@@ -107,7 +107,88 @@ struct DailyReportView: View {
                     Text(closed).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3).lineLimit(1)
                 }
             }
+            dayStepper
         }
+    }
+
+    /// The night before or after `iso` — nil for a night after `today` (on
+    /// the restaurant's clock) or for anything that isn't a date.
+    static func adjacentNight(_ iso: String?, by days: Int, today: String) -> String? {
+        guard let iso, DSRFormat.isISODate(iso) else { return nil }
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(secondsFromGMT: 0)!
+        let p = iso.split(separator: "-").compactMap { Int($0) }
+        guard p.count == 3,
+              let date = utc.date(from: DateComponents(year: p[0], month: p[1], day: p[2])),
+              let moved = utc.date(byAdding: .day, value: days, to: date) else { return nil }
+        let out = CavnarDate.isoDay(moved, in: utc.timeZone)
+        return out > today ? nil : out
+    }
+
+    /// Previous / next night in place, and the report as text to send to a
+    /// partner (friction audit #50, U3-15) — comparing Friday with Saturday
+    /// was back, list, row; sharing was a screenshot.
+    @ViewBuilder
+    private var dayStepper: some View {
+        let today = CavnarDate.isoDay(Date(), in: RestaurantClock.timeZone)
+        let current = viewModel.report?.businessDate ?? viewModel.businessDate
+        let previous = Self.adjacentNight(current, by: -1, today: today)
+        let next = Self.adjacentNight(current, by: 1, today: today)
+        HStack(spacing: 8) {
+            stepButton("Previous night", systemImage: "chevron.left", to: previous)
+            stepButton("Next night", systemImage: "chevron.right", to: next)
+            Spacer(minLength: 0)
+            if let text = shareText {
+                ShareLink(item: text) {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                        .font(.cavnarBody(13.5, weight: 700))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+            }
+        }
+    }
+
+    private func stepButton(_ label: String, systemImage: String, to date: String?) -> some View {
+        Button {
+            guard let date else { return }
+            Haptic.selection()
+            expanded = ["sales"]
+            viewModel = DailyReportViewModel(businessDate: date)
+            Task { await viewModel.load() }
+        } label: {
+            Image(systemName: systemImage)
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(date == nil ? Color.cavnarInk3.opacity(0.4) : Color.cavnarEmber2)
+                .frame(width: 44, height: 44)
+                .background(Color.cavnarEmber.opacity(date == nil ? 0.04 : 0.12), in: Circle().inset(by: 5))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(date == nil)
+        .accessibilityLabel(label)
+    }
+
+    /// The night as text: the date, the morning read, what went well and
+    /// what needs attention — only lines this login was sent.
+    private var shareText: String? {
+        guard let report = viewModel.report else { return nil }
+        var lines = ["Daily sales report — \(report.displayDate)"]
+        if let n = report.narrative {
+            if let s = n.executiveSummary?.text, !s.isEmpty { lines.append(""); lines.append(s) }
+            if !n.wentWell.isEmpty {
+                lines.append("")
+                lines.append("Went well")
+                lines += n.wentWell.map { "• " + $0.text }
+            }
+            if !n.needsAttention.isEmpty {
+                lines.append("")
+                lines.append("Needs attention")
+                lines += n.needsAttention.map { "• " + $0.text }
+            }
+        }
+        return lines.count > 1 ? lines.joined(separator: "\n") : nil
     }
 
     /// "Tuesday 9/22/26" — the weekday in Clash, the date in the number face.

@@ -1074,6 +1074,7 @@ def _do_mobile_home(current_user):
             "title": f"{urgent} urgent review{'' if urgent == 1 else 's'} unanswered",
             "detail": "Negative reviews are still waiting on a reply",
             "cta": "Reply now", "secondary": None, "action": "open_module",
+            "nav": "reviews?filter=urgent",
         })
     # What one publish may post — recent, not urgent, not flagged — the same
     # count web Home labels its button with (models.reply_queue_counts). This
@@ -1096,6 +1097,7 @@ def _do_mobile_home(current_user):
             # one tap will actually do.
             "cta": f"Publish {min(n, 25)} {'reply' if n == 1 else 'replies'}",
             "secondary": "Read them first", "action": "publish_replies",
+            "nav": "reviews?filter=pending",
         })
     # Overtime: live shifts only (the sample week is not this restaurant's
     # staff — it read "7 staff members in overtime" on a new account), this
@@ -1113,6 +1115,7 @@ def _do_mobile_home(current_user):
                 "detail": (f"About ${_ot['premium']:,.0f} in overtime premium on {_ot['hours']:g} hours past 40"
                            if _ot["premium"] is not None else f"{_ot['hours']:g} hours past 40 so far"),
                 "cta": "Open schedule", "secondary": None, "action": "open_module",
+                "nav": "labor/overtime",
             })
     if "reviews" in active_keys and rstats.get("total", 0) > 0 and rstats.get("response_rate", 0) < 50:
         needs_attention.append({
@@ -1120,6 +1123,7 @@ def _do_mobile_home(current_user):
             "title": f"Response rate at {rstats['response_rate']}%",
             "detail": f"{rstats.get('responded', 0)} of {rstats['total']} reviews have a reply",
             "cta": "Answer reviews", "secondary": None, "action": "open_module",
+            "nav": "reviews?filter=pending",
         })
 
     # Total value delivered — the Home tab's chart card. Snapshot recorded
@@ -1199,6 +1203,9 @@ def _do_mobile_home(current_user):
                 "secondary": ("Read them first"
                               if a.get("key") == "awaiting_approval" else None),
                 "action": (a.get("action") or {}).get("kind") or "open_module",
+                # Where the tap lands (nav.py) — the item, filter or section
+                # the web's focus opens, not the module's top (friction #3).
+                "nav": a.get("nav") or (a.get("action") or {}).get("nav"),
                 "severity": a.get("severity"),
                 "evidence": a.get("evidence"),
                 # The item's measured confidence (K1/K4) — the same object

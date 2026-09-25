@@ -19,14 +19,39 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         didSet {
             guard let router, let tap = heldTap else { return }
             heldTap = nil
-            router.handleNotificationTap(alertType: tap.alertType, reviewId: tap.reviewId, askPrompt: tap.askPrompt,
-                                         alertId: tap.alertId, recKey: tap.recKey,
-                                         module: tap.module, restaurantId: tap.restaurantId,
-                                         businessDate: tap.businessDate, surface: tap.surface)
+            tap.deliver(to: router)
         }
     }
-    private var heldTap: (alertType: String, reviewId: Int?, askPrompt: String?, alertId: Int?, recKey: String?,
-                          module: String?, restaurantId: Int?, businessDate: String?, surface: String?)?
+    private var heldTap: Tap?
+
+    /// Everything a tap routes on — only Sendable values, read out of the
+    /// payload before crossing to the main actor.
+    struct Tap: Sendable {
+        var alertType: String
+        var reviewId: Int?
+        var askPrompt: String?
+        var alertId: Int?
+        var recKey: String?
+        var module: String?
+        var restaurantId: Int?
+        var businessDate: String?
+        var surface: String?
+        /// Where it opens (push.nav_for): the review, the pending send, the
+        /// request. Nil from an older server — the router's mirror answers.
+        var nav: String?
+        /// The push's own "Ask about this" button: send the question, not
+        /// just fill it in (friction audit #15).
+        var askAutoSend = false
+
+        @MainActor
+        func deliver(to router: DeepLinkRouter) {
+            router.handleNotificationTap(alertType: alertType, reviewId: reviewId, askPrompt: askPrompt,
+                                         alertId: alertId, recKey: recKey,
+                                         module: module, restaurantId: restaurantId,
+                                         businessDate: businessDate, surface: surface,
+                                         nav: nav, askAutoSend: askAutoSend)
+        }
+    }
 
     /// Whether the phone will actually show anything. A denial is permanent
     /// and silent: the app never asked, so an owner who tapped "Don't Allow"
@@ -44,11 +69,20 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
     /// Categories are what let an owner act from the lock screen instead of
     /// unlocking, finding the module and starting again. The identifiers
     /// match push.py's CATEGORY_* constants.
-    private static let reviewCategory = "CAVNAR_REVIEW"
-    private static let briefCategory  = "CAVNAR_BRIEF"
-    private static let issueCategory  = "CAVNAR_ISSUE"
-    private static let openAction     = "CAVNAR_OPEN"
-    private static let askAction      = "CAVNAR_ASK"
+    nonisolated private static let reviewCategory = "CAVNAR_REVIEW"
+    nonisolated private static let briefCategory  = "CAVNAR_BRIEF"
+    nonisolated private static let issueCategory  = "CAVNAR_ISSUE"
+    /// The actionable kinds (friction audit #22): the button does the work
+    /// in the background, behind the phone's own unlock, and nothing opens.
+    nonisolated private static let reviewDraftedCategory = "CAVNAR_REVIEW_DRAFTED"
+    nonisolated private static let undoableCategory      = "CAVNAR_UNDOABLE"
+    nonisolated private static let requestCategory       = "CAVNAR_REQUEST"
+    nonisolated private static let openAction     = "CAVNAR_OPEN"
+    nonisolated private static let askAction      = "CAVNAR_ASK"
+    nonisolated static let approvePostAction      = "CAVNAR_APPROVE_POST"
+    nonisolated static let undoAction             = "CAVNAR_UNDO"
+    nonisolated static let approveRequestAction   = "CAVNAR_APPROVE_REQUEST"
+    nonisolated static let denyRequestAction      = "CAVNAR_DENY_REQUEST"
 
     /// The system prompt used to fire within seconds of the first login,
     /// before the owner had seen a single number. Asking on the second open
@@ -174,18 +208,128 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
+    /// "Open" on an issue did exactly what tapping the notification does, so
+    /// the issue category has no button of its own now; "Respond" on a
+    /// review only opened the app, so it says "Reply". The actionable ones
+    /// act: no `.foreground`, and `.authenticationRequired` so a locked
+    /// phone asks for Face ID before a reply posts or a send is stopped.
     private static var categories: Set<UNNotificationCategory> {
-        let open = UNNotificationAction(identifier: openAction, title: "Open", options: [.foreground])
-        let respond = UNNotificationAction(identifier: openAction, title: "Respond", options: [.foreground])
+        let reply = UNNotificationAction(identifier: openAction, title: "Reply", options: [.foreground])
         let ask = UNNotificationAction(identifier: askAction, title: "Ask about this", options: [.foreground])
+        let approvePost = UNNotificationAction(identifier: approvePostAction, title: "Approve & post",
+                                               options: [.authenticationRequired])
+        let edit = UNNotificationAction(identifier: openAction, title: "Edit", options: [.foreground])
+        let undo = UNNotificationAction(identifier: undoAction, title: "Undo",
+                                        options: [.destructive, .authenticationRequired])
+        let review = UNNotificationAction(identifier: openAction, title: "Review", options: [.foreground])
+        let approve = UNNotificationAction(identifier: approveRequestAction, title: "Approve",
+                                           options: [.authenticationRequired])
+        let deny = UNNotificationAction(identifier: denyRequestAction, title: "Deny",
+                                        options: [.destructive, .authenticationRequired])
         return [
-            UNNotificationCategory(identifier: reviewCategory, actions: [respond],
+            UNNotificationCategory(identifier: reviewCategory, actions: [reply],
+                                   intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: reviewDraftedCategory, actions: [approvePost, edit],
+                                   intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: undoableCategory, actions: [undo, review],
+                                   intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: requestCategory, actions: [approve, deny],
                                    intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: briefCategory, actions: [ask],
                                    intentIdentifiers: [], options: []),
-            UNNotificationCategory(identifier: issueCategory, actions: [open],
+            UNNotificationCategory(identifier: issueCategory, actions: [],
                                    intentIdentifiers: [], options: []),
         ]
+    }
+
+    // MARK: - Acting from the notification (friction audit #22)
+
+    /// What a background button does: the route it calls, what it sends,
+    /// and the sentence to post if it could not be done.
+    struct BackgroundAction: Equatable {
+        let path: String
+        let decision: String?
+        let failureTitle: String
+    }
+
+    /// The call a background action identifier makes for this payload, or
+    /// nil when the payload doesn't carry what it needs (then the action
+    /// just opens, like a tap).
+    nonisolated static func backgroundAction(for actionIdentifier: String,
+                                             cavnar: [String: Any]) -> BackgroundAction? {
+        switch actionIdentifier {
+        case approvePostAction:
+            guard let id = reviewId(from: cavnar["review_id"]) else { return nil }
+            return BackgroundAction(path: "/mobile/api/reviews/\(id)/approve", decision: nil,
+                                    failureTitle: "Couldn't post that reply")
+        case undoAction:
+            guard let id = reviewId(from: cavnar["delayed_action_id"]) else { return nil }
+            return BackgroundAction(path: "/mobile/api/actions/\(id)/cancel", decision: nil,
+                                    failureTitle: "Couldn't undo that")
+        case approveRequestAction, denyRequestAction:
+            guard let id = reviewId(from: cavnar["request_id"]) else { return nil }
+            let kind = (cavnar["request_kind"] as? String ?? "shift").lowercased()
+            let base = kind.contains("time") ? "/mobile/api/labor/time-off" : "/mobile/api/labor/shift-requests"
+            let approve = actionIdentifier == approveRequestAction
+            return BackgroundAction(path: "\(base)/\(id)/decide", decision: approve ? "approve" : "deny",
+                                    failureTitle: approve ? "Couldn't approve that request"
+                                                          : "Couldn't deny that request")
+        default:
+            return nil
+        }
+    }
+
+    private struct DecisionBody: Encodable { let decision: String }
+    private struct EmptyBody: Encodable {}
+
+    /// Runs a background action with the stored owner session. The app may
+    /// have been launched just for this — no view has set up APIClient yet —
+    /// so the token is read from the Keychain and sent explicitly. A failure
+    /// is never silent: a local notification says so, carrying the original
+    /// payload, so tapping it opens the thing to do it by hand.
+    nonisolated static func perform(_ action: BackgroundAction, userInfo: [AnyHashable: Any],
+                                    restaurantId: Int?) async {
+        guard let token = Keychain.get(Keychain.Key.sessionToken) else {
+            await postFailure(action.failureTitle, "Open Cavnar AI and sign in to do this.", userInfo: userInfo)
+            return
+        }
+        // The server acts on the location this phone is signed into. An
+        // alert about another location of the group can't be answered from
+        // here without switching, so it says so instead of failing oddly.
+        let active = await MainActor.run { SessionScope.restaurantId }
+        if let restaurantId, restaurantId > 0, active > 0, restaurantId != active {
+            await postFailure(action.failureTitle,
+                              "It's for another location — tap to open it there.", userInfo: userInfo)
+            return
+        }
+        do {
+            let response: APIClient.OKResponse
+            if let decision = action.decision {
+                response = try await APIClient.shared.sendWithBearer(
+                    action.path, method: .post, body: DecisionBody(decision: decision), bearer: token)
+            } else {
+                response = try await APIClient.shared.sendWithBearer(
+                    action.path, method: .post, body: EmptyBody(), bearer: token)
+            }
+            if !response.ok {
+                await postFailure(action.failureTitle, response.error ?? "Tap to open it.", userInfo: userInfo)
+            }
+        } catch let error as APIClient.APIError {
+            await postFailure(action.failureTitle, error.message, userInfo: userInfo)
+        } catch {
+            await postFailure(action.failureTitle, "Tap to open it and try again.", userInfo: userInfo)
+        }
+    }
+
+    nonisolated private static func postFailure(_ title: String, _ body: String,
+                                                userInfo: [AnyHashable: Any]) async {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.userInfo = userInfo
+        let request = UNNotificationRequest(identifier: "cavnar-action-failed-\(UUID().uuidString)",
+                                            content: content, trigger: nil)
+        try? await UNUserNotificationCenter.current().add(request)
     }
 
     /// Clear the app icon badge. The backend now sends the unread count on
@@ -349,21 +493,37 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         // server sends neither and the router falls back to its mirror.
         let module = (cavnar["module"] as? String).map { String($0.prefix(32)) }
         let restaurantId = Self.reviewId(from: cavnar["restaurant_id"])
-        // Every action we register is .foreground and lands on the same
-        // screen the notification itself does, so the action identifier
-        // changes nothing here — it is the tap that matters. Dismissals are
-        // ignored rather than routed.
-        guard response.actionIdentifier != UNNotificationDismissActionIdentifier else { return }
+        let nav = Self.nav(cavnar)
+        let actionIdentifier = response.actionIdentifier
+        // Dismissals are ignored rather than routed.
+        guard actionIdentifier != UNNotificationDismissActionIdentifier else { return }
+        // Approve & post, Undo, Approve / Deny: done here, in the
+        // background, and nothing opens (friction audit #22).
+        if let action = Self.backgroundAction(for: actionIdentifier, cavnar: cavnar) {
+            await Self.perform(action, userInfo: userInfo, restaurantId: restaurantId)
+            return
+        }
+        // Every other button (Reply, Edit, Review, Ask about this) and the
+        // tap itself open the notification's own place; "Ask about this"
+        // also sends the question.
+        let tap = Tap(alertType: alertType, reviewId: reviewId, askPrompt: askPrompt, alertId: alertId,
+                      recKey: recKey, module: module, restaurantId: restaurantId,
+                      businessDate: businessDate, surface: surface, nav: nav,
+                      askAutoSend: actionIdentifier == Self.askAction)
         await MainActor.run {
             guard let router else {
-                heldTap = (alertType, reviewId, askPrompt, alertId, recKey, module, restaurantId, businessDate, surface)
+                heldTap = tap
                 return
             }
-            router.handleNotificationTap(alertType: alertType, reviewId: reviewId, askPrompt: askPrompt,
-                                         alertId: alertId, recKey: recKey,
-                                         module: module, restaurantId: restaurantId,
-                                         businessDate: businessDate, surface: surface)
+            tap.deliver(to: router)
         }
+    }
+
+    /// `cavnar["nav"]` (push.nav_for), bounded; nil when absent or empty.
+    nonisolated static func nav(_ cavnar: [String: Any]) -> String? {
+        guard let raw = cavnar["nav"] as? String else { return nil }
+        let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return s.isEmpty ? nil : String(s.prefix(400))
     }
 
     /// `cavnar["surface"]`, bounded; nil when absent or empty.

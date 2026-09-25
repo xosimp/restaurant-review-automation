@@ -12,11 +12,25 @@ import Observation
 final class DeepLinkRouter {
     var pendingTab: AppTab?
     var pendingModuleKey: String?
+    /// The module screen to open with its focus — the filter, section or
+    /// item the notification or card was about (friction audit #3). Set with
+    /// pendingModuleKey (same key) so anything reading the key alone still
+    /// lands in the right module.
+    var pendingModuleRoute: ModuleRoute?
     var pendingReviewID: Int?
-    /// A question to prefill in Ask Cavnar. Set by the morning brief push,
-    /// whose lines each carry the question an owner would ask about them.
-    /// Prefilled, never auto-sent: the owner decides whether to ask it.
+    /// A question for Ask Cavnar. Set by the morning brief push, whose lines
+    /// each carry the question an owner would ask about them, and by every
+    /// "Ask about this".
     var pendingAskPrompt: String?
+    /// Whether pendingAskPrompt is sent as well as filled in. An explicit
+    /// "Ask about this" (a Home link, the push's own Ask button, the command
+    /// sheet) was the decision, so it sends — as the web's hbAsk does
+    /// (friction audit #15). A plain tap on a brief's body only fills it in.
+    var pendingAskAutoSend = false
+    /// A queued automatic send (delayed_actions id) to show with Undo /
+    /// Review — the "goes out at 11am" push and its notification row
+    /// (friction audit #3). RootView presents PendingActionSheet for it.
+    var pendingActionId: PendingActionRef?
     /// A Daily Sales Report to open on Home's stack — set by a `dsr` push
     /// (`business_date` → that night) or its row in the notification list
     /// (no date there → the list of nights). HomeView consumes it.
@@ -39,31 +53,139 @@ final class DeepLinkRouter {
     func handleNotificationTap(alertType: String, reviewId: Int?, askPrompt: String? = nil,
                                alertId: Int? = nil, recKey: String? = nil,
                                module: String? = nil, restaurantId: Int? = nil,
-                               businessDate: String? = nil, surface: String? = nil) {
+                               businessDate: String? = nil, surface: String? = nil,
+                               nav: String? = nil, askAutoSend: Bool = false) {
         let current = activeRestaurantId()
         if let target = restaurantId, target > 0, current > 0, target != current, let switchLocation {
             Task {
                 if await switchLocation(target) { locationSwitches += 1 }
                 route(alertType: alertType, reviewId: reviewId, askPrompt: askPrompt,
                       alertId: alertId, recKey: recKey, module: module, businessDate: businessDate,
-                      surface: surface)
+                      surface: surface, nav: nav, askAutoSend: askAutoSend)
             }
             return
         }
         route(alertType: alertType, reviewId: reviewId, askPrompt: askPrompt,
               alertId: alertId, recKey: recKey, module: module, businessDate: businessDate,
-              surface: surface)
+              surface: surface, nav: nav, askAutoSend: askAutoSend)
+    }
+
+    /// Open a nav path (nav.py / Core/NavPath.swift) — a card's, a
+    /// notification's, the command sheet's (`.cavnarOpenNav`). One router
+    /// for every way in. `restaurantId` switches location first when the
+    /// path belongs to another one. `askAutoSend` decides whether an
+    /// `ask?q=` path sends or only fills in.
+    func open(_ nav: NavPath, restaurantId: Int? = nil, askAutoSend: Bool = true, askPrompt: String? = nil) {
+        let current = activeRestaurantId()
+        if let target = restaurantId, target > 0, current > 0, target != current, let switchLocation {
+            Task {
+                if await switchLocation(target) { locationSwitches += 1 }
+                apply(nav, askAutoSend: askAutoSend, askPrompt: askPrompt)
+            }
+            return
+        }
+        apply(nav, askAutoSend: askAutoSend, askPrompt: askPrompt)
+    }
+
+    /// The destination of a nav path. Unknown heads degrade to Home, never
+    /// to a wrong module (nav.py's contract: a newer server never strands
+    /// an older app).
+    private func apply(_ nav: NavPath, askAutoSend: Bool, askPrompt: String?) {
+        pendingReviewID = nil
+        switch nav.head {
+        case "home", "issue":
+            pendingTab = .home
+            pendingModuleKey = nil
+            pendingModuleRoute = nil
+        case "action":
+            // The queued send's own sheet, over whatever is on screen.
+            if let id = nav.target.flatMap({ Int($0) }), id > 0 {
+                pendingActionId = PendingActionRef(id: id)
+            } else {
+                pendingTab = .home
+            }
+        case "location":
+            // location/<id>: switch there, then Home shows it.
+            pendingModuleKey = nil
+            pendingModuleRoute = nil
+            if let id = nav.target.flatMap({ Int($0) }), id > 0, id != activeRestaurantId(),
+               let switchLocation {
+                Task {
+                    if await switchLocation(id) { locationSwitches += 1 }
+                    pendingTab = .home
+                }
+            } else {
+                pendingTab = .home
+            }
+        case "dsr":
+            // dsr/night/<date>, dsr/<date>, or the list of nights.
+            let date = nav.rest.last
+            pendingTab = .home
+            pendingModuleKey = nil
+            pendingModuleRoute = nil
+            pendingDailyReport = DSRFormat.isISODate(date) ? .report(date: date) : .list
+        case "ask":
+            pendingTab = .ask
+            pendingModuleKey = nil
+            pendingModuleRoute = nil
+            let fromPath = nav.query["q"].map { String($0.prefix(300)) }
+            let question = (fromPath?.isEmpty == false ? fromPath : nil) ?? askPrompt
+            if let question, !question.isEmpty {
+                pendingAskAutoSend = askAutoSend
+                pendingAskPrompt = question
+            }
+        case "account", "recs":
+            pendingTab = .account
+            pendingModuleKey = nil
+            pendingModuleRoute = nil
+        default:
+            guard let target = ModuleRoute.from(nav) else {
+                pendingTab = .home
+                pendingModuleKey = nil
+                pendingModuleRoute = nil
+                return
+            }
+            if target.key == "reviews", let item = target.itemId, let id = Int(item), id > 0 {
+                pendingReviewID = id
+            }
+            pendingModuleRoute = target
+            pendingModuleKey = target.key
+            pendingTab = .modules
+        }
+    }
+
+    /// What the Modules tab opens next: the focused route when one was set,
+    /// else a bare module key (an older caller). Consumed — both cleared —
+    /// so a later reappearance can't push it twice.
+    func consumePendingModuleRoute(labelFor: (String) -> String) -> ModuleRoute? {
+        defer {
+            pendingModuleRoute = nil
+            pendingModuleKey = nil
+        }
+        if let route = pendingModuleRoute {
+            return ModuleRoute(key: route.key, label: labelFor(route.key), filter: route.filter,
+                               section: route.section, itemId: route.itemId)
+        }
+        guard let key = pendingModuleKey else { return nil }
+        return ModuleRoute(key: key, label: labelFor(key))
     }
 
     private func route(alertType: String, reviewId: Int?, askPrompt: String?,
                        alertId: Int?, recKey: String?, module: String?, businessDate: String?,
-                       surface: String?) {
+                       surface: String?, nav: String? = nil, askAutoSend: Bool = false) {
         // What the product knew was how many notifications it SENT. Whether
         // any of them were worth sending had no answer anywhere — not for
         // the owner, not for Will. Best effort: a failure here must never
         // interfere with actually opening the thing.
         if !alertType.isEmpty {
             Task { await Self.recordOpen(alertType, alertId: alertId, recKey: recKey, surface: surface) }
+        }
+        // The server's own address for it (push.nav_for / the notification
+        // row's `nav`): the review, the pending send, the request — not the
+        // module's top. The mirror below is only for an older server.
+        if let path = NavPath(nav) {
+            apply(path, askAutoSend: askAutoSend, askPrompt: askPrompt)
+            return
         }
         // The nightly Daily Sales Report opens on Home's stack: that night
         // when the push names it, the list of nights when it doesn't (a row
@@ -87,7 +209,10 @@ final class DeepLinkRouter {
             pendingTab = .ask
             pendingModuleKey = nil
             pendingReviewID = nil
-            if let askPrompt, !askPrompt.isEmpty { pendingAskPrompt = askPrompt }
+            if let askPrompt, !askPrompt.isEmpty {
+                pendingAskAutoSend = askAutoSend
+                pendingAskPrompt = askPrompt
+            }
             return
         }
         // "login" isn't a product module — it has nowhere to deep-link to
@@ -203,4 +328,10 @@ final class DeepLinkRouter {
         default: return "reviews"
         }
     }
+}
+
+/// A queued automatic send to present (delayed_actions.id). Identifiable so
+/// RootView can drive `.sheet(item:)` with it.
+struct PendingActionRef: Identifiable, Hashable {
+    let id: Int
 }

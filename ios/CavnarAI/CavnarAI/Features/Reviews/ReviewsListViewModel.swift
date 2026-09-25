@@ -23,6 +23,19 @@ enum ReviewInboxFilter: String, CaseIterable, Identifiable {
         case .positive: return "positive"
         }
     }
+
+    /// A nav path's `?filter=` (nav.py): the server's key, or the words a
+    /// card or the web may use for the same chip. Nil for anything else.
+    init?(key: String?) {
+        switch key?.lowercased().replacingOccurrences(of: "-", with: "_") {
+        case "all": self = .all
+        case "urgent": self = .urgent
+        case "pending", "to_approve", "toapprove", "awaiting", "awaiting_approval", "drafted": self = .toApprove
+        case "negative": self = .negative
+        case "positive": self = .positive
+        default: return nil
+        }
+    }
 }
 
 @Observable
@@ -101,6 +114,50 @@ final class ReviewsListViewModel {
 
     func remove(reviewID: Int) {
         reviews.removeAll { $0.id == reviewID }
+    }
+
+    // MARK: - Queue mode (friction audit #21)
+
+    /// The first open: the link's filter when one was given, else "To
+    /// approve" whenever replies are waiting (the stats say how many), else
+    /// All. Set before the first page loads, so it loads once.
+    func openInbox(preferred: ReviewInboxFilter?) async {
+        defer { inboxOpened = true }
+        // Only the first open chooses: coming back from a review keeps the
+        // chip the owner picked.
+        if !inboxOpened {
+            if let preferred {
+                filter = preferred
+            } else {
+                await loadStats()
+                if (stats?.awaitingApproval ?? 0) > 0 { filter = .toApprove }
+            }
+        }
+        await load()
+    }
+
+    /// Set once the first open has chosen its filter and loaded; a filter
+    /// change before that is the open's own, not a chip tap to reload for.
+    private(set) var inboxOpened = false
+
+    /// The next reply waiting after `id`, in the order the list shows them —
+    /// what "Approve & next" moves on to. Nil at the end of the queue.
+    func nextInQueue(after id: Int) -> Review? {
+        let queue = filteredReviews.filter { $0.responseStatus == "drafted" && !($0.draftResponse ?? "").isEmpty }
+        guard let i = queue.firstIndex(where: { $0.id == id }) else {
+            return queue.first { $0.id != id }
+        }
+        return queue.dropFirst(i + 1).first
+    }
+
+    /// A reply that may be approved without opening it: the bar Home's
+    /// "Publish N replies" holds (models.BULK_PUBLISHABLE_SQL) — drafted,
+    /// not flagged for a read, not urgent.
+    static func canQuickApprove(_ review: Review) -> Bool {
+        review.responseStatus == "drafted"
+            && !(review.draftResponse ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !review.draftIsFlagged
+            && !review.isUrgent
     }
 
     private let client: APIClient

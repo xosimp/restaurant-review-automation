@@ -534,8 +534,11 @@ def test_h16_the_server_caps_match_what_web_and_ios_render():
     assert "Math.min(items.length,3)" in web and "Math.min(recs.length,3)" in web
     ios = open("ios/CavnarAI/CavnarAI/Features/Home/HomeRecommendations.swift").read()
     assert ".prefix(3)" in ios
-    home = open("ios/CavnarAI/CavnarAI/Features/Home/HomeView.swift").read()
-    assert "summary.needsAttention.prefix(4)" in home
+    # iOS shows the lead card plus three rows before "+N more" (friction
+    # audit #11 moved the cap from HomeView's prefix(4) into the deck).
+    deck = open("ios/CavnarAI/CavnarAI/Features/Home/HomeActionDeck.swift").read()
+    assert "static let shownByDefault = 4" in deck
+    assert "rest.prefix(shownByDefault - 1)" in deck
 
 
 # ── H-17 the on-call ask is recorded only once it went out ──────────────────

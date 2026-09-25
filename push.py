@@ -313,22 +313,93 @@ _EXPIRY_SECONDS = {
 # UNNotificationCategory identifiers the app registers (PushManager.swift).
 # A category is what lets an owner act from the lock screen instead of
 # unlocking, finding the module and starting again.
-CATEGORY_REVIEW = "CAVNAR_REVIEW"     # Respond
+CATEGORY_REVIEW = "CAVNAR_REVIEW"     # Reply (opens the review)
 CATEGORY_BRIEF  = "CAVNAR_BRIEF"      # Ask about this
-CATEGORY_ISSUE  = "CAVNAR_ISSUE"      # Open
+CATEGORY_ISSUE  = "CAVNAR_ISSUE"      # no extra button: the tap opens it
+# The actionable kinds (friction audit #22, 9/25/26): the button does the
+# work in the background, behind the phone's own unlock, and nothing opens.
+CATEGORY_REVIEW_DRAFTED = "CAVNAR_REVIEW_DRAFTED"   # Approve & post · Edit
+CATEGORY_UNDOABLE = "CAVNAR_UNDOABLE"               # Undo · Review
+CATEGORY_REQUEST = "CAVNAR_REQUEST"                 # Approve · Deny
 _BRIEF_TYPES = {"morning_brief", "intraday_pulse", "closing_summary",
                 "weekly_review", "monthly_review", "daily_briefing"}
 _ISSUE_TYPES = {"issue", "issue_escalated", "coverage", "critical_low"}
+# A queued automatic send (delayed.py) the owner can still stop.
+_UNDOABLE_TYPES = {"schedule_publish_pending", "order_send_pending"}
 
 
 def _category(alert_type, data) -> str:
-    if alert_type in _BRIEF_TYPES or (data or {}).get("ask_prompt"):
+    data = data or {}
+    if alert_type in _UNDOABLE_TYPES and data.get("delayed_action_id"):
+        return CATEGORY_UNDOABLE
+    if alert_type == "shift_request" and data.get("request_id") and data.get("request_kind"):
+        return CATEGORY_REQUEST
+    if alert_type in _BRIEF_TYPES or data.get("ask_prompt"):
         return CATEGORY_BRIEF
     if alert_type in _ISSUE_TYPES:
         return CATEGORY_ISSUE
-    if (data or {}).get("review_id"):
-        return CATEGORY_REVIEW
+    if data.get("review_id"):
+        # Approve from the lock screen only for a draft that could be
+        # published without reading it one by one — the bulk-publish bar
+        # (models.BULK_PUBLISHABLE_SQL): not flagged, not urgent, recent.
+        return CATEGORY_REVIEW_DRAFTED if data.get("draft_ready") else CATEGORY_REVIEW
     return ""
+
+
+def _review_draft_ready(restaurant_id, review_id, db_path=DB_PATH) -> bool:
+    """Whether this review has a reply that one tap may publish — the same
+    rule the Home "Publish N replies" button and approve-all apply. Never
+    raises (False)."""
+    try:
+        from models import BULK_PUBLISHABLE_SQL, bulk_publish_window
+        conn = get_conn(db_path)
+        try:
+            row = conn.execute(
+                f"SELECT 1 FROM reviews WHERE id=? AND restaurant_id=? AND {BULK_PUBLISHABLE_SQL}",
+                (int(review_id), int(restaurant_id), bulk_publish_window())).fetchone()
+        finally:
+            conn.close()
+        return row is not None
+    except Exception:
+        return False
+
+
+def nav_for(alert_type, data=None) -> str:
+    """The nav path (nav.py) a notification opens: the item when the payload
+    names one, else the section, else the module. The same string rides the
+    push and the notification list, so the app opens the review, the pending
+    send or the request instead of a module's top (friction audit #3)."""
+    import nav
+    data = data or {}
+    if data.get("nav"):
+        return str(data["nav"])
+    if alert_type in _UNDOABLE_TYPES and data.get("delayed_action_id"):
+        return nav.path("action", data["delayed_action_id"])
+    if data.get("review_id"):
+        return nav.path("review", data["review_id"])
+    if alert_type == "dsr":
+        date = str(data.get("business_date") or "")
+        return nav.path("dsr", "night", date) if len(date) == 10 else nav.path("dsr")
+    if data.get("ask_prompt"):
+        # The question itself rides as ask_prompt; repeating it URL-encoded
+        # here would spend the 4KB APNs budget twice.
+        return nav.path("ask")
+    if alert_type == "shift_request":
+        if data.get("request_id") and data.get("request_kind"):
+            return nav.path("request", f"{data['request_kind']}-{data['request_id']}")
+        return nav.path("labor", "requests")
+    if alert_type == "schedule_publish_held" and data.get("schedule_id"):
+        return nav.path("schedule", data["schedule_id"])
+    if alert_type in ("schedule_drafted", "schedule_publish_held", "coverage"):
+        return nav.path("labor", "schedule")
+    if alert_type in ("critical_low", "order_send_held", "order_send_voided", "order_send_pending"):
+        return nav.path("inventory", "order")
+    if alert_type in ("issue", "issue_escalated") and data.get("issue_id"):
+        return nav.path("issue", data["issue_id"])
+    if alert_type in ("login", "staff_signin"):
+        return nav.path("account", "security")
+    module = module_of(alert_type)
+    return nav.path({"competitor": "intel", "food": "inventory"}.get(module, module))
 
 
 _jwt_cache = {"token": None, "minted_at": 0}
@@ -918,6 +989,15 @@ def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH
     data = dict(data or {})
     data.setdefault("restaurant_id", restaurant_id)
     data.setdefault("module", module_of(alert_type))
+    # A review push carries whether its reply may be published from the
+    # lock screen (read once here, not per device), and every push carries
+    # where it opens (nav.py) — friction audit #3/#22.
+    if data.get("review_id") and "draft_ready" not in data:
+        data["draft_ready"] = _review_draft_ready(restaurant_id, data["review_id"], db_path)
+    try:
+        data.setdefault("nav", nav_for(alert_type, data))
+    except Exception as e:
+        print(f"[push] nav for {alert_type} failed: {e}")
     try:
         tokens = get_device_tokens(restaurant_id, db_path, for_delivery=True)
         if user_ids is not None:

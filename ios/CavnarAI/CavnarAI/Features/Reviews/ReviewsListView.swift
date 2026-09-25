@@ -15,6 +15,23 @@ struct ReviewsListView: View {
     @State private var clock = CavnarEntranceClock()
     @State private var analyticsLoaded = false
     @Environment(DeepLinkRouter.self) private var deepLinkRouter
+    /// Where the link that opened this was pointing (friction audit #3):
+    /// "reviews?filter=urgent" opens on Urgent, "review/412" on that review.
+    var initialFilter: String? = nil
+    var focusReviewId: Int? = nil
+    /// A review the loaded page doesn't hold (older, or another filter) —
+    /// fetched by id rather than silently not opening.
+    @State private var fetchedReviewId: Int?
+    /// The row whose swipe-approve failed, with the server's sentence.
+    @State private var rowError: (id: Int, message: String)?
+    @State private var approvingRowId: Int?
+    @State private var postedLabel: String?
+    @State private var focusConsumed = false
+
+    init(initialFilter: String? = nil, focusReviewId: Int? = nil) {
+        self.initialFilter = initialFilter
+        self.focusReviewId = focusReviewId
+    }
 
     var body: some View {
         // No NavigationStack of its own — this is now a pushed destination
@@ -69,13 +86,25 @@ struct ReviewsListView: View {
         .navigationDestination(item: $deepLinkedReview) { review in
             ReviewDetailView(
                 viewModel: ReviewDetailViewModel(review: review),
-                onCompleted: { status in viewModel.markCompleted(reviewID: review.id, status: status) }
+                onCompleted: { status in viewModel.markCompleted(reviewID: review.id, status: status) },
+                // Queue mode (friction audit #21): after an approve the
+                // detail moves on to the next reply waiting, in the order
+                // the list shows them, instead of popping back here.
+                nextInQueue: { id in viewModel.nextInQueue(after: id) },
+                onAdvanced: { status, id in viewModel.markCompleted(reviewID: id, status: status) }
             )
         }
+        .navigationDestination(item: $fetchedReviewId) { id in
+            ReviewByIdView(reviewID: id, category: nil)
+        }
         .task {
-            await viewModel.load()
+            // Opens on the link's filter, else on "To approve" whenever
+            // replies are waiting — the inbox used to open on All and the
+            // owner tapped the chip every time (friction audit #21).
+            await viewModel.openInbox(preferred: ReviewInboxFilter(key: initialFilter))
             openDeepLinkIfNeeded()
         }
+        .cavnarPostedOverlay(postedLabel) { postedLabel = nil }
         // Reopening the app after a while re-reads the inbox rather than
         // showing this morning's list as current (audit 4.2).
         .refreshOnForeground(lastLoaded: viewModel.lastLoadedAt) { await viewModel.reload() }
@@ -176,11 +205,33 @@ struct ReviewsListView: View {
                         Haptic.light()
                         deepLinkedReview = review
                     } label: {
-                        ReviewRow(review: review)
-                            .cavnarRowEntrance(index: index, clock: clock)
-                            .contentShape(Rectangle())
+                        VStack(alignment: .leading, spacing: 4) {
+                            ReviewRow(review: review)
+                                .opacity(approvingRowId == review.id ? 0.5 : 1)
+                            if let rowError, rowError.id == review.id {
+                                Text(rowError.message)
+                                    .font(.cavnarBody(13))
+                                    .foregroundStyle(Color.cavnarRed)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .cavnarRowEntrance(index: index, clock: clock)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    // Swipe to approve a reply that may be published unread
+                    // (friction audit #21). A flagged or urgent draft has no
+                    // swipe: it keeps the read-first rule.
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        if ReviewsListViewModel.canQuickApprove(review) {
+                            Button {
+                                quickApprove(review)
+                            } label: {
+                                Label("Approve", systemImage: "checkmark")
+                            }
+                            .tint(Color.cavnarGreen)
+                        }
+                    }
                     // List rows keep an opaque background of their own even
                     // with .scrollContentBackground(.hidden) below (that only
                     // clears the list's overall canvas) — every other module
@@ -215,6 +266,9 @@ struct ReviewsListView: View {
         // Each chip is answered by the server over the whole inbox, not by
         // filtering the page already on the phone.
         .onChange(of: viewModel.filter) { _, _ in
+            // The first open sets its filter before its own first load
+            // (openInbox); only a chip tap after that reloads.
+            guard viewModel.inboxOpened else { return }
             Task { await viewModel.reload() }
         }
     }
@@ -266,6 +320,10 @@ struct ReviewsListView: View {
                             .background(on ? Color.cavnarEmber : Color.cavnarPaper2)
                             .overlay(Capsule().strokeBorder(on ? Color.cavnarEmber : Color.cavnarPaper3, lineWidth: 1))
                             .clipShape(Capsule())
+                            // The chip stays ~32pt; the tap area is 44pt
+                            // (friction audit #50).
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                     }
@@ -283,11 +341,49 @@ struct ReviewsListView: View {
     /// tapped notification needs to reach it either way without RootView
     /// having to construct this view itself.
     private func openDeepLinkIfNeeded() {
-        guard let reviewID = deepLinkRouter.consumePendingReviewID(),
-              let match = viewModel.reviews.first(where: { $0.id == reviewID }) else {
-            return
+        // The router's (a push, a notification row) or this screen's own
+        // route (a card on Home's stack). Either way it opens: from the
+        // loaded page when it's there, fetched by id when it isn't — it used
+        // to open nothing for a review past the first page.
+        let routed = deepLinkRouter.consumePendingReviewID()
+        // This screen's own focus opens once — not again every time the
+        // owner comes back from it.
+        let own = focusConsumed ? nil : focusReviewId
+        focusConsumed = true
+        guard let reviewID = routed ?? own else { return }
+        if let match = viewModel.reviews.first(where: { $0.id == reviewID }) {
+            deepLinkedReview = match
+        } else {
+            fetchedReviewId = reviewID
         }
-        deepLinkedReview = match
+    }
+
+    /// A trailing swipe on a reply that may be published unread (the same
+    /// bar as Home's "Publish N replies": drafted, not flagged, not urgent).
+    /// Flagged drafts keep the read-first rule and have no swipe.
+    private func quickApprove(_ review: Review) {
+        guard approvingRowId == nil else { return }
+        approvingRowId = review.id
+        rowError = nil
+        Task {
+            let detail = ReviewDetailViewModel(review: review)
+            await detail.approve()
+            approvingRowId = nil
+            if detail.hasQueuedWrite {
+                // Offline: queued behind the banner, honestly labelled.
+                viewModel.markCompleted(reviewID: review.id, status: "pending-sync")
+            } else if detail.didComplete, let status = detail.finalStatus {
+                viewModel.markCompleted(reviewID: review.id, status: status)
+                postedLabel = status == "posted" ? "Reply posted to \(review.platformDisplayName)" : "Reply approved"
+            } else if let status = detail.finalStatus, detail.postFailure != nil {
+                // Approved but the post failed: the row says so, and the
+                // detail screen has the retry.
+                viewModel.markCompleted(reviewID: review.id, status: status)
+                rowError = (review.id, detail.postFailure ?? "Approved, but it didn't post — open it to retry.")
+            } else {
+                rowError = (review.id, detail.errorMessage ?? "Couldn't approve — open it to try again.")
+            }
+        }
     }
 }
 

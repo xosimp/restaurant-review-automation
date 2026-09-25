@@ -28,7 +28,9 @@ final class AppPreferences {
     }
 
     /// Seconds in the background before the re-entry lock engages. 0 =
-    /// immediately (the original behaviour). See SessionStore.noteBackgrounded.
+    /// immediately. A new install starts at one minute (friction audit #9):
+    /// a GM checking between texts was asked for Face ID on every glance.
+    /// An owner who chose a value keeps it. See SessionStore.noteBackgrounded.
     var lockDelaySeconds: Int {
         didSet { UserDefaults.standard.set(lockDelaySeconds, forKey: Key.lockDelay) }
     }
@@ -48,8 +50,15 @@ final class AppPreferences {
         let d = UserDefaults.standard
         hapticsEnabled = d.object(forKey: Key.haptics) == nil ? true : d.bool(forKey: Key.haptics)
         defaultTab = AppTab(rawValue: d.string(forKey: Key.defaultTab) ?? "") ?? .home
-        lockDelaySeconds = d.integer(forKey: Key.lockDelay)
+        lockDelaySeconds = Self.initialLockDelay(stored: d.object(forKey: Key.lockDelay))
         privacyMode = d.bool(forKey: Key.privacyMode)
+    }
+
+    /// The lock delay a device starts with: what the owner chose, or one
+    /// minute when they never chose (friction audit #9).
+    nonisolated static let defaultLockDelaySeconds = 60
+    nonisolated static func initialLockDelay(stored: Any?) -> Int {
+        (stored as? Int) ?? (stored as? NSNumber)?.intValue ?? defaultLockDelaySeconds
     }
 
     /// Non-isolated read for the few call sites that can't hop to the main

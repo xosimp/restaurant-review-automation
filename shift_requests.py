@@ -585,13 +585,19 @@ def _email_staff(restaurant_id, people, subject, lines, db_path) -> int:
     return sent
 
 
-def _tell_managers(restaurant_id, title, body, db_path):
+def _tell_managers(restaurant_id, title, body, db_path, req=None):
     try:
         import strategy_jobs
         # Its own type (re-audit A-6). As "coverage" it was P1 (broke Focus
         # mode), labelled "Someone hasn't clocked in", opened Reviews on iOS
         # and was dropped by the "calm" level and the briefing budget.
-        strategy_jobs._reach(restaurant_id, "shift_request", title, body, {"tab": "labor"}, db_path, lines=[body])
+        data = {"tab": "labor"}
+        if req and req.get("id"):
+            # A request waiting on an answer carries its id, so the push can
+            # offer Approve / Deny and open that request (push.CATEGORY_REQUEST,
+            # friction audit #22).
+            data.update(request_id=req["id"], request_kind="shift")
+        strategy_jobs._reach(restaurant_id, "shift_request", title, body, data, db_path, lines=[body])
     except Exception as e:
         print(f"[shift_requests] manager notice failed rid={restaurant_id}: {e!r}")
 
@@ -640,7 +646,7 @@ def _notify(restaurant_id, event, req, db_path=DB_PATH):
         if event == "drop_asked":
             _tell_managers(restaurant_id, "Shift drop request",
                            f"{who} asked to drop {when}" + (f" ({role})" if role else "") + ". Approve or decline it in Labor.",
-                           db_path)
+                           db_path, req=req)
         elif event == "opened":
             _email_staff(restaurant_id, [who], "Your shift is off your schedule",
                          [f"Your manager approved your request to drop {when}. It is now an open shift for the team."], db_path)
@@ -668,7 +674,7 @@ def _notify(restaurant_id, event, req, db_path=DB_PATH):
                           "Nothing moves unless you say yes — answer in the staff portal."], db_path)
             _tell_managers(restaurant_id, "Shift swap request",
                            f"{who} asked to trade their {when} for {req.get('target_name')}'s {_when(req, 'target_')}. "
-                           "Approve or decline it in Labor.", db_path)
+                           "Approve or decline it in Labor.", db_path, req=req)
         elif event == "swap_approved":
             _email_staff(restaurant_id, [req.get("target_name")], "A swap is waiting on your yes",
                          [f"Your manager approved {who}'s request to trade their {when} for your {_when(req, 'target_')}.",

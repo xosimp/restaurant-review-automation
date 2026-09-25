@@ -19,16 +19,12 @@ struct HomeView: View {
     // scratch on every unlock — and RootView fetches it while the lock
     // screen is still up, so a cold launch lands straight on the hero.
     let viewModel: HomeViewModel
-    @State private var showingLocationSwitcher = false
-    @State private var showingNotifications = false
     @State private var showingValueDetail = false
     @State private var showingDataHealth = false
-    @State private var notificationsBadge = NotificationsBadgeViewModel()
-    // Owned here (not by NotificationsListView) so the fetch can start the
-    // instant the bell is tapped, and so a second open in the same session
-    // shows the already-loaded list immediately instead of resetting to a
-    // fresh loading state — see NotificationsListView's own doc comment.
-    @State private var notificationsList = NotificationsListViewModel()
+    // The inbox and the location switcher are RootView's now (AppChrome):
+    // one of each, reachable from every screen, not just Home's corner
+    // (friction audit #32).
+    @Environment(AppChrome.self) private var chrome
     // Bound from RootView, not owned here — see ModulesGridView.path's doc
     // comment (the identical pattern there) for why: RootView.body swaps
     // this whole view out for LockedView across a Face ID lock/unlock
@@ -68,7 +64,7 @@ struct HomeView: View {
     // kept compositing every frame through a sheet's presentation and any
     // interactive swipe-to-dismiss, which is what made both feel laggy.
     private var backgroundMotionPaused: Bool {
-        showingValueDetail || showingNotifications || showingLocationSwitcher || showingDataHealth || !tabVisible
+        showingValueDetail || chrome.showingNotifications || chrome.showingLocationSwitcher || showingDataHealth || !tabVisible
             // Also frozen until the landing is done. Home mounts during
             // RootView's own crossfade out of the sign-in screen, and the
             // field's three Canvas layers used to start ticking right then
@@ -144,18 +140,6 @@ struct HomeView: View {
                                     .belowFold(heroAppeared, delay: 0.13)
                             }
 
-                            // How you compare (Benchmarking #23): who the
-                            // restaurant is compared to and where it stands,
-                            // behind-first, each behind metric with its Ask.
-                            // Its own read; nothing when there is nothing
-                            // to compare.
-                            HomeBenchmarkStrip(onOpenModule: { module in
-                                navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
-                            })
-                                .padding(.horizontal, 20)
-                                .padding(.top, 10)
-                                .belowFold(heroAppeared, delay: 0.14)
-
                             // The activity strip — what Cavnar AI is doing
                             // right now, rotating; tap for the feed. Shows
                             // nothing for an account with nothing armed.
@@ -172,9 +156,31 @@ struct HomeView: View {
                                     .belowFold(heroAppeared, delay: 0.1)
                             }
 
+                            // The work leads (friction audit #11): what needs
+                            // the owner sits right under the header strip,
+                            // every item visible, before any result or read.
+                            // It sat tenth, 2–4 screens down, under charts.
+                            attentionSection(summary)
+                                .padding(.horizontal, 20)
+                                .padding(.top, 26)
+                                .belowFold(heroAppeared, delay: 0.2)
+
+                            // How you compare (Benchmarking #23): who the
+                            // restaurant is compared to and where it stands,
+                            // behind-first, each behind metric with its Ask.
+                            // Its own read; nothing when there is nothing
+                            // to compare. Results start here, below the work.
+                            HomeBenchmarkStrip(onOpenModule: { module in
+                                navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
+                            })
+                                .padding(.horizontal, 20)
+                                .padding(.top, 22)
+                                .belowFold(heroAppeared, delay: 0.3)
+
                             // The order is fixed by role, the same as the web
-                            // Home: header strip, value graph, THE DAY, what
-                            // needs a hand, what to do next, then the proof.
+                            // Home: header strip, what needs a hand (above),
+                            // then value graph, THE DAY, what to do next, and
+                            // the proof (§11b as amended 9/25/26).
                             // An account with nothing connected leads with
                             // readiness and the first look instead, because
                             // nothing else has data yet.
@@ -231,11 +237,6 @@ struct HomeView: View {
                                     .padding(.top, 30)
                                     .belowFold(heroAppeared, delay: 0.66)
                             }
-
-                            attentionSection(summary)
-                                .padding(.horizontal, 20)
-                                .padding(.top, 30)
-                                .belowFold(heroAppeared, delay: 0.7)
 
                             // The one cross-module thing (§11b), with its
                             // answers. Renders nothing when there is none.
@@ -322,7 +323,7 @@ struct HomeView: View {
             .animation(.easeOut(duration: 0.2), value: pendingPublish != nil)
             .animation(.easeOut(duration: 0.25), value: followThrough.pendingMilestone?.key)
             .navigationDestination(for: ModuleRoute.self) { route in
-                ModuleDestinationView(moduleKey: route.key, moduleLabel: route.label)
+                ModuleDestinationView(route: route)
             }
             .navigationDestination(for: DailyReportRoute.self) { route in
                 switch route {
@@ -381,47 +382,16 @@ struct HomeView: View {
                     }
                 }
                 cavnarToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        Haptic.light()
-                        Task {
-                            // The FIRST open this session waits for the real
-                            // fetch to land before the sheet ever appears;
-                            // every open after that presents instantly
-                            // against the cached list and refreshes it
-                            // silently in the background.
-                            if notificationsList.hasLoadedOnce {
-                                showingNotifications = true
-                                Task { await notificationsList.load() }
-                            } else {
-                                await notificationsList.load()
-                                showingNotifications = true
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "bell")
-                            .font(.system(size: 17, weight: .semibold))
-                            // cavnarEmber2, not the deeper cavnarEmber — this
-                            // is Home's header, and the header's other orange
-                            // (the greeting name, the section kickers) is all
-                            // Ember2; a bell in the darker token read as an
-                            // off-brand mismatch next to them.
-                            .foregroundStyle(Color.cavnarEmber2)
-                            .cavnarToolbarIconGlass()
-                            .overlay(alignment: .topTrailing) {
-                                if notificationsBadge.unreadCount > 0 {
-                                    CavnarAlertBadge(diameter: 8)
-                                        .offset(x: 2, y: -2)
-                                }
-                            }
-                    }
-                    .buttonStyle(.plain)
-                    .tint(nil)
+                    // The one bell (AppChrome): the sheet opens at once on
+                    // its own skeleton — the first open used to wait for the
+                    // network before anything appeared (#32).
+                    CavnarBellButton()
                 }
                 if sessionStore.currentUser?.isOwner == true {
                     cavnarToolbarItem(placement: .topBarTrailing) {
                         Button {
                             Haptic.light()
-                            showingLocationSwitcher = true
+                            chrome.showingLocationSwitcher = true
                         } label: {
                             Image(systemName: "building.2")
                                 .font(.system(size: 15, weight: .semibold))
@@ -436,35 +406,18 @@ struct HomeView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showingLocationSwitcher) {
-                LocationSwitcherView { Task { await viewModel.load() } }
-            }
-            .sheet(isPresented: $showingNotifications) {
-                NotificationsListView(viewModel: notificationsList)
-            }
             .sheet(isPresented: $showingValueDetail) {
                 valueDetailSheet
             }
             .sheet(isPresented: $showingDataHealth) {
                 DataHealthSheet(summary: viewModel.summary?.dataHealth)
             }
-            // Opening the sheet marks alert_log seen server-side (see
-            // NotificationsListViewModel.load()), so refreshing again right
-            // as it's dismissed is what actually clears the bell's dot.
-            .onChange(of: showingNotifications) { wasShowing, isShowing in
-                if wasShowing && !isShowing {
-                    Task { await notificationsBadge.refresh() }
-                }
-            }
             .task { await viewModel.load() }
-            .task { await notificationsBadge.refresh() }
             // A tapped push about another location switched to it
-            // (DeepLinkRouter) — Home shows that location now, not the old one.
+            // (DeepLinkRouter), or the switcher did — Home shows that
+            // location now, not the old one. RootView re-reads the badge.
             .onChange(of: deepLinkRouter.locationSwitches) { _, _ in
-                Task {
-                    await viewModel.load()
-                    await notificationsBadge.refresh()
-                }
+                Task { await viewModel.load() }
             }
             // Reopening the app after a shift should not show morning's
             // numbers as if they were current (audit 4.2).
@@ -610,16 +563,18 @@ struct HomeView: View {
                                                                monitoring: summary.monitoring).reason)
             }
         } else {
-            // The first four, as on the web (its focus card plus three rows):
-            // the server logs exactly those as shown (home_brief
-            // HOME_ATTENTION_SHOWN), so the deck never holds an item the
-            // ledger would later count as ignored without it being seen.
+            // The lead card plus every other item as a row (friction #11):
+            // the first four show, as on the web (its focus card plus three
+            // rows) — the server logs exactly those as shown (home_brief
+            // HOME_ATTENTION_SHOWN) — and "+N more" opens the rest in place.
             HomeActionDeck(
-                items: Array(summary.needsAttention.prefix(4)),
+                items: summary.needsAttention,
                 busy: viewModel.isPublishingReplies,
                 onPrimary: { item in primaryAction(item, in: summary) },
                 onSecondary: { item in
-                    navigate(to: ModuleRoute(key: item.module, label: moduleLabel(item.module, in: summary)))
+                    // "Read them first" is the queue to read, not the inbox.
+                    open(nav: item.isPublishAction ? (item.nav ?? "reviews?filter=pending") : item.nav,
+                         module: item.module, in: summary)
                 },
                 // Not today / hide, recorded server-side so the same item is
                 // quiet in the brief and the queue too. Never offered for a
@@ -753,8 +708,24 @@ struct HomeView: View {
             Haptic.light()
             pendingPublish = item
         } else {
-            navigate(to: ModuleRoute(key: item.module, label: moduleLabel(item.module, in: summary)))
+            open(nav: item.nav, module: item.module, in: summary)
         }
+    }
+
+    /// A card's destination: its nav path when the server sent one — the
+    /// filter, section or item it is about, pushed on Home's own stack when
+    /// it is a module screen, handed to the router otherwise (Ask, the daily
+    /// report, a queued send) — else the module's top as before (#3).
+    private func open(nav raw: String?, module: String, in summary: HomeSummary) {
+        if let nav = NavPath(raw) {
+            if let route = ModuleRoute.from(nav, labelFor: { moduleLabel($0, in: summary) }) {
+                navigate(to: route)
+            } else {
+                deepLinkRouter.open(nav)
+            }
+            return
+        }
+        navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
     }
 
     /// The card STAYS open (showing "Working…" via viewModel

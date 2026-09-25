@@ -21,6 +21,18 @@ struct LaborView: View {
     @State private var showDataInfo = false
     // The schedule row whose "why this person" is open.
     @State private var explainingRow: ScheduleRow?
+    /// The section a link pointed at — "requests", "timeoff", "team",
+    /// "schedule", "overtime" (nav.py; friction audit #3). Opened and
+    /// scrolled to once the page has loaded, then spent.
+    var focusSection: String? = nil
+    @State private var focusSpent = false
+    // What was sent, reachable from Labor itself — it lived only under
+    // Account → More (friction audit #50).
+    @State private var showingScheduleHistory = false
+
+    init(focusSection: String? = nil) {
+        self.focusSection = focusSection
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -146,6 +158,12 @@ struct LaborView: View {
                     await setupViewModel.loadRoster()
                     await setupViewModel.loadSignals()
                 }
+                // A push or card about a request, the schedule or overtime
+                // opens its section and scrolls to it once the page is in.
+                .onChange(of: viewModel.stats != nil, initial: true) { _, loaded in
+                    guard loaded else { return }
+                    revealFocus(proxy: proxy)
+                }
             }
         }
         .cavnarModuleBackground()
@@ -224,6 +242,25 @@ struct LaborView: View {
         .navigationTitle("Labor")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { cavnarTitleToolbar("Labor") }
+        .toolbar {
+            cavnarToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    Haptic.light()
+                    showingScheduleHistory = true
+                } label: {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .cavnarToolbarIconGlass()
+                }
+                .buttonStyle(.plain)
+                .tint(nil)
+                .accessibilityLabel("Schedule history")
+            }
+        }
+        .sheet(isPresented: $showingScheduleHistory) {
+            ScheduleHistoryView()
+        }
         .cavnarTabSwipeNavigation($subTab, primaryTab: .overview, secondaryTab: .analytics)
         .task {
             // Loaded synchronously from disk before either network call —
@@ -596,6 +633,34 @@ struct LaborView: View {
     /// CavnarDropdown.swift — firing ~0.06s before the container had
     /// actually finished growing, scrolling to a position that was still
     /// shifting underneath it).
+    /// Opens and scrolls to `focusSection`, once. An unknown section just
+    /// leaves the page at its top.
+    private func revealFocus(proxy: ScrollViewProxy) {
+        guard !focusSpent, let section = focusSection?.lowercased() else { return }
+        focusSpent = true
+        subTab = .overview
+        switch section {
+        case "requests", "shift_requests", "shifts":
+            setupViewModel.requestsExpanded = true
+            scrollToReveal(Self.requestsID, proxy: proxy)
+        case "timeoff", "time_off", "time-off":
+            viewModel.timeOffExpanded = true
+            scrollToReveal(Self.timeOffID, proxy: proxy)
+        case "team", "roster", "people":
+            setupViewModel.rosterExpanded = true
+            scrollToReveal(Self.rosterID, proxy: proxy)
+        case "overtime":
+            viewModel.overtimeExpanded = true
+            scrollToReveal(Self.overtimeID, proxy: proxy)
+        case "availability":
+            scrollToReveal(Self.availabilityID, proxy: proxy)
+        case "schedule":
+            viewModel.scheduleResultExpanded = true
+        default:
+            break
+        }
+    }
+
     private func scrollToReveal(_ id: String, proxy: ScrollViewProxy) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             withAnimation(.easeOut(duration: 0.25)) {

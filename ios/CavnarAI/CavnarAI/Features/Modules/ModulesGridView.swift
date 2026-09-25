@@ -86,15 +86,12 @@ struct ModulesGridView: View {
     @State private var lastNavigationAt = Date.distantPast
     @Environment(DeepLinkRouter.self) private var deepLinkRouter
 
-    // Static, not backend-driven — these aren't real, shipping features
-    // gated by entitlement the way the modules above are, so every client
-    // sees them regardless of what /mobile/api/home actually returns for
-    // their account. Non-interactive (see ComingSoonModuleTile — no Button
-    // wrapper at all), so there's nothing to route to on tap.
-    private let comingSoonModules: [ModuleSummary] = [
-        ModuleSummary(key: "waitlist", label: "Waitlist & Reservations", icon: "waitlist", status: "coming_soon", kpi: nil),
-        ModuleSummary(key: "bar", label: "Bar & Alcohol", icon: "bar", status: "coming_soon", kpi: nil),
-    ]
+    // Empty: the Waitlist and Bar "coming soon" tiles were dead ends on the
+    // primary navigation grid — a tap that led nowhere (friction audit #50,
+    // U3-22). HomeModuleGrid's coming-soon support, ComingSoonView (still
+    // the fallback for an unknown module key) and ModuleIcon's glyphs stay:
+    // candidate for future cleanup after additional verification.
+    private let comingSoonModules: [ModuleSummary] = []
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -118,6 +115,13 @@ struct ModulesGridView: View {
                         Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
                         Button("Retry") { Task { await viewModel.load() } }
                     }
+                } else if viewModel.modules.isEmpty && !viewModel.isLoading {
+                    // The coming-soon tiles used to keep this from ever
+                    // being empty; with them gone, say what fills it.
+                    CavnarEmptyHearth(
+                        title: "No modules on yet",
+                        message: "Reviews, Labor, Food Cost, Marketing and Intel appear here once they're switched on for this location."
+                    )
                 } else {
                     ScrollView {
                         // Same KPITile/HomeModuleGrid used on Home — one
@@ -131,7 +135,7 @@ struct ModulesGridView: View {
                 }
             }
             .navigationDestination(for: ModuleRoute.self) { route in
-                ModuleDestinationView(moduleKey: route.key, moduleLabel: route.label)
+                ModuleDestinationView(route: route)
             }
             .sensoryFeedback(.impact(weight: .light), trigger: navHapticTrigger)
             // Same ember-to-black wash every module screen (Reviews, Labor,
@@ -150,6 +154,10 @@ struct ModulesGridView: View {
                 pushToPendingModuleIfDeepLinked()
             }
             .onChange(of: deepLinkRouter.pendingModuleKey) { _, _ in pushToPendingModuleIfDeepLinked() }
+            .onChange(of: deepLinkRouter.pendingModuleRoute) { _, _ in pushToPendingModuleIfDeepLinked() }
+            .toolbar {
+                cavnarToolbarItem(placement: .topBarTrailing) { CavnarBellButton() }
+            }
         }
     }
 
@@ -162,9 +170,15 @@ struct ModulesGridView: View {
         // nothing downstream needs pendingModuleKey after this point, so
         // leaving it set would push a duplicate ModuleRoute the next time
         // this view reappears or .task reruns.
-        guard let moduleKey = deepLinkRouter.consumePendingModuleKey() else { return }
-        let label = viewModel.modules.first(where: { $0.key == moduleKey })?.label ?? moduleKey.capitalized
-        path.append(ModuleRoute(key: moduleKey, label: label))
+        let modules = viewModel.modules
+        guard let route = deepLinkRouter.consumePendingModuleRoute(labelFor: { key in
+            modules.first(where: { $0.key == key })?.label ?? key.capitalized
+        }) else { return }
+        // A fresh stack: the link's screen with Back to the grid, not on top
+        // of whatever module was open before (friction audit #50).
+        var fresh = NavigationPath()
+        fresh.append(route)
+        path = fresh
     }
 
     // See HomeView.navigate(to:) for why this is debounced rather than

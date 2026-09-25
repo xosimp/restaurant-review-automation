@@ -779,6 +779,10 @@ struct NeedsAttentionItem: Codable, Identifiable {
     /// What the item's dollar figure covers (dollars_basis, B4 H7), when the
     /// server sends it.
     var dollarsBasis: String? = nil
+    /// Where the tap lands (nav.py): the filter, section or item the card is
+    /// about — "reviews?filter=urgent", "labor/overtime" — rather than the
+    /// module's top (friction audit #3). Nil from an older server.
+    var nav: String? = nil
 
     var id: String { type }
 
@@ -798,6 +802,7 @@ struct NeedsAttentionItem: Codable, Identifiable {
         case recKey = "rec_key"
         case timesHidden = "times_hidden"
         case dollarsBasis = "dollars_basis"
+        case nav
     }
 }
 
@@ -822,5 +827,7 @@ extension NeedsAttentionItem {
         evidence = (ev?.isEmpty ?? true) ? nil : ev
         confidence = try? c.decodeIfPresent(TrustConfidence.self, forKey: .confidence)
         dollarsBasis = RecDollarCalibration.basis((try? c.decodeIfPresent(String.self, forKey: .dollarsBasis)) ?? nil)
+        let navRaw = (try? c.decodeIfPresent(String.self, forKey: .nav)) ?? nil
+        nav = (navRaw?.isEmpty ?? true) ? nil : navRaw
     }
 }

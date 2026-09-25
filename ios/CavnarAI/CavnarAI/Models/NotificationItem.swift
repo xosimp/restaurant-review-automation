@@ -19,11 +19,27 @@ struct NotificationItem: Codable, Identifiable {
     /// Where the row opens — the server's module map (push.NOTIFICATION_
     /// MODULE), the same one the web bell uses. Optional for older servers.
     let module: String?
+    /// Where the row opens (nav.py) — the item or section, not the module's
+    /// top — and which location it is about. Both optional: an older server
+    /// sends neither and the router falls back to `module`.
+    var nav: String? = nil
+    var restaurantId: Int? = nil
 
     enum CodingKeys: String, CodingKey {
-        case type, label, priority, urgent, unread, module
+        case type, label, priority, urgent, unread, module, nav
         case firedAt = "fired_at"
         case reviewId = "review_id"
+        case restaurantId = "restaurant_id"
+    }
+
+    /// The delayed.py kind a "going out" row is about — the row that can
+    /// be undone in place (friction audit #22).
+    var undoableKind: String? {
+        switch type {
+        case "schedule_publish_pending": return "schedule_publish"
+        case "order_send_pending": return "order_send"
+        default: return nil
+        }
     }
 
     var isUrgent: Bool { urgent ?? ((priority ?? 3) <= 1) }
@@ -68,13 +84,14 @@ struct NotificationItem: Codable, Identifiable {
         let calendar = Calendar.current
         if calendar.isDateInToday(date) { return "Today" }
         if calendar.isDateInYesterday(date) { return "Yesterday" }
-        let formatter = DateFormatter()
         if let days = calendar.dateComponents([.day], from: date, to: Date()).day, days < 7 {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US")
             formatter.dateFormat = "EEEE"
-        } else {
-            formatter.dateFormat = "d MMM"
+            return formatter.string(from: date)
         }
-        return formatter.string(from: date)
+        // M/D/YY, the one owner-facing date form — "12 Sep" wasn't.
+        return CavnarDate.mdy(date)
     }
 }
 

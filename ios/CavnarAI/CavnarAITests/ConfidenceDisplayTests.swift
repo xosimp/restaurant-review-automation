@@ -307,7 +307,8 @@ final class ConfidenceDisplayTests: XCTestCase {
             """)
         let base = HomeActionDeck.cardHeight(for: [plain])
         let grown = HomeActionDeck.cardHeight(for: [plain, rich])
-        XCTAssertEqual(base, 150)
+        // 156 since the deck's buttons became 44pt targets (friction #50).
+        XCTAssertEqual(base, 156)
         XCTAssertGreaterThan(grown, base)
     }
 
