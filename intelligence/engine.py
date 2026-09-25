@@ -652,8 +652,27 @@ def _own_progress(restaurant_id, metric, db_path, today=None) -> str:
                 else:
                     sql = "SELECT COUNT(DISTINCT date) FROM labor_daily_history WHERE restaurant_id=? AND date >= ? AND sales > 0"
                 have = int(conn.execute(sql, (restaurant_id, since)).fetchone()[0] or 0)
-                need = max(1, _features.MIN_MEASURED_DAYS - have)
-                return f"about {need} more measured day{'s' if need != 1 else ''} to a comparison"
+                if have < _features.MIN_MEASURED_DAYS or src == "labor":
+                    need = max(1, _features.MIN_MEASURED_DAYS - have)
+                    return f"about {need} more measured day{'s' if need != 1 else ''} to a comparison"
+                # Enough sales days: what is missing is the metric's own
+                # input, not more days (Benchmarking #29, R2-22, R4-10) — a
+                # restaurant with 60 sales days and no count read "about 1
+                # more measured day" forever.
+                if src == "waste":
+                    share, hit = _features.waste_log_regularity(conn, restaurant_id, today)
+                    weeks = _features.WASTE_REGULARITY_WEEKS
+                    floor = int(math.ceil(_features.WASTE_REGULARITY_MIN * weeks))
+                    if share is None:
+                        return (f"waste logged in {floor} of {weeks} weeks of inventory history to a comparison "
+                                "(the inventory is newer than that)")
+                    if hit < floor:
+                        more = floor - hit
+                        return (f"waste logged in {hit} of the last {weeks} weeks — {more} more week"
+                                f"{'s' if more != 1 else ''} with waste logged to a comparison")
+                    return "waste and deliveries logged over the last 4 weeks to a comparison"
+                return ("two inventory counts about 4 weeks apart, with the deliveries between them logged, "
+                        "to a comparison")
             if src == "reviews":
                 since = (today - timedelta(days=30)).isoformat()
                 have = int(conn.execute("SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND "

@@ -994,9 +994,24 @@ through `benchmark_views` (L2), which shapes and never compares:
   comparison strength % (only for a band comparison; its Why? rows are the
   engine's four strength dimensions), the standing per metric, and one Ask
   action per metric the restaurant is behind on. Below the minimum it says
-  "Not enough restaurants like yours yet — here's how you compare to your own
-  last 13 weeks" and carries the engine's `why_not` — the self benchmark is the
-  headline until peers clear their floors (#18).
+  WHY, by the class of the engine's `why_not` (`benchmark_views.why_class`:
+  unconfirmed profile, concept unset, the default wage, spread too wide, too
+  few separate owners, the restaurant's own figure, too few restaurants),
+  then "— here's how you compare to your own last 13 weeks", carries the
+  engine's `why_not`, and for a profile reason a "Confirm your profile" action
+  with the engine's suggestion — the self benchmark is the headline until
+  peers clear their floors (#18). Fix round (9/25/26): a published figure the
+  engine marks `comparable: False` is a CONTEXT row on every metric (the
+  engine's `definition_note`, no standing, tone, "behind" or action, and never
+  on the Home strip — #2); a peer standing is read in outcome words ("in the
+  group's worst quarter — higher than 3 in 4"; `standing_key` keeps the
+  engine's word — #17); each row carries `own_as_of`, and when
+  `data_freshness` reads the metric's source `stale` the standing is withheld
+  ("Last measured M/D/YY" — #25); rows from different groups get a neutral
+  header and each row names its own group and strength (`tag` — #26). The
+  engine's "how far to a comparison" hint names the missing input for food
+  cost (two counts about 4 weeks apart with deliveries) and waste (weeks with
+  waste logged) once the sales days are there (#29).
 - **Location to location** (`benchmark_views.location_compare`, in the group
   Home and the phone's locations sheet): the engine's `location` kind (the
   siblings are the restaurant's `privacy.org_key` organisation, named by

@@ -63,8 +63,8 @@ struct LaborAnalyticsSection: View {
         // its period, the warn tone, and no dollars at all on sample data
         // (OwnerCopy.laborMoneyTiles; never-say C, NS1 #2, #15, NS3 C3).
         let money = OwnerCopy.laborMoneyTiles(isLive: stats.isLive, monthly: b.laborMonthly, annual: b.laborAnnual,
-                                              vsIndustryMonthly: b.laborVsIndustryMonthly,
-                                              vsIndustryAnnual: b.laborVsIndustryAnnual,
+                                              vsIndustryMonthly: b.laborVsIndustryMonthly ?? 0,
+                                              vsIndustryAnnual: b.laborVsIndustryAnnual ?? 0,
                                               industryText: b.industryPctText, periodDays: stats.periodDays)
         LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
             ForEach(Array(money.enumerated()), id: \.offset) { _, tile in
@@ -121,7 +121,7 @@ struct LaborAnalyticsSection: View {
 
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text(industry == nil ? "Labor % vs your target" : "Labor % vs target and industry")
+                Text("Labor % vs \(Self.targetName(stats))")
                     .font(.cavnarBody(14, weight: 700))
                     .tracking(0.4)
                     .foregroundStyle(Color.cavnarInk)
@@ -156,51 +156,46 @@ struct LaborAnalyticsSection: View {
             HStack(spacing: 14) {
                 HStack(spacing: 4) {
                     Rectangle().fill(Color.cavnarGreen).frame(width: 8, height: 2)
-                    Text("Your target (\(Int(target))%)")
+                    Text(Self.targetLegend(stats, target: target))
                 }
                 if let ind = stats.savingsBreakdown.industryPctText {
                     HStack(spacing: 4) {
                         Rectangle().fill(Color.cavnarInk.opacity(0.55)).frame(width: 8, height: 2)
-                        Text("Industry benchmark (\(ind))")
+                        Text("Published figure (\(ind))")
                     }
                 }
             }
             .font(.cavnarBody(14))
             .foregroundStyle(Color.cavnarInk3)
 
-            // Against the industry figure for this restaurant's type, not
-            // the restaurant's own target — "your target" and "industry
-            // benchmark" are two different marks on this bar, and this
-            // sentence is about the second. Only when the server sent one,
-            // with its source and year (NS4 H3: no registry entry, no line).
-            if let industry, let ind = stats.savingsBreakdown.industryPctText {
-                let diff = pct - industry
-                // Neutral ink either side (Benchmarking #34, BM3-15): the
-                // industry mark is a reference, not a verdict — it includes
-                // benefits and this figure is wages from shifts, so neither
-                // side of it is a win or a failure.
-                HomeMixedText.make(Self.industryLine(diff: diff, industryText: ind),
-                                   size: 14, color: .cavnarInk2, numberWeight: 700)
+            // The published mark is CONTEXT, never a standing (Benchmarking
+            // #2, R1-05): it includes benefits and this figure is wages from
+            // shifts, so no points-difference sentence against it —
+            // the web never drew one either. Its source and what it measures,
+            // only when the server sent one (NS4 H3: no entry, no line).
+            if industry != nil, let ind = stats.savingsBreakdown.industryPctText {
+                HomeMixedText.make("Published figure \(ind)" + (stats.savingsBreakdown.laborIndustryBasis.map { ": \($0)" } ?? "")
+                                   + ". \(Self.industryDefinitionNote)", size: 12.5, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
-                if let basis = stats.savingsBreakdown.laborIndustryBasis, !basis.isEmpty {
-                    HomeMixedText.make("Benchmark: \(basis). \(Self.industryDefinitionNote)", size: 12.5, color: .cavnarInk3)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
             }
         }
         .cavnarCard()
     }
 
-    /// "3.2 points below the 34.5% industry benchmark" — a difference of two
-    /// percentages is points, and the benchmark is a published figure, not
-    /// "other similar restaurants".
-    /// Why the industry mark is a reference and not a target: the published
-    /// figure is not the same measure as this restaurant's labor %.
-    static let industryDefinitionNote = "It includes benefits; yours is wages from your shifts, so it is a reference, not a like-for-like target."
+    /// Why the published mark is context and not a comparison: it is not the
+    /// same measure as this restaurant's labor %.
+    static let industryDefinitionNote = "It includes benefits; yours is wages from your shifts, so it is context, not a like-for-like comparison."
 
-    static func industryLine(diff: Double, industryText: String) -> String {
-        let pts = String(format: "%.1f", abs(diff))
-        return "Your labor is \(pts) point\(pts == "1.0" ? "" : "s") \(diff <= 0 ? "below" : "above") the \(industryText) industry benchmark"
+    /// The target as the server names it: "your target" only for one the
+    /// owner set, else "Cavnar's starting target" (Benchmarking #10).
+    static func targetName(_ stats: LaborStats) -> String {
+        stats.savingsBreakdown.laborTargetLabel ?? "your target"
+    }
+
+    /// "Cavnar's starting target (30%)" — the legend beside the green mark.
+    static func targetLegend(_ stats: LaborStats, target: Double) -> String {
+        let name = targetName(stats)
+        return name.prefix(1).uppercased() + name.dropFirst() + " (\(Int(target))%)"
     }
 
     /// The positive-status contract for labor (OwnerCopy): live, complete,

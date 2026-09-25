@@ -630,6 +630,11 @@ def index(current_user):
         "labor_kinds":               _labor_sb_row["kinds"],
         "labor_overtime_period_days": _labor_sb_row["overtime_period_days"],
         "labor_dollars_withheld":    _labor_sb_row["dollars_withheld"],
+        # Where the labor target came from, in the server's words — the
+        # Labor tab names it instead of calling every target "your target"
+        # (Benchmarking #10, workstream O).
+        "labor_target_label":        _labor_sb_row.get("labor_target_label"),
+        "labor_target_source":       _labor_sb_row.get("labor_target_source"),
     }
 
     import secrets as _sec

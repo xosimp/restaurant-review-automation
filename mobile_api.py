@@ -2107,9 +2107,32 @@ def mobile_food_cost_cogs(current_user):
         days = _cogs.DEFAULT_WINDOW_DAYS
     days = max(7, min(days, 365))
     try:
-        return jsonify(**_cogs.build_food_cost_pct(current_user["restaurant_id"], days=days))
+        return jsonify(**food_target_labelled(_cogs.build_food_cost_pct(current_user["restaurant_id"], days=days),
+                                              current_user["restaurant_id"]))
     except Exception as e:
         return jsonify(ok=False, pct=None, error=_safe_err(e)), 500
+
+
+def food_target_labelled(payload, rid):
+    """The food cost payload with where its target came from, in the
+    server's words (Benchmarking #10): `food_cost_target_label` ("your
+    target" / Cavnar's starting target) and `food_cost_target_source`
+    (set | seeded | default), so web and iOS name it rather than calling a
+    target nobody set "your target". Kept when the body already carries
+    them."""
+    if not isinstance(payload, dict):
+        return payload
+    if "food_cost_target_label" in payload and "food_cost_target_source" in payload:
+        return payload
+    try:
+        import thresholds as _thr
+        rest = get_restaurant(rid)
+        if rest is not None:
+            payload.setdefault("food_cost_target_label", _thr.target_label(rest, "food"))
+            payload.setdefault("food_cost_target_source", _thr.target_source(rest, "food"))
+    except Exception:
+        pass
+    return payload
 
 
 @mobile_bp.route("/food-cost/cfo")
@@ -2258,7 +2281,7 @@ def _food_cost_trust_block(rid):
     out = {"cogs": None, "recipe_coverage": None, "waste_split": None}
     try:
         import cogs as _cogs
-        out["cogs"] = _cogs.build_food_cost_pct(rid)
+        out["cogs"] = food_target_labelled(_cogs.build_food_cost_pct(rid), rid)
     except Exception:
         pass
     try:
@@ -2396,9 +2419,17 @@ def mobile_food_cost_trend(current_user):
         # target from here; now both do.
         target_pct = get_waste_target_pct(rid)
         target_weekly, basis = implied_target_weekly(None, weeks, target_pct)
+        # Whose target the line is (Benchmarking #10): NULL waste_target_pct
+        # is Cavnar's starting 4.5%, never "your target".
+        try:
+            _own_waste = getattr(get_restaurant(rid), "waste_target_pct", None) is not None
+        except Exception:
+            _own_waste = False
+        import thresholds as _thr_w
         return jsonify(ok=True, weeks=[{
             "label": w["label"], "start": w["start"], "end": w["week_end"], "waste": w["waste"],
-        } for w in weeks], target={"pct": target_pct, "weekly": target_weekly, "basis": basis})
+        } for w in weeks], target={"pct": target_pct, "weekly": target_weekly, "basis": basis,
+                                   "label": "your target" if _own_waste else _thr_w.STARTING_TARGET_LABEL})
     except Exception as e:
         return jsonify(ok=False, weeks=[], error=_safe_err(e)), 500
 

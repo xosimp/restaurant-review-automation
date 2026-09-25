@@ -149,7 +149,9 @@ struct HomeView: View {
                             // behind-first, each behind metric with its Ask.
                             // Its own read; nothing when there is nothing
                             // to compare.
-                            HomeBenchmarkStrip()
+                            HomeBenchmarkStrip(onOpenModule: { module in
+                                navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
+                            })
                                 .padding(.horizontal, 20)
                                 .padding(.top, 10)
                                 .belowFold(heroAppeared, delay: 0.14)

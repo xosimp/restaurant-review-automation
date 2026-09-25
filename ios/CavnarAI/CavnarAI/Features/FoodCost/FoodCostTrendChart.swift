@@ -81,6 +81,16 @@ struct FoodCostTrendChart: View {
         return weekly
     }
 
+    /// Whose target the caption names — the server's label ("your target" /
+    /// "Cavnar's starting target", #10); an older server sends none, and a
+    /// target it sent a percentage for was then read as the owner's.
+    static func captionName(_ target: FoodCostTrendTarget?) -> String {
+        if let label = target?.label, !label.isEmpty {
+            return label.prefix(1).uppercased() + label.dropFirst()
+        }
+        return target?.pct != nil ? "Your target" : "Starting target"
+    }
+
     /// The target percentage to name in the caption — the restaurant's own
     /// when it has one.
     private var targetPctLabel: String {
@@ -180,7 +190,9 @@ struct FoodCostTrendChart: View {
                             .foregroundStyle(Self.industryBandColor)
                             .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
                             .annotation(position: .top, alignment: .leading) {
-                                Text("your target ~$\(Int(industryTargetDollar.rounded()))")
+                                // Named as the server names it (#10): a
+                                // starting target is never "your target".
+                                Text("\(target?.label ?? "target") ~$\(Int(industryTargetDollar.rounded()))")
                                     .font(.cavnarBody(13.5, weight: 700))
                                     .foregroundStyle(Color.black)
                                     .padding(.horizontal, 6)
@@ -227,8 +239,7 @@ struct FoodCostTrendChart: View {
                 } else if let benchmarkLabel, wasteRatePct != nil, benchmarkLabel != "—" {
                     HStack(spacing: 5) {
                         Rectangle().fill(Self.industryBandColor).frame(width: 12, height: 2)
-                        Text(target?.pct != nil ? "Your target: \(targetPctLabel) of purchases"
-                                                : "Starting target: \(targetPctLabel) of purchases")
+                        Text(Self.captionName(target) + ": \(targetPctLabel) of purchases")
                         Text("· you're \(benchmarkLabel.lowercased())")
                             .foregroundStyle(benchmarkColor(benchmarkLabel))
                     }

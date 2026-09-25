@@ -201,8 +201,10 @@ def test_both_clients_hide_the_industry_tiles_without_a_figure():
     # Benchmarking #34: the "$ under industry" tiles are gone on both clients
     # (this pinned the web's tile branch and the iOS tile guard).
     assert "{% elif labor.is_live and _ind and savings_breakdown.labor_vs_industry_monthly > 0 %}" not in dash
-    # L7: the verdict is against the owner's target, and the tile says so.
-    assert "<span>Vs industry</span>" not in dash and "<span>Vs your target</span>" in dash
+    # L7: the verdict is against the target, and the tile says so — named as
+    # the server names it (Benchmarking #10: "your target" or Cavnar's
+    # starting target), never the industry figure.
+    assert "<span>Vs industry</span>" not in dash and "<span>Vs {{ _tl }}</span>" in dash
     sec = _read("ios", "CavnarAI", "CavnarAI", "Features", "Labor", "LaborAnalyticsSection.swift")
     assert "industryLow = 33.0" not in sec and "33–36%" not in sec
     assert "industryText: b.industryPctText" in sec

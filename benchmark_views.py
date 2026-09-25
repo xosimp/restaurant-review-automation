@@ -136,62 +136,124 @@ def _ask(label, words) -> str:
     return f"My {label.lower()} is {words}. What should I change first?"
 
 
+def outcome_words(standing, better="higher") -> str | None:
+    """The engine's quartile standing in outcome words (Benchmarking audit
+    #17, R3-23): "bottom quarter" on a lower-is-better metric is the
+    HIGHEST labor % in the group, and an owner (or a model) reads "bottom"
+    as "lowest". So the screen says which way is better and what the
+    quarter means: "in the group's worst quarter — higher than 3 in 4"."""
+    if not standing or standing == "unmeasured":
+        return None
+    lower = better == "lower"
+    if standing == "top quarter":
+        return "in the group's best quarter — " + ("lower" if lower else "higher") + " than 3 in 4"
+    if standing == "bottom quarter":
+        return "in the group's worst quarter — " + ("higher" if lower else "lower") + " than 3 in 4"
+    if standing == "above the middle":
+        return "better than the group's middle"
+    if standing == "below the middle":
+        return "worse than the group's middle"
+    if standing == "about the middle":
+        return "about the group's middle"
+    return standing
+
+
+def _week_end_mdy(week) -> str | None:
+    """M/D/YY of the Sunday that ends an ISO week ("2026-W38")."""
+    try:
+        from datetime import timedelta
+        from intelligence import benchmarks as _bm
+        from time_utils import mdy
+        mon = _bm._week_monday(week) if week else None
+        return mdy(mon + timedelta(days=6)) if mon else None
+    except Exception:
+        return None
+
+
+def _context_row(row, c, unit) -> dict:
+    """A published figure measured differently from the restaurant's own
+    (the engine's `comparable` False — Benchmarking audit #2, R1-05, R2-2,
+    R4-3): shown as CONTEXT, with the engine's own definition note, never a
+    standing, a tone, "behind" or an action — for every metric, not only
+    labor."""
+    lo, hi = c.get("low"), c.get("high")
+    middle = (f"{fmt(lo, unit)}–{fmt(hi, unit)}" if lo is not None and hi is not None
+              else (fmt(c.get("median"), unit) if c.get("median") is not None else None))
+    row.update(kind="industry", context=True, standing=None, tone="neutral", behind=False,
+               against=c.get("label") or c.get("source"), middle_text=middle, source=c.get("source"),
+               note=(c.get("definition_note") or "The published figure is measured differently from yours, so it "
+                     "is context, not a like-for-like comparison."))
+    return row
+
+
 def metric_row(cm) -> dict | None:
     """One metric's row on the card, from its engine comparison: the value,
-    which kind the standing is read against, the standing in words, its tone
-    (good / neutral / warn — never red: a standing is not an emergency),
-    whether the restaurant is behind, and for a metric it is behind on one
-    action. None when the restaurant has no figure for the metric or the
-    engine has no comparison for it."""
+    which kind the standing is read against, the standing in outcome words,
+    its tone (good / neutral / warn — never red: a standing is not an
+    emergency), whether the restaurant is behind, and for a metric it is
+    behind on one action. A published figure the engine marks not
+    comparable is a context row. None when the restaurant has no figure for
+    the metric or the engine has no comparison for it."""
     head = (cm.get("headline") or {}).get("kind")
     by = _by_kind(cm)
     label, unit = cm.get("label") or cm.get("metric"), cm.get("unit")
     own = (cm.get("own") or {}).get("value")
     row = {"metric": cm.get("metric"), "label": label, "unit": unit, "module": cm.get("module"),
-           "kind": head, "value": own, "value_text": fmt(own, unit), "standing": None, "tone": "neutral",
-           "behind": False, "text": (cm.get("headline") or {}).get("text"), "as_of": None,
-           "strength_pct": None, "note": None, "action": None}
+           "kind": head, "value": own, "value_text": fmt(own, unit), "standing": None, "standing_key": None,
+           "tone": "neutral", "behind": False, "context": False, "text": (cm.get("headline") or {}).get("text"),
+           "as_of": None, "own_as_of": _week_end_mdy((cm.get("own") or {}).get("week")) if own is not None else None,
+           "strength_pct": None, "note": None, "action": None, "group": None, "tag": None}
+    ind = by.get("industry") or {}
+    if head is None and ind.get("available") and ind.get("comparable") is not True:
+        # The engine may keep a not-comparable figure out of the headline;
+        # it is still worth showing as context beside the owner's figure.
+        head = "industry"
     if head == "peers":
         c = by["peers"]
         st = c.get("standing")
-        row.update(standing=st, as_of=c.get("as_of"), strength_pct=(c.get("strength") or {}).get("pct"),
-                   value=c.get("value"), value_text=fmt(c.get("value"), unit),
-                   against=f"{c.get('n')} other {c.get('cohort_label')}",
-                   middle_text=fmt(c.get("p50"), unit))
+        pct = (c.get("strength") or {}).get("pct")
+        row.update(standing=outcome_words(st, cm.get("better")), standing_key=st, as_of=c.get("as_of"),
+                   strength_pct=pct, value=c.get("value"), value_text=fmt(c.get("value"), unit),
+                   against=f"{c.get('n')} other {_lc_label(c.get('cohort_label'))}",
+                   middle_text=fmt(c.get("p50"), unit), group=("peers", c.get("cohort")),
+                   tag=(f"vs {c.get('n')} like yours" + (f" · {pct}% comparison strength" if pct is not None else "")))
         row["tone"] = "good" if st in _AHEAD else ("warn" if st in _BEHIND else "neutral")
         row["behind"] = st in _BEHIND
     elif head == "self":
         c = by["self"]
         v = c.get("verdict")
-        row.update(standing=v, as_of=c.get("as_of"), value=c.get("value"), value_text=fmt(c.get("value"), unit),
-                   against=c.get("baseline_label"), middle_text=fmt(c.get("baseline"), unit))
+        row.update(standing=v, standing_key=v, as_of=c.get("as_of"), value=c.get("value"),
+                   value_text=fmt(c.get("value"), unit), against=c.get("baseline_label"),
+                   middle_text=fmt(c.get("baseline"), unit), group=("self",), tag="vs your own normal")
         row["tone"] = "good" if v and v.startswith("better") else ("warn" if v and v.startswith("worse") else "neutral")
         row["behind"] = bool(v and v.startswith("worse"))
     elif head == "industry":
-        c = by["industry"]
+        c = ind
         if own is None:
             return None
-        lo, hi = c.get("low"), c.get("high")
-        higher = cm.get("better") == "higher"
-        try:
-            import cogs
-            name = cogs.band_name(c) or "published band"
-        except Exception:
-            name = "published band"
-        if lo is None or hi is None:
-            return None
-        if (own < lo and not higher) or (own > hi and higher):
-            st, tone = f"better than the {name}", "good"
-        elif lo <= own <= hi:
-            st, tone = f"within the {name}", "neutral"
+        row.update(group=("industry", c.get("source")), tag="published figure")
+        if c.get("comparable") is not True:
+            _context_row(row, c, unit)
+            row["tag"] = "published figure, as context"
         else:
-            st, tone = f"outside the {name}, on the wrong side", "warn"
-        row.update(standing=st, tone=tone, behind=tone == "warn", against=c.get("label"),
-                   middle_text=f"{fmt(lo, unit)}–{fmt(hi, unit)}", source=c.get("source"))
-        if cm.get("metric") == "labor_pct_28d":
-            # BM3-15: not like for like — say so wherever it is shown.
-            row["note"] = ("The published figure includes benefits; yours is wages from your shifts, "
-                           "so the two are not the same measure.")
+            lo, hi = c.get("low"), c.get("high")
+            higher = cm.get("better") == "higher"
+            try:
+                import cogs
+                name = cogs.band_name(c) or "published band"
+            except Exception:
+                name = "published band"
+            if lo is None or hi is None:
+                return None
+            if (own < lo and not higher) or (own > hi and higher):
+                st, tone = f"better than the {name}", "good"
+            elif lo <= own <= hi:
+                st, tone = f"within the {name}", "neutral"
+            else:
+                st, tone = f"outside the {name}, on the wrong side", "warn"
+            row.update(standing=st, standing_key=st, tone=tone, behind=tone == "warn", against=c.get("label"),
+                       middle_text=f"{fmt(lo, unit)}–{fmt(hi, unit)}", source=c.get("source"),
+                       note=c.get("definition_note"))
     else:
         return None
     if own is None and row.get("value") is None:
@@ -202,70 +264,227 @@ def metric_row(cm) -> dict | None:
     return row
 
 
-def _who(rows, cms) -> dict:
-    """Who the card compares the restaurant to — the headline kind the most
-    rows share, peers first: {kind, text, n, as_of}."""
-    kinds = [r["kind"] for r in rows]
+def _lc_label(s):
+    """"Full-service restaurants on Cavnar" as it reads mid-sentence."""
+    s = str(s or "restaurants")
+    return s[:1].lower() + s[1:] if s[:2] != s[:2].upper() else s
+
+
+def withhold_stale(row, state) -> dict:
+    """Data Health gate on the card (Benchmarking audit #25, R3-15): when the
+    data the restaurant's own figure is read from is out of date, the row
+    says when it was last measured and carries no standing, tone or action
+    — a July figure is not ranked next to a Labor tab that calls it old."""
+    if not state or state.get("state") != "stale":
+        return row
+    when = row.get("own_as_of") or state.get("as_of")
+    row.update(standing=None, standing_key=None, tone="neutral", behind=False, action=None, stale=True,
+               note=((f"Last measured {when}. " if when else "")
+                     + f"{state.get('label') or 'The data behind it'} is out of date, so no standing is shown "
+                       "until it is current."))
+    return row
+
+
+def _group_text(g, rows, cms) -> str | None:
     by_metric = {cm.get("metric"): cm for cm in cms}
-    if "peers" in kinds:
-        r = next(r for r in rows if r["kind"] == "peers")
-        c = _by_kind(by_metric[r["metric"]])["peers"]
-        return {"kind": "peers", "text": f"Compared to {c.get('n')} other {c.get('cohort_label')}",
-                "n": c.get("n"), "as_of": c.get("as_of"), "inferred": bool(c.get("inferred"))}
-    if "self" in kinds:
-        r = next(r for r in rows if r["kind"] == "self")
-        c = _by_kind(by_metric[r["metric"]])["self"]
-        return {"kind": "self", "text": f"vs {c.get('baseline_label') or 'your own previous 13 weeks'}",
-                "n": c.get("points"), "as_of": c.get("as_of"), "inferred": False}
-    if "industry" in kinds:
-        r = next(r for r in rows if r["kind"] == "industry")
-        c = _by_kind(by_metric[r["metric"]])["industry"]
-        return {"kind": "industry", "text": f"published: {c.get('source')}", "n": None,
-                "as_of": str(c.get("year") or "") or None, "inferred": bool(c.get("inferred"))}
-    return {"kind": None, "text": None, "n": None, "as_of": None, "inferred": False}
+    r = next(r for r in rows if r.get("group") == g)
+    c = _by_kind(by_metric.get(r["metric"]) or {}).get(r["kind"]) or {}
+    if g[0] == "peers":
+        return f"Compared to {c.get('n')} other {_lc_label(c.get('cohort_label'))}"
+    if g[0] == "self":
+        return f"vs {c.get('baseline_label') or 'your own previous 13 weeks'}"
+    if g[0] == "industry":
+        if r.get("context"):
+            return f"Published figure for your type, as context: {c.get('source')}"
+        return f"published: {c.get('source')}"
+    return None
 
 
-def _below_minimum(cms, who) -> dict | None:
-    """The honest state when no like-for-like group clears its minimum:
-    what the card falls back to, and the engine's own reason."""
-    if who.get("kind") == "peers":
+def _who(rows, cms) -> dict:
+    """Who the card compares the restaurant to. One group across every row
+    names it ("Compared to 12 other full-service restaurants on Cavnar");
+    rows read against different groups get a neutral header and each row
+    names its own group and strength (Benchmarking audit #26, R1-13, R2-24,
+    R3-14): {kind, text, n, as_of, inferred, groups}."""
+    groups = []
+    for r in rows:
+        if r.get("group") and r["group"] not in groups:
+            groups.append(r["group"])
+    by_metric = {cm.get("metric"): cm for cm in cms}
+    if len(groups) == 1:
+        g = groups[0]
+        r = next(r for r in rows if r.get("group") == g)
+        c = _by_kind(by_metric[r["metric"]]).get(r["kind"]) or {}
+        text = _group_text(g, rows, cms)
+        if g[0] == "peers":
+            return {"kind": "peers", "text": text, "n": c.get("n"), "as_of": c.get("as_of"),
+                    "inferred": bool(c.get("inferred")), "groups": 1}
+        if g[0] == "self":
+            return {"kind": "self", "text": text, "n": c.get("points"), "as_of": c.get("as_of"),
+                    "inferred": False, "groups": 1}
+        return {"kind": "industry", "text": text, "n": None, "as_of": str(c.get("year") or "") or None,
+                "inferred": bool(c.get("inferred")), "groups": 1}
+    if not groups:
+        return {"kind": None, "text": None, "n": None, "as_of": None, "inferred": False, "groups": 0}
+    peers = sum(1 for g in groups if g[0] == "peers")
+    parts = []
+    if peers:
+        parts.append("restaurants like yours" if peers == 1 else f"{peers} groups of restaurants like yours")
+    if any(g[0] == "self" for g in groups):
+        parts.append("your own normal")
+    if any(g[0] == "industry" for g in groups):
+        parts.append("published figures")
+    return {"kind": "mixed", "text": f"{len(rows)} comparisons — vs " + " and ".join(parts) + "; each row says which",
+            "n": None, "as_of": None, "groups": len(groups),
+            "inferred": any(r.get("kind") == "peers" and (_by_kind(by_metric[r["metric"]]).get("peers") or {}).get("inferred")
+                            for r in rows)}
+
+
+# Why there is no like-for-like group, by class (Benchmarking audit #29,
+# R3-24): the engine's why_not is matched to the reason an owner can act on.
+# Checked in this order: "fewer than 5 separate owners" is an owners reason
+# before it is a "fewer than" one.
+WHY_CLASSES = (
+    ("unconfirmed", ("profile isn't confirmed",),
+     "Your restaurant profile isn't confirmed yet, so no other restaurant is compared with you"),
+    ("concept", ("set the restaurant's concept", "untyped or 'other'"),
+     "Your concept isn't set, so there's no like-for-like group for it yet"),
+    ("wage", ("pay rate", "default wage", "default rate"),
+     "Labor cost is on Cavnar's default wage, so it isn't compared with other restaurants — set your pay rates"),
+    ("spread", ("too spread out",),
+     "Restaurants like yours vary too much on this for a middle to mean anything yet"),
+    ("owners", ("separate owners", "one owner's locations"),
+     "Restaurants like yours come from too few separate owners to compare yet"),
+    ("own_data", ("more measured day", "more review", "not measured yet", "no current figure", "inventory count",
+                  "logged in", "log waste", "a count", "deliveries"),
+     "Your own figure isn't measured yet"),
+    ("few", ("fewer than", "no current band", "no like-for-like", "withheld"),
+     "Not enough restaurants like yours yet"),
+)
+_WHY_PRIORITY = ("unconfirmed", "concept")
+
+
+def why_class(why) -> str | None:
+    w = str(why or "").lower()
+    if not w:
         return None
-    why = next((c.get("why_not") for cm in cms for c in (cm.get("comparisons") or ())
-                if c.get("kind") == "peers" and not c.get("available") and c.get("why_not")), None)
-    if who.get("kind") == "self":
-        text = "Not enough restaurants like yours yet — here's how you compare to your own last 13 weeks."
-    elif who.get("kind") == "industry":
-        text = "Not enough restaurants like yours yet — here's the published figure for your type."
+    for cls, needles, _text in WHY_CLASSES:
+        if any(n in w for n in needles):
+            return cls
+    return "few"
+
+
+def _why_text(cls) -> str:
+    return next((t for c, _n, t in WHY_CLASSES if c == cls), WHY_CLASSES[-1][2])
+
+
+def _below_minimum(cms, who, rows=(), can_edit=None) -> dict | None:
+    """The honest state when no like-for-like group clears its minimum:
+    WHY (unconfirmed profile, spread too wide, too few owners, the default
+    wage, the restaurant's own figure — never always "not enough
+    restaurants"), what the card falls back to, the engine's own reason and,
+    for a profile reason, a "Confirm your profile" action carrying the
+    engine's suggestion."""
+    if who.get("kind") == "peers" or any(r.get("kind") == "peers" for r in rows):
+        return None
+    shown = {r.get("metric") for r in rows}
+    peers_off = [c for cm in cms for c in (cm.get("comparisons") or ())
+                 if c.get("kind") == "peers" and not c.get("available") and c.get("why_not")]
+    # The reason for the metrics on screen leads; a metric the restaurant
+    # has no figure for is counted under "N more not measured yet".
+    on_screen = [c for cm in cms if cm.get("metric") in shown for c in (cm.get("comparisons") or ())
+                 if c.get("kind") == "peers" and not c.get("available") and c.get("why_not")]
+    peers_off = on_screen or peers_off
+    classes = [why_class(c.get("why_not")) for c in peers_off]
+    cls = next((p for p in _WHY_PRIORITY if p in classes), None)
+    if cls is None and classes:
+        cls = max(dict.fromkeys(classes), key=classes.count)
+    why = next((c.get("why_not") for c in peers_off if why_class(c.get("why_not")) == cls), None)
+    reason = _why_text(cls or "few")
+    kinds = {r.get("kind") for r in rows}
+    if who.get("kind") == "self" or ("self" in kinds and "industry" not in kinds):
+        text = f"{reason} — here's how you compare to your own last 13 weeks."
+    elif who.get("kind") == "industry" or ("industry" in kinds and "self" not in kinds):
+        text = f"{reason} — here's the published figure for your type, as context."
+    elif kinds & {"self", "industry"}:
+        text = f"{reason} — here's how you compare to your own last 13 weeks, and published figures as context."
     else:
         self_why = next((c.get("why_not") for cm in cms for c in (cm.get("comparisons") or ())
                          if c.get("kind") == "self" and not c.get("available") and c.get("why_not")), None)
-        text = ("Not enough restaurants like yours yet, and not enough of your own history to compare "
-                "against" + (f" — {self_why}" if self_why else "") + ".")
-    return {"text": text, "why_not": why}
+        text = (f"{reason}, and not enough of your own history to compare against"
+                + (f" — {self_why}" if self_why else "") + ".")
+    out = {"text": text, "why_not": why, "reason": cls or "few", "action": None}
+    if cls in ("unconfirmed", "concept"):
+        sug = next((c.get("suggestion") for c in peers_off if c.get("suggestion")), None)
+        out["action"] = {"kind": "profile", "label": "Confirm your profile" if cls == "unconfirmed" else "Set your concept",
+                         "suggestion": (sug or {}).get("text") if isinstance(sug, dict) else None,
+                         "can_edit": can_edit}
+    return out
 
 
-def build(cms, scope="module", module=None) -> dict:
-    """The card (or the Home strip) from engine comparisons."""
-    rows = [r for r in (metric_row(cm) for cm in cms or ()) if r]
-    who = _who(rows, cms or ())
+def build(cms, scope="module", module=None, *, sources=None, can_edit=None) -> dict:
+    """The card (or the Home strip) from engine comparisons. `sources`:
+    {registry source: data_freshness state} for the Data Health gate (#25)."""
+    cms = list(cms or ())
+    rows = []
+    for cm in cms:
+        r = metric_row(cm)
+        if not r:
+            continue
+        src = None
+        try:
+            from intelligence import metrics_registry as _reg
+            src = _reg.meta(cm.get("metric")).get("source")
+        except Exception:
+            pass
+        rows.append(withhold_stale(r, (sources or {}).get(src)))
+    if scope == "home":
+        # A figure measured differently is context on its module's card,
+        # not a comparison worth a line on Home.
+        rows = [r for r in rows if not r.get("context")]
+    who = _who(rows, cms)
     strength = None
     if who["kind"] == "peers":
         first = next(r for r in rows if r["kind"] == "peers")
         cm = next(c for c in cms if c.get("metric") == first["metric"])
         strength = strength_detail(_by_kind(cm)["peers"])
-    unmeasured = sum(1 for cm in cms or () if not (cm.get("own") or {}).get("measured"))
+    unmeasured = sum(1 for cm in cms if not (cm.get("own") or {}).get("measured"))
     if scope == "home":
         rows.sort(key=lambda r: (0 if r["behind"] else (1 if r["tone"] == "good" else 2)))
         rows = rows[:STRIP_MAX]
         for r in rows:
             r["open_module"] = OPEN_MODULE.get(r.get("module"))
+    for r in rows:
+        r.pop("group", None)
     out = {"ok": True, "scope": scope, "module": module, "who": who, "strength": strength, "rows": rows,
-           "below_minimum": _below_minimum(cms or (), who), "unmeasured": unmeasured,
+           "below_minimum": _below_minimum(cms, who, rows, can_edit=can_edit), "unmeasured": unmeasured,
            "behind": sum(1 for r in rows if r["behind"])}
     if not rows:
-        first = next(iter(cms or ()), None)
+        first = next(iter(cms), None)
         out["empty"] = ((first or {}).get("headline") or {}).get("text") or \
             "Nothing to compare yet — this fills in as your own weeks of data build up."
+    return out
+
+
+def _source_states(restaurant, cms, db_path) -> dict:
+    """{registry source: data_freshness.source_state} for the sources the
+    rows read, each read once."""
+    out = {}
+    if restaurant is None:
+        return out
+    try:
+        import data_freshness
+        from intelligence import metrics_registry as _reg
+    except Exception:
+        return out
+    for cm in cms or ():
+        src = _reg.meta(cm.get("metric")).get("source")
+        if not src or src in out or src not in data_freshness.SOURCES:
+            continue
+        try:
+            out[src] = data_freshness.source_state(restaurant, src, db_path=None if db_path == DB_PATH else db_path)
+        except Exception:
+            out[src] = None
     return out
 
 
@@ -284,7 +503,20 @@ def card(user, module=None, db_path=DB_PATH) -> dict:
         scope = "module"
     if not payload.get("ok"):
         return payload
-    return build(payload.get("comparisons") or [], scope=scope, module=mod)
+    cms = payload.get("comparisons") or []
+    restaurant = None
+    try:
+        import models as _m
+        rid = (user or {}).get("restaurant_id")
+        restaurant = _m.get_restaurant(rid) if db_path == DB_PATH else _m.get_restaurant(rid, db_path=db_path)
+    except Exception:
+        restaurant = None
+    try:
+        from permissions import is_principal
+        can_edit = bool(is_principal(user))
+    except Exception:
+        can_edit = None
+    return build(cms, scope=scope, module=mod, sources=_source_states(restaurant, cms, db_path), can_edit=can_edit)
 
 
 def strip(user, db_path=DB_PATH) -> dict:
