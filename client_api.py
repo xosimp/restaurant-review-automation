@@ -4523,7 +4523,11 @@ def get_alert_settings(current_user):
     for col in _PUSH_COLUMNS:
         settings[col] = 1 if getattr(r, col, 1) is None else int(getattr(r, col, 1))
     settings["push_sound"] = 1 if getattr(r, "push_sound", 1) is None else int(getattr(r, "push_sound", 1))
-    return jsonify(ok=True, contacts=contacts, settings=settings)
+    # The owner's own name and phone, which contact 1 offers when no contact
+    # is saved yet (friction audit U2-26). A suggestion only: nothing is an
+    # alert contact until saved with SMS consent.
+    owner = {"name": getattr(r, "owner_name", None) or "", "phone": getattr(r, "owner_phone", None) or ""}
+    return jsonify(ok=True, contacts=contacts, settings=settings, owner=owner)
 
 
 @client_bp.route("/api/alert-settings", methods=["POST"])
@@ -7436,17 +7440,53 @@ def _do_account_hours(rid, data, current_user=None):
                 out[day] = v.strip()[:12]
         return _json_h.dumps(out) if out else None
 
-    closures = (data or {}).get("closures") or []
-    if not isinstance(closures, list):
-        closures = []
-    closures = sorted({str(c).strip()[:10] for c in closures if str(c).strip()})[:60]
     update_restaurant(rid, {
         "open_times_json": _clean_times((data or {}).get("open")),
         "close_times_json": _clean_times((data or {}).get("close")),
-        "skip_holidays": ",".join(closures) or None,
     })
+    out = {"ok": True}
+    # Closures are the scheduler's closed dates (schedule_rules.save_closures,
+    # the list Labor -> Scheduling rules edits too). This box said "used when
+    # generating schedules" and wrote `skip_holidays` - the marketing
+    # holiday-skip list - which the scheduler never reads, and saving hours
+    # with it empty wiped that marketing setting (friction audit U2-3). Only
+    # touched when the client sent the list; an entry that is not a date is
+    # named back, never guessed.
+    if isinstance((data or {}).get("closures"), list):
+        dates, ignored = [], []
+        for c in data["closures"][:120]:
+            iso = _closure_iso(c)
+            if iso:
+                dates.append(iso)
+            elif str(c or "").strip():
+                ignored.append(str(c).strip()[:40])
+        import schedule_rules as _sr_h
+        out["closures"] = _sr_h.save_closures(rid, closed_dates=dates)["closed_dates"]
+        if ignored:
+            out["ignored"] = ignored
     log_account_event(rid, "hours_changed", current_user)
-    return {"ok": True}, 200
+    return out, 200
+
+
+def _closure_iso(value):
+    """A closure entry as YYYY-MM-DD: ISO from a date picker, or the M/D/YY
+    and M/D/YYYY an owner reads everywhere else. None when it is not a date."""
+    from datetime import date as _date_c
+    v = str(value or "").strip()
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", v[:10]):
+        try:
+            return _date_c.fromisoformat(v[:10]).isoformat()
+        except ValueError:
+            return None
+    m = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{2}|\d{4})$", v)
+    if not m:
+        return None
+    y = int(m.group(3))
+    y = 2000 + y if y < 100 else y
+    try:
+        return _date_c(y, int(m.group(1)), int(m.group(2))).isoformat()
+    except ValueError:
+        return None
 
 
 def _do_data_retention(rid, data, current_user=None):
@@ -7600,7 +7640,9 @@ def _account_settings_payload(rid):
         except Exception:
             return {}
 
-    closures = [c for c in (getattr(r, "skip_holidays", "") or "").split(",") if c.strip()]
+    # The scheduler's closed dates - the one closures list (U2-3).
+    import schedule_rules as _sr_p
+    closures = _sr_p.closures(r)["closed_dates"]
     return {
         "ok": True,
         "auto_approve": {
@@ -7659,6 +7701,31 @@ def save_auto_approve(current_user):
 def save_account_hours(current_user):
     payload, status = _do_account_hours(current_user["restaurant_id"],
                                         request.get_json(silent=True) or {}, current_user)
+    return jsonify(**payload), status
+
+
+def _do_account_hours_google(rid):
+    """The opening hours Google Business lists, in Account's shape, for the
+    owner to take or edit before saving (friction audit U2-19). Nothing is
+    written here."""
+    import gmb
+    if not gmb.is_connected(rid):
+        return {"ok": False, "connected": False,
+                "error": "Connect Google Business to fill your hours from it."}, 200
+    listing = gmb.get_gbp_listing(rid)
+    if not listing.get("ok"):
+        return {"ok": False, "connected": True,
+                "error": "Google didn't answer just now - try again in a moment."}, 502
+    hours = listing.get("hours") or {"open": {}, "close": {}}
+    if not hours.get("open"):
+        return {"ok": False, "connected": True, "error": "Your Google listing has no opening hours on it."}, 200
+    return {"ok": True, "connected": True, "open": hours["open"], "close": hours.get("close") or {}}, 200
+
+
+@client_bp.route("/api/account-settings/hours/google")
+@login_required
+def account_hours_google(current_user):
+    payload, status = _do_account_hours_google(current_user["restaurant_id"])
     return jsonify(**payload), status
 
 
@@ -7921,6 +7988,26 @@ def _send_order_request(current_user):
                        error=("The order changed since you reviewed it — take another look before sending."
                               if expected else "Review the order before sending it.")), 409
 
+    # The owner's own quantities on one supplier's order (friction audit
+    # U2-15). Checked against the draft they reviewed (the hash above), then
+    # applied: what is emailed is the edited order, and the PO records the
+    # draft beside it (`drafts`, audit #41 suggested vs chosen).
+    edits = data.get("lines") if isinstance(data.get("lines"), list) else None
+    drafts, drafted_hash = None, None
+    if edits:
+        if not only or len(groups) != 1:
+            return jsonify(ok=False, error="Change one supplier's order at a time."), 400
+        from inventory import apply_order_edits
+        try:
+            edited = apply_order_edits(groups[0], edits)
+        except ValueError:
+            return jsonify(ok=False, error="Each quantity must be a number, 0 or more."), 400
+        if not edited["items"]:
+            return jsonify(ok=False, error="Every line is at 0 - there is nothing to send."), 400
+        drafts = {groups[0]["supplier_email"].lower(): groups[0]["items"]}
+        drafted_hash = groups[0].get("draft_hash")
+        groups = [edited]
+
     emails_ = sorted({(g.get("supplier_email") or "").lower() for g in groups})
     if not _order_send_allowed(rid, emails_):
         return jsonify(ok=False, error="An order was just sent — give it a moment before sending again."), 429
@@ -7957,14 +8044,16 @@ def _send_order_request(current_user):
         for group in groups:
             row = delayed.schedule(rid, "order_send",
                                    {"supplier_email": group["supplier_email"],
-                                    "draft_hash": group.get("draft_hash") or draft.get("draft_hash"),
-                                    "resend": resend},
+                                    # The DRAFT's hash, which the runner rebuilds and checks; the
+                                    # owner's edits ride along and are applied after that check.
+                                    "draft_hash": drafted_hash or group.get("draft_hash") or draft.get("draft_hash"),
+                                    "resend": resend, **({"lines": edits} if edits else {})},
                                    delay, actor=current_user,
                                    label=f"Sending the {group.get('supplier_name') or group['supplier_email']} order "
                                          f"(${float(group.get('total_cost') or 0):,.0f}, {len(group.get('items') or [])} items)")
             queued.append({"action_id": row["id"], "execute_at": row["execute_at"], "supplier_email": group["supplier_email"]})
         return jsonify(ok=True, queued=queued, sent=[], failed=[], undo_minutes=delay)
-    _s, _f = _send_supplier_orders(rid, restaurant, groups, current_user, resend=resend)
+    _s, _f = _send_supplier_orders(rid, restaurant, groups, current_user, resend=resend, drafts=drafts)
     sent.extend(_s); failed.extend(_f)
     _release_order_send(rid, sorted({f["supplier_email"].lower() for f in failed
                                      if not f.get("already_sent")} - {s["supplier_email"].lower() for s in sent}))
@@ -7982,18 +8071,174 @@ def _send_order_request(current_user):
 @client_bp.route("/api/food-cost/purchase-orders")
 @login_required
 def food_cost_purchase_orders(current_user):
+    return jsonify(ok=True, orders=purchase_orders_for(current_user, request.args.get("status") or None))
+
+
+def purchase_orders_for(current_user, status=None):
+    """The purchase orders this login may see. A manager receives deliveries
+    without the margins (FOOD_COST_ENTER, U2-27), so without FOOD_COST_VIEW
+    every dollar figure is taken off: what was ordered, never what it cost."""
     from models import get_purchase_orders
-    status = request.args.get("status") or None
-    return jsonify(ok=True, orders=get_purchase_orders(current_user["restaurant_id"], status=status))
+    from permissions import has_permission, FOOD_COST_VIEW
+    orders = get_purchase_orders(current_user["restaurant_id"], status=status)
+    if current_user.get("is_admin") or has_permission(current_user, FOOD_COST_VIEW):
+        return orders
+    money = ("unit_cost", "line_cost", "total_cost")
+    return [dict({k: v for k, v in po.items() if k not in money},
+                 items=[{k: v for k, v in it.items() if k not in money} for it in (po.get("items") or [])
+                        if isinstance(it, dict)])
+            for po in orders]
 
 
 @client_bp.route("/api/food-cost/purchase-orders/<int:po_id>/received", methods=["POST"])
 @login_required
 def receive_purchase_order(current_user, po_id):
+    """Web twin - the one body is _do_receive_po."""
+    payload, status = _do_receive_po(current_user, po_id, request.get_json(silent=True) or {})
+    return jsonify(**payload), status
+
+
+def _po_line_key(item):
+    return str(item.get("ingredient_id") or ("name:" + str(item.get("item") or "").strip().lower()))
+
+
+def _do_receive_po(current_user, po_id, data):
+    """Close a purchase order AND put what arrived into stock.
+
+    "Mark received" only flipped the PO's status, so a delivery never raised
+    on-hand stock: the count sheet's "expected" drifted low and the next
+    count read the gap as unexplained waste (friction audit U2-12). Each PO
+    line with an ingredient is now posted through
+    inventory_ledger.record_receiving at the ordered quantity, or at the
+    quantity the receiver typed for a short line (`lines`: [{ingredient_id
+    or item, qty}]; 0 = didn't arrive). The status flip claims the PO first,
+    so a second tap or a second device can never post the delivery twice.
+    A line with no ingredient behind it (a CSV-only account) is named back,
+    not guessed at."""
+    import json as _json_r
+    import inventory_ledger
+    rid = current_user["restaurant_id"]
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT id, po_number, supplier_name, supplier_email, items_json, status "
+                           "FROM purchase_orders WHERE id=? AND restaurant_id=?", (po_id, rid)).fetchone()
+    finally:
+        conn.close()
+    if not row or row["status"] != "sent":
+        return {"ok": False, "error": "That order is already received, or isn't yours."}, 404
+    try:
+        items = [i for i in (_json_r.loads(row["items_json"] or "[]") or []) if isinstance(i, dict)]
+    except Exception:
+        items = []
+    overrides = {}
+    for ln in (data.get("lines") if isinstance(data.get("lines"), list) else [])[:500]:
+        if not isinstance(ln, dict):
+            continue
+        try:
+            q = float(ln.get("qty"))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "Each received quantity must be a number, 0 or more."}, 400
+        if q != q or q < 0 or q > 1e6:
+            return {"ok": False, "error": "Each received quantity must be a number, 0 or more."}, 400
+        overrides[_po_line_key(ln)] = q
     from models import mark_purchase_order_received
-    if not mark_purchase_order_received(current_user["restaurant_id"], po_id):
-        return jsonify(ok=False, error="That order is already received, or isn't yours."), 404
-    return jsonify(ok=True)
+    if not mark_purchase_order_received(rid, po_id):
+        return {"ok": False, "error": "That order is already received, or isn't yours."}, 404
+    posted, short, skipped = [], [], []
+    for it in items:
+        name = str(it.get("item") or it.get("name") or "").strip()
+        ordered = float(it.get("qty") or 0)
+        qty = overrides.get(_po_line_key(it), ordered)
+        if qty < ordered:
+            short.append({"item": name, "ordered": ordered, "received": qty})
+        if not it.get("ingredient_id"):
+            skipped.append(name)
+            continue
+        if qty <= 0:
+            continue
+        ev = inventory_ledger.record_receiving(rid, int(it["ingredient_id"]), qty, source="purchase_order",
+                                               note=f"{row['po_number']} from {row['supplier_name'] or row['supplier_email']}")
+        if ev:
+            posted.append({"item": name, "qty": qty, "unit": it.get("unit") or ""})
+        else:
+            skipped.append(name)
+    log_account_event(rid, "purchase_order_received", current_user,
+                      detail=f"{row['po_number']}: {len(posted)} line{'' if len(posted) == 1 else 's'} into stock"
+                             + (f", {len(short)} short" if short else ""))
+    return {"ok": True, "po_number": row["po_number"], "posted": posted, "short": short,
+            "skipped": [s for s in skipped if s]}, 200
+
+
+def _do_create_ingredient(current_user, data):
+    """A new ingredient from the owner's own screen - first used by an
+    invoice line that matches nothing (friction audit U2-23), which could
+    only be settled by an admin or a whole CSV re-upload. An active
+    ingredient of the same name is returned rather than duplicated."""
+    import math
+    import inventory_ledger
+    rid = current_user["restaurant_id"]
+    name = " ".join(str(data.get("name") or "").split())[:80]
+    if not name:
+        return {"ok": False, "error": "Give the ingredient a name."}, 400
+    unit = " ".join(str(data.get("unit") or "").split())[:20]
+    cost = data.get("unit_cost")
+    try:
+        cost = float(cost) if cost not in (None, "") else 0.0
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "The cost must be a number."}, 400
+    if not math.isfinite(cost) or cost < 0 or cost > 100000:
+        return {"ok": False, "error": "The cost must be a number, 0 or more."}, 400
+    conn = get_conn()
+    try:
+        same = conn.execute("SELECT id, name, unit FROM ingredients WHERE restaurant_id=? AND is_active=1 "
+                            "AND lower(name)=lower(?)", (rid, name)).fetchone()
+    finally:
+        conn.close()
+    if same:
+        return {"ok": True, "existed": True,
+                "ingredient": {"id": same["id"], "name": same["name"], "unit": same["unit"] or ""}}, 200
+    new_id = inventory_ledger.create_ingredient(rid, name, unit=unit, unit_cost=round(cost, 4))
+    log_account_event(rid, "ingredient_created", current_user, detail=name)
+    return {"ok": True, "existed": False, "ingredient": {"id": new_id, "name": name, "unit": unit}}, 200
+
+
+@client_bp.route("/api/food-cost/ingredients", methods=["POST"])
+@login_required
+def create_ingredient(current_user):
+    payload, status = _do_create_ingredient(current_user, request.get_json(silent=True) or {})
+    return jsonify(**payload), status
+
+
+WASTE_REASONS = ("spoiled", "dropped", "overprepped", "returned", "expired", "other")
+
+
+def _do_log_waste(current_user, data):
+    """One line of waste an owner or manager saw thrown out (U2-32). Waste
+    only ever arrived as a recount gap (source 'inferred', which waste_sources
+    reports as unexplained); a logged line is counted waste, and it lowers
+    expected stock the same way the ledger's other events do."""
+    import inventory_ledger
+    rid = current_user["restaurant_id"]
+    try:
+        ing_id = int(data.get("ingredient_id"))
+        qty = float(data.get("qty"))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "Pick an ingredient and a quantity."}, 400
+    reason = str(data.get("reason") or "other").strip().lower()
+    if reason not in WASTE_REASONS:
+        reason = "other"
+    out = inventory_ledger.record_waste(rid, ing_id, qty, reason=reason)
+    if not out.get("ok"):
+        return out, 400
+    log_account_event(rid, "waste_logged", current_user, detail=f"{out['name']}: {qty:g} ({reason})")
+    return out, 200
+
+
+@client_bp.route("/api/food-cost/waste", methods=["POST"])
+@login_required
+def log_waste(current_user):
+    payload, status = _do_log_waste(current_user, request.get_json(silent=True) or {})
+    return jsonify(**payload), status
 
 
 @client_bp.route("/api/food-cost/cogs")

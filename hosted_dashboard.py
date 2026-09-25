@@ -663,17 +663,26 @@ def index(current_user):
                 _food_cost_data = _json_fc.loads(_fc_raw["food_cost_json"])
     except Exception:
         pass
-    # With a live pantry and no price submission yet, the price monitor opens
-    # on the pantry itself — name, unit, unit cost, a week's usage — instead
-    # of seven sample rows at 0.00 sitting beside the real ingredient list.
+    # With a live pantry, the price monitor reads the pantry itself — name,
+    # unit, unit cost, a week's usage — instead of seven sample rows at 0.00
+    # beside the real ingredient list. For a ledger account this is ALWAYS
+    # the case now (friction audit U2-14): invoices keep unit_cost current and
+    # usage is computed from POS x recipes, so the 14 typed fields a week
+    # duplicated them. The rows render read-only with an Edit affordance.
+    # The typed tracker itself (/api/food-cost-quickcount, food_cost_json) is
+    # a candidate for future cleanup after additional verification: its
+    # food_cost_data consumers were not traced end to end.
     try:
-        if _can_see_food_cost and not (_food_cost_data and (_food_cost_data.get("current") or {}).get("items")):
+        if _can_see_food_cost:
             import inventory_ledger as _il_fc
             _pantry = [r for r in (_il_fc.list_ingredients(rid) or []) if r.get("name")]
             if _pantry:
                 _food_cost_data = dict(_food_cost_data or {})
+                _typed_at = ((_food_cost_data.get("current") or {}).get("submitted_at")
+                             if not (_food_cost_data.get("current") or {}).get("from_pantry") else None)
                 _food_cost_data["current"] = {
                     "from_pantry": True,
+                    "typed_at": _typed_at,
                     "items": [{"name": r["name"], "unit": r.get("unit") or "",
                                "price": (round(float(r["unit_cost"]), 2) if r.get("unit_cost") else ""),
                                "usage": (round(float(r["avg_daily_usage"]) * 7, 1) if r.get("avg_daily_usage") else "")}
@@ -730,6 +739,11 @@ def index(current_user):
         # Entitlement AND permission. The tab button was gated on the module
         # alone; the panel itself was gated on nothing.
         mod_inventory=int(1 if _can_see_food_cost else 0),
+        # A manager without the margins still counts stock, receives
+        # deliveries and logs waste (permissions.FOOD_COST_ENTER, U2-27): a
+        # counts-only Food Cost tab with no dollar figure on it.
+        fc_enter_only=int(bool(restaurant and restaurant.module_inventory) and not _can_see_food_cost
+                          and _hp_fc(current_user, __import__("permissions").FOOD_COST_ENTER)),
         mod_marketing=int(restaurant.module_marketing or 0),
         is_full_tier=is_full_tier(restaurant),
         # The registry-backed single source of truth (models.get_active_modules) —

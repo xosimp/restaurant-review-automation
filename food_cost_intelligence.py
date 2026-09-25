@@ -629,6 +629,22 @@ def _local_today(restaurant_id):
         return date.today()
 
 
+def driver_action(driver):
+    """{"label", "nav"} - where a cost driver is acted on (friction audit
+    U4-9: "salmon up 18%" gave no path to the order or the menu price). The
+    nav path is nav.py's grammar. None when there is nowhere better than
+    the Food Cost page the driver is already on."""
+    import nav
+    kind = (driver or {}).get("kind")
+    if kind in ("price", "sourcing"):
+        return {"label": "Open the order", "nav": nav.path("inventory", "order")}
+    if kind == "portion" and driver.get("dish"):
+        return {"label": f"Look at {driver['dish']}'s price", "nav": nav.path("inventory", "menu", dish=driver["dish"])}
+    if kind == "waste":
+        return {"label": "Log or count it", "nav": nav.path("inventory", "count")}
+    return None
+
+
 def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     """Every driver of food cost movement, each with the dollars it carries,
     ranked here rather than by the model.

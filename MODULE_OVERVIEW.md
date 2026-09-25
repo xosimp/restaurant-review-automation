@@ -101,6 +101,16 @@ Weekly ingredient counts → waste cost, price-drift detection (this week's unit
 - A projection returns nothing rather than substituting a zero, and says which component is missing. `profitability_projection` is PRIME COST, not net profit, and its basis says the labor share came from the shift analysis's own period.
 - The inferred-waste gap is attributed per ingredient and per dish (`inventory_ledger.inferred_variance`) — it is over-portioning, prep loss or shrink, and aggregating it to one restaurant-wide dollar figure produced the one number an owner could not act on.
 
+**The work, not just the read (friction audit, 9/25/26, workstream O2)**:
+- A delivery goes into stock. "Received as ordered" (or "Some were short" with a quantity per line) posts each PO line with an ingredient through `inventory_ledger.record_receiving` (`client_api._do_receive_po`); the status flip claims the PO first, so a delivery can never post twice. Without this the count sheet's "expected" drifted low and the next count read the gap as unexplained waste.
+- One Order card: the week's lines grouped by supplier with editable quantities, loaded when first on screen; the edits ride with the send (`inventory.apply_order_edits`) after the draft hash proves the draft unchanged, and the PO keeps the draft beside what went. Sending asks once, inline, naming the supplier, the item count and the total.
+- Pending invoices live on the server (`invoices.pending_imports` — never applied, or a trusted supplier's leftovers) and list at the top of the invoice card; Home's queue item opens the invoice itself (`invoice/<id>`). An unmatched line can become an ingredient in place. Ask can apply only the lines the stored invoice marks checked (`apply_invoice_lines`) and receive the oldest open order as ordered (`receive_purchase_order`).
+- Logged waste (`inventory_ledger.record_waste`, source `logged`) is counted waste; only a recount gap is `inferred`.
+- Counts without the margins: `permissions.FOOD_COST_ENTER` (every console role, incl. `manager`) opens the count sheet, the PO list (money withheld), receiving and the waste log — and nothing else. A manager's web Food Cost tab is "Counts" (`fc_enter_only`), the count sheet and deliveries only.
+- For a ledger account the price monitor is filled from the ingredient list, read-only until "Edit prices"; the typed tracker (`/api/food-cost-quickcount`, `food_cost_json`) is a candidate for future cleanup after additional verification — its `food_cost_data` consumers were not traced end to end.
+- Recipes with every line at ≥80% support and clean units accept in one tap; the rest stay one by one.
+- Each cost driver and cross-module link carries `act: {label, nav}` (`food_cost_intelligence.driver_action`, `business_intelligence.link_action`) — where the fix is done.
+
 ---
 
 ## Marketing
@@ -276,6 +286,8 @@ Client health rollup (owner → brand → location), job-run history (`job_runs`
 ---
 
 ## Account
+
+**Hours and closures (friction audit U2-3/U2-19)**: the closures box is the scheduler's closed dates (`schedule_rules.closures`, the same list Labor → Scheduling rules edits), as date chips — it used to write `skip_holidays`, the marketing holiday list, which the scheduler never read. Hours can be filled from Google Business (`gmb.regular_hours`) or copied to every day; neither saves until Save hours. Alert contact 1 starts as the owner's own name and phone when none is saved. The DSR budget editor prefills from last week, last year ± %, or Cavnar's forecast (`dsr.store.budget_prefill`); the covers tile offers the POS guest count for a night nobody entered (`covers.pos_offers`), never writing it without a tap.
 
 Profile, Security (2FA + backup codes + trusted devices + sign-in history), Team (owner-only invite/revoke/re-role, owner-granted Food-cost and Comps access), Automation & trust (every switch with its record), Connections (Google, Toast, Instagram and RPOWER real; Square/Clover honest "contact us" stubs), Billing, Notifications/alert channels, Data export, Help/FAQ. All five iOS sheets share one "identity card" layout (`AccountSheetKit.swift`) — a new sheet reuses it rather than inventing a new chrome.
 

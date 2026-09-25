@@ -153,6 +153,109 @@ def test_web_purchase_order_can_be_marked_received(client, db_path, monkeypatch)
     assert client.post(f"/api/food-cost/purchase-orders/{po_id}/received").status_code == 404
 
 
+def _anchor(db_path, rid, name, qty=0):
+    """The recount every ledger ingredient carries (inventory_ledger)."""
+    conn = get_conn(db_path)
+    ing = conn.execute("SELECT id FROM ingredients WHERE restaurant_id=? AND name=?", (rid, name)).fetchone()["id"]
+    conn.execute("INSERT INTO ingredient_stock_events (restaurant_id, ingredient_id, event_type, qty, event_date, source) "
+                 "VALUES (?,?,'recount',?, '2026-09-01', 'test')", (rid, ing, qty))
+    conn.commit(); conn.close()
+    return ing
+
+
+def _stock(db_path, ing):
+    import inventory_ledger
+    conn = get_conn(db_path)
+    try:
+        return inventory_ledger._compute_current_stock(conn, ing)
+    finally:
+        conn.close()
+
+
+def test_an_edited_order_sends_the_owners_quantities(client, db_path, monkeypatch):
+    """Friction audit U2-15: the order went out sight-unseen, with no way to
+    change a line. The owner's quantity is what is emailed, and the PO keeps
+    the draft beside it."""
+    rid = _restaurant(db_path)
+    _ingredient(db_path, rid, "Romaine", supplier_name="Fresh Co", supplier_email="orders@fresh.test")
+    ing = _anchor(db_path, rid, "Romaine")
+    _login_as(monkeypatch, rid)
+    sent = {}
+    monkeypatch.setattr("emails.send_supplier_order_email", lambda **kw: sent.update(kw))
+    d = client.get("/api/food-cost/order-draft").get_json()
+    drafted = d["groups"][0]["items"][0]["qty"]
+    assert drafted != 7
+    resp = client.post("/api/food-cost/send-order", json={
+        "supplier_email": "orders@fresh.test", "draft_hash": d["groups"][0]["draft_hash"],
+        "lines": [{"ingredient_id": ing, "qty": 7}]}).get_json()
+    assert resp["ok"] is True
+    assert sent["items"][0]["qty"] == 7 and sent["total_cost"] == 28.0
+    row = get_conn(db_path).execute("SELECT edited FROM purchase_orders WHERE restaurant_id=?", (rid,)).fetchone()
+    assert row["edited"] == 1
+    bad = client.post("/api/food-cost/send-order", json={
+        "supplier_email": "orders@fresh.test", "draft_hash": d["groups"][0]["draft_hash"],
+        "lines": [{"ingredient_id": ing, "qty": -2}]})
+    assert bad.status_code == 400
+
+
+def test_received_posts_the_delivery_into_stock(client, db_path, monkeypatch):
+    """Friction audit U2-12: "Mark received" only flipped the status, so a
+    delivery never raised on-hand stock and the next count read the gap as
+    waste. A short line is received at the quantity typed; a second receive
+    posts nothing."""
+    rid = _restaurant(db_path)
+    _ingredient(db_path, rid, "Romaine", supplier_name="Fresh Co", supplier_email="orders@fresh.test")
+    _ingredient(db_path, rid, "Kale", supplier_name="Fresh Co", supplier_email="orders@fresh.test")
+    romaine, kale = _anchor(db_path, rid, "Romaine"), _anchor(db_path, rid, "Kale")
+    _login_as(monkeypatch, rid)
+    monkeypatch.setattr("emails.send_supplier_order_email", lambda **kw: None)
+    client.post("/api/food-cost/send-order",
+                json={"draft_hash": client.get("/api/food-cost/order-draft").get_json()["draft_hash"]})
+    po = client.get("/api/food-cost/purchase-orders").get_json()["orders"][0]
+    ordered = {i["ingredient_id"]: i["qty"] for i in po["items"]}
+    out = client.post(f"/api/food-cost/purchase-orders/{po['id']}/received",
+                      json={"lines": [{"ingredient_id": kale, "qty": 1}]}).get_json()
+    assert out["ok"] is True
+    assert _stock(db_path, romaine) == ordered[romaine]
+    assert _stock(db_path, kale) == 1
+    assert [s["item"] for s in out["short"]] == ["Kale"]
+    assert client.post(f"/api/food-cost/purchase-orders/{po['id']}/received").status_code == 404
+    assert _stock(db_path, romaine) == ordered[romaine], "a second receive posts nothing"
+
+
+def test_an_invoice_line_can_become_an_ingredient(client, db_path, monkeypatch):
+    """Friction audit U2-23: an unmatched invoice line could only be settled
+    by an admin or a CSV re-upload."""
+    rid = _restaurant(db_path)
+    _login_as(monkeypatch, rid)
+    out = client.post("/api/food-cost/ingredients", json={"name": " Burrata  8oz ", "unit": "ea", "unit_cost": 3.25}).get_json()
+    assert out["ok"] is True and out["existed"] is False and out["ingredient"]["name"] == "Burrata 8oz"
+    row = get_conn(db_path).execute("SELECT unit, unit_cost FROM ingredients WHERE id=?", (out["ingredient"]["id"],)).fetchone()
+    assert (row["unit"], row["unit_cost"]) == ("ea", 3.25)
+    again = client.post("/api/food-cost/ingredients", json={"name": "burrata 8oz"}).get_json()
+    assert again["existed"] is True and again["ingredient"]["id"] == out["ingredient"]["id"]
+    assert client.post("/api/food-cost/ingredients", json={"name": ""}).status_code == 400
+
+
+def test_logged_waste_is_counted_waste(client, db_path, monkeypatch):
+    """Friction audit U2-32: waste only ever arrived as a recount gap, which
+    reads as unexplained. A logged line is counted and lowers stock."""
+    rid = _restaurant(db_path)
+    _ingredient(db_path, rid, "Salmon", cost=10.0)
+    ing = _anchor(db_path, rid, "Salmon", qty=20)
+    _login_as(monkeypatch, rid)
+    out = client.post("/api/food-cost/waste", json={"ingredient_id": ing, "qty": 2, "reason": "spoiled"}).get_json()
+    assert out["ok"] is True and out["name"] == "Salmon"
+    assert _stock(db_path, ing) == 18
+    src = get_conn(db_path).execute("SELECT source, note FROM ingredient_stock_events WHERE event_type='waste'").fetchone()
+    assert (src["source"], src["note"]) == ("logged", "spoiled")
+    assert client.post("/api/food-cost/waste", json={"ingredient_id": ing, "qty": 0}).status_code == 400
+    other = _restaurant(db_path, name="Other")
+    _ingredient(db_path, other, "Tuna")
+    tuna = get_conn(db_path).execute("SELECT id FROM ingredients WHERE name='Tuna'").fetchone()["id"]
+    assert client.post("/api/food-cost/waste", json={"ingredient_id": tuna, "qty": 1}).status_code == 400
+
+
 # ── Menu margins ─────────────────────────────────────────────────────────
 
 def test_web_menu_profitability_costs_the_plate(client, db_path, monkeypatch):

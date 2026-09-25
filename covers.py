@@ -77,6 +77,29 @@ def by_date(restaurant_id, start=None, end=None, db_path=DB_PATH):
     return {r["date"]: int(r["covers"]) for r in rows}
 
 
+def pos_offers(restaurant_id, days=14, db_path=DB_PATH):
+    """Nights the POS counted guests (the DSR's sales.guests) that have no
+    cover count yet, newest first: [{"date", "guests"}] (friction audit
+    U2-18). An OFFER, not a write - the module docstring's caveat stands:
+    a POS guest count is not reliable enough to become a cover count on its
+    own, so it is shown for the owner to accept or correct."""
+    end = date.today()
+    start = end - timedelta(days=days - 1)
+    have = by_date(restaurant_id, start.isoformat(), end.isoformat(), db_path=db_path)
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT business_date, value FROM dsr_metrics WHERE restaurant_id=? "
+                            "AND metric='sales.guests' AND value IS NOT NULL AND value > 0 "
+                            "AND business_date BETWEEN ? AND ? ORDER BY business_date DESC",
+                            (restaurant_id, start.isoformat(), end.isoformat())).fetchall()
+    except Exception:
+        rows = []
+    finally:
+        conn.close()
+    return [{"date": r["business_date"], "guests": int(round(float(r["value"])))}
+            for r in rows if r["business_date"] not in have]
+
+
 def recent(restaurant_id, days=28, db_path=DB_PATH):
     end = date.today()
     m = by_date(restaurant_id, (end - timedelta(days=days - 1)).isoformat(), end.isoformat(), db_path=db_path)

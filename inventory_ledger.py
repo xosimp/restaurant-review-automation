@@ -398,6 +398,38 @@ def record_receiving(restaurant_id: int, ingredient_id: int, qty: float,
     return event_id
 
 
+def record_waste(restaurant_id: int, ingredient_id: int, qty: float, event_date=None,
+                 reason: str = None, source: str = "logged") -> dict:
+    """Waste someone saw and logged (friction audit U2-32): a positive,
+    finite quantity of this restaurant's ingredient. Tagged `source='logged'`
+    so waste_sources counts it as counted waste, never as the 'inferred' gap
+    a recount leaves. Returns {"ok", "event_id", "name", "unit"}."""
+    import math
+    from models import db_conn
+    try:
+        qty = float(qty)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "Waste is a quantity above 0."}
+    if not math.isfinite(qty) or qty <= 0 or qty > 1e6:
+        return {"ok": False, "error": "Waste is a quantity above 0."}
+    event_date_str = _as_date_str(event_date, restaurant_id)
+    with db_conn() as conn:
+        if not ingredient_belongs_to(conn, restaurant_id, ingredient_id):
+            return {"ok": False, "error": "That ingredient isn't this restaurant's."}
+        ing = conn.execute("SELECT name, unit FROM ingredients WHERE id=? AND restaurant_id=?",
+                           (ingredient_id, restaurant_id)).fetchone()
+        cur = conn.execute(
+            "INSERT INTO ingredient_stock_events "
+            "(restaurant_id, ingredient_id, event_type, qty, event_date, source, note) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (restaurant_id, ingredient_id, "waste", qty, event_date_str, source,
+             (reason or "")[:40] or None))
+        event_id = cur.lastrowid
+        recompute_rollups(restaurant_id, ingredient_id, conn=conn)
+        conn.commit()
+    return {"ok": True, "event_id": event_id, "name": ing["name"], "unit": ing["unit"] or ""}
+
+
 def record_depletion_from_sale(restaurant_id: int, ingredient_id: int, qty: float,
                                 event_date, source: str = "toast") -> int:
     """Records the event only — does NOT roll up current_stock/avg_daily_usage.

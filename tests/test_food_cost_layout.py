@@ -75,11 +75,21 @@ def test_the_count_sheet_carries_the_supplier_for_the_web_block(db_path, monkeyp
     assert out["items"][0]["supplier_name"] == "Sysco"
 
 
-def test_the_price_monitor_opens_on_the_pantry_when_nothing_was_submitted():
+def test_the_price_monitor_reads_the_pantry_for_a_ledger_account():
+    """This used to pin "never over a real submission". Friction audit
+    U2-14 changed it on purpose: for a ledger account the rows always come
+    from the ingredient list (invoices keep prices current, usage comes from
+    sales), read-only until Edit, and the typed tracker is only an override."""
     src = open(os.path.join(ROOT, "hosted_dashboard.py"), encoding="utf-8").read()
     block = src[src.index('"from_pantry": True'):]
-    assert "list_ingredients(rid)" in src[src.index("# With a live pantry"):src.index('"from_pantry": True')]
-    assert '"price": (round(float(r["unit_cost"]), 2)' in block
-    # never over a real submission
     guard = src[src.index("# With a live pantry"):src.index('"from_pantry": True')]
-    assert 'not (_food_cost_data and (_food_cost_data.get("current") or {}).get("items"))' in guard
+    assert "list_ingredients(rid)" in guard
+    assert '"price": (round(float(r["unit_cost"]), 2)' in block
+    assert 'not (_food_cost_data and (_food_cost_data.get("current") or {}).get("items"))' not in guard
+    assert "Candidate for future cleanup after additional verification".lower() in guard.lower().replace("\n    # ", " ")
+    s = _src()
+    tracker = s[s.index('id="fc2-tracker"') - 400:s.index('id="fc2-tools"')]
+    assert "{% set _fc_ledger = food_cost_data and food_cost_data.current and food_cost_data.current.from_pantry %}" in tracker
+    assert "{{ ' readonly' if _fc_ledger }}" in tracker and 'onclick="fcEditPrices(this)"' in tracker
+    assert "and not _fc_ledger %}" in tracker, "no drift between a ledger read and an old typed week"
+    assert ".fc2-ledger-rows:not(.editing) .fc2-submit{display:none}" in s

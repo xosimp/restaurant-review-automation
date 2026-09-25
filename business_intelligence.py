@@ -357,6 +357,7 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
                 _periods = _window_overlap(_cluster_window(c), _labor_window(labor))
                 links.append({
                     "kind": "reviews_x_labor",
+                    "day": day,
                     # What the link is about, for its recommendation key: one
                     # answer silences THIS pairing, not every cross-module
                     # link of the kind (H-13).
@@ -405,6 +406,7 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
         if waste_day and waste_day in days:
             links.append({
                 "kind": "reviews_x_food_cost",
+                "day": waste_day,
                 "subject": _link_subject(c.get("category"), waste_day),
                 "modules": ["reviews", "food_cost"],
                 "claim_kind": "inferred",
@@ -439,6 +441,7 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
                 if any(_same_thing(dish, h) for h in haystack):
                     links.append({
                         "kind": "reviews_x_menu",
+                        "dish": dish,
                         "subject": _link_subject(c.get("category"), dish),
                         "modules": ["reviews", "food_cost"],
                         "claim_kind": "inferred",
@@ -541,7 +544,33 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
                     "alternative": "A nearby competitor improved their profile, or Google changed what it shows.",
                 })
 
+    for link in links:
+        act = link_action(link)
+        if act:
+            link["act"] = act
     return links
+
+
+def link_action(link):
+    """{"label", "nav"} - where the owner does something about a cross-module
+    finding (friction audit U4-9): complaints on a weekday open that day's
+    schedule, a waste day opens the count, a dish opens its price, a
+    posting month opens Marketing, a visibility drop opens Intel. The nav
+    path is nav.py's grammar; a client that cannot focus it opens the
+    module. None for a kind with nowhere better than the module itself."""
+    import nav
+    kind = link.get("kind")
+    if kind == "reviews_x_labor" and link.get("day"):
+        return {"label": f"Open {link['day']}'s schedule", "nav": nav.path("labor", "schedule", day=link["day"])}
+    if kind == "reviews_x_food_cost":
+        return {"label": "Log or count the waste", "nav": nav.path("inventory", "count", day=link.get("day"))}
+    if kind == "reviews_x_menu" and link.get("dish"):
+        return {"label": f"Look at {link['dish']}'s price", "nav": nav.path("inventory", "menu", dish=link["dish"])}
+    if kind == "marketing_x_reviews":
+        return {"label": "Open Marketing", "nav": nav.path("marketing")}
+    if kind == "intel_x_reviews":
+        return {"label": "Open AI visibility", "nav": nav.path("intel")}
+    return None
 
 
 # Floors for the two co-movement links above. A handful of posts against a

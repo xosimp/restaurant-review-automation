@@ -99,6 +99,36 @@ MODULE_VIEW_PERMISSIONS = {
 
 _ALL_MODULES = frozenset(MODULE_VIEW_PERMISSIONS.values())
 
+# Counting stock, receiving deliveries and logging waste - the stock work,
+# split from the margins (friction audit U2-27). A shift manager is the one
+# who counts the walk-in and signs for the truck, but FOOD_COST_VIEW is
+# withheld from ROLE_MANAGER on purpose (margins), so the count sheet was
+# closed to exactly the person who does the count. Every console role holds
+# this; it opens ONLY the paths in FOOD_COST_ENTER_PATHS, and those routes
+# withhold every dollar figure from a login without FOOD_COST_VIEW.
+FOOD_COST_ENTER = "foodcost.enter"
+
+# (method, path regex) pairs FOOD_COST_ENTER opens inside the "inventory"
+# module gate, web and mobile (auth._module_permission_denied).
+FOOD_COST_ENTER_PATHS = (
+    ("GET", r"^/(mobile/)?api/food-cost/count-sheet$"),
+    ("POST", r"^/(mobile/)?api/food-cost/count-sheet$"),
+    ("GET", r"^/(mobile/)?api/food-cost/purchase-orders$"),
+    ("POST", r"^/(mobile/)?api/food-cost/purchase-orders/\d+/received$"),
+    ("POST", r"^/(mobile/)?api/food-cost/waste$"),
+)
+
+
+def enter_path_allowed(user, method, path) -> bool:
+    """Whether FOOD_COST_ENTER lets `user` through the inventory gate on this
+    request - it must be one of the stock-work paths, and the login must
+    hold the permission."""
+    import re
+    if not has_permission(user, FOOD_COST_ENTER):
+        return False
+    m = (method or "").upper()
+    return any(m == meth and re.match(rx, path or "") for meth, rx in FOOD_COST_ENTER_PATHS)
+
 # Comp, void and refund patterns (loss_detection.py). Its own permission, not
 # part of FOOD_COST_VIEW: a loss signal can name the manager who approved the
 # comps, so an owner opening the numbers to a GM is a separate decision from
@@ -139,6 +169,7 @@ ALL_PERMISSIONS = frozenset({
     TASKS_COMPLETE_OWN,
     PROFILE_MANAGE_OWN,
     LOSS_VIEW,
+    FOOD_COST_ENTER,
 }) | _ALL_MODULES
 
 
@@ -158,6 +189,7 @@ _CONSOLE_BASE = frozenset({
     DASHBOARD_ACCESS,
     TEAM_RATE,          # can_manage_team defaults open, and nothing sets it to 0
     MARKETING_APPROVE,
+    FOOD_COST_ENTER,    # counts, receiving, waste - kept by a manager (U2-27)
 }) | _ALL_MODULES       # every module, which is what holding the console meant
 
 ROLE_PERMISSIONS = {

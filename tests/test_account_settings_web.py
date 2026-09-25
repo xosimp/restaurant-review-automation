@@ -114,6 +114,29 @@ def test_hours_and_closures_round_trip(client, db_path, monkeypatch):
     assert shown["closures"] == ["2026-11-26", "2026-12-25"]
 
 
+def test_account_closures_are_the_schedulers_closed_dates(client, db_path, monkeypatch):
+    """Friction audit U2-3: Account's closures box said "used when generating
+    schedules" and wrote the marketing holiday-skip list, which the scheduler
+    never reads - and saving hours with it empty wiped that list."""
+    import schedule_rules
+    from models import update_restaurant
+    rid = _restaurant(db_path)
+    _login_as(monkeypatch, rid)
+    update_restaurant(rid, {"skip_holidays": "Christmas Day"}, db_path=db_path)
+    resp = client.post("/api/account-settings/hours", json={
+        "open": {}, "close": {}, "closures": ["12/25/26", "2027-01-01", "someday"]}).get_json()
+    assert resp["ok"] is True and resp["ignored"] == ["someday"]
+    r = get_restaurant(rid, db_path=db_path)
+    assert schedule_rules.closures(r)["closed_dates"] == ["2026-12-25", "2027-01-01"]
+    assert r.skip_holidays == "Christmas Day", "the marketing list is its own setting"
+    # A date Labor's rules added shows in Account: one list, two doors.
+    schedule_rules.save_closures(rid, closed_dates=["2026-11-26"], db_path=db_path)
+    assert client.get("/api/account-settings").get_json()["hours"]["closures"] == ["2026-11-26"]
+    # Saving hours without sending closures leaves them alone.
+    client.post("/api/account-settings/hours", json={"open": {"Monday": "09:00"}, "close": {}})
+    assert schedule_rules.closures(get_restaurant(rid, db_path=db_path))["closed_dates"] == ["2026-11-26"]
+
+
 def test_data_retention_accepts_only_the_offered_choices(client, db_path, monkeypatch):
     rid = _restaurant(db_path)
     _login_as(monkeypatch, rid)

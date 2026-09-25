@@ -3260,9 +3260,13 @@ def _module_permission_denied(user):
         key = _required_module(request.path or "")
         if not key:
             return None
-        from permissions import MODULE_VIEW_PERMISSIONS, has_permission
+        from permissions import MODULE_VIEW_PERMISSIONS, has_permission, enter_path_allowed
         needed = MODULE_VIEW_PERMISSIONS.get(key)
         if not needed or has_permission(user, needed):
+            return None
+        # Counting, receiving and logging waste are open to FOOD_COST_ENTER
+        # without the margins (U2-27); those routes withhold every dollar.
+        if key == "inventory" and enter_path_allowed(user, request.method, request.path or ""):
             return None
         from models import module_label
         return module_label(key)

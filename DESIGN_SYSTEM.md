@@ -288,6 +288,26 @@ other rows (label + detail left, `AccountKVRow.rowHeight`); web is an
 Validation reads as a plain sentence under the control in `--red` /
 `.cavnarRed`: what went wrong and how to fix it.
 
+**Prefill, never pre-save (friction audit, 9/25/26).** Where the system
+already knows a value an owner would type — last week's budget, Google's
+listed hours, the POS guest count, the owner's own phone for alert contact
+1 — the form offers it and the owner saves. Web: a row of
+`cbtn-secondary cbtn-sm` source buttons led by a small `--ink3` label
+("Start from", `.dr-bud-pre`), or one `cbtn-text` "use it" link beside a
+suggested figure (`.lb2-cov-offer`); the status line then says where the
+figures came from and "Not saved yet". A field the source has nothing for
+stays blank — never 0. Dates the owner enters are a `type=date` input plus
+removable chips (`.rul-ov`, M/D/YY), never a comma-separated text box.
+
+**Editable lines before an outward send.** A list that will be emailed
+(the supplier order) shows each line with a numeric `.fc2-inv-in` input and
+a running total; the send button names the recipient and the total
+("Send to Sysco · $412"), and pressing it opens an inline `.fc2-inv-note`
+strip that names the address, the item count and the total with "Send it" /
+"Not yet" — the confirm surface for an outward action, never `confirm()`.
+A read that the ledger keeps current (the ingredient price monitor) opens
+read-only with one "Edit" button that unlocks it.
+
 ---
 
 ## 8. Tables

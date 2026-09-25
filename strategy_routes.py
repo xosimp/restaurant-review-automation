@@ -55,6 +55,13 @@ def _sees_food(u):
     return bool(u.get("is_admin")) or has_permission(u, FOOD_COST_VIEW)
 
 
+def _enters_food(u):
+    """The stock work - counts, receiving, waste - which a manager holds
+    without the margins (permissions.FOOD_COST_ENTER, U2-27)."""
+    from permissions import has_permission, FOOD_COST_ENTER
+    return _sees_food(u) or has_permission(u, FOOD_COST_ENTER)
+
+
 def _metric_visible(u, metric):
     """Food cost and waste need FOOD_COST_VIEW; comps and voids need
     LOSS_VIEW (re-audit A27) — a comp result can name the manager who
@@ -540,7 +547,15 @@ def _do_invoice_get(u, import_id):
 
 def _do_invoice_apply(u, import_id):
     import invoices
-    sel = _body().get("lines")
+    b = _body()
+    sel = b.get("lines")
+    if b.get("use_checked") is True and not sel:
+        # "Apply the checked lines" (Ask's apply_invoice_lines): the stored
+        # invoice's own preselected lines, never costs sent by the caller.
+        sel = invoices.checked_selections(invoices.get_import(_rid(u), import_id))
+        if not sel:
+            return {"ok": False, "error": "No checked lines are left on that invoice - "
+                                         "open it on Food Cost to settle the rest."}, 409
     if not isinstance(sel, list) or not sel:
         return {"ok": False, "error": "Pick at least one line to update."}, 400
     out = invoices.apply(_rid(u), import_id, sel, user_id=u.get("id"))
@@ -778,8 +793,8 @@ def _do_auto_order_set(u):
 # sheet opens filled with that number; the owner corrects, not types.
 
 def _do_count_sheet_get(u):
-    if not _sees_food(u):
-        return _forbidden("Only someone who can see food cost can count.")
+    if not _enters_food(u):
+        return _forbidden("Only someone who can count stock can count.")
     import inventory_ledger
     rows = inventory_ledger.list_ingredients(_rid(u))
     out = [{"ingredient_id": r["id"], "name": r["name"], "unit": r.get("unit") or "",
@@ -793,8 +808,8 @@ def _do_count_sheet_get(u):
 
 
 def _do_count_sheet_save(u):
-    if not _sees_food(u):
-        return _forbidden("Only someone who can see food cost can count.")
+    if not _enters_food(u):
+        return _forbidden("Only someone who can count stock can count.")
     import inventory_ledger
     from client_api import log_account_event
     b = _body()
@@ -1090,7 +1105,9 @@ def _do_covers_get(u):
     if not _sees_labor(u):
         return _forbidden("Only someone who can see labor can see covers.")
     import covers
-    return {"ok": True, "days": covers.recent(_rid(u))}, 200
+    # What the POS counted on nights nobody entered (U2-18) - offered, never
+    # written until the owner takes it.
+    return {"ok": True, "days": covers.recent(_rid(u)), "pos_offers": covers.pos_offers(_rid(u))}, 200
 
 
 def _do_covers_save(u):
@@ -1104,7 +1121,9 @@ def _do_covers_save(u):
         rows = covers.parse_csv(b.get("csv") or "")
     if not rows:
         return {"ok": False, "error": "Send rows of date and covers, or a CSV with those two columns."}, 400
-    out = covers.save(_rid(u), rows, source="manual")
+    # A POS guest count the owner accepted is recorded as such, so it can be
+    # told apart from a count someone made (U2-18).
+    out = covers.save(_rid(u), rows, source="pos_confirmed" if b.get("from_pos") is True else "manual")
     if out["written"]:
         log_account_event(_rid(u), "covers_imported", current_user=u, detail=f"{out['written']} days")
     return {"ok": True, **out}, 200
@@ -3292,6 +3311,38 @@ def _do_dsr_budget(u):
                                   for d, g, n in clean]}, 200
 
 
+def _do_dsr_budget_prefill(u):
+    """Suggested budget figures for a week (friction audit U2-11) -
+    ?start=YYYY-MM-DD (the week's first night), ?from=last_week|last_year|
+    forecast, ?pct= (last_year only, -50..100). Owner view only, like the
+    budget itself. Nothing is saved: the editor fills in and the owner saves."""
+    from dsr import store
+    refused = _dsr_owner_only(u)
+    if refused:
+        return refused
+    start = _dsr_day(request.args.get("start"))
+    if start is None:
+        return {"ok": False, "error": "The start date must be YYYY-MM-DD."}, 400
+    source = (request.args.get("from") or "").strip()
+    if source not in store.PREFILL_SOURCES:
+        return {"ok": False, "error": "Prefill from last_week, last_year or forecast."}, 400
+    try:
+        pct = float(request.args.get("pct") or 0)
+    except ValueError:
+        return {"ok": False, "error": "The percentage must be a number."}, 400
+    if pct != pct or not -50 <= pct <= 100:
+        return {"ok": False, "error": "The percentage must be between -50 and 100."}, 400
+    try:
+        n = int(request.args.get("days") or 7)
+    except ValueError:
+        n = 7
+    n = max(1, min(n, 14))
+    from datetime import timedelta as _td_b
+    dates = [start + _td_b(days=i) for i in range(n)]
+    out = store.budget_prefill(_rid(u), dates, source, pct=pct if source == "last_year" else 0)
+    return {"ok": True, **out}, 200
+
+
 def _do_dsr_category(u):
     """Map a POS department to a DSR category — {pos_name, category}. One of
     Erik's six (matched case-insensitively) or the owner's own label; never
@@ -3594,6 +3645,7 @@ _ROUTES = [
     ("/dsr/history/template.csv", ["GET"], _do_dsr_history_template, "dsr_history_template"),
     ("/dsr/week.xlsx", ["GET"], _do_dsr_week_xlsx, "dsr_week_xlsx"),
     ("/dsr/budget", ["POST"], _do_dsr_budget, "dsr_budget"),
+    ("/dsr/budget/prefill", ["GET"], _do_dsr_budget_prefill, "dsr_budget_prefill"),
     ("/dsr/category", ["POST"], _do_dsr_category, "dsr_category"),
     ("/dsr/settings", ["GET"], _do_dsr_settings_get, "dsr_settings_get"),
     ("/dsr/settings", ["POST"], _do_dsr_settings_set, "dsr_settings_set"),
