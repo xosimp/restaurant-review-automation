@@ -41,6 +41,14 @@ SCENARIOS = {
     # A weak comparison, the viewer at the middle: a ranking word is rewritten.
     "tacos_middle": {"category": "mexican", "set": True, "n": 12, "viewer_completeness": 0.45,
                      "base": {"labor_pct_28d": 26.0}, "viewer": {"labor_pct_28d": 27.1}},
+    # The re-audit's probe restaurant (R3-1 to R3-3, 9/24/26): the same group,
+    # the viewer in the WORST quarter on labor % and on rating, and in the
+    # best quarter on labor hours per $1k — so a claim bound to the wrong
+    # metric, or read in the wrong direction, is visible.
+    "pizza_bottom": {"category": "pizza", "set": True, "n": 12,
+                     "base": {"labor_pct_28d": 28.0, "avg_rating_30d": 4.2, "labor_hours_per_1k_28d": 3.0},
+                     "steps": {"avg_rating_30d": 0.04},
+                     "viewer": {"labor_pct_28d": 33.4, "avg_rating_30d": 3.9, "labor_hours_per_1k_28d": 2.5}},
     # A lone sushi bar among 12 pizza places: only the all-types band, and
     # only for a behaviour metric.
     "platform": {"category": "sushi", "set": True, "n": 12, "alone": True,
@@ -90,9 +98,10 @@ def _scenario(name):
     peer_cat = "pizza" if sc.get("alone") else sc["category"]
     names = {"pizza": "Pizza", "mexican": "Tacos", "sushi": "Sushi"}
     cohorts = {}
+    steps = sc.get("steps") or {}
     for i in range(sc["n"]):
-        rid = add(f"{names[peer_cat]} Peer {i}", peer_cat, {k: round(v + i * 0.2 if v > 1 else v + i * 0.02, 3)
-                                                            for k, v in sc["base"].items()},
+        rid = add(f"{names[peer_cat]} Peer {i}", peer_cat,
+                  {k: round(v + i * steps.get(k, 0.2 if v > 1 else 0.02), 3) for k, v in sc["base"].items()},
                   set_type=sc["set"] or sc.get("alone"), email=f"p{i}")
         cohorts[rid] = peer_cat
     viewer = add(f"{names[sc['category']]} Viewer", sc["category"], sc["viewer"], set_type=sc["set"], email="v",

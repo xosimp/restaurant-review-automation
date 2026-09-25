@@ -72,10 +72,11 @@ SOURCES = {
     "depletion":  {"label": "Depletion",      "expected_lag": 1.0,  "grace": 1.0, "horizon": 7},
     # The peer bands a comparison rests on (Benchmarking audit BM3-9,
     # Top-50 #22), dated by intel_benchmarks.computed_at for the
-    # restaurant's own type (else the all-types band): weekly bands, a week
-    # of grace, and 49 days to 0 — benchmarks.MAX_BAND_AGE_WEEKS (8), past
-    # which a band is withheld anyway.
-    "cohort":     {"label": "Peer benchmarks", "expected_lag": 7.0, "grace": 7.0, "horizon": 49},
+    # restaurant's confirmed peer partitions (else the all-types band):
+    # weekly bands, a week of grace, and ONE age limit with the engine —
+    # benchmarks.MAX_BAND_AGE_WEEKS (8) × 7 = 56 days, past which the band
+    # is withheld (re-audit #24: 49 here while the engine served to 56).
+    "cohort":     {"label": "Peer benchmarks", "expected_lag": 7.0, "grace": 7.0, "horizon": 56},
 }
 # How often each source is refreshed when everything works, in hours, and
 # the owner's word for it. "Live" is said only of a source refreshed more
@@ -938,29 +939,41 @@ def _competitor(r, conn, today, now, ctx, db_path=None):
 
 
 def _cohort(r, conn, today, now, ctx, db_path=None):
-    """Dated by the newest intel_benchmarks row for the restaurant's own
-    type (categories.category_for), else the all-types ('platform') band —
-    the comparison it would be shown. No band ever computed is not_connected:
-    no figure rests on it yet."""
-    cat = None
+    """Dated by the bands the restaurant is ACTUALLY compared with
+    (Benchmarking re-audit #24, R2-8, R3-18): its owner-confirmed peer
+    partitions, one per metric family (categories.partition_key — the keys
+    the bands are stored under), the source as old as the OLDEST family's
+    newest band; with no confirmed profile, or no partition band yet, the
+    all-types ('platform') band. It read `cohort = <type>`, which no band
+    is stored under, so it always dated the platform band. No band ever
+    computed is not_connected: no figure rests on it yet."""
+    keys = []
     try:
         from intelligence import categories
-        cat = categories.category_for(r)[0]
+        prof = categories.profile_for(r)
+        keys = sorted({k for k in (categories.partition_key(prof, fam) for fam in categories.FAMILIES) if k})
     except Exception:
-        cat = None
-    row = None
-    for cohort in ([cat] if cat else []) + ["platform"]:
+        keys = []
+    dates = []
+    for key in keys:
         try:
-            row = conn.execute("SELECT MAX(computed_at) AS t, MAX(n) AS n FROM intel_benchmarks WHERE cohort=?",
-                               (cohort,)).fetchone()
+            row = conn.execute("SELECT MAX(computed_at) AS t FROM intel_benchmarks WHERE cohort=?", (key,)).fetchone()
         except Exception:
             row = None
-        if row and row["t"]:
-            break
-    d = _as_date(row["t"] if row else None)
-    if d is None:
+        d = _as_date(row["t"] if row else None)
+        if d is not None:
+            dates.append(d)
+    if not dates:
+        try:
+            row = conn.execute("SELECT MAX(computed_at) AS t FROM intel_benchmarks WHERE cohort='platform'").fetchone()
+        except Exception:
+            row = None
+        d = _as_date(row["t"] if row else None)
+        if d is not None:
+            dates.append(d)
+    if not dates:
         return _result("cohort", None, None, "No peer comparison computed yet", state="not_connected")
-    return _data_date_state("cohort", d, today, "Peer bands computed")
+    return _data_date_state("cohort", min(dates), today, "Peer bands computed")
 
 
 def _weather(r, conn, today, now, ctx, db_path=None):

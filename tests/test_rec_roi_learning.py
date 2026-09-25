@@ -252,7 +252,10 @@ def test_the_cohort_prior_is_used_only_over_the_floor_and_only_anonymous(db, mon
         calls.append((cohort, exclude_restaurant_id, window_days))
         return {"restaurants": 7, "answered_restaurants": 7, "measured_restaurants": 6, "available": True,
                 "answered": 40, "measured": 20, "improved": 14, "measured_capped": 20.0, "improved_capped": 14.0,
-                "acceptance_rate_shrunk": 0.8, "success_rate_shrunk": 0.7}
+                "acceptance_rate_shrunk": 0.8, "success_rate_shrunk": 0.7,
+                # kind_stats' own verdicts on its floors (restaurants AND
+                # organisations — Benchmarking re-audit #14).
+                "acceptance_available": True, "success_available": True}
     monkeypatch.setattr(intelligence, "recommendation_success", fake)
     m = rec_learning.effectiveness(rid, db_path=db)
     # The cohort without this restaurant: its own record is never inside its own prior (re-audit B3).
@@ -277,7 +280,8 @@ def test_the_cohort_prior_is_used_only_over_the_floor_and_only_anonymous(db, mon
     monkeypatch.setattr(intelligence, "recommendation_success",
                         lambda *a, **k: {"restaurants": 7, "answered_restaurants": 7, "measured_restaurants": 1,
                                          "available": True, "answered": 30, "measured": 10,
-                                         "acceptance_rate_shrunk": 0.8, "success_rate_shrunk": 0.95})
+                                         "acceptance_rate_shrunk": 0.8, "success_rate_shrunk": 0.95,
+                                         "acceptance_available": True, "success_available": False})
     assert rec_learning.effectiveness(rid, db_path=db).prior("trim_day") == (0.8, base)
 
 

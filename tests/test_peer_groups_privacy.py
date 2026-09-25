@@ -410,7 +410,7 @@ def test_a_patterns_figures_are_frozen_for_the_week(db_path):
         ids.append(_mk(db_path, f"Freeze {i}", profile=("counter", "pizza"), feats=f))
     cohorts = {r: "pizza" for r in ids}
     patterns.discover(db_path=db_path, cohorts=cohorts, shuffles=300, wall_seconds=60)
-    key = "pizza:reply_fast_rating"
+    key = "sm:counter:reply_fast_rating"        # the confirmed peer group, not the type (re-audit #21)
     first = get_conn(db_path).execute("SELECT effect, evidence_json FROM intel_patterns WHERE key=?", (key,)).fetchone()
     assert first and json.loads(first["evidence_json"])["week"] == WEEK
     conn = get_conn(db_path)

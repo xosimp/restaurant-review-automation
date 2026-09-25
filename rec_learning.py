@@ -788,9 +788,9 @@ class Effectiveness:
                                                         exclude_restaurant_id=self.rid,
                                                         window_days=PRIOR_WINDOW_DAYS)
                 privacy.assert_anonymous(s)
-                if s.get("answered") and privacy.cohort_ok(s.get("answered_restaurants")):
+                if s.get("answered") and s.get("acceptance_available"):
                     acc = float(s.get("acceptance_rate_shrunk") or 0.5)
-                if s.get("measured") and privacy.cohort_ok(s.get("measured_restaurants")):
+                if s.get("measured") and s.get("success_available"):
                     pm = float(s.get("measured_capped", s.get("measured")) or 0.0)
                     pi = float(s.get("improved_capped", s.get("improved")) or 0.0)
                     suc = _shrink(pi / pm if pm else None, pm, suc)
@@ -989,8 +989,10 @@ def effectiveness(restaurant_id, db_path=DB_PATH, restaurant=None, now=None) -> 
         if restaurant is None:
             restaurant = _models_mod.get_restaurant(restaurant_id, db_path=db_path)
         if restaurant is not None:
-            import intelligence
-            cohort = intelligence.cohort_for(restaurant)[0]
+            # Only a type the owner SET: a guessed type reads no group's
+            # record (Benchmarking re-audit R2-7, #14, #20).
+            from intelligence import categories as _cats
+            cohort = _cats.confirmed_type(restaurant)
     except Exception as e:
         print(f"[rec_learning] cohort unresolved for {restaurant_id}: {e}")
     try:
@@ -1018,12 +1020,14 @@ def kind_record(restaurant_id, kind, db_path=DB_PATH, restaurant=None, now=None,
        recent_half_life_days, base_rate, base_rate_source, base_rate_n,
        base_rate_basis, untaken}
     where `rate` is the own improved share only at MIN_MEASURED_FOR_RATE
-    measured; below that `source` is "cohort" when the anonymous cohort
-    (this restaurant excluded) clears privacy.cohort_ok and has at least
-    PRIOR_MIN_MEASURED measured results after no one restaurant is allowed
-    more than scoring.MAX_RESTAURANT_SHARE of them (the capped counts —
-    re-audit B2 #3; `prior_measured_raw` / `prior_improved_raw` are the
-    uncapped counts), else "none" and rate None. The cohort's `prior_*`
+    measured; below that `source` is "cohort" when the anonymous cohort of
+    the restaurant's CONFIRMED type (categories.confirmed_type; its whole
+    organisation excluded) clears privacy.cohort_ok and privacy.MIN_ORGS
+    organisations and has at least PRIOR_MIN_MEASURED measured results
+    after no one organisation is allowed more than
+    scoring.MAX_RESTAURANT_SHARE of them (the capped counts — re-audit B2
+    #3, Benchmarking re-audit #14; the uncapped counts are not returned),
+    else "none" and rate None. The cohort's `prior_*`
     counts are filled at ANY own count (group P): the confidence engine
     reads them only as its prior's centre, which they may only lower.
 
@@ -1082,7 +1086,8 @@ def kind_record(restaurant_id, kind, db_path=DB_PATH, restaurant=None, now=None,
         from intelligence import privacy
         if restaurant is None:
             restaurant = _models_mod.get_restaurant(restaurant_id, db_path=db_path)
-        cohort = intelligence.cohort_for(restaurant)[0] if restaurant is not None else None
+        from intelligence import categories as _cats
+        cohort = _cats.confirmed_type(restaurant)
         if cohort:
             s = intelligence.recommendation_success(kind, cohort=cohort, db_path=db_path,
                                                     exclude_restaurant_id=restaurant_id,
@@ -1092,10 +1097,12 @@ def kind_record(restaurant_id, kind, db_path=DB_PATH, restaurant=None, now=None,
             # eight results among twelve no longer stand as the cohort.
             pm = float(s.get("measured_capped", s.get("measured")) or 0)
             pi = float(s.get("improved_capped", s.get("improved")) or 0)
-            if pm >= PRIOR_MIN_MEASURED and privacy.cohort_ok(s.get("measured_restaurants")):
+            # Over MIN_COHORT restaurants from privacy.MIN_ORGS organisations,
+            # the viewer's own organisation out (scoring, re-audit #14) — and
+            # only the capped counts: the raw ones had no owner use and made
+            # one organisation's share recoverable (R1-02).
+            if pm >= PRIOR_MIN_MEASURED and s.get("success_available"):
                 out.update(prior_measured=int(round(pm)), prior_improved=int(round(pi)),
-                           prior_measured_raw=int(s.get("measured") or 0),
-                           prior_improved_raw=int(s.get("improved") or 0),
                            prior_restaurants=int(s.get("measured_restaurants") or 0))
                 # The label of the cohort ACTUALLY read (NS4 H4): never "like
                 # yours" when it is the whole platform.

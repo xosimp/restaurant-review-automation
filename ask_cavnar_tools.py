@@ -1231,8 +1231,14 @@ def _read_platform_intelligence(restaurant_id, _viewer=None):
     import intelligence
     from models import get_restaurant
     from intelligence import benchmarks as _b, engine as _eng, patterns as _p
+    from intelligence import categories as _cats
     r = get_restaurant(restaurant_id)
-    cohort, source = intelligence.cohort_for(r) if r else (None, None)
+    _guess, source = intelligence.cohort_for(r) if r else (None, None)
+    # Only a type the owner SET is named, and the peer groups are the
+    # owner-confirmed partitions (Benchmarking re-audit #20, #24, R2-8): a
+    # guessed type reads no group's comparisons or patterns.
+    cohort = _cats.confirmed_type(r)
+    groups = _p.viewer_cohorts(r)
     denied = _denied(_viewer)
     comps = [c for c in _eng.compare_all(restaurant_id, kinds=("peers", "platform", "industry"), restaurant=r)
              if intelligence.visible(c.get("metric"), denied)]
@@ -1244,18 +1250,23 @@ def _read_platform_intelligence(restaurant_id, _viewer=None):
         head = next((by[k] for k in ("peers", "platform") if by.get(k, {}).get("available")), None) or \
             by.get("peers") or {"available": False}
         bands.append(dict(head, metric=c["metric"], label=c.get("label")))
-    pats = [p for p in _p.active(cohort, limit=8)
+    pats = [p for p in _p.active(groups, limit=8)
             if intelligence._pattern_visible(p, denied) and not _p.pooled_on_economics(p)]
-    return {"cohort": cohort, "cohort_label": _b.cohort_label(cohort), "cohort_source": source,
-            "inferred": source == "inferred",
+    return {"cohort": cohort, "cohort_label": _b.cohort_label(groups.get("format")), "cohort_source": source,
+            "inferred": source == "inferred", "peer_groups": {k: _b.cohort_label(v) for k, v in groups.items()},
             "comparisons": comps, "lines": _eng.prompt_lines(comps), "benchmarks": bands, "patterns": pats,
-            "note": (f"Each comparison names its peer group: a band of this restaurant's own type on Cavnar, or "
-                     f"'other restaurants on Cavnar, all types' (behaviour metrics only). Bands are over at least "
-                     f"{_b.MIN_QUARTILE_N} other restaurants (this one left out), no older than "
+            "note": (f"Each comparison names its peer group: the restaurant's owner-confirmed peer group on "
+                     f"Cavnar — how it serves (counter, full service, bar-led), split further for labor by bar-led "
+                     f"and for food cost by menu family — or 'other restaurants on Cavnar, all types' (behaviour "
+                     f"metrics only). Bands are over at least {_b.MIN_QUARTILE_N} other restaurants from "
+                     f"several owners (this restaurant's own organisation left out), no older than "
                      f"{_b.MAX_BAND_AGE_WEEKS} weeks. Quote the group, n and as_of with any band; under 75% comparison "
-                     "strength use no ranking word. A comparison that is unavailable carries why_not — say it. "
-                     + ("This restaurant's type was inferred from its name, not set by the owner — say so. "
-                        if source == "inferred" else ""))}
+                     "strength use no ranking word. A published figure marked comparable false is measured "
+                     "differently — context only, never compared. A comparison that is unavailable carries why_not "
+                     "— say it. "
+                     + ("This restaurant's profile is not confirmed (its type was only guessed from its name), so "
+                        "it is compared with no peer group — say so, and that confirming it in Account fixes that. "
+                        if not groups else ""))}
 
 
 def _read_decisions(restaurant_id, limit=20, _viewer=None):

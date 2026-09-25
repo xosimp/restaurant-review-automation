@@ -2,9 +2,17 @@
 
 A hypothesis is data: a behaviour feature and the split that defines
 "does it", an outcome feature, the direction that counts as better, and
-a sentence template. Discovery runs every hypothesis for every cohort
+a sentence template. Discovery runs every hypothesis for every peer group
 that clears the floor (and platform-wide), and a pattern is written only
 when:
+
+  (The groups are the owner-CONFIRMED peer partitions the bands use —
+  each hypothesis inside the partition of its own metric family — over the
+  members a band may have: jobs.eligible_members, and never a $26/hr
+  default-wage restaurant for a labor-cost outcome. A restaurant with no
+  confirmed group is served only the all-types patterns. Benchmarking
+  re-audit #20, #21.)
+
 
   * each side of the split has ≥ MIN_GROUP restaurants,
   * |Cohen's d| ≥ MIN_EFFECT_D,
@@ -311,7 +319,8 @@ def _prospective_sentence(h, cand, cohort_label, n_total):
     eff = cand["effect"]
     direction = "higher" if eff > 0 else "lower"
     size = f"{abs(eff):.2f}" if h["unit"] == "★" else f"{abs(eff):.1f}"
-    return (f"Across {n_total} {cohort_label.lower()}, those that {h['did']} saw {h['outcome_text']} end "
+    who = cohort_label[:1].lower() + cohort_label[1:]
+    return (f"Across {n_total} {who}, those that {h['did']} saw {h['outcome_text']} end "
             f"{size}{h['unit']} {direction} over the following {HORIZON_WEEKS} weeks than those that did not — "
             f"measured after the behaviour, compared within each type; an association, not proof of cause.")
 
@@ -321,7 +330,7 @@ def _sentence(h, cand, cohort_label, n_total):
     eff = cand["effect"]
     direction = "higher" if eff > 0 else "lower"
     text = h["sentence"].format(effect_abs=abs(eff), effect_pct=abs(eff) * 100, direction=direction)
-    return f"Across {n_total} {cohort_label.lower()}, {text}."
+    return f"Across {n_total} {cohort_label[:1].lower() + cohort_label[1:]}, {text}."
 
 
 def _confidence(cand) -> float:
@@ -389,33 +398,112 @@ def _cursor(conn, value=None):
                  (CURSOR_KEY, str(value)))
 
 
-def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles=SHUFFLES,
-             wall_seconds=DISCOVER_WALL_SECONDS, members: dict = None) -> dict:
-    """Run every hypothesis over every cohort that clears the floor, plus
-    platform-wide — cross-sectional and prospective. `cohorts` is
-    {restaurant_id: category or None}; `members` (jobs.member_info) lets
-    each side of a split be counted by organisation (#11).
+# Which hard split a hypothesis is read inside (categories.partition_key):
+# the strictest family of its outcome and its behaviour — a labor outcome
+# is read among restaurants that staff alike, a food one among the same
+# menu family (Benchmarking re-audit R1-09, R2-8).
+_FAMILY_ORDER = {"format": 0, "labor": 1, "food": 2}
 
-    Bounded and resumable (CLAUDE.md): cohorts run in name order from the
+
+def family_of(h) -> str:
+    from . import metrics_registry as reg
+    keys = [h.get("outcome")] + ([h["behaviour"][0]] if h.get("behaviour") else [])
+    fams = [reg.partition_family(k) for k in keys if k]
+    fams = [f if f in _FAMILY_ORDER else "labor" for f in fams]
+    return max(fams, key=_FAMILY_ORDER.get) if fams else "format"
+
+
+def _labor_cost(h) -> bool:
+    from . import metrics_registry as reg
+    return h.get("outcome") in reg.LABOR_COST_METRICS or \
+        (bool(h.get("behaviour")) and h["behaviour"][0] in reg.LABOR_COST_METRICS)
+
+
+def _hypothesis(key):
+    return next((h for h in HYPOTHESES + PROSPECTIVE_HYPOTHESES if h["key"] == key), None)
+
+
+def viewer_cohorts(restaurant) -> dict:
+    """{family: partition key} — the confirmed peer groups a restaurant's
+    patterns are read from, one per metric family; {} for a profile the
+    owner has not confirmed (a guess reads no group's patterns, only the
+    all-types ones)."""
+    if restaurant is None:
+        return {}
+    try:
+        prof = categories.profile_for(restaurant)
+    except Exception:
+        return {}
+    out = {}
+    for fam in categories.FAMILIES:
+        k = categories.partition_key(prof, fam)
+        if k:
+            out[fam] = k
+    return out
+
+
+def _group_label(cohort) -> str:
+    if cohort == "platform":
+        return "restaurants on Cavnar (all types)"
+    if categories.is_partition(cohort):
+        return categories.partition_label(cohort)
+    return f"{categories.label(cohort).lower()} on Cavnar"
+
+
+def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles=SHUFFLES,
+             wall_seconds=DISCOVER_WALL_SECONDS, members: dict = None, partitions: dict = None) -> dict:
+    """Run every hypothesis over every peer group that clears the floor,
+    plus platform-wide — cross-sectional and prospective.
+
+    The members are the ones a band may have (Benchmarking re-audit #21,
+    R1-09 / R2-8): jobs.eligible_members — live MIN_LIVE_WEEKS, half its
+    measures on file, one per Google listing, no test account — and a
+    labor-cost outcome never counts a restaurant on the $26/hr default
+    wage. The groups are the owner-CONFIRMED peer partitions
+    (`partitions`, jobs.peer_partitions; read here when not given), each
+    hypothesis inside the partition of its own metric family (family_of),
+    never the restaurant type. `cohorts` (a type map) is no longer a
+    grouping; it is accepted so older callers keep working. `members`
+    (jobs.member_info, read here when not given) counts each side of a
+    split by organisation (#11).
+
+    Bounded and resumable (CLAUDE.md): groups run in name order from the
     cursor, the first one always runs, and once `wall_seconds` has passed the
-    pass stops and records the last cohort it finished. Only cohorts actually
-    tested tonight can have a pattern retired for failing; a cohort below the
+    pass stops and records the last group it finished. Only groups actually
+    tested tonight can have a pattern retired for failing; a group below the
     floor is retired whether tested or not."""
     import time
+    from . import jobs as _jobs
     latest = _features.latest_by_restaurant(db_path=db_path)
-    cohorts = cohorts or {}
+    if members is None:
+        members = _jobs.member_info(db_path=db_path, today=today)
     members_info = members or {}
+    if partitions is None:
+        partitions = _jobs.peer_partitions(members_info, latest=latest, db_path=db_path, today=today)
+    partitions = partitions or {}
+    elig, _skipped = _jobs.eligible_members(latest, members_info)
 
     def _org(rid):
         return (members_info.get(rid) or {}).get("org_hash") or privacy.org_hash(f"r{rid}")
-    latest = {rid: dict(row, _org=_org(rid)) for rid, row in latest.items()}
+    latest = {rid: dict(row, _org=_org(rid), _rid=rid) for rid, row in latest.items() if rid in elig}
     week = _features.iso_week(today or date.today())
-    groups = {"platform": list(latest)}
+    fam_groups = {fam: {"platform": list(latest)} for fam in _FAMILY_ORDER}
     for rid in latest:
-        c = cohorts.get(rid)
-        if c:
-            groups.setdefault(c, []).append(rid)
-    eligible = sorted(c for c, rids in groups.items() if privacy.cohort_ok(len(rids)))
+        for fam in _FAMILY_ORDER:
+            key = (partitions.get(rid) or {}).get(fam) if isinstance(partitions.get(rid), dict) else None
+            if key:
+                fam_groups[fam].setdefault(key, []).append(rid)
+
+    def _format_key(rid):
+        entry = partitions.get(rid)
+        return entry.get("format") if isinstance(entry, dict) else None
+
+    def _members_for(h, rids):
+        if _labor_cost(h):
+            return [r for r in rids if (members_info.get(r) or {}).get("cost_basis") != "default"]
+        return list(rids)
+
+    eligible = sorted({k for fam, gs in fam_groups.items() for k, rids in gs.items() if privacy.cohort_ok(len(rids))})
     conn = get_conn(db_path)
     try:
         after = _cursor(conn)
@@ -434,19 +522,24 @@ def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles
         if i > 0 and time.monotonic() > deadline:
             stopped_early = True
             break
-        rids = groups[cohort]
-        rows = [latest[r] for r in rids]
         for h in HYPOTHESES:
+            rids = _members_for(h, fam_groups[family_of(h)].get(cohort) or [])
+            if not privacy.cohort_ok(len(rids)):
+                continue
+            rows = [latest[r] for r in rids]
             cand = test_hypothesis(rows, h, shuffles=shuffles)
             if cand:
                 cand["cohort"] = cohort
                 cand["n_total"] = len(rows)
                 cand["hypothesis"] = h
                 candidates.append(cand)
-        members = {r: pairs[r] for r in rids if r in pairs}
-        strata_of = (lambda r: cohorts.get(r)) if cohort == "platform" else (lambda r, _c=cohort: _c)
+        strata_of = (lambda r: _format_key(r)) if cohort == "platform" else (lambda r, _c=cohort: _c)
         for h in PROSPECTIVE_HYPOTHESES:
-            cand = test_prospective(members, h, strata_of, shuffles=shuffles, org_of=_org)
+            rids = _members_for(h, fam_groups[family_of(h)].get(cohort) or [])
+            if not privacy.cohort_ok(len(rids)):
+                continue
+            group_pairs = {r: pairs[r] for r in rids if r in pairs}
+            cand = test_prospective(group_pairs, h, strata_of, shuffles=shuffles, org_of=_org)
             if cand:
                 cand["cohort"] = cohort
                 cand["n_total"] = cand["n_with"] + cand["n_without"]
@@ -477,8 +570,7 @@ def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles
             key = f"{c['cohort']}:{h['key']}"
             # The cohort actually tested, named as such (NS4 H4): a type's
             # label, or every restaurant on Cavnar — never "like yours".
-            label = (f"{categories.label(c['cohort']).lower()} on Cavnar" if c["cohort"] != "platform"
-                     else "restaurants on Cavnar (all types)")
+            label = _group_label(c["cohort"])
             row = {"key": key, "cohort": c["cohort"], "hypothesis": h["key"], "n_with": c["n_with"], "n_without": c["n_without"],
                    "effect": privacy.round_effect(c["effect"], 3), "effect_unit": h["unit"],
                    "cohen_d": privacy.round_effect(c["cohen_d"], 3), "p_value": round(c["p_value"], 4),
@@ -525,8 +617,10 @@ def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles
         # Only cohorts TESTED tonight: a cohort the wall clock never reached
         # keeps its patterns until the next pass reaches it (BM4-14).
         tested = set(tested_now)
-        for r in conn.execute("SELECT key, cohort FROM intel_patterns WHERE status='active'").fetchall():
-            below_floor = not privacy.cohort_ok(len(groups.get(r["cohort"]) or []))
+        for r in conn.execute("SELECT key, cohort, hypothesis FROM intel_patterns WHERE status='active'").fetchall():
+            h = _hypothesis(r["hypothesis"])
+            fams = [family_of(h)] if h else list(_FAMILY_ORDER)
+            below_floor = not any(privacy.cohort_ok(len(fam_groups[f].get(r["cohort"]) or [])) for f in fams)
             if below_floor or (r["cohort"] in tested and r["key"] not in active_keys):
                 conn.execute("UPDATE intel_patterns SET status='retired', computed_at=datetime('now') WHERE key=?", (r["key"],))
                 retired += 1
@@ -571,31 +665,46 @@ def owner_projection(d) -> dict | None:
     return out
 
 
-def active(cohort: str = None, db_path=DB_PATH, include_platform=True, limit=20, projection="owner") -> list:
-    """Active patterns for a cohort, with platform-wide ones after them,
+def active(cohort=None, db_path=DB_PATH, include_platform=True, limit=20, projection="owner",
+           all_cohorts=False) -> list:
+    """Active patterns for a peer group, with platform-wide ones after them,
     each re-confirmed within MAX_PATTERN_AGE_DAYS and carrying `as_of`
     (M/D/YY). Rows are anonymous by construction; asserted again on the
     way out. `projection="owner"` (the default — Ask, the prompts, the
     confidence model) applies owner_projection; the admin page passes
-    "admin"."""
+    "admin".
+
+    `cohort` is a viewer's {family: partition key} (viewer_cohorts) — a
+    pattern is served only from the partition of its own hypothesis's
+    family — or one group key. With no cohort only the all-types patterns
+    are served (Benchmarking re-audit R2-7: a restaurant with no confirmed
+    group read every group's patterns); `all_cohorts=True` is the admin
+    view of every group."""
+    by_family = dict(cohort) if isinstance(cohort, dict) else None
+    keys = sorted(set(by_family.values())) if by_family is not None else ([cohort] if cohort else [])
     fresh = f"AND last_confirmed >= datetime('now', '-{int(MAX_PATTERN_AGE_DAYS)} days')"
     conn = get_conn(db_path)
     try:
-        if cohort and include_platform:
-            rows = conn.execute(f"SELECT * FROM intel_patterns WHERE status='active' {fresh} AND cohort IN (?, 'platform') "
-                                "ORDER BY CASE WHEN cohort=? THEN 0 ELSE 1 END, confidence DESC LIMIT ?",
-                                (cohort, cohort, int(limit))).fetchall()
-        elif cohort:
-            rows = conn.execute(f"SELECT * FROM intel_patterns WHERE status='active' {fresh} AND cohort=? "
-                                "ORDER BY confidence DESC LIMIT ?", (cohort, int(limit))).fetchall()
-        else:
+        if all_cohorts:
             rows = conn.execute(f"SELECT * FROM intel_patterns WHERE status='active' {fresh} "
                                 "ORDER BY confidence DESC LIMIT ?", (int(limit),)).fetchall()
+        else:
+            want = keys + (["platform"] if include_platform or not keys else [])
+            if not want:
+                return []
+            marks = ",".join("?" for _ in want)
+            rows = conn.execute(f"SELECT * FROM intel_patterns WHERE status='active' {fresh} AND cohort IN ({marks}) "
+                                "ORDER BY CASE WHEN cohort='platform' THEN 1 ELSE 0 END, confidence DESC LIMIT ?",
+                                (*want, int(limit) * (3 if by_family else 1))).fetchall()
     finally:
         conn.close()
     out = []
     for r in rows:
         d = dict(r)
+        if by_family is not None and d.get("cohort") != "platform":
+            h = _hypothesis(d.get("hypothesis"))
+            if h is not None and by_family.get(family_of(h)) != d.get("cohort"):
+                continue          # another family's group under the same key
         d["evidence"] = json.loads(d.pop("evidence_json") or "{}")
         d.pop("id", None)
         d["as_of"] = _as_of(d.get("last_confirmed"))
@@ -604,6 +713,8 @@ def active(cohort: str = None, db_path=DB_PATH, include_platform=True, limit=20,
             if d is None:
                 continue
         out.append(privacy.assert_anonymous(strength_fields(d)))
+        if len(out) >= int(limit):
+            break
     return out
 
 
@@ -622,7 +733,7 @@ def all_patterns(db_path=DB_PATH, limit=100) -> list:
     return out
 
 
-def support_for(rec_kind: str, cohort: str = None, db_path=DB_PATH) -> dict | None:
+def support_for(rec_kind: str, cohort=None, db_path=DB_PATH) -> dict | None:
     """The strongest active pattern whose rec_kinds cover this kind — never
     a platform-pooled one about an economics metric (pooled_on_economics)."""
     kind = (rec_kind or "").split(":")[0]

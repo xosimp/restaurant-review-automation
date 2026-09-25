@@ -218,6 +218,21 @@ def category_for(restaurant):
     return (guess, "inferred") if guess else (None, None)
 
 
+def confirmed_type(restaurant) -> str | None:
+    """The restaurant's type when the owner (or an admin) SET it — the
+    confirmed profile's concept, else an explicitly set `category` — and
+    None when Cavnar only guessed it from the name. The one accessor every
+    cross-restaurant read takes its type from (recommendation priors, the
+    confidence model's cohort, the Ask label): a guess never makes a
+    restaurant a member of a group, and never reads one's record
+    (Benchmarking re-audit R2-7, R1-09). Never raises."""
+    try:
+        cat, src = category_for(restaurant) if restaurant is not None else (None, None)
+    except Exception:
+        return None
+    return cat if src == "set" else None
+
+
 def label(category) -> str:
     """A type's label. No type means the comparison is platform-wide, and
     it is named that way — never "Restaurants like yours" (NS4 H4)."""

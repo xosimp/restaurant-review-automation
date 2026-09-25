@@ -658,11 +658,15 @@ def client_settings_page(restaurant_id, current_user):
     # The benchmark hints by this restaurant's type, each with its source
     # and year, or none (benchmark_registry, NS4 L2): the page said
     # "Industry average $22–28/hr" and "typically 28–35%" with no source.
-    import benchmark_registry as _br
+    # Through the Benchmark Engine's industry kind (Benchmarking re-audit
+    # #5, R1-17): nothing for a type Cavnar only guessed, and a figure
+    # measured differently from Cavnar's is marked context only.
+    import intelligence as _intel_hints
     bench_hints = {}
-    for key, metric, what in (("labor", "labor_pct", "Labor %"), ("food", "food_cost_pct", "Food cost %")):
-        e = _br.for_restaurant(metric, restaurant)
-        bench_hints[key] = _br.line(e, what) if e else None
+    for key, metric in (("labor", "labor_pct_28d"), ("food", "food_cost_pct_28d")):
+        got = _intel_hints.industry_read(restaurant, metric)
+        bench_hints[key] = ((got["comparison"].get("line") or "")
+                            + (f" {got['definition_note']}" if got.get("definition_note") else "")) if got else None
     return render_template('client_settings.html',
         current_user=current_user,
         restaurant=restaurant,

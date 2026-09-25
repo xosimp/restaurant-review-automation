@@ -520,8 +520,23 @@ def test_a_type_difference_is_not_a_prospective_effect():
     assert within is None or within["p_value"] > 0.05                  # the stratified test is not
 
 
+# A member a pattern may be read from (Benchmarking re-audit #21): live 17
+# weeks, in an owner-confirmed peer group.
+_LIVE = (date.today() - timedelta(days=120)).isoformat() + "T00:00:00"
+
+
+def _member(db_path, name, service_model="counter", concept="pizza"):
+    rid = _rid(db_path, name, created_at=_LIVE, hourly_rate=18.0)
+    conn = get_conn(db_path)
+    conn.execute("UPDATE restaurants SET service_model=?, concept=?, category=?, profile_source='set' WHERE id=?",
+                 (service_model, concept, concept, rid))
+    conn.commit()
+    conn.close()
+    return rid
+
+
 def test_discovery_stores_a_prospective_pattern_marked_as_such(db_path):
-    rids = [_rid(db_path, f"Prospect {i}") for i in range(12)]
+    rids = [_member(db_path, f"Prospect {i}") for i in range(12)]
     t = features.iso_week(date.today() - timedelta(weeks=14))
     t_h = patterns._week_plus(t, patterns.HORIZON_WEEKS)
     conn = get_conn(db_path)
@@ -540,8 +555,10 @@ def test_discovery_stores_a_prospective_pattern_marked_as_such(db_path):
     got = [p for p in patterns.all_patterns(db_path=db_path) if p["hypothesis"] == "prospective_reply_fast_rating"]
     assert got, "the planted prospective effect was not found"
     by = {p["cohort"]: p for p in got}
-    assert by["pizza"]["evidence"]["prospective"] is True and by["pizza"]["evidence"]["pooled_types"] is False
-    assert "following 13 weeks" in by["pizza"]["sentence"]
+    # Read inside the confirmed peer group (counter service), never the type.
+    assert by["sm:counter"]["evidence"]["prospective"] is True
+    assert by["sm:counter"]["evidence"]["pooled_types"] is False
+    assert "following 13 weeks" in by["sm:counter"]["sentence"]
     if "platform" in by:
         assert by["platform"]["evidence"]["pooled_types"] is True
     for p in got:
@@ -552,26 +569,30 @@ def test_discovery_stores_a_prospective_pattern_marked_as_such(db_path):
 
 def test_discovery_is_bounded_resumable_and_retires_only_what_it_tested(db_path):
     wk = features.iso_week(date.today())
-    cohorts = {_rid(db_path, f"Bound {cat} {i}"): cat for cat in ("bar", "cafe") for i in range(6)}
+    # Two confirmed peer groups of six (Benchmarking re-audit #21: groups are
+    # partitions, walked in name order after "platform").
+    cohorts = {_member(db_path, f"Bound {sm} {i}", service_model=sm, concept=c): sm
+               for sm, c in (("bar_led", None), ("counter", None)) for i in range(6)}
     conn = get_conn(db_path)
     for r in cohorts:
-        if True:
-            conn.execute("INSERT INTO intel_features (restaurant_id, week, features_json, completeness) "
-                         "VALUES (?,?,?,0.5)", (r, wk, json.dumps({"labor_pct_28d": 30})))
+        conn.execute("INSERT INTO intel_features (restaurant_id, week, features_json, completeness) "
+                     "VALUES (?,?,?,0.5)", (r, wk, json.dumps({"labor_pct_28d": 30})))
     conn.execute("INSERT INTO intel_patterns (key, cohort, hypothesis, n_with, n_without, effect, cohen_d, p_value, "
-                 "q_value, confidence, sentence, status) VALUES ('platform:h','platform','h',5,5,0.2,0.5,0.01,0.05,"
-                 "0.6,'Across 12 restaurants, x.','active')")
+                 "q_value, confidence, sentence, status) VALUES ('sm:counter:h','sm:counter','h',5,5,0.2,0.5,0.01,"
+                 "0.05,0.6,'Across 6 counter-service restaurants on Cavnar, x.','active')")
     conn.commit()
     conn.close()
     first = patterns.discover(db_path=db_path, cohorts=cohorts, shuffles=50, wall_seconds=0)
-    assert first["complete"] is False and first["cohorts_tested"] == ["bar"]
-    # 'platform' was never reached, so its pattern was not retired for failing.
-    assert any(p["key"] == "platform:h" for p in patterns.active(db_path=db_path, projection="admin"))
+    assert first["complete"] is False and first["cohorts_tested"] == ["platform"]
+    # 'sm:counter' was never reached, so its pattern was not retired for failing.
+    assert any(p["key"] == "sm:counter:h" for p in patterns.active(db_path=db_path, projection="admin",
+                                                                   all_cohorts=True))
     second = patterns.discover(db_path=db_path, cohorts=cohorts, shuffles=50, wall_seconds=0)
-    assert second["cohorts_tested"] == ["cafe"] and second["resumed_after"] == "bar"
+    assert second["cohorts_tested"] == ["sm:bar_led"] and second["resumed_after"] == "platform"
     third = patterns.discover(db_path=db_path, cohorts=cohorts, shuffles=50, wall_seconds=0)
-    assert third["cohorts_tested"] == ["platform"]
-    assert not any(p["key"] == "platform:h" for p in patterns.active(db_path=db_path, projection="admin"))
+    assert third["cohorts_tested"] == ["sm:counter"]
+    assert not any(p["key"] == "sm:counter:h" for p in patterns.active(db_path=db_path, projection="admin",
+                                                                       all_cohorts=True))
 
 
 def test_a_clearly_null_permutation_stops_early_and_a_real_one_runs_to_the_end():
@@ -624,16 +645,23 @@ def test_comparisons_are_materialised_and_read_back_when_fresh(db_path):
 def test_peer_benchmarks_are_a_data_freshness_source(db_path):
     import data_freshness as df
     import data_health as dh
-    assert df.SOURCES["cohort"]["horizon"] == 49 and df.SOURCES["cohort"]["label"] == "Peer benchmarks"
+    # One age limit with the engine: MAX_BAND_AGE_WEEKS (8) x 7 (re-audit #24;
+    # it was 49 while the engine served bands to 56 days).
+    assert df.SOURCES["cohort"]["horizon"] == 56 and df.SOURCES["cohort"]["label"] == "Peer benchmarks"
     assert "cohort" in df.TOOL_SOURCES["read_platform_intelligence"] and dh.OWNER_LABEL["cohort"]
-    rid = _rid(db_path, "Fresh Pie")
-    update_restaurant(rid, {"category": "pizza"}, db_path=db_path)
+    rid = _member(db_path, "Fresh Pie")
     r = models.get_restaurant(rid, db_path)
     assert df.source_state(r, "cohort", db_path=db_path)["state"] == "not_connected"
     conn = get_conn(db_path)
     ten = (datetime.utcnow() - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+    # A band stored under the TYPE is no band this restaurant is compared with.
     conn.execute("INSERT INTO intel_benchmarks (cohort, metric, week, n, computed_at) VALUES ('pizza','labor_pct_28d',"
                  "'2026-W30', 9, ?)", (ten,))
+    conn.commit()
+    assert df.source_state(r, "cohort", db_path=db_path)["state"] == "not_connected"
+    # Its confirmed partition's band dates it (re-audit #24, R3-18).
+    conn.execute("INSERT INTO intel_benchmarks (cohort, metric, week, n, computed_at) VALUES ('sm:counter',"
+                 "'labor_pct_28d', '2026-W30', 9, ?)", (ten,))
     conn.commit()
     conn.close()
     s = df.source_state(r, "cohort", db_path=db_path)

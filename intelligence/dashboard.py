@@ -84,7 +84,7 @@ def build(db_path=DB_PATH, today: date = None) -> dict:
             "totals": {k: v for k, v in totals.items() if k not in ("reason",)},
             "by_kind": scoring.rank_kinds(db_path=db_path, limit=30),
         },
-        "top_insights": patterns.active(db_path=db_path, limit=8, projection="admin"),
+        "top_insights": patterns.active(db_path=db_path, limit=8, projection="admin", all_cohorts=True),
         "emerging": trends.emerging(cohorts=cohorts, db_path=db_path),
         "benchmarks": benchmarks.cohort_table(db_path=db_path),
         "confidence_over_time": [dict(c) for c in reversed(conf)],

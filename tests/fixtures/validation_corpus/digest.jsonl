@@ -28,3 +28,5 @@
 {"src": "good: digest measured", "ctx": "digest_p14", "text": "Labor rose to 31.4% from 28.1% over four weeks.", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "digest-027"}
 {"src": "good: digest co-movement wording", "ctx": "digest_p14", "text": "Labor rose to 31.4% in the same period service complaints appeared; these moved together, which is not proof of a cause.", "expect": {"verdict": "pass", "rules": []}, "good": true, "id": "digest-028"}
 {"src": "UNVERIFIED marker written by the model", "ctx": "digest_p14", "text": "UNVERIFIED: labor rose.", "expect": {"verdict": "refuse", "rules": ["I1"]}, "id": "digest-029"}
+{"src": "R3-1 unattended: 'better than most' on the worst quarter", "ctx": "bench_bottom_digest", "text": "Your labor % is better than most counter-service restaurants on Cavnar.", "expect": {"verdict": "refuse", "rules": ["B1"]}, "id": "digest-r3-01"}
+{"src": "R3-2 unattended: 'beats the group'", "ctx": "bench_bottom_digest", "text": "Your labor % beats the group.", "expect": {"verdict": "refuse", "rules": ["B1"]}, "id": "digest-r3-02"}

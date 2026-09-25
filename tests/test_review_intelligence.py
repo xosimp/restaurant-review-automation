@@ -499,8 +499,10 @@ def test_the_insight_caches_the_whole_payload_not_just_the_sentence():
     """Caching the string meant every caveat was computed, rendered once, and
     then dropped for five minutes while the text it qualified kept showing."""
     src = inspect.getsource(client_api._do_review_insight)
-    assert '_cache_set("review-insight:" + str(rid), payload)' in src
-    assert '_cache_set("review-insight:" + str(rid), insight)' not in src
+    # The key carries whether the read shows other locations (re-audit #42).
+    assert '_ck = "review-insight:" + str(rid)' in src
+    assert '_cache_set(_ck, payload)' in src
+    assert '_cache_set(_ck, insight)' not in src
 
 
 def test_the_stale_fallback_says_how_old_it_is():
@@ -598,7 +600,10 @@ def test_locations_compare_shares_not_raw_counts(db_path):
         _review(db_path, 1, ext=f"l1{i}", cats='["wait_time"]')
     for i in range(12):
         _review(db_path, 2, ext=f"l2{i}", cats='["service"]')
-    out = ri.location_comparison(1)
+    # Only for a login that may switch locations, like the engine's
+    # location kind — closed with no viewer (Benchmarking re-audit #42).
+    assert ri.location_comparison(1)["available"] is False
+    out = ri.location_comparison(1, viewer={"is_admin": True})
     assert out["available"] is True
     mine = next(l for l in out["locations"] if l["is_this_one"])
     assert mine["complaint_share"]["wait_time"] == 1.0
@@ -607,7 +612,7 @@ def test_locations_compare_shares_not_raw_counts(db_path):
 
 def test_a_single_location_has_nothing_to_compare(db_path):
     _restaurant(db_path)
-    assert ri.location_comparison(1)["available"] is False
+    assert ri.location_comparison(1, viewer={"is_admin": True})["available"] is False
 
 
 # ── The executive questions ─────────────────────────────────────────────────

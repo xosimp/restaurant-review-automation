@@ -258,20 +258,26 @@ def test_discovery_writes_a_pattern_only_with_evidence_and_never_a_name(db_path)
     # Eight a side: an owner is shown a pattern only with at least
     # MIN_ORGS_PER_SIDE organisations on each side (Benchmarking audit #11).
     rids = _cohort(db_path, 16, "pizza", 1)
+    # Read inside the owner-confirmed peer group, never the type
+    # (Benchmarking re-audit #21): counter-service pizzerias.
+    for r in rids:
+        _confirm(db_path, r, "counter", "pizza")
     cohorts = {r: "pizza" for r in rids}
     out = patterns.discover(db_path=db_path, cohorts=cohorts, shuffles=500)
-    assert "pizza" in out["cohorts_tested"] and out["active"] >= 1
-    act = patterns.active("pizza", db_path=db_path)
+    assert "sm:counter" in out["cohorts_tested"] and out["active"] >= 1
+    mine = patterns.viewer_cohorts(models.get_restaurant(rids[0], db_path=db_path))
+    assert mine["format"] == "sm:counter"
+    act = [x for x in patterns.active(mine, db_path=db_path) if x["cohort"] != "platform"]
     keys = {p["hypothesis"] for p in act}
     assert "reply_fast_rating" in keys                              # the planted effect
     p = next(x for x in act if x["hypothesis"] == "reply_fast_rating")
     assert p["n_with"] == 8 and p["n_without"] == 8 and p["p_value"] <= 0.05 and p["q_value"] <= 0.10
-    assert "Across 16 pizza" in p["sentence"] and "higher" in p["sentence"]
+    assert "Across 16 counter-service restaurants on Cavnar" in p["sentence"] and "higher" in p["sentence"]
     for x in act:
         privacy.assert_anonymous(x)
         assert not any(name in x["sentence"] for name in ("pizza 1 0", "Moat"))
     # the same kind is supported for a confidence score
-    assert patterns.support_for("reply", cohort="pizza", db_path=db_path)["hypothesis"] == "reply_fast_rating"
+    assert patterns.support_for("reply", cohort=mine, db_path=db_path)["hypothesis"] == "reply_fast_rating"
     # noise discovers nothing: shuffle the outcome and rerun
     conn = get_conn(db_path)
     rows = conn.execute("SELECT id, features_json FROM intel_features").fetchall()
@@ -281,7 +287,8 @@ def test_discovery_writes_a_pattern_only_with_evidence_and_never_a_name(db_path)
         conn.execute("UPDATE intel_features SET features_json=? WHERE id=?", (json.dumps(f), r["id"]))
     conn.commit(); conn.close()
     out2 = patterns.discover(db_path=db_path, cohorts=cohorts, shuffles=500)
-    assert not any(x["hypothesis"] == "reply_fast_rating" for x in patterns.active("pizza", db_path=db_path))
+    assert not any(x["hypothesis"] == "reply_fast_rating" and x["cohort"] == "sm:counter"
+                   for x in patterns.active(mine, db_path=db_path))
     retired = [x for x in patterns.all_patterns(db_path=db_path) if x["hypothesis"] == "reply_fast_rating"]
     assert retired and retired[0]["status"] == "retired" and out2["retired"] >= 1
 
@@ -433,9 +440,14 @@ def test_ask_has_the_two_read_tools_and_a_context_section(db_path):
     mem = next(t for t in ask_cavnar_tools.TOOLS if t["spec"]["name"] == "read_restaurant_memory")["fn"](rid)
     assert mem["busiest_days"]["available"] is False and mem["note"] == "This restaurant's own history only."
     plat = next(t for t in ask_cavnar_tools.TOOLS if t["spec"]["name"] == "read_platform_intelligence")["fn"](rid)
-    assert plat["cohort"] == "bar" and all(b["available"] is False for b in plat["benchmarks"]) and plat["patterns"] == []
+    # "Solo Bar" is only GUESSED to be a bar: no type is named and no group
+    # is read (Benchmarking re-audit #20).
+    assert plat["cohort"] is None and plat["inferred"] is True and plat["cohort_label"] == "All restaurants on Cavnar"
+    assert all(b["available"] is False for b in plat["benchmarks"]) and plat["patterns"] == []
     privacy.assert_anonymous({"benchmarks": plat["benchmarks"], "patterns": plat["patterns"]})
-    # No cohort section with nothing to say; a bar's labor figure is a rule
-    # of thumb from the registry, and said as one (NS4 H3/M7).
+    # With nothing to compare, the section says WHY per module (re-audit
+    # R3-13); a guessed bar's labor figure is not quoted at all (#5, R3-8) —
+    # only the all-restaurant prime cost target, said as one (NS4 H3/M7).
     ctx = ask_cavnar._intelligence_context(rid)
-    assert "HISTORY AND OTHER RESTAURANTS" not in ctx and "rule of thumb" in ctx
+    assert "No fair comparison with other restaurants for labor yet" in ctx
+    assert "bar-led concepts" not in ctx and "Prime cost % for restaurants in general" in ctx

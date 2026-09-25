@@ -109,6 +109,21 @@ def _pattern_visible(p, denied_modules=None) -> bool:
     return visible(ev.get("outcome"), denied_modules) and visible(beh[0] if beh else None, denied_modules)
 
 
+_MODULE_WORDS = {"labor": "labor", "inventory": "food cost and waste", "reviews": "reviews",
+                 "marketing": "marketing"}
+
+
+def no_comparison_line(cm, module=None) -> str:
+    """The prompt line for a module no fair comparison exists for, with the
+    engine's reason (the peer kind's why_not)."""
+    by = {c.get("kind"): c for c in (cm or {}).get("comparisons") or ()}
+    why = ((by.get("peers") or {}).get("why_not") or (by.get("platform") or {}).get("why_not")
+           or "not enough data yet")
+    what = _MODULE_WORDS.get(module or "", str((cm or {}).get("label") or "this").lower())
+    return (f"No fair comparison with other restaurants for {what} yet — {why}. If asked how this restaurant "
+            "compares, say that and why; do not substitute an industry average or general knowledge.")
+
+
 def context_bundle(restaurant_id, restaurant=None, db_path=DB_PATH, denied_modules=None) -> tuple:
     """(lines, facts): context_lines and the response_validation benchmark
     facts behind every comparison a line states (engine.facts), so a peer
@@ -132,13 +147,12 @@ def context_lines(restaurant_id, restaurant=None, db_path=DB_PATH, denied_module
     if restaurant is None:
         from models import get_restaurant
         restaurant = get_restaurant(restaurant_id, db_path=db_path)
-    cohort, src = categories.category_for(restaurant) if restaurant else (None, None)
     # The Benchmark Engine's comparisons (Benchmarking audit 9/24/26): a
     # peer band of the restaurant's own type, the all-types band ONLY for a
     # behaviour metric (an all-types labor or food cost band is never
     # stated), each line naming how the group was chosen, set or guessed,
     # how many measured it and the comparison strength (engine.prompt_lines).
-    comps, facts = [], []
+    comps, facts, missing = [], [], {}
     try:
         for cm in engine.compare_all(restaurant_id, kinds=("peers", "platform"), restaurant=restaurant,
                                      db_path=db_path):
@@ -147,10 +161,22 @@ def context_lines(restaurant_id, restaurant=None, db_path=DB_PATH, denied_module
             if any(c.get("available") for c in cm.get("comparisons") or ()):
                 comps.append(cm)
                 facts += cm.get("facts") or []
+            else:
+                missing.setdefault(cm.get("module") or metric_module(cm.get("metric")), cm)
     except Exception as e:
         print(f"[intelligence] benchmark context for {restaurant_id} unavailable: {e}")
     lines += engine.prompt_lines(comps)
-    for p in patterns.active(cohort, db_path=db_path, limit=6):
+    # One line per visible module with no fair comparison at all, saying why
+    # (Benchmarking re-audit R3-13): "how do I compare to places like
+    # mine?" is answered with the reason — confirm the profile, too few
+    # owners yet — never with general industry lore.
+    shown = {cm.get("module") or metric_module(cm.get("metric")) for cm in comps}
+    for mod, cm in missing.items():
+        if mod and mod not in shown:
+            lines.append(no_comparison_line(cm, mod))
+    # Patterns from the restaurant's owner-CONFIRMED peer groups and the
+    # all-types ones — never a type Cavnar guessed (re-audit #20, #21).
+    for p in patterns.active(patterns.viewer_cohorts(restaurant), db_path=db_path, limit=6):
         if not _pattern_visible(p, denied) or patterns.pooled_on_economics(p):
             continue
         if sum(1 for ln in lines if ln.startswith("Pattern")) >= 3:
@@ -189,6 +215,69 @@ def compare_all(restaurant_id, module=None, **kw):
 
 def benchmark_facts(comparisons):
     return engine.facts(comparisons)
+
+
+# ── published figures: one road to every model (Benchmarking re-audit #5) ──
+# Ask's registry block, the labor insight, the food insight's facts, the
+# onboarding email and the admin hints each read benchmark_registry
+# directly — a guessed type's figure and the NRA median that includes
+# benefits reached them bare (R1-04, R1-17, R3-8, R4-4). They read the
+# engine's `industry` kind through industry_read instead: nothing for a
+# guessed type, and a figure measured differently comes marked as context.
+
+CONTEXT_ONLY_NOTE = ("CONTEXT ONLY — measured differently from this restaurant's figure, so never say it is "
+                     "above, below, under, over, better or worse than it, or near it")
+
+
+def industry_line(comparison, what=None) -> str:
+    """The one wording a prompt carries for an engine industry comparison:
+    the registry line (source, year, applicability), and — when the figure
+    is measured differently — that it is context only, with the engine's
+    definition note."""
+    c = comparison or {}
+    line = str(c.get("line") or "").rstrip()
+    if not line:
+        return ""
+    if c.get("comparable") is False:
+        note = str(c.get("definition_note") or "").strip()
+        line += f" {CONTEXT_ONLY_NOTE}" + (f": {note}" if note else ".")
+    return line
+
+
+def industry_read(restaurant, metric, db_path=DB_PATH) -> dict | None:
+    """The engine's `industry` comparison for one metric (engine metric key,
+    e.g. labor_pct_28d), or None when there is none to quote — no published
+    figure for the type, or a type Cavnar only guessed. {comparison, line,
+    facts, comparable, definition_note, low, high, median, label, source,
+    year}. `facts` are the engine's benchmark facts, each carrying
+    source.comparable / definition_note / metric (the contract keys) so the
+    Response Validation Layer drops a comparison against a figure measured
+    differently. Never raises."""
+    if restaurant is None:
+        return None
+    try:
+        cm = engine.compare(getattr(restaurant, "id", None), metric, kinds=("industry",), restaurant=restaurant,
+                            rows=[], db_path=db_path)
+    except Exception as e:
+        print(f"[intelligence] industry read for {metric} unavailable: {e}")
+        return None
+    c = next((x for x in cm.get("comparisons") or () if x.get("kind") == "industry"), None)
+    if not c or not c.get("available"):
+        return None
+    comparable = c.get("comparable") is not False
+    facts = []
+    for f in cm.get("facts") or ():
+        if (f.get("source") or {}).get("engine_kind") != "industry":
+            continue
+        f = dict(f, source=dict(f.get("source") or {}))
+        f["source"].setdefault("comparable", comparable)
+        f["source"].setdefault("definition_note", c.get("definition_note"))
+        f["source"].setdefault("metric", metric)
+        facts.append(f)
+    return {"comparison": c, "metric": metric, "line": industry_line(c), "facts": facts, "comparable": comparable,
+            "definition_note": c.get("definition_note"), "low": c.get("low"), "high": c.get("high"),
+            "median": c.get("median"), "label": c.get("label"), "source": c.get("source"), "year": c.get("year"),
+            "source_kind": c.get("source_kind")}
 
 
 def benchmark_prompt_lines(comparisons):
