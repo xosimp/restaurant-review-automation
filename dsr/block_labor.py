@@ -203,6 +203,19 @@ def _coverage(ctx):
     return {"measured": True, "no_shows": [], "late": [], "reason": None}
 
 
+def _scheduled(ctx):
+    """Distinct people on the published schedule for the night, or None when
+    no published schedule covered it (never 0 for "unknown")."""
+    try:
+        import intraday
+        rows = intraday.published_rows(ctx.restaurant_id, ctx.business_date, db_path=ctx.db_path)
+    except Exception:
+        return None
+    names = {" ".join(str(r.get("employee") or "").lower().split()) for r in rows or []}
+    names.discard("")
+    return len(names) if names else None
+
+
 def _quality(ctx):
     """The published week's Shift Quality for this date, or None."""
     conn = store.get_conn(ctx.db_path)
@@ -271,6 +284,7 @@ def collect(ctx):
     sales_after = (sales.get("metrics") or {}).get("evening_share_pct") if net else None
     cov = _coverage(ctx)
     quality = _quality(ctx)
+    scheduled = _scheduled(ctx)
 
     metrics = {
         "cost": cost, "pct": pct, "hours": hours, "overtime_hours": ot,
@@ -280,6 +294,9 @@ def collect(ctx):
         "no_shows": len(cov["no_shows"]) if cov["measured"] else None,
         "late_arrivals": len(cov["late"]) if cov["measured"] else None,
         "shift_quality": quality["score"] if quality else None,
+        # People on the published schedule for the night (the Manager DSR's
+        # "Employees scheduled"); None without a published schedule.
+        "scheduled": scheduled,
     }
 
     observations = []

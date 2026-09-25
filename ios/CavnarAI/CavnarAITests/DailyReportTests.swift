@@ -28,7 +28,8 @@ final class DailyReportDecodingTests: XCTestCase {
         XCTAssertEqual(r.displayDate, "9/22/26")
         XCTAssertEqual(r.phase, .final)
         XCTAssertEqual(r.fiscal?.label, "Period 9 \u{00B7} Week 4")
-        XCTAssertEqual(r.orderedBlocks.map(\.name), ["sales", "labor", "food", "reviews", "marketing", "intel", "closeout"])
+        // Reading order since 9/25/26: weather (intel) right after reviews.
+        XCTAssertEqual(r.orderedBlocks.map(\.name), ["sales", "labor", "food", "reviews", "intel", "marketing", "closeout"])
 
         let sales = try XCTUnwrap(r.facts.blocks["sales"])
         XCTAssertTrue(sales.isReady)

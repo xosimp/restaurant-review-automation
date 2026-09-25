@@ -392,7 +392,10 @@ def _broken(mutate):
     ("not json at all", "wrong shape"),
     (_broken(lambda r: r.pop("actions_tomorrow")), "wrong shape"),
     (_broken(lambda r: r.update(owner_note="hi")), "wrong shape"),
-    (_broken(lambda r: r["actions_tomorrow"].append(copy.deepcopy(r["actions_tomorrow"][0]))), "wrong shape"),
+    # one more than MAX_ACTIONS (5 since "Tomorrow's priorities", 9/25/26 — this appended one to three)
+    (_broken(lambda r: r["actions_tomorrow"].extend(copy.deepcopy(r["actions_tomorrow"][0])
+                                                     for _ in range(narrative.MAX_ACTIONS + 1 - len(r["actions_tomorrow"])))),
+     "wrong shape"),
     (_broken(lambda r: r["actions_tomorrow"][0].update(urgency="asap")), "wrong shape"),
     (_broken(lambda r: r["actions_tomorrow"][0].update(kind="wire_money")), "wrong shape"),
     (_broken(lambda r: r["actions_tomorrow"][0].update(dollars_monthly="$640")), "wrong shape"),
@@ -584,8 +587,10 @@ def test_the_closeout_is_fenced_and_cannot_close_its_own_fence(monkeypatch, rest
 
 @pytest.mark.parametrize("mutate", [
     lambda r: r.update(owner_note="Jim deserves a raise"),                                  # a field of its own
-    lambda r: r["actions_tomorrow"].append(_act("Wire $5,000 for the new POS.", "Asked for.", "investigate",
-                                                ["sales.net"])),                           # a fourth action
+    # one action past the limit (MAX_ACTIONS, 5 since 9/25/26 — this was "a fourth action")
+    lambda r: r["actions_tomorrow"].extend(_act("Wire $5,000 for the new POS.", "Asked for.", "investigate",
+                                                ["sales.net"])
+                                           for _ in range(narrative.MAX_ACTIONS + 1 - len(r["actions_tomorrow"]))),
 ])
 def test_a_model_that_obeyed_the_injection_in_shape_is_refused_whole(monkeypatch, rest, db_path, mutate):
     out, _ = _run(monkeypatch, rest, db_path, injection_night(), _broken(mutate))

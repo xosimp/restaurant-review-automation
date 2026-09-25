@@ -1100,6 +1100,11 @@ def dsr_scorecard_sections(card: dict, d: dict) -> list:
     is one the scorecard carries; an unmeasured component says why."""
     tones = {"good": BRAND["good"], "warn": BRAND["warn"], "bad": BRAND["bad"]}
     out = []
+    # The executive summary leads (9/25/26 hierarchy), then the score.
+    if d.get("lead"):
+        out.append(report_eyebrow("Executive summary") + report_paragraph(esc(d["lead"])))
+    elif d.get("lead_missing"):
+        out.append(report_eyebrow("Executive summary") + report_paragraph(esc(d["lead_missing"])))
     verdict = card.get("verdict")
     if verdict and card.get("overall") is not None:
         color = tones.get(verdict.get("tone"), BRAND["ink"])
@@ -1118,16 +1123,85 @@ def dsr_scorecard_sections(card: dict, d: dict) -> list:
         else:
             comps.append(("&mdash;", esc(c.get("label") or ""), None))
     out.append(report_stats(comps))
-    if d.get("lead"):
-        out.append(report_eyebrow("Executive summary") + report_paragraph(esc(d["lead"])))
-    elif d.get("lead_missing"):
-        out.append(report_eyebrow("Executive summary") + report_paragraph(esc(d["lead_missing"])))
     wins = [esc(w["text"]) for w in card.get("wins") or [] if w.get("text")]
     risks = [esc(r["text"]) for r in card.get("risks") or [] if r.get("text")]
     if wins:
         out.append(report_eyebrow("Today&rsquo;s wins", BRAND["good"]) + report_bullets(wins, BRAND["good"]))
     if risks:
         out.append(report_eyebrow("Today&rsquo;s risks", BRAND["warn"]) + report_bullets(risks, BRAND["warn"]))
+    return out
+
+
+def dsr_kpi_section(title: str, kpis: list) -> str:
+    """Key numbers with direction: the value, then how it moved against the
+    same weekday (and a best/worst streak) under the label."""
+    tones = {"good": BRAND["good"], "bad": BRAND["bad"]}
+    stats = []
+    for k in kpis or []:
+        chg = (k.get("change") or {})
+        stk = (k.get("streak") or {})
+        label = esc(k.get("label") or "")
+        if chg.get("text"):
+            label += f'<br><span style="color:{tones.get(chg.get("tone"), BRAND["muted"])}">{esc(chg["text"])}</span>'
+        if stk.get("text"):
+            label += f'<br><span style="color:{tones.get(stk.get("tone"), BRAND["muted"])}">{esc(stk["text"])}</span>'
+        if (k.get("target") or {}).get("value_text"):
+            label += f'<br>{esc(k["target"]["label"])} {esc(k["target"]["value_text"])}'
+        if (k.get("peers") or {}).get("available"):
+            label += f'<br>{esc(k["peers"]["label"])} {esc(k["peers"]["value_text"])}'
+        stats.append((esc(k.get("value_text") or "—"), label, None))
+    return report_eyebrow(title) + report_stats(stats) if stats else ""
+
+
+def dsr_tomorrow_sections(d: dict) -> list:
+    """Tomorrow's priorities (the narrative's actions), tomorrow's prep with
+    Cavnar's forecast and its confidence, and "How did yesterday turn out?"."""
+    out = []
+    t = d.get("tomorrow") or {}
+    if t:
+        lines = [esc(i["text"]) for i in t.get("items") or [] if i.get("text")]
+        fc = t.get("forecast") or {}
+        if fc.get("text"):
+            lines.append(f"Cavnar&rsquo;s forecast: {esc(fc['text'])} ({esc(fc.get('basis') or '')})")
+        cf = t.get("confidence") or {}
+        if cf.get("pct") is not None:
+            lines.append(f"AI confidence {int(cf['pct'])}% &mdash; based on {esc(', '.join(cf.get('based_on') or []))}")
+        if lines:
+            out.append(report_eyebrow(f"Tomorrow &middot; {esc(t.get('weekday') or '')}", BRAND["warn"])
+                       + report_bullets(lines, BRAND["warn"]))
+    y = d.get("yesterday") or {}
+    if y.get("items"):
+        marks = {"correct": "&#10003;", "incorrect": "&#10007;"}
+        rows = []
+        for x in y["items"]:
+            word = {"correct": "Correct", "incorrect": "Incorrect"}.get(x.get("outcome"), "Not graded")
+            rows.append(f"{marks.get(x.get('outcome'), '&bull;')} {esc(x['text'])} &mdash; <b>{word}</b>"
+                        + (f" ({esc(x['actual_text'])})" if x.get("actual_text") else ""))
+        ac = y.get("accuracy") or {}
+        acc = (f"Prediction accuracy {ac['pct']}% &mdash; {ac['correct']} of {ac['graded']} right, "
+               f"last {ac['window_days']} days" if ac.get("pct") is not None else
+               f"{ac.get('correct', 0)} of {ac.get('graded', 0)} right so far")
+        out.append(report_eyebrow("How did yesterday turn out?") + report_bullets(rows) + report_paragraph(acc))
+    return out
+
+
+def dsr_manager_sections(d: dict) -> list:
+    """The Manager DSR's top: its operations summary, Today's shift and
+    Operations — no finance."""
+    out = []
+    if d.get("lead"):
+        out.append(report_eyebrow("Operations summary") + report_paragraph(esc(d["lead"])))
+    elif d.get("lead_missing"):
+        out.append(report_eyebrow("Operations summary") + report_paragraph(esc(d["lead_missing"])))
+    sh = d.get("shift") or {}
+    tones = {"good": BRAND["good"], "warn": BRAND["warn"], "bad": BRAND["bad"]}
+    if sh.get("rows"):
+        out.append(report_eyebrow("Today&rsquo;s shift")
+                   + report_stats([(esc(r["value_text"]), esc(r["label"]), tones.get(r.get("tone")))
+                                   for r in sh["rows"]]))
+    ops = dsr_kpi_section("Operations", d.get("operations") or [])
+    if ops:
+        out.append(ops)
     return out
 
 
@@ -1174,12 +1248,20 @@ def dsr_email(d: dict):
                 "figures yet. You&rsquo;ll get one short update when they land."))
         if card:
             sections.extend(dsr_scorecard_sections(card, d))
+        elif not owner:
+            # Operations summary, then the night's volume (net, vs last week,
+            # labor — sales volume is operations), then shift and operations.
+            mgr = dsr_manager_sections(d)
+            sections.extend(mgr[:1] + [stats] + mgr[1:])
         else:
             if d.get("lead"):
                 sections.append(report_paragraph(esc(d["lead"])))
             elif d.get("lead_missing"):
                 sections.append(report_paragraph(esc(d["lead_missing"])))
             sections.append(stats)
+        kp = dsr_kpi_section("Top KPIs", d.get("kpis") or [])
+        if kp:
+            sections.append(kp)
         if not card and d.get("went_well"):
             sections.append(report_eyebrow("Went well", BRAND["good"])
                             + report_bullets([esc(t) for t in d["went_well"]], BRAND["good"]))
@@ -1201,8 +1283,9 @@ def dsr_email(d: dict):
             first += _ask(actions[0])
             rest = report_bullets([esc(a["text"]) + report_confidence(a.get("confidence")) + _ask(a)
                                    for a in actions[1:]])
-            sections.append(report_action("Tomorrow", first)
+            sections.append(report_action("Tomorrow&rsquo;s priorities", first)
                             + (f'<div style="margin-top:14px">{rest}</div>' if rest else ""))
+        sections.extend(dsr_tomorrow_sections(d))
         missing = list(d.get("missing") or [])
         if missing:
             sections.append(report_eyebrow("Not in this report") + report_bullets([esc(m) for m in missing]))

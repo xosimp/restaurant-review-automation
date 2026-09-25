@@ -498,6 +498,11 @@ def _advance(restaurant, report, trigger, now_utc, db, probed=None, carried=None
         return _result("retry", store.get_report_by_id(report_id, db_path=db), awaiting=holding,
                        next_attempt_at=_stamp(nxt))
 
+    # tomorrow: grade what the previous report predicted about this night,
+    # then the next night's prep, forecast and confidence (dsr.tomorrow), and
+    # its predictions — recorded only while that night is still ahead.
+    _tomorrow(restaurant, report_id, day, trigger, now_utc, db)
+
     # writing: one narrative, only over a night whose sales are in.
     sales_status = (ctx.blocks.get("sales") or {}).get("status")
     if sales_status == dsr.READY:
@@ -530,6 +535,24 @@ def _advance(restaurant, report, trigger, now_utc, db, probed=None, carried=None
     _deliver(restaurant, report_id, now_utc, db)
     return _result(terminal, store.get_report_by_id(report_id, db_path=db), awaiting=awaiting,
                    required_missing=required_missing)
+
+
+def _tomorrow(restaurant, report_id, day, trigger, now_utc, db):
+    """Grade this night's predictions, store the next night's snapshot and
+    record its predictions. Never holds or fails the report."""
+    try:
+        from dsr import predictions, tomorrow
+        facts_now = store.get_report_by_id(report_id, db_path=db)["facts"]
+        predictions.grade(restaurant.id, day, facts_now, db_path=db)
+        snap = tomorrow.build(restaurant, day, facts_now, db_path=db)
+        preds = snap.pop("_preds", [])
+        store.save_section(report_id, "tomorrow", snap, db_path=db)
+        # A prediction is made BEFORE its night: a re-run of an older night
+        # (or a late version after the next night began) records nothing.
+        if local_time(restaurant, now_utc).date() <= day + timedelta(days=1):
+            predictions.record(restaurant.id, day, day + timedelta(days=1), preds, db_path=db)
+    except Exception as e:
+        log.warning("dsr: tomorrow not built rid=%s day=%s: %s", getattr(restaurant, "id", None), day, e)
 
 
 def _record_attempt(restaurant, ok, db, error=None, data_through=None):

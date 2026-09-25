@@ -178,6 +178,13 @@ def narrative_for(narrative, hidden):
     that is the lead. `executive_summary` is therefore always the lead to
     show, and `lead_from` says when it was substituted."""
     n = filter_narrative(narrative, hidden)
+    if isinstance(n, dict) and n.get("operations_summary") and n.get("executive_summary") != n["operations_summary"] \
+            and any(str(h).startswith("sales.budget") for h in hidden):
+        # The Manager DSR leads with its own operations summary (9/25/26:
+        # "every report has one", and the manager's is operations, not
+        # finance) — the executive summary is the owner's.
+        n["executive_summary"] = n["operations_summary"]
+        n["lead_from"] = "operations_summary"
     if isinstance(n, dict) and n.get("largest_money_saving"):
         # Retired (dsr.narrative.RETIRED_SINGLES, NS3 C2): a stored night's
         # "Largest saving" line named an opportunity or a budget miss as
@@ -264,6 +271,13 @@ def render(report, user, restaurant=None, versions=None):
             card = scorecard.build(report.get("facts") or {}, restaurant, narrative=report.get("narrative"))
         except Exception:
             card = None
+    # Every figure with direction and, where fair, a benchmark (dsr.kpis);
+    # the manager's set is operations, never finance.
+    try:
+        from dsr import kpis as _kpis
+        kp = _kpis.build(facts, restaurant, user, view)
+    except Exception:
+        kp = {"top": [], "operations": [], "shift": None}
     return {
         "view": view,
         "business_date": report.get("business_date"),
@@ -277,11 +291,71 @@ def render(report, user, restaurant=None, versions=None):
         "facts": facts,
         "narrative": narrative_for(report.get("narrative"), hidden),
         "scorecard": card,
+        "kpis": kp.get("top") or [],
+        "operations": kp.get("operations") or [],
+        "shift": kp.get("shift"),
+        "tomorrow": tomorrow_for(facts, user, view),
+        "insights": insights(facts, report.get("narrative") and narrative_for(report.get("narrative"), hidden), view),
+        "yesterday": _yesterday(report, restaurant),
         "checklist": checklist(report, user, restaurant),
         "versions": [dict(v, finalized_at_local=_stamp_local(v.get("finalized_at"), restaurant),
                           created_at_local=_stamp_local(v.get("created_at"), restaurant))
                      for v in (versions or [])],
     }
+
+
+def tomorrow_for(facts, user, view):
+    """The stored next-night snapshot (dsr.tomorrow) as this login may read
+    it: a manager without the Food view loses the stock lines."""
+    t = (facts or {}).get("tomorrow")
+    if not isinstance(t, dict):
+        return None
+    t = copy.deepcopy(t)
+    t.pop("_preds", None)
+    if "food" in ((facts or {}).get("withheld") or []):
+        t["items"] = [i for i in t.get("items") or [] if i.get("kind") != "stock"]
+    return t
+
+
+def insights(facts, narrative, view):
+    """AI insights: the narrative's verified callouts (biggest win, risk,
+    staffing concern …) and — owner only — the money the Food block counts
+    at stake. An opportunity is never money saved (value_delivered rules):
+    it is labelled at stake, a month, and its basis."""
+    out = []
+    n = narrative if isinstance(narrative, dict) else {}
+    labels = (("biggest_win", "Biggest win"), ("biggest_risk", "Biggest risk"),
+              ("highest_priority_issue", "Top priority"),
+              ("biggest_financial_opportunity", "Biggest opportunity"), ("largest_opportunity", "Biggest opportunity"),
+              ("biggest_staffing_concern", "Staffing"), ("largest_staffing", "Staffing"),
+              ("largest_guest_experience", "Guests"))
+    seen = set()
+    for key, label in labels:
+        item = n.get(key)
+        text = item.get("text") if isinstance(item, dict) else None
+        if text and text not in seen:
+            seen.add(text)
+            out.append({"kind": key, "label": label, "text": text, "source": "narrative"})
+    if view == OWNER:
+        food = ((facts or {}).get("blocks") or {}).get("food") or {}
+        fm = food.get("metrics") or {} if food.get("status") == dsr.READY else {}
+        at = fm.get("drivers_at_stake_monthly")
+        if isinstance(at, (int, float)) and at > 0:
+            out.append({"kind": "at_stake", "label": "Money at stake",
+                        "text": f"${at:,.0f} a month across your food-cost drivers — at stake, not saved",
+                        "source": "measured"})
+    return out
+
+
+def _yesterday(report, restaurant):
+    """"How did yesterday turn out?" — what the previous night's report
+    predicted about this night, graded (dsr.predictions)."""
+    try:
+        from dsr import predictions
+        rid = report.get("restaurant_id") or getattr(restaurant, "id", None)
+        return predictions.review(rid, report.get("business_date")) if rid else None
+    except Exception:
+        return None
 
 
 def summary(report, user):

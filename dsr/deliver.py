@@ -352,6 +352,13 @@ def digest(payload, restaurant, kind=FIRST):
         # The owner's "did we win today?" (dsr.scorecard) — None for the
         # manager's view; the email and the push lead with it when present.
         "scorecard": payload.get("scorecard") if isinstance(payload.get("scorecard"), dict) else None,
+        # Both views (9/25/26): the numbers with direction, the manager's
+        # shift and operations, tomorrow, and yesterday's predictions graded.
+        "kpis": list(payload.get("kpis") or []),
+        "shift": payload.get("shift"),
+        "operations": list(payload.get("operations") or []),
+        "tomorrow": payload.get("tomorrow"),
+        "yesterday": payload.get("yesterday"),
         "actions": actions,
         "missing": list(facts.get("missing") or []),
         "withheld": withheld,

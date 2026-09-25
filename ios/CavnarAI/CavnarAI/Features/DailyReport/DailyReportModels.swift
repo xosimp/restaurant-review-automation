@@ -205,9 +205,18 @@ struct DSRReport: Decodable {
     let versions: [DSRVersion]
     /// The owner's "did we win today?" (dsr/scorecard.py); nil for a manager.
     let scorecard: DSRScorecard?
+    /// Both views (9/25/26): numbers with direction, the manager's shift and
+    /// operations, AI insights, tomorrow and yesterday's predictions graded.
+    let kpis: [DSRKPI]
+    let operations: [DSRKPI]
+    let shift: DSRShift?
+    let insights: [DSRInsight]
+    let tomorrow: DSRTomorrow?
+    let yesterday: DSRYesterday?
 
     enum CodingKeys: String, CodingKey {
         case view, label, fiscal, version, status, provisional, trigger, facts, narrative, checklist, versions, scorecard
+        case kpis, operations, shift, insights, tomorrow, yesterday
         case businessDate = "business_date"
         case finalizedAt = "finalized_at"
     }
@@ -230,6 +239,12 @@ struct DSRReport: Decodable {
         checklist = try? c.decodeIfPresent(DSRChecklist.self, forKey: .checklist)
         versions = (try? c.decodeIfPresent([DSRVersion].self, forKey: .versions)) ?? []
         scorecard = try? c.decodeIfPresent(DSRScorecard.self, forKey: .scorecard)
+        kpis = (try? c.decodeIfPresent([DSRKPI].self, forKey: .kpis)) ?? []
+        operations = (try? c.decodeIfPresent([DSRKPI].self, forKey: .operations)) ?? []
+        shift = try? c.decodeIfPresent(DSRShift.self, forKey: .shift)
+        insights = (try? c.decodeIfPresent([DSRInsight].self, forKey: .insights)) ?? []
+        tomorrow = try? c.decodeIfPresent(DSRTomorrow.self, forKey: .tomorrow)
+        yesterday = try? c.decodeIfPresent(DSRYesterday.self, forKey: .yesterday)
     }
 
     var isOwnerView: Bool { view == "owner" }
@@ -274,7 +289,8 @@ struct DSRFacts: Decodable {
 /// or the manager's close-out. `status` is "ready" when it was measured;
 /// anything else carries the server's own `reason` sentence.
 struct DSRBlock: Hashable {
-    static let order = ["sales", "labor", "food", "reviews", "marketing", "intel", "closeout"]
+    // Reading order (9/25/26): sales, labor, food cost, reviews, weather — then the rest.
+    static let order = ["sales", "labor", "food", "reviews", "intel", "marketing", "closeout"]
     static let titles: [String: String] = [
         "sales": "Sales", "labor": "Labor", "food": "Food", "reviews": "Reviews",
         "marketing": "Marketing", "intel": "Intel", "closeout": "Manager close-out",

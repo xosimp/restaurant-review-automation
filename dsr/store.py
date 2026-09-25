@@ -123,6 +123,31 @@ def init_dsr(db_path=DB_PATH):
             UNIQUE(restaurant_id, business_date, user_id, channel, kind)
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_dsr_deliveries_held ON dsr_deliveries(status, hold_until)")
+        # What a night's report said about the NEXT night, and how it turned
+        # out (dsr.predictions — "How did yesterday turn out?", 9/25/26).
+        # Written once per (restaurant, night predicted, key) BEFORE that night
+        # happens — a re-run never rewrites a prediction after the fact — and
+        # graded from that night's own measured blocks.
+        conn.execute("""CREATE TABLE IF NOT EXISTS dsr_predictions (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            for_date        TEXT    NOT NULL,
+            made_on         TEXT    NOT NULL,
+            key             TEXT    NOT NULL,
+            text            TEXT    NOT NULL,
+            metric          TEXT    NOT NULL,
+            op              TEXT    NOT NULL,
+            value           REAL,
+            low             REAL,
+            high            REAL,
+            basis           TEXT,
+            outcome         TEXT,
+            actual          REAL,
+            graded_at       TEXT,
+            created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(restaurant_id, for_date, key)
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_dsr_predictions_graded ON dsr_predictions(restaurant_id, for_date, outcome)")
         conn.commit()
     finally:
         conn.close()
@@ -337,6 +362,27 @@ def save_fiscal(report_id, fiscal, db_path=DB_PATH):
             "schema": _dsr.SCHEMA_VERSION, "restaurant_id": r["restaurant_id"],
             "business_date": r["business_date"], "blocks": {}}
         facts["fiscal"] = fiscal
+        conn.execute("UPDATE dsr_reports SET facts_json=? WHERE id=?", (json.dumps(facts), report_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def save_section(report_id, key, value, db_path=DB_PATH):
+    """One top-level section of a night's facts that is not a block — today
+    `tomorrow` (dsr.tomorrow: the next night's prep, forecast and confidence,
+    as it stood when the report was built, so the email, the app and a later
+    read all show the same thing)."""
+    if key in ("blocks", "missing", "withheld", "schema", "restaurant_id", "business_date"):
+        raise ValueError(f"{key!r} is not a free section")
+    conn = get_conn(db_path)
+    try:
+        r = conn.execute("SELECT restaurant_id, business_date, facts_json FROM dsr_reports WHERE id=?",
+                         (report_id,)).fetchone()
+        facts = json.loads(r["facts_json"] or "null") or {
+            "schema": _dsr.SCHEMA_VERSION, "restaurant_id": r["restaurant_id"],
+            "business_date": r["business_date"], "blocks": {}}
+        facts[key] = value
         conn.execute("UPDATE dsr_reports SET facts_json=? WHERE id=?", (json.dumps(facts), report_id))
         conn.commit()
     finally:

@@ -321,20 +321,32 @@ struct DailyReportView: View {
             CavnarCaveat(title: report.phase == .provisional ? "Provisional — still missing" : "Still missing",
                          detail: report.facts.missing.joined(separator: " "))
         }
-        // The owner's report opens with "did we win today?" (dsr/scorecard.py):
-        // the score, then the executive summary, then wins and risks.
+        // Top to bottom (9/25/26): the summary (the owner's executive, the
+        // manager's operations), then "did we win?" — the owner's score,
+        // wins and risks, the manager's shift and operations — the numbers
+        // with direction, AI insights, tomorrow's priorities and tomorrow.
+        leadCard(report)
         if let card = report.scorecard {
             DSRScorecardCard(card: card)
+            DSRWinsRisks(card: card)
         }
-        if let narrative = report.narrative, !narrative.isEmpty {
-            narrativeSections(narrative, scorecard: report.scorecard)
-        } else if report.phase.isTerminal {
-            Text(noSummaryLine(report))
-                .font(.cavnarBody(14))
-                .foregroundStyle(Color.cavnarInk3)
-                .fixedSize(horizontal: false, vertical: true)
-                .cavnarCard()
-            if let card = report.scorecard { DSRWinsRisks(card: card) }
+        if !report.isOwnerView {
+            if let shift = report.shift { DSRShiftCard(shift: shift) }
+            DSRKPIGrid(kicker: "Service", title: "Operations", kpis: report.operations)
+        }
+        DSRKPIGrid(kicker: "Top KPIs", title: "The numbers, with direction", kpis: report.kpis)
+        if report.scorecard == nil, let n = report.narrative {
+            if !n.wentWell.isEmpty {
+                titledCard("Went well") { DSRLineList(lines: n.wentWell, dot: .cavnarGreen) }
+            }
+            if !n.needsAttention.isEmpty {
+                titledCard("Needs attention") { DSRLineList(lines: n.needsAttention, dot: .cavnarAmber) }
+            }
+        }
+        DSRInsightsGrid(insights: report.insights)
+        if let n = report.narrative { narrativeSections(n) }
+        if let t = report.tomorrow {
+            DSRTomorrowCard(tomorrow: t, recommendation: staffingRecommendation(report.narrative))
         }
 
         if !report.orderedBlocks.isEmpty {
@@ -346,7 +358,42 @@ struct DailyReportView: View {
             }
         }
 
+        if let y = report.yesterday, !y.items.isEmpty {
+            DSRYesterdayCard(yesterday: y)
+        }
+
         footer(report)
+    }
+
+    @ViewBuilder
+    private func leadCard(_ report: DSRReport) -> some View {
+        let kicker = report.isOwnerView ? "Executive summary" : "Operations summary"
+        if let summary = report.narrative?.executiveSummary {
+            VStack(alignment: .leading, spacing: 10) {
+                DSRKicker(text: kicker)
+                HomeMixedText.make(summary.text, size: 16.5, weight: 500, color: .cavnarInk)
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .cavnarCard(.ai)
+        } else if report.phase.isTerminal {
+            Text(noSummaryLine(report))
+                .font(.cavnarBody(14))
+                .foregroundStyle(Color.cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
+                .cavnarCard()
+        }
+    }
+
+    /// The staffing action among tomorrow's priorities, shown as Tomorrow's
+    /// "AI recommendation" (the same rule as the web).
+    private func staffingRecommendation(_ n: DSRNarrative?) -> String? {
+        let words = ["staff", "schedul", "labor", "shift", "cover"]
+        return n?.actionsTomorrow.first { a in
+            let s = ((a.kind ?? "") + " " + a.text).lowercased()
+            return words.contains { s.contains($0) }
+        }?.text
     }
 
     private func noSummaryLine(_ report: DSRReport) -> String {
@@ -356,46 +403,12 @@ struct DailyReportView: View {
         return "No written summary for this night. Every figure below is still measured."
     }
 
+    /// Tomorrow's priorities (the narrative's ranked actions) and the
+    /// verification footer; the lead, lists and insights render above.
     @ViewBuilder
-    private func narrativeSections(_ n: DSRNarrative, scorecard: DSRScorecard? = nil) -> some View {
-        if let summary = n.executiveSummary {
-            VStack(alignment: .leading, spacing: 10) {
-                DSRKicker(text: scorecard == nil ? "The morning read" : "Executive summary")
-                HomeMixedText.make(summary.text, size: 16.5, weight: 500, color: .cavnarInk)
-                    .lineSpacing(3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .cavnarCard(.ai)
-        }
-        if let card = scorecard {
-            // Wins and risks replace "went well / needs attention": the
-            // scorecard's measured signals first, topped up from those lines.
-            DSRWinsRisks(card: card)
-        } else {
-            if !n.wentWell.isEmpty {
-                titledCard("Went well") { DSRLineList(lines: n.wentWell, dot: .cavnarGreen) }
-            }
-            if !n.needsAttention.isEmpty {
-                titledCard("Needs attention") { DSRLineList(lines: n.needsAttention, dot: .cavnarAmber) }
-            }
-        }
-        if !n.callouts.isEmpty {
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10, alignment: .top),
-                                GridItem(.flexible(), spacing: 10, alignment: .top)], spacing: 10) {
-                ForEach(n.callouts, id: \.label) { c in
-                    VStack(alignment: .leading, spacing: 6) {
-                        DSRKicker(text: c.label)
-                        HomeMixedText.make(c.line.text, size: 13.5, color: .cavnarInk2)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .cavnarCard()
-                }
-            }
-        }
+    private func narrativeSections(_ n: DSRNarrative) -> some View {
         if !n.actionsTomorrow.isEmpty {
-            titledCard("Tomorrow") {
+            titledCard("Tomorrow's priorities") {
                 VStack(alignment: .leading, spacing: 14) {
                     ForEach(Array(n.actionsTomorrow.enumerated()), id: \.element.id) { i, action in
                         HStack(alignment: .top, spacing: 12) {

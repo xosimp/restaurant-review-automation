@@ -97,7 +97,7 @@ MEASURED_BLOCKS = tuple(b for b in _dsr.BLOCKS if b != "closeout")
 MIN_READY_BLOCKS = 2               # sales + one more measured block
 HISTORY_NIGHTS = 7
 MAX_ISSUES = 5
-MAX_ACTIONS = 3
+MAX_ACTIONS = 5                   # "Tomorrow's priorities" (9/25/26): up to five, each an action
 MAX_LIST_ITEMS = 4
 MAX_CITES = 6
 MAX_LEAD_CITES = 10                # the lead is 2–3 sentences, each figure cited
@@ -1604,10 +1604,10 @@ EVIDENCE RULES. A line that breaks one is deleted before the owner reads it; an 
 
 WHAT TO WRITE
 - executive_summary: 2 to 3 sentences. Lead with the result that mattered most and what in tonight's facts drove it, then what to watch. Measured figures only.
-- operations_summary: 2 sentences for the floor manager, who never sees the budget, prime cost, food cost, or comps, voids and refunds. Operations only: sales volume and traffic, labor, service, reviews, and what to do tomorrow. Cite none of those owner-only figures (no sales.budget*, sales.vs_budget*, prime_cost*, comps, voids, refunds or food.* key) and do not mention them in words. Measured figures only. Leave it out when the operations figures cannot carry it.
+- operations_summary: 2 sentences for the floor manager, who never sees the budget, prime cost, food cost, or comps, voids and refunds. Operations only: sales volume and traffic, labor, service, reviews, and what to do tomorrow. Cite none of those owner-only figures (no sales.budget*, sales.vs_budget*, prime_cost*, comps, voids, refunds or food.* key) and do not mention them in words. Measured figures only. Write it whenever sales and one more operations block are measured — every report, the manager's included, opens with a summary; leave it out only when the operations figures cannot carry it.
 - went_well, needs_attention: up to 4 each, one sentence each, most important first. An empty list is fine.
 - biggest_risk, biggest_win, biggest_financial_opportunity, biggest_staffing_concern, highest_priority_issue, largest_opportunity, largest_guest_experience, largest_staffing: one sentence each, or leave the field out when the facts do not show one. Leaving it out is a correct answer; do not stretch. biggest_win cites measured figures only; largest_opportunity is the largest dollar opportunity, worded as one (could, at stake), never as a saving.
-- actions_tomorrow: at most 3, each something the manager or owner can start tomorrow with the staff and suppliers they already have.
+- actions_tomorrow: at most 5, ranked most important first — each an ACTION, never an observation ("Order chicken.", "Schedule another bartender Friday.", "Respond to yesterday's two-star review."), something the manager or owner can start tomorrow with the staff and suppliers they already have.
   text: the action, one imperative sentence. why: the figure that makes it worth doing.
   cites: measured figures only. The manager's closeout may inform an action but an action never cites it.
   dollars_monthly: only when a cited fact is already a monthly dollar figure (its key says monthly); otherwise null.

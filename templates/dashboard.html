@@ -4912,6 +4912,33 @@ svg:hover .hb-xh{opacity:1}
 .dr-old .sp{flex:1}
 .dr-miss{margin-top:16px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:13.5px;color:var(--ink3)}
 .dr-miss span.m{color:var(--hb-warn);background:var(--amber-bg);border-radius:999px;padding:4px 11px;font-weight:600}
+/* KPIs with direction, the manager's shift, tomorrow, predictions graded (9/25/26) */
+.dr-kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;margin-top:14px}
+.dr-kpi{padding:14px 16px;border-radius:12px;background:var(--hb-inner);border:1px solid var(--hb-line2);min-width:0}
+.dr-kpi .k{font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
+.dr-kpi .k small{font-weight:500;letter-spacing:0;text-transform:none}
+.dr-kpi .row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px}
+.dr-kpi .v{font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:600;letter-spacing:-.02em;color:var(--ink);line-height:1}
+.dr-kpi .chg,.dr-kpi .stk{font-size:13px;font-weight:600;margin-top:6px;color:var(--ink2)}
+.dr-kpi .chg.good,.dr-kpi .stk.good{color:var(--hb-good)}.dr-kpi .chg.bad,.dr-kpi .stk.bad{color:var(--hb-bad)}
+.dr-kpi .sub{font-size:12.5px;color:var(--ink2);margin-top:4px}.dr-kpi .sub.dim,.dr-tmr .sub.dim{color:var(--ink3)}
+.dr-spark{color:var(--ink3);flex:none}.dr-spark .dot{fill:var(--ember)}
+.dr-shift{margin-top:18px}.dr-shift-rows{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-top:10px}
+.dr-shift-rows .c{padding:12px 14px;border-radius:12px;background:var(--hb-inner);border:1px solid var(--hb-line2)}
+.dr-shift-rows .v{font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:600;color:var(--ink);line-height:1}
+.dr-shift-rows .c.good .v{color:var(--hb-good)}.dr-shift-rows .c.warn .v{color:var(--hb-warn)}.dr-shift-rows .c.bad .v{color:var(--hb-bad)}
+.dr-shift-rows .k{font-size:12px;color:var(--ink3);margin-top:6px}
+.dr-tmr .hb-row .d,.dr-yest .hb-row .d{display:none}
+.dr-tmr .hb-row .g,.dr-yest .hb-row .g{flex:none;width:18px;font-weight:700;text-align:center;color:var(--ink3)}
+.dr-tmr .risk .g{color:var(--hb-warn)}.dr-yest .win .g{color:var(--hb-good)}.dr-yest .miss .g{color:var(--hb-bad)}
+.dr-yest .hb-row small{display:block;font-size:12.5px;color:var(--ink3);margin-top:2px}
+.dr-rec{margin-top:14px;padding:12px 14px;border-radius:12px;background:var(--hb-inner);border:1px solid var(--hb-line2)}
+.dr-rec .k,.dr-conf .k,.dr-acc .k{font-size:11.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ember)}
+.dr-rec .t{font-size:15px;font-weight:600;color:var(--ink);margin-top:4px}
+.dr-fc{font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:600;color:var(--ink);margin-top:4px}
+.dr-conf{margin-top:14px}.dr-conf .v,.dr-acc .v{font-family:'Space Grotesk',sans-serif;font-size:30px;font-weight:600;color:var(--ink);line-height:1.1}
+.dr-conf .v small,.dr-acc .v small{font-size:15px;color:var(--ink3)}.dr-conf .sub,.dr-acc .sub{font-size:12.5px;color:var(--ink2);margin-top:4px}
+.dr-acc{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-top:12px;padding-top:12px;border-top:1px solid var(--hb-line2)}
 /* Today's score (dsr.scorecard, 9/25/26): "did we win today?" in one glance */
 .dr-score{margin-top:22px}
 .dr-score .top{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
@@ -5083,7 +5110,8 @@ svg:hover .hb-xh{opacity:1}
 (function(){
   var TERMINAL={final:1,provisional:1,failed:1};
   var STATUS={final:'Final',provisional:'Provisional',failed:'Couldn’t finish'};
-  var BLOCKS=['sales','labor','food','reviews','marketing','intel','closeout'];
+  // Reading order (9/25/26): sales, labor, food cost, reviews, weather — then the rest.
+  var BLOCKS=['sales','labor','food','reviews','intel','marketing','closeout'];
   var BLOCK={sales:'Sales',labor:'Labor',food:'Food',reviews:'Reviews',marketing:'Marketing',intel:'Intel',closeout:'Manager close-out'};
   var BSTATUS={awaiting:'Awaiting',unavailable:'Unavailable',not_connected:'Not connected'};
   var SOURCE={rpower:'RPower',toast:'Toast',square:'Square',clover:'Clover',cavnar:'Cavnar',google:'Google',yelp:'Yelp',instagram:'Instagram',facebook:'Facebook',manager:''};
@@ -5305,13 +5333,13 @@ svg:hover .hb-xh{opacity:1}
     h+='</div><div class="dr-err" hidden></div><div id="dr-rerun"></div>';
     if(isOld)h+='<section class="hb-card rail dr-old"><span>You’re reading version '+hn(p.version)+' of '+hn(latest.version)+', as it went out'+(mine&&mine.finalized_at_local?' at '+hn(esc(stamp(mine.finalized_at_local))):'')+'.</span><span class="sp"></span><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="night" data-date="'+esc(date)+'">Read the latest</button></section>';
     if((f.missing||[]).length){h+='<div class="dr-miss"><span>Still missing:</span>';for(var m=0;m<f.missing.length;m++)h+='<span class="m">'+esc(f.missing[m])+'</span>';h+='</div>';}
-    if(p.scorecard)h+=scoreHtml(p.scorecard);
     h+=narrativeHtml(p.narrative,ck,p);
     h+='<div class="hb-sh"><div><div class="k dim">The night, measured</div><h2>Block by block <small>each with its source; nothing estimated to fill a gap</small></h2></div></div>';
     var withheld=f.withheld||[];
     for(var k=0;k<BLOCKS.length;k++){var n=BLOCKS[k];
       if(B[n])h+=section(n,B[n],p);
       else if(withheld.indexOf(n)<0)h+=section(n,{status:'unavailable',reason:'Not collected for this night'},p);}
+    h+=yesterdayHtml(p.yesterday);
     h+=builtHtml(ck);
     if(withheld.length){var names=[];for(var w=0;w<withheld.length;w++)names.push(BLOCK[withheld[w]]||withheld[w]);
       h+='<div class="dr-withheld">Not part of your view: '+esc(names.join(', '))+'. The owner decides what a manager login can read.</div>';}
@@ -5353,30 +5381,30 @@ svg:hover .hb-xh{opacity:1}
       +'<div class="hb-card"><div class="hb-h3"><span>Today\u2019s risks</span></div>'
       +(r.length?wrItems(r,'risk','!'):'<div class="hb-empty">Nothing to watch tonight.</div>')+'</div></div>';
   }
+  // The night's report, top to bottom (9/25/26 visual hierarchy): the
+  // executive summary first, then "did we win?" (owner: Today's score, wins
+  // and risks; manager: Today's shift and Operations), the key numbers with
+  // direction, AI insights, tomorrow's priorities, tomorrow — and the blocks,
+  // the detail, below them (renderNight).
   function narrativeHtml(n,ck,p){
-    var why=(ck.narrative&&ck.narrative.reason)||null,h='';
+    var why=(ck.narrative&&ck.narrative.reason)||null,h='',mgr=p&&p.view==='manager',sc=p&&p.scorecard;
     var lead=n&&n.executive_summary&&n.executive_summary.text;
-    if(!n||(!lead&&!(n.went_well||[]).length&&!(n.needs_attention||[]).length&&!(n.actions_tomorrow||[]).length)){
-      var k0=p&&p.scorecard?'Executive summary':'The morning read';
-      return '<section class="hb-card quiet dr-read" aria-label="'+k0+'"><div class="hb-h3"><span>'+k0+'</span></div><div class="hb-empty">'
-        +esc(why||(n&&p.view==='manager'?'The summary rests on figures outside your view, so it isn’t shown here. Every figure you can read is below.':'No summary was written for this night. Every measured figure is below.'))+'</div></section>'
-        +(p&&p.scorecard?winsRisksHtml(p.scorecard):'');
-    }
-    var sc=p&&p.scorecard,kick=sc?'Executive summary':'The morning read';
+    var kick=mgr?'Operations summary':'Executive summary';
     if(lead)h+='<section class="hb-card hero hb-focus dr-read" aria-label="'+kick+'"><div class="hb-kicker">'+kick+'</div><div class="lead">'+prose(lead)+'</div></section>';
-    else h+='<div class="dr-note" style="margin-top:22px">The opening summary rests on figures outside your view, so it isn’t shown.</div>';
-    var ww=n.went_well||[],na=n.needs_attention||[];
-    if(sc){h+=winsRisksHtml(sc);ww=[];na=[];}
-    if(ww.length||na.length){h+='<div class="dr-two">';
-      h+='<div class="hb-card"><div class="hb-h3"><span>Went well</span></div>'+(ww.length?items(ww,'good'):'<div class="hb-empty">Nothing called out.</div>')+'</div>';
-      h+='<div class="hb-card"><div class="hb-h3"><span>Needs attention</span></div>'+(na.length?items(na,'important'):'<div class="hb-empty">Nothing called out.</div>')+'</div></div>';}
-    var calls='',seen={};
-    for(var i=0;i<CALLS.length;i++){var ck=CALLS[i][0].split('|'),c=null;for(var ci=0;ci<ck.length&&!c;ci++)c=n[ck[ci]]||null;var t=c&&c.text;if(!t||seen[t])continue;seen[t]=1;
-      calls+='<div class="dr-call"><div class="k">'+esc(CALLS[i][1])+'</div><div class="t">'+prose(t)+'</div></div>';}
-    if(calls)h+='<div class="dr-calls">'+calls+'</div>';
+    else h+='<section class="hb-card quiet dr-read" aria-label="'+kick+'"><div class="hb-h3"><span>'+kick+'</span></div><div class="hb-empty">'
+      +esc(why||(n&&mgr?'The summary rests on figures outside your view, so it isn\u2019t shown here. Every figure you can read is below.':'No summary was written for this night. Every measured figure is below.'))+'</div></section>';
+    if(sc)h+=scoreHtml(sc)+winsRisksHtml(sc);
+    if(mgr){h+=shiftHtml(p.shift);h+=opsHtml(p.operations);}
+    h+=kpisHtml(p&&p.kpis);
+    n=n||{};
+    if(!sc){var ww=n.went_well||[],na=n.needs_attention||[];
+      if(ww.length||na.length){h+='<div class="dr-two">';
+        h+='<div class="hb-card"><div class="hb-h3"><span>Went well</span></div>'+(ww.length?items(ww,'good'):'<div class="hb-empty">Nothing called out.</div>')+'</div>';
+        h+='<div class="hb-card"><div class="hb-h3"><span>Needs attention</span></div>'+(na.length?items(na,'important'):'<div class="hb-empty">Nothing called out.</div>')+'</div></div>';}}
+    h+=insightsHtml(p&&p.insights);
     var acts=n.actions_tomorrow||[];
     if(acts.length){
-      h+='<div class="hb-sh"><div><div class="k">Tomorrow</div><h2>What to do about it <small>ranked by urgency, dollars and effort</small></h2></div></div><div class="hb-recs">';
+      h+='<div class="hb-sh"><div><div class="k">AI recommended actions</div><h2>Tomorrow\u2019s priorities <small>ranked by urgency, dollars and effort</small></h2></div></div><div class="hb-recs">';
       for(var a=0;a<acts.length;a++){var x=acts[a],rk=x.rec_key||x.key||'',blk=String(rk).split(':')[2]||'';blk=blk.split('/')[0];
         // The calibrated figure when this restaurant's measured results
         // of the kind correct it (rec_learning.attach_dollar_calibration).
@@ -5399,6 +5427,7 @@ svg:hover .hb-xh{opacity:1}
           +(uadj?'<div class="dr-note">Cavnar AI marked this '+esc(URGENCY[uadj.from]||'Today')+'; moved to '+esc(URGENCY[uadj.to]||'This week')+' because '+prose(uadj.why||'the figures it cites don\u2019t show that urgency')+'.</div>':'')
           +acf+ans+'</div>';}
       h+='</div>';}
+    h+=tomorrowHtml(p&&p.tomorrow,n);
     var vf=n.verification;
     // "Traced to a measured fact" never covers an estimate (H13): a line
     // that cites the estimated food cost or the forecast is counted apart
@@ -5418,6 +5447,82 @@ svg:hover .hb-xh{opacity:1}
         +(dropped?' · '+hn(dropped)+' dropped because '+(dropped===1?'it':'they')+' didn’t pass the check against the night’s facts':'')
         +(dAns?' · '+hn(dAns)+' left out because you already answered '+(dAns===1?'it':'them')+' or '+(dAns===1?'it repeated':'they repeated')+' a line above':'')+' · written by Cavnar AI</div>';}
     return h;
+  }
+  // AI insights: the narrative's verified callouts and (owner) money at stake.
+  function insightsHtml(list){
+    if(!list||!list.length)return '';
+    var h='<div class="hb-sh"><div><div class="k">Cavnar AI</div><h2>AI insights</h2></div></div><div class="dr-calls">';
+    for(var i=0;i<list.length;i++){var x=list[i];h+='<div class="dr-call"><div class="k">'+esc(x.label)+'</div><div class="t">'+prose(x.text)+'</div></div>';}
+    return h+'</div>';
+  }
+  // A small trend line: the last nights, the latest lit (DESIGN_SYSTEM §12).
+  function spark(vals){
+    if(!vals||vals.length<3)return '';
+    var w=84,hh=22,mn=Math.min.apply(null,vals),mx=Math.max.apply(null,vals),rg=(mx-mn)||1,pts=[];
+    for(var i=0;i<vals.length;i++)pts.push((i*(w-4)/(vals.length-1)+2).toFixed(1)+','+(hh-3-(vals[i]-mn)/rg*(hh-6)).toFixed(1));
+    var last=pts[pts.length-1].split(',');
+    return '<svg class="dr-spark" width="'+w+'" height="'+hh+'" viewBox="0 0 '+w+' '+hh+'" aria-hidden="true"><polyline points="'+pts.join(' ')+'" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/><circle cx="'+last[0]+'" cy="'+last[1]+'" r="2.6" class="dot"/></svg>';
+  }
+  function kpiTile(k){
+    var h='<div class="dr-kpi"><div class="k">'+esc(k.label)+(k.estimate?' <small>est.</small>':'')+'</div><div class="row"><span class="v">'+hn(esc(k.value_text))+'</span>'+spark(k.spark)+'</div>';
+    if(k.change)h+='<div class="chg '+esc(k.change.tone||'')+'">'+prose(k.change.text)+'</div>';
+    if(k.streak)h+='<div class="stk '+esc(k.streak.tone||'')+'">'+esc(k.streak.text)+'</div>';
+    if(k.detail)h+='<div class="sub">'+esc(k.detail)+'</div>';
+    if(k.target)h+='<div class="sub">'+esc(k.target.label)+' '+hn(esc(k.target.value_text))+'</div>';
+    if(k.peers){h+=k.peers.available?'<div class="sub">'+esc(k.peers.label)+' '+hn(esc(k.peers.value_text))+(isNum(k.peers.strength_pct)?' <small>'+hn(k.peers.strength_pct)+'% comparison strength</small>':'')+'</div>'
+      :'<div class="sub dim" title="'+esc(k.peers.why_not||'')+'">'+esc(k.peers.label)+': no fair comparison yet</div>';}
+    return h+'</div>';
+  }
+  function kpisHtml(list){
+    if(!list||!list.length)return '';
+    var h='<div class="hb-sh"><div><div class="k">Top KPIs</div><h2>The numbers, with direction <small>against the same weekday</small></h2></div></div><div class="dr-kpis">';
+    for(var i=0;i<list.length;i++)h+=kpiTile(list[i]);
+    return h+'</div>';
+  }
+  // Manager: Today's shift and Operations.
+  function shiftHtml(sh){
+    if(!sh)return '';
+    var h='<section class="hb-card dr-shift" aria-label="Today\u2019s shift"><div class="hb-kicker">Today\u2019s shift</div><div class="dr-shift-rows">';
+    for(var i=0;i<(sh.rows||[]).length;i++){var r=sh.rows[i];h+='<div class="c '+esc(r.tone||'')+'"><div class="v">'+hn(esc(r.value_text))+'</div><div class="k">'+esc(r.label)+'</div></div>';}
+    h+='</div>'+(sh.note?'<div class="dr-note">'+esc(sh.note)+'</div>':'')+'</section>';
+    return h;
+  }
+  function opsHtml(list){
+    if(!list||!list.length)return '';
+    var h='<div class="hb-sh"><div><div class="k">Service</div><h2>Operations</h2></div></div><div class="dr-kpis">';
+    for(var i=0;i<list.length;i++)h+=kpiTile(list[i]);
+    return h+'</div>';
+  }
+  // Tomorrow: the prep list, Cavnar's forecast and the confidence it rests on.
+  function tomorrowHtml(t,n){
+    if(!t)return '';
+    var it=t.items||[],fc=t.forecast,cf=t.confidence;
+    var h='<div class="hb-sh"><div><div class="k">Tomorrow</div><h2>'+esc(t.weekday||'Tomorrow')+(t.date?' <small>'+esc(md(t.date))+'</small>':'')+'</h2></div></div><div class="dr-two dr-tmr">';
+    h+='<div class="hb-card"><div class="hb-h3"><span>Get ready for</span></div>';
+    if(it.length){for(var i=0;i<it.length;i++)h+='<div class="hb-row '+(it[i].tone==='warn'?'risk':'watch')+'"><span class="g" aria-hidden="true">'+(it[i].tone==='warn'?'!':'\u2022')+'</span><span class="t wrap">'+prose(it[i].text)+'</span></div>';}
+    else h+='<div class="hb-empty">Nothing on the books to prep for.</div>';
+    if(isNum(t.scheduled))h+='<div class="dr-note">'+hn(t.scheduled)+' on the published schedule.</div>';
+    var rec=null,acts=(n&&n.actions_tomorrow)||[];
+    for(var a=0;a<acts.length&&!rec;a++){if(/staff|schedul|labor|shift|cover/i.test(String(acts[a].kind||'')+' '+String(acts[a].text||'')))rec=acts[a];}
+    if(rec)h+='<div class="dr-rec"><div class="k">AI recommendation</div><div class="t">'+prose(rec.text)+'</div></div>';
+    h+='</div><div class="hb-card"><div class="hb-h3"><span>Cavnar\u2019s forecast</span></div>';
+    if(fc)h+='<div class="dr-fc">'+hn(esc(fc.text))+'</div><div class="dr-note">'+esc(cap(fc.basis||''))+'</div>';
+    else h+='<div class="hb-empty">Not enough history for this weekday yet.</div>';
+    if(cf){h+='<div class="dr-conf"><div class="k">AI confidence</div><div class="v">'+hn(cf.pct)+'<small>%</small></div><div class="sub">Based on '+esc((cf.based_on||[]).join(' \u00b7 '))+'</div>'
+      +((cf.missing||[]).length?'<div class="sub dim">Missing: '+esc(cf.missing.join(' \u00b7 '))+'</div>':'')+'<div class="sub dim">'+esc(cf.track||'')+'</div></div>';}
+    return h+'</div></div>';
+  }
+  // How did yesterday turn out? Cavnar's predictions about this night, graded.
+  function yesterdayHtml(y){
+    if(!y||!(y.items||[]).length)return '';
+    var ac=y.accuracy||{},h='<div class="hb-sh"><div><div class="k">Cavnar grading itself</div><h2>How did yesterday turn out?</h2></div></div><section class="hb-card dr-yest">';
+    for(var i=0;i<y.items.length;i++){var x=y.items[i],o=x.outcome;
+      h+='<div class="hb-row '+(o==='correct'?'win':(o==='incorrect'?'miss':'watch'))+'"><span class="g" aria-hidden="true">'+(o==='correct'?'\u2713':(o==='incorrect'?'\u2717':'\u2022'))+'</span><span class="t wrap">'+prose(x.text)
+        +(x.actual_text?'<small>'+prose(x.actual_text)+'</small>':'')+'</span><span class="m">'+(o==='correct'?'Correct':(o==='incorrect'?'Incorrect':'Not graded'))+'</span></div>';}
+    h+='<div class="dr-acc"><span class="k">Prediction accuracy</span>'
+      +(isNum(ac.pct)?'<span class="v">'+hn(ac.pct)+'<small>%</small></span><span class="sub">'+hn(ac.correct)+' of '+hn(ac.graded)+' right, last '+hn(ac.window_days)+' days</span>'
+        :'<span class="sub">'+hn(ac.correct||0)+' of '+hn(ac.graded||0)+' right so far \u2014 a percentage after '+hn(ac.min_graded||5)+' graded</span>')+'</div>';
+    return h+'</section>';
   }
   function items(list,cls){var h='';for(var i=0;i<list.length;i++){var t=typeof list[i]==='string'?list[i]:(list[i]&&list[i].text);if(t)h+=row(prose(t),cls);}return h;}
 
