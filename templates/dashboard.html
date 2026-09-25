@@ -1833,6 +1833,28 @@ document.addEventListener('click', function (e) {
   cavNav(t.getAttribute('data-nav-go'));
 });
 window.cavNav = cavNav; window.cavNavRegister = cavNavRegister; window.cavNavParse = cavNavParse;
+
+/* Opening a section disclosure (the ember chevron) scrolls its heading to
+   the top, under the sticky chrome, so what it opened is on screen (owner,
+   9/25/26). Only when the owner opened it themselves - a deep link or "Show
+   all" does its own scrolling. */
+(function () {
+  var SEL = 'details.hb-results>summary,details.rv2-analytics>summary';
+  document.addEventListener('click', function (e) {
+    var sm = e.target && e.target.closest ? e.target.closest(SEL) : null;
+    if (sm && sm.parentNode) sm.parentNode._cavUserOpen = Date.now();
+  }, true);
+  document.addEventListener('toggle', function (e) {
+    var d = e.target;
+    if (!d || !d.open || !d._cavUserOpen || Date.now() - d._cavUserOpen > 1500) return;
+    d._cavUserOpen = 0;
+    setTimeout(function () {
+      var chrome = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--cav-chrome'), 10) || 110;
+      var top = d.getBoundingClientRect().top + (window.pageYOffset || document.documentElement.scrollTop) - chrome - 12;
+      try { window.scrollTo({top: top, behavior: 'smooth'}); } catch (x) { window.scrollTo(0, top); }
+    }, 60);
+  }, true);
+})();
 window.cavHistory = cavHistory; window.cavRoute = cavRoute; window.cavFlash = cavFlash;
 
 /* ── Built-in handlers ─────────────────────────────────────────────────────
@@ -2392,6 +2414,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-focus .money{font-family:'Space Grotesk',sans-serif;font-size:34px;font-weight:600;letter-spacing:-.025em;color:var(--ink);line-height:1}
 .hb-focus .money small{font-family:'Apfel Grotezk',sans-serif;font-size:13.5px;color:var(--ink3);font-weight:400;letter-spacing:0;margin-left:7px}
 .hb-focus .ft .sp{display:none}
+.hb-focus .hb-focus-hd{align-items:center}
+.hb-focus .hb-focus-hd .mods{color:var(--ink3);letter-spacing:.12em}
 /* The primary beside Could also be... is the same 36px; its glow made it
    read bigger, so on this card it keeps only the plain shadow (9/25/26). */
 .hb-focus .ft .cbtn-primary,.hb-focus .ft .cbtn-primary:hover{box-shadow:inset 0 1px 0 rgba(255,255,255,.16),var(--cb-shadow)}
@@ -2681,6 +2705,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 @keyframes hbNewRing{0%{outline:2px solid var(--ember);outline-offset:0}100%{outline:2px solid transparent;outline-offset:14px}}
 /* the brief's dots land one after another */
 .hb-tl .it{opacity:0;animation:hbRise .42s cubic-bezier(.2,.9,.3,1) forwards;animation-delay:calc(var(--i,0)*60ms + 120ms)}
+.hb-still,.hb-still .hb-rise,.hb-still .hb-tl .it,.hb-still .hb-rec{animation:none!important;opacity:1!important;transform:none!important}
 /* charts: crosshair + tooltip */
 .hb-sg svg,.hb-hero svg{cursor:crosshair}
 .hb-xh{pointer-events:none;opacity:0;transition:opacity .15s ease}
@@ -3631,7 +3656,12 @@ svg:hover .hb-xh{opacity:1}
       var c=e.closest('.hb-rec,.hb-row,.hb-tl .it,.hb-chk');
       if(c&&c.parentNode){c.classList.add('hb-gone');(function(n){setTimeout(function(){if(n.parentNode)n.parentNode.removeChild(n);},220);})(c);}}
   }
-  function hbSwap(id,html){var el=document.getElementById(id);if(el)el.outerHTML=html;}
+  // A quiet refresh swaps only what changed, and without its entrance
+  // animation: returning to Home used to replay every card as if the page
+  // had reloaded (9/25/26).
+  var _hbSwapLast={};
+  function hbSwap(id,html){var el=document.getElementById(id);if(!el||_hbSwapLast[id]===html)return;_hbSwapLast[id]=html;
+    el.outerHTML=html;var n=document.getElementById(id);if(n&&n.classList)n.classList.add('hb-still');}
   function hbSoft(fresh){
     if(fresh)_hbSoftFresh=true;
     clearTimeout(_hbSoftT);
@@ -3641,7 +3671,7 @@ svg:hover .hb-xh{opacity:1}
       fetch('/api/home/brief'+(f?'?fresh=1':''),{credentials:'same-origin'}).then(apiJson).then(function(d){
         if(!d||!d.ok||d.scope==='group')return;
         _hbData=d;_hbLoadedAt=Date.now();renderTop(d);
-        var used=focusUsed(d);
+        var used=focusUsed(d,_hbG);
         var fx=document.getElementById('hb-focus');
         if(fx&&_hbG){var prev=_hbFocusLead,nf=renderFocus(d,_hbG);if(_hbFocusLead!==prev)fx.outerHTML=nf;}
         hbSwap('hb-attn-card',renderAttention(d,{att:_hbFocusAtt?1:0}));
@@ -3865,7 +3895,15 @@ svg:hover .hb-xh{opacity:1}
   // top recommendation, then — honestly — nothing needs you. It renders
   // from the first payload and is upgraded in place once the follow-through
   // reads land, so it is never a skeleton and never empty.
-  function focusUsed(d){var att=d.attention||[],recs=d.recommendations||[];return att.length?{att:1}:(recs.length?{rec:1}:{});}
+  // What the one thing card took from the lists below it, so nothing is on
+  // the page twice. It mirrors renderFocus: a cross-module finding (g.cross.
+  // fix_first) leads and takes nothing; else the first attention item, else
+  // the first recommendation. Before the day's reads land (no g) the card is
+  // a placeholder and takes nothing. It used to ignore the finding, so the
+  // grid dropped card 01 on some paths and kept it on others (9/25/26).
+  function focusUsed(d,g){var att=d.attention||[],recs=d.recommendations||[];
+    if(!g)return {};var ff=g.cross&&g.cross.fix_first;if(ff&&ff.what)return {};
+    return att.length?{att:1}:(recs.length?{rec:1}:{});}
   function hbNorm(t){return String(t||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').replace(/^\s+|\s+$/g,'');}
   function hbFreshEvidence(ev,said){
     said=String(said||'');
@@ -3951,18 +3989,24 @@ svg:hover .hb-xh{opacity:1}
     var h='<section class="hb-card hero hb-focus'+(clear?' clear':'')+' hb-rise" id="hb-focus" aria-label="Today">';
     // Freshness is the header chip's to say (density fix #21); the card's
     // head is a plain .hb-h3 like every card on Home (#41).
-    h+='<div class="hb-h3"><span>'+esc(kick)+'</span></div>';
-    if(mods.length>1){h+='<div class="hb-join">';for(var m=0;m<mods.length;m++){if(m)h+='<span class="ln"></span>';h+='<span class="mod">'+esc(MODLABEL[mods[m]]||mods[m])+'</span>';}h+='</div>';}
+    // Simplified (owner, 9/25/26 - "way too wordy"): the card says what to
+    // do, one sentence of why, the money and the actions. The modules ride
+    // in the kicker, how sure is a pill (its Why? opens the full basis), and
+    // the evidence, the confirm step, the claim kind and what else could
+    // explain it sit behind one "Why this?" panel.
+    var modTxt=mods.length>1?mods.map(function(mm){return MODLABEL[mm]||mm;}).join(' + '):'';
+    h+='<div class="hb-h3 hb-focus-hd"><span>'+esc(kick)+(modTxt?' <span class="mods">\u00b7 '+esc(modTxt)+'</span>':'')+'</span>'
+      +(fconf&&!clear?cavConfLine(fconf,{key:fkey,surface:'home',module:'home',pill:1}):'')+'</div>';
     h+='<div class="lead">'+num(lead)+'</div>';
     if(why)h+='<div class="why">'+num(why)+'</div>';
-    if(confirm)h+='<div class="why"><strong>To confirm:</strong> '+num(confirm)+'</div>';
-    if(ev.length){h+='<div class="ev">';for(var e=0;e<ev.length;e++)h+='<span>'+num(ev[e])+'</span>';h+='</div>';}
-    // How sure, on the most prominent item on the page too (CA4: the one
-    // thing carried a confidence and a claim kind and showed neither).
-    if((fconf||ftag)&&!clear)h+='<div class="hb-focus-cf">'+ftag+(fconf?cavConfLine(fconf,{key:fkey,surface:'home',module:'home'}):'')+'</div>';
+    var basis='';
+    if(ev.length){basis+='<div style="margin-bottom:10px"><strong>What it rests on:</strong><ul style="margin:6px 0 0;padding-left:18px">';for(var e=0;e<ev.length;e++)basis+='<li>'+num(ev[e])+'</li>';basis+='</ul></div>';}
+    if(confirm)basis+='<div style="margin-bottom:10px"><strong>To confirm:</strong> '+num(confirm)+'</div>';
+    if(ftag&&!clear)basis+='<div style="margin-bottom:10px">'+ftag+'</div>';
+    alt=basis+alt;
     h+='<div class="ft">'+(money?'<div class="money hb-num">'+money+'</div>':'')+'<span class="sp"></span>';
     var ffKey=ff&&(ff.rec_key||ff.key)||'';
-    if(alt)h+='<button type="button" class="cbtn cbtn-secondary" data-explain="'+esc(alt)+'" data-explain-title="What else could explain it" data-explain-kicker="A question, not a finding"'+(ffKey?' data-explain-key="'+esc(ffKey)+'"':'')+'>Could also be…</button>';
+    if(alt)h+='<button type="button" class="cbtn cbtn-secondary" data-explain="'+esc(alt)+'" data-explain-title="Why this is the one thing" data-explain-kicker="What it rests on"'+(ffKey?' data-explain-key="'+esc(ffKey)+'"':'')+'>Why this?</button>';
     // The one thing is a recommendation like any other (rec-ROI #26): Done /
     // Pass when the server says it can be answered - the same ledger door as
     // every module line. A lead that is the top card keeps that card's own
@@ -4369,7 +4413,7 @@ svg:hover .hb-xh{opacity:1}
     // the bottom, its summary line carrying the measured figure (density
     // fixes #4, #20, #21). Readiness leads the page for an account with
     // nothing connected yet; otherwise it follows the recommendations.
-    var used=focusUsed(d);
+    var used=focusUsed(d,_hbG);
     var fresh=hbIsFresh(d);
     if(fresh)h+=renderReadiness(d);
     // Until the day's reads land (renderFollow), the lead isn't known: a
@@ -4377,9 +4421,9 @@ svg:hover .hb-xh{opacity:1}
     // real one thing, read as a banner that vanished (9/25/26). Hold the
     // card's place instead; renderFollow always swaps it (even on failure).
     h+=(_hbG?renderFocus(d,_hbG):renderFocusPending());
-    // Nothing is promoted into the placeholder, so every attention item stays
-    // in its card until the real lead is known.
-    h+=renderAttention(d,_hbG?used:{att:0,rec:used&&used.rec});
+    // Nothing is promoted into the placeholder (focusUsed(d,null) is {}), so
+    // every item stays in its list until the real lead is known.
+    h+=renderAttention(d,used);
     if(hbFreshBehind(d))h+=renderFreshness(d);
     // How you compare (Benchmarking #23): the compact strip under the
     // freshness line, filled by its own read so the brief never waits on it.
@@ -4885,7 +4929,8 @@ svg:hover .hb-xh{opacity:1}
     var fx=document.getElementById('hb-focus');
     if(fx){var _prevLead=_hbFocusLead,_nf=renderFocus(d,g);if(_hbFocusLead!==_prevLead)fx.outerHTML=_nf;}
     var ff=g.cross&&g.cross.fix_first;
-    if(ff&&ff.what&&!(d.attention||[]).length){var rg=document.getElementById('hb-recs');if(rg)rg.outerHTML=renderRecs(d,0);}
+    // The grid is redrawn with what the settled card actually took.
+    var u2=focusUsed(d,g);if(ff&&ff.what||u2.rec){var rg=document.getElementById('hb-recs');if(rg)rg.outerHTML=renderRecs(d,u2.rec?1:0);}
     // A grid drawn before the cross-module read landed may hold the card the
     // one thing now leads with: take it out, so one key is on the page once.
     else if(hbFocusKey){var gx=document.getElementById('hb-recs'),dup=gx?gx.querySelectorAll('.hb-rec [data-dismiss-key]'):[];
@@ -5364,7 +5409,12 @@ svg:hover .hb-xh{opacity:1}
       _hbLoadedAt=Date.now();if(d.scope==='group')renderGroup(d);else render(d);
     }).catch(function(){_hbLoading=false;again();var b=document.getElementById('hb-body');if(b)b.innerHTML='<div class="hb-err"><span>Couldn\'t reach Cavnar AI — check your connection.</span><button class="cbtn cbtn-secondary cbtn-sm" onclick="hbLoad(true)">Try again</button></div>';});
   };
-  window.hbRefresh=function(){if(!_hbLoadedAt||Date.now()-_hbLoadedAt>5*60*1000)hbLoad(false);};
+  // Back on Home after five minutes (or after a change made elsewhere): a
+  // quiet re-read that swaps only what changed - never the full rebuild with
+  // skeletons, which read as the page reloading itself. The first visit and
+  // the group view still load in full.
+  window.hbRefresh=function(){if(!_hbLoadedAt&&!_hbData){hbLoad(false);return;}
+    if(!_hbLoadedAt||Date.now()-_hbLoadedAt>5*60*1000)hbSoft(false);};
   // A "Ask about this →" link in the morning-brief email lands here with the
   // question in the query string (morning_brief._ask_url). Ask it once Home
   // is up, then clean the URL so a refresh doesn't ask again.
@@ -6752,7 +6802,7 @@ svg:hover .hb-xh{opacity:1}
   <div class="rh-head">
     <div class="hb-kicker">Your record</div>
     <h1 class="hb-h1">Recommendations</h1>
-    <div class="rh-sub">What Cavnar suggested, what you did with it, and what was measured afterwards. Anything left unanswered counts as not taken.</div>
+    <div class="rh-sub">What Cavnar suggested, what you did with it, and what was measured afterwards. Anything left unanswered counts as not acted on.</div>
   </div>
   <div id="rh-body" aria-live="polite"></div>
 </div>
@@ -6859,7 +6909,7 @@ svg:hover .hb-xh{opacity:1}
     if(cks.length){h+='<div class="hb-sh"><div><div class="k">Check in</div><h2>Did you make these changes? <small>'+cks.length+' result'+(cks.length===1?'':'s')+' landed</small></h2></div></div>';
       for(var c=0;c<cks.length&&c<5;c++)h+=recCheckinHtml(cks[c],'home');}
     h+=strip(g.summary)+worked(g.worked)+followed(g.summary);
-    h+='<div class="hb-sh"><div><div class="k dim">Everything shown</div><h2>Every recommendation <small>newest first</small></h2></div></div><section class="hb-card" aria-label="Every recommendation"><div id="rh-tl"></div><div class="rh-err" id="rh-tl-err"></div></section>';
+    h+='<div class="hb-sh"><div><div class="k">Everything shown</div><h2>Every recommendation <small>newest first</small></h2></div></div><section class="hb-card" aria-label="Every recommendation"><div id="rh-tl"></div><div class="rh-err" id="rh-tl-err"></div></section>';
     b.innerHTML=h;renderTimeline();linked();
   }
   // Three tiles (density audit #40): taken of shown, measured better, open
@@ -6872,7 +6922,7 @@ svg:hover .hb-xh{opacity:1}
     var bet=t.measured_enough?('<span class="hb-num">'+t.improved+'</span><small>of '+t.measured+'</small>'):'—';
     var betS=t.measured_enough?'measured results that improved':(t.measured+' of '+(s.min_measured||5)+' measured — not enough yet');
     return '<div class="hb-stats rh-strip" role="group" aria-label="Your record in three figures">'
-      +'<div class="hb-stat"><div class="k">Taken</div><div class="v">'+took+'</div><div class="s">'+esc(tookS)+'</div></div>'
+      +'<div class="hb-stat"><div class="k">Acted on</div><div class="v">'+took+'</div><div class="s">'+esc(tookS)+'</div></div>'
       +'<div class="hb-stat'+(t.measured_enough&&t.improved*2>=t.measured?' good':'')+'"><div class="k">Measured better</div><div class="v">'+bet+'</div><div class="s">'+esc(betS)+'</div></div>'
       +'<div class="hb-stat"><div class="k">Open now</div><div class="v"><span class="hb-num">'+(t.open||0)+'</span></div><div class="s">shown, not yet answered</div></div>'
       +'</div>';
@@ -6889,18 +6939,18 @@ svg:hover .hb-xh{opacity:1}
   function followed(s){
     var bm=s.by_module||{},keys=[],k;for(k in bm)if(bm.hasOwnProperty(k))keys.push(k);
     keys.sort(function(a,b){return (bm[b].n-bm[a].n)||(a<b?-1:1);});
-    var h='<div class="hb-sh"><div><div class="k">What you followed</div><h2>Taken, by area <small>the last '+s.days+' days</small></h2></div></div><section class="hb-card" aria-label="What you followed">';
+    var h='<div class="hb-sh"><div><div class="k">What you followed</div><h2>Acted on, by area <small>the last '+s.days+' days</small></h2></div></div><section class="hb-card" aria-label="What you followed">';
     if(!keys.length)return h+'<div class="hb-empty">Nothing was shown in the last '+s.days+' days.</div></section>';
     h+='<div class="rh-mods">';
     for(var i=0;i<keys.length;i++){var m=bm[keys[i]],took=(m.accepted||0)+(m.completed||0)+(m.implemented||0);
-      var bits=[];bits.push('<span class="hb-num">'+took+'</span> taken');
+      var bits=[];bits.push('<span class="hb-num">'+took+'</span> acted on');
       if(m.dismissed)bits.push('<span class="hb-num">'+m.dismissed+'</span> declined');
       if(m.ignored)bits.push('<span class="hb-num">'+m.ignored+'</span> left unanswered');
       var open=(m.shown||0)-(m.n||0);if(open>0)bits.push('<span class="hb-num">'+open+'</span> still open');
       var bar,v;
       if(m.enough&&isNum(m.accept_rate)){
         var lo=isNum(m.accept_rate_low)?m.accept_rate_low:m.accept_rate,hi=isNum(m.accept_rate_high)?m.accept_rate_high:m.accept_rate;
-        bar='<div class="bar" role="img" aria-label="'+Math.round(m.accept_rate*100)+'% taken"><span class="rg" style="left:'+(lo*100).toFixed(1)+'%;width:'+((hi-lo)*100).toFixed(1)+'%"></span><i style="width:'+(m.accept_rate*100).toFixed(1)+'%;animation-delay:'+(i*60)+'ms"></i></div>';
+        bar='<div class="bar" role="img" aria-label="'+Math.round(m.accept_rate*100)+'% acted on"><span class="rg" style="left:'+(lo*100).toFixed(1)+'%;width:'+((hi-lo)*100).toFixed(1)+'%"></span><i style="width:'+(m.accept_rate*100).toFixed(1)+'%;animation-delay:'+(i*60)+'ms"></i></div>';
         v='<div class="v">'+Math.round(m.accept_rate*100)+'%<small>likely '+Math.round(lo*100)+'–'+Math.round(hi*100)+'%</small></div>';
       }else{
         bar='<div class="bar none" aria-hidden="true"></div>';
@@ -7274,8 +7324,11 @@ svg:hover .hb-xh{opacity:1}
 .rv2-analytics,.hb-results{margin-top:30px;border-top:1px solid var(--paper3)}
 .rv2-analytics>summary,.hb-results>summary{list-style:none;cursor:pointer;display:flex;align-items:baseline;gap:10px;padding:14px 0;font-size:13px;color:var(--ink2)}
 .rv2-analytics>summary::-webkit-details-marker,.hb-results>summary::-webkit-details-marker{display:none}
-.rv2-analytics>summary:after,.hb-results>summary:after{content:'›';margin-left:auto;flex:0 0 auto;align-self:center;display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:50%;background:var(--hb-tint,rgba(200,75,47,.08));color:var(--ember);font-size:22px;font-weight:600;line-height:1;transition:transform .2s ease,background-color .15s ease}
-.rv2-analytics>summary:hover:after,.hb-results>summary:hover:after{background:var(--hb-tint2,rgba(200,75,47,.16))}
+.rv2-analytics>summary:after,.hb-results>summary:after{content:'';margin-left:auto;flex:0 0 auto;align-self:center;display:block;width:30px;height:30px;border-radius:50%;background:var(--hb-tint,rgba(200,75,47,.08)) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M4.5 2.5 8 6l-3.5 3.5' fill='none' stroke='%23c84b2f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/12px 12px no-repeat;transition:transform .2s ease,background-color .15s ease}
+/* A drawn chevron, centred exactly in its circle (the '›' glyph sat off
+   centre in its own box, 9/25/26). */
+[data-theme="dark"] .rv2-analytics>summary:after,[data-theme="dark"] .hb-results>summary:after{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M4.5 2.5 8 6l-3.5 3.5' fill='none' stroke='%23e06444' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")}
+.rv2-analytics>summary:hover:after,.hb-results>summary:hover:after{background-color:var(--hb-tint2,rgba(200,75,47,.16))}
 /* Disclosure headings read as headings (9/25/26): the kicker and its line
    a size up, and the chevron a clear ember button, not a tiny grey glyph. */
 .rv2-analytics>summary,.hb-results>summary{font-size:15.5px;align-items:center}
@@ -13499,8 +13552,12 @@ function recReasonPicker(after,opts){
   var inp=box.querySelector('input');
   function lock(){var bs=box.querySelectorAll('button');for(var j=0;j<bs.length;j++)bs[j].disabled=true;inp.disabled=true;}
   box.unlock=function(){var bs=box.querySelectorAll('button');for(var j=0;j<bs.length;j++)bs[j].disabled=false;inp.disabled=false;};
-  box.close=function(){if(box.parentNode)box.parentNode.removeChild(box);};
-  function pick(code){var note=(inp.value||'').replace(/^\s+|\s+$/g,'');lock();if(opts.onPick)opts.onPick(code,note,box);}
+  // Every caller closes the picker only once the server has saved the
+  // answer, so a close after a pick is the save landing: say so (owner,
+  // 9/25/26 - the picker just vanished). Cancel closes with nothing picked.
+  box.close=function(){if(box.parentNode)box.parentNode.removeChild(box);
+    if(box._picked!==undefined&&!box._toasted&&typeof toast==='function'){box._toasted=1;toast(box._picked?'Got it \u2014 your reason is saved':'Got it \u2014 passed','success');}};
+  function pick(code){var note=(inp.value||'').replace(/^\s+|\s+$/g,'');box._picked=code||'';lock();if(opts.onPick)opts.onPick(code,note,box);}
   box.addEventListener('click',function(e){
     var b=e.target&&e.target.closest?e.target.closest('button'):null;if(!b||b.disabled||!box.contains(b))return;
     e.preventDefault();e.stopPropagation();
@@ -17141,7 +17198,7 @@ function _sqRecAnswer(el, action, text, code, note, picker) {
       if (picker) picker.close();
       _recState[text] = action;
       if (_quality) { _quality.suppressed_recommendation_kinds = d.suppressed_kinds || _quality.suppressed_recommendation_kinds || []; renderQualityWarnings(_quality); }
-      toast(action === 'accepted' ? 'Noted as done' : 'Noted — not for you', 'success');
+      if (!picker) toast(action === 'accepted' ? 'Noted as done' : 'Noted — not for you', 'success');   // a picker says it on close
     }).catch(function () { done(); if (picker) picker.unlock(); toast('Could not record that', 'error'); });
 }
 function openIntelPanel() {

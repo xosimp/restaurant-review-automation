@@ -859,7 +859,7 @@ class Effectiveness:
             prior = self.prior(kind)
             deltas = [self._delta(s, prior) for s in learned]
         if ks:
-            why.append(f"{kind}: taken {ks['taken']} of {ks['settled']}, {ks['improved']} of {ks['measured']} "
+            why.append(f"{kind}: acted on {ks['taken']} of {ks['settled']}, {ks['improved']} of {ks['measured']} "
                        f"measured improved")
         w = 1.0 + (sum(deltas) / len(deltas) if deltas else 0.0)
         cold = None
@@ -1198,7 +1198,7 @@ def base_rate_from(inputs, kind) -> dict:
         k = sum(1 for v in kept if v[0] == "improved")
         rate = _shrink(k / n, n, chance)
         return {"rate": round(min(BASE_RATE_BOUNDS[1], max(BASE_RATE_BOUNDS[0], rate)), 3), "source": "untaken",
-                "n": n, "basis": (f"{k} of {n} improved when this advice was not taken here, shrunk toward "
+                "n": n, "basis": (f"{k} of {n} improved when this advice was not acted on here, shrunk toward "
                                   f"{basis}")}
     return {"rate": round(chance, 3), "source": src, "n": len(far), "basis": basis}
 
