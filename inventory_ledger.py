@@ -356,6 +356,10 @@ def compute_daily_depletion(restaurant_id: int, business_date) -> dict:
     # nothing", which would zero every ingredient's usage, overstate days
     # remaining and quietly empty the reorder list.
     selections, _provider = _pos.fetch_order_selections(restaurant_id, real_date)
+    # The provider that reported the sales labels the events (DH1-13): an
+    # RPOWER night was stored as source='toast'. Rows written before this
+    # carry 'toast' whatever the provider, so they are matched too.
+    src = str(_provider or "toast")
 
     sold_by_guid = {}
     for sel in selections:
@@ -421,8 +425,8 @@ def compute_daily_depletion(restaurant_id: int, business_date) -> dict:
         # subtracted twice, and the next count's shrink masked (MOD-FC-4).
         existing = conn.execute(
             "SELECT id, ingredient_id FROM ingredient_stock_events "
-            "WHERE restaurant_id=? AND event_date=? AND event_type='depletion' AND source='toast' ORDER BY id",
-            (restaurant_id, business_date_str)).fetchall()
+            "WHERE restaurant_id=? AND event_date=? AND event_type='depletion' AND source IN (?, 'toast') ORDER BY id",
+            (restaurant_id, business_date_str, src)).fetchall()
         keep, stale = {}, []
         for row in existing:
             if row["ingredient_id"] in qty_by_ingredient and row["ingredient_id"] not in keep:
@@ -435,14 +439,14 @@ def compute_daily_depletion(restaurant_id: int, business_date) -> dict:
             ingredients_updated.add(row["ingredient_id"])
         for ingredient_id, qty in qty_by_ingredient.items():
             if ingredient_id in keep:
-                conn.execute("UPDATE ingredient_stock_events SET qty=? WHERE id=? AND restaurant_id=?",
-                             (qty, keep[ingredient_id], restaurant_id))
+                conn.execute("UPDATE ingredient_stock_events SET qty=?, source=? WHERE id=? AND restaurant_id=?",
+                             (qty, src, keep[ingredient_id], restaurant_id))
             else:
                 conn.execute(
                     "INSERT INTO ingredient_stock_events "
                     "(restaurant_id, ingredient_id, event_type, qty, event_date, source) "
                     "VALUES (?,?,?,?,?,?)",
-                    (restaurant_id, ingredient_id, "depletion", qty, business_date_str, "toast"))
+                    (restaurant_id, ingredient_id, "depletion", qty, business_date_str, src))
             ingredients_updated.add(ingredient_id)
 
         # Every ingredient still carrying a usage figure from sales, not just

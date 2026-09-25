@@ -25,6 +25,7 @@ and the cadence all live in the loop.
   run_coverage_check        service — scheduled staff who have not clocked in
 """
 import logging
+import threading
 import config
 import uuid
 
@@ -299,19 +300,38 @@ def run_milestones(db_path=DB_PATH):
 
 def run_loss_sync(db_path=DB_PATH):
     import loss_detection, ops
-    synced = unsupported = 0
+    synced = unsupported = failed = 0
     for r in _restaurants(db_path):
         try:
             out = loss_detection.sync(r.id, db_path=db_path)
         except Exception as e:
             ops.capture(e, job="loss_sync", context=f"restaurant_id={r.id}")
+            failed += 1
+            _record_loss(r.id, False, str(e), None, db_path)
             continue
         if out.get("ok"):
             synced += 1
+            _record_loss(r.id, True, None, out.get("provider"), db_path)
             _loss_flags_to_issues(r, db_path)
         else:
+            # A POS that cannot report comps and voids is a normal state,
+            # not a failed sync: nothing is recorded for it.
             unsupported += 1
-    return {"synced": synced, "not_supported": unsupported}
+    out = {"synced": synced, "not_supported": unsupported}
+    if failed:
+        # The counts job_runs judges a partial or failed night by (DH2-1).
+        out.update(attempted=synced + failed, ok=synced, failed=failed)
+    return out
+
+
+def _record_loss(restaurant_id, ok, error, provider, db_path):
+    """The loss sync's attempt in the Data Health ledger (source `loss`)."""
+    try:
+        import data_health
+        data_health.record_attempt(restaurant_id, "loss", ok, provider=provider, error=error,
+                                   db_path=None if db_path == DB_PATH else db_path)
+    except Exception:
+        pass
 
 
 def _loss_flags_to_issues(r, db_path):
@@ -1028,26 +1048,142 @@ def _open_now(r, local):
     return is_open_at(r, local, default_hours=DEFAULT_SERVICE_HOURS)
 
 
-def run_intraday_capture(db_path=DB_PATH):
+# ── the 20-minute service slot (DH5-9) ──────────────────────────────────────
+#
+# Intraday capture and its five siblings each walked every restaurant
+# serially, with no bound and no cursor, re-reading all 200-odd columns of
+# every restaurant six times a slot. The slot now reads the list once
+# (slot_restaurants) and hands it to each job; each walks it from its own
+# cursor under its own wall-clock bound, so one slow POS region can no
+# longer overrun the slot, and the restaurants a bound cut off lead the next
+# slot (CLAUDE.md: work over every restaurant is bounded and resumable).
+INTRADAY_WORKERS = 4
+INTRADAY_CAPTURE_MAX_SECONDS = 10 * 60
+SLOT_JOB_MAX_SECONDS = 4 * 60
+
+
+def slot_restaurants(db_path=DB_PATH) -> list:
+    """Every live restaurant, read once per slot for all six jobs."""
+    return list(_restaurants(db_path))
+
+
+def _slot_order(job, restaurants, db_path):
+    rows = list(restaurants) if restaurants is not None else list(_restaurants(db_path))
+    rows.sort(key=lambda r: r.id)
+    cursor = _read_cursor(f"{job}_cursor", db_path)
+    return [r for r in rows if r.id > cursor] + [r for r in rows if r.id <= cursor]
+
+
+def _slot_iter(job, restaurants=None, db_path=DB_PATH, max_seconds=SLOT_JOB_MAX_SECONDS):
+    """The slot's restaurants for one serial job, from after its cursor,
+    stopping once `max_seconds` have passed (the rest lead the next slot).
+    The cursor is saved when the walk ends — finished, cut off by the
+    bound, or abandoned — at the last restaurant whose turn completed."""
+    import time as _time
+    order = _slot_order(job, restaurants, db_path)
+    started, last = _time.monotonic(), None
+    try:
+        for r in order:
+            if last is not None and _time.monotonic() - started > max_seconds:
+                import ops
+                ops.capture(RuntimeError(f"{job} stopped at its {max_seconds}s bound; the rest lead the next "
+                                         "slot"), job=job, context="time_bound")
+                break
+            yield r
+            last = r.id
+    finally:
+        if last is not None:
+            _write_cursor(f"{job}_cursor", last, db_path)
+
+
+def _slot_sweep(job, restaurants, fn, db_path, workers=1, max_seconds=SLOT_JOB_MAX_SECONDS):
+    """`fn(r)` over the slot's restaurants on a small pool
+    (scheduler.bounded_map), from after the job's cursor, under
+    `max_seconds`. The cursor is the end of the longest finished prefix, so
+    a restaurant still in flight is never skipped. Returns hit_bound."""
+    import ops
+    import scheduler as _sched
+    order = _slot_order(job, restaurants, db_path)
+    if not order:
+        return False
+    lock = threading.Lock()
+    finished, state = set(), {"prefix": 0}
+
+    def _covered(r):
+        with lock:
+            finished.add(r.id)
+            p = state["prefix"]
+            while p < len(order) and order[p].id in finished:
+                p += 1
+            state["prefix"] = p
+
+    def _run(r):
+        fn(r)
+        _covered(r)
+
+    def _failed(r, e):
+        ops.capture(e, job=job, context=f"restaurant_id={r.id}")
+        _covered(r)
+
+    _done, hit = _sched.bounded_map(order, _run, workers, max_seconds, on_error=_failed)
+    if state["prefix"]:
+        _write_cursor(f"{job}_cursor", order[state["prefix"] - 1].id, db_path)
+    if hit:
+        ops.capture(RuntimeError(f"{job} stopped at its {max_seconds}s bound; the rest lead the next slot"),
+                    job=job, context="time_bound")
+    return bool(hit)
+
+
+def run_intraday_capture(db_path=DB_PATH, restaurants=None):
     """Snapshot net sales so far, once an hour, while the restaurant is open.
     Each snapshot is also the baseline for the same weekday in later weeks —
-    no hour-level history existed to compare a running day against."""
+    no hour-level history existed to compare a running day against.
+
+    Bounded and resumable (DH5-9): four POS calls in flight, a wall-clock
+    bound, a cursor; `restaurants` is the slot's one read of the list
+    (slot_restaurants). Each capture that reached the POS is recorded as
+    `pos_intraday` in the Data Health ledger."""
     import intraday, ops
     from time_utils import restaurant_now
-    captured = skipped = 0
-    for r in _restaurants(db_path):
+    c = {"captured": 0, "closed": 0, "attempted": 0, "failed": 0}
+    lock = threading.Lock()
+
+    def _one(r):
         local = restaurant_now(r, naive=True)
         if not _open_now(r, local):
-            skipped += 1
-            continue
+            with lock:
+                c["closed"] += 1
+            return
         if not ops.claim_period(f"intraday:{r.id}", f"{local.date().isoformat()}-{local.hour}"):
-            continue
+            return
         try:
-            captured += 1 if intraday.capture(r.id, now_local=local, db_path=db_path,
-                                              restaurant=r).get("ok") else 0
+            out = intraday.capture(r.id, now_local=local, db_path=db_path, restaurant=r)
         except Exception as e:
             ops.capture(e, job="intraday_capture", context=f"restaurant_id={r.id}")
-    return {"captured": captured, "closed": skipped}
+            out = {"ok": False, "reason": "the POS didn't answer"}
+        answered = out.get("ok") or out.get("reason") == "the POS didn't answer"
+        with lock:
+            c["captured"] += 1 if out.get("ok") else 0
+            if answered:
+                c["attempted"] += 1
+                c["failed"] += 0 if out.get("ok") else 1
+        if answered:
+            _record_intraday(r.id, bool(out.get("ok")), out.get("provider"), db_path)
+
+    hit = _slot_sweep("intraday_capture", restaurants, _one, db_path, workers=INTRADAY_WORKERS,
+                      max_seconds=INTRADAY_CAPTURE_MAX_SECONDS)
+    return {"captured": c["captured"], "closed": c["closed"], "attempted": c["attempted"],
+            "failed": c["failed"], "hit_bound": hit}
+
+
+def _record_intraday(restaurant_id, ok, provider, db_path):
+    try:
+        import data_health
+        data_health.record_attempt(restaurant_id, "pos_intraday", ok, provider=provider,
+                                   error=None if ok else "the POS didn't answer",
+                                   db_path=None if db_path == DB_PATH else db_path)
+    except Exception:
+        pass
 
 
 # The one interruption of the working day this product allows itself: late
@@ -1056,14 +1192,14 @@ def run_intraday_capture(db_path=DB_PATH):
 PULSE_HOUR = 16
 
 
-def run_pre_dinner_pulse(db_path=DB_PATH):
+def run_pre_dinner_pulse(db_path=DB_PATH, restaurants=None):
     """One push before dinner, and only when today is materially off a
     typical same weekday at this hour. A pulse that fires every day is a
     notification people turn off."""
     import intraday, ops, push, scheduler
     from time_utils import restaurant_now
     sent = 0
-    for r in _restaurants(db_path):
+    for r in _slot_iter("pre_dinner_pulse", restaurants, db_path):
         local = restaurant_now(r, naive=True)
         if not scheduler.local_due(r, PULSE_HOUR, until=PULSE_HOUR + 2,
                                    claim_key="pre_dinner_pulse", now_local=local):
@@ -1305,14 +1441,14 @@ def staffing_move(restaurant, local, pulse, db_path=DB_PATH):
             "key": f"pulse_cut:{local.date().isoformat()}:{_ss.name_key(who['employee'])}"}
 
 
-def run_coverage_check(db_path=DB_PATH):
+def run_coverage_check(db_path=DB_PATH, restaurants=None):
     """A scheduled person who hasn't clocked in becomes the routed manager's
     issue — the one staffing problem that is still fixable while it matters.
     One issue per person per day (source_key)."""
     import intraday, issues, ops
     from time_utils import restaurant_now
     opened = 0
-    for r in _restaurants(db_path):
+    for r in _slot_iter("coverage_check", restaurants, db_path):
         if not getattr(r, "module_labor", 0):
             continue
         local = restaurant_now(r, naive=True)
@@ -1566,7 +1702,7 @@ def _closing_due_day(r, local):
     return None
 
 
-def run_closing_summary(db_path=DB_PATH):
+def run_closing_summary(db_path=DB_PATH, restaurants=None):
     """How tonight went, sent once the doors are shut.
 
     The morning brief tells an owner how YESTERDAY went. Nothing told them
@@ -1582,7 +1718,7 @@ def run_closing_summary(db_path=DB_PATH):
     from time_utils import restaurant_now
     sent = 0
     from dsr.deliver import replaces_closing_summary
-    for r in _restaurants(db_path):
+    for r in _slot_iter("closing_summary", restaurants, db_path):
         if not getattr(r, "morning_brief_enabled", 1):
             continue
         local = restaurant_now(r, naive=True)
@@ -1672,7 +1808,7 @@ def _closing_text(summary, note):
 DEMAND_OPPORTUNITY_HOUR = 10
 
 
-def run_demand_opportunity(db_path=DB_PATH):
+def run_demand_opportunity(db_path=DB_PATH, restaurants=None):
     """A quiet night two days out, while there is still time to fill it.
 
     Marketing and demand were the one area of the product that produced no
@@ -1684,7 +1820,7 @@ def run_demand_opportunity(db_path=DB_PATH):
     import demand, ops, push
     from time_utils import restaurant_now
     sent = 0
-    for r in _restaurants(db_path):
+    for r in _slot_iter("demand_opportunity", restaurants, db_path):
         if not getattr(r, "module_marketing", 0):
             continue
         try:
@@ -1929,7 +2065,17 @@ def run_trusted_orders(db_path=DB_PATH):
             continue
         try:
             held = []
-            rows = ordering.queue_trusted_orders(r.id, restaurant=r, db_path=db_path, held=held)
+            # Stock is the last count minus depletion since: with depletion
+            # more than a day behind it reads high and the order comes out
+            # short (DH2-4). Nothing is queued; the owner hears why.
+            import data_freshness
+            behind = data_freshness.depletion_behind(r, max_days_behind=1, db_path=db_path)
+            if behind:
+                held.append({"supplier_name": "Every trusted order",
+                             "reason": f"{behind} — stock can't be trusted until it catches up"})
+                rows = []
+            else:
+                rows = ordering.queue_trusted_orders(r.id, restaurant=r, db_path=db_path, held=held)
             # A held order is news: the owner expected it to go out and it
             # did not, so they hear why and what to do.
             if held:
@@ -1969,7 +2115,7 @@ def _local_clock(restaurant, utc_stamp) -> str:
     return _clock(local.hour, local.minute)
 
 
-def run_preshift_nudge(db_path=DB_PATH):
+def run_preshift_nudge(db_path=DB_PATH, restaurants=None):
     """Text the routed manager that tonight's lineup notes are ready, at the
     hour the owner chose (restaurants.preshift_nudge_hour; 0 = off).
 
@@ -1982,7 +2128,7 @@ def run_preshift_nudge(db_path=DB_PATH):
     from time_utils import restaurant_now
     import scheduler
     sent = 0
-    for r in _restaurants(db_path):
+    for r in _slot_iter("preshift_nudge", restaurants, db_path):
         hour = int(getattr(r, "preshift_nudge_hour", 0) or 0)
         if not hour:
             continue

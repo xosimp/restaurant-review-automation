@@ -109,8 +109,16 @@ One SQLite file (`reviews.db`), WAL mode, on a Railway persistent volume. `model
 | `_claim_fallback` | `ops.py` | `claim_period` and the scheduler lease both fail open on the same dependency |
 
 **Signals.** `/health` reports db, scheduler heartbeat **and disk** (a full
-volume fails writes while reads succeed). `status_manager.health_snapshot`
-holds the body so it is testable without booting the app.
+volume fails writes while reads succeed), and `jobs_overdue` — every
+`ops.EXPECTED_JOBS` entry with no successful `job_runs` row inside its SLA.
+`status_manager.health_snapshot` holds the body so it is testable without
+booting the app, and calls `ops.check_platform_sla` — the scheduler's
+watchdog on the REQUEST path, never inside the loop it watches: a heartbeat
+older than 15 minutes or an overdue job sends Will one email and push
+(`ops.alert_will`, `claim_cooldown` — once an hour at most), only where the
+scheduler is meant to run (`scheduling_allowed`); owners are never
+contacted from it. The loop stamps its heartbeat at the END of a tick (the
+pulse stamps it during long jobs) and captures a loop-level exception.
 `http_layer.request_metrics` is a rolling in-process latency/error window.
 `admin_ops.overview` raises platform issues for job failures, a stale
 scheduler, a 5xx spike, and **fetch coverage** — the one check that can tell
@@ -133,12 +141,14 @@ A single `scheduler_loop()` running in a background thread, ticking every five m
 |---|---|---|
 | `backup_db` | 2am | `backup_db` — a consistent, **unredacted** snapshot on the volume (only the emailed copy is redacted), then `prune_ledgers` |
 | `restore_drill` | 2nd of Jan/Apr/Jul/Oct | `run_restore_drill` |
-| `pos_sync`, `loss_sync` | 3am | `run_toast_sync` (every provider in `pos.PROVIDERS`; after each restaurant `pos.note_sync_failure` writes one account-visible `pos_sync_failing` activity event per failure run once a provider has failed `SYNC_FAILURE_NOTICE_DAYS` (2) with no success — never an SMS or push), `run_loss_sync` |
+| `pos_sync`, `loss_sync` | 3am | `run_toast_sync` (every provider in `pos.PROVIDERS`, restaurants in service (`models.in_service`), four fetches at a time with the SQLite write section under `pos._WRITE_LOCK`, 45-minute bound captured when hit; after each restaurant `pos.note_sync_failure` writes one account-visible `pos_sync_failing` activity event per failure run once a provider has failed `SYNC_FAILURE_NOTICE_DAYS` (2) with no success — never an SMS or push), `run_loss_sync`. A day still trading at pull time is stored provisional (`pos.complete_through`). Toast/Square/Clover calls go through `pos.http_call` (3 tries, backoff, Retry-After, never on 401/403) |
+| `pos_retry` | hourly | `run_pos_retry` — every POS sync whose retry is due (`data_health.due_retries("pos")`, +1h/+3h/+6h after each failure, never an auth failure) until 11am *local*, at most three a day per restaurant; bounded and resumable, `hit_bound` captured |
 | `intelligence_features`, `intelligence_learning` | 3am, 4am | `intelligence.jobs.run_features` (bounded, cursor in `job_cursors`; demo accounts get their own row), `run_learning` (cross-restaurant: `active_restaurants()` and every cohort reader leave out `jobs.seeded_restaurant_ids()` — `is_demo` accounts and ones de-flagged under 90 days ago) |
 | `marketing_metrics_sync` | 4am | `run_marketing_metrics_sync` (each restaurant's result stamped in `job_cursors metrics_sync:<rid>`, failures captured — `scheduler.metrics_sync_state`) |
-| `inventory_depletion`, `food_cost_snapshots`, `forecast_scoring` | 5am | `run_daily_depletion_sync`, `run_food_cost_snapshots`, `run_forecast_scoring` (every frozen forecast whose period closed, all restaurants) |
+| `inventory_depletion`, `food_cost_snapshots`, `forecast_scoring` | 5am | `run_daily_depletion_sync` (from the last depleted business day, never fewer than 3 days, at most 14 — `source_health depletion`), `run_food_cost_snapshots` (a restaurant whose depletion did not land for last night is held, not snapshotted — `data_freshness.depletion_behind`), `run_forecast_scoring` (every frozen forecast whose period closed, all restaurants) |
+| `data_health_daily` | 6am | `run_data_health_daily` — one `data_health.record_daily` per restaurant in service, bounded and resumable; the admin rollup reads it |
 | `review_diagnoses`, `food_cost_diagnoses`, `outcome_evaluations`, `outcome_rechecks` | 6am | the two root-cause passes, then `run_outcome_evaluations`, then `run_outcome_rechecks` |
-| `competitor_analysis`, `ai_visibility` | Mon 6am, Mon 7am | `run_weekly_competitor_analysis`, `run_weekly_ai_visibility` |
+| `competitor_analysis`, `ai_visibility` (per ISO week), `competitor_retry`, `ai_visibility_retry` (per day) | Mon–Wed 6am / 7am, then daily | `run_weekly_competitor_analysis`, `run_weekly_ai_visibility` — claimed per ISO week with Monday–Wednesday catch-up; after the weekly pass a daily `retry_only` pass for restaurants with no success this week (`source_health`); soft failures captured |
 | `auto_draft_schedule` | Thu 6am | `run_auto_draft_schedules` |
 | `refresh_tokens` | 7am | `refresh_expiring_tokens` |
 | `outcome_wins`, `milestones` | hourly | `run_outcome_wins`, `run_milestones` — each restaurant at its own 9am local (`strategy_jobs.WIN_HOUR`), bounded and resumable; pushes inside quiet hours arrive silently |
@@ -162,7 +172,7 @@ A single `scheduler_loop()` running in a background thread, ticking every five m
 | `inactive_clients` | Mon 11am | `check_inactive_clients`, `send_while_away_nudges` |
 | `optin_invite` | 11am–`OPTIN_INVITE_LATEST_HOUR` | `guest_marketing.run_toast_optin_invites` |
 | `campaign_attribution` | noon | `run_campaign_attribution` |
-| `intraday` | every 20 min | `run_intraday_capture`, `run_pre_dinner_pulse`, `run_coverage_check`, `run_preshift_nudge`, `run_closing_summary`, `run_demand_opportunity` (each gates itself) |
+| `intraday` | every 20 min | `run_intraday_capture`, `run_pre_dinner_pulse`, `run_coverage_check`, `run_preshift_nudge`, `run_closing_summary`, `run_demand_opportunity` (each gates itself) — the restaurants are read once per slot (`strategy_jobs.slot_restaurants`); each job walks them from its own `job_cursors` cursor under a wall-clock bound (capture: 4 in flight, 10 min; the others 4 min), `claim="intraday"` on each run |
 | `dsr_sweep` | every tick, claimed per 10-minute slot | `dsr.pipeline.run_sweep` — the nightly DSR for every live, `dsr_enabled`, POS-connected restaurant past its own *local* close: polls the POS close-day record every 10 min, collects each block (retrying awaiting ones 10/20/40 min until the deadline; the closeout never holds a night open), writes the narrative, finalises. At `dsr_deadline_hour` *local* (default 4am) only Sales decides: still missing → provisional, re-checked hourly for 48h and completed as a new version when sales land; in → final, with any other block still awaiting (Food's 5am item sync) labelled, never a new version on its own. Bounded (20 min) with a `job_cursors` cursor; each night claims `dsr:<rid>:<date>:v<n>` so it never double-runs. When a version is saved final or provisional it calls `dsr.deliver.on_terminal` (below) |
 | `dsr_delivery` | every tick, claimed per 10-minute slot | `dsr.deliver.release_held` — the DSR pushes held through a restaurant's alert quiet hours, sent once they end (oldest release time first; bounded at 500 rows / 2 minutes; the held rows are the queue, each taken `held` → `sending` before it goes, so a second pass or a run-now finds nothing) |
 | `prune_login_attempts` | daily | drops `login_attempts` rows older than two days |

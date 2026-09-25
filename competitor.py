@@ -1504,10 +1504,15 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
         # The read's verdict and engine version are stored beside it
         # (intel_blob), so a later engine version re-validates it on read.
         result = intel_blob(competitors, insight, _now_ct.strftime("%Y-%m-%d"), _closed_custom)
+        # The freshness stamp is UTC with an offset (DH1-16): the local wall
+        # clock with no offset was read as UTC by ai_guard.freshness and
+        # time_utils.parse_stamp, five to ten hours off. The blob's own date
+        # above stays the restaurant's local day, which is what it displays.
+        from datetime import datetime as _dt_utc, timezone as _tz
         conn = get_conn()
         conn.execute(
             "UPDATE restaurants SET competitor_intel=?, competitor_updated_at=? WHERE id=?",
-            (json.dumps(result), _now_ct.strftime("%Y-%m-%d %H:%M:%S"), restaurant_id)
+            (json.dumps(result), _dt_utc.now(_tz.utc).isoformat(timespec="seconds"), restaurant_id)
         )
         conn.commit()
         conn.close()

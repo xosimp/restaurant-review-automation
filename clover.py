@@ -56,6 +56,14 @@ def test_credentials(merchant_id: str, api_token: str) -> dict:
         return {"ok": False, "error": str(e)}
 
 
+def _http(fn, url, **kwargs):
+    """One provider call through pos.http_call: retried on a timeout, a
+    dropped connection, 429 and 5xx (Retry-After honoured), never on 401 or
+    403 (DH2-5). Every caller still names its timeout."""
+    import pos
+    return pos.http_call(fn, url, **kwargs)
+
+
 # ── Data fetching ──────────────────────────────────────────────────────────────
 
 def _fetch_employees(restaurant_id: int) -> dict:
@@ -65,7 +73,7 @@ def _fetch_employees(restaurant_id: int) -> dict:
     employees = {}
     offset = 0
     while True:
-        resp = requests.get(
+        resp = _http(requests.get, 
             f"{CLOVER_BASE}/merchants/{mid}/employees",
             headers=headers,
             params={"limit": 200, "offset": offset},
@@ -92,7 +100,7 @@ def _fetch_shifts(restaurant_id: int, start_ms: int, end_ms: int) -> list:
     shifts = []
     offset = 0
     while True:
-        resp = requests.get(
+        resp = _http(requests.get, 
             f"{CLOVER_BASE}/merchants/{mid}/shifts",
             headers=headers,
             params={
@@ -167,7 +175,7 @@ def _fetch_daily_sales(restaurant_id: int, start_ms: int, end_ms: int) -> dict:
     sales = {}
     offset = 0
     while True:
-        resp = requests.get(
+        resp = _http(requests.get, 
             f"{CLOVER_BASE}/merchants/{mid}/orders",
             headers=headers,
             params={

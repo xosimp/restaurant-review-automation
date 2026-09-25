@@ -42,6 +42,10 @@ PULSE_BEHIND_PCT = 15
 PULSE_AHEAD_PCT = 20
 # How late a scheduled person has to be before it becomes the manager's problem.
 COVERAGE_GRACE_MINUTES = 15
+# An empty clock-in feed while someone scheduled is this far past due reads
+# as a feed that is not reporting — `available: False` — not as a room of
+# no-shows (DH2-8).
+EMPTY_FEED_UNAVAILABLE_MINUTES = 30
 
 
 def _median(values):
@@ -291,7 +295,13 @@ def coverage_gaps(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=Non
         if is_here(s["employee"], here, scheduled_keys):
             continue                      # clocked in
         missing.append({**s, "minutes_late": int((local - due).total_seconds() // 60)})
-    arrived = {k for k in scheduled_keys if is_here(k, here, scheduled_keys)} | here
+    # A feed that answered with NOBODY while people on the published
+    # schedule are well past due is a feed that is not reporting, not a
+    # restaurant where nobody came in: every one of them would be a no-show
+    # issue on the manager's phone (DH2-8).
+    if not clocked and any(m["minutes_late"] > EMPTY_FEED_UNAVAILABLE_MINUTES for m in missing):
+        return {"available": False, "reason": "clock-in feed incomplete — the POS reported nobody clocked in"}
+    arrived ={k for k in scheduled_keys if is_here(k, here, scheduled_keys)} | here
     return {"available": True, "provider": provider, "missing": missing,
             "scheduled": len(scheduled), "scheduled_rows": scheduled, "clocked_in": len(clocked or []),
             "arrived_keys": sorted(arrived)}

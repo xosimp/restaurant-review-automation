@@ -343,11 +343,22 @@ def health_snapshot(db_path=None):
     except Exception:
         scheduler_state = "unknown"
 
+    # The scheduler's watchdog lives HERE, on the request path an uptime
+    # monitor polls, never inside the loop it watches (DH2-2): expected jobs
+    # past their SLA, and one out-of-band alert to Will an hour at most.
+    overdue = []
+    try:
+        import ops
+        overdue = ops.check_platform_sla(db_path=db_path).get("jobs_overdue") or []
+    except Exception:
+        overdue = []
+
     overall = "ok"
-    if disk["state"] in ("critical", "low") or scheduler_state == "stale":
+    if disk["state"] in ("critical", "low") or scheduler_state == "stale" or overdue:
         overall = "degraded"
 
-    payload = {"status": overall, "db": "ok", "scheduler": scheduler_state, "disk": disk}
+    payload = {"status": overall, "db": "ok", "scheduler": scheduler_state, "disk": disk,
+               "jobs_overdue": [j["job"] for j in overdue]}
     if age is not None:
         payload["scheduler_heartbeat_age_minutes"] = round(age, 1)
     return payload, 200

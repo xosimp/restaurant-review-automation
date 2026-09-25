@@ -189,6 +189,18 @@ def _load_everything():
     sessions = per_rid("""SELECT u.restaurant_id AS restaurant_id, COUNT(*) AS n FROM sessions s JOIN users u ON u.id=s.user_id
                           WHERE s.expires_at > datetime('now') GROUP BY u.restaurant_id""")
     guests = per_rid("SELECT restaurant_id, COUNT(*) AS n FROM guest_contacts WHERE consent=1 AND unsubscribed=0 GROUP BY restaurant_id")
+    # The Data Health rollup (DH5-13): the newest daily snapshot per
+    # restaurant (data_health_daily, written by scheduler.run_data_health_daily)
+    # and the live sync ledger (source_health) — read, never recomputed per
+    # restaurant on every page load.
+    data_health_daily = per_rid("SELECT d.restaurant_id, d.date, d.overall, d.sources_json FROM data_health_daily d "
+                                "WHERE d.date = (SELECT MAX(x.date) FROM data_health_daily x "
+                                "WHERE x.restaurant_id = d.restaurant_id)")
+    source_health = {}
+    for row in _rows_dict(conn, "SELECT restaurant_id, source, provider, last_attempt_at, last_ok_at, first_failed_at, "
+                                "last_error, error_class, consecutive_failures, next_retry_at, data_through "
+                                "FROM source_health"):
+        source_health.setdefault(row["restaurant_id"], []).append(row)
     job_failures = _rows_dict(conn, "SELECT id, job, error, context, created_at FROM job_failures WHERE created_at >= ? ORDER BY id DESC", (week,))
     resolved = {r["key"]: r for r in _rows_dict(conn, "SELECT key, resolved_at, note FROM admin_issue_resolutions")}
     conn.close()
@@ -199,7 +211,8 @@ def _load_everything():
                 recipes=recipes, labor_days=labor_days, labor_last=labor_last, contacts=contacts, routing=routing,
                 stale_issues=stale_issues,
                 sched_posts=sched_posts, schedules=schedules, logins=logins, sessions=sessions, guests=guests,
-                job_failures=job_failures, resolved=resolved)
+                job_failures=job_failures, resolved=resolved, data_health_daily=data_health_daily,
+                source_health=source_health, pos_states={})
 
 
 # ── the per-location health record ──────────────────────────────────────────
@@ -288,8 +301,7 @@ def _modules_for(r, d):
     ing = d["ingredients"].get(rid, {})
     mk = d["marketing"].get(rid, {})
     sc = d["schedules"].get(rid, {})
-    import pos_health
-    pos_state = pos_health.pos_sync_state(r)
+    pos_state = _pos_state_for(r, d)
     pos = bool(pos_state.get("connected"))
     labor_last = (d.get("labor_last") or {}).get(rid, {}).get("last")
     mods = [
@@ -310,6 +322,12 @@ def _modules_for(r, d):
         {"key": "intel", "label": "Intel", "enabled": bool(r.get("module_reviews") and r.get("module_labor") and r.get("module_inventory") and r.get("module_marketing")),
          "configured": bool(r.get("google_place_id")), "receiving": bool(r.get("competitor_intel")), "last_data": r.get("competitor_updated_at")},
     ]
+    # "Stale" by the registry's own reading where the daily Data Health
+    # snapshot has one for the module's source (the owner's cards read the
+    # same rule), else the old age cut.
+    dh_states = _dh_source_states(d, rid)
+    dh_key = {"reviews": "reviews", "labor": "labor", "inventory": "inventory", "marketing": "marketing",
+              "intel": "competitor"}
     for m in mods:
         if not m["enabled"]:
             m["state"] = "off"
@@ -317,10 +335,45 @@ def _modules_for(r, d):
             m["state"] = "unconfigured"
         elif not m["receiving"]:
             m["state"] = "no_data"
+        elif dh_key.get(m["key"]) in dh_states:
+            s = dh_states[dh_key[m["key"]]]
+            m["state"] = "stale" if (s.get("error") or s.get("state") in ("stale", "unknown", "disconnected")) \
+                else "healthy"
         else:
             age = _age_days(m["last_data"])
             m["state"] = "stale" if (age is not None and age > (14 if m["key"] in ("inventory", "intel", "marketing") else 3)) else "healthy"
     return mods
+
+
+def _median(vals):
+    vals = sorted(v for v in vals if v is not None)
+    if not vals:
+        return None
+    mid = len(vals) // 2
+    return vals[mid] if len(vals) % 2 else round((vals[mid - 1] + vals[mid]) / 2.0, 1)
+
+
+def _dh_source_states(d, rid) -> dict:
+    """{source key: {state, pct, error}} from the restaurant's newest
+    data_health_daily row, {} when there is none."""
+    row = (d.get("data_health_daily") or {}).get(rid) or {}
+    try:
+        return {s["key"]: s for s in json.loads(row.get("sources_json") or "[]") if s.get("key")}
+    except (ValueError, TypeError):
+        return {}
+
+
+def _data_health_for(r, d) -> dict:
+    """The location's Data Health for the console: the newest daily overall
+    % and its date, and every source failing in the live ledger right now
+    (consecutive failures, since when, the error, the next retry)."""
+    rid = r["id"]
+    row = (d.get("data_health_daily") or {}).get(rid) or {}
+    failing = [{"source": s["source"], "provider": s.get("provider"), "failures": s.get("consecutive_failures"),
+                "since": s.get("first_failed_at"), "error": (s.get("last_error") or "")[:160],
+                "next_retry_at": s.get("next_retry_at"), "last_ok_at": s.get("last_ok_at")}
+               for s in (d.get("source_health") or {}).get(rid, []) if int(s.get("consecutive_failures") or 0) > 0]
+    return {"overall": row.get("overall"), "as_of": row.get("date"), "failing": failing}
 
 
 def _onboarding_for(r, d, owner):
@@ -369,8 +422,7 @@ def _data_completeness(r, d):
             if _src == "places_sampled" else
             ("reviews fetch automatically" if (r.get("gmb_refresh_token") or r.get("reviews_live"))
              else "no live review source"))
-    import pos_health
-    _pos = pos_health.pos_sync_state(r)
+    _pos = _pos_state_for(r, d)
     pos_fresh = _pos.get("last_synced")
     if r.get("module_labor") or r.get("module_inventory"):
         add("pos", "POS syncing", pos_fresh and not _pos.get("error") and _pos.get("state") in ("current", "aging"),
@@ -468,9 +520,16 @@ def _churn_risk(r, d, last_active, completeness):
     return {"level": level, "reasons": reasons}
 
 
-def _pos_state_for(r):
+def _pos_state_for(r, d=None):
+    """pos_health.pos_sync_state, read ONCE per location per page load
+    (DH5-13: it was evaluated four times per record)."""
     import pos_health
-    return pos_health.pos_sync_state(r)
+    cache = (d or {}).get("pos_states")
+    if cache is None:
+        return pos_health.pos_sync_state(r)
+    if r["id"] not in cache:
+        cache[r["id"]] = pos_health.pos_sync_state(r)
+    return cache[r["id"]]
 
 
 def location_record(r, d):
@@ -525,8 +584,9 @@ def location_record(r, d):
         "integration_health": ("error" if any(i["state"] == "error" for i in integrations)
                                else "ok" if any(i["state"] == "connected" for i in integrations) else "none"),
         "onboarding": onboarding,
-        "freshness": {"reviews": r.get("last_fetched_at"), "pos": _pos_state_for(r).get("last_synced"),
-                      "pos_state": _pos_state_for(r),
+        "data_health": _data_health_for(r, d),
+        "freshness": {"reviews": r.get("last_fetched_at"), "pos": _pos_state_for(r, d).get("last_synced"),
+                      "pos_state": _pos_state_for(r, d),
                       "inventory": (d["ingredients"].get(rid) or {}).get("last_count_at"),
                       "intel": r.get("competitor_updated_at")},
         "reviews": {"total": rv.get("total") or 0, "awaiting": rv.get("awaiting") or 0, "responded": rv.get("responded") or 0,
@@ -808,6 +868,24 @@ def overview():
             "since": f"{int(worst)}h" if worst else "never", "since_at": None,
             "action": "Open jobs", "action_route": None})
 
+    # Expected jobs past their SLA (ops.EXPECTED_JOBS, DH2-2): "did something
+    # not run?" for the jobs themselves, read here from a request thread.
+    try:
+        import ops as _ops_sla
+        overdue = _ops_sla.jobs_overdue()
+    except Exception:
+        overdue = []
+    for j in overdue:
+        key = f"job_overdue:{j['job']}"
+        if key in d["resolved"]:
+            continue
+        issues.insert(0, {"key": key, "restaurant_id": None, "restaurant": "Platform", "brand": "Platform",
+                          "location_name": None, "owner": None,
+                          "title": f"Job `{j['job']}` has not run successfully in {j['hours_since']:g}h",
+                          "detail": f"Expected within {j['max_hours']}h. Last success: {j['last_ok_at'] or 'never'}.",
+                          "severity": "critical", "severity_rank": 2, "since": f"{int(j['hours_since'])}h",
+                          "since_at": j["last_ok_at"], "action": "Open jobs", "action_route": None})
+
     if hb is None or hb > 15:
         issues.insert(0, {"key": "scheduler", "restaurant_id": None, "restaurant": "Platform", "brand": "Platform", "location_name": None, "owner": None,
                           "title": "Scheduler heartbeat is stale" if hb is not None else "Scheduler has never stamped a heartbeat", "detail": f"{int(hb)} minutes" if hb else None,
@@ -830,7 +908,12 @@ def overview():
         "alerts_today": alerts_today.get("n") or 0,
         "job_failures_24h": jobs_failed_24h.get("n") or 0, "jobs_failing": jobs_failed_24h.get("jobs") or 0,
         "attention": sum(1 for i in issues), "critical": sum(1 for i in issues if i["severity"] == "critical"),
-        "scheduler_heartbeat_minutes": hb,
+        "scheduler_heartbeat_minutes": hb, "jobs_overdue": len(overdue),
+        # The platform's data health, from the daily snapshots (admin only —
+        # never an owner or the public status page: intelligence privacy).
+        "data_health_median": _median([r["data_health"]["overall"] for r in real
+                                       if r.get("data_health", {}).get("overall") is not None]),
+        "sources_failing": sum(len(r.get("data_health", {}).get("failing") or []) for r in real),
     }
     # Latency and error rate. Rolling, in-process, reset on deploy — see
     # http_layer.request_metrics for why it is not a table.
@@ -1141,6 +1224,8 @@ RUNNABLE_JOBS = {
     "weekly_digests":          {"cadence": "9am on each client's digest day", "what": "Email weekly digests", "target": ("scheduler", "run_weekly_digests"), "sends": True},
     "pos_sync":                {"cadence": "3am nightly", "what": "Pull yesterday's Toast sales and labor", "target": ("scheduler", "run_toast_sync")},
     "inventory_depletion":     {"cadence": "5am nightly", "what": "Deplete inventory from POS sales", "target": ("scheduler", "run_daily_depletion_sync")},
+    "pos_retry":               {"cadence": "hourly, until 11am local", "what": "Retry failed POS syncs whose retry is due (+1h, +3h, +6h; never an auth failure)", "target": ("scheduler", "run_pos_retry")},
+    "data_health_daily":       {"cadence": "6am daily", "what": "Write each restaurant's Data Health snapshot (data_health_daily)", "target": ("scheduler", "run_data_health_daily")},
     "marketing_metrics_sync":  {"cadence": "4am nightly", "what": "Refresh Instagram / Facebook post metrics", "target": ("scheduler", "run_marketing_metrics_sync")},
     "refresh_tokens":          {"cadence": "7am daily", "what": "Renew expiring OAuth tokens", "target": ("scheduler", "refresh_expiring_tokens")},
     "onboarding_emails":       {"cadence": "10am daily", "what": "Send day-2 / day-7 / day-30 onboarding emails", "target": ("scheduler", "run_onboarding_sequence"), "sends": True},
@@ -1168,6 +1253,15 @@ RUNNABLE_JOBS = {
 }
 
 
+# A run with no finish is taken as still running for this long — longer than
+# any job's own bound (the review fetch and weekly sweeps stop at three
+# hours) — so "run now" can never start a second pass beside a live one.
+# The 30-minute window it replaced let a second review fetch start beside a
+# live one, drafting the same reviews twice (DH2-15). An unfinished row older
+# than this is a run a deploy killed.
+RUN_NOW_BLOCK_MINUTES = 4 * 60
+
+
 def run_job_now(name, actor):
     """Run one scheduled job right now, on a background thread, recorded in
     job_runs exactly like a scheduled run — context says who asked."""
@@ -1175,9 +1269,13 @@ def run_job_now(name, actor):
     spec = RUNNABLE_JOBS.get(name)
     if not spec:
         return {"ok": False, "error": "Unknown job"}
+    import ops as _ops_now
+    if _ops_now.is_running(name):
+        return {"ok": False, "error": f"{name} is already running in this process"}
     conn = get_conn()
-    running = _one_dict(conn, "SELECT id, started_at FROM job_runs WHERE job=? AND finished_at IS NULL AND started_at >= ? ORDER BY id DESC LIMIT 1",
-                   (name, _stamp(datetime.now() - timedelta(minutes=30))))
+    running = _one_dict(conn, "SELECT id, started_at FROM job_runs WHERE job=? AND finished_at IS NULL "
+                              "AND started_at >= datetime('now', ?) ORDER BY id DESC LIMIT 1",
+                        (name, f"-{RUN_NOW_BLOCK_MINUTES} minutes"))
     conn.close()
     if running:
         return {"ok": False, "error": f"{name} is already running (started {running['started_at']})"}

@@ -64,7 +64,7 @@ OWNER_LABEL = {
     "pos": "POS sales", "labor": "Shifts", "sales": "Sales", "reviews": "Reviews",
     "inventory": "Inventory counts", "purchases": "Deliveries", "marketing": "Marketing metrics",
     "visibility": "AI visibility", "competitor": "Competitors", "weather": "Weather",
-    "dsr": "Daily report",
+    "dsr": "Daily report", "depletion": "Depletion",
 }
 
 # The module flags an owner sees, and the modules each one turns on. Intel
@@ -294,7 +294,7 @@ def source_line(s, now=None) -> dict:
         line = f"{label}: {basis}" if basis else f"{label}: {state}"
         if synced and "synced" not in basis:
             line += f" (synced {synced})"
-        if s.get("error") or state in ("stale", "unknown"):
+        if s.get("error") or state in ("stale", "unknown", "disconnected"):
             tone = "bad"
         elif state == "aging":
             tone = "warn"

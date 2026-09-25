@@ -54,6 +54,14 @@ def test_credentials(access_token: str, location_id: str) -> dict:
         return {"ok": False, "error": str(e)}
 
 
+def _http(fn, url, **kwargs):
+    """One provider call through pos.http_call: retried on a timeout, a
+    dropped connection, 429 and 5xx (Retry-After honoured), never on 401 or
+    403 (DH2-5). Every caller still names its timeout."""
+    import pos
+    return pos.http_call(fn, url, **kwargs)
+
+
 # ── Data fetching ──────────────────────────────────────────────────────────────
 
 def _fetch_team_members(restaurant_id: int) -> dict:
@@ -65,7 +73,7 @@ def _fetch_team_members(restaurant_id: int) -> dict:
         body = {"limit": 200}
         if cursor:
             body["cursor"] = cursor
-        resp = requests.post(f"{SQUARE_BASE}/team-members/search", headers=headers, json=body, timeout=15)
+        resp = _http(requests.post, f"{SQUARE_BASE}/team-members/search", headers=headers, json=body, timeout=15)
         resp.raise_for_status()
         data = resp.json()
         for tm in data.get("team_members", []):
@@ -100,7 +108,7 @@ def _fetch_shifts(restaurant_id: int, start_dt: datetime, end_dt: datetime) -> l
         }
         if cursor:
             body["cursor"] = cursor
-        resp = requests.post(f"{SQUARE_BASE}/labor/shifts/search", headers=headers, json=body, timeout=15)
+        resp = _http(requests.post, f"{SQUARE_BASE}/labor/shifts/search", headers=headers, json=body, timeout=15)
         resp.raise_for_status()
         data = resp.json()
         shifts.extend(data.get("shifts", []))
@@ -179,7 +187,7 @@ def _fetch_daily_sales(restaurant_id: int, start_date: date, end_date: date) -> 
         }
         if cursor:
             body["cursor"] = cursor
-        resp = requests.post(f"{SQUARE_BASE}/orders/search", headers=headers, json=body, timeout=15)
+        resp = _http(requests.post, f"{SQUARE_BASE}/orders/search", headers=headers, json=body, timeout=15)
         if resp.status_code != 200:
             # A later page failing (a 429) used to `break` and the partial
             # sales were saved as whole days (MOD-LAB-7). Fail the sync; the

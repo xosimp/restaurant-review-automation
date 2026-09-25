@@ -344,7 +344,9 @@ def test_one_restaurant_failing_its_pos_sync_does_not_stop_the_rest(db_path, mon
     provider = _FakeProvider(fail_for={b})
     pos = _fake_pos(monkeypatch, provider)
     results = pos.sync_all()
-    assert provider.synced == [a, b, c]
+    # Sorted: the sweep fetches POS_SYNC_WORKERS restaurants at once (DH5-7),
+    # so the call order is the pool's; the results come back in sweep order.
+    assert sorted(provider.synced) == [a, b, c]
     assert [r["ok"] for r in results] == [True, False, True]
 
 
