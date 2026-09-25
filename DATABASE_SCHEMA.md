@@ -314,6 +314,11 @@ Benchmarking audit (9/24/26, workstream D), all DDL in `init_db`:
   norm}}`, `coverage`, `version`, computed_at; UNIQUE(restaurant_id, week)) —
   Restaurant DNA; ratios, rates, shares and bands only, never dollars; a
   dimension below its minimum data has raw NULL and says what it needs.
+  `raw` is the truth: the stored `z`/`norm` record the night, and every
+  distance re-normalises both rows from `raw` under one norm set. Similarity,
+  platform norms and prediction read only rows at the current `version`
+  (`dna.DNA_VERSION` = 2 from 9/24/26: S6 is the confirmed service model, S7
+  the concept, labor % blank on the assumed wage).
 - `intel_benchmark_facts` (restaurant_id, metric, week, `payload_json`,
   `available`, computed_at; UNIQUE(restaurant_id, metric, week)) — the
   engine's comparisons materialised nightly; the viewer-dependent `location`

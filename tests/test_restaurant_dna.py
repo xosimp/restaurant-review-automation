@@ -7,7 +7,9 @@ discovery, the materialised comparisons, the peer-benchmark freshness
 source and the dormant neighbour prediction (intelligence/predict.py).
 
 Top-50 items #22, #24, #25, #26, #27, #32, #33, #45, #46 and the prediction
-scaffolding."""
+scaffolding; and the 9/24/26 re-audit fix round, items #46–#50 (DNA reachable
+without an hourly POS feed, one norm set and one type vocabulary, labor cost
+on the owner's rates, prediction's control arm, privacy and pass bounds)."""
 import json
 import random
 from datetime import date, datetime, timedelta
@@ -76,7 +78,9 @@ def test_an_unmeasured_dimension_is_none_with_what_it_needs_never_zero(db_path):
 
 
 def test_the_profile_is_ratios_and_bands_and_passes_the_privacy_check(db_path):
-    rid = _rid(db_path, "Band Grill")
+    # The owner's own blended rate: labor % is a labor COST and enters the
+    # DNA only on the owner's pay rates (R4-19, see the test below).
+    rid = _rid(db_path, "Band Grill", hourly_rate=18.0)
     _sales(db_path, rid, days=70, base=3500.0)
     row = dna.compute(rid, db_path=db_path, features={"labor_pct_28d": 29.5, "avg_rating_30d": 4.4,
                                                       "reviews_30d": 12})
@@ -97,9 +101,48 @@ def test_the_profile_is_ratios_and_bands_and_passes_the_privacy_check(db_path):
 
 def test_service_type_counts_only_when_the_owner_set_it(db_path):
     guessed = _rid(db_path, "Tony's Pizzeria")
-    assert dna.compute(guessed, db_path=db_path, features={})["dims"]["service_type"]["raw"] is None
-    update_restaurant(guessed, {"category": "pizza"}, db_path=db_path)
-    assert dna.compute(guessed, db_path=db_path, features={})["dims"]["service_type"]["raw"] == "pizza"
+    d = dna.compute(guessed, db_path=db_path, features={})["dims"]
+    assert d["service_type"]["raw"] is None and d["concept"]["raw"] is None
+    assert "guessed" in d["concept"]["basis"]
+    update_restaurant(guessed, {"profile_source": "set", "service_model": "counter", "concept": "pizza"},
+                      db_path=db_path)
+    d = dna.compute(guessed, db_path=db_path, features={})["dims"]
+    assert d["service_type"]["raw"] == "service:counter" and d["concept"]["raw"] == "pizza"
+
+
+def test_the_type_dimension_is_the_confirmed_service_model_only_and_the_concept_is_its_own(db_path):
+    """R4-18 (#47): S6 fell back to the concept, so an owner-typed Italian
+    and a confirmed full-service Italian were "different types"."""
+    typed = _rid(db_path, "Typed Italian")
+    update_restaurant(typed, {"category": "italian"}, db_path=db_path)
+    confirmed = _rid(db_path, "Confirmed Italian")
+    update_restaurant(confirmed, {"profile_source": "set", "service_model": "full_service", "concept": "italian"},
+                      db_path=db_path)
+    unconfirmed = _rid(db_path, "Unconfirmed Model")
+    update_restaurant(unconfirmed, {"service_model": "counter"}, db_path=db_path)
+    t = dna.compute(typed, db_path=db_path, features={})["dims"]
+    c = dna.compute(confirmed, db_path=db_path, features={})["dims"]
+    u = dna.compute(unconfirmed, db_path=db_path, features={})["dims"]
+    assert t["service_type"]["raw"] is None                      # never the concept
+    assert c["service_type"]["raw"] == "service:full_service" and c["concept"]["raw"] == "italian"
+    assert u["service_type"]["raw"] is None and "confirmed" in u["service_type"]["basis"]
+    assert dna.DIMENSIONS["concept"]["structural"] and dna.DIMENSIONS["concept"]["kind"] == "categorical"
+    assert dna.display("service_type", "service:full_service") == "Full service"
+
+
+def test_labor_cost_dimensions_are_blank_on_the_assumed_wage(db_path):
+    """R4-19 (#47): labor % on the $26/hr default is hours × $26 — the bands
+    refuse it, and so do the DNA, its norms and prediction's baseline."""
+    f = {"labor_pct_28d": 29.5, "labor_pct_sd_28d": 4.0, "labor_hours_per_1k_28d": 10.0}
+    default = _rid(db_path, "Default Wage")
+    d = dna.compute(default, db_path=db_path, features=f)["dims"]
+    assert d["labor_pct"]["raw"] is None and d["labor_swing"]["raw"] is None
+    assert "pay rates" in d["labor_pct"]["basis"]
+    assert d["labor_hours_per_1k"]["raw"] == 10.0                # hours are not a cost
+    own = _rid(db_path, "Own Rates")
+    update_restaurant(own, {"role_rates_json": json.dumps({"server": 12.0, "cook": 19.0})}, db_path=db_path)
+    d = dna.compute(own, db_path=db_path, features=f)["dims"]
+    assert d["labor_pct"]["raw"] == 29.5 and d["labor_swing"]["raw"] == 4.0
 
 
 def test_z_uses_stated_anchors_below_thirty_and_the_robust_z_from_thirty(db_path):
@@ -107,15 +150,15 @@ def test_z_uses_stated_anchors_below_thirty_and_the_robust_z_from_thirty(db_path
     rids = [_rid(db_path, f"Norm {i}") for i in range(29)]
     conn = get_conn(db_path)
     for i, rid in enumerate(rids):
-        conn.execute("INSERT INTO intel_dna (restaurant_id, week, dims_json, coverage) VALUES (?,?,?,0.5)",
-                     (rid, wk, json.dumps({"labor_pct": {"raw": 20.0 + i * 0.5}})))
+        conn.execute("INSERT INTO intel_dna (restaurant_id, week, dims_json, coverage, version) VALUES (?,?,?,0.5,?)",
+                     (rid, wk, json.dumps({"labor_pct": {"raw": 20.0 + i * 0.5}}), dna.DNA_VERSION))
     conn.commit()
     conn.close()
     assert dna.platform_norms(db_path=db_path)["labor_pct"]["kind"] == "anchor"
     rid = _rid(db_path, "Norm 30")
     conn = get_conn(db_path)
-    conn.execute("INSERT INTO intel_dna (restaurant_id, week, dims_json, coverage) VALUES (?,?,?,0.5)",
-                 (rid, wk, json.dumps({"labor_pct": {"raw": 35.0}})))
+    conn.execute("INSERT INTO intel_dna (restaurant_id, week, dims_json, coverage, version) VALUES (?,?,?,0.5,?)",
+                 (rid, wk, json.dumps({"labor_pct": {"raw": 35.0}}), dna.DNA_VERSION))
     conn.commit()
     conn.close()
     n = dna.platform_norms(db_path=db_path)["labor_pct"]
@@ -127,19 +170,77 @@ def test_z_uses_stated_anchors_below_thirty_and_the_robust_z_from_thirty(db_path
 # ── #24: similarity ─────────────────────────────────────────────────────────
 
 def test_distance_is_missing_aware_and_refuses_thin_overlap():
-    a = _dims(volume_band=1.0, weekend_share=0.5, daypart_mix=-0.5, service_type="pizza")
-    b = _dims(volume_band=1.0, weekend_share=0.5, daypart_mix=-0.5, service_type="pizza")
+    W = dna.STRUCTURAL_WEIGHTS
+    a = _dims(volume_band=1.0, weekend_share=0.5, daypart_mix=0.3, ticket_band=2.0, service_type="service:counter")
+    b = _dims(volume_band=1.0, weekend_share=0.5, daypart_mix=0.3, ticket_band=2.0, service_type="service:counter")
     assert dna.distance(a, b) == 0.0
-    c = _dims(volume_band=2.0, weekend_share=0.5, daypart_mix=-0.5, service_type="bar")
+    c = _dims(volume_band=2.0, weekend_share=0.5, daypart_mix=0.3, ticket_band=2.0, service_type="service:bar_led")
     d = dna.distance(a, c)
-    # (0.30·1² + 0.15·2²) ÷ 0.80 over the four shared structural dimensions
-    assert abs(d - ((0.30 * 1.0 + 0.15 * 4.0) / 0.80) ** 0.5) < 1e-3
-    # One structural dimension missing: 0.65 of the weight is shared, but
-    # only 3 structural dimensions — not comparable, and never "0 apart".
-    thin = _dims(volume_band=1.0, weekend_share=0.5, service_type="pizza")
+    # One band apart on S1 (anchor scale 1) and a service-model mismatch
+    # (2 SD), over the five shared structural dimensions' weight.
+    shared = W["volume_band"] + W["weekend_share"] + W["daypart_mix"] + W["ticket_band"] + W["service_type"]
+    assert abs(d - ((W["volume_band"] * 1.0 + W["service_type"] * 4.0) / shared) ** 0.5) < 1e-3
+    # Too little of the profile in common — not comparable, and never "0 apart".
+    thin = _dims(volume_band=1.0, weekend_share=0.5, service_type="service:counter")
     det = dna.distance_detail(a, thin)
-    assert det["comparable"] is False and det["d"] is None and "structural" in det["why_not"]
+    assert det["comparable"] is False and det["d"] is None and det["why_not"]
     assert dna.distance(a, {}) is None
+
+
+def test_size_ticket_and_service_model_make_a_non_toast_pair_comparable():
+    """R4-16 (#46): with no hourly POS feed and under 12 months of sales a
+    restaurant had at most 3 structural dimensions — never comparable. The
+    core three (size, ticket, service model) are enough on their own."""
+    core = _dims(volume_band=2.0, ticket_band=2.0, service_type="service:full_service")
+    other = _dims(volume_band=2.0, ticket_band=3.0, service_type="service:full_service")
+    det = dna.distance_detail(core, other)
+    assert det["comparable"] is True and det["shared_structural"] == 3 and det["d"] > 0
+    no_ticket = _dims(volume_band=2.0, weekend_share=0.5, service_type="service:full_service")
+    assert dna.distance_detail(no_ticket, _dims(volume_band=2.0, weekend_share=0.5,
+                                                service_type="service:full_service"))["comparable"] is False
+
+
+def test_distance_renormalises_both_rows_from_raw_under_one_norm_set():
+    """R4-17 (#47): each row's stored z was computed under its own night's
+    norms; subtracting them compared numbers on different scales."""
+    a = _dims(volume_band=2.0, weekend_share=0.5, daypart_mix=0.3, ticket_band=2.0, service_type="service:counter")
+    b = json.loads(json.dumps(a))
+    b["weekend_share"]["z"] = 2.5              # stored under another night's norm — same raw
+    assert dna.distance(a, b) == 0.0
+    b["weekend_share"]["raw"] = 0.6
+    anchors = dna.distance(a, b)
+    wide = dict(dna.anchor_norms())
+    wide["weekend_share"] = dict(wide["weekend_share"], scale=0.20, kind="robust")
+    assert dna.distance(a, b, norms=wide) < anchors    # one norm set, applied to both rows
+
+
+def test_daypart_fills_from_the_daily_sales_reports_hourly_split(db_path):
+    """R4-16 (#46): RPOWER cannot be asked during the day, so pos_intraday
+    never fills and S3 was out of reach; the nightly DSR's hourly split
+    (from the POS's own ticket times) measures it."""
+    rid = _rid(db_path, "Rpower House")
+    _sales(db_path, rid, days=40)
+    conn = get_conn(db_path)
+    for k in range(30):
+        day = (date.today() - timedelta(days=k + 1)).isoformat()
+        facts = {"blocks": {"sales": {"status": "ready", "detail": {"hourly": [
+            {"hour": "11", "net": 300.0}, {"hour": "15", "net": 100.0}, {"hour": "19", "net": 500.0},
+            {"hour": "01", "net": 100.0}]}}}}
+        conn.execute("INSERT INTO dsr_reports (restaurant_id, business_date, version, status, facts_json) "
+                     "VALUES (?,?,1,'final',?)", (rid, day, json.dumps(facts)))
+    conn.commit()
+    conn.close()
+    d = dna.compute(rid, db_path=db_path, features={})["dims"]["daypart_mix"]
+    assert d["raw"] == 0.4 and d["n"] == 30 and "daily sales report" in d["basis"]   # 400 of 1,000
+
+
+def test_the_non_sales_structural_coordinates_enter_the_dna(db_path):
+    rid = _rid(db_path, "Coordinates")
+    d = dna.compute(rid, db_path=db_path, features={"ticket_band": 3, "weekly_open_hours": 77.0,
+                                                     "urbanity_band": 2})["dims"]
+    assert d["ticket_band"]["raw"] == 3 and d["open_hours"]["raw"] == 77.0 and d["urbanity_band"]["raw"] == 2
+    assert {"ticket_band", "open_hours", "urbanity_band", "concept"} <= set(dna.STRUCTURAL)
+    assert dna.display("urbanity_band", 2) == "Urban" and dna.display("open_hours", 77.0) == "77h a week"
 
 
 # ── #24: the pass, the owner's read, the routes ─────────────────────────────
@@ -541,23 +642,70 @@ def test_peer_benchmarks_are_a_data_freshness_source(db_path):
 
 # ── prediction scaffolding (dormant) ────────────────────────────────────────
 
-def _neighbourhood(db_path, n=7, same_org=False):
-    wk = features.iso_week(date.today())
+_TAKEN_ON = date.today() - timedelta(days=40)          # when the advice was taken
+_MEASURED = date.today() - timedelta(days=30)          # its after-window's end
+
+
+def _dna_row(conn, rid, week, dims):
+    conn.execute("INSERT OR REPLACE INTO intel_dna (restaurant_id, week, dims_json, coverage, version) "
+                 "VALUES (?,?,?,0.3,?)", (rid, week, json.dumps(dims), dna.DNA_VERSION))
+
+
+def _neighbourhood(db_path, n=7, same_org=False, then_waste=2.0):
+    """The viewer and n peers with the same shape (raw values — distances
+    re-normalise from raw), each with a DNA row now and one from the week
+    the advice was taken, when its waste % was `then_waste`."""
+    now_wk, then_wk = features.iso_week(date.today()), features.iso_week(_TAKEN_ON)
     me = _rid(db_path, "Predict Me")
     rids = [_rid(db_path, f"Predict Peer {i}") for i in range(n)]
     conn = get_conn(db_path)
-    base = {"volume_band": {"raw": 2, "z": 0.0}, "weekend_share": {"raw": 0.5, "z": 0.5},
-            "daypart_mix": {"raw": 0.3, "z": -0.5}, "service_type": {"raw": "pizza"},
-            "waste_rate": {"raw": 2.0, "z": 0.0}}
+    base = {"volume_band": {"raw": 2}, "weekend_share": {"raw": 0.5}, "daypart_mix": {"raw": 0.3},
+            "ticket_band": {"raw": 2}, "service_type": {"raw": "service:counter"}, "waste_rate": {"raw": 2.0}}
     for i, r in enumerate([me] + rids):
         dims = json.loads(json.dumps(base))
-        dims["weekend_share"]["z"] = 0.5 + 0.01 * i
-        conn.execute("INSERT INTO intel_dna (restaurant_id, week, dims_json, coverage) VALUES (?,?,?,0.3)",
-                     (r, wk, json.dumps(dims)))
+        dims["weekend_share"]["raw"] = 0.5 + 0.01 * i
+        _dna_row(conn, r, now_wk, dims)
+        if r != me:
+            then = json.loads(json.dumps(dims))
+            then["waste_rate"]["raw"] = then_waste
+            _dna_row(conn, r, then_wk, then)
         conn.execute("UPDATE restaurants SET organization_id=? WHERE id=?", (1 if (same_org and r != me) else 100 + i, r))
     conn.commit()
     conn.close()
     return me, rids
+
+
+def _outcome(conn, rid, source_key, verdict="improved", tags=None):
+    cur = conn.execute("INSERT INTO recommendation_outcomes (restaurant_id, source, source_key, title, metric, "
+                       "baseline_value, started_on, evaluate_on, after_value, after_start, after_end, verdict, delta, "
+                       "delta_pct, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'evaluated')",
+                       (rid, "observed" if source_key.startswith("observed:") else "rec", source_key, "t",
+                        "weekly_waste", 100.0, _TAKEN_ON.isoformat(), _MEASURED.isoformat(), 99.0,
+                        _TAKEN_ON.isoformat(), _MEASURED.isoformat(), verdict, -1.0, -1.0))
+    return cur.lastrowid
+
+
+def _results(db_path, rids, taken_per=2, untaken_at=None, tags=None, untaken_tags=None, after_end=True):
+    """Two measured, taken results per peer (each on a real tracker, so its
+    start is known) and one untaken result per restaurant in `untaken_at`
+    (default: every peer)."""
+    at = _MEASURED.isoformat()
+    conn = get_conn(db_path)
+    for i, r in enumerate(rids):
+        for j in range(taken_per):
+            key = f"cut_waste:{i}{j}"
+            tid = _outcome(conn, r, key)
+            conn.execute("INSERT INTO intel_rec_events (restaurant_id, rec_kind, source_key, action, outcome, event_at, "
+                         "metric, effect_pct, after_end, tags_json) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                         (r, "cut_waste", feedback.measured_key(key, tid), "measured", "improved", at, "weekly_waste",
+                          10.0 + i + j, at if after_end else None, json.dumps(tags or [])))
+    for n, r in enumerate(untaken_at if untaken_at is not None else rids):
+        rec_id = f"rec{r}_{n}"
+        conn.execute("INSERT INTO rec_instances (rec_id, restaurant_id, key, kind, tags) VALUES (?,?,?,?,?)",
+                     (rec_id, r, f"cut_waste:u{n}", "cut_waste", json.dumps(untaken_tags) if untaken_tags else None))
+        _outcome(conn, r, f"observed:untaken:{rec_id}", verdict="no_clear_change")
+    conn.commit()
+    conn.close()
 
 
 def test_prediction_is_unavailable_below_the_floors_and_names_why(db_path):
@@ -576,27 +724,24 @@ def test_prediction_excludes_the_viewers_organisation(db_path):
     assert predict.neighbours(me, metric="weekly_waste", db_path=db_path) == []
 
 
-def test_prediction_clears_its_floors_and_reports_only_counts_a_median_and_an_interval(db_path):
+def test_prediction_counts_organisations_by_the_shared_org_key(db_path):
+    """R4-22 (#13): predict._orgs used organization_id or the restaurant
+    alone, so an owner's ungrouped locations counted as separate owners and
+    were never left out as the viewer's own organisation."""
     me, rids = _neighbourhood(db_path, n=7)
-    now = datetime.utcnow()
-    at = (now - timedelta(days=30)).strftime("%Y-%m-%d")
     conn = get_conn(db_path)
-    for i, r in enumerate(rids):
-        for j in range(2):
-            conn.execute("INSERT INTO intel_rec_events (restaurant_id, rec_kind, source_key, action, outcome, event_at, "
-                         "metric, effect_pct, after_end) VALUES (?,?,?,?,?,?,?,?,?)",
-                         (r, "cut_waste", f"cut_waste:{i}{j}#o{i}{j}", "measured", "improved", at, "weekly_waste",
-                          10.0 + i + j, at))
-        rec_id = f"rec{i}"
-        conn.execute("INSERT INTO rec_instances (rec_id, restaurant_id, key, kind) VALUES (?,?,?,?)",
-                     (rec_id, r, f"cut_waste:u{i}", "cut_waste"))
-        conn.execute("INSERT INTO recommendation_outcomes (restaurant_id, source, source_key, title, metric, "
-                     "baseline_value, started_on, evaluate_on, after_value, after_start, after_end, verdict, delta, "
-                     "delta_pct, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'evaluated')",
-                     (r, "observed", f"observed:untaken:{rec_id}", "t", "weekly_waste", 100.0, at, at, 99.0, at, at,
-                      "no_clear_change", -1.0, -1.0))
+    conn.execute("UPDATE restaurants SET organization_id=NULL, location_group='Syrup', owner_email='one@owner.test' "
+                 f"WHERE id IN ({','.join('?' for _ in [me] + rids)})", (me, *rids))
     conn.commit()
     conn.close()
+    assert predict._orgs(db_path)[me] == privacy.org_key({"id": me, "organization_id": None,
+                                                          "location_group": "Syrup", "owner_email": "one@owner.test"})
+    assert predict.neighbours(me, metric="weekly_waste", db_path=db_path) == []
+
+
+def test_prediction_clears_its_floors_and_reports_only_counts_a_median_and_an_interval(db_path):
+    me, rids = _neighbourhood(db_path, n=7)
+    _results(db_path, rids)
     f = predict.predict_effect(me, "cut_waste", "weekly_waste", db_path=db_path)
     assert f["available"] is True and f["mixed"] is False, f
     # the nearest three quarters of the 7 candidates (NEIGHBOUR_DISTANCE_PCTL), one owner each
@@ -606,3 +751,91 @@ def test_prediction_clears_its_floors_and_reports_only_counts_a_median_and_an_in
     privacy.assert_anonymous(f)
     blob = json.dumps(f)
     assert "Predict Peer" not in blob and "restaurant_id" not in blob
+
+
+def test_prediction_is_a_smoothed_whole_percent_never_one_neighbours_effect(db_path):
+    """R4-21 (#49): the weighted median returned a member's own effect minus
+    another's, to 0.1 — the disclosure pattern bands avoid."""
+    me, rids = _neighbourhood(db_path, n=7)
+    _results(db_path, rids)
+    f = predict.predict_effect(me, "cut_waste", "weekly_waste", db_path=db_path)
+    assert isinstance(f["value"], int) and all(isinstance(x, int) for x in f["interval"])
+    # the estimator itself: Harrell–Davis (equal weights = stats.harrell_davis),
+    # a Beta-weighted blend of every result, not one of them
+    from intelligence.stats import harrell_davis
+    vals = [10.0, 11.0, 12.0, 13.0, 40.0]
+    assert abs(predict._weighted_hd(vals, [1.0] * 5) - harrell_davis(vals, 50)) < 1e-9
+    assert predict._weighted_hd(vals, [1.0, 0.5, 1.0, 0.5, 1.0]) not in vals
+
+
+def test_prediction_matches_the_baseline_when_the_advice_was_taken_not_today(db_path):
+    """R4-20 (#48): "started where you are" read the neighbour's CURRENT
+    baseline. These neighbours sit at the viewer's waste % now but were far
+    above it when they took the advice."""
+    me, rids = _neighbourhood(db_path, n=7, then_waste=6.0)
+    _results(db_path, rids)
+    f = predict.predict_effect(me, "cut_waste", "weekly_waste", db_path=db_path)
+    assert f["available"] is False and f["n_restaurants"] == 0, f
+
+
+def test_the_control_arm_needs_five_restaurants_from_three_owners(db_path):
+    """R4-20 (#48): MIN_UNTAKEN counted results, so one restaurant's five
+    untaken results cleared it."""
+    me, rids = _neighbourhood(db_path, n=7)
+    _results(db_path, rids, untaken_at=[rids[0]] * 6)
+    f = predict.predict_effect(me, "cut_waste", "weekly_waste", db_path=db_path)
+    assert f["available"] is False and "wasn't taken" in f["why_not"] and f["n_untaken_restaurants"] == 1, f
+
+
+def test_the_control_arm_is_tag_filtered_like_the_taken_arm(db_path):
+    me, rids = _neighbourhood(db_path, n=7)
+    _results(db_path, rids, tags=["weekend"], untaken_tags=["weekday"])
+    f = predict.predict_effect(me, "cut_waste", "weekly_waste", tags=["weekend"], db_path=db_path)
+    assert f["available"] is False and f["n_untaken"] == 0, f
+
+
+def test_no_taken_window_means_no_control_not_every_untaken_result(db_path):
+    """R4-20 (#48): with no after_end on the taken results the span was
+    empty and the window filter was skipped, so any untaken result counted."""
+    me, rids = _neighbourhood(db_path, n=7)
+    _results(db_path, rids, after_end=False)
+    f = predict.predict_effect(me, "cut_waste", "weekly_waste", db_path=db_path)
+    assert f["available"] is False and f["n_untaken"] == 0, f
+
+
+def test_the_weekly_pass_is_bounded_per_pair_and_loads_the_dna_once(db_path, monkeypatch):
+    """R4-24 (#50): the deadline was checked only between restaurants, and
+    every pair reloaded every restaurant's DNA and organisation."""
+    me, rids = _neighbourhood(db_path, n=7)
+    _results(db_path, rids)
+    conn = get_conn(db_path)
+    for k, kind in enumerate(("cut_waste", "trim_day", "reprice")):
+        conn.execute("INSERT INTO rec_instances (rec_id, restaurant_id, key, kind, expected_metric) VALUES (?,?,?,?,?)",
+                     (f"mine{k}", me, f"{kind}:x{k}", kind, "weekly_waste"))
+    conn.commit()
+    conn.close()
+    calls = {"dna": 0, "orgs": 0}
+    real_dna, real_orgs = dna.latest_by_restaurant, predict._orgs
+
+    def count_dna(*a, **k):
+        calls["dna"] += 1
+        return real_dna(*a, **k)
+
+    def count_orgs(*a, **k):
+        calls["orgs"] += 1
+        return real_orgs(*a, **k)
+    monkeypatch.setattr(dna, "latest_by_restaurant", count_dna)
+    monkeypatch.setattr(predict, "_orgs", count_orgs)
+    first = predict.run_weekly(db_path=db_path, wall_seconds=0)
+    assert first["written"] == 1 and first["complete"] is False
+    second = predict.run_weekly(db_path=db_path, wall_seconds=0)
+    assert second["written"] == 1                      # resumed mid-restaurant, at the next pair
+    calls.update(dna=0, orgs=0)
+    rest = predict.run_weekly(db_path=db_path, wall_seconds=60)
+    assert rest["written"] == 1 and rest["complete"] is True
+    assert calls == {"dna": 1, "orgs": 1}
+    conn = get_conn(db_path)
+    kinds = {r[0] for r in conn.execute("SELECT rec_kind FROM intel_effects WHERE restaurant_id=?", (me,)).fetchall()}
+    conn.close()
+    assert kinds == {"cut_waste", "trim_day", "reprice"}
+    assert predict.run_weekly(db_path=db_path)["complete"] is True

@@ -29,7 +29,11 @@ The rules this module never bends:
     dimension, z = (raw − centre) ÷ scale against the stated ANCHORS; from
     MIN_ROBUST_N up, the robust z (raw − median) ÷ (1.4826 × MAD) over the
     platform's latest rows. The centre and scale used ride with each value
-    (`norm`), so a z is reproducible. Clipped to ±Z_CLIP.
+    (`norm`), so a z is reproducible. Clipped to ±Z_CLIP. `raw` is the
+    truth: a distance re-normalises both rows from it under one norm set.
+  * Labor-cost dimensions only on the owner's own pay rates; a type only
+    when the owner set it — the service model (S6) and the concept (S7) are
+    separate dimensions.
 
 Computed in the bounded nightly features pass (jobs.run_features), one
 connection per restaurant, beside its feature row.
@@ -51,7 +55,11 @@ def get_conn(db_path=None):
     return _models_mod.get_conn(db_path)
 
 
-DNA_VERSION = 1
+# 2 (R4-17/18/19, 9/24/26): S6 is the confirmed service model only, the
+# concept is its own S7, the non-sales structural dimensions joined, and
+# labor % is withheld on the assumed wage. Similarity reads version-2 rows
+# only, so a type code from the old mixed vocabulary is never compared.
+DNA_VERSION = 2
 MIN_ROBUST_N = 30          # restaurants measuring a dimension before the robust z replaces the anchors
 MAD_K = 1.4826
 Z_CLIP = 3.0
@@ -61,16 +69,32 @@ TREND_STEADY_SCALE = 0.25  # a move under this share of the stated scale reads "
 # Similarity (BM4 §5.2). Stated, not fitted: they become fitted only once
 # the admin ordering check can judge them (≥200 counted results across ≥30
 # restaurants). A test holds that they sum to 1.
+#
+# The non-sales coordinates (S8 ticket band, S9 weekly open hours, S10
+# urbanity) and the concept (S7) are here so a restaurant whose POS cannot
+# fill the hourly daypart (RPOWER, a CSV) and that has under 12 months of
+# sales can still be placed (R4-16): before them, such a restaurant had at
+# most 3 structural dimensions and no similarity for a year.
 STRUCTURAL_WEIGHTS = {
-    "volume_band": 0.30,           # S1
-    "weekend_share": 0.20,         # S2
-    "daypart_mix": 0.15,           # S3
-    "service_type": 0.15,          # S6
-    "beverage_share": 0.10,        # S5 (dormant: a mapped daily sales report)
-    "seasonality": 0.10,           # S4 (12 months of sales)
+    "volume_band": 0.20,           # S1
+    "weekend_share": 0.15,         # S2
+    "daypart_mix": 0.10,           # S3 (POS hourly totals, else the DSR's hourly split)
+    "seasonality": 0.05,           # S4 (12 months of sales)
+    "beverage_share": 0.05,        # S5 (dormant: a mapped daily sales report)
+    "service_type": 0.12,          # S6 (the CONFIRMED service model only)
+    "concept": 0.08,               # S7 (the confirmed concept, its own dimension)
+    "ticket_band": 0.12,           # S8
+    "open_hours": 0.08,            # S9
+    "urbanity_band": 0.05,         # S10
 }
 MIN_SHARED_WEIGHT = 0.60
 MIN_SHARED_STRUCTURAL = 4
+# Size, ticket and service model together say what a restaurant is: when a
+# pair shares all three, three structural dimensions are enough, and the
+# weight floor is what those three carry (0.44 of the stated weight).
+CORE_STRUCTURAL = ("volume_band", "ticket_band", "service_type")
+MIN_SHARED_STRUCTURAL_CORE = 3
+MIN_SHARED_WEIGHT_CORE = 0.40
 # A categorical mismatch (a different service type) counts as a difference
 # of this many standard deviations — Gower's 0/1, on the z scale.
 CATEGORICAL_MISMATCH_Z = 2.0
@@ -101,16 +125,28 @@ DIMENSIONS = {
                       "needs": "14 days of sales in the last 4 weeks"},
     "daypart_mix": {"code": "S3", "family": "sales", "label": "Share of sales before 4pm", "unit": "share",
                     "anchor": (0.35, 0.10), "module": "labor", "structural": True,
-                    "needs": "28 days of hourly POS sales in the last 8 weeks"},
+                    "needs": "28 days of hourly sales (POS or daily sales report) in the last 8 weeks"},
     "seasonality": {"code": "S4", "family": "sales", "label": "Busiest month vs quietest", "unit": "ratio",
                     "transform": "log10", "anchor": (0.12, 0.08), "module": "labor", "structural": True,
                     "needs": "12 months of sales"},
     "beverage_share": {"code": "S5", "family": "sales", "label": "Bar and beverage share of sales", "unit": "share",
                        "anchor": (0.25, 0.10), "module": "labor", "structural": True, "buildable": False,
                        "needs": "a daily sales report with its departments mapped"},
-    "service_type": {"code": "S6", "family": "sales", "label": "Restaurant type", "unit": "type",
+    "service_type": {"code": "S6", "family": "sales", "label": "Service model", "unit": "type",
                      "kind": "categorical", "module": None, "structural": True,
-                     "needs": "your restaurant type set under Account"},
+                     "needs": "your service model confirmed under Account"},
+    "concept": {"code": "S7", "family": "sales", "label": "Restaurant type", "unit": "type",
+                "kind": "categorical", "module": None, "structural": True,
+                "needs": "your restaurant type set under Account"},
+    "ticket_band": {"code": "S8", "family": "sales", "label": "Average ticket band", "unit": "band",
+                    "anchor": (2.0, 1.0), "module": "labor", "structural": True,
+                    "needs": "14 days with both sales and covers in the last 4 weeks"},
+    "open_hours": {"code": "S9", "family": "sales", "label": "Hours open a week", "unit": "hours_week",
+                   "anchor": (70.0, 15.0), "module": None, "structural": True,
+                   "needs": "your opening hours set under Account"},
+    "urbanity_band": {"code": "S10", "family": "sales", "label": "Setting (from nearby competitors)",
+                      "unit": "urbanity", "anchor": (1.0, 0.7), "module": "intel", "structural": True,
+                      "needs": "3 matched competitors with a distance in Intel"},
     "sales_volatility": {"code": "B1", "family": "sales", "label": "Day-to-day sales swing (after weekday pattern)",
                          "unit": "share", "anchor": (0.20, 0.10), "module": "labor",
                          "needs": "42 days of sales in the last 8 weeks"},
@@ -121,7 +157,7 @@ DIMENSIONS = {
                               "needs": "6 scored weekly sales forecasts"},
     "labor_pct": {"code": "B4", "family": "labor", "label": "Labor %", "unit": "pct",
                   "anchor": (30.0, 3.0), "module": "labor", "better": "lower",
-                  "needs": "14 costed days in the last 4 weeks"},
+                  "needs": "your pay rates and 14 costed days in the last 4 weeks"},
     "labor_hours_per_1k": {"code": "B4", "family": "labor", "label": "Labor hours per $1k of sales", "unit": "h",
                            "anchor": (11.0, 3.0), "module": "labor", "better": "lower",
                            "needs": "14 days with hours and sales in the last 4 weeks"},
@@ -130,7 +166,7 @@ DIMENSIONS = {
                    "needs": "28 days with hours and sales in the last 8 weeks"},
     "labor_swing": {"code": "B6", "family": "labor", "label": "Day-to-day labor % swing", "unit": "pts",
                     "anchor": (5.0, 2.0), "module": "labor", "better": "lower",
-                    "needs": "14 costed days in the last 4 weeks"},
+                    "needs": "your pay rates and 14 costed days in the last 4 weeks"},
     "overtime_intensity": {"code": "B7", "family": "labor", "label": "Overtime share of hours", "unit": "share",
                            "anchor": (0.03, 0.03), "module": "labor", "better": "lower",
                            "needs": "4 whole payroll weeks of shifts"},
@@ -272,11 +308,56 @@ def _weekend_share(days, today):
     return _m(round(wk / tot, 3), len(recent), f"Friday to Sunday share over {len(recent)} sales days")
 
 
+DAYPART_SPLIT_HOUR = 16           # "before 4pm"
+
+
+def _dsr_hourly(conn, rid, since):
+    """{business_date: (before 4pm, all)} from the nightly Daily Sales
+    Report's hourly split (facts_json → blocks.sales.detail.hourly, each
+    hour's net from the POS's own ticket times — RPOWER's ticket open time,
+    Toast's order opened time), the latest finished version of each night.
+    The source for a restaurant whose POS cannot be asked during the day
+    (RPOWER is month-at-a-time, intraday.py), so pos_intraday never fills.
+    An hour before the business day starts (1am) belongs to the night."""
+    from time_utils import BUSINESS_DAY_START_HOUR
+    try:
+        rows = conn.execute("SELECT business_date, version, facts_json FROM dsr_reports WHERE restaurant_id=? "
+                            "AND business_date >= ? AND status IN ('final','provisional') "
+                            "ORDER BY business_date, version", (rid, since.isoformat())).fetchall()
+    except Exception:
+        return {}
+    out = {}
+    for r in rows:                       # later versions overwrite earlier ones
+        try:
+            blk = ((json.loads(r["facts_json"] or "{}") or {}).get("blocks") or {}).get("sales") or {}
+        except (TypeError, ValueError):
+            continue
+        if blk.get("status") not in (None, "ready"):
+            continue
+        early = tot = 0.0
+        for h in ((blk.get("detail") or {}).get("hourly") or []):
+            try:
+                hour, net = int(h.get("hour")), float(h.get("net") or 0)
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if net <= 0:
+                continue
+            tot += net
+            if BUSINESS_DAY_START_HOUR <= hour < DAYPART_SPLIT_HOUR:
+                early += net
+        if tot > 0:
+            out[_d(r["business_date"])] = (early, tot)
+    return out
+
+
 def _daypart_mix(conn, rid, days, today):
-    """Share of the day's net sales rung before 16:00, from the POS's hourly
-    running total (pos_intraday) against the day's final sales. The
-    schedule_outcomes split is NOT used: it divides the day by a morning
-    share that falls back to a stated 0.4 — not a measurement."""
+    """Share of the day's net sales rung before 16:00. Per day, from the
+    POS's hourly running total (pos_intraday) against the day's final sales
+    where the POS can be asked during the day (Toast); otherwise from the
+    Daily Sales Report's hourly split of that night (RPOWER), so a non-Toast
+    restaurant can fill S3 (R4-16). The schedule_outcomes split is NOT used:
+    it divides the day by a morning share that falls back to a stated 0.4 —
+    not a measurement."""
     since = today - timedelta(days=56)
     try:
         rows = conn.execute("SELECT business_date, MAX(CASE WHEN captured_hour <= 16 THEN net_sales END) AS early "
@@ -286,18 +367,33 @@ def _daypart_mix(conn, rid, days, today):
         rows = []
     final = {d.isoformat(): s for d, s, _h, _p in days}
     early = tot = 0.0
-    n = 0
+    n = n_pos = 0
+    seen = set()
     for r in rows:
-        f = final.get(_d(r["business_date"]))
+        day = _d(r["business_date"])
+        f = final.get(day)
         e = r["early"]
         if not f or e is None or float(e) < 0 or float(e) > f * 1.05:
             continue
         early += min(float(e), f)
         tot += f
         n += 1
+        n_pos += 1
+        seen.add(day)
+    n_dsr = 0
+    if n < 28:
+        for day, (e, t) in _dsr_hourly(conn, rid, since).items():
+            if day in seen:
+                continue
+            early += e
+            tot += t
+            n += 1
+            n_dsr += 1
     if n < 28 or not tot:
-        return _need(n, f"{n} days of hourly POS sales in the last 8 weeks")
-    return _m(round(early / tot, 3), n, f"sales rung before 4pm over {n} days (POS hourly totals)")
+        return _need(n, f"{n} days of hourly sales in the last 8 weeks")
+    src = ("POS hourly totals" if not n_dsr else "the daily sales report's hourly split" if not n_pos
+           else "POS hourly totals and the daily sales report's hourly split")
+    return _m(round(early / tot, 3), n, f"sales rung before 4pm over {n} days ({src})")
 
 
 def _seasonality(days, today):
@@ -320,25 +416,53 @@ def _seasonality(days, today):
 
 
 def _service_type(restaurant):
-    """S6: the service model the owner set when the profile carries one,
-    else the restaurant type — only when the owner SET it. A type guessed
-    from the name never places a restaurant among peers (BM1-3, BM2-2)."""
+    """S6: the service model, only from a CONFIRMED profile
+    (categories.profile_for → confirmed). One vocabulary (R4-18): it used
+    to fall back to the concept, so a confirmed full-service Italian and an
+    owner-typed Italian with no profile were "different types", and a
+    counter-service steakhouse matched a counter-service café. The concept
+    is S7, its own dimension."""
     if restaurant is None:
         return _need(0, "no restaurant")
-    for attr in ("service_model", "service_format"):
-        v = "_".join(str(getattr(restaurant, attr, None) or "").strip().lower().replace("-", " ").split())
-        v = "".join(ch for ch in v if ch.isalnum() or ch == "_")
-        if v:
-            return _m(f"service:{v}"[:40], 1, "the service model you set")
     try:
         from . import categories
-        cat, src = categories.category_for(restaurant)
+        prof = categories.profile_for(restaurant)
+    except Exception:
+        prof = {}
+    sm = prof.get("service_model")
+    if sm and prof.get("confirmed"):
+        return _m(f"service:{sm}"[:40], 1, "the service model you confirmed")
+    if sm:
+        return _need(0, "the service model isn't confirmed yet")
+    return _need(0, "no service model set")
+
+
+def _concept(restaurant):
+    """S7: the restaurant type (concept), only when the owner SET it. A type
+    guessed from the name never places a restaurant among peers (BM1-3,
+    BM2-2); "other" is no type."""
+    if restaurant is None:
+        return _need(0, "no restaurant")
+    try:
+        from . import categories
+        confirmed = getattr(categories, "confirmed_type", None)
+        if confirmed is not None:       # the one accessor, once it exists (the shared contract)
+            cat = confirmed(restaurant)
+            if cat:
+                src = "set"
+            else:
+                src = categories.category_for(restaurant)[1]
+                src = "unconfirmed" if src == "set" else src
+        else:
+            cat, src = categories.category_for(restaurant)
     except Exception:
         cat, src = None, None
     if cat and src == "set" and cat != "other":
         return _m(cat, 1, "the restaurant type you set")
-    if cat and src == "inferred":
+    if src == "inferred":
         return _need(0, "the type was only guessed from the name")
+    if src == "unconfirmed":
+        return _need(0, "the restaurant type isn't confirmed yet")
     return _need(0, "no restaurant type set")
 
 
@@ -662,6 +786,32 @@ def _from_feature(f, key, dim, n=None):
     return _m(v, n, f"from this week's {key} feature")
 
 
+def _labor_cost(f, key, dim, restaurant):
+    """A labor-COST dimension (labor %, its swing) only on the owner's own
+    pay rates (R4-19): on the assumed $26/hr it is hours × $26, which the
+    bands already refuse (benchmarks.compute: cost_basis "default"), and it
+    would otherwise feed platform norms, similarity and prediction's
+    "started where you are" labor baseline."""
+    try:
+        import thresholds
+        basis = thresholds.labor_cost_basis(restaurant)
+    except Exception:
+        basis = "default"
+    if basis == "default":
+        return _need(0, "labor cost on the assumed $26/hr, not your pay rates")
+    return _from_feature(f, key, dim)
+
+
+def _structural_feature(f, key, basis):
+    """A structural coordinate the features pass measured
+    (features.STRUCTURAL_KEYS): a band index, hours or a share — never a
+    dollar. None when not measured, never 0."""
+    v = (f or {}).get(key)
+    if v is None:
+        return _need(0, "")
+    return _m(v, 1, basis)
+
+
 def measure(restaurant_id, today=None, db_path=DB_PATH, features=None, restaurant=None) -> dict:
     """{dim: {raw, n, basis}} for every dimension — raw None below its
     minimum data. Pure read."""
@@ -689,13 +839,20 @@ def measure(restaurant_id, today=None, db_path=DB_PATH, features=None, restauran
             "seasonality": lambda: _seasonality(days, today),
             "beverage_share": lambda: _need(0, "no mapped daily sales report"),
             "service_type": lambda: _service_type(restaurant),
+            "concept": lambda: _concept(restaurant),
+            "ticket_band": lambda: _structural_feature(f, "ticket_band", "band of 0–4 on stated edges, sales ÷ covers "
+                                                                         "over the last 4 weeks"),
+            "open_hours": lambda: _structural_feature(f, "weekly_open_hours", "hours open a week, from your "
+                                                                              "opening hours"),
+            "urbanity_band": lambda: _structural_feature(f, "urbanity_band", "median distance to your matched "
+                                                                             "competitors (0 rural – 2 urban)"),
             "sales_volatility": lambda: _volatility(days, today),
             "growth": lambda: _growth(days, today),
             "demand_predictability": lambda: _predictability(conn, restaurant_id),
-            "labor_pct": lambda: _from_feature(f, "labor_pct_28d", "labor_pct"),
+            "labor_pct": lambda: _labor_cost(f, "labor_pct_28d", "labor_pct", restaurant),
             "labor_hours_per_1k": lambda: _from_feature(f, "labor_hours_per_1k_28d", "labor_hours_per_1k"),
             "labor_flex": lambda: _labor_flex(days, today),
-            "labor_swing": lambda: _from_feature(f, "labor_pct_sd_28d", "labor_swing"),
+            "labor_swing": lambda: _labor_cost(f, "labor_pct_sd_28d", "labor_swing", restaurant),
             "overtime_intensity": lambda: _overtime(restaurant_id, days, today, db_path),
             "schedule_publish_rate": lambda: _publish_rate(conn, restaurant_id, today),
             "staffing_issues": lambda: _staffing_issues(conn, restaurant_id, today),
@@ -783,7 +940,7 @@ def platform_norms(db_path=DB_PATH, weeks=2) -> dict:
         rows = conn.execute(
             "SELECT d.restaurant_id, d.dims_json FROM intel_dna d JOIN (SELECT restaurant_id, MAX(week) AS week "
             "FROM intel_dna GROUP BY restaurant_id) m ON m.restaurant_id=d.restaurant_id AND m.week=d.week "
-            "WHERE d.week >= ?", (floor,)).fetchall()
+            "WHERE d.week >= ? AND COALESCE(d.version, 1) >= ?", (floor, DNA_VERSION)).fetchall()
     except Exception:
         rows = []
     finally:
@@ -812,18 +969,32 @@ def platform_norms(db_path=DB_PATH, weeks=2) -> dict:
     return norms
 
 
+def z_of(dim, raw, norms: dict):
+    """The clipped z of one raw value under one norm set, or None (no raw,
+    a categorical dimension, or no norm)."""
+    if DIMENSIONS.get(dim, {}).get("kind") != "numeric":
+        return None
+    x = _t(dim, raw)
+    nm = (norms or {}).get(dim)
+    if x is None or not nm or not nm.get("scale"):
+        return None
+    z = (x - float(nm["centre"])) / float(nm["scale"])
+    return round(max(-Z_CLIP, min(Z_CLIP, z)), 3)
+
+
 def normalise(measured: dict, norms: dict = None) -> dict:
     """{dim: {raw, z, n, basis, norm}}: z clipped to ±Z_CLIP, None when the
-    raw is None or the dimension is categorical."""
+    raw is None or the dimension is categorical. The stored z and norm are
+    a record of the night; every comparison between two rows re-normalises
+    both from `raw` under one norm set (distance_detail, R4-17)."""
     norms = norms or anchor_norms()
     out = {}
     for dim, m in measured.items():
         e = {"raw": m.get("raw"), "z": None, "n": m.get("n"), "basis": m.get("basis") or ""}
-        nm = norms.get(dim)
-        x = _t(dim, e["raw"]) if DIMENSIONS.get(dim, {}).get("kind") == "numeric" else None
-        if x is not None and nm and nm.get("scale"):
-            z = (x - float(nm["centre"])) / float(nm["scale"])
-            e["z"] = round(max(-Z_CLIP, min(Z_CLIP, z)), 3)
+        z = z_of(dim, e["raw"], norms)
+        if z is not None:
+            nm = norms[dim]
+            e["z"] = z
             e["norm"] = {"kind": nm["kind"], "centre": nm["centre"], "scale": nm["scale"],
                          "transform": DIMENSIONS[dim]["transform"]}
         out[dim] = e
@@ -898,8 +1069,9 @@ def latest(restaurant_id, db_path=DB_PATH):
 
 def latest_by_restaurant(db_path=DB_PATH, max_age_weeks=3) -> dict:
     """{restaurant_id: dims} — each REAL restaurant's latest row, recent
-    enough to describe it now. Server-side only (neighbour search): never
-    returned to a client."""
+    enough to describe it now and of the current DNA_VERSION (an older row
+    carries the old type vocabulary). Server-side only (neighbour search):
+    never returned to a client."""
     from .features import iso_week
     from .jobs import seeded_restaurant_ids
     floor = iso_week(date.today() - timedelta(weeks=max_age_weeks))
@@ -908,7 +1080,7 @@ def latest_by_restaurant(db_path=DB_PATH, max_age_weeks=3) -> dict:
         rows = conn.execute(
             "SELECT d.restaurant_id, d.dims_json FROM intel_dna d JOIN (SELECT restaurant_id, MAX(week) AS week "
             "FROM intel_dna GROUP BY restaurant_id) m ON m.restaurant_id=d.restaurant_id AND m.week=d.week "
-            "WHERE d.week >= ?", (floor,)).fetchall()
+            "WHERE d.week >= ? AND COALESCE(d.version, 1) >= ?", (floor, DNA_VERSION)).fetchall()
     finally:
         conn.close()
     seeded = seeded_restaurant_ids(db_path=db_path)
@@ -917,16 +1089,28 @@ def latest_by_restaurant(db_path=DB_PATH, max_age_weeks=3) -> dict:
 
 # ── similarity ──────────────────────────────────────────────────────────────
 
-def distance_detail(a: dict, b: dict, weights: dict = None) -> dict:
+def distance_detail(a: dict, b: dict, weights: dict = None, norms: dict = None) -> dict:
     """{comparable, d, shared_weight, shared_structural, why_not}. Gower-
     style over the dimensions BOTH measured: d = sqrt(Σ w δ (z_a − z_b)² ÷
     Σ w δ); a categorical dimension contributes 0 when equal, else
     CATEGORICAL_MISMATCH_Z². A missing dimension is neither 0 nor imputed —
-    it is left out, and too much left out means not comparable."""
+    it is left out, and too much left out means not comparable.
+
+    Both rows are re-normalised from `raw` under ONE norm set (`norms`, read
+    once per call or pass by the caller — platform_norms() — else the stated
+    anchors), never by subtracting the z's each row stored: those were
+    computed under the norms of different nights, and around the 30-
+    restaurant anchor-to-robust crossing that halved or doubled a distance
+    (R4-17).
+
+    Comparable at MIN_SHARED_WEIGHT and MIN_SHARED_STRUCTURAL; or, when the
+    pair shares all of CORE_STRUCTURAL (size, ticket, service model), at
+    MIN_SHARED_WEIGHT_CORE and MIN_SHARED_STRUCTURAL_CORE (R4-16)."""
     weights = weights or STRUCTURAL_WEIGHTS
+    norms = norms or anchor_norms()
     total = sum(weights.values())
     num = den = 0.0
-    shared_struct = 0
+    shared = []
     for dim, w in weights.items():
         ea, eb = (a or {}).get(dim) or {}, (b or {}).get(dim) or {}
         if DIMENSIONS.get(dim, {}).get("kind") == "categorical":
@@ -934,28 +1118,33 @@ def distance_detail(a: dict, b: dict, weights: dict = None) -> dict:
                 continue
             diff2 = 0.0 if ea["raw"] == eb["raw"] else CATEGORICAL_MISMATCH_Z ** 2
         else:
-            if ea.get("z") is None or eb.get("z") is None:
+            za, zb = z_of(dim, ea.get("raw"), norms), z_of(dim, eb.get("raw"), norms)
+            if za is None or zb is None:
                 continue
-            diff2 = (float(ea["z"]) - float(eb["z"])) ** 2
+            diff2 = (za - zb) ** 2
         num += w * diff2
         den += w
         if dim in STRUCTURAL:
-            shared_struct += 1
+            shared.append(dim)
+    shared_struct = len(shared)
     share = den / total if total else 0.0
     out = {"shared_weight": round(share, 3), "shared_structural": shared_struct}
-    if share < MIN_SHARED_WEIGHT:
+    core = all(d in shared for d in CORE_STRUCTURAL)
+    min_weight = MIN_SHARED_WEIGHT_CORE if core else MIN_SHARED_WEIGHT
+    min_struct = MIN_SHARED_STRUCTURAL_CORE if core else MIN_SHARED_STRUCTURAL
+    if share < min_weight - 1e-9:
         return dict(out, comparable=False, d=None,
                     why_not=f"only {int(round(share * 100))}% of the profile is measured for both")
-    if shared_struct < MIN_SHARED_STRUCTURAL:
+    if shared_struct < min_struct:
         return dict(out, comparable=False, d=None,
-                    why_not=f"only {shared_struct} structural measures in common (needs {MIN_SHARED_STRUCTURAL})")
+                    why_not=f"only {shared_struct} structural measures in common (needs {min_struct})")
     return dict(out, comparable=True, d=round(math.sqrt(num / den), 4), why_not=None)
 
 
-def distance(a: dict, b: dict, weights: dict = None):
-    """The DNA distance between two profiles ({dim: {raw, z, …}}), or None
+def distance(a: dict, b: dict, weights: dict = None, norms: dict = None):
+    """The DNA distance between two profiles ({dim: {raw, …}}), or None
     when they are not comparable (distance_detail says why)."""
-    return distance_detail(a, b, weights)["d"]
+    return distance_detail(a, b, weights, norms)["d"]
 
 
 def prediction_weights(target_dim: str = None) -> dict:
@@ -984,6 +1173,8 @@ _UNIT_FMT = {
     "elasticity": lambda v: f"{float(v):.2f}",
     "per100": lambda v: f"{float(v):.1f}",
     "pct_per_week": lambda v: f"{float(v):+.1f}% a week",
+    "hours_week": lambda v: f"{float(v):.0f}h a week",
+    "urbanity": lambda v: {0: "Rural", 1: "Suburban", 2: "Urban"}.get(int(v), f"{v}"),
 }
 
 
@@ -993,10 +1184,11 @@ def display(dim, raw) -> str | None:
     meta = DIMENSIONS.get(dim) or {}
     if meta.get("kind") == "categorical":
         s = str(raw)
-        if s.startswith("service:"):
-            return s.split(":", 1)[1].replace("_", " ").capitalize()
         try:
             from . import categories
+            if s.startswith("service:"):
+                sm = s.split(":", 1)[1]
+                return categories.SERVICE_MODEL_LABELS.get(sm, sm.replace("_", " ").capitalize())
             return categories.LABELS.get(s, s.replace("_", " ").capitalize())
         except Exception:
             return s

@@ -112,8 +112,8 @@ Ask, the queue, decisions and the ledger share (legacy
 | `confidence.py` | all | `score(rid, rec_kind)` → `{score, band, factors[], caution}` — the kind-level model, read by the admin dashboard; NOT what owners see (see Recommendation Confidence below). `metric` is accepted and not read |
 | `dashboard.py` | admin | the Intelligence page payload, passed through `assert_anonymous` |
 | `staffing.py` | 1 → 3 | people on the floor per role family and daypart per $1k of sales (`staff_per_1k.<family>.<daypart>` in each feature row); partition bands (with the sales band once the restaurant's own is measured) come from `benchmarks.compute`; `starting_headcount` lends a restaurant with a CONFIRMED profile and no history of its own the PUBLISHED median (≥ 8 others from ≥ 5 organisations, 0.05 step) scaled by ITS OWN sales, labelled borrowed; `payload()` ships the rounded headcount, the group label and n — never `people_per_1k` (#10) |
-| `dna.py` | 1 → 3 | Restaurant DNA (BM4 §5, Top-50 #24): `measure`/`compute`/`store` the ~30 dimensions (22+ buildable today; S5 beverage share dormant; B10 retention dormant until `last_seen` fills), `normalise` (stated anchors below `MIN_ROBUST_N` = 30 measuring a dimension, robust z = (x − median) ÷ 1.4826·MAD from 30, clipped ±3; the centre and scale ride with each value), `distance(a, b)` (Gower-style, missing-aware; None below 60% shared weight or 4 shared structural dimensions), `prediction_weights`, `profile(rid)` — the owner's own read — and `payload_for(user)` |
-| `predict.py` | 3 | `predict_effect(rid, kind, metric, tags)` → a fact of kind `prediction` for the P2 rule; `neighbours()` (server-side only); `run_weekly()` into `intel_effects`. Dormant below its floors (every restaurant today) |
+| `dna.py` | 1 → 3 | Restaurant DNA (BM4 §5, Top-50 #24): `measure`/`compute`/`store` the ~30 dimensions (22+ buildable today; S5 beverage share dormant; B10 retention dormant until `last_seen` fills), `normalise` (stated anchors below `MIN_ROBUST_N` = 30 measuring a dimension, robust z = (x − median) ÷ 1.4826·MAD from 30, clipped ±3; the centre and scale ride with each value), `distance(a, b, weights, norms)` (Gower-style, missing-aware, both rows re-normalised from `raw` under one norm set; None below 60% shared weight or 4 shared structural dimensions — 40% and 3 when size, ticket and service model are all shared), `prediction_weights`, `profile(rid)` — the owner's own read — and `payload_for(user)` |
+| `predict.py` | 3 | `predict_effect(rid, kind, metric, tags)` → a fact of kind `prediction` for the P2 rule; `neighbours()` (server-side only); `run_weekly()` into `intel_effects` (DNA, organisations and norms loaded once per pass; bounded and resumable per (kind, metric) pair). Dormant below its floors (every restaurant today) |
 | `comparison_cache.py` | 3 | `materialise()` the engine's comparisons nightly into `intel_benchmark_facts` (bounded, cursor-resumable); `read()` — `engine.compare(..., use_cache=True)` serves a fresh row |
 | `jobs.py` | — | `run_features()` (bounded, cursor-resumable; writes the DNA row beside the features), `run_learning()` |
 
@@ -738,11 +738,18 @@ measurement is held to these rules (outcomes.py, metrics.py; tests in
 measures each restaurant, week by week, on the dimensions its own tables
 can measure (BM4 §5.1): sales (volume band from stated edges on mean daily
 sales — the band index is stored, never the dollars; Friday-to-Sunday share;
-share rung before 4pm from the POS's hourly totals — the schedule_outcomes
-split is not used, it divides a day by a stated 0.4 morning share; busiest vs
-quietest month; restaurant type, only when the owner SET it; residual sales
-swing; 13-week sales trend; forecast skill vs a naive guess), labor (labor %,
-hours per $1k, how closely hours follow sales, labor % swing, overtime share,
+share rung before 4pm from the POS's hourly totals, or for a POS that cannot
+be asked during the day (RPOWER) the nightly Daily Sales Report's hourly
+split — the schedule_outcomes split is not used, it divides a day by a
+stated 0.4 morning share; busiest vs quietest month; the service model, only
+from a CONFIRMED profile (S6); the restaurant type, only when the owner SET
+it (S7, its own dimension — S6 no longer falls back to it); average-ticket
+band, hours open a week and the urbanity band from Intel's competitor
+distances (S8–S10, from the features pass's structural block); residual sales
+swing; 13-week sales trend; forecast skill vs a naive guess), labor (labor %
+and labor % swing only on the owner's own pay rates — blank, "needs your pay
+rates", on the assumed $26/hr, as the bands refuse it;
+hours per $1k, how closely hours follow sales, overtime share,
 weeks published, coverage and no-show issues per 100 shifts, retention,
 median tenure), guests (rating, negative share, rating change, wait and
 service complaints — the honest proxy for service speed, which has no data
@@ -760,12 +767,19 @@ permissions.
 
 **Similarity.** `dna.distance(a, b)` = sqrt(Σ w·δ·(z_a − z_b)² ÷ Σ w·δ)
 over the dimensions both measured; a categorical mismatch counts as a
-2-SD difference. Structural weights are STATED (S1 volume 0.30, S2 weekend
-share 0.20, S3 daypart 0.15, S6 type 0.15, S5 beverage 0.10, S4 seasonality
-0.10 — they sum to 1, and a test holds it); two profiles are comparable only
-at ≥ 60% shared weight and ≥ 4 shared structural dimensions. Prediction
-weights add the target metric's baseline dimension at 0.25, renormalised.
-Weights become fitted only when the admin ordering check can judge them.
+2-SD difference. Both rows are re-normalised from `raw` under ONE norm set
+(the caller's `platform_norms()` read once per pass, else the stated
+anchors) — never the z each row stored under its own night's norms (R4-17).
+Structural weights are STATED (S1 volume 0.20, S2 weekend share 0.15, S3
+daypart 0.10, S4 seasonality 0.05, S5 beverage 0.05, S6 service model 0.12,
+S7 concept 0.08, S8 ticket band 0.12, S9 open hours 0.08, S10 urbanity 0.05
+— they sum to 1, and a test holds it); two profiles are comparable at ≥ 60%
+shared weight and ≥ 4 shared structural dimensions, or at ≥ 40% and 3 when
+they share size, ticket and service model (so a non-Toast restaurant with
+under 12 months of sales can be placed, R4-16). Prediction weights add the
+target metric's baseline dimension at 0.25, renormalised. Weights become
+fitted only when the admin ordering check can judge them. Similarity reads
+only rows at the current `DNA_VERSION`.
 
 **Effect sizes in learning (BM4-6).** `feedback.sync` writes `metric`,
 `effect_pct`, `effect_z` (delta ÷ the restaurant's noise sigma), signed so
@@ -804,15 +818,24 @@ difference cannot pass as an effect. Every stored pattern's evidence carries
 `prospective` and `pooled_types` (true for the all-types group).
 
 **Prediction (BM4 §5.3, dormant).** `predict.predict_effect` — neighbours by
-DNA distance outside the viewer's organisation, within its type, started
-where it is (the target dimension within 1 z); taken effects weighted by
-similarity × the per-restaurant cap; minus the median untaken effect in
-overlapping windows; a restaurant-cluster bootstrap for the 80% interval;
-floors ≥ 5 restaurants from ≥ 5 organisations, ≥ 10 capped results, n_eff ≥
-8, ≥ 5 untaken; "mixed results" when the interval spans 0. Returns
-`{kind: "prediction", value, n_restaurants, n_orgs, interval, basis}` —
-never a neighbour, distance, date or dollar. Likelihood words never come from
-it.
+DNA distance outside the viewer's organisation (`privacy.org_key`, the rule
+every band uses), within its confirmed service model; a result counts only
+when the neighbour STARTED where the viewer is — its target dimension within
+1 z of the viewer's, read from its DNA row of the week it took the advice (up
+to 3 weeks before), not today's; taken effects weighted by similarity × the
+per-restaurant cap; the control arm built the same way — untaken results of
+the same kind (read from the key by `feedback.kind_of`, the taken rows'
+vocabulary), the same tags, windows overlapping the taken results' (none
+without them), weighted and capped alike, from ≥ 5 restaurants and ≥ 3
+organisations; each arm a weighted Harrell–Davis median (never one
+member's own effect); a restaurant-cluster bootstrap for the 80% interval;
+the figure and interval in whole percents; floors ≥ 5 restaurants from ≥ 5
+organisations, ≥ 10 capped results, n_eff ≥ 8, ≥ 5 untaken; "mixed results"
+when the interval spans 0. Returns `{kind: "prediction", value,
+n_restaurants, n_orgs, interval, basis}` — never a neighbour, distance, date
+or dollar. Likelihood words never come from it. `run_weekly` loads the DNA,
+organisations and norms once per pass and checks its wall clock before every
+(kind, metric) pair, its cursor resuming mid-restaurant.
 
 **Peer-benchmark freshness (BM3-9).** `data_freshness.SOURCES["cohort"]`
 ("Peer benchmarks": lag 7, grace 7, horizon 49 days), dated by the newest
