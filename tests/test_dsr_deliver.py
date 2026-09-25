@@ -200,7 +200,9 @@ def test_the_owner_and_manager_emails_carry_exactly_their_own_views(db, sent):
     # this pinned the plain subject both views used to share).
     assert owner["subject"].startswith("Simple EJ's · Tue 9/22/26 · ") and owner["subject"].endswith("/100 · $6,975 net")
     assert manager["subject"] == "Simple EJ's · Tue 9/22/26 · $6,975 net"
-    link = "https://dashboard.cavnar.ai/#dsr/2026-09-22"
+    # The link names its location (D2-7): a group owner's session on a
+    # sibling location switches here first (was the bare #dsr link).
+    link = f"https://dashboard.cavnar.ai/?rid={r.id}#dsr/2026-09-22"
     for m in (owner, manager):
         assert link in m["html"] and "View full report" in m["html"]
         assert "2026-09-22<" not in m["html"], "no ISO date an owner reads"

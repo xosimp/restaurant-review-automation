@@ -233,10 +233,18 @@ def _kind(first, updated, report):
 
 # ── what it says ────────────────────────────────────────────────────────────
 
-def report_url(business_date):
-    """The web report for the night — the hash route the web client opens."""
+def report_url(business_date, rid=None):
+    """The web report for the night — the hash route the web client opens.
+    `rid` names the location: a group owner's session may sit on a sibling
+    location, and the #dsr route switches to this one first (D2-7)."""
     import config
-    return f"{config.base_url()}/#dsr/{str(business_date)[:10]}"
+    q = ""
+    if rid:
+        try:
+            q = f"?rid={int(rid)}"
+        except (TypeError, ValueError):
+            q = ""
+    return f"{config.base_url()}/{q}#dsr/{str(business_date)[:10]}"
 
 
 def _money(v):
@@ -305,9 +313,12 @@ def digest(payload, restaurant, kind=FIRST):
     if _num(lm.get("pct")):
         target = lm.get("target_pct") if _num(lm.get("target_pct")) else None
         pts = lm.get("vs_target_pts") if _num(lm.get("vs_target_pts")) else None
+        # A starting target the owner never set is never "over" in red
+        # (thresholds.target_for; the scorecard and the web tile agree).
+        starting = (labor.get("detail") or {}).get("target_source") == "default"
         stats.append({"value": f"{lm['pct']:.1f}%",
                       "label": "Labor" + (f" · target {target:g}%" if target is not None else ""),
-                      "tone": None if pts is None else ("bad" if pts > 0 else "good")})
+                      "tone": None if pts is None else (("warn" if starting else "bad") if pts > 0 else "good")})
 
     narrative = payload.get("narrative") or {}
     notes = (payload.get("checklist") or {}).get("narrative") or {}
@@ -359,10 +370,14 @@ def digest(payload, restaurant, kind=FIRST):
         "operations": list(payload.get("operations") or []),
         "tomorrow": payload.get("tomorrow"),
         "yesterday": payload.get("yesterday"),
+        # AI insights (access.insights, already filtered for this view): the
+        # email shows them between Top KPIs and Tomorrow's priorities (D3-7).
+        "insights": [i for i in payload.get("insights") or [] if isinstance(i, dict) and i.get("text")],
         "actions": actions,
         "missing": list(facts.get("missing") or []),
         "withheld": withheld,
-        "url": report_url(day),
+        "url": report_url(day, getattr(restaurant, "id", None)),
+        "restaurant_id": getattr(restaurant, "id", None),
     }
 
 

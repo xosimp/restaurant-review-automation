@@ -1119,7 +1119,12 @@ def dsr_scorecard_sections(card: dict, d: dict) -> list:
     comps = []
     for c in card.get("components") or []:
         if c.get("measured") and c.get("value") is not None:
-            comps.append((esc(c["value"]), esc(c["label"]), tones.get(c.get("tone"))))
+            # An estimate says so, as the app does (the food cost is
+            # recipe-theoretical): "Food cost (est.)" over its detail line.
+            label = esc(c["label"]) + (" (est.)" if c.get("estimate") else "")
+            if c.get("estimate") and c.get("detail"):
+                label += f'<br>{esc(c["detail"])}'
+            comps.append((esc(c["value"]), label, tones.get(c.get("tone"))))
         else:
             comps.append(("&mdash;", esc(c.get("label") or ""), None))
     out.append(report_stats(comps))
@@ -1140,7 +1145,8 @@ def dsr_kpi_section(title: str, kpis: list) -> str:
     for k in kpis or []:
         chg = (k.get("change") or {})
         stk = (k.get("streak") or {})
-        label = esc(k.get("label") or "")
+        # An estimate (food cost, prime cost) is labelled one, as in the app.
+        label = esc(k.get("label") or "") + (" (est.)" if k.get("estimate") else "")
         if chg.get("text"):
             label += f'<br><span style="color:{tones.get(chg.get("tone"), BRAND["muted"])}">{esc(chg["text"])}</span>'
         if stk.get("text"):
@@ -1167,7 +1173,10 @@ def dsr_tomorrow_sections(d: dict) -> list:
         if cf.get("pct") is not None:
             lines.append(f"AI confidence {int(cf['pct'])}% &mdash; based on {esc(', '.join(cf.get('based_on') or []))}")
         if lines:
-            out.append(report_eyebrow(f"Tomorrow &middot; {esc(t.get('weekday') or '')}", BRAND["warn"])
+            # The weekday and its M/D/YY date, as the app's Tomorrow card.
+            from time_utils import mdy as _mdy
+            when = esc(t.get("weekday") or "") + (f" {esc(_mdy(t['date']))}" if t.get("date") else "")
+            out.append(report_eyebrow(f"Tomorrow &middot; {when}", BRAND["warn"])
                        + report_bullets(lines, BRAND["warn"]))
     y = d.get("yesterday") or {}
     if y.get("items"):
@@ -1259,7 +1268,12 @@ def dsr_email(d: dict):
             elif d.get("lead_missing"):
                 sections.append(report_paragraph(esc(d["lead_missing"])))
             sections.append(stats)
-        kp = dsr_kpi_section("Top KPIs", d.get("kpis") or [])
+        kpis = d.get("kpis") or []
+        if not owner:
+            # The manager's Top KPIs never repeat a tile Operations shows.
+            shown = {k.get("key") for k in d.get("operations") or [] if isinstance(k, dict) and k.get("key")}
+            kpis = [k for k in kpis if not (isinstance(k, dict) and k.get("key") in shown)]
+        kp = dsr_kpi_section("Top KPIs", kpis)
         if kp:
             sections.append(kp)
         if not card and d.get("went_well"):
@@ -1268,12 +1282,21 @@ def dsr_email(d: dict):
         if not card and d.get("needs_attention"):
             sections.append(report_eyebrow("Needs attention", BRAND["warn"])
                             + report_bullets([esc(t) for t in d["needs_attention"]], BRAND["warn"]))
+        # AI insights, where the app has them: after the numbers, before
+        # tomorrow's priorities (access.insights — this view's list only).
+        ins = [f"<b>{esc(i.get('label') or '')}:</b> {esc(i['text'])}" if i.get("label") else esc(i["text"])
+               for i in d.get("insights") or [] if isinstance(i, dict) and i.get("text")]
+        if ins:
+            sections.append(report_eyebrow("AI insights") + report_bullets(ins))
         actions = d.get("actions") or []
         if actions:
             # Each action links to Ask about it, naming its rec_ledger key
-            # (src=dsr_email) so the click is recorded as opened (#32).
+            # (src=dsr_email) so the click is recorded as opened (#32) —
+            # against this report's location (rid=), not whichever one a
+            # group owner's session is on (D2-7).
             def _ask(a):
-                return report_ask_link(f"Walk me through this: {a['text']}", a.get("key"), "dsr_email")
+                return report_ask_link(f"Walk me through this: {a['text']}", a.get("key"), "dsr_email",
+                                       rid=d.get("restaurant_id"))
             first = esc(actions[0]["text"])
             if actions[0].get("why"):
                 first += (f'<div style="font-family:{_SANS};font-size:12.5px;font-weight:400;'

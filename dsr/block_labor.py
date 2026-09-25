@@ -317,8 +317,18 @@ def collect(ctx):
         observations.append({"key": "no_shows", "facts": ["labor.no_shows"],
                              "text": f"{n} scheduled {'person' if n == 1 else 'people'} never clocked in."})
 
+    # Whose target it is: a starting target the owner never set is never
+    # "over" in red (thresholds.target_for; dsr/scorecard caps it the same).
+    try:
+        import thresholds
+        tgt = thresholds.target_for(ctx.restaurant, "labor")
+        target_source, target_label = tgt.get("source"), tgt.get("label")
+    except Exception:
+        target_source, target_label = None, None
     detail = {
         "pct_basis": basis,
+        "target_source": target_source,
+        "target_label": target_label,
         "overtime_source": ot_source,
         "coverage": cov,
         "shift_quality": quality,
