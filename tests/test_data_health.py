@@ -304,3 +304,13 @@ def test_every_pos_sync_attempt_is_recorded(db_path, monkeypatch):
     fake.sync_to_db = lambda r: (_ for _ in ()).throw(RuntimeError("boom"))
     out = pos.sync_restaurant(rid)
     assert out["ok"] is False and rec[-1][0][2] is False
+
+
+def test_a_never_fetched_source_is_a_missing_input_not_out_of_date_data():
+    """Weather with no forecast fetched yet reads `unknown` (DH2-17), but it
+    is not old data: the answer checker's missing-input rule holds claims
+    about it, and no "out of date (Weather)" caveat is attached."""
+    st = {"key": "weather", "label": "Weather", "state": "unknown", "pct": None, "never_fetched": True,
+          "basis": "Weather: no forecast fetched yet"}
+    out = dh.validation_state([st])
+    assert out["stale_sources"] == [] and out["missing_inputs"] == ["weather"]

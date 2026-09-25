@@ -380,6 +380,9 @@ def test_a_review_missing_from_a_complete_gbp_listing_drops_out_of_the_stats(db_
             "createTime": "2026-09-02T12:00:00Z", "reviewer": {"displayName": "F"}}
     monkeypatch.setattr(gmb, "get_valid_token", lambda rid: "tok")
     monkeypatch.setattr(gmb, "fetch_gmb_logo_url", lambda *a, **k: None)
+    # The rating refresh (scheduler._rating_refresh_due) is its own GET; this
+    # test's fake answers only the two review listings.
+    monkeypatch.setattr(gmb, "fetch_location_rating", lambda *a, **k: None)
     listings = [{"reviews": [kept, gone]}, {"reviews": [kept]}]   # no nextPageToken: complete
     monkeypatch.setattr(requests, "get", lambda *a, **k: _Resp(listings.pop(0)))
     _run_fetch(monkeypatch)

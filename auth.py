@@ -3171,6 +3171,9 @@ _UNGATED_PREFIXES = (
     # (Home, Ask Cavnar, the action/issue/goal/outcome loop, notifications,
     # the morning brief), so a single module gate would be wrong for them.
     "/api/home", "/mobile/api/home", "/api/ask-cavnar", "/mobile/api/ask-cavnar",
+    # The Restaurant Data Health Score reads every module's sources; its
+    # Sync now only re-pulls the POS the restaurant already connected.
+    "/api/data-health", "/mobile/api/data-health",
     "/api/notifications", "/mobile/api/notifications", "/api/actions", "/mobile/api/actions",
     "/api/issues", "/mobile/api/issues", "/api/goals", "/mobile/api/goals",
     "/api/outcomes", "/mobile/api/outcomes", "/api/decisions", "/mobile/api/decisions",

@@ -831,9 +831,16 @@ def validation_state(states) -> dict:
     stale_sources (labels of every stale, unknown or failing source — M1
     turns them into a disclosure), as_of (the stalest date, M/D/YY) and
     data_age_days (the oldest lag), so "this week" on old data is caught."""
-    stale, ages, stalest = [], [], None
+    stale, ages, stalest, missing = [], [], None, []
     for s in states or ():
         if not s or s.get("state") == "not_connected":
+            continue
+        # Expected but never obtained (weather with no forecast fetched yet,
+        # DH2-17) is a missing input, not out-of-date data: M2 holds any
+        # claim about it, and nothing tells the owner old data is in use.
+        if s.get("never_fetched") and not s.get("error"):
+            if s.get("key") not in missing:
+                missing.append(s.get("key"))
             continue
         if s.get("error") or s.get("state") in ("stale", "unknown"):
             label = OWNER_LABEL.get(s.get("key"), s.get("label") or s.get("key"))
@@ -844,6 +851,8 @@ def validation_state(states) -> dict:
             if stalest is None or lag > (stalest.get("lag_days") or 0):
                 stalest = s
     out = {"stale_sources": stale}
+    if missing:
+        out["missing_inputs"] = missing
     # Present tense only while current (DH5-3): a period source that is
     # not current — aging, stale, unknown or failing — is named here, and
     # the Response Validation Layer's M1 holds "this week" / "today" /

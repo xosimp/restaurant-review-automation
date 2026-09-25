@@ -160,6 +160,18 @@ def test_the_status_page_does_not_report_an_outage_during_a_long_pass(db_path, m
     seen = {}
 
     def long_fetch():                               # 25 minutes into a pass that started on time
+        # The heartbeat is stamped at the END of a tick (DH2-2), and the
+        # pulse stamps it while a long job runs — so what a pass in progress
+        # shows is the pulse's stamp. Read once the pulse has run.
+        import threading as _th
+        import time as _t
+        tick = _th.Event()                          # time.sleep is the harness's stop signal
+        deadline = _t.monotonic() + 3
+        while _t.monotonic() < deadline:            # the side-effect-free age, until the pulse stamps
+            age = status_manager.scheduler_heartbeat_age_minutes()
+            if age is not None and age < 1:
+                break
+            tick.wait(0.02)
         seen["age"] = status_manager.check_scheduler_liveness()
         seen["status"] = _sql(db_path, "SELECT status FROM service_status WHERE service_key='scheduler'")[0]["status"]
     monkeypatch.setattr(scheduler, "run_daily_fetch", long_fetch)
