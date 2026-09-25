@@ -7529,8 +7529,16 @@ _ACCOUNT_DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturd
 
 def _do_account_hours(rid, data, current_user=None):
     """Open/close time per day plus closure dates. close_times_json already
-    drove schedule generation (shift_end hard cap); open_times_json too."""
+    drove schedule generation (shift_end hard cap); open_times_json too.
+
+    The owner's: close times cap what the next draft may schedule, and the
+    closures are the scheduler's closed dates, which Labor's rules editor
+    already keeps owner-only. The path is on auth's ungated list on exactly
+    that condition — owner-only pieces check is_principal here (F2-3)."""
     import json as _json_h
+    from permissions import is_principal
+    if current_user is not None and not is_principal(current_user):
+        return {"ok": False, "error": "Only the account owner can change opening hours and closures."}, 403
 
     def _clean_times(raw):
         out = {}
@@ -7770,6 +7778,11 @@ def _account_settings_payload(rid):
 @login_required
 def get_account_settings(current_user):
     payload, status = _account_settings_payload(current_user["restaurant_id"])
+    from permissions import is_principal
+    if isinstance(payload.get("hours"), dict):
+        # Hours and closures save for the owner only (F2-3); the sheet
+        # shows them read-only to everyone else.
+        payload["hours"]["can_edit"] = is_principal(current_user)
     return jsonify(**payload), status
 
 
@@ -8578,6 +8591,100 @@ def _drop_share(token, schedule_id):
         conn.close()
 
 
+def _send_week_to_staff(rid, restaurant, schedule_id, csv_text, names, week_label, contacts=None,
+                        updated=False):
+    """Each person on the channel they signed up with (Friction audit #17):
+    the app when their phone has it, a text when they ticked "text me when
+    my schedule is posted", email as the fallback. Everyone gets their own
+    share link; the portal has the week either way. Returns (sent,
+    unreachable, failed).
+
+    Only a delivery that happened counts as sent: deliver() never raises —
+    a missing key, a suppressed address, the flood guard and a Resend
+    failure all come back as SendResult(ok=False) — and only an exception
+    used to count as a failure, so a send that reached nobody was reported
+    "sent" and the week published (F2-1). A share row made for a send that
+    did not go out is removed, so the status list never shows that person
+    as sent. deliver() records the real outcome in email_log itself.
+
+    `updated`: the week changed after it went out (send_schedule_changes)."""
+    from models import create_schedule_share
+    from labor import employee_shifts_from_csv
+    import people as _people
+    if contacts is None:
+        from models import get_staff_contacts
+        contacts = {c["employee_name"].lower(): c for c in get_staff_contacts(rid)}
+    base_url = config.base_url()
+    try:
+        reachable = _people.reach(rid, names)
+    except Exception as _re:
+        _ops.capture(_re, job="schedule_publish_reach", context=f"restaurant_id={rid}")
+        reachable = {n: {"push_user_id": None, "sms": None,
+                         "email": ((contacts.get(n.lower()) or {}).get("email") or "").strip() or None}
+                     for n in names}
+    posted = "changed" if updated else "is posted"
+    sent, unreachable, failed, failed_tokens = [], [], [], []
+    for name in names:
+        ch = reachable.get(name) or {}
+        email = (ch.get("email") or "").strip()
+        shifts = employee_shifts_from_csv(csv_text, name)
+        count = f"{len(shifts)} shift{'' if len(shifts) == 1 else 's'}"
+        if ch.get("push_user_id"):
+            token = create_schedule_share(rid, schedule_id, name, sent_to="app")
+            try:
+                import push as _push
+                queued = _push.fire_push(rid, "staff_schedule", f"Your schedule — {restaurant.name}",
+                                         f"The week of {week_label} {posted}: {count}.",
+                                         data={"kind": "staff_schedule", "module": "staff", "schedule_id": schedule_id},
+                                         user_ids=[ch["push_user_id"]])
+            except Exception as _pe:
+                print(f"[publish] push failed for {name}: {_pe}")
+                queued = 0
+            if queued:
+                sent.append({"employee_name": name, "sent_to": "app", "channel": "push", "shifts": len(shifts)})
+                continue
+            _drop_share(token, schedule_id)
+        if ch.get("sms"):
+            token = create_schedule_share(rid, schedule_id, name, sent_to=ch["sms"])
+            try:
+                from notify import send_sms as _send_sms_staff
+                texted = bool(_send_sms_staff(
+                    ch["sms"], f"{restaurant.name}: your schedule for the week of {week_label} "
+                               f"{'was updated' if updated else 'is posted'} ({count}). {base_url}/s/{token} "
+                               f"Reply STOP to stop these texts.", use_case="staff"))
+            except Exception as _se:
+                print(f"[publish] staff text failed for {name}: {_se}")
+                texted = False
+            if texted:
+                sent.append({"employee_name": name, "sent_to": ch["sms"], "channel": "sms", "shifts": len(shifts)})
+                continue
+            _drop_share(token, schedule_id)
+        if not email:
+            unreachable.append({"employee_name": name,
+                                "reason": "no app, text consent or email address on file"})
+            continue
+        token = create_schedule_share(rid, schedule_id, name, sent_to=email)
+        err = None
+        try:
+            from emails import send_staff_schedule_email
+            res = send_staff_schedule_email(
+                to_email=email, employee_name=name, restaurant_name=restaurant.name,
+                week_label=f"{week_label} (updated)" if updated else week_label,
+                link=f"{base_url}/s/{token}", shifts=shifts,
+                reply_to=restaurant.owner_email or None, restaurant_id=rid)
+        except Exception as e:
+            res, err = None, str(e)
+        if not getattr(res, "ok", False):
+            failed.append({"employee_name": name,
+                           "error": err or getattr(res, "error", None) or "The email was not sent."})
+            failed_tokens.append(token)
+            continue
+        sent.append({"employee_name": name, "sent_to": email, "channel": "email", "shifts": len(shifts)})
+    for t in failed_tokens:
+        _drop_share(t, schedule_id)
+    return sent, unreachable, failed
+
+
 def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=False):
     """Shared by the route, the mobile twin and delayed.py (auto-publish).
     Returns (payload, http_status). `actor` is the user dict acting, or
@@ -8588,8 +8695,8 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
     list, never automation. Publishing stamps published_at, which is what
     the staff portal and the payroll-week hours check read."""
     actor = actor or {}
-    from models import get_staff_contacts, create_schedule_share, get_schedule_share_status
-    from labor import employees_in_schedule, employee_shifts_from_csv
+    from models import get_staff_contacts, get_schedule_share_status
+    from labor import employees_in_schedule
 
     rid = restaurant_id
     restaurant = get_restaurant(rid)
@@ -8620,20 +8727,17 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
     unattended = acknowledge is False and bool(actor.get("role") == "automation")
     review = publish_review(rid, row["id"], unattended=unattended)
     blockers = [b["text"] for b in review["blockers"]]
-    if isinstance(acknowledge, (list, tuple, set)):
-        acked = {str(k) for k in acknowledge}
-        unacked = [b["text"] for b in review["blockers"] if b["key"] not in acked]
-    else:
-        unacked = [] if acknowledge else blockers
+    _acked, unacked = _ack_gate(review, acknowledge)
     if unacked:
-        return {"ok": False, "needs_ack": True, "blockers": blockers, "new_blockers": unacked,
-                "schedule_id": row["id"],
-                "error": "This week has things to look at before it goes to staff."}, 409
+        # Each blocker with its key, so the client acknowledges exactly the
+        # list it showed (F2-9).
+        return _needs_ack(review, unacked, row["id"])
 
     schedule_id = row["id"]
-    week_label = row["week_start"] or ""
-    if row["week_end"]:
-        week_label = f"{row['week_start']} – {row['week_end']}"
+    # What staff read in the push, the text and the email subject: M/D/YY,
+    # never the ISO the row stores (F2-15).
+    from time_utils import mdy_range as _mdy_range
+    week_label = _mdy_range(row["week_start"], row["week_end"] or row["week_start"])
 
     # Claim the week before anything goes out. Nothing stopped a second
     # publish (a double tap, a second device, the 11am auto-publish after a
@@ -8661,7 +8765,6 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
                 "error": "This week is being sent to staff right now."}, 409
 
     contacts = {c["employee_name"].lower(): c for c in get_staff_contacts(rid)}
-    base_url = config.base_url()
 
     # The owner is acting. Measure what it does to labor % over the next
     # window, whether or not they ever pressed Track (outcomes.observe).
@@ -8682,89 +8785,15 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
     except Exception as _rle:
         print(f"[publish] implementation not recorded for {rid}: {_rle}")
 
-    # Each person on the channel they signed up with (Friction audit #17):
-    # the app when their phone has it, a text when they ticked "text me when
-    # my schedule is posted", email as the fallback. Everyone gets their own
-    # share link; the portal has the week either way.
-    import people as _people
-    names = employees_in_schedule(row["schedule_csv"])
-    try:
-        reachable = _people.reach(rid, names)
-    except Exception as _re:
-        _ops.capture(_re, job="schedule_publish_reach", context=f"restaurant_id={rid}")
-        reachable = {n: {"push_user_id": None, "sms": None,
-                         "email": ((contacts.get(n.lower()) or {}).get("email") or "").strip() or None}
-                     for n in names}
-    sent, unreachable, failed, failed_tokens = [], [], [], []
-    for name in names:
-        ch = reachable.get(name) or {}
-        email = (ch.get("email") or "").strip()
-        shifts = employee_shifts_from_csv(row["schedule_csv"], name)
-        if ch.get("push_user_id"):
-            token = create_schedule_share(rid, schedule_id, name, sent_to="app")
-            try:
-                import push as _push
-                queued = _push.fire_push(rid, "staff_schedule", f"Your schedule — {restaurant.name}",
-                                         f"The week of {week_label} is posted: {len(shifts)} shift"
-                                         f"{'' if len(shifts) == 1 else 's'}.",
-                                         data={"kind": "staff_schedule", "module": "staff", "schedule_id": schedule_id},
-                                         user_ids=[ch["push_user_id"]])
-            except Exception as _pe:
-                print(f"[publish] push failed for {name}: {_pe}")
-                queued = 0
-            if queued:
-                sent.append({"employee_name": name, "sent_to": "app", "channel": "push", "shifts": len(shifts)})
-                continue
-            _drop_share(token, schedule_id)
-        if ch.get("sms"):
-            token = create_schedule_share(rid, schedule_id, name, sent_to=ch["sms"])
-            try:
-                from notify import send_sms as _send_sms_staff
-                texted = bool(_send_sms_staff(
-                    ch["sms"], f"{restaurant.name}: your schedule for the week of {week_label} is posted "
-                               f"({len(shifts)} shift{'' if len(shifts) == 1 else 's'}). {base_url}/s/{token} "
-                               f"Reply STOP to stop these texts.", use_case="staff"))
-            except Exception as _se:
-                print(f"[publish] staff text failed for {name}: {_se}")
-                texted = False
-            if texted:
-                sent.append({"employee_name": name, "sent_to": ch["sms"], "channel": "sms", "shifts": len(shifts)})
-                continue
-            _drop_share(token, schedule_id)
-        if not email:
-            unreachable.append({"employee_name": name,
-                                "reason": "no app, text consent or email address on file"})
-            continue
-
-        token = create_schedule_share(rid, schedule_id, name, sent_to=email)
-        link = f"{base_url}/s/{token}"
-        try:
-            from emails import send_staff_schedule_email
-            send_staff_schedule_email(
-                to_email=email, employee_name=name, restaurant_name=restaurant.name,
-                week_label=week_label, link=link, shifts=shifts,
-                reply_to=restaurant.owner_email or None)
-        except Exception as e:
-            failed.append({"employee_name": name, "error": str(e)})
-            failed_tokens.append(token)
-            continue
-
-        try:
-            from models import log_email as _log_email
-            _log_email(rid, "staff_schedule", email, f"Your schedule — {week_label}")
-        except Exception:
-            pass
-        sent.append({"employee_name": name, "sent_to": email, "channel": "email", "shifts": len(shifts)})
-
+    sent, unreachable, failed = _send_week_to_staff(
+        rid, restaurant, schedule_id, row["schedule_csv"], employees_in_schedule(row["schedule_csv"]),
+        week_label, contacts=contacts)
     actor_name = (actor.get("username") or actor.get("email") or "automation") if isinstance(actor, dict) else "automation"
     if failed and not sent:
         # Every email that was tried failed (Resend down): nothing is
-        # published. The share rows made for those emails are removed so the
-        # week is not half-published, and the claim is released for a retry.
+        # published, and the claim is released for a retry.
         conn = get_conn()
         try:
-            for t in failed_tokens:
-                conn.execute("DELETE FROM schedule_shares WHERE token=? AND schedule_id=?", (t, schedule_id))
             conn.execute("UPDATE schedule_history SET publishing_at=NULL WHERE id=?", (schedule_id,))
             conn.commit()
         finally:
@@ -8822,55 +8851,211 @@ def publish_schedule_api(current_user):
     return _publish_schedule_request(current_user)
 
 
+def _ack_gate(review, acknowledge):
+    """(acked_keys, unacked_blockers) for one publish_review. `acknowledge`
+    is a list of blocker keys (what the person was shown) or a bool (an
+    older client's "yes to whatever the gate finds now")."""
+    items = review["blockers"]
+    if isinstance(acknowledge, (list, tuple, set)):
+        keys = {str(k) for k in acknowledge}
+        return [b["key"] for b in items if b["key"] in keys], [b for b in items if b["key"] not in keys]
+    if acknowledge:
+        return [b["key"] for b in items], []
+    return [], list(items)
+
+
+def _needs_ack(review, unacked, schedule_id):
+    return {"ok": False, "needs_ack": True, "blockers": [b["text"] for b in review["blockers"]],
+            "blocker_items": review["blockers"], "new_blockers": [b["text"] for b in unacked],
+            "schedule_id": schedule_id,
+            "error": "This week has things to look at before it goes to staff."}, 409
+
+
+def send_schedule_changes(restaurant_id, schedule_id, actor=None, acknowledge=False):
+    """Tell the people whose shifts changed on a week staff already have —
+    the explicit second step after a save (F2-2). Returns (payload, status).
+
+    A save used to email them itself: under SCHEDULE_DRAFT alone (a member
+    who may not send), past the rule gate and the owner's undo window, and
+    again on every save because each send re-stamped the diff base. Now a
+    save only records the edit; this runs the publish gate, reaches each
+    changed person on their own channel (people.reach), and appends a
+    `published` version so the next diff starts from what they were told.
+    The caller checks SCHEDULE_PUBLISH and the undo window
+    (_publish_schedule_request)."""
+    import schedule_versions as _sv
+    from models import get_schedule_share_status, _ensure_history_columns
+    from time_utils import mdy_range as _mdy_range
+    actor = actor or {}
+    rid = restaurant_id
+    restaurant = get_restaurant(rid)
+    if not restaurant:
+        return {"ok": False, "error": "Restaurant not found"}, 404
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT id, week_start, week_end, schedule_csv, published_at FROM schedule_history "
+                           "WHERE id=? AND restaurant_id=?", (int(schedule_id), rid)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return {"ok": False, "error": "That week is gone — reload the schedule."}, 404
+    if not row["published_at"]:
+        return {"ok": False, "error": "This week hasn't been sent to staff yet — send the whole week."}, 400
+    week_label = _mdy_range(row["week_start"], row["week_end"] or row["week_start"])
+    pending = _sv.unsent_changes(rid, row["id"]) or {"people": [], "dates": []}
+    if not pending["people"]:
+        return dict(ok=True, already_published=True, schedule_id=row["id"], week_label=week_label,
+                    sent=[], unreachable=[], failed=[], unsent_changes=[],
+                    status=get_schedule_share_status(rid, row["id"]), error=None), 200
+    review = publish_review(rid, row["id"])
+    _acked, unacked = _ack_gate(review, acknowledge)
+    if unacked:
+        return _needs_ack(review, unacked, row["id"])
+    # One sender at a time: a double tap must not tell the same people twice.
+    conn = get_conn()
+    try:
+        _ensure_history_columns(conn)
+        got = conn.execute(
+            "UPDATE schedule_history SET publishing_at=datetime('now') WHERE id=? AND restaurant_id=? "
+            "AND (publishing_at IS NULL OR publishing_at < datetime('now','-10 minutes'))", (row["id"], rid)).rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    if not got:
+        return {"ok": False, "in_progress": True, "schedule_id": row["id"],
+                "error": "This week is being sent to staff right now."}, 409
+    try:
+        # Re-read under the claim: what is sent is what is stored now.
+        pending = _sv.unsent_changes(rid, row["id"]) or {"people": [], "dates": []}
+        conn = get_conn()
+        try:
+            csv_now = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=?", (row["id"],)).fetchone()["schedule_csv"]
+        finally:
+            conn.close()
+        sent, unreachable, failed = _send_week_to_staff(rid, restaurant, row["id"], csv_now, pending["people"],
+                                                        week_label, updated=True)
+        if failed and not sent:
+            return dict(ok=False, schedule_id=row["id"], week_label=week_label, sent=[], unreachable=unreachable,
+                        failed=failed, unsent_changes=pending["people"],
+                        status=get_schedule_share_status(rid, row["id"]),
+                        error="The changes could not be sent. Try again in a few minutes."), 200
+        who = (actor.get("username") or actor.get("email") or "automation") if isinstance(actor, dict) else "automation"
+        _sv.append(rid, row["id"], "published", csv_now, saved_by=who)
+        conn = get_conn()
+        try:
+            conn.execute("UPDATE schedule_history SET republished_at=datetime('now') WHERE id=? AND restaurant_id=?",
+                         (row["id"], rid))
+            conn.commit()
+        finally:
+            conn.close()
+    finally:
+        conn = get_conn()
+        try:
+            conn.execute("UPDATE schedule_history SET publishing_at=NULL WHERE id=?", (row["id"],))
+            conn.commit()
+        finally:
+            conn.close()
+    log_account_event(rid, "schedule_changes_sent", actor,
+                      detail=f"week of {_mdy_range(row['week_start'], row['week_start'])}: "
+                             f"{len(sent)} of {len(pending['people'])} told"
+                             + (" — acknowledged blockers" if review["blockers"] else ""))
+    note = None
+    if not sent:
+        note = ("Saved to the staff portal. Nobody whose shifts changed has the app, agreed to texts, or has "
+                "an email address on file, so nothing went out.")
+    return dict(ok=True, changes_sent=True, schedule_id=row["id"], week_label=week_label,
+                sent=sent, unreachable=unreachable, failed=failed, unsent_changes=[],
+                acknowledged=bool(review["blockers"]), portal_only=not sent, note=note,
+                status=get_schedule_share_status(rid, row["id"]), error=None), 200
+
+
 def _publish_schedule_request(current_user):
     """The one publish body for web and phone. The phone called
     _publish_schedule directly and never read send_delay_minutes, so a week
-    published from it skipped the owner's undo window (DATA-41)."""
+    published from it skipped the owner's undo window (DATA-41).
+
+    The week is named, always: without `schedule_id` it used to fall back to
+    the restaurant's newest history row, which may be another week than the
+    one on screen (F2-10). `acknowledge` is the list of blocker keys the
+    person was shown (publish-check and the 409 carry them as
+    `blocker_items`); a blocker that appeared since is not covered by it. A
+    bare `true` from an older client still acknowledges what the gate finds
+    now (F2-9).
+
+    A week staff already have, saved since with changes, is "sent" by
+    telling the people those changes moved (send_schedule_changes) — the
+    same permission, gate and undo window as the first send (F2-2)."""
     from permissions import has_permission, SCHEDULE_PUBLISH
     if not (current_user.get("is_admin") or has_permission(current_user, SCHEDULE_PUBLISH)):
         return jsonify(ok=False, error="Your login can draft a schedule but not send it to staff."), 403
     data = request.get_json(silent=True) or {}
     rid = current_user["restaurant_id"]
+    try:
+        schedule_id = int(data.get("schedule_id") or 0)
+    except (TypeError, ValueError):
+        schedule_id = 0
+    if not schedule_id:
+        conn = get_conn()
+        try:
+            any_week = conn.execute("SELECT 1 FROM schedule_history WHERE restaurant_id=? LIMIT 1", (rid,)).fetchone()
+        finally:
+            conn.close()
+        if not any_week:
+            return jsonify(ok=False, error="Generate a schedule first — there's nothing to send yet."), 400
+        return jsonify(ok=False, error="Reload the schedule before sending — this copy doesn't say which week it is."), 400
+    ack = data.get("acknowledge")
+    acknowledge = [str(k) for k in ack] if isinstance(ack, (list, tuple)) else bool(ack)
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT id, week_start, published_at FROM schedule_history WHERE id=? AND restaurant_id=?",
+                           (schedule_id, rid)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return jsonify(ok=False, error="Generate a schedule first — there's nothing to send yet."), 400
+    changes = None
+    if row["published_at"]:
+        import schedule_versions as _sv
+        changes = (_sv.unsent_changes(rid, row["id"]) or {}).get("people") or []
+        if not changes:
+            out, status = _publish_schedule(rid, schedule_id, current_user, acknowledge=acknowledge)
+            return jsonify(**out), status
     restaurant = get_restaurant(rid)
     delay = int(getattr(restaurant, "send_delay_minutes", 0) or 0) if restaurant else 0
     if delay > 0:
         # The owner asked for a window before anything reaches staff.
-        conn = get_conn()
-        try:
-            if data.get("schedule_id"):
-                row = conn.execute("SELECT id, week_start FROM schedule_history WHERE id=? AND restaurant_id=?",
-                                   (int(data["schedule_id"]), rid)).fetchone()
-            else:
-                row = conn.execute("SELECT id, week_start FROM schedule_history WHERE restaurant_id=? "
-                                   "ORDER BY id DESC LIMIT 1", (rid,)).fetchone()
-        except (TypeError, ValueError):
-            return jsonify(ok=False, error="Which schedule?"), 400
-        finally:
-            conn.close()
-        if not row:
-            return jsonify(ok=False, error="Generate a schedule first — there's nothing to send yet."), 400
         review = publish_review(rid, row["id"])
-        blockers = [b["text"] for b in review["blockers"]]
-        if blockers and not data.get("acknowledge"):
-            return jsonify(ok=False, needs_ack=True, blockers=blockers, schedule_id=row["id"],
-                           error="This week has things to look at before it goes to staff."), 409
+        acked, unacked = _ack_gate(review, acknowledge)
+        if unacked:
+            out, status = _needs_ack(review, unacked, row["id"])
+            return jsonify(**out), status
         import delayed
         from time_utils import mdy as _mdy_pub
         # What the person acknowledged, by key: when the window ends the
         # gate runs again, and a blocker that was not on this list holds the
         # publish (NS5 H3) — an "OK" to one list is not an OK to another.
-        act = delayed.schedule(rid, "schedule_publish",
-                               {"schedule_id": row["id"], "manual": True,
-                                "acknowledge": [b["key"] for b in review["blockers"]] if data.get("acknowledge") else []},
-                               delay, actor=current_user,
-                               label=f"Publishing the week of {_mdy_pub(row['week_start'])} to staff")
+        if changes:
+            import schedule_versions as _sv_q
+            newest = _sv_q.newest_version(rid, row["id"])
+            act = delayed.schedule(rid, "schedule_changes_send",
+                                   {"schedule_id": row["id"], "manual": True, "acknowledge": acked,
+                                    # The version the person saw: an edit in the
+                                    # window voids the send (delayed.py).
+                                    "version": newest[0]["version"] if newest else None},
+                                   delay, actor=current_user,
+                                   label=f"Sending the changes to the week of {_mdy_pub(row['week_start'])} "
+                                         f"to {len(changes)} {'person' if len(changes) == 1 else 'people'}")
+        else:
+            act = delayed.schedule(rid, "schedule_publish",
+                                   {"schedule_id": row["id"], "manual": True, "acknowledge": acked},
+                                   delay, actor=current_user,
+                                   label=f"Publishing the week of {_mdy_pub(row['week_start'])} to staff")
         return jsonify(ok=True, queued=True, action_id=act["id"], execute_at=act["execute_at"],
                        undo_minutes=delay, sent=[], unreachable=[], failed=[])
-    try:
-        out, status = _publish_schedule(rid, data.get("schedule_id"), current_user,
-                                        acknowledge=bool(data.get("acknowledge")))
-    except (TypeError, ValueError):
-        return jsonify(ok=False, error="Which schedule?"), 400
+    if changes:
+        out, status = send_schedule_changes(rid, schedule_id, current_user, acknowledge=acknowledge)
+    else:
+        out, status = _publish_schedule(rid, schedule_id, current_user, acknowledge=acknowledge)
     return jsonify(**out), status
 
 

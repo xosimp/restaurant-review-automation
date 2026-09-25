@@ -305,12 +305,13 @@ def test_web_staff_contacts_come_from_the_schedule(client, db_path, monkeypatch)
 
 def test_web_publish_schedule_sends_to_staff_with_email(client, db_path, monkeypatch):
     rid = _restaurant(db_path)
-    _stored_schedule(db_path, rid)
+    sid = _stored_schedule(db_path, rid)
     _login_as(monkeypatch, rid)
     client.post("/api/labor/staff-contacts", json={"employee_name": "Sofia R.", "email": "sofia@x.test"})
     sent = []
-    monkeypatch.setattr("emails.send_staff_schedule_email", lambda **kw: sent.append(kw))
-    resp = client.post("/api/labor/publish-schedule", json={})
+    import emails as _em
+    monkeypatch.setattr("emails.send_staff_schedule_email", lambda **kw: sent.append(kw) or _em.SendResult(True))
+    resp = client.post("/api/labor/publish-schedule", json={"schedule_id": sid})
     d = resp.get_json()
     assert d["ok"] is True
     assert [s["employee_name"] for s in d["sent"]] == ["Sofia R."]
@@ -332,11 +333,12 @@ def test_web_publish_schedule_share_status_reflects_a_real_open(client, db_path,
     /s/<token> page writes to on a real view — not a separate counter."""
     from models import mark_schedule_share_viewed
     rid = _restaurant(db_path)
-    _stored_schedule(db_path, rid)
+    sid = _stored_schedule(db_path, rid)
     _login_as(monkeypatch, rid)
     client.post("/api/labor/staff-contacts", json={"employee_name": "Sofia R.", "email": "sofia@x.test"})
-    monkeypatch.setattr("emails.send_staff_schedule_email", lambda **kw: None)
-    d = client.post("/api/labor/publish-schedule", json={}).get_json()
+    import emails as _em
+    monkeypatch.setattr("emails.send_staff_schedule_email", lambda **kw: _em.SendResult(True))
+    d = client.post("/api/labor/publish-schedule", json={"schedule_id": sid}).get_json()
     token = get_conn(db_path).execute(
         "SELECT token FROM schedule_shares WHERE restaurant_id=? AND employee_name='Sofia R.'", (rid,)
     ).fetchone()["token"]

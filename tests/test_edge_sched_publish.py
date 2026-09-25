@@ -169,7 +169,7 @@ def test_a_double_already_lists_both_legs_in_upcoming(db):
 def test_publishing_with_no_email_contacts_still_publishes_to_the_portal(db, monkeypatch):
     rid = _restaurant(db)
     hid = _save(db, rid, W1, _week_csv(W1))
-    monkeypatch.setattr(emails, "send_staff_schedule_email", lambda **kw: None)
+    monkeypatch.setattr(emails, "send_staff_schedule_email", lambda **kw: emails.SendResult(True))
     payload, status = client_api._publish_schedule(rid, hid, actor={"username": "owner"}, acknowledge=True)
     assert status == 200
     assert _one(db, "SELECT published_at FROM schedule_history WHERE id=?", hid)["published_at"]
@@ -196,7 +196,7 @@ def test_a_successful_send_stamps_published_at_and_versions_it(db, monkeypatch):
     hid = _save(db, rid, W1, _week_csv(W1))
     _contacts(db, rid, "Ana", "Bob")
     sent = []
-    monkeypatch.setattr(emails, "send_staff_schedule_email", lambda **kw: sent.append(kw["employee_name"]))
+    monkeypatch.setattr(emails, "send_staff_schedule_email", lambda **kw: sent.append(kw["employee_name"]) or emails.SendResult(True))
     payload, status = client_api._publish_schedule(rid, hid, actor={"username": "owner"}, acknowledge=True)
     assert status == 200 and payload["ok"] and sorted(sent) == ["Ana", "Bob"]
     assert _one(db, "SELECT published_at FROM schedule_history WHERE id=?", hid)["published_at"]
@@ -214,6 +214,7 @@ def test_two_concurrent_publishes_email_each_employee_once(db, monkeypatch):
     def record(**kw):
         with lock:
             sent.append(kw["employee_name"])
+        return emails.SendResult(True)
     monkeypatch.setattr(emails, "send_staff_schedule_email", record)
     barrier = threading.Barrier(2)
     real_blockers = client_api.publish_blockers
@@ -240,7 +241,7 @@ def test_two_concurrent_publishes_email_each_employee_once(db, monkeypatch):
 def test_publishing_a_second_version_of_a_week_retires_the_first(db, monkeypatch):
     rid = _restaurant(db)
     _contacts(db, rid, "Ana", "Bob")
-    monkeypatch.setattr(emails, "send_staff_schedule_email", lambda **kw: None)
+    monkeypatch.setattr(emails, "send_staff_schedule_email", lambda **kw: emails.SendResult(True))
     v1 = _save(db, rid, W1, _week_csv(W1))
     client_api._publish_schedule(rid, v1, actor={"username": "owner"}, acknowledge=True)
     v2 = _save(db, rid, W1, _week_csv(W1, people=(("Bob", "11:00am", "3:00pm", 4), ("Ana", "5:00pm", "9:00pm", 4))))
@@ -480,26 +481,27 @@ def test_the_delayed_publish_is_voided_when_the_week_was_edited_in_the_window(db
     models.update_schedule_history_rows(rid, _week_csv(W1, people=(("Ana", "9:00am", "1:00pm", 4),)),
                                         history_id=hid, edited_by="half-finished edit")
     sent = []
-    monkeypatch.setattr(emails, "send_staff_schedule_email", lambda **kw: sent.append(kw["employee_name"]))
+    monkeypatch.setattr(emails, "send_staff_schedule_email", lambda **kw: sent.append(kw["employee_name"]) or emails.SendResult(True))
     delayed.run_due(now=dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=3))
     assert sent == []
     assert not _one(db, "SELECT published_at FROM schedule_history WHERE id=?", hid)["published_at"]
 
 
-def test_an_edit_to_a_week_staff_already_have_tells_them(db, save_app, monkeypatch):
-    """The re-notify ran inside an `except` after the activity log, so it
-    only ran when logging failed — never. Staff whose shifts moved were not
-    told and the week was never stamped as changed since it went out."""
-    import mobile_api
+def test_an_edit_to_a_week_staff_already_have_names_who_send_would_tell(db, save_app, monkeypatch):
+    """A save of a published week names the people whose shifts changed
+    since they were told (unsent_changes) and tells nobody itself: the send
+    is the explicit Send, behind SCHEDULE_PUBLISH, the gate and the undo
+    window (F2-2). This test used to pin the save emailing them."""
     rid = _restaurant(db, module_labor=1)
     hid = _save(db, rid, W1, _week_csv(W1), published=True)
     sv.append(rid, hid, "published", _week_csv(W1), saved_by="Owner")
-    told = []
-    monkeypatch.setattr(mobile_api, "_notify_changed_rows",
-                        lambda r, h, csv_text, actor, **k: told.append((r, h)) or ["Ana"])
+    _contacts(db, rid, "Ana", "Bob")
+    sent = []
+    monkeypatch.setattr(emails, "send_staff_schedule_email",
+                        lambda **kw: sent.append(kw["employee_name"]) or emails.SendResult(True))
     rows = _rows(_week_csv(W1))
     rows[0]["shift_start"] = "12:00pm"
     resp = _post_save(save_app, _bearer(db, rid), rows, history_id=hid, version=1)
     assert resp.status_code == 200 and resp.get_json()["saved"]
-    assert told == [(rid, hid)]
-    assert resp.get_json()["changed_since_sent"] == ["Ana"]
+    assert resp.get_json()["unsent_changes"] == ["Ana"]
+    assert sent == []

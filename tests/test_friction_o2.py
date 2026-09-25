@@ -133,7 +133,8 @@ def test_apply_invoice_lines_is_a_confirmed_proposal_from_the_stored_invoice(db_
     rid = _rid(db_path)
     beef = _ingredient(db_path, rid, "Beef", cost=2.0)
     iid = _import(db_path, rid, "Sysco", [
-        {"index": 0, "selected": True, "ingredient_id": beef, "proposed_cost": 2.4, "description": "BEEF"},
+        {"index": 0, "selected": True, "verified": True, "ingredient_id": beef, "proposed_cost": 2.4,
+         "description": "BEEF"},
         {"index": 1, "selected": False, "ingredient_id": None, "proposed_cost": None, "description": "??"}])
     p = tools.build_proposal("apply_invoice_lines", {"lines": [{"index": 1, "unit_cost": 99}]}, restaurant_id=rid)
     assert p["route"]["web"] == f"/api/food-cost/invoices/{iid}/apply"
@@ -150,14 +151,18 @@ def test_use_checked_applies_only_the_stored_checked_lines(db_path, monkeypatch)
     rid = _rid(db_path)
     beef = _ingredient(db_path, rid, "Beef", cost=2.0)
     herbs = _ingredient(db_path, rid, "Herbs", cost=1.0)
+    saffron = _ingredient(db_path, rid, "Saffron", cost=0.0)
     iid = _import(db_path, rid, "Sysco", [
-        {"index": 0, "selected": True, "ingredient_id": beef, "proposed_cost": 2.4},
-        {"index": 1, "selected": False, "ingredient_id": herbs, "proposed_cost": 9.0}])
+        {"index": 0, "selected": True, "verified": True, "ingredient_id": beef, "proposed_cost": 2.4},
+        {"index": 1, "selected": False, "ingredient_id": herbs, "proposed_cost": 9.0},
+        # Preselected, but its quantity/total was not read and the
+        # ingredient has no cost to compare with: not verified (F2-4).
+        {"index": 2, "selected": True, "verified": False, "ingredient_id": saffron, "proposed_cost": 189.0}])
     _as(monkeypatch, rid)
     out = _app().test_client().post(f"/api/food-cost/invoices/{iid}/apply", json={"use_checked": True}).get_json()
     assert out["ok"] is True and [u["ingredient_id"] for u in out["updated"]] == [beef]
     costs = {r["id"]: r["unit_cost"] for r in _conn(db_path).execute("SELECT id, unit_cost FROM ingredients")}
-    assert costs[beef] == 2.4 and costs[herbs] == 1.0
+    assert costs[beef] == 2.4 and costs[herbs] == 1.0 and costs[saffron] == 0.0
 
 
 def test_receive_purchase_order_is_a_proposal_for_the_oldest_open_order(db_path):

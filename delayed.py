@@ -287,17 +287,47 @@ def _run_schedule_publish(restaurant_id, payload, db_path):
     return out
 
 
-def _tell_owner_schedule_held(restaurant_id, payload, blockers, db_path):
+def _run_schedule_changes_send(restaurant_id, payload, db_path):
+    """Tell the people a saved change moved on a week staff already have
+    (client_api.send_schedule_changes) — through the owner's undo window,
+    like the first send (F2-2). A week edited again inside the window is
+    not sent: the people and shifts it would tell are no longer the ones
+    the manager saw when they pressed Send."""
+    from client_api import send_schedule_changes
+    if payload.get("schedule_id") and payload.get("version") is not None:
+        # By version, not by clock: a save in the same second as the press
+        # is the edit the person was sending, not one made after it.
+        conn = get_conn(db_path)
+        try:
+            r = conn.execute("SELECT MAX(version) AS v FROM schedule_versions WHERE history_id=? AND restaurant_id=?",
+                             (payload["schedule_id"], restaurant_id)).fetchone()
+        finally:
+            conn.close()
+        if r and r["v"] is not None and int(r["v"]) != int(payload["version"]):
+            return {"ok": False, "error": "The week was changed again after it was queued, so the changes were "
+                                          "not sent. Send them from the Labor tab when it's ready."}
+    ack = payload.get("acknowledge")
+    out, _status = send_schedule_changes(restaurant_id, payload.get("schedule_id"), AUTOMATION_ACTOR,
+                                         acknowledge=ack if isinstance(ack, list) else [])
+    if out.get("needs_ack"):
+        held = out.get("new_blockers") or out.get("blockers") or []
+        _tell_owner_schedule_held(restaurant_id, payload, held, db_path,
+                                  title="Your schedule changes were not sent")
+        out = dict(out, ok=False, error="The changes were not sent: " + "; ".join(held[:3]) + ".")
+    return out
+
+
+def _tell_owner_schedule_held(restaurant_id, payload, blockers, db_path, title=None):
     """A queued publish the gate held at send time. The owner was told
     "goes to staff at 11am"; without this the week simply never arrived."""
-    title = "Next week's schedule was not sent"
+    title = title or "Next week's schedule was not sent"
     body = ("It was held when its send time came: " + "; ".join(blockers[:3])
             + ". Review it on the Labor tab and send it yourself.")
     try:
         import strategy_jobs
         strategy_jobs._reach(restaurant_id, "schedule_publish_held", title, body,
                              {"schedule_id": payload.get("schedule_id")}, db_path,
-                             subject="Next week's schedule was not sent")
+                             subject=title)
     except Exception as e:
         import ops
         ops.capture(e, job="schedule_publish_held", context=f"restaurant_id={restaurant_id}")
@@ -376,5 +406,6 @@ def _tell_owner_order_not_sent(restaurant_id, payload, reason, db_path):
 
 HANDLERS = {
     "schedule_publish": _run_schedule_publish,
+    "schedule_changes_send": _run_schedule_changes_send,
     "order_send": _run_order_send,
 }

@@ -106,7 +106,7 @@ def test_publish_refuses_blockers_until_acknowledged_then_stamps_published_at(db
     conn.close()
     sent = []
     import emails
-    monkeypatch.setattr(emails, "send_staff_schedule_email", lambda **kw: sent.append(kw["employee_name"]))
+    monkeypatch.setattr(emails, "send_staff_schedule_email", lambda **kw: sent.append(kw["employee_name"]) or emails.SendResult(True))
     monkeypatch.setattr(client_api, "log_account_event", lambda *a, **k: None)
 
     payload, status = client_api._publish_schedule(rid, hid, actor={"id": 1, "username": "will"})

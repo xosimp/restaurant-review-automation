@@ -16379,9 +16379,10 @@ function rescoreSchedule(btn, after) {
         _schedSnapshot();
         _schedHideConflict();
         _schedLoadVersion();
-        // A week staff already have: who was re-sent their shifts.
-        var cs = d.changed_since_sent;
-        if (cs && cs.length) toast('Updated schedule sent to ' + cs.join(', '), 'success');
+        // A week staff already have: a save tells nobody. Who Send would
+        // tell is unsent_changes (F2-2).
+        var cs = d.unsent_changes;
+        if (cs && cs.length) toast('Saved. ' + cs.join(', ') + (cs.length === 1 ? ' hasn\u2019t' : ' haven\u2019t') + ' been told yet \u2014 press Send to tell them', 'success');
         else if (cs && !cs.length) toast('Saved; nobody\u2019s shifts changed', 'success');
         else toast('Schedule saved \u2014 this is what your staff will receive', 'success');
         /* A change inside the notice window: the pay warning replaces the
@@ -24999,7 +25000,7 @@ window.cavPalette = cavPalette;
   function psReach() {
     var el = $id('ps-reach'), c = window._psCheck; if (!el) return;
     if (!c || !c.reach) { el.innerHTML = ''; return; }
-    if (c.published_at) { el.innerHTML = 'Sent to staff <span class="hb-num">' + e(md(c.published_at)) + '</span> · a change you save is re-sent to whoever it moves.'; return; }
+    if (c.published_at) { var un = c.unsent_changes || []; el.innerHTML = 'Sent to staff <span class="hb-num">' + e(md(c.published_at)) + '</span> · ' + (un.length ? ('<span class="hb-num">' + un.length + '</span> ' + (un.length === 1 ? 'person hasn’t' : 'people haven’t') + ' been told about saved changes — Send tells them.') : 'a change you save is sent when you press Send, to whoever it moves.'); return; }
     var r = c.reach, bits = [];
     if (r.by_app) bits.push('<span class="hb-num">' + r.by_app + '</span> in the app');
     if (r.by_text) bits.push('<span class="hb-num">' + r.by_text + '</span> by text');

@@ -551,10 +551,12 @@ def _do_invoice_apply(u, import_id):
     sel = b.get("lines")
     if b.get("use_checked") is True and not sel:
         # "Apply the checked lines" (Ask's apply_invoice_lines): the stored
-        # invoice's own preselected lines, never costs sent by the caller.
-        sel = invoices.checked_selections(invoices.get_import(_rid(u), import_id))
+        # invoice's own VERIFIED lines, never costs sent by the caller. The
+        # card was confirmed without the photo, so a preselected line that
+        # could not be checked is left for the invoice card (F2-4).
+        sel = invoices.checked_selections(invoices.get_import(_rid(u), import_id), verified_only=True)
         if not sel:
-            return {"ok": False, "error": "No checked lines are left on that invoice - "
+            return {"ok": False, "error": "No verified lines are left on that invoice - "
                                          "open it on Food Cost to settle the rest."}, 409
     if not isinstance(sel, list) or not sel:
         return {"ok": False, "error": "Pick at least one line to update."}, 400
@@ -3659,14 +3661,27 @@ def _do_publish_check(u):
     if not row:
         return {"ok": False, "error": "Not found"}, 404
     try:
-        blockers = [b["text"] for b in publish_review(rid, row["id"])["blockers"]]
+        items = publish_review(rid, row["id"])["blockers"]
     except Exception:
-        blockers = []
+        items = []
+    blockers = [b["text"] for b in items]
     names = employees_in_schedule(row["schedule_csv"] or "")
+    unsent = None
+    if row["published_at"]:
+        # A week staff already have: Send tells only the people a saved
+        # change moved (client_api.send_schedule_changes, F2-2), so the
+        # button and its reach are theirs.
+        import schedule_versions as _sv
+        unsent = (_sv.unsent_changes(rid, row["id"]) or {}).get("people") or []
+        names = unsent
     summary = people.reach_summary(people.reach(rid, names))
     from permissions import has_permission, SCHEDULE_PUBLISH
+    # `blocker_items` carries each blocker's key: the client sends back
+    # `acknowledge: [keys it showed]`, so a blocker that appears between
+    # this read and the press is not acknowledged by it (F2-9).
     return {"ok": True, "schedule_id": row["id"], "week_start": row["week_start"], "week_end": row["week_end"],
-            "published_at": row["published_at"], "blockers": blockers, "reach": summary,
+            "published_at": row["published_at"], "blockers": blockers, "blocker_items": items, "reach": summary,
+            "unsent_changes": unsent,
             "texts_available": people.staff_sms_ready(),
             "can_publish": bool(u.get("is_admin")) or has_permission(u, SCHEDULE_PUBLISH)}, 200
 

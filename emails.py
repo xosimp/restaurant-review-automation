@@ -1648,7 +1648,7 @@ def send_welcome_email(to_email, restaurant_name, username, password,
 
 
 def send_staff_schedule_email(to_email, employee_name, restaurant_name, week_label,
-                              link, shifts, reply_to=None):
+                              link, shifts, reply_to=None, restaurant_id=None):
     """One employee's shifts plus their own link.
 
     The shifts are in the email body on purpose — staff read this on a
@@ -1698,7 +1698,9 @@ def send_staff_schedule_email(to_email, employee_name, restaurant_name, week_lab
     }
     if reply_to:
         params["reply_to"] = reply_to
-    return deliver(params, email_type=_etype)
+    # The restaurant rides along so email_log's row names it: the publish
+    # reads this result instead of logging its own copy (F2-1).
+    return deliver(params, restaurant_id=restaurant_id, email_type=_etype)
 
 
 def send_supplier_order_email(to_email, supplier_name, restaurant_name, po_number,

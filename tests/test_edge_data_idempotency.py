@@ -252,7 +252,7 @@ def _staff_contacts(db_path, rid, people=(("Ana", "ana@staff.test"), ("Bob", "bo
 def staff_mail(monkeypatch):
     sent = []
     monkeypatch.setattr(emails, "send_staff_schedule_email",
-                        lambda **kw: sent.append(kw["employee_name"]) or {"id": "e"})
+                        lambda **kw: sent.append(kw["employee_name"]) or emails.SendResult(True))
     monkeypatch.setattr(client_api, "log_account_event", lambda *a, **k: None)
     return sent
 
@@ -328,9 +328,9 @@ def test_the_web_publish_honours_the_send_delay(app, db_path, staff_mail):
     rid = _restaurant(db_path)
     models.update_restaurant(rid, {"send_delay_minutes": 10}, db_path=db_path)
     _staff_contacts(db_path, rid)
-    _week(db_path, rid)
+    sid = _week(db_path, rid)
     c = _web(app, db_path, _owner(db_path, rid))
-    body = c.post("/api/labor/publish-schedule", json={}, headers={"X-CSRF": CSRF}).get_json()
+    body = c.post("/api/labor/publish-schedule", json={"schedule_id": sid}, headers={"X-CSRF": CSRF}).get_json()
     assert body["ok"] and body["queued"] is True and body["undo_minutes"] == 10
     assert staff_mail == []
     assert [a["kind"] for a in delayed.pending(rid, db_path=db_path)] == ["schedule_publish"]
@@ -340,9 +340,9 @@ def test_the_phone_publish_honours_the_send_delay_too(app, db_path, staff_mail):
     rid = _restaurant(db_path)
     models.update_restaurant(rid, {"send_delay_minutes": 10}, db_path=db_path)
     _staff_contacts(db_path, rid)
-    _week(db_path, rid)
+    sid = _week(db_path, rid)
     h = _bearer(db_path, _owner(db_path, rid))
-    app.test_client().post("/mobile/api/labor/publish-schedule", json={}, headers=h)
+    app.test_client().post("/mobile/api/labor/publish-schedule", json={"schedule_id": sid}, headers=h)
     assert staff_mail == [], "the phone sent to staff inside the owner's undo window"
     assert [a["kind"] for a in delayed.pending(rid, db_path=db_path)] == ["schedule_publish"]
 
