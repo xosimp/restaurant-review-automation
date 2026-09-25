@@ -341,6 +341,8 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
         three-week-old count was presented as the last seven days.
     """
     today = today or datetime.now(ZoneInfo('America/Chicago')).date()
+    if isinstance(today, datetime):
+        today = today.date()
     delivery_offset = days_until_next_delivery(delivery_days, today)
     holiday_keywords = _holiday_relevant_keywords(upcoming_holidays)
     holiday_days_away = _days_until_relevant_holiday(upcoming_holidays, today)
@@ -567,8 +569,13 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
     # Two different windows, kept apart on purpose.
     #
     # week_start/week_end label the period the WASTE figures cover, and for a
-    # ledger restaurant that genuinely is the trailing seven days —
-    # recompute_rollups sums waste over exactly today-6..today. Relabelling
+    # ledger restaurant that genuinely is the trailing seven days ending
+    # `today` (the restaurant's own date, passed by analysis_for) —
+    # load_inventory_for_restaurant sums each item's waste from the dated
+    # events over exactly today-6..today (inventory_ledger.waste_in_window,
+    # DH1-1). The cached rollup it replaced was only as current as the
+    # item's last ledger event, so this label was false for any item nobody
+    # had touched since. Relabelling
     # this with the count dates (the first version of this fix) was wrong:
     # it renamed a correct seven-day waste window after a single count day.
     #
@@ -582,14 +589,19 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
             return datetime.strptime(str(d)[:10], "%Y-%m-%d")
         except (TypeError, ValueError):
             return None
-    week_end_dt   = now_chi
-    week_start_dt = now_chi - timedelta(days=6)
+    week_end_dt   = datetime(today.year, today.month, today.day)
+    week_start_dt = week_end_dt - timedelta(days=6)
     counted_to_dt = _parse(counted_to)
+    counted_from_dt = _parse(counted_from)
     counts_are_real = bool(counted_to_dt)
     # Days since the newest count. 0 when nothing is on file — reported
     # alongside window_from_counts=False so an absent count is never read as
     # a fresh one.
-    window_age_days = max(0, (now_chi.date() - counted_to_dt.date()).days) if counted_to_dt else 0
+    window_age_days = max(0, (today - counted_to_dt.date()).days) if counted_to_dt else 0
+    # And since the OLDEST: each item's stock rests on its own count, so the
+    # newest count alone overstated how current the stock figures were
+    # (DH3-3).
+    oldest_age_days = (max(0, (today - counted_from_dt.date()).days) if counted_from_dt else None)
 
     def fmt(dt): return dt.strftime("%-m/%-d/%y")
 
@@ -623,8 +635,10 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
         "counted_from":             counted_from,
         "counted_to":               counted_to,
         "stock_basis":              (
-            f"Stock figures rest on counts taken {window_age_days} day"
-            f"{'' if window_age_days == 1 else 's'} ago."
+            (f"Stock figures rest on counts taken {window_age_days} to {oldest_age_days} days ago."
+             if oldest_age_days is not None and oldest_age_days > window_age_days else
+             f"Stock figures rest on counts taken {window_age_days} day"
+             f"{'' if window_age_days == 1 else 's'} ago.")
             if counts_are_real else
             "No count dates on file — stock figures are as supplied, with no way to say how "
             "current they are."),
@@ -652,6 +666,7 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
         "total_items":    len(items),
         "week_start":     fmt(week_start_dt),
         "week_end":       fmt(week_end_dt),
+        "waste_window":   {"start": week_start_dt.date().isoformat(), "end": week_end_dt.date().isoformat()},
         "last_updated":   fmt(now_chi),
     }
 
@@ -951,20 +966,41 @@ def food_prompt_data_lines(analysis: dict) -> tuple:
                  "compare it to anything.")
     cf = a.get("count_freshness") or {}
     last = cf.get("last_count_at") or a.get("counted_to")
-    age = cf.get("age_days")
     parts = []
     if a.get("week_start") and a.get("week_end"):
-        parts.append(f"waste covers {a['week_start']}–{a['week_end']}")
-    if last:
+        ws = a.get("waste_source") or {}
+        parts.append(f"waste covers {a['week_start']}–{a['week_end']}, summed from what was logged"
+                     + (f" (newest waste entry {_mdy_fl(str(ws['last_waste_at'])[:10])})"
+                        if ws.get("last_waste_at") else "")
+                     + (f"; {ws['manual_items']} item(s) carry an undated waste figure typed in, not logged"
+                        if ws.get("manual_items") else ""))
+    # Each item's stock rests on its OWN count (DH3-3): how many were counted
+    # inside the fresh window, and the oldest, never only the newest.
+    total, recent = cf.get("items_total"), cf.get("counted_recent")
+    fresh_days = cf.get("fresh_days") or 7
+    if total:
+        oldest = cf.get("oldest_count_at")
+        parts.append(f"{recent} of {total} items counted in the last {fresh_days} days; "
+                     + (f"oldest count {_mdy_fl(str(oldest)[:10])}"
+                        + (f", {cf['oldest_age_days']} days ago" if cf.get("oldest_age_days") is not None else "")
+                        if oldest else "some items never counted"))
+    elif last:
+        # An analysis without per-item counts (built elsewhere): the newest
+        # count and its age, as before.
+        age = cf.get("age_days")
         parts.append(f"newest stock count {_mdy_fl(str(last)[:10])}"
                      + (f", {age} day{'' if age == 1 else 's'} ago" if age is not None else ""))
     else:
         parts.append("no stock count on file")
     line = "- Data window: " + "; ".join(parts) + "."
-    if cf.get("stale"):
+    if cf.get("all_stale") or (cf.get("stale") and not total):
         line += (" THE STOCK COUNT IS OLD: days remaining, critically-low items (marked count_stale) and suggested "
                  "orders rest on a projection from it. Say the count is old before any ordering advice, and do not "
                  "say an item is out, running out today or needs ordering now on that count alone.")
+    elif cf.get("stale"):
+        line += (" SOME ITEMS' COUNTS ARE OLD: an item marked count_stale rests on a projection from a count older "
+                 f"than {fresh_days} days (or none). Say its count is old before any ordering advice about it, and do "
+                 "not say it is out, running out today or needs ordering now on that count alone.")
     return waste, line
 
 
@@ -1352,7 +1388,7 @@ Today's date: {today_inv}
 {_window_line}
 
 Key findings:
-- Waste this week: ${analysis['total_waste_cost_week']:,.2f}
+- Waste logged {analysis.get('week_start', '')}–{analysis.get('week_end', '')}: ${analysis['total_waste_cost_week']:,.2f}
 - Projected monthly waste cost: ${analysis['monthly_waste_projection']:,.2f} ({analysis['projection_basis']})
 - Recoverable (waste above tolerance — an opportunity projected from one week, not money saved): ${analysis['recoverable_monthly']:,.2f}/month
 - Total current inventory value: ${analysis['total_stock_value']:,.2f}
@@ -1532,6 +1568,44 @@ def food_insight_validation_facts(analysis: dict, drivers=(), forecasts=(), cfo_
     return [f for f in facts if f.value is not None]
 
 
+def food_stale_sources(restaurant_id, restaurant=None, db_path=None) -> dict:
+    """The food read's M1 data_state: {"stale_sources": [...], "as_of"} for
+    each food source (counts, waste log, deliveries) the freshness registry
+    reads stale, unknown or erroring — data_freshness.source_state, the one
+    rule the confidence percentages read too (DH3-3). It used to be fed by
+    the NEWEST count, so a single recount made every old count "current" to
+    the validator. The waste figures are summed from dated events over the
+    week, so the read as a whole is not aged — only the named source is.
+    {} when nothing is stale or the registry cannot be read."""
+    if not restaurant_id:
+        return {}
+    try:
+        import data_freshness as _df
+        if restaurant is None:
+            from models import get_restaurant
+            restaurant = get_restaurant(restaurant_id)
+        if restaurant is None:
+            return {}
+        names = {"inventory": "stock count", "waste": "waste log", "purchases": "delivery log"}
+        stale, oldest = [], None
+        for key in ("inventory", "waste", "purchases"):
+            s = _df.source_state(restaurant, key, db_path=db_path)
+            if s.get("state") in ("stale", "unknown") or s.get("error"):
+                stale.append(names[key] + (f" ({s['basis']})" if s.get("basis") else ""))
+                if s.get("as_of_iso") and (oldest is None or s["as_of_iso"] < oldest):
+                    oldest = s["as_of_iso"]
+        if not stale:
+            return {}
+        out = {"stale_sources": stale}
+        if oldest:
+            from time_utils import mdy as _mdy_cf
+            out["as_of"] = _mdy_cf(oldest)
+        return out
+    except Exception as e:
+        print(f"[inventory] food source states unreadable for {restaurant_id}: {e}")
+        return {}
+
+
 def food_read_context(restaurant_id, prompt, analysis, facts, cause_anchors=(), alt_anchors=(), untrusted=()):
     """The ValidationContext the food read is checked under (and re-checked
     under when its stored read is re-validated)."""
@@ -1541,16 +1615,16 @@ def food_read_context(restaurant_id, prompt, analysis, facts, cause_anchors=(), 
         denied = _m.other_tenant_names(restaurant_id)
     except Exception:
         denied = set()
-    data_state = {}
+    data_state = food_stale_sources(restaurant_id)
     cf = (analysis or {}).get("count_freshness") or {}
-    if cf.get("stale"):
-        # The waste figures cover the week; only the count is old, so the
-        # stale source is named rather than the whole read aged (a
-        # data_age_days here would call "waste this week" out of date).
-        last = cf.get("last_count_at")
+    if not restaurant_id and cf.get("stale"):
+        # No restaurant to read the registry for (a re-check of a bare
+        # analysis): the analysis's own count reading stands in, dated by
+        # its oldest count when it has one.
+        last = cf.get("oldest_count_at") or cf.get("last_count_at")
         from time_utils import mdy as _mdy_cf
         as_of = _mdy_cf(str(last)[:10]) if last else None
-        data_state["stale_sources"] = ["stock count" + (f" from {as_of}" if as_of else "")]
+        data_state = {"stale_sources": ["stock count" + (f" from {as_of}" if as_of else "")]}
         if as_of:
             data_state["as_of"] = as_of
     anchors = []
@@ -1583,6 +1657,36 @@ def finish_food_read(text: str, ctx):
 
 
 _UNREAD = object()   # "client_data not passed in" — None is a real answer (no row)
+
+
+def _overlay_logged_waste(restaurant_id, items):
+    """Each ledger item's waste_last_week, summed from its dated waste
+    events over the restaurant's trailing seven days at read time
+    (inventory_ledger.waste_in_window — one grouped query), in place of the
+    cached rollup, which was only as current as the item's last ledger
+    event (DH1-1). An item that has never had a waste event keeps the
+    figure typed on it (recompute_rollups never overwrote a manual value
+    either) and is marked `waste_basis: "manual"` — an undated figure the
+    analysis counts and the food read names. Never raises: on a read error
+    the items are left as they were, marked unverified."""
+    try:
+        import inventory_ledger as _il
+        ww = _il.waste_in_window(restaurant_id)
+    except Exception as e:
+        print(f"[inventory] logged waste unreadable for {restaurant_id}: {e}")
+        for it in items:
+            it["waste_basis"] = "cached"
+        return None
+    for it in items:
+        iid = it.get("ingredient_id")
+        if iid in ww["logged"]:
+            it["waste_last_week"] = float(ww["by_ingredient"].get(iid) or 0.0)
+            it["waste_basis"] = "logged"
+            it["last_waste_at"] = ww["last_by_ingredient"].get(iid)
+        else:
+            it["waste_basis"] = "manual" if float(it.get("waste_last_week") or 0) > 0 else "none"
+            it["last_waste_at"] = None
+    return ww
 
 
 def load_inventory_for_restaurant(restaurant_id: int, client_data=_UNREAD):
@@ -1635,7 +1739,12 @@ def load_inventory_for_restaurant(restaurant_id: int, client_data=_UNREAD):
             # CA3 F14): the stock figure is a discrepancy to count, not a
             # reading. None when the ledger is sound.
             "count_discrepancy": (r["count_discrepancy_qty"] if "count_discrepancy_qty" in r.keys() else None),
+            # This item's own count date: its stock rests on it, so a
+            # critical-low or "count is old" judgement is made per item,
+            # never from the restaurant's newest count (DH3-3).
+            "last_recount_at": (str(r["last_recount_at"])[:10] if r["last_recount_at"] else None),
         } for r in rows]
+        _overlay_logged_waste(restaurant_id, items)
         return items, True
     # A caller that already holds the client_data row passes it (Home reads
     # it once for Labor and Food Cost together — MOD-HOME-2).
@@ -1667,6 +1776,14 @@ def analysis_for(restaurant_id: int, items=None, is_live=None, client_data=_UNRE
         items, is_live = (load_inventory_for_restaurant(restaurant_id) if client_data is _UNREAD
                           else load_inventory_for_restaurant(restaurant_id, client_data=client_data))
     restaurant = get_restaurant(restaurant_id)
+    # The restaurant's own calendar date — the day boundary of the waste
+    # week, the purchases window and every count's age (DH1-14).
+    try:
+        from time_utils import restaurant_now as _rnow
+        local_today = _rnow(restaurant).date()
+    except Exception:
+        from datetime import date as _dt_fallback
+        local_today = _dt_fallback.today()
 
     # The two measured inputs analyse_inventory could not derive for itself:
     # what was actually received over the same seven days the waste covers,
@@ -1676,9 +1793,9 @@ def analysis_for(restaurant_id: int, items=None, is_live=None, client_data=_UNRE
     purchases_window, counted_from, counted_to = None, None, None
     if is_live:
         try:
-            from datetime import date as _d, timedelta as _td
+            from datetime import timedelta as _td
             import cogs as _cogs
-            _end = _d.today()
+            _end = local_today
             _start = _end - _td(days=6)
             _p, _n = _cogs.purchases_in_window(restaurant_id, _start, _end)
             if _n:
@@ -1702,26 +1819,66 @@ def analysis_for(restaurant_id: int, items=None, is_live=None, client_data=_UNRE
         items,
         delivery_days=restaurant.delivery_days if restaurant else None,
         upcoming_holidays=get_upcoming_holidays(),
+        today=local_today,
         purchases_window=purchases_window,
         counted_from=counted_from,
         counted_to=counted_to,
     )
     analysis["is_live"] = bool(is_live)
-    # How old the newest count is. critical_low and every suggested order
-    # are computed from stock on hand; with no count in the last week that
-    # stock is a projection, and an item "running out" may simply be one
-    # nobody counted (audit). Carried on the analysis and on each
-    # critical_low line, so an alert or an automatic order can hold or say so.
+    # Where the week's waste came from (DH1-1): summed from dated waste
+    # events ("logged"), or an undated figure typed on an item that has
+    # never had a waste event ("manual"). The newest logged event dates it.
+    _logged = [it for it in (items or []) if it.get("waste_basis") == "logged"]
+    _manual = [it for it in (items or []) if it.get("waste_basis") == "manual"]
+    _lasts = [str(it["last_waste_at"]) for it in _logged if it.get("last_waste_at")]
+    analysis["waste_source"] = {
+        "logged_items": len(_logged), "manual_items": len(_manual),
+        "last_waste_at": max(_lasts) if _lasts else None,
+        "basis": ("summed from waste logged " + analysis.get("week_start", "") + "–"
+                  + analysis.get("week_end", "")
+                  + (f"; {len(_manual)} item{'' if len(_manual) == 1 else 's'} carry an undated waste "
+                     "figure typed in, not logged" if _manual else "")),
+    }
+    # How old each item's OWN count is (DH3-3). critical_low and every
+    # suggested order are computed from stock on hand; an item with no count
+    # in the last ordering.COUNT_FRESH_DAYS has a projected stock, and an
+    # item "running out" may simply be one nobody counted. The rule is
+    # ordering.count_freshness's: every line's quantity depends on its own
+    # count, never counted is stale. It used to be the restaurant's NEWEST
+    # count, so recounting lettuce today made a 40-day-old chicken count
+    # "fresh" and fired a running-out push. Carried on every item (so every
+    # critical_low and reorder_soon line) and summarised here.
     try:
         from datetime import date as _d2
         from ordering import COUNT_FRESH_DAYS as _CFD
-        age = (_d2.today() - _d2.fromisoformat(str(counted_to)[:10])).days if counted_to else None
-        analysis["count_freshness"] = {"last_count_at": counted_to, "age_days": age,
-                                       "stale": bool(is_live) and (age is None or age > _CFD),
-                                       "fresh_days": _CFD}
-        if analysis["count_freshness"]["stale"]:
-            for x in analysis.get("critical_low") or []:
-                x["count_stale"] = True
+        n_items, n_recent, oldest, stale_names = 0, 0, None, []
+        for it in items or []:
+            n_items += 1
+            last = it.get("last_recount_at")
+            try:
+                age_i = (local_today - _d2.fromisoformat(str(last)[:10])).days if last else None
+            except ValueError:
+                age_i = None
+            it["count_age_days"] = age_i
+            it["count_stale"] = bool(is_live) and (age_i is None or age_i > _CFD)
+            if it["count_stale"]:
+                stale_names.append(it.get("item"))
+            else:
+                n_recent += 1
+            if last and (oldest is None or str(last)[:10] < oldest):
+                oldest = str(last)[:10]
+        age = (local_today - _d2.fromisoformat(str(counted_to)[:10])).days if counted_to else None
+        oldest_age = (local_today - _d2.fromisoformat(oldest)).days if oldest else None
+        analysis["count_freshness"] = {
+            "last_count_at": counted_to, "age_days": age,
+            "oldest_count_at": oldest, "oldest_age_days": oldest_age,
+            "items_total": n_items, "counted_recent": n_recent,
+            "stale_items": len(stale_names), "stale_item_names": stale_names[:12],
+            # Some item's stock rests on an old count (or none); `all_stale`
+            # when no item has a current one.
+            "stale": bool(is_live) and len(stale_names) > 0,
+            "all_stale": bool(is_live) and n_recent == 0,
+            "fresh_days": _CFD}
     except Exception:
         pass
     # An item whose ledger went negative reads 0 on hand only because it was

@@ -41,19 +41,96 @@ def _days_per_month():
 
 
 
-def _as_date_str(d) -> str:
+def local_today(restaurant_id=None):
+    """The restaurant's own calendar date (time_utils.restaurant_now_by_id),
+    the one day boundary every ledger window takes. The server's
+    date.today() is UTC on the host, so after 7pm Central "today" was
+    tomorrow and every seven-day window slid a day early (DH1-14)."""
+    try:
+        from time_utils import restaurant_now_by_id
+        return restaurant_now_by_id(restaurant_id).date()
+    except Exception:
+        return date.today()
+
+
+def _as_date_str(d, restaurant_id=None) -> str:
     """An event date as YYYY-MM-DD. A string that is not an ISO date raises
     ValueError: the ledger orders and windows events by this text, and
     "9/21/26" sorts after every ISO date, so it sat inside every future
-    7-day window (MOD-FC-15)."""
+    7-day window (MOD-FC-15). No date is the restaurant's local today."""
     if d is None:
-        return date.today().isoformat()
+        return local_today(restaurant_id).isoformat()
     if hasattr(d, "isoformat"):
         return d.isoformat()[:10]
     s = str(d).strip()
     if len(s) != 10:
         raise ValueError(f"not an ISO date: {s!r}")
     return date.fromisoformat(s).isoformat()
+
+
+def _today_on(conn, restaurant_id):
+    """local_today, with the timezone read on an open connection."""
+    try:
+        row = conn.execute("SELECT timezone FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+        from time_utils import restaurant_now
+        return restaurant_now((row["timezone"] if row else None) or None).date()
+    except Exception:
+        return local_today(restaurant_id)
+
+
+# The window "waste this week" covers: the restaurant's today and the six
+# days before it.
+WASTE_WINDOW_DAYS = _TREND_WINDOW_DAYS
+
+
+def waste_in_window(restaurant_id, end=None, days=WASTE_WINDOW_DAYS, conn=None) -> dict:
+    """Waste per ingredient over the `days` ending `end` (default: the
+    restaurant's local today), summed from the dated waste events at read
+    time — one grouped query for the whole restaurant.
+
+    The cached ingredients.waste_last_week was written only when that
+    ingredient's ledger moved, so $400 of produce logged on 9/1 and never
+    touched again still read "waste this week" on 9/24, in the food read,
+    Ask, the waste alert, the daily snapshot and the opportunity figure
+    (DH1-1). metrics._weekly_waste already read the events; this is the
+    same rule per ingredient.
+
+    Returns {"start", "end", "by_ingredient": {id: qty in window},
+    "logged": {ids with any waste event ever}, "last_event": ISO date of
+    the newest waste event or None}. An ingredient never logged is absent
+    from `logged`: its figure is a manual entry, not a ledger reading."""
+    own = conn is None
+    if own:
+        from models import get_conn
+        conn = get_conn()
+    try:
+        if end is None:
+            end_d = _today_on(conn, restaurant_id)
+        elif hasattr(end, "isoformat"):
+            end_d = end if not hasattr(end, "date") else end.date()
+        else:
+            end_d = date.fromisoformat(str(end)[:10])
+        start_d = end_d - timedelta(days=days - 1)
+        rows = conn.execute(
+            "SELECT ingredient_id, "
+            "COALESCE(SUM(CASE WHEN event_date >= ? AND event_date <= ? THEN qty END), 0) AS qty, "
+            "MAX(CASE WHEN event_date <= ? THEN event_date END) AS last "
+            "FROM ingredient_stock_events WHERE restaurant_id=? AND event_type='waste' "
+            "GROUP BY ingredient_id",
+            (start_d.isoformat(), end_d.isoformat(), end_d.isoformat(), restaurant_id)).fetchall()
+    finally:
+        if own:
+            conn.close()
+    by, lasts, logged, last = {}, {}, set(), None
+    for r in rows:
+        iid = r["ingredient_id"]
+        logged.add(iid)
+        by[iid] = round(float(r["qty"] or 0), 3)
+        lasts[iid] = str(r["last"])[:10] if r["last"] else None
+        if r["last"] and (last is None or str(r["last"])[:10] > last):
+            last = str(r["last"])[:10]
+    return {"start": start_d.isoformat(), "end": end_d.isoformat(), "by_ingredient": by,
+            "last_by_ingredient": lasts, "logged": logged, "last_event": last}
 
 
 def _compute_current_stock(conn, ingredient_id: int, restaurant_id: int = None) -> float:
@@ -105,7 +182,9 @@ def recompute_rollups(restaurant_id: int, ingredient_id: int, conn=None) -> None
     try:
         current_stock = _compute_current_stock(conn, ingredient_id, restaurant_id)
 
-        window_start = (date.today() - timedelta(days=_TREND_WINDOW_DAYS - 1)).isoformat()
+        # The restaurant's own today, read on this connection (one row, no
+        # second connection per ingredient in the nightly loop), DH1-14.
+        window_start = (_today_on(conn, restaurant_id) - timedelta(days=_TREND_WINDOW_DAYS - 1)).isoformat()
 
         # One aggregate instead of six separate reads. This runs once per
         # ingredient touched by a business date inside compute_daily_depletion's
@@ -158,7 +237,14 @@ def recompute_rollups(restaurant_id: int, ingredient_id: int, conn=None) -> None
                         f"clamped to 0 and flagged as a count discrepancy until the next count")
             discrepancy = round(float(current_stock), 3)
             current_stock = 0.0
-        sets, params = (["current_stock=?", "updated_at=datetime('now')", "count_discrepancy_qty=?"],
+        # rollup_at stamps THIS recompute (UTC), apart from updated_at, which
+        # any edit moves. The cached waste_last_week is only as current as
+        # this stamp: nothing recomputes it as the calendar moves, so every
+        # "waste this week" figure is summed from dated waste events at read
+        # time instead (waste_in_window, DH1-1) and the stamp is the note on
+        # the `waste` freshness source.
+        sets, params = (["current_stock=?", "updated_at=datetime('now')", "count_discrepancy_qty=?",
+                         "rollup_at=datetime('now')"],
                         [current_stock, discrepancy])
         if recount_date:
             sets.append("last_recount_at=?")
@@ -222,7 +308,7 @@ def record_recount(restaurant_id: int, ingredient_id: int, counted_qty: float,
     waste and the "unexplained" share on every 86 (CA1 F20, fix I8)."""
     import math
     from models import db_conn
-    event_date_str = _as_date_str(event_date)
+    event_date_str = _as_date_str(event_date, restaurant_id)
     counted_qty = float(counted_qty)
     if not math.isfinite(counted_qty) or counted_qty < 0:
         raise ValueError("a count must be a number of 0 or more")
@@ -291,7 +377,7 @@ def record_receiving(restaurant_id: int, ingredient_id: int, qty: float,
         return 0
     if not math.isfinite(qty) or qty <= 0:
         return 0
-    event_date_str = _as_date_str(event_date)
+    event_date_str = _as_date_str(event_date, restaurant_id)
     with db_conn() as conn:
         if not ingredient_belongs_to(conn, restaurant_id, ingredient_id):
             return 0          # see record_recount's note on the untrusted pair
@@ -319,7 +405,7 @@ def record_depletion_from_sale(restaurant_id: int, ingredient_id: int, qty: floa
     rolls up once per ingredient afterward; a standalone caller must call
     recompute_rollups() itself to see the change reflected."""
     from models import db_conn
-    event_date_str = _as_date_str(event_date)
+    event_date_str = _as_date_str(event_date, restaurant_id)
     with db_conn() as conn:
         # Its recount and receiving siblings both check the pair; this one
         # took it on trust, which is the same trap that let an event be
@@ -347,7 +433,7 @@ def compute_daily_depletion(restaurant_id: int, business_date) -> dict:
     import pos as _pos
     from models import db_conn
 
-    business_date_str = _as_date_str(business_date)
+    business_date_str = _as_date_str(business_date, restaurant_id)
     real_date = business_date if hasattr(business_date, "isoformat") else date.fromisoformat(business_date_str)
     # Through pos.py, not toast directly. Recipe depletion was Toast-only for
     # no reason other than this import: any provider that can report
@@ -479,14 +565,15 @@ def compute_daily_depletion(restaurant_id: int, business_date) -> dict:
     }
 
 
-def _window(days, as_of):
+def _window(days, as_of, restaurant_id=None):
     """(first day, last day or None) of a `days`-long window. Anchored on
-    today with no upper bound by default; on `as_of` (a past business date —
-    the nightly report) it ends there, so later events stay out."""
+    the restaurant's local today with no upper bound by default; on `as_of`
+    (a past business date — the nightly report) it ends there, so later
+    events stay out."""
     if as_of:
         end = _as_date_str(as_of)
         return (date.fromisoformat(end) - timedelta(days=days - 1)).isoformat(), end
-    return (date.today() - timedelta(days=days - 1)).isoformat(), None
+    return (local_today(restaurant_id) - timedelta(days=days - 1)).isoformat(), None
 
 
 def waste_sources(restaurant_id: int, days: int = _TREND_WINDOW_DAYS, as_of=None) -> dict:
@@ -504,7 +591,7 @@ def waste_sources(restaurant_id: int, days: int = _TREND_WINDOW_DAYS, as_of=None
     from models import get_conn
     conn = get_conn()
     try:
-        window_start, window_end = _window(days, as_of)
+        window_start, window_end = _window(days, as_of, restaurant_id)
         rows = conn.execute(
             "SELECT COALESCE(e.source,'manual') AS src, "
             "       COALESCE(SUM(e.qty * COALESCE(i.unit_cost,0)), 0) AS cost "
@@ -576,7 +663,7 @@ def inferred_variance(restaurant_id: int, days: int = _TREND_WINDOW_DAYS, as_of=
     from models import get_conn
     conn = get_conn()
     try:
-        window_start, window_end = _window(days, as_of)
+        window_start, window_end = _window(days, as_of, restaurant_id)
         upto = " AND e.event_date<=?" if window_end else ""
         rows = conn.execute(
             """SELECT i.id, i.name, i.unit, COALESCE(i.unit_cost,0) AS unit_cost,
@@ -683,7 +770,7 @@ def recipe_coverage(restaurant_id: int, days: int = _POPULARITY_WINDOW_DAYS) -> 
     from models import get_conn
     conn = get_conn()
     try:
-        window_start = (date.today() - timedelta(days=days - 1)).isoformat()
+        window_start = (local_today(restaurant_id) - timedelta(days=days - 1)).isoformat()
         rows = conn.execute(
             "SELECT s.menu_item_id AS mid, m.name AS name, SUM(s.qty_sold) AS qty, "
             "       (SELECT COUNT(*) FROM recipe_ingredients ri WHERE ri.menu_item_id=s.menu_item_id) AS n "
@@ -719,7 +806,7 @@ def discover_menu_items(restaurant_id: int, days: int = 7) -> dict:
     import pos as _pos
     from models import db_conn
 
-    end = date.today()
+    end = local_today(restaurant_id)
     # Toast's demo mode short-circuits fetch_order_selections but not
     # fetch_business_days, so a showcase restaurant would otherwise make a
     # real HTTP call with a fake token. Asked of the toast module directly
@@ -780,7 +867,7 @@ def import_csv_to_ingredients(restaurant_id: int) -> dict:
         return {"imported": 0, "skipped_existing": 0, "error": "No inventory_csv found for this restaurant"}
 
     items = load_inventory(csv_string=data["inventory_csv"])
-    today_str = date.today().isoformat()
+    today_str = local_today(restaurant_id).isoformat()
     imported, skipped = 0, 0
 
     with db_conn() as conn:
@@ -827,8 +914,19 @@ def list_ingredients(restaurant_id: int) -> list:
         "SELECT * FROM ingredients WHERE restaurant_id=? AND is_active=1 ORDER BY name",
         (restaurant_id,)
     ).fetchall()
+    try:
+        ww = waste_in_window(restaurant_id, conn=conn)
+    except Exception:
+        ww = None
     conn.close()
-    return [dict(r) for r in rows]
+    out = [dict(r) for r in rows]
+    # The same week's waste every other surface reads: summed from the dated
+    # events, not the cached rollup (DH1-1).
+    if ww:
+        for d in out:
+            if d.get("id") in ww["logged"]:
+                d["waste_last_week"] = ww["by_ingredient"].get(d["id"], 0.0)
+    return out
 
 
 def create_ingredient(restaurant_id: int, name: str, category: str = "", unit: str = "",
@@ -837,7 +935,7 @@ def create_ingredient(restaurant_id: int, name: str, category: str = "", unit: s
     """Creates the ingredient and its initial recount anchor in one call —
     every ingredient must have at least one recount (see module docstring)."""
     from models import db_conn
-    today_str = date.today().isoformat()
+    today_str = local_today(restaurant_id).isoformat()
     with db_conn() as conn:
         cur = conn.execute(
             "INSERT INTO ingredients (restaurant_id, name, category, unit, par_level, "
@@ -1149,7 +1247,7 @@ def menu_profitability(restaurant_id: int) -> dict:
             costs[row["mid"]] = {"cost": float(row["plate_cost"] or 0),
                                  "ingredients": int(row["n"] or 0),
                                  "uncosted": int(row["uncosted"] or 0)}
-        window_start = (date.today() - timedelta(days=_POPULARITY_WINDOW_DAYS - 1)).isoformat()
+        window_start = (local_today(restaurant_id) - timedelta(days=_POPULARITY_WINDOW_DAYS - 1)).isoformat()
         sold = {r["menu_item_id"]: float(r["qty"] or 0) for r in conn.execute(
             "SELECT menu_item_id, SUM(qty_sold) AS qty FROM menu_item_sales "
             "WHERE restaurant_id=? AND business_date>=? GROUP BY menu_item_id",

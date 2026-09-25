@@ -8,6 +8,7 @@ Labor "potential savings" is the gap above target over the synced period;
 callers used to multiply it by 4.33 as if every period were one week. It
 now carries per-week and per-month figures normalized by the calendar days
 the data covers, and every consumer reads those."""
+from datetime import date, timedelta
 from types import SimpleNamespace
 
 import inventory
@@ -124,9 +125,13 @@ def test_the_headline_figure_is_measured_results_not_the_gap_to_target(monkeypat
     monkeypatch.setattr(value_delivered, "get_restaurant", lambda rid, db_path=None: SimpleNamespace(
         module_reviews=1, module_labor=1, module_inventory=1, module_marketing=0))
     monkeypatch.setattr(value_delivered, "get_review_stats", lambda rid: {"responded": 3})
+    # A current labor period: an opportunity on an undated or stale period
+    # is withheld now (DH1-4).
+    _lend = (date.today() - timedelta(days=1)).isoformat()
     monkeypatch.setattr(labor, "analyse_shifts_for_restaurant", lambda rid: {
         "is_live": True, "potential_savings": 4000.0, "potential_savings_weekly": 2000.0,
-        "potential_savings_monthly": 8666.67})
+        "potential_savings_monthly": 8666.67,
+        "date_range": {"start": (date.today() - timedelta(days=28)).isoformat(), "end": _lend, "days": 28}})
     monkeypatch.setattr(inventory, "analysis_for",
                         lambda rid, items=None, is_live=None: ([], True, {"recoverable_monthly": 150}))
 

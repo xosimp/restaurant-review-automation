@@ -184,7 +184,7 @@ def weekday_waste(restaurant_id: int, days: int = 56, db_path: str = DB_PATH) ->
           JOIN ingredients i ON i.id=e.ingredient_id AND i.restaurant_id=e.restaurant_id
          WHERE e.restaurant_id=? AND e.event_type='waste' AND e.event_date >= ?
          GROUP BY e.event_date, e.source
-    """, (restaurant_id, (date.today() - timedelta(days=days - 1)).isoformat()))
+    """, (restaurant_id, (_local_today(restaurant_id) - timedelta(days=days - 1)).isoformat()))
     conn.close()
 
     buckets = {}
@@ -254,7 +254,7 @@ def seasonal_baseline(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     if not weeks:
         return {"available": False, "reason": "no waste history on file"}
 
-    today = date.today()
+    today = _local_today(restaurant_id)
     def _window(end_day, n=28):
         start = end_day - timedelta(days=n - 1)
         vals = []
@@ -600,6 +600,35 @@ def deduplicated_total(drivers: list) -> dict:
             "by_kind": by_kind, "kinds": sorted(by_kind)}
 
 
+def _prices_state(restaurant_id, db_path=DB_PATH) -> dict:
+    """{as_of, as_of_iso, last_invoice_iso, state, word} from the `prices`
+    freshness source (newest applied invoice or priced delivery). {} when
+    it cannot be read."""
+    try:
+        import data_freshness as _df
+        from models import get_restaurant
+        r = get_restaurant(restaurant_id, db_path=db_path)
+        st = _df.source_state(r, "prices", db_path=db_path) if r is not None else {}
+    except Exception as e:
+        print(f"[food_cost_intelligence] prices freshness unreadable rid={restaurant_id}: {e}")
+        return {}
+    if not st or not st.get("as_of_iso"):
+        return {"state": (st or {}).get("state")}
+    inv = st.get("last_invoice_iso")
+    return {"as_of": st.get("as_of"), "as_of_iso": st.get("as_of_iso"), "last_invoice_iso": inv,
+            "state": st.get("state"),
+            "word": "invoice" if inv and inv == st.get("as_of_iso") else "priced delivery"}
+
+
+def _local_today(restaurant_id):
+    """The restaurant's own calendar date (DH1-14)."""
+    try:
+        from time_utils import restaurant_now_by_id
+        return restaurant_now_by_id(restaurant_id).date()
+    except Exception:
+        return date.today()
+
+
 def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     """Every driver of food cost movement, each with the dollars it carries,
     ranked here rather than by the model.
@@ -655,7 +684,8 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
             "weeks_of_data": weeks,
             "evidence": (f"{x['item']} wasted {x.get('waste_pct')}% of what was ordered "
                          f"against a {x.get('waste_tolerance_pct')}% tolerance band, "
-                         f"${_f(x.get('waste_cost')):,.2f} last week"
+                         f"${_f(x.get('waste_cost')):,.2f} logged "
+                         f"{analysis.get('week_start', '')}–{analysis.get('week_end', '')}"
                          + (" — one week of data projected to a month" if weeks == 1 else
                             f" — an offender in {weeks} of the last 8 weeks")),
             "if_ignored": "the same share keeps going in the bin every week",
@@ -695,6 +725,10 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     # 3. Ingredient price movement on the items that carry real spend.
     try:
         from inventory import compute_item_trends, build_price_watch
+        # Every price driver carries the date its price rests on (DH3-4):
+        # the newest applied invoice or priced delivery (data_freshness
+        # `prices`). A rise read off a five-week-old invoice says so.
+        _prices = _prices_state(restaurant_id, db_path=db_path)
         # Filter to rises on real spend, price each one, THEN keep the top
         # four by dollars (M-12). The watch list is sorted by the size of the
         # % move, up or down, so cutting it to four first let parsley +80%
@@ -722,9 +756,14 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
                 "evidence": (f"{w['item']} moved ${_f(w.get('old_price')):.2f} to "
                              f"${_f(w.get('new_price')):.2f}"
                              + (f" over {w['weeks']} weeks" if w.get("weeks") else " this week")
-                             + f", against {usage:g} a day of recorded usage"),
+                             + f", against {usage:g} a day of recorded usage"
+                             + (f"; price as of the last {_prices['word']} {_prices['as_of']}"
+                                if _prices.get("as_of") else "; no dated invoice behind this price")),
                 "if_ignored": "the higher unit price flows into every plate using it",
                 "item": w["item"],
+                "price_as_of": _prices.get("as_of_iso"),
+                "last_invoice_at": _prices.get("last_invoice_iso"),
+                "price_state": _prices.get("state"),
             })
         _price_drivers.sort(key=lambda d: -d["dollars_monthly"])
         drivers.extend(_price_drivers[:4])
@@ -857,6 +896,36 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
 
 # ── The number an owner actually asks for ───────────────────────────────────
 
+def _labor_stale_why(restaurant_id, analysis, period_end, today, db_path=DB_PATH):
+    """None when the shift analysis's labor share may stand in a prime cost
+    today; else the owner-facing reason it is missing (DH1-3): the `labor`
+    source reads stale, unknown or failing in data_freshness, or the
+    analysis period ended more than data_freshness.stale_after_days("labor")
+    before today."""
+    import data_freshness as _df
+    from time_utils import mdy as _mdy_ls
+    end = None
+    try:
+        end = date.fromisoformat(str(period_end)[:10]) if period_end else None
+    except ValueError:
+        end = None
+    if end is None:
+        return "the labor period has no end date, so how current it is is unknown"
+    limit = _df.stale_after_days("labor")
+    if (today - end).days > limit:
+        return (f"shifts on file end {_mdy_ls(end.isoformat())}, more than {int(limit)} days ago — "
+                "an old labor share is not applied to this month")
+    try:
+        from models import get_restaurant
+        r = get_restaurant(restaurant_id, db_path=db_path)
+        st = _df.source_state(r, "labor", db_path=db_path, context={"labor": analysis}) if r is not None else None
+    except Exception:
+        st = None
+    if st and (st.get("state") in ("stale", "unknown") or st.get("error")):
+        return f"shift data is not current ({st.get('error') or st.get('basis') or st.get('state')})"
+    return None
+
+
 def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhold: bool = True) -> dict:
     """Month-to-date prime cost, projected to month end.
 
@@ -883,7 +952,7 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
     never recover.
     """
     import cogs as _cogs
-    today = date.today()
+    today = _local_today(restaurant_id)
     if withhold:
         try:
             acc = forecast_accuracy(restaurant_id, "profitability_month", db_path=db_path)
@@ -912,11 +981,11 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
 
     labor_cost, labor_pct, labor_why, labor_period = None, None, None, None
     labor_period_start = labor_period_end = None
+    labor_from = None
     try:
         from labor import analyse_shifts_for_restaurant
         la = analyse_shifts_for_restaurant(restaurant_id)
         if la and la.get("is_live") and _f(la.get("total_sales")) > 0:
-            labor_pct = _f(la.get("overall_labor_pct"))
             rng = la.get("date_range") or {}
             # M/D/YY, never ISO, in owner-facing text (T7, B6#13); the
             # ISO bounds travel apart as labor_period_start / _end.
@@ -924,6 +993,19 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
             labor_period = (f"{_mdy_lp(rng.get('start')) or rng.get('start')} to "
                             f"{_mdy_lp(rng.get('end')) or rng.get('end')}") if rng.get("end") else None
             labor_period_start, labor_period_end = rng.get("start"), rng.get("end")
+            # The short form every owner-facing line carries (the brief's
+            # prime-cost line): "labor from 9/1/26–9/21/26".
+            labor_from = (f"labor from {_mdy_lp(rng.get('start')) or rng.get('start')}–"
+                          f"{_mdy_lp(rng.get('end')) or rng.get('end')}") if rng.get("end") else None
+            # The labor share is the shift analysis's OWN period, anchored on
+            # the latest shift on file — not on today. Shifts last uploaded
+            # 7/15 made every September email state a prime cost on July's
+            # labor % (DH1-3). Labor is MISSING when the freshness registry
+            # reads the shifts stale (or failing), or when that period ended
+            # more than the registry's stale point ago.
+            labor_why = _labor_stale_why(restaurant_id, la, rng.get("end"), today, db_path=db_path)
+            if labor_why is None:
+                labor_pct = _f(la.get("overall_labor_pct"))
         else:
             labor_why = "no shift data synced — labor cannot be measured"
     except Exception as e:
@@ -947,6 +1029,9 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
                 "specific days."))
     if missing:
         return {"available": False, "missing": missing, "basis": basis,
+                "labor_period": labor_period,
+                "labor_period_start": labor_period_start, "labor_period_end": labor_period_end,
+                "labor_from": labor_from,
                 "reason": "; ".join(m["component"] for m in missing) + " missing"}
 
     days_in_month = ((month_start + timedelta(days=32)).replace(day=1) - month_start).days
@@ -1008,6 +1093,7 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
                              "food cost component only." if prev_pct is not None else None),
         "labor_period": labor_period,
         "labor_period_start": labor_period_start, "labor_period_end": labor_period_end,
+        "labor_from": labor_from,
         "basis": basis,
     }
 
@@ -1172,7 +1258,7 @@ def record_profitability_forecast(restaurant_id: int, db_path: str = DB_PATH, to
     15th, is a forecast; the last render before month end is a reading."""
     from datetime import date as _date
     import forecast_log
-    today = today or _date.today()
+    today = today or _local_today(restaurant_id)
     if today.day < PROFITABILITY_FORECAST_DAY:
         return {"recorded": False, "reason": "before the 15th"}
     if forecast_log.frozen(restaurant_id, "profitability_month", today, db_path=db_path):

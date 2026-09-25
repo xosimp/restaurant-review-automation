@@ -53,6 +53,13 @@ SOURCES = {
     # ordering.COUNT_FRESH_DAYS: an order built on an older count is held.
     "inventory":  {"label": "Counts",         "expected_lag": 0.0,  "grace": 7.0, "horizon": 14},
     "purchases":  {"label": "Deliveries",     "expected_lag": 0.0,  "grace": 7.0, "horizon": 14},
+    # The waste log, dated by its newest waste event (DH1-1): "waste this
+    # week" is summed from those events, so a log nobody has written to in
+    # three weeks is an old reading, not a clean week.
+    "waste":      {"label": "Waste log",      "expected_lag": 0.0,  "grace": 7.0, "horizon": 14},
+    # Ingredient prices, dated by the newest applied invoice or priced
+    # delivery (DH1-5): a price-spike alert or a price driver rests on it.
+    "prices":     {"label": "Prices",         "expected_lag": 0.0,  "grace": 7.0, "horizon": 14},
     "marketing":  {"label": "Marketing",      "expected_lag": 0.0,  "grace": 10.0, "horizon": 14},
     "visibility": {"label": "AI visibility",  "expected_lag": 0.0,  "grace": 7.0, "horizon": 14},
     "competitor": {"label": "Competitors",    "expected_lag": 0.0,  "grace": 7.0, "horizon": 14},
@@ -69,6 +76,7 @@ CADENCE = {
     "pos": (24, "nightly"), "labor": (24, "nightly"), "sales": (24, "nightly"),
     "reviews": (4, "4× a day"), "inventory": (None, "when you count"),
     "purchases": (None, "when deliveries are logged"), "marketing": (24, "nightly"),
+    "waste": (None, "when waste is logged"), "prices": (None, "when invoices are applied"),
     "visibility": (168, "weekly"), "competitor": (168, "weekly"), "weather": (6, "every 6 hours"),
     "dsr": (24, "nightly, after close"),
 }
@@ -101,9 +109,14 @@ MODULE_SOURCES = {
     "labor": ("labor", "pos", "sales"),
     "schedule": ("labor", "pos", "sales", "weather"),
     "demand": ("sales", "pos", "weather"),
-    "inventory": ("inventory", "pos", "sales"),
-    "food": ("inventory", "pos", "sales"),
-    "food_cost": ("inventory", "pos", "sales"),
+    # Food rests on the counts, the deliveries (COGS = opening + purchases −
+    # closing: deliveries that stop being logged make food cost look better,
+    # DH3-4) and the waste log (the week's waste, DH1-1). A restaurant that
+    # never logged a delivery or a waste reads those two not_connected and
+    # they leave the minimum.
+    "inventory": ("inventory", "purchases", "waste", "pos", "sales"),
+    "food": ("inventory", "purchases", "waste", "pos", "sales"),
+    "food_cost": ("inventory", "purchases", "waste", "pos", "sales"),
     "marketing": ("marketing",),
     # Guest campaigns measured by guests who came back: matched through the
     # POS's orders (guest_marketing._with_confidence).
@@ -292,6 +305,15 @@ def age_pct(key, lag_days, completeness=1.0, error=False):
 
 
 _score = age_pct
+
+
+def stale_after_days(key) -> float:
+    """The data age, in days, past which `key` reads stale (its pct falls
+    under confidence_engine.AGING_AT) — the registry's stale point, for a
+    caller that holds a date rather than a source reading (prime cost's
+    labor period, DH1-3)."""
+    cfg = SOURCES[key]
+    return cfg["expected_lag"] + cfg["grace"] + cfg["horizon"] * (1 - ce.AGING_AT / 100.0)
 
 
 def _future(d, today):
@@ -504,11 +526,82 @@ def _inventory(r, conn, today, now, ctx, db_path=None):
                        "FROM ingredients WHERE restaurant_id=? AND is_active=1", (_rid(r),)).fetchone()
     n, counted = int(row["n"] or 0), int(row["counted"] or 0)
     if not n:
+        # The legacy inventory-CSV path: inventory.load_inventory_for_restaurant
+        # serves live stock and waste from client_data.inventory_csv when the
+        # ingredients table is empty. That is data on file with no count date
+        # — `unknown` (pct 0, never fresh), never "not connected", which
+        # dropped it from the minimum and let POS and sales alone set food
+        # cost's confidence over a six-month-old upload (DH1-6). The upload
+        # date is named; it is not a count date (any upload moves it).
+        up = None
+        try:
+            up = conn.execute("SELECT updated_at FROM client_data WHERE restaurant_id=? AND "
+                              "inventory_csv IS NOT NULL AND TRIM(inventory_csv) != ''", (_rid(r),)).fetchone()
+        except Exception:
+            up = None
+        if up:
+            when = ce._mdy(str(up["updated_at"] or "")[:10])
+            return _result("inventory", 0, None,
+                           (f"Inventory file uploaded {when}, count date unknown" if when
+                            else "Inventory file on file, count date unknown"),
+                           state="unknown", legacy_csv=True, uploaded_at=up["updated_at"])
         return _result("inventory", None, None, "No ingredients on file", state="not_connected")
     d = _as_date(row["oldest"])
     comp = counted / float(n) if n else 0.0
     extra = f"{counted} of {n} items counted" if counted < n else ""
     return _data_date_state("inventory", d, today, "Oldest count", comp, extra)
+
+
+def _waste(r, conn, today, now, ctx, db_path=None):
+    """The waste log, dated by its newest waste event (a manager's entry or
+    one a recount inferred) — "waste this week" is summed from those events
+    at read time (inventory_ledger.waste_in_window, DH1-1). The last
+    rollup recompute (ingredients.rollup_at) is a note, not the date: it
+    says when the cached per-item figures last moved."""
+    row = conn.execute("SELECT MAX(event_date) AS d FROM ingredient_stock_events WHERE restaurant_id=? "
+                       "AND event_type='waste' AND event_date <= ?", (_rid(r), _latest_ok(today))).fetchone()
+    d = _as_date(row["d"] if row else None)
+    if d is None:
+        return _result("waste", None, None, "No waste logged", state="not_connected")
+    note = ""
+    try:
+        ru = conn.execute("SELECT MAX(rollup_at) AS t FROM ingredients WHERE restaurant_id=? AND is_active=1",
+                          (_rid(r),)).fetchone()
+        if ru and ru["t"]:
+            note = f"item figures recomputed {ce._mdy(str(ru['t'])[:10])}"
+    except Exception:
+        note = ""
+    return _data_date_state("waste", d, today, "Last waste logged", 1.0, note)
+
+
+def _prices(r, conn, today, now, ctx, db_path=None):
+    """Ingredient prices, dated by the newest applied invoice (its invoice
+    date, else when it was applied) or priced delivery (a receiving event
+    that recorded its unit cost) — whichever is newer (DH1-5). A price typed
+    on the ingredient carries no date and cannot date this source."""
+    inv = rec = None
+    try:
+        row = conn.execute("SELECT MAX(COALESCE(NULLIF(invoice_date, ''), applied_at)) AS d FROM invoice_imports "
+                           "WHERE restaurant_id=? AND applied_at IS NOT NULL", (_rid(r),)).fetchone()
+        inv = _as_date(row["d"] if row else None)
+    except Exception:
+        inv = None
+    try:
+        row = conn.execute("SELECT MAX(event_date) AS d FROM ingredient_stock_events WHERE restaurant_id=? "
+                           "AND event_type='receiving' AND unit_cost IS NOT NULL AND unit_cost > 0 "
+                           "AND event_date <= ?", (_rid(r), _latest_ok(today))).fetchone()
+        rec = _as_date(row["d"] if row else None)
+    except Exception:
+        rec = None
+    if inv is not None and _future(inv, today):
+        inv = None
+    d = max([x for x in (inv, rec) if x is not None], default=None)
+    if d is None:
+        return _result("prices", None, None, "No invoice or priced delivery on file", state="not_connected")
+    word = "Last invoice" if (inv is not None and d == inv) else "Last priced delivery"
+    out = _data_date_state("prices", d, today, word)
+    out["last_invoice_iso"] = inv.isoformat() if inv else None
+    return out
 
 
 def _purchases(r, conn, today, now, ctx, db_path=None):
@@ -727,7 +820,8 @@ def _with_health(res, key, restaurant, conn):
 
 
 _READERS = {"pos": _pos, "labor": _labor, "sales": _sales, "reviews": _reviews, "inventory": _inventory,
-            "purchases": _purchases, "marketing": _marketing, "visibility": _visibility,
+            "purchases": _purchases, "waste": _waste, "prices": _prices,
+            "marketing": _marketing, "visibility": _visibility,
             "competitor": _competitor, "weather": _weather, "dsr": _dsr}
 
 

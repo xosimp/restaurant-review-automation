@@ -345,8 +345,8 @@ def opportunity(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None)
     """
     restaurant = get_restaurant(restaurant_id, db_path=db_path)
     if not restaurant:
-        return {"items": [], "monthly": 0.0}
-    items = []
+        return {"items": [], "monthly": 0.0, "withheld": []}
+    items, withheld = [], []
     if restaurant.module_labor:
         try:
             from labor import analyse_shifts_for_restaurant
@@ -355,8 +355,9 @@ def opportunity(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None)
             if labor.get("is_live"):
                 v = float(labor.get("potential_savings_monthly", 0) or 0)
                 if v > 0:
-                    items.append({"key": "labor", "label": "Scheduling against your target",
-                                  "monthly": round(v, 2), "module": "labor"})
+                    _dated(items, withheld, restaurant, {"key": "labor", "label": "Scheduling against your target",
+                                                          "monthly": round(v, 2), "module": "labor"},
+                           ("labor",), {"labor": labor}, db_path)
         except Exception:
             pass
     if restaurant.module_inventory and "inventory" not in set(denied_modules or ()):
@@ -366,13 +367,56 @@ def opportunity(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None)
             if live:
                 v = float(inv.get("recoverable_monthly", 0) or 0)
                 if v > 0:
-                    items.append({"key": "inventory", "label": "Waste above tolerance",
-                                  "monthly": round(v, 2), "module": "inventory"})
+                    _dated(items, withheld, restaurant, {"key": "inventory", "label": "Waste above tolerance",
+                                                          "monthly": round(v, 2), "module": "inventory"},
+                           ("inventory", "waste"), None, db_path)
         except Exception:
             pass
     return {"items": items,
             "monthly": round(sum(i["monthly"] for i in items), 2),
+            # Items held back because a source they rest on is stale: named,
+            # dated, and carrying no dollars (DH1-4).
+            "withheld": withheld,
             "basis": "gaps against your own targets — available, not captured"}
+
+
+def _dated(items, withheld, restaurant, item, sources, context, db_path):
+    """Date one opportunity item from the freshness registry and file it
+    (DH1-4). The item's `as_of` is its stalest source's data date and
+    `state` that source's state. A source that is stale, unknown or failing
+    withholds the item — its gap was measured on data that no longer
+    describes the restaurant (a June labor period, a waste log nobody has
+    written to in weeks), so its dollars are neither shown nor in `monthly`.
+    An aging source keeps the item, marked `aged` with its as-of date, so
+    it is visibly old rather than silently current. Unreadable freshness
+    keeps the item undated: the arithmetic is unchanged and the gap is
+    real on the data it was read from."""
+    import data_freshness as _df
+    try:
+        states = [_df.source_state(restaurant, k, db_path=db_path, context=context) for k in sources]
+    except Exception:
+        items.append(item)
+        return
+    use = [s for s in states if s and s.get("state") != "not_connected"]
+    rank = {"unknown": 0, "stale": 1, "aging": 2, "current": 3}
+    worst = min(use, key=lambda s: (0 if s.get("error") else 1, rank.get(s.get("state"), 0),
+                                    s.get("pct") or 0)) if use else None
+    if worst is None:
+        items.append(item)
+        return
+    item["as_of"] = worst.get("as_of")
+    item["as_of_iso"] = worst.get("as_of_iso")
+    item["source"] = worst.get("key")
+    item["state"] = worst.get("state")
+    if worst.get("error") or worst.get("state") in ("stale", "unknown"):
+        withheld.append({"key": item["key"], "label": item["label"], "module": item["module"],
+                         "source": worst.get("key"), "state": worst.get("state"),
+                         "as_of": worst.get("as_of"), "as_of_iso": worst.get("as_of_iso"),
+                         "reason": (f"{worst.get('label') or worst.get('key')} is out of date"
+                                    + (f" — {worst.get('basis')}" if worst.get("basis") else ""))})
+        return
+    item["aged"] = worst.get("state") == "aging"
+    items.append(item)
 
 
 # ── The whole picture ───────────────────────────────────────────────────────

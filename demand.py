@@ -41,19 +41,37 @@ def _median(vals):
     return s[mid] if len(s) % 2 else (s[mid - 1] + s[mid]) / 2
 
 
-def _weekday_history(restaurant_id, weekday, before, weeks=LOOKBACK_WEEKS, db_path=DB_PATH):
-    """Sales on `weekday` in the `weeks` before `before` (exclusive), so a day
-    is never compared with a baseline that contains itself."""
+def local_today(restaurant_id):
+    """The restaurant's own calendar date (time_utils.restaurant_now_by_id)
+    — the day a forecast is for and the edge of every window here. The
+    server's date.today() is UTC on the host: after 7pm Central "today"
+    was tomorrow (DH1-14)."""
+    try:
+        from time_utils import restaurant_now_by_id
+        return restaurant_now_by_id(restaurant_id).date()
+    except Exception:
+        return date.today()
+
+
+def _weekday_history_dated(restaurant_id, weekday, before, weeks=LOOKBACK_WEEKS, db_path=DB_PATH):
+    """[(ISO date, sales)] on `weekday` in the `weeks` before `before`
+    (exclusive), oldest first."""
     start = (before - timedelta(weeks=weeks)).isoformat()
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
             "SELECT date, sales FROM labor_daily_history WHERE restaurant_id=? AND day_of_week=? "
-            "AND date>=? AND date<? AND sales IS NOT NULL AND sales > 0",
+            "AND date>=? AND date<? AND sales IS NOT NULL AND sales > 0 ORDER BY date",
             (restaurant_id, weekday, start, before.isoformat())).fetchall()
     finally:
         conn.close()
-    return [float(r["sales"]) for r in rows]
+    return [(str(r["date"])[:10], float(r["sales"])) for r in rows]
+
+
+def _weekday_history(restaurant_id, weekday, before, weeks=LOOKBACK_WEEKS, db_path=DB_PATH):
+    """Sales on `weekday` in the `weeks` before `before` (exclusive), so a day
+    is never compared with a baseline that contains itself."""
+    return [v for _d, v in _weekday_history_dated(restaurant_id, weekday, before, weeks, db_path=db_path)]
 
 
 # The stated range around a forecast is an 80% PREDICTION range for the next
@@ -103,28 +121,53 @@ def prediction_range(hist):
     return math.exp(m - half), math.exp(m + half)
 
 
+# The newest night a day forecast rests on may be at most this many days
+# before the day it is for. After the POS stops, "a typical Saturday" could
+# come from three Saturdays six to eight weeks back and read like this
+# week's expectation (DH1-18); past this it is withheld and says why.
+STALE_SAMPLE_DAYS = 14
+
+
 def forecast_day(restaurant_id, day=None, db_path=DB_PATH):
-    """Typical sales for `day` (default today), from its own weekday history.
+    """Typical sales for `day` (default the restaurant's today), from its own
+    weekday history.
 
     `low`/`high` are the 80% prediction range for the night (prediction_range)
     once there are RANGE_MIN_SAMPLES past nights; None before that, with
-    `range_note` saying so."""
-    day = day or date.today()
+    `range_note` saying so. `newest_sample` is the newest night it rests on,
+    named in `range_basis` / `range_note`; a forecast whose newest night is
+    more than STALE_SAMPLE_DAYS before `day` is withheld (DH1-18)."""
+    from time_utils import mdy as _mdy
+    day = day or local_today(restaurant_id)
     weekday = day.strftime("%A")
-    hist = _weekday_history(restaurant_id, weekday, day, db_path=db_path)
+    dated = _weekday_history_dated(restaurant_id, weekday, day, db_path=db_path)
+    hist = [v for _d, v in dated]
     if len(hist) < MIN_SAMPLES:
         return {"available": False, "day": day.isoformat(), "weekday": weekday,
                 "reason": f"only {len(hist)} past {weekday}s with sales on file"}
+    newest = dated[-1][0]
+    try:
+        newest_age = (day - date.fromisoformat(newest)).days
+    except ValueError:
+        newest_age = None
+    if newest_age is None or newest_age > STALE_SAMPLE_DAYS:
+        return {"available": False, "day": day.isoformat(), "weekday": weekday, "newest_sample": newest,
+                "stale": True,
+                "reason": (f"the newest {weekday} with sales on file is {_mdy(newest)}, more than "
+                           f"{STALE_SAMPLE_DAYS} days before {_mdy(day.isoformat())} — sales have not "
+                           "synced recently, so a typical night can't be stated")}
     out = {"available": True, "day": day.isoformat(), "weekday": weekday,
            "typical_sales": round(_median(hist), 2), "samples": len(hist),
+           "newest_sample": newest,
            "claim_kind": "forecast", "low": None, "high": None, "range_note": None}
     rng = prediction_range(hist) if len(hist) >= RANGE_MIN_SAMPLES else None
     if rng is not None:
         out.update({"low": round(rng[0], 2), "high": round(rng[1], 2),
                     "range_coverage_pct": int(round(RANGE_COVERAGE * 100)),
                     "range_basis": (f"where 8 in 10 nights should land, from the spread of the last "
-                                    f"{len(hist)} {weekday}s")})
+                                    f"{len(hist)} {weekday}s, the newest {_mdy(newest)}")})
     else:
+        out["range_basis"] = f"the last {len(hist)} {weekday}s, the newest {_mdy(newest)}"
         out["range_note"] = (f"range not yet measurable — {len(hist)} past {weekday}s, "
                              f"needs {RANGE_MIN_SAMPLES}")
     return out
@@ -166,7 +209,7 @@ def demand_accuracy(restaurant_id, today=None, days=ACCURACY_WINDOW_DAYS, db_pat
     is the lower (the forecast must beat both), None below
     ACCURACY_MIN_NIGHTS such nights. The evidence input for a
     recommendation built on the demand forecast."""
-    today = today or date.today()
+    today = today or local_today(restaurant_id)
     start = (today - timedelta(days=days)).isoformat()
     end = (today - timedelta(days=1)).isoformat()
     base = {"available": False, "n_nights": 0, "mean_error_pct": None, "bias_pct": None, "actual_vs_forecast_pct": None,
@@ -327,7 +370,7 @@ def yesterday_vs_typical(restaurant_id, today=None, db_path=DB_PATH):
     compares a day that has no sales recorded — an unsynced day is unknown,
     not a catastrophe.
     """
-    today = today or date.today()
+    today = today or local_today(restaurant_id)
     y = today - timedelta(days=1)
     conn = get_conn(db_path)
     try:
@@ -370,7 +413,7 @@ def slow_days(restaurant_id, db_path=DB_PATH):
             continue
         consistency = None
         try:
-            hist = _weekday_history(restaurant_id, d["day"], date.today() + timedelta(days=1),
+            hist = _weekday_history(restaurant_id, d["day"], local_today(restaurant_id) + timedelta(days=1),
                                     db_path=db_path)
             typical = float(overall) if overall else (d.get("median_sales") or 0) / (1 + d["vs_average_pct"] / 100.0)
             if hist and typical:
@@ -392,7 +435,7 @@ def prep_list(restaurant_id, day=None, db_path=DB_PATH, limit=15):
     sub-recipes or batch sizes, and says so — but it answers the question the
     kitchen asks the night before: what are we going to run out of.
     """
-    day = day or (date.today() + timedelta(days=1))
+    day = day or (local_today(restaurant_id) + timedelta(days=1))
     weekday_num = int(day.strftime("%w"))
     start = (day - timedelta(weeks=LOOKBACK_WEEKS)).isoformat()
     conn = get_conn(db_path)
@@ -464,7 +507,7 @@ def quiet_night_ahead(restaurant_id, today=None, db_path=DB_PATH):
     slow, and a restaurant whose days are all within normal variation gets
     nothing rather than a manufactured opportunity.
     """
-    today = today or date.today()
+    today = today or local_today(restaurant_id)
     target = today + timedelta(days=OPPORTUNITY_LEAD_DAYS)
     weekday = target.strftime("%A")
     slow = slow_days(restaurant_id, db_path=db_path)

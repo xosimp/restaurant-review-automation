@@ -347,6 +347,14 @@ def test_a_forecast_of_zero_against_an_actual_of_zero_is_scored_without_dividing
     # A closed week (last week): only a closed period is scored.
     horizon = date.today() - timedelta(days=7)
     _snapshot(db_path, rid, horizon, waste=0.0)
+    # One waste event logged that week (on an uncosted ingredient, so the
+    # week's priced waste is $0): a week with nothing logged is unscorable
+    # now (DH3-15), not a $0 actual.
+    iid = _ingredient(db_path, rid, "Parsley", cost=0.0)
+    c = get_conn(db_path)
+    c.execute("INSERT INTO ingredient_stock_events (restaurant_id, ingredient_id, event_type, qty, event_date, source) "
+              "VALUES (?,?,'waste',1,?,'manual')", (rid, iid, horizon.isoformat()))
+    c.commit(); c.close()
     c = get_conn(db_path)
     c.execute("INSERT INTO forecast_log (restaurant_id, kind, horizon_end, predicted) VALUES (?,?,?,0)",
               (rid, "waste_week", horizon.isoformat()))
