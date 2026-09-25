@@ -859,7 +859,9 @@ def test_google_post_attempt_is_synchronous_not_a_background_thread():
     approve_src = inspect.getsource(client_api._do_approve)
     assert "threading" not in approve_src and "Thread(" not in approve_src
     assert "auto_posted, post_error = _attempt_google_post(rid, restaurant_id, google)" in approve_src
-    assert '"post_error"' in approve_src
+    # The answer is built by _post_payload (shared with retry, F3-3).
+    assert "_post_payload(rid, restaurant_id, auto_posted, post_error)" in approve_src
+    assert '"post_error"' in inspect.getsource(client_api._post_payload)
 
 
 def test_retry_post_route_only_allows_an_approved_google_reply():

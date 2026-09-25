@@ -236,7 +236,7 @@ def test_the_shared_publish_body_names_the_automation_as_actor(db_path, monkeypa
     conn.commit(); conn.close()
     sid = _schedule(db_path, rid, "2099-01-04", shared=False)
     import emails
-    monkeypatch.setattr(emails, "send_staff_schedule_email", lambda **kw: None)
+    monkeypatch.setattr(emails, "send_staff_schedule_email", lambda **kw: emails.SendResult(True))
     logged = []
     monkeypatch.setattr(client_api, "log_account_event", lambda r, t, u=None, detail=None, **k: logged.append((t, (u or {}).get("username"))))
     monkeypatch.setattr(client_api, "get_restaurant", lambda r, **k: models.get_restaurant(r, db_path=db_path))

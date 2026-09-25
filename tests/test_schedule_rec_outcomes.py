@@ -129,7 +129,8 @@ def test_labor_waiting_names_close_requests_and_an_unsent_draft(db):
 def test_a_time_off_request_tells_the_managers(db, monkeypatch):
     import shift_requests, time_off
     told = []
-    monkeypatch.setattr(shift_requests, "_tell_managers", lambda rid, title, body, dbp: told.append((title, body)))
+    monkeypatch.setattr(shift_requests, "_tell_managers",
+                        lambda rid, title, body, dbp, **k: told.append((title, body)))
     rid = create_restaurant(Restaurant(name="Ask Co", owner_email="a@x.com"), db_path=db)
     row, err = time_off.request_time_off(rid, "Ana", "2026-10-02", "2026-10-02", db_path=db,
                                          today=__import__("datetime").date(2026, 10, 1))

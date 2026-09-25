@@ -933,15 +933,23 @@ def _draft_one(r, db_path, _se, _bump):
         # The owner's task, not the line cook's: a teammate with the app
         # was told to review and publish a schedule they cannot publish.
         # morning_brief.recipients is the same audience the brief uses.
+        # Only the ones who can publish it (SCHEDULE_PUBLISH).
         import morning_brief
-        audience = {u["id"] for u in morning_brief.recipients(r.id, db_path)}
+        from permissions import has_permission, SCHEDULE_PUBLISH
+        audience = {u["id"] for u in morning_brief.recipients(r.id, db_path)
+                    if has_permission(u, SCHEDULE_PUBLISH)}
         if not notify.briefing_allowed(r.id, "schedule_drafted", db_path):
             return
         notify.record_notification(r.id, "schedule_drafted", db_path=db_path)
+        # An empty audience is nobody, not everyone: `user_ids=None` is
+        # every phone at the restaurant, members who cannot publish
+        # included — the case this audience exists to prevent (F2-11).
+        if not audience:
+            return
         push.fire_push(r.id, "schedule_drafted", "Next week's schedule is drafted",
                        "Review it and publish when it looks right — nothing has gone to "
                        "your staff yet.", data={}, db_path=db_path,
-                       user_ids=audience or None)
+                       user_ids=audience)
     except Exception as e:
         ops.capture(e, job="auto_draft_schedule_push", context=f"restaurant_id={r.id}")
 
@@ -1589,7 +1597,7 @@ def _metric_permissions(metric):
 
 
 def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
-           lines=None, email_type=None, rec=None, permissions=None):
+           lines=None, email_type=None, rec=None, permissions=None, deciders=False):
     """Push to the people who have the app, email the ones who don't.
 
     morning_brief.deliver established this — push OR email, never both,
@@ -1597,6 +1605,11 @@ def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
     closing summary and the outcome win were written push-only, so an owner
     without the app simply never learned their change had paid off. Same
     audience either way (morning_brief.recipients).
+
+    `deciders`: the notice waits on someone's decision (a staff request),
+    so it goes to every console login holding `permissions`, whether or not
+    their brief is on — a GM who turned the brief off never heard "Dana
+    asked to drop Friday" (F2-6).
 
     Returns the number of people reached.
     """
@@ -1610,7 +1623,7 @@ def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
     _r = _gr(restaurant_id, db_path=db_path)
     if _r and (_r.billing_status or "trial").lower() in ("paused", "churned", "cancelled", "canceled"):
         return 0
-    people = morning_brief.recipients(restaurant_id, db_path)
+    people = morning_brief.recipients(restaurant_id, db_path, include_opted_out=bool(deciders))
     # Only the people allowed to read what this is about — the rule
     # notify.alert_audience applies to alerts. The brief's audience includes
     # managers who cannot open Food Cost, and they were pushed food-cost

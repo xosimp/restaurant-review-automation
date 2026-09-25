@@ -3538,7 +3538,7 @@ def test_saving_a_contact_makes_that_person_reachable(client, db_path):
 
 def test_publish_sends_each_person_their_own_shifts_and_flags_who_is_unreachable(client, db_path, monkeypatch):
     rid = _restaurant(db_path)
-    _stored_schedule(db_path, rid)
+    sid = _stored_schedule(db_path, rid)
     token = _login(client, db_path, rid)
     client.post("/mobile/api/labor/staff-contacts",
                 json={"employee_name": "Sofia R.", "email": "sofia@x.test"},
@@ -3547,9 +3547,10 @@ def test_publish_sends_each_person_their_own_shifts_and_flags_who_is_unreachable
     sends = []
     import emails as _emails
     monkeypatch.setattr(_emails, "send_staff_schedule_email",
-                        lambda **kw: sends.append(kw) or {"id": "e"})
+                        lambda **kw: sends.append(kw) or _emails.SendResult(True))
 
-    d = client.post("/mobile/api/labor/publish-schedule", headers=_auth_headers(token)).get_json()
+    d = client.post("/mobile/api/labor/publish-schedule", json={"schedule_id": sid},
+                    headers=_auth_headers(token)).get_json()
     assert d["ok"] is True
     assert [s["employee_name"] for s in d["sent"]] == ["Sofia R."]
     assert d["sent"][0]["shifts"] == 2
@@ -3574,9 +3575,10 @@ def test_publish_with_nobody_reachable_publishes_to_the_portal_and_says_so(clien
     # A restaurant whose staff use only the portal must still be able to
     # publish; it used to be refused because no email went out (SCHED-9).
     rid = _restaurant(db_path)
-    _stored_schedule(db_path, rid)
+    sid = _stored_schedule(db_path, rid)
     token = _login(client, db_path, rid)
-    d = client.post("/mobile/api/labor/publish-schedule", headers=_auth_headers(token)).get_json()
+    d = client.post("/mobile/api/labor/publish-schedule", json={"schedule_id": sid},
+                    headers=_auth_headers(token)).get_json()
     assert d["ok"] is True and d["portal_only"] is True
     assert len(d["unreachable"]) == 2
     assert "email address on file" in d["note"].lower()
@@ -3584,7 +3586,7 @@ def test_publish_with_nobody_reachable_publishes_to_the_portal_and_says_so(clien
 
 def test_one_failed_send_does_not_stop_the_others(client, db_path, monkeypatch):
     rid = _restaurant(db_path)
-    _stored_schedule(db_path, rid)
+    sid = _stored_schedule(db_path, rid)
     token = _login(client, db_path, rid)
     for name, email in [("Sofia R.", "sofia@x.test"), ("Marcus T.", "marcus@x.test")]:
         client.post("/mobile/api/labor/staff-contacts", json={"employee_name": name, "email": email},
@@ -3594,10 +3596,11 @@ def test_one_failed_send_does_not_stop_the_others(client, db_path, monkeypatch):
     def _send(**kw):
         if kw["to_email"] == "marcus@x.test":
             raise RuntimeError("550 rejected")
-        return {"id": "e"}
+        return _emails.SendResult(True)
     monkeypatch.setattr(_emails, "send_staff_schedule_email", _send)
 
-    d = client.post("/mobile/api/labor/publish-schedule", headers=_auth_headers(token)).get_json()
+    d = client.post("/mobile/api/labor/publish-schedule", json={"schedule_id": sid},
+                    headers=_auth_headers(token)).get_json()
     assert [s["employee_name"] for s in d["sent"]] == ["Sofia R."]
     assert [f["employee_name"] for f in d["failed"]] == ["Marcus T."]
 
@@ -3610,8 +3613,8 @@ def test_share_status_reports_who_has_opened_the_schedule(client, db_path, monke
                 json={"employee_name": "Sofia R.", "email": "sofia@x.test"},
                 headers=_auth_headers(token))
     import emails as _emails
-    monkeypatch.setattr(_emails, "send_staff_schedule_email", lambda **kw: {"id": "e"})
-    client.post("/mobile/api/labor/publish-schedule", headers=_auth_headers(token))
+    monkeypatch.setattr(_emails, "send_staff_schedule_email", lambda **kw: _emails.SendResult(True))
+    client.post("/mobile/api/labor/publish-schedule", json={"schedule_id": sid}, headers=_auth_headers(token))
 
     d = client.get("/mobile/api/labor/schedule-share-status", headers=_auth_headers(token)).get_json()
     row = next(r for r in d["status"] if r["employee_name"] == "Sofia R.")

@@ -207,7 +207,7 @@ def test_a_delayed_publish_is_held_by_a_blocker_that_appeared_after_it_was_queue
     hid = _history(db_path, rid, CLEAN)
     sent = []
     import emails
-    monkeypatch.setattr(emails, "send_staff_schedule_email", lambda **kw: sent.append(kw["employee_name"]))
+    monkeypatch.setattr(emails, "send_staff_schedule_email", lambda **kw: sent.append(kw["employee_name"]) or emails.SendResult(True))
     monkeypatch.setattr(client_api, "log_account_event", lambda *a, **k: None)
     told = []
     import strategy_jobs

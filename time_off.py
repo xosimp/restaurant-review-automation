@@ -6,10 +6,11 @@ general; the moat audit's #5 is the specific one — "I need the 12th to the
 then a hard constraint on the next schedule draft. No text, no sticky note,
 no manager retyping it.
 
-A request is a row. Nothing here sends anything: the manager sees pending
-requests on Labor (web and phone) and the employee sees the decision in the
-portal. Approved ranges are read by labor.generate_optimized_schedule for
-the week being drafted.
+A request is a row. The managers who can decide it are told when it is
+filed (shift_requests._tell_managers), and the person who asked is told the
+decision on their own channel (people.tell) as well as in the portal.
+Approved ranges are read by labor.generate_optimized_schedule for the week
+being drafted.
 """
 from datetime import date, timedelta
 
@@ -70,8 +71,11 @@ def request_time_off(restaurant_id, employee_name, start, end, reason=None, db_p
         import shift_requests as _sr
         from time_utils import mdy
         span = mdy(s.isoformat()) + ("" if e == s else f"–{mdy(e.isoformat())}")
+        # The id rides along so the push offers Approve / Deny and opens
+        # this request, and it reaches whoever can decide it (F2-6).
         _sr._tell_managers(restaurant_id, "Time off request",
-                           f"{name} asked for {span} off. Approve or decline it in Labor.", db_path)
+                           f"{name} asked for {span} off. Approve or decline it in Labor.", db_path,
+                           req={"id": row["id"], "request_kind": "time_off"})
     except Exception as ex:
         print(f"[time_off] manager notice failed rid={restaurant_id}: {ex!r}")
     return dict(row), None
@@ -176,7 +180,29 @@ def decide(restaurant_id, request_id, approve, decided_by=None, note=None, db_pa
         row = conn.execute("SELECT * FROM staff_time_off WHERE id=?", (int(request_id),)).fetchone()
     finally:
         conn.close()
-    return dict(row)
+    row = dict(row)
+    _tell_requester(restaurant_id, row, db_path)
+    return row
+
+
+def _tell_requester(restaurant_id, row, db_path=DB_PATH):
+    """The person who asked hears the answer — on the app, a text they
+    agreed to, or email (people.tell). A decision used to reach nobody: the
+    employee found out only if they opened the portal (F2-5). Never raises."""
+    try:
+        import people
+        from time_utils import mdy_range
+        span = mdy_range(row["start_date"], row["end_date"])
+        if row["status"] == "approved":
+            title, lines = "Your time off is approved", [f"Your manager approved your time off {span}."]
+        else:
+            title, lines = "Your time off request was declined", [
+                f"Your manager declined your time off request for {span}. Talk to them if that is a problem."]
+        if row.get("decision_note"):
+            lines.append(f"Their note: {row['decision_note']}")
+        people.tell(restaurant_id, row["employee_name"], title, lines, email_type="time_off", db_path=db_path)
+    except Exception as e:
+        print(f"[time_off] decision notice failed rid={restaurant_id}: {e!r}")
 
 
 def approved_in_window(restaurant_id, start, end, db_path=DB_PATH):

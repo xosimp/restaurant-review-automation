@@ -408,14 +408,23 @@ def list_imports(restaurant_id, limit=20, db_path=DB_PATH):
     return out
 
 
-def checked_selections(invoice) -> list:
+def checked_selections(invoice, verified_only=False) -> list:
     """The selections apply() takes for every line of a loaded import that
     Cavnar preselected and has not been applied: matched to one ingredient,
     with a proposed cost. What "apply the checked lines" means when it is
-    not a person ticking boxes (Ask's apply_invoice_lines)."""
+    not a person ticking boxes (Ask's apply_invoice_lines).
+
+    `verified_only`: only lines whose reading passed both checks (`verified`
+    — the arithmetic ran and agreed, and there was a current cost to compare
+    with). Ask confirms from a card, not from the invoice photo, so it takes
+    only these; a preselected line that could not be checked stays for the
+    owner on the invoice card (F2-4, the AI-19 rule the trusted-supplier
+    apply already follows)."""
     out = []
     for ln in (invoice or {}).get("lines") or []:
         if ln.get("applied") or not ln.get("selected"):
+            continue
+        if verified_only and not ln.get("verified"):
             continue
         if not ln.get("ingredient_id") or not ln.get("proposed_cost"):
             continue

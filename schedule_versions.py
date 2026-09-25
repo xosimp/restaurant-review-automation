@@ -343,6 +343,67 @@ def _versions(restaurant_id, history_id, db_path=DB_PATH) -> list:
     return out
 
 
+def _person_shifts(rows, key) -> list:
+    return sorted((r.get("date", ""), r.get("shift_start", ""), r.get("shift_end", ""),
+                   (r.get("role") or "").strip().lower())
+                  for r in rows if " ".join((r.get("employee") or "").split()).casefold() == key)
+
+
+def unsent_changes(restaurant_id, history_id, csv_text=None, db_path=DB_PATH):
+    """Who has shifts on this PUBLISHED week that differ from what they were
+    last told, or None when the week was never published.
+
+    {"people": [names], "dates": [iso dates whose shifts changed]}.
+
+    What a person was last told is the last `published` version (the week
+    went out, or its changes did) — or, for the two people in a cover or a
+    swap after it, that `swap` version: shift_requests told both of them
+    itself. Diffing only against `published` re-sent a cover to both people
+    on the manager's next edit (F2-2). `csv_text` is the week as it stands
+    (default: the stored week)."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT published_at, schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
+                           (history_id, restaurant_id)).fetchone()
+        if not row or not row["published_at"]:
+            return None
+        versions = conn.execute("SELECT version, reason, schedule_csv FROM schedule_versions WHERE history_id=? "
+                                "AND restaurant_id=? ORDER BY version", (history_id, restaurant_id)).fetchall()
+    finally:
+        conn.close()
+    now_rows = rows_from_csv(row["schedule_csv"] if csv_text is None else csv_text)
+    last_pub = max((i for i, v in enumerate(versions) if v["reason"] == "published"), default=None)
+    if last_pub is None:
+        # A week published before versions were kept: nothing on file says
+        # what anyone was told, so nobody is claimed to be behind.
+        return {"people": [], "dates": []}
+    base = rows_from_csv(versions[last_pub]["schedule_csv"])
+    personal, prev = {}, base
+    for v in versions[last_pub + 1:]:
+        cur = rows_from_csv(v["schedule_csv"])
+        if v["reason"] == "swap":
+            d = diff(prev, cur)
+            parties = {(r.get("employee") or "") for r in d["added"] + d["removed"] + d["retimed"] + d["role_changed"]}
+            parties |= {m.get("from") or "" for m in d["moved"]} | {m.get("to") or "" for m in d["moved"]}
+            for p in parties:
+                k = " ".join(p.split()).casefold()
+                if k:
+                    personal[k] = cur
+        prev = cur
+    names = {}
+    for r in base + now_rows + [r for rows in personal.values() for r in rows]:
+        n = " ".join((r.get("employee") or "").split())
+        if n:
+            names.setdefault(n.casefold(), n)
+    people, dates = [], set()
+    for k, n in sorted(names.items()):
+        was, now = _person_shifts(personal.get(k, base), k), _person_shifts(now_rows, k)
+        if was != now:
+            people.append(n)
+            dates |= {s[0] for s in set(was) ^ set(now) if s[0]}
+    return {"people": people, "dates": sorted(dates)}
+
+
 def draft_vs_published(restaurant_id, history_id, db_path=DB_PATH) -> dict:
     """The first version against the latest, which is what a manager means
     by "what did I change before I sent it"."""

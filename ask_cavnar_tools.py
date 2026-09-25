@@ -2870,6 +2870,16 @@ def build_proposal(name, tool_input, restaurant_id=None):
                 h = None
             if h:
                 args["draft_hash"] = h
+    if name == "publish_schedule" and not args.get("schedule_id") and restaurant_id is not None:
+        # The route requires the week it sends (F2-10). The card describes
+        # the newest schedule (proposal_details), so that is the one named.
+        try:
+            from models import get_schedule_history
+            newest = (get_schedule_history(restaurant_id, limit=1) or [None])[0]
+        except Exception:
+            newest = None
+        if newest:
+            args["schedule_id"] = newest["id"]
     summary = tool["summary"]
     if "{supplier}" in summary:
         summary = summary.replace("{supplier}", args.get("supplier_email") or "every supplier")
@@ -3002,7 +3012,8 @@ def _invoice_or_po(name, args, restaurant_id):
         if not row:
             return None
         inv = invoices.get_import(restaurant_id, row["id"]) or {}
-        checked = invoices.checked_selections(inv)
+        # The lines the route will apply on confirm (verified only, F2-4).
+        checked = invoices.checked_selections(inv, verified_only=True)
         if not checked:
             return None
         return {"id": row["id"], "label": row.get("supplier") or None, "invoice": inv, "checked": checked}
@@ -3181,8 +3192,11 @@ def proposal_details(name, args, restaurant_id) -> dict:
                                 "value": f"{_money(ln.get('current_cost')) or '—'} → {_money(s['unit_cost'])}"})
             left = sum(1 for ln in (target["invoice"].get("lines") or []) if not ln.get("applied")) - len(target["checked"])
             if left > 0:
-                details.append({"label": "Left for you", "value": f"{left} flagged line{'' if left == 1 else 's'} "
-                                                                  "stay on the Food Cost invoice card"})
+                # Flagged lines and preselected ones Cavnar could not check
+                # (no quantity or total read, no current cost) — both wait
+                # for the owner with the photo in front of them (F2-4).
+                details.append({"label": "Left for you", "value": f"{left} line{'' if left == 1 else 's'} Cavnar "
+                                                                  "couldn't verify stay on the Food Cost invoice card"})
         elif target:
             po = target["po"]
             stake = round(float(po.get("total_cost") or 0), 2)

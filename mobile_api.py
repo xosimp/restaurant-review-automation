@@ -4691,6 +4691,8 @@ def _do_mobile_account(current_user):
         # "closures" now writes (U2-3). skip_holidays is the marketing
         # holiday-skip list, not closures.
         "closures": __import__("schedule_rules").closures(restaurant)["closed_dates"],
+        # POST /account/hours is the owner's (F2-3): read-only for others.
+        "hours_can_edit": __import__("permissions").is_principal(current_user),
     }
     # Where a 2FA code actually goes, masked, for the Security sheet's
     # status tile ("Text · •••-0142" / "Email · ma***@giamia.com").
@@ -6642,26 +6644,29 @@ def mobile_score_schedule(current_user):
                 _log_account_event(rid, "schedule_edited", current_user, detail=f"history {saved}: {len(rows)} rows")
             except Exception:
                 pass
-            # A week staff were already sent: the people whose shifts
-            # changed are told, and the week is stamped as changed since
-            # it went out. Nobody else hears about it. (This sat inside the
-            # except above, so it only ran when logging failed — never.)
+            # A week staff were already sent: nobody is told from a save.
+            # The save records the edit; the people whose shifts differ
+            # from what they were last told come back as `unsent_changes`,
+            # and Send (publish-schedule, SCHEDULE_PUBLISH, the gate and the
+            # undo window) tells them. A save used to email them itself —
+            # under SCHEDULE_DRAFT alone, past the gate, on every save (F2-2).
             try:
-                _changed_dates = []
-                changed = _notify_changed_rows(rid, saved, csv_text, current_user, changed_dates=_changed_dates)
-                if changed is not None:
-                    _resp_changed = changed
-                # A change to a week staff already have, inside the notice
-                # window: where a predictive-scheduling law applies the
-                # restaurant may owe premium pay for it. Said as that — a
-                # possibility to check, never a sum (NS5 H2).
-                if _changed_dates:
-                    import schedule_rules as _sr_w
-                    from time_utils import restaurant_now_by_id as _rnow_w
-                    _late_warning = _sr_w.late_change_warning(
-                        _sr_w.compliance(rid), _changed_dates, _rnow_w(rid, naive=True).date())
+                import schedule_versions as _sv_u
+                pending = _sv_u.unsent_changes(rid, saved, csv_text)
+                if pending is not None:
+                    _resp_unsent = pending["people"]
+                    # A change to a week staff already have, inside the
+                    # notice window: where a predictive-scheduling law
+                    # applies the restaurant may owe premium pay for it.
+                    # Said as that — a possibility to check, never a sum
+                    # (NS5 H2).
+                    if pending["dates"]:
+                        import schedule_rules as _sr_w
+                        from time_utils import restaurant_now_by_id as _rnow_w
+                        _late_warning = _sr_w.late_change_warning(
+                            _sr_w.compliance(rid), pending["dates"], _rnow_w(rid, naive=True).date())
             except Exception as _nx:
-                print(f"[schedule] re-notify failed: {_nx}")
+                print(f"[schedule] unsent-changes check failed: {_nx}")
         # The rescored verdict is on the manager's screen: its
         # recommendations are shown now (re-audit C1).
         from schedule_engine import present_quality
@@ -6670,7 +6675,10 @@ def mobile_score_schedule(current_user):
         return jsonify(ok=True, quality=quality, what_if=what_if, saved=bool(saved),
                        violations=violations or [], review=review,
                        history_id=saved or None,
-                       changed_since_sent=locals().get("_resp_changed"),
+                       # Who a Send would tell: shifts that differ from
+                       # what each person was last told (null: the week was
+                       # never sent). Nobody has been told yet.
+                       unsent_changes=locals().get("_resp_unsent"),
                        late_change_warning=locals().get("_late_warning"),
                        capability_version=capability_version(rid)), 200
     except Exception as e:
@@ -6695,78 +6703,6 @@ def _mark_review_rows(rows, violations):
     for i, r in enumerate(rows):
         if i not in still and "NEEDS REVIEW" in (r.get("notes") or ""):
             r["notes"] = _REVIEW_MARK.sub("", r.get("notes") or "").strip()
-
-
-def _notify_changed_rows(rid, history_id, csv_text, actor, changed_dates=None):
-    """After an edit to a PUBLISHED week: diff against what was last sent,
-    email each person whose own shifts changed (their new week, with the
-    link they already have), stamp republished_at. Returns the list of
-    people told, or None when the week was never published. `changed_dates`,
-    when given, is filled with the dates whose shifts changed (the notice
-    window warning reads them)."""
-    import schedule_versions as _sv
-    from models import get_conn as _gc, get_staff_contacts, get_restaurant, _ensure_history_columns
-    conn = _gc()
-    try:
-        _ensure_history_columns(conn)
-        row = conn.execute("SELECT published_at, week_start, week_end FROM schedule_history WHERE id=? AND restaurant_id=?",
-                           (history_id, rid)).fetchone()
-        if not row or not row["published_at"]:
-            return None
-        sent = conn.execute("SELECT schedule_csv FROM schedule_versions WHERE history_id=? AND reason='published' "
-                            "ORDER BY version DESC LIMIT 1", (history_id,)).fetchone()
-    finally:
-        conn.close()
-    before = _sv.rows_from_csv(sent["schedule_csv"] if sent else "")
-    after = _sv.rows_from_csv(csv_text)
-    d = _sv.diff(before, after)
-    people = set()
-    for r in d["added"] + d["removed"]:
-        people.add((r.get("employee") or "").strip())
-    for m in d["moved"]:
-        people.add((m.get("from") or "").strip()); people.add((m.get("to") or "").strip())
-    for r in d["retimed"]:
-        people.add((r.get("employee") or "").strip())
-    people.discard("")
-    if changed_dates is not None:
-        for r in d["added"] + d["removed"] + d["retimed"] + d["moved"]:
-            dd = (r.get("date") or (r.get("row") or {}).get("date") or "")[:10]
-            if dd and dd not in changed_dates:
-                changed_dates.append(dd)
-    if not people:
-        return []
-    restaurant = get_restaurant(rid)
-    contacts = {c["employee_name"].lower(): c for c in get_staff_contacts(rid)}
-    told = []
-    week_label = f"{row['week_start']} – {row['week_end']}" if row["week_end"] else (row["week_start"] or "")
-    from labor import employee_shifts_from_csv
-    from models import create_schedule_share
-    import config as _cfg
-    for name in sorted(people):
-        email = ((contacts.get(name.lower()) or {}).get("email") or "").strip()
-        if not email:
-            continue
-        try:
-            token = create_schedule_share(rid, history_id, name, sent_to=email)
-            from emails import send_staff_schedule_email
-            send_staff_schedule_email(to_email=email, employee_name=name, restaurant_name=restaurant.name,
-                                      week_label=f"{week_label} (updated)", link=f"{_cfg.base_url()}/s/{token}",
-                                      shifts=employee_shifts_from_csv(csv_text, name),
-                                      reply_to=restaurant.owner_email or None)
-            told.append(name)
-        except Exception as e:
-            print(f"[schedule] re-notify {name} failed: {e}")
-    conn = _gc()
-    try:
-        conn.execute("UPDATE schedule_history SET republished_at=datetime('now') WHERE id=? AND restaurant_id=?", (history_id, rid))
-        conn.commit()
-    finally:
-        conn.close()
-    try:
-        _sv.append(rid, history_id, "published", csv_text, saved_by=(actor.get("username") or actor.get("email")) if isinstance(actor, dict) else None)
-    except Exception:
-        pass
-    return told
 
 
 def _rows_to_csv(rows: list) -> str:

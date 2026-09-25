@@ -2961,7 +2961,10 @@ def run_auto_publish_schedules():
                       if soft else "")
                    + " Undo from Home before then if you'd rather look first.",
                    {"delayed_action_id": action["id"]}, DB_PATH,
-                   subject=f"Publishing next week's schedule at {at} — {r.name}")
+                   subject=f"Publishing next week's schedule at {at} — {r.name}",
+                   # It carries Undo: only to the people the cancel route
+                   # lets undo it (F3-13).
+                   permissions=[__import__("permissions").SCHEDULE_PUBLISH])
             queued += 1
         except Exception as e:
             _ops.capture(e, job="auto_publish_schedule", context=f"restaurant_id={r.id}")

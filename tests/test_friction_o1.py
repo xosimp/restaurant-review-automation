@@ -166,7 +166,7 @@ def _week(db, rid, names):
 def sends(monkeypatch):
     out = {"sms": [], "email": [], "push": []}
     import emails
-    monkeypatch.setattr(emails, "send_staff_schedule_email", lambda **kw: out["email"].append(kw["employee_name"]))
+    monkeypatch.setattr(emails, "send_staff_schedule_email", lambda **kw: out["email"].append(kw["employee_name"]) or emails.SendResult(True))
     monkeypatch.setattr(notify, "send_sms", lambda to, msg, use_case="alert": out["sms"].append((to, use_case, msg)) or True)
     monkeypatch.setattr(push, "fire_push", lambda rid, t, title, body, data=None, user_ids=None, **k:
                         out["push"].append((t, list(user_ids or []), data)) or 1)

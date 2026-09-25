@@ -555,33 +555,28 @@ def _contacts(restaurant_id, db_path):
 
 
 def _email_staff(restaurant_id, people, subject, lines, db_path) -> int:
-    """Email each named person who has an address on file. Returns how many."""
-    import html as _h
-    try:
-        import emails as _emails
-        from config import base_url
-        from models import get_restaurant
-        r = get_restaurant(restaurant_id, db_path)
-        place = (getattr(r, "location_name", None) or getattr(r, "name", None) or "your restaurant") if r else "your restaurant"
-    except Exception:
+    """Tell each named person, on the channel they signed up with
+    (people.tell: the app, a text they agreed to, email as the fallback).
+    Returns how many were reached. The name is historical: it emailed only,
+    so a person with no address on file never heard their drop was approved
+    or their swap went through (F2-12)."""
+    import people as _people
+    names = [p for p in (people or []) if (p or "").strip()]
+    if not names:
         return 0
-    book = _contacts(restaurant_id, db_path)
+    try:
+        channels = _people.reach(restaurant_id, names, db_path=db_path)
+    except Exception as e:
+        print(f"[shift_requests] reach failed rid={restaurant_id}: {e!r}")
+        channels = {}
     sent = 0
-    for person in people:
-        c = book.get((person or "").strip().lower()) or {}
-        if not c.get("email"):
-            continue
+    for person in names:
         try:
-            html = _emails.report_shell(kicker=place, title=subject, subtitle="",
-                                        sections=[_emails.report_paragraph(_h.escape(x)) for x in lines],
-                                        cta_label="Open the staff portal", cta_url=base_url() + "/staff")
-            res = _emails.deliver(email_type="shift_request", restaurant_id=restaurant_id, payload={
-                "from": _emails.sender("client"), "to": [c["email"]],
-                "subject": f"{subject} — {place}", "preheader": lines[0][:120] if lines else subject, "html": html})
-            if getattr(res, "ok", False):
+            if _people.tell(restaurant_id, person, subject, lines, email_type="shift_request",
+                            channel=channels.get(person) or {}, db_path=db_path):
                 sent += 1
         except Exception as e:
-            print(f"[shift_requests] staff email failed rid={restaurant_id}: {e!r}")
+            print(f"[shift_requests] staff notice failed rid={restaurant_id}: {e!r}")
     return sent
 
 
@@ -592,12 +587,17 @@ def _tell_managers(restaurant_id, title, body, db_path, req=None):
         # mode), labelled "Someone hasn't clocked in", opened Reviews on iOS
         # and was dropped by the "calm" level and the briefing budget.
         data = {"tab": "labor"}
+        kw = {}
         if req and req.get("id"):
             # A request waiting on an answer carries its id, so the push can
             # offer Approve / Deny and open that request (push.CATEGORY_REQUEST,
-            # friction audit #22).
-            data.update(request_id=req["id"], request_kind="shift")
-        strategy_jobs._reach(restaurant_id, "shift_request", title, body, data, db_path, lines=[body])
+            # friction audit #22) — a time-off request as "time_off".
+            data.update(request_id=req["id"], request_kind=req.get("request_kind") or "shift")
+            # ...and it reaches the people who can decide it, whether or
+            # not their morning brief is on (F2-6).
+            from permissions import SCHEDULE_DRAFT
+            kw = {"deciders": True, "permissions": [SCHEDULE_DRAFT]}
+        strategy_jobs._reach(restaurant_id, "shift_request", title, body, data, db_path, lines=[body], **kw)
     except Exception as e:
         print(f"[shift_requests] manager notice failed rid={restaurant_id}: {e!r}")
 
@@ -657,7 +657,7 @@ def _notify(restaurant_id, event, req, db_path=DB_PATH):
             if not told:
                 _tell_managers(restaurant_id, "Open shift, nobody told",
                                f"{who}'s {when}" + (f" {role}" if role else "") + " is open, and no teammate who could "
-                               "take it has an email on file — assign someone from Labor.", db_path)
+                               "take it could be reached — assign someone from Labor.", db_path)
         elif event == "denied":
             _email_staff(restaurant_id, [who], "Your shift request was declined",
                          [f"Your manager kept you on {when}. Talk to them if that is a problem."], db_path)

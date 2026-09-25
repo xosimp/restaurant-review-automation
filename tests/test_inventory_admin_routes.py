@@ -263,6 +263,11 @@ def test_resync_depletion_route(app, db_path, monkeypatch):
     rid = _restaurant(db_path)
     ingredient_id = inventory_ledger.create_ingredient(rid, name="Shrimp", current_stock=20)
     conn = get_conn(db_path)
+    # The 20 was counted before the night being resynced. The ledger orders
+    # by the day a count was taken (F2-7): a night's usage dated before the
+    # count is already in it and is not subtracted again.
+    conn.execute("UPDATE ingredient_stock_events SET event_date='2026-08-19' WHERE ingredient_id=? "
+                 "AND event_type='recount'", (ingredient_id,))
     cur = conn.execute("INSERT INTO menu_items (restaurant_id, toast_guid, name) VALUES (?,?,?)",
                        (rid, "guid-shrimp-scampi", "Shrimp Scampi"))
     menu_item_id = cur.lastrowid
