@@ -701,6 +701,17 @@ def test_the_archive_has_provenance_columns(db_path):
 
 # ── #43: the daily report and the POS agree, or sales says so ────────────────
 
+def _dsr_night(db_path, rid, d, net, status="final", version=1):
+    """A night as the pipeline stores it: the report's status on dsr_reports,
+    the Sales block's ("ready") on its dsr_metrics row. These tests used to
+    write status='final' on the metric row, which no code ever writes — so
+    the check they pinned never looked at a real night (D1-3)."""
+    _x(db_path, "INSERT INTO dsr_reports (restaurant_id, business_date, version, status) VALUES (?,?,?,?)",
+       (rid, d, version, status))
+    _x(db_path, "INSERT OR REPLACE INTO dsr_metrics (restaurant_id, business_date, metric, value, status) "
+                "VALUES (?,?,?,?,?)", (rid, d, "sales.net", net, "ready"))
+
+
 def test_final_reports_that_disagree_with_the_pos_put_an_error_on_sales(db_path):
     rid = _rid(db_path)
     today = _local_today(db_path, rid)
@@ -708,12 +719,26 @@ def test_final_reports_that_disagree_with_the_pos_put_an_error_on_sales(db_path)
         d = (today - timedelta(days=n)).isoformat()
         _x(db_path, "INSERT INTO labor_daily_history (restaurant_id, date, labor_cost, sales) VALUES (?,?,?,?)",
            (rid, d, 1000, pos_net))
-        _x(db_path, "INSERT INTO dsr_metrics (restaurant_id, business_date, metric, value, status) "
-                    "VALUES (?,?,?,?,?)", (rid, d, "sales.net", dsr_net, "final"))
+        _dsr_night(db_path, rid, d, dsr_net)
     chk = df.sales_consistency(rid, db_path=db_path)
     assert chk["checked"] == 3 and len(chk["mismatches"]) == 2
     st = df.source_state(_row(db_path, rid), "sales", db_path=db_path)
     assert st["error"] and "disagree on 2 nights" in st["error"]
+
+
+def test_only_a_night_whose_latest_version_is_final_is_checked(db_path):
+    # D1-3: a provisional latest version is still settling — not checked.
+    rid = _rid(db_path)
+    today = _local_today(db_path, rid)
+    d1, d2 = (today - timedelta(days=1)).isoformat(), (today - timedelta(days=2)).isoformat()
+    for d in (d1, d2):
+        _x(db_path, "INSERT INTO labor_daily_history (restaurant_id, date, labor_cost, sales) VALUES (?,?,?,?)",
+           (rid, d, 1000, 7500.0))
+    _dsr_night(db_path, rid, d1, 6000.0)
+    _dsr_night(db_path, rid, d2, 6000.0, status="final")
+    _dsr_night(db_path, rid, d2, 6000.0, status="provisional", version=2)
+    chk = df.sales_consistency(rid, db_path=db_path)
+    assert chk["checked"] == 1 and [m["date"] for m in chk["mismatches"]] == [d1]
 
 
 def test_one_late_void_is_not_an_error(db_path):
@@ -721,8 +746,8 @@ def test_one_late_void_is_not_an_error(db_path):
     d = (_local_today(db_path, rid) - timedelta(days=1)).isoformat()
     _x(db_path, "INSERT INTO labor_daily_history (restaurant_id, date, labor_cost, sales) VALUES (?,?,?,?)",
        (rid, d, 1000, 7960.0))
-    _x(db_path, "INSERT INTO dsr_metrics (restaurant_id, business_date, metric, value, status) VALUES (?,?,?,?,?)",
-       (rid, d, "sales.net", 8420.0, "final"))
+    _dsr_night(db_path, rid, d, 8420.0)
+    assert df.sales_consistency(rid, db_path=db_path)["checked"] == 1
     assert df.source_state(_row(db_path, rid), "sales", db_path=db_path)["error"] is None
 
 

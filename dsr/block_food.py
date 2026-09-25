@@ -27,10 +27,12 @@ calls a model.
 Statuses:
   not_connected  Food Cost is off, or no inventory is on file (sample data)
   unavailable    the inventory read itself failed
-  awaiting       recipes are costed and the POS reports items, but the
-                 night's item sales haven't synced yet (the nightly item sync
-                 re-reads the last two business days). The estimate follows;
-                 every other figure is already in the block.
+  awaiting       recipes are costed, no item sales are synced for the night
+                 and tonight's Sales block itself is still coming — its POS
+                 pull lists every item sold, which the estimate costs when
+                 the 5am item sync (menu_item_sales) hasn't run yet (D1-8).
+                 Nothing here waits on the item sync: no later version is
+                 made for it.
   ready          otherwise. A figure that can't be measured is None, with the
                  sentence saying why in detail.
 """
@@ -45,10 +47,7 @@ VARIANCE_WINDOW_DAYS = 7
 # Below it the percentage describes a minority of the night and is withheld
 # with the coverage stated (CA1 D5). The dollars of what was costed stay.
 ESTIMATE_MIN_COVERAGE_PCT = 50
-# scheduler.run_daily_depletion_sync re-reads business dates from two days
-# back: a night younger than that may still get its item sales.
-ITEM_SYNC_DAYS = 2
-# A night with no item sales is "not synced yet" only for a restaurant that
+# A night with no item sales is "not on file" only for a restaurant that
 # has had item sales before — otherwise it is "this POS doesn't send them".
 ITEM_HISTORY_DAYS = 28
 
@@ -62,11 +61,33 @@ def _rows(ctx, sql, args):
         conn.close()
 
 
-def _local_today(ctx):
-    return common.to_local(ctx.now_utc, ctx.restaurant).date()
-
-
 # ── the estimate ────────────────────────────────────────────────────────────
+
+def _tonight_items(ctx):
+    """([{"id", "name", "qty"}], waiting) — tonight's items from the Sales
+    block's own POS pull, matched to the menu by the POS's item id
+    (menu_items.toast_guid, as the nightly item sync matches them). An item
+    the menu list doesn't have is left out, as the item sync leaves it out.
+    `waiting` is True while the Sales block itself is still coming."""
+    sales = (ctx.blocks or {}).get("sales") or {}
+    if sales.get("status") == dsr.AWAITING:
+        return [], True
+    if sales.get("status") != dsr.READY:
+        return [], False
+    by_guid = {}
+    for it in (sales.get("detail") or {}).get("items_sold") or []:
+        guid = it.get("guid")
+        qty = float(it.get("qty") or 0)
+        if guid and qty > 0:
+            by_guid[str(guid)] = by_guid.get(str(guid), 0.0) + qty
+    if not by_guid:
+        return [], False
+    marks = ",".join("?" for _ in by_guid)
+    menu = _rows(ctx, f"SELECT id, name, toast_guid FROM menu_items WHERE restaurant_id=? AND is_active=1 "
+                      f"AND toast_guid IN ({marks})", (ctx.restaurant_id, *by_guid))
+    return [{"id": m["id"], "name": m["name"], "qty": by_guid[str(m["toast_guid"])]} for m in menu
+            if str(m["toast_guid"]) in by_guid], False
+
 
 def _estimate(ctx):
     """(metrics, detail, awaiting_reason)."""
@@ -94,6 +115,19 @@ def _estimate(ctx):
                       "JOIN menu_items m ON m.id=s.menu_item_id AND m.restaurant_id=s.restaurant_id "
                       "WHERE s.restaurant_id=? AND s.business_date=?", (ctx.restaurant_id, ctx.day))
     sold = [s for s in sold if float(s["qty"] or 0) > 0]
+    units_from = "the item sales synced for the night"
+    if not sold:
+        # The nightly item sync (menu_item_sales) runs at 5am Central, after
+        # most report deadlines, and nothing makes a later version for it —
+        # so "the estimate follows" never did (D1-8). Tonight's own POS pull
+        # (the Sales block) already lists every item sold by the POS's item
+        # id, the same id the item sync matches menu_items on: cost those.
+        tonight, waiting = _tonight_items(ctx)
+        if tonight:
+            sold, units_from = tonight, "tonight's POS item sales"
+        elif waiting:
+            return empty, {"estimate": None, "note": "Waiting for tonight's sales from the POS."}, \
+                "Waiting for tonight's sales from the POS"
     if not sold:
         import pos
         since = (ctx.business_date - timedelta(days=ITEM_HISTORY_DAYS)).isoformat()
@@ -103,10 +137,11 @@ def _estimate(ctx):
         if not reports_items:
             return empty, {"estimate": None, "note": "Your POS doesn't send item-level sales to Cavnar, "
                                                       "so food cost can't be estimated from recipes."}, None
-        if (_local_today(ctx) - ctx.business_date).days <= ITEM_SYNC_DAYS:
-            return empty, {"estimate": None, "note": f"Item sales for {mdy(ctx.business_date)} haven't synced yet."}, \
-                f"Item sales for {mdy(ctx.business_date)} haven't synced yet — the food cost estimate follows"
-        return empty, {"estimate": None, "note": f"No item sales were recorded for {mdy(ctx.business_date)}."}, None
+        # Said as it stands, never as a promise: no later version of this
+        # report is made for item sales.
+        return empty, {"estimate": None,
+                       "note": f"No item sales for {mdy(ctx.business_date)} were on file when this report was "
+                               "built, so food cost wasn't estimated."}, None
 
     units = sum(float(s["qty"]) for s in sold)
     costed = [s for s in sold if s["id"] in plate]
@@ -133,6 +168,7 @@ def _estimate(ctx):
         # units sold, and a dish sold twenty times is twenty of them.
         "label": (f"Estimated — what the units sold on {mdy(ctx.business_date)} should have cost by their "
                   "recipes, at current ingredient prices. Not a count of what was actually used."),
+        "units_from": units_from,
         "units_sold": round(units, 2),
         "units_with_recipe": round(units_costed, 2),
         "coverage_basis": "share of units sold that had a fully costed recipe",

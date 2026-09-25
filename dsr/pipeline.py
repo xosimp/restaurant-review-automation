@@ -31,12 +31,22 @@ THE RULES, each one pinned by tests/test_dsr_pipeline.py:
   (NEVER_HOLDS) but is re-read on every pass while it is.
 * At the deadline only SALES decides (REQUIRED_BLOCKS): still awaiting →
   PROVISIONAL; in → FINAL, with every other block still awaiting labelled by
-  its reason in facts.missing (Food's item sales land at 5am Central, after
-  most deadlines — that is a final night saying so, not a provisional one).
+  its reason in facts.missing. (Food costs tonight's items from the Sales
+  block's own pull, so it no longer waits on the 5am item sync — D1-8.)
+* Close day never overrules a POS with a close-day record (day_closed): the
+  night waits for the POS's close. A POS without one is refused before its
+  close (manual_close_refusal) unless the owner says they closed early.
+* A re-run (`force`) is made only from sales that are in; otherwise the
+  report is unchanged and the night notes why (D1-12). A FINAL night the POS
+  archive later disagrees with is re-pulled (recheck_final) and gets a new
+  version only when the POS's own figure moved.
 * A provisional night is re-checked every LATE_DATA_MINUTES for
   LATE_DATA_HOURS. When sales has arrived the night gets a new VERSION — the
-  old one is never edited. Nothing else makes a version on its own; the
-  owner can re-run a night (Close day with rerun, or `force`).
+  old one is never edited; Labor is re-read over the new net. A day the POS
+  closed with no tickets still has none when the window ends: a FINAL
+  version saying "No sales recorded" (figures None, never $0). Nothing else
+  makes a version on its own; the owner can re-run a night (Close day with
+  rerun, or `force`).
 * Failures are bounded. A collector that raises is captured (ops.capture,
   so it reaches the admin console) and its block retried as awaiting; after
   MAX_FAILURES it is marked unavailable rather than holding the night. The
@@ -88,9 +98,8 @@ SWEEP_LOOKBACK_DAYS = 4            # nights the sweep still finishes or re-check
 NOT_AVAILABLE_YET = "Not available yet"
 CLAIM_JOB = "dsr"
 
-# The blocks a night cannot go out FINAL without. Only sales: Food's item
-# sales sync at 5am Central, after a 4am local deadline, so a Food block
-# still awaiting then would make every recipe restaurant's night provisional.
+# The blocks a night cannot go out FINAL without. Only sales: a Food, Labor
+# or Reviews block still awaiting at the deadline goes out labelled.
 # A night is provisional only while one of these is awaiting at the
 # deadline, and only these arriving late make a new version — Food catching
 # up the next morning never does.
@@ -193,21 +202,54 @@ def just_closed(restaurant, local):
 
 
 def day_closed(restaurant, day, now_utc, trigger=None):
-    """How the POS day is known to be over — "manual", "pos" or
-    "close_time" — or None when it is not (or the POS could not be asked,
-    which is never read as closed)."""
+    """How the POS day is known to be over — "pos", "close_time" or
+    "manual" — or None when it is not (or the POS could not be asked,
+    which is never read as closed).
+
+    Close day never overrules a POS that keeps a close-day record (D1-1):
+    pressed at 10:40pm with tables still open, the night waits for the
+    POS's own close like any other, rather than going out FINAL on half a
+    night that nothing ever revisits. Only a POS with no such record takes
+    the button's word — and the route refuses that before close
+    (manual_close_refusal) unless the owner says they closed early."""
     import pos
-    if trigger == TRIGGER_MANUAL:
-        return "manual"
     try:
         closed, _provider = pos.fetch_day_closed(restaurant.id, day)
         return "pos" if closed else None
     except pos.POSCapabilityError:
+        if trigger == TRIGGER_MANUAL:
+            return "manual"
         close = close_at(restaurant, day) or datetime.combine(day, _time(*DEFAULT_CLOSE))
         return "close_time" if local_time(restaurant, now_utc) >= close + timedelta(minutes=CLOSE_GRACE_MINUTES) else None
     except Exception as e:
         log.warning("dsr: closeday check failed rid=%s day=%s: %s", restaurant.id, day, e)
         return None
+
+
+EARLY_CLOSE_MINUTES = 30           # Close day on a POS with no close-day record: not before close − this
+
+
+def manual_close_refusal(restaurant, day, now_utc=None):
+    """Why Close day can't finalise `day` yet, or None (D1-1). A POS that
+    keeps a close-day record is asked by the pipeline itself (the night
+    waits for it), so only a POS without one is judged here: before its
+    close time less EARLY_CLOSE_MINUTES, pressing the button would build the
+    report from a day still trading."""
+    import pos
+    from time_utils import mdy
+    now_utc = now_utc or datetime.utcnow()
+    try:
+        if pos.supports(restaurant.id, "fetch_day_closed"):
+            return None
+    except Exception:
+        return None
+    close = close_at(restaurant, day)
+    if close is None:
+        return None
+    if local_time(restaurant, now_utc) >= close - timedelta(minutes=EARLY_CLOSE_MINUTES):
+        return None
+    return (f"It's before your close ({close.strftime('%-I:%M %p').lower()}), and your POS doesn't tell Cavnar "
+            f"when the day is closed — a report built now would miss the rest of {mdy(day)}'s sales.")
 
 
 # ── collectors and the narrative, reached lazily by name ────────────────────
@@ -380,9 +422,9 @@ def run_night(restaurant, business_date, trigger, now_utc=None, db_path=None, fo
     latest = store.get_report(rid, day, db_path=db)
     status = latest["status"] if latest else None
 
-    def fresh():
+    def fresh(probed=None):
         report = store.create_report(rid, day, trigger=trigger, db_path=db)
-        return _advance(restaurant, report, trigger, now_utc, db)
+        return _advance(restaurant, report, trigger, now_utc, db, probed=probed)
 
     if latest is None:
         if not (manual or force):
@@ -396,6 +438,18 @@ def run_night(restaurant, business_date, trigger, now_utc=None, db_path=None, fo
     if status in dsr.TERMINAL_STAGES:
         # A finished night is re-run only on purpose: `force`, or someone
         # pressing Close day on a night that failed. Either is a new version.
+        if force and status in store.FINISHED:
+            # A re-run replaces what everyone reads, so it is made only from
+            # sales that are in (D1-12): a POS timing out mid re-run used to
+            # turn a good final night into a "no sales" provisional one for
+            # good. Sales are pulled first; not in → the report is unchanged.
+            sales = _probe_sales(restaurant, latest, trigger, now_utc, db)
+            if sales.get("status") != dsr.READY:
+                store.note(latest["id"], "rerun", {"at": _stamp(now_utc), "refused": RERUN_REFUSED,
+                                                   "why": sales.get("reason")}, db_path=db)
+                return _result("unchanged", latest, reason=RERUN_REFUSED)
+            return _run_claimed(restaurant, day, latest["version"] + 1, now_utc, db,
+                                lambda: fresh(probed={"sales": sales}))
         if force or (manual and status == "failed"):
             return _run_claimed(restaurant, day, latest["version"] + 1, now_utc, db, fresh)
         if status != "provisional":
@@ -411,6 +465,58 @@ def run_night(restaurant, business_date, trigger, now_utc=None, db_path=None, fo
     return _run_claimed(restaurant, day, latest["version"], now_utc, db,
                         lambda: _advance(restaurant, store.get_report_by_id(latest["id"], db_path=db),
                                          trigger, now_utc, db))
+
+
+RERUN_REFUSED = "The POS didn't return this night's sales, so your report is unchanged"
+
+
+def _probe_sales(restaurant, report, trigger, now_utc, db):
+    """The Sales block for a finished night, pulled again now — nothing
+    saved. The day was closed when the night finished, by the record it
+    kept (or the POS asked again when it went out at the deadline)."""
+    day = _as_date(report["business_date"])
+    ctx = dsr.Context(restaurant, day, db_path=db, now_utc=now_utc, trigger=trigger)
+    was = (report.get("stages") or {}).get("closed_by")
+    ctx.day_closed = was if was in ("pos", "close_time", "manual") else (
+        day_closed(restaurant, day, now_utc, trigger) or False)
+    blk, _crashed = _collect("sales", ctx)
+    return blk
+
+
+RECHECK_MIN_DOLLARS = 1.0          # a re-pulled net this far from the report's makes a new version
+
+
+def recheck_final(restaurant, business_date, now_utc=None, db_path=None):
+    """A FINAL night the POS archive no longer agrees with (a late void, a
+    check closed after the report — data_freshness.sales_consistency): pull
+    the night's sales again, and when the POS's own figure has moved, the
+    night gets a new version from it, as a late-data version does (D1-1).
+    When the re-pull matches what the report says, nothing changes — the
+    archive and the report count differently, and a new version would say
+    the same. Returns the pipeline's result; never raises."""
+    import ops
+    db = _db(db_path)
+    now_utc = now_utc or datetime.utcnow()
+    day = _as_date(business_date)
+    try:
+        latest = store.get_report(restaurant.id, day, db_path=db)
+        if not latest or latest["status"] != "final":
+            return _result("none", latest)
+        sm = (((latest.get("facts") or {}).get("blocks") or {}).get("sales") or {})
+        was = (sm.get("metrics") or {}).get("net") if sm.get("status") == dsr.READY else None
+        sales = _probe_sales(restaurant, latest, TRIGGER_LATE, now_utc, db)
+        now_net = (sales.get("metrics") or {}).get("net") if sales.get("status") == dsr.READY else None
+        if now_net is None or (was is not None and abs(float(now_net) - float(was)) < RECHECK_MIN_DOLLARS):
+            return _result("unchanged", latest)
+
+        def fresh():
+            report = store.create_report(restaurant.id, day, trigger=TRIGGER_LATE, db_path=db)
+            store.note(report["id"], "supersedes", latest["version"], db_path=db)
+            return _advance(restaurant, report, TRIGGER_LATE, now_utc, db, probed={"sales": sales})
+        return _run_claimed(restaurant, day, latest["version"] + 1, now_utc, db, fresh)
+    except Exception as e:
+        ops.capture(e, job="dsr_recheck", context=f"restaurant_id={restaurant.id} business_date={day}")
+        return {"ok": False, "action": "error", "error": str(e)[:300]}
 
 
 def _save_fiscal(report_id, restaurant, day, db):
@@ -436,7 +542,12 @@ def _advance(restaurant, report, trigger, now_utc, db, probed=None, carried=None
     # awaiting_close: nothing is collected until the POS has closed the day,
     # or the deadline says to go with what there is.
     if status in ("scheduled", "awaiting_close"):
-        how = day_closed(restaurant, day, now_utc, trigger)
+        if probed and (probed.get("sales") or {}).get("status") == dsr.READY:
+            # Sales already pulled for this version (a re-run, a recheck):
+            # the day was closed for that pull.
+            how = ((probed["sales"].get("detail") or {}).get("closed_by")) or "manual"
+        else:
+            how = day_closed(restaurant, day, now_utc, trigger)
         if how is None and not past_deadline:
             if status != "awaiting_close":
                 store.set_stage(report_id, "awaiting_close", db_path=db)
@@ -537,20 +648,42 @@ def _advance(restaurant, report, trigger, now_utc, db, probed=None, carried=None
                    required_missing=required_missing)
 
 
+NO_HOURS_SERVICE_START_HOUR = 5    # a night with no opening hours "starts" at 5am, for predictions
+
+
+def service_start(restaurant, day):
+    """When the service of business date `day` opens (naive local): its
+    opening time, else NO_HOURS_SERVICE_START_HOUR on that date. A
+    prediction about the night is a prediction only before this (D1-7)."""
+    from time_utils import service_window
+    window = service_window(restaurant, day)
+    return window[0] if window else datetime.combine(day, _time(NO_HOURS_SERVICE_START_HOUR, 0))
+
+
+def prediction_cutoff_utc(restaurant, day):
+    """service_start as naive UTC — the moment after which nothing written
+    about `day` counts as a prediction."""
+    return to_utc(restaurant, service_start(restaurant, day))
+
+
 def _tomorrow(restaurant, report_id, day, trigger, now_utc, db):
     """Grade this night's predictions, store the next night's snapshot and
     record its predictions. Never holds or fails the report."""
     try:
         from dsr import predictions, tomorrow
         facts_now = store.get_report_by_id(report_id, db_path=db)["facts"]
-        predictions.grade(restaurant.id, day, facts_now, db_path=db)
+        # Only what was written before this night opened is graded (D1-7).
+        predictions.grade(restaurant.id, day, facts_now, db_path=db,
+                          cutoff_utc=prediction_cutoff_utc(restaurant, day))
         snap = tomorrow.build(restaurant, day, facts_now, db_path=db)
         preds = snap.pop("_preds", [])
         store.save_section(report_id, "tomorrow", snap, db_path=db)
-        # A prediction is made BEFORE its night: a re-run of an older night
-        # (or a late version after the next night began) records nothing.
-        if local_time(restaurant, now_utc).date() <= day + timedelta(days=1):
-            predictions.record(restaurant.id, day, day + timedelta(days=1), preds, db_path=db)
+        # A prediction is made BEFORE its night — strictly before the next
+        # night's service opens, not merely on or before its calendar date
+        # (D1-7): a provisional night's v2 landing the next evening, a Close
+        # day or a re-run pressed the next day records nothing.
+        if now_utc < prediction_cutoff_utc(restaurant, day + timedelta(days=1)):
+            predictions.record(restaurant.id, day, day + timedelta(days=1), preds, db_path=db, made_at=now_utc)
     except Exception as e:
         log.warning("dsr: tomorrow not built rid=%s day=%s: %s", getattr(restaurant, "id", None), day, e)
 
@@ -627,15 +760,13 @@ def _upgrade(restaurant, previous, trigger, now_utc, db):
     already there carried over with their original collection times, the
     late ones as they are now, the summary written over the complete facts."""
     day = _as_date(previous["business_date"])
-    if local_time(restaurant, now_utc) > deadline_at(restaurant, day) + timedelta(hours=LATE_DATA_HOURS):
-        store.schedule_retry(previous["id"], None, db_path=db, count=False)
-        return _result("expired", previous)
+    expired = local_time(restaurant, now_utc) > deadline_at(restaurant, day) + timedelta(hours=LATE_DATA_HOURS)
     blocks = (previous.get("facts") or {}).get("blocks") or {}
     awaiting = [n for n in dsr.BLOCKS if (blocks.get(n) or {}).get("status") == dsr.AWAITING]
     required = [n for n in REQUIRED_BLOCKS if n in awaiting]
     if not required:
         store.schedule_retry(previous["id"], None, db_path=db, count=False)
-        return _result("none", previous)
+        return _result("expired" if expired else "none", previous)
     ctx = dsr.Context(restaurant, day, db_path=db, now_utc=now_utc, trigger=TRIGGER_LATE)
     ctx.blocks = dict(blocks)
     closed_by = None
@@ -644,15 +775,36 @@ def _upgrade(restaurant, previous, trigger, now_utc, db):
         ctx.day_closed = closed_by or False
     recheck = awaiting + [n for n in NEVER_HOLDS if n not in awaiting
                           and (blocks.get(n) or {}).get("status") != dsr.READY]
+    if "sales" in required and "labor" not in recheck and (blocks.get("labor") or {}).get("status") == dsr.READY:
+        # Labor % is over the night's net: a v1 without sales took it from
+        # the POS archive's own sales (or had none), so the version that
+        # brings sales re-reads Labor over the same net (D1-9). It reads
+        # only local tables.
+        recheck.append("labor")
     probed = {}
     for name in dsr.BLOCKS:
         if name in recheck:
             probed[name], _crashed = _collect(name, ctx)
             ctx.blocks[name] = probed[name]
     if not all(probed[n]["status"] == dsr.READY for n in required):
-        nxt = now_utc + timedelta(minutes=LATE_DATA_MINUTES)
-        store.schedule_retry(previous["id"], nxt, db_path=db, count=False)
-        return _result("still_awaiting", previous, next_attempt_at=_stamp(nxt))
+        sales = probed.get("sales") or {}
+        if expired and (sales.get("detail") or {}).get("waiting_for") == "tickets":
+            # The POS closed the day and, 48 hours on, still holds no ticket
+            # for it (D1-20): the night had no sales. It goes FINAL saying
+            # so — the figures stay unmeasured (None), never $0.
+            from time_utils import mdy
+            probed["sales"] = dsr.block(dsr.UNAVAILABLE, source=sales.get("source"), block_name="sales",
+                                        reason=f"No sales recorded for {mdy(day)}",
+                                        detail={"no_sales": True, "closed_by": closed_by})
+        elif expired:
+            store.schedule_retry(previous["id"], None, db_path=db, count=False)
+            return _result("expired", previous)
+        else:
+            nxt = now_utc + timedelta(minutes=LATE_DATA_MINUTES)
+            store.schedule_retry(previous["id"], nxt, db_path=db, count=False)
+            return _result("still_awaiting", previous, next_attempt_at=_stamp(nxt))
+        if "labor" in probed and "labor" not in awaiting:
+            del probed["labor"]         # carried as it was: no new net to read it over
 
     stamps = (previous.get("stages") or {}).get("blocks") or {}
     carried = {n: (blocks[n], stamps.get(n)) for n in dsr.BLOCKS if n in blocks and n not in probed}
@@ -745,6 +897,21 @@ def _nights_for(restaurant, rows, now_utc):
     for day_iso, row in rows.items():
         if _needs_work(row, now_utc):
             days.add(date.fromisoformat(day_iso))
+    # A night the sweep never saw (a deploy or an outage from one close to
+    # the next) was never created, and nothing said so (D1-15). Every night
+    # between this restaurant's earliest recent report and the one just
+    # closed that had service and is past its deadline, with no row, is run
+    # now. Only after a report exists in the window — a restaurant just
+    # switched on is not back-filled (and its owner not emailed) for nights
+    # before it started.
+    if rows and night is not None:
+        local = local_time(restaurant, now_utc)
+        d = min(date.fromisoformat(x) for x in rows) + timedelta(days=1)
+        while d < night:
+            if d.isoformat() not in rows and close_at(restaurant, d) is not None \
+                    and local >= deadline_at(restaurant, d):
+                days.add(d)
+            d += timedelta(days=1)
     return sorted(days)
 
 
@@ -772,8 +939,9 @@ def run_sweep(now_utc=None, db_path=None):
     """Every tick, claimed per 10-minute slot (scheduler.scheduler_loop).
 
     For every live restaurant with the DSR on and a POS connected: the night
-    that just closed (local time, past its own close) and any recent night
-    whose retry or late-data check is due. Bounded by SWEEP_MAX_SECONDS and
+    that just closed (local time, past its own close), any recent night
+    whose retry or late-data check is due, and any night since its earliest
+    recent report that was never created (_nights_for). Bounded by SWEEP_MAX_SECONDS and
     resumable: the restaurants run in id order starting after the cursor in
     job_cursors, which records the last one this pass finished — so a pass
     that runs out of time is picked up where it stopped, not at the top."""

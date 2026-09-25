@@ -99,12 +99,30 @@ def test_a_streak_needs_an_unbroken_run_and_money_moves_in_percent(db):
 
 def test_derived_figures_are_computed_from_the_night(db):
     r = _rest(db)
+    # D1-11: prime cost is DOLLARS over one denominator — $2,430 labor plus
+    # $2,000 of recipe cost over $9,000 net = 49.2% — never labor % (over
+    # net) plus a food % over the priced dishes' menu revenue (27 + 30.5).
     rep = _night(db, r.id, SAT, net=9000.0, hours=180.0, labor_pct=27.0,
-                 food=({"est_food_cost_pct": 30.5}, {}))
+                 food=({"est_food_cost_pct": 30.5, "est_food_cost": 2000.0, "recipe_coverage_pct": 80.0}, {}))
     k = {x["key"]: x for x in access.render(rep, {"role": "owner"}, r)["kpis"]}
-    assert k["splh"]["value"] == 50.0 and k["prime_pct"]["value_text"] == "57.5%"
+    assert k["splh"]["value"] == 50.0 and k["prime_pct"]["value_text"] == "49.2%"
+    assert "80% of units sold" in k["prime_pct"]["basis"]
     assert k["bev_mix"]["value_text"] == "30.0%"
     assert k["prime_pct"]["estimate"] and k["food_pct"]["estimate"]
+    # Under the recipe-coverage floor it is withheld, not understated.
+    rep = _night(db, r.id, SAT - timedelta(days=7), net=9000.0, labor_pct=27.0,
+                 food=({"est_food_cost_pct": None, "est_food_cost": 900.0, "recipe_coverage_pct": 30.0}, {}))
+    assert "prime_pct" not in {x["key"] for x in access.render(rep, {"role": "owner"}, r)["kpis"]}
+
+
+def test_beverage_mix_counts_only_the_beverage_categories(db):
+    # D1-18: "Barbecue" is not a bar, and NA Beverage is not beverage mix.
+    r = _rest(db)
+    rep = _night(db, r.id, SAT, net=10000.0, extra_sales={"cat:Food": 5000.0, "cat:Liquor": 2000.0,
+                                                          "cat:Beer": 1000.0, "cat:Barbecue": 1500.0,
+                                                          "cat:NA Beverage": 500.0})
+    k = {x["key"]: x for x in access.render(rep, {"role": "owner"}, r)["kpis"]}
+    assert k["bev_mix"]["value_text"] == "30.0%"
 
 
 # ── the Manager DSR: operations, not finance ───────────────────────────────
@@ -202,11 +220,30 @@ def test_tomorrow_lists_the_prep_and_a_confidence_it_can_back(db, monkeypatch):
     assert "Chicken low (1 day left)" in texts
     assert t["forecast"]["text"] == "$6,200–$7,900"
     conf = t["confidence"]
-    # history 8/12 of 35 + sales 20 + weather 15 + events 15 (no published schedule) = 73.3 → held at 70
-    assert conf["pct"] == 70 and "the weather forecast" in conf["based_on"] and "tomorrow's schedule" in conf["missing"]
-    assert "held at 70%" in conf["track"]
+    # D1-6: the forecast is the median of past Sundays and nothing else, so
+    # the weather, events and schedule are things to watch, never
+    # confidence; with no measured record of its range there is no %.
+    assert conf["pct"] is None and conf["label"] == "—"
+    assert conf["based_on"] == ["8 Sundays of sales history"]
+    assert "the weather forecast" in conf["watch"] and "your events and reservations" in conf["watch"]
+    assert "a confidence % shows at 10" in conf["track"]
     # Rain outranks the event for a prediction; both are gradable claims.
     assert [p["key"] for p in t["_preds"]] == ["sales_range", "rain"]
+
+
+def test_the_confidence_is_the_forecasts_measured_record_not_its_inputs():
+    # D1-6: a range that held on half the last 20 nights is 50%, not the
+    # 69% that averaging it with "inputs present" gave.
+    fc = {"available": True, "typical_sales": 7000.0, "low": 6200.0, "high": 7900.0, "samples": 8,
+          "weekday": "Sunday"}
+    track = {"n_ranged": 20, "inside_range_pct": 50.0, "window_days": 30}
+    c = tomorrow.confidence(fc, track, wx={"stale": False}, scheduled=17, keeps_events=True)
+    assert (c["pct"], c["label"]) == (50, "50%")
+    assert c["track"] == "Cavnar's range held on 10 of the last 20 nights (30-day record)"
+    assert c["based_on"] == ["8 Sundays of sales history", "its measured record"]
+    # Under the record floor, or with no range to rate: no %.
+    assert tomorrow.confidence(fc, dict(track, n_ranged=9))["pct"] is None
+    assert tomorrow.confidence(dict(fc, low=None, high=None), track)["pct"] is None
 
 
 def test_the_pipeline_records_predictions_only_while_tomorrow_is_ahead(db, monkeypatch):
@@ -272,4 +309,123 @@ def test_both_emails_follow_the_new_order(db):
     order = [mgr.index(k) for k in ("Operations summary", "Today&rsquo;s shift", ">Operations<", "Top KPIs")]
     assert order == sorted(order)
     assert "Saturday ran 300 guests on 17 people." in mgr and "Sales beat budget" not in mgr
-    assert "Employees scheduled" in mgr and "Call-offs" in mgr and "Today&rsquo;s score" not in mgr
+    # "No-shows", as the Labor block calls them (D1-17) — this pinned "Call-offs".
+    assert "Employees scheduled" in mgr and "No-shows" in mgr and "Today&rsquo;s score" not in mgr
+
+
+# ── fix round 9/25/26: what a manager's payload may carry ──────────────────
+
+def _budget_night(db, r):
+    """Saturday with a budget, a graded budget prediction about it, and a
+    stored tomorrow whose predictions include tomorrow's budget."""
+    predictions.record(r.id, SAT - timedelta(days=1), SAT, [
+        {"key": "sales_range", "metric": "sales.net", "op": "between", "low": 8000.0, "high": 9500.0,
+         "text": "Sales between $8,000 and $9,500", "basis": "Cavnar's forecast"},
+        {"key": "sales_budget", "metric": "sales.net", "op": "gt", "value": 9500.0,
+         "text": "Sales expected above budget ($9,500)", "basis": "Cavnar's forecast: $9,700 against the budget"}])
+    rep = _night(db, r.id, SAT, food=({"est_food_cost_pct": 31.0}, {"stock": {"critical": [{"item": "Buns"}]}}),
+                 extra_sales={"budget_net": 9500.0, "vs_budget_net": -500.0, "vs_budget_net_pct": -5.3})
+    predictions.grade(r.id, SAT, rep["facts"])
+    store.save_section(rep["id"], "tomorrow", {
+        "date": "2026-09-20", "weekday": "Sunday",
+        "items": [{"kind": "stock", "tone": "warn", "text": "Buns low (1 day left)"},
+                  {"kind": "event", "tone": "warn", "text": "Game day"}],
+        "predictions": [{"key": "sales_range", "text": "Sales between $6,200 and $7,900"},
+                        {"key": "sales_budget", "text": "Sales expected below budget ($9,800)"}],
+        "_preds": [{"key": "sales_budget", "value": 9800.0, "text": "Sales expected below budget ($9,800)"}]})
+    return store.get_report(r.id, SAT)
+
+
+def test_a_managers_payload_carries_no_budget_anywhere(db):
+    # D2-1 / D3-1 / D3-2: "How did yesterday turn out?", tomorrow's
+    # predictions and the raw facts.tomorrow all carried the owner's budget.
+    import json as _json
+    r = _rest(db)
+    rep = _budget_night(db, r)
+    p = access.render(rep, {"role": "manager"}, r)
+    assert "budget" not in _json.dumps(p).lower()
+    assert "tomorrow" not in p["facts"]
+    assert [i["key"] for i in p["yesterday"]["items"]] == ["sales_range"]
+    assert (p["yesterday"]["accuracy"]["graded"], p["yesterday"]["accuracy"]["correct"]) == (1, 1)
+    assert [x["key"] for x in p["tomorrow"]["predictions"]] == ["sales_range"]
+    assert [i["text"] for i in p["tomorrow"]["items"]] == ["Game day"]          # no Food view: no stock line
+    # The owner reads all of it.
+    o = access.render(rep, {"role": "owner"}, r)
+    assert [i["key"] for i in o["yesterday"]["items"]] == ["sales_range", "sales_budget"]
+    assert o["yesterday"]["accuracy"]["graded"] == 2
+    assert [x["key"] for x in o["tomorrow"]["predictions"]] == ["sales_range", "sales_budget"]
+    assert "_preds" not in o["tomorrow"] and "tomorrow" not in o["facts"]
+
+
+def test_a_manager_reads_the_same_lead_on_the_list_as_in_the_report(db):
+    # D2-4 / D3-4: the list (Home's "Last night") used filter_narrative and
+    # showed nothing where the report led with the operations summary.
+    from dsr import deliver
+    r = _rest(db)
+    rep = _night(db, r.id, SAT, extra_sales={"budget_net": 8000.0, "vs_budget_net": 1000.0})
+    ops = {"text": "Saturday ran 300 guests on 17 people.", "cites": ["sales.guests"]}
+    store.save_narrative(rep["id"], {"executive_summary": {"text": "Sales beat budget by $1,000.",
+                                                           "cites": ["sales.vs_budget_net"]},
+                                     "operations_summary": ops, "went_well": [], "needs_attention": [],
+                                     "actions_tomorrow": []})
+    rep = store.get_report(r.id, SAT)
+    assert access.summary(rep, {"role": "manager"})["lead"] == ops["text"]
+    assert access.summary(rep, {"role": "owner"})["lead"] == "Sales beat budget by $1,000."
+    # No lead for this view at all: said, in the list and in the email.
+    store.save_narrative(rep["id"], {"executive_summary": {"text": "Sales beat budget by $1,000.",
+                                                           "cites": ["sales.vs_budget_net"]},
+                                     "went_well": [], "needs_attention": [], "actions_tomorrow": []})
+    rep = store.get_report(r.id, SAT)
+    assert access.summary(rep, {"role": "manager"})["lead_missing"] == access.NO_LEAD_FOR_VIEW
+    d = deliver.digest(access.render(rep, {"role": "manager"}, r), r)
+    assert d["lead"] is None and d["lead_missing"] == access.NO_LEAD_FOR_VIEW
+
+
+def test_a_line_that_names_the_budget_in_words_is_the_owners(db):
+    # D2-5: no figure, cites only net — and still a budget verdict.
+    r = _rest(db)
+    rep = _night(db, r.id, SAT, extra_sales={"budget_net": 8000.0})
+    store.save_narrative(rep["id"], {
+        "executive_summary": {"text": "A steady Saturday.", "cites": ["sales.net"]},
+        "went_well": [{"text": "Guests held at 300.", "cites": ["sales.guests"]}],
+        "needs_attention": [{"text": "Sales came in under budget again.", "cites": ["sales.net"]},
+                            {"text": "Comps ran high on the patio.", "cites": ["sales.net"]}],
+        "actions_tomorrow": [],
+        "verification": {"checked": 9, "kept": 7, "measured": 6, "dropped": [{"why": "x"}, {"why": "y"}]}})
+    rep = store.get_report(r.id, SAT)
+    n = access.render(rep, {"role": "manager"}, r)["narrative"]
+    assert n["needs_attention"] == []
+    assert access.render(rep, {"role": "owner"}, r)["narrative"]["needs_attention"][0]["text"] == \
+        "Sales came in under budget again."
+    # D2-8: the footer counts the lines this view shows, not the owner's nine.
+    v = n["verification"]
+    assert (v["checked"], v["kept"], v["dropped"]) == (2, 2, []) and v["counted"] == "shown in this view"
+    assert access.render(rep, {"role": "owner"}, r)["narrative"]["verification"]["checked"] == 9
+
+
+def test_the_manager_top_kpis_and_operations_never_share_a_tile(db):
+    # D3-5 / D2-11: guests, average ticket and SPLH were drawn twice.
+    r = _rest(db)
+    rep = _night(db, r.id, SAT)
+    p = access.render(rep, {"role": "manager"}, r)
+    top, ops = [x["key"] for x in p["kpis"]], [x["key"] for x in p["operations"]]
+    assert set(top).isdisjoint(ops) and {"guests", "avg_ticket", "splh"} <= set(ops)
+    assert set(kpis.MANAGER_SET).isdisjoint(kpis.OPERATIONS_SET)
+
+
+def test_a_budget_entered_after_the_report_is_read_as_it_stands(db):
+    # D1-14: Erik sets the day's budget the next morning; the grid showed it
+    # and the report said "No budget".
+    r = _rest(db)
+    rep = _night(db, r.id, SAT, net=9000.0)
+    assert access.render(rep, {"role": "owner"}, r)["facts"]["blocks"]["sales"]["metrics"].get("budget_net") is None
+    store.set_budget(r.id, SAT, gross=9800.0, net=9500.0)
+    p = access.render(store.get_report(r.id, SAT), {"role": "owner"}, r)
+    s = p["facts"]["blocks"]["sales"]
+    assert (s["metrics"]["budget_net"], s["metrics"]["vs_budget_net"], s["metrics"]["vs_budget_net_pct"]) == \
+        (9500.0, -500.0, -5.3)
+    assert s["detail"]["budget"]["entered_after_report"] is True
+    sales = next(c for c in p["scorecard"]["components"] if c["key"] == "sales")
+    assert "budget" in str(sales).lower()
+    assert "budget_net" not in access.render(store.get_report(r.id, SAT), {"role": "manager"}, r)[
+        "facts"]["blocks"]["sales"]["metrics"]

@@ -231,6 +231,21 @@ def _kind(first, updated, report):
     return None
 
 
+# A first notice in one of these never reached the person (D2-10): Resend
+# refused it, it was skipped, or it was held too long and expired. SENDING
+# (a process that died mid-send) may have gone out, and HELD still will.
+NEVER_ARRIVED = (FAILED, SKIPPED, EXPIRED)
+
+
+def _content(kind, first):
+    """What a notice owed under `kind` SAYS: an "Updated" notice to someone
+    whose first notice never arrived is the first notice's content — they
+    never read "went out provisional", so it is not an update to them."""
+    if kind == UPDATED and first is not None and first.get("status") in NEVER_ARRIVED:
+        return FIRST
+    return kind
+
+
 # ── what it says ────────────────────────────────────────────────────────────
 
 def report_url(business_date):
@@ -315,6 +330,10 @@ def digest(payload, restaurant, kind=FIRST):
     lead_missing = None
     if lead is None and not narrative and notes.get("reason"):
         lead_missing = str(notes["reason"])
+    elif lead is None and narrative:
+        # A summary was written but none of it is this view's: say so, as
+        # the app does, rather than silently leaving the opening out (D2-4).
+        lead_missing = access.NO_LEAD_FOR_VIEW
     went = [t for t in (_text(x) for x in narrative.get("went_well") or []) if t]
     needs = [t for t in (_text(x) for x in narrative.get("needs_attention") or []) if t]
     # `key` is the action's rec_ledger key (dsr_action:…): the email's
@@ -359,6 +378,9 @@ def digest(payload, restaurant, kind=FIRST):
         "operations": list(payload.get("operations") or []),
         "tomorrow": payload.get("tomorrow"),
         "yesterday": payload.get("yesterday"),
+        # The AI insights the app shows between Top KPIs and the priorities
+        # (D3-7) — the view's own list (access.insights), already filtered.
+        "insights": list(payload.get("insights") or []),
         "actions": actions,
         "missing": list(facts.get("missing") or []),
         "withheld": withheld,
@@ -373,8 +395,11 @@ def push_text(d):
     whose = "Your daily report" if d.get("view") == access.OWNER else "Your manager report"
     head = f"{d['name']} · {d['date_short']}"
     if d["kind"] == UPDATED:
-        body = f"{head}: {d['net_label']} net." if d.get("net_label") else f"{head}: the report is final now."
-        return "Sales are now in — updated report", _clip(body, PUSH_BODY_MAX)
+        if d.get("net_label"):
+            return "Sales are now in — updated report", _clip(f"{head}: {d['net_label']} net.", PUSH_BODY_MAX)
+        # Final without a net: the POS closed the day with no sales in it
+        # (pipeline D1-20) — never "sales are now in".
+        return f"{whose} is final", _clip(f"{head}: no sales were recorded for the night.", PUSH_BODY_MAX)
     if d.get("provisional"):
         return (f"{whose} is ready — provisional",
                 _clip(f"{head}: sales are still syncing. You'll get one update when they land.", PUSH_BODY_MAX))
@@ -426,15 +451,17 @@ def present_shown(restaurant_id, payload, surface, user_id=None, db_path=None):
         return {}
 
 
-def _send_email(db, row_id, restaurant, report, user, kind):
+def _send_email(db, row_id, restaurant, report, user, kind, content=None):
+    """`kind` is the claim; `content` what the email says (_content)."""
     import emails
+    content = content or kind
     payload = _render(report, user, restaurant, db)
-    d = digest(payload, restaurant, kind)
+    d = digest(payload, restaurant, content)
     result = emails.send_dsr_email(user["email"], d, restaurant_id=restaurant.id)
     if getattr(result, "ok", False):
         _finish(db, row_id, SENT)
         # The "Updated" notice shows no actions; the first notice does.
-        if kind == FIRST:
+        if content == FIRST:
             present_shown(restaurant.id, payload, "dsr_email", user_id=user.get("id"), db_path=db)
         return SENT
     # Never attempted (a suppressed address, no key): a decision, not a failure.
@@ -471,9 +498,10 @@ def push_data(business_date, kind, version, alert_id=None):
     return data
 
 
-def _send_push(db, row_id, restaurant, report, user, kind):
+def _send_push(db, row_id, restaurant, report, user, kind, content=None):
+    """`kind` is the claim (and the bell row); `content` what it says."""
     import push
-    d = digest(_render(report, user, restaurant, db), restaurant, kind)
+    d = digest(_render(report, user, restaurant, db), restaurant, content or kind)
     title, body = push_text(d)
     alert_id = _history(db, restaurant, report["business_date"], kind, report)
     push.fire_push(restaurant.id, ALERT_TYPE, title, body,
@@ -535,7 +563,8 @@ def on_terminal(restaurant, report_id, now_utc=None, db_path=None):
                 if row_id is None:
                     continue
                 try:
-                    status = (_send_email if channel == EMAIL else _send_push)(db, row_id, restaurant, report, u, kind)
+                    status = (_send_email if channel == EMAIL else _send_push)(db, row_id, restaurant, report, u, kind,
+                                                                                content=_content(kind, first))
                 except Exception as e:
                     _finish(db, row_id, FAILED, detail=e)
                     raise
@@ -584,8 +613,10 @@ def _release_one(row, now_utc, db):
     if now_utc - created > timedelta(hours=HELD_MAX_HOURS):
         _finish(db, row["id"], EXPIRED, detail="held too long to be worth sending")
         return EXPIRED
-    if r is None or not getattr(r, "dsr_enabled", 1) or \
+    if r is None or not getattr(r, "dsr_enabled", 1) or not getattr(r, "dsr_notify", 0) or \
             (getattr(r, "billing_status", None) or "trial").lower() in ("churned", "cancelled", "canceled", "paused"):
+        # Notices switched off while the push was held (D2-9) is as final as
+        # the DSR switched off: on_terminal would not have sent it either.
         _finish(db, row["id"], SKIPPED, detail="restaurant no longer receives the DSR")
         return SKIPPED
     again = quiet_until(r, now_utc)
@@ -604,7 +635,8 @@ def _release_one(row, now_utc, db):
     if report is None or (row["kind"] == UPDATED and report.get("provisional")):
         _finish(db, row["id"], SKIPPED, detail="no deliverable version")
         return SKIPPED
-    return _send_push(db, row["id"], r, report, user, row["kind"])
+    first = _rows(db, r.id, row["business_date"]).get((user["id"], PUSH, FIRST)) if row["kind"] == UPDATED else None
+    return _send_push(db, row["id"], r, report, user, row["kind"], content=_content(row["kind"], first))
 
 
 def release_held(now_utc=None, db_path=None):

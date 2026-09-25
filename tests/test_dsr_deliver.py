@@ -437,6 +437,44 @@ def test_a_push_held_when_the_final_version_lands_goes_out_once_from_the_final(d
     assert len([p for p in sent["pushes"] if ids["erik"] in p["user_ids"]]) == 1
 
 
+def test_a_held_push_is_not_released_after_notices_are_switched_off(db, sent):
+    # D2-9: on_terminal checked dsr_notify; the 7am release did not.
+    r = _restaurant(db, alert_quiet_start="22:00", alert_quiet_end="07:00")
+    _people(db, r.id)
+    deliver.on_terminal(r, _report(db, r)["id"], now_utc=AT_CLOSE, db_path=db)
+    update_restaurant(r.id, {"dsr_notify": 0}, db_path=db)
+    out = deliver.release_held(now_utc=datetime(2026, 9, 23, 12, 5), db_path=db)
+    assert out["released"] == 0 and sent["pushes"] == []
+    assert {x["status"] for x in _rows(db) if x["channel"] == "push"} == {"skipped"}
+
+
+def test_an_update_to_someone_whose_first_notice_never_arrived_is_the_first_notice(db, sent, monkeypatch):
+    # D2-10: Resend refused the provisional first email; the final version
+    # then sent "Updated … went out provisional while sales were syncing" to
+    # someone who had never been told anything.
+    r = _restaurant(db)
+    _people(db, r.id, devices=False)
+    v1 = _report(db, r, status="provisional", sales=False)
+    recording = requests.post                     # the `sent` fixture's recorder
+
+    class _No:
+        status_code = 422
+        text = "refused"
+
+        def json(self):
+            return {"message": "refused"}
+    monkeypatch.setattr(requests, "post", lambda url, json=None, **kw: _No())
+    deliver.on_terminal(r, v1["id"], now_utc=datetime(2026, 9, 23, 9, 5), db_path=db)
+    assert {x["status"] for x in _rows(db) if x["channel"] == "email"} == {"failed"}
+    assert sent["emails"] == []
+    monkeypatch.setattr(requests, "post", recording)
+    v2 = _report(db, r, status="final")
+    deliver.on_terminal(r, v2["id"], now_utc=datetime(2026, 9, 23, 15, 10), db_path=db)
+    subjects = {m["subject"] for m in sent["emails"]}
+    assert subjects and not [s for s in subjects if s.startswith("Updated")]
+    assert all("$6,975" in s for s in subjects)
+
+
 def test_a_login_removed_overnight_is_not_pushed_at_release(db, sent):
     r = _restaurant(db, alert_quiet_start="22:00", alert_quiet_end="07:00")
     ids = _people(db, r.id)

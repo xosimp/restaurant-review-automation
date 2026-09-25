@@ -15,14 +15,22 @@ number can settle — never a vibe — so the grade is a fact, not an opinion:
 
 A prediction is written ONCE, before its night happens (INSERT OR IGNORE on
 (restaurant, for_date, key)); a re-run of the earlier night never rewrites it
-after the fact. It is graded from the night's own Sales block — each version
-re-grades, so late sales correct the grade — and a night with no sales leaves
-it ungraded, never "wrong".
+after the fact. "Before" is strict (D1-7): the pipeline records only before
+the predicted night's service opens (pipeline.prediction_cutoff_utc), and
+created_at is when the row was really written — grade() voids any row
+written at or after the night opened, so it is never graded or shown. It is
+graded from the night's own Sales block — each version re-grades, so late
+sales correct the grade — and a night with no sales leaves it ungraded,
+never "wrong".
 
-    record(restaurant_id, made_on, for_date, preds, db_path)
-    grade(restaurant_id, for_date, facts, db_path)          -> [rows]
+A prediction that rests on an owner-only fact (sales_budget names the
+budget — PREDICTION_CITES) is shown only to a view allowed that fact
+(review(allowed=...), dsr.access).
+
+    record(restaurant_id, made_on, for_date, preds, db_path, made_at)
+    grade(restaurant_id, for_date, facts, db_path, cutoff_utc) -> [rows]
     for_date(restaurant_id, day, db_path)                   -> [rows]
-    accuracy(restaurant_id, through, days=30, db_path)      -> {pct, correct, graded, window_days}
+    accuracy(restaurant_id, through, days=30, db_path, exclude_keys) -> {pct, correct, graded, window_days}
 """
 from datetime import date, timedelta
 
@@ -32,6 +40,7 @@ RAIN_PCT = 50
 ACCURACY_WINDOW_DAYS = 30
 ACCURACY_MIN_GRADED = 5          # under this, the count is shown and the % is not
 CORRECT, INCORRECT = "correct", "incorrect"
+VOID = "void"                    # written after its night opened: not a prediction, never shown
 
 
 def _db(db_path):
@@ -80,20 +89,34 @@ def build(forecast, budget_net=None, weather=None, events=None, weekday=None) ->
     return out
 
 
-def record(restaurant_id, made_on, for_date, preds, db_path=None) -> int:
-    """Store predictions for `for_date` made on `made_on`; an existing one
-    for the same night and key is kept as it was first written."""
+# The facts a prediction rests on beyond the night's net — what dsr.access
+# filters it by, like a narrative line's cites. "Sales expected above budget
+# ($9,500)" names the owner's budget, which no manager view shows (D2-1).
+PREDICTION_CITES = {"sales_budget": ("sales.budget_net",)}
+
+
+def cites_for(key) -> tuple:
+    return ("sales.net",) + tuple(PREDICTION_CITES.get(str(key), ()))
+
+
+def record(restaurant_id, made_on, for_date, preds, db_path=None, made_at=None) -> int:
+    """Store predictions for `for_date` made by the report of `made_on`; an
+    existing one for the same night and key is kept as it was first
+    written. `made_at` (naive UTC, default now) is when it was really
+    written — created_at, which grade() checks against the night's open."""
     if not preds:
         return 0
+    from dsr import store
+    at = (made_at.strftime("%Y-%m-%d %H:%M:%S") if made_at else store._now())
     conn = _db(db_path)
     n = 0
     try:
         for p in preds:
             cur = conn.execute(
                 "INSERT OR IGNORE INTO dsr_predictions (restaurant_id, for_date, made_on, key, text, metric, op, "
-                "value, low, high, basis) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "value, low, high, basis, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (restaurant_id, str(for_date)[:10], str(made_on)[:10], p["key"], p["text"], p["metric"], p["op"],
-                 p.get("value"), p.get("low"), p.get("high"), p.get("basis")))
+                 p.get("value"), p.get("low"), p.get("high"), p.get("basis"), at))
             n += cur.rowcount or 0
         conn.commit()
     finally:
@@ -124,16 +147,25 @@ def outcome(row, actual):
     return CORRECT if ok else INCORRECT
 
 
-def grade(restaurant_id, for_date, facts, db_path=None) -> list:
+def grade(restaurant_id, for_date, facts, db_path=None, cutoff_utc=None) -> list:
     """Grade the predictions made about `for_date` from that night's facts.
-    Unmeasured → left ungraded (outcome NULL), never wrong."""
+    Unmeasured → left ungraded (outcome NULL), never wrong. One written at
+    or after `cutoff_utc` (naive UTC — the night's open,
+    pipeline.prediction_cutoff_utc) was written while the night was already
+    under way: it is VOID, never graded, never shown (D1-7)."""
     from dsr import store
+    cut = cutoff_utc.strftime("%Y-%m-%d %H:%M:%S") if cutoff_utc else None
     conn = _db(db_path)
     try:
         rows = [dict(r) for r in conn.execute(
             "SELECT * FROM dsr_predictions WHERE restaurant_id=? AND for_date=?",
             (restaurant_id, str(for_date)[:10])).fetchall()]
         for r in rows:
+            if cut and str(r.get("created_at") or "")[:19] >= cut:
+                conn.execute("UPDATE dsr_predictions SET outcome=?, actual=NULL, graded_at=NULL WHERE id=?",
+                             (VOID, r["id"]))
+                r.update(outcome=VOID, actual=None)
+                continue
             actual = _actual(facts, r["metric"])
             res = outcome(r, actual) if actual is not None else None
             conn.execute("UPDATE dsr_predictions SET outcome=?, actual=?, graded_at=? WHERE id=?",
@@ -146,26 +178,33 @@ def grade(restaurant_id, for_date, facts, db_path=None) -> list:
 
 
 def for_date(restaurant_id, day, db_path=None) -> list:
+    """The predictions about one night, VOID ones left out."""
     conn = _db(db_path)
     try:
         return [dict(r) for r in conn.execute(
             "SELECT key, text, metric, op, value, low, high, basis, outcome, actual, made_on FROM dsr_predictions "
-            "WHERE restaurant_id=? AND for_date=? ORDER BY id", (restaurant_id, str(day)[:10])).fetchall()]
+            "WHERE restaurant_id=? AND for_date=? AND COALESCE(outcome, '') != ? ORDER BY id",
+            (restaurant_id, str(day)[:10], VOID)).fetchall()]
     finally:
         conn.close()
 
 
-def accuracy(restaurant_id, through, days=ACCURACY_WINDOW_DAYS, db_path=None) -> dict:
+def accuracy(restaurant_id, through, days=ACCURACY_WINDOW_DAYS, db_path=None, exclude_keys=()) -> dict:
     """Graded predictions over the window ending `through`: the share that
     came true, with the counts it rests on. `pct` is None under
-    ACCURACY_MIN_GRADED graded (the count still shows)."""
+    ACCURACY_MIN_GRADED graded (the count still shows). `exclude_keys`
+    leaves out the predictions a view may not see (D2-1), so a manager's
+    count is of what they were shown."""
     end = date.fromisoformat(str(through)[:10])
     start = end - timedelta(days=days - 1)
+    skip = tuple(exclude_keys or ())
+    extra = f" AND key NOT IN ({','.join('?' for _ in skip)})" if skip else ""
     conn = _db(db_path)
     try:
         rows = conn.execute(
             "SELECT outcome, COUNT(*) n FROM dsr_predictions WHERE restaurant_id=? AND for_date BETWEEN ? AND ? "
-            "AND outcome IS NOT NULL GROUP BY outcome", (restaurant_id, start.isoformat(), end.isoformat())).fetchall()
+            "AND outcome IN (?, ?)" + extra + " GROUP BY outcome",
+            (restaurant_id, start.isoformat(), end.isoformat(), CORRECT, INCORRECT, *skip)).fetchall()
     finally:
         conn.close()
     by = {r["outcome"]: int(r["n"]) for r in rows}
@@ -175,11 +214,16 @@ def accuracy(restaurant_id, through, days=ACCURACY_WINDOW_DAYS, db_path=None) ->
             "min_graded": ACCURACY_MIN_GRADED}
 
 
-def review(restaurant_id, day, db_path=None) -> dict | None:
+def review(restaurant_id, day, db_path=None, allowed=None) -> dict | None:
     """The report's "How did yesterday turn out?": what the previous night's
     report predicted about `day`, each graded, plus the running accuracy.
-    None when nothing was predicted about the night."""
+    None when nothing was predicted about the night. `allowed(cite)` is the
+    view's rule (dsr.access): a prediction resting on a fact the view
+    withholds is left out, and the accuracy counts only the kinds it may
+    see (D2-1)."""
     rows = for_date(restaurant_id, day, db_path=db_path)
+    hidden = {k for k in PREDICTION_CITES if allowed is not None and not all(allowed(c) for c in cites_for(k))}
+    rows = [r for r in rows if r["key"] not in hidden]
     if not rows:
         return None
     items = []
@@ -187,4 +231,4 @@ def review(restaurant_id, day, db_path=None) -> dict | None:
         items.append({"key": r["key"], "text": r["text"], "outcome": r["outcome"], "basis": r["basis"],
                       "actual": r["actual"],
                       "actual_text": (f"Net sales {_money(r['actual'])}" if r["actual"] is not None else None)})
-    return {"items": items, "accuracy": accuracy(restaurant_id, day, db_path=db_path)}
+    return {"items": items, "accuracy": accuracy(restaurant_id, day, db_path=db_path, exclude_keys=sorted(hidden))}

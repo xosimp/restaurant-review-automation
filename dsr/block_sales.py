@@ -5,9 +5,12 @@ The night's money from the POS (pos.fetch_day_sales, whose docstring is the
 definition of gross and net), set against every baseline the restaurant
 actually has:
 
-  yesterday       the night before          ┐ dsr_metrics "sales.net" (the
-  last_week       the same weekday, 7 back  │ DSR's own figure), else the
-  last_year       the same weekday, 364 back┘ POS sync's labor_daily_history
+  yesterday       the night before          ┐ store.baseline_net — the DSR's
+  last_week       the same weekday, 7 back  │ own figure, else an imported
+  last_year       store.last_year_day       ┘ workbook row, else the POS
+                  (the same fiscal week and   sync's daily total where that
+                  weekday last fiscal year,   total is built as the DSR's
+                  else 364 back)              net (store.POS_SYNC_SAME_BASIS)
   budget          dsr_budgets, gross and net as the owner entered them
   forecast        demand.forecast_day — the codebase's one demand forecast
                   (the median of the last eight same weekdays), used only
@@ -58,21 +61,15 @@ def _delta(value, base):
     return round(value - base, 2)
 
 
-def _baseline_net(ctx, day):
-    """(net, source) for another night, or (None, None). The DSR's own
-    figure first; before DSRs existed, the nightly POS sync's daily sales
-    (labor_daily_history, where a day with no sales synced is 0 and means
-    unknown, so only a positive figure counts)."""
-    iso = day.isoformat()
-    for d, v in store.metric_series(ctx.restaurant_id, "sales.net", iso, iso, db_path=ctx.db_path):
-        return float(v), "dsr"
-    conn = store.get_conn(ctx.db_path)
-    try:
-        row = conn.execute("SELECT sales FROM labor_daily_history WHERE restaurant_id=? AND date=? "
-                           "AND sales IS NOT NULL AND sales > 0", (ctx.restaurant_id, iso)).fetchone()
-    finally:
-        conn.close()
-    return (float(row["sales"]), "pos_sync") if row else (None, None)
+def _baseline_net(ctx, day, provider=None):
+    """(net, source) for another night, or (None, None) — store.baseline_net,
+    the one resolver the weekly grid reads too (D1-10): the DSR's own
+    figure, else the owner's imported workbook, else the nightly POS sync's
+    daily sales where that total is built as the DSR's net (D1-13)."""
+    if day is None:
+        return None, None
+    return store.baseline_net(ctx.restaurant_id, day, db_path=ctx.db_path,
+                              pos_sync=store.pos_sync_same_basis(provider))
 
 
 def _forecast(ctx):
@@ -220,15 +217,21 @@ def _ready(ctx, data, provider, closed_by):
     }
     baselines = {}
     for key, other in (("yesterday", day - timedelta(days=1)), ("last_week", day - timedelta(days=7)),
-                       ("last_year", day - timedelta(days=LAST_YEAR_DAYS))):
-        base, source = _baseline_net(ctx, other)
+                       ("last_year", store.last_year_day(ctx.restaurant, day))):
+        base, source = _baseline_net(ctx, other, provider)
         metrics[f"{key}_net"] = base
         metrics[f"vs_{key}"] = _delta(net, base)
         metrics[f"vs_{key}_pct"] = _pct(net, base)
-        baselines[key] = {"date": other.isoformat(), "net": base, "source": source}
+        baselines[key] = {"date": other.isoformat() if other else None, "net": base, "source": source}
 
     fc = _forecast(ctx)
     fc_net = float(fc["typical_sales"]) if fc else None
+    # The forecast is built from the nightly POS sync's daily totals
+    # (demand.forecast_day reads labor_daily_history), which are the DSR's
+    # own net only where store.POS_SYNC_SAME_BASIS says so (D1-13): the
+    # basis is recorded beside it, and where it differs the comparison is
+    # said to be across two ways of counting.
+    same_basis = store.pos_sync_same_basis(provider)
     metrics.update({"forecast_net": fc_net, "vs_forecast": _delta(net, fc_net), "vs_forecast_pct": _pct(net, fc_net),
                     # The forecast's own stated range (10th-90th percentile,
                     # None under demand.RANGE_MIN_SAMPLES), stored per night so
@@ -236,7 +239,11 @@ def _ready(ctx, data, provider, closed_by):
                     # inside it (contract K8, CA2 #6).
                     "forecast_low": (fc or {}).get("low"), "forecast_high": (fc or {}).get("high")})
     baselines["forecast"] = ({"net": fc_net, "source": "demand.forecast_day", "samples": fc.get("samples"),
-                              "basis": f"median of the last {fc.get('samples')} {fc.get('weekday')}s"}
+                              "basis": f"median of the last {fc.get('samples')} {fc.get('weekday')}s",
+                              "forecast_basis": "pos_daily_total", "same_basis": same_basis,
+                              "basis_note": None if same_basis else
+                              "Built from the POS's own daily totals, which may count some things (service "
+                              "charges, refunds) differently from tonight's net"}
                              if fc else {"net": None, "source": None})
 
     budget = store.budgets_for(ctx.restaurant_id, day, day, db_path=ctx.db_path).get(day.isoformat()) or {}
@@ -254,6 +261,11 @@ def _ready(ctx, data, provider, closed_by):
         metrics[f"cat:{dsr.UNMAPPED}"] = round(sum(u["net"] for u in unmapped), 2)
     metrics["evening_share_pct"] = evening_share(hourly, net)
     top, bottom = _items(data["items"])
+    # Every item sold, by the POS's own item id (menu_items.toast_guid holds
+    # it for any provider) — the Food block costs tonight's recipes from
+    # these rather than waiting for the 5am item sync (D1-8).
+    sold = [{"guid": it.get("guid"), "name": it.get("name"), "qty": it.get("qty")}
+            for it in data["items"] if (it.get("qty") or 0) > 0]
 
     detail = {
         "provider": provider,
@@ -269,6 +281,7 @@ def _ready(ctx, data, provider, closed_by):
         "unallocated": unallocated,
         "top_items": top,
         "bottom_items": bottom,
+        "items_sold": sold,
         "source_checks": data.get("source_checks") or {},
     }
     return dsr.block(dsr.READY, source=provider, metrics=metrics, detail=detail, block_name="sales")

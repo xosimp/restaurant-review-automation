@@ -186,22 +186,39 @@ def test_food_recoverable_is_the_deduplicated_total_not_the_plain_sum(db, monkey
     assert b["detail"]["recoverable"]["kind"] == "opportunity"
 
 
-def test_food_waits_for_the_nights_item_sales_and_says_so(db):
+def test_food_costs_tonights_items_from_the_sales_pull_and_never_promises_a_follow_up(db):
+    """D1-8: the 5am item sync lands after the report, and nothing made a
+    later version for it — "the estimate follows" never did. Tonight's
+    Sales block lists every item by the POS's own item id, which is what
+    menu_items.toast_guid holds: those are costed now."""
     rid = _rid(db)
     k = _kitchen(db, rid, sales=False, count=False)
-    # Item sales arrived on earlier nights: tonight's are coming.
     _sql(db, "INSERT INTO menu_item_sales (restaurant_id, menu_item_id, business_date, qty_sold) VALUES (?,?,?,?)",
          (rid, k["burger"], "2026-09-20", 7))
+    # No Sales block yet at all (a collector run on its own): not an
+    # estimate, and not a promise either.
     b = block_food.collect(_ctx(db, rid))
-    assert b["status"] == dsr.AWAITING
-    assert b["reason"] == "Item sales for 9/22/26 haven't synced yet — the food cost estimate follows"
+    assert b["status"] == dsr.READY and b["metrics"]["est_food_cost"] is None
+    assert "follows" not in str(b) and "wasn't estimated" in b["detail"]["note"]
     _no_zero_for_unknown(b, ("est_food_cost", "est_food_cost_pct", "recipe_coverage_pct"))
-    # Everything else is already in the block.
     assert b["metrics"]["critical_low"] == 1
-    # A week later they never came: no item sales that night, not "awaiting".
-    later = block_food.collect(_ctx(db, rid, now=datetime(2026, 9, 30, 12)))
-    assert later["status"] == dsr.READY and later["metrics"]["est_food_cost"] is None
-    assert "No item sales were recorded for 9/22/26" in later["detail"]["note"]
+    # Sales still coming: Food waits with it (the night is held by sales anyway).
+    ctx = _ctx(db, rid)
+    ctx.blocks["sales"] = dsr.block(dsr.AWAITING, block_name="sales")
+    assert block_food.collect(ctx)["status"] == dsr.AWAITING
+    # Sales in: 10 burgers and 5 fries by item id, plus an item the menu
+    # list doesn't have (left out, as the item sync leaves it out).
+    ctx = _ctx(db, rid)
+    ctx.blocks["sales"] = dsr.block(dsr.READY, metrics={"net": 150.0}, detail={"items_sold": [
+        {"guid": f"g-burger-{rid}", "name": "Burger", "qty": 10.0},
+        {"guid": f"g-fries-{rid}", "name": "Fries", "qty": 5.0},
+        {"guid": "not-on-the-menu", "name": "Special", "qty": 3.0},
+        {"guid": None, "name": "Open food", "qty": 1.0}]})
+    b = block_food.collect(ctx)
+    m, est = b["metrics"], b["detail"]["estimate"]
+    assert b["status"] == dsr.READY and est["units_from"] == "tonight's POS item sales"
+    # 10 burgers × (0.25 lb × $20 + a $0.50 bun) = $55; 10 of 15 units costed.
+    assert (m["est_food_cost"], m["recipe_coverage_pct"]) == (55.0, 66.7)
 
 
 def test_food_never_reports_zero_for_what_was_not_measured(db):

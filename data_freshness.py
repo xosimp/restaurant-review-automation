@@ -546,10 +546,18 @@ def sales_consistency(restaurant_id, days=SALES_CONSISTENCY_DAYS, db_path=None, 
     except Exception:
         return out
     try:
+        # A night counts when its LATEST version is final — dsr_reports holds
+        # the report's status; dsr_metrics.status is the block's ("ready"),
+        # which this used to compare with 'final', so it never checked a
+        # single night (D1-3).
         rows = c.execute(
             "SELECT m.business_date AS d, m.value AS dsr, l.sales AS pos FROM dsr_metrics m "
+            "JOIN dsr_reports r ON r.restaurant_id=m.restaurant_id AND r.business_date=m.business_date "
+            "AND r.version=(SELECT MAX(version) FROM dsr_reports x WHERE x.restaurant_id=r.restaurant_id "
+            "AND x.business_date=r.business_date) "
             "JOIN labor_daily_history l ON l.restaurant_id=m.restaurant_id AND l.date=m.business_date "
-            "WHERE m.restaurant_id=? AND m.metric='sales.net' AND m.status='final' AND m.value IS NOT NULL "
+            "WHERE m.restaurant_id=? AND m.metric='sales.net' AND m.status='ready' AND r.status='final' "
+            "AND m.value IS NOT NULL "
             "AND l.sales IS NOT NULL AND l.sales > 0 AND COALESCE(l.final, 1) = 1 "
             "AND m.business_date >= date('now', ?) ORDER BY m.business_date DESC",
             (restaurant_id, f"-{int(days)} days")).fetchall()

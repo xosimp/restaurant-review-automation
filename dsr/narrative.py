@@ -342,6 +342,69 @@ _WORD_RE = re.compile(r"[a-z0-9']+")
 _CAUSE_GENERIC = {"last", "week", "year", "prior", "prev", "previous", "yesterday", "target", "budget",
                   "forecast", "count", "total", "monthly", "dollars", "avg", "rate", "share", "pct", "percent"}
 
+# What a fact is called in words, for cite completion (D2-3): a key's own
+# words, and the ones an owner or the model would use for them. A figure is
+# completed with a fact only when one of these sits beside it.
+_KEY_NOISE = {"pct", "vs", "est", "pts", "and", "of", "per", "the", "cat"}
+_KEY_WORDS = {
+    "net": ("net", "sales", "revenue", "took in"),
+    "gross": ("gross", "sales"),
+    "guests": ("guest", "cover", "diner"),
+    "transactions": ("transaction", "check", "ticket", "order"),
+    "avg": ("average", "avg", "per check", "per ticket"),
+    "ticket": ("ticket", "check"),
+    "no": ("no-show", "no show", "never clocked", "didn't show", "did not show", "didn't clock", "missed"),
+    "shows": ("no-show", "no show", "never clocked", "didn't show", "did not show"),
+    "late": ("late",),
+    "arrivals": ("late", "arriv"),
+    "hours": ("hour",),
+    "overtime": ("overtime",),
+    "cost": ("cost", "labor", "payroll", "wage", "spend"),
+    "scheduled": ("scheduled", "schedule", "staff", "on the floor"),
+    "yesterday": ("yesterday", "last night"),
+    "last": ("last",),
+    "week": ("week", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"),
+    "year": ("year",),
+    "forecast": ("forecast", "expected", "typical", "usual"),
+    "budget": ("budget",),
+    "target": ("target",),
+    "evening": ("evening", "after 6", "6pm", "6 pm", "after six", "dinner"),
+    "rating": ("rating", "star", "★"),
+    "reviews": ("review",),
+    "negative": ("negative", "complaint", "bad review", "low review"),
+    "discounts": ("discount",),
+    "coverage": ("coverage", "recipe"),
+}
+
+
+def key_words(key) -> tuple:
+    """The words that name fact `key` ("<block>.<metric>") in a sentence."""
+    block, _, k = str(key).partition(".")
+    tokens = [t for t in re.split(r"[_:\s]+", k.lower()) if t and t not in _KEY_NOISE]
+    words = []
+    for tok in tokens:
+        words += list(_KEY_WORDS.get(tok, ())) + ([tok] if len(tok) >= 3 else [])
+    if not words:
+        words = [block]                 # labor.pct: "labor"
+    return tuple(dict.fromkeys(w for w in words if w))
+
+
+def _named_near(t, raw, key, before=60, after=45) -> bool:
+    """Whether the words beside figure `raw` in (normalised) text `t` name
+    fact `key` — any occurrence of the figure."""
+    low = t.lower()
+    words = key_words(key)
+    start = 0
+    raw_l = str(raw).lower()
+    while True:
+        i = low.find(raw_l, start)
+        if i < 0:
+            return False
+        window = low[max(0, i - before): i + len(raw_l) + after]
+        if any(w in window for w in words):
+            return True
+        start = i + 1
+
 
 def _strings(v, out, depth=0):
     if depth > 4:
@@ -488,6 +551,7 @@ class Facts:
         # when the words name it as one ("below the $7,300 budget").
         kinds = {kind_of(c) for c in cites}
         names_plan = bool(_PLAN_WORDS_RE.search(str(text or "")))
+        t = _normalise(text)
         for key in self.metrics:
             if not missing:
                 break
@@ -497,7 +561,12 @@ class Facts:
             if k not in kinds and not (k == "measured" or (k == "plan" and names_plan)):
                 continue
             alone = self.untraced(text, [key])
-            if any(m not in alone for m in missing):
+            # The fact must be the one the words NAME beside the figure
+            # (D2-3): "3 scheduled people never clocked in" is not backed by
+            # three LATE arrivals because both are 3, nor "180 guests" by 180
+            # transactions. A value alone matches by coincidence too often.
+            backs = [m for m in missing if m not in alone and _named_near(t, m, key)]
+            if backs:
                 cites.append(key)
                 missing = self.untraced(text, cites)
         return cites

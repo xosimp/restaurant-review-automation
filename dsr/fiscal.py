@@ -222,6 +222,34 @@ def period_span(restaurant, day):
     return None
 
 
+LAST_YEAR_DAYS = 364     # the same weekday 52 weeks back
+
+
+def same_day_last_year(restaurant, day):
+    """The night a year back that `day` is compared with: the same week of
+    the fiscal year and the same weekday in the PREVIOUS fiscal year, where
+    the restaurant keeps a fiscal calendar — so in the year after a 53-week
+    year "last year" is 371 days back, as Back Office has it, not one week
+    off (D1-16). With no calendar, the same weekday 364 days back. None for
+    week 53 of a 53-week year: last year had no such week, and 364 days back
+    would be this year's own first week."""
+    d = _as_date(day)
+    fallback = d - timedelta(days=LAST_YEAR_DAYS)
+    ws, _we = week_bounds(restaurant, d)
+    year = _year_of(restaurant, ws)
+    if year is None:
+        return fallback
+    start, _lengths = year
+    week_index = (ws - start).days // 7
+    prev = _year_of(restaurant, start - timedelta(days=7))
+    if prev is None:
+        return fallback
+    pstart, plengths = prev
+    if week_index >= sum(plengths):
+        return None
+    return pstart + timedelta(weeks=week_index) + (d - ws)
+
+
 def label(restaurant, day) -> str:
     """"Period 9 · Week 1" when periods are configured, else the week range
     in M/D/YY."""

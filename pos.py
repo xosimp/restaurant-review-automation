@@ -237,8 +237,35 @@ def _recheck_sales_consistency(restaurant_id):
             ops.capture(RuntimeError(f"Daily report net ${m['dsr']:,.2f} vs POS ${m['pos']:,.2f} on {m['date']} "
                                      f"({len(chk['mismatches'])} night(s) apart)"),
                         job="dsr_pos_consistency", context=f"restaurant_id={restaurant_id}")
+            _reopen_moved_nights(restaurant_id, chk["mismatches"])
     except Exception as e:
         log.warning(f"sales consistency re-check skipped for {restaurant_id}: {e}")
+
+
+def _reopen_moved_nights(restaurant_id, mismatches):
+    """Recent final nights whose POS total moved after the report (dsr D1-1):
+    each is re-pulled off this thread (dsr.pipeline.recheck_final — a new
+    version only when the POS's own figure changed). Only where the archive
+    is built as the DSR's net, so a mismatch means the POS moved rather than
+    two ways of counting; only nights the sweep still looks at."""
+    from datetime import date, timedelta
+    from dsr import pipeline, store
+    from models import get_restaurant
+    name, _mod = connected_provider(restaurant_id)
+    if not store.pos_sync_same_basis(name):
+        return
+    r = get_restaurant(restaurant_id)
+    if r is None or not getattr(r, "dsr_enabled", 1):
+        return
+    since = date.today() - timedelta(days=pipeline.SWEEP_LOOKBACK_DAYS)
+    nights = sorted({m["date"] for m in mismatches if str(m.get("date") or "") >= since.isoformat()})
+    if not nights:
+        return
+
+    def go():
+        for night in nights:
+            pipeline.recheck_final(r, night)
+    pipeline._spawn(go)
 
 
 POS_SYNC_MAX_SECONDS = 45 * 60
@@ -611,8 +638,10 @@ def fetch_day_sales(restaurant_id, business_date):
     Returns (data, provider_name), where data is
       {"gross", "net", "transactions", "guests", "discounts", "comps",
        "voids", "refunds", "tax", "by_department": {pos department: net},
-       "by_hour": {"HH": net}, "items": [{"name", "department", "qty", "net"}],
+       "by_hour": {"HH": net}, "items": [{"name", "department", "guid", "qty", "net"}],
        "net_deductions", "source_checks"}
+    An item's `guid` is the POS's own item id (Toast's item guid, RPOWER's
+    menuitem_mid) — what menu_items.toast_guid holds — or None.
 
     GROSS is every item sold, at the price it was rung, before any discount
     or comp: the POS's sale lines plus the value of comped items. It never
@@ -661,7 +690,7 @@ def fetch_day_sales(restaurant_id, business_date):
 def _net_day(raw):
     """A provider's parts, netted by NET_DEDUCTIONS in one place."""
     total = {k: raw.get(k) for k in ("gross", "discounts", "comps")}
-    items = [{"name": it.get("name"), "department": it.get("department"),
+    items = [{"name": it.get("name"), "department": it.get("department"), "guid": it.get("guid"),
               "qty": round(float(it.get("qty") or 0), 3), "net": net_of(it.get("parts"))}
              for it in raw.get("items") or []]
     return {

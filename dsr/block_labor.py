@@ -6,7 +6,13 @@ Reads what the product already syncs; calls no POS itself.
   labor $, hours    labor_daily_history — the per-day archive every POS sync
                     (pos.save_synced_shifts / rpower.sync_to_db) and every
                     shifts upload writes, costed by the Labor module (role
-                    rates, the weekly overtime premium allocated to its days)
+                    rates, the weekly overtime premium allocated to its days).
+                    A row written while the day was still trading (final=0)
+                    is never the night's labor: AWAITING until a sync after
+                    close, UNAVAILABLE past the deadline. The dollars say
+                    what they are (detail.cost_basis, thresholds
+                    .labor_cost_basis); on Cavnar's assumed $26/hr — no wage
+                    entered — labor $ and % are withheld and hours stay
   labor %           labor $ over TONIGHT's net sales when the Sales block is
                     ready, so the report's own figures reconcile; otherwise
                     the archive's own percentage, and the detail says which
@@ -19,10 +25,12 @@ Reads what the product already syncs; calls no POS itself.
   after 6pm         the day's shifts clipped at 6pm, against the Sales block's
                     hourly curve after 6pm
   coverage          the day's "hasn't clocked in" issues (strategy_jobs
-                    .run_coverage_check): closed by a clock-in = late, the
-                    rest = no-shows. Measured only where that check could run
+                    .run_coverage_check): closed by a clock-in, or punches
+                    for the day in the synced shifts = late, the rest =
+                    no-shows (_coverage). Measured only where that check ran
                     (Labor module, a routed manager, a POS with a live clock-in
-                    feed, a published schedule for the day); elsewhere None
+                    feed, a published schedule for the day, and the check's
+                    own record for the night); elsewhere None
   shift quality     the published week's Shift Quality evaluation
                     (schedule_history.quality_json) for this date's shifts
 
@@ -47,6 +55,7 @@ log = logging.getLogger("dsr")
 REASON_SYNC_PENDING = "Labor syncs from the POS overnight"
 REASON_NOTHING = "No time punches recorded for this day"
 REASON_NOT_CONNECTED = "Connect your POS or upload shifts to see labor"
+REASON_PARTIAL = "Only part of the day's punches had synced by the report deadline"
 
 _OT_NOTE = re.compile(r"\b(OT|DT)\s+([0-9.]+)h", re.I)
 
@@ -54,8 +63,9 @@ _OT_NOTE = re.compile(r"\b(OT|DT)\s+([0-9.]+)h", re.I)
 def _history_row(ctx):
     conn = store.get_conn(ctx.db_path)
     try:
-        row = conn.execute("SELECT labor_pct, labor_cost, sales, total_hours FROM labor_daily_history "
-                           "WHERE restaurant_id=? AND date=?", (ctx.restaurant_id, ctx.day)).fetchone()
+        row = conn.execute("SELECT labor_pct, labor_cost, sales, total_hours, COALESCE(final, 1) AS final "
+                           "FROM labor_daily_history WHERE restaurant_id=? AND date=?",
+                           (ctx.restaurant_id, ctx.day)).fetchone()
     finally:
         conn.close()
     return dict(row) if row else None
@@ -163,31 +173,60 @@ def _overtime(ctx, provider, rows, all_rows):
     return round(ot, 2), "cavnar"
 
 
-def _coverage(ctx):
-    """{"measured", "no_shows", "late", "reason"}."""
+def _after_midnight(shift_start):
+    """Whether a shift start is past midnight, before the business day
+    begins (00:30) — the previous business date's service."""
+    from time_utils import BUSINESS_DAY_START_HOUR
+    m = _clock_minutes(shift_start)
+    return m is not None and m < BUSINESS_DAY_START_HOUR * 60
+
+
+def _coverage(ctx, day_rows=()):
+    """{"measured", "no_shows", "late", "reason"}.
+
+    The live clock-in check (strategy_jobs.run_coverage_check) opens one
+    "hasn't clocked in" issue per person, keyed by the CALENDAR date it ran
+    on — so a shift after midnight is keyed the next day and is still this
+    business date's (D1-17). Who of them turned up is read from the night's
+    own punches: the check closing the issue at a clock-in, or the person
+    having worked that day in the synced shifts, is a late arrival; nobody
+    else is a no-show — a manager closing the issue says nothing about
+    whether they came. With no issues, "0 no-shows" is stated only for a
+    night the check actually ran (store.coverage_ran)."""
     import issues
     import intraday
     import pos
+    from datetime import date as _date, timedelta as _td
+    import staff_settings
+    nxt = (_date.fromisoformat(ctx.day) + _td(days=1)).isoformat()
     conn = store.get_conn(ctx.db_path)
     try:
         rows = conn.execute("SELECT source_key, status, resolution_note, meta_json FROM ops_issues "
-                            "WHERE restaurant_id=? AND kind='coverage' AND source_key LIKE ?",
-                            (ctx.restaurant_id, f"coverage:{ctx.day}:%")).fetchall()
+                            "WHERE restaurant_id=? AND kind='coverage' AND (source_key LIKE ? OR source_key LIKE ?)",
+                            (ctx.restaurant_id, f"coverage:{ctx.day}:%", f"coverage:{nxt}:%")).fetchall()
     finally:
         conn.close()
+    worked = {staff_settings.name_key(r.get("employee")) for r in day_rows or [] if r.get("employee")}
     no_shows, late = [], []
+    seen = 0
     for r in rows:
         try:
             meta = json.loads(r["meta_json"] or "null") or {}
         except (TypeError, ValueError):
             meta = {}
+        keyed = r["source_key"].split(":", 2)[1]
+        past_midnight = _after_midnight(meta.get("shift_start"))
+        if (keyed == ctx.day and past_midnight) or (keyed == nxt and not past_midnight):
+            continue                     # another business date's shift
+        seen += 1
         entry = {"employee": meta.get("missing") or r["source_key"].split(":", 2)[2],
                  "role": meta.get("role"), "shift_start": meta.get("shift_start")}
-        if (r["resolution_note"] or "").startswith("Closed automatically: they clocked in"):
+        if (r["resolution_note"] or "").startswith("Closed automatically: they clocked in") \
+                or staff_settings.name_key(entry["employee"]) in worked:
             late.append(entry)
         else:
             no_shows.append(entry)
-    if rows:
+    if seen:
         return {"measured": True, "no_shows": no_shows, "late": late, "reason": None}
     why = None
     if not getattr(ctx.restaurant, "module_labor", 0):
@@ -198,6 +237,8 @@ def _coverage(ctx):
         why = "No manager is routed for coverage issues"
     elif not intraday.published_rows(ctx.restaurant_id, ctx.business_date, db_path=ctx.db_path):
         why = "No published schedule covered this day"
+    elif not store.coverage_ran(ctx.restaurant_id, ctx.day, db_path=ctx.db_path):
+        why = "The clock-in check didn't run during this shift"
     if why:
         return {"measured": False, "no_shows": [], "late": [], "reason": why}
     return {"measured": True, "no_shows": [], "late": [], "reason": None}
@@ -264,25 +305,53 @@ def collect(ctx):
                              detail={"waiting_for": "pos_sync"})
         return dsr.block(dsr.UNAVAILABLE, source=provider or "upload", reason=REASON_NOTHING, block_name="labor")
 
+    if not int(hist.get("final") or 0):
+        # The archive row was written while the business day was still
+        # trading (models.save_labor_daily_history final=0: a "Sync now"
+        # during service, a retry, the 3am sync west of Central) — half a
+        # night of punches. It is never the night's labor (D1-2): wait for a
+        # sync after close, and past the deadline say what is missing.
+        from dsr import pipeline
+        local = pipeline.local_time(ctx.restaurant, ctx.now_utc)
+        if local < pipeline.deadline_at(ctx.restaurant, ctx.business_date):
+            return dsr.block(dsr.AWAITING, source=provider or "upload", reason=REASON_SYNC_PENDING,
+                             block_name="labor", detail={"waiting_for": "pos_sync", "partial_day": True})
+        return dsr.block(dsr.UNAVAILABLE, source=provider or "upload", reason=REASON_PARTIAL, block_name="labor",
+                         detail={"partial_day": True})
+
     source = provider or "upload"
-    cost = round(float(hist.get("labor_cost") or 0), 2)
     worked, after = _hours_after(day_rows)
     hours = round(float(hist.get("total_hours") or 0), 2) or (worked or None)
+    # What the labor dollars are (D1-5): hours × the owner's per-role pay,
+    # the owner's blended rate, or — when nobody entered a wage — Cavnar's
+    # assumed $26/hr, which is not payroll. On that basis the dollars and
+    # the % are withheld and the hours stay.
+    import thresholds
+    cost_basis = thresholds.labor_cost_basis(ctx.restaurant)
+    costed = cost_basis != "default"
+    cost = round(float(hist.get("labor_cost") or 0), 2) if costed else None
 
     sales = ctx.blocks.get("sales") or {}
     net = (sales.get("metrics") or {}).get("net") if sales.get("status") == dsr.READY else None
-    if net:
+    if not costed:
+        pct, basis = None, None
+    elif net:
         pct, basis = round(cost / net * 100.0, 1), "dsr_net"
     elif hist.get("labor_pct") is not None:
         pct, basis = round(float(hist["labor_pct"]), 1), "labor_history"
     else:
         pct, basis = None, None
     target = labor_target_for(ctx.restaurant)
+    try:
+        tgt = thresholds.target_for(ctx.restaurant, "labor")
+    except Exception:
+        tgt = {"source": None, "label": "target"}
+    target_label = tgt.get("label") or "target"
     ot, ot_source = _overtime(ctx, provider, day_rows, all_rows)
 
     after_share = round(after / worked * 100.0, 1) if worked else None
     sales_after = (sales.get("metrics") or {}).get("evening_share_pct") if net else None
-    cov = _coverage(ctx)
+    cov = _coverage(ctx, day_rows)
     quality = _quality(ctx)
     scheduled = _scheduled(ctx)
 
@@ -302,8 +371,10 @@ def collect(ctx):
     observations = []
     if pct is not None:
         side = "over" if pct > target else "at or under"
+        # The target named as what it is (D1-19): "your target", or
+        # "Cavnar's starting target" when the owner never set one.
         observations.append({"key": "vs_target", "facts": ["labor.pct", "labor.target_pct"],
-                             "text": f"Labor was {pct:.1f}% of sales, {side} the {target:g}% target."})
+                             "text": f"Labor was {pct:.1f}% of sales, {side} {target_label} of {target:g}%."})
     if after_share is not None and sales_after is not None:
         observations.append({"key": "evening_mix",
                              "facts": ["labor.hours_after_6pm_share_pct", "labor.sales_after_6pm_share_pct"],
@@ -319,6 +390,15 @@ def collect(ctx):
 
     detail = {
         "pct_basis": basis,
+        "cost_basis": cost_basis,
+        "cost_basis_label": thresholds.LABOR_COST_BASIS_LABELS.get(cost_basis),
+        "cost_note": None if costed else "Set your wage rates to see labor cost — Cavnar won't cost your "
+                                         "hours at an assumed $26/hr and call it payroll.",
+        # Where the target came from (thresholds.target_for): the clients
+        # colour a figure over a target the owner never set amber, not red,
+        # as the scorecard does (D3-12).
+        "target_source": tgt.get("source"),
+        "target_label": target_label,
         "overtime_source": ot_source,
         "coverage": cov,
         "shift_quality": quality,

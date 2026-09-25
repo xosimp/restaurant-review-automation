@@ -170,7 +170,9 @@ def test_rpower_departments_hours_and_items_all_net_by_the_same_rule(db_path, mo
     # ever comped was served, not sold.
     assert set(items) == {"Burger", "IPA"}
     assert items["Burger"]["qty"] == 2 and items["Burger"]["net"] == 30.0
-    assert items["IPA"] == {"name": "IPA", "department": "Beer", "qty": 2.0, "net": 12.0}
+    # `guid` is RPOWER's menuitem_mid — what menu_items.toast_guid holds, so
+    # the Food block can cost tonight's items without the 5am sync (D1-8).
+    assert items["IPA"] == {"name": "IPA", "department": "Beer", "qty": 2.0, "net": 12.0, "guid": "M2"}
 
 
 def test_the_subtraction_is_one_tuple(db_path, monkeypatch):
@@ -284,7 +286,7 @@ def test_toast_departments_hours_and_items(db_path, monkeypatch):
     # openedDate is UTC; the hour is the restaurant's (Chicago, CDT).
     assert data["by_hour"] == {"12": 18.0, "18": 45.0}
     items = {i["name"]: i for i in data["items"]}
-    assert items["Burger"] == {"name": "Burger", "department": "Food", "qty": 2.0, "net": 30.0}
+    assert items["Burger"] == {"name": "Burger", "department": "Food", "qty": 2.0, "net": 30.0, "guid": "i-Burger"}
     assert items["Salad"]["net"] == 18.0 and "Fries" not in items
 
 

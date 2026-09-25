@@ -15,28 +15,23 @@ own forecast. Nothing is shown that isn't measured or listed.
     # {"date", "label", "items": [{"text", "kind", "tone"}], "scheduled",
     #  "forecast": {...}|None, "confidence": {...}|None, "predictions": [...]}
 
-THE CONFIDENCE (a percentage, never a word) is how much Cavnar's view of
-tomorrow rests on — each input weighted, and the running prediction
-accuracy folded in once there is a track record:
-
-    sales history   35   the weekday's history, full at FULL_HISTORY nights
-    tonight's sales 20   the Sales block is measured
-    weather         15   a current (not stale) NWS forecast for the date
-    schedule        15   a published schedule covers the date
-    events          15   events/reservations are kept for this restaurant
-
-With fewer than TRACK_MIN graded predictions it is held at NO_TRACK_CAP
-(the confidence rule: no track record, no higher than 70); after that it is
-the mean of the inputs' coverage and the accuracy. No forecast → None.
+THE CONFIDENCE (a percentage, never a word) is the forecast's own measured
+record, and only that (D1-6): the share of recent nights whose net landed
+inside the range the forecast stated for them (demand.demand_accuracy's
+inside_range_pct — out of sample, each night's range built only from the
+nights before it). The forecast is the median of the same weekday's recent
+nights; tonight's sales, the schedule, events and the weather are not in it,
+so they are listed as things to watch (`watch`), never counted as
+confidence. With no range yet (fewer than FULL_HISTORY_FOR_RANGE weekdays)
+or fewer than TRACK_MIN ranged nights scored, there is no % — "—" and the
+count it is waiting for. No forecast → None.
 """
 from datetime import date, timedelta
 
 import dsr
 
-INPUT_WEIGHTS = (("history", 35), ("sales", 20), ("weather", 15), ("schedule", 15), ("events", 15))
-FULL_HISTORY = 12
 TRACK_MIN = 10
-NO_TRACK_CAP = 70
+FULL_HISTORY_FOR_RANGE = 8        # demand.RANGE_MIN_SAMPLES: the forecast states a range from here
 RAIN_PCT = 40
 HOT_F, COLD_F = 92, 25
 
@@ -111,6 +106,17 @@ def _scheduled(rid, day, db_path):
     return len(names) if names else None
 
 
+def _track(rid, tmr, db_path):
+    """demand.demand_accuracy through the night before `tmr` — how often the
+    forecast's range held, each night scored against the range it had then."""
+    try:
+        import demand
+        return demand.demand_accuracy(rid, today=tmr, db_path=db_path) if db_path \
+            else demand.demand_accuracy(rid, today=tmr)
+    except Exception:
+        return None
+
+
 def _budget(rid, day, db_path):
     try:
         from dsr import store
@@ -120,37 +126,52 @@ def _budget(rid, day, db_path):
         return None
 
 
-def confidence(forecast, sales_measured, wx, scheduled, keeps_events, track) -> dict | None:
-    """The confidence in Cavnar's view of tomorrow (module docstring)."""
+def confidence(forecast, track, wx=None, scheduled=None, keeps_events=False) -> dict | None:
+    """The confidence in Cavnar's forecast for tomorrow (module docstring):
+    how often its stated range has held, out of sample, over the last
+    `track["window_days"]` — nothing else.
+
+    `forecast` is demand.forecast_day's dict; `track` is
+    demand.demand_accuracy's (inside_range_pct over n_ranged nights, each
+    night's range taken only from the nights before it). The forecast uses
+    only the weekday's own sales history, so only that and its measured
+    record are what the % rests on (D1-6): tonight's sales, the schedule,
+    events and the weather are not inputs to it, and are listed as things to
+    watch, never as confidence. No range (under demand.RANGE_MIN_SAMPLES
+    weekdays) or fewer than TRACK_MIN ranged nights → no % ("—"), with the
+    count it is waiting for — never a figure from how many inputs exist."""
     if not forecast or not forecast.get("available"):
         return None
     samples = int(forecast.get("samples") or 0)
     wd = forecast.get("weekday") or "night"
-    have = {
-        "history": min(1.0, samples / FULL_HISTORY),
-        "sales": 1.0 if sales_measured else 0.0,
-        "weather": 1.0 if (wx and not wx.get("stale")) else 0.0,
-        "schedule": 1.0 if scheduled else 0.0,
-        "events": 1.0 if keeps_events else 0.0,
-    }
-    coverage = sum(w * have[k] for k, w in INPUT_WEIGHTS) / sum(w for _k, w in INPUT_WEIGHTS)
-    weeks = samples
-    history = (f"{weeks // 52} year{'s' if weeks // 52 != 1 else ''} of {wd} sales history" if weeks >= 52
-               else f"{weeks} {wd}{'s' if weeks != 1 else ''} of sales history")
-    labels = {"history": history, "sales": "tonight's sales", "weather": "the weather forecast",
-              "schedule": "tomorrow's schedule", "events": "your events and reservations"}
-    based = [labels[k] for k, _w in INPUT_WEIGHTS if have[k] > 0]
-    missing = [labels[k] for k, _w in INPUT_WEIGHTS if have[k] == 0]
-    graded = int((track or {}).get("graded") or 0)
-    if graded >= TRACK_MIN and (track or {}).get("pct") is not None:
-        pct = round(100 * (coverage + track["pct"] / 100.0) / 2)
-        track_line = f"{track['correct']} of {graded} predictions right in the last {track['window_days']} days"
+    history = f"{samples} {wd}{'s' if samples != 1 else ''} of sales history"
+    watch = []
+    if wx and not wx.get("stale"):
+        watch.append("the weather forecast")
+    if scheduled:
+        watch.append("tomorrow's schedule")
+    if keeps_events:
+        watch.append("your events and reservations")
+    t = track or {}
+    ranged = int(t.get("n_ranged") or 0)
+    inside = t.get("inside_range_pct")
+    has_range = forecast.get("low") is not None and forecast.get("high") is not None
+    pct = None
+    if not has_range:
+        track_line = (f"Only {samples} {wd}{'s' if samples != 1 else ''} on file — the forecast states a range, "
+                      f"and a confidence in it, from {FULL_HISTORY_FOR_RANGE}")
+    elif ranged >= TRACK_MIN and isinstance(inside, (int, float)):
+        pct = int(round(inside))
+        held = int(round(inside * ranged / 100.0))
+        track_line = (f"Cavnar's range held on {held} of the last {ranged} nights "
+                      f"({t.get('window_days')}-day record)")
     else:
-        pct = min(round(100 * coverage), NO_TRACK_CAP)
-        track_line = (f"{graded} prediction{'s' if graded != 1 else ''} graded so far — held at "
-                      f"{NO_TRACK_CAP}% until there are {TRACK_MIN}")
-    return {"pct": int(pct), "based_on": based, "missing": missing, "track": track_line,
-            "label": f"{int(pct)}%", "meaning": "How much Cavnar's view of tomorrow rests on — not a promise"}
+        track_line = (f"{ranged} night{'s' if ranged != 1 else ''} scored against Cavnar's range so far — "
+                      f"a confidence % shows at {TRACK_MIN}")
+    return {"pct": pct, "based_on": [history] + (["its measured record"] if pct is not None else []),
+            "missing": [], "watch": watch, "track": track_line,
+            "label": f"{pct}%" if pct is not None else "—",
+            "meaning": "How often Cavnar's forecast range has held — not a promise"}
 
 
 def build(restaurant, business_date, facts=None, db_path=None) -> dict:
@@ -215,9 +236,8 @@ def build(restaurant, business_date, facts=None, db_path=None) -> dict:
                     "text": (f"{_money(fc['low'])}–{_money(fc['high'])}" if fc.get("low") is not None
                              and fc.get("high") is not None else _money(fc["typical_sales"])),
                     "basis": f"the median of the last {fc.get('samples')} {wd}s"}
-    sales_ok = (blocks.get("sales") or {}).get("status") == dsr.READY
-    track = predictions.accuracy(rid, day, db_path=db_path)
-    conf = confidence(fc, sales_ok, wx, scheduled, _keeps_events(rid, db_path), track)
+    conf = confidence(fc, _track(rid, tmr, db_path), wx=wx, scheduled=scheduled,
+                      keeps_events=_keeps_events(rid, db_path))
     preds = predictions.build(fc, budget_net=_budget(rid, tmr, db_path), weather=wx, events=events, weekday=wd)
     return {"date": tmr.isoformat(), "weekday": wd, "items": items, "scheduled": scheduled,
             "forecast": forecast, "confidence": conf,

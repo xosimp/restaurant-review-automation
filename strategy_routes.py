@@ -3189,6 +3189,16 @@ def _do_dsr_close(u):
             return {"ok": False, "error": f"Only the last {DSR_OWNER_DAYS} nights ({mdy(earliest)} – {mdy(today)}) "
                                           "can be run here."}, 400
         return {"ok": False, "error": f"Only tonight ({mdy(today)}) or the night before can be closed here."}, 400
+    if not rerun:
+        # A POS that keeps a close-day record is asked by the pipeline (the
+        # night waits for its close). One that doesn't would take the
+        # button's word, so before close it is refused — unless the owner
+        # says the restaurant closed early (`early`) (D1-1).
+        why = pipeline.manual_close_refusal(r, d)
+        if why and not (owner and body.get("early")):
+            return {"ok": False, "code": "before_close", "needs_confirm": owner,
+                    "error": why + (" If you closed early tonight, confirm to close the day now." if owner
+                                    else " The owner can close the day early if the restaurant has closed.")}, 409
     if _limited(u, "dsr_close", 6, 600):
         return _SLOW_DOWN
     out = pipeline.start_manual(r, d, rerun=rerun)

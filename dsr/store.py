@@ -148,6 +148,17 @@ def init_dsr(db_path=DB_PATH):
             UNIQUE(restaurant_id, for_date, key)
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_dsr_predictions_graded ON dsr_predictions(restaurant_id, for_date, outcome)")
+        # The business dates the live clock-in check (strategy_jobs
+        # .run_coverage_check) really ran for a restaurant during service
+        # (D1-17): the Labor block counts no-shows only for a night the
+        # check saw — "0 no-shows" on a night it never ran was a guess.
+        conn.execute("""CREATE TABLE IF NOT EXISTS dsr_coverage_runs (
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            business_date   TEXT    NOT NULL,
+            first_at        TEXT    NOT NULL DEFAULT (datetime('now')),
+            last_at         TEXT    NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (restaurant_id, business_date)
+        )""")
         conn.commit()
     finally:
         conn.close()
@@ -279,6 +290,15 @@ def set_stage(report_id, stage, db_path=DB_PATH, error=None):
         conn.commit()
     finally:
         conn.close()
+    if stage in FINISHED:
+        sync_metrics(report_id, db_path=db_path)
+    elif stage == "failed":
+        # A failed re-run never leaves its half-collected figures in the
+        # history: the night's metrics go back to the version that finished.
+        r = get_report_by_id(report_id, db_path=db_path)
+        done = get_finished_report(r["restaurant_id"], r["business_date"], db_path=db_path) if r else None
+        if done:
+            sync_metrics(done["id"], db_path=db_path)
 
 
 def schedule_retry(report_id, next_attempt_at, db_path=DB_PATH, count=True):
@@ -298,7 +318,7 @@ def schedule_retry(report_id, next_attempt_at, db_path=DB_PATH, count=True):
 # stages_json keys that are progress notes rather than stages: when each
 # block was collected, how the day was known closed, the narrative's outcome,
 # failure and crash counts, the version this one completes.
-NOTE_KEYS = ("blocks", "closed_by", "narrative", "failures", "crashes", "supersedes")
+NOTE_KEYS = ("blocks", "closed_by", "narrative", "failures", "crashes", "supersedes", "rerun")
 
 
 def note(report_id, key, value, db_path=DB_PATH):
@@ -318,11 +338,51 @@ def note(report_id, key, value, db_path=DB_PATH):
         conn.close()
 
 
+def _upsert_metrics(conn, restaurant_id, business_date, name, blk, report_id):
+    for key, value in (blk.get("metrics") or {}).items():
+        conn.execute(
+            "INSERT INTO dsr_metrics (restaurant_id, business_date, metric, value, status, source, report_id, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,datetime('now')) ON CONFLICT(restaurant_id, business_date, metric) DO UPDATE SET "
+            "value=excluded.value, status=excluded.status, source=excluded.source, report_id=excluded.report_id, "
+            "updated_at=excluded.updated_at",
+            (restaurant_id, business_date, f"{name}.{key}", value, blk.get("status"), blk.get("source"), report_id))
+
+
+def sync_metrics(report_id, db_path=DB_PATH):
+    """Make the night's dsr_metrics exactly this version's READY blocks
+    (D1-4) — called when a version finishes (set_stage final/provisional),
+    so a block the new version could not measure takes its old figures out
+    of the history rather than leaving the previous version's beside it."""
+    conn = get_conn(db_path)
+    try:
+        r = conn.execute("SELECT restaurant_id, business_date, facts_json FROM dsr_reports WHERE id=?",
+                         (report_id,)).fetchone()
+        if r is None:
+            return
+        blocks = (json.loads(r["facts_json"] or "null") or {}).get("blocks") or {}
+        conn.execute("DELETE FROM dsr_metrics WHERE restaurant_id=? AND business_date=?",
+                     (r["restaurant_id"], r["business_date"]))
+        for name in _dsr.BLOCKS:
+            blk = blocks.get(name)
+            if isinstance(blk, dict) and blk.get("status") == _dsr.READY:
+                _upsert_metrics(conn, r["restaurant_id"], r["business_date"], name, blk, report_id)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def save_block(report_id, name, blk, db_path=DB_PATH, stamped_at=None):
     """Store one block on the report, stamp when it was collected
     (stages_json["blocks"][name] — the progressive checklist's times) and
     refresh its metrics in dsr_metrics. `stamped_at` carries a block's
-    original collection time into a later version that reuses it."""
+    original collection time into a later version that reuses it.
+
+    Only a READY block writes history, and it replaces the block's metrics
+    whole (D1-4): a key the new version no longer carries — "Unmapped" after
+    the owner mapped the department — is removed, never left beside the new
+    figures to add up to more than net. A block still awaiting (or
+    unavailable) leaves the night's history as it was; when the version
+    finishes, sync_metrics makes the history exactly that version."""
     if name not in _dsr.BLOCKS:
         raise ValueError(f"unknown block {name!r}")
     conn = get_conn(db_path)
@@ -340,14 +400,12 @@ def save_block(report_id, name, blk, db_path=DB_PATH, stamped_at=None):
         stages.setdefault("blocks", {})[name] = str(stamped_at)[:19] if stamped_at else _now()
         conn.execute("UPDATE dsr_reports SET facts_json=?, stages_json=? WHERE id=?",
                      (json.dumps(facts), json.dumps(stages), report_id))
-        for key, value in (blk.get("metrics") or {}).items():
-            conn.execute(
-                "INSERT INTO dsr_metrics (restaurant_id, business_date, metric, value, status, source, report_id, updated_at) "
-                "VALUES (?,?,?,?,?,?,?,datetime('now')) ON CONFLICT(restaurant_id, business_date, metric) DO UPDATE SET "
-                "value=excluded.value, status=excluded.status, source=excluded.source, report_id=excluded.report_id, "
-                "updated_at=excluded.updated_at",
-                (r["restaurant_id"], r["business_date"], f"{name}.{key}", value, blk.get("status"),
-                 blk.get("source"), report_id))
+        if blk.get("status") == _dsr.READY:
+            keys = [f"{name}.{k}" for k in (blk.get("metrics") or {})]
+            keep = f" AND metric NOT IN ({','.join('?' for _ in keys)})" if keys else ""
+            conn.execute("DELETE FROM dsr_metrics WHERE restaurant_id=? AND business_date=? AND metric LIKE ?" + keep,
+                         (r["restaurant_id"], r["business_date"], f"{name}.%", *keys))
+            _upsert_metrics(conn, r["restaurant_id"], r["business_date"], name, blk, report_id)
         conn.commit()
     finally:
         conn.close()
@@ -658,3 +716,109 @@ def history_for(restaurant_id, start, end, db_path=DB_PATH):
     return {r["business_date"]: {"gross": r["gross"], "net": r["net"],
                                  "categories": json.loads(r["categories_json"]) if r["categories_json"] else {}}
             for r in rows}
+
+
+# ── another night's net: the one resolver (D1-10, D1-13) ───────────────────
+
+# The POS whose daily total in the nightly sync's archive
+# (labor_daily_history.sales) is built exactly as the DSR's own net
+# (pos.fetch_day_sales' docstring states it for RPOWER). Any other POS's
+# daily total (Toast's businessDay netSales) is a different figure until a
+# live night proves otherwise, so it is never set beside tonight's net as
+# "last week" — a gap in how the two are built would read as a change in
+# sales.
+POS_SYNC_SAME_BASIS = ("rpower",)
+
+
+def pos_sync_same_basis(provider) -> bool:
+    return str(provider or "").lower() in POS_SYNC_SAME_BASIS
+
+
+def baselines_net(restaurant_id, days, db_path=DB_PATH, pos_sync=True) -> dict:
+    """{day_iso: (net, source)} for other nights, in the ONE order every
+    surface reads them — the nightly report's yesterday / last week / last
+    year and the weekly grid's Last Year alike (D1-10):
+
+      dsr        that night's own report (dsr_metrics sales.net)
+      import     the owner's old DSR workbook (dsr_history_import)
+      pos_sync   the nightly POS sync's daily sales, a positive figure only
+                 (0 there means nothing synced), and only when `pos_sync`:
+                 the POS's daily total is the DSR's own basis (D1-13)
+
+    (None, None) for a night none of them has."""
+    isos = sorted({(d.isoformat() if hasattr(d, "isoformat") else str(d)[:10]) for d in days if d})
+    out = {d: (None, None) for d in isos}
+    if not isos:
+        return out
+    marks = ",".join("?" for _ in isos)
+    conn = get_conn(db_path)
+    try:
+        measured = {r["business_date"]: float(r["value"]) for r in conn.execute(
+            f"SELECT business_date, value FROM dsr_metrics WHERE restaurant_id=? AND metric='sales.net' "
+            f"AND value IS NOT NULL AND business_date IN ({marks})", (restaurant_id, *isos)).fetchall()}
+        synced = {}
+        if pos_sync:
+            try:
+                synced = {r["date"]: float(r["sales"]) for r in conn.execute(
+                    f"SELECT date, sales FROM labor_daily_history WHERE restaurant_id=? AND date IN ({marks}) "
+                    "AND sales IS NOT NULL AND sales > 0", (restaurant_id, *isos)).fetchall()}
+            except Exception:
+                synced = {}
+    finally:
+        conn.close()
+    imported = history_for(restaurant_id, isos[0], isos[-1], db_path=db_path)
+    for d in isos:
+        if d in measured:
+            out[d] = (measured[d], "dsr")
+        elif (imported.get(d) or {}).get("net") is not None:
+            out[d] = (float(imported[d]["net"]), "import")
+        elif d in synced:
+            out[d] = (synced[d], "pos_sync")
+    return out
+
+
+def baseline_net(restaurant_id, day, db_path=DB_PATH, pos_sync=True):
+    """(net, source) for one other night — baselines_net for one day."""
+    iso = day.isoformat() if hasattr(day, "isoformat") else str(day)[:10]
+    return baselines_net(restaurant_id, [iso], db_path=db_path, pos_sync=pos_sync)[iso]
+
+
+def last_year_day(restaurant, day):
+    """The night a year back that `day` is compared with (D1-16): the same
+    fiscal week and weekday of the previous fiscal year where the restaurant
+    keeps a fiscal calendar (so the year after a 53-week year lines up with
+    Back Office), else the same weekday 364 days back."""
+    from dsr import fiscal
+    return fiscal.same_day_last_year(restaurant, day)
+
+
+# ── the clock-in check's own record (D1-17) ────────────────────────────────
+
+def mark_coverage_ran(restaurant_id, business_date, db_path=DB_PATH):
+    """strategy_jobs.run_coverage_check read the POS's clock-ins for this
+    restaurant during `business_date`'s service. Never raises."""
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return
+    try:
+        conn.execute("INSERT INTO dsr_coverage_runs (restaurant_id, business_date) VALUES (?,?) "
+                     "ON CONFLICT(restaurant_id, business_date) DO UPDATE SET last_at=datetime('now')",
+                     (restaurant_id, str(business_date)[:10]))
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+
+def coverage_ran(restaurant_id, business_date, db_path=DB_PATH) -> bool:
+    """Whether the clock-in check ran during that night's service."""
+    conn = get_conn(db_path)
+    try:
+        return bool(conn.execute("SELECT 1 FROM dsr_coverage_runs WHERE restaurant_id=? AND business_date=?",
+                                 (restaurant_id, str(business_date)[:10])).fetchone())
+    except Exception:
+        return False
+    finally:
+        conn.close()

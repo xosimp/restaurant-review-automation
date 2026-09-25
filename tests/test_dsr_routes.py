@@ -116,7 +116,9 @@ def test_the_manager_view_leaves_out_loss_food_cost_and_owner_financials():
     m = facts["blocks"]["sales"]["metrics"]
     for gone in ("comps", "voids", "refunds", "budget_net", "vs_budget_net", "vs_budget_net_pct"):
         assert gone not in m, gone
-    assert (m["net"], m["gross"], m["discounts"], m["vs_yesterday_pct"]) == (2000.0, 2100.0, 60.0, 12.5)
+    assert (m["net"], m["discounts"], m["vs_yesterday_pct"]) == (2000.0, 60.0, 12.5)
+    # Gross beside net and discounts IS the comps (D2-2): it goes with them.
+    assert "gross" not in m and "sales.gross" in hidden
     assert set(facts["blocks"]["sales"]["detail"]) == {"hourly"}
     assert "food" not in facts["blocks"] and facts["withheld"] == ["food"]
     assert facts["blocks"]["labor"]["metrics"]["pct"] == 22.0
@@ -129,6 +131,7 @@ def test_the_manager_view_leaves_out_loss_food_cost_and_owner_financials():
 def test_an_owner_grant_opens_comps_or_food_cost_to_a_manager_but_never_the_budget():
     loss, _ = access.redact(_facts(), {"role": "manager", "grants": frozenset({"loss.view"})})
     assert loss["blocks"]["sales"]["metrics"]["comps"] == 40.0
+    assert loss["blocks"]["sales"]["metrics"]["gross"] == 2100.0      # granted comps, so gross derives nothing new
     assert "budget_net" not in loss["blocks"]["sales"]["metrics"] and "food" not in loss["blocks"]
     food, _ = access.redact(_facts(), {"role": "manager", "grants": frozenset({"foodcost.view"})})
     assert food["blocks"]["food"]["metrics"] == {"cost_pct": 29.0}       # prime cost stays the owner's
@@ -181,10 +184,11 @@ def test_the_list_and_the_status_checklist(client, db, monkeypatch):
     rows = client.get("/api/dsr").get_json()
     assert rows["view"] == "manager"
     # The lead cites the budget, withheld from a manager, so it goes; the
-    # summary never falls back to an unfiltered sentence.
+    # summary never falls back to an unfiltered sentence — and it says why
+    # there is none (D2-4: it used to say nothing).
     assert rows["reports"] == [{"business_date": "2026-09-22", "label": "9/22/26", "version": 1, "status": "final",
                                 "provisional": False, "missing": [], "finalized_at": rows["reports"][0]["finalized_at"],
-                                "net": 2000.0, "lead": None, "lead_missing": None}]
+                                "net": 2000.0, "lead": None, "lead_missing": access.NO_LEAD_FOR_VIEW}]
     assert rows["enabled"] is True and len(rows["tonight"]) == 10
     st = client.get("/api/dsr/2026-09-22/status").get_json()
     assert st["exists"] is True and st["status"] == "final"
@@ -211,6 +215,10 @@ def test_the_mobile_twin_answers_with_a_bearer_token(client, db):
 @pytest.fixture
 def fake_night(monkeypatch):
     monkeypatch.setattr(pipeline, "_spawn", lambda fn: fn())
+    # These tests press Close day at whatever the wall clock says; the
+    # before-close refusal (a POS with no close-day record) is tested on
+    # its own below and in test_dsr_pipeline with a fixed clock.
+    monkeypatch.setattr(pipeline, "manual_close_refusal", lambda r, d, now_utc=None: None)
     monkeypatch.setattr(pos, "connected_provider", lambda rid: ("fakepos", object()))
     monkeypatch.setattr(pos, "fetch_day_sales", lambda rid, day: ({
         "gross": 1000.0, "net": 950.0, "transactions": 40, "guests": None, "discounts": 50.0, "comps": 0.0,
@@ -236,6 +244,28 @@ def test_close_day_starts_tonight_now(client, db, monkeypatch, fake_night):
     rep = store.get_report(rid, today, db_path=db)
     assert rep["trigger"] == "manual" and rep["stages"]["closed_by"] == "manual"
     assert rep["facts"]["blocks"]["sales"]["metrics"]["net"] == 950.0
+
+
+def test_close_day_before_close_is_refused_unless_the_owner_says_they_closed_early(client, db, monkeypatch,
+                                                                                    fake_night):
+    # D1-1: a POS with no close-day record takes the button's word, so
+    # before close the button is refused rather than finalising half a night.
+    import closeout
+    rid = _rid(db)
+    monkeypatch.setattr(pipeline, "manual_close_refusal",
+                        lambda r, d, now_utc=None: "It's before your close (11:00 pm).")
+    _as(monkeypatch, rid, "manager")
+    resp = client.post("/api/dsr/close", json={"early": True})
+    body = resp.get_json()
+    assert resp.status_code == 409 and body["code"] == "before_close" and body["needs_confirm"] is False
+    today = closeout.business_date_for(get_restaurant(rid, db_path=db))
+    assert store.get_report(rid, today, db_path=db) is None
+    _as(monkeypatch, rid, "client")
+    resp = client.post("/api/dsr/close", json={})
+    assert resp.status_code == 409 and resp.get_json()["needs_confirm"] is True
+    assert client.post("/api/dsr/close", json={"early": True}).status_code == 202
+    rep = store.get_report(rid, today, db_path=db)
+    assert rep["stages"]["closed_by"] == "manual" and rep["facts"]["blocks"]["sales"]["metrics"]["net"] == 950.0
 
 
 def test_only_the_owner_can_rerun_a_finished_night(client, db, monkeypatch, fake_night):

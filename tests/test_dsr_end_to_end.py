@@ -121,8 +121,11 @@ REPLY = {
 def _restaurant(db):
     rid = create_restaurant(Restaurant(name="Simple EJ's", owner_email="erik@example.com",
                                        timezone="America/Chicago"), db_path=db)
+    # The owner's own blended wage ($440 over 32h): labor dollars are costed
+    # at a rate somebody entered, never Cavnar's assumed $26 (D1-5).
     update_restaurant(rid, {"open_times_json": json.dumps({d: "11:00am" for d in DAYS}),
-                            "close_times_json": json.dumps({d: "11:00pm" for d in DAYS})}, db_path=db)
+                            "close_times_json": json.dumps({d: "11:00pm" for d in DAYS}),
+                            "hourly_rate": 13.75, "hourly_rate_source": "set"}, db_path=db)
     conn = models.get_conn(db)
     conn.execute("INSERT INTO labor_daily_history (restaurant_id, date, day_of_week, labor_pct, labor_cost, sales, "
                  "total_hours) VALUES (?,?,?,?,?,?,?)", (rid, DAY.isoformat(), "Tuesday", 22.0, 440.0, 2000.0, 32.0))

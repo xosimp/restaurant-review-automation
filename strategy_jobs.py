@@ -1529,6 +1529,14 @@ def run_coverage_check(db_path=DB_PATH, restaurants=None):
             if gaps.get("available"):
                 issues.resolve_coverage(r.id, local.date().isoformat(), set(gaps.get("arrived_keys") or []),
                                         db_path=db_path)
+                # The nightly report states "0 no-shows" only for a night
+                # this check really read the clock-ins (dsr D1-17).
+                try:
+                    import closeout
+                    from dsr import store as _dsr_store
+                    _dsr_store.mark_coverage_ran(r.id, closeout.business_date_for(r, local), db_path=db_path)
+                except Exception as me:
+                    ops.capture(me, job="coverage_check", context=f"restaurant_id={r.id} dsr marker")
             import staff_settings as _ss
             for m in (gaps.get("missing") or []):
                 fits_text, fits = "", []

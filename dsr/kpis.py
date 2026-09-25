@@ -36,7 +36,10 @@ import dsr
 STREAK_MIN = 3
 STREAK_WEEKS = 12
 SPARK_NIGHTS = 14
-BEVERAGE_WORDS = ("liquor", "beer", "wine", "bev", "bar", "cocktail", "spirit", "drink")
+# The DSR categories that are beverage (alcohol) sales — matched whole, by
+# the category the owner mapped a POS department to, never by a substring
+# ("bar" matched "Barbecue", and "NA Beverage" counted as beverage, D1-18).
+BEVERAGE_CATEGORIES = ("liquor", "beer", "wine", "spirits", "cocktails")
 
 # key: (label, fact key or derived, unit, better)  unit: money | pct | count | hours | stars | ratio
 KPIS = {
@@ -58,7 +61,11 @@ KPIS = {
 }
 OWNER_SET = ("net", "labor_pct", "food_pct", "prime_pct", "avg_ticket", "guests", "splh", "labor_cost",
              "overtime", "bev_mix", "rating")
-MANAGER_SET = ("guests", "avg_ticket", "splh", "labor_pct", "overtime", "rating")
+# The Manager DSR's Top KPIs and its Operations are two sets that never share
+# a key (D3-5): guests, average ticket and sales per labor hour are
+# Operations; overtime is a row of Today's shift. build() also skips any key
+# Operations already placed, so the same tile is never drawn twice.
+MANAGER_SET = ("labor_pct", "rating")
 OPERATIONS_SET = ("avg_ticket", "guests", "splh", "voids", "discounts", "comps")
 # the Benchmark Engine's comparable metric for a nightly KPI (28/30-day)
 ENGINE_METRIC = {"labor_pct": "labor_pct_28d", "food_pct": "food_cost_pct_28d", "rating": "avg_rating_30d"}
@@ -98,8 +105,22 @@ def _bev_share(metrics):
     if not _num(net) or net <= 0:
         return None
     cats = {k[4:]: v for k, v in metrics.items() if k.startswith("cat:") and _num(v)}
-    bev = [v for k, v in cats.items() if any(w in k.lower() for w in BEVERAGE_WORDS)]
+    bev = [v for k, v in cats.items() if " ".join(k.lower().split()) in BEVERAGE_CATEGORIES]
     return round(sum(bev) / net * 100, 1) if bev else None
+
+
+def _prime(labor_cost, food_cost, net, coverage):
+    """Prime cost % from DOLLARS over one denominator (D1-11): labor $ plus
+    the estimated recipe cost of what sold, over the night's net — never two
+    percentages with different bases added. Withheld (None) unless every
+    part is measured, net is positive and the recipe estimate covers at
+    least block_food.ESTIMATE_MIN_COVERAGE_PCT of the units sold."""
+    from dsr.block_food import ESTIMATE_MIN_COVERAGE_PCT
+    if not (_num(labor_cost) and _num(food_cost) and _num(net) and net > 0 and _num(coverage)):
+        return None
+    if coverage < ESTIMATE_MIN_COVERAGE_PCT:
+        return None
+    return round((labor_cost + food_cost) / net * 100, 1)
 
 
 def _value(key, blocks):
@@ -112,8 +133,8 @@ def _value(key, blocks):
         net, hours = m("sales").get("net"), m("labor").get("hours")
         return round(net / hours, 2) if _num(net) and _num(hours) and hours > 0 else None
     if fact == "derived:prime":
-        lab, food = m("labor").get("pct"), m("food").get("est_food_cost_pct")
-        return round(lab + food, 1) if _num(lab) and _num(food) else None
+        return _prime(m("labor").get("cost"), m("food").get("est_food_cost"), m("sales").get("net"),
+                      m("food").get("recipe_coverage_pct"))
     if fact == "derived:bev_mix":
         return _bev_share(m("sales"))
     block, _, k = fact.partition(".")
@@ -131,9 +152,12 @@ def _history(key, rid, day, db_path):
         net, hrs = _series(rid, "sales.net", start, end, db_path), _series(rid, "labor.hours", start, end, db_path)
         return {d: round(net[d] / hrs[d], 2) for d in net if d in hrs and hrs[d] > 0}
     if fact == "derived:prime":
-        lab, food = (_series(rid, "labor.pct", start, end, db_path),
-                     _series(rid, "food.est_food_cost_pct", start, end, db_path))
-        return {d: round(lab[d] + food[d], 1) for d in lab if d in food}
+        lab, food, net, cov = (_series(rid, "labor.cost", start, end, db_path),
+                               _series(rid, "food.est_food_cost", start, end, db_path),
+                               _series(rid, "sales.net", start, end, db_path),
+                               _series(rid, "food.recipe_coverage_pct", start, end, db_path))
+        out = {d: _prime(lab.get(d), food.get(d), net.get(d), cov.get(d)) for d in lab}
+        return {d: v for d, v in out.items() if v is not None}
     if fact == "derived:bev_mix":
         return {}
     return _series(rid, fact, start, end, db_path)
@@ -247,6 +271,11 @@ def kpi(key, blocks, restaurant, day, db_path=None, with_peers=True) -> dict | N
            "peers": _peers(key, restaurant, db_path) if with_peers else None,
            "derived": fact.startswith("derived:"),
            "estimate": key in ("food_pct", "prime_pct")}
+    if key == "prime_pct":
+        food = blocks.get("food") or {}
+        cov = (food.get("metrics") or {}).get("recipe_coverage_pct")
+        out["basis"] = (f"Labor dollars plus the estimated recipe cost of what sold ({cov:g}% of units sold have a "
+                        "costed recipe; anything without one, drinks included, isn't in it), over net sales")
     # a streak needs an unbroken run of measured same weekdays
     run = []
     for w in range(1, STREAK_WEEKS + 1):
@@ -268,7 +297,7 @@ def build(facts, restaurant, user, view, db_path=None) -> dict:
         day = date.fromisoformat(str(facts.get("business_date"))[:10])
     except Exception:
         return {"top": [], "operations": [], "shift": None}
-    keys = OWNER_SET if view == access.OWNER else MANAGER_SET
+    keys = OWNER_SET if view == access.OWNER else [k for k in MANAGER_SET if k not in OPERATIONS_SET]
     top = []
     for k in keys:
         if not _allowed(k, user, view):
@@ -315,7 +344,10 @@ def shift_recap(blocks, user=None) -> dict | None:
         return None
     m = b.get("metrics") or {}
     rows = []
-    for key, label, fmt_ in (("scheduled", "Employees scheduled", "{:.0f}"), ("no_shows", "Call-offs", "{:.0f}"),
+    # "No-shows", as the Labor block names them (D1-17): scheduled people
+    # who never clocked in. A call-off is someone who told you — Cavnar has
+    # no record of that.
+    for key, label, fmt_ in (("scheduled", "Employees scheduled", "{:.0f}"), ("no_shows", "No-shows", "{:.0f}"),
                              ("late_arrivals", "Late arrivals", "{:.0f}"), ("overtime_hours", "Overtime hours", "{:g}"),
                              ("shift_quality", "Shift quality", "{:.0f}")):
         v = m.get(key)

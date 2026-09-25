@@ -102,7 +102,10 @@ def test_a_week_is_erik_s_grid(db):
     assert (ptd["start"], ptd["end"], ptd["net"]) == ("2026-08-26", "2026-09-22", 11000.0)
 
 
-def test_last_year_is_the_dsr_then_the_import_then_the_pos_sync(db):
+def test_last_year_is_the_dsr_then_the_import_then_the_pos_sync(db, monkeypatch):
+    import pos
+    # RPOWER's daily total is built as the DSR's net (store.POS_SYNC_SAME_BASIS).
+    monkeypatch.setattr(pos, "connected_provider", lambda rid: ("rpower", object()))
     r = _ejs(db)
     _night(db, r.id, WED, 5000.0, 5300.0, {"Food": 5000.0})
     _night(db, r.id, date(2025, 9, 17), 4600.0, 4800.0, {"Food": 4600.0})      # a DSR from last year
@@ -121,6 +124,48 @@ def test_last_year_is_the_dsr_then_the_import_then_the_pos_sync(db):
     ly = [(d["last_year_net"], d["last_year_source"]) for d in w["days"][:5]]
     assert ly == [(4600.0, "dsr"), (4800.0, "import"), (4000.0, "pos_sync"), (None, None), (None, None)]
     assert w["days"][0]["vs_last_year_net_pct"] == round(400 / 4600 * 100, 1)
+    # A POS whose daily total is another figure (Toast's businessDay
+    # netSales) is never set beside the DSR's net as last year (D1-13).
+    monkeypatch.setattr(pos, "connected_provider", lambda rid: ("toast", object()))
+    ly = [(d["last_year_net"], d["last_year_source"]) for d in rollup.week(r, WED)["days"][:3]]
+    assert ly == [(4600.0, "dsr"), (4800.0, "import"), (None, None)]
+
+
+def test_the_nightly_report_and_the_grid_read_last_year_the_same_way(db, monkeypatch):
+    # D1-10: the imported workbook fills the nightly report's "vs last year"
+    # exactly as it fills the grid's Last Year column.
+    import pos
+    monkeypatch.setattr(pos, "connected_provider", lambda rid: ("rpower", object()))
+    r = _ejs(db)
+    store.import_history(r.id, [{"date": "2025-09-17", "gross": 5100.0, "net": 4800.0}], db_path=db)
+    from dsr import block_sales
+    ctx = dsr.Context(r, WED, db_path=db)
+    assert block_sales._baseline_net(ctx, store.last_year_day(r, WED), "rpower") == (4800.0, "import")
+    _night(db, r.id, WED, 5000.0, 5300.0, {"Food": 5000.0})
+    assert rollup.week(r, WED)["days"][0]["last_year_net"] == 4800.0
+
+
+def test_last_year_follows_the_fiscal_calendar_after_a_53_week_year():
+    # D1-16: FY2026 (from Wed 12/31/25) is listed with 53 weeks, so FY2027
+    # starts Wed 1/6/27. Its week 1 Wednesday compares with FY2026's week 1
+    # Wednesday — 371 days back, not 364.
+    from datetime import timedelta
+    import json
+    from dsr import fiscal
+    r = Restaurant(name="x", owner_email="x@x.com")
+    r.fiscal_week_start_dow = 2
+    r.fiscal_year_start = "2025-12-31"
+    r.fiscal_period_scheme = "445"
+    r.fiscal_years_json = json.dumps([{"start": "2025-12-31", "lengths": [4, 4, 5, 4, 4, 5, 4, 4, 5, 4, 5, 5]}])
+    day = date(2027, 1, 6)
+    assert fiscal.position(r, day)["week"] == 1 and fiscal.position(r, day)["period"] == 1
+    assert store.last_year_day(r, day) == date(2025, 12, 31) == day - timedelta(days=371)
+    # Week 53 of the long year has no twin last year: no last year, never
+    # this year's own first week.
+    assert store.last_year_day(r, date(2026, 12, 30)) is None
+    # No fiscal calendar: the same weekday 364 days back.
+    plain = Restaurant(name="y", owner_email="y@x.com")
+    assert store.last_year_day(plain, day) == day - timedelta(days=364)
 
 
 def test_a_period_is_its_weeks(db):
@@ -145,7 +190,9 @@ def test_a_manager_s_grid_has_no_budget(db):
     mgr = access.redact_grid(w, {"role": "manager"})
     assert not [k for d in mgr["days"] for k in d if k.startswith(("budget", "vs_budget"))]
     assert not [k for k in mgr["totals"] if k.startswith(("budget", "vs_budget"))]
-    assert mgr["withheld"] == ["budget"] and mgr["days"][0]["net"] == 5000.0
+    # Gross goes too without LOSS_VIEW (D2-2): beside net it is the comps.
+    assert mgr["withheld"] == ["budget", "gross"] and mgr["days"][0]["net"] == 5000.0
+    assert not [k for d in mgr["days"] for k in d if k.startswith("gross")]
     assert access.redact_grid(w, {"role": "client"}) is w
     assert w["days"][0]["budget_net"] == 5200.0                       # the owner's copy is untouched
 

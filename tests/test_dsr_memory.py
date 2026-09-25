@@ -239,7 +239,9 @@ def test_the_week_and_period_through_ask_keep_the_budget_the_owners(db):
     assert UNTRUSTED_OPEN in owner["days"][0]["notes"]                 # the closer's words, fenced
     assert "net" not in owner["days"][1]                                # unmeasured is absent, never 0
     mgr = _run("read_week", r.id, {"date": "2026-09-16"}, MANAGER, r)
-    assert mgr["withheld"] == ["budget"] and mgr["days"][0]["net"] == 5000.0
+    # Gross goes with the comps it would reveal (D2-2).
+    assert mgr["withheld"] == ["budget", "gross"] and mgr["days"][0]["net"] == 5000.0
+    assert "gross" not in mgr["days"][0]
     assert "budget" not in _text(dict(mgr, withheld=None))
     per = _run("read_period", r.id, {"date": "2026-09-16"}, MANAGER, r)
     assert per["label"] == "Period 9" and len(per["weeks"]) == 4 and "budget" not in _text(dict(per, withheld=None))
@@ -257,7 +259,11 @@ def test_a_login_without_labor_gets_no_labor_columns_in_the_grid():
         g = access.redact_grid(grid, no_labor)
     finally:
         permissions.has_permission = orig
-    assert g["days"][0] == {"date": "2026-09-16", "net": 10.0} and g["withheld"] == ["budget", "labor"]
+    assert g["days"][0] == {"date": "2026-09-16", "net": 10.0} and g["withheld"] == ["budget", "labor", "gross"]
+    # The workbook leaves the withheld columns out — no column of dashes (D2-11).
+    from dsr import xlsx
+    heads = [h for h, _k, _t in xlsx.columns(g)]
+    assert "Labor %" not in heads and "Gross" not in heads and "Net" in heads
 
 
 # ── tenancy ─────────────────────────────────────────────────────────────────

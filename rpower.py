@@ -764,7 +764,8 @@ def fetch_day_sales(restaurant_id: int, business_date) -> dict:
             # an "item" in the top and bottom lists.
             key = str(row.get("menuitem_mid") or "")
             it = items.setdefault(key, {"name": (item.get("name") or "").strip() or "Unknown item",
-                                        "department": dep, "qty": 0.0, "parts": _parts()})
+                                        "department": dep, "qty": 0.0, "parts": _parts(),
+                                        "guid": key or None})
             buckets.append(it["parts"])
             if kind == "sale":
                 it["qty"] += float(row.get("qty") or 0)

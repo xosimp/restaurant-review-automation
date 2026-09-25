@@ -478,6 +478,27 @@ def test_a_traced_budget_figure_leaves_the_managers_view_with_its_line():
     assert kept["went_well"] == []
 
 
+def test_completion_needs_the_words_to_name_the_fact_it_adds():
+    """D2-3: completion added any measured fact whose value matched a figure
+    — "3 people never clocked in" was 'traced' by three LATE arrivals, "180
+    guests" by 180 transactions. A fact is added only when the words beside
+    the figure name it."""
+    f = strong_night()
+    f["blocks"]["labor"]["metrics"].update({"no_shows": 1, "late_arrivals": 3})
+    f["blocks"]["sales"]["metrics"].update({"guests": 250, "transactions": 180})
+    F = narrative.Facts(f)
+    t1 = "3 scheduled people never clocked in."
+    c1 = F.complete_cites(t1, ["labor.no_shows"])
+    assert c1 == ["labor.no_shows"] and narrative.check_item({"text": t1, "cites": c1}, F) is not None
+    t2 = "We served 180 guests tonight."
+    c2 = F.complete_cites(t2, ["sales.guests"])
+    assert c2 == ["sales.guests"] and narrative.check_item({"text": t2, "cites": c2}, F) is not None
+    # The words do name it: completed, and the line stands.
+    t3 = "3 people clocked in late."
+    assert F.complete_cites(t3, ["labor.no_shows"]) == ["labor.no_shows", "labor.late_arrivals"]
+    assert F.complete_cites("180 checks tonight.", ["sales.guests"]) == ["sales.guests", "sales.transactions"]
+
+
 def test_a_figure_that_goes_the_wrong_way_is_dropped(monkeypatch, rest, db_path):
     r = weak_reply()
     r["needs_attention"].append(_it("Net sales were up 14.9% on last Tuesday.", "sales.net", "sales.net_last_week"))

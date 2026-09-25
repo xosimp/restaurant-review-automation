@@ -273,11 +273,17 @@ def test_a_night_whose_sales_are_missing_at_the_deadline_is_provisional(db, worl
 
 
 def test_late_sales_make_a_new_version_and_the_old_one_is_never_edited(db, world):
-    r = _restaurant(db)
-    _labor_in(db, r.id)
+    r = _restaurant(db, hourly_rate=13.75, hourly_rate_source="set")
+    conn = models.get_conn(db)
+    # The POS archive's own sales (1,760) differ from the DSR's net (2,000).
+    conn.execute("INSERT INTO labor_daily_history (restaurant_id, date, day_of_week, labor_pct, labor_cost, sales, "
+                 "total_hours) VALUES (?,?,?,?,?,?,?)", (r.id, DAY.isoformat(), "Tuesday", 25.0, 440.0, 1760.0, 32.0))
+    conn.commit()
+    conn.close()
     world["closed"] = False
     _run(r, U(9, 5), db)
     v1 = store.get_report(r.id, DAY, db_path=db)
+    assert v1["facts"]["blocks"]["labor"]["detail"]["pct_basis"] == "labor_history"
     assert _run(r, U(10, 5), db)["action"] == "still_awaiting"
     assert store.get_report(r.id, DAY, db_path=db)["version"] == 1
     world["closed"] = True                                # the POS closed the day at last
@@ -287,8 +293,12 @@ def test_late_sales_make_a_new_version_and_the_old_one_is_never_edited(db, world
     assert old["status"] == "provisional" and old["facts"] == v1["facts"] and old["next_attempt_at"] is None
     assert new["trigger"] == pipeline.TRIGGER_LATE and new["stages"]["supersedes"] == 1
     assert new["facts"]["blocks"]["sales"]["status"] == dsr.READY and new["facts"]["missing"] == []
-    # Labor was carried over with the time it was really collected.
-    assert new["stages"]["blocks"]["labor"] == v1["stages"]["blocks"]["labor"]
+    # D1-9: labor % is re-read over the net this version brings — never v1's
+    # 25% over the POS archive's own sales beside a net of $2,000.
+    lab = new["facts"]["blocks"]["labor"]
+    assert (lab["metrics"]["pct"], lab["detail"]["pct_basis"]) == (22.0, "dsr_net")
+    # Blocks that don't read the net are carried with their original times.
+    assert new["stages"]["blocks"]["food"] == v1["stages"]["blocks"]["food"]
     assert world["sales_calls"] == 1 and len(world["narratives"]) == 1
     assert store.metric_series(r.id, "sales.net", DAY, DAY, db_path=db) == [(DAY.isoformat(), 2000.0)]
     assert [v["version"] for v in store.versions(r.id, DAY, db_path=db)] == [1, 2]
@@ -301,6 +311,157 @@ def test_a_provisional_night_stops_being_checked_after_the_late_window(db, world
     out = _run(r, U(10, 0, day=25) + timedelta(hours=1), db)     # past deadline + 48h
     assert out["action"] == "expired"
     assert store.get_report(r.id, DAY, db_path=db)["next_attempt_at"] is None
+
+
+def test_a_day_the_pos_closed_with_no_tickets_finalises_as_no_sales_when_the_window_ends(db, world, monkeypatch):
+    # D1-20: it used to stay provisional for good, rechecked for nothing.
+    r = _restaurant(db)
+    _labor_in(db, r.id)
+    empty = dict(_sales_day(), gross=0.0, net=0.0, transactions=0)
+    monkeypatch.setattr(pos, "fetch_day_sales", lambda rid, day: (dict(empty), "fakepos"))
+    assert _run(r, U(9, 5), db)["action"] == "provisional"
+    assert _run(r, U(10, 5), db)["action"] == "still_awaiting"
+    out = _run(r, U(10, 0, day=25) + timedelta(hours=1), db)     # past deadline + 48h
+    assert out["action"] == "final" and out["version"] == 2
+    rep = store.get_report(r.id, DAY, db_path=db)
+    sales = rep["facts"]["blocks"]["sales"]
+    assert sales["status"] == dsr.UNAVAILABLE and sales["reason"] == "No sales recorded for 9/22/26"
+    assert all(v is None for v in sales["metrics"].values())
+    assert store.metric_series(r.id, "sales.net", DAY, DAY, db_path=db) == []      # never $0
+    assert rep["next_attempt_at"] is None
+
+
+def test_a_rerun_while_the_pos_is_down_leaves_the_report_unchanged(db, world, monkeypatch):
+    # D1-12: a forced re-run used to create a "no sales" provisional version
+    # that hid the good final one for good.
+    r = _restaurant(db)
+    _labor_in(db, r.id)
+    assert _run(r, U(4, 10), db)["action"] == "final"
+
+    def down(rid, day):
+        raise TimeoutError("RPOWER timed out")
+    monkeypatch.setattr(pos, "fetch_day_sales", down)
+    out = _run(r, U(20, 0, day=24), db, trigger=pipeline.TRIGGER_MANUAL, force=True)
+    assert out["action"] == "unchanged" and out["reason"] == pipeline.RERUN_REFUSED
+    assert [v["version"] for v in store.versions(r.id, DAY, db_path=db)] == [1]
+    assert store.get_finished_report(r.id, DAY, db_path=db)["facts"]["blocks"]["sales"]["metrics"]["net"] == 2000.0
+    from dsr import access
+    note = access.checklist(store.get_report(r.id, DAY, db_path=db), {"role": "client"})["rerun"]
+    assert note["refused"] == pipeline.RERUN_REFUSED
+    # With the POS back, the re-run is a new version from the fresh pull.
+    monkeypatch.setattr(pos, "fetch_day_sales", lambda rid, day: (_sales_day(2100.0), "fakepos"))
+    out = _run(r, U(20, 10, day=24), db, trigger=pipeline.TRIGGER_MANUAL, force=True)
+    assert out["action"] == "final" and out["version"] == 2
+    assert store.metric_series(r.id, "sales.net", DAY, DAY, db_path=db) == [(DAY.isoformat(), 2100.0)]
+
+
+def test_a_final_night_the_pos_later_moved_gets_a_new_version_only_if_it_moved(db, world, monkeypatch):
+    # D1-1: the POS archive disagrees with a final report — a check closed
+    # after the report. Re-pulled: same figure → nothing; moved → version 2.
+    r = _restaurant(db)
+    _labor_in(db, r.id)
+    assert _run(r, U(4, 10), db)["action"] == "final"
+    assert pipeline.recheck_final(r, DAY, now_utc=U(12, 0), db_path=db)["action"] == "unchanged"
+    monkeypatch.setattr(pos, "fetch_day_sales", lambda rid, day: (_sales_day(2350.0), "fakepos"))
+    out = pipeline.recheck_final(r, DAY, now_utc=U(12, 5), db_path=db)
+    assert out["action"] == "final" and out["version"] == 2
+    rep = store.get_report(r.id, DAY, db_path=db)
+    assert rep["trigger"] == pipeline.TRIGGER_LATE and rep["stages"]["supersedes"] == 1
+    assert rep["facts"]["blocks"]["sales"]["metrics"]["net"] == 2350.0
+
+
+def test_a_pos_pull_that_disagrees_with_a_recent_final_night_rechecks_it(db, world, monkeypatch):
+    # D1-1 / D1-3: the consistency check after each POS pull re-pulls the
+    # mismatched recent nights — only where the archive is the DSR's basis.
+    import data_freshness
+    from datetime import date as _date
+    r = _restaurant(db)
+    yesterday = (_date.today() - timedelta(days=1)).isoformat()
+    monkeypatch.setattr(data_freshness, "sales_consistency", lambda rid: {"checked": 2, "mismatches": [
+        {"date": yesterday, "dsr": 6000.0, "pos": 7500.0, "diff_pct": 20.0},
+        {"date": "2020-01-01", "dsr": 1.0, "pos": 2.0, "diff_pct": 50.0}]})
+    monkeypatch.setattr(pipeline, "_spawn", lambda fn: fn())
+    seen = []
+    monkeypatch.setattr(pipeline, "recheck_final", lambda rest, night, **kw: seen.append((rest.id, night)))
+    monkeypatch.setattr(pos, "connected_provider", lambda rid: ("rpower", object()))
+    pos._recheck_sales_consistency(r.id)
+    assert seen == [(r.id, yesterday)], "only the nights the sweep still looks at"
+    seen.clear()
+    monkeypatch.setattr(pos, "connected_provider", lambda rid: ("toast", object()))
+    pos._recheck_sales_consistency(r.id)
+    assert seen == [], "a Toast archive is another basis: a mismatch is not the POS moving"
+
+
+def test_a_night_the_sweep_never_saw_is_run(db, world):
+    # D1-15: an outage from one close to the next left the night with no
+    # report and nobody told. Monday was reported; Tuesday was missed.
+    r = _restaurant(db)
+    _labor_in(db, r.id)
+    _labor_in(db, r.id, day=DAY - timedelta(days=1))
+    pipeline.run_night(r, DAY - timedelta(days=1), pipeline.TRIGGER_SWEEP, now_utc=U(4, 10, day=22), db_path=db)
+    assert store.get_report(r.id, DAY, db_path=db) is None
+    # Wednesday's close has passed: the sweep runs Wednesday AND Tuesday.
+    pipeline.run_sweep(now_utc=U(4, 10, day=24), db_path=db)
+    assert store.get_report(r.id, DAY, db_path=db)["status"] in ("final", "provisional")
+    # A restaurant with no report in the window is not back-filled.
+    fresh = _restaurant(db, "Fresh Co")
+    pipeline.run_sweep(now_utc=U(4, 20, day=24), db_path=db)
+    assert store.get_report(fresh.id, DAY, db_path=db) is None
+
+
+def test_a_rerun_that_drops_a_category_takes_it_out_of_the_history(db, world):
+    # D1-4: v1's "Unmapped" $1,500 stayed beside v2's Liquor $1,500.
+    r = _restaurant(db)
+    v1 = store.create_report(r.id, DAY, db_path=db)
+    store.save_block(v1["id"], "sales", dsr.block(dsr.READY, source="x", metrics={
+        "net": 5000.0, "cat:Food": 3500.0, "cat:Unmapped": 1500.0}), db_path=db)
+    store.save_block(v1["id"], "labor", dsr.block(dsr.READY, source="x", metrics={"cost": 900.0}), db_path=db)
+    store.set_stage(v1["id"], "final", db_path=db)
+    v2 = store.create_report(r.id, DAY, db_path=db)
+    # In flight, sales not in yet: the finished night's history is untouched.
+    store.save_block(v2["id"], "sales", dsr.block(dsr.AWAITING, block_name="sales"), db_path=db)
+    assert store.metric_series(r.id, "sales.cat:Unmapped", DAY, DAY, db_path=db) == [(DAY.isoformat(), 1500.0)]
+    store.save_block(v2["id"], "sales", dsr.block(dsr.READY, source="x", metrics={
+        "net": 5000.0, "cat:Food": 3500.0, "cat:Liquor": 1500.0}), db_path=db)
+    store.save_block(v2["id"], "labor", dsr.block(dsr.UNAVAILABLE, block_name="labor"), db_path=db)
+    store.set_stage(v2["id"], "final", db_path=db)
+    names = store.metric_names(r.id, db_path=db)
+    assert "sales.cat:Unmapped" not in names and "sales.cat:Liquor" in names
+    assert "labor.cost" not in names, "v2 could not measure labor: v1's figure is not the night's any more"
+    # A re-run that fails puts the history back to the version that finished.
+    v3 = store.create_report(r.id, DAY, db_path=db)
+    store.save_block(v3["id"], "sales", dsr.block(dsr.READY, source="x", metrics={"net": 1.0}), db_path=db)
+    store.set_stage(v3["id"], "failed", db_path=db)
+    assert store.metric_series(r.id, "sales.net", DAY, DAY, db_path=db) == [(DAY.isoformat(), 5000.0)]
+    assert store.metric_series(r.id, "sales.cat:Liquor", DAY, DAY, db_path=db) == [(DAY.isoformat(), 1500.0)]
+
+
+def test_a_prediction_is_recorded_only_before_its_night_opens_and_graded_only_then(db, world, monkeypatch):
+    # D1-7: recorded at 10:30pm on the predicted night, "Sales below budget"
+    # was graded as if it had been a prediction.
+    import demand
+    from dsr import predictions
+    r = _restaurant(db)
+    monkeypatch.setattr(demand, "forecast_day", lambda rid, day=None, db_path=None: {
+        "available": True, "typical_sales": 7000.0, "low": 6200.0, "high": 7900.0, "samples": 8,
+        "weekday": "Wednesday"})
+    wed = DAY + timedelta(days=1)
+    rep = store.create_report(r.id, DAY, db_path=db)
+    # Wednesday 10:30pm CDT = 03:30 UTC Thursday: Wednesday's service is under way.
+    pipeline._tomorrow(r, rep["id"], DAY, "manual", datetime(2026, 9, 24, 3, 30), db)
+    assert predictions.for_date(r.id, wed, db_path=db) == []
+    # Tuesday 11:30pm CDT: before Wednesday opens at 11am — recorded.
+    pipeline._tomorrow(r, rep["id"], DAY, "sweep", datetime(2026, 9, 23, 4, 30), db)
+    assert [p["key"] for p in predictions.for_date(r.id, wed, db_path=db)] == ["sales_range"]
+    # A row written after Wednesday opened (an older build) is void: never graded, never shown.
+    predictions.record(r.id, DAY, wed, [{"key": "rain", "metric": "sales.net", "op": "lt", "value": 7000.0,
+                                         "text": "Rain"}], db_path=db, made_at=datetime(2026, 9, 23, 22, 0))
+    rows = {x["key"]: x["outcome"] for x in predictions.grade(
+        r.id, wed, {"blocks": {"sales": {"status": dsr.READY, "metrics": {"net": 6500.0}}}}, db_path=db,
+        cutoff_utc=pipeline.prediction_cutoff_utc(r, wed))}
+    assert rows == {"sales_range": "correct", "rain": predictions.VOID}
+    assert [p["key"] for p in predictions.for_date(r.id, wed, db_path=db)] == ["sales_range"]
+    assert predictions.accuracy(r.id, wed, db_path=db)["graded"] == 1
 
 
 # ── the manager's closeout never holds a night ──────────────────────────────
@@ -456,7 +617,11 @@ def test_a_block_not_built_yet_is_not_available_yet(db, world, monkeypatch):
 
 # ── Close day ───────────────────────────────────────────────────────────────
 
-def test_close_day_starts_the_night_now(db, world, monkeypatch):
+def test_close_day_starts_the_night_now_but_never_overrules_the_pos(db, world, monkeypatch):
+    # D1-1 (this test used to pin the bug): a manager pressing Close day at
+    # 9:30pm while the POS is still trading made the night FINAL from half
+    # its sales, and nothing ever revisited it. The POS keeps a close-day
+    # record, so the night waits for it.
     r = _restaurant(db)
     _labor_in(db, r.id)
     world["closed"] = False                       # the POS hasn't closed; the manager says it's done
@@ -465,8 +630,29 @@ def test_close_day_starts_the_night_now(db, world, monkeypatch):
     out = pipeline.start_manual(r, DAY, db_path=db)
     assert out["started"] is True
     rep = store.get_report(r.id, DAY, db_path=db)
-    assert rep["status"] == "final" and rep["trigger"] == "manual" and rep["stages"]["closed_by"] == "manual"
+    assert rep["status"] == "awaiting_close" and rep["trigger"] == "manual"
+    assert world["sales_calls"] == 0, "no sales pulled from a day still trading"
+    # The POS closes the day; the next pass finishes it.
+    world["closed"] = True
+    out = _run(r, U(4, 30), db)
+    rep = store.get_report(r.id, DAY, db_path=db)
+    assert rep["status"] == "final" and rep["stages"]["closed_by"] == "pos"
     assert pipeline.start_manual(r, DAY, db_path=db)["started"] is False
+
+
+def test_close_day_on_a_pos_with_no_close_record_is_refused_before_close(db, world, monkeypatch):
+    # D1-1: such a POS takes the button's word — so before close − 30 min
+    # the button is refused (the route), and after it the night runs.
+    r = _restaurant(db)
+    world["closeday"] = False
+    monkeypatch.setattr(pos, "supports", lambda rid, cap: cap != "fetch_day_closed")
+    why = pipeline.manual_close_refusal(r, DAY, now_utc=datetime(2026, 9, 23, 2, 30))     # 9:30pm CDT
+    assert why and "before your close (11:00 pm)" in why and "9/22/26" in why
+    assert pipeline.manual_close_refusal(r, DAY, now_utc=datetime(2026, 9, 23, 3, 35)) is None   # 10:35pm
+    # A POS that keeps a close-day record is never refused here: the pipeline asks it.
+    monkeypatch.setattr(pos, "supports", lambda rid, cap: True)
+    assert pipeline.manual_close_refusal(r, DAY, now_utc=datetime(2026, 9, 23, 2, 30)) is None
+    assert pipeline.day_closed(r, DAY, datetime(2026, 9, 23, 2, 30), pipeline.TRIGGER_MANUAL) == "manual"
 
 
 class _FrozenDatetime(datetime):

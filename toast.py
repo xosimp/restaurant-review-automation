@@ -650,7 +650,8 @@ def fetch_day_sales(restaurant_id: int, business_date: date) -> dict:
                 d["discounts"] += sel_disc
                 name = (sel.get("displayName") or "").strip() or "Unknown item"
                 key = ((sel.get("item") or {}).get("guid") or name, dep)
-                it = items.setdefault(key, {"name": name, "department": dep, "qty": 0.0, "parts": parts()})
+                it = items.setdefault(key, {"name": name, "department": dep, "qty": 0.0, "parts": parts(),
+                                            "guid": (sel.get("item") or {}).get("guid")})
                 it["qty"] += _num(sel.get("quantity"))
                 it["parts"]["gross"] += price + sel_disc
                 it["parts"]["discounts"] += sel_disc

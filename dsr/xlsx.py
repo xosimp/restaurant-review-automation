@@ -194,14 +194,21 @@ def columns(grid):
     """[(header, key, kind)] for the grid, in the screen's order. `kind` is
     money | delta | pct | text. Budget columns only when the grid has them
     (the manager's grid had them removed)."""
-    owner = "budget" not in (grid.get("withheld") or [])
+    withheld = grid.get("withheld") or []
+    owner = "budget" not in withheld
     cols = [(c, "cat:" + c, "money") for c in grid.get("categories") or []]
-    cols += [("Gross", "gross", "money"), ("Net", "net", "money")]
+    # A column the view withholds is left out, not written as a column of
+    # dashes (D2-11): labor without LABOR_VIEW, gross without LOSS_VIEW.
+    if "gross" not in withheld:
+        cols += [("Gross", "gross", "money")]
+    cols += [("Net", "net", "money")]
     if owner:
         cols += [("Budget gross", "budget_gross", "money"), ("Budget net", "budget_net", "money"),
                  ("vs Budget", "vs_budget_net", "delta"), ("vs Budget %", "vs_budget_net_pct", "pct")]
     cols += [("Last year", "last_year_net", "money"), ("vs LY", "vs_last_year_net", "delta"),
-             ("vs LY %", "vs_last_year_net_pct", "pct"), ("Labor %", "labor_pct", "pct")]
+             ("vs LY %", "vs_last_year_net_pct", "pct")]
+    if "labor" not in withheld:
+        cols += [("Labor %", "labor_pct", "pct")]
     return cols
 
 

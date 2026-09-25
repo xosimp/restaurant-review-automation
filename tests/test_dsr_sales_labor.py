@@ -213,7 +213,9 @@ def test_labor_not_connected_awaiting_or_unavailable(db, monkeypatch):
 
 
 def test_labor_pct_is_over_tonights_net_and_measured_against_the_one_target(db, monkeypatch):
-    rid = _rid(db, labor_target_pct=28)
+    # The owner's own wage rate (D1-5: the dollars are costed at a rate
+    # somebody entered, and say which).
+    rid = _rid(db, labor_target_pct=28, labor_target_source="set", hourly_rate=18.0, hourly_rate_source="set")
     monkeypatch.setattr(pos, "connected_provider", lambda r: ("rpower", object()))
     _history(db, rid)
     ctx = _ctx(db, rid)
@@ -222,11 +224,57 @@ def test_labor_pct_is_over_tonights_net_and_measured_against_the_one_target(db, 
     assert b["status"] == dsr.READY
     m = b["metrics"]
     assert (m["cost"], m["hours"], m["pct"], m["target_pct"], m["vs_target_pts"]) == (400.0, 30.0, 20.0, 28.0, -8.0)
-    assert b["detail"]["pct_basis"] == "dsr_net"
-    assert b["detail"]["observations"][0]["text"] == "Labor was 20.0% of sales, at or under the 28% target."
+    assert b["detail"]["pct_basis"] == "dsr_net" and b["detail"]["cost_basis"] == "owner_blended"
+    # D1-19: the target is named for what it is.
+    assert b["detail"]["observations"][0]["text"] == "Labor was 20.0% of sales, at or under your target of 28%."
+    assert b["detail"]["target_source"] == "set"
     # Without tonight's sales, the archive's own percentage, labelled.
     b2 = block_labor.collect(_ctx(db, rid))
     assert b2["metrics"]["pct"] == 25.0 and b2["detail"]["pct_basis"] == "labor_history"
+
+
+def test_labor_at_cavnars_assumed_rate_withholds_the_dollars_and_keeps_the_hours(db, monkeypatch):
+    # D1-5: nobody entered a wage, so labor_daily_history's cost is hours ×
+    # Cavnar's $26 — not payroll. It is never shown as the night's labor $.
+    rid = _rid(db, labor_target_pct=28, labor_target_source="seeded")
+    monkeypatch.setattr(pos, "connected_provider", lambda r: ("rpower", object()))
+    _history(db, rid)
+    ctx = _ctx(db, rid)
+    ctx.blocks["sales"] = dsr.block(dsr.READY, metrics={"net": 2000.0})
+    b = block_labor.collect(ctx)
+    m = b["metrics"]
+    assert b["status"] == dsr.READY and m["hours"] == 30.0
+    assert (m["cost"], m["pct"], m["vs_target_pts"]) == (None, None, None)
+    assert b["detail"]["cost_basis"] == "default" and "wage rates" in b["detail"]["cost_note"]
+    assert not [o for o in b["detail"]["observations"] if o["key"] == "vs_target"]
+    # The starting target is never called "the target" (D1-19).
+    update_restaurant(rid, {"hourly_rate": 18.0, "hourly_rate_source": "set"}, db_path=db)
+    ctx = _ctx(db, rid)
+    ctx.blocks["sales"] = dsr.block(dsr.READY, metrics={"net": 2000.0})
+    b = block_labor.collect(ctx)
+    assert b["detail"]["observations"][0]["text"] == \
+        "Labor was 20.0% of sales, at or under Cavnar's starting target of 28%."
+
+
+def test_a_labor_row_synced_mid_service_is_never_the_nights_labor(db, monkeypatch):
+    # D1-2: final=0 — the archive row was written while the day still traded.
+    rid = _rid(db, hourly_rate=18.0, hourly_rate_source="set")
+    monkeypatch.setattr(pos, "connected_provider", lambda r: ("rpower", object()))
+    _history(db, rid, cost=450.0, hours=30.0)
+    conn = models.get_conn(db)
+    conn.execute("UPDATE labor_daily_history SET final=0 WHERE restaurant_id=?", (rid,))
+    conn.commit()
+    conn.close()
+    ctx = _ctx(db, rid)
+    ctx.blocks["sales"] = dsr.block(dsr.READY, metrics={"net": 6000.0})
+    b = block_labor.collect(ctx)
+    assert b["status"] == dsr.AWAITING and b["reason"] == block_labor.REASON_SYNC_PENDING
+    assert b["metrics"] == {}
+    # Past the deadline (4am CDT 9/23 = 09:00 UTC) it says only part synced.
+    late = dsr.Context(get_restaurant(rid, db_path=db), DAY, db_path=db, now_utc=datetime(2026, 9, 23, 10, 0))
+    late.day_closed = "pos"
+    b = block_labor.collect(late)
+    assert b["status"] == dsr.UNAVAILABLE and b["reason"] == block_labor.REASON_PARTIAL
 
 
 def test_labor_overtime_and_hours_after_six_against_sales_after_six(db, monkeypatch):
@@ -283,6 +331,41 @@ def test_labor_coverage_is_counted_only_where_it_was_measured(db, monkeypatch):
     b = block_labor.collect(_ctx(db, rid))
     assert (b["metrics"]["no_shows"], b["metrics"]["late_arrivals"]) == (1, 1)
     assert b["detail"]["coverage"]["no_shows"][0]["employee"] == "Bo"
+
+
+def test_coverage_reads_the_business_date_the_punches_and_whether_the_check_ran(db, monkeypatch):
+    # D1-17.
+    import intraday
+    import issues
+    rid = _rid(db, module_labor=1)
+    monkeypatch.setattr(pos, "connected_provider", lambda r: ("toast", object()))
+    monkeypatch.setattr(pos, "supports", lambda r, cap: True)
+    monkeypatch.setattr(issues, "get_routing", lambda r, db_path=None: {"manager": [1]})
+    monkeypatch.setattr(intraday, "published_rows", lambda r, d, db_path=None: [{"employee": "Ana"}])
+    _history(db, rid)
+    # Every precondition holds but the check never ran for the night: no "0".
+    b = block_labor.collect(_ctx(db, rid))
+    assert b["metrics"]["no_shows"] is None
+    assert b["detail"]["coverage"]["reason"] == "The clock-in check didn't run during this shift"
+    store.mark_coverage_ran(rid, DAY, db_path=db)
+    b = block_labor.collect(_ctx(db, rid))
+    assert (b["metrics"]["no_shows"], b["metrics"]["late_arrivals"]) == (0, 0)
+    conn = models.get_conn(db)
+    rows = (("coverage:2026-09-23:cy", "Cy", "00:30", None),        # after midnight: still 9/22's service
+            ("coverage:2026-09-22:dee", "Dee", "00:15", None),      # after midnight of 9/21's service
+            ("coverage:2026-09-22:eve", "Eve", "17:00", "Resolved by a manager"))
+    for key, who, start, note in rows:
+        conn.execute("INSERT INTO ops_issues (restaurant_id, kind, source_key, title, status, resolution_note, meta_json) "
+                     "VALUES (?,?,?,?,?,?,?)", (rid, "coverage", key, f"{who} hasn't clocked in", "resolved", note,
+                                                json.dumps({"missing": who, "shift_start": start})))
+    conn.commit()
+    conn.close()
+    # Eve worked that day after all (the synced punches say so): late, not a no-show.
+    _shifts(db, rid, [{"date": "2026-09-22", "employee": "Eve", "start": "17:40", "end": "23:00", "hours": 5}])
+    b = block_labor.collect(_ctx(db, rid))
+    cov = b["detail"]["coverage"]
+    assert [x["employee"] for x in cov["no_shows"]] == ["Cy"]
+    assert [x["employee"] for x in cov["late"]] == ["Eve"]
 
 
 def test_labor_reads_the_published_days_shift_quality(db, monkeypatch):

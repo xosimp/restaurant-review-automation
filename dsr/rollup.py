@@ -10,10 +10,14 @@ Every figure is read, never computed from a guess:
 
   categories, gross, net, labor   dsr_metrics (the night's report)
   budget                          dsr_budgets (the owner enters it)
-  last year                       the same weekday 52 weeks back: that
-                                  night's DSR, else an imported row from
-                                  his old workbooks (dsr_history_import),
-                                  else the nightly POS sync's daily sales
+  last year                       store.last_year_day (the same fiscal week
+                                  and weekday last fiscal year, else 52
+                                  weeks back) through store.baselines_net —
+                                  that night's DSR, else an imported row
+                                  from his old workbooks, else the nightly
+                                  POS sync's daily sales where that total is
+                                  the DSR's own basis; the nightly report
+                                  reads the same resolver
   weather / event / influence     the night's report (intel, close-out)
 
 A day with no report is in the week with its budget and last year and every
@@ -88,39 +92,20 @@ def _reports(rid, start, end, db_path):
     return {r["business_date"]: r for r in rows}
 
 
-def _pos_sync_sales(rid, days, db_path):
-    if not days:
-        return {}
-    conn = store.get_conn(db_path)
+def _last_year(restaurant, days, db_path):
+    """{day_iso: (net, source)} for each day's night a year back
+    (store.last_year_day) — read by store.baselines_net, the same resolver
+    and order the nightly report uses (D1-10), so the grid and the report
+    never give two answers for the same last year."""
+    ly = {d: store.last_year_day(restaurant, d) for d in days}
     try:
-        marks = ",".join("?" for _ in days)
-        rows = conn.execute(f"SELECT date, sales FROM labor_daily_history WHERE restaurant_id=? AND date IN ({marks}) "
-                            "AND sales IS NOT NULL AND sales > 0", (rid, *days)).fetchall()
+        import pos
+        provider = pos.connected_provider(restaurant.id)[0]
     except Exception:
-        return {}
-    finally:
-        conn.close()
-    return {r["date"]: float(r["sales"]) for r in rows}
-
-
-def _last_year(rid, days, db_path):
-    """{day_iso: (net, source)} for the same weekday 52 weeks before each day."""
-    ly = {d: (_d(d) - timedelta(days=LAST_YEAR_DAYS)).isoformat() for d in days}
-    lo, hi = min(ly.values()), max(ly.values())
-    measured = _metrics(rid, lo, hi, db_path)
-    imported = store.history_for(rid, lo, hi, db_path=db_path)
-    synced = _pos_sync_sales(rid, list(ly.values()), db_path)
-    out = {}
-    for d, then in ly.items():
-        if (measured.get(then) or {}).get("sales.net") is not None:
-            out[d] = (measured[then]["sales.net"], "dsr")
-        elif (imported.get(then) or {}).get("net") is not None:
-            out[d] = (imported[then]["net"], "import")
-        elif then in synced:
-            out[d] = (synced[then], "pos_sync")
-        else:
-            out[d] = (None, None)
-    return out
+        provider = None
+    found = store.baselines_net(restaurant.id, [t for t in ly.values() if t], db_path=db_path,
+                                pos_sync=store.pos_sync_same_basis(provider))
+    return {d: (found.get(then.isoformat(), (None, None)) if then else (None, None)) for d, then in ly.items()}
 
 
 def _notes(facts):
@@ -216,7 +201,7 @@ def _rows(restaurant, start, end, db_path):
     metrics = _metrics(rid, start, end, db_path)
     reports = _reports(rid, start, end, db_path)
     budgets = store.budgets_for(rid, start, end, db_path=db_path)
-    last_year = _last_year(rid, days, db_path)
+    last_year = _last_year(restaurant, days, db_path)
     from time_utils import mdy
     rows = []
     for d in days:
