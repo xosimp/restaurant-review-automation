@@ -7,9 +7,11 @@ an owner got nothing from Cavnar that they couldn't get by looking around
 the room — which is exactly the stretch of the day they are working.
 
 Toast can be asked during service (businessDay net sales, and the labor
-timeEntries feed). RPOWER cannot: the vendor confirmed month-at-a-time
-extracts, so for those restaurants this module honestly reports that it
-can't see today rather than guessing.
+timeEntries feed). RPOWER cannot, as far as we know: the vendor has given us
+range extracts (a month at most, a week preferred), not a live feed, and
+whether today's sales can be read during service is unconfirmed, so for
+those restaurants this module honestly reports that it can't see today
+rather than guessing.
 
 TWO THINGS, BOTH ACTIONABLE BEFORE THE NEXT SERVICE:
 

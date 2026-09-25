@@ -608,7 +608,8 @@ def test_a_long_range_is_chunked(db_path):
     against an API with no documented rate limit or timeout behaviour."""
     from datetime import date
     chunks = list(rpower._chunk_range(date(2026, 1, 1), date(2026, 12, 31)))
-    assert len(chunks) == 12
+    assert len(chunks) == 53          # 52 weeks + 1 day: a week per request
+    assert all((e - s).days < rpower.MAX_RANGE_DAYS for s, e in chunks)
     assert chunks[0][0] == date(2026, 1, 1)
     assert chunks[-1][1] == date(2026, 12, 31)
     # Contiguous, no gaps and no overlap.

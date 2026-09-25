@@ -595,14 +595,16 @@ def test_a_closed_day_does_not_break_archive_coverage(db_path, monkeypatch):
     assert total == 1200.0
 
 
-def test_rpower_requests_a_month_at_a_time(db_path):
-    """RPOWER told us to pull "a month worth of data at a time". Both range
-    fetches chunk through _chunk_range, so a 60-day sync is two requests
-    rather than one oversized one."""
+def test_rpower_requests_a_week_at_a_time(db_path):
+    """RPOWER's ceiling is "a month worth of data at a time" (18 Sep 2026);
+    Justin is comfortable with "a week's worth of data at a time" (25 Sep
+    2026), so that is what we ask for. Both range fetches chunk through
+    _chunk_range: a 62-day sync is nine small requests, never one at the
+    ceiling."""
     import rpower
-    assert rpower.MAX_RANGE_DAYS <= 31
+    assert rpower.MAX_RANGE_DAYS <= 7
     chunks = list(rpower._chunk_range("2026-07-01", "2026-08-31"))
-    assert len(chunks) >= 2
+    assert len(chunks) == 9
     for start, end in chunks:
         from datetime import date as _date
         s = _date.fromisoformat(str(start)[:10])

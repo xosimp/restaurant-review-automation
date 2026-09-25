@@ -65,9 +65,9 @@ PAGE_SIZE = 1000
 # behaviour is observed rather than assumed.
 PAGINATION_UNVERIFIED = True
 
-# No rate limit is documented. These are conservative defaults chosen so a
-# full historical backfill cannot look like an attack; revise once RPOWER
-# confirms the real ceiling.
+# No rate limit is documented. Justin (RPOWER, 25 Sep 2026): "I'll check with
+# dev but I don't think so." Until dev confirms, these stay conservative
+# defaults so a full historical backfill cannot look like an attack.
 REQUEST_SPACING_SECONDS = 0.15
 MAX_RETRIES = 3
 RETRY_BACKOFF = 2.0
@@ -76,10 +76,12 @@ TIMEOUT_SECONDS = 45
 # A backfill asks for one business date at a time for item-level data (a busy
 # day can exceed a single page) but takes date ranges where the API allows.
 #
-# CONFIRMED by RPOWER (Justin, 18 Sep 2026): "Month worth of data at a time."
-# Both range fetches below chunk through _chunk_range, so a 60-day sync is two
-# requests rather than one oversized one.
-MAX_RANGE_DAYS = 31
+# RPOWER (Justin): 18 Sep 2026, "Month worth of data at a time" (the API's
+# ceiling); 25 Sep 2026, "I don't have a problem with you pulling a week's
+# worth of data at a time" (what he is comfortable with). We ask for the
+# week: both range fetches below chunk through _chunk_range, so a month's
+# backfill is five small requests rather than one at the ceiling.
+MAX_RANGE_DAYS = 7
 
 
 class RPowerError(Exception):
@@ -838,7 +840,7 @@ def _chunk_range(start_date, end_date, max_days: int = MAX_RANGE_DAYS):
 
     A year-long backfill in one call would be one enormous paged read against
     an API with no documented rate limit or timeout behaviour. Chunking keeps
-    each request bounded and lets a partial failure cost one month rather
+    each request bounded and lets a partial failure cost one week rather
     than the whole history.
     """
     start = start_date if hasattr(start_date, "toordinal") else date.fromisoformat(_d(start_date))
