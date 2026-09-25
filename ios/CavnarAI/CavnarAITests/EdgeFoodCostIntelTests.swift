@@ -119,6 +119,11 @@ final class EdgeFoodCostIntelTests: XCTestCase {
     func testAnAppliedInvoiceIsNotAppliedAgain() async throws {
         let applies = Box(0)
         let client = EdgeHTTP.client { request in
+            // Count only this test's applies: the stub's handler is global, and a
+            // load another test left in flight can land here (the full run).
+            guard EdgeHTTP.line(request).hasSuffix("/apply") else {
+                return EdgeHTTP.reply(request, 200, #"{"ok": true}"#)
+            }
             applies.value += 1
             if applies.value == 1 {
                 return EdgeHTTP.reply(request, 200, #"{"ok": true, "updated": [{"name": "Butter"}]}"#)

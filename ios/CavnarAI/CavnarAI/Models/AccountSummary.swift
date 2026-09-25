@@ -18,6 +18,9 @@ struct AccountProfile: Decodable {
     let openTimesJson: String?
     let closeTimesJson: String?
     let skipHolidays: String?
+    /// The scheduler's closed dates (schedule_rules.closures, Friction #6) —
+    /// what "Hours & closures" edits. `skipHolidays` is the marketing list.
+    let closures: [String]?
     /// Set the moment "Close my account" is tapped — an ISO-ish UTC
     /// timestamp string, or nil if no request is on file. Lets the sheet
     /// show "request received" instead of the button again on a later
@@ -32,6 +35,7 @@ struct AccountProfile: Decodable {
         case openTimesJson = "open_times_json"
         case closeTimesJson = "close_times_json"
         case skipHolidays = "skip_holidays"
+        case closures
         case locationName = "location_name"
         case ownerName = "owner_name"
         case ownerEmail = "owner_email"

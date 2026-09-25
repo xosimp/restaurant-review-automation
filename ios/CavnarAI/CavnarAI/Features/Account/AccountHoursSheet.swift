@@ -71,7 +71,9 @@ struct AccountHoursSheet: View {
             h[day] = DayHours(closed: !(hasOpen || hasClose) && !(opens.isEmpty && closes.isEmpty), open: o, close: c)
         }
         _hours = State(initialValue: h)
-        _closures = State(initialValue: (profile.skipHolidays ?? "").split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+        // The scheduler's closed dates (Friction #6: these used to land in
+        // the marketing holiday list and never reached the scheduler).
+        _closures = State(initialValue: (profile.closures ?? []).filter { !$0.isEmpty }.sorted())
     }
 
     var body: some View {
