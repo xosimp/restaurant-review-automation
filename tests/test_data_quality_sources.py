@@ -340,8 +340,12 @@ def test_the_connect_routes_refuse_demo_credentials_for_a_real_restaurant(db_pat
 def test_p9_admin_reads_inventory_age_from_the_last_count(db_path):
     rid = _rid(db_path, module_inventory=1, module_labor=0, module_reviews=0, module_marketing=0)
     c = get_conn(db_path)
+    # The count date is written from the same clock the assertion reads:
+    # SQLite's date('now') is UTC, so after 7pm Central it was a day ahead of
+    # date.today() and this test failed every evening.
+    counted = (date.today() - timedelta(days=40)).isoformat()
     c.execute("INSERT INTO ingredients (restaurant_id, name, unit, par_level, current_stock, unit_cost, is_active, "
-              "last_recount_at) VALUES (?,?,?,?,?,?,1,date('now','-40 days'))", (rid, "Salmon", "lb", 10, 5, 12))
+              "last_recount_at) VALUES (?,?,?,?,?,?,1,?)", (rid, "Salmon", "lb", 10, 5, 12, counted))
     c.commit(); c.close()
     rec = admin_ops.client_detail(rid)["client"]
     inv = next(m for m in rec["modules"] if m["key"] == "inventory")
