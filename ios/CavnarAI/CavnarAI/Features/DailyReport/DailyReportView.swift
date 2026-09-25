@@ -240,14 +240,20 @@ struct DailyReportView: View {
             CavnarCaveat(title: report.phase == .provisional ? "Provisional — still missing" : "Still missing",
                          detail: report.facts.missing.joined(separator: " "))
         }
+        // The owner's report opens with "did we win today?" (dsr/scorecard.py):
+        // the score, then the executive summary, then wins and risks.
+        if let card = report.scorecard {
+            DSRScorecardCard(card: card)
+        }
         if let narrative = report.narrative, !narrative.isEmpty {
-            narrativeSections(narrative)
+            narrativeSections(narrative, scorecard: report.scorecard)
         } else if report.phase.isTerminal {
             Text(noSummaryLine(report))
                 .font(.cavnarBody(14))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
                 .cavnarCard()
+            if let card = report.scorecard { DSRWinsRisks(card: card) }
         }
 
         if !report.orderedBlocks.isEmpty {
@@ -270,10 +276,10 @@ struct DailyReportView: View {
     }
 
     @ViewBuilder
-    private func narrativeSections(_ n: DSRNarrative) -> some View {
+    private func narrativeSections(_ n: DSRNarrative, scorecard: DSRScorecard? = nil) -> some View {
         if let summary = n.executiveSummary {
             VStack(alignment: .leading, spacing: 10) {
-                DSRKicker(text: "The morning read")
+                DSRKicker(text: scorecard == nil ? "The morning read" : "Executive summary")
                 HomeMixedText.make(summary.text, size: 16.5, weight: 500, color: .cavnarInk)
                     .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -281,11 +287,17 @@ struct DailyReportView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .cavnarCard(.ai)
         }
-        if !n.wentWell.isEmpty {
-            titledCard("Went well") { DSRLineList(lines: n.wentWell, dot: .cavnarGreen) }
-        }
-        if !n.needsAttention.isEmpty {
-            titledCard("Needs attention") { DSRLineList(lines: n.needsAttention, dot: .cavnarAmber) }
+        if let card = scorecard {
+            // Wins and risks replace "went well / needs attention": the
+            // scorecard's measured signals first, topped up from those lines.
+            DSRWinsRisks(card: card)
+        } else {
+            if !n.wentWell.isEmpty {
+                titledCard("Went well") { DSRLineList(lines: n.wentWell, dot: .cavnarGreen) }
+            }
+            if !n.needsAttention.isEmpty {
+                titledCard("Needs attention") { DSRLineList(lines: n.needsAttention, dot: .cavnarAmber) }
+            }
         }
         if !n.callouts.isEmpty {
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10, alignment: .top),

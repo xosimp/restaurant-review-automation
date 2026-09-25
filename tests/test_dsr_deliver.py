@@ -196,8 +196,10 @@ def test_the_owner_and_manager_emails_carry_exactly_their_own_views(db, sent):
     assert set(by) == {"erik@example.com", "jim@example.com", "maria@example.com"}
 
     owner, manager = by["erik@example.com"], by["maria@example.com"]
-    assert owner["subject"] == "Simple EJ's · Tue 9/22/26 · $6,975 net"
-    assert manager["subject"] == owner["subject"]
+    # The owner's leads with "did we win today?" (dsr.scorecard, 9/25/26 —
+    # this pinned the plain subject both views used to share).
+    assert owner["subject"].startswith("Simple EJ's · Tue 9/22/26 · ") and owner["subject"].endswith("/100 · $6,975 net")
+    assert manager["subject"] == "Simple EJ's · Tue 9/22/26 · $6,975 net"
     link = "https://dashboard.cavnar.ai/#dsr/2026-09-22"
     for m in (owner, manager):
         assert link in m["html"] and "View full report" in m["html"]
@@ -245,7 +247,8 @@ def test_the_push_payload_is_what_the_app_opens_the_report_from(db, sent):
     p = by[ids["erik"]]
     assert p["type"] == "dsr" and p["data"]["type"] == "dsr" and p["data"]["business_date"] == "2026-09-22"
     assert p["title"] == "Your daily report is ready"
-    assert p["body"].startswith("Simple EJ's · Tue 9/22/26: $6,975 net, 1.9% below last Tue.")
+    # The owner's push leads with the score (dsr.scorecard; this pinned the plain figures line).
+    assert p["body"].startswith("Simple EJ's · Tue 9/22/26: ") and "/100 · $6,975 net, −$325 vs budget." in p["body"]
     assert len(p["body"]) <= deliver.PUSH_BODY_MAX
     m = by[ids["maria"]]
     assert m["title"] == "Your manager report is ready" and "budget" not in m["body"]

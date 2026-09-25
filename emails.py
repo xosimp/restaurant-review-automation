@@ -1093,6 +1093,44 @@ def _header_text(value) -> str:
     return " ".join(str(value or "").split())
 
 
+def dsr_scorecard_sections(card: dict, d: dict) -> list:
+    """The Owner DSR's top, in the email (dsr.scorecard): Today's score —
+    the verdict, the overall score out of 100 and the four components —
+    then the executive summary, Today's wins and Today's risks. Every figure
+    is one the scorecard carries; an unmeasured component says why."""
+    tones = {"good": BRAND["good"], "warn": BRAND["warn"], "bad": BRAND["bad"]}
+    out = []
+    verdict = card.get("verdict")
+    if verdict and card.get("overall") is not None:
+        color = tones.get(verdict.get("tone"), BRAND["ink"])
+        out.append(report_eyebrow("Today&rsquo;s score")
+                   + f'<p style="font-family:{_SANS};font-size:22px;font-weight:700;color:{BRAND["ink"]};margin:0">'
+                     f'<span style="display:inline-block;width:12px;height:12px;border-radius:6px;background:{color};'
+                     f'margin-right:8px;vertical-align:1px"></span>{esc(verdict["label"])}'
+                     f'<span style="font-family:{_NUM};font-weight:600;color:{BRAND["muted"]};font-size:16px;'
+                     f'margin-left:10px">{int(card["overall"])}/100</span></p>')
+    else:
+        out.append(report_eyebrow("Today&rsquo;s score") + report_paragraph(esc(card.get("basis") or "")))
+    comps = []
+    for c in card.get("components") or []:
+        if c.get("measured") and c.get("value") is not None:
+            comps.append((esc(c["value"]), esc(c["label"]), tones.get(c.get("tone"))))
+        else:
+            comps.append(("&mdash;", esc(c.get("label") or ""), None))
+    out.append(report_stats(comps))
+    if d.get("lead"):
+        out.append(report_eyebrow("Executive summary") + report_paragraph(esc(d["lead"])))
+    elif d.get("lead_missing"):
+        out.append(report_eyebrow("Executive summary") + report_paragraph(esc(d["lead_missing"])))
+    wins = [esc(w["text"]) for w in card.get("wins") or [] if w.get("text")]
+    risks = [esc(r["text"]) for r in card.get("risks") or [] if r.get("text")]
+    if wins:
+        out.append(report_eyebrow("Today&rsquo;s wins", BRAND["good"]) + report_bullets(wins, BRAND["good"]))
+    if risks:
+        out.append(report_eyebrow("Today&rsquo;s risks", BRAND["warn"]) + report_bullets(risks, BRAND["warn"]))
+    return out
+
+
 def dsr_email(d: dict):
     """(subject, html, preheader) for the nightly Daily Sales Report.
 
@@ -1105,10 +1143,15 @@ def dsr_email(d: dict):
     net = d.get("net_label")
     updated = d.get("kind") == "updated"
     owner = d.get("view") == "owner"
+    card = d.get("scorecard") if owner and isinstance(d.get("scorecard"), dict) else None
+    verdict = (card or {}).get("verdict")
     if updated:
         subject = f"Updated · {name} · {d['date_short']}" + (f" · {net} net" if net else "")
     elif d.get("provisional"):
         subject = f"{name} · {d['date_short']} · Provisional, sales still syncing"
+    elif verdict and card.get("overall") is not None:
+        subject = (f"{name} · {d['date_short']} · {verdict['label']} {card['overall']}/100"
+                   + (f" · {net} net" if net else ""))
     else:
         subject = f"{name} · {d['date_short']}" + (f" · {net} net" if net else "")
 
@@ -1129,15 +1172,18 @@ def dsr_email(d: dict):
             sections.append(report_eyebrow("Provisional", BRAND["warn"]) + report_paragraph(
                 "Sales hadn&rsquo;t synced from the POS by the deadline, so this report has no sales "
                 "figures yet. You&rsquo;ll get one short update when they land."))
-        if d.get("lead"):
-            sections.append(report_paragraph(esc(d["lead"])))
-        elif d.get("lead_missing"):
-            sections.append(report_paragraph(esc(d["lead_missing"])))
-        sections.append(stats)
-        if d.get("went_well"):
+        if card:
+            sections.extend(dsr_scorecard_sections(card, d))
+        else:
+            if d.get("lead"):
+                sections.append(report_paragraph(esc(d["lead"])))
+            elif d.get("lead_missing"):
+                sections.append(report_paragraph(esc(d["lead_missing"])))
+            sections.append(stats)
+        if not card and d.get("went_well"):
             sections.append(report_eyebrow("Went well", BRAND["good"])
                             + report_bullets([esc(t) for t in d["went_well"]], BRAND["good"]))
-        if d.get("needs_attention"):
+        if not card and d.get("needs_attention"):
             sections.append(report_eyebrow("Needs attention", BRAND["warn"])
                             + report_bullets([esc(t) for t in d["needs_attention"]], BRAND["warn"]))
         actions = d.get("actions") or []
@@ -1162,6 +1208,12 @@ def dsr_email(d: dict):
             sections.append(report_eyebrow("Not in this report") + report_bullets([esc(m) for m in missing]))
         lead_line = (d.get("lead") or "").split(". ")[0].rstrip(".")
         figures = " · ".join(x for x in (f"{net} net" if net else None, d.get("compare")) if x)
+        if verdict and card.get("overall") is not None:
+            sales = next((c for c in card.get("components") or [] if c.get("key") == "sales" and c.get("measured")),
+                         None)
+            figures = " · ".join(x for x in (f"{verdict['label']} {card['overall']}/100",
+                                             f"{net} net" if net else None,
+                                             sales.get("value") if sales else None) if x)
         preheader = (f"{figures}. {lead_line}." if figures and lead_line else figures or lead_line
                      or ("Sales are still syncing." if d.get("provisional") else ""))
 

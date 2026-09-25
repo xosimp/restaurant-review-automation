@@ -254,6 +254,16 @@ def render(report, user, restaurant=None, versions=None):
     from time_utils import mdy
     view = view_for(user)
     facts, hidden = redact(report.get("facts") or {}, user)
+    # "Did we win today?" — the owner's scorecard (dsr.scorecard): score,
+    # wins and risks, all from the measured blocks. The manager's view keeps
+    # its own layout: the budget and the food estimate are the owner's.
+    card = None
+    if view == OWNER:
+        try:
+            from dsr import scorecard
+            card = scorecard.build(report.get("facts") or {}, restaurant, narrative=report.get("narrative"))
+        except Exception:
+            card = None
     return {
         "view": view,
         "business_date": report.get("business_date"),
@@ -266,6 +276,7 @@ def render(report, user, restaurant=None, versions=None):
         "finalized_at": report.get("finalized_at"),
         "facts": facts,
         "narrative": narrative_for(report.get("narrative"), hidden),
+        "scorecard": card,
         "checklist": checklist(report, user, restaurant),
         "versions": [dict(v, finalized_at_local=_stamp_local(v.get("finalized_at"), restaurant),
                           created_at_local=_stamp_local(v.get("created_at"), restaurant))

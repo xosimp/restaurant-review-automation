@@ -349,6 +349,9 @@ def digest(payload, restaurant, kind=FIRST):
         "lead_missing": lead_missing,
         "went_well": went,
         "needs_attention": needs,
+        # The owner's "did we win today?" (dsr.scorecard) — None for the
+        # manager's view; the email and the push lead with it when present.
+        "scorecard": payload.get("scorecard") if isinstance(payload.get("scorecard"), dict) else None,
         "actions": actions,
         "missing": list(facts.get("missing") or []),
         "withheld": withheld,
@@ -368,6 +371,17 @@ def push_text(d):
     if d.get("provisional"):
         return (f"{whose} is ready — provisional",
                 _clip(f"{head}: sales are still syncing. You'll get one update when they land.", PUSH_BODY_MAX))
+    card = d.get("scorecard") or {}
+    if card.get("verdict") and card.get("overall") is not None:
+        sales = next((c for c in card.get("components") or [] if c.get("key") == "sales" and c.get("measured")), None)
+        # The first risk that isn't the sales line the body already carries.
+        risk = next((x for x in card.get("risks") or [] if x.get("key") != "sales_budget"), None)
+        figs = ", ".join(x for x in (f"{d['net_label']} net" if d.get("net_label") else None,
+                                     sales.get("value") if sales else None) if x)
+        body = f"{head}: {card['verdict']['label']}, {card['overall']}/100" + (f" · {figs}." if figs else ".")
+        if risk and risk.get("text"):
+            body += f" Watch: {risk['text']}."
+        return f"{whose} is ready", _clip(body, PUSH_BODY_MAX)
     figures = ", ".join(x for x in (f"{d['net_label']} net" if d.get("net_label") else None, d.get("compare")) if x)
     # The first thing that needs attention (else went well) — the lead would
     # only repeat the net the body already opens with.

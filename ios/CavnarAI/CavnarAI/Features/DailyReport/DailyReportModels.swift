@@ -203,9 +203,11 @@ struct DSRReport: Decodable {
     let narrative: DSRNarrative?
     let checklist: DSRChecklist?
     let versions: [DSRVersion]
+    /// The owner's "did we win today?" (dsr/scorecard.py); nil for a manager.
+    let scorecard: DSRScorecard?
 
     enum CodingKeys: String, CodingKey {
-        case view, label, fiscal, version, status, provisional, trigger, facts, narrative, checklist, versions
+        case view, label, fiscal, version, status, provisional, trigger, facts, narrative, checklist, versions, scorecard
         case businessDate = "business_date"
         case finalizedAt = "finalized_at"
     }
@@ -227,6 +229,7 @@ struct DSRReport: Decodable {
         narrative = try? c.decodeIfPresent(DSRNarrative.self, forKey: .narrative)
         checklist = try? c.decodeIfPresent(DSRChecklist.self, forKey: .checklist)
         versions = (try? c.decodeIfPresent([DSRVersion].self, forKey: .versions)) ?? []
+        scorecard = try? c.decodeIfPresent(DSRScorecard.self, forKey: .scorecard)
     }
 
     var isOwnerView: Bool { view == "owner" }

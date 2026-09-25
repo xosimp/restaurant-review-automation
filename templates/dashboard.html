@@ -4179,6 +4179,26 @@ svg:hover .hb-xh{opacity:1}
 .dr-old .sp{flex:1}
 .dr-miss{margin-top:16px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:13.5px;color:var(--ink3)}
 .dr-miss span.m{color:var(--hb-warn);background:var(--amber-bg);border-radius:999px;padding:4px 11px;font-weight:600}
+/* Today's score (dsr.scorecard, 9/25/26): "did we win today?" in one glance */
+.dr-score{margin-top:22px}
+.dr-score .top{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.dr-score .verdict{display:inline-flex;align-items:center;gap:9px;font-family:'Clash Display','Apfel Grotezk',sans-serif;font-size:clamp(22px,2.4vw,28px);font-weight:600;color:var(--ink)}
+.dr-score .verdict i{width:13px;height:13px;border-radius:50%;background:var(--ink3);box-shadow:0 0 0 4px var(--hb-inner)}
+.dr-score .verdict.good i{background:var(--hb-good)}.dr-score .verdict.warn i{background:var(--hb-warn)}.dr-score .verdict.bad i{background:var(--hb-bad)}
+.dr-score .overall{margin-left:auto;text-align:right}
+.dr-score .overall .n{font-family:'Space Grotesk',sans-serif;font-size:34px;font-weight:600;letter-spacing:-.02em;color:var(--ink);line-height:1}
+.dr-score .overall .n small{font-size:15px;color:var(--ink3);font-weight:500;margin-left:2px}
+.dr-score .overall .l{font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-top:4px}
+.dr-score .comps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:16px}
+.dr-score .hb-stat .v{font-size:19px;white-space:normal;line-height:1.2}
+.dr-score .hb-stat.good .v{color:var(--hb-good)}.dr-score .hb-stat.warn .v{color:var(--hb-warn)}.dr-score .hb-stat.bad .v{color:var(--hb-bad)}
+.dr-score .hb-stat.off .v{color:var(--ink3);font-size:15px}
+.dr-score .stars{letter-spacing:2px;color:var(--ember)}
+.dr-score .basis{font-size:12.5px;color:var(--ink3);margin-top:12px}
+.dr-wr .hb-row .d{display:none}
+.dr-wr .hb-row .g{flex:none;width:18px;font-weight:700;text-align:center}
+.dr-wr .win .g{color:var(--hb-good)}.dr-wr .risk .g{color:var(--hb-warn)}
+@media (max-width:760px){.dr-score .comps{grid-template-columns:repeat(2,minmax(0,1fr))}.dr-score .overall{margin-left:0;text-align:left}}
 .dr-read{margin-top:24px}
 .dr-read.hb-focus .lead{font-size:clamp(19px,1.8vw,23px);line-height:1.42;max-width:none;margin-bottom:4px}
 .dr-two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;margin-top:16px}
@@ -4542,6 +4562,7 @@ svg:hover .hb-xh{opacity:1}
     h+='</div><div class="dr-err" hidden></div><div id="dr-rerun"></div>';
     if(isOld)h+='<section class="hb-card rail dr-old"><span>You’re reading version '+hn(p.version)+' of '+hn(latest.version)+', as it went out'+(mine&&mine.finalized_at_local?' at '+hn(esc(stamp(mine.finalized_at_local))):'')+'.</span><span class="sp"></span><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="night" data-date="'+esc(date)+'">Read the latest</button></section>';
     if((f.missing||[]).length){h+='<div class="dr-miss"><span>Still missing:</span>';for(var m=0;m<f.missing.length;m++)h+='<span class="m">'+esc(f.missing[m])+'</span>';h+='</div>';}
+    if(p.scorecard)h+=scoreHtml(p.scorecard);
     h+=narrativeHtml(p.narrative,ck,p);
     h+='<div class="hb-sh"><div><div class="k dim">The night, measured</div><h2>Block by block <small>each with its source; nothing estimated to fill a gap</small></h2></div></div>';
     var withheld=f.withheld||[];
@@ -4564,16 +4585,45 @@ svg:hover .hb-xh{opacity:1}
     if(!rows)return '';
     return '<details class="dr-sec"><summary><span class="ttl">How the night was built</span><span class="src">'+esc(CLOSED[ck.closed_by]||'')+'</span><span class="sp"></span><span class="sum">each step at the time it finished</span></summary><div class="dr-sec-b">'+rows+'</div></details>';
   }
+  // Today's score (dsr.scorecard): the verdict, the overall score out of
+  // 100, and the four things an owner checks first. Every figure measured;
+  // a component that wasn't says why instead of a zero.
+  function scoreHtml(c){
+    var v=c.verdict,h='<section class="hb-card dr-score" aria-label="Today\u2019s score"><div class="hb-kicker">Today\u2019s score</div><div class="top">';
+    h+=v?'<span class="verdict '+esc(v.tone||'')+'"><i aria-hidden="true"></i>'+esc(v.label)+'</span>':'<span class="verdict"><i aria-hidden="true"></i>Not scored yet</span>';
+    if(isNum(c.overall))h+='<div class="overall"><div class="n">'+hn(c.overall)+'<small>/100</small></div><div class="l">Overall performance</div></div>';
+    h+='</div><div class="comps">';
+    var cs=c.components||[];
+    for(var i=0;i<cs.length;i++){var x=cs[i];
+      if(!x.measured||x.value==null){h+=tile(x.label,esc(x.why||'Not measured'),'','off');continue;}
+      var val=x.key==='guests'?'<span class="stars" aria-label="'+esc(x.detail||'')+'">'+esc(x.value)+'</span>':prose(x.value);
+      h+=tile(x.label,val,x.detail?prose(x.detail):'',x.tone||'');}
+    h+='</div><div class="basis">'+esc(c.basis||'')+'</div></section>';
+    return h;
+  }
+  function wrItems(list,cls,glyph){var h='';for(var i=0;i<list.length;i++){var t=list[i]&&list[i].text;if(!t)continue;
+    h+='<div class="hb-row '+cls+'"><span class="g" aria-hidden="true">'+glyph+'</span><span class="t wrap">'+prose(t)+'</span></div>';}return h;}
+  function winsRisksHtml(c){
+    var w=c.wins||[],r=c.risks||[];
+    return '<div class="dr-two dr-wr"><div class="hb-card"><div class="hb-h3"><span>Today\u2019s wins</span></div>'
+      +(w.length?wrItems(w,'win','\u2713'):'<div class="hb-empty">Nothing stood out tonight.</div>')+'</div>'
+      +'<div class="hb-card"><div class="hb-h3"><span>Today\u2019s risks</span></div>'
+      +(r.length?wrItems(r,'risk','!'):'<div class="hb-empty">Nothing to watch tonight.</div>')+'</div></div>';
+  }
   function narrativeHtml(n,ck,p){
     var why=(ck.narrative&&ck.narrative.reason)||null,h='';
     var lead=n&&n.executive_summary&&n.executive_summary.text;
     if(!n||(!lead&&!(n.went_well||[]).length&&!(n.needs_attention||[]).length&&!(n.actions_tomorrow||[]).length)){
-      return '<section class="hb-card quiet dr-read" aria-label="The morning read"><div class="hb-h3"><span>The morning read</span></div><div class="hb-empty">'
-        +esc(why||(n&&p.view==='manager'?'The summary rests on figures outside your view, so it isn’t shown here. Every figure you can read is below.':'No summary was written for this night. Every measured figure is below.'))+'</div></section>';
+      var k0=p&&p.scorecard?'Executive summary':'The morning read';
+      return '<section class="hb-card quiet dr-read" aria-label="'+k0+'"><div class="hb-h3"><span>'+k0+'</span></div><div class="hb-empty">'
+        +esc(why||(n&&p.view==='manager'?'The summary rests on figures outside your view, so it isn’t shown here. Every figure you can read is below.':'No summary was written for this night. Every measured figure is below.'))+'</div></section>'
+        +(p&&p.scorecard?winsRisksHtml(p.scorecard):'');
     }
-    if(lead)h+='<section class="hb-card hero hb-focus dr-read" aria-label="The morning read"><div class="hb-kicker">The morning read</div><div class="lead">'+prose(lead)+'</div></section>';
+    var sc=p&&p.scorecard,kick=sc?'Executive summary':'The morning read';
+    if(lead)h+='<section class="hb-card hero hb-focus dr-read" aria-label="'+kick+'"><div class="hb-kicker">'+kick+'</div><div class="lead">'+prose(lead)+'</div></section>';
     else h+='<div class="dr-note" style="margin-top:22px">The opening summary rests on figures outside your view, so it isn’t shown.</div>';
     var ww=n.went_well||[],na=n.needs_attention||[];
+    if(sc){h+=winsRisksHtml(sc);ww=[];na=[];}
     if(ww.length||na.length){h+='<div class="dr-two">';
       h+='<div class="hb-card"><div class="hb-h3"><span>Went well</span></div>'+(ww.length?items(ww,'good'):'<div class="hb-empty">Nothing called out.</div>')+'</div>';
       h+='<div class="hb-card"><div class="hb-h3"><span>Needs attention</span></div>'+(na.length?items(na,'important'):'<div class="hb-empty">Nothing called out.</div>')+'</div></div>';}

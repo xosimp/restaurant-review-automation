@@ -677,6 +677,10 @@ day is a short page.
 
 ---
 
+### Today's score (Owner DSR, 9/25/26)
+
+The top of the owner's nightly report answers "did we win today?" in one glance, on web (`.dr-score`), iOS (`DSRScorecardCard`) and email (`emails.dsr_scorecard_sections`), in this order: **Today's score** — a verdict with a status dot (Excellent / Good = good, Mixed = warn, Tough = bad) and the overall score set as `92/100` in the number face — then four components (Sales, Labor, Food cost, Guest experience) as stat tiles coloured by their tone, an unmeasured one showing why in muted text, never a dash pretending to be zero; the guest tile is whole stars in ember (rounded down unless within a quarter). Then the **executive summary** (the narrative's lead, kicker "Executive summary"), then **Today's wins** (✓ in `--hb-good`) and **Today's risks** (! / triangle in `--hb-warn`), five each at most. Status is a dot, a check or a triangle glyph — not emoji (email subjects stay emoji-free). The manager's report keeps "The morning read" and Went well / Needs attention.
+
 ## 13. Checklist before shipping a screen
 
 1. Tokens only — no literal colours (`scripts/check_colors.py`).
