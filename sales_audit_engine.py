@@ -22,6 +22,17 @@ table from the owner:
 from sales_audit_schema import QUESTIONS, completion
 
 # ── Benchmarks ───────────────────────────────────────────────────────────────
+# The labor and food bands are read from benchmark_registry (the one source
+# for outside figures) through an explicit type picker — `concept_class` and
+# `_bench` below (Benchmarking audit #15, BM1-11). A type the registry has no
+# entry for is "not assessed", never the full-service band.
+#
+# BENCHMARKS["labor"] and BENCHMARKS["food"] (other than "combined") are no
+# longer read by the scoring; tests/test_benchmarks_and_floors.py still pins
+# the registry's bands against them. Candidate for future cleanup after
+# additional verification. The bar, prime, reviews and waste entries have no
+# registry equivalent and are still read here.
+#
 # Each has a source and an applicability note. Bands are (low, high) in
 # percentage points of the relevant sales base. The engine targets the TOP of
 # the band unless the owner gave their own target — that is the conservative
@@ -180,23 +191,44 @@ def _round100(x):
     return int(round(x, -2)) if x else 0
 
 
+# The explicit picker's answers → the registry type they name.
+TYPE_PICKER = {"Full-service restaurant": "family", "Fine dining": "fine_dining",
+               "Fast casual / counter": "fast_casual", "Sports bar": "sports_bar", "Bar / pub": "bar",
+               "Brewery": "brewery", "Wine bar": "wine_bar", "None of these — don't compare": None}
+# Unpicked: the restaurant type, only where it names a type the published
+# figures cover. A pizzeria, a café or "Other" is not assessed.
+_TYPE_FROM_RESTAURANT_TYPE = {"Upscale sports bar": "sports_bar", "Sports bar": "sports_bar", "Bar / pub": "bar",
+                              "Casual full-service": "family", "Upscale full-service": "family",
+                              "Fine dining": "fine_dining", "Fast casual": "fast_casual", "Quick service": "fast_casual"}
+_BAR_CLASSES = ("sports_bar", "bar", "brewery", "wine_bar")
+
+
 def concept_class(answers):
-    t = (_txt(answers, "restaurant_type") or "").lower()
-    s = (_txt(answers, "service_model") or "").lower()
-    if "sports" in t:
-        return "sports_bar"
-    if "bar" in t or "pub" in t or "bar-forward" in s:
-        return "bar"
-    if "fine" in t:
-        return "fine_dining"
-    if "fast" in t or "quick" in t or "counter" in s or "café" in t or "cafe" in t or "bakery" in t:
-        return "fast_casual"
-    return "full_service"
+    """The registry type (intelligence.categories.TAXONOMY) the published
+    labor and food figures are read for, or None — not assessed."""
+    pick = _txt(answers, "benchmark_type")
+    if pick:
+        return TYPE_PICKER.get(pick)
+    return _TYPE_FROM_RESTAURANT_TYPE.get(_txt(answers, "restaurant_type") or "")
 
 
 def _bench(cat, cls):
-    table = BENCHMARKS[cat]
-    return table.get(cls) or table["full_service"]
+    """{band, source, note, source_kind} from benchmark_registry for the
+    picked type, or None when the registry has no entry for it."""
+    import benchmark_registry as _br
+    metric = {"labor": "labor_pct", "food": "food_cost_pct"}[cat]
+    e = _br.lookup(metric, cls) if cls else None
+    if not e:
+        return None
+    return {"band": (e["low"], e["high"]), "source": e["source"], "note": e.get("note") or "",
+            "source_kind": e.get("source_kind"), "label": e.get("label")}
+
+
+def _not_assessed(key, label, what, owner, missing):
+    return _insufficient(key, label, missing + [
+        "Pick the type of restaurant in \"Compare against published figures for\" — there is no published %s "
+        "figure for this type, so it is not assessed rather than scored against full-service." % what],
+        note="Not assessed — no published %s figure for this type of restaurant." % what)
 
 
 _BAND_ORDER = ("low", "moderate", "high")
@@ -299,7 +331,7 @@ def derive_financials(a):
         put("food_sales", fs, "owner")
     elif R and A is not None:
         put("food_sales", max(0.0, R - A), "calculated", "annual revenue − alcohol sales")
-    elif R and concept_class(a) in ("full_service", "fine_dining", "fast_casual") and A is None and alc_pct is None:
+    elif R and concept_class(a) not in _BAR_CLASSES and A is None and alc_pct is None:
         # Non-bar concepts: no bar figure given. Leave unset; the food
         # calculation will ask for it rather than assume a mix.
         pass
@@ -448,9 +480,7 @@ def calc_labor(a, fin, cls, owner):
     R = fin.get("annual_revenue", {}).get("value")
     L = fin.get("labor_pct", {}).get("value")
     bench = _bench("labor", cls)
-    band = bench["band"]
     owner_target = _num(a, "lab_target_pct")
-    target = owner_target if owner_target is not None else band[1]
     missing = []
     if R is None:
         missing.append("Ask %s for approximate annual (or monthly) revenue — nothing in the labor estimate works without it." % owner)
@@ -458,6 +488,21 @@ def calc_labor(a, fin, cls, owner):
         missing.append("Ask %s for labor as a %% of sales, or weekly payroll dollars, to size the labor opportunity." % owner)
     if owner_target is None and L is not None:
         missing.append("Ask what labor target %s actually aims for — it replaces the generic benchmark." % owner)
+    if bench is None:
+        if owner_target is None:
+            # No published labor figure for this type and no target of the
+            # owner's: the labor-% gap is not assessed. Overtime, which needs
+            # no benchmark, still sizes below.
+            if L is not None:
+                missing.append("Pick the type of restaurant in \"Compare against published figures for\" — there is "
+                               "no published labor figure for this type, so the labor %% gap is not assessed rather "
+                               "than scored against full-service.")
+            L = None
+            bench = {"band": (0.0, 0.0), "source": "", "note": ""}
+        else:
+            bench = {"band": (owner_target, owner_target), "source": "the owner's own labor target", "note": ""}
+    band = bench["band"]
+    target = owner_target if owner_target is not None else band[1]
 
     ot_yes = _yes(a, "lab_overtime")
     ot_week = _num(a, "lab_ot_dollars_week")
@@ -577,9 +622,13 @@ def calc_food(a, fin, cls, owner):
             return out
         return _insufficient("food", "Food Cost", missing)
 
-    bench = BENCHMARKS["food"]["combined"] if combined else _bench("food", cls)
-    band = bench["band"]
+    bench = (BENCHMARKS["food"]["combined"] if cls else None) if combined else _bench("food", cls)
     owner_target = _num(a, "food_target_pct")
+    if bench is None:
+        if owner_target is None:
+            return _not_assessed("food", "Food Cost", "food cost", owner, missing)
+        bench = {"band": (owner_target, owner_target), "source": "the owner's own food cost target", "note": ""}
+    band = bench["band"]
     target = owner_target if owner_target is not None else band[1]
     gap_rng, gap_calc = _gap_calc(FS, F, target, band, bench["source"], "annual revenue (combined COGS)" if combined else "annual food sales",
                                   "combined food + beverage cost" if combined else "food cost", POINT_CAPS["food"])
@@ -709,6 +758,17 @@ def calc_reviews(a, fin, cls, owner):
     if R is None:
         missing.append("Revenue is needed to size the reputation opportunity.")
     module = MODULES["reviews"]
+    # The revenue-per-star study (Luca 2016) is about INDEPENDENT restaurants;
+    # chains showed no effect. Sized only for an owner-confirmed independent
+    # (Benchmarking audit #15, BM1-11, BM2-11).
+    own = _txt(a, "ownership")
+    if own and own != "Independent":
+        return _insufficient("reviews", "Reviews", missing,
+                             note="Not assessed — the revenue-per-star study covers independent restaurants only.")
+    if not own:
+        missing.append("Ask whether %s's restaurant is independent, a franchise or corporate-owned — the "
+                       "revenue-per-star study covers independents only." % owner)
+        return _insufficient("reviews", "Reviews", missing)
     if rating is None or R is None:
         return _insufficient("reviews", "Reviews", missing)
     rr = _num(a, "rev_response_rate")

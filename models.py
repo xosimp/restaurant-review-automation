@@ -558,6 +558,26 @@ class Restaurant:
     changelog_seen_at: Optional[str] = None
     # Restaurant type for the intelligence engine's cohorts (intelligence/categories.py).
     category: Optional[str] = None
+    # The owner-confirmed restaurant profile (Benchmarking audit #7/#8/#9/#13,
+    # intelligence/categories.profile_for): the peer partition is built from
+    # these, never from a type guessed from the name.
+    service_model: Optional[str] = None          # counter | full_service | bar_led | daytime
+    concept: Optional[str] = None                # a categories.TAXONOMY value
+    bar_led: Optional[int] = None                # 1 = bar-led (alcohol about 40%+ of sales)
+    ownership: Optional[str] = None              # independent | franchise | corporate
+    opened_year: Optional[int] = None
+    profile_source: Optional[str] = None         # set | inferred
+    profile_confirmed_at: Optional[str] = None
+    # Test and internal accounts: never part of any cross-restaurant figure.
+    exclude_from_learning: int = 0
+    # Where a target came from: set (the owner) | seeded (the published
+    # median for a confirmed type) | default (Cavnar's starting target).
+    labor_target_source: Optional[str] = None
+    food_cost_target_source: Optional[str] = None
+    # The restaurant's own Google listing (competitor.py already fetched and
+    # discarded these): a cross-check on the service model, never a peer key.
+    google_types: Optional[str] = None           # JSON list
+    google_price_level: Optional[int] = None
     notifications_seen_at: Optional[str] = None
     alert_quiet_start: Optional[str] = None
     alert_quiet_end:   Optional[str] = None
@@ -869,6 +889,27 @@ def ensure_columns(db_path: str = DB_PATH):
         # Changelog seen state
         ("restaurants", "changelog_seen_at", "TEXT"),
         ("restaurants", "category", "TEXT"),
+        # The owner-confirmed restaurant profile and where each target came
+        # from (Benchmarking audit #7, #9, #13; intelligence/categories.py).
+        ("restaurants", "service_model", "TEXT"),
+        ("restaurants", "concept", "TEXT"),
+        ("restaurants", "bar_led", "INTEGER"),
+        ("restaurants", "ownership", "TEXT"),
+        ("restaurants", "opened_year", "INTEGER"),
+        ("restaurants", "profile_source", "TEXT"),
+        ("restaurants", "profile_confirmed_at", "TEXT"),
+        ("restaurants", "exclude_from_learning", "INTEGER DEFAULT 0"),
+        ("restaurants", "labor_target_source", "TEXT"),
+        ("restaurants", "food_cost_target_source", "TEXT"),
+        ("restaurants", "google_types", "TEXT"),
+        ("restaurants", "google_price_level", "INTEGER"),
+        # Organisation-level privacy on a band (Benchmarking audit #9): the
+        # distinct organisations behind it, the largest one's share, and each
+        # member value beside an organisation hash — server-side only, so the
+        # band a viewer sees leaves their whole organisation out.
+        ("intel_benchmarks", "orgs", "INTEGER"),
+        ("intel_benchmarks", "max_org_share", "REAL"),
+        ("intel_benchmarks", "members_json", "TEXT"),
         # A cohort band's member values, sorted and unlabelled — server-side
         # only, so the band shown to a restaurant can leave its own row out
         # (intelligence.benchmarks.published, NS4 M6).
@@ -2100,6 +2141,41 @@ def init_db(db_path: str = DB_PATH):
             vals_json      TEXT,
             UNIQUE(cohort, metric, week)
         )""",
+        # Which peer group each restaurant was compared with, week by week
+        # (Benchmarking audit #29): the rung of the ladder it reached, the
+        # partition, a hash of the peer set (never the ids), n and the
+        # distinct organisations. Written by intelligence.jobs.run_learning.
+        """CREATE TABLE IF NOT EXISTS intel_peer_assignments (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id  INTEGER NOT NULL,
+            week           TEXT    NOT NULL,
+            family         TEXT    NOT NULL,
+            rung           TEXT    NOT NULL,
+            partition_key  TEXT,
+            peer_set_hash  TEXT,
+            n              INTEGER,
+            orgs           INTEGER,
+            profile_source TEXT,
+            profile_confirmed_at TEXT,
+            drift          TEXT,
+            computed_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(restaurant_id, week, family)
+        )""",
+        # A cohort's weekly median over a balanced panel (Benchmarking audit
+        # #44), persisted by the learning pass so a trend is what was
+        # measured then, not today's cohort map applied to old weeks.
+        """CREATE TABLE IF NOT EXISTS intel_cohort_series (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            cohort         TEXT    NOT NULL,
+            metric         TEXT    NOT NULL,
+            week           TEXT    NOT NULL,
+            n              INTEGER NOT NULL,
+            p50            REAL,
+            n_joined       INTEGER,
+            n_left         INTEGER,
+            computed_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(cohort, metric, week)
+        )""",
         """CREATE TABLE IF NOT EXISTS intel_confidence_log (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             week            TEXT    NOT NULL,
@@ -3133,6 +3209,17 @@ def _check_numeric_fields(updates):
 # change since a recommendation's data window (DH3-14).
 OWNER_TARGET_FIELDS = ("labor_target_pct", "food_cost_target", "waste_target_pct", "monthly_revenue_target")
 
+# A target written without saying where it came from is the owner's own
+# (every settings route writes the bare field); the seeding path passes its
+# source explicitly (Benchmarking audit #13).
+TARGET_SOURCE_FIELDS = {"labor_target_pct": "labor_target_source", "food_cost_target": "food_cost_target_source"}
+
+# The peer-relevant profile: a change to one is recorded as a
+# `profile_changed` activity_log event carrying the old and new values
+# (Benchmarking audit #29), so "which profile produced the comparison I saw
+# on 8/3?" has an answer.
+PROFILE_FIELDS = ("service_model", "concept", "bar_led", "ownership", "opened_year", "category")
+
 
 def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
                       expected_version: int = None):
@@ -3182,6 +3269,8 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "al_spike_email","al_spike_sms","al_spike_push",
         "al_unres_email","al_unres_sms","al_unres_push",
         "changelog_seen_at","notifications_seen_at", "category",
+        "service_model","concept","bar_led","ownership","opened_year","profile_source","profile_confirmed_at",
+        "exclude_from_learning","labor_target_source","food_cost_target_source","google_types","google_price_level",
         "alert_quiet_start","alert_quiet_end","alert_max_per_day",
         "brand_name","brand_color","brand_logo_url",
         "section_count","daypart_split","delivery_pct","role_minimums_json","sched_notes","email_theme",
@@ -3194,6 +3283,27 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
+    _mark = [(_tf, _sf) for _tf, _sf in TARGET_SOURCE_FIELDS.items()
+             if _tf in updates and _sf not in updates and updates[_tf] not in (None, "")]
+    if _mark:
+        # Only a CHANGED value is the owner's own: a settings form that
+        # re-sends the default 30 alongside other fields confirms nothing.
+        try:
+            _c0 = get_conn(db_path)
+            try:
+                _prev = _c0.execute(f"SELECT {', '.join(t for t, _ in _mark)} FROM restaurants WHERE id=?",
+                                    (restaurant_id,)).fetchone()
+            finally:
+                _c0.close()
+        except Exception:
+            _prev = None
+        for _tf, _sf in _mark:
+            try:
+                _was = _prev[_tf] if _prev is not None else None
+                if _was is None or abs(float(_was) - float(updates[_tf])) > 1e-9:
+                    updates[_sf] = "set"
+            except (TypeError, ValueError):
+                pass
     _check_numeric_fields(updates)
     # OAuth/POS credentials are encrypted at rest (credentials.py); every
     # reader sees plaintext through get_restaurant.
@@ -3219,6 +3329,15 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         # it don't reflect (DH3-14): recorded as a `target_change` event, read
         # by rec_trust.owner_changes. Only a real change — a settings save
         # that re-sends the same value records nothing.
+        _profile = {k: updates[k] for k in PROFILE_FIELDS if k in updates}
+        _old_profile = None
+        if _profile:
+            try:
+                _row_p = conn.execute(f"SELECT {', '.join(_profile)} FROM restaurants WHERE id=?",
+                                      (restaurant_id,)).fetchone()
+                _old_profile = dict(_row_p) if _row_p else None
+            except Exception:
+                _old_profile = None
         _targets = {k: updates[k] for k in OWNER_TARGET_FIELDS if k in updates}
         _old_targets = None
         if _targets:
@@ -3253,6 +3372,15 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
                                  (restaurant_id, "target_change", json.dumps({"field": _k, "from": _was, "to": _v})))
                 except Exception as _tc_e:
                     print(f"[update_restaurant] target change not recorded for {restaurant_id}: {_tc_e}")
+        if _old_profile is not None:
+            _changes = {k: {"from": _old_profile.get(k), "to": v} for k, v in _profile.items()
+                        if (_old_profile.get(k) if _old_profile.get(k) != "" else None) != (v if v != "" else None)}
+            if _changes:
+                try:
+                    conn.execute("INSERT INTO activity_log (restaurant_id, event_type, event_data) VALUES (?,?,?)",
+                                 (restaurant_id, "profile_changed", json.dumps(_changes)))
+                except Exception as _pc_e:
+                    print(f"[update_restaurant] profile change not recorded for {restaurant_id}: {_pc_e}")
         conn.commit()
     finally:
         try:
@@ -3648,6 +3776,18 @@ def _restaurant_from_row(row) -> Restaurant:
         last_fetched_at=row["last_fetched_at"] if "last_fetched_at" in row.keys() else None,
         changelog_seen_at=row["changelog_seen_at"] if "changelog_seen_at" in row.keys() else None,
         category=row["category"] if "category" in row.keys() else None,
+        service_model=row["service_model"] if "service_model" in row.keys() else None,
+        concept=row["concept"] if "concept" in row.keys() else None,
+        bar_led=row["bar_led"] if "bar_led" in row.keys() else None,
+        ownership=row["ownership"] if "ownership" in row.keys() else None,
+        opened_year=row["opened_year"] if "opened_year" in row.keys() else None,
+        profile_source=row["profile_source"] if "profile_source" in row.keys() else None,
+        profile_confirmed_at=row["profile_confirmed_at"] if "profile_confirmed_at" in row.keys() else None,
+        exclude_from_learning=(row["exclude_from_learning"] or 0) if "exclude_from_learning" in row.keys() else 0,
+        labor_target_source=row["labor_target_source"] if "labor_target_source" in row.keys() else None,
+        food_cost_target_source=row["food_cost_target_source"] if "food_cost_target_source" in row.keys() else None,
+        google_types=row["google_types"] if "google_types" in row.keys() else None,
+        google_price_level=row["google_price_level"] if "google_price_level" in row.keys() else None,
         notifications_seen_at=row["notifications_seen_at"] if "notifications_seen_at" in row.keys() else None,
         alert_quiet_start=row["alert_quiet_start"] if "alert_quiet_start" in row.keys() else None,
         alert_quiet_end=row["alert_quiet_end"]     if "alert_quiet_end"   in row.keys() else None,

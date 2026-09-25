@@ -19,6 +19,9 @@ from intelligence import metrics_registry as reg
 def _rid(db_path, **kw):
     kw.setdefault("name", f"Engine Cafe {kw.get('owner_email', '')}")
     kw.setdefault("owner_email", "e@x.test")
+    # Live long enough to stand in a band (jobs.MIN_LIVE_WEEKS, audit #39).
+    kw.setdefault("created_at", (date.today() - timedelta(days=120)).isoformat() + "T00:00:00")
+    kw.setdefault("hourly_rate", 18.0)          # a real labor cost basis, not the $26 default (#14)
     return create_restaurant(Restaurant(**kw), db_path=db_path)
 
 
@@ -93,9 +96,12 @@ def test_self_needs_enough_of_its_own_history(db_path):
 
 # ── peers and platform ─────────────────────────────────────────────────────
 
-def _set_type(db_path, rid, category):
+def _set_type(db_path, rid, category, service_model="counter"):
+    """An owner-confirmed profile (audit #7): the peer partition is built
+    from it, never from a guessed type."""
     conn = get_conn(db_path)
-    conn.execute("UPDATE restaurants SET category=? WHERE id=?", (category, rid))
+    conn.execute("UPDATE restaurants SET category=?, concept=?, service_model=?, profile_source='set', "
+                 "profile_confirmed_at=datetime('now') WHERE id=?", (category, category, service_model, rid))
     conn.commit()
     conn.close()
 
@@ -105,19 +111,22 @@ def _cohort(db_path, n, category="pizza", **vals):
     for i in range(n):
         rid = _rid(db_path, name=f"Peer {i}", owner_email=f"p{i}{category}@x.test")
         _set_type(db_path, rid, category)
-        _feature(db_path, rid, _week(0), **{k: v + i * 0.2 for k, v in vals.items()})
+        _feature(db_path, rid, _week(0), **{k: v + i * (0.02 if v < 1 else 0.2) for k, v in vals.items()})
         ids.append(rid)
-    cohorts = {rid: category for rid in ids}
-    bm.compute(db_path=db_path, cohorts=cohorts)
+    bm.compute(db_path=db_path)          # each member's confirmed partition
     return ids
 
 
 def test_labor_is_never_compared_to_an_all_types_band_even_when_one_exists(db_path):
     ids = _cohort(db_path, 12, "pizza", labor_pct_28d=28.0, reply_rate_30d=0.6)
     viewer = _rid(db_path, name="Corner Spot", owner_email="t@x.test")
-    _set_type(db_path, viewer, "mexican")
+    _set_type(db_path, viewer, "mexican", service_model="full_service")
     _feature(db_path, viewer, _week(0), labor_pct_28d=33.0, reply_rate_30d=0.9)
-    bm.compute(db_path=db_path, cohorts={**{r: "pizza" for r in ids}, viewer: "mexican"})
+    conn = get_conn(db_path)
+    conn.execute("DELETE FROM intel_benchmarks")     # recompute this week with the viewer in it
+    conn.commit()
+    conn.close()
+    bm.compute(db_path=db_path)
     labor = {c["kind"]: c for c in eng.compare(viewer, "labor_pct_28d", db_path=db_path)["comparisons"]}
     assert not labor["platform"]["available"] and "all-types comparison would mislead" in labor["platform"]["why_not"]
     assert not labor["peers"]["available"]                  # one mexican restaurant: no like-for-like group
@@ -199,3 +208,21 @@ def test_the_benchmark_routes_exist_on_web_and_mobile():
     assert '@client_bp.route("/api/benchmarks")' in web and '@mobile_bp.route("/benchmarks")' in mob
     assert web.count("engine.payload_for(current_user") == 1 and mob.count("engine.payload_for(current_user") == 1
     assert "/api/benchmarks" in auth._UNGATED_PREFIXES and "/mobile/api/benchmarks" in auth._UNGATED_PREFIXES
+
+
+def test_a_module_alias_is_checked_as_the_permission_it_names(db_path, monkeypatch):
+    """payload_for(module="food_cost") compared the raw alias against the
+    login's permitted modules, so every non-admin login was refused its own
+    food cost comparisons (found by workstream O)."""
+    import permissions
+    rid = _rid(db_path)
+    monkeypatch.setattr(models, "DB_PATH", db_path, raising=False)
+    monkeypatch.setattr(permissions, "has_permission", lambda user, perm: True)
+    user = {"id": 1, "restaurant_id": rid, "role": "manager"}
+    for alias in ("food_cost", "food", "inventory"):
+        out = eng.payload_for(user, module=alias, db_path=db_path)
+        assert out["ok"], alias
+        assert {c["metric"] for c in out["comparisons"]} == set(reg.metrics_for("inventory"))
+    monkeypatch.setattr(permissions, "has_permission",
+                        lambda user, perm: perm != permissions.MODULE_VIEW_PERMISSIONS["inventory"])
+    assert eng.payload_for(user, module="food", db_path=db_path)["ok"] is False

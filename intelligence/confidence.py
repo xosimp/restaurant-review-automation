@@ -47,7 +47,9 @@ def get_conn(db_path=None):
 
 def _recent_changes(restaurant_id, days=14, db_path=DB_PATH) -> tuple[float, str]:
     """0 (calm) .. 1 (a lot changed): schedule edits, price changes, a new
-    POS or connection in the window. Each is one signal; three saturate."""
+    POS or connection, a changed comparison group (the peer partition moved
+    — Benchmarking audit #30) in the window. Each is one signal; three
+    saturate."""
     floor = (date.today() - timedelta(days=days)).isoformat()
     conn = get_conn(db_path)
     try:
@@ -57,10 +59,13 @@ def _recent_changes(restaurant_id, days=14, db_path=DB_PATH) -> tuple[float, str
                                 (restaurant_id, floor)).fetchone()[0]
         pos = conn.execute("SELECT COUNT(*) FROM activity_log WHERE restaurant_id=? AND event_type IN ('pos_connected','pos_disconnected') "
                            "AND created_at >= ?", (restaurant_id, floor)).fetchone()[0]
+        group = conn.execute("SELECT COUNT(*) FROM activity_log WHERE restaurant_id=? AND event_type='comparison_group_changed' "
+                             "AND created_at >= ?", (restaurant_id, floor)).fetchone()[0]
     finally:
         conn.close()
-    signals = (1 if edits else 0) + (1 if reprices else 0) + (1 if pos else 0)
-    notes = [n for n, v in (("schedule edited", edits), ("prices changed", reprices), ("POS connection changed", pos)) if v]
+    signals = (1 if edits else 0) + (1 if reprices else 0) + (1 if pos else 0) + (1 if group else 0)
+    notes = [n for n, v in (("schedule edited", edits), ("prices changed", reprices), ("POS connection changed", pos),
+                            ("comparison group changed", group)) if v]
     return min(1.0, signals / 3.0), ", ".join(notes) or "no operational changes in the last two weeks"
 
 
@@ -91,12 +96,35 @@ def _measurability(restaurant_id, db_path=DB_PATH):
     return round(sum(parts) / len(parts), 3), f"{len(errs)} scored forecasts, {len(ev)} evaluated outcomes"
 
 
+def _type_match(restaurant_id, restaurant, metric, db_path):
+    """The type_match factor, or None when the restaurant has no confirmed
+    profile (unmeasured does not vote)."""
+    from . import benchmarks as _bm, metrics_registry as _reg
+    if restaurant is None or not categories.profile_for(restaurant).get("confirmed"):
+        return None
+    metrics = [metric] if metric and _reg.meta(metric) else list(_features.BENCHMARK_KEYS)
+    org = _bm.viewer_org(restaurant_id, db_path=db_path)
+    label = None
+    for m in metrics:
+        key, _why = _bm.peer_cohort(restaurant, m)
+        if not key:
+            continue
+        label = label or _bm.cohort_label(key)
+        p = _bm.published(key, m, exclude_org=org, db_path=db_path)
+        if p and not p.get("withheld"):
+            return {"name": "type_match", "value": 1.0,
+                    "note": f"{p['cohort_label']}: {p['n']} others from {p['orgs']} owners to compare with"}
+    return {"name": "type_match", "value": 0.4,
+            "note": f"{label or 'Restaurants like this one'}: too few similar restaurants yet"}
+
+
 def score(restaurant_id: int, rec_kind: str, metric: str = None, cohort: str = None, restaurant=None,
           db_path: str = DB_PATH) -> dict:
     """{score, band, factors:[{name, value, weight, note}], caution}.
 
-    `metric` is accepted for the facade's signature and not read: every
-    factor here is per recommendation KIND, not per metric."""
+    `metric`, when given, is the metric type_match is read for (the
+    published rule is per metric); every other factor is per recommendation
+    KIND."""
     if restaurant is None:
         from models import get_restaurant
         restaurant = get_restaurant(restaurant_id, db_path=db_path)
@@ -140,15 +168,14 @@ def score(restaurant_id: int, rec_kind: str, metric: str = None, cohort: str = N
             "cohort_label": (f"{categories.label(cohort).lower()} on Cavnar" if scope == "cohort"
                              else "restaurants on Cavnar (all types)")}))
 
-    if cohort:
-        conn = get_conn(db_path)
-        try:
-            n = conn.execute("SELECT n FROM intel_benchmarks WHERE cohort=? ORDER BY week DESC LIMIT 1", (cohort,)).fetchone()
-        finally:
-            conn.close()
-        ok = bool(n and privacy.cohort_ok(n[0]))
-        factors.append({"name": "type_match", "value": 1.0 if ok else 0.4,
-                        "note": f"{categories.label(cohort)}: {'enough similar restaurants to compare' if ok else 'too few similar restaurants yet'}"})
+    # Type match by the PUBLISHED rule (Benchmarking audit #31, BM2-9): a band
+    # this restaurant could actually be shown — its confirmed partition, the
+    # same metric, at most MAX_BAND_AGE_WEEKS old, at least MIN_QUARTILE_N
+    # others from privacy.MIN_ORGS organisations, its own organisation out.
+    # It read any metric's newest n with no age limit and called 5 "enough".
+    tm = _type_match(restaurant_id, restaurant, metric, db_path)
+    if tm is not None:
+        factors.append(tm)
 
     meas, meas_note = _measurability(restaurant_id, db_path=db_path)
     if meas is not None:

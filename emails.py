@@ -1851,7 +1851,7 @@ def benchmark_sentence(metric: str, restaurant_id: int = None, what: str = "") -
         s = (f"For {e['label']}, an operator rule of thumb (not a published study) puts {what} at "
              f"{_br.band_text(e)} — the dashboard measures you against your own target.")
     if e.get("inferred"):
-        s += " (We guessed your type from your restaurant's name; set it in Settings if it's wrong.)"
+        s += " (We guessed your type from your restaurant's name; confirm it under Account → Restaurant profile.)"
     return s
 
 

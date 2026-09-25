@@ -7426,6 +7426,55 @@ def _do_data_retention(rid, data, current_user=None):
     return {"ok": True}, 200
 
 
+def _restaurant_profile_payload(rid):
+    """The Account → Restaurant profile block's read (Benchmarking audit #7):
+    the confirmed profile, its closed choices, the "we think you're X — is
+    that right?" suggestion while it is unconfirmed, and where each target
+    came from (#13)."""
+    import thresholds as _thr
+    from intelligence import categories as _cats
+    r = get_restaurant(rid)
+    if r is None:
+        return {"ok": False, "error": "No restaurant."}
+    out = {"ok": True, "profile": _cats.profile_payload(r)}
+    out["targets"] = {
+        "labor": {"pct": r.labor_target_pct, "source": _thr.target_source(r, "labor"),
+                  "label": _thr.target_label(r, "labor")},
+        "food": {"pct": r.food_cost_target, "source": _thr.target_source(r, "food"),
+                 "label": _thr.target_label(r, "food")},
+    }
+    basis = _thr.labor_cost_basis(r)
+    out["labor_cost_basis"] = {"basis": basis, "label": _thr.LABOR_COST_BASIS_LABELS.get(basis)}
+    return out
+
+
+def _do_restaurant_profile(rid, data, current_user=None):
+    """Save the owner-confirmed restaurant profile (Benchmarking audit #7):
+    service model, concept, bar-led, ownership and the year it opened. The
+    save IS the confirmation (profile_source='set', profile_confirmed_at),
+    and it is the only thing a peer group is built from. Owner-only: it
+    decides who this restaurant is compared with. A target the owner has not
+    set is then seeded from the published median for the confirmed type
+    (#13), and the change is recorded with its old and new values (#29,
+    models.update_restaurant's profile_changed event)."""
+    from permissions import is_principal
+    if current_user is not None and not is_principal(current_user):
+        return {"ok": False, "owner_only": True,
+                "error": "Only the account owner can change the restaurant profile."}, 403
+    from intelligence import categories as _cats
+    updates, err = _cats.clean_profile(data or {})
+    if err:
+        return {"ok": False, "error": err}, 400
+    update_restaurant(rid, updates)
+    import thresholds as _thr
+    seed = _thr.seeded_targets(get_restaurant(rid))
+    if seed:
+        update_restaurant(rid, seed)
+    log_account_event(rid, "restaurant_profile_confirmed", current_user,
+                      detail=_cats.SERVICE_MODEL_LABELS.get(updates.get("service_model"), ""))
+    return _restaurant_profile_payload(rid), 200
+
+
 def _do_marketing_opt_out(rid, data, current_user=None):
     """Gates only the promotional onboarding drip at its scheduler.py call
     sites — security/transactional email (2FA, login notify,
@@ -7570,6 +7619,18 @@ def save_account_hours(current_user):
 def save_data_retention(current_user):
     payload, status = _do_data_retention(current_user["restaurant_id"],
                                          request.get_json(silent=True) or {}, current_user)
+    return jsonify(**payload), status
+
+
+@client_bp.route("/api/account-settings/restaurant-profile", methods=["GET", "POST"])
+@login_required
+def restaurant_profile(current_user):
+    """Account → Restaurant profile (Benchmarking audit #7). GET reads it,
+    POST confirms it (owner-only). Twin: /mobile/api/account/restaurant-profile."""
+    rid = current_user["restaurant_id"]
+    if request.method == "GET":
+        return jsonify(**_restaurant_profile_payload(rid))
+    payload, status = _do_restaurant_profile(rid, request.get_json(silent=True) or {}, current_user)
     return jsonify(**payload), status
 
 

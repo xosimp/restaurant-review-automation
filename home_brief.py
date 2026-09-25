@@ -988,6 +988,10 @@ def _build(current_user, present=True):
             labor = None
     from notify import labor_target_for as _labor_target_for
     labor_target = _labor_target_for(r)
+    # "your 30% target", or "Cavnar's starting target of 30%" when nobody set
+    # it (Benchmarking audit #13).
+    import thresholds as _thr_tgt
+    _labor_tgt = _thr_tgt.target_phrase(r, "labor", labor_target)
     labor_hist = get_labor_history(rid, limit=8) if labor_live else []
     client_data = _one_dict(conn, "SELECT updated_at, shifts_source, inventory_source FROM client_data WHERE restaurant_id=?", (rid,)) or {}
     last_schedule = _one_dict(conn, "SELECT generated_at, week_start, week_end, hours_scheduled, hours_budget FROM schedule_history WHERE restaurant_id=? ORDER BY id DESC LIMIT 1", (rid,))
@@ -1483,7 +1487,7 @@ def _build(current_user, present=True):
             if over >= LABOR_OVER_TARGET_PTS and period_days >= _MIN_DAYS:
                 # Never from a cold start: one day of shifts is not "labor
                 # over target" (CA3 F5) — labor.MIN_DAYS_TO_EXTRAPOLATE.
-                add_attn("labor_over", "important" if over < 6 else "critical", f"Labor at {pct:.1f}% — {over:.1f} pts over your {labor_target:.0f}% target",
+                add_attn("labor_over", "important" if over < 6 else "critical", f"Labor at {pct:.1f}% — {over:.1f} pts over {_labor_tgt}",
                          f"Across the last {days} days of shifts" + (f" ({_cover_note})" if _cover_note else "")
                          # The figure is the WHOLE schedule's weekly gap, so the
                          # sentence says so: it read "recoverable by trimming the
@@ -1504,7 +1508,7 @@ def _build(current_user, present=True):
                          dollars_basis=("a week of the whole schedule's gap to your target, all shifts in the period"
                                         if savings > 0 else None))
             elif over <= 0 and _lab_readable:
-                add_win("labor_on_target", f"Labor at {pct:.1f}% — under target", f"{abs(over):.1f} pts under your {labor_target:.0f}% target over {days} days.", "labor")
+                add_win("labor_on_target", f"Labor at {pct:.1f}% — under target", f"{abs(over):.1f} pts under {_labor_tgt} over {days} days.", "labor")
             if ot_now:
                 n_ot = ot_now["people"]
                 prem = ot_now["premium"]
@@ -1574,7 +1578,7 @@ def _build(current_user, present=True):
                 brief_lines.append({"text": f"Labor {pct:.1f}% as of {_lab_fr.get('as_of') or 'the last upload'} — "
                                             "the data under it is out of date.", "tone": "neutral", "module": "labor"})
             else:
-                brief_lines.append({"text": f"Labor {pct:.1f}% against a {labor_target:.0f}% target" + (f", {delta:+.1f} pts vs last period" if delta is not None else "") + ".", "tone": "bad" if over >= LABOR_OVER_TARGET_PTS else ("good" if over <= 0 else "neutral"), "module": "labor"})
+                brief_lines.append({"text": f"Labor {pct:.1f}% against " + (f"a {labor_target:.0f}% target" if _thr_tgt.target_source(r, "labor") == "set" else _labor_tgt) + (f", {delta:+.1f} pts vs last period" if delta is not None else "") + ".", "tone": "bad" if over >= LABOR_OVER_TARGET_PTS else ("good" if over <= 0 else "neutral"), "module": "labor"})
             ask.append("Why is labor over target?" if over > 0 else "Where can I save on labor next week?")
             if last_schedule and last_schedule.get("week_end"):
                 upcoming.append({"label": f"Schedule through {last_schedule['week_end']}", "when": last_schedule.get("week_end"), "module": "labor", "kind": "schedule"})

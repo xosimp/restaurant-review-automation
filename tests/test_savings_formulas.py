@@ -122,8 +122,10 @@ def test_the_headline_figure_is_measured_results_not_the_gap_to_target(monkeypat
 
     The headline is now only what outcomes.py actually measured.
     """
+    # The owner's own blended rate: a gap-to-target in dollars needs a real
+    # labor cost, not the $26/hr default (Benchmarking audit #14).
     monkeypatch.setattr(value_delivered, "get_restaurant", lambda rid, db_path=None: SimpleNamespace(
-        module_reviews=1, module_labor=1, module_inventory=1, module_marketing=0))
+        module_reviews=1, module_labor=1, module_inventory=1, module_marketing=0, hourly_rate=19.0))
     monkeypatch.setattr(value_delivered, "get_review_stats", lambda rid: {"responded": 3})
     # A current labor period: an opportunity on an undated or stale period
     # is withheld now (DH1-4).

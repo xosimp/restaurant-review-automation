@@ -2466,9 +2466,25 @@ def admin_set_brand(restaurant_id, current_user):
         if cat and not _valid_category(cat):
             return jsonify(ok=False, error="Unknown category"), 400
         updates["category"] = cat or None
+    # The restaurant profile (Benchmarking audit #7) — the same closed
+    # vocabularies and confirmation stamp as the owner's Account block.
+    if data.get("service_model"):
+        from intelligence.categories import clean_profile
+        prof, err = clean_profile(data)
+        if err:
+            return jsonify(ok=False, error=err), 400
+        updates.update(prof)
+    if "exclude_from_learning" in data:
+        updates["exclude_from_learning"] = 1 if data.get("exclude_from_learning") in (1, True, "1", "true", "on") else 0
     if not updates:
         return jsonify(ok=False, error="No valid fields"), 400
     update_restaurant(restaurant_id, updates)
+    if "profile_source" in updates:
+        import thresholds as _thr
+        from models import get_restaurant as _gr
+        seed = _thr.seeded_targets(_gr(restaurant_id))
+        if seed:
+            update_restaurant(restaurant_id, seed)
     return jsonify(ok=True)
 
 
@@ -2486,8 +2502,13 @@ def admin_api_overview(current_user):
 @admin_required
 def admin_api_intelligence(current_user):
     """The Intelligence page (INTELLIGENCE_ENGINE.md): platform learning,
-    patterns, recommendation rates, benchmarks, trends. Every figure is an
-    aggregate; the payload is asserted anonymous before it leaves."""
+    patterns, recommendation rates, Cavnar cohort bands, trends. Every figure
+    is an aggregate; the payload is asserted anonymous before it leaves.
+    is_admin only — admin_required also admits the support role, and a
+    support login has no need for cohort statistics (Benchmarking audit #47,
+    BM1-20)."""
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Cavnar admins only."), 403
     from intelligence import dashboard as _dash
     return jsonify(**_dash.build())
 

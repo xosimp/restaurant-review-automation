@@ -2670,7 +2670,7 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                urgent_via_sms, urgent_via_email,
                alert_negative_trend,
                alert_rating_threshold, alert_rating_floor, gbp_rating, gbp_rating_updated_at,
-               alert_labor_over, labor_target_pct
+               alert_labor_over, labor_target_pct, labor_target_source
         FROM restaurants
         WHERE (COALESCE(alert_negative_trend,0) = 1 OR COALESCE(alert_rating_threshold,0) = 1
                OR COALESCE(alert_labor_over,0) = 1)
@@ -2779,7 +2779,11 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                 ], "rating_threshold")
 
         # ── Labor over target ──────────────────────────────────
-        if r["alert_labor_over"] and not _already_alerted("labor_over"):
+        # Never on Cavnar's unconfirmed starting target (Benchmarking audit
+        # #13): "over your 30% target" when nobody set 30 was the bug.
+        import thresholds as _thr_t
+        if r["alert_labor_over"] and _thr_t.target_alerts_allowed(dict(r), "labor") \
+                and not _already_alerted("labor_over"):
             c2 = models.get_conn(db_path)
             # Bounded on the age of the PERIOD, not just on when the snapshot
             # happened to be written. Snapshots are saved every time an

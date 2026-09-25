@@ -24,6 +24,16 @@ type of restaurant and is marked `pooled_types`; such a pattern never
 supports a recommendation about an economics metric (labor %, food cost %,
 waste — metrics_registry), where a type difference would pass as a
 behaviour effect (pooled_on_economics).
+
+What an OWNER (or a model answering one) is served is a narrower projection
+(Benchmarking audit #11, BM1-8): `active()` strips the group means
+(`mean_with` / `mean_without` — with a side of five and your own figure,
+the other four's sum falls out) and serves only a pattern with at least
+MIN_ORGS_PER_SIDE organisations on each side of the split. The admin
+projection (`all_patterns`, `active(projection="admin")`) keeps them. The
+figures are frozen for the ISO week: a nightly re-run that confirms a
+pattern re-dates it but does not move its numbers until the next week, so a
+member joining or leaving cannot be differenced out of two nights.
 """
 import json
 from datetime import date, timedelta
@@ -46,6 +56,10 @@ MIN_EFFECT_D = 0.3
 MAX_P = 0.05
 MAX_Q = 0.10
 SHUFFLES = 2000
+# Organisations on each side of a split before an owner is shown the pattern.
+MIN_ORGS_PER_SIDE = 8
+# Evidence keys an owner-facing projection never carries.
+ADMIN_ONLY_EVIDENCE = ("mean_with", "mean_without")
 
 # behaviour: (feature, op, threshold). outcome: feature. better: "higher"|"lower".
 HYPOTHESES = (
@@ -152,16 +166,21 @@ def permutation_test_sequential(a, b, shuffles=SHUFFLES, seed=7, every=EARLY_STO
 
 def test_hypothesis(rows, h, shuffles=SHUFFLES) -> dict | None:
     """One hypothesis over one cohort's latest rows. None when a side is
-    too small; otherwise a candidate with its statistics (not yet judged)."""
+    too small; otherwise a candidate with its statistics (not yet judged).
+    A row carrying `_org` (discover() adds it) is counted by organisation."""
     with_, without = _split(rows, h["behaviour"])
-    a = [r["features"].get(h["outcome"]) for r in with_ if r["features"].get(h["outcome"]) is not None]
-    b = [r["features"].get(h["outcome"]) for r in without if r["features"].get(h["outcome"]) is not None]
+    a_rows = [r for r in with_ if r["features"].get(h["outcome"]) is not None]
+    b_rows = [r for r in without if r["features"].get(h["outcome"]) is not None]
+    a = [r["features"][h["outcome"]] for r in a_rows]
+    b = [r["features"][h["outcome"]] for r in b_rows]
     if len(a) < privacy.MIN_GROUP or len(b) < privacy.MIN_GROUP:
         return None
     diff, p, ran = permutation_test_sequential(a, b, shuffles=shuffles)
     d = cohen_d(a, b)
     return {"key": h["key"], "n_with": len(a), "n_without": len(b), "effect": diff, "p_value": p, "cohen_d": d,
-            "mean_with": mean(a), "mean_without": mean(b), "shuffles_run": ran}
+            "mean_with": mean(a), "mean_without": mean(b), "shuffles_run": ran,
+            "orgs_with": len({r.get("_org") or id(r) for r in a_rows}),
+            "orgs_without": len({r.get("_org") or id(r) for r in b_rows})}
 
 
 # ── prospective mode (BM4-5, BM1-16; Top-50 #45) ─────────────────────────────
@@ -241,23 +260,28 @@ def _stratified_effect(strata):
     return num / den if den else None
 
 
-def test_prospective(pairs, h, strata_of, shuffles=SHUFFLES, seed=7) -> dict | None:
+def test_prospective(pairs, h, strata_of, shuffles=SHUFFLES, seed=7, org_of=None) -> dict | None:
     """One prospective hypothesis over {rid: pair}: behaviour at week t,
     outcome = change to week t + HORIZON_WEEKS, permuted within strata
     (strata_of(rid) → the restaurant's type). None when no stratum has
-    MIN_GROUP restaurants on each side."""
+    MIN_GROUP restaurants on each side. `org_of(rid)` counts each side by
+    organisation (#11)."""
     import random
     feat, op, thr = h["behaviour"]
     by = {}
+    side_rids = {}
     for rid, p in pairs.items():
         x = (p["t"] or {}).get(feat)
         y0, y1 = (p["t"] or {}).get(h["outcome"]), (p["t_h"] or {}).get(h["outcome"])
         if x is None or y0 is None or y1 is None:
             continue
         ok = {">=": x >= thr, "<=": x <= thr, ">": x > thr, "<": x < thr}[op]
-        s = by.setdefault(strata_of(rid) or "untyped", ([], []))
+        key = strata_of(rid) or "untyped"
+        s = by.setdefault(key, ([], []))
         (s[0] if ok else s[1]).append(float(y1) - float(y0))
-    strata = [(a, b) for a, b in by.values() if len(a) >= privacy.MIN_GROUP and len(b) >= privacy.MIN_GROUP]
+        side_rids.setdefault(key, ([], []))[0 if ok else 1].append(rid)
+    kept = [k for k, (a, b) in by.items() if len(a) >= privacy.MIN_GROUP and len(b) >= privacy.MIN_GROUP]
+    strata = [by[k] for k in kept]
     if not strata:
         return None
     observed = _stratified_effect(strata)
@@ -278,7 +302,9 @@ def test_prospective(pairs, h, strata_of, shuffles=SHUFFLES, seed=7) -> dict | N
     all_b = [v for _a, b in strata for v in b]
     return {"key": h["key"], "n_with": len(all_a), "n_without": len(all_b), "effect": observed,
             "p_value": (hits + 1) / (done + 1), "cohen_d": cohen_d(all_a, all_b), "mean_with": mean(all_a),
-            "mean_without": mean(all_b), "strata": len(strata), "shuffles_run": done, "prospective": True}
+            "mean_without": mean(all_b), "strata": len(strata), "shuffles_run": done, "prospective": True,
+            "orgs_with": len({(org_of or (lambda r: r))(r) for k in kept for r in side_rids[k][0]}),
+            "orgs_without": len({(org_of or (lambda r: r))(r) for k in kept for r in side_rids[k][1]})}
 
 
 def _prospective_sentence(h, cand, cohort_label, n_total):
@@ -364,10 +390,11 @@ def _cursor(conn, value=None):
 
 
 def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles=SHUFFLES,
-             wall_seconds=DISCOVER_WALL_SECONDS) -> dict:
+             wall_seconds=DISCOVER_WALL_SECONDS, members: dict = None) -> dict:
     """Run every hypothesis over every cohort that clears the floor, plus
     platform-wide — cross-sectional and prospective. `cohorts` is
-    {restaurant_id: category or None}.
+    {restaurant_id: category or None}; `members` (jobs.member_info) lets
+    each side of a split be counted by organisation (#11).
 
     Bounded and resumable (CLAUDE.md): cohorts run in name order from the
     cursor, the first one always runs, and once `wall_seconds` has passed the
@@ -377,6 +404,12 @@ def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles
     import time
     latest = _features.latest_by_restaurant(db_path=db_path)
     cohorts = cohorts or {}
+    members_info = members or {}
+
+    def _org(rid):
+        return (members_info.get(rid) or {}).get("org_hash") or privacy.org_hash(f"r{rid}")
+    latest = {rid: dict(row, _org=_org(rid)) for rid, row in latest.items()}
+    week = _features.iso_week(today or date.today())
     groups = {"platform": list(latest)}
     for rid in latest:
         c = cohorts.get(rid)
@@ -413,7 +446,7 @@ def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles
         members = {r: pairs[r] for r in rids if r in pairs}
         strata_of = (lambda r: cohorts.get(r)) if cohort == "platform" else (lambda r, _c=cohort: _c)
         for h in PROSPECTIVE_HYPOTHESES:
-            cand = test_prospective(members, h, strata_of, shuffles=shuffles)
+            cand = test_prospective(members, h, strata_of, shuffles=shuffles, org_of=_org)
             if cand:
                 cand["cohort"] = cohort
                 cand["n_total"] = cand["n_with"] + cand["n_without"]
@@ -428,6 +461,12 @@ def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles
     written = retired = 0
     conn = get_conn(db_path)
     try:
+        frozen = {}
+        for r in conn.execute("SELECT key, evidence_json FROM intel_patterns WHERE status='active'").fetchall():
+            try:
+                frozen[r["key"]] = (json.loads(r["evidence_json"] or "{}") or {}).get("week")
+            except Exception:
+                frozen[r["key"]] = None
         for c in candidates:
             h = c["hypothesis"]
             direction_ok = (c["effect"] > 0) == (h["better"] == "higher")
@@ -449,6 +488,8 @@ def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles
                    "evidence": {"n": c["n_total"], "mean_with": privacy.round_effect(c["mean_with"], 3),
                                 "mean_without": privacy.round_effect(c["mean_without"], 3), "behaviour": list(h["behaviour"]),
                                 "outcome": h["outcome"], "rec_kinds": list(h["rec_kinds"]),
+                                "orgs_with": c.get("orgs_with"), "orgs_without": c.get("orgs_without"),
+                                "week": week,
                                 # BM4-5: whether the outcome was measured AFTER
                                 # the behaviour, and whether every type was
                                 # pooled (platform) — a pooled pattern never
@@ -459,6 +500,12 @@ def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles
                 row["evidence"].update(horizon_weeks=HORIZON_WEEKS, strata=c.get("strata"),
                                        outcome_measure="change over the horizon")
             privacy.assert_anonymous(row)
+            if frozen.get(key) == week:
+                # Frozen for the week (#11): confirmed, re-dated, not re-figured.
+                conn.execute("UPDATE intel_patterns SET last_confirmed=datetime('now') WHERE key=?", (key,))
+                active_keys.add(key)
+                written += 1
+                continue
             conn.execute(
                 "INSERT INTO intel_patterns (key, cohort, hypothesis, n_with, n_without, effect, effect_unit, cohen_d, p_value, "
                 "q_value, confidence, sentence, evidence_json, status, last_confirmed, computed_at) "
@@ -506,11 +553,31 @@ def _as_of(raw):
         return None
 
 
-def active(cohort: str = None, db_path=DB_PATH, include_platform=True, limit=20) -> list:
+def owner_projection(d) -> dict | None:
+    """A pattern as an owner (or a model answering one) may see it: no
+    group means, and only with MIN_ORGS_PER_SIDE organisations on each side
+    of the split — None otherwise (Benchmarking audit #11)."""
+    ev = dict(d.get("evidence") or {})
+    try:
+        ow, oo = int(ev.get("orgs_with") or 0), int(ev.get("orgs_without") or 0)
+    except (TypeError, ValueError):
+        ow = oo = 0
+    if ow < MIN_ORGS_PER_SIDE or oo < MIN_ORGS_PER_SIDE:
+        return None
+    for k in ADMIN_ONLY_EVIDENCE:
+        ev.pop(k, None)
+    out = dict(d)
+    out["evidence"] = ev
+    return out
+
+
+def active(cohort: str = None, db_path=DB_PATH, include_platform=True, limit=20, projection="owner") -> list:
     """Active patterns for a cohort, with platform-wide ones after them,
     each re-confirmed within MAX_PATTERN_AGE_DAYS and carrying `as_of`
     (M/D/YY). Rows are anonymous by construction; asserted again on the
-    way out."""
+    way out. `projection="owner"` (the default — Ask, the prompts, the
+    confidence model) applies owner_projection; the admin page passes
+    "admin"."""
     fresh = f"AND last_confirmed >= datetime('now', '-{int(MAX_PATTERN_AGE_DAYS)} days')"
     conn = get_conn(db_path)
     try:
@@ -532,6 +599,10 @@ def active(cohort: str = None, db_path=DB_PATH, include_platform=True, limit=20)
         d["evidence"] = json.loads(d.pop("evidence_json") or "{}")
         d.pop("id", None)
         d["as_of"] = _as_of(d.get("last_confirmed"))
+        if projection != "admin":
+            d = owner_projection(d)
+            if d is None:
+                continue
         out.append(privacy.assert_anonymous(strength_fields(d)))
     return out
 

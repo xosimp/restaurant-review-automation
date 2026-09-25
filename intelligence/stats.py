@@ -40,6 +40,64 @@ def percentile(xs, p):
     return xs[f] + (xs[c] - xs[f]) * (k - f)
 
 
+def _betacf(a, b, x):
+    """The continued fraction of the incomplete beta (Numerical Recipes)."""
+    qab, qap, qam = a + b, a + 1.0, a - 1.0
+    c, d = 1.0, 1.0 - qab * x / qap
+    d = 1.0 / (d if abs(d) > 1e-300 else 1e-300)
+    h = d
+    for m in range(1, 300):
+        m2 = 2 * m
+        aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+        d = 1.0 + aa * d
+        d = 1.0 / (d if abs(d) > 1e-300 else 1e-300)
+        c = 1.0 + aa / c if abs(c) > 1e-300 else 1e300
+        h *= d * c
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+        d = 1.0 + aa * d
+        d = 1.0 / (d if abs(d) > 1e-300 else 1e-300)
+        c = 1.0 + aa / c if abs(c) > 1e-300 else 1e300
+        de = d * c
+        h *= de
+        if abs(de - 1.0) < 3e-12:
+            break
+    return h
+
+
+def beta_cdf(x, a, b):
+    """The regularized incomplete beta I_x(a, b)."""
+    if x <= 0:
+        return 0.0
+    if x >= 1:
+        return 1.0
+    lbt = math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b) + a * math.log(x) + b * math.log(1.0 - x)
+    bt = math.exp(lbt)
+    if x < (a + 1.0) / (a + b + 2.0):
+        return bt * _betacf(a, b, x) / a
+    return 1.0 - bt * _betacf(b, a, 1.0 - x) / b
+
+
+def harrell_davis(xs, p):
+    """The Harrell–Davis quantile, p in 0..100: a Beta-weighted average of
+    EVERY order statistic, so a published quartile is never one member's
+    exact figure the way a linear-interpolated one is at n ≡ 1 mod 4
+    (Benchmarking audit #42, BM1-6). None on empty."""
+    xs = sorted(float(x) for x in xs if x is not None)
+    n = len(xs)
+    if not n:
+        return None
+    if n == 1:
+        return xs[0]
+    q = min(max(p / 100.0, 1e-9), 1 - 1e-9)
+    a, b = q * (n + 1), (1 - q) * (n + 1)
+    total, prev = 0.0, 0.0
+    for i in range(1, n + 1):
+        cur = beta_cdf(i / n, a, b)
+        total += (cur - prev) * xs[i - 1]
+        prev = cur
+    return total
+
+
 def cohen_d(a, b):
     """Standardised difference of means; None when either side lacks spread."""
     a = [float(x) for x in a if x is not None]

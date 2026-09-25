@@ -6222,6 +6222,18 @@ def mobile_hours(current_user):
     return jsonify(**payload), status
 
 
+@mobile_bp.route("/account/restaurant-profile", methods=["GET", "POST"])
+@mobile_login_required
+def mobile_restaurant_profile(current_user):
+    """See client_api._do_restaurant_profile — the owner-confirmed profile
+    every peer group is built from (Benchmarking audit #7)."""
+    rid = current_user["restaurant_id"]
+    if request.method == "GET":
+        return jsonify(**_capi._restaurant_profile_payload(rid))
+    payload, status = _capi._do_restaurant_profile(rid, request.get_json(silent=True) or {}, current_user)
+    return jsonify(**payload), status
+
+
 @mobile_bp.route("/account/data-retention", methods=["POST"])
 @mobile_login_required
 def mobile_data_retention(current_user):

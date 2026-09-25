@@ -101,7 +101,7 @@ def test_check_daily_alerts_fires_push_for_labor_over(db_path, monkeypatch):
     rid = _restaurant(db_path)
     update_restaurant(rid, {
         "urgent_via_sms": 0, "urgent_via_email": 1, "owner_email": "p@x.com",
-        "alert_labor_over": 1, "labor_target_pct": 30.0,
+        "alert_labor_over": 1, "labor_target_pct": 30.0, "labor_target_source": "set",
     }, db_path=db_path)
     _start, _end = _recent_week()
     save_labor_snapshot(rid, _start, _end, 35.0, 3500, 10000, db_path=db_path)
@@ -123,7 +123,7 @@ def test_check_daily_alerts_does_not_refire_within_7_days(db_path, monkeypatch):
     rid = _restaurant(db_path)
     update_restaurant(rid, {
         "urgent_via_sms": 0, "urgent_via_email": 1, "owner_email": "p@x.com",
-        "alert_labor_over": 1, "labor_target_pct": 30.0,
+        "alert_labor_over": 1, "labor_target_pct": 30.0, "labor_target_source": "set",
     }, db_path=db_path)
     _start, _end = _recent_week()
     save_labor_snapshot(rid, _start, _end, 35.0, 3500, 10000, db_path=db_path)

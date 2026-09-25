@@ -99,13 +99,16 @@ def labor_industry_benchmark(restaurant) -> dict | None:
 
 
 def labor_vs_industry_monthly(overall_pct, total_sales, period_days, hours_are_estimated=False,
-                              sales_data_missing=False, analysis_failed=False, industry_pct=None) -> int:
+                              sales_data_missing=False, analysis_failed=False, industry_pct=None,
+                              cost_basis=None) -> int:
     """Monthly dollars this restaurant's labor % runs under the industry
     figure for its type (`industry_pct`, from labor_industry_benchmark), or
     0 when that cannot be said honestly: no benchmark for the type,
     estimated hours understate labor (and so overstate the gap), missing
-    sales or a sub-week period leave no monthly rate to compare."""
-    if industry_pct is None:
+    sales or a sub-week period leave no monthly rate to compare, or the
+    labor cost rests on the $26/hr default (`cost_basis == "default"`,
+    Benchmarking audit #14) — an assumed wage is not a gap."""
+    if industry_pct is None or cost_basis == "default":
         return 0
     try:
         pct, sales, days = float(overall_pct or 0), float(total_sales or 0), int(period_days or 0)
@@ -124,6 +127,132 @@ def labor_vs_industry_monthly(overall_pct, total_sales, period_days, hours_are_e
 # rating is a handful of guests, not a reading.
 RATING_MIN_REVIEWS = 5
 
+
+# ── Where the labor cost comes from (Benchmarking audit #14, BM1-9) ──────
+# Labor % is labor cost ÷ sales, and labor cost is hours × a rate. When the
+# rate is the $26/hr default — which benchmark_registry.ABSENT says has no
+# source — every dollar built on it is an assumption: the "under industry"
+# figure, the target-gap dollars and a place in a peer band are withheld.
+#   pos_wages      the POS supplied each shift's wage (reserved: no
+#                  integration supplies wages today)
+#   role_rates     the owner set a rate per role
+#   owner_blended  the owner set one blended rate (anything but the default)
+#   default        the unsourced $26/hr — mirrors labor.DEFAULT_HOURLY_RATE
+LABOR_DEFAULT_HOURLY_RATE = 26.0
+LABOR_COST_BASES = ("pos_wages", "role_rates", "owner_blended", "default")
+LABOR_COST_BASIS_LABELS = {
+    "pos_wages": "wages from your POS", "role_rates": "your per-role pay rates",
+    "owner_blended": "your blended hourly rate", "default": "Cavnar's assumed $26/hr (not your payroll)",
+}
+
+
+def labor_cost_basis(restaurant) -> str:
+    """'role_rates' | 'owner_blended' | 'default' for a Restaurant or row
+    dict. Pure: reads role_rates_json and hourly_rate only."""
+    def g(k):
+        return restaurant.get(k) if isinstance(restaurant, dict) else getattr(restaurant, k, None)
+    if restaurant is None:
+        return "default"
+    raw = g("role_rates_json")
+    if raw:
+        try:
+            import json as _json
+            rates = _json.loads(raw) if isinstance(raw, str) else raw
+            if any(k != "_default" and float(v or 0) > 0 for k, v in (rates or {}).items()):
+                return "role_rates"
+        except Exception:
+            pass
+    try:
+        rate = float(g("hourly_rate") or 0)
+    except (TypeError, ValueError):
+        rate = 0.0
+    if rate > 0 and abs(rate - LABOR_DEFAULT_HOURLY_RATE) > 1e-9:
+        return "owner_blended"
+    return "default"
+
+
+# ── Where a target comes from (Benchmarking audit #13, BM1-10) ───────────
+# A 30% labor and a 30% food target for every type of restaurant were shown
+# as "your target", and a steakhouse at the published median was texted
+# "over target" every night. A target now says where it came from:
+#   set      the owner (or admin) chose it — behaviour unchanged
+#   seeded   the published median for the owner-CONFIRMED type
+#   default  Cavnar's starting target — labelled so, and no over-target
+#            alert fires on it
+TARGET_DEFAULTS = {"labor": 30.0, "food": 30.0}
+_TARGET_FIELDS = {"labor": ("labor_target_pct", "labor_target_source"),
+                  "food": ("food_cost_target", "food_cost_target_source")}
+STARTING_TARGET_LABEL = "Cavnar's starting target"
+
+
+def target_source(restaurant, kind) -> str:
+    """'set' | 'seeded' | 'default' for kind 'labor' or 'food'. A row from
+    before the source was recorded counts as the owner's own when it holds
+    anything but the default."""
+    field, src_field = _TARGET_FIELDS[kind]
+
+    def g(k):
+        return restaurant.get(k) if isinstance(restaurant, dict) else getattr(restaurant, k, None)
+    if restaurant is None:
+        return "default"
+    src = g(src_field)
+    if src in ("set", "seeded", "default"):
+        return src
+    try:
+        v = float(g(field))
+    except (TypeError, ValueError):
+        return "default"
+    return "default" if abs(v - TARGET_DEFAULTS[kind]) < 1e-9 else "set"
+
+
+def target_label(restaurant, kind) -> str:
+    """How a surface names the target: "your target", or "Cavnar's
+    starting target" for a seeded or default one."""
+    return "your target" if target_source(restaurant, kind) == "set" else STARTING_TARGET_LABEL
+
+
+def target_phrase(restaurant, kind, value) -> str:
+    """The target in a sentence: "your 30% target", or "Cavnar's starting
+    target of 30%" when the owner has not set one (#13)."""
+    try:
+        v = f"{float(value):g}%"
+    except (TypeError, ValueError):
+        v = "—"
+    return f"your {v} target" if target_source(restaurant, kind) == "set" else f"{STARTING_TARGET_LABEL} of {v}"
+
+
+def target_alerts_allowed(restaurant, kind) -> bool:
+    """No over-target alert on an unconfirmed default (#13): an SMS saying a
+    steakhouse is "over your 30% target" when nobody set 30 is the bug."""
+    return target_source(restaurant, kind) != "default"
+
+
+def seeded_targets(restaurant) -> dict:
+    """The update that seeds a not-yet-set target from the PUBLISHED median
+    for the owner-confirmed type ({} when the type is unconfirmed or the
+    owner already set one). With no published median the default stays,
+    labelled as the default."""
+    try:
+        from intelligence import categories
+        import benchmark_registry as _br
+    except Exception:
+        return {}
+    prof = categories.profile_for(restaurant)
+    concept = prof.get("concept")
+    if not prof.get("confirmed") or not concept:
+        return {}
+    out = {}
+    for kind, metric in (("labor", "labor_pct"), ("food", "food_cost_pct")):
+        field, src_field = _TARGET_FIELDS[kind]
+        if target_source(restaurant, kind) == "set":
+            continue
+        e = _br.lookup(metric, concept, published_only=True)
+        if e and e.get("median") is not None:
+            out[field] = float(e["median"])
+            out[src_field] = "seeded"
+        else:
+            out[src_field] = "default"
+    return out
 # ── Group strongest / weakest (CA1 H13, fix I12; Benchmarking #19) ───────
 # A location is ranked "strongest" or "weakest" by rating only when at least
 # this many reviews stand behind its rating in the window — the group Home

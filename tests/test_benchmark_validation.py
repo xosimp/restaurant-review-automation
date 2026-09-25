@@ -9,7 +9,7 @@ tests/benchmark_corpus_facts.py.)"""
 import json
 import os
 import types
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -46,12 +46,18 @@ def _redirect(db_path, monkeypatch):
     ask_cavnar._INTEL_FACTS.clear()
 
 
-def _rid(db_path, name, category=None, **kw):
+def _rid(db_path, name, category=None, service_model="counter", **kw):
+    # Live 17 weeks on a real labor cost basis, with an owner-CONFIRMED
+    # profile when a type is given: the peer group is that confirmed
+    # partition (Benchmarking audit #7, #14, #20, #39 — workstream P).
+    kw.setdefault("created_at", (date.today() - timedelta(days=120)).isoformat() + "T00:00:00")
+    kw.setdefault("hourly_rate", 18.0)
     rid = create_restaurant(Restaurant(name=name, owner_email=f"{name.replace(' ', '').lower()}@x.test", **kw),
                             db_path=db_path)
     if category:
         conn = models.get_conn(db_path)
-        conn.execute("UPDATE restaurants SET category=? WHERE id=?", (category, rid))
+        conn.execute("UPDATE restaurants SET category=?, concept=?, service_model=?, profile_source='set' "
+                     "WHERE id=?", (category, category, service_model, rid))
         conn.commit()
         conn.close()
     return rid
@@ -76,7 +82,7 @@ def _pizza(db_path, n=12, **extra):
     viewer = _rid(db_path, "Viewer Pizza", "pizza")
     _feat(db_path, viewer, {"labor_pct_28d": 27.0, "reply_rate_30d": 0.95, "food_cost_pct_28d": 29.0,
                             **{k: v - 0.5 for k, v in extra.items()}})
-    benchmarks.compute(db_path=db_path, cohorts={**{r: "pizza" for r in ids}, viewer: "pizza"})
+    benchmarks.compute(db_path=db_path)       # each one's confirmed partition
     return viewer, ids
 
 
@@ -123,13 +129,13 @@ def test_facts_from_dict_walks_lists():
 def test_asks_snapshot_registers_the_engines_bands_and_a_peer_claim_binds(db_path):
     viewer, _ids = _pizza(db_path)
     text, facts = ask_cavnar._intelligence_bundle(viewer)
-    assert "12 other Pizza on Cavnar" in text and "comparison strength" in text
+    assert "12 other counter-service restaurants on Cavnar" in text and "comparison strength" in text
     peers = [f for f in facts if (f.get("source") or {}).get("engine_kind") == "peers"]
     assert peers and all(f["kind"] == "benchmark" and f["source"]["n"] == 12 for f in peers)
     assert ask_cavnar.snapshot_benchmark_facts(viewer) == facts
     ctx = ask_cavnar._validation_context([text], viewer, bench_facts=facts)
     v = rv.validate("Your labor is above restaurants similar to yours.", ctx)
-    assert v.verdict == "pass" and "12 other Pizza on Cavnar" in v.text, v.findings
+    assert v.verdict == "pass" and "12 other counter-service restaurants on Cavnar" in v.text, v.findings
     # And without them the same claim has nothing to bind to.
     v0 = rv.validate("Your labor is above restaurants similar to yours.",
                      ask_cavnar._validation_context([text], viewer))
@@ -151,7 +157,7 @@ def test_the_platform_intelligence_tool_is_typed_as_engine_facts(db_path):
     viewer, _ids = _pizza(db_path)
     payload = ask_cavnar_tools.run_read_tool("read_platform_intelligence", viewer, {})
     body = json.loads(payload)
-    assert body["comparisons"] and any("12 other Pizza on Cavnar" in ln for ln in body["lines"])
+    assert body["comparisons"] and any("12 other counter-service restaurants on Cavnar" in ln for ln in body["lines"])
     facts = ask_cavnar._typed_facts(["snapshot", payload])
     bench = [f for f in facts if (f.get("kind") if isinstance(f, dict) else f.kind) == "benchmark"]
     srcs = [(f["source"] if isinstance(f, dict) else f.source) for f in bench]
@@ -166,8 +172,8 @@ def test_the_schedule_prompts_cohort_block_is_the_engines_and_registers_its_fact
     viewer, _ids = _pizza(db_path, labor_hours_per_1k_28d=20.0)
     r = models.get_restaurant(viewer, db_path=db_path)
     block = schedule_engine._cohort_block(viewer, r)
-    assert schedule_engine.COHORT_BLOCK_HEADER in block and "12 other Pizza on Cavnar" in block
-    assert "peer group: restaurants of the same type (Pizza), the type set by the owner" in block
+    assert schedule_engine.COHORT_BLOCK_HEADER in block and "12 other counter-service restaurants on Cavnar" in block
+    assert "peer group: counter-service restaurants — split by how they serve" in block
     assert "measured at 13 of 13" in block and "% comparison strength" in block
     ctx = labor.schedule_note_context("Build next week." + block, restaurant_id=viewer)
     assert ctx.facts and all(f.kind == "benchmark" for f in ctx.facts)
@@ -177,10 +183,17 @@ def test_the_schedule_prompts_cohort_block_is_the_engines_and_registers_its_fact
 def test_the_schedule_prompt_never_states_an_all_types_band_for_hours(db_path):
     """BM3-7: a lone sushi bar got the all-types hours band ("hold the line")."""
     _viewer, ids = _pizza(db_path, labor_hours_per_1k_28d=20.0)
-    sushi = _rid(db_path, "Omakase Room", "sushi")
+    sushi = _rid(db_path, "Omakase Room", "sushi", service_model="full_service")
     _feat(db_path, sushi, {"labor_hours_per_1k_28d": 14.0})
-    benchmarks.compute(db_path=db_path, cohorts={**{r: "pizza" for r in ids}, sushi: "sushi"})
-    assert benchmarks.benchmark(sushi, "labor_hours_per_1k_28d", cohort="sushi", db_path=db_path)["available"]
+    conn = models.get_conn(db_path)
+    conn.execute("DELETE FROM intel_benchmarks")       # this week's bands again, with the sushi bar in them
+    conn.commit()
+    conn.close()
+    benchmarks.compute(db_path=db_path)
+    # The legacy read no longer falls back to the all-types band either
+    # (Benchmarking audit #6, workstream P).
+    b = benchmarks.benchmark(sushi, "labor_hours_per_1k_28d", cohort="sushi", db_path=db_path)
+    assert b["available"] is False and "no like-for-like peers" in b["reason"]
     assert schedule_engine._cohort_block(sushi, models.get_restaurant(sushi, db_path=db_path)) == ""
 
 
@@ -222,7 +235,10 @@ def _pattern(db_path, key, cohort, outcome, behaviour, rec_kinds):
                  "VALUES (?,?,?,6,6,0.5,'%',0.6,0.01,0.05,0.7,'Across 12 restaurants, x.',?,'active',"
                  "datetime('now'))",
                  (key, cohort, key.split(":")[1], json.dumps({"n": 12, "outcome": outcome, "behaviour": behaviour,
-                                                               "rec_kinds": rec_kinds})))
+                                                               "rec_kinds": rec_kinds,
+                                                               # an owner is served a pattern only
+                                                               # over 8 organisations a side (#11)
+                                                               "orgs_with": 8, "orgs_without": 8})))
     conn.commit()
     conn.close()
 
@@ -276,6 +292,7 @@ def test_prompt_lines_say_how_the_group_was_chosen_how_many_measured_and_how_str
     viewer, _ids = _pizza(db_path)
     cm = engine.compare(viewer, "labor_pct_28d", kinds=("peers",), db_path=db_path)
     line = engine.prompt_lines([cm])[0]
-    assert "peer group: restaurants of the same type (Pizza), the type set by the owner" in line
+    assert "peer group: counter-service restaurants — split by how they serve" in line
+    assert "from the profile the owner confirmed" in line
     assert "measured at 13 of 13 in the group" in line and "% comparison strength" in line
-    assert "as of " in line and "12 other Pizza on Cavnar" in line
+    assert "as of " in line and "12 other counter-service restaurants on Cavnar" in line

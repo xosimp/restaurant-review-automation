@@ -27,6 +27,15 @@ SECTIONS = [
                      "Fine dining", "Fast casual", "Quick service", "Café / bakery", "Pizzeria", "Other"]},
         {"id": "service_model", "label": "Service model", "type": "choice",
          "options": ["Full-service", "Counter service", "Hybrid", "Bar-forward"]},
+        # The explicit type picker (Benchmarking audit #15): which published
+        # figures the labor and food bands come from. Unanswered, the
+        # restaurant type above decides where it is unambiguous; a type with
+        # no published figure is "not assessed", never full-service.
+        {"id": "benchmark_type", "label": "Compare against published figures for", "type": "choice",
+         "options": ["Full-service restaurant", "Fine dining", "Fast casual / counter", "Sports bar", "Bar / pub",
+                     "Brewery", "Wine bar", "None of these — don't compare"]},
+        {"id": "ownership", "label": "Ownership", "type": "choice",
+         "options": ["Independent", "Franchise", "Corporate / chain-owned"]},
         {"id": "years_in_business", "label": "Years in business", "type": "decimal", "min": 0},
         {"id": "seating_capacity", "label": "Seating capacity", "type": "integer", "min": 0},
         {"id": "hours", "label": "Hours of operation", "type": "text", "placeholder": "e.g. 11am–1am Sun–Thu, 11am–2am Fri–Sat"},

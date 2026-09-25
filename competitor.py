@@ -440,6 +440,34 @@ def search_places_near(query: str, lat: float = None, lng: float = None, max_res
         return []
 
 
+def _remember_own_listing(google_place_id, types, price_level):
+    """Keep the restaurant's OWN Google types and price level (Benchmarking
+    audit #8, BM2-2): they were fetched on every competitor refresh and
+    thrown away. They cross-check the service model Cavnar guesses for the
+    "is that right?" prompt — never a peer key by themselves. A direct write
+    outside update_restaurant, so each row's request cache is invalidated.
+    Never raises: a failed write only loses the cross-check."""
+    if not google_place_id:
+        return
+    try:
+        import models as _m
+        conn = _m.get_conn()
+        try:
+            ids = [r["id"] for r in conn.execute("SELECT id FROM restaurants WHERE google_place_id=?",
+                                                 (google_place_id,)).fetchall()]
+            if ids:
+                conn.execute("UPDATE restaurants SET google_types=?, google_price_level=? WHERE google_place_id=?",
+                             (json.dumps([str(t) for t in (types or [])][:20]),
+                              int(price_level) if isinstance(price_level, (int, float)) else None, google_place_id))
+                conn.commit()
+        finally:
+            conn.close()
+        for rid in ids:
+            _m._invalidate_request_cache(rid)
+    except Exception as e:
+        print(f"[competitor] own listing not kept for {google_place_id}: {e}")
+
+
 def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_results: int = 5,
                            usage: dict = None) -> list:
     """Find nearby restaurants using the Google Places API.
@@ -479,6 +507,7 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
         own_name = result_data.get("name", "")
         own_types = result_data.get("types", [])
         own_price = result_data.get("price_level")
+        _remember_own_listing(google_place_id, own_types, own_price)
 
         # Build a keyword from the restaurant's type to filter similar competitors
         # Exclude generic types that apply to everything

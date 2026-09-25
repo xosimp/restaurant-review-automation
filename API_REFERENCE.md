@@ -411,11 +411,18 @@ before them, ROI #44); both take `restaurant_id`.
 
 ## Intelligence engine
 
-- `GET /admin/api/intelligence` (admin) — the Intelligence page payload.
+- `GET /admin/api/intelligence` (is_admin only — the support role gets 403, Benchmarking #47) — the Intelligence page payload; `benchmarks` is "Cavnar cohorts": each row `{cohort, cohort_label, metric, label, week, n, orgs, p25, p50, p75}`, rounded as published; `top_insights` is the admin pattern projection (with group means).
+- **Restaurant profile** (Benchmarking audit #7, workstream P): `GET /api/account-settings/restaurant-profile` + `GET /mobile/api/account/restaurant-profile` → `{ok, profile: {service_model, concept, bar_led, ownership, opened_year, confirmed, confirmed_at, source, suggestion: {text "We think you're a pizzeria — is that right?", service_model, concept, confidence_pct, cues[]} | null, choices: {service_model, concept, ownership: [{value, label}]}}, targets: {labor, food: {pct, source: set|seeded|default, label "your target" | "Cavnar's starting target"}}, labor_cost_basis: {basis: role_rates|owner_blended|default, label}}`. `POST` (same paths, owner-only — 403 `owner_only`) `{service_model (required: counter|full_service|bar_led|daytime), concept?, bar_led?, ownership? (independent|franchise|corporate), opened_year?}` confirms it (`profile_source='set'`, `profile_confirmed_at`), seeds a target the owner has not set from the published median for the confirmed type, and answers the GET body; 400 `{error}` on a value outside the closed vocabularies.
+- `POST /admin/api/brand/<id>` also takes the profile fields above (`service_model` present → the same `clean_profile`) and `exclude_from_learning` (0/1: a test or internal account, out of every cross-restaurant figure).
+- Labor `savings_breakdown` (web + `/mobile/api/labor`) adds `cost_basis` (role_rates|owner_blended|default), `cost_basis_label`, `labor_target_source`, `labor_target_label`; on the `default` basis `labor_monthly` and `labor_vs_industry_monthly` are 0 and `dollars_withheld` is `"default_rate"` (#14).
+- `GET /api/benchmarks` (+ mobile): the `peers` comparison is the owner-CONFIRMED partition (`cohort` `sm:…`, `cohort_label` "counter-service restaurants on Cavnar"), with `orgs` and `blend` `{group_weight_pct, toward, median, text}` | null; unconfirmed → unavailable with `why_not` and `suggestion`; below its own floor → `why_not` "about N more measured days to a comparison". `industry` adds `comparable` (false when the published figure measures something else — the NRA labor median includes benefits) and `definition_note`. `?module=` accepts the aliases `food` / `food_cost` for `inventory`.
+- The public `/status` page and `/api/status` say "one or more locations", never a count (#47).
 - Home brief recommendations carry `confidence: {score, band, caution}`.
 - Ask tools `read_restaurant_memory`, `read_platform_intelligence`.
 - `POST /mobile/api/account/update-profile` and `POST /admin/api/brand/<id>`
-  accept `category` (taxonomy in `intelligence/categories.py`).
+  accept `category` (taxonomy in `intelligence/categories.py`). The peer
+  group is built from the confirmed restaurant profile above, not from
+  `category` alone.
 - `POST /api/generate-content` and the mobile twin return `tags`
   (`menu_item_id`, `menu_item_name`, `occasion`, `post_kind`, `label`).
 - `POST /api/marketing/posts/<id>/tags` (web) / `/mobile/api/marketing/posts/<id>/tags`

@@ -76,13 +76,15 @@ def test_the_schedule_job_refuses_sample_data(monkeypatch, db_path):
 
 # ── The partial-data flags reach the payload ───────────────────────────────
 
-def _labor_payload(monkeypatch, analysis):
+def _labor_payload(monkeypatch, analysis, hourly_rate=18.5):
     monkeypatch.setattr(mobile_api, "analyse_shifts_for_restaurant",
                         lambda rid: analysis, raising=False)
     monkeypatch.setattr("labor.analyse_shifts_for_restaurant", lambda rid: analysis)
+    # The owner's own blended rate: a $ comparison needs a real labor cost
+    # basis, not the $26/hr default (Benchmarking audit #14).
     monkeypatch.setattr(mobile_api, "get_restaurant",
                         lambda rid: types.SimpleNamespace(
-                            labor_target_pct=30.0, hourly_rate=26.0, timezone="America/Chicago",
+                            labor_target_pct=30.0, hourly_rate=hourly_rate, timezone="America/Chicago",
                             category="italian"))   # a type with a published labor figure (NS4 H3)
     monkeypatch.setattr(mobile_api, "_staff_constraints_index", lambda rid: {})
     payload, _ = mobile_api._do_mobile_labor(1)
@@ -146,6 +148,21 @@ def test_a_measured_period_still_makes_the_claim(monkeypatch):
     assert p["savings_breakdown"]["labor_vs_industry_monthly"] > 0
 
 
+def test_the_default_wage_makes_no_dollar_claim(monkeypatch):
+    """Benchmarking audit #14 (BM1-9): "Under 34.2% industry — $2,100/mo"
+    could come entirely from the unsourced $26/hr. On the default rate the
+    industry dollars and the gap-to-target dollars are withheld, and the
+    payload says why and what the labor cost rests on."""
+    p = _labor_payload(monkeypatch, _base_analysis(overall_labor_pct=25.0, potential_savings_monthly=900),
+                       hourly_rate=26.0)
+    sb = p["savings_breakdown"]
+    assert sb["labor_vs_industry_monthly"] == 0 and sb["labor_monthly"] == 0
+    assert sb["dollars_withheld"] == "default_rate" and sb["cost_basis"] == "default"
+    assert "$26" in sb["cost_basis_label"]
+    ok = _labor_payload(monkeypatch, _base_analysis(overall_labor_pct=25.0, potential_savings_monthly=900))
+    assert ok["savings_breakdown"]["labor_monthly"] == 900 and ok["savings_breakdown"]["cost_basis"] == "owner_blended"
+
+
 def test_a_failed_analysis_does_not_read_as_zero_percent_on_track(monkeypatch):
     def boom(rid):
         raise RuntimeError("db gone")
@@ -178,9 +195,11 @@ def _alerting_restaurant(db_path):
     conn.execute("INSERT INTO restaurants (id, name, owner_email) VALUES (1,'R','o@x.test')")
     conn.commit()
     conn.close()
+    # An owner-SET target: no over-target alert fires on Cavnar's unconfirmed
+    # 30% default (Benchmarking audit #13).
     update_restaurant(1, {"urgent_via_sms": 0, "urgent_via_email": 1,
                           "owner_email": "o@x.test", "alert_labor_over": 1,
-                          "labor_target_pct": 30.0}, db_path=db_path)
+                          "labor_target_pct": 31.0}, db_path=db_path)
     return 1
 
 
@@ -222,6 +241,22 @@ def test_a_recent_period_over_target_still_alerts(monkeypatch, db_path):
     models.save_labor_snapshot(rid, start, end, 38.0, 3800, 10000, db_path=db_path)
     sent = _fire(monkeypatch, db_path)
     assert len(sent) == 1
+
+
+def test_no_over_target_alert_on_the_unconfirmed_default(monkeypatch, db_path):
+    """Benchmarking audit #13 (BM1-10): a steakhouse at the published median
+    was texted "over your 30% target" every night when nobody set 30."""
+    from datetime import date, timedelta
+    from models import update_restaurant
+    rid = _alerting_restaurant(db_path)
+    update_restaurant(rid, {"labor_target_pct": 30.0, "labor_target_source": "default"}, db_path=db_path)
+    end = (date.today() - timedelta(days=2)).isoformat()
+    start = (date.today() - timedelta(days=8)).isoformat()
+    models.save_labor_snapshot(rid, start, end, 38.0, 3800, 10000, db_path=db_path)
+    assert _fire(monkeypatch, db_path) == []
+    update_restaurant(rid, {"labor_target_pct": 30.5}, db_path=db_path)   # the owner sets one
+    assert models.get_restaurant(rid, db_path).labor_target_source == "set"
+    assert len(_fire(monkeypatch, db_path)) == 1
 
 
 def test_the_alert_names_the_period_it_is_about(monkeypatch, db_path):

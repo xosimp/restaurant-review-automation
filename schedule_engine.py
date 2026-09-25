@@ -3249,7 +3249,8 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             if _start.get("available"):
                 result["review"]["lines"].append(
                     f"Staffing numbers marked borrowed come from {_start.get('n')}+ "
-                    f"{(_start.get('cohort_label') or 'restaurants').lower()} on Cavnar (people on the floor per $1k of "
+                    f"{(_start.get('cohort_label') or 'Restaurants on Cavnar')[:1].lower()}"
+                    f"{(_start.get('cohort_label') or 'Restaurants on Cavnar')[1:]} (people on the floor per $1k of "
                     f"sales, scaled to {_start.get('basis')})"
                     + (" — the type was inferred from the restaurant's name, not set" if _start.get("inferred") else "")
                     + " — this restaurant has no schedule history of its own yet.")

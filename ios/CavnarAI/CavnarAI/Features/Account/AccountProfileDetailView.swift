@@ -26,6 +26,7 @@ struct AccountProfileDetailView: View {
     @State private var signOffName: String
     @State private var responseLanguage: String
     @State private var showingHours = false
+    @State private var showingRestaurantProfile = false
     @State private var autoApproveEnabled: Bool
     @State private var autoApprovePaused: Bool
     @State private var autoApproveCap: Int
@@ -129,6 +130,9 @@ struct AccountProfileDetailView: View {
             }
             .sheet(isPresented: $showingHours) {
                 AccountHoursSheet(viewModel: viewModel, profile: viewModel.summary?.profile ?? profile)
+            }
+            .sheet(isPresented: $showingRestaurantProfile) {
+                AccountRestaurantProfileSheet(canEdit: isOwner)
             }
             .task {
                 if isOwner { await locations.load() }
@@ -316,7 +320,9 @@ struct AccountProfileDetailView: View {
 
     private var hoursSection: some View {
         AccountSection(kicker: "Hours") {
-            AccountNavRow(label: "Hours & closures", value: hoursSummary, showsDivider: false) { showingHours = true }
+            AccountNavRow(label: "Hours & closures", value: hoursSummary) { showingHours = true }
+            // Who Cavnar compares you with (Benchmarking audit #7).
+            AccountNavRow(label: "Restaurant profile", showsDivider: false) { showingRestaurantProfile = true }
         }
     }
 

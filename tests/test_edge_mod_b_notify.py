@@ -264,7 +264,7 @@ def test_a_combined_morning_batch_is_delivered_with_the_unresponded_toggles_off(
     monkeypatch.setattr(notify, "rush_release_at", lambda *a, **k: None)
     rid = _rid(db_path)
     update_restaurant(rid, {"urgent_via_sms": 0, "urgent_via_email": 1, "alert_labor_over": 1,
-                            "labor_target_pct": 30.0, "alert_rating_threshold": 1, "alert_rating_floor": 4.5,
+                            "labor_target_pct": 30.0, "labor_target_source": "set", "alert_rating_threshold": 1, "alert_rating_floor": 4.5,
                             "gbp_rating": 3.9, "al_unres_push": 0, "al_unres_email": 0,
                             # read just now: an unaged rating is not announced (Data Freshness #38)
                             "gbp_rating_updated_at": __import__("datetime").datetime.now(
@@ -282,7 +282,7 @@ def test_a_single_labor_alert_is_delivered_with_the_unresponded_toggles_off(db_p
     monkeypatch.setattr(notify, "rush_release_at", lambda *a, **k: None)
     rid = _rid(db_path)
     update_restaurant(rid, {"urgent_via_sms": 0, "urgent_via_email": 1, "alert_labor_over": 1,
-                            "labor_target_pct": 30.0, "al_unres_push": 0, "al_unres_email": 0}, db_path=db_path)
+                            "labor_target_pct": 30.0, "labor_target_source": "set", "al_unres_push": 0, "al_unres_email": 0}, db_path=db_path)
     _labor_over(db_path, rid)
     notify.begin_daily_batch()
     notify.check_daily_alerts(db_path=db_path)
@@ -295,7 +295,7 @@ def test_a_push_only_owner_still_gets_the_labor_alert(db_path, sent, monkeypatch
     monkeypatch.setattr(notify, "rush_release_at", lambda *a, **k: None)
     rid = _rid(db_path)
     update_restaurant(rid, {"urgent_via_sms": 0, "urgent_via_email": 0, "alert_labor_over": 1,
-                            "labor_target_pct": 30.0}, db_path=db_path)
+                            "labor_target_pct": 30.0, "labor_target_source": "set"}, db_path=db_path)
     _labor_over(db_path, rid)
     notify.check_daily_alerts(db_path=db_path)
     assert (rid, "labor_over") in sent["push"]
@@ -400,7 +400,7 @@ def test_a_restart_mid_batch_does_not_lose_the_days_alerts(db_path, sent, monkey
     monkeypatch.setattr(notify, "rush_release_at", lambda *a, **k: None)
     monkeypatch.setattr(time_utils, "restaurant_now_by_id", lambda r, naive=False: datetime(2026, 9, 21, 10, 5))
     rid = _rid(db_path)
-    update_restaurant(rid, {"urgent_via_email": 1, "alert_labor_over": 1, "labor_target_pct": 30.0},
+    update_restaurant(rid, {"urgent_via_email": 1, "alert_labor_over": 1, "labor_target_pct": 30.0, "labor_target_source": "set"},
                       db_path=db_path)
     _labor_over(db_path, rid)
     notify.begin_daily_batch()
