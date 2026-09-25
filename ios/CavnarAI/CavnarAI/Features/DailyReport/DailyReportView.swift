@@ -24,7 +24,13 @@ struct DailyReportView: View {
     }
 
     @State private var viewModel: DailyReportViewModel
-    @State private var expanded: Set<String> = ["sales"]
+    // Every block starts closed (owner decision 9/25/26): each card's one
+    // line already carries its number, and the score card above has the
+    // net — the Sales block open by default restated it.
+    @State private var expanded: Set<String> = []
+    /// "All KPIs" / "All priorities" (density #2).
+    @State private var showingAllKPIs = false
+    @State private var showingAllPriorities = false
     @State private var confirmingRerun = false
     @State private var didLoad = false
     @State private var clock = CavnarEntranceClock()
@@ -328,20 +334,24 @@ struct DailyReportView: View {
             CavnarCaveat(title: report.phase == .provisional ? "Provisional — still missing" : "Still missing",
                          detail: report.facts.missing.joined(separator: " "))
         }
-        // Top to bottom (9/25/26): the summary (the owner's executive, the
-        // manager's operations), then "did we win?" — the owner's score,
-        // wins and risks, the manager's shift and operations — the numbers
-        // with direction, AI insights, tomorrow's priorities and tomorrow.
+        // SCORE FIRST (owner decision 9/25/26, density #2; DESIGN_SYSTEM.md
+        // §12): the score card is the hero — verdict, score, net and net
+        // against budget — then the summary in a few sentences, 3 wins and
+        // 3 risks, the top 3 of tomorrow's priorities, tomorrow, 4–6 KPIs
+        // with the rest behind "All KPIs", then the blocks (closed) and how
+        // the night was built. A manager's view has no scorecard: the
+        // operations summary leads, then the shift, the priorities, and
+        // the numbers.
+        if let card = report.scorecard {
+            DSRScorecardCard(card: card, sales: report.facts.blocks["sales"])
+        }
         leadCard(report)
         if let card = report.scorecard {
-            DSRScorecardCard(card: card)
             DSRWinsRisks(card: card)
         }
-        if !report.isOwnerView {
-            if let shift = report.shift { DSRShiftCard(shift: shift) }
-            DSRKPIGrid(kicker: "Service", title: "Operations", kpis: report.operations)
+        if !report.isOwnerView, let shift = report.shift {
+            DSRShiftCard(shift: shift)
         }
-        DSRKPIGrid(kicker: "Top KPIs", title: "The numbers, with direction", kpis: report.kpis)
         if report.scorecard == nil, let n = report.narrative {
             if !n.wentWell.isEmpty {
                 titledCard("Went well") { DSRLineList(lines: n.wentWell, dot: .cavnarGreen) }
@@ -350,16 +360,24 @@ struct DailyReportView: View {
                 titledCard("Needs attention") { DSRLineList(lines: n.needsAttention, dot: .cavnarAmber) }
             }
         }
-        DSRInsightsGrid(insights: report.insights)
         if let n = report.narrative { narrativeSections(n) }
         if let t = report.tomorrow {
             DSRTomorrowCard(tomorrow: t, recommendation: staffingRecommendation(report.narrative))
         }
-        // Under Tomorrow, as on the web (D3-13).
-        if let footer = report.narrative?.verification?.footer {
-            HomeMixedText.make(footer, size: 12, color: .cavnarInk3)
-                .fixedSize(horizontal: false, vertical: true)
+
+        // 4–6 KPIs (the owner's `kpis_headline`: without the score's four
+        // components), every KPI behind "All KPIs" — for a manager, labor
+        // against target leads (it is in `kpis`), then Operations.
+        let split = Self.kpiSplit(top: report.topKPIs, all: report.kpis, showingAll: showingAllKPIs)
+        DSRKPIGrid(kicker: "Top KPIs", title: "The numbers, with direction", kpis: split.shown)
+        if split.hidden > 0 || showingAllKPIs {
+            disclosureButton(showingAllKPIs ? "Top KPIs only" : "All KPIs (\(report.kpis.count))",
+                             open: showingAllKPIs) { showingAllKPIs.toggle() }
         }
+        if !report.isOwnerView {
+            DSRKPIGrid(kicker: "Service", title: "Operations", kpis: report.operations)
+        }
+        DSRInsightsGrid(insights: report.insights)
 
         if !report.displayedBlocks.isEmpty {
             HomeSectionHeader(kicker: "The night", title: "Block by block")
@@ -373,6 +391,13 @@ struct DailyReportView: View {
         if let y = report.yesterday, !y.items.isEmpty {
             DSRYesterdayCard(yesterday: y)
         }
+        // How the night was built: the verification footer (kept of
+        // checked, dropped, estimates counted apart) sits with the blocks
+        // it describes now, not between Tomorrow and the numbers.
+        if let footer = report.narrative?.verification?.footer {
+            HomeMixedText.make(footer, size: 12, color: .cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
         // A block this login's view leaves out is SAID, not silently
         // missing — "withheld" is not "absent" (D3-13).
         if let line = report.withheldLine {
@@ -383,6 +408,33 @@ struct DailyReportView: View {
         }
 
         footer(report)
+    }
+
+    /// Top KPIs shown before "All KPIs" (density #2: 4–6).
+    static let kpisShown = 6
+    /// Tomorrow's priorities shown before "All priorities" (density #2).
+    static let prioritiesShown = 3
+
+    /// The KPIs drawn, and how many more "All KPIs" would add: the top
+    /// list's first `kpisShown`, or — opened — every KPI.
+    static func kpiSplit(top: [DSRKPI], all: [DSRKPI], showingAll: Bool) -> (shown: [DSRKPI], hidden: Int) {
+        guard !showingAll else { return (all, 0) }
+        let shown = Array(top.prefix(kpisShown))
+        return (shown, max(0, all.count - shown.count))
+    }
+
+    private func disclosureButton(_ label: String, open: Bool, _ toggle: @escaping () -> Void) -> some View {
+        Button {
+            Haptic.light()
+            withAnimation(.easeOut(duration: 0.2)) { toggle() }
+        } label: {
+            HStack(spacing: 5) {
+                Text(label).font(.cavnarBody(CavnarType.secondary, weight: 700))
+                Image(systemName: open ? "chevron.up" : "chevron.down").font(.system(size: 10, weight: .bold))
+            }
+            .foregroundStyle(Color.cavnarEmber2)
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -430,7 +482,10 @@ struct DailyReportView: View {
         if !n.actionsTomorrow.isEmpty {
             titledCard("Tomorrow's priorities") {
                 VStack(alignment: .leading, spacing: 14) {
-                    ForEach(Array(n.actionsTomorrow.enumerated()), id: \.element.id) { i, action in
+                    // The top 3 visible (density #2); the rest one tap away.
+                    let actions = showingAllPriorities ? n.actionsTomorrow
+                                                       : Array(n.actionsTomorrow.prefix(Self.prioritiesShown))
+                    ForEach(Array(actions.enumerated()), id: \.element.id) { i, action in
                         HStack(alignment: .top, spacing: 12) {
                             Text("\(i + 1)")
                                 .font(.cavnarNumber(16, weight: 700))
@@ -484,16 +539,21 @@ struct DailyReportView: View {
                             Spacer(minLength: 0)
                         }
                     }
+                    if n.actionsTomorrow.count > Self.prioritiesShown {
+                        disclosureButton(showingAllPriorities ? "Top 3 only"
+                                                              : "All \(n.actionsTomorrow.count) priorities",
+                                         open: showingAllPriorities) { showingAllPriorities.toggle() }
+                    }
                 }
             }
         }
         // The verification footer (kept of checked, dropped, estimates
-        // counted apart) is drawn under Tomorrow now, where the web has it.
+        // counted apart) is drawn with the blocks, "how the night was built".
     }
 
     private func titledCard<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(title).font(.cavnarHeadline(19)).foregroundStyle(Color.cavnarInk)
+            Text(title).font(.cavnarHeadline(CavnarType.section)).foregroundStyle(Color.cavnarInk)
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)

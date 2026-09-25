@@ -21,6 +21,13 @@ struct LaborView: View {
     @State private var showDataInfo = false
     // The schedule row whose "why this person" is open.
     @State private var explainingRow: ScheduleRow?
+    // "How it scored" inside the generated schedule (density #29).
+    @State private var showingHowItScored = false
+    // The Scheduling setup sheet — roster, availability, demand signals,
+    // team strength and shift targets (density #28) — and the person a
+    // "person/<key>" link opens over it.
+    @State private var showingSetup = false
+    @State private var setupFocusPerson: PersonSheetTarget?
     /// The section a link pointed at — "requests", "timeoff", "team",
     /// "schedule", "overtime" (nav.py; friction audit #3). Opened and
     /// scrolled to once the page has loaded, then spent.
@@ -57,6 +64,16 @@ struct LaborView: View {
                                 // background/border) — see heroCard's own
                                 // comment.
                                 heroCard(stats)
+                                // Three groups, not thirteen equal rows
+                                // (density #28): NEEDS YOU — what staff are
+                                // waiting on, the drafted week, time off,
+                                // shift requests and overtime, each decided
+                                // in place; WHY — the diagnosis and what
+                                // drove the hours; SCHEDULING SETUP — one row
+                                // that opens a sheet with the roster,
+                                // availability, demand signals, team
+                                // strength and targets.
+                                laborGroupHeader("Needs you")
                                 // What staff are waiting on, answered in
                                 // place, before any chart (Friction #18).
                                 LaborWaitingOnYou(viewModel: viewModel, setupViewModel: setupViewModel) {
@@ -64,11 +81,6 @@ struct LaborView: View {
                                     scrollToReveal(Self.requestsID, proxy: proxy)
                                 }
                                 .id(Self.waitingID)
-                                // Why labor ran over, and the check that
-                                // would confirm it — answerable (#25).
-                                if let diagnosis = analyticsViewModel.diagnosis {
-                                    LaborDiagnosisCard(diagnosis: diagnosis)
-                                }
                                 if let result = viewModel.scheduleResult, result.ok {
                                     scheduleResultSection(result)
                                         .id(Self.scheduleID)
@@ -78,27 +90,6 @@ struct LaborView: View {
                                         .font(.cavnarBody(14))
                                         .foregroundStyle(Color.cavnarRed)
                                 }
-                                // By role sits directly above the other three
-                                // dropdowns (Overtime/Overstaffed/Understaffed)
-                                // so all four read as one connected group —
-                                // Overtime used to sit above the donut chart,
-                                // visually separating it from the rest.
-                                if !stats.roleSummary.isEmpty {
-                                    roleSection(stats.roleSummary, dateRange: stats.dateRange)
-                                }
-                                if !stats.overtimeRisk.isEmpty {
-                                    overtimeDropdown(stats.overtimeRisk, proxy: proxy)
-                                }
-                                if !stats.overstaffedDays.isEmpty {
-                                    overstaffedDropdown(stats.overstaffedDays, proxy: proxy)
-                                }
-                                if !stats.understaffedDays.isEmpty {
-                                    understaffedDropdown(stats.understaffedDays, proxy: proxy)
-                                }
-                                AvailabilityManagerSection(viewModel: viewModel) {
-                                    scrollToReveal(Self.availabilityID, proxy: proxy)
-                                }
-                                .id(Self.availabilityID)
                                 TimeOffSection(viewModel: viewModel) {
                                     scrollToReveal(Self.timeOffID, proxy: proxy)
                                 }
@@ -110,17 +101,28 @@ struct LaborView: View {
                                     scrollToReveal(Self.requestsID, proxy: proxy)
                                 }
                                 .id(Self.requestsID)
-                                // What the generator reads beyond the shift
-                                // history: who it may schedule and how, and
-                                // the dated demand it cannot infer.
-                                RosterSection(viewModel: setupViewModel) {
-                                    scrollToReveal(Self.rosterID, proxy: proxy)
+                                if !stats.overtimeRisk.isEmpty {
+                                    overtimeDropdown(stats.overtimeRisk, proxy: proxy)
                                 }
-                                .id(Self.rosterID)
-                                DemandSignalsSection(viewModel: setupViewModel) {
-                                    scrollToReveal(Self.demandID, proxy: proxy)
+
+                                laborGroupHeader("Why")
+                                    .padding(.top, 14)
+                                // Why labor ran over, and the check that
+                                // would confirm it — answerable (#25).
+                                if let diagnosis = analyticsViewModel.diagnosis {
+                                    LaborDiagnosisCard(diagnosis: diagnosis)
                                 }
-                                .id(Self.demandID)
+                                // By role sits directly above Overstaffed /
+                                // Understaffed so they read as one group.
+                                if !stats.roleSummary.isEmpty {
+                                    roleSection(stats.roleSummary, dateRange: stats.dateRange)
+                                }
+                                if !stats.overstaffedDays.isEmpty {
+                                    overstaffedDropdown(stats.overstaffedDays, proxy: proxy)
+                                }
+                                if !stats.understaffedDays.isEmpty {
+                                    understaffedDropdown(stats.understaffedDays, proxy: proxy)
+                                }
                                 // The measured layer behind the draft:
                                 // outcomes, rotation, what staff keep doing.
                                 ScheduleIntelSection(viewModel: setupViewModel, onExpand: {
@@ -130,18 +132,11 @@ struct LaborView: View {
                                 }, demandAccuracy: viewModel.stats?.demandAccuracy,
                                    weekProjectionAccuracy: viewModel.stats?.weekProjectionAccuracy)
                                 .id(Self.intelID)
-                                // Rating the team, then the targets those
-                                // ratings feed. In that order because a
-                                // target means nothing before anyone is
-                                // rated, and the targets editor says so.
-                                TeamStrengthSection(viewModel: viewModel) {
-                                    scrollToReveal(Self.teamID, proxy: proxy)
-                                }
-                                .id(Self.teamID)
-                                ShiftTargetsSection(viewModel: viewModel) {
-                                    scrollToReveal(Self.targetsID, proxy: proxy)
-                                }
-                                .id(Self.targetsID)
+
+                                laborGroupHeader("Scheduling setup")
+                                    .padding(.top, 14)
+                                setupRow
+                                    .id(Self.setupID)
                             } else if viewModel.isLoading {
                                 CavnarLoadingOrb().padding(.top, 60).frame(maxWidth: .infinity)
                             } else if let error = viewModel.errorMessage {
@@ -196,6 +191,10 @@ struct LaborView: View {
         }
         .cavnarModuleBackground()
         .sheet(item: $focusPerson) { target in PersonSheet(target: target) }
+        .sheet(isPresented: $showingSetup, onDismiss: { setupFocusPerson = nil }) {
+            LaborSetupSheet(viewModel: viewModel, setupViewModel: setupViewModel,
+                            focusPerson: $setupFocusPerson)
+        }
         // The ribbon itself always shows once there's a hero card, even
         // with zero upcoming events — the panel's own empty-state copy
         // covers that case, rather than the whole feature disappearing
@@ -656,6 +655,53 @@ struct LaborView: View {
     private static let waitingID = "labor-waiting"
     private static let scheduleID = "labor-schedule"
     private static let reviewID = "labor-schedule-review"
+    private static let setupID = "labor-setup"
+
+    /// A group's small header on the Overview (density #28): three of
+    /// them — Needs you, Why, Scheduling setup — so a decision never looks
+    /// like a settings row.
+    private func laborGroupHeader(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(.cavnarBody(CavnarType.kicker, weight: 700))
+            .tracking(1.6)
+            .foregroundStyle(Color.cavnarEmber2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, -8)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    /// The one row that opens Scheduling setup — configuration the
+    /// generator reads, kept off the page of decisions.
+    private var setupRow: some View {
+        Button {
+            Haptic.light()
+            showingSetup = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Team, availability & targets")
+                        .font(.cavnarBody(CavnarType.body, weight: 700))
+                        .foregroundStyle(Color.cavnarInk)
+                    Text("Roster, availability, demand signals, team strength, shift targets")
+                        .font(.cavnarBody(CavnarType.caption))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Color.cavnarInk3)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .cavnarCard()
+        .accessibilityHint("Opens the scheduling setup")
+    }
 
     /// Scrolls the just-opened section into view once its expand animation
     /// has room to settle — firing scrollTo in the same instant as the
@@ -690,17 +736,22 @@ struct LaborView: View {
             viewModel.timeOffExpanded = true
             scrollToReveal(Self.timeOffID, proxy: proxy)
         case .team:
+            // The roster lives in Scheduling setup now (density #28): the
+            // sheet opens on it, and person/<key> opens that person's sheet
+            // over the roster (F3-15) from inside it.
             setupViewModel.rosterExpanded = true
-            scrollToReveal(Self.rosterID, proxy: proxy)
-            // person/<key>: that person's sheet, over the roster (F3-15).
+            scrollToReveal(Self.setupID, proxy: proxy)
             if let key = focusItem, !key.isEmpty {
-                focusPerson = PersonSheetTarget(key: key, name: "")
+                setupFocusPerson = PersonSheetTarget(key: key, name: "")
             }
+            showingSetup = true
         case .overtime:
             viewModel.overtimeExpanded = true
             scrollToReveal(Self.overtimeID, proxy: proxy)
         case .availability:
-            scrollToReveal(Self.availabilityID, proxy: proxy)
+            viewModel.availabilityExpanded = true
+            scrollToReveal(Self.setupID, proxy: proxy)
+            showingSetup = true
         case .schedule:
             viewModel.scheduleResultExpanded = true
             // No draft yet: the top of Labor, where the week is built.
@@ -935,21 +986,33 @@ struct LaborView: View {
         .id(Self.understaffedID)
     }
 
-    /// Wrapped in a dropdown (starting open on a freshly-generated result,
-    /// but otherwise following whatever the user last left it at — see
-    /// LaborViewModel.scheduleResultExpanded) instead of always-rendered —
-    /// a full schedule with its summary and day-by-day table has no way to
-    /// be hidden afterward otherwise, and stays pinned at that height for
-    /// the rest of the session.
+    /// Wrapped in a dropdown that starts CLOSED (density #29) — the full
+    /// schedule, its scoring model and the day-by-day table used to open
+    /// under the hero and push every decision on Labor several screens
+    /// down. Closed, its subtitle is the summary an owner needs: "9/28–
+    /// 10/4/26 drafted · Quality 82/100 · 2 still need you". A fresh
+    /// generation still opens it (the owner just asked for it). Inside,
+    /// what needs a decision (the review panel) comes first, then what
+    /// changed, then "How it scored" behind a tap, then the rows. Send is
+    /// the pinned bar (LaborSendBar) — always on screen once a draft is
+    /// saved, open or closed, so it is never under the table.
     @ViewBuilder
     private func scheduleResultSection(_ result: GeneratedSchedule) -> some View {
         CavnarDropdown(
             title: "Generated schedule",
-            subtitle: scheduleSubtitle(result),
-            tone: .good,
+            subtitle: Self.scheduleSubtitle(result),
+            tone: (result.review?.hardCount ?? 0) > 0 ? .warning : .good,
             isExpanded: $viewModel.scheduleResultExpanded
         ) {
             VStack(alignment: .leading, spacing: 16) {
+                // The rules check comes first: a hard violation is decided
+                // on before anything is admired. Shown whenever the server
+                // sent one, or there is pending time off to say.
+                if result.review != nil || !(result.pendingTimeOff ?? [:]).isEmpty {
+                    ScheduleReviewPanel(viewModel: viewModel, result: result)
+                        .id(Self.reviewID)
+                }
+
                 VStack(alignment: .leading, spacing: 12) {
                     if let summary = result.summary, !summary.isEmpty {
                         // `summary` is the deterministic diff against the
@@ -957,7 +1020,7 @@ struct LaborView: View {
                         // computed from the rows, never written by the
                         // model. The model's own note follows separately.
                         Text("WHAT CHANGED VS LAST PUBLISHED WEEK")
-                            .font(.cavnarBody(14, weight: 700))
+                            .font(.cavnarBody(CavnarType.kicker, weight: 700))
                             .tracking(1.2)
                             .foregroundStyle(Color.cavnarGreen)
                         ForEach(Array(summary.enumerated()), id: \.offset) { _, line in
@@ -995,35 +1058,50 @@ struct LaborView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .cavnarCard()
 
-                // The rules check comes before the score: a hard violation
-                // is decided on before a number is admired. Shown whenever
-                // the server sent one, or there is pending time off to say.
-                if result.review != nil || !(result.pendingTimeOff ?? [:]).isEmpty {
-                    ScheduleReviewPanel(viewModel: viewModel, result: result)
-                        .id(Self.reviewID)
-                }
-
-                // The Shift Quality Engine's verdict. Placed above the shift
-                // table deliberately: the score and its reasons are what a
-                // manager decides on, and the rows are what they check after.
+                // The Shift Quality Engine's verdict, behind "How it
+                // scored" — the score is in the closed subtitle; the
+                // dimensions, optimizer, ratings and every shift are the
+                // 300-second layer.
                 if let quality = result.quality, quality.checked {
-                    ShiftQualityPanel(quality: quality, whatIf: result.whatIf,
-                                      isRescoring: viewModel.isRescoringQuality,
-                                      overrideState: viewModel.overrideState,
-                                      savedTick: viewModel.savedTick,
-                                      recommendationDecisions: viewModel.recommendationDecisions,
-                                      onRecommendation: { text, accepted, reason in
-                                          Task {
-                                              await viewModel.recordRecommendation(text, accepted: accepted,
-                                                                                   reasonCode: reason?.code)
-                                          }
-                                      },
-                                      suppressedKinds: viewModel.suppressedRecommendationKinds.isEmpty
-                                          ? (quality.suppressedRecommendationKinds ?? [])
-                                          : viewModel.suppressedRecommendationKinds,
-                                      viewModel: viewModel)
+                    Button {
+                        Haptic.light()
+                        withAnimation(.easeOut(duration: 0.2)) { showingHowItScored.toggle() }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text("How it scored")
+                                .font(.cavnarBody(CavnarType.body, weight: 700))
+                            if let score = quality.score {
+                                Text("\(score)/100")
+                                    .font(.cavnarNumber(CavnarType.secondary, weight: 700))
+                                    .foregroundStyle(Color.cavnarInk3)
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: showingHowItScored ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 11, weight: .bold))
+                        }
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint(showingHowItScored ? "Hides the scoring detail" : "Shows the scoring detail")
+                    if showingHowItScored {
+                        ShiftQualityPanel(quality: quality, whatIf: result.whatIf,
+                                          isRescoring: viewModel.isRescoringQuality,
+                                          overrideState: viewModel.overrideState,
+                                          savedTick: viewModel.savedTick,
+                                          recommendationDecisions: viewModel.recommendationDecisions,
+                                          onRecommendation: { text, accepted, reason in
+                                              Task {
+                                                  await viewModel.recordRecommendation(text, accepted: accepted,
+                                                                                       reasonCode: reason?.code)
+                                              }
+                                          },
+                                          suppressedKinds: viewModel.suppressedRecommendationKinds.isEmpty
+                                              ? (quality.suppressedRecommendationKinds ?? [])
+                                              : viewModel.suppressedRecommendationKinds,
+                                          viewModel: viewModel)
+                    }
                 }
-
                 if let rows = result.previewRows, !rows.isEmpty {
                     fullScheduleTable(rows, csv: result.scheduleCsv)
                     // Tick days on their headers; only those are redone.
@@ -1087,15 +1165,24 @@ struct LaborView: View {
     /// Date range first, so a client sees at a glance which week this is
     /// for, then hours scheduled — reuses the same ISO/display formatters
     /// the freshness popover already parses shift-data dates with.
-    private func scheduleSubtitle(_ result: GeneratedSchedule) -> String? {
+    /// The closed row's summary (density #29): "9/28–10/4/26 drafted ·
+    /// Quality 82/100 · 2 still need you" — each part only when the payload
+    /// carried it; "ready to send" when the review found nothing.
+    static func scheduleSubtitle(_ result: GeneratedSchedule) -> String? {
         var parts: [String] = []
         // M/D/YY (CLIENT-45).
         if let first = result.weekDates?.first, let last = result.weekDates?.last,
            !first.isEmpty, !last.isEmpty {
-            parts.append(CavnarDate.mdyRange(first, last))
-        }
-        if let hours = result.hoursScheduled {
+            parts.append(CavnarDate.mdyRange(first, last) + " drafted")
+        } else if let hours = result.hoursScheduled {
             parts.append("\(String(format: "%.1f", hours))h scheduled")
+        }
+        if let q = result.quality, q.checked, let score = q.score {
+            parts.append("Quality \(score)/100")
+        }
+        if let review = result.review {
+            let open = review.hardCount + review.softCount
+            parts.append(open > 0 ? "\(open) still need\(open == 1 ? "s" : "") you" : "ready to send")
         }
         return parts.isEmpty ? nil : parts.joined(separator: "  ·  ")
     }
@@ -1732,6 +1819,77 @@ enum LaborFocus: Equatable {
         case "availability": self = .availability
         case "schedule": self = .schedule
         default: return nil
+        }
+    }
+}
+
+/// Scheduling setup (density #28): what the generator reads beyond the
+/// shift history — who it may schedule and how, when they can work, the
+/// dated demand it cannot infer, and the team ratings with the targets
+/// those ratings feed. Configuration, so it lives one tap off the Labor
+/// page instead of interleaved with the decisions on it. The same view
+/// models as the page, so a change here is on the page the moment the
+/// sheet closes.
+private struct LaborSetupSheet: View {
+    let viewModel: LaborViewModel
+    let setupViewModel: ScheduleSetupViewModel
+    /// A "person/<key>" link's person, opened over the roster.
+    @Binding var focusPerson: PersonSheetTarget?
+    @Environment(\.dismiss) private var dismiss
+
+    private static let rosterID = "setup-roster"
+    private static let availabilityID = "setup-availability"
+    private static let demandID = "setup-demand"
+    private static let teamID = "setup-team"
+    private static let targetsID = "setup-targets"
+
+    var body: some View {
+        NavigationStack {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        RosterSection(viewModel: setupViewModel) { reveal(Self.rosterID, proxy) }
+                            .id(Self.rosterID)
+                        AvailabilityManagerSection(viewModel: viewModel) { reveal(Self.availabilityID, proxy) }
+                            .id(Self.availabilityID)
+                        DemandSignalsSection(viewModel: setupViewModel) { reveal(Self.demandID, proxy) }
+                            .id(Self.demandID)
+                        // Rating the team, then the targets those ratings
+                        // feed — a target means nothing before anyone is
+                        // rated, and the targets editor says so.
+                        TeamStrengthSection(viewModel: viewModel) { reveal(Self.teamID, proxy) }
+                            .id(Self.teamID)
+                        ShiftTargetsSection(viewModel: viewModel) { reveal(Self.targetsID, proxy) }
+                            .id(Self.targetsID)
+                    }
+                    .padding(20)
+                }
+                .scrollDismissesKeyboard(.immediately)
+            }
+            .cavnarModuleBackground()
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbar {
+                cavnarTitleToolbar("Scheduling setup")
+                cavnarToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        Haptic.light()
+                        dismiss()
+                    } label: {
+                        Text("Done")
+                            .font(.cavnarBody(15, weight: 700))
+                            .foregroundStyle(Color.cavnarEmber2)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .sheet(item: $focusPerson) { target in PersonSheet(target: target) }
+    }
+
+    private func reveal(_ id: String, _ proxy: ScrollViewProxy) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(id, anchor: .center) }
         }
     }
 }

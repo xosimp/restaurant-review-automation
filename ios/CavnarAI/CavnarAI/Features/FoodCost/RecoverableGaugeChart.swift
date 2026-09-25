@@ -5,6 +5,11 @@ import SwiftUI
 /// OPPORTUNITY, labelled one: projected, with its basis, never "this month"
 /// as if measured, never "claw back" (a certainty), never "overstock"
 /// (which is not in the figure) — NS1 #6.
+///
+/// No longer drawn (density #25, 9/25/26): Food Cost's Analytics tab was
+/// its only caller, and it restated the hero's recoverable figure. No
+/// preview, test or other screen references it. Candidate for future
+/// cleanup after additional verification.
 struct RecoverableGaugeChart: View {
     let monthly: Double
     let annual: Double

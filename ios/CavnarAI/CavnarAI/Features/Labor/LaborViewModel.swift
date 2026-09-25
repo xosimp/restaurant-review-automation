@@ -1654,7 +1654,11 @@ final class LaborViewModel {
     // sticks across tab switches instead of the schedule result silently
     // re-expanding (or an intentionally-opened section silently
     // re-collapsing) every time.
-    var scheduleResultExpanded = true
+    //
+    // The generated schedule starts CLOSED (density #29): its subtitle
+    // carries the week, the quality score and what still needs the owner;
+    // a fresh generation opens it (see pollSchedule).
+    var scheduleResultExpanded = false
     var overtimeExpanded = false
     var overstaffedExpanded = false
     var understaffedExpanded = false

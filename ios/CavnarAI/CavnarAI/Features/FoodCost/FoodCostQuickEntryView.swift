@@ -1,8 +1,11 @@
 import SwiftUI
 
+/// Analytics leads (density #7): Food Cost opens on food cost % against
+/// target, the 3-second answer, not on a price-entry form. The Tracker is
+/// one tap (or one swipe) away, and every action sheet sits above both.
 private enum FoodCostSubTab: String, CaseIterable, Identifiable {
-    case tracker = "Tracker"
     case analytics = "Analytics"
+    case tracker = "Tracker"
     var id: String { rawValue }
 }
 
@@ -10,8 +13,9 @@ struct FoodCostQuickEntryView: View {
     @Environment(SessionStore.self) private var sessionStore
     @State private var viewModel = FoodCostQuickEntryViewModel()
     @State private var analyticsViewModel = FoodCostAnalyticsViewModel()
-    @State private var subTab: FoodCostSubTab = .tracker
+    @State private var subTab: FoodCostSubTab = .analytics
     @State private var showSuccessToast = false
+    @State private var showingTrackerHelp = false
     /// The action row's sheet (Friction audit #28).
     @State private var actionSheet: FoodCostAction?
     /// Where the link that pushed this screen pointed inside Food Cost —
@@ -55,11 +59,11 @@ struct FoodCostQuickEntryView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { cavnarTitleToolbar("Food Cost") }
         // Replaces the plain cavnarEmberBackButton() — swipe left anywhere
-        // jumps to Analytics; swipe right or tap back while on Analytics
-        // returns to Tracker first, and only leaves the module once
+        // jumps to Tracker; swipe right or tap back while on Tracker
+        // returns to Analytics first, and only leaves the module once
         // already there. See the modifier's own doc comment for why this
         // needs to own the back chevron/gesture too, not just add a swipe.
-        .cavnarTabSwipeNavigation($subTab, primaryTab: .tracker, secondaryTab: .analytics)
+        .cavnarTabSwipeNavigation($subTab, primaryTab: .analytics, secondaryTab: .tracker)
         // Mimics Labor's Overview hero forecast pill exactly (same shared
         // DesignSystem/HeroForecastRibbon.swift component) — straddles the
         // Analytics hero card's bottom edge (see FoodCostAnalyticsSection's
@@ -173,26 +177,47 @@ struct FoodCostQuickEntryView: View {
         ScrollViewReader { outerProxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
+                    // A kicker and ONE line (density #45) — the how-to
+                    // (enter the price per unit right after an invoice)
+                    // is behind the "?". 8-10 is the standard food-cost-
+                    // consulting sweet spot for a WEEKLY quick price check
+                    // (not a full count): enough of the highest-dollar,
+                    // most volatile items to catch a real supplier swing.
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("KEY INGREDIENT PRICES")
-                            .font(.cavnarBody(14, weight: 700))
-                            .tracking(1.2)
-                            .foregroundStyle(Color.cavnarEmber2)
-                        Text("Fill in this week's price per unit right after an invoice arrives.")
-                            .font(.cavnarBody(14))
+                        HStack(spacing: 6) {
+                            Text("KEY INGREDIENT PRICES")
+                                .font(.cavnarBody(CavnarType.kicker, weight: 700))
+                                .tracking(1.2)
+                                .foregroundStyle(Color.cavnarEmber2)
+                            Button {
+                                Haptic.light()
+                                showingTrackerHelp = true
+                            } label: {
+                                Image(systemName: "questionmark.circle")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(Color.cavnarInk3)
+                                    .frame(width: 28, height: 28)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("How this works")
+                            .popover(isPresented: $showingTrackerHelp) {
+                                Text("Fill in each price per unit right after an invoice arrives. Your top 8\u{2013}10 highest-cost ingredients are enough to catch a real supplier swing without turning this into busywork.")
+                                    .font(.cavnarBody(CavnarType.secondary))
+                                    .foregroundStyle(Color.cavnarInk2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(width: 280)
+                                    .padding(16)
+                                    .presentationCompactAdaptation(.popover)
+                            }
+                        }
+                        (Text("This week\u{2019}s prices for your top ")
+                            + Text("8–10").font(.cavnarNumber(CavnarType.secondary, weight: 700)).foregroundStyle(Color.cavnarEmber2)
+                            + Text(" ingredients"))
+                            .font(.cavnarBody(CavnarType.secondary))
                             .foregroundStyle(Color.cavnarInk3)
-                        // 8-10 is the standard food-cost-consulting sweet
-                        // spot for a WEEKLY quick-price-check specifically
-                        // (not a full inventory count) — enough of a
-                        // restaurant's highest-dollar-volume, most price-
-                        // volatile items (proteins especially) to catch a
-                        // real supplier price swing, without turning this
-                        // into a chore nobody keeps up with every week.
-                        (Text("Track your top ")
-                            + Text("8–10").font(.cavnarNumber(14, weight: 700)).foregroundStyle(Color.cavnarEmber2)
-                            + Text(" highest-cost ingredients — enough to catch real swings, not busywork."))
-                            .font(.cavnarBody(14))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
                     }
 
                     // Scroll target is the CAROUSEL's own top, not the intro

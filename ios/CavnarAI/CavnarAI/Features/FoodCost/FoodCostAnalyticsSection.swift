@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Food Cost Analytics tab — deliberately built around whitespace and
 /// typography instead of stacking bordered card after bordered card. Only
-/// the hero (annual waste vs. recoverable) is a real container; everything
+/// the hero (food cost % against target, then waste) is a real container; everything
 /// else signals "new section" with a kicker label and generous vertical
 /// spacing, and "grouped item" with a hairline divider or a colored
 /// left-edge accent bar instead of a box. Matches the same unboxed
@@ -21,15 +21,11 @@ struct FoodCostAnalyticsSection: View {
 
     var body: some View {
         ScrollView {
-            // 44pt between top-level sections — was 28, then 36, still
-            // read as crammed once every section lost its own card border
-            // (a border used to do double duty as visual separation;
-            // without one, the gap between sections has to carry that job
-            // alone). Matches the wider rhythm SaaS dashboards (Stripe,
-            // Linear) lean on between distinct content blocks specifically
-            // because there's no box to signal "new section" otherwise —
-            // only whitespace and the kicker label are left to do it.
-            VStack(alignment: .leading, spacing: 44) {
+            // 34pt between top-level sections — the §3 rhythm every other
+            // screen uses (density #25). It was 44, the loosest in the app,
+            // chosen when each section lost its card border; the kicker
+            // labels carry the separation at 34 just as well.
+            VStack(alignment: .leading, spacing: 34) {
                 if let analytics = viewModel.analytics {
                     // Sits above everything else in the module: the numbers
                     // in the cards below are the example pantry's, not this
@@ -37,11 +33,12 @@ struct FoodCostAnalyticsSection: View {
                     if analytics.showsExampleData {
                         CavnarCaveat.exampleData
                     }
-                    // The AI strip lives INSIDE the hero card itself (see
-                    // heroCard's own comment) when there's a hero to embed
-                    // into — reads as that card's own footer commentary,
-                    // not a second adjacent card. Only the no-hero case
-                    // falls back to the self-contained AIConsultantView.
+                    // Position, then why, then this week's work (density
+                    // #7/#25): the hero is food cost % against target with
+                    // waste as its second figure and the AI's why inside
+                    // it; then 3 stats; the CFO driver read; the order list
+                    // (the actions) right under it; then the ledgers, price
+                    // watch and trend; How you compare last.
                     if hasHeroData(analytics) {
                         heroCard(analytics, isLoading: viewModel.isLoading)
                     } else {
@@ -53,17 +50,7 @@ struct FoodCostAnalyticsSection: View {
                             recSurface: "food"
                         )
                     }
-                    // The module's namesake number, the coverage that says how
-                    // far the rest of this screen can be trusted, and the
-                    // counted-vs-inferred waste split. All three were computed
-                    // server-side and exposed on their own endpoints; this app
-                    // called none of them, so the phone showed a confident
-                    // waste analysis with no way to see the percentage it was
-                    // about or how soft the usage figures underneath were.
-                    positionStrip(analytics)
                     statStrip(analytics)
-                    // How you compare — the Benchmark Engine's card (#23).
-                    HowYouCompareCard(module: "food_cost")
                     // The CFO read: what is DRIVING the cost, ranked by the
                     // dollars each driver carries, the stored root cause with
                     // its alternative and its confidence, and the month-end
@@ -72,6 +59,9 @@ struct FoodCostAnalyticsSection: View {
                     if viewModel.hasCFORead {
                         cfoCard(viewModel.cfo)
                     }
+                    // What to order now — the page's actions, directly under
+                    // the driver read (it sat tenth, under two charts).
+                    actionSection(analytics)
                     // Dishes an ingredient rise has eaten into, each with the
                     // price that restores its food cost % and one tap to set
                     // it. Nothing renders when there is nothing to revisit.
@@ -79,20 +69,9 @@ struct FoodCostAnalyticsSection: View {
                         repriceSection(viewModel.repriceSuggestions,
                                        assumption: viewModel.reprice?.assumption)
                     }
-                    if (analytics.recoverableMonthly ?? 0) > 0 {
-                        RecoverableGaugeChart(
-                            monthly: analytics.recoverableMonthly ?? 0,
-                            annual: analytics.annualRecoverable ?? (analytics.recoverableMonthly ?? 0) * 12,
-                            // Recurring waste only. Overstock is capital
-                            // sitting above par, not money leaving every
-                            // month; adding it made the arc a ratio of two
-                            // different kinds of quantity.
-                            ceiling: max(analytics.recoverableMonthly ?? 0,
-                                         analytics.monthlyWasteProjection ?? 0),
-                            basis: analytics.recoverableBasisLine,
-                            kind: analytics.recoverableKind
-                        )
-                    }
+                    // The recoverable gauge that stood here is gone from this
+                    // page (density #25): it drew the hero's recoverable
+                    // figure a third time against the monthly projection.
                     if !analytics.wasteItems.isEmpty {
                         WasteLedgerChart(
                             kicker: "Top waste offenders", title: "Waste Ledger",
@@ -122,19 +101,30 @@ struct FoodCostAnalyticsSection: View {
                             tint: Color.cavnarAmber
                         )
                     }
-                    actionSection(analytics)
                     if !analytics.priceWatch.isEmpty {
                         priceWatchDetail(analytics.priceWatch)
                     }
-                    FoodCostTrendChart(
-                        weeks: viewModel.trend,
-                        benchmarkLabel: analytics.benchmarkLabel,
-                        wasteRatePct: analytics.wasteRatePct,
-                        totalWasteCostWeek: analytics.totalWasteCostWeek,
-                        wasteState: analytics.wasteState,
-                        target: viewModel.trendTarget,
-                        asOf: analytics.lastUpdated
-                    )
+                    VStack(alignment: .leading, spacing: 12) {
+                        FoodCostTrendChart(
+                            weeks: viewModel.trend,
+                            benchmarkLabel: analytics.benchmarkLabel,
+                            wasteRatePct: analytics.wasteRatePct,
+                            totalWasteCostWeek: analytics.totalWasteCostWeek,
+                            wasteState: analytics.wasteState,
+                            target: viewModel.trendTarget,
+                            asOf: analytics.lastUpdated
+                        )
+                        // The annual projection, under the waste trend it
+                        // extrapolates — with its basis, never as a
+                        // headline (one week's count projected to a year).
+                        if let line = Self.projectionLine(analytics) {
+                            HomeMixedText.make(line, size: CavnarType.caption, color: .cavnarInk3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    // How you compare — the Benchmark Engine's card (#23) —
+                    // after the module's own read (density #34).
+                    HowYouCompareCard(module: "food_cost")
                 } else if viewModel.isLoading || !viewModel.hasRequestedFirstLoad {
                     // The first load starts as the tab appears — the
                     // skeleton covers the frame before it does.
@@ -166,8 +156,22 @@ struct FoodCostAnalyticsSection: View {
         }
     }
 
+    /// The hero draws when it has its position (food cost %, or the reason
+    /// it can't be measured) or a waste figure to carry.
     private func hasHeroData(_ a: FoodCostAnalytics) -> Bool {
-        (a.annualWasteProjection ?? 0) > 0 || (a.annualRecoverable ?? 0) > 0
+        a.cogs != nil || a.recipeCoverage != nil || a.wasteSplit != nil
+            || a.totalWasteCostWeek != nil
+            || (a.annualWasteProjection ?? 0) > 0 || (a.annualRecoverable ?? 0) > 0
+    }
+
+    /// "Projected: $X/mo, $Y/yr — from this week's count only." The basis
+    /// travels with the figure: one heavy prep week must not become a
+    /// five-figure headline an owner takes to a supplier. Nil when nothing
+    /// was projected.
+    static func projectionLine(_ a: FoodCostAnalytics) -> String? {
+        guard let annual = a.annualWasteProjection, annual > 0 else { return nil }
+        let monthly = a.monthlyWasteProjection.map { "$\($0.commaFormatted)/mo, " } ?? ""
+        return "Projected waste: \(monthly)$\(annual.commaFormatted)/yr \u{2014} from this week\u{2019}s count only."
     }
 
     // MARK: - Load failure
@@ -212,7 +216,7 @@ struct FoodCostAnalyticsSection: View {
     /// showing nothing — an owner can act on "no closing count" in a way they
     /// cannot act on a blank space.
     @ViewBuilder
-    private func positionStrip(_ a: FoodCostAnalytics) -> some View {
+    private func positionContent(_ a: FoodCostAnalytics) -> some View {
         if a.cogs != nil || a.recipeCoverage != nil || a.wasteSplit != nil {
             VStack(alignment: .leading, spacing: 12) {
                 if let c = a.cogs {
@@ -223,7 +227,7 @@ struct FoodCostAnalyticsSection: View {
                                 .foregroundStyle(Color.cavnarInk3)
                             HStack(alignment: .firstTextBaseline, spacing: 10) {
                                 Text("\(pct, specifier: "%.1f")%")
-                                    .font(.cavnarNumber(34, weight: 600))
+                                    .font(.cavnarNumber(CavnarType.heroNumber, weight: 600))
                                     .foregroundStyle(Self.toneColor(c.tone))
                                 if let v = c.variancePts, let t = c.target {
                                     HomeMixedText.make(c.varianceLine(v, t), size: 13.5, weight: 400,
@@ -505,44 +509,42 @@ struct FoodCostAnalyticsSection: View {
     private func heroCard(_ a: FoodCostAnalytics, isLoading: Bool) -> some View {
         let startFromZero = !viewModel.hasPlayedHeroIntro
         return VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 20) {
-                VStack(alignment: .leading, spacing: 8) {
-                    // Both kickers reserve two lines. "PROJECTED ANNUAL
-                    // WASTE" wraps to two at this width while "RECOVERABLE
-                    // / YEAR" fits on one, so with a .top-aligned HStack
-                    // the right column's number and subtext sat a full line
-                    // higher than the left's. Reserving the space on both
-                    // makes the two numbers share a baseline at any width.
-                    Text("PROJECTED ANNUAL WASTE")
-                        .font(.cavnarBody(13.5, weight: 700))
-                        .tracking(1.4)
-                        .foregroundStyle(Color.cavnarInk.opacity(0.6))
-                        .lineLimit(2, reservesSpace: true)
-                    HeroAnimatedNumber(numericValue: a.annualWasteProjection ?? 0, tone: Color.cavnarRed, startFromZero: startFromZero)
-                    // The basis, stated. This is one week's count projected
-                    // to a year; as a bare number in red it reads as measured
-                    // fact, and one heavy prep week becomes a five-figure
-                    // headline an owner may take to a supplier.
-                    Text("$\((a.monthlyWasteProjection ?? 0).commaFormatted)/mo — projected from this week's count")
-                        .font(.cavnarBody(14))
-                        .foregroundStyle(Color.cavnarInk.opacity(0.55))
-                }
-                Spacer(minLength: 12)
-                VStack(alignment: .trailing, spacing: 8) {
-                    Text("RECOVERABLE / YEAR")
-                        .font(.cavnarBody(13.5, weight: 700))
-                        .tracking(1.4)
-                        .foregroundStyle(Color.cavnarInk.opacity(0.6))
-                        .lineLimit(2, reservesSpace: true)
-                        .multilineTextAlignment(.trailing)
-                    // An OPPORTUNITY (I8, `recoverable_kind`): waste still
-                    // being thrown away, projected from one week — amber
-                    // "available", never a win's green.
-                    HeroAnimatedNumber(numericValue: a.annualRecoverable ?? 0, tone: Color.cavnarAmber, startFromZero: startFromZero)
-                    HomeMixedText.make("$\((a.recoverableMonthly ?? 0).commaFormatted)/mo still being lost \u{2014} an opportunity, not savings",
-                                       size: 14, color: Color.cavnarInk.opacity(0.55))
-                        .multilineTextAlignment(.trailing)
-                        .fixedSize(horizontal: false, vertical: true)
+            // The 3-second answer (density #7): food cost % against its
+            // target, the screen's one 40pt figure. The one-week waste
+            // projection that used to lead here moved under the trend.
+            VStack(alignment: .leading, spacing: 18) {
+                positionContent(a)
+                // Waste is the second figure: this week's measured waste
+                // and the recoverable run-rate beside it — an OPPORTUNITY
+                // (I8, `recoverable_kind`): amber "available", never a
+                // win's green, and never summed with anything.
+                if a.totalWasteCostWeek != nil || (a.recoverableMonthly ?? 0) > 0 {
+                    HStack(alignment: .top, spacing: 20) {
+                        if let week = a.totalWasteCostWeek {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("WASTE THIS WEEK")
+                                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
+                                    .tracking(1.2)
+                                    .foregroundStyle(Color.cavnarInk.opacity(0.6))
+                                HeroAnimatedNumber(numericValue: week, tone: Color.cavnarRed,
+                                                   startFromZero: startFromZero)
+                            }
+                        }
+                        Spacer(minLength: 12)
+                        if (a.recoverableMonthly ?? 0) > 0 {
+                            VStack(alignment: .trailing, spacing: 6) {
+                                Text("RECOVERABLE / MO")
+                                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
+                                    .tracking(1.2)
+                                    .foregroundStyle(Color.cavnarInk.opacity(0.6))
+                                HeroAnimatedNumber(numericValue: a.recoverableMonthly ?? 0, tone: Color.cavnarAmber,
+                                                   startFromZero: startFromZero)
+                                Text("an opportunity, not savings")
+                                    .font(.cavnarBody(CavnarType.caption))
+                                    .foregroundStyle(Color.cavnarInk.opacity(0.55))
+                            }
+                        }
+                    }
                 }
             }
             .padding(22)
@@ -613,7 +615,7 @@ struct FoodCostAnalyticsSection: View {
 
         var body: some View {
             CavnarAnimatableNumber(value: animatedValue, format: { "$\($0.commaFormatted)" })
-                .font(.cavnarNumber(27, weight: 700))
+                .font(.cavnarNumber(CavnarType.tileNumber, weight: 700))
                 .foregroundStyle(tone)
                 .shadow(color: .black.opacity(0.5), radius: 5, x: 0, y: 3)
                 .cavnarNumberGlow(tone)
@@ -635,17 +637,11 @@ struct FoodCostAnalyticsSection: View {
 
     private func statStrip(_ a: FoodCostAnalytics) -> some View {
         VStack(spacing: 20) {
-            statRow([
-                (Self.money(a.totalWasteCostWeek), "Waste / wk", Color.cavnarRed),
-                (Self.money(a.monthlyWasteProjection), "Proj. / mo", Color.cavnarAmber),
-                ("\(a.wasteItems.count)", "Waste items", a.wasteItems.isEmpty ? Color.cavnarGreen : Color.cavnarAmber),
-            ])
-            Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1)
-            statRow([
-                ("\(a.criticalLow.count)", "Critical low", a.criticalLow.isEmpty ? Color.cavnarGreen : Color.cavnarRed),
-                (Self.money(a.totalStockValue), "Inv. value", Color.cavnarInk),
-                (a.totalItems.map(String.init) ?? "—", "Tracked", Color.cavnarInk),
-            ])
+            // Three tiles (density #25), not six: waste per week is the
+            // hero's second figure now, the monthly projection sits under
+            // the trend with its basis, and the waste-item count is the
+            // ledger's own header.
+            statRow(Self.statTiles(a))
             if let asOf = a.lastUpdated, !asOf.isEmpty {
                 // The server has always sent week_start/week_end/last_updated
                 // and nothing rendered them, so an owner could not tell
@@ -668,13 +664,23 @@ struct FoodCostAnalyticsSection: View {
         return "$\(value.commaFormatted)"
     }
 
+    /// The strip's three tiles: what is critically low (the thing to act
+    /// on), the stock's value and how many items are tracked.
+    static func statTiles(_ a: FoodCostAnalytics) -> [(String, String, Color)] {
+        [
+            ("\(a.criticalLow.count)", "Critical low", a.criticalLow.isEmpty ? Color.cavnarGreen : Color.cavnarRed),
+            (money(a.totalStockValue), "Inv. value", Color.cavnarInk),
+            (a.totalItems.map(String.init) ?? "—", "Tracked", Color.cavnarInk),
+        ]
+    }
+
     private func statRow(_ items: [(String, String, Color)]) -> some View {
         HStack(spacing: 0) {
             ForEach(Array(items.enumerated()), id: \.offset) { index, entry in
                 let (value, label, tone) = entry
                 VStack(spacing: 6) {
                     Text(value)
-                        .font(.cavnarNumber(18, weight: 700))
+                        .font(.cavnarNumber(CavnarType.tileNumber, weight: 700))
                         .foregroundStyle(tone)
                     Text(label.uppercased())
                         .font(.cavnarBody(13.5, weight: 700))

@@ -240,15 +240,24 @@ struct DSRReport: Decodable {
     /// Both views (9/25/26): numbers with direction, the manager's shift and
     /// operations, AI insights, tomorrow and yesterday's predictions graded.
     let kpis: [DSRKPI]
+    /// The owner's Top KPIs without the score's four components (the score
+    /// card above already carries them) — nil on an older server, and the
+    /// report falls back to `kpis`. See `topKPIs`.
+    var kpisHeadline: [DSRKPI]? = nil
     let operations: [DSRKPI]
     let shift: DSRShift?
     let insights: [DSRInsight]
     let tomorrow: DSRTomorrow?
     let yesterday: DSRYesterday?
 
+    /// What "Top KPIs" draws: `kpis_headline` when the server sent it,
+    /// else `kpis` (density #2).
+    var topKPIs: [DSRKPI] { kpisHeadline ?? kpis }
+
     enum CodingKeys: String, CodingKey {
         case view, label, fiscal, version, status, provisional, trigger, facts, narrative, checklist, versions, scorecard
         case kpis, operations, shift, insights, tomorrow, yesterday
+        case kpisHeadline = "kpis_headline"
         case businessDate = "business_date"
         case finalizedAt = "finalized_at"
     }
@@ -272,6 +281,7 @@ struct DSRReport: Decodable {
         versions = (try? c.decodeIfPresent([DSRVersion].self, forKey: .versions)) ?? []
         scorecard = try? c.decodeIfPresent(DSRScorecard.self, forKey: .scorecard)
         kpis = (try? c.decodeIfPresent([DSRKPI].self, forKey: .kpis)) ?? []
+        kpisHeadline = (try? c.decodeIfPresent([DSRKPI].self, forKey: .kpisHeadline)) ?? nil
         operations = (try? c.decodeIfPresent([DSRKPI].self, forKey: .operations)) ?? []
         shift = try? c.decodeIfPresent(DSRShift.self, forKey: .shift)
         insights = (try? c.decodeIfPresent([DSRInsight].self, forKey: .insights)) ?? []

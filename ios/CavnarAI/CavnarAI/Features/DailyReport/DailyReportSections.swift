@@ -71,6 +71,9 @@ struct DSRShift: Decodable, Hashable {
     }
     let rows: [Row]
     let note: String?
+    /// The manager's one-line verdict ("Labor 27.5%, on target · 1
+    /// no-show"), server-built; nil on an older server.
+    var verdict: String? = nil
 }
 
 struct DSRInsight: Decodable, Hashable, Identifiable {
@@ -260,6 +263,10 @@ struct DSRShiftCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             DSRKicker(text: "Today's shift")
+            if let verdict = shift.verdict, !verdict.isEmpty {
+                HomeMixedText.make(verdict, size: CavnarType.emphasis, weight: 700, color: .cavnarInk)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10),
                                 GridItem(.flexible(), spacing: 10)], spacing: 10) {
                 ForEach(shift.rows) { r in

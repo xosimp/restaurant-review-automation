@@ -7,9 +7,65 @@ import SwiftUI
 private struct AIConsultantStripContent: View {
     let insight: AIInsight?
     let isLoading: Bool
+    /// The hero's readable form (density #30): the intro at up to three
+    /// lines in ink2 with "Read the analysis ›" under it, instead of one
+    /// clipped grey line — the 30-second "why" behind the hero's number.
+    var readable: Bool = false
     let onTap: () -> Void
 
     var body: some View {
+        if readable {
+            readableBody
+        } else {
+            stripBody
+        }
+    }
+
+    private var readableBody: some View {
+        Button(action: onTap) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .padding(.top, 3)
+                VStack(alignment: .leading, spacing: 6) {
+                    Group {
+                        if let insight, !insight.intro.isEmpty {
+                            HomeMixedText.make(insight.intro, size: CavnarType.body, weight: 500,
+                                               color: .cavnarInk2)
+                        } else if isLoading {
+                            PulsingAnalyzingText()
+                                .font(.cavnarBody(CavnarType.body, weight: 500))
+                                .foregroundStyle(Color.cavnarInk3)
+                        } else {
+                            Text("No analysis yet")
+                                .font(.cavnarBody(CavnarType.body, weight: 500))
+                                .foregroundStyle(Color.cavnarInk3)
+                        }
+                    }
+                    .lineLimit(3)
+                    .truncationMode(.tail)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    if insight != nil {
+                        HStack(spacing: 4) {
+                            Text("Read the analysis")
+                                .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10, weight: .bold))
+                        }
+                        .foregroundStyle(Color.cavnarEmber2)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(insight == nil)
+    }
+
+    private var stripBody: some View {
         Button(action: onTap) {
             HStack(spacing: 8) {
                 Image(systemName: "sparkles")
@@ -88,11 +144,15 @@ struct AIConsultantEmbeddedStrip: View {
     /// recommendations answer for. Nil — every caller that hasn't opted in —
     /// shows no answer controls, even when the insight carries keys.
     var recSurface: String? = nil
+    /// The hero's readable why — the intro at 2–3 lines in ink2 with "Read
+    /// the analysis ›" (density #30). On by default: the Labor and Food
+    /// Cost heroes are this strip's only callers.
+    var readable: Bool = true
 
     @State private var isPresented = false
 
     var body: some View {
-        AIConsultantStripContent(insight: insight, isLoading: isLoading) {
+        AIConsultantStripContent(insight: insight, isLoading: isLoading, readable: readable) {
             guard insight != nil else { return }
             Haptic.selection()
             isPresented = true
