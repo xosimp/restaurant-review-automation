@@ -1442,6 +1442,18 @@ def mobile_review_by_id(review_id, current_user):
     return jsonify(ok=True, review=rows[0]), 200
 
 
+@mobile_bp.route("/reviews/why-line")
+@mobile_login_required
+def mobile_reviews_why_line(current_user):
+    """Twin of /api/reviews/why-line (density round #32): the line above the
+    inbox, from the stored diagnosis and the rating's direction. No model call."""
+    import review_intelligence as _ri
+    try:
+        return jsonify(ok=True, **_ri.inbox_why(current_user["restaurant_id"])), 200
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 200
+
+
 @mobile_bp.route("/reviews/<int:review_id>/approve", methods=["POST"])
 @mobile_login_required
 def mobile_approve_review(review_id, current_user):
@@ -1731,9 +1743,16 @@ def mobile_notifications_engagement(current_user):
 @mobile_login_required
 def mobile_notifications_unread_count(current_user):
     from models import unread_notification_count
-    return jsonify(ok=True, count=unread_notification_count(
-        current_user["id"], current_user["restaurant_id"],
-        visible=_capi.notification_visibility(current_user)))
+    count = unread_notification_count(current_user["id"], current_user["restaurant_id"],
+                                      visible=_capi.notification_visibility(current_user))
+    # `urgent`: the same rows and rule as the web bell's red count (density
+    # audit #39) — still needing someone (P0/P1, not yet handled).
+    try:
+        body, _ = _capi._do_get_notifications(current_user["restaurant_id"], current_user)
+        urgent = sum(1 for n in body.get("notifications") or [] if n.get("urgent") and not n.get("resolved"))
+    except Exception:
+        urgent = 0
+    return jsonify(ok=True, count=count, urgent=urgent)
 
 
 # ── Changelog ─────────────────────────────────────────────────────────────
@@ -3234,6 +3253,21 @@ def _do_mobile_marketing(restaurant_id, user_id=None):
 def mobile_marketing(current_user):
     payload, status = _do_mobile_marketing(current_user["restaurant_id"], current_user.get("id"))
     return jsonify(**payload), status
+
+
+@mobile_bp.route("/marketing/header")
+@mobile_login_required
+def mobile_marketing_header(current_user):
+    """Twin of /api/marketing/header (density round #10): the status line and
+    three chips, from rows already written. No model call."""
+    from marketing_signals import header_summary
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    try:
+        return jsonify(ok=True, **header_summary(rid)), 200
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 200
 
 
 @mobile_bp.route("/marketing/calendar/seen", methods=["POST"])

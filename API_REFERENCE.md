@@ -70,7 +70,7 @@ List/detail/approve/skip/regenerate a draft response, retry a failed Google post
 
 Inbox order (density round 9/25/26, #33): `get_reviews_data` sorts every review whose reply is posted, approved or skipped below every one still waiting, then by urgency, severity, sentiment and date — on both surfaces. The web draws an "Answered (N)" divider where they begin.
 
-`GET /api/reviews/why-line` (web; body `review_intelligence.inbox_why`, which a phone twin can read) → `{ok, rating_delta, recent_n, prior_n, window_days, complaint}`. `rating_delta` is the average star rating of the last 28 days against the 28 before, `null` (never 0) unless each side holds 3 reviews; `complaint` is the top stored diagnosis — `{category, label, mentions, window_days, stale, as_of}` — or `null`. Counts and stored rows only, no model call. Gated to Reviews by the `/api/reviews` prefix.
+`GET /api/reviews/why-line` (web) and `GET /mobile/api/reviews/why-line` (phone twin), both over `review_intelligence.inbox_why` → `{ok, rating_delta, recent_n, prior_n, window_days, complaint}`. `rating_delta` is the average star rating of the last 28 days against the 28 before, `null` (never 0) unless each side holds 3 reviews; `complaint` is the top stored diagnosis — `{category, label, mentions, window_days, stale, as_of}` — or `null`. Counts and stored rows only, no model call. Gated to Reviews by the `/api/reviews` prefix.
 
 ### Food Cost (`/mobile/api/food-cost/*`, `/api/food-cost*`)
 Inventory CSV upload, custom items, purchase orders, waste/drift insight.
@@ -480,7 +480,7 @@ before them, ROI #44); both take `restaurant_id`.
   (`menu_item_id`, `menu_item_name`, `occasion`, `post_kind`, `label`).
 - `POST /api/marketing/posts/<id>/tags` (web) / `/mobile/api/marketing/posts/<id>/tags`
   — correct a post's tags.
-- `GET /api/marketing/header` (web; body `marketing_signals.header_summary`) — the
+- `GET /api/marketing/header` (web) and `GET /mobile/api/marketing/header` (phone twin), both over `marketing_signals.header_summary` — the
   Marketing h1 (density round #10): `{ok, status, tone, posts, days, reach_change,
   change_note, days_since_post, last_post, next_scheduled}`. `reach_change` keeps
   `performance_window`'s floor (null under 3 posts a window); `next_scheduled` is

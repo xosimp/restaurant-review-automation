@@ -232,3 +232,15 @@ def test_labor_says_its_percent_once_and_the_money_sits_under_waiting_on_you():
     assert "data-timeoff=" not in to
     rs = s[s.index("window.renderShiftRequests=function(){"):s.index("window.decideShiftRequest=function")]
     assert "decideShiftRequest(" not in rs
+
+
+def test_phone_twins_read_the_same_bodies_and_are_module_gated():
+    """The why line and the Marketing header each have a /mobile/api twin
+    over the same function (CLAUDE.md: web/mobile twins), gated to the same
+    module by the /mobile/api prefix."""
+    import auth
+    src = open(os.path.join(ROOT, "mobile_api.py"), encoding="utf-8").read()
+    assert '@mobile_bp.route("/reviews/why-line")' in src and "_ri.inbox_why(" in src
+    assert '@mobile_bp.route("/marketing/header")' in src and "header_summary(rid)" in src
+    assert any(p == "/mobile/api/reviews" and m == "reviews" for p, m in auth._MODULE_PREFIXES)
+    assert any(p == "/mobile/api/marketing" and m == "marketing" for p, m in auth._MODULE_PREFIXES)
