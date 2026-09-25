@@ -463,6 +463,9 @@ struct RootView: View {
             }
         }
         .sensoryFeedback(.impact(weight: .medium), trigger: selectedTab) { _, _ in AppPreferences.hapticsEnabledSnapshot }
+        // The command sheet (Friction audit #47) lives inside the unlocked
+        // tabs, so it can never show over the Face ID lock.
+        .cavnarCommandSheetHost()
         // True-black tab bar chrome, distinct from the warm near-black
         // content background — mirrors the web dashboard's own two-tier
         // black system (pure #000 nav chrome vs #1a1714 content).

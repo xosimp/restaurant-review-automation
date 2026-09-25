@@ -17,6 +17,8 @@ struct AccountStaffDetailView: View {
     @State private var pendingUnlink: AccountViewModel.StaffAccount?
     @State private var pendingRotate = false
     @State private var copied = false
+    /// The one person record (Friction audit #25).
+    @State private var person: PersonSheetTarget?
 
     var body: some View {
         NavigationStack {
@@ -57,6 +59,7 @@ struct AccountStaffDetailView: View {
             .accountSheetChrome("Staff accounts")
             .task { await viewModel.loadStaff() }
             .sheet(isPresented: $showingAdd) { AddStaffSheet(viewModel: viewModel) }
+            .sheet(item: $person) { target in PersonSheet(target: target) }
             .sheet(item: $renaming) { staff in
                 StaffTextEditSheet(
                     title: "Name", field: "Name",
@@ -166,6 +169,7 @@ struct AccountStaffDetailView: View {
                             AccountPill(text: job, on: true)
                         }
                         Menu {
+                            Button("Person record") { person = PersonSheetTarget(key: nil, name: staff.name) }
                             Button("Rename") { renaming = staff }
                             Button("Change job") { retitling = staff }
                             Button("New PIN") { resettingPin = staff }

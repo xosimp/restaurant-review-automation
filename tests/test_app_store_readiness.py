@@ -51,8 +51,23 @@ def test_every_collected_type_is_complete(manifest):
 def test_required_reason_apis_are_declared(manifest):
     reasons = {d["NSPrivacyAccessedAPIType"]: d["NSPrivacyAccessedAPITypeReasons"]
                for d in manifest["NSPrivacyAccessedAPITypes"]}
-    assert reasons.get("NSPrivacyAccessedAPICategoryUserDefaults") == ["CA92.1"]
+    # CA92.1: the app's own preferences. 1C8F.1: the widget snapshot in the
+    # App Group the CavnarWidgets extension reads (Friction audit #47).
+    assert reasons.get("NSPrivacyAccessedAPICategoryUserDefaults") == ["CA92.1", "1C8F.1"]
     assert reasons.get("NSPrivacyAccessedAPICategoryFileTimestamp") == ["C617.1"]
+
+
+def test_the_widget_extension_has_its_own_manifest():
+    """An extension ships its own privacy manifest; the widget reads the App
+    Group snapshot (1C8F.1) and collects nothing."""
+    path = os.path.join(ROOT, "ios", "CavnarAI", "CavnarWidgets", "PrivacyInfo.xcprivacy")
+    with open(path, "rb") as fh:
+        widget = plistlib.load(fh)
+    assert widget["NSPrivacyTracking"] is False
+    assert widget["NSPrivacyCollectedDataTypes"] == []
+    reasons = {d["NSPrivacyAccessedAPIType"]: d["NSPrivacyAccessedAPITypeReasons"]
+               for d in widget["NSPrivacyAccessedAPITypes"]}
+    assert reasons == {"NSPrivacyAccessedAPICategoryUserDefaults": ["1C8F.1"]}
 
 
 def test_the_review_account_seeder_exists_and_is_safe():

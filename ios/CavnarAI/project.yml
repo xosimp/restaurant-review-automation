@@ -15,6 +15,9 @@ targets:
     platform: iOS
     sources:
       - path: CavnarAI
+      # The widget snapshot and the Live Activity's attributes + Undo intent
+      # — compiled into both this app and the CavnarWidgets extension.
+      - path: Shared
       # Written by the generate-build-info script below on every build, so
       # Account -> Help & FAQ's "Build abc1234 · 9/3/26" line always reflects
       # the commit the running binary was actually built from (a "+" suffix
@@ -64,6 +67,23 @@ targets:
         UIBackgroundModes:
           - remote-notification
         NSFaceIDUsageDescription: "Cavnar AI uses Face ID to keep your restaurant's data secure when you return to the app."
+        # Scan invoice opens the VisionKit document camera (Friction #28).
+        NSCameraUsageDescription: "Cavnar AI uses the camera to scan supplier invoices so their prices can update your food costs."
+        # The auto-publish / supplier-order countdown with Undo (Friction #47).
+        NSSupportsLiveActivities: true
+        # Home Screen quick actions (Friction #31). Static so they exist before
+        # the first launch; "Approve replies" is added at runtime, only while
+        # replies are waiting (SystemEntry.swift → QuickAction).
+        UIApplicationShortcutItems:
+          - UIApplicationShortcutItemType: ai.cavnar.quick.ask
+            UIApplicationShortcutItemTitle: Ask Cavnar AI
+            UIApplicationShortcutItemIconSymbolName: sparkles
+          - UIApplicationShortcutItemType: ai.cavnar.quick.last-night
+            UIApplicationShortcutItemTitle: Last night's report
+            UIApplicationShortcutItemIconSymbolName: chart.bar.doc.horizontal
+          - UIApplicationShortcutItemType: ai.cavnar.quick.scan-invoice
+            UIApplicationShortcutItemTitle: Scan an invoice
+            UIApplicationShortcutItemIconSymbolName: doc.text.viewfinder
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         ITSAppUsesNonExemptEncryption: false
@@ -105,6 +125,12 @@ targets:
         com.apple.developer.usernotifications.time-sensitive: true
         com.apple.developer.applesignin:
           - Default
+        # Shared with the CavnarWidgets extension: the app writes the widget
+        # snapshot here (Shared/WidgetSnapshot.swift). No token is shared.
+        com.apple.security.application-groups:
+          - group.ai.cavnar.CavnarAI
+    dependencies:
+      - target: CavnarWidgets
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.cavnar.CavnarAI
@@ -124,6 +150,57 @@ targets:
       configs:
         Release:
           APS_ENVIRONMENT: production
+
+  # The Home Screen / Lock Screen widget and the auto-publish countdown Live
+  # Activity (Friction audit #47). Draws only what the app wrote into the
+  # shared app group; never signs in and never calls the API. The Undo
+  # button's intent runs in the app's process (LiveActivityIntent), so the
+  # CAVNAR_WIDGET_EXTENSION flag compiles its network call out of here.
+  CavnarWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: CavnarWidgets
+      - path: Shared
+      # The app's own colour and type tokens, and the fonts and colour sets
+      # they name — one source for both targets, not a copy.
+      - path: CavnarAI/DesignSystem/Color+Cavnar.swift
+      - path: CavnarAI/DesignSystem/Font+Cavnar.swift
+      - path: CavnarAI/Assets.xcassets
+      - path: CavnarAI/Fonts
+    info:
+      path: Generated/CavnarWidgets-Info.plist
+      properties:
+        CFBundleDisplayName: Cavnar AI
+        UIAppFonts:
+          - ApfelGrotezk-Regular.ttf
+          - ApfelGrotezk-Fett.ttf
+          - ClashDisplay-Regular.ttf
+          - ClashDisplay-Medium.ttf
+          - ClashDisplay-Semibold.ttf
+          - ClashDisplay-Bold.ttf
+          - SpaceGrotesk.ttf
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: Generated/CavnarWidgets.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.ai.cavnar.CavnarAI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.cavnar.CavnarAI.Widgets
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 8DW8XL63K6
+        CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]: NO
+        CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]: NO
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_STRICT_CONCURRENCY: complete
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) CAVNAR_WIDGET_EXTENSION"
+        APPLICATION_EXTENSION_API_ONLY: YES
 
   CavnarAITests:
     type: bundle.unit-test

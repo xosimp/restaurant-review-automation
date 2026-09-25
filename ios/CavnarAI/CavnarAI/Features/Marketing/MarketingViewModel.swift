@@ -556,6 +556,55 @@ final class MarketingViewModel {
                       platform: "Facebook")
     }
 
+    // MARK: Post to all connected (Friction audit #41, U3-16)
+
+    /// Per-channel switches under the one Post button, on by default for
+    /// every connected channel.
+    var instagramSelected = true
+    var facebookSelected = true
+
+    /// The channels this caption would go to now: connected, switched on,
+    /// not already posted, and Instagram only with a photo.
+    func socialTargets(hasMedia: Bool) -> [String] {
+        var out: [String] = []
+        if channels.instagram, instagramSelected, hasMedia, !alreadyPosted(to: "Instagram") { out.append("Instagram") }
+        if channels.facebook, facebookSelected, !alreadyPosted(to: "Facebook") { out.append("Facebook") }
+        return out
+    }
+
+    /// "Instagram and Facebook" / "Facebook".
+    static func channelList(_ names: [String]) -> String {
+        switch names.count {
+        case 0: return ""
+        case 1: return names[0]
+        default: return names.dropLast().joined(separator: ", ") + " and " + names.last!
+        }
+    }
+
+    /// One tap, every selected channel, one after another — each through its
+    /// own route, so each keeps its own duplicate guard and its own error.
+    /// Confirmed by the caller first (it goes outside the restaurant).
+    func postToAll(imageURL: String?) async {
+        let targets = socialTargets(hasMedia: !(imageURL ?? "").isEmpty)
+        guard hasDraft, !targets.isEmpty else { return }
+        var posted: [String] = []
+        var failures: [String] = []
+        for platform in targets {
+            if platform == "Instagram" {
+                await postToInstagram(imageURL: imageURL)
+            } else {
+                await postToFacebook()
+            }
+            if alreadyPosted(to: platform) {
+                posted.append(platform)
+            } else if let error = postError {
+                failures.append("\(platform): \(error)")
+            }
+        }
+        postedPlatform = posted.isEmpty ? nil : Self.channelList(posted)
+        postError = failures.isEmpty ? nil : failures.joined(separator: "\n")
+    }
+
     private struct GooglePostBody: Encodable {
         let summary: String
         let ctaType: String
