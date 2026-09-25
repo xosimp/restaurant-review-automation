@@ -1399,6 +1399,15 @@ def init_db(db_path: str = DB_PATH):
             next_retry_at        TEXT,
             PRIMARY KEY (restaurant_id, source)
         )""",
+        # Where each archived day came from (DH1-9, DH2-3): the writer
+        # (a provider name for a POS pull), the provider, when it was
+        # synced, and `final` — 0 for a business day that was still
+        # trading when it was pulled (pos.complete_through). NULL on rows
+        # written before these existed, and on uploads: read as final.
+        "ALTER TABLE labor_daily_history ADD COLUMN source TEXT",
+        "ALTER TABLE labor_daily_history ADD COLUMN provider TEXT",
+        "ALTER TABLE labor_daily_history ADD COLUMN synced_at TEXT",
+        "ALTER TABLE labor_daily_history ADD COLUMN final INTEGER",
         # One Data Health snapshot per restaurant per day (data_health.
         # record_daily), so the admin rollup and trend lines never recompute
         # every restaurant live.
@@ -6456,7 +6465,7 @@ def compute_blended_rate(shifts: list, role_rates: dict, fallback: float = 26.0)
 
 
 def save_labor_daily_history(restaurant_id: int, by_day: dict,
-                              db_path: str = DB_PATH):
+                              db_path: str = DB_PATH, provenance: dict = None):
     """Persist per-day labor breakdown from a shifts analysis. Called on every CSV upload.
 
     A day with no sales figure is written sales=NULL, labor_pct=NULL — never
@@ -6465,10 +6474,24 @@ def save_labor_daily_history(restaurant_id: int, by_day: dict,
     sales feed that had stopped read as current to the demand forecast. And
     a NULL never overwrites a figure already on file for that date: a later
     sync whose sales call failed keeps the day's known sales, re-costed
-    against the new labor (DATABASE_SCHEMA.md → labor_daily_history)."""
+    against the new labor (DATABASE_SCHEMA.md → labor_daily_history).
+
+    `provenance` (a POS pull, pos.save_synced_shifts): {source, provider,
+    synced_at, window: (first, last), complete_through}. Days inside the
+    pulled window carry it, with final=0 past complete_through (a business
+    day still trading when it was read); days outside keep what they had.
+    Without it (an upload) the provenance columns are left as they were."""
     from datetime import datetime as _dt
     conn = get_conn(db_path)
+    prov = provenance or {}
+    win = prov.get("window") or None
+    ct = prov.get("complete_through")
     for date_str, day_data in by_day.items():
+        in_win = bool(prov) and bool(win) and win[0] <= date_str <= win[1]
+        p_src = prov.get("source") if in_win else None
+        p_prov = prov.get("provider") if in_win else None
+        p_at = prov.get("synced_at") if in_win else None
+        p_final = (0 if (ct and date_str > ct) else 1) if in_win else None
         try:
             sales = float(day_data.get("sales")) if day_data.get("sales") is not None else None
         except (TypeError, ValueError):
@@ -6490,9 +6513,14 @@ def save_labor_daily_history(restaurant_id: int, by_day: dict,
             dow = None
         conn.execute("""
             INSERT INTO labor_daily_history
-                (restaurant_id, date, day_of_week, labor_pct, labor_cost, sales, total_hours)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (restaurant_id, date, day_of_week, labor_pct, labor_cost, sales, total_hours,
+                 source, provider, synced_at, final)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(restaurant_id, date) DO UPDATE SET
+                source=COALESCE(excluded.source, labor_daily_history.source),
+                provider=COALESCE(excluded.provider, labor_daily_history.provider),
+                synced_at=COALESCE(excluded.synced_at, labor_daily_history.synced_at),
+                final=COALESCE(excluded.final, labor_daily_history.final),
                 day_of_week=excluded.day_of_week,
                 labor_pct=CASE
                     WHEN excluded.sales IS NOT NULL THEN excluded.labor_pct
@@ -6506,7 +6534,8 @@ def save_labor_daily_history(restaurant_id: int, by_day: dict,
                     ELSE NULL END,
                 total_hours=excluded.total_hours,
                 saved_at=datetime('now')
-        """, (restaurant_id, date_str, dow, labor_pct, labor_cost, sales, actual_hours))
+        """, (restaurant_id, date_str, dow, labor_pct, labor_cost, sales, actual_hours,
+              p_src, p_prov, p_at, p_final))
     conn.commit()
     conn.close()
 

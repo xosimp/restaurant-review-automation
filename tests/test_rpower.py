@@ -323,13 +323,17 @@ def test_an_overlapping_page_is_deduplicated_not_double_counted(db_path, monkeyp
 
 
 def test_a_fully_repeating_page_stops_rather_than_looping(db_path, monkeypatch):
-    """A server that ignores pagenumber would otherwise page forever."""
+    """A server that ignores pagenumber would otherwise page forever — and a
+    FULL page repeated means rows exist that can't be read, so the read
+    fails rather than returning the first page as the whole night (DH2-6).
+    Updated: this pinned the old return-what-we-have, which stored a busy
+    night at its first thousand lines."""
     rid = _connected(db_path)
     page = [_ticketsale("100", 1.0, menuitem=f"i{n}") for n in range(rpower.PAGE_SIZE)]
     _stub_api(monkeypatch, {"salestype/getbycg": [SALE],
                             "ticketsales/getbybusinessdate": lambda p: page})
-    out = rpower.fetch_business_days(rid, "2026-09-10", "2026-09-10")
-    assert out == {"2026-09-10": float(rpower.PAGE_SIZE)}
+    with pytest.raises(rpower.RPowerError, match="truncated"):
+        rpower.fetch_business_days(rid, "2026-09-10", "2026-09-10")
 
 
 # ── business date, never time_stamp ────────────────────────────────────────

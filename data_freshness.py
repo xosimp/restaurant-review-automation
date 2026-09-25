@@ -65,6 +65,11 @@ SOURCES = {
     "competitor": {"label": "Competitors",    "expected_lag": 0.0,  "grace": 7.0, "horizon": 14},
     "weather":    {"label": "Weather",        "expected_lag": 0.0,  "grace": 1.0, "horizon": 2},
     "dsr":        {"label": "Daily report",   "expected_lag": 1.0,  "grace": 1.0, "horizon": 7},
+    # Recipe depletion from the POS's item sales (scheduler.
+    # run_daily_depletion_sync): current through yesterday when it works;
+    # one day of slack (a night it ran late) before recency falls, so
+    # "more than one day behind" is exactly where it starts to (DH2-4).
+    "depletion":  {"label": "Depletion",      "expected_lag": 1.0,  "grace": 1.0, "horizon": 7},
 }
 # How often each source is refreshed when everything works, in hours, and
 # the owner's word for it. "Live" is said only of a source refreshed more
@@ -78,7 +83,7 @@ CADENCE = {
     "purchases": (None, "when deliveries are logged"), "marketing": (24, "nightly"),
     "waste": (None, "when waste is logged"), "prices": (None, "when invoices are applied"),
     "visibility": (168, "weekly"), "competitor": (168, "weekly"), "weather": (6, "every 6 hours"),
-    "dsr": (24, "nightly, after close"),
+    "dsr": (24, "nightly, after close"), "depletion": (24, "nightly"),
 }
 LIVE_WITHIN_HOURS = 1
 
@@ -111,12 +116,15 @@ MODULE_SOURCES = {
     "demand": ("sales", "pos", "weather"),
     # Food rests on the counts, the deliveries (COGS = opening + purchases −
     # closing: deliveries that stop being logged make food cost look better,
-    # DH3-4) and the waste log (the week's waste, DH1-1). A restaurant that
-    # never logged a delivery or a waste reads those two not_connected and
-    # they leave the minimum.
-    "inventory": ("inventory", "purchases", "waste", "pos", "sales"),
-    "food": ("inventory", "purchases", "waste", "pos", "sales"),
-    "food_cost": ("inventory", "purchases", "waste", "pos", "sales"),
+    # DH3-4), the waste log (the week's waste, DH1-1) and depletion (on-hand
+    # is the last count minus depletion since, so a depletion sync that
+    # stopped overstates stock silently, DH2-4). A restaurant that never
+    # logged a delivery or a waste reads those not_connected and they leave
+    # the minimum.
+    "inventory": ("inventory", "purchases", "waste", "depletion", "pos", "sales"),
+    "food": ("inventory", "purchases", "waste", "depletion", "pos", "sales"),
+    "food_cost": ("inventory", "purchases", "waste", "depletion", "pos", "sales"),
+    "ordering": ("inventory", "depletion", "pos", "sales"),
     "marketing": ("marketing",),
     # Guest campaigns measured by guests who came back: matched through the
     # POS's orders (guest_marketing._with_confidence).
@@ -135,7 +143,7 @@ MODULE_SOURCES = {
 # advisory: it caveats. Reply drafts and social drafts rest on no source.
 BLOCKING = {
     "labor": "labor", "schedule": "labor",
-    "inventory": "inventory", "food": "inventory", "food_cost": "inventory",
+    "inventory": "inventory", "food": "inventory", "food_cost": "inventory", "ordering": "inventory",
     "dsr": "sales", "ops": "sales", "daily report": "sales",
     "demand": "sales", "campaigns": "sales",
     "reviews": "reviews", "intel": "competitor", "visibility": "visibility",
@@ -364,8 +372,9 @@ def _pos(r, conn, today, now, ctx, db_path=None):
     stamp dates it, as before. A stamp in the future is unknown, pct 0."""
     import pos_health
     s = pos_health.pos_sync_state(r, now=now)
+    today = today or _today(r, now)
     if not s.get("connected"):
-        return _result("pos", None, None, "No POS connected", state="not_connected")
+        return _disconnected_pos(r, conn, today)
     name = {"rpower": "RPOWER"}.get(s["provider"], (s["provider"] or "POS").title())
     err = s.get("error")
     if s.get("future") or s.get("unreadable"):
@@ -374,16 +383,17 @@ def _pos(r, conn, today, now, ctx, db_path=None):
                        error=err or ("sync stamp in the future" if s.get("future") else "sync stamp unreadable"),
                        provider=s["provider"], future=bool(s.get("future")))
     if not s.get("last_synced_iso"):
-        return _result("pos", None, None, f"{name} has never synced" + (f" ({str(err)[:80]})" if err else ""),
+        # Never synced: no figure rests on it yet, so it does not zero a card
+        # built from uploads (B1 H1a) — unless it has tried and FAILED, which
+        # is a POS the owner expects data from and is not getting: unknown,
+        # pct 0 (DH3-12).
+        return _result("pos", 0 if err else None, None,
+                       f"{name} has never synced" + (f" ({str(err)[:80]})" if err else ""),
                        state="unknown", error=err, provider=s["provider"], never_synced=True)
     when = ce._mdy(s["last_synced_iso"])
-    today = today or _today(r, now)
     d = None
     if conn is not None:
-        row = conn.execute("SELECT MAX(date) AS d FROM labor_daily_history WHERE restaurant_id=? "
-                           "AND sales IS NOT NULL AND sales > 0 AND date <= ?",
-                           (_rid(r), _latest_ok(today))).fetchone()
-        d = _as_date(row["d"] if row else None)
+        d = _complete_sales_date(r, conn, today)
     if d is None:
         pct = age_pct("pos", s.get("age_days"), 1.0, bool(err))
         basis = (f"{name} sync failing — last good sync {when}" if err else f"{name} synced {when}")
@@ -392,6 +402,121 @@ def _pos(r, conn, today, now, ctx, db_path=None):
     extra = (f"sync failing — last good sync {when}" if err else f"synced {when}")
     out = _data_date_state("pos", d, today, f"{name} sales through", 1.0, extra, error=err)
     out.update(provider=s["provider"], last_synced_iso=s["last_synced_iso"])
+    return out
+
+
+def _complete_sales_date(r, conn, today):
+    """The last COMPLETE business date carrying sales in the daily archive:
+    a day a pull read while it was still trading is stored final=0
+    (pos.complete_through, DH2-3) and never dates the source — "Sales
+    through" names a whole day. Rows from before provenance, and uploads,
+    carry NULL and count as final."""
+    row = conn.execute("SELECT MAX(date) AS d FROM labor_daily_history WHERE restaurant_id=? "
+                       "AND sales IS NOT NULL AND sales > 0 AND COALESCE(final, 1) = 1 AND date <= ?",
+                       (_rid(r), _latest_ok(today))).fetchone()
+    return _as_date(row["d"] if row else None)
+
+
+def _disconnected_pos(r, conn, today):
+    """No POS credentials now. One that WAS used (a provider sync stamp is
+    still on the row) is `disconnected`, dated by the recency of its last
+    data — never dropped from the minimum, so removing a failing POS can't
+    raise a card's confidence (DH3-12). Never used — or nothing on file came
+    from it, or the newest day on file was uploaded since — not connected:
+    no figure rests on it, so it must not zero a card built from uploads
+    (B6#1)."""
+    import pos_health
+    used = [n for n in pos_health.PROVIDER_NAMES if _get(r, f"{n}_last_synced")]
+    d = None
+    if used and conn is not None:
+        newest = conn.execute("SELECT source FROM labor_daily_history WHERE restaurant_id=? AND date <= ? "
+                              "ORDER BY date DESC LIMIT 1", (_rid(r), _latest_ok(today))).fetchone()
+        src = newest["source"] if newest else None
+        if not src or src in pos_health.PROVIDER_NAMES:
+            d = _complete_sales_date(r, conn, today)
+    if d is None:
+        return _result("pos", None, None, "No POS connected", state="not_connected")
+    name = {"rpower": "RPOWER"}.get(used[0], used[0].title())
+    out = _data_date_state("pos", d, today, f"{name} disconnected — sales through")
+    if out.get("state") != "unknown":
+        out["state"] = "disconnected"
+    out.update(provider=used[0], disconnected=True)
+    return out
+
+
+def _pos_of_record_error(r, conn, today, now):
+    """The POS's failure, when the POS is where this archive's figures come
+    from: a POS is connected and the newest archived day came from a POS
+    pull (or predates provenance). `sales` and `labor` inherit it, so a card
+    passing only `sales` still sees the POS is failing (DH3-5). None when
+    the POS is healthy, not connected, or the newest day was uploaded."""
+    try:
+        import pos_health
+        s = pos_health.pos_sync_state(r, now=now)
+        if not s.get("connected"):
+            return None
+        row = conn.execute("SELECT source FROM labor_daily_history WHERE restaurant_id=? AND date <= ? "
+                           "ORDER BY date DESC LIMIT 1", (_rid(r), _latest_ok(today))).fetchone()
+        src = row["source"] if row else None
+        if src and src not in pos_health.PROVIDER_NAMES:
+            return None
+        err = s.get("error")
+        if not err:
+            h = conn.execute("SELECT consecutive_failures, last_error FROM source_health WHERE restaurant_id=? "
+                             "AND source='pos'", (_rid(r),)).fetchone()
+            if h and int(h["consecutive_failures"] or 0) >= FAILING_AFTER.get("pos", 1):
+                err = h["last_error"] or "sync failing"
+        if not err:
+            return None
+        name = {"rpower": "RPOWER"}.get(s.get("provider"), (s.get("provider") or "POS").title())
+        return f"{name} sync failing ({str(err)[:80]})"
+    except Exception:
+        return None
+
+
+# The daily report's net and the POS archive's net for the same night are
+# the same figure by definition (pos.fetch_day_sales, net to net). Beyond
+# this, they disagree; SALES_MISMATCH_NIGHTS such nights in the window put
+# an error on `sales` (DH5-4). Conservative on purpose: RPOWER's field
+# mapping is still unverified live, and one late void is not a broken feed.
+SALES_MISMATCH_PCT = 2.0
+SALES_MISMATCH_DOLLARS = 50.0
+SALES_MISMATCH_NIGHTS = 2
+SALES_CONSISTENCY_DAYS = 14
+
+
+def sales_consistency(restaurant_id, days=SALES_CONSISTENCY_DAYS, db_path=None, conn=None) -> dict:
+    """{checked, mismatches: [{date, dsr, pos, diff_pct}]} — FINAL daily
+    reports (dsr_metrics sales.net) against the POS archive's sales for the
+    same business dates over the last `days`, the newest first. Re-read on
+    every call, so each POS pull re-checks every final night in the window
+    against what the POS now says (DH2-18). Never raises."""
+    own = conn is None
+    out = {"checked": 0, "mismatches": []}
+    try:
+        c = get_conn(db_path) if own else conn
+    except Exception:
+        return out
+    try:
+        rows = c.execute(
+            "SELECT m.business_date AS d, m.value AS dsr, l.sales AS pos FROM dsr_metrics m "
+            "JOIN labor_daily_history l ON l.restaurant_id=m.restaurant_id AND l.date=m.business_date "
+            "WHERE m.restaurant_id=? AND m.metric='sales.net' AND m.status='final' AND m.value IS NOT NULL "
+            "AND l.sales IS NOT NULL AND l.sales > 0 AND COALESCE(l.final, 1) = 1 "
+            "AND m.business_date >= date('now', ?) ORDER BY m.business_date DESC",
+            (restaurant_id, f"-{int(days)} days")).fetchall()
+        for r in rows:
+            dsr, pos_net = float(r["dsr"]), float(r["pos"])
+            out["checked"] += 1
+            diff = abs(dsr - pos_net)
+            if diff > SALES_MISMATCH_DOLLARS and diff > pos_net * SALES_MISMATCH_PCT / 100.0:
+                out["mismatches"].append({"date": r["d"], "dsr": round(dsr, 2), "pos": round(pos_net, 2),
+                                          "diff_pct": round(diff / pos_net * 100.0, 1)})
+    except Exception:
+        pass                     # no dsr_metrics on this database: nothing to compare
+    finally:
+        if own:
+            c.close()
     return out
 
 
@@ -419,7 +544,8 @@ def _labor(r, conn, today, now, ctx, db_path=None):
             extra = f"{max(0, days - missing)} of {days} days carry sales"
     else:
         row = conn.execute("SELECT MAX(date) AS d FROM labor_daily_history WHERE restaurant_id=? "
-                           "AND labor_cost > 0 AND date <= ?", (_rid(r), _latest_ok(today))).fetchone()
+                           "AND labor_cost > 0 AND COALESCE(final, 1) = 1 AND date <= ?",
+                           (_rid(r), _latest_ok(today))).fetchone()
         end = _as_date(row["d"] if row else None)
         if end is not None:
             start = (end - timedelta(days=LABOR_WINDOW_DAYS - 1)).isoformat()
@@ -434,18 +560,27 @@ def _labor(r, conn, today, now, ctx, db_path=None):
         # restaurant that never uploaded is not "stale"). Data on file with
         # no date is `unknown` — never fresh.
         return _result("labor", None, None, "No shifts on file", state="not_connected")
-    return _data_date_state("labor", end, today, "Shifts through", 1.0, extra)
+    return _data_date_state("labor", end, today, "Shifts through", 1.0, extra,
+                            error=_pos_of_record_error(r, conn, today, now))
 
 
 def _sales(r, conn, today, now, ctx, db_path=None):
-    """The last business date carrying sales (NULL and legacy 0 rows are no
-    sales). Recency only — see the note above _labor."""
-    row = conn.execute("SELECT MAX(date) AS d FROM labor_daily_history WHERE restaurant_id=? "
-                       "AND sales IS NOT NULL AND sales > 0 AND date <= ?",
-                       (_rid(r), _latest_ok(today))).fetchone()
-    d = _as_date(row["d"] if row else None)
+    """The last COMPLETE business date carrying sales (NULL and legacy 0
+    rows are no sales; a day pulled while still trading is not complete).
+    Recency only — see the note above _labor. Carries the POS's error when
+    the POS is the provider of record (DH3-5), and an error when final
+    daily reports and the POS archive disagree on SALES_MISMATCH_NIGHTS
+    nights (DH5-4)."""
+    d = _complete_sales_date(r, conn, today)
     if d is None:
         return _result("sales", None, None, "No sales on file", state="not_connected")
+    err = _pos_of_record_error(r, conn, today, now)
+    if not err:
+        chk = sales_consistency(_rid(r), conn=conn)
+        if len(chk["mismatches"]) >= SALES_MISMATCH_NIGHTS:
+            m = chk["mismatches"][0]
+            err = (f"Daily report and POS disagree on {len(chk['mismatches'])} nights "
+                   f"({ce._mdy(m['date'])}: ${m['dsr']:,.0f} vs ${m['pos']:,.0f})")
     note = ""
     try:
         import metrics
@@ -456,7 +591,7 @@ def _sales(r, conn, today, now, ctx, db_path=None):
             note = f"{int(round(float(cov['share']) * 100))}% of trading days carry sales"
     except Exception:
         note = ""
-    return _data_date_state("sales", d, today, "Sales through", 1.0, note)
+    return _data_date_state("sales", d, today, "Sales through", 1.0, note, error=err)
 
 
 def _reviews(r, conn, today, now, ctx, db_path=None):
@@ -471,11 +606,36 @@ def _reviews(r, conn, today, now, ctx, db_path=None):
                        future=f["future"])
     err, age, day = f["error"], f["age_days"], f["as_of_iso"]
     sampled, share, label = _review_sampling(r, db_path=db_path)
+    # A Business Profile connection being served from the Places fallback is
+    # a 5-review sample, not the complete listing — and after
+    # REVIEW_FALLBACK_SAMPLED_AT fallback fetches in a row, a failing source
+    # (DH2-9). scheduler.run_daily_fetch records each GBP attempt as `gbp`.
+    fb = _gbp_fallback_slots(r, conn)
+    if fb >= REVIEW_FALLBACK_SAMPLED_AT:
+        sampled, share = True, None
+        label = "Google reviews (sampled — Business Profile failing, Places returns 5 at a time)"
+        err = err or f"Google Business Profile failing — {fb} fetches read Places' 5-review sample"
     pct = age_pct("reviews", age, share if share is not None else 1.0, bool(err))
     basis = f"Reviews fetched {ce._mdy(day)}" + (f" — {err}" if err else "") + (
         f" · {label}" if sampled else "") + (
         f" · {int(round(share * 100))}% of Google's new reviews stored" if share is not None else "")
     return _result("reviews", pct, day, basis, error=err, sampled=sampled)
+
+
+REVIEW_FALLBACK_SAMPLED_AT = 2
+
+
+def _gbp_fallback_slots(r, conn) -> int:
+    """Consecutive review fetches that fell back from a connected Google
+    Business Profile to Places (source_health `gbp`), 0 when none."""
+    if not _get(r, "gmb_refresh_token") or conn is None:
+        return 0
+    try:
+        row = conn.execute("SELECT consecutive_failures FROM source_health WHERE restaurant_id=? AND source='gbp'",
+                           (_rid(r),)).fetchone()
+        return int(row["consecutive_failures"] or 0) if row else 0
+    except Exception:
+        return 0
 
 
 def review_fetch_state(restaurant, now=None) -> dict:
@@ -703,7 +863,19 @@ def _visibility(r, conn, today, now, ctx, db_path=None):
 
 
 def _competitor(r, conn, today, now, ctx, db_path=None):
-    d = _as_date(_get(r, "competitor_updated_at"))
+    """Dated by the last competitor read. New stamps are UTC with an offset
+    (competitor.py, DH1-16) and are dated in the restaurant's own zone;
+    older ones were written as the restaurant's local wall clock with no
+    offset, whose first ten characters are already its local date."""
+    raw = _get(r, "competitor_updated_at")
+    d = None
+    if raw and ("+" in str(raw)[10:] or str(raw).endswith("Z")):
+        at = _stamp(raw)
+        if at is not None:
+            from time_utils import restaurant_tz
+            d = at.astimezone(restaurant_tz(_get(r, "timezone") or None)).date()
+    if d is None:
+        d = _as_date(raw)
     if d is None:
         return _result("competitor", None, None, "No competitor read yet", state="not_connected")
     return _data_date_state("competitor", d, today, "Competitors read")
@@ -718,6 +890,16 @@ def _weather(r, conn, today, now, ctx, db_path=None):
     72-hour-old fallback forecast current."""
     raw = _get(r, "weather_cached_at")
     if not raw:
+        # Never fetched. Where a forecast is possible (the restaurant has a
+        # location) it is EXPECTED and missing: `unknown` — named in the
+        # caution and the prompt block — not "not applicable" (DH2-17).
+        # pct None: weather never blocks and never zeroes a card; advice
+        # simply leaves weather out. No location at all: not connected.
+        if _get(r, "google_place_id") or _get(r, "latitude"):
+            why = ("its address could not be located" if _get(r, "geocode_failed_at")
+                   else "no forecast fetched yet")
+            return _result("weather", None, None, f"Weather: {why} — forecast-based advice leaves weather out",
+                           state="unknown", never_fetched=True)
         return _result("weather", None, None, "No forecast cached", state="not_connected")
     import weather
     at = _stamp(raw, naive_tz="local")
@@ -774,6 +956,69 @@ def _dsr(r, conn, today, now, ctx, db_path=None):
     return pv
 
 
+def _depletion(r, conn, today, now, ctx, db_path=None):
+    """Recipe depletion from the POS's item sales: dated by the last business
+    date the nightly depletion sync COMPLETED (source_health `depletion`
+    data_through, written by scheduler.run_daily_depletion_sync), else by
+    the newest depletion event. Applies only to a restaurant with recipes
+    mapped. A restaurant with recipes whose depletion never ran is unknown
+    with pct None (no figure rests on it yet); its failures reach this
+    source through _with_health (DH2-4)."""
+    rid = _rid(r)
+    has_recipes = conn.execute("SELECT 1 FROM recipe_ingredients ri JOIN menu_items mi ON mi.id=ri.menu_item_id "
+                               "WHERE mi.restaurant_id=? LIMIT 1", (rid,)).fetchone()
+    sh = conn.execute("SELECT data_through FROM source_health WHERE restaurant_id=? AND source='depletion'",
+                      (rid,)).fetchone()
+    if not has_recipes and not sh:
+        return _result("depletion", None, None, "No recipes mapped — nothing is depleted from sales",
+                       state="not_connected")
+    ev = conn.execute("SELECT MAX(event_date) AS d FROM ingredient_stock_events WHERE restaurant_id=? "
+                      "AND event_type='depletion' AND event_date <= ?", (rid, _latest_ok(today))).fetchone()
+    dates = [x for x in (_as_date(sh["data_through"] if sh else None), _as_date(ev["d"] if ev else None)) if x]
+    if not dates:
+        # A POS that reports no item-level sales (Square, Clover) can never
+        # deplete: that is a fact about the integration, not a sync behind.
+        try:
+            import pos
+            import pos_health
+            prov = pos_health.pos_sync_state(r, now=now).get("provider")
+            if not prov or not hasattr(pos.get_providers().get(prov), "fetch_order_selections"):
+                return _result("depletion", None, None, "Your POS doesn't report item sales, so nothing is "
+                               "depleted from sales", state="not_connected")
+        except Exception:
+            pass
+        return _result("depletion", None, None, "Depletion from sales has not run yet", state="unknown",
+                       never_synced=True)
+    return _data_date_state("depletion", max(dates), today, "Depleted through")
+
+
+def depletion_behind(restaurant, max_days_behind=0, db_path=None, now=None):
+    """None when depletion is current (or at most `max_days_behind` business
+    days behind) or does not apply; else the owner-safe reason — for the
+    jobs that must not act on overstated stock (DH2-4): the 5am food-cost
+    snapshot (max 0: last night's depletion must have landed) and trusted
+    supplier orders (max 1: held while MORE than one day behind). Days
+    behind = the lag past yesterday. An unknown age is behind. Never raises
+    (None)."""
+    try:
+        st = source_state(restaurant, "depletion", db_path=db_path, now=now)
+    except Exception:
+        return None
+    if st.get("state") == "not_connected" or st.get("never_synced"):
+        return None
+    if st.get("state") == "unknown":
+        return st.get("basis") or "Depletion age unknown"
+    lag = st.get("lag_days")
+    if not isinstance(lag, (int, float)):
+        return None
+    behind = max(0, int(lag) - 1)
+    if behind > max_days_behind:
+        why = f" — {st['error']}" if st.get("error") else ""
+        return (f"Depletion is {behind} day{'' if behind == 1 else 's'} behind "
+                f"(through {st.get('as_of')}){why}")
+    return None
+
+
 # Consecutive failed attempts (source_health, written by
 # data_health.record_attempt) at which a source reads as failing: one for a
 # sync that runs once a day, REVIEW_SLOTS_MISSED_AT for reviews (fetched four
@@ -822,7 +1067,7 @@ def _with_health(res, key, restaurant, conn):
 _READERS = {"pos": _pos, "labor": _labor, "sales": _sales, "reviews": _reviews, "inventory": _inventory,
             "purchases": _purchases, "waste": _waste, "prices": _prices,
             "marketing": _marketing, "visibility": _visibility,
-            "competitor": _competitor, "weather": _weather, "dsr": _dsr}
+            "competitor": _competitor, "weather": _weather, "dsr": _dsr, "depletion": _depletion}
 
 
 def source_state(restaurant, key, db_path=None, now=None, context=None) -> dict:

@@ -219,7 +219,11 @@ def _coverage_world(db_path, monkeypatch, clocked):
                       db_path=db_path)
     _routed(db_path, rid)
     _week(db_path, rid, DAY, [("Dana K", "Server", "11:00am", "5:00pm")])
-    monkeypatch.setattr(time_utils, "restaurant_now", lambda r, naive=False: datetime(2026, 9, 21, 11, 40))
+    # 25 minutes past an 11:00 start: late past the grace, and inside the
+    # 30 minutes after which an EMPTY clock-in feed reads as a feed that is
+    # not reporting rather than a no-show (intraday.EMPTY_FEED_UNAVAILABLE_
+    # MINUTES, DH2-8). It was 11:40 — the empty-feed no-show that rule stops.
+    monkeypatch.setattr(time_utils, "restaurant_now", lambda r, naive=False: datetime(2026, 9, 21, 11, 25))
     monkeypatch.setattr(pos, "fetch_clock_ins_today", lambda *a: (clocked(), "toast"))
     monkeypatch.setattr(labor_replacements, "for_gap", lambda *a, **k: [{"name": "Ana", "score": 4.0}])
     return rid

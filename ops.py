@@ -77,17 +77,69 @@ CREATE TABLE IF NOT EXISTS job_runs (
     duration_ms INTEGER,
     ok INTEGER,
     error TEXT,
-    context TEXT
+    context TEXT,
+    result_json TEXT,
+    claim_job TEXT
 )
 """
+# Added to job_runs after it shipped: the sweep's counts (result_json) and
+# the claim_period job key the run was claimed under (claim_job), so a dead
+# run is reclaimed even where the claim key and the job name differ (DH2-16).
+# ALTERed at boot by init_ops; a database that already has them skips.
+_RUNS_COLUMNS = (("result_json", "TEXT"), ("claim_job", "TEXT"))
+
+# job_runs.ok: 1 ran clean, 0 failed (raised, or every restaurant it
+# attempted failed), 2 PARTIAL — some restaurants failed or the time bound
+# cut it short (DH2-1: a night on which every POS sync failed read ok=1).
+RUN_OK, RUN_FAILED, RUN_PARTIAL = 1, 0, 2
+_RESULT_KEYS = ("attempted", "ok", "failed", "skipped", "hit_bound", "held", "retried")
+_SUCCESS_KEYS = ("ok", "analysed", "checked", "synced", "written")
 
 
-def _record_run_start(name, context="", db_path=None):
+def run_outcome(result):
+    """(job_runs.ok, result_json or None) for what a job returned. A dict
+    carrying the sweep counts (_RESULT_KEYS) is judged by them: nothing
+    failed and no bound hit is 1; every attempt failed is 0; anything
+    between — or a pass the time bound cut short — is 2 (partial). Any
+    other return value is a clean run."""
+    import json as _json
+    if not isinstance(result, dict) or not any(k in result for k in _RESULT_KEYS):
+        return RUN_OK, None
+    counts = {k: result.get(k) for k in _RESULT_KEYS if k in result}
+    try:
+        failed = int(result.get("failed") or 0)
+        attempted = int(result.get("attempted") or 0)
+        if "attempted" not in result and failed:
+            # Sweeps that count their successes by their own name
+            # ({"analysed": 2, "failed": 1}): attempted is the two together.
+            attempted = failed + sum(int(v) for k, v in result.items()
+                                     if k in _SUCCESS_KEYS and isinstance(v, int) and not isinstance(v, bool))
+    except (TypeError, ValueError):
+        failed, attempted = 0, 0
+    state = RUN_OK
+    if failed and attempted and failed >= attempted:
+        state = RUN_FAILED
+    elif failed or result.get("hit_bound"):
+        state = RUN_PARTIAL
+    try:
+        blob = _json.dumps(counts, default=str)[:500]
+    except (TypeError, ValueError):
+        blob = None
+    return state, blob
+
+
+def _record_run_start(name, context="", db_path=None, claim=None):
     try:
         from models import get_conn
         conn = get_conn(db_path) if db_path else get_conn()
         conn.execute(_RUNS_SQL)
-        cur = conn.execute("INSERT INTO job_runs (job, context) VALUES (?, ?)", (str(name)[:100], str(context)[:200]))
+        try:
+            cur = conn.execute("INSERT INTO job_runs (job, context, claim_job) VALUES (?, ?, ?)",
+                               (str(name)[:100], str(context)[:200], (str(claim)[:100] if claim else None)))
+        except sqlite3.OperationalError:
+            # A database booted before claim_job existed (init_ops adds it).
+            cur = conn.execute("INSERT INTO job_runs (job, context) VALUES (?, ?)",
+                               (str(name)[:100], str(context)[:200]))
         run_id = cur.lastrowid
         conn.commit()
         conn.close()
@@ -96,7 +148,7 @@ def _record_run_start(name, context="", db_path=None):
         return None
 
 
-def _record_run_end(run_id, started, ok, error=None, db_path=None):
+def _record_run_end(run_id, started, ok, error=None, db_path=None, result_json=None):
     if run_id is None:
         return
     try:
@@ -104,9 +156,16 @@ def _record_run_end(run_id, started, ok, error=None, db_path=None):
         from ai_guard import redact_secrets
         from models import get_conn
         conn = get_conn(db_path) if db_path else get_conn()
-        conn.execute("UPDATE job_runs SET finished_at=datetime('now'), duration_ms=?, ok=?, error=? WHERE id=?",
-                     (int((_time.time() - started) * 1000), 1 if ok else 0,
-                      (redact_secrets(str(error))[:500] if error else None), run_id))
+        if isinstance(ok, bool) or ok not in (RUN_OK, RUN_FAILED, RUN_PARTIAL):
+            ok = RUN_OK if ok else RUN_FAILED
+        args = (int((_time.time() - started) * 1000), ok,
+                (redact_secrets(str(error))[:500] if error else None))
+        try:
+            conn.execute("UPDATE job_runs SET finished_at=datetime('now'), duration_ms=?, ok=?, error=?, "
+                         "result_json=? WHERE id=?", args + (result_json, run_id))
+        except sqlite3.OperationalError:
+            conn.execute("UPDATE job_runs SET finished_at=datetime('now'), duration_ms=?, ok=?, error=? "
+                         "WHERE id=?", args + (run_id,))
         conn.commit()
         conn.close()
     except Exception as e:
@@ -191,6 +250,10 @@ def init_ops(db_path=None):
     try:
         for sql in (_TABLE_SQL, _RUNS_SQL, _PERIOD_CLAIM_SQL, _ASYNC_JOB_SQL, _LEASE_SQL):
             conn.execute(sql)
+        have = {r[1] for r in conn.execute("PRAGMA table_info(job_runs)")}
+        for col, typ in _RUNS_COLUMNS:
+            if col not in have:
+                conn.execute(f"ALTER TABLE job_runs ADD COLUMN {col} {typ}")
         for sql in (
             # The retention deletes in prune_ledgers (DATA-40), and the
             # dead-run lookup in _reclaim_dead_run.
@@ -240,9 +303,18 @@ def _reclaim_dead_run(conn, job, key):
     if not row:
         return False
     claimed_at = row[0]
-    runs = conn.execute(
-        "SELECT SUM(finished_at IS NULL), SUM(finished_at IS NOT NULL) FROM job_runs "
-        "WHERE job=? AND started_at >= datetime(?, '-5 minutes')", (job, claimed_at)).fetchone()
+    # The run is found by its job name OR the claim it ran under: the
+    # "ops_digest" claim runs "ops_failure_digest", "intraday" runs six jobs,
+    # and a lookup by claim key alone never found them (DH2-16).
+    try:
+        runs = conn.execute(
+            "SELECT SUM(finished_at IS NULL), SUM(finished_at IS NOT NULL) FROM job_runs "
+            "WHERE (job=? OR claim_job=?) AND started_at >= datetime(?, '-5 minutes')",
+            (job, job, claimed_at)).fetchone()
+    except sqlite3.OperationalError:
+        runs = conn.execute(
+            "SELECT SUM(finished_at IS NULL), SUM(finished_at IS NOT NULL) FROM job_runs "
+            "WHERE job=? AND started_at >= datetime(?, '-5 minutes')", (job, claimed_at)).fetchone()
     if not runs or not runs[0] or runs[1]:
         return False
     cur = conn.execute("UPDATE job_period_claims SET claimed_at=datetime('now') "
@@ -614,31 +686,186 @@ def inflight_async_jobs(limit=20):
         return []
 
 
-def run_job(name, fn, *args, context="", db_path=None, **kwargs):
+def run_job(name, fn, *args, context="", db_path=None, claim=None, **kwargs):
     """Run a scheduled job with failure capture. Returns the job's result,
     or None if it raised. Every run — not only the failures — lands in
     job_runs (start, end, duration, ok), which is what the admin console's
     Jobs page reads; before this the only record of a job that worked was
-    the scheduler's heartbeat."""
+    the scheduler's heartbeat.
+
+    A job that returns its sweep counts ({attempted, ok, failed, skipped,
+    hit_bound}) is recorded by them (run_outcome): ok=2 (partial) when some
+    restaurants failed or the bound cut the pass short, ok=0 when every one
+    it attempted failed — never a green run over a night nothing synced
+    (DH2-1). `claim` is the claim_period job key the run was claimed under,
+    stored with it so a dead run is reclaimable by that key (DH2-16)."""
     import time as _time
     started = _time.time()
-    run_id = _record_run_start(name, context, db_path=db_path)
+    run_id = _record_run_start(name, context, db_path=db_path, claim=claim)
+    names = [name] + ([claim] if claim and claim != name else [])
     with _running_lock:
-        _running_jobs[name] = _running_jobs.get(name, 0) + 1
+        for n in names:
+            _running_jobs[n] = _running_jobs.get(n, 0) + 1
     try:
         result = fn(*args, **kwargs)
-        _record_run_end(run_id, started, True, db_path=db_path)
+        state, blob = run_outcome(result)
+        err = None
+        if state != RUN_OK and isinstance(result, dict):
+            err = (f"{result.get('failed') or 0} of {result.get('attempted') or 0} failed"
+                   + (" · stopped at its time bound" if result.get("hit_bound") else ""))
+        _record_run_end(run_id, started, state, err, db_path=db_path, result_json=blob)
         return result
     except Exception as e:
         log.error(f"Job '{name}' crashed: {e}")
         capture(e, job=name, db_path=db_path)
-        _record_run_end(run_id, started, False, e, db_path=db_path)
+        _record_run_end(run_id, started, RUN_FAILED, e, db_path=db_path)
         return None
     finally:
         with _running_lock:
-            _running_jobs[name] -= 1
-            if not _running_jobs[name]:
-                del _running_jobs[name]
+            for n in names:
+                _running_jobs[n] -= 1
+                if not _running_jobs[n]:
+                    del _running_jobs[n]
+
+
+def is_running(name) -> bool:
+    """Whether run_job is executing `name` (a job name or the claim it ran
+    under) in this process right now."""
+    with _running_lock:
+        return bool(_running_jobs.get(name))
+
+
+# ── the jobs that should have run (DH2-2) ────────────────────────────────────
+#
+# Nothing compared "jobs that should have run by now" against job_runs: a
+# loop that died after stamping its heartbeat, or a job whose gate never
+# opened, left no failure row and no stuck row. This table is the SLA — job
+# name → the most hours that may pass between SUCCESSFUL (ok 1 or partial 2)
+# runs — and jobs_overdue() is read from a REQUEST thread (/health, the admin
+# overview), never from the scheduler it is watching.
+EXPECTED_JOBS = {
+    "pos_sync": 26, "loss_sync": 26, "inventory_depletion": 26, "food_cost_snapshots": 26,
+    "marketing_metrics_sync": 26, "backup_db": 26, "data_health_daily": 26,
+    # 8am, 12pm, 4pm, 8pm Chicago: the overnight gap is 12 hours, plus a
+    # bounded pass of up to three.
+    "review_fetch": 16,
+    "daily_alerts": 3, "dsr_sweep": 1, "intraday_capture": 2, "pos_retry": 3,
+    "competitor_analysis": 8 * 24, "ai_visibility": 8 * 24,
+}
+# Heartbeat older than this is a dead or wedged loop (the pulse stamps it
+# during long jobs, so a live runner is never this old).
+HEARTBEAT_ALERT_MINUTES = 15
+# One out-of-band alert per this many minutes, however many requests see it.
+PLATFORM_ALERT_COOLDOWN_MINUTES = 60
+
+
+def jobs_overdue(now=None, db_path=None) -> list:
+    """[{job, max_hours, last_ok_at, hours_since}] for every EXPECTED_JOBS
+    entry whose last successful run is older than its SLA. A job that has
+    never succeeded counts only once job_runs is older than its SLA (a fresh
+    database is not "overdue"). `now` is a UTC "YYYY-MM-DD HH:MM:SS" (tests);
+    None is SQLite's now. Never raises: [] when unreadable."""
+    try:
+        from models import get_conn
+        conn = get_conn(db_path) if db_path else get_conn()
+    except Exception:
+        return []
+    out = []
+    try:
+        first = conn.execute("SELECT MIN(started_at) FROM job_runs").fetchone()[0]
+        if not first:
+            return []
+        rows = {r[0]: r[1] for r in conn.execute(
+            "SELECT job, MAX(finished_at) FROM job_runs WHERE ok IN (1, 2) AND finished_at IS NOT NULL "
+            "GROUP BY job").fetchall()}
+        for job, hours in EXPECTED_JOBS.items():
+            last = rows.get(job)
+            base = last or first
+            late = conn.execute("SELECT (julianday(COALESCE(?, 'now')) - julianday(?)) * 24.0",
+                                (now, base)).fetchone()[0]
+            if late is not None and late > hours:
+                out.append({"job": job, "max_hours": hours, "last_ok_at": last,
+                            "hours_since": round(float(late), 1)})
+    except Exception as e:
+        log.error(f"jobs_overdue unreadable: {e}")
+        return []
+    finally:
+        conn.close()
+    return out
+
+
+def check_platform_sla(send=True, db_path=None) -> dict:
+    """The scheduler's watchdog, run from a REQUEST thread: {heartbeat_minutes,
+    jobs_overdue, alerted}. When the heartbeat is older than
+    HEARTBEAT_ALERT_MINUTES or any expected job is overdue, Will gets one
+    email and push per PLATFORM_ALERT_COOLDOWN_MINUTES (claim_cooldown) —
+    out of band, because the failure digest is itself a job inside the loop
+    that has stopped. Only where the scheduler is meant to run
+    (scheduler.scheduling_allowed): a laptop has no scheduler and must not
+    page anyone. Owners are never contacted from here. Never raises."""
+    out = {"heartbeat_minutes": None, "jobs_overdue": [], "alerted": False}
+    try:
+        from status_manager import scheduler_heartbeat_age_minutes
+        out["heartbeat_minutes"] = scheduler_heartbeat_age_minutes()
+    except Exception:
+        pass
+    out["jobs_overdue"] = jobs_overdue(db_path=db_path)
+    hb = out["heartbeat_minutes"]
+    problems = []
+    if hb is not None and hb > HEARTBEAT_ALERT_MINUTES:
+        problems.append(f"Scheduler heartbeat is {int(hb)} minutes old — nothing scheduled is running.")
+    for j in out["jobs_overdue"]:
+        problems.append(f"{j['job']}: no successful run in {j['hours_since']:g}h (expected within {j['max_hours']}h)")
+    if not problems or not send:
+        return out
+    try:
+        import scheduler as _sched
+        if not _sched.scheduling_allowed():
+            return out
+    except Exception:
+        return out
+    if not claim_cooldown("platform_sla_alert", PLATFORM_ALERT_COOLDOWN_MINUTES):
+        return out
+    out["alerted"] = alert_will("Cavnar AI: scheduled jobs are not running", problems)
+    return out
+
+
+def alert_will(subject, lines) -> bool:
+    """Tell Will now, outside the scheduler: an email to config.will_email()
+    and a push to the admin logins' phones. Never an owner, never an SMS.
+    True when either went out."""
+    import html as _html
+    sent = False
+    try:
+        import emails as _emails
+        b = _emails.BRAND
+        body = "".join(f'<li style="margin:0 0 6px">{_html.escape(str(x))}</li>' for x in lines[:12])
+        res = _emails._send_branded(
+            config.will_email(), subject, from_label="Cavnar AI Ops", email_type="ops_platform_alert",
+            inner_html=(f'<p style="color:{b["strong"]};font-size:16px;font-weight:700;margin:0 0 12px">'
+                        f'{_html.escape(subject)}</p><ul style="color:{b["body"]};font-size:14px;'
+                        f'line-height:1.5;margin:0 0 0 18px">{body}</ul>'))
+        sent = bool(getattr(res, "ok", res))
+    except Exception as e:
+        log.error(f"alert_will email failed: {e}")
+    try:
+        from models import get_conn
+        import push as _push
+        conn = get_conn()
+        try:
+            admins = conn.execute("SELECT id, restaurant_id FROM users WHERE is_admin=1 AND is_active=1").fetchall()
+        finally:
+            conn.close()
+        by_rid = {}
+        for a in admins:
+            by_rid.setdefault(a["restaurant_id"], set()).add(a["id"])
+        for rid, ids in by_rid.items():
+            if _push.fire_push(rid, "platform_alert", subject, str(lines[0])[:180] if lines else subject,
+                               data={"tab": "home"}, user_ids=ids):
+                sent = True
+    except Exception as e:
+        log.error(f"alert_will push failed: {e}")
+    return sent
 
 
 def failures_last_24h():

@@ -481,6 +481,8 @@ def _advance(restaurant, report, trigger, now_utc, db, probed=None, carried=None
                     blk = dsr.block(dsr.UNAVAILABLE, block_name=name, detail={"error": "collector_failed"})
         store.save_block(report_id, name, blk, db_path=db, stamped_at=stamped_at)
         ctx.blocks[name] = blk
+        if name == "sales" and not (carried and name in carried):
+            _record_sales_collect(restaurant, day, blk, db)
     if crashed_any:
         store.note(report_id, "crashes", crashes, db_path=db)
 
@@ -518,12 +520,48 @@ def _advance(restaurant, report, trigger, now_utc, db, probed=None, carried=None
     # block still awaiting goes out labelled with its reason (facts.missing).
     required_missing = [n for n in REQUIRED_BLOCKS if n in awaiting]
     terminal = "provisional" if required_missing else "final"
+    if "sales" in required_missing:
+        # Waiting for sales is not a failure until the deadline; going out
+        # without them is (DH5-1).
+        _record_attempt(restaurant, False, db, error=f"Sales for {day.isoformat()} missing at the report deadline")
     store.set_stage(report_id, terminal, db_path=db)
     nxt = now_utc + timedelta(minutes=LATE_DATA_MINUTES) if required_missing else None
     store.schedule_retry(report_id, nxt, db_path=db, count=False)
     _deliver(restaurant, report_id, now_utc, db)
     return _result(terminal, store.get_report_by_id(report_id, db_path=db), awaiting=awaiting,
                    required_missing=required_missing)
+
+
+def _record_attempt(restaurant, ok, db, error=None, data_through=None):
+    """The nightly report's sales collection in the Data Health ledger
+    (source `dsr`). Never raises."""
+    try:
+        import data_health
+        from models import DB_PATH
+        name, _mod = (None, None)
+        try:
+            import pos
+            name, _mod = pos.connected_provider(restaurant.id)
+        except Exception:
+            pass
+        data_health.record_attempt(restaurant.id, "dsr", ok, provider=name, error=error,
+                                   data_through=data_through, db_path=None if db in (None, DB_PATH) else db)
+    except Exception as e:
+        log.warning("dsr sales attempt not recorded rid=%s: %s", getattr(restaurant, "id", None), e)
+
+
+def _record_sales_collect(restaurant, day, blk, db):
+    """One sales collection: READY is a success through `day`; a collector
+    that crashed, or a POS that refused the login, is a failure. AWAITING
+    (the POS still settling) is not recorded until the deadline decides it,
+    and a POS that cannot report a day this way is not a failed sync."""
+    status = (blk or {}).get("status")
+    if status == dsr.READY:
+        _record_attempt(restaurant, True, db, data_through=day.isoformat())
+    elif (blk.get("detail") or {}).get("error") == "collector_failed":
+        _record_attempt(restaurant, False, db, error="Sales collection failed")
+    elif status == dsr.UNAVAILABLE and "attention" in str(blk.get("reason") or ""):
+        _record_attempt(restaurant, False, db, error=str(blk.get("reason")))
 
 
 def _deliver(restaurant, report_id, now_utc, db):

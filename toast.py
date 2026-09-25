@@ -198,6 +198,14 @@ def get_toast_token(restaurant_id: int) -> str:
     return token
 
 
+def _http(fn, url, **kwargs):
+    """One provider call through pos.http_call: retried on a timeout, a
+    dropped connection, 429 and 5xx (Retry-After honoured), never on 401 or
+    403 (DH2-5). Every caller still names its timeout."""
+    import pos
+    return pos.http_call(fn, url, **kwargs)
+
+
 # ── Data fetching ──────────────────────────────────────────────────────────────
 
 def _headers(token: str, restaurant_guid: str) -> dict:
@@ -220,11 +228,17 @@ class ToastTruncated(RuntimeError):
     """Toast had more pages than PAGE_LIMIT; the data read is incomplete."""
 
 
-def fetch_time_entries(restaurant_id: int, start_date: date, end_date: date) -> list:
+def fetch_time_entries(restaurant_id: int, start_date: date, end_date: date,
+                       start_at: datetime = None, end_at: datetime = None) -> list:
     """
     Pull clock-in/clock-out time entries from Toast Labor API with pagination.
     Toast returns up to 100 entries per page; we loop until no nextPageToken.
     Returns a flat list of all raw Toast timeEntry dicts.
+
+    The window is whole UTC calendar days from start_date to end_date, or
+    exactly [start_at, end_at] when both (aware datetimes) are given — the
+    live clock-in feed asks for one restaurant-local business day that way
+    (DH2-8).
     """
     from models import get_restaurant
 
@@ -233,8 +247,12 @@ def fetch_time_entries(restaurant_id: int, start_date: date, end_date: date) -> 
     base  = TOAST_SANDBOX if os.getenv("TOAST_SANDBOX", "").lower() in ("1", "true") else TOAST_BASE
 
     # Toast expects RFC 3339 with +00:00 offset
-    start_iso = datetime.combine(start_date, datetime.min.time()).strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
-    end_iso   = datetime.combine(end_date, datetime.max.time().replace(microsecond=0)).strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
+    if start_at is not None and end_at is not None:
+        start_iso = start_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
+        end_iso = end_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
+    else:
+        start_iso = datetime.combine(start_date, datetime.min.time()).strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
+        end_iso   = datetime.combine(end_date, datetime.max.time().replace(microsecond=0)).strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
 
     all_entries = []
     page_token  = None
@@ -244,7 +262,7 @@ def fetch_time_entries(restaurant_id: int, start_date: date, end_date: date) -> 
         if page_token:
             params["pageToken"] = page_token
 
-        resp = requests.get(
+        resp = _http(requests.get, 
             f"{base}/labor/v1/timeEntries",
             headers=_headers(token, r.toast_restaurant_guid),
             params=params,
@@ -284,7 +302,7 @@ def fetch_business_days(restaurant_id: int, start_date: date, end_date: date) ->
     start_str = start_date.strftime("%Y%m%d")
     end_str   = end_date.strftime("%Y%m%d")
 
-    resp = requests.get(
+    resp = _http(requests.get, 
         f"{base}/businessDay/v1/businessDays",
         headers=_headers(token, r.toast_restaurant_guid),
         params={"start": start_str, "end": end_str},
@@ -300,8 +318,11 @@ def fetch_business_days(restaurant_id: int, start_date: date, end_date: date) ->
             iso = f"{bd[:4]}-{bd[4:6]}-{bd[6:8]}"
         else:
             iso = bd
-        net = day.get("netSales", 0) or 0
-        sales_by_date[iso] = float(net)
+        # A day with no netSales field is UNKNOWN — None, stored blank —
+        # never $0 (pos.py's sales contract; DH2-6). `or 0` turned a missing
+        # field into a night with no sales.
+        net = day.get("netSales")
+        sales_by_date[iso] = float(net) if net is not None else None
     return sales_by_date
 
 
@@ -362,7 +383,7 @@ def fetch_order_selections(restaurant_id: int, business_date: date) -> list:
     all_selections = []
     page = 1
     for _ in range(PAGE_LIMIT):
-        resp = requests.get(
+        resp = _http(requests.get, 
             f"{base}/orders/v2/ordersBulk",
             headers=_headers(token, r.toast_restaurant_guid),
             params={"businessDate": business_date_str, "page": page, "pageSize": 100},
@@ -438,7 +459,7 @@ def fetch_order_customers(restaurant_id: int, business_date: date) -> list:
     seen = set()
     page = 1
     for _ in range(20):
-        resp = requests.get(
+        resp = _http(requests.get, 
             f"{base}/orders/v2/ordersBulk",
             headers=_headers(token, r.toast_restaurant_guid),
             params={"businessDate": business_date_str, "page": page, "pageSize": 100},
@@ -501,7 +522,7 @@ def _sales_category_names(restaurant_id, token, guid, base) -> dict:
     leaves the names unresolved (the DSR shows them as unmapped) rather than
     failing the whole day's figures."""
     try:
-        resp = requests.get(f"{base}/config/v2/salesCategories", headers=_headers(token, guid), timeout=30)
+        resp = _http(requests.get, f"{base}/config/v2/salesCategories", headers=_headers(token, guid), timeout=30)
         resp.raise_for_status()
         body = resp.json() or []
         return {c.get("guid"): (c.get("name") or "").strip() for c in body if isinstance(c, dict) and c.get("guid")}
@@ -553,7 +574,7 @@ def fetch_day_sales(restaurant_id: int, business_date: date) -> dict:
     orders = []
     page = 1
     for _ in range(PAGE_LIMIT):
-        resp = requests.get(
+        resp = _http(requests.get, 
             f"{base}/orders/v2/ordersBulk",
             headers=_headers(token, r.toast_restaurant_guid),
             params={"businessDate": business_date_str, "page": page, "pageSize": 100},
@@ -679,6 +700,94 @@ def _toast_name(emp: dict) -> str:
     return f"{first} {last}".strip()
 
 
+# ── Who each time entry belongs to (DH2-7) ──────────────────────────────────
+#
+# Toast's Labor API time entries identify the person and the job by
+# reference — employeeReference.guid, jobReference.guid — and normalise_entries
+# read expanded employee/jobReference names only. With references alone every
+# shift became "Unknown" / "Staff": one merged employee, phantom 1.5x overtime,
+# and an empty clock-in feed. So names are resolved through the employees and
+# jobs endpoints (once per sync, cached for the pull), and a pull where more
+# than UNRESOLVED_MAX_SHARE of the entries still have no person FAILS rather
+# than saving "Unknown".
+# UNVERIFIED against a live Toast response: whether the entries carry
+# references only, or expanded names as the test fixtures assume. Confirm on
+# the first live Toast labor pull before trusting either path.
+EMPLOYEE_RESOLUTION_UNVERIFIED = True
+UNRESOLVED_MAX_SHARE = 0.05
+
+
+class ToastUnresolved(RuntimeError):
+    """Too many time entries could not be matched to a Toast employee."""
+
+
+def _fetch_people(restaurant_id: int, cache: dict) -> dict:
+    """{"employees": {guid: employee dict}, "jobs": {guid: title}} — read once
+    per `cache` (one sync or one clock-in read)."""
+    if "employees" in cache:
+        return cache
+    from models import get_restaurant
+    r = get_restaurant(restaurant_id)
+    token = get_toast_token(restaurant_id)
+    base = TOAST_SANDBOX if os.getenv("TOAST_SANDBOX", "").lower() in ("1", "true") else TOAST_BASE
+    emps, jobs = {}, {}
+    resp = _http(requests.get, f"{base}/labor/v1/employees", headers=_headers(token, r.toast_restaurant_guid),
+                 timeout=30)
+    resp.raise_for_status()
+    for e in resp.json() or []:
+        if isinstance(e, dict) and e.get("guid"):
+            emps[e["guid"]] = e
+    resp = _http(requests.get, f"{base}/labor/v1/jobs", headers=_headers(token, r.toast_restaurant_guid),
+                 timeout=30)
+    resp.raise_for_status()
+    for j in resp.json() or []:
+        if isinstance(j, dict) and j.get("guid"):
+            jobs[j["guid"]] = j.get("title") or j.get("name")
+    cache.update(employees=emps, jobs=jobs)
+    return cache
+
+
+def resolve_people(restaurant_id: int, entries: list, cache: dict = None) -> int:
+    """Give every entry that carries only an employeeReference / jobReference
+    GUID its person and job title, in place. Returns how many entries still
+    have no person. Calls Toast only when some entry needs it."""
+    cache = {} if cache is None else cache
+    needs = [e for e in entries or []
+             if not _toast_name(e.get("employee") or {}) and (e.get("employeeReference") or {}).get("guid")
+             or (not (e.get("jobReference") or {}).get("name") and (e.get("jobReference") or {}).get("guid"))]
+    if needs:
+        _fetch_people(restaurant_id, cache)
+    unresolved = 0
+    for e in entries or []:
+        if not _toast_name(e.get("employee") or {}):
+            guid = (e.get("employeeReference") or {}).get("guid")
+            emp = (cache.get("employees") or {}).get(guid) if guid else None
+            if emp and _toast_name(emp):
+                e["employee"] = emp
+            else:
+                unresolved += 1
+        jr = e.get("jobReference") or {}
+        if not jr.get("name") and jr.get("guid"):
+            title = (cache.get("jobs") or {}).get(jr["guid"])
+            if title:
+                e["jobReference"] = {**jr, "name": title}
+    return unresolved
+
+
+def _require_resolved(restaurant_id: int, entries: list, cache: dict = None) -> list:
+    """resolve_people, then fail when more than UNRESOLVED_MAX_SHARE of the
+    entries have no person: saved as "Unknown" they merge into one employee
+    with false overtime (DH2-7)."""
+    n = len(entries or [])
+    if not n:
+        return entries or []
+    unresolved = resolve_people(restaurant_id, entries, cache)
+    if unresolved and unresolved / float(n) > UNRESOLVED_MAX_SHARE:
+        raise ToastUnresolved(f"{unresolved} of {n} Toast time entries could not be matched to an employee; "
+                              "nothing was saved from this read")
+    return entries
+
+
 def normalise_entries(time_entries: list, sales_by_date: dict, tz=None) -> list:
     """
     Convert raw Toast timeEntry objects into dicts matching the CSV schema
@@ -775,7 +884,7 @@ def build_shifts_csv(restaurant_id: int, days: int = 60) -> str:
     end   = date.today()
     start = end - timedelta(days=days)
 
-    time_entries = fetch_time_entries(restaurant_id, start, end)
+    time_entries = _require_resolved(restaurant_id, fetch_time_entries(restaurant_id, start, end))
     sales        = fetch_business_days(restaurant_id, start, end)
     rows         = normalise_entries(time_entries, sales, tz=_tz_for(restaurant_id))
 
@@ -919,9 +1028,26 @@ def fetch_clock_ins_today(restaurant_id: int, business_date: date) -> list:
     """Everyone clocked in today: [{"employee", "role", "clocked_in_at"}].
 
     Names come from the same Toast employee record build_shifts_csv uses, so
-    they match the names in a generated schedule."""
+    they match the names in a generated schedule.
+
+    The window is the restaurant's own business day — BUSINESS_DAY_START_HOUR
+    local to the same hour the next day, converted to UTC — not the UTC
+    calendar date: a Pacific dinner clock-in after 5pm fell outside "today",
+    and yesterday's evening fell inside it (DH2-8). An entry Toast files
+    under another businessDate is not today's."""
+    from time_utils import restaurant_tz, BUSINESS_DAY_START_HOUR
+    tz = _tz_for(restaurant_id) or restaurant_tz(None)
+    start_local = datetime.combine(business_date, datetime.min.time()).replace(
+        hour=BUSINESS_DAY_START_HOUR, tzinfo=tz)
+    end_local = start_local + timedelta(days=1) - timedelta(seconds=1)
+    entries = fetch_time_entries(restaurant_id, business_date, business_date,
+                                 start_at=start_local, end_at=end_local) or []
+    want = business_date.strftime("%Y%m%d")
+    entries = [e for e in entries if not str(e.get("businessDate") or "").strip()
+               or str(e.get("businessDate")).strip() == want]
+    _require_resolved(restaurant_id, entries)
     rows = []
-    for entry in fetch_time_entries(restaurant_id, business_date, business_date) or []:
+    for entry in entries:
         name = _toast_name(entry.get("employee") or {})
         if not name:
             continue

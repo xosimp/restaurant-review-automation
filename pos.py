@@ -10,6 +10,8 @@ implementing this module's PROVIDER_API and adding one registry line — not
 copying 500 lines and hoping every call site notices.
 """
 import logging
+import threading
+import time
 
 log = logging.getLogger("pos")
 
@@ -75,23 +77,121 @@ def get_providers():
 
 
 def connected_provider(restaurant_id):
-    """(name, module) for the first provider this restaurant is connected to,
-    else (None, None)."""
+    """(name, module) for the provider this restaurant's POS data comes from,
+    else (None, None). With credentials for more than one (a migration), the
+    ONE primary provider pos_health.primary_provider names — the same one
+    every freshness reading reads — so the nightly sync, the DSR, depletion
+    and the freshness line never read different providers (DH2-13)."""
+    connected = []
     for name, mod in get_providers().items():
         try:
             if mod.is_connected(restaurant_id):
-                return name, mod
+                connected.append((name, mod))
         except Exception as e:
             log.error(f"pos.is_connected crashed for {name}: {e}")
-    return None, None
+    if not connected:
+        return None, None
+    if len(connected) == 1:
+        return connected[0]
+    try:
+        import pos_health
+        from models import get_restaurant
+        pick = pos_health.primary_provider(get_restaurant(restaurant_id), [n for n, _m in connected])
+    except Exception as e:
+        log.warning(f"primary POS provider unreadable for {restaurant_id}: {e}")
+        pick = None
+    return next(((n, m) for n, m in connected if n == pick), connected[0])
 
 
-def sync_restaurant(restaurant_id, trigger="nightly"):
+# ── HTTP with retries (Toast, Square, Clover) ───────────────────────────────
+#
+# Toast, Square and Clover each made one attempt per call, so one 429 or 503
+# at 3:02am failed a 60-day sync until 3am the next night (DH2-5). RPOWER has
+# its own backoff (rpower._request). Retried: a connection error or timeout,
+# 429 and 5xx — with Retry-After honoured, capped. Never a 401 or 403: bad
+# credentials are bad on the third try too, and the owner has to reconnect.
+HTTP_TRIES = 3
+HTTP_BACKOFF_SECONDS = 1.0
+HTTP_RETRY_AFTER_MAX = 30.0
+_sleep = time.sleep          # module-level so a test can skip the waits
+
+
+def http_call(fn, url, *, timeout, tries=HTTP_TRIES, **kwargs):
+    """`fn(url, timeout=timeout, **kwargs)` — requests.get or requests.post,
+    passed resolved at the call site — with up to `tries` attempts. Returns
+    the last response (the caller still raise_for_status()es it); re-raises
+    the last connection error. Every call names its timeout (CLAUDE.md)."""
+    import requests
+    for attempt in range(max(1, tries)):
+        last = attempt + 1 >= max(1, tries)
+        wait = HTTP_BACKOFF_SECONDS * (2 ** attempt)
+        try:
+            resp = fn(url, timeout=timeout, **kwargs)
+        except (requests.ConnectionError, requests.Timeout):
+            if last:
+                raise
+            _sleep(wait)
+            continue
+        status = getattr(resp, "status_code", 200) or 200
+        if (status == 429 or status >= 500) and not last:
+            try:
+                ra = float((getattr(resp, "headers", None) or {}).get("Retry-After") or 0)
+            except (TypeError, ValueError):
+                ra = 0.0
+            _sleep(min(HTTP_RETRY_AFTER_MAX, max(wait, ra)))
+            continue
+        return resp
+    return resp
+
+
+# ── when a business day is complete (DH2-3) ─────────────────────────────────
+
+def complete_through(restaurant, now_local=None):
+    """The last business date that had ENDED at `now_local` (the
+    restaurant's naive local time): its close from the restaurant's hours
+    when it has them, else the BUSINESS_DAY_START_HOUR boundary. A pull at
+    3am Chicago is 1am in Los Angeles — the night before is still trading,
+    and a day read before it closed must not be stored or dated as whole."""
+    from datetime import timedelta
+    from time_utils import restaurant_now, business_date, open_service_day, service_window, \
+        BUSINESS_DAY_START_HOUR
+    local = now_local or restaurant_now(restaurant, naive=True)
+    day = business_date(restaurant, local)
+    if open_service_day(restaurant, local) is None and local.hour < BUSINESS_DAY_START_HOUR:
+        try:
+            window = service_window(restaurant, day)
+        except Exception:
+            window = None
+        if window and window[1] <= local:
+            return day                   # it closed already: last night is whole
+    return day - timedelta(days=1)
+
+
+def _complete_through_for(restaurant_id):
+    try:
+        from models import get_restaurant
+        r = get_restaurant(restaurant_id)
+        return complete_through(r) if r is not None else None
+    except Exception:
+        return None
+
+
+# Automatic recovery (DH5-7): a failed sync is retried this many hours after
+# each failure — +1h after the nightly one, then +3h, then +6h — by the
+# hourly retry sweep (scheduler.run_pos_retry, until 11am local). Never
+# after an auth failure: that waits for the owner to reconnect.
+RETRY_DELAYS_HOURS = (1, 3, 6)
+
+
+def sync_restaurant(restaurant_id, trigger="nightly", attempt=0):
     """Sync whichever POS this restaurant uses. Uniform result shape. Every
     attempt — the nightly sweep, a retry, a "Sync now" — is recorded in the
     Data Health ledger (data_health.record_attempt), so a sync that failed or
-    never ran is never read as a quiet night."""
+    never ran is never read as a quiet night. data_through is the last
+    COMPLETE business date the pull covered (complete_through), and a failure
+    sets next_retry_at from RETRY_DELAYS_HOURS[attempt] (0 = the first)."""
     import time as _time
+    from datetime import datetime, timedelta, timezone
     name, mod = connected_provider(restaurant_id)
     if not mod:
         return {"ok": False, "provider": None, "error": "No POS connected"}
@@ -104,51 +204,104 @@ def sync_restaurant(restaurant_id, trigger="nightly"):
         result = {"ok": False, "provider": name, "error": str(e)}
     try:
         import data_health
-        data_health.record_attempt(restaurant_id, "pos", bool(result.get("ok")), provider=name,
-                                   error=None if result.get("ok") else result.get("error"),
-                                   data_through=result.get("data_through"),
+        ok = bool(result.get("ok"))
+        err = None if ok else result.get("error")
+        klass = None if ok else ("auth" if result.get("auth") else data_health.classify_error(err))
+        retry_at = None
+        if not ok and klass != "auth" and 0 <= int(attempt or 0) < len(RETRY_DELAYS_HOURS):
+            retry_at = (datetime.now(timezone.utc) + timedelta(hours=RETRY_DELAYS_HOURS[int(attempt or 0)])
+                        ).strftime("%Y-%m-%d %H:%M:%S")
+        through = result.get("data_through") or (_complete_through_for(restaurant_id) if ok else None)
+        data_health.record_attempt(restaurant_id, "pos", ok, provider=name, error=err, error_class=klass,
+                                   data_through=through, next_retry_at=retry_at,
                                    duration_ms=int((_time.monotonic() - t0) * 1000))
     except Exception as e:
         log.warning(f"POS sync attempt not recorded for {restaurant_id}: {e}")
+    if result.get("ok"):
+        _recheck_sales_consistency(restaurant_id)
     return result
 
 
+def _recheck_sales_consistency(restaurant_id):
+    """After a successful pull: final nightly reports whose net no longer
+    matches the POS archive (a late void, a check closed after the report)
+    reach the operator (DH2-18). The owner-facing half is the `sales`
+    freshness source, which reads the same check (data_freshness
+    .sales_consistency). Never raises."""
+    try:
+        import data_freshness
+        chk = data_freshness.sales_consistency(restaurant_id)
+        if chk.get("mismatches"):
+            import ops
+            m = chk["mismatches"][0]
+            ops.capture(RuntimeError(f"Daily report net ${m['dsr']:,.2f} vs POS ${m['pos']:,.2f} on {m['date']} "
+                                     f"({len(chk['mismatches'])} night(s) apart)"),
+                        job="dsr_pos_consistency", context=f"restaurant_id={restaurant_id}")
+    except Exception as e:
+        log.warning(f"sales consistency re-check skipped for {restaurant_id}: {e}")
+
+
 POS_SYNC_MAX_SECONDS = 45 * 60
+# The fetch is network-bound (a 60-day pull per restaurant); the SQLite write
+# section (save_synced_shifts) holds _WRITE_LOCK, so four fetches overlap and
+# one restaurant at a time writes (DH5-7).
+POS_SYNC_WORKERS = int(__import__("os").getenv("POS_SYNC_WORKERS", "4"))
+_WRITE_LOCK = threading.RLock()
 
 
-def sync_all():
-    """Nightly: sync every restaurant that has ANY provider connected —
-    not just Toast. One restaurant failing never blocks the rest."""
-    from models import get_all_restaurants
+def sync_all(stats=None):
+    """Nightly: sync every restaurant in service (models.in_service — the
+    one eligibility rule every sync job uses, DH2-12) that has ANY provider
+    connected. One restaurant failing never blocks the rest. Returns one
+    result per restaurant attempted, in sweep order; `stats` (a dict), when
+    given, is filled with {attempted, ok, failed, skipped, hit_bound} for
+    job_runs."""
+    from models import get_all_restaurants, in_service
     import ops
     import scheduler
-    results = []
-    # Paying or trialling restaurants only: a churned restaurant's POS was
-    # still called every night (MOD-LAB-9). Bounded and resumable like the
-    # review fetch: one long provider call no longer holds the whole pass,
-    # and the next pass starts where this one stopped.
-    live = {r.id: r for r in get_all_restaurants()
-            if (getattr(r, "billing_status", None) or "trial").lower() in ("trial", "active", "past_due")}
+    by_rid, lock = {}, threading.Lock()
+    counts = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0}
+    # Bounded and resumable like the review fetch: one long provider call no
+    # longer holds the whole pass, and the next pass starts where this one
+    # stopped.
+    live = {r.id: r for r in get_all_restaurants() if in_service(r)}
 
     def _one(rid):
         r = live[rid]
         name, mod = connected_provider(rid)
         if not mod:
+            with lock:
+                counts["skipped"] += 1
             return
         result = sync_restaurant(rid)
-        results.append({"restaurant": r.name, **result})
+        with lock:
+            by_rid[rid] = {"restaurant": r.name, **result}
+            counts["attempted"] += 1
+            counts["ok" if result["ok"] else "failed"] += 1
         if result["ok"]:
             log.info(f"POS sync OK [{name}] {r.name} — {result.get('rows', '?')} rows")
         else:
             log.warning(f"POS sync failed [{name}] {r.name}: {result.get('error')}")
             ops.capture(Exception(result.get("error", "unknown")),
-                        job="pos_sync", context=f"{name} {r.name}")
+                        job="pos_sync", context=f"restaurant_id={rid} {name} {r.name}")
         try:
             note_sync_failure(rid)
         except Exception as e:
             log.warning(f"POS sync-failure note skipped for {rid}: {e}")
-    scheduler.resumable_sweep("pos_sync", list(live), _one, max_seconds=POS_SYNC_MAX_SECONDS, job="pos_sync")
-    return results
+    order = scheduler._fetch_order(list(live), key="pos_sync")
+    _done, hit_bound = scheduler.resumable_sweep("pos_sync", list(live), _one, max_seconds=POS_SYNC_MAX_SECONDS,
+                                                 workers=POS_SYNC_WORKERS, job="pos_sync")
+    if hit_bound:
+        # The restaurants not reached tonight lead the next pass (the
+        # cursor), and the retry sweep picks up nothing for them — so the
+        # operator hears it (DH2-5).
+        ops.capture(RuntimeError(f"POS sync covered {counts['attempted'] + counts['skipped']} of {len(live)} "
+                                 f"restaurants before the {POS_SYNC_MAX_SECONDS}s bound; the rest lead the "
+                                 "next pass"), job="pos_sync", context="time_bound")
+    counts["hit_bound"] = bool(hit_bound)
+    if isinstance(stats, dict):
+        stats.update(counts)
+    return [by_rid[rid] for rid in order if rid in by_rid]
 
 
 # A sync failing this long, with no success in between, is the owner's to
@@ -201,6 +354,19 @@ def note_sync_failure(restaurant_id, now=None):
     return True
 
 
+def _serialized_write(fn):
+    """Hold _WRITE_LOCK for the whole call: the nightly sweep fetches four
+    restaurants at once, and this is the section that writes SQLite."""
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with _WRITE_LOCK:
+            return fn(*args, **kwargs)
+    return wrapper
+
+
+@_serialized_write
 def save_synced_shifts(restaurant_id, csv_str, source):
     """Store a provider's synced window and archive its per-day history.
 
@@ -211,9 +377,11 @@ def save_synced_shifts(restaurant_id, csv_str, source):
       are kept; inside it, the POS is the record.
     - Only Toast archived labor_daily_history (what YoY and trends read), so
       Square and Clover restaurants never accumulated history (MOD-LAB-8).
-    Returns the number of shift rows the synced window carried."""
+    Returns the number of shift rows the synced window carried. Serialized
+    by _WRITE_LOCK (the sweep's fetches run four at a time)."""
     import csv as _csv
     import io as _io
+    from datetime import datetime, timezone
     from labor import load_shifts, drop_future_shifts
     from models import get_client_data, save_client_data
     # A provider row dated after the restaurant's today is a clock or data
@@ -244,7 +412,16 @@ def save_synced_shifts(restaurant_id, csv_str, source):
         # The per-day archive takes the whole synced file; the period
         # snapshot (what the labor alert reads) is the current window.
         from labor import full_history_by_day
-        save_labor_daily_history(restaurant_id, full_history_by_day(restaurant_id))
+        # Provenance for the days this pull covered (DH1-9): which provider,
+        # when, and whether the business day had ENDED when it was read — a
+        # day still trading at pull time is stored provisional (final=0), and
+        # freshness dates the POS by its complete days only (DH2-3).
+        ct = _complete_through_for(restaurant_id)
+        prov = {"source": source, "provider": source,
+                "synced_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                "window": (dates[0], dates[-1]) if dates else None,
+                "complete_through": ct.isoformat() if ct else None}
+        save_labor_daily_history(restaurant_id, full_history_by_day(restaurant_id), provenance=prov)
         analysis = analyse_shifts_for_restaurant(restaurant_id)
         dr = analysis.get("date_range", {})
         if dr.get("start") and dr.get("end"):

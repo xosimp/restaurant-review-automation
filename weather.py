@@ -273,10 +273,15 @@ def _periods_by_date(restaurant, db_path=DB_PATH):
                 "weather_cached_at": fetched,
             }, db_path=db_path)
             periods_as_of = fetched
+            _record(restaurant, True, db_path=db_path, data_through=fetched[:10])
         else:
             if failure != "backing_off":
                 _back_off(key, _NOT_COVERED_BACKOFF_SECS if failure == "not_covered"
                           else _TRANSIENT_BACKOFF_SECS)
+                # Only a real attempt is recorded; a back-off is not one.
+                _record(restaurant, False, db_path=db_path,
+                        error=("NWS does not cover this location" if failure == "not_covered"
+                               else "NWS did not answer"))
             periods = _stale_periods(restaurant) or []
 
     by_day, by_night = {}, {}
@@ -288,6 +293,19 @@ def _periods_by_date(restaurant, db_path=DB_PATH):
                 p["_as_of"] = as_of
                 (by_day if p.get("isDaytime") else by_night)[pdate] = p
     return by_day, by_night
+
+
+def _record(restaurant, ok, db_path=DB_PATH, error=None, data_through=None):
+    """Every real forecast fetch in the Data Health ledger (source
+    `weather`): weather is fetched on read, so nothing recorded whether it
+    worked (DH3-13). Never raises."""
+    try:
+        import data_health
+        data_health.record_attempt(getattr(restaurant, "id", None), "weather", ok, provider="nws", error=error,
+                                   data_through=data_through,
+                                   db_path=None if db_path == DB_PATH else db_path)
+    except Exception:
+        pass
 
 
 def _row(d, p):

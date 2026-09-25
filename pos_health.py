@@ -109,6 +109,43 @@ def provider_state(r, name, now=None) -> dict:
     return out
 
 
+def primary_provider(r, names=None, now=None):
+    """The ONE provider a restaurant's POS data comes from — what the nightly
+    sync dispatches to (pos.connected_provider) and what every freshness
+    reading reads (pos_sync_state), so the two can never name different
+    providers during a migration (DH2-13). `names` limits the choice to
+    providers the caller knows are connected (default: every provider whose
+    credentials are on the row).
+
+    The owner's recorded POS (restaurants.pos_system) when it names one of
+    them; else the one with the freshest sync stamp (a restaurant that moved
+    from Toast to RPOWER is not judged on a dead Toast stamp, re-audit
+    B3#16), ties in PROVIDER_NAMES order. None when nothing is connected."""
+    now = now or datetime.now(timezone.utc)
+    cands = [n for n in PROVIDER_NAMES if (n in names if names is not None else _connected(r, n))]
+    if names is not None:
+        cands += [n for n in names if n not in cands]
+    if not cands:
+        return None
+    if len(cands) == 1:
+        return cands[0]
+    named = str(_get(r, "pos_system") or "").strip().lower()
+    if named in cands:
+        return named
+    best = None
+    for name in cands:
+        stamp = parse_stamp(_get(r, f"{name}_last_synced"))
+        age = None
+        if stamp is not None:
+            age = (now - stamp).total_seconds() / 86400.0
+            if age < -FUTURE_TOLERANCE_DAYS:
+                age = None
+        rank = (age is not None, -(age or 0.0))
+        if best is None or rank > best[0]:
+            best = (rank, name)
+    return best[1]
+
+
 def pos_sync_state(r, now=None) -> dict:
     """{provider, connected, last_synced, last_synced_iso, age_days, error,
     state, pct, future} for the restaurant's POS. state: not_connected |
@@ -123,16 +160,10 @@ def pos_sync_state(r, now=None) -> dict:
            "age_days": None, "error": None, "state": "not_connected",
            "pct": None, "future": False, "unreadable": False}
     try:
-        best = None
-        for name in PROVIDER_NAMES:
-            if not _connected(r, name):
-                continue
-            st = provider_state(r, name, now=now)
-            # Stamped beats unstamped; then the freshest; ties keep the order.
-            rank = (st.get("age_days") is not None, -(st.get("age_days") or 0.0))
-            if best is None or rank > best[0]:
-                best = (rank, st)
-        return best[1] if best is not None else out
+        # The primary provider (primary_provider): the owner's recorded POS,
+        # else the freshest stamp — the same one the nightly sync uses.
+        name = primary_provider(r, now=now)
+        return provider_state(r, name, now=now) if name else out
     except Exception as e:
         print(f"[pos_health] unreadable: {e}")
         out["state"] = "unknown"

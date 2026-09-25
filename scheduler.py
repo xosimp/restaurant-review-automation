@@ -424,6 +424,8 @@ def run_daily_fetch():
             gbp_listing = None      # (location_id, the GbpReviews it returned)
             places_total = None     # Google's user_ratings_total, Places path
             gmb_failed_reason = None
+            gbp_revoked = False     # the revoked-token branch told the owner itself
+            fetch_error = None
 
             if restaurant.gmb_refresh_token:
                 try:
@@ -442,6 +444,7 @@ def run_daily_fetch():
                         # expired refresh token used to land here and be
                         # indistinguishable from "nothing new today".
                         gmb_failed_reason = "Google refresh token is no longer valid (revoked, or expired)"
+                        gbp_revoked = True
                         # Tell the OWNER, once a week. Until now this reached
                         # Will's failure digest and status_manager, while the
                         # owner's dashboard kept showing last week's reviews
@@ -515,6 +518,7 @@ def run_daily_fetch():
                             fetched_ok = True
                             log.warning(f"GMB unusable for {restaurant.name}; served from Places instead")
                         except Exception as e:
+                            fetch_error = f"Places fallback failed: {str(e)[:160]}"
                             log.error(f"Places fallback [{restaurant.name}]: {e}")
                             _ops.capture(e, job="review_fetch", context=f"Places fallback {restaurant.name}")
 
@@ -525,6 +529,7 @@ def run_daily_fetch():
                     places_total = getattr(_pl, "total", None)
                     fetched_ok = True
                 except Exception as e:
+                    fetch_error = f"Google fetch failed: {str(e)[:160]}"
                     log.error(f"Google fetch [{restaurant.name}]: {e}")
                     _ops.capture(e, job="review_fetch", context=f"Google {restaurant.name}")
 
@@ -535,6 +540,8 @@ def run_daily_fetch():
                 update_last_fetched(rid)
             else:
                 log.warning(f"Review fetch did not complete for {restaurant.name} — last_fetched_at left stale on purpose")
+            _record_review_fetch(restaurant, fetched_ok, gbp_listing is not None, gmb_failed_reason,
+                                 gbp_revoked, fetch_error)
 
             new_count, new_reviews = 0, []
             downgraded = []
@@ -719,7 +726,10 @@ def run_daily_fetch():
         order = _fetch_order([r["id"] for r in live])
         by_id = {r["id"]: r for r in live}
 
+        failed = {"n": 0}
+
         def _failed(row, e):
+            failed["n"] += 1
             log.error(f"Review cycle failed for restaurant {row['id']}: {e}")
             _ops.capture(e, job="review_fetch", context=f"restaurant_id={row['id']}")
 
@@ -744,10 +754,58 @@ def run_daily_fetch():
                              f"before the {FETCH_MAX_SECONDS}s bound. The rest start "
                              f"the next pass — see _fetch_order."),
                 job="review_fetch", context="time_bound")
-        return {"restaurants": len(live), "processed": done, "hit_time_bound": ran_out}
+        return {"restaurants": len(live), "processed": done, "hit_time_bound": ran_out,
+                "attempted": done + failed["n"], "ok": done, "failed": failed["n"], "hit_bound": ran_out}
 
     except Exception as e:
+        # Captured AND re-raised (DH2-1): logged only, a pass that never
+        # started — a locked database, a bad import — was a green job_runs row.
         log.error(f"Daily fetch error: {e}")
+        _ops.capture(e, job="review_fetch", context="outer")
+        raise
+
+
+# A connected Business Profile served from the Places fallback this many
+# fetches in a row — whatever the cause — tells the owner (connection_lost,
+# at most weekly), not only the operator: replies can't post and only five
+# reviews arrive a fetch (DH2-9). Four fetches is one day.
+GBP_FALLBACK_ALERT_SLOTS = 4
+
+
+def _record_review_fetch(restaurant, fetched_ok, gbp_ok, gmb_failed_reason, gbp_revoked, fetch_error):
+    """Record one review fetch in the Data Health ledger: `reviews` (with
+    how it was fetched — gbp, places_fallback or places — as its provider)
+    and, for a Business Profile connection, `gbp` (whose consecutive
+    failures are the fallback slots data_freshness reads as a sampled,
+    failing source). Then the owner alert after GBP_FALLBACK_ALERT_SLOTS.
+    Never raises."""
+    rid = restaurant.id
+    try:
+        import data_health
+        mode = "gbp" if gbp_ok else ("places_fallback" if restaurant.gmb_refresh_token else "places")
+        if restaurant.gmb_refresh_token:
+            data_health.record_attempt(rid, "gbp", bool(gbp_ok), provider="gbp",
+                                       error=None if gbp_ok else (gmb_failed_reason or "Business Profile fetch failed"))
+        data_health.record_attempt(rid, "reviews", bool(fetched_ok), provider=mode,
+                                   error=None if fetched_ok else (fetch_error or gmb_failed_reason
+                                                                  or "review fetch failed"))
+        if not restaurant.gmb_refresh_token or gbp_ok or gbp_revoked:
+            return
+        fails = int((data_health.health_rows(rid).get("gbp") or {}).get("consecutive_failures") or 0)
+        if fails >= GBP_FALLBACK_ALERT_SLOTS and _ops.claim_period(f"connection_lost:{rid}",
+                                                                   _chi_now().strftime("%G-W%V")):
+            import notify as _nf
+            _nf.raise_alert(
+                rid, "connection_lost",
+                f"Cavnar AI: Google Business Profile isn't answering — reviews for {restaurant.name} "
+                "are coming in five at a time.",
+                f"Google needs attention — {restaurant.name}",
+                lines=["Your Google Business Profile connection has not answered for the last "
+                       f"{fails} review checks, so Cavnar is reading the five most recent reviews from "
+                       "Google Maps instead. Replies cannot post until it answers again.",
+                       "Open Account → Connections and reconnect Google."])
+    except Exception as e:
+        log.warning(f"review fetch not recorded for {rid}: {e}")
 
 
 
@@ -1038,12 +1096,97 @@ def run_toast_sync():
     """
     try:
         import pos
-        results = pos.sync_all()
+        stats = {}
+        results = pos.sync_all(stats=stats)
         if results:
             ok = sum(1 for r in results if r.get("ok"))
             log.info(f"POS nightly sync: {ok}/{len(results)} restaurants OK")
+        # The counts reach job_runs (ops.run_outcome): a night on which every
+        # POS failed is a failed run, some failing a partial one (DH2-1).
+        return stats
     except Exception as e:
         log.error(f"run_toast_sync error: {e}")
+        _ops.capture(e, job="pos_sync", context="outer")
+        raise
+
+
+# The automatic-recovery pass (DH5-7): restaurants whose POS sync failed and
+# whose retry is due (data_health.due_retries — never an auth failure) are
+# retried hourly, until this local hour. Three retries a day at most, at +1h,
+# +3h and +6h after each failure (pos.RETRY_DELAYS_HOURS).
+POS_RETRY_UNTIL_LOCAL_HOUR = 11
+POS_RETRY_MAX_SECONDS = int(os.getenv("POS_RETRY_MAX_SECONDS", str(15 * 60)))
+
+
+def run_pos_retry():
+    """Hourly: retry every POS sync whose retry is due, bounded and
+    resumable, before POS_RETRY_UNTIL_LOCAL_HOUR in the restaurant's own
+    zone. Returns the sweep counts for job_runs, hit_bound included."""
+    import data_health
+    import pos
+    from models import get_restaurant, in_service
+    from time_utils import restaurant_now
+    counts = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0}
+    lock = threading.Lock()
+    due = data_health.due_retries("pos")
+
+    def _one(rid):
+        r = get_restaurant(rid)
+        local = restaurant_now(r, naive=True) if r is not None else None
+        if r is None or not in_service(r) or local.hour >= POS_RETRY_UNTIL_LOCAL_HOUR:
+            with lock:
+                counts["skipped"] += 1
+            return
+        attempt = next((n for n in range(1, len(pos.RETRY_DELAYS_HOURS) + 1)
+                        if _ops.claim_period(f"pos_retry_attempt:{rid}", f"{local.date().isoformat()}#{n}")), None)
+        if attempt is None:
+            with lock:
+                counts["skipped"] += 1
+            return
+        result = pos.sync_restaurant(rid, trigger="retry", attempt=attempt)
+        with lock:
+            counts["attempted"] += 1
+            counts["ok" if result.get("ok") else "failed"] += 1
+
+    _done, hit_bound = resumable_sweep("pos_retry_cursor", due, _one, POS_RETRY_MAX_SECONDS,
+                                       workers=SWEEP_WORKERS, job="pos_retry")
+    if hit_bound:
+        _ops.capture(RuntimeError(f"POS retry pass stopped at its {POS_RETRY_MAX_SECONDS}s bound; "
+                                  "the rest lead the next pass"), job="pos_retry", context="time_bound")
+    counts["hit_bound"] = bool(hit_bound)
+    return counts
+
+
+# The depletion catch-up (DH2-4): from the last depleted business date —
+# never fewer than DEPLETION_OVERLAP_DAYS back, for late edits and voids —
+# and never more than DEPLETION_CATCHUP_MAX_DAYS, so an outage over a long
+# weekend is backfilled once the POS answers again. A fixed three days left
+# anything older permanently missing.
+DEPLETION_OVERLAP_DAYS = 2
+DEPLETION_CATCHUP_MAX_DAYS = 14
+
+
+def _depletion_start(restaurant_id, end):
+    from datetime import date as _date, timedelta as _td
+    start = end - _td(days=DEPLETION_OVERLAP_DAYS)
+    last = None
+    try:
+        import data_health
+        last = (data_health.health_rows(restaurant_id).get("depletion") or {}).get("data_through")
+        if not last:
+            from models import get_conn as _gc
+            c = _gc()
+            try:
+                row = c.execute("SELECT MAX(event_date) FROM ingredient_stock_events WHERE restaurant_id=? "
+                                "AND event_type='depletion'", (restaurant_id,)).fetchone()
+                last = row[0] if row else None
+            finally:
+                c.close()
+        if last:
+            start = min(start, _date.fromisoformat(str(last)[:10]))
+    except Exception as e:
+        log.warning(f"depletion catch-up start unreadable for {restaurant_id}: {e}")
+    return max(start, end - _td(days=DEPLETION_CATCHUP_MAX_DAYS))
 
 
 def run_daily_depletion_sync():
@@ -1077,7 +1220,7 @@ def run_daily_depletion_sync():
         }
         conn.close()
 
-        counts = {"ok": 0, "total": 0}
+        counts = {"ok": 0, "total": 0, "failed": 0, "skipped": 0}
         by_id = {}
         for r in get_all_restaurants():
             # Item-level sales (menu_item_sales) are what a post's dish lift
@@ -1094,6 +1237,10 @@ def run_daily_depletion_sync():
 
         def _one(rid):
             r = by_id[rid]
+            import time as _time
+            import data_health
+            t0 = _time.monotonic()
+            provider = None
             try:
                 # A POS that cannot report item-level sales is skipped
                 # explicitly rather than erroring per restaurant every night:
@@ -1101,20 +1248,33 @@ def run_daily_depletion_sync():
                 # there is nothing to deplete from and that is a fact about
                 # the integration, not a failure.
                 if not pos.supports(r.id, "fetch_order_selections"):
+                    counts["skipped"] += 1
                     return
                 counts["total"] += 1
                 end = _chi_now().date()
-                start = end - _td(days=2)  # small overlap window, idempotent re-sync covers gaps
-                business_dates, _provider = pos.fetch_business_days(r.id, start, end)
-                for bd_str in business_dates:
+                # Since the last depleted business date, capped (DH2-4) —
+                # idempotent, so the overlap re-syncs late edits for free.
+                start = _depletion_start(r.id, end)
+                business_dates, provider = pos.fetch_business_days(r.id, start, end)
+                for bd_str in sorted(business_dates):
                     result = inventory_ledger.compute_daily_depletion(r.id, __import__('datetime').date.fromisoformat(bd_str))
                     if result.get("unmapped_selections"):
                         log.warning(f"[inventory_depletion] {r.name}: "
                                    f"{len(result['unmapped_selections'])} unmapped selection(s) on {bd_str}")
                 counts["ok"] += 1
+                # Per restaurant (DH2-4): depleted through the last business
+                # day that had ENDED — the source data_freshness dates, and
+                # what the snapshot and trusted orders check before trusting
+                # stock.
+                data_health.record_attempt(r.id, "depletion", True, provider=provider,
+                                           data_through=pos.complete_through(r),
+                                           duration_ms=int((_time.monotonic() - t0) * 1000))
             except Exception as e:
+                counts["failed"] += 1
                 log.warning(f"[inventory_depletion] {r.name} failed: {e}")
-                ops.capture(e, job="inventory_depletion", context=r.name)
+                ops.capture(e, job="inventory_depletion", context=f"restaurant_id={r.id} {r.name}")
+                data_health.record_attempt(r.id, "depletion", False, provider=provider, error=str(e),
+                                           duration_ms=int((_time.monotonic() - t0) * 1000))
 
         # Bounded and resumable (MOD-FC-19): this walked every restaurant in
         # one serial pass with no bound and no cursor, so a pass that could
@@ -1129,8 +1289,12 @@ def run_daily_depletion_sync():
                          context="time_bound")
         if counts["total"]:
             log.info(f"Inventory depletion nightly sync: {counts['ok']}/{counts['total']} restaurants OK")
+        return {"attempted": counts["total"], "ok": counts["ok"], "failed": counts["failed"],
+                "skipped": counts["skipped"], "hit_bound": bool(ran_out)}
     except Exception as e:
         log.error(f"run_daily_depletion_sync error: {e}")
+        _ops.capture(e, job="inventory_depletion", context="outer")
+        raise
 
 
 # Graph calls a restaurant's token refresh may make in one day. The job is
@@ -1203,11 +1367,16 @@ def refresh_expiring_tokens():
                     log.info(f"Refreshed IG/FB tokens for {r.name}, new expiry {new_expires}")
                 else:
                     log.warning(f"Token refresh failed for {r.name}: {resp.status_code} {(resp.text or '')[:100]}")
+                    _ops.capture(RuntimeError(f"Meta token refresh returned {resp.status_code}"),
+                                 job="refresh_tokens", context=f"restaurant_id={r.id}")
             except Exception as e:
                 log.error(f"Token refresh error for {r.name}: {e}")
+                _ops.capture(e, job="refresh_tokens", context=f"restaurant_id={r.id}")
 
     except Exception as e:
         log.error(f"refresh_expiring_tokens error: {e}")
+        _ops.capture(e, job="refresh_tokens", context="outer")
+        raise
 
 
 # One nightly metrics pass stops taking on restaurants after this long; the
@@ -1246,6 +1415,15 @@ def record_metrics_sync(restaurant_id, ok, error=None):
             conn.close()
     except Exception as e:
         log.warning(f"metrics sync stamp for {restaurant_id}: {e}")
+    # The Data Health ledger too (DH5-1): metrics_sync_state keeps reading
+    # its job_cursors stamp as before, and source_health carries the
+    # attempt history, reliability and consecutive failures for `marketing`.
+    try:
+        import data_health
+        data_health.record_attempt(int(restaurant_id), "marketing", bool(ok), provider="meta",
+                                   error=None if ok else str(error or "unknown"))
+    except Exception as e:
+        log.warning(f"metrics sync not recorded for {restaurant_id}: {e}")
 
 
 def metrics_sync_state(restaurant_id, db_path=None, conn=None) -> dict:
@@ -1313,8 +1491,13 @@ def run_marketing_metrics_sync():
         if hit_bound:
             log.info(f"Marketing metrics sync stopped at its bound after {done}; "
                      "the next pass resumes from there")
+            _ops.capture(RuntimeError(f"Marketing metrics sync stopped at its {METRICS_SYNC_SECONDS}s bound "
+                                      f"after {done}"), job="marketing_metrics_sync", context="time_bound")
+        return {"attempted": done, "hit_bound": bool(hit_bound)}
     except Exception as e:
         log.error(f"run_marketing_metrics_sync error: {e}")
+        _ops.capture(e, job="marketing_metrics_sync", context="outer")
+        raise
 
 
 # ── Scheduler loop ────────────────────────────────────────────────────────────
@@ -2063,6 +2246,29 @@ _COMPETITOR_CURSOR_KEY = "competitor_sweep_cursor"
 _VISIBILITY_CURSOR_KEY = "ai_visibility_sweep_cursor"
 
 
+def _week_start_utc(now=None):
+    """Monday 00:00 Chicago of the current ISO week, as a UTC
+    "YYYY-MM-DD HH:MM:SS" — what a source_health last_ok_at is compared to."""
+    from datetime import timedelta as _td, timezone as _tz
+    now = now or _chi_now()
+    monday = (now - _td(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    if monday.tzinfo is None:
+        from zoneinfo import ZoneInfo
+        monday = monday.replace(tzinfo=ZoneInfo("America/Chicago"))
+    return monday.astimezone(_tz.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _ok_this_week(restaurant_id, source, week_start):
+    """Whether `source` succeeded for this restaurant since week_start
+    (source_health last_ok_at) — the weekly jobs' daily retry skips it."""
+    try:
+        import data_health
+        last = (data_health.health_rows(restaurant_id).get(source) or {}).get("last_ok_at")
+        return bool(last) and str(last) >= week_start
+    except Exception:
+        return False
+
+
 def _weekly_sweep(job, cursor_key, restaurants, fn):
     """Run `fn(restaurant)` over `restaurants` under WEEKLY_SWEEP_MAX_SECONDS,
     starting after the cursor; returns (processed, hit_bound). `fn` returns
@@ -2092,40 +2298,62 @@ def _weekly_sweep(job, cursor_key, restaurants, fn):
     return tally["attempted"], ran_out
 
 
-def run_weekly_competitor_analysis():
-    """Monday 6am — competitor analysis for every full-tier client in service."""
+def _record(restaurant_id, source, ok, error=None, provider=None):
+    try:
+        import data_health
+        data_health.record_attempt(restaurant_id, source, ok, provider=provider, error=error)
+    except Exception as e:
+        log.warning(f"{source} attempt not recorded for {restaurant_id}: {e}")
+
+
+def run_weekly_competitor_analysis(retry_only=False):
+    """Weekly — competitor analysis for every full-tier client in service.
+    Claimed per ISO week with Monday–Wednesday catch-up; `retry_only` is the
+    daily retry for restaurants with no success this week (DH2-10). Every
+    attempt is recorded (source_health `competitor`)."""
     import competitor
     from models import get_all_restaurants, in_service, is_full_tier
     counts = {"analysed": 0, "failed": 0}
+    week_start = _week_start_utc()
 
     def _analyse(r):
         try:
             # Looked up at call time so a test's (or a hot patch's) swap of
             # competitor.run_competitor_analysis is honoured.
             res = competitor.run_competitor_analysis(r.id) or {}
-        except Exception:
+        except Exception as e:
             counts["failed"] += 1
+            _record(r.id, "competitor", False, error=str(e), provider="places")
             raise
         # An analysis that returned ok:False did not analyse anything:
         # counting it as done hid a Places refusal behind "analysed".
         if res.get("ok") is False:
             counts["failed"] += 1
+            _record(r.id, "competitor", False, error=res.get("error") or "competitor analysis failed",
+                    provider="places")
             if res.get("places_status") or "No nearby competitors" not in (res.get("error") or ""):
                 _ops.capture(RuntimeError(res.get("error") or "competitor analysis failed"),
                              job="competitor_analysis", context=f"restaurant_id={r.id}")
         else:
             counts["analysed"] += 1
+            _record(r.id, "competitor", True, provider="places")
 
     # In service only (MOD-REV-2): no Places or Claude spend on a customer
     # who has cancelled.
     eligible = [r for r in get_all_restaurants()
                 if r.google_place_id and r.id and is_full_tier(r) and in_service(r)]
-    _weekly_sweep("competitor_analysis", _COMPETITOR_CURSOR_KEY, eligible, _analyse)
+    if retry_only:
+        eligible = [r for r in eligible if not _ok_this_week(r.id, "competitor", week_start)]
+    _n, hit_bound = _weekly_sweep("competitor_analysis", _COMPETITOR_CURSOR_KEY, eligible, _analyse)
+    if hit_bound:
+        counts["hit_bound"] = True
     return counts
 
 
-def run_weekly_ai_visibility():
-    """Monday 7am — one AI visibility run per full-tier client.
+def run_weekly_ai_visibility(retry_only=False):
+    """Weekly, from Monday 7am (ISO-week claim, Monday–Wednesday catch-up,
+    then a daily `retry_only` pass until each restaurant has one success
+    this week — DH2-10) — one AI visibility run per full-tier client.
 
     There was no scheduled run at all. Visibility was checked only when an
     owner happened to open the Intel tab, so ai_visibility_runs accumulated
@@ -2140,21 +2368,33 @@ def run_weekly_ai_visibility():
     import client_api
     from models import get_all_restaurants, in_service, is_full_tier
     counts = {"checked": 0, "failed": 0}
+    week_start = _week_start_utc()
 
     def _check(r):
         try:
             payload, _ = client_api._do_ai_visibility_inner(r.id, force=True)
-        except Exception:
+        except Exception as e:
             counts["failed"] += 1
+            _record(r.id, "visibility", False, error=str(e), provider="perplexity")
             raise
         if payload.get("ok"):
             counts["checked"] += 1
+            _record(r.id, "visibility", True, provider="perplexity")
         else:
+            # A soft failure — budget paused, rate-limited, a missing key —
+            # reached neither job_failures nor the digest (DH2-10).
             counts["failed"] += 1
+            why = payload.get("error") or payload.get("reason") or "AI visibility check did not run"
+            _record(r.id, "visibility", False, error=why, provider="perplexity")
+            _ops.capture(RuntimeError(str(why)[:200]), job="ai_visibility", context=f"restaurant_id={r.id}")
 
     # In service only (MOD-REV-2): no Perplexity spend on a cancelled customer.
     eligible = [r for r in get_all_restaurants() if r.id and is_full_tier(r) and in_service(r)]
-    _weekly_sweep("ai_visibility", _VISIBILITY_CURSOR_KEY, eligible, _check)
+    if retry_only:
+        eligible = [r for r in eligible if not _ok_this_week(r.id, "visibility", week_start)]
+    _n, hit_bound = _weekly_sweep("ai_visibility", _VISIBILITY_CURSOR_KEY, eligible, _check)
+    if hit_bound:
+        counts["hit_bound"] = True
     return counts
 
 
@@ -2235,10 +2475,23 @@ def run_food_cost_snapshots():
         "AND COALESCE(billing_status,'trial') IN ('trial','active')"
     ).fetchall()
     conn.close()
-    c = {"written": 0, "skipped": 0, "failed": 0, "scored": 0}
+    c = {"written": 0, "skipped": 0, "failed": 0, "scored": 0, "held": 0}
     lock = threading.Lock()
+    import data_freshness
+    from models import get_restaurant
 
     def _one(rid):
+        # Not over overstated stock (DH2-4): on-hand is the last count minus
+        # depletion since, so a restaurant whose depletion did not land for
+        # last night would write an inflated inventory value into history,
+        # and every COGS bracket reads it. Held, not written, and said.
+        r = get_restaurant(rid)
+        behind = data_freshness.depletion_behind(r, max_days_behind=0) if r is not None else None
+        if behind:
+            with lock:
+                c["held"] += 1
+            log.warning(f"Food cost snapshot held for restaurant {rid}: {behind}")
+            return
         try:
             out = fci.weekly_snapshot(rid)
             with lock:
@@ -2264,8 +2517,41 @@ def run_food_cost_snapshots():
                                   f"the rest lead the next pass"), job="food_cost_snapshots", context="time_bound")
     written, skipped, failed, scored = c["written"], c["skipped"], c["failed"], c["scored"]
     log.info(f"Food cost snapshots: {written} written, {skipped} skipped, {failed} failed, "
-             f"{scored} forecasts scored")
-    return {"written": written, "skipped": skipped, "failed": failed, "forecasts_scored": scored}
+             f"{c['held']} held for depletion, {scored} forecasts scored")
+    return {"written": written, "skipped": skipped, "failed": failed, "forecasts_scored": scored,
+            "held": c["held"], "attempted": written + failed, "hit_bound": bool(ran_out)}
+
+
+DATA_HEALTH_DAILY_CURSOR_KEY = "data_health_daily_cursor"
+
+
+def run_data_health_daily():
+    """Daily — one Data Health snapshot per restaurant in service
+    (data_health.record_daily → data_health_daily), dated by the
+    restaurant's own day, so the admin rollup reads a table instead of
+    recomputing every restaurant on every page load (DH5-13). Bounded and
+    resumable."""
+    import data_health
+    from models import get_all_restaurants, in_service
+    from time_utils import restaurant_now
+    rows = {r.id: r for r in get_all_restaurants() if in_service(r)}
+    c = {"attempted": 0, "ok": 0, "failed": 0}
+    lock = threading.Lock()
+
+    def _one(rid):
+        day = restaurant_now(rows[rid], naive=True).date().isoformat()
+        ok = data_health.record_daily(rid, day)
+        with lock:
+            c["attempted"] += 1
+            c["ok" if ok else "failed"] += 1
+
+    _done, ran_out = resumable_sweep(DATA_HEALTH_DAILY_CURSOR_KEY, list(rows), _one, SWEEP_MAX_SECONDS,
+                                     workers=SWEEP_WORKERS, job="data_health_daily")
+    if ran_out:
+        _ops.capture(RuntimeError(f"Data health snapshots stopped at the {SWEEP_MAX_SECONDS}s bound; "
+                                  "the rest lead the next pass"), job="data_health_daily", context="time_bound")
+    c["hit_bound"] = bool(ran_out)
+    return c
 
 
 FORECAST_SCORING_CURSOR_KEY = "forecast_scoring_cursor"
@@ -2882,13 +3168,11 @@ def scheduler_loop():
             if _lease_lost_logged:
                 log.info("Scheduler lease acquired — this process is now the runner")
                 _lease_lost_logged = False
-            # Stamped at the top as well as the bottom: a tick that runs a
-            # long job is a live scheduler, not an outage (DATA-3).
-            try:
-                record_scheduler_heartbeat()
-            except Exception:
-                pass
-
+            # The heartbeat is stamped only at the END of a tick (DH2-2): a
+            # tick that died after stamping it at the top — the 9/19
+            # UnboundLocalError — left a fresh heartbeat over a loop that ran
+            # nothing. A long job is still a live scheduler: the pulse
+            # stamps it while the job runs (_PulsedOps).
             now   = _chi_now()
             today = now.date()
 
@@ -2905,19 +3189,37 @@ def scheduler_loop():
                 # Straight after the backup, so the pruned rows are in it.
                 _ops.run_job("prune_ledgers", _ops.prune_ledgers)
 
-            if _due(now, 6) and now.weekday() == 0 and _ops.claim_period("competitor_analysis", str(today)):
+            # Weekly Intel, claimed per ISO WEEK (DH2-10): due from Monday
+            # 6am with Monday–Wednesday catch-up, so a lost Monday runs
+            # Tuesday instead of next week; after it, a daily retry pass for
+            # restaurants with no success this week.
+            _iso_week = now.strftime("%G-W%V")
+            if _due(now, 6) and now.weekday() <= 2 and _ops.claim_period("competitor_analysis", _iso_week):
                 log.info("Running weekly competitor analysis...")
                 _ops.run_job("competitor_analysis", run_weekly_competitor_analysis)
+            elif _due(now, 6) and _ops.period_claimed("competitor_analysis", _iso_week) and \
+                    _ops.claim_period("competitor_retry", str(today)):
+                _ops.run_job("competitor_analysis", run_weekly_competitor_analysis, retry_only=True,
+                             claim="competitor_retry")
 
             # An hour after the competitor run, so the two weekly Intel jobs
             # do not compete for the same minute.
-            if _due(now, 7) and now.weekday() == 0 and _ops.claim_period("ai_visibility", str(today)):
+            if _due(now, 7) and now.weekday() <= 2 and _ops.claim_period("ai_visibility", _iso_week):
                 log.info("Running weekly AI visibility checks...")
                 _ops.run_job("ai_visibility", run_weekly_ai_visibility)
+            elif _due(now, 7) and _ops.period_claimed("ai_visibility", _iso_week) and \
+                    _ops.claim_period("ai_visibility_retry", str(today)):
+                _ops.run_job("ai_visibility", run_weekly_ai_visibility, retry_only=True,
+                             claim="ai_visibility_retry")
 
             if _due(now, 3) and _ops.claim_period("pos_sync", str(today)):
                 log.info("Running nightly Toast POS sync...")
                 _ops.run_job("pos_sync", run_toast_sync)
+
+            # Hourly — the automatic-recovery pass over failed POS syncs
+            # whose retry is due (+1h, +3h, +6h; until 11am local).
+            if _ops.claim_period("pos_retry", f"{today}-{now.hour}"):
+                _ops.run_job("pos_retry", run_pos_retry)
 
             # 3am+ — comps/voids/refunds from POSes that report them. After
             # pos_sync so the same night's data is settled first.
@@ -2944,6 +3246,11 @@ def scheduler_loop():
             # before its forecast is scored.
             if _due(now, 5) and _ops.claim_period("forecast_scoring", str(today)):
                 _ops.run_job("forecast_scoring", run_forecast_scoring)
+
+            # 6am+ — one Data Health snapshot per restaurant, after the
+            # nightly chain (POS, depletion, snapshots) has landed.
+            if _due(now, 6) and _ops.claim_period("data_health_daily", str(today)):
+                _ops.run_job("data_health_daily", run_data_health_daily)
 
             if _due(now, 6) and _ops.claim_period("review_diagnoses", str(today)):
                 log.info("Running review root-cause diagnoses...")
@@ -3068,14 +3375,14 @@ def scheduler_loop():
 
             # 8am daily — operator failure digest (only sends if something failed)
             if _due(now, 8) and _ops.claim_period("ops_digest", str(today)):
-                _ops.run_job("ops_failure_digest", _ops.send_failure_digest)
+                _ops.run_job("ops_failure_digest", _ops.send_failure_digest, claim="ops_digest")
 
             # Attempted hourly: each restaurant is gated on ITS 9am inside
             # (local_due), so one Chicago-timed daily claim would serve only
             # the restaurants whose local hour happened to match.
             if _ops.claim_period("weekly_digest", f"{today}-{now.hour}"):
                 log.info("Running weekly digest check...")
-                _ops.run_job("weekly_digests", run_weekly_digests)
+                _ops.run_job("weekly_digests", run_weekly_digests, claim="weekly_digest")
 
             if _due(now, 10) and now.weekday() == 0 and _ops.claim_period("stale_inventory", str(today)):
                 # Monday 10am — check for stale inventory data
@@ -3090,7 +3397,7 @@ def scheduler_loop():
             # 1st of the month at 9am — send monthly summary to all active clients
             if today.day == 1 and today.month in (1, 4, 7, 10) and \
                     _ops.claim_period("quarterly_summary", f"{today}-{now.hour}"):
-                _ops.run_job("quarterly_summaries", run_quarterly_summaries)
+                _ops.run_job("quarterly_summaries", run_quarterly_summaries, claim="quarterly_summary")
 
             # Attempted hourly so each restaurant is served at 9am in its own
             # timezone; run_monthly_summaries gates on the restaurant's own
@@ -3102,13 +3409,13 @@ def scheduler_loop():
             if _ops.claim_period("onboarding", f"{today}-{now.hour}"):
                 # 10am daily — onboarding email sequence
                 log.info("Running onboarding sequence check...")
-                _ops.run_job("onboarding_emails", run_onboarding_sequence, local_hour=10)
+                _ops.run_job("onboarding_emails", run_onboarding_sequence, local_hour=10, claim="onboarding")
 
             if _due(now, 11) and now.weekday() == 0 and _ops.claim_period("inactive_clients", str(today)):
                 # Monday 11am — inactive client check
                 log.info("Running inactive client check...")
                 _ops.run_job("inactive_clients", check_inactive_clients)
-                _ops.run_job("while_away", send_while_away_nudges)
+                _ops.run_job("while_away", send_while_away_nudges, claim="inactive_clients")
 
             if (_due(now, 11, until=OPTIN_INVITE_LATEST_HOUR)
                     and _ops.claim_period("optin_invite", f"{today}-{now.hour}")):
@@ -3124,7 +3431,8 @@ def scheduler_loop():
                 from guest_marketing import run_toast_optin_invites
                 from datetime import date as _d, timedelta as _td
                 _ops.run_job("toast_optin_invites",
-                             lambda: run_toast_optin_invites(business_date=_d.today() - _td(days=1)))
+                             lambda: run_toast_optin_invites(business_date=_d.today() - _td(days=1)),
+                             claim="optin_invite")
 
             # 3am — the intelligence engine's feature pass (bounded, resumable),
             # then 4am learning over the materialized tables. INTELLIGENCE_ENGINE.md.
@@ -3169,21 +3477,26 @@ def scheduler_loop():
             # time and says so). Capture is hourly per restaurant, the pulse
             # is one push before dinner, coverage runs while they're open.
             if _ops.claim_period("intraday", f"{today}-{now.hour}-{now.minute // 20}"):
-                from strategy_jobs import run_intraday_capture, run_pre_dinner_pulse, run_coverage_check
-                _ops.run_job("intraday_capture", run_intraday_capture)
-                _ops.run_job("pre_dinner_pulse", run_pre_dinner_pulse)
-                _ops.run_job("coverage_check", run_coverage_check)
+                # The restaurants are read ONCE per slot and handed to all
+                # six jobs; each is a bounded, resumable sweep with its own
+                # cursor (strategy_jobs._slot_sweep, DH5-9).
+                from strategy_jobs import (run_intraday_capture, run_pre_dinner_pulse, run_coverage_check,
+                                           slot_restaurants)
+                _slot = slot_restaurants()
+                _ops.run_job("intraday_capture", run_intraday_capture, restaurants=_slot, claim="intraday")
+                _ops.run_job("pre_dinner_pulse", run_pre_dinner_pulse, restaurants=_slot, claim="intraday")
+                _ops.run_job("coverage_check", run_coverage_check, restaurants=_slot, claim="intraday")
                 from strategy_jobs import run_preshift_nudge
-                _ops.run_job("preshift_nudge", run_preshift_nudge)
+                _ops.run_job("preshift_nudge", run_preshift_nudge, restaurants=_slot, claim="intraday")
                 # How tonight went, once the doors are shut — the one part
                 # of the day nothing reported on while the owner could
                 # still picture the room.
                 from strategy_jobs import run_closing_summary
-                _ops.run_job("closing_summary", run_closing_summary)
+                _ops.run_job("closing_summary", run_closing_summary, restaurants=_slot, claim="intraday")
                 # A quiet night two days out, once a week — the one area of
                 # the product that produced no notification at all.
                 from strategy_jobs import run_demand_opportunity
-                _ops.run_job("demand_opportunity", run_demand_opportunity)
+                _ops.run_job("demand_opportunity", run_demand_opportunity, restaurants=_slot, claim="intraday")
 
             # Every tick, claimed per 10-minute slot — the nightly DSR
             # (dsr.pipeline.run_sweep): each restaurant past its OWN close,
@@ -3225,13 +3538,25 @@ def scheduler_loop():
                     _ops.capture(e, job="prune_login_attempts")
 
             try:
-                record_scheduler_heartbeat()
                 run_health_checks()
+            except Exception:
+                pass
+            # The end of the tick: everything above got the chance to run.
+            try:
+                record_scheduler_heartbeat()
             except Exception:
                 pass
 
         except Exception as e:
+            # Captured, not only logged (DH2-2): an exception here skips the
+            # rest of the tick AND the heartbeat, and the operator hears it
+            # from the digest and from the request-path watchdog
+            # (ops.check_platform_sla), not from an owner.
             log.error(f"Scheduler loop error: {e}")
+            try:
+                _ops.capture(e, job="scheduler_loop", context="tick")
+            except Exception:
+                pass
 
         # Five minutes, not an hour. Every daily/hourly job above is gated on
         # its own "already ran for this hour/date" marker, so a faster tick

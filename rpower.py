@@ -244,9 +244,15 @@ def _paged(token: str, path: str, params: dict, max_pages: int = 200) -> list:
             seen.add(key)
             fresh.append(row)
 
-        # A fully repeated page means paging is not advancing — returning
-        # what we have is correct, continuing would loop forever.
+        # A fully repeated page means paging is not advancing. A SHORT one is
+        # the end of the set. A FULL one means more rows exist that we cannot
+        # reach — returning what we have stored a busy Saturday at the first
+        # thousand lines as the whole night, so it fails the sync instead and
+        # the previous data stays (pos.py's contract, DH2-6).
         if duplicates and not fresh:
+            if len(rows) >= PAGE_SIZE:
+                raise RPowerError(f"{path} truncated: page {page} repeated the previous page in full, so "
+                                  "RPOWER's paging is not advancing and the rest of the rows can't be read")
             log.warning("[rpower] %s page %s repeated entirely — stopping", path, page)
             break
         if duplicates:
@@ -257,8 +263,9 @@ def _paged(token: str, path: str, params: dict, max_pages: int = 200) -> list:
         if len(rows) < PAGE_SIZE:
             break
     else:
-        log.warning("[rpower] %s hit the %s-page ceiling — result may be truncated",
-                    path, max_pages)
+        # More pages than the ceiling: the result is incomplete, never
+        # returned as though it were whole (DH2-6).
+        raise RPowerError(f"{path} truncated: more than {max_pages} pages; nothing was saved from this read")
     return out
 
 
