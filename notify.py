@@ -51,6 +51,11 @@ TWILIO_OTP_MESSAGING_SERVICE_SID = os.getenv("TWILIO_OTP_MESSAGING_SERVICE_SID",
 # used (a plain From on the same number is the same campaign, only less
 # reliably routed), and the mismatch is logged once per process.
 TWILIO_GUEST_MESSAGING_SERVICE_SID = os.getenv("TWILIO_GUEST_MESSAGING_SERVICE_SID", "")
+# Staff texts ("your week is posted") are a fourth use case: messages to
+# employees who ticked "text me when my schedule is posted". They NEVER fall
+# back to another service — people.staff_sms_ready() is False until this is
+# set, and the publish emails instead (Friction audit #17).
+TWILIO_STAFF_MESSAGING_SERVICE_SID = os.getenv("TWILIO_STAFF_MESSAGING_SERVICE_SID", "")
 _guest_service_warned = False
 from emails import _resend_key
 
@@ -155,6 +160,11 @@ def send_sms(to_phone: str, message: str, use_case: str = "alert") -> bool:
     # existed).
     if use_case == "otp":
         service_sid = TWILIO_OTP_MESSAGING_SERVICE_SID
+    elif use_case == "staff":
+        if not TWILIO_STAFF_MESSAGING_SERVICE_SID:
+            print("[notify] TWILIO_STAFF_MESSAGING_SERVICE_SID unset: staff text not sent")
+            return False
+        service_sid = TWILIO_STAFF_MESSAGING_SERVICE_SID
     elif use_case == "guest" and TWILIO_GUEST_MESSAGING_SERVICE_SID:
         service_sid = TWILIO_GUEST_MESSAGING_SERVICE_SID
     else:

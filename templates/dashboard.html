@@ -570,13 +570,18 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none;box
 #congrats-inner .c-stat strong{color:var(--ember)}
 /* The explanation modal shares the milestone frame, left-aligned because it
    carries a list of line items rather than one sentence. */
-#explain-modal{display:none;position:fixed;inset:0;background:rgba(14,12,10,.6);z-index:9999;align-items:center;justify-content:center;backdrop-filter:blur(3px)}
-#explain-modal.show{display:flex}
-#explain-inner{background:linear-gradient(135deg,#1a1410,#1e1a14);border:1px solid #3d2e1e;border-radius:16px;padding:30px 34px;max-width:520px;width:90%;max-height:80vh;overflow-y:auto;animation:modalIn .3s ease;position:relative;text-align:left}
-#explain-inner .c-ember{width:3px;position:absolute;left:0;top:0;bottom:0;background:var(--ember);border-radius:16px 0 0 16px}
-#explain-inner h2{color:#f0ebe0;font-size:20px;font-weight:800;margin:0 0 14px}
-#explain-inner .c-sub{color:var(--ember);font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px}
-#explain-body{color:#c8bfb0;font-size:13px;line-height:1.65}
+#explain-modal,#person-modal{display:none;position:fixed;inset:0;background:rgba(14,12,10,.6);z-index:9999;align-items:center;justify-content:center;backdrop-filter:blur(3px)}
+#explain-modal.show,#person-modal.show{display:flex}
+#explain-inner,#person-inner{background:linear-gradient(135deg,#1a1410,#1e1a14);border:1px solid #3d2e1e;border-radius:16px;padding:30px 34px;max-width:520px;width:90%;max-height:80vh;overflow-y:auto;animation:modalIn .3s ease;position:relative;text-align:left}
+#explain-inner .c-ember,#person-inner .c-ember{width:3px;position:absolute;left:0;top:0;bottom:0;background:var(--ember);border-radius:16px 0 0 16px}
+#explain-inner h2,#person-inner h2{color:#f0ebe0;font-size:20px;font-weight:800;margin:0 0 14px}
+#explain-inner .c-sub,#person-inner .c-sub{color:var(--ember);font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px}
+#explain-body,#person-body{color:#c8bfb0;font-size:13px;line-height:1.65}
+/* The person sheet (Friction #25) is the explanation modal's frame holding
+   one person's facts: .ac-field rows that save on change, an .ac-status. */
+#person-body .ps-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:8px 0 14px}
+#person-body .sr-k{margin-top:14px}
+#person-body label{font-size:12px;color:#c8bfb0}
 /* ── Confidence line + its Why? panel (contract K1; DESIGN_SYSTEM §12
    "Confidence") ─────────────────────────────────────────────────────────
    One line wherever a recommendation says how sure it is: a small meter,
@@ -3913,8 +3918,7 @@ svg:hover .hb-xh{opacity:1}
       h+='<div class="hb-sh"><div><div class="k dim">Follow-through</div><h2>Still open <small>'+acts.length+'</small></h2></div></div><section class="hb-card quiet hb-rise" aria-label="Still open">';
       for(var a=0;a<acts.length;a++){var y=acts[a];
         h+='<div class="hb-chk '+esc(y.severity)+'"><span class="d"></span><span class="t">'+num(y.title)+(y.detail?'<span class="m">'+num(y.detail)+'</span>':'')+'</span><span class="a">'
-          +(y.action&&y.action.route?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-body="'+esc(y.action.body?JSON.stringify(y.action.body):'')+'" onclick="hbActionDo(\''+esc(y.action.route.web)+'\',this)">'+esc(y.action.label)+'</button>':'')
-          +(y.action&&y.action.ask?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ask="'+esc(y.action.ask)+'">'+esc(y.action.label)+'</button>':(y.action&&y.action.module?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="hbOpen(\''+esc(y.action.module)+'\')">'+esc(y.action.label)+'</button>':''))
+          +hbQueueActs(y.action||{})
           +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="hbSnooze(\''+esc(y.key)+'\',this)">Not today</button></span></div>';}
       h+='</section>';
     }
@@ -3988,9 +3992,14 @@ svg:hover .hb-xh{opacity:1}
   function renderCloseout(){
     var c=window._hbCloseout;if(!c||!c.ok)return '';
     var e=c.closeout||{};
-    var field=function(id,label,ph,val){
+    // What the system already knows about tonight, offered as an editable
+    // suggestion in an empty box on a night not yet filed (Friction #40):
+    // tonight's no-shows and what was on. Never saved unless handed off.
+    var sg=(!e.created_at&&c.suggested)||{},src=sg.sources||{};
+    var field=function(id,label,ph,val,note){
       return '<div class="ac-field"><label for="'+id+'">'+esc(label)+'</label>'
-           + '<input class="ac-input" id="'+id+'" placeholder="'+esc(ph)+'" value="'+esc(val||'')+'"></div>';
+           + '<input class="ac-input" id="'+id+'" placeholder="'+esc(ph)+'" value="'+esc(val||'')+'">'
+           + (note?'<span class="sr-note">Suggested \u2014 '+esc(note)+'. Edit or clear it.</span>':'')+'</div>';
     };
     // mdy() is the page's one date format (M/D/YY). This used to print the
     // raw ISO business_date, so one card on Home spoke a different date
@@ -4002,9 +4011,9 @@ svg:hover .hb-xh{opacity:1}
               ['co-maint','Maintenance','Leak under the bar sink',e.maintenance],
               ['co-shift','Shift notes','Short a busser from 7',e.shift_notes],
               ['co-notes','General notes','New menu cards arrived',e.general_notes],
-              ['co-why','Influence — what was going on','Cubs home game, Bears on TV, the World Cup, a private event',e.influence]];
+              ['co-why','Influence — what was going on','Cubs home game, Bears on TV, the World Cup, a private event',e.influence||sg.influence,(!e.influence&&sg.influence)?src.influence:'']];
     var moreHtml='',anyMore=false;
-    for(var i=0;i<more.length;i++){moreHtml+=field(more[i][0],more[i][1],more[i][2],more[i][3]);if(more[i][3])anyMore=true;}
+    for(var i=0;i<more.length;i++){moreHtml+=field(more[i][0],more[i][1],more[i][2],more[i][3],more[i][4]);if(more[i][3])anyMore=true;}
     return '<div class="hb-sh"><div><div class="k dim">End of the night</div><h2>Close-out <small>'+mdy(c.business_date)+(e.created_at?' · filed by '+esc(e.submitted_by||'a manager'):'')+'</small></h2></div></div>'
          + '<section class="hb-card quiet hb-rise" aria-label="Close-out">'
          + '<div class="hb-empty" style="padding:0 0 12px">Whoever closes writes four lines. They lead tomorrow morning\'s brief.</div>'
@@ -4012,7 +4021,7 @@ svg:hover .hb-xh{opacity:1}
          + field('co-well','What went well','A section ran clean',e.went_well)
          + field('co-wrong','What went wrong','Ticket times over 20 min',e.went_wrong)
          + field('co-86','What we ran out of','Salmon, house red',e.eighty_sixed)
-         + field('co-call','Who didn\'t make it','Dana — called out',e.callouts)
+         + field('co-call','Who didn\'t make it','Dana — called out',e.callouts||sg.callouts,(!e.callouts&&sg.callouts)?src.callouts:'')
          + '</div>'
          + '<details class="co-more"'+(anyMore?' open':'')+'><summary>For the daily report <small>equipment, VIPs, maintenance, notes, and what was going on</small></summary>'
          + '<div class="co-grid">'+moreHtml+'</div></details>'
@@ -4038,13 +4047,42 @@ svg:hover .hb-xh{opacity:1}
       .then(apiJson).then(function(d){if(d&&d.ok)hbFollow();else if(btn)btn.disabled=false;})
       .catch(function(){if(btn)btn.disabled=false;});
   };
+  // A queue item's buttons (Friction #4, #18): its action (a route posts in
+  // place; a nav opens the item itself; else its module or Ask), and an
+  // "alt" beside it — Deny next to Approve, Open it next to Send now.
+  function hbQueueActs(a){
+    var h='',alt=a.alt||null;
+    if(a.route)h+='<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-body="'+esc(a.body?JSON.stringify(a.body):'')+'" onclick="hbActionDo(\''+esc(a.route.web)+'\',this)">'+esc(a.label)+'</button>';
+    else if(a.ask)h+='<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ask="'+esc(a.ask)+'">'+esc(a.label)+'</button>';
+    else if(a.nav&&window.cavNav)h+='<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="cavNav(\''+esc(a.nav)+'\')">'+esc(a.label)+'</button>';
+    else if(a.module)h+='<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="hbOpen(\''+esc(a.module)+'\')">'+esc(a.label)+'</button>';
+    if(alt&&alt.route)h+='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-body="'+esc(alt.body?JSON.stringify(alt.body):'')+'" onclick="hbActionDo(\''+esc(alt.route.web)+'\',this)">'+esc(alt.label)+'</button>';
+    else if(alt&&alt.nav&&window.cavNav)h+='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="cavNav(\''+esc(alt.nav)+'\')">'+esc(alt.label)+'</button>';
+    return h;
+  }
   window.hbActionDo=function(route,btn){
     if(btn)btn.disabled=true;
     var body=(btn&&btn.getAttribute('data-body'))||'{}';
     fetch(route,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:body})
-      .then(apiJson).then(function(d){if(d&&d.ok)hbFollow();else{if(btn)btn.disabled=false;toast((d&&d.error)||'Could not do that','error');}})
+      .then(apiJson).then(function(d){
+        if(d&&d.ok){if(d.queued)toast('Queued \u2014 undo from the Cavnar AI strip','success');hbFollow();return;}
+        if(btn)btn.disabled=false;
+        // The publish gate on "Send now": the warnings go on screen under
+        // the item, and the one button that names them sends it knowingly.
+        if(d&&d.needs_ack&&btn){hbAckInPlace(route,btn,body,d.blockers||[]);return;}
+        toast((d&&d.error)||'Could not do that','error');})
       .catch(function(){if(btn)btn.disabled=false;});
   };
+  function hbAckInPlace(route,btn,body,list){
+    var row=btn.closest?btn.closest('.hb-chk'):null;if(!row)return;
+    var old=row.nextSibling;if(old&&old.className==='hb-chk-ack')old.parentNode.removeChild(old);
+    var b={};try{b=JSON.parse(body)||{};}catch(e){b={};}b.acknowledge=true;
+    var box=document.createElement('div');box.className='hb-chk-ack';box.style.padding='4px 0 10px 22px';
+    var h='<div class="sr-k">Read before this goes out</div>',i;
+    for(i=0;i<list.length;i++)h+='<div class="sr-line bad"><span class="d"></span><span>'+esc(list[i])+'</span></div>';
+    h+='<button type="button" class="cbtn cbtn-danger cbtn-sm" data-body="'+esc(JSON.stringify(b))+'" onclick="hbActionDo(\''+esc(route)+'\',this)">Send with '+list.length+' rule warning'+(list.length===1?'':'s')+'\u2026</button>';
+    box.innerHTML=h;row.parentNode.insertBefore(box,row.nextSibling);
+  }
   // A coverage issue carries its suggested covers (meta.covers) and who was
   // already asked (meta.asked): one tap asks the next person, by text or
   // email (POST /api/issues/<id>/ask-cover). The schedule itself moves only
@@ -5849,6 +5887,7 @@ svg:hover .hb-xh{opacity:1}
      arrived while the figure that prompted the question was sliding out of
      view. Same branded frame as the milestone moment below. -->
 <div id="explain-modal"><div id="explain-inner"><div class="c-ember"></div><div class="c-sub" id="explain-kicker">How this is counted</div><h2 id="explain-title"></h2><div id="explain-body"></div><button id="explain-close" class="cbtn cbtn-primary cbtn-lg cbtn-block" style="margin-top:20px">Got it</button></div></div>
+<div id="person-modal" role="dialog" aria-modal="true" aria-labelledby="person-title"><div id="person-inner"><div class="c-ember"></div><div class="c-sub" id="person-kicker">Person</div><h2 id="person-title"></h2><div id="person-body"></div><button type="button" id="person-close" class="cbtn cbtn-primary cbtn-lg cbtn-block" style="margin-top:20px" onclick="closePersonSheet()">Done</button></div></div>
 <div id="congrats-modal"><div id="congrats-inner"><div class="c-ember"></div><div class="c-sub" id="congrats-kicker">A milestone</div><h2 id="congrats-title"></h2><p id="congrats-body"></p><div id="congrats-stats"><div class="c-stat"><strong>5–9% revenue lift</strong> per star gained — Michael Luca, Harvard Business School (2011), on independent restaurants' Yelp ratings</div></div><p id="congrats-note" style="margin-top:12px;font-size:12px;color:var(--ink3)">This won't appear again.</p><button id="congrats-close" class="cbtn cbtn-primary cbtn-lg cbtn-block" style="margin-top:20px" onclick="document.getElementById('congrats-modal').classList.remove('show')">Got it</button></div></div>
 
 <!-- LABOR -->
@@ -6489,6 +6528,14 @@ svg:hover .hb-xh{opacity:1}
     </div>
   </div>
 
+  <!-- Waiting on you (Friction #18): time off, shift requests and a drafted
+       week staff don't have — answered here, at the top of Labor, not ten
+       blocks down. Hidden when nothing is waiting. lb2LoadWaiting(). -->
+  <section class="hb-card" id="lb2-wait" data-nav="labor/requests" hidden aria-label="Waiting on you" style="margin-top:22px">
+    <div class="hb-kicker">Waiting on you</div>
+    <div id="lb2-wait-body" class="ac-rows"></div>
+  </section>
+
   <div id="lb-panel-schedule">
   <section class="lb2-hero" aria-label="Labor ribbon">
     <div class="hd"><div><div class="hb-kicker" id="lb2-hero-kicker">Labor ribbon · daily labor %</div><div class="big"><span id="lb2-hero-n" class="hb-num stat-n">{{ _lp }}</span><small>% of sales · {% if labor.date_range and labor.date_range.start and labor.date_range.end %}{{ labor.date_range.start|format_date }} – {{ labor.date_range.end|format_date }}{% else %}{{ 'last ' ~ _days ~ ' days' if _days else 'this period' }}{% endif %}</small></div><div class="delta" id="lb2-hero-delta">{% if labor.trend_delta is not none and labor.trend_delta != 0 %}<span class="hb-num">{{ '+' if labor.trend_delta > 0 }}{{ labor.trend_delta|round(1) }} pts</span> <span>vs the previous period</span>{% endif %}</div></div><div class="lb2-range" id="lb2-hero-range"><button class="on" onclick="switchPerfTab('daily')" id="perf-tab-dow">Daily</button><button onclick="switchPerfTab('trend')" id="perf-tab-trend">8 weeks</button></div></div>
@@ -6621,7 +6668,7 @@ svg:hover .hb-xh{opacity:1}
   {# Whether last year's same days are an input to the next draft (read
      tolerantly: an older server never sends last_year_available). #}
   <script>window._SCHED_HAS_LAST_YEAR={{ 'true' if labor.last_year_available else 'false' }};</script>
-  <div class="lb2-sched">
+  <div class="lb2-sched" data-nav="labor/schedule">
     <div class="hb-sh" style="margin-top:0"><div><div class="k">Schedule</div><h2>Next week, drafted by Cavnar AI<small>generated against your {{ _lt|int }}% target and the staff rules you set — check it before it goes out</small></h2><div class="lb2-actions">
       {% if labor.is_live %}<button onclick="generateSchedule(this)" id="gen-sched-btn" class="cbtn cbtn-primary">Generate a draft schedule</button>
       <!-- Which week: next week by default, the week after, or any date
@@ -6630,7 +6677,13 @@ svg:hover .hb-xh{opacity:1}
       {% if not restaurant.toast_restaurant_guid %}
       <label class="cbtn cbtn-secondary">{% if labor.is_live %}Update shifts CSV{% else %}Upload shifts CSV{% endif %}<input type="file" accept=".csv" style="display:none" id="shifts-inline-input" onchange="clientUpload('shifts', this)"></label>
       {% endif %}
-    </div></div></div>
+      {# The weekly automation where the work is (Friction #27): the same
+         switch as Account -> Automation & AI, both on /api/labor/auto-draft. #}
+      <span class="rul-sw" id="lb2-autodraft-sw" style="border-top:0;padding:0;gap:8px" hidden><label class="ac-switch"><input type="checkbox" id="lb2-autodraft" onchange="lb2SaveAutoDraft(this)" aria-label="Cavnar drafts every Thursday"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><span>Cavnar drafts every Thursday</span><span class="ac-status" id="lb2-autodraft-status"></span></span>
+    </div>
+    {# A drafted week staff don't have yet, one tap back into the editor (#4). #}
+    <div class="lb2-ro" id="sched-reopen" hidden></div>
+    </div></div>
   <!-- Schedule download tooltip -->
   <div id="schedule-tooltip" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:999;background:rgba(14,12,10,0.6);align-items:center;justify-content:center">
     <div style="background:var(--ink);border-radius:12px;padding:28px 32px;max-width:420px;width:90%;position:relative;border:1px solid #3d3530">
@@ -6659,44 +6712,83 @@ svg:hover .hb-xh{opacity:1}
           <div id="sched-week-label" style="font-size:14px;font-weight:700;color:rgba(255,255,255,.88)">Week of —</div>
           <div id="sched-gen-meta"></div>
           <div id="sched-gen-notes" class="sr-note"></div>
+          <!-- One line that grades the week (Friction #19): rules, hours
+               against PAR, quality. The detail sits under Details below. -->
+          <div id="sched-verdict" class="sr-note" style="margin-top:6px;color:var(--ink2)"></div>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button onclick="downloadScheduleFromPreview()" class="cbtn cbtn-success" onmousedown="this.style.transform='scale(.97)'" onmouseup="this.style.transform='translateY(-1px)'">Download CSV</button>
-          <button onclick="togglePublishSchedule()" id="ps-toggle-btn" class="cbtn cbtn-primary">Send to staff</button>
-          <button class="cbtn cbtn-glass" onclick="document.getElementById('schedule-preview-panel').style.display='none'" onmousedown="this.style.transform='scale(.97)'" onmouseup="this.style.transform='translateY(-1px)'">Close</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <!-- One button (Friction #16): it saves unsaved edits, then sends.
+               Its label names who it reaches, or the rule warnings a send
+               would acknowledge. -->
+          <button onclick="saveAndSendSchedule(this)" id="ps-send-btn" class="cbtn cbtn-primary">Send to staff</button>
+          <button class="cbtn cbtn-glass" onclick="closeSchedulePreview()" onmousedown="this.style.transform='scale(.97)'" onmouseup="this.style.transform='translateY(-1px)'">Close</button>
         </div>
       </div>
+      <div id="ps-reach" class="sr-note" style="padding:8px 20px 0"></div>
+      <!-- The publish gate: a 409 needs_ack (or the pre-send check) lists
+           what the sender must read before the week goes out; the send
+           button then names them. Rendered by _psRenderBlockers. -->
+      <div id="ps-blockers" style="padding:0 20px"></div>
+      <div style="padding:6px 20px 0"><span id="ps-result" style="font-size:13.5px"></span></div>
 
-      <!-- Redo some days: one checkbox per date, regenerated against the
-           same draft (POST /api/generate-schedule {dates, history_id}). -->
-      <div id="sched-redo" class="sched-redo" style="display:none"></div>
-
-      <!-- Publish schedule to staff -->
+      <!-- Who the week reaches, fixed in place: missing emails and numbers.
+           Opened from "fix contacts" under the send button. -->
       <div id="publish-sched-panel" style="display:none;padding:14px 20px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(200,75,47,.05)">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px">
-          <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ember2)">Send this schedule to your staff</div>
+          <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ember2)">How each person gets the week</div>
           <button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" title="Collapse" aria-label="Collapse" onclick="togglePublishSchedule()">✕</button>
         </div>
-        <div id="ps-contacts" style="font-size:14px;color:rgba(255,255,255,.55)">Loading staff…</div>
-        <!-- The publish gate: a 409 needs_ack lists what the sender must read
-             before the week goes out. Rendered by _psRenderBlockers. -->
-        <div id="ps-blockers"></div>
-        <div id="ps-actions" style="margin-top:10px;display:none">
-          <button onclick="publishScheduleNow()" id="ps-send-btn" class="cbtn cbtn-success">Send now</button>
-          <span id="ps-result" style="font-size:13.5px;margin-left:10px"></span>
-        </div>
+        <div id="ps-contacts" style="font-size:14px;color:rgba(255,255,255,.55)"></div>
+        <div id="ps-actions" style="margin-top:10px;display:none"></div>
         <div id="ps-seen" style="display:none;margin-top:12px;border-top:1px solid rgba(255,255,255,.08);padding-top:10px">
           <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ember2);margin-bottom:6px">Who's seen it</div>
           <div id="ps-seen-list" style="font-size:13.5px;color:rgba(255,255,255,.75)"></div>
         </div>
       </div>
 
-      <!-- AI summary bullets -->
-      <div id="sched-summary" style="padding:14px 20px;border-bottom:1px solid rgba(255,255,255,.08);display:none">
-        <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#6fcf97;margin-bottom:8px">What changed vs last published week</div>
-        <div id="sched-summary-bullets" style="font-size:13px;color:#c0b8b0;line-height:1.8"></div>
-        <div id="sched-narrative" class="sr-narr" style="display:none"></div>
+      <!-- Schedule table toggle bar -->
+      <div id="sched-toggle-bar" style="display:none;padding:12px 20px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(111,207,151,.04);cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between" onclick="toggleSchedTable()">
+        <button style="background:none;border:none;cursor:pointer;font-size:12px;font-weight:700;color:#6fcf97;padding:0;letter-spacing:.02em;display:flex;align-items:center;gap:6px" id="sched-toggle-label">View full schedule<span id="sched-toggle-arrow" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:rgba(111,207,151,.12);border:1px solid rgba(111,207,151,.25);color:#6fcf97;transition:transform .25s;flex-shrink:0"><svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M5 6l3 3 3-3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></button>
+        <span id="sched-shift-count" style="font-size:11px;color:var(--ink3)"></span>
       </div>
+
+      <!-- Schedule table (collapsed by default) -->
+      <div id="sched-table-wrap" style="display:none;overflow-x:auto;padding:0 0 4px">
+        <table id="sched-table" style="width:100%;border-collapse:collapse;font-size:11px;min-width:580px">
+          <thead>
+            <tr style="background:rgba(255,255,255,.04)">
+              <th style="padding:8px 12px;text-align:left;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;white-space:nowrap">Day</th>
+              <th style="padding:8px 12px;text-align:left;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase">Employee</th>
+              <th style="padding:8px 12px;text-align:left;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase">Role</th>
+              <th style="padding:8px 12px;text-align:left;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;white-space:nowrap">Shift</th>
+              <th style="padding:8px 12px;text-align:left;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;white-space:nowrap">Hrs</th>
+              <th style="padding:8px 12px;text-align:left;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase">Notes</th>
+              <th style="padding:8px 12px;text-align:right;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase">Edit</th>
+            </tr>
+          </thead>
+          <tbody id="sched-tbody"></tbody>
+        </table>
+        <div id="sched-table-foot">
+          <span class="cap">Tap a row for why that person is on it &middot; the pencil edits it</span>
+          <button type="button" class="cbtn cbtn-soft cbtn-sm" data-sched-add="1">+ Add a shift</button>
+          <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-muted cbtn-sm" onclick="downloadScheduleFromPreview()">Download CSV</button>
+        </div>
+      </div>
+      <!-- Unsaved edits. Save re-scores and stores the week as a new
+           "edited" version; nothing can be sent to staff until then. -->
+      <div id="sched-edit-bar">
+        <span class="st">Unsaved edits</span>
+        <span class="sr-note">Save to re-score the week and keep it &mdash; or send, which saves them first.</span>
+        <!-- What the edits move: hours, overtime-priced dollars, overtime
+             hours — from POST /api/labor/schedule/violations with baseline_rows. -->
+        <span id="sched-edit-cost" class="sched-cost"></span>
+        <span class="sp"></span>
+        <button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="discardScheduleEdits()">Discard</button>
+        <button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="saveScheduleEdits(this)">Save changes</button>
+      </div>
+      <!-- Somebody saved this week after it was opened here: their lines,
+           and a Reload. Nothing is overwritten. -->
+      <div id="sched-conflict" class="sched-conflict" style="display:none"></div>
 
       <!-- Rules check — every hard and soft rule the finished week breaks,
            what the engine fixed on its own, what still needs a human, and
@@ -6704,6 +6796,21 @@ svg:hover .hb-xh{opacity:1}
            from POST /api/labor/schedule/violations so the verdict is never
            stale. -->
       <div id="sched-review" class="sr-panel" style="display:none"></div>
+
+      <!-- Redo some days: one checkbox per date, regenerated against the
+           same draft (POST /api/generate-schedule {dates, history_id}). -->
+      <div id="sched-redo" class="sched-redo" style="display:none"></div>
+      <!-- Everything that grades the week, folded under Details
+           (Friction #19): what changed, PAR, the economics and Shift
+           Quality. The verdict line above says the headline. -->
+      <details class="co-more" id="sched-details" style="padding:0 20px 14px">
+        <summary>Details <small id="sched-details-sub">what changed, PAR hours, cost and Shift Quality</small></summary>
+      <!-- AI summary bullets -->
+      <div id="sched-summary" style="padding:14px 20px;border-bottom:1px solid rgba(255,255,255,.08);display:none">
+        <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#6fcf97;margin-bottom:8px">What changed vs last published week</div>
+        <div id="sched-summary-bullets" style="font-size:13px;color:#c0b8b0;line-height:1.8"></div>
+        <div id="sched-narrative" class="sr-narr" style="display:none"></div>
+      </div>
 
       <!-- PAR hours banner -->
       <div id="sched-par-banner" style="display:none;padding:14px 20px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(111,207,151,.06)">
@@ -6757,48 +6864,7 @@ svg:hover .hb-xh{opacity:1}
         </div>
       </div>
 
-      <!-- Schedule table toggle bar -->
-      <div id="sched-toggle-bar" style="display:none;padding:12px 20px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(111,207,151,.04);cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between" onclick="toggleSchedTable()">
-        <button style="background:none;border:none;cursor:pointer;font-size:12px;font-weight:700;color:#6fcf97;padding:0;letter-spacing:.02em;display:flex;align-items:center;gap:6px" id="sched-toggle-label">View full schedule<span id="sched-toggle-arrow" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:rgba(111,207,151,.12);border:1px solid rgba(111,207,151,.25);color:#6fcf97;transition:transform .25s;flex-shrink:0"><svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M5 6l3 3 3-3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></button>
-        <span id="sched-shift-count" style="font-size:11px;color:var(--ink3)"></span>
-      </div>
-
-      <!-- Schedule table (collapsed by default) -->
-      <div id="sched-table-wrap" style="display:none;overflow-x:auto;padding:0 0 4px">
-        <table id="sched-table" style="width:100%;border-collapse:collapse;font-size:11px;min-width:580px">
-          <thead>
-            <tr style="background:rgba(255,255,255,.04)">
-              <th style="padding:8px 12px;text-align:left;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;white-space:nowrap">Day</th>
-              <th style="padding:8px 12px;text-align:left;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase">Employee</th>
-              <th style="padding:8px 12px;text-align:left;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase">Role</th>
-              <th style="padding:8px 12px;text-align:left;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;white-space:nowrap">Shift</th>
-              <th style="padding:8px 12px;text-align:left;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;white-space:nowrap">Hrs</th>
-              <th style="padding:8px 12px;text-align:left;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase">Notes</th>
-              <th style="padding:8px 12px;text-align:right;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase">Edit</th>
-            </tr>
-          </thead>
-          <tbody id="sched-tbody"></tbody>
-        </table>
-        <div id="sched-table-foot">
-          <span class="cap">Tap a row for why that person is on it &middot; the pencil edits it</span>
-          <button type="button" class="cbtn cbtn-soft cbtn-sm" data-sched-add="1">+ Add a shift</button>
-        </div>
-      </div>
-      <!-- Unsaved edits. Save re-scores and stores the week as a new
-           "edited" version; nothing can be sent to staff until then. -->
-      <div id="sched-edit-bar">
-        <span class="st">Unsaved edits</span>
-        <span class="sr-note">Save to re-score the week and keep it. Send to staff is off until you do.</span>
-        <!-- What the edits move: hours, overtime-priced dollars, overtime
-             hours — from POST /api/labor/schedule/violations with baseline_rows. -->
-        <span id="sched-edit-cost" class="sched-cost"></span>
-        <span class="sp"></span>
-        <button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="discardScheduleEdits()">Discard</button>
-        <button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="saveScheduleEdits(this)">Save changes</button>
-      </div>
-      <!-- Somebody saved this week after it was opened here: their lines,
-           and a Reload. Nothing is overwritten. -->
-      <div id="sched-conflict" class="sched-conflict" style="display:none"></div>
+      </details>
     </div>
   </div>
 
@@ -6829,7 +6895,7 @@ svg:hover .hb-xh{opacity:1}
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:flex-end">
           <div>
             <div style="font-size:12.5px;font-weight:600;color:var(--ink3);margin-bottom:4px">Employee name</div>
-            <input id="av-name" type="text" placeholder="e.g. Jake M." style="font-size:15px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;width:160px;background:var(--surface);color:var(--ink);font-family:inherit">
+            <input id="av-name" type="text" placeholder="Pick from the roster" list="lb2-people-names" data-people-picker autocomplete="off" style="font-size:15px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;width:160px;background:var(--surface);color:var(--ink);font-family:inherit">
           </div>
           <div>
             <div style="font-size:12.5px;font-weight:600;color:var(--ink3);margin-bottom:4px">Available days</div>
@@ -7003,7 +7069,7 @@ svg:hover .hb-xh{opacity:1}
   <!-- Roster & settings — the facts the schedule respects about each
        person: on the roster or not, full or part time, hours, mornings or
        nights per day, under 18. Each change is one POST and one toast. -->
-  <div class="lb2-srow s4">
+  <div class="lb2-srow s4" data-nav="labor/team">
     <div class="lb2-subsection" onclick="lb2RowClick(event,toggleRosterPanel)">
       <div class="lb2-subsection-title">Roster &amp; settings <span id="roster-chip" class="lb2-subsection-chip"></span></div>
       <button type="button" onclick="toggleRosterPanel()" class="cbtn cbtn-text cbtn-inline lb2-subsection-toggle" id="roster-toggle-btn">Manage ↓</button>
@@ -7707,7 +7773,10 @@ svg:hover .hb-xh{opacity:1}
   </div>
 
   <div class="fc2-sec" id="fc2-orders">
-    <div class="hd"><div><div class="hb-kicker">Order list · recommended quantities</div><h2>What to order this week</h2><div class="sub">Built from days remaining, par levels and your last order — deltas are against what you ordered last time.</div></div></div>
+    <div class="hd"><div><div class="hb-kicker">Order list · recommended quantities</div><h2>What to order this week</h2><div class="sub">Built from days remaining, par levels and your last order — deltas are against what you ordered last time.</div>
+      {# Auto-order where the order is (Friction #27): the same switch as
+         Account -> Automation & AI, on /api/food-cost/auto-order. #}
+      <span class="rul-sw" id="fc2-autoorder-sw" style="border-top:0;padding:8px 0 0;gap:8px" hidden><label class="ac-switch"><input type="checkbox" id="fc2-autoorder" onchange="fc2SaveAutoOrder(this)" aria-label="Send orders to suppliers you've used before"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><span>Send Monday orders to suppliers you&rsquo;ve used before</span><span class="ac-status" id="fc2-autoorder-status"></span></span></div></div>
     {% if inv.critical_low or inv.reorder_soon or inv.order_reduction %}
     <div class="fc2-orders">
       {% for _grp, _label, _items in [('urgent','Urgent — order now', inv.critical_low), ('soon','Order soon', inv.reorder_soon), ('reduce','Reduce order', inv.order_reduction)] %}
@@ -9185,6 +9254,31 @@ svg:hover .hb-xh{opacity:1}
         {% if not _is_owner %}<div class="ac-note">Only the account owner can change the restaurant profile.</div>{% endif %}
       </div>
 
+      <!-- Targets & pay rates (Friction #26): the numbers every labor figure
+           and every schedule's budget rest on, set by the owner here. Each
+           control saves on change; Cavnar's admin stays an override. -->
+      <div class="ac-card" id="as-tg-card" style="margin-top:14px" hidden>
+        <div class="ac-card-h"><div><h3>Targets &amp; pay rates</h3><p>What labor and food cost are judged against, and what each hour costs. Every labor figure and every drafted week&rsquo;s budget uses these.</p></div>
+          <div class="r"><span class="ac-status" id="as-tg-status"></span></div></div>
+        <div class="ac-rows">
+          <div class="ac-row"><div class="l"><b>Labor target</b><span>Labor as a % of sales. The schedule is drafted to it.</span></div>
+            <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-labor_target_pct" min="5" max="80" step="0.5" style="width:96px" aria-label="Labor target %" data-tg="labor_target_pct"></div></div>
+          <div class="ac-row"><div class="l"><b>Food cost target</b><span>Food cost as a % of food sales.</span></div>
+            <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-food_cost_target" min="5" max="80" step="0.5" style="width:96px" aria-label="Food cost target %" data-tg="food_cost_target"></div></div>
+          <div class="ac-row"><div class="l"><b>Waste target</b><span>Waste as a % of purchases. Blank uses Cavnar&rsquo;s starting 4.5%.</span></div>
+            <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-waste_target_pct" min="0" max="50" step="0.5" style="width:96px" aria-label="Waste target %" data-tg="waste_target_pct"></div></div>
+          <div class="ac-row"><div class="l"><b>Monthly revenue target</b><span>In dollars. Blank or 0 means no target.</span></div>
+            <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-monthly_revenue_target" min="0" step="100" style="width:130px" aria-label="Monthly revenue target" data-tg="monthly_revenue_target"></div></div>
+          <div class="ac-row"><div class="l"><b>Blended hourly rate</b><span>What an hour costs when a role has no rate of its own.</span></div>
+            <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-hourly_rate" min="2" max="250" step="0.25" style="width:96px" aria-label="Blended hourly rate" data-tg="hourly_rate"></div></div>
+          <div class="ac-row"><div class="l"><b>Payroll week starts</b><span>Overtime is counted over this week.</span></div>
+            <div class="c"><select class="ac-select" id="as-tg-week_start_day" aria-label="Payroll week starts" data-tg="week_start_day"><option value="0">Monday</option><option value="1">Tuesday</option><option value="2">Wednesday</option><option value="3">Thursday</option><option value="4">Friday</option><option value="5">Saturday</option><option value="6">Sunday</option></select></div></div>
+        </div>
+        <div class="lb2-sub" style="margin-top:14px">Pay by role<small>per hour · blank uses the blended rate</small></div>
+        <div id="as-tg-roles" class="ac-rows"></div>
+        <div class="ac-note" id="as-tg-ro" hidden>Only the account owner can change targets and pay rates.</div>
+      </div>
+
       <div class="ac-card" id="as-dsr-card" style="margin-top:14px" hidden>
         <div class="ac-card-h"><div><h3>Daily report</h3><p>The nightly sales report and the weekly grid: your week, your periods, and which of your categories each POS department counts toward. Owner only.</p></div>
           <div class="r"><span class="ac-status" id="as-dsr-status"></span></div></div>
@@ -9370,16 +9464,6 @@ svg:hover .hb-xh{opacity:1}
               <div class="c"><select class="ac-select" id="as-preshift-hour" onchange="saveMorningBrief()" aria-label="Lineup notes hour"></select></div></div>
             <div class="ac-row"><div><div class="ac-row-l">How much to hear from Cavnar AI</div><div class="ac-note">Calm is the brief, results and the close. Normal adds the pre-dinner pulse, coverage and opportunities, up to four a day. Everything is what it says.</div></div>
               <div class="c"><select class="ac-select" id="as-briefing-level" onchange="saveMorningBrief()" aria-label="Briefing level"><option value="calm">Calm</option><option value="normal">Normal</option><option value="all">Everything</option></select></div></div>
-            <div class="ac-row" id="as-autodraft-row" hidden><div class="l"><b>Draft next week&rsquo;s schedule for me</b><span>Every Thursday, if you haven&rsquo;t built one. A draft only &mdash; nothing goes to staff until you publish.</span></div>
-              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-autodraft" onchange="saveAutoDraft()" aria-label="Draft next week's schedule"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
-            <div class="ac-row" id="as-weeklyplan-row"><div class="l"><b>Plan my week for me</b><span>Monday mornings Cavnar AI reads the week &mdash; brief, issues, goals, results, what connects &mdash; and files up to three owned actions under Still open. Nobody is texted.</span></div>
-              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-weeklyplan" onchange="saveWeeklyPlan()" aria-label="Plan my week automatically"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
-            <div class="ac-row" id="as-senddelay-row"><div class="l"><b>Give me a moment before anything goes out</b><span>A supplier order or a published schedule waits this long with an Undo in the Cavnar AI strip before it leaves the building.</span></div>
-              <div class="c"><select id="as-senddelay" class="ac-select" onchange="saveSendDelay()" aria-label="Delay before sends"><option value="0">Send now</option><option value="5">5 minutes</option><option value="15">15 minutes</option></select></div></div>
-            <div class="ac-row" id="as-autoorder-row" hidden><div class="l"><b>Send orders to suppliers you&rsquo;ve used before</b><span>Monday mornings, an order to a supplier with 3+ past orders, for about what you usually spend, goes out an hour later &mdash; you&rsquo;re told, and can undo from Home. New suppliers always wait for you. <span id="as-autoorder-trust"></span></span></div>
-              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-autoorder" onchange="saveAutoOrder()" aria-label="Send trusted supplier orders automatically"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
-            <div class="ac-row" id="as-autopublish-row" hidden><div class="l"><b>Publish it for me on Friday</b><span>Once your last 3 published schedules went out unedited, the Thursday draft goes to staff at 11am Friday &mdash; you&rsquo;re told at 9, and can undo from Home until then. <span id="as-autopublish-trust"></span></span></div>
-              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-autopublish" onchange="saveAutoPublish()" aria-label="Publish the schedule automatically"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
           </div>
           <div class="ac-status" id="as-ops-status" style="margin-top:8px"></div>
           </div>
@@ -9396,6 +9480,25 @@ svg:hover .hb-xh{opacity:1}
     <section class="ac-section" id="acct-automation" aria-labelledby="acct-automation-h">
       <div class="ac-h"><div><h2 id="acct-automation-h">Automation &amp; AI</h2><p>What the AI is allowed to do on its own, and how it sounds when it speaks for you.</p></div></div>
       <div class="ac-grid" id="account-settings-card">
+        <!-- The work Cavnar does on its own (Friction #27): moved out of
+             Notifications, where it hid under the morning brief. The
+             Schedule header and the order card carry the same switches. -->
+        <div class="ac-card" id="as-auto-ops-card">
+          <div class="ac-card-h"><div><h3>Work Cavnar does for you</h3><p>Drafting the schedule, sending it, ordering from suppliers you trust &mdash; each one off until you turn it on, and each one undoable.</p></div>
+            <div class="r"><span class="ac-status" id="as-auto-ops-status"></span></div></div>
+          <div class="ac-rows">
+            <div class="ac-row" id="as-autodraft-row" hidden><div class="l"><b>Draft next week&rsquo;s schedule for me</b><span>Every Thursday, if you haven&rsquo;t built one. A draft only &mdash; nothing goes to staff until you publish.</span></div>
+              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-autodraft" onchange="saveAutoDraft()" aria-label="Draft next week's schedule"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
+            <div class="ac-row" id="as-weeklyplan-row"><div class="l"><b>Plan my week for me</b><span>Monday mornings Cavnar AI reads the week &mdash; brief, issues, goals, results, what connects &mdash; and files up to three owned actions under Still open. Nobody is texted.</span></div>
+              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-weeklyplan" onchange="saveWeeklyPlan()" aria-label="Plan my week automatically"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
+            <div class="ac-row" id="as-senddelay-row"><div class="l"><b>Give me a moment before anything goes out</b><span>A supplier order or a published schedule waits this long with an Undo in the Cavnar AI strip before it leaves the building.</span></div>
+              <div class="c"><select id="as-senddelay" class="ac-select" onchange="saveSendDelay()" aria-label="Delay before sends"><option value="0">Send now</option><option value="5">5 minutes</option><option value="15">15 minutes</option></select></div></div>
+            <div class="ac-row" id="as-autoorder-row" hidden><div class="l"><b>Send orders to suppliers you&rsquo;ve used before</b><span>Monday mornings, an order to a supplier with 3+ past orders, for about what you usually spend, goes out an hour later &mdash; you&rsquo;re told, and can undo from Home. New suppliers always wait for you. <span id="as-autoorder-trust"></span></span></div>
+              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-autoorder" onchange="saveAutoOrder()" aria-label="Send trusted supplier orders automatically"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
+            <div class="ac-row" id="as-autopublish-row" hidden><div class="l"><b>Publish it for me on Friday</b><span>Once your last 3 published schedules went out unedited, the Thursday draft goes to staff at 11am Friday &mdash; you&rsquo;re told at 9, and can undo from Home until then. <span id="as-autopublish-trust"></span></span></div>
+              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-autopublish" onchange="saveAutoPublish()" aria-label="Publish the schedule automatically"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
+          </div>
+        </div>
         <div class="ac-card">
           <div class="ac-card-h"><div><h3>Auto-approve 5-star replies</h3><p>Drafted replies to 5-star reviews are approved automatically &mdash; and posted, when Google Business is connected. Capped per day, with a pause switch.</p></div>
             <div class="r"><span class="ac-status" id="as-auto-status"></span><button class="cbtn cbtn-primary cbtn-sm" onclick="saveAutoApprove()">Save rule</button></div></div>
@@ -13509,7 +13612,7 @@ document.addEventListener('click',function(e){
   var done=cbtnBusy(t,'\u2026');
   fetch('/api/labor/time-off/'+encodeURIComponent(t.getAttribute('data-timeoff'))+'/decide',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision:t.getAttribute('data-decision')})}).then(apiJson).then(function(d){
     // An approval over a week staff already have names the shifts to cover.
-    done();if(typeof toast==='function')toast(d&&d.ok?(d.warning?('Approved \u2014 '+d.warning):(d.request.status==='approved'?'Approved \u2014 kept off the next draft':'Not approved')):((d&&d.error)||'Could not decide'),d&&d.ok?(d.warning?'warning':'success'):'error');lb2LoadTimeOff();
+    done();if(typeof toast==='function')toast(d&&d.ok?(d.warning?('Approved \u2014 '+d.warning):(d.request.status==='approved'?'Approved \u2014 kept off the next draft':'Not approved')):((d&&d.error)||'Could not decide'),d&&d.ok?(d.warning?'warning':'success'):'error');lb2LoadTimeOff();if(window.lb2AfterTimeOff)lb2AfterTimeOff(d);
   }).catch(function(){done();});
 });
 function lb2LoadCovers(){
@@ -13569,6 +13672,7 @@ function laborApplyCaveats(el,figs,d,note){
 function loadLaborInsight(){
   laborLoaded=true;
   lb2LoadTimeOff();lb2LoadCovers();
+  if(window.lb2OnOpen)lb2OnOpen();
   var el=document.getElementById('labor-insight');
   if(!el)return;
   var fiveMin=5*60*1000;
@@ -13810,7 +13914,10 @@ function _schedHandleResult(data) {
   _schedHideConflict();
   _schedLoadVersion();
   var psb = document.getElementById('ps-blockers'); if (psb) { psb.style.display = 'none'; psb.innerHTML = ''; }
-  _schedRenderTable(true);
+  var psr = document.getElementById('ps-result'); if (psr) psr.textContent = '';
+  // The week shows the week (Friction #19): the grid opens with the draft.
+  _schedRenderTable();
+  _schedTableOpen = false; toggleSchedTable();
   var gm = document.getElementById('sched-gen-meta');
   if (gm) {
     var bits = [];
@@ -13890,7 +13997,13 @@ function _schedHandleResult(data) {
   }
 
   if (panel) panel.style.display = 'block';
-  if (panel) panel.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+  // A draft reopened on its own when Labor loads (openScheduleDraft quiet)
+  // does not pull the page down to it.
+  if (panel && !window._schedQuietOpen) panel.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+  window._schedQuietOpen = false;
+  if (window.schedVerdict) schedVerdict(data);
+  if (window.psRefresh) psRefresh();
+  var reo = document.getElementById('sched-reopen'); if (reo) reo.hidden = true;
 
   // The server already saved this run to schedule_history the moment it
   // finished generating (see client_api.py's save_schedule_history call) —
@@ -14900,7 +15013,7 @@ function applyShiftSwap(index, name) {
 // this page, the score moved, and publishing read the CSV saved at
 // generation time — so staff received the week the manager had just fixed,
 // unfixed, with nothing on screen to say so.
-function rescoreSchedule(btn) {
+function rescoreSchedule(btn, after) {
   var prevScore = _quality ? _quality.score : null;
   _setQualityState('saving');
   var done = btn ? cbtnBusy(btn, 'Saving\u2026') : function () {};
@@ -14944,6 +15057,10 @@ function rescoreSchedule(btn) {
       }
       if (window.renderScheduleReview) renderScheduleReview({review: d.review, violations: d.violations, fixes: [], unfixed: []});
       _schedRenderTable();
+      // Save & send: the send runs only once the week it sends is stored.
+      // A plain Save re-reads what Send would do for the saved week.
+      if (d.saved && typeof after === 'function') after();
+      else if (d.saved && window.psRefresh) psRefresh();
     } else if (d && d.conflict) {
       _schedShowConflict(d);
       _setQualityState('stale', d.error || 'Somebody saved this week first.');
@@ -15259,64 +15376,72 @@ function togglePublishSchedule(){
   openPublishSchedule();
 }
 
+// "Fix contacts": everyone on the week, how each one gets it, and an email
+// box for whoever nothing reaches. The POS id lives on the person sheet now
+// (Friction #16) — it has nothing to do with sending.
 function openPublishSchedule(){
   var panel = document.getElementById('publish-sched-panel');
   panel.style.display = 'block';
   var body = document.getElementById('ps-contacts');
-  body.innerHTML = 'Loading staff…';
+  body.innerHTML = '<div class="dr-pulse" aria-hidden="true"></div>';
   fetch('/api/labor/staff-contacts').then(apiJson).then(function(d){
     if(!d.ok || !d.contacts || !d.contacts.length){
-      body.innerHTML = '<span style="color:rgba(255,255,255,.35)">No staff found in this schedule.</span>';
+      body.innerHTML = '<span class="sr-note">Nobody is on this week yet.</span>';
       return;
     }
+    var how = {}, r = _psCheck && _psCheck.reach ? _psCheck.reach : null, i;
+    if (r) for (i = 0; i < (r.unreachable || []).length; i++) how[r.unreachable[i]] = 'none';
     var html = '';
     d.contacts.forEach(function(c){
-      html += '<div style="display:flex;align-items:center;gap:10px;padding:6px 0">';
-      html += '<div style="width:130px;font-size:14px;color:rgba(255,255,255,.8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+_psEsc(c.employee_name)+'</div>';
-      html += '<input type="email" placeholder="email address" value="'+_psEsc(c.email)+'" data-name="'+_psEsc(c.employee_name)+'" onchange="savePsContact(this)" style="flex:1;background:#101010;border:1px solid var(--paper3);border-radius:6px;color:var(--ink);padding:8px 10px;font-size:14px">';
-      html += '<input type="text" placeholder="POS id" title="The id your POS shows for this person — lets a comp or void pattern be named to them" value="'+_psEsc(c.pos_id||'')+'" data-name="'+_psEsc(c.employee_name)+'" data-field="pos_id" onchange="savePsContact(this)" style="width:92px;background:#101010;border:1px solid var(--paper3);border-radius:6px;color:var(--ink);padding:8px 10px;font-size:14px">';
+      var lost = how[c.employee_name] === 'none';
+      html += '<div style="display:flex;align-items:center;gap:10px;padding:6px 0;font-size:14px">';
+      html += '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" style="width:150px;justify-content:flex-start;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" data-person-open="' + _psEsc(c.employee_name) + '">' + _psEsc(c.employee_name) + '</button>';
+      html += '<input type="email" class="ac-input" placeholder="' + (lost ? 'no app, texts or email — add an email' : 'email address') + '" value="' + _psEsc(c.email) + '" data-name="' + _psEsc(c.employee_name) + '" onchange="savePsContact(this)" style="flex:1">';
       html += '</div>';
     });
-    body.innerHTML = html;
-    document.getElementById('ps-actions').style.display = 'block';
-    var reach = d.reachable + ' of ' + d.contacts.length + ' reachable by email';
-    document.getElementById('ps-result').textContent = reach;
-    document.getElementById('ps-result').style.color = 'rgba(255,255,255,.4)';
-  }).catch(function(){ body.innerHTML = '<span style="color:#ef4444">Couldn\'t load staff</span>'; });
+    body.innerHTML = html + '<div class="sr-note" style="margin-top:6px">Staff who ticked “text me when my schedule is posted” in the staff portal get a text; anyone with the app gets a notification; everyone else gets this email.</div>';
+  }).catch(function(){ body.innerHTML = '<span class="sr-note" style="color:var(--hb-bad)">Couldn\'t load staff</span>'; });
 }
 
 function savePsContact(input){
   var name = input.getAttribute('data-name');
-  var row = input.parentNode, body = {employee_name: name};
-  var em = row.querySelector('input[type=email]'), pid = row.querySelector('input[data-field=pos_id]');
-  body.email = em ? em.value.trim() : input.value.trim();
-  if (pid) body.pos_id = pid.value.trim();
   fetch('/api/labor/staff-contacts', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify(body)
+    body: JSON.stringify({employee_name: name, email: input.value.trim()})
   }).then(apiJson).then(function(d){
     if(!d.ok) toast(d.error||'Couldn\'t save that contact','error');
+    else if (window.psRefresh) psRefresh();
   });
+}
+
+// Save & send (Friction #16): unsaved edits are saved, then the week goes
+// out. A week with rule warnings is sent knowingly — the button names them
+// once the list is on screen, and that press is the acknowledgement.
+function saveAndSendSchedule(btn){
+  var result = document.getElementById('ps-result');
+  if (_schedEditIdx !== null) { toast('Finish the row you are editing first', 'error'); return; }
+  if (_schedDirty) {
+    if (result) { result.style.color = 'var(--ink3)'; result.textContent = 'Saving your edits first…'; }
+    rescoreSchedule(btn, function(){ publishScheduleNow(false); });
+    return;
+  }
+  publishScheduleNow(!!(window._psArmed && _psArmed.hid === _schedHistoryId));
 }
 
 function publishScheduleNow(ack){
   var btn = document.getElementById('ps-send-btn');
   var result = document.getElementById('ps-result');
   var bl = document.getElementById('ps-blockers');
-  if (_schedDirty) {
-    result.style.color = 'var(--hb-warn)';
-    result.textContent = 'Save your edits first — staff would get the week without them.';
-    return;
-  }
-  btn.disabled = true; btn.textContent = 'Sending…';
+  var done = btn ? cbtnBusy(btn, 'Sending…') : function(){};
   var body = {acknowledge: !!ack};
   if (_schedHistoryId) body.schedule_id = _schedHistoryId;
   var status = 0;
   fetch('/api/labor/publish-schedule', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)})
     .then(function(r){ status = r.status; return r.json().catch(function(){ return {ok:false, error:'Server error (HTTP ' + status + ') — please try again'}; }); })
     .then(function(d){
-      btn.disabled = false; btn.textContent = 'Send now';
+      done();
       if(d.ok){
         if (bl) { bl.style.display = 'none'; bl.innerHTML = ''; }
+        if (window.psDisarm) psDisarm();
         result.style.color = 'var(--hb-good)';
         if (d.queued) {
           result.textContent = 'Goes to staff in ' + d.undo_minutes + ' min — undo from the Cavnar AI strip';
@@ -15328,16 +15453,25 @@ function publishScheduleNow(ack){
           result.textContent = d.note || 'Published to the staff portal.';
           toast('Published to the portal','success');
         } else {
-          var sent = (d.sent || []).length, total = sent + (d.unreachable || []).length + (d.failed || []).length;
-          result.textContent = 'Sent to ' + sent + ' of ' + total + ' staff' + ((d.failed || []).length ? ' · ' + d.failed.length + ' email' + (d.failed.length === 1 ? '' : 's') + ' failed' : '') + (d.acknowledged ? ' · warnings acknowledged' : '');
+          var sent = d.sent || [], total = sent.length + (d.unreachable || []).length + (d.failed || []).length, by = {app: 0, text: 0, email: 0}, k;
+          for (k = 0; k < sent.length; k++) { var ch = sent[k].channel; if (ch === 'push') by.app++; else if (ch === 'sms') by.text++; else by.email++; }
+          var parts = [];
+          if (by.app) parts.push(by.app + ' in the app');
+          if (by.text) parts.push(by.text + ' by text');
+          if (by.email) parts.push(by.email + ' by email');
+          result.textContent = 'Sent to ' + sent.length + ' of ' + total + ' staff' + (parts.length ? ' (' + parts.join(', ') + ')' : '') + ((d.failed || []).length ? ' · ' + d.failed.length + ' email' + (d.failed.length === 1 ? '' : 's') + ' failed' : '') + (d.acknowledged ? ' · warnings acknowledged' : '');
           toast('Schedule sent','success');
         }
+        if (typeof loadScheduleHistory === 'function') loadScheduleHistory();
+        if (window.lb2LoadWaiting) lb2LoadWaiting();
+        if (window.psRefresh) psRefresh();
         return;
       }
       // The publish gate: nothing goes out until the person sending has
-      // read what the rules check found. A second Send carries acknowledge.
+      // read what the rules check found. The list goes on screen and the
+      // button becomes the acknowledgement.
       if (d.needs_ack) {
-        _psRenderBlockers(d.blockers || []);
+        _psRenderBlockers(d.blockers || [], true);
         result.textContent = '';
         return;
       }
@@ -15345,20 +15479,20 @@ function publishScheduleNow(ack){
       // 403: this login can draft the week but not send it. The server's
       // sentence says exactly that; show it rather than "Nothing sent".
       result.textContent = d.error || (status === 403 ? 'Your login can draft a schedule but not send it to staff.' : 'Nothing sent');
-    }).catch(function(){ btn.disabled=false; btn.textContent='Send now'; result.style.color='var(--hb-bad)'; result.textContent='Network error'; });
+    }).catch(function(){ done(); result.style.color='var(--hb-bad)'; result.textContent='Network error'; });
 }
 
-function _psRenderBlockers(list) {
+function _psRenderBlockers(list, arm) {
   var bl = document.getElementById('ps-blockers');
   if (!bl) return;
+  if (!list || !list.length) { bl.style.display = 'none'; bl.innerHTML = ''; return; }
   var h = '<div class="sr-k">Read before this goes out</div>', i;
   for (i = 0; i < list.length; i++) {
     h += '<div class="sr-line bad"><span class="d"></span><span>' + _escHtml(list[i]) + '</span></div>';
   }
-  h += '<div class="ack"><label><input type="checkbox" id="ps-ack" onchange="document.getElementById(\'ps-ack-send\').disabled=!this.checked"> I’ve read these and want to send anyway</label>'
-     + '<button type="button" id="ps-ack-send" class="cbtn cbtn-danger cbtn-sm" disabled onclick="publishScheduleNow(true)">Send anyway</button></div>';
   bl.innerHTML = h;
   bl.style.display = 'block';
+  if (arm && window.psArm) psArm(list.length);
 }
 
 // ── Editing the week in place ───────────────────────────────────────────────
@@ -15562,14 +15696,11 @@ function _schedSetDirty(on) {
   var bar = document.getElementById('sched-edit-bar');
   if (bar) bar.className = on ? 'on' : '';
   if (!on) _schedRenderCost(null);
-  var ids = ['ps-toggle-btn', 'ps-send-btn', 'ps-ack-send'], i;
-  for (i = 0; i < ids.length; i++) {
-    var b = document.getElementById(ids[i]);
-    if (!b) continue;
-    if (ids[i] === 'ps-ack-send' && !on) continue;   // stays gated on its checkbox
-    b.disabled = !!on;
-    b.title = on ? 'Save your edits first' : '';
-  }
+  // The send button stays live with unsaved edits: it saves them first
+  // (Friction #16). An edit disarms a warnings acknowledgement — the list
+  // it acknowledged is about the week before the edit.
+  if (on && window.psDisarm) psDisarm();
+  if (window.psLabel) psLabel();
 }
 
 function _schedRecheck() {
@@ -15634,6 +15765,39 @@ function _schedFillEmployeeSelect(sel, current) {
   sel.innerHTML = opts;
 }
 
+// Shift times as 15-minute steps (Friction #44), in the table's own
+// spelling ("4:00pm"). A stored time off the grid stays selectable.
+function _schedFmtMin(m) {
+  var h = Math.floor(m / 60) % 24, mi = m % 60, ap = h < 12 ? 'am' : 'pm', h12 = h % 12 === 0 ? 12 : h % 12;
+  return h12 + ':' + (mi < 10 ? '0' : '') + mi + ap;
+}
+function _schedTimeOpts(current) {
+  var cur = _schedMinutes(current), h = '', m, hit = false;
+  for (m = 5 * 60; m < 29 * 60; m += 15) {
+    var v = _schedFmtMin(m), on = cur !== null && (m % (24 * 60)) === cur;
+    if (on) hit = true;
+    h += '<option value="' + v + '"' + (on ? ' selected' : '') + '>' + v + '</option>';
+  }
+  if (current && !hit) h = '<option value="' + _escAttr(current) + '" selected>' + _escHtml(current) + '</option>' + h;
+  return h;
+}
+// The role follows the person picked: their role on this week, else the
+// roster's (Friction #44: role taken from the chosen person).
+function _schedRoleOf(name) {
+  var low = String(name || '').toLowerCase(), k;
+  for (k = 0; k < _schedRows.length; k++) if (String(_schedRows[k].employee || '').toLowerCase() === low && _schedRows[k].role) return _schedRows[k].role;
+  var ppl = window._lb2People || [];
+  for (k = 0; k < ppl.length; k++) if (String(ppl[k].name).toLowerCase() === low && ppl[k].role) return ppl[k].role;
+  return '';
+}
+document.addEventListener('change', function (ev) {
+  var t = ev.target;
+  if (!t || !t.getAttribute || t.getAttribute('data-sched-f') !== 'employee') return;
+  var box = t.closest ? t.closest('[data-sched-editrow]') : null, r = _schedRoleOf(t.value);
+  var rl = box ? box.querySelector('[data-sched-f="role"]') : null;
+  if (rl && r) rl.value = r;
+});
+
 function _schedEditRowHtml(i, row) {
   var dates = '', k;
   for (k = 0; k < _schedWeekDates.length; k++) {
@@ -15646,9 +15810,9 @@ function _schedEditRowHtml(i, row) {
              : '<span style="font-weight:700;color:var(--ember2);font-size:12px">' + _escHtml(row.day || '') + '</span>')
     + '<select class="ac-select" data-sched-f="employee" aria-label="Employee"><option>' + _escHtml(row.employee || '') + '</option></select>'
     + '<input class="ac-input rl" data-sched-f="role" value="' + _escAttr(row.role || '') + '" placeholder="Role" aria-label="Role">'
-    + '<input class="ac-input tm" data-sched-f="shift_start" value="' + _escAttr(row.shift_start || '') + '" placeholder="4:00pm" aria-label="Start">'
+    + '<select class="ac-select tm" data-sched-f="shift_start" aria-label="Start">' + _schedTimeOpts(row.shift_start) + '</select>'
     + '<span style="color:var(--ink3)">–</span>'
-    + '<input class="ac-input tm" data-sched-f="shift_end" value="' + _escAttr(row.shift_end || '') + '" placeholder="10:00pm" aria-label="End">'
+    + '<select class="ac-select tm" data-sched-f="shift_end" aria-label="End">' + _schedTimeOpts(row.shift_end) + '</select>'
     + '<span style="flex:1"></span>'
     + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-sched-cancel="' + i + '">Cancel</button>'
     + '<button type="button" class="cbtn cbtn-soft cbtn-sm" data-sched-done="' + i + '">Done</button>'
@@ -15710,10 +15874,15 @@ function schedRemoveRow(i) {
 
 function schedAddRow() {
   if (_schedAddedIdx !== null) return;
-  var first = _schedRows[0] || {};
-  var d0 = _schedWeekDates[0] || first.date || '';
-  var row = {date: d0, day: _schedDayOf(d0) || first.day || '', employee: _schedRosterNames[0] || first.employee || '',
-             role: first.role || '', shift_start: '4:00pm', shift_end: '10:00pm', scheduled_hours: '6', notes: ''};
+  // Defaults from the row being looked at (its day and times), not always
+  // day one at 4-10pm (Friction #44).
+  var first = (_schedWhyOpen !== null && _schedRows[_schedWhyOpen]) || _schedRows[0] || {};
+  var d0 = first.date || _schedWeekDates[0] || '';
+  var emp0 = _schedRosterNames[0] || first.employee || '';
+  var st0 = first.shift_start || '4:00pm', en0 = first.shift_end || '10:00pm';
+  var row = {date: d0, day: _schedDayOf(d0) || first.day || '', employee: emp0,
+             role: _schedRoleOf(emp0) || first.role || '', shift_start: st0, shift_end: en0,
+             scheduled_hours: _schedHoursBetween(st0, en0) || '6', notes: ''};
   _schedRows.push(row);
   _schedAddedIdx = _schedRows.length - 1;
   _schedEditIdx = _schedAddedIdx; _schedEditOpts = []; _schedWhyOpen = null;
@@ -16104,7 +16273,7 @@ function renderTeamList() {
     if (m.role) sub.push(_escHtml(m.role));
     if (m.score) sub.push(_escHtml(_TEAM_LABELS[m.score] || ''));
     html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--paper);border:1px solid var(--paper3);border-radius:6px;gap:12px;flex-wrap:wrap">';
-    html += '<div><div style="font-size:15.5px;font-weight:600;color:var(--ink)">' + _escHtml(m.name) + '</div>';
+    html += '<div><div style="font-size:15.5px;font-weight:600;color:var(--ink)">' + _escHtml(m.name) + ' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-person-open="' + _escAttr(m.name) + '">Details</button></div>';
     html += '<div style="font-size:13.5px;color:var(--ink3)">' + sub.join(' · ') + '</div></div>';
     html += '<div style="display:flex;align-items:center;gap:12px">';
     html += '<div style="display:flex;gap:4px" data-team-idx="' + i + '">';
@@ -16479,8 +16648,19 @@ function toggleSchedTable() {
 }
 
 function downloadScheduleFromPreview() {
-  if (!_schedCsvCache) return;
-  var blob = new Blob([_schedCsvCache], {type: 'text/csv'});
+  // A saved edit clears the generated CSV; the rows on screen are the week.
+  var csv = _schedCsvCache, cols = ['date', 'day', 'employee', 'role', 'shift_start', 'shift_end', 'scheduled_hours', 'notes'], i, j;
+  if (!csv && _schedRows.length) {
+    var lines = [cols.join(',')];
+    for (i = 0; i < _schedRows.length; i++) {
+      var cells = [];
+      for (j = 0; j < cols.length; j++) cells.push(String(_schedRows[i][cols[j]] == null ? '' : _schedRows[i][cols[j]]).replace(/,/g, ' '));
+      lines.push(cells.join(','));
+    }
+    csv = lines.join('\n');
+  }
+  if (!csv) return;
+  var blob = new Blob([csv], {type: 'text/csv'});
   var url = URL.createObjectURL(blob);
   var a = document.createElement('a');
   a.href = url;
@@ -17983,17 +18163,17 @@ function saveIssueRouting(role) {
 
 function saveAutoDraft() {
   asPost('/api/labor/auto-draft', {enabled: document.getElementById('as-autodraft').checked},
-         'as-ops-status', 'Saved');
+         'as-auto-ops-status', 'Saved');
 }
 function saveAutoPublish() {
   asPost('/api/labor/auto-publish', {enabled: document.getElementById('as-autopublish').checked},
-         'as-ops-status', 'Saved').then(function() { loadAutoPublish(); });
+         'as-auto-ops-status', 'Saved').then(function() { loadAutoPublish(); });
 }
 function saveWeeklyPlan() {
-  asPost('/api/labor/weekly-plan', {enabled: document.getElementById('as-weeklyplan').checked}, 'as-ops-status', 'Saved');
+  asPost('/api/labor/weekly-plan', {enabled: document.getElementById('as-weeklyplan').checked}, 'as-auto-ops-status', 'Saved');
 }
 function saveSendDelay() {
-  asPost('/api/account/send-delay', {minutes: parseInt(document.getElementById('as-senddelay').value, 10) || 0}, 'as-ops-status', 'Saved');
+  asPost('/api/account/send-delay', {minutes: parseInt(document.getElementById('as-senddelay').value, 10) || 0}, 'as-auto-ops-status', 'Saved');
 }
 function loadWeeklyPlanAndDelay() {
   fetch('/api/labor/weekly-plan', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
@@ -18005,7 +18185,7 @@ function loadWeeklyPlanAndDelay() {
 }
 function saveAutoOrder() {
   asPost('/api/food-cost/auto-order', {enabled: document.getElementById('as-autoorder').checked},
-         'as-ops-status', 'Saved').then(function() { loadAutoOrder(); });
+         'as-auto-ops-status', 'Saved').then(function() { loadAutoOrder(); });
 }
 function loadAutoOrder() {
   fetch('/api/food-cost/auto-order', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
@@ -21180,7 +21360,8 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
           // number you don't recognise next to a name you do is the signal.
           if(s.self_signup)bits.push('signed up '+ago(s.claimed_at)+' · '+esc(_phone(s.claimed_by_phone)));
           var meta=bits.length?' <span style="color:var(--ink3)">· '+bits.join(' · ')+'</span>':'';
-          var acts='<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="renameStaff('+s.membership_id+',this)">Rename</button>'
+          var acts='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-person-open="'+esc(s.name||'')+'">Details</button>'
+                 + '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="renameStaff('+s.membership_id+',this)">Rename</button>'
                  + '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="retitleStaff('+s.membership_id+',this)">Job</button>'
                  + '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="resetStaffPin('+s.membership_id+',this)">New PIN</button>';
           if(s.locked)acts+='<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="unlockStaff('+s.membership_id+',this)">Unlock</button>';
@@ -21539,6 +21720,9 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       +'<span class="rgen">'+ago(r.generated_at)+'</span>'
       +'<div class="rside">'+q+'<span class="rhrs">'+Math.round(hs)+'h</span></div>'
       +'<div class="ractions">'
+      // Open puts the week back in the editor with Send (Friction #4); the
+      // eye is the read-only look it always was.
+      +'<button class="cbtn cbtn-text cbtn-inline cbtn-sm" title="Open in the editor" onclick="event.stopPropagation();schedOpenInEditor('+r.id+')">Open</button>'
       +'<button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm ric-view" title="View" aria-label="View" onclick="event.stopPropagation();viewScheduleHistory('+r.id+',this)">'+_SH_ICON_EYE+'</button>'
       +'<button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" title="Download CSV" aria-label="Download CSV" onclick="event.stopPropagation();downloadHistoryCsv('+r.id+')">'+_SH_ICON_CSV+'</button>'
       +'<button class="cbtn cbtn-icon cbtn-text cbtn-danger cbtn-sm" title="Delete" aria-label="Delete" onclick="event.stopPropagation();deleteScheduleHistory('+r.id+',this)">'+_SH_ICON_TRASH+'</button>'
@@ -21587,7 +21771,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       if(wi&&wi.ran&&wi.verdict){wih='<div class="sv-dvp" style="margin-top:12px"><div class="sr-k" style="margin-bottom:4px">What if</div><div class="ln">'+num(wi.verdict)+'</div>';var sws=wi.swaps||[],si;for(si=0;si<Math.min(sws.length,3);si++)if(sws[si]&&sws[si].reason)wih+='<div class="ln">&#8644; '+num(sws[si].reason)+'</div>';wih+='</div>';}
       var rvh='';
       if(d.review&&(d.review.hard||d.review.soft)){var hh=+d.review.hard||0,ss=+d.review.soft||0;rvh=' · '+(hh?hh+' hard':'')+(hh&&ss?', ':'')+(ss?ss+' soft':'')+' rule'+(hh+ss===1?'':'s')+' broken';}
-      var html='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:10px"><div><div style="font-size:15px;font-weight:600;color:var(--ink)">Week of '+esc(mdy(d.week_start||''))+' · '+rows.length+' shifts'+(d.generation_seconds?' · generated in '+Math.round(+d.generation_seconds)+'s':'')+esc(rvh)+'</div>'+pub+'</div><div style="display:flex;gap:10px"><button onclick="downloadHistoryCsv('+id+')" class="cbtn cbtn-secondary">Download CSV</button><button onclick="closeScheduleHistoryDetail()" class="cbtn cbtn-secondary">Close ✕</button></div></div>';
+      var html='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:10px"><div><div style="font-size:15px;font-weight:600;color:var(--ink)">Week of '+esc(mdy(d.week_start||''))+' · '+rows.length+' shifts'+(d.generation_seconds?' · generated in '+Math.round(+d.generation_seconds)+'s':'')+esc(rvh)+'</div>'+pub+'</div><div style="display:flex;gap:10px"><button onclick="openScheduleDraft('+id+')" class="cbtn cbtn-primary">Open in the editor</button><button onclick="downloadHistoryCsv('+id+')" class="cbtn cbtn-secondary">Download CSV</button><button onclick="closeScheduleHistoryDetail()" class="cbtn cbtn-secondary">Close ✕</button></div></div>';
       html+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13.5px"><tr style="color:var(--ink3);text-transform:uppercase;font-size:13px;letter-spacing:.06em"><th style="text-align:left;padding:6px 8px">Day</th><th style="text-align:left;padding:6px 8px">Employee</th><th style="text-align:left;padding:6px 8px">Role</th><th style="text-align:left;padding:6px 8px">Shift</th><th style="text-align:right;padding:6px 8px">Hrs</th></tr>';
       var lastDay='';
       html+=rows.map(function(r){
@@ -21766,9 +21950,12 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       h+='</div>';
     }
     if(pendNames.length){
-      var parts=[];
-      for(i=0;i<pendNames.length;i++){var ds=pend[pendNames[i]]||[],dd=[],j;for(j=0;j<ds.length;j++)dd.push(mdy(ds[j]));parts.push(esc(pendNames[i])+' ('+dd.join(', ')+')');}
-      h+='<div class="sr-soft"><b>Time off still waiting for an answer</b> &mdash; the draft may use these days: '+parts.join('; ')+'. Answer it in Time off above and regenerate.</div>';
+      // Answered here (Friction #18): Approve / Deny on each request, and an
+      // approval offers to redo only the days it touches.
+      var parts=[],ids=window.lb2PendingTimeOffIds?lb2PendingTimeOffIds():{};
+      for(i=0;i<pendNames.length;i++){var ds=pend[pendNames[i]]||[],dd=[],j,rid=ids[String(pendNames[i]).toLowerCase()];for(j=0;j<ds.length;j++)dd.push(mdy(ds[j]));
+        parts.push('<div class="sr-line"><span class="d"></span><span><b>'+esc(pendNames[i])+'</b> ('+dd.join(', ')+')'+(rid?' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-timeoff="'+esc(rid)+'" data-decision="deny">Deny</button><button type="button" class="cbtn cbtn-soft cbtn-sm" data-timeoff="'+esc(rid)+'" data-decision="approve">Approve</button>':'')+'</span></div>');}
+      h+='<div class="sr-soft"><b>Time off still waiting for an answer</b> &mdash; the draft may use these days. Approving one offers to redo just those days.'+parts.join('')+'</div>';
     }
     // Apply fixes clears hard rules; Improve with Cavnar runs the Shift
     // Quality repair loop over the rows on screen. Both only propose.
@@ -22003,7 +22190,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     for(i=0;i<list.length;i++){
       var e=list[i],st=e.settings||{},on=_rstActive(e),open=!!_rosterOpen[e.name],nm=esc(e.name);
       h+='<tr class="'+(on?'':'off')+(open?' open':'')+'" data-rst="'+nm+'">'
-        +'<td class="nm" data-rst-toggle="'+nm+'">'+nm+'<span class="car">&#9662;</span><small>'+esc(e.role||'')+(on?'':((e.role?' · ':'')+'not on the roster'))+'</small></td>'
+        +'<td class="nm" data-rst-toggle="'+nm+'">'+nm+'<span class="car">&#9662;</span> <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-person-open="'+nm+'">Details</button><small>'+esc(e.role||'')+(on?'':((e.role?' · ':'')+'not on the roster'))+'</small></td>'
         +'<td>'+(e.score?'<span class="rst-score" title="Operational Score">'+esc(e.score)+'</span>':'<span class="rst-score none" title="Not rated yet">—</span>')+'</td>'
         +'<td>'+_rstRel(e.reliability)+'</td>'
         +'<td>'+_lbSw('active',on,ro)+'</td>'
@@ -22865,6 +23052,529 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var p=$('panel-account');
     if(p&&p.classList.contains('active'))acctOnOpen();
   });
+})();
+</script>
+<script id="cav-o1">
+/* Scheduling and people (Friction audit 9/25/26, workstream O1). ES5 only.
+   #4  a drafted week reopens in the editor (openScheduleDraft), on its own
+       when Labor opens, from history and from Home's "Send now".
+   #16 one "Save & send to N staff" button (psLabel / psRefresh / psArm).
+   #18 "Waiting on you" at the top of Labor (lb2LoadWaiting) and the redo
+       of only the days an approved time off touches (lb2AfterTimeOff).
+   #19 the one-line verdict over the open grid (schedVerdict).
+   #25 one person sheet (openPersonSheet), from any list or name.
+   #26 targets and pay rates in Account (tgLoad).
+   #27 the automation switches where the work is (Schedule header, order card).
+   Nav heads registered here: schedule, request, person. */
+(function () {
+  function $id(id) { return document.getElementById(id); }
+  function e(s) { return (typeof _escHtml === 'function') ? _escHtml(s) : String(s == null ? '' : s); }
+  function md(x) { return (typeof mdy === 'function') ? mdy(x) : String(x || ''); }
+  function getJ(url, fn) {
+    fetch(url, {credentials: 'same-origin'}).then(apiJson).then(function (d) { fn(d || {}); }).catch(function () { fn({ok: false}); });
+  }
+  function postJ(url, body, fn) {
+    fetch(url, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {})})
+      .then(apiJson).then(function (d) { fn(d || {}); }).catch(function () { fn({ok: false, error: 'Network error'}); });
+  }
+  function status(id, text, bad) {
+    var el = $id(id); if (!el) return;
+    el.textContent = text; el.style.color = bad ? 'var(--hb-bad)' : '';
+    if (!bad) setTimeout(function () { if (el.textContent === text) el.textContent = ''; }, 2500);
+  }
+
+  /* ── The send button (#16) ── */
+  window._psCheck = null;
+  window._psArmed = null;
+  window.psDisarm = function () { window._psArmed = null; psLabel(); };
+  window.psArm = function (n) { window._psArmed = {hid: _schedHistoryId, n: n}; psLabel(); };
+  window.psLabel = function () {
+    var b = $id('ps-send-btn'); if (!b || b.getAttribute('aria-busy') === 'true') return;
+    var c = window._psCheck, n = c && c.reach ? c.reach.total : 0;
+    var armed = window._psArmed && window._psArmed.hid === _schedHistoryId;
+    if (armed) b.textContent = 'Send with ' + window._psArmed.n + ' rule warning' + (window._psArmed.n === 1 ? '' : 's') + '…';
+    else b.textContent = (_schedDirty ? 'Save & send' : 'Send') + (n ? ' to ' + n + ' staff' : ' to staff');
+    b.className = 'cbtn ' + (armed ? 'cbtn-danger' : 'cbtn-primary');
+    var no = !!(c && c.can_publish === false);
+    b.disabled = no;
+    b.title = no ? 'Your login can draft a schedule but not send it to staff.' : '';
+  };
+  function psReach() {
+    var el = $id('ps-reach'), c = window._psCheck; if (!el) return;
+    if (!c || !c.reach) { el.innerHTML = ''; return; }
+    if (c.published_at) { el.innerHTML = 'Sent to staff <span class="hb-num">' + e(md(c.published_at)) + '</span> · a change you save is re-sent to whoever it moves.'; return; }
+    var r = c.reach, bits = [];
+    if (r.by_app) bits.push('<span class="hb-num">' + r.by_app + '</span> in the app');
+    if (r.by_text) bits.push('<span class="hb-num">' + r.by_text + '</span> by text');
+    if (r.by_email) bits.push('<span class="hb-num">' + r.by_email + '</span> by email');
+    var lost = (r.unreachable || []).length;
+    el.innerHTML = 'Reaches <span class="hb-num">' + r.reachable + '</span> of <span class="hb-num">' + r.total + '</span>'
+      + (bits.length ? ' · ' + bits.join(', ') : '')
+      + (lost ? ' · <span class="hb-num">' + lost + '</span> only in the staff portal' : '')
+      + ' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="togglePublishSchedule()">' + (lost ? 'Fix contacts' : 'Contacts') + '</button>';
+  }
+  window.psRefresh = function () {
+    if (!_schedHistoryId) return;
+    var hid = _schedHistoryId;
+    getJ('/api/labor/publish-check?schedule_id=' + hid, function (d) {
+      if (!d.ok || _schedHistoryId !== hid) return;
+      window._psCheck = d;
+      psReach();
+      /* Warnings already on file for the saved week go on screen now, and
+         the button names them: that press is the acknowledgement. */
+      if ((d.blockers || []).length && !_schedDirty && !d.published_at) _psRenderBlockers(d.blockers, true);
+      else if (!(d.blockers || []).length) { _psRenderBlockers([], false); window._psArmed = null; }
+      psLabel();
+    });
+  };
+
+  /* ── The verdict line (#19) ── */
+  var _svBudget = null, _svReview = null;
+  window.schedVerdict = function (data) {
+    if (data) { _svBudget = data.hours_budget || null; if (data.review !== undefined) _svReview = data.review || null; }
+    var el = $id('sched-verdict'); if (!el) return;
+    var hrs = 0, i, bits = [];
+    for (i = 0; i < _schedRows.length; i++) hrs += (+_schedRows[i].scheduled_hours || 0);
+    if (_svReview) {
+      var h = +_svReview.hard || 0, s = +_svReview.soft || 0;
+      bits.push(h ? ('<span class="hb-num">' + h + '</span> hard rule' + (h === 1 ? '' : 's') + ' broken')
+                  : (s ? ('<span class="hb-num">' + s + '</span> soft rule' + (s === 1 ? '' : 's') + ' bent') : 'Every rule kept'));
+    }
+    bits.push('<span class="hb-num">' + Math.round(hrs) + 'h</span>' + (_svBudget ? ' vs <span class="hb-num">' + Math.round(_svBudget) + 'h</span> PAR' : ' scheduled'));
+    if (typeof _quality !== 'undefined' && _quality && _quality.score !== null && _quality.score !== undefined) bits.push('quality <span class="hb-num">' + e(_quality.score) + '</span>');
+    el.innerHTML = bits.join(' · ');
+  };
+  if (typeof window.renderScheduleReview === 'function') {
+    var _rvOrig = window.renderScheduleReview;
+    window.renderScheduleReview = function (d) {
+      if (d && d.review !== undefined) _svReview = d.review || null;
+      var out = _rvOrig.apply(this, arguments);
+      schedVerdict(null);
+      return out;
+    };
+  }
+
+  /* ── Reopening a drafted week (#4) ── */
+  function weekDates(start, end) {
+    var out = [], m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(start || ''));
+    if (!m) return out;
+    var d = new Date(+m[1], +m[2] - 1, +m[3]), stop = String(end || start).slice(0, 10), k;
+    for (k = 0; k < 14; k++) {
+      var iso = d.getFullYear() + '-' + (d.getMonth() < 9 ? '0' : '') + (d.getMonth() + 1) + '-' + (d.getDate() < 10 ? '0' : '') + d.getDate();
+      out.push(iso);
+      if (iso >= stop) break;
+      d.setDate(d.getDate() + 1);
+    }
+    return out;
+  }
+  window.openScheduleDraft = function (hid, opts) {
+    opts = opts || {};
+    hid = parseInt(hid, 10);
+    if (!hid) return false;
+    if (!opts.quiet) window._schedAutoTried = true;
+    var panel = $id('schedule-preview-panel');
+    if (_schedHistoryId === hid && panel && panel.style.display === 'block') {
+      if (!opts.quiet) panel.scrollIntoView({behavior: 'smooth', block: 'start'});
+      return true;
+    }
+    if (_schedDirty && _schedHistoryId !== hid) { toast('Save or discard your edits first', 'error'); return true; }
+    getJ('/api/labor/schedule-history/' + hid, function (d) {
+      if (!d.ok) { if (!opts.quiet) toast(d.error || 'Could not open that week', 'error'); return; }
+      var rows = d.preview_rows || [], names = [], seen = {}, i;
+      for (i = 0; i < rows.length; i++) { var n = rows[i].employee; if (n && !seen[n]) { seen[n] = 1; names.push(n); } }
+      var ppl = window._lb2People || [];
+      for (i = 0; i < ppl.length; i++) if (ppl[i].active && !seen[ppl[i].name]) { seen[ppl[i].name] = 1; names.push(ppl[i].name); }
+      _schedBtn = null;
+      window._schedQuietOpen = !!opts.quiet;
+      _schedHandleResult({ok: true, history_id: d.id, week_dates: weekDates(d.week_start, d.week_end),
+        preview_rows: rows, schedule_csv: d.schedule_csv || '', summary: d.summary || [], narrative: null,
+        quality: d.quality || null, what_if: d.what_if || null, review: d.review || null,
+        hours_budget: d.hours_budget, hours_scheduled: d.hours_scheduled, labor_target: d.labor_target,
+        roster: names, daily_target_hours: {}, pending_time_off: undefined});
+      if (!opts.quiet && panel) panel.scrollIntoView({behavior: 'smooth', block: 'start'});
+    });
+    return true;
+  };
+  /* The history list's name for it: a row states no draft or published
+     status of its own (test_schedule_history_redesign). */
+  window.schedOpenInEditor = function (hid) { return openScheduleDraft(hid); };
+  window.closeSchedulePreview = function () {
+    var p = $id('schedule-preview-panel'); if (p) p.style.display = 'none';
+    var el = $id('sched-reopen'); if (!el) return;
+    if (!_schedHistoryId || !_schedWeekDates.length) { el.hidden = true; return; }
+    el.innerHTML = 'The draft for the week of <span class="hb-num">' + e(md(_schedWeekDates[0])) + '</span> is kept'
+      + (_schedDirty ? ', with your unsaved edits' : '') + '. <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="reopenSchedulePreview()">Open it</button>';
+    el.hidden = false;
+  };
+  window.reopenSchedulePreview = function () {
+    var p = $id('schedule-preview-panel'); if (p) { p.style.display = 'block'; p.scrollIntoView({behavior: 'smooth', block: 'start'}); }
+    var el = $id('sched-reopen'); if (el) el.hidden = true;
+  };
+  function autoOpenDraft() {
+    var p = $id('schedule-preview-panel');
+    if (!p || p.style.display === 'block' || window._schedAutoTried) return;
+    window._schedAutoTried = true;
+    getJ('/api/labor/publish-check', function (d) {
+      if (!d.ok || !d.schedule_id || p.style.display === 'block') return;
+      openScheduleDraft(d.schedule_id, {quiet: true});
+    });
+  }
+
+  /* ── Waiting on you (#18) ── */
+  var _wait = {offs: null, reqs: null, draft: null, redo: null};
+  window.lb2PendingTimeOffIds = function () {
+    var out = {}, i, rows = _wait.offs || _wait.lastOffs || [];
+    for (i = 0; i < rows.length; i++) if (rows[i].status === 'pending') out[String(rows[i].employee_name).toLowerCase()] = rows[i].id;
+    return out;
+  };
+  function waitRender() {
+    var box = $id('lb2-wait'), el = $id('lb2-wait-body');
+    if (!box || !el || _wait.offs === null || _wait.reqs === null || _wait.draft === null) return;
+    var h = '', i, n = 0;
+    if (_wait.redo) {
+      var rd = _wait.redo, ds = [];
+      for (i = 0; i < rd.dates.length; i++) ds.push(_schedDayOf(rd.dates[i]).slice(0, 3) + ' ' + md(rd.dates[i]));
+      h += '<div class="ac-row" data-wait-key="redo"><div class="l"><b>' + e(rd.name) + ' is off — the open draft has them on</b><span>' + e(ds.join(', ')) + '</span></div>'
+         + '<div class="c"><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="lb2RedoDays(this)">Redo these days</button></div></div>';
+      n++;
+    }
+    var dr = _wait.draft;
+    if (dr && dr.schedule_id) {
+      var reach = dr.reach || {};
+      h += '<div class="ac-row" data-wait-key="schedule-' + e(dr.schedule_id) + '"><div class="l"><b>The week of <span class="hb-num">' + e(md(dr.week_start)) + '</span> is drafted</b><span>Staff don’t have it yet'
+         + (reach.total ? ' · reaches <span class="hb-num">' + reach.reachable + '</span> of <span class="hb-num">' + reach.total + '</span>' : '')
+         + ((dr.blockers || []).length ? ' · <span class="hb-num">' + dr.blockers.length + '</span> rule warning' + (dr.blockers.length === 1 ? '' : 's') + ' to read first' : '') + '</span></div>'
+         + '<div class="c"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="openScheduleDraft(' + (+dr.schedule_id) + ')">Open it</button>'
+         + (dr.can_publish && !(dr.blockers || []).length && reach.total ? '<button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="lb2WaitSend(' + (+dr.schedule_id) + ',this)">Send to ' + reach.total + ' staff</button>' : '')
+         + '</div></div>';
+      n++;
+    }
+    for (i = 0; i < (_wait.offs || []).length; i++) {
+      var q = _wait.offs[i]; if (q.status !== 'pending') continue;
+      var when = q.start_date === q.end_date ? md(q.start_date) : (md(q.start_date) + ' – ' + md(q.end_date));
+      h += '<div class="ac-row" data-wait-key="time_off-' + e(q.id) + '"><div class="l"><b>' + e(q.employee_name) + ' asked for time off</b><span><span class="hb-num">' + e(when) + '</span>' + (q.reason ? ' · ' + e(q.reason) : '') + '</span></div>'
+         + '<div class="c"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-timeoff="' + e(q.id) + '" data-decision="deny">Deny</button><button type="button" class="cbtn cbtn-primary cbtn-sm" data-timeoff="' + e(q.id) + '" data-decision="approve">Approve</button></div></div>';
+      n++;
+    }
+    for (i = 0; i < (_wait.reqs || []).length; i++) {
+      var r = _wait.reqs[i]; if (r.status !== 'pending') continue;
+      var what = (r.kind || 'drop') === 'swap' ? ('swap ' + (r.shift_start || '') + ' with ' + (r.target_name || 'a colleague')) : ('drop ' + (r.shift_start || ''));
+      h += '<div class="ac-row" data-wait-key="shift_request-' + e(r.id) + '"><div class="l"><b>' + e(r.employee_name) + ' asked to ' + e(what) + '</b><span>' + e(_schedDayOf(r.date).slice(0, 3)) + ' <span class="hb-num">' + e(md(r.date)) + '</span>' + (r.reason ? ' · ' + e(r.reason) : '') + '</span></div>'
+         + '<div class="c"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="lb2DecideShift(' + (+r.id) + ',\'deny\',this)">Deny</button><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="lb2DecideShift(' + (+r.id) + ',\'approve\',this)">Approve</button></div></div>';
+      n++;
+    }
+    el.innerHTML = h;
+    box.hidden = !n;
+    if (window._lb2WaitFocus) { var f = window._lb2WaitFocus; window._lb2WaitFocus = null; waitFocus(f); }
+  }
+  function waitFocus(key) {
+    var box = $id('lb2-wait'), row = box ? box.querySelector('[data-wait-key="' + key + '"]') : null;
+    if (!box || box.hidden) { if (window.toggleRequestsPanel) { var rp = $id('requests-body'); if (rp) rp.scrollIntoView({behavior: 'smooth', block: 'start'}); } return; }
+    (row || box).scrollIntoView({behavior: 'smooth', block: 'center'});
+    if (row) { row.style.background = 'var(--hb-tint2)'; setTimeout(function () { row.style.background = ''; }, 2200); }
+  }
+  window.lb2LoadWaiting = function () {
+    if (!$id('lb2-wait')) return;
+    _wait.offs = null; _wait.reqs = null; _wait.draft = null;
+    getJ('/api/labor/time-off', function (d) { _wait.offs = d.ok ? (d.requests || []) : []; _wait.lastOffs = _wait.offs; waitRender(); });
+    getJ('/api/labor/shift-requests', function (d) { _wait.reqs = d.ok ? (d.requests || []) : []; waitRender(); });
+    getJ('/api/labor/publish-check', function (d) { _wait.draft = d.ok ? d : {}; waitRender(); });
+  };
+  window.lb2WaitSend = function (hid, btn) {
+    var done = cbtnBusy(btn, 'Sending…');
+    postJ('/api/labor/publish-schedule', {schedule_id: hid}, function (d) {
+      done();
+      if (d.ok) { toast(d.queued ? ('Goes to staff in ' + d.undo_minutes + ' min — undo from the Cavnar AI strip') : 'Schedule sent', 'success'); lb2LoadWaiting(); if (window.psRefresh) psRefresh(); return; }
+      if (d.needs_ack) { openScheduleDraft(hid); return; }
+      toast(d.error || 'Nothing sent', 'error');
+    });
+  };
+  window.lb2DecideShift = function (id, decision, btn) {
+    var done = cbtnBusy(btn, decision === 'approve' ? 'Approving…' : 'Denying…');
+    postJ('/api/labor/shift-requests/' + id + '/decide', {decision: decision}, function (d) {
+      done();
+      if (!d.ok) { toast(d.error || 'Could not decide that', 'error'); return; }
+      var st = (d.request || {}).status;
+      toast(st === 'covered' ? 'Covered' : (st === 'open' ? 'Approved — the shift is open to claim' : (st === 'approved' ? 'Approved — waiting on the colleague' : 'Denied')), 'success');
+      lb2LoadWaiting();
+      if (window.loadShiftRequests) loadShiftRequests();
+    });
+  };
+  /* An approval over days the open draft puts that person on offers to
+     redo just those days, not the whole week. */
+  window.lb2AfterTimeOff = function (d) {
+    lb2LoadWaiting();
+    var q = d && d.ok ? d.request : null;
+    if (!q || q.status !== 'approved' || !_schedHistoryId || !_schedWeekDates.length) return;
+    var low = String(q.employee_name || '').toLowerCase(), hit = {}, dates = [], i;
+    for (i = 0; i < _schedRows.length; i++) {
+      var r = _schedRows[i];
+      if (String(r.employee || '').toLowerCase() === low && r.date >= q.start_date && r.date <= q.end_date && !hit[r.date]) { hit[r.date] = 1; dates.push(r.date); }
+    }
+    if (!dates.length) return;
+    _wait.redo = {name: q.employee_name, dates: dates.sort()};
+    waitRender();
+    window._lb2WaitFocus = 'redo';
+  };
+  window.lb2RedoDays = function (btn) {
+    var rd = _wait.redo; if (!rd) return;
+    var boxes = document.querySelectorAll('#sched-redo input[type=checkbox]'), i;
+    for (i = 0; i < boxes.length; i++) boxes[i].checked = rd.dates.indexOf(boxes[i].value) !== -1;
+    _wait.redo = null; waitRender();
+    regenerateScheduleDays(btn);
+  };
+
+  /* ── The person sheet (#25) ── */
+  function keyOf(name) {
+    return String(name || '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  }
+  var _person = null;
+  window.openPersonSheet = function (keyOrName) {
+    var m = $id('person-modal'), body = $id('person-body'); if (!m || !body) return;
+    $id('person-title').textContent = '';
+    body.innerHTML = '<div class="dr-pulse" aria-hidden="true"></div>';
+    m.classList.add('show');
+    window._personReturn = document.activeElement;
+    getJ('/api/people/' + encodeURIComponent(keyOf(keyOrName) || String(keyOrName)), function (d) {
+      if (!d.ok) { body.innerHTML = '<div style="color:var(--amber)">' + e(d.error || 'That person isn’t on the roster.') + '</div>'; return; }
+      _person = d.person; personRender();
+    });
+  };
+  window.closePersonSheet = function () {
+    var m = $id('person-modal'); if (m) m.classList.remove('show');
+    if (window._personReturn && window._personReturn.focus) { try { window._personReturn.focus(); } catch (x) {} }
+  };
+  function opt(v, label, cur) { return '<option value="' + e(v) + '"' + (String(v) === String(cur == null ? '' : cur) ? ' selected' : '') + '>' + e(label) + '</option>'; }
+  function personRender() {
+    var p = _person, body = $id('person-body'); if (!p || !body) return;
+    var ro = !p.can_edit, dis = ro ? ' disabled' : '', ch = p.choices || {}, i, h = '';
+    $id('person-title').textContent = p.name;
+    $id('person-kicker').textContent = (p.role || 'Person') + (p.active ? '' : ' · off the roster');
+    h += '<div>' + (p.has_login ? ('Staff login' + (p.pin_set ? ' · PIN set' : ' · no PIN yet') + (p.schedule_texts ? ' · texts when a week is posted' : '')) : 'No staff login yet — add one in Account → People.') + '</div>';
+    h += '<div class="sr-k">Contact</div><div class="ps-grid">'
+       + '<div class="ac-field"><label for="pp-email">Email</label><input class="ac-input" id="pp-email" data-pp="email" value="' + e(p.email) + '"' + dis + '></div>'
+       + '<div class="ac-field"><label for="pp-phone">Phone</label><input class="ac-input" id="pp-phone" data-pp="phone" value="' + e(p.phone) + '"' + dis + '></div>'
+       + '<div class="ac-field"><label for="pp-pos">POS id</label><input class="ac-input" id="pp-pos" data-pp="pos_id" value="' + e(p.pos_id) + '" title="The id your POS shows for this person — names a comp or void pattern"' + dis + '></div></div>';
+    var hr = p.hours || {}, types = ch.employment_type || ['full', 'part'];
+    h += '<div class="sr-k">Hours</div><div class="ps-grid">'
+       + '<div class="ac-field"><label for="pp-type">Type</label><select class="ac-select" id="pp-type" data-pp="employment_type"' + dis + '>' + opt('', '—', hr.employment_type);
+    for (i = 0; i < types.length; i++) h += opt(types[i], types[i] === 'full' ? 'Full time' : (types[i] === 'part' ? 'Part time' : types[i]), hr.employment_type);
+    h += '</select></div>'
+       + '<div class="ac-field"><label for="pp-min">Min h / week</label><input class="ac-input ac-num" type="number" min="0" max="80" id="pp-min" data-pp="min_hours" value="' + e(hr.min_hours == null ? '' : hr.min_hours) + '"' + dis + '></div>'
+       + '<div class="ac-field"><label for="pp-max">Max h / week</label><input class="ac-input ac-num" type="number" min="0" max="80" id="pp-max" data-pp="max_hours" value="' + e(hr.max_hours == null ? '' : hr.max_hours) + '"' + dis + '></div></div>';
+    if (hr.desired_hours || (p.availability && (p.availability.preferred_dayparts || []).length)) h += '<div class="sr-note">They asked for ' + (hr.desired_hours ? '<span class="hb-num">' + e(hr.desired_hours) + 'h</span> a week' : '') + ((p.availability.preferred_dayparts || []).length ? (hr.desired_hours ? ', ' : '') + e(p.availability.preferred_dayparts.join(' and ')) : '') + '.</div>';
+    var days = ch.days || [], dps = ch.daypart || ['any', 'morning', 'night', 'off'], av = (p.availability || {}).dayparts || {};
+    h += '<div class="sr-k">Availability</div><div class="ps-grid">';
+    for (i = 0; i < days.length; i++) {
+      h += '<div class="ac-field"><label for="pp-d' + i + '">' + e(days[i]) + '</label><select class="ac-select" id="pp-d' + i + '" data-pp-day="' + e(days[i]) + '"' + dis + '>';
+      for (var k = 0; k < dps.length; k++) h += opt(dps[k], dps[k] === 'any' ? 'Any time' : (dps[k] === 'morning' ? 'Mornings' : (dps[k] === 'night' ? 'Nights' : 'Off')), av[days[i]] || 'any');
+      h += '</select></div>';
+    }
+    h += '</div>';
+    var portal = (p.availability || {}).portal;
+    if (portal && portal.updated_at) h += '<div class="sr-note">What they said in the staff portal is kept with the next draft too (updated <span class="hb-num">' + e(md(portal.updated_at)) + '</span>).</div>';
+    var rt = p.rating || {};
+    h += '<div class="sr-k">Rating and skills</div><div class="ps-grid">'
+       + '<div class="ac-field"><label for="pp-rate">Operational Score</label><select class="ac-select" id="pp-rate" data-pp="rating"' + dis + '>' + opt('', 'Not rated', rt.score);
+    for (i = 1; i <= 5; i++) h += opt(i, String(i), rt.score);
+    h += '</select></div><div class="ac-field"><label for="pp-close">Can close</label><label class="ac-switch"><input type="checkbox" id="pp-close" data-pp="can_close"' + (rt.can_close ? ' checked' : '') + dis + '><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>';
+    var certs = ch.certifications || [], have = p.certifications || [];
+    h += '<div style="display:flex;flex-wrap:wrap;gap:6px">';
+    for (i = 0; i < certs.length; i++) {
+      var on = have.indexOf(certs[i]) !== -1;
+      h += '<button type="button" class="cbtn cbtn-sm ' + (on ? 'cbtn-primary' : 'cbtn-secondary') + '" data-pp-cert="' + e(certs[i]) + '" aria-pressed="' + (on ? 'true' : 'false') + '"' + dis + '>' + e(certs[i].replace(/_/g, ' ')) + '</button>';
+    }
+    h += '</div>';
+    var pr = p.pay_rate;
+    if (pr) h += '<div class="sr-k">Pay</div><div>' + (pr.rate ? '<span class="hb-num">$' + e((+pr.rate).toFixed(2)) + '</span>/h — ' + (pr.source === 'role' ? 'the ' + e(pr.role) + ' rate' : 'the blended rate') : 'No rate on file') + '. <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="closePersonSheet();if(window.acctGo)acctGo(\'restaurant\',\'as-tg-card\');else if(window.cavNav)cavNav(\'account/restaurant\')">Set rates</button></div>';
+    if (p.can_manage_login && p.has_login) {
+      h += '<div class="sr-k">Login</div><div class="ac-inline"><input class="ac-input ac-num" id="pp-pin" type="password" inputmode="numeric" maxlength="8" placeholder="New PIN" aria-label="New PIN" style="width:130px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="ppSetPin(this)">Set PIN</button></div>';
+    }
+    h += '<div class="sr-k">On the roster</div><label class="ac-switch"><input type="checkbox" data-pp="active"' + (p.active ? ' checked' : '') + dis + ' aria-label="On the roster"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label>';
+    h += '<div class="ac-status" id="pp-status" style="margin-top:10px"></div>';
+    if (ro) h += '<div class="sr-note">Your login can view the team but not change it.</div>';
+    body.innerHTML = h;
+  }
+  function ppSave(fields) {
+    if (!_person) return;
+    var st = $id('pp-status'); if (st) { st.textContent = 'Saving…'; st.style.color = ''; }
+    postJ('/api/people/' + encodeURIComponent(_person.key), fields, function (d) {
+      if (!d.ok) { if (st) { st.textContent = d.error || 'Could not save that'; st.style.color = 'var(--hb-bad)'; } return; }
+      _person = d.person;
+      window._lb2People = null;
+      if (st) { st.textContent = 'Saved'; setTimeout(function () { if (st.textContent === 'Saved') st.textContent = ''; }, 2000); }
+      if (fields.certifications) personRender();
+    });
+  }
+  window.ppSetPin = function (btn) {
+    var v = ($id('pp-pin') || {}).value || '';
+    if (!/^\d{4,8}$/.test(v)) { status('pp-status', 'A PIN is 4 to 8 digits.', true); return; }
+    ppSave({pin: v});
+    $id('pp-pin').value = '';
+  };
+  document.addEventListener('change', function (ev) {
+    var t = ev.target; if (!t || !t.getAttribute || !_person) return;
+    var f = t.getAttribute('data-pp'), day = t.getAttribute('data-pp-day'), body = {};
+    if (day) {
+      var sels = document.querySelectorAll('#person-body [data-pp-day]'), av = {}, i;
+      for (i = 0; i < sels.length; i++) av[sels[i].getAttribute('data-pp-day')] = sels[i].value;
+      ppSave({daypart_availability: av}); return;
+    }
+    if (!f) return;
+    if (f === 'can_close' || f === 'active') body[f] = !!t.checked;
+    else if (f === 'rating') body.rating = t.value === '' ? null : +t.value;
+    else if (f === 'min_hours' || f === 'max_hours') body[f] = t.value === '' ? null : +t.value;
+    else body[f] = t.value;
+    ppSave(body);
+  });
+  /* Any element carrying data-person-open opens the sheet: the roster, the
+     team list, Account People, the send drawer. Captured so a row's own
+     click (the roster's week grid) does not also fire. */
+  document.addEventListener('click', function (ev) {
+    var t = ev.target && ev.target.closest ? ev.target.closest('[data-person-open]') : null;
+    if (t) { ev.preventDefault(); ev.stopPropagation(); openPersonSheet(t.getAttribute('data-person-open')); return; }
+    var c = ev.target && ev.target.closest ? ev.target.closest('[data-pp-cert]') : null;
+    if (c && _person && !c.disabled) {
+      var have = (_person.certifications || []).slice(), k = c.getAttribute('data-pp-cert'), at = have.indexOf(k);
+      if (at === -1) have.push(k); else have.splice(at, 1);
+      ppSave({certifications: have});
+      return;
+    }
+    var m = $id('person-modal');
+    if (m && ev.target === m) closePersonSheet();
+  }, true);
+  document.addEventListener('keydown', function (ev) {
+    var m = $id('person-modal');
+    if ((ev.key === 'Escape' || ev.keyCode === 27) && m && m.classList.contains('show')) closePersonSheet();
+  });
+  /* The roster names every name box can pick from (#25). */
+  function loadPeople(fn) {
+    if (window._lb2People) { if (fn) fn(window._lb2People); return; }
+    getJ('/api/people', function (d) {
+      window._lb2People = d.ok ? (d.people || []) : [];
+      var dl = $id('lb2-people-names');
+      if (!dl) { dl = document.createElement('datalist'); dl.id = 'lb2-people-names'; document.body.appendChild(dl); }
+      var h = '', i; for (i = 0; i < window._lb2People.length; i++) if (window._lb2People[i].active) h += '<option value="' + e(window._lb2People[i].name) + '">';
+      dl.innerHTML = h;
+      var boxes = document.querySelectorAll('[data-people-picker]');
+      for (i = 0; i < boxes.length; i++) boxes[i].setAttribute('list', 'lb2-people-names');
+      if (fn) fn(window._lb2People);
+    });
+  }
+
+  /* ── Automation where the work is (#27) ── */
+  window.lb2SaveAutoDraft = function (el) {
+    postJ('/api/labor/auto-draft', {enabled: !!el.checked}, function (d) {
+      status('lb2-autodraft-status', d.ok ? 'Saved' : (d.error || 'Could not save'), !d.ok);
+      var mirror = $id('as-autodraft'); if (d.ok && mirror) mirror.checked = !!el.checked;
+    });
+  };
+  function loadAutoDraftSwitch() {
+    getJ('/api/labor/auto-draft', function (d) {
+      var sw = $id('lb2-autodraft-sw'), el = $id('lb2-autodraft');
+      if (!d.ok || !sw || !el || d.external_tool) return;
+      el.checked = !!d.enabled; sw.hidden = false;
+    });
+  }
+  window.fc2SaveAutoOrder = function (el) {
+    postJ('/api/food-cost/auto-order', {enabled: !!el.checked}, function (d) {
+      status('fc2-autoorder-status', d.ok ? 'Saved' : (d.error || 'Could not save'), !d.ok);
+      var mirror = $id('as-autoorder'); if (d.ok && mirror) mirror.checked = !!el.checked;
+    });
+  };
+  function loadAutoOrderSwitch() {
+    getJ('/api/food-cost/auto-order', function (d) {
+      var sw = $id('fc2-autoorder-sw'), el = $id('fc2-autoorder');
+      if (!d.ok || !sw || !el) return;
+      el.checked = !!d.enabled; sw.hidden = false;
+    });
+  }
+
+  /* ── Targets and pay rates (#26) ── */
+  var _tg = null;
+  function tgRender() {
+    var card = $id('as-tg-card'); if (!card || !_tg) return;
+    var t = _tg.targets || {}, ro = !_tg.can_edit, k;
+    var ids = ['labor_target_pct', 'food_cost_target', 'waste_target_pct', 'monthly_revenue_target', 'hourly_rate', 'week_start_day'];
+    for (k = 0; k < ids.length; k++) {
+      var el = $id('as-tg-' + ids[k]); if (!el) continue;
+      var v = t[ids[k]];
+      el.value = (v === null || v === undefined || (ids[k] === 'monthly_revenue_target' && !v)) ? '' : String(v);
+      el.disabled = ro;
+    }
+    var roles = t.roles || [], rates = t.role_rates || {}, h = '', i;
+    if (!roles.length) h = '<div class="sr-note">No roles yet — they come from your shifts and the roster.</div>';
+    for (i = 0; i < roles.length; i++) {
+      var cur = null, rk;
+      for (rk in rates) if (rates.hasOwnProperty(rk) && rk.toLowerCase() === roles[i].toLowerCase()) cur = rates[rk];
+      h += '<div class="ac-row"><div class="l"><b>' + e(roles[i]) + '</b></div><div class="c"><input class="ac-input ac-num" type="number" min="2" max="250" step="0.25" style="width:96px" data-tg-role="' + e(roles[i]) + '" value="' + (cur === null ? '' : e(cur)) + '" placeholder="' + e(t.hourly_rate || '') + '" aria-label="' + e(roles[i]) + ' hourly rate"' + (ro ? ' disabled' : '') + '></div></div>';
+    }
+    $id('as-tg-roles').innerHTML = h;
+    var roNote = $id('as-tg-ro'); if (roNote) roNote.hidden = !ro;
+    card.hidden = false;
+  }
+  window.tgLoad = function () {
+    getJ('/api/account/targets', function (d) { if (d.ok) { _tg = d; tgRender(); } });
+  };
+  document.addEventListener('change', function (ev) {
+    var t = ev.target; if (!t || !t.getAttribute || !_tg) return;
+    var f = t.getAttribute('data-tg'), role = t.getAttribute('data-tg-role'), body = {};
+    if (!f && role === null) return;
+    if (f) body[f] = t.value === '' ? (f === 'waste_target_pct' ? null : (f === 'monthly_revenue_target' ? 0 : '')) : +t.value;
+    else {
+      var boxes = document.querySelectorAll('#as-tg-roles [data-tg-role]'), rates = {}, i;
+      for (i = 0; i < boxes.length; i++) if (boxes[i].value !== '') rates[boxes[i].getAttribute('data-tg-role')] = +boxes[i].value;
+      body.role_rates = rates;
+    }
+    if (f && body[f] === '') { status('as-tg-status', 'Enter a number', true); return; }
+    status('as-tg-status', 'Saving…');
+    postJ('/api/account/targets', body, function (d) {
+      if (d.ok) { _tg.targets = d.targets; status('as-tg-status', 'Saved'); }
+      else { status('as-tg-status', d.error || 'Could not save', true); tgRender(); }
+    });
+  });
+
+  /* ── Opening Labor, once per page (and a refresh after) ── */
+  window.lb2OnOpen = function () {
+    lb2LoadWaiting();
+    if (window._lb2Opened) return;
+    window._lb2Opened = true;
+    loadPeople();
+    loadAutoDraftSwitch();
+    autoOpenDraft();
+  };
+  document.addEventListener('DOMContentLoaded', function () {
+    var orders = $id('fc2-orders');
+    if (orders && window.cavnarWhenVisible) cavnarWhenVisible(orders, loadAutoOrderSwitch);
+    var tg = $id('as-tg-card');
+    if (tg && window.cavnarWhenVisible) cavnarWhenVisible($id('acct-restaurant') || tg, tgLoad);
+    var av = document.querySelectorAll('[data-people-picker]');
+    if (av.length) loadPeople();
+  });
+
+  /* ── Nav heads (nav.py): schedule/<id>, request/<kind>-<id>, person/<key> ── */
+  if (window.cavNavRegister) {
+    cavNavRegister('schedule', function (p) {
+      var id = parseInt(p.rest[0], 10);
+      cavNavOpenModule('labor');
+      if (!id) { var s = document.querySelector('[data-nav="labor/schedule"]'); if (s) s.scrollIntoView({behavior: 'smooth', block: 'start'}); return true; }
+      openScheduleDraft(id);
+      return true;
+    });
+    cavNavRegister('request', function (p) {
+      cavNavOpenModule('labor');
+      window._lb2WaitFocus = String(p.rest[0] || '');
+      if (window.lb2OnOpen) lb2OnOpen(); else lb2LoadWaiting();
+      return true;
+    });
+    cavNavRegister('person', function (p) {
+      if (!p.rest[0]) return false;
+      cavNavOpenModule('labor');
+      var s = document.querySelector('[data-nav="labor/team"]'); if (s) s.scrollIntoView({behavior: 'smooth', block: 'start'});
+      openPersonSheet(p.rest[0]);
+      return true;
+    });
+  }
 })();
 </script>
 </body>

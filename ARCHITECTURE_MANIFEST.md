@@ -157,6 +157,7 @@ Every root module, its layer and its one-line job. The test fails when a module 
 | `schedule_engine` | 2 | the deterministic schedule pipeline: inputs, row repair, backstops, quality signals, the async generation job |
 | `schedule_rules` | 2 | the rules a schedule is checked against: compliance settings, role floors, the Constraints set, the violation sweep |
 | `staff_settings` | 2 | the one roster (history ∪ hand-added − deactivated) and per-person facts: hours limits, daypart windows, minors, pairings, reliability |
+| `people` | 2 | one person record composed from the stores that own each fact (roster settings, memberships, contacts, ratings, rates) — `list_people`, `get_person`, `update_person` writes each field back to its owner; `reach` is the channel a published week goes out on (app, consented text, email). Stores nothing of its own (Friction audit #25/#17) |
 | `demand_signals` | 2 | owner-entered events and reservation counts for specific dates |
 | `schedule_versions` | 2 | every saved state of a schedule, diffs between them, the edits a manager keeps making |
 | `shift_requests` | 2 | staff drop and swap requests, the manager's answer, open shifts and claims |
