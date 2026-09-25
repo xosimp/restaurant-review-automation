@@ -76,7 +76,7 @@ MIN_GAIN = 0.15
 JUDGE_CANDIDATES = 3
 # Reassignments listed one by one before the rest are counted.
 MAX_LISTED_CHANGES = 25
-NOTE_TAG = "Cavnar:"
+NOTE_TAG = "Cavnar AI:"
 # Discrepancy limits tried when no legal week has been found yet; None is
 # the complete pass.
 LDS_SCHEDULE = (0, 1, 2, 4, 8, None)
@@ -1863,7 +1863,7 @@ def _describe(prob, before_rows, after_rows, before_q, after_q, gain) -> list:
     moved = sorted(((ad[k]["score"] - bd[k]["score"], ad[k]["label"], bd[k]["score"], ad[k]["score"])
                     for k in ad if k in bd and ad[k]["score"] != bd[k]["score"]), key=lambda t: -t[0])
     ups = [f"{label.lower()} {b} → {a}" for d, label, b, a in moved if d > 0][:3]
-    head = (f"Cavnar re-solved who works each shift ({len(changed)} change{'s' if len(changed) != 1 else ''}), "
+    head = (f"Cavnar AI re-solved who works each shift ({len(changed)} change{'s' if len(changed) != 1 else ''}), "
             f"Shift Quality {before_q.get('score')} → {after_q.get('score')}"
             + (f": {', '.join(ups)}" if ups else "") + ".")
     out = [{"kind": "solve", "reason": head, "gain": round(gain, 1)}]
@@ -1961,7 +1961,7 @@ def merge_into_optimizer(optimizer: dict, solver: dict) -> dict:
     opt.update(ran=True, applied=True, changes=changes, before_score=before, after_score=after,
                improvement=(after or 0) - (before or 0) if before is not None and after is not None else 0)
     n = len([c for c in changes if c.get("kind") != "solve"])
-    opt["verdict"] = (f"Cavnar made {n} change{'s' if n != 1 else ''} to the draft, raising Shift Quality "
+    opt["verdict"] = (f"Cavnar AI made {n} change{'s' if n != 1 else ''} to the draft, raising Shift Quality "
                       f"from {before} to {after}. Each is listed with why.")
     opt.setdefault("unresolved", [])
     return opt

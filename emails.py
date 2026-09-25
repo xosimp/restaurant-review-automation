@@ -1244,7 +1244,7 @@ def dsr_tomorrow_sections(d: dict) -> list:
         lines = [esc(i["text"]) for i in t.get("items") or [] if i.get("text")]
         fc = t.get("forecast") or {}
         if fc.get("text"):
-            lines.append(f"Cavnar&rsquo;s forecast: {esc(fc['text'])} ({esc(fc.get('basis') or '')})")
+            lines.append(f"Cavnar AI&rsquo;s forecast: {esc(fc['text'])} ({esc(fc.get('basis') or '')})")
         cf = t.get("confidence") or {}
         if cf:
             # No % until the forecast's range has a measured record (D1-6): "—" and why.
@@ -2156,7 +2156,7 @@ def benchmark_sentence(metric: str, restaurant_id: int = None, what: str = "") -
         s = (f"For {e['label']}, an operator rule of thumb (not a published study) puts {what} at "
              f"{band} — the dashboard measures you against your own target.")
     if e.get("comparable") is False:
-        s += (" It's measured differently from the figure Cavnar shows you, so it's context, not a "
+        s += (" It's measured differently from the figure Cavnar AI shows you, so it's context, not a "
               "comparison.")
     return s
 

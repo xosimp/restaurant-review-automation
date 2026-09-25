@@ -315,8 +315,8 @@ def band_label(pct, target=None, bench=None, starting=False):
         return None, None
     if target and starting:
         if pct <= target:
-            return "Under Cavnar's starting target", "good"
-        return "Above Cavnar's starting target", "warn"
+            return "Under Cavnar AI's starting target", "good"
+        return "Above Cavnar AI's starting target", "warn"
     if target:
         if pct <= target:
             return "On target", "good"

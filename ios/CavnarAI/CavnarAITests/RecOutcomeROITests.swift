@@ -91,7 +91,7 @@ final class RecOutcomeROITests: XCTestCase {
     func testATrackerReplyReadsAsWhatIsMeasuredUntilWhen() throws {
         let r = try decode(APIClient.RecEventResponse.self, """
             {"ok": true, "recorded": true,
-             "message": "Tracking — Cavnar will compare labor % over the next 28 days with the 28 before",
+             "message": "Tracking — Cavnar AI will compare labor % over the next 28 days with the 28 before",
              "tracker": {"id": 41, "metric": "labor_pct", "label": "Labor %", "evaluate_on": "2026-10-21",
                          "window_days": 28, "baseline_kind": "matched weekdays", "module": "labor",
                          "label_text": "measuring labor % until 10/21/26"}}
@@ -107,20 +107,20 @@ final class RecOutcomeROITests: XCTestCase {
     func testDonesMessageAlreadyCarriesTheTrackerSoItIsNotSaidTwice() {
         let tracker = RecTracker(id: 1, metric: "labor_pct", label: "Labor %", evaluateOn: "2026-10-21",
                                  windowDays: 28, module: "labor", labelText: "measuring labor % until 10/21/26")
-        let message = "Done \u{2014} Cavnar won\u{2019}t suggest it again. Now measuring labor % until 10/21/26"
+        let message = "Done \u{2014} Cavnar AI won\u{2019}t suggest it again. Now measuring labor % until 10/21/26"
         XCTAssertNil(RecTrackerNote.extraLine(message: message, tracker: tracker, refused: nil))
     }
 
     func testARefusalSaysWhyNothingStarted() throws {
         let r = try decode(APIClient.RecEventResponse.self, """
-            {"ok": true, "recorded": true, "message": "Noted — hidden for 14 days. There is nothing here Cavnar can measure it against yet",
-             "tracker_refused": {"code": "no_metric", "reason": "There is nothing here Cavnar can measure it against yet",
+            {"ok": true, "recorded": true, "message": "Noted — hidden for 14 days. There is nothing here Cavnar AI can measure it against yet",
+             "tracker_refused": {"code": "no_metric", "reason": "There is nothing here Cavnar AI can measure it against yet",
                                  "in_flight_until": null}}
             """)
         XCTAssertEqual(r.trackerRefused?.code, "no_metric")
         XCTAssertNil(r.trackerRefused?.inFlightUntil)
         XCTAssertEqual(RecTrackerNote.line(tracker: nil, refused: r.trackerRefused),
-                       "There is nothing here Cavnar can measure it against yet")
+                       "There is nothing here Cavnar AI can measure it against yet")
         // Already in the message: no second line.
         XCTAssertNil(RecTrackerNote.extraLine(message: r.message, tracker: nil, refused: r.trackerRefused))
         // An older server with no label_text: built from label + evaluate_on, M/D/YY.
@@ -336,7 +336,7 @@ final class RecOutcomeROITests: XCTestCase {
         XCTAssertEqual(r.checkin?.attribution?.implemented, "partly")
         XCTAssertEqual(r.checkin?.attribution?.discount, true)
         XCTAssertEqual(RecCheckInCard.thanks(didIt: "no", conditionsChanged: false),
-                       "Noted \u{2014} this result no longer counts as one of Cavnar\u{2019}s.")
+                       "Noted \u{2014} this result no longer counts as one of Cavnar AI\u{2019}s.")
     }
 
     func testStopMeasuringPostsTheAbandonRoute() async throws {

@@ -421,7 +421,7 @@ def labor_cost_sourced(restaurant, _memo=None) -> tuple:
         return _memo["labor_sourced"]
     import thresholds as _thr
     basis = _thr.labor_cost_basis(restaurant)
-    why = "set your pay rates to compare labor cost — it is on Cavnar's assumed $26/hr, not your payroll"
+    why = "set your pay rates to compare labor cost — it is on Cavnar AI's assumed $26/hr, not your payroll"
     if basis == "default":
         out = (False, why)
     elif basis == "owner_blended" or _owner_fallback_rate(restaurant):
@@ -433,8 +433,8 @@ def labor_cost_sourced(restaurant, _memo=None) -> tuple:
         else:
             out = (False, ("set a pay rate for every role (or a flat rate) to compare labor cost — "
                            + (f"your role rates price {int(round(cov * 100))}% of the hours worked, the rest is "
-                              "Cavnar's assumed $26/hr" if cov is not None else
-                              "the roles without a rate are on Cavnar's assumed $26/hr")))
+                              "Cavnar AI's assumed $26/hr" if cov is not None else
+                              "the roles without a rate are on Cavnar AI's assumed $26/hr")))
     if _memo is not None:
         _memo["labor_sourced"] = out
     return out
@@ -599,7 +599,7 @@ def _self(restaurant_id, metric, rows, today=None, restaurant=None, _memo=None) 
         if not ok:
             # Its own history on the same assumed wage is still a fair
             # "vs your normal"; it says what the figure rests on (R4-8).
-            out["basis_note"] = "on Cavnar's assumed $26/hr, not your payroll"
+            out["basis_note"] = "on Cavnar AI's assumed $26/hr, not your payroll"
     return out
 
 
@@ -736,7 +736,7 @@ def _band_kind(kind, restaurant_id, metric, cohort, type_source, db_path, today,
     if not row:
         return {"kind": kind, "available": False,
                 "why_not": (f"no current band of at least {_bm.MIN_QUARTILE_N} other "
-                            f"{'restaurants on Cavnar' if kind == 'platform' else _bm.cohort_label(cohort).replace(' on Cavnar', '').lower()} "
+                            f"{'restaurants on Cavnar AI' if kind == 'platform' else _bm.cohort_label(cohort).replace(' on Cavnar AI', '').lower()} "
                             "with this measured yet")}
     v_now, v_at, own_week, own_stale = _own_at(rows, metric, today=today, band_week=row.get("week"))
     if exclude is None:
@@ -752,7 +752,7 @@ def _band_kind(kind, restaurant_id, metric, cohort, type_source, db_path, today,
     st, margin = standing(v_now, p, metric, p["n"], own_noise=own_sigma)
     platform = kind == "platform"
     out = {"kind": kind, "available": True, "value": v_now, "cohort": cohort,
-           "cohort_label": (f"{p['n']} other restaurants on Cavnar, all types" if platform
+           "cohort_label": (f"{p['n']} other restaurants on Cavnar AI, all types" if platform
                             else p["cohort_label"]),
            "type_source": ("platform" if platform else type_source),
            "inferred": kind == "peers" and type_source == "inferred",
@@ -1248,14 +1248,14 @@ def prompt_lines(comparisons) -> list:
                 # Who the group is and how it was chosen, how many of it
                 # measured this, and how strong the comparison is (BM3-8).
                 if k == "platform":
-                    who = f"{c['n']} other restaurants on Cavnar, all types"
-                    group = ("peer group: every restaurant on Cavnar, all types — a behaviour metric, comparable "
+                    who = f"{c['n']} other restaurants on Cavnar AI, all types"
+                    group = ("peer group: every restaurant on Cavnar AI, all types — a behaviour metric, comparable "
                              "across types; never call it restaurants like yours")
                 else:
                     who = f"{c['n']} other {_lc(c['cohort_label'])}"
                     if categories.is_partition(c.get("cohort")):
                         # The owner-confirmed partition (Benchmarking #20).
-                        group = (f"peer group: {_lc(c['cohort_label']).replace(' on Cavnar', '')} — split by "
+                        group = (f"peer group: {_lc(c['cohort_label']).replace(' on Cavnar AI', '').replace(' on Cavnar', '')} — split by "
                                  "how they serve (and bar-led, and menu family for food cost), from the profile "
                                  f"the owner confirmed; {c.get('orgs') or 'several'} separate owners")
                     else:
@@ -1321,7 +1321,7 @@ def facts(comparisons, _entries=None) -> list:
                 continue
             k = c["kind"]
             if k in ("peers", "platform"):
-                src = {"source": "Cavnar anonymous cohort", "source_kind": ("cohort" if k == "peers" else "platform"),
+                src = {"source": "Cavnar AI anonymous cohort", "source_kind": ("cohort" if k == "peers" else "platform"),
                        "engine_kind": k, "cohort_label": c.get("cohort_label"), "n": c.get("n"),
                        "min_n": c.get("min_n"), "as_of": c.get("as_of"), "comparable": bool(c.get("comparable")),
                        "definition_note": None,

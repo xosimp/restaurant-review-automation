@@ -41,7 +41,7 @@ struct AIInsight: Codable, Equatable {
         guard stale == true else { return nil }
         if let note = staleNote?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty { return note }
         let date = ConfidenceDisplay.mdyDate(asOf: asOf, asOfISO: nil)
-        return "This is the last read Cavnar completed" + (date.map { ", from \($0)" } ?? "")
+        return "This is the last read Cavnar AI completed" + (date.map { ", from \($0)" } ?? "")
             + ". A new one couldn\u{2019}t be written just now."
     }
 

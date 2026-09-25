@@ -343,7 +343,7 @@ struct DSRTomorrowCard: View {
             }
             if let fc = tomorrow.forecast {
                 VStack(alignment: .leading, spacing: 3) {
-                    DSRKicker(text: "Cavnar's forecast")
+                    DSRKicker(text: "Cavnar AI's forecast")
                     Text(fc.text).font(.cavnarNumber(22, weight: 600)).foregroundStyle(Color.cavnarInk)
                     if let b = fc.basis {
                         Text(b.prefix(1).uppercased() + b.dropFirst()).font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
@@ -386,7 +386,7 @@ struct DSRYesterdayCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            DSRKicker(text: "Cavnar grading itself")
+            DSRKicker(text: "Cavnar AI grading itself")
             Text("How did yesterday turn out?").font(.cavnarHeadline(19)).foregroundStyle(Color.cavnarInk)
             ForEach(yesterday.items) { x in
                 HStack(alignment: .top, spacing: 10) {

@@ -2841,7 +2841,7 @@ svg:hover .hb-xh{opacity:1}
       det.push(str(a.beats_label)||(p+'% likely to beat doing nothing'));
       if(isNum(a.low)&&isNum(a.high))det.push('improved-rate range '+Math.round(a.low)+'–'+Math.round(a.high)+'%');
       // An older server's cohort stand-in says where it comes from.
-      if(a.source==='cohort'&&!/on Cavnar/i.test(bs))det.unshift('From other restaurants on Cavnar');
+      if(a.source==='cohort'&&!/on Cavnar/i.test(bs))det.unshift('From other restaurants on Cavnar AI');
       out.push({key:'accuracy',title:'Historical accuracy',pct:p,tone:tone(p,at),value:p+'%',basis:bs,detail:det.join(' · ')});
     }else{
       var nn=a&&isNum(a.n)?a.n:0;
@@ -4651,7 +4651,7 @@ svg:hover .hb-xh{opacity:1}
     // The two headings are the server's (value_delivered.VALUE_SECTIONS via
     // /api/value sections, fix I7); the words below are the fallback for
     // an older server.
-    var secH={measured:'What was measured',surfaced:'What Cavnar surfaced · still available'},vs=v.sections||[];
+    var secH={measured:'What was measured',surfaced:'What Cavnar AI surfaced · still available'},vs=v.sections||[];
     for(var si=0;si<vs.length;si++){if(vs[si]&&vs[si].key&&vs[si].heading)secH[vs[si].key]=String(vs[si].heading).replace(' / ',' · ');}
     // Which kind of "measured" the tile is (delivered.scope): a monthly
     // RATE here, never an all-time total.
@@ -4754,7 +4754,7 @@ svg:hover .hb-xh{opacity:1}
     var h='<section class="hb-card rail ember hb-rise hb-worked" style="margin-top:16px" aria-label="Measured alongside your changes"><div class="hb-h3"><span>Measured alongside your changes</span><span class="cnt">'+num(f.window||'')+'</span></div>';
     if(!w.enough||!ss.length){
       var d=(v&&v.delivered)||{};if(!v||!(d.wins||(d.unpriced_wins||[]).length||d.in_flight||(d.worsened&&d.worsened.count)))return '';
-      return h+'<div class="hb-empty">Not enough yet. Cavnar shows what was measured alongside your changes once '+(mn.settled_for_rate||10)+' recommendations in one area have been answered or left, or '+(mn.results_per_metric||2)+' measured results land on one number.</div></section>';}
+      return h+'<div class="hb-empty">Not enough yet. Cavnar AI shows what was measured alongside your changes once '+(mn.settled_for_rate||10)+' recommendations in one area have been answered or left, or '+(mn.results_per_metric||2)+' measured results land on one number.</div></section>';}
     h+='<div class="hb-tl">';
     for(var i=0;i<ss.length;i++)h+='<div class="it good" style="--i:'+i+'"><span class="d"></span><span class="t">'+num(ss[i])+'</span></div>';
     // The caveat is never optional under outcomes data (NS1 #18).
@@ -5722,7 +5722,7 @@ svg:hover .hb-xh{opacity:1}
   var BLOCKS=['sales','labor','food','reviews','intel','marketing','closeout'];
   var BLOCK={sales:'Sales',labor:'Labor',food:'Food',reviews:'Reviews',marketing:'Marketing',intel:'Intel',closeout:'Manager close-out'};
   var BSTATUS={awaiting:'Awaiting',unavailable:'Unavailable',not_connected:'Not connected'};
-  var SOURCE={rpower:'RPower',toast:'Toast',square:'Square',clover:'Clover',cavnar:'Cavnar',google:'Google',yelp:'Yelp',instagram:'Instagram',facebook:'Facebook',manager:''};
+  var SOURCE={rpower:'RPower',toast:'Toast',square:'Square',clover:'Clover',cavnar:'Cavnar AI',google:'Google',yelp:'Yelp',instagram:'Instagram',facebook:'Facebook',manager:''};
   var MODULE={sales:'ops',labor:'labor',food:'food',reviews:'reviews',marketing:'marketing',intel:'intel',closeout:'ops'};
   var URGENCY={before_service:'Today',this_week:'This week',next_schedule:'Next schedule',next_order:'Next order'};
   var CLOSED={pos:'Closed by the POS',close_time:'Closed at closing time',manual:'Closed by hand'};
@@ -5903,7 +5903,7 @@ svg:hover .hb-xh{opacity:1}
     h+='<div class="dr-meta"><span class="dr-pill running"><i></i>Running</span><span>Checks every 5 seconds</span></div>';
     h+='<section class="hb-card dr-prog" aria-label="Progress"><div class="dr-pulse wide" aria-hidden="true"><i></i></div>';
     if(!s){
-      h+='<div class="hb-h3"><span>Starting the night</span></div><div class="hb-empty">'+esc((err&&err.error)||'Cavnar is opening the night — the checklist appears in a moment.')+'</div></section>';
+      h+='<div class="hb-h3"><span>Starting the night</span></div><div class="hb-empty">'+esc((err&&err.error)||'Cavnar AI is opening the night — the checklist appears in a moment.')+'</div></section>';
       b.innerHTML=h;return;
     }
     if(!s.exists){h+='<div class="hb-h3"><span>Not started yet</span></div><div class="hb-empty">Nothing has run for this night yet.</div></section>';b.innerHTML=h;return;}
@@ -6203,7 +6203,7 @@ svg:hover .hb-xh{opacity:1}
     var rec=-1,acts=(n&&n.actions_tomorrow)||[];
     for(var a=0;a<acts.length&&rec<0;a++){if(/staff|schedul|labor|shift|cover/i.test(String(acts[a].kind||'')+' '+String(acts[a].text||'')))rec=a;}
     if(rec>=0)h+='<div class="dr-note">Staffing for tomorrow: see priority '+hn('#'+(rec+1))+' above.</div>';
-    h+='</div><div class="hb-card"><div class="hb-h3"><span>Cavnar\u2019s forecast</span></div>';
+    h+='</div><div class="hb-card"><div class="hb-h3"><span>Cavnar AI\u2019s forecast</span></div>';
     if(fc)h+='<div class="dr-fc">'+hn(esc(fc.text))+'</div><div class="dr-note">'+esc(cap(fc.basis||''))+'</div>';
     else h+='<div class="hb-empty">Not enough history for this weekday yet.</div>';
     if(cf){h+='<div class="dr-conf"><div class="k">AI confidence</div><div class="v">'+(isNum(cf.pct)?hn(cf.pct)+'<small>%</small>':'\u2014')+'</div><div class="sub">Based on '+esc((cf.based_on||[]).join(' \u00b7 '))+'</div>'
@@ -6214,7 +6214,7 @@ svg:hover .hb-xh{opacity:1}
   // How did yesterday turn out? Cavnar's predictions about this night, graded.
   function yesterdayHtml(y){
     if(!y||!(y.items||[]).length)return '';
-    var ac=y.accuracy||{},h='<div class="hb-sh"><div><div class="k">Cavnar grading itself</div><h2>How did yesterday turn out?</h2></div></div><section class="hb-card dr-yest">';
+    var ac=y.accuracy||{},h='<div class="hb-sh"><div><div class="k">Cavnar AI grading itself</div><h2>How did yesterday turn out?</h2></div></div><section class="hb-card dr-yest">';
     for(var i=0;i<y.items.length;i++){var x=y.items[i],o=x.outcome;
       h+='<div class="hb-row '+(o==='correct'?'win':(o==='incorrect'?'miss':'watch'))+'"><span class="g" aria-hidden="true">'+(o==='correct'?'\u2713':(o==='incorrect'?'\u2717':'\u2022'))+'</span><span class="t wrap">'+prose(x.text)
         +(x.actual_text?'<small>'+prose(x.actual_text)+'</small>':'')+'</span><span class="m">'+(o==='correct'?'Correct':(o==='incorrect'?'Incorrect':'Not graded'))+'</span></div>';}
@@ -6620,7 +6620,7 @@ svg:hover .hb-xh{opacity:1}
       +'<div class="dr-bud-pre"><span class="k">Start from</span>'
       +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="bud-prefill" data-from="last_week" data-start="'+esc(days.length?days[0].date:'')+'">Same as last week</button>'
       +'<span class="dr-bud-ly"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="bud-prefill" data-from="last_year" data-start="'+esc(days.length?days[0].date:'')+'">Last year</button><input class="ac-input ac-num" type="number" step="1" min="-50" max="100" id="dr-bud-pct" value="0" aria-label="Last year plus this percent" style="max-width:70px">%</span>'
-      +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="bud-prefill" data-from="forecast" data-start="'+esc(days.length?days[0].date:'')+'">Cavnar’s forecast</button>'
+      +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="bud-prefill" data-from="forecast" data-start="'+esc(days.length?days[0].date:'')+'">Cavnar AI’s forecast</button>'
       +'<span class="ac-status" id="dr-bud-pre-status"></span></div>'
       +'<div class="dr-bud-grid"><span class="h">Night</span><span class="h">Gross</span><span class="h">Net</span>';
     for(var i=0;i<days.length;i++){var d=days[i];
@@ -6665,7 +6665,7 @@ svg:hover .hb-xh{opacity:1}
            for is cleared, never left from another source (F2-19). */
         if(g)g.value=isNum(r.gross)?Math.round(r.gross):'';if(nt)nt.value=isNum(r.net)?Math.round(r.net):'';}
       if(s)s.textContent=filled?(d.basis+(d.missing&&d.missing.length?' '+d.missing.length+' night'+(d.missing.length===1?'':'s')+' had nothing to go on.':'')+' Not saved yet.'):'Nothing to go on for these nights yet.';
-    }).catch(function(){done();if(s)s.textContent='Couldn’t reach Cavnar.';});
+    }).catch(function(){done();if(s)s.textContent='Couldn’t reach Cavnar AI.';});
   }
   function importFile(btn){
     var inp=el('dr-imp-file'),s=el('dr-imp-status'),ul=el('dr-imp-err'),f=inp&&inp.files&&inp.files[0];
@@ -6813,7 +6813,7 @@ svg:hover .hb-xh{opacity:1}
   <div class="rh-head">
     <div class="hb-kicker">Your record</div>
     <h1 class="hb-h1">Recommendations</h1>
-    <div class="rh-sub">What Cavnar suggested, what you did with it, and what was measured afterwards. Anything left unanswered counts as not acted on.</div>
+    <div class="rh-sub">What Cavnar AI suggested, what you did with it, and what was measured afterwards. Anything left unanswered counts as not acted on.</div>
   </div>
   <div id="rh-body" aria-live="polite"></div>
 </div>
@@ -6941,7 +6941,7 @@ svg:hover .hb-xh{opacity:1}
   function worked(w){
     if(!w||!w.ok)return '';
     var ss=w.sentences||[],f=w.facts||{},mn=f.minimums||{};
-    if(!w.enough||!ss.length)return '<section class="hb-card quiet rh-worked" aria-label="Measured alongside your changes"><div class="hb-h3"><span>Measured alongside your changes</span><span class="cnt">'+num(f.window||'')+'</span></div><div class="hb-empty">Not enough yet. Cavnar shows what was measured alongside your changes once '+(mn.settled_for_rate||10)+' recommendations in one area have been answered or left, or '+(mn.results_per_metric||2)+' measured results land on one number — and never estimates to fill the gap.</div></section>';
+    if(!w.enough||!ss.length)return '<section class="hb-card quiet rh-worked" aria-label="Measured alongside your changes"><div class="hb-h3"><span>Measured alongside your changes</span><span class="cnt">'+num(f.window||'')+'</span></div><div class="hb-empty">Not enough yet. Cavnar AI shows what was measured alongside your changes once '+(mn.settled_for_rate||10)+' recommendations in one area have been answered or left, or '+(mn.results_per_metric||2)+' measured results land on one number — and never estimates to fill the gap.</div></section>';
     var h='<section class="hb-card hero hb-focus rh-worked" aria-label="Measured alongside your changes"><div class="hb-kicker">Measured alongside your changes</div><div class="lead">'+prose(ss[0])+'</div>';
     if(ss.length>1){h+='<div class="more">';for(var i=1;i<ss.length;i++)h+='<div class="why">'+prose(ss[i])+'</div>';h+='</div>';}
     h+='<div class="why" style="opacity:.75">'+esc(f.caveat||'Measured before and after, not proven cause.')+'</div>';
@@ -7031,7 +7031,7 @@ svg:hover .hb-xh{opacity:1}
   }
   function renderTimeline(){
     var box=el('rh-tl');if(!box)return;
-    if(!st.items.length){box.innerHTML='<div class="hb-empty">Nothing yet. Every recommendation Cavnar shows you — on Home, in the brief, in a module — lands here with what you did with it.</div>';return;}
+    if(!st.items.length){box.innerHTML='<div class="hb-empty">Nothing yet. Every recommendation Cavnar AI shows you — on Home, in the brief, in a module — lands here with what you did with it.</div>';return;}
     var h='<div class="rh-tl">';for(var i=0;i<st.items.length;i++)h+=item(st.items[i]);h+='</div>';
     if(st.next)h+='<div class="rh-more"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-rh="more">Show older</button></div>';
     else if(st.caveat)h+='<div class="hb-empty" style="font-size:12px;margin-top:10px">'+esc(st.caveat)+'</div>';
@@ -7467,7 +7467,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
       <div id="trend-avg-rating" hidden></div>
     </section>
     {# What the figures below cover (moved from the header, density round #33). #}
-    <div class="rv2-basis"><span><span class="hb-num">{{ rstats.positive_pct }}%</span> positive</span>{% if _gl and _gl.tone != 'bad' %}<span class="sep">·</span><span>{{ _gl.line }}</span>{% elif not _gl %}<span class="sep">·</span><span>{{ 'Google connected' if restaurant.gmb_refresh_token else ('Google reviews (sampled)' if restaurant.reviews_live else 'Imported reviews') }}</span>{% endif %}{% if rstats.official_review_count and not rstats.is_full_history %}<span class="sep">·</span><span title="Google's own all-time rating is over every review ever left; ours is over the reviews Cavnar holds.">avg over <span class="hb-num">{{ rstats.total }}</span> of <span class="hb-num">{{ rstats.official_review_count }}</span> reviews</span>{% endif %}{% if rstats.unanalysed %}<span class="sep">·</span><span style="color:var(--hb-warn)" title="Sentiment and topic charts only cover analysed reviews."><span class="hb-num">{{ rstats.unanalysed }}</span> not yet analysed</span>{% endif %}</div>
+    <div class="rv2-basis"><span><span class="hb-num">{{ rstats.positive_pct }}%</span> positive</span>{% if _gl and _gl.tone != 'bad' %}<span class="sep">·</span><span>{{ _gl.line }}</span>{% elif not _gl %}<span class="sep">·</span><span>{{ 'Google connected' if restaurant.gmb_refresh_token else ('Google reviews (sampled)' if restaurant.reviews_live else 'Imported reviews') }}</span>{% endif %}{% if rstats.official_review_count and not rstats.is_full_history %}<span class="sep">·</span><span title="Google's own all-time rating is over every review ever left; ours is over the reviews Cavnar AI holds.">avg over <span class="hb-num">{{ rstats.total }}</span> of <span class="hb-num">{{ rstats.official_review_count }}</span> reviews</span>{% endif %}{% if rstats.unanalysed %}<span class="sep">·</span><span style="color:var(--hb-warn)" title="Sentiment and topic charts only cover analysed reviews."><span class="hb-num">{{ rstats.unanalysed }}</span> not yet analysed</span>{% endif %}</div>
     {# The AI read on the reviews. This card was removed from the markup at
        some point and loadReviewInsight() has been dead-ending on the
        missing #review-insight ever since — so /api/review-insight, the one
@@ -8480,7 +8480,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
       {% endif %}
       {# The weekly automation where the work is (Friction #27): the same
          switch as Account -> Automation & AI, both on /api/labor/auto-draft. #}
-      <span class="rul-sw" id="lb2-autodraft-sw" style="border-top:0;padding:0;gap:8px" hidden><label class="ac-switch"><input type="checkbox" id="lb2-autodraft" onchange="lb2SaveAutoDraft(this)" aria-label="Cavnar drafts every Thursday"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><span>Cavnar drafts every Thursday</span><span class="ac-status" id="lb2-autodraft-status"></span></span>
+      <span class="rul-sw" id="lb2-autodraft-sw" style="border-top:0;padding:0;gap:8px" hidden><label class="ac-switch"><input type="checkbox" id="lb2-autodraft" onchange="lb2SaveAutoDraft(this)" aria-label="Cavnar AI drafts every Thursday"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><span>Cavnar AI drafts every Thursday</span><span class="ac-status" id="lb2-autodraft-status"></span></span>
     </div>
     {# A drafted week staff don't have yet, one tap back into the editor (#4). #}
     <div class="lb2-ro" id="sched-reopen" hidden></div>
@@ -9866,7 +9866,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
       if(st)st.textContent=d.error||'Couldn\'t send order';
       toast(d.error||'Couldn\'t send order','error');
       if(d.stale){ loadOrderDraft(); }
-    }).catch(function(){done();toast('Couldn\'t reach Cavnar','error');});
+    }).catch(function(){done();toast('Couldn\'t reach Cavnar AI','error');});
   }
   // Auto-load the order card and the margins table the first time each is
   // on screen - the "Load" buttons were implementation clicks (U2-16).
@@ -11121,7 +11121,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
            restaurant with. A comparison with other restaurants is only ever
            built from the profile confirmed here, never from a guess. -->
       <div class="ac-card" id="as-rp-card" style="margin-top:14px">
-        <div class="ac-card-h"><div><h3>Restaurant profile</h3><p>Who Cavnar compares you with. Other restaurants are only ever compared with you through the profile you confirm here &mdash; never a guess from your name.</p></div>
+        <div class="ac-card-h"><div><h3>Restaurant profile</h3><p>Who Cavnar AI compares you with. Other restaurants are only ever compared with you through the profile you confirm here &mdash; never a guess from your name.</p></div>
           <div class="r"><span class="ac-status" id="as-rp-status"></span></div></div>
         <div class="ac-card accent" id="as-rp-suggest" hidden style="margin-bottom:12px">
           <div class="ac-row" style="border-top:0"><div class="l"><b id="as-rp-suggest-text"></b><span id="as-rp-suggest-why"></span></div>
@@ -11155,7 +11155,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
             <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-labor_target_pct" min="5" max="80" step="0.5" style="width:96px" aria-label="Labor target %" data-tg="labor_target_pct"></div></div>
           <div class="ac-row"><div class="l"><b>Food cost target</b><span>Food cost as a % of food sales.</span></div>
             <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-food_cost_target" min="5" max="80" step="0.5" style="width:96px" aria-label="Food cost target %" data-tg="food_cost_target"></div></div>
-          <div class="ac-row"><div class="l"><b>Waste target</b><span>Waste as a % of purchases. Blank uses Cavnar&rsquo;s starting 4.5%.</span></div>
+          <div class="ac-row"><div class="l"><b>Waste target</b><span>Waste as a % of purchases. Blank uses Cavnar AI&rsquo;s starting 4.5%.</span></div>
             <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-waste_target_pct" min="0" max="50" step="0.5" style="width:96px" aria-label="Waste target %" data-tg="waste_target_pct"></div></div>
           <div class="ac-row"><div class="l"><b>Monthly revenue target</b><span>In dollars. Blank or 0 means no target.</span></div>
             <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-monthly_revenue_target" min="0" step="100" style="width:130px" aria-label="Monthly revenue target" data-tg="monthly_revenue_target"></div></div>
@@ -11400,7 +11400,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
              Notifications, where it hid under the morning brief. The
              Schedule header and the order card carry the same switches. -->
         <div class="ac-card" id="as-auto-ops-card">
-          <div class="ac-card-h"><div><h3>Work Cavnar does for you</h3><p>Drafting the schedule, sending it, ordering from suppliers you trust &mdash; each one off until you turn it on, and each one undoable.</p></div>
+          <div class="ac-card-h"><div><h3>Work Cavnar AI does for you</h3><p>Drafting the schedule, sending it, ordering from suppliers you trust &mdash; each one off until you turn it on, and each one undoable.</p></div>
             <div class="r"><span class="ac-status" id="as-auto-ops-status"></span></div></div>
           <div class="ac-rows">
             <div class="ac-row" id="as-autodraft-row" hidden><div class="l"><b>Draft next week&rsquo;s schedule for me</b><span>Every Thursday, if you haven&rsquo;t built one. A draft only &mdash; nothing goes to staff until you publish.</span></div>
@@ -12240,7 +12240,7 @@ function _appendAskCavnarEvidence(d) {
   if (badCauses.length) warns.push('Unsupported cause — Cavnar AI gave a reason here that nothing it read supports (“'
                                    + String(badCauses[0]).slice(0, 120) + '”). Treat it as a guess, not a finding.');
   if (badNames.length) warns.push('Unverified name — ' + badNames.slice(0, 2).join(', ')
-                                  + ' doesn’t appear in anything Cavnar read. Check before acting on it.');
+                                  + ' doesn’t appear in anything Cavnar AI read. Check before acting on it.');
   var nUnver = bad.length + badCauses.length + badNames.length;
   var row = document.createElement('div');
   row.className = 'ask-eva';
@@ -12770,7 +12770,7 @@ function regenDraft(id) {
           '<button class="cbtn cbtn-secondary cbtn-sm" onclick="skipR('+id+')">Skip</button>';
         actionsEl.style.display='flex';
         document.getElementById('editor-'+id).style.display='none';
-        _revShowFlag(id, data.needs_review ? (data.review_reason || 'states something Cavnar cannot confirm') : '');
+        _revShowFlag(id, data.needs_review ? (data.review_reason || 'states something Cavnar AI cannot confirm') : '');
       } else if (boxEl) {
         boxEl.style.background='';
         boxEl.innerHTML =
@@ -12789,7 +12789,7 @@ function regenDraft(id) {
               '<button class="cbtn cbtn-secondary cbtn-sm" onclick="closeEditor('+id+')">Cancel</button>' +
             '</div>' +
           '</div>';
-        _revShowFlag(id, data.needs_review ? (data.review_reason || 'states something Cavnar cannot confirm') : '');
+        _revShowFlag(id, data.needs_review ? (data.review_reason || 'states something Cavnar AI cannot confirm') : '');
       }
       toast('New draft generated','success');
     } else {
@@ -12820,8 +12820,8 @@ function saveDraft(id) {
     // draft with its reason shown, and posts only if the owner says so.
     var _txtSaved = document.getElementById('draft-txt-'+id);
     if (_txtSaved) _txtSaved.textContent = draft;
-    _revShowFlag(id, sd.needs_review ? (sd.review_reason || 'states something Cavnar cannot confirm') : '');
-    if (sd.needs_review && !_revFlagOk(id, sd.review_reason || 'states something Cavnar cannot confirm')) {
+    _revShowFlag(id, sd.needs_review ? (sd.review_reason || 'states something Cavnar AI cannot confirm') : '');
+    if (sd.needs_review && !_revFlagOk(id, sd.review_reason || 'states something Cavnar AI cannot confirm')) {
       settle(); toast('Saved as a draft — not posted','success'); return;
     }
     fetch('/approve/'+id, {method:'POST'}).then(apiJson).then(function(ad){
@@ -13020,7 +13020,7 @@ function rpowerSyncNow(btn){
   }).catch(function(){ btn.disabled=false; btn.textContent='\u21bb Sync'; toast('Request failed','error'); });
 }
 function rpowerDisconnect(btn){
-  if (!confirm('Disconnect RPower? Synced data stays. Reconnecting goes through Cavnar.')) return;
+  if (!confirm('Disconnect RPower? Synced data stays. Reconnecting goes through Cavnar AI.')) return;
   btn.disabled = true;
   fetch('/api/rpower/disconnect',{method:'POST'}).then(apiJson).then(function(d){
     if (d.ok){ toast('RPower disconnected','success'); setTimeout(function(){ window.location.reload(); },600); }
@@ -13531,7 +13531,7 @@ function recNotForUsHtml(key,surface,module){
    hidden); these are the fallbacks for an older server. */
 function _recAnsweredText(ev,d){
   if(d&&d.message)return String(d.message);
-  if(ev==='completed')return 'Done \u2014 Cavnar won\u2019t suggest it again';
+  if(ev==='completed')return 'Done \u2014 Cavnar AI won\u2019t suggest it again';
   if(ev==='accepted')return 'Noted \u2014 hidden for 14 days';
   return 'Noted \u2014 it won\u2019t come back';
 }
@@ -13574,7 +13574,7 @@ function recReasonPicker(after,opts){
   if(!after||!after.parentNode)return null;
   var old=after.nextSibling;if(old&&old.className&&String(old.className).indexOf('rsn')===0)return old;
   var box=document.createElement('div');box.className='rsn';box.setAttribute('role','group');box.setAttribute('aria-label','Why not?');
-  var h='<div class="rsn-k">'+recEsc(opts.title||'Why not?')+' <span>'+recEsc(opts.hint||'One tap \u2014 it tells Cavnar what to stop suggesting.')+'</span></div><div class="rsn-opts">';
+  var h='<div class="rsn-k">'+recEsc(opts.title||'Why not?')+' <span>'+recEsc(opts.hint||'One tap \u2014 it tells Cavnar AI what to stop suggesting.')+'</span></div><div class="rsn-opts">';
   for(var i=0;i<REC_REASONS.length;i++)h+='<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-rsn="'+REC_REASONS[i][0]+'">'+REC_REASONS[i][1]+'</button>';
   h+='</div><div class="rsn-ft"><input class="ac-input" type="text" maxlength="200" placeholder="Add a note (optional)" aria-label="A note">'
     +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rsn-skip="1">'+recEsc(opts.skipLabel||'Skip \u2014 no reason')+'</button>'
@@ -13796,7 +13796,7 @@ function applyInsightCaveats(el,d){
   if(d.names_verified===false){
     var n=(d.unsupported_names||[]);
     el.insertBefore(aiCaveat('Unverified name',
-      'Cavnar could not match '+(n.length?n.slice(0,2).join(', '):'a name')
+      'Cavnar AI could not match '+(n.length?n.slice(0,2).join(', '):'a name')
       +' to any reviewer in your data. Check the review before acting on this.'),el.firstChild);
   }
   if(d.stale){
@@ -13804,8 +13804,8 @@ function applyInsightCaveats(el,d){
        queued, so it promises only what happens: another try next time
        (M-33). as_of is M/D/YY from the server (M-26). */
     el.insertBefore(aiCaveat('Older read',
-      'This is the last read Cavnar completed'+(d.as_of?(', from '+d.as_of):'')
-      +'. A new one couldn\u2019t be written just now \u2014 Cavnar tries again the next time this opens.'),el.firstChild);
+      'This is the last read Cavnar AI completed'+(d.as_of?(', from '+d.as_of):'')
+      +'. A new one couldn\u2019t be written just now \u2014 Cavnar AI tries again the next time this opens.'),el.firstChild);
   }
 }
 /* Open complaints by how serious they are, not how many there are. Urgency
@@ -15003,7 +15003,7 @@ function _revFlagOk(id, reason){
     reason=f?f.getAttribute('data-flag-reason'):'';
   }
   if(!reason)return true;
-  return window.confirm('This reply '+reason+'. Cavnar can’t confirm that. Post it anyway?');
+  return window.confirm('This reply '+reason+'. Cavnar AI can’t confirm that. Post it anyway?');
 }
 function _revShowFlag(id, reason){
   var old=document.getElementById('draft-flag-'+id);
@@ -16021,7 +16021,7 @@ function loadMktPerformance(){
 // sub-audit).
 function mktStaleCaveat(el,d){
   if(!el||!d||!d.stale||typeof aiCaveat!=='function')return;
-  el.insertBefore(aiCaveat('Older read',d.stale_note||('This is the last read Cavnar completed'+(d.as_of?(', from '+d.as_of):'')+'. A new one couldn\u2019t be written just now.')),el.firstChild);
+  el.insertBefore(aiCaveat('Older read',d.stale_note||('This is the last read Cavnar AI completed'+(d.as_of?(', from '+d.as_of):'')+'. A new one couldn\u2019t be written just now.')),el.firstChild);
 }
 function loadMktInsight(){
   mktLoaded=true;
@@ -16190,10 +16190,10 @@ function laborSplitUnverified(html){
 function laborApplyCaveats(el,figs,d,note){
   if(!el)return;
   if(figs)applyFigureCaveat(el,{figures_verified:false,unsupported_figures:figs});
-  if(note)el.insertBefore(aiCaveat('Unverified', 'Cavnar could not check everything in this read: '+note+'. Check before acting on it.'),el.firstChild);
+  if(note)el.insertBefore(aiCaveat('Unverified', 'Cavnar AI could not check everything in this read: '+note+'. Check before acting on it.'),el.firstChild);
   // A cached read served because a new one failed says how old it is (H15):
   // the server's stale_note, else its as_of (M/D/YY).
-  if(d&&d.stale)el.insertBefore(aiCaveat('Older read',d.stale_note||('This is the last read Cavnar completed'+(d.as_of?(', from '+d.as_of):'')+'. A new one couldn\u2019t be written just now.')),el.firstChild);
+  if(d&&d.stale)el.insertBefore(aiCaveat('Older read',d.stale_note||('This is the last read Cavnar AI completed'+(d.as_of?(', from '+d.as_of):'')+'. A new one couldn\u2019t be written just now.')),el.firstChild);
 }
 function loadLaborInsight(){
   laborLoaded=true;
@@ -16905,7 +16905,7 @@ function renderQualityOptimizer() {
     if (ch.length || un.length) {
       h += '<div class="sq-opt">';
       if (ch.length && o.before_score !== null && o.before_score !== undefined) {
-        h += '<div class="hd">Cavnar improved this draft from <span class="hb-num">' + _sqN(o.before_score) + '</span> to <span class="hb-num">'
+        h += '<div class="hd">Cavnar AI improved this draft from <span class="hb-num">' + _sqN(o.before_score) + '</span> to <span class="hb-num">'
            + _sqN(o.after_score) + '</span> — <span class="hb-num">' + ch.length + '</span> change' + (ch.length === 1 ? '' : 's')
            + (_sqOptimizerProposed ? '<span class="st">not saved yet</span>' : '') + '</div>';
         h += '<details><summary>What changed and why</summary><div>';
@@ -17627,7 +17627,7 @@ function _setQualityState(state, message) {
     note.textContent = 'Edited \u2014 the score above is from before your change. Save to re-score the week.';
   } else if (state === 'proposed') {
     note.style.color = 'var(--hb-warn)';
-    note.textContent = 'Cavnar\u2019s changes are on screen and scored above \u2014 Save to keep them, Discard to go back.';
+    note.textContent = 'Cavnar AI\u2019s changes are on screen and scored above \u2014 Save to keep them, Discard to go back.';
   } else if (state === '') {
     note.textContent = '';
   } else {
@@ -19498,7 +19498,7 @@ function fc2LoadRecipeDrafts(note){
     if(!d||!d.ok)return;
     var ds=d.drafts||[];
     var h=fc2BlockHead(FC2_ICON.recipe,'Recipes','Recipes to confirm',ds.length,'Every plate cost rests on these. Nothing is saved until you accept it.');
-    if(!ds.length)h+='<div class="hb-empty" style="font-size:14px;padding-top:2px">Nothing waiting. Paste your menu below and Cavnar drafts a recipe for each dish; anything your POS adds later is drafted on Tuesday mornings.</div>';
+    if(!ds.length)h+='<div class="hb-empty" style="font-size:14px;padding-top:2px">Nothing waiting. Paste your menu below and Cavnar AI drafts a recipe for each dish; anything your POS adds later is drafted on Tuesday mornings.</div>';
     // Accept every confident draft at once (U2-24): only drafts whose every
     // line carries a measured support of FC2_SURE_PCT% or more, with units
     // that converted and no batch yield to fill. The rest stay one by one.
@@ -19541,7 +19541,7 @@ function fc2LoadRecipeDrafts(note){
     // restaurant without a POS has no dishes for the Tuesday job to draft
     // against — but every owner has the menu. One paste does the rest.
     var canDraft=(d.ingredients||0)>=3;
-    h+='<div class="fc2-menu-draft"><div class="t"><b>Draft recipes from your menu</b><span>Paste the menu, one dish a line, a price after a comma if you like. Cavnar drafts each recipe from your ingredient list and you confirm it above \u2014 nothing is saved until you accept.</span></div>';
+    h+='<div class="fc2-menu-draft"><div class="t"><b>Draft recipes from your menu</b><span>Paste the menu, one dish a line, a price after a comma if you like. Cavnar AI drafts each recipe from your ingredient list and you confirm it above \u2014 nothing is saved until you accept.</span></div>';
     if(d.missing>0)h+='<div class="fc2-count-ft" style="margin:0 0 10px;justify-content:flex-start"><span class="ac-status">'+d.missing+' dish'+(d.missing===1?' on file has':'es on file have')+' no recipe yet.</span><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="fc2DraftRecipes(this,true)"'+(canDraft?'':' disabled')+'>Draft '+(d.missing===1?'it':'them')+' now</button></div>';
     h+='<textarea id="fc2-menu-text" rows="5" class="ac-input" style="width:100%;font-size:14px" placeholder="Classic Burger, 14&#10;Caesar Salad, 11&#10;Grilled Salmon, 24"></textarea><div class="fc2-count-ft"><span class="ac-status" id="fc2-menu-status">'+(canDraft?'':'Add at least three ingredients first \u2014 a recipe can only use what is on your list.')+'</span><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="fc2DraftRecipes(this,false)"'+(canDraft?'':' disabled')+'>Draft recipes</button></div></div>';
     h+='<details class="fc2-import"><summary>Import recipes from a CSV</summary><div class="hb-empty" style="font-size:12.5px;margin:6px 0">Columns: menu_item, ingredient, qty \u2014 ingredient names must match your list; a new dish is created, an unknown ingredient is skipped and named.</div><textarea id="fc2-import-csv" rows="5" class="ac-input" style="width:100%;font-family:monospace;font-size:12px" placeholder="menu_item,ingredient,qty&#10;Margherita,Mozzarella,0.25"></textarea><div class="fc2-count-ft"><span class="ac-status" id="fc2-import-status"></span><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="fc2ImportRecipes(this)">Import</button></div></details>';
@@ -21841,7 +21841,7 @@ function renderAIVisibility(d) {
     } else if (ai === 0) {
       note = '<b>Not coming up in ' + (d.platform || 'AI search') + ' yet</b> — normal for independent restaurants this early. This is one system, asked ' + (d.answered_queries||0) + ' ways. More reviews and a complete Google listing are the parts you control.';
     } else if (d.setup_total) {
-      note = (d.setup_done||0) + ' of ' + d.setup_total + ' Cavnar connections set up. These help us read your listing; they do not change what AI search sees.';
+      note = (d.setup_done||0) + ' of ' + d.setup_total + ' Cavnar AI connections set up. These help us read your listing; they do not change what AI search sees.';
     }
     aivNote.innerHTML = note;
     aivNote.style.display = note ? 'block' : 'none';
@@ -22355,8 +22355,8 @@ function applyFigureCaveat(el, d){
   if(d.figures_verified!==false) return;
   var n=(d.unsupported_figures||[]).length;
   var detail=n
-    ? 'Cavnar could not trace '+(n===1?'a figure':n+' figures')+' in this to your data ('+(d.unsupported_figures||[]).slice(0,3).join(', ')+'). Check before acting on '+(n===1?'it':'them')+'.'
-    : 'Cavnar could not trace every figure in this back to your data. Check before acting on them.';
+    ? 'Cavnar AI could not trace '+(n===1?'a figure':n+' figures')+' in this to your data ('+(d.unsupported_figures||[]).slice(0,3).join(', ')+'). Check before acting on '+(n===1?'it':'them')+'.'
+    : 'Cavnar AI could not trace every figure in this back to your data. Check before acting on them.';
   el.insertBefore(aiCaveat('Unverified numbers', detail), el.firstChild);
 }
 
@@ -22830,7 +22830,7 @@ function revokeOtherSessions(btn){
     if(v.applied_at&&!v.awaiting_owner){h+='<div class="hb-clear"><span class="ok">✓</span><span>Applied '+_fcEsc(window.mdy?window.mdy(v.applied_at):v.applied_at)+'.</span></div>';body.innerHTML=h;return;}
     // The trusted-supplier rule applied the lines it could check; the rest
     // still wait for the owner, so the table stays for them (M-4).
-    if(v.awaiting_owner)h+='<div class="fc2-inv-note">Cavnar applied '+(+v.auto_applied_count||0)+' checked line'+((+v.auto_applied_count||0)===1?'':'s')+' from this trusted supplier. The lines below still need you.</div>';
+    if(v.awaiting_owner)h+='<div class="fc2-inv-note">Cavnar AI applied '+(+v.auto_applied_count||0)+' checked line'+((+v.auto_applied_count||0)===1?'':'s')+' from this trusted supplier. The lines below still need you.</div>';
     h+='<div class="fc2-table-scroll"><table class="fc2-mt"><thead><tr><th></th><th>Invoice line</th><th>Ingredient</th><th class="r">Now</th><th class="r">New cost</th></tr></thead><tbody>';
     for(var i=0;i<v.lines.length;i++){var l=v.lines[i];
       if(l.applied){h+='<tr><td><span class="ok">✓</span></td><td><b>'+_fcEsc(l.description)+'</b><div class="why">Applied automatically</div></td><td>'+_fcEsc(l.ingredient_name||'')+'</td><td class="r hb-num">'+_fcMoney(l.current_cost,4)+'</td><td class="r hb-num">'+_fcMoney(l.proposed_cost,4)+'</td></tr>';continue;}
@@ -22858,7 +22858,7 @@ function revokeOtherSessions(btn){
         if(!d||!d.ok){if(msg){msg.style.color='var(--red)';msg.textContent=(d&&d.error)||'Couldn\'t update.';}return;}
         v.applied_at='just now';v.awaiting_owner=false;renderInvoice();fc2LoadPendingInvoices();
         if(typeof toast==='function')toast(d.updated.length+' ingredient cost'+(d.updated.length===1?'':'s')+' updated','success');
-      }).catch(function(){if(msg){msg.style.color='var(--red)';msg.textContent='Couldn\'t reach Cavnar.';}});
+      }).catch(function(){if(msg){msg.style.color='var(--red)';msg.textContent='Couldn\'t reach Cavnar AI.';}});
   };
 
   // Load on account tab open
@@ -23929,7 +23929,7 @@ document.addEventListener('click', function(e) {
       <img src="/static/brand/integrations/rpower.png" alt="" style="height:22px;width:auto">
       <div style="font-size:16px;font-weight:700;color:var(--ink)">Connect RPower POS</div>
     </div>
-    <div style="font-size:15px;color:var(--ink2);line-height:1.55;margin:12px 0 20px">RPower issues the connection key to Cavnar, not to your restaurant, so there&rsquo;s nothing for you to paste. Ask and Will connects your store &mdash; your sales, labor and the nightly Daily Sales Report start flowing once it&rsquo;s linked.</div>
+    <div style="font-size:15px;color:var(--ink2);line-height:1.55;margin:12px 0 20px">RPower issues the connection key to Cavnar AI, not to your restaurant, so there&rsquo;s nothing for you to paste. Ask and Will connects your store &mdash; your sales, labor and the nightly Daily Sales Report start flowing once it&rsquo;s linked.</div>
     <div style="display:flex;gap:10px;justify-content:flex-end">
       <button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="closeRpowerConnect()">Not now</button>
       <a class="cbtn cbtn-primary cbtn-sm" href="mailto:will@cavnar.ai?subject=Connect%20RPower%20for%20{{ restaurant.name|urlencode }}" onclick="closeRpowerConnect()">Ask Will to connect it</a>
@@ -24999,8 +24999,8 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     // Quality repair loop over the rows on screen. Both only propose.
     if((window._schedRows||[]).length){
       h+='<div class="sr-actions">'+(hard?'<button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="applyScheduleFixes(this)">Apply fixes</button>':'')
-        +'<button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="improveScheduleWithCavnar(this)">Improve with Cavnar</button>'
-        +'<span class="sr-note">'+(hard?'Apply fixes puts somebody legal on every row that breaks a hard rule. ':'')+'Improve with Cavnar makes legal changes that raise the score and lists each one. You still choose to save.</span></div>';
+        +'<button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="improveScheduleWithCavnar(this)">Improve with Cavnar AI</button>'
+        +'<span class="sr-note">'+(hard?'Apply fixes puts somebody legal on every row that breaks a hard rule. ':'')+'Improve with Cavnar AI makes legal changes that raise the score and lists each one. You still choose to save.</span></div>';
     }
     box.innerHTML=h;box.style.display='block';
     if(typeof _schedRenderTable==='function')_schedRenderTable();
@@ -25054,7 +25054,8 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   // POST /api/labor/schedule/optimize: the Shift Quality repair loop over
   // the week on screen. Nothing is saved — the improved rows are staged
   // like any edit, the changes are listed with why, and Save or Discard is
-  // the owner's. Rows Cavnar touched carry a note starting "Cavnar:".
+  // the owner's. Rows Cavnar touched carry a note starting "Cavnar AI:" (an
+  // older draft's rows say "Cavnar:").
   window.improveScheduleWithCavnar=function(btn){
     var rows=window._schedRows||[];if(!rows.length)return;
     var done=busy(btn,'Improving…'),prevScore=window._quality?window._quality.score:null;
@@ -25075,13 +25076,13 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
          started at: an unsaved manual edit may already have moved it. */
       if(o.before_score!==null&&o.before_score!==undefined)prevScore=o.before_score;
       var i,ov={};
-      for(i=0;i<window._schedRows.length;i++)if(String(window._schedRows[i].notes||'').indexOf('Cavnar:')===0)ov[i]=true;
+      for(i=0;i<window._schedRows.length;i++)if(/^Cavnar( AI)?:/.test(String(window._schedRows[i].notes||'')))ov[i]=true;
       window._schedOverrides=ov;
       window._sqOptimizer=o;window._sqOptimizerProposed=true;window._sqOptimizerKey=d.rec_key||null;
       if(typeof renderShiftQuality==='function')renderShiftQuality(d.quality,d.what_if,prevScore);
       if(typeof _schedSetDirty==='function'){_schedSetDirty(true);_setQualityState('proposed');}
       if(typeof _schedRecheck==='function')_schedRecheck();
-      toast(n+' change'+(n===1?'':'s')+' from Cavnar — save to keep them','success');
+      toast(n+' change'+(n===1?'':'s')+' from Cavnar AI — save to keep them','success');
     });
   };
 
@@ -25710,7 +25711,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
          until Cavnar can watch a shift. */
       h+='<div class="hb-empty" style="text-align:left"><b>Auto-publish</b> &mdash; '+esc(off.reason)+'</div>';
     }
-    h+='<div class="lb2-sub" style="margin-top:14px">How much of the draft you keep<small>rows that went out exactly as Cavnar wrote them</small></div>';
+    h+='<div class="lb2-sub" style="margin-top:14px">How much of the draft you keep<small>rows that went out exactly as Cavnar AI wrote them</small></div>';
     var wk=(acc.weeks||[]).slice().reverse(),bars='';
     for(i=0;i<wk.length;i++){var w=wk[i];if(w.unchanged_share===null||w.unchanged_share===undefined)continue;
       var pct=Math.round(+w.unchanged_share*100);
@@ -26232,7 +26233,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       <input id="cpal-input" type="text" autocomplete="off" spellcheck="false" placeholder="Go to, find or ask anything…" aria-label="Go to, find or ask anything" aria-controls="cpal-list" aria-autocomplete="list"><span class="k">esc</span></div>
     <div class="cpal-list" id="cpal-list" role="listbox" aria-label="Results"></div>
     <div class="cpal-card" id="cpal-card" hidden></div>
-    <div class="cpal-ft"><span><b>↑↓</b> move</span><span><b>↵</b> open</span><span><b>Tab</b> ask Cavnar</span><span><b>⌘↵</b> confirm a card</span><span><b>esc</b> close</span></div>
+    <div class="cpal-ft"><span><b>↑↓</b> move</span><span><b>↵</b> open</span><span><b>Tab</b> ask Cavnar AI</span><span><b>⌘↵</b> confirm a card</span><span><b>esc</b> close</span></div>
   </div>
 </div>
 <script id="cav-palette-js">
@@ -26337,8 +26338,8 @@ var cavPalette = (function () {
         if (f.type === 'place') continue;
         fIdx.push(row({label: f.title, sub: f.subtitle || '', tag: TYPE[f.type] || 'Open', nav: f.nav}));
       }
-      var askIdx = [row({label: 'Ask Cavnar: “' + q + '”', tag: 'Tab', ask: q})];
-      h = group('Actions', doIdx) + group('Go to', goIdx) + group('Found', fIdx) + group('Ask Cavnar', askIdx);
+      var askIdx = [row({label: 'Ask Cavnar AI: “' + q + '”', tag: 'Tab', ask: q})];
+      h = group('Actions', doIdx) + group('Go to', goIdx) + group('Found', fIdx) + group('Ask Cavnar AI', askIdx);
     }
     if (on >= rows.length) on = 0;
     list.innerHTML = h;

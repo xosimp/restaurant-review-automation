@@ -1425,7 +1425,7 @@ struct HomeFollowThrough: View {
         }
         if avoided != nil || surfaced != nil || opportunity != nil {
             HomeSectionHeader(kicker: "Not measured",
-                              title: v.heading("surfaced", fallback: "What Cavnar surfaced / still available"))
+                              title: v.heading("surfaced", fallback: "What Cavnar AI surfaced / still available"))
             VStack(alignment: .leading, spacing: 0) {
                 if let avoided {
                     lineRow(avoided, tone: .cavnarInk3, showsDivider: rates.isEmpty && (surfaced != nil || opportunity != nil))

@@ -116,13 +116,13 @@ def test_an_all_types_group_is_known_by_its_source_whatever_its_label():
     """BM3-4: 'All restaurants on Cavnar' was not in a label list, so 'like
     yours' survived on an all-types band."""
     f = {"key": "bench.reply_rate_30d.platform.p50", "value": 0.6, "unit": "", "kind": "benchmark",
-         "as_of": "9/20/26", "source": {"source": "Cavnar anonymous cohort", "source_kind": "platform",
-                                        "engine_kind": "platform", "cohort_label": "All restaurants on Cavnar",
+         "as_of": "9/20/26", "source": {"source": "Cavnar AI anonymous cohort", "source_kind": "platform",
+                                        "engine_kind": "platform", "cohort_label": "All restaurants on Cavnar AI",
                                         "n": 12, "min_n": 8, "as_of": "9/20/26", "restaurant_category": "platform",
                                         "strength_pct": 60, "standing": "top quarter", "comparable": True}}
     v = rv.validate("Your reply rate is higher than restaurants like yours.",
                     rv.ValidationContext(surface="ask", facts=[f]))
-    assert "like yours" not in v.text and "12 other restaurants on Cavnar, all types" in v.text
+    assert "like yours" not in v.text and "12 other restaurants on Cavnar AI, all types" in v.text
 
 
 # ── #3: every benchmark is a bindable fact ─────────────────────────────────
@@ -136,7 +136,7 @@ def test_facts_from_dict_walks_lists():
 def test_asks_snapshot_registers_the_engines_bands_and_a_peer_claim_binds(db_path):
     viewer, _ids = _pizza(db_path)
     text, facts = ask_cavnar._intelligence_bundle(viewer)
-    assert "12 other counter-service restaurants on Cavnar" in text and "comparison strength" in text
+    assert "12 other counter-service restaurants on Cavnar AI" in text and "comparison strength" in text
     peers = [f for f in facts if (f.get("source") or {}).get("engine_kind") == "peers"]
     assert peers and all(f["kind"] == "benchmark" and f["source"]["n"] == 12 for f in peers)
     assert ask_cavnar.snapshot_benchmark_facts(viewer) == facts
@@ -144,7 +144,7 @@ def test_asks_snapshot_registers_the_engines_bands_and_a_peer_claim_binds(db_pat
     # The viewer runs 27% against a 29% middle: its labor is BELOW the group
     # (the better side). The old "above" pinned a false claim (R3-1).
     v = rv.validate("Your labor is below restaurants similar to yours.", ctx)
-    assert v.verdict == "pass" and "12 other counter-service restaurants on Cavnar" in v.text, v.findings
+    assert v.verdict == "pass" and "12 other counter-service restaurants on Cavnar AI" in v.text, v.findings
     assert rv.validate("Your labor is above restaurants similar to yours.", ctx).verdict == "refuse"
     # And without them the same claim has nothing to bind to — not said (R3-4).
     v0 = rv.validate("Your labor is below restaurants similar to yours.",
@@ -172,7 +172,7 @@ def test_the_platform_intelligence_tool_is_typed_as_engine_facts(db_path):
     viewer, _ids = _pizza(db_path)
     payload = ask_cavnar_tools.run_read_tool("read_platform_intelligence", viewer, {})
     body = json.loads(payload)
-    assert body["comparisons"] and any("12 other counter-service restaurants on Cavnar" in ln for ln in body["lines"])
+    assert body["comparisons"] and any("12 other counter-service restaurants on Cavnar AI" in ln for ln in body["lines"])
     facts = ask_cavnar._typed_facts(["snapshot", payload])
     bench = [f for f in facts if (f.get("kind") if isinstance(f, dict) else f.kind) == "benchmark"]
     srcs = [(f["source"] if isinstance(f, dict) else f.source) for f in bench]
@@ -187,7 +187,7 @@ def test_the_schedule_prompts_cohort_block_is_the_engines_and_registers_its_fact
     viewer, _ids = _pizza(db_path, labor_hours_per_1k_28d=20.0)
     r = models.get_restaurant(viewer, db_path=db_path)
     block = schedule_engine._cohort_block(viewer, r)
-    assert schedule_engine.COHORT_BLOCK_HEADER in block and "12 other counter-service restaurants on Cavnar" in block
+    assert schedule_engine.COHORT_BLOCK_HEADER in block and "12 other counter-service restaurants on Cavnar AI" in block
     assert "peer group: counter-service restaurants — split by how they serve" in block
     # 12 of 12: the viewer is out of both counts, as it is out of n (fix round R1-15; this pinned 13 of 13).
     assert "measured at 12 of 12" in block and "% comparison strength" in block
@@ -323,4 +323,4 @@ def test_prompt_lines_say_how_the_group_was_chosen_how_many_measured_and_how_str
     assert "from the profile the owner confirmed" in line
     # 12 of 12: counted with the viewer out, as n is (fix round R1-15; this pinned 13 of 13).
     assert "measured at 12 of 12 in the group" in line and "% comparison strength" in line
-    assert "as of " in line and "12 other counter-service restaurants on Cavnar" in line
+    assert "as of " in line and "12 other counter-service restaurants on Cavnar AI" in line

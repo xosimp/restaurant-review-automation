@@ -76,7 +76,7 @@ def _posts(ctx, u0, u1):
                    "reach": p["seen"] if (p["seen"] or 0) > 0 else None,
                    "engagement": p["engaged"] if (p["seen"] or 0) > 0 else None} for p in rows[:10]],
         "measured": len(measured),
-        "basis": "posts published through Cavnar; reach and engagement as Meta last reported them",
+        "basis": "posts published through Cavnar AI; reach and engagement as Meta last reported them",
     }
 
 

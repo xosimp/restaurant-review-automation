@@ -163,15 +163,15 @@ def confidence(forecast, track, wx=None, scheduled=None, keeps_events=False) -> 
     elif ranged >= TRACK_MIN and isinstance(inside, (int, float)):
         pct = int(round(inside))
         held = int(round(inside * ranged / 100.0))
-        track_line = (f"Cavnar's range held on {held} of the last {ranged} nights "
+        track_line = (f"Cavnar AI's range held on {held} of the last {ranged} nights "
                       f"({t.get('window_days')}-day record)")
     else:
-        track_line = (f"{ranged} night{'s' if ranged != 1 else ''} scored against Cavnar's range so far — "
+        track_line = (f"{ranged} night{'s' if ranged != 1 else ''} scored against Cavnar AI's range so far — "
                       f"a confidence % shows at {TRACK_MIN}")
     return {"pct": pct, "based_on": [history] + (["its measured record"] if pct is not None else []),
             "missing": [], "watch": watch, "track": track_line,
             "label": f"{pct}%" if pct is not None else "—",
-            "meaning": "How often Cavnar's forecast range has held — not a promise"}
+            "meaning": "How often Cavnar AI's forecast range has held — not a promise"}
 
 
 def build(restaurant, business_date, facts=None, db_path=None) -> dict:

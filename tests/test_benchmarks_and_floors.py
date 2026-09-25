@@ -134,7 +134,7 @@ def test_an_inferred_type_travels_with_the_entry_and_is_said():
 def test_a_published_median_is_quoted_as_the_source_states_it():
     line = br.line(br.lookup("labor_pct", "italian"), "Labor %")
     assert "34.2%" in line and "NRA 2025" in line and "(2024 data)" in line
-    assert "Cavnar's target band 30–34%" in line
+    assert "Cavnar AI's target band 30–34%" in line
     thumb = br.line(br.lookup("labor_pct", "fast_casual"), "Labor %")
     assert "not a published study" in thumb
 
@@ -245,7 +245,7 @@ def test_the_waste_target_is_never_called_an_industry_figure():
         assert "industry target" not in d, d
         assert "industry" not in d.replace("not an industry figure", ""), d
     assert "not an\n# industry benchmark" in inspect.getsource(__import__("waste_trend")) or "not an industry" in inspect.getsource(__import__("waste_trend"))
-    assert "Cavnar's own allowances, not a published" in inventory.RECOVERABLE_BASIS
+    assert "Cavnar AI's own allowances, not a published" in inventory.RECOVERABLE_BASIS
 
 
 def test_an_unmeasured_waste_rate_never_reaches_the_prompt_as_zero(monkeypatch):
@@ -451,10 +451,10 @@ def test_the_platform_band_is_never_called_restaurants_like_yours(db_path):
     labor_b = intelligence.benchmark(sushi, "labor_pct_28d")
     assert labor_b["available"] is False and "no like-for-like peers" in labor_b["reason"]
     b = intelligence.benchmark(sushi, "reply_rate_30d")
-    assert b["cohort"] == "platform" and b["cohort_label"] == "All restaurants on Cavnar"
+    assert b["cohort"] == "platform" and b["cohort_label"] == "All restaurants on Cavnar AI"
     line = benchmarks.context_line(b)
     assert "like yours" not in line and "all types" in line and "band as of " in line
-    assert categories.label(None) == "All restaurants on Cavnar"
+    assert categories.label(None) == "All restaurants on Cavnar AI"
     ctx = " ".join(intelligence.context_lines(sushi))
     # The only "like yours" a prompt may carry is the instruction never to say it.
     assert "like yours" not in ctx.lower().replace("never call it restaurants like yours", "")
@@ -487,7 +487,7 @@ def test_a_pattern_is_retired_when_its_cohort_drops_below_the_floor(db_path):
     c.execute("INSERT INTO intel_patterns (key, cohort, hypothesis, n_with, n_without, effect, effect_unit, cohen_d, "
               "p_value, q_value, confidence, sentence, evidence_json, status) "
               "VALUES ('sushi:reply_fast_rating','sushi','reply_fast_rating',5,5,0.2,'★',0.5,0.01,0.05,0.6,"
-              "'Across 10 sushi on Cavnar, x.','{\"orgs_with\": 8, \"orgs_without\": 8}','active')")
+              "'Across 10 sushi on Cavnar AI, x.','{\"orgs_with\": 8, \"orgs_without\": 8}','active')")
     c.commit(); c.close()
     assert patterns.active("sushi", db_path=db_path)
     out = patterns.discover(db_path=db_path, cohorts={}, shuffles=50)
@@ -510,8 +510,8 @@ def test_an_unconfirmed_pattern_is_not_served_and_a_current_one_is_dated(db_path
 def test_the_cohort_prior_names_the_cohort_it_used():
     c = confidence.card_confidence("medium", "four weeks of shifts", {"factors": [
         {"name": "platform_evidence", "value": 0.82, "scope": "cohort", "restaurants": 6, "measured": 12,
-         "note": "9 of 12 measured across 6 restaurants improved", "cohort_label": "pizza on Cavnar"}]})
-    assert "like yours" not in c["reason"] and "pizza on Cavnar" in c["reason"]
+         "note": "9 of 12 measured across 6 restaurants improved", "cohort_label": "pizza on Cavnar AI"}]})
+    assert "like yours" not in c["reason"] and "pizza on Cavnar AI" in c["reason"]
 
 
 # ══ assert_anonymous scans values (NS6 §B finding 2) ═════════════════════
@@ -526,7 +526,7 @@ def test_the_anonymity_check_scans_string_values():
     with pytest.raises(privacy.PrivacyError):
         privacy.assert_anonymous({"rows": [{"note": "ask owner@place.com"}]}, deny_names=[])
     # Generic words and cohort labels are not names.
-    privacy.assert_anonymous({"cohort_label": "Pizza on Cavnar", "sentence": "Across 9 bars, those replying…"},
+    privacy.assert_anonymous({"cohort_label": "Pizza on Cavnar AI", "sentence": "Across 9 bars, those replying…"},
                              deny_names=["Pizza", "Bar", "Joe's Tacos"])
 
 
@@ -535,7 +535,7 @@ def test_the_anonymity_check_reads_tenant_names_from_the_data(db_path):
     getattr(privacy, "invalidate_tenant_names", lambda: None)()
     with pytest.raises(privacy.PrivacyError):
         privacy.assert_anonymous({"sentence": "Your rating trails Lula Cafe."})
-    privacy.assert_anonymous({"sentence": "Across 9 cafés on Cavnar, those replying fast rated higher."})
+    privacy.assert_anonymous({"sentence": "Across 9 cafés on Cavnar AI, those replying fast rated higher."})
 
 
 # ══ Reviews insight data floor (NS4 C1) ══════════════════════════════════
@@ -719,7 +719,7 @@ def test_ask_names_its_cohort_and_labels_general_knowledge(db_path):
     assert "RESTAURANTS LIKE IT" not in ctx and "PUBLISHED INDUSTRY BENCHMARKS" in ctx and "34.2%" in ctx
     plain = _rid(db_path, name="Zzz")
     tool = next(t for t in ask_cavnar_tools.TOOLS if t["spec"]["name"] == "read_platform_intelligence")["fn"]
-    assert tool(plain)["cohort_label"] == "All restaurants on Cavnar"
+    assert tool(plain)["cohort_label"] == "All restaurants on Cavnar AI"
 
 
 def test_the_brief_says_how_many_nights_typical_rests_on(monkeypatch):

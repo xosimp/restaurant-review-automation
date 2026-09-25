@@ -300,4 +300,4 @@ def test_the_palette_opens_on_command_k_and_enter_never_confirms():
     assert "[data-prop-confirm]" in js and "b.click()" in js, "only ⌘Enter or a click confirms a card"
     assert "/api/command/registry" in js and "/api/command/search" in js and "/api/command/propose" in js
     assert "cavPropCard(d.proposal, card" in js, "the same confirm card Ask renders"
-    assert "Ask Cavnar: " in js, "the last row is always Ask"
+    assert "Ask Cavnar AI: " in js, "the last row is always Ask"

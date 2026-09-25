@@ -568,7 +568,7 @@ enum RecSummaryFormat {
         case "guests": return "Guests"
         case "ops": return "Operations"
         case "home": return "Home"
-        case "ask": return "Ask Cavnar"
+        case "ask": return "Ask Cavnar AI"
         case "other": return "Other"
         default: return key.prefix(1).uppercased() + key.dropFirst()
         }

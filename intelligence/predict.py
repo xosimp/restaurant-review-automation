@@ -401,7 +401,7 @@ def _predict(restaurant_id, rec_kind, metric, tags, db_path, now, seed, dnas=Non
     norms = norms if norms is not None else dna.platform_norms(db_path=db_path)
     nb = neighbours(restaurant_id, metric=metric, db_path=db_path, dnas=dnas, orgs=orgs, norms=norms)
     if len(nb) < MIN_RESTAURANTS:
-        return _unavailable(f"fewer than {MIN_RESTAURANTS} restaurants on Cavnar have a profile close to yours yet",
+        return _unavailable(f"fewer than {MIN_RESTAURANTS} restaurants on Cavnar AI have a profile close to yours yet",
                             n_restaurants=len(nb))
     sims = {r: 1.0 / (1.0 + d) for r, d in nb}
     target = _target_dim(metric)

@@ -96,8 +96,8 @@ MODULES = {
                    "does": "Upcoming: pour cost vs. target, variance tracking and drink-level margins. Not available today."},
     "waitlist":   {"key": "waitlist", "label": "Waitlist & guest flow", "live": False,
                    "does": "Upcoming: waitlist and turn-time intelligence. Not available today."},
-    "operations": {"key": "platform", "label": "Cavnar AI platform (Home brief, Ask Cavnar, weekly digest)", "live": True,
-                   "does": "One daily brief across every connected module, a weekly AI digest by email, push alerts, and Ask Cavnar to question your own numbers in plain English."},
+    "operations": {"key": "platform", "label": "Cavnar AI platform (Home brief, Ask Cavnar AI, weekly digest)", "live": True,
+                   "does": "One daily brief across every connected module, a weekly AI digest by email, push alerts, and Ask Cavnar AI to question your own numbers in plain English."},
     "technology": {"key": "platform", "label": "Cavnar AI platform (consolidation)", "live": True,
                    "does": "Pulls POS, review and marketing data into one dashboard so fewer tools need checking. Does not replace your POS, payroll or accounting."},
 }

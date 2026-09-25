@@ -248,7 +248,7 @@ struct RecCheckInCard: View {
 
     /// What the answer did to the result, in one sentence.
     static func thanks(didIt: String, conditionsChanged: Bool) -> String {
-        if didIt == "no" { return "Noted \u{2014} this result no longer counts as one of Cavnar\u{2019}s." }
+        if didIt == "no" { return "Noted \u{2014} this result no longer counts as one of Cavnar AI\u{2019}s." }
         if conditionsChanged { return "Noted \u{2014} with other changes in those weeks, the result is read more cautiously." }
         return didIt == "partly" ? "Noted \u{2014} you made part of this change." : "Noted \u{2014} you made this change."
     }

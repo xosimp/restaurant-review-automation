@@ -127,7 +127,7 @@ def _acceptance_sentence(rows, window):
     quoted = [r for r in rows if r["enough"] and r["accept_rate"] is not None][:MAX_MODULES_IN_SENTENCE]
     if not quoted:
         return None
-    parts = [f"{round(r['accept_rate'] * 100)}% of Cavnar's {r['label']} recommendations "
+    parts = [f"{round(r['accept_rate'] * 100)}% of Cavnar AI's {r['label']} recommendations "
              f"({r['taken']} of {r['n']})" for r in quoted]
     s = f"Over {window}, you accepted {_join(parts)}."
     ignored = sum(r["ignored"] for r in quoted)
@@ -373,7 +373,7 @@ def _most_effective_sentence(best, by_tag):
     # "Most often followed by an improvement" — what the count says. "Most
     # consistently effective" claimed an effect a before-and-after cannot
     # show (re-audit B13; the ranking itself is rec_learning's).
-    return (f"Of what Cavnar has measured, recommendations about {label} have most often been followed by an "
+    return (f"Of what Cavnar AI has measured, recommendations about {label} have most often been followed by an "
             f"improvement at your restaurant: {row['improved']} of {row['measured']} measured results improved. "
             f"{CAVEAT}")
 

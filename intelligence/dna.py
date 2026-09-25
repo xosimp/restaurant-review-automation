@@ -172,7 +172,7 @@ DIMENSIONS = {
                            "needs": "4 whole payroll weeks of shifts"},
     "schedule_publish_rate": {"code": "B8", "family": "labor", "label": "Weeks with a published schedule",
                               "unit": "share", "anchor": (0.75, 0.20), "module": "labor",
-                              "needs": "4 weeks since your first schedule in Cavnar"},
+                              "needs": "4 weeks since your first schedule in Cavnar AI"},
     "staffing_issues": {"code": "B9", "family": "labor", "label": "Coverage and no-show issues per 100 shifts",
                         "unit": "per100", "anchor": (3.0, 3.0), "module": "labor", "better": "lower",
                         "needs": "4 published weeks with their outcomes recorded"},
@@ -212,7 +212,7 @@ DIMENSIONS = {
                    "needs": "waste logged in at least 6 of the last 8 weeks"},
     "waste_logging_regularity": {"code": "F3", "family": "food", "label": "Weeks with waste logged (last 8)",
                                  "unit": "share", "anchor": (0.5, 0.3), "module": "inventory", "better": "higher",
-                                 "needs": "8 weeks of inventory in Cavnar"},
+                                 "needs": "8 weeks of inventory in Cavnar AI"},
     "count_discipline": {"code": "B19", "family": "food", "label": "Median days between counts", "unit": "days",
                          "transform": "log10", "anchor": (0.85, 0.30), "module": "inventory", "better": "lower",
                          "needs": "3 counts in the last 180 days"},
@@ -223,7 +223,7 @@ DIMENSIONS = {
                   "anchor": (1.0, 0.7), "module": "inventory", "better": "lower",
                   "needs": "14 days of void data from the POS in the last 4 weeks"},
     "post_cadence": {"code": "B21", "family": "marketing", "label": "Posts in the last 4 weeks", "unit": "count",
-                     "anchor": (4.0, 3.0), "module": "marketing", "needs": "a first post published through Cavnar"},
+                     "anchor": (4.0, 3.0), "module": "marketing", "needs": "a first post published through Cavnar AI"},
     "rec_uptake": {"code": "B24", "family": "loop", "label": "Recommendations taken", "unit": "share",
                    "anchor": (0.4, 0.2), "module": None, "needs": "10 recommendations answered or expired in 90 days"},
     "follow_through": {"code": "B25", "family": "loop", "label": "Accepted changes actually made", "unit": "share",
@@ -571,7 +571,7 @@ def _publish_rate(conn, rid, today):
     except Exception:
         return _need(0, "no schedule history")
     if not first:
-        return _need(0, "no schedule built in Cavnar yet")
+        return _need(0, "no schedule built in Cavnar AI yet")
     try:
         age_weeks = (today - date.fromisoformat(str(first)[:10])).days // 7
     except ValueError:
@@ -734,7 +734,7 @@ def _post_cadence(conn, rid, f):
     except Exception:
         ever = None
     if not ever or f.get("posts_28d") is None:
-        return _need(0, "no post published through Cavnar yet")
+        return _need(0, "no post published through Cavnar AI yet")
     return _m(int(f["posts_28d"]), int(f["posts_28d"]), "posts published in the last 28 days")
 
 
@@ -1272,7 +1272,7 @@ def profile(restaurant_id, db_path=DB_PATH, modules=None) -> dict:
             "coverage_pct": int(round(100.0 * measured / total)) if total else 0,
             "version": row["version"], "families": fams,
             "note": ("Your own figures, measured from your data. Comparisons with similar restaurants switch on "
-                     "when enough of them are on Cavnar.")}
+                     "when enough of them are on Cavnar AI.")}
 
 
 def payload_for(user, db_path=DB_PATH) -> dict:

@@ -288,7 +288,7 @@ struct ReviewDetailView: View {
                 Rectangle().fill(Color.cavnarEmber.opacity(0.35)).frame(width: 2)
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("Cavnar's read. \(r.summary ?? "")"
+            .accessibilityLabel("Cavnar AI's read. \(r.summary ?? "")"
                                 + (r.specificComplaint.map { " Issue: \($0)." } ?? "")
                                 + (chips.isEmpty ? "" : " Mentioned: \(chips.joined(separator: ", "))."))
         }
@@ -382,7 +382,7 @@ struct ReviewDetailView: View {
                         Haptic.light()
                         Task { await viewModel.regenerateDraft() }
                     } label: {
-                        Label("Write a reply with Cavnar", systemImage: "sparkles")
+                        Label("Write a reply with Cavnar AI", systemImage: "sparkles")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(CavnarGlassButtonStyle(isProminent: true, isDisabled: viewModel.isSubmitting))

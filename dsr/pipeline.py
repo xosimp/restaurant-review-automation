@@ -248,7 +248,7 @@ def manual_close_refusal(restaurant, day, now_utc=None):
         return None
     if local_time(restaurant, now_utc) >= close - timedelta(minutes=EARLY_CLOSE_MINUTES):
         return None
-    return (f"It's before your close ({close.strftime('%-I:%M %p').lower()}), and your POS doesn't tell Cavnar "
+    return (f"It's before your close ({close.strftime('%-I:%M %p').lower()}), and your POS doesn't tell Cavnar AI "
             f"when the day is closed — a report built now would miss the rest of {mdy(day)}'s sales.")
 
 

@@ -444,10 +444,10 @@ def viewer_cohorts(restaurant) -> dict:
 
 def _group_label(cohort) -> str:
     if cohort == "platform":
-        return "restaurants on Cavnar (all types)"
+        return "restaurants on Cavnar AI (all types)"
     if categories.is_partition(cohort):
         return categories.partition_label(cohort)
-    return f"{categories.label(cohort).lower()} on Cavnar"
+    return f"{categories.label(cohort).lower()} on Cavnar AI"
 
 
 def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles=SHUFFLES,

@@ -390,7 +390,7 @@ struct StaffTimeOffSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("Your manager sees this in Cavnar and answers it. An approved range stays off the next schedule.")
+                    Text("Your manager sees this in Cavnar AI and answers it. An approved range stays off the next schedule.")
                         .font(.cavnarBody(14))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)

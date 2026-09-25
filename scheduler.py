@@ -827,7 +827,7 @@ def _record_review_fetch(restaurant, fetched_ok, gbp_ok, gmb_failed_reason, gbp_
                 "are coming in five at a time.",
                 f"Google needs attention — {restaurant.name}",
                 lines=["Your Google Business Profile connection has not answered for the last "
-                       f"{fails} review checks, so Cavnar is reading the five most recent reviews from "
+                       f"{fails} review checks, so Cavnar AI is reading the five most recent reviews from "
                        "Google Maps instead. Replies cannot post until it answers again.",
                        "Open Account → Connections and reconnect Google."])
     except Exception as e:
@@ -3697,7 +3697,7 @@ def auto_approve_five_stars(rid: int, restaurant) -> int:
             # The engine would reword it (a certainty or confidence phrase
             # lowered); what would publish is the stored draft, which it did
             # not pass as written. A person reads it first.
-            refusal = "Cavnar would reword part of this reply before it goes out"
+            refusal = "Cavnar AI would reword part of this reply before it goes out"
         if refusal:
             log.warning(f"Auto-approve skipped review {review_id}: {refusal}")
             # Marked for the owner's review, which also takes it out of the

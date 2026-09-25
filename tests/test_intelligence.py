@@ -272,7 +272,7 @@ def test_discovery_writes_a_pattern_only_with_evidence_and_never_a_name(db_path)
     assert "reply_fast_rating" in keys                              # the planted effect
     p = next(x for x in act if x["hypothesis"] == "reply_fast_rating")
     assert p["n_with"] == 8 and p["n_without"] == 8 and p["p_value"] <= 0.05 and p["q_value"] <= 0.10
-    assert "Across 16 counter-service restaurants on Cavnar" in p["sentence"] and "higher" in p["sentence"]
+    assert "Across 16 counter-service restaurants on Cavnar AI" in p["sentence"] and "higher" in p["sentence"]
     for x in act:
         privacy.assert_anonymous(x)
         assert not any(name in x["sentence"] for name in ("pizza 1 0", "Moat"))
@@ -305,7 +305,7 @@ def test_benchmarks_place_a_restaurant_in_its_cohort_and_fall_back_to_platform(d
     assert out["written"] > 0
     b = benchmarks.benchmark(rids[0], "labor_pct_28d", cohort="bar", db_path=db_path)
     assert b["available"] and b["cohort"] == "bar" and b["n"] == 8 and b["p25"] <= b["p50"] <= b["p75"]
-    assert b["cohort_label"] == "Bars on Cavnar" and b["as_of"]
+    assert b["cohort_label"] == "Bars on Cavnar AI" and b["as_of"]
     assert b["standing"] in ("top quarter", "above the middle", "below the middle", "bottom quarter")
     # a steakhouse alone compares platform-wide, and is told so — on a
     # behaviour metric only (Benchmarking audit #6): its rating, a format
@@ -442,7 +442,7 @@ def test_ask_has_the_two_read_tools_and_a_context_section(db_path):
     plat = next(t for t in ask_cavnar_tools.TOOLS if t["spec"]["name"] == "read_platform_intelligence")["fn"](rid)
     # "Solo Bar" is only GUESSED to be a bar: no type is named and no group
     # is read (Benchmarking re-audit #20).
-    assert plat["cohort"] is None and plat["inferred"] is True and plat["cohort_label"] == "All restaurants on Cavnar"
+    assert plat["cohort"] is None and plat["inferred"] is True and plat["cohort_label"] == "All restaurants on Cavnar AI"
     assert all(b["available"] is False for b in plat["benchmarks"]) and plat["patterns"] == []
     privacy.assert_anonymous({"benchmarks": plat["benchmarks"], "patterns": plat["patterns"]})
     # With nothing to compare, the section says WHY per module (re-audit

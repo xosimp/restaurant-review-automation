@@ -366,7 +366,7 @@ struct InvoiceScanSheet: View {
                 .font(.cavnarBody(13.5, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarEmber2)
-            Text("Photograph a supplier invoice. Cavnar reads the prices and proposes updates — nothing changes until you confirm each line.")
+            Text("Photograph a supplier invoice. Cavnar AI reads the prices and proposes updates — nothing changes until you confirm each line.")
                 .font(.cavnarBody(14))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -433,7 +433,7 @@ struct InvoiceScanSheet: View {
             } else {
                 if inv.awaitingOwner == true {
                     let n = inv.autoAppliedCount ?? 0
-                    HomeMixedText.make("Cavnar applied \(n) checked line\(n == 1 ? "" : "s") from this trusted supplier. The lines below still need you.",
+                    HomeMixedText.make("Cavnar AI applied \(n) checked line\(n == 1 ? "" : "s") from this trusted supplier. The lines below still need you.",
                                        size: 13.5, weight: 500, color: .cavnarAmber)
                 }
                 let open = inv.lines.filter { $0.applied != true }

@@ -326,7 +326,7 @@ class AIProviderDown(RuntimeError):
 # call (DEFAULT_AI_TIMEOUT per attempt).
 CB_PROBE_SECONDS = int(os.getenv("AI_BREAKER_PROBE_SECONDS", "120"))
 
-_PROVIDER_DOWN_MESSAGE = ("Cavnar's AI provider is not responding right now. Nothing is lost — "
+_PROVIDER_DOWN_MESSAGE = ("Cavnar AI's model provider is not responding right now. Nothing is lost — "
                           "try again in a minute.")
 
 
@@ -431,7 +431,7 @@ def user_facing_error(exc, fallback="Couldn't get an answer right now — try ag
     if isinstance(exc, AIProviderDown):
         return str(exc), 503
     if isinstance(exc, AIRefused):
-        return ("Cavnar can't answer that one as asked. Try rephrasing it, "
+        return ("Cavnar AI can't answer that one as asked. Try rephrasing it, "
                 "or ask about a specific part of the business."), 422
     return fallback, 502
 

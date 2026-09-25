@@ -1179,7 +1179,7 @@ def _follow_through_sections(restaurant_id, owner_view=False, include_results=Tr
             out.append(report_eyebrow("Your quietest day") + report_paragraph(_html.escape(
                 f"{d['day']}s run about {abs(d['vs_average_pct'])}% under a normal day "
                 f"({d['samples']} weeks of history). A text to the guest club aimed at that "
-                f"day is the cheapest thing that moves it — Cavnar tracks what it does.")))
+                f"day is the cheapest thing that moves it — Cavnar AI tracks what it does.")))
     except Exception as e:
         log.warning("digest slow-day block failed: %s", e)
     try:

@@ -560,7 +560,7 @@ def _empty_state(weeks_have, is_live):
         return {
             "title": "Your waste trend starts with your first count",
             "reason": "The numbers on this page are a sample pantry, so there is no history of yours to chart yet.",
-            "needed": "Upload an inventory CSV or connect your POS. Cavnar records a weekly waste snapshot every time your analysis runs.",
+            "needed": "Upload an inventory CSV or connect your POS. Cavnar AI records a weekly waste snapshot every time your analysis runs.",
             "when": f"A first comparison appears after {WEEKS_FOR_COMPARISON} weekly counts; a trend line after {WEEKS_FOR_TREND}.",
             "weeks_have": 0, "weeks_needed": WEEKS_FOR_COMPARISON,
         }

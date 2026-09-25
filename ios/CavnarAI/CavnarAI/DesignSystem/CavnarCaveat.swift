@@ -54,11 +54,11 @@ struct CavnarCaveat: View {
     static func unverifiedFigures(_ figures: [String]) -> CavnarCaveat {
         let detail: String
         if figures.isEmpty {
-            detail = "Cavnar couldn't trace every figure here back to your data. Check before acting on them."
+            detail = "Cavnar AI couldn't trace every figure here back to your data. Check before acting on them."
         } else if figures.count == 1 {
-            detail = "Cavnar couldn't trace \(figures[0]) back to your data. Check before acting on it."
+            detail = "Cavnar AI couldn't trace \(figures[0]) back to your data. Check before acting on it."
         } else {
-            detail = "Cavnar couldn't trace \(figures.count) figures here (\(figures.prefix(3).joined(separator: ", "))) back to your data. Check before acting on them."
+            detail = "Cavnar AI couldn't trace \(figures.count) figures here (\(figures.prefix(3).joined(separator: ", "))) back to your data. Check before acting on them."
         }
         return CavnarCaveat(title: "Unverified numbers", detail: detail)
     }
@@ -70,11 +70,11 @@ struct CavnarCaveat: View {
         let named = causes.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
         let detail: String
         if named.isEmpty {
-            detail = "Cavnar couldn\u{2019}t match the reason this read gives to anything in your data. Treat the why as a guess until you\u{2019}ve checked it."
+            detail = "Cavnar AI couldn\u{2019}t match the reason this read gives to anything in your data. Treat the why as a guess until you\u{2019}ve checked it."
         } else if named.count == 1 {
-            detail = "Cavnar couldn\u{2019}t match \u{201C}\(named[0])\u{201D} to anything in your data. Treat that reason as a guess until you\u{2019}ve checked it."
+            detail = "Cavnar AI couldn\u{2019}t match \u{201C}\(named[0])\u{201D} to anything in your data. Treat that reason as a guess until you\u{2019}ve checked it."
         } else {
-            detail = "Cavnar couldn\u{2019}t match \(named.count) reasons here (\(named.prefix(2).map { "\u{201C}\($0)\u{201D}" }.joined(separator: ", "))) to anything in your data. Treat them as guesses until you\u{2019}ve checked."
+            detail = "Cavnar AI couldn\u{2019}t match \(named.count) reasons here (\(named.prefix(2).map { "\u{201C}\($0)\u{201D}" }.joined(separator: ", "))) to anything in your data. Treat them as guesses until you\u{2019}ve checked."
         }
         return CavnarCaveat(title: "Unverified cause", detail: detail)
     }
@@ -90,7 +90,7 @@ struct CavnarCaveat: View {
             : "\(names.prefix(2).joined(separator: ", "))"
         return CavnarCaveat(
             title: "Unverified name",
-            detail: "Cavnar couldn't match \(who) to a reviewer in your data. Open the review before acting on this."
+            detail: "Cavnar AI couldn't match \(who) to a reviewer in your data. Open the review before acting on this."
         )
     }
 
@@ -103,8 +103,8 @@ struct CavnarCaveat: View {
             // The stale path runs because writing a new read failed and
             // nothing is queued: promise only the retry that does happen
             // (M-33). `asOf` arrives M/D/YY from the server (M-26).
-            detail: asOf.map { "This is the last read Cavnar finished, from \($0). A new one couldn\u{2019}t be written just now \u{2014} Cavnar tries again the next time this opens." }
-                ?? "This is the last read Cavnar finished. A new one couldn\u{2019}t be written just now \u{2014} Cavnar tries again the next time this opens."
+            detail: asOf.map { "This is the last read Cavnar AI finished, from \($0). A new one couldn\u{2019}t be written just now \u{2014} Cavnar AI tries again the next time this opens." }
+                ?? "This is the last read Cavnar AI finished. A new one couldn\u{2019}t be written just now \u{2014} Cavnar AI tries again the next time this opens."
         )
     }
 }

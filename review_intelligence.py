@@ -917,7 +917,7 @@ def revenue_at_risk(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         _gcount = None
     if _gcount and (cur["n"] or 0) < 0.8 * float(_gcount):
         return {"available": False,
-                "reason": (f"Cavnar holds {cur['n']} of the {int(_gcount)} reviews on your listing, so it "
+                "reason": (f"Cavnar AI holds {cur['n']} of the {int(_gcount)} reviews on your listing, so it "
                            f"can't track the rating guests see")}
     delta = round(_f(cur["r"]) - _f(prev["r"]), 2)
     if abs(delta) < MIN_RATING_DELTA_FOR_ESTIMATE:

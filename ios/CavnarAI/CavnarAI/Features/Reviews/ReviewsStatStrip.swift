@@ -53,7 +53,7 @@ struct ReviewsStatStrip: View {
     private var coverageCaveat: String? {
         var parts: [String] = []
         if !stats.holdsEveryReview, let official = stats.officialReviewCount, official > stats.total {
-            parts.append("Average is over the \(stats.total) reviews Cavnar holds, not all \(official) on Google.")
+            parts.append("Average is over the \(stats.total) reviews Cavnar AI holds, not all \(official) on Google.")
         }
         if let unanalysed = stats.unanalysed, unanalysed > 0 {
             parts.append("\(unanalysed) not yet analysed — the topic and sentiment charts don't cover them.")

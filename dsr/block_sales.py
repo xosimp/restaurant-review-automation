@@ -44,7 +44,7 @@ LAST_YEAR_DAYS = 364      # the same weekday a year back
 EVENING_HOUR = 18         # "after 6pm", shared with the Labor block
 
 REASON_NO_POS = "No POS connected"
-REASON_CANT_REPORT = "Your POS doesn't report daily sales through Cavnar yet"
+REASON_CANT_REPORT = "Your POS doesn't report daily sales through Cavnar AI yet"
 REASON_AUTH = "The POS connection needs attention"
 REASON_PULL_FAILED = dsr.MISSING_TEXT["sales"]
 

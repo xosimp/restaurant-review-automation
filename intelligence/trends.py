@@ -137,7 +137,7 @@ def platform_trends(weeks: int = 8, cohorts: dict = None, db_path=DB_PATH) -> li
             base = ys[0] or None
             from .benchmarks import cohort_label
             out.append(privacy.assert_anonymous({
-                "cohort": cohort, "cohort_label": cohort_label(cohort) if cohort != "platform" else "All restaurants on Cavnar",
+                "cohort": cohort, "cohort_label": cohort_label(cohort) if cohort != "platform" else "All restaurants on Cavnar AI",
                 "metric": metric, "weeks": len(pts), "n_latest": pts[-1]["n"], "from": ys[0], "to": ys[-1],
                 "slope_per_week": privacy.round_effect(sl, 4),
                 "relative_per_week": privacy.round_effect(sl / base, 4) if base else None,

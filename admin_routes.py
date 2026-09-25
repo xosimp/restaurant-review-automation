@@ -2194,7 +2194,7 @@ def admin_api_intelligence(current_user):
     support login has no need for cohort statistics (Benchmarking audit #47,
     BM1-20)."""
     if not current_user.get("is_admin"):
-        return jsonify(ok=False, error="Cavnar admins only."), 403
+        return jsonify(ok=False, error="Cavnar AI admins only."), 403
     from intelligence import dashboard as _dash
     return jsonify(**_dash.build())
 

@@ -1184,7 +1184,7 @@ _MEMBER_VALUE_RE = re.compile(r"\b(?:a|one|another)\s+(?:restaurant|caf[eé]|bar
 # "high" threshold.
 COHORT_MIN_N = 8
 STRONG_CLAIM_PCT = HIGH_AT
-PLATFORM_CITE = "restaurants on Cavnar, all types"
+PLATFORM_CITE = "restaurants on Cavnar AI, all types"
 # The metric a sentence is about, and the metric a benchmark fact is for:
 # a claim with no figure binds only to a benchmark for the same metric
 # (BM3-5: "your reviews are better than similar restaurants" rode on a
@@ -1722,7 +1722,7 @@ class _Run:
                 self.emit("I1", "drop", "drop", "", "repeats six or more words of untrusted text")
         for name, pat in self.denied:
             if pat.search(s):
-                self.emit("T1", "drop", "refuse", name, "names another Cavnar restaurant")
+                self.emit("T1", "drop", "refuse", name, "names another Cavnar AI restaurant")
                 break
         if _MEMBER_VALUE_RE.search(s) and _g.figure_claims(s):
             m = _MEMBER_VALUE_RE.search(s)
@@ -1797,7 +1797,7 @@ class _Run:
                 self.emit("P1", "refuse", span=m.group(0), detail="an absolute claim in a public reply")
             for phrase in _g.unsupported_commitments(body):
                 if phrase.lower() not in src:
-                    self.emit("P1", "refuse", span=phrase, detail="a commitment nobody told Cavnar was true")
+                    self.emit("P1", "refuse", span=phrase, detail="a commitment nobody told Cavnar AI was true")
                     break
             # The public-reply claims auto-approve and bulk approve already
             # hold (NS5 H5, ai_guard.public_reply_claims): an explanation
@@ -2645,14 +2645,14 @@ class _Run:
         group = self._bench_group(src)
         if src.get("inferred"):
             # A type Cavnar guessed compares with no one (R1-04, R3-8).
-            self.emit("B1", "drop", "drop", span, "a comparison for a restaurant type Cavnar only guessed")
+            self.emit("B1", "drop", "drop", span, "a comparison for a restaurant type Cavnar AI only guessed")
             return s
         if group:
             n = src.get("n")
             min_n = src.get("min_n") if isinstance(src.get("min_n"), (int, float)) else COHORT_MIN_N
             if not isinstance(n, (int, float)) or isinstance(n, bool) or n < min_n:
                 self.emit("B1", "drop", "drop", span,
-                          f"a Cavnar peer group under its minimum of {int(min_n)} other restaurants")
+                          f"a Cavnar AI peer group under its minimum of {int(min_n)} other restaurants")
                 return s
         elif not (src.get("source") and src.get("year")):
             self.emit("B1", "caveat", "drop", span, "benchmark without a source and year",
@@ -2734,7 +2734,7 @@ class _Run:
         if group:
             n = int(src["n"])
             as_of = src.get("as_of") or f.as_of
-            label = PLATFORM_CITE if platform else (src.get("cohort_label") or "restaurants on Cavnar")
+            label = PLATFORM_CITE if platform else (src.get("cohort_label") or "restaurants on Cavnar AI")
             has_n = str(n) in re.findall(r"\d+", s)
             has_date = not as_of or str(as_of) in s
             cite = None

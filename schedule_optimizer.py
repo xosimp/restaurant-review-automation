@@ -52,7 +52,7 @@ BUDGET_TOLERANCE = 1.02
 MAX_EXTEND_MINUTES = 150
 STEP = 30
 
-NOTE_TAG = "Cavnar:"
+NOTE_TAG = "Cavnar AI:"
 
 
 # ── time helpers ───────────────────────────────────────────────────────────
@@ -772,7 +772,7 @@ def summary(result: dict, signals: dict = None) -> dict:
         verdict = ("The draft already met the quality target." if result.get("stopped") == "target reached"
                    else "No legal change improved the draft.")
     else:
-        verdict = (f"Cavnar made {len(changes)} change{'s' if len(changes) != 1 else ''} to the draft, "
+        verdict = (f"Cavnar AI made {len(changes)} change{'s' if len(changes) != 1 else ''} to the draft, "
                    f"raising Shift Quality from {before} to {after}. Each is listed with why.")
     return {"ran": True, "applied": bool(changes), "before_score": before, "after_score": after,
             "improvement": (after or 0) - (before or 0) if before is not None and after is not None else 0,

@@ -850,7 +850,7 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
                 "evidence": (f"{e['name']} costs ${e['plate_cost']:.2f} on a "
                              f"${_f(e['sell_price']):.2f} price against your {target_pct:g}% target, "
                              f"{e['units_sold']:g} sold in {il._POPULARITY_WINDOW_DAYS} days"
-                             + (f"; {unreviewed} of its {p['lines']} recipe lines are a Cavnar draft "
+                             + (f"; {unreviewed} of its {p['lines']} recipe lines are a Cavnar AI draft "
                                 f"accepted unedited, so the plate cost is unconfirmed" if unreviewed else "")),
                 "if_ignored": "the dish keeps selling at a thin margin",
                 "item": e["name"],

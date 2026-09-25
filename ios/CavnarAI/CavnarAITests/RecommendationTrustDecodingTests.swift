@@ -46,7 +46,7 @@ final class RecommendationTrustDecodingTests: XCTestCase {
         XCTAssertEqual(RecAnswer.completed.label, "Done")
         XCTAssertEqual(RecAnswer.notForUs.label, "Pass")
         XCTAssertEqual(RecAnswer.accepted.label, "Measure it")
-        XCTAssertEqual(RecAnswer.completed.confirmation, "Done \u{2014} Cavnar won\u{2019}t suggest it again")
+        XCTAssertEqual(RecAnswer.completed.confirmation, "Done \u{2014} Cavnar AI won\u{2019}t suggest it again")
         XCTAssertEqual(RecAnswer.notForUs.confirmation, "Noted \u{2014} it won\u{2019}t come back")
         // Track's own promise now comes from the server (a tracker on a named
         // metric, or only hidden); the fallback claims nothing it can't keep.
@@ -61,10 +61,10 @@ final class RecommendationTrustDecodingTests: XCTestCase {
 
     func testTheServersSentenceTravelsWithTheAnswer() async throws {
         let client = EdgeHTTP.client { request in
-            EdgeHTTP.reply(request, 200, #"{"ok": true, "recorded": true, "message": "Tracking — Cavnar will compare average rating over the next 30 days with the 30 before"}"#)
+            EdgeHTTP.reply(request, 200, #"{"ok": true, "recorded": true, "message": "Tracking — Cavnar AI will compare average rating over the next 30 days with the 30 before"}"#)
         }
         let r = try await client.answerRecommendation(key: "k", answer: .accepted, surface: "reviews")
-        XCTAssertEqual(r.message, "Tracking \u{2014} Cavnar will compare average rating over the next 30 days with the 30 before")
+        XCTAssertEqual(r.message, "Tracking \u{2014} Cavnar AI will compare average rating over the next 30 days with the 30 before")
     }
 
     // MARK: - Reviews

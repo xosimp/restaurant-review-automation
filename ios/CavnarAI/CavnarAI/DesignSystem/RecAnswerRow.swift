@@ -54,7 +54,7 @@ enum RecAnswer: String, CaseIterable, Sendable {
     /// tracker on a named metric, or only hidden.
     var confirmation: String {
         switch self {
-        case .completed: return "Done \u{2014} Cavnar won\u{2019}t suggest it again"
+        case .completed: return "Done \u{2014} Cavnar AI won\u{2019}t suggest it again"
         case .notForUs:  return "Noted \u{2014} it won\u{2019}t come back"
         case .accepted:  return "Noted \u{2014} hidden for 14 days"
         }
@@ -64,7 +64,7 @@ enum RecAnswer: String, CaseIterable, Sendable {
         switch self {
         case .completed: return "Marks this done so it isn't suggested again"
         case .notForUs:  return "Asks why, then stops this recommendation coming back"
-        case .accepted:  return "Cavnar compares the numbers before and after you act on it"
+        case .accepted:  return "Cavnar AI compares the numbers before and after you act on it"
         }
     }
 }

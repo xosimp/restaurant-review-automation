@@ -125,7 +125,7 @@ struct AskEvidence: Decodable, Hashable {
     var nameWarning: String? {
         let names = unsupportedNames.filter { !$0.isEmpty }
         guard !names.isEmpty else { return nil }
-        return "Unverified name \u{2014} \(names.prefix(2).joined(separator: ", ")) doesn\u{2019}t appear in anything Cavnar read. Check before acting on it."
+        return "Unverified name \u{2014} \(names.prefix(2).joined(separator: ", ")) doesn\u{2019}t appear in anything Cavnar AI read. Check before acting on it."
     }
 
     /// Every warning line, in the order the strip draws them.

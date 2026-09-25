@@ -210,7 +210,7 @@ def build(audit, results):
         ("Is my data used to train AI?", "No. The privacy policy says it explicitly: your data is not used to train AI models for other customers."),
         ("How secure is this?", "Encrypted in transit, hashed passwords, two-factor login available, login alerts, and error monitoring with personal data stripped. If you want specifics beyond that — certifications, encryption at rest — let me confirm and send them rather than guess. [Do not claim SOC 2 or similar without verifying.]"),
         ("What if one of my integrations goes down?", "The dashboard shows the connection state and I get alerted. Reviews keep fetching on a schedule; POS data re-syncs nightly once it's back."),
-        ("How frequently is data updated?", "Reviews four times a day. POS shifts and sales sync nightly. Social performance nightly. The weekly digest lands on the day you choose. Ask Cavnar reads live."),
+        ("How frequently is data updated?", "Reviews four times a day. POS shifts and sales sync nightly. Social performance nightly. The weekly digest lands on the day you choose. Ask Cavnar AI reads live."),
         ("Does it work with multiple locations?", "Yes — each location has its own numbers and you can switch between them or see a consolidated view; every location is its own record, never averaged away."),
         ("What if I add another location?", "We add it to your account; pricing for additional locations isn't on the public page — let me confirm it. [Do not quote a per-location price without verifying.]"),
         ("How much work does this create for my managers?", "Approving drafted replies takes seconds. Schedules are generated, not typed. The rest is reading a morning brief instead of six reports."),
@@ -329,7 +329,7 @@ def build(audit, results):
             "Labor (live): daily labor % vs the restaurant's target, by day / shift / role; overstaffed, understaffed and overtime tables; AI-generated schedules from sales patterns and staff availability, published to staff by email; shifts and sales sync from the POS (Toast) nightly — nothing for the owner to upload.",
             "Food Cost (live): ingredient cost history, supplier price-creep alerts, food cost % vs target, waste rate vs benchmark, AI-suggested order quantities and a supplier order email, menu margin reads, weekly food cost digest.",
             "Marketing (live): social / SMS / email content written in the restaurant's voice and scheduled from the dashboard, a guest text club with QR opt-in, Meta post performance synced nightly, content calendar.",
-            "Platform: a daily Home brief across every active module, a weekly AI digest email, iOS app with push alerts, Ask Cavnar (plain-English questions answered from the restaurant's own data, with proposed actions that always need confirmation), competitor intelligence, AI-search visibility check.",
+            "Platform: a daily Home brief across every active module, a weekly AI digest email, iOS app with push alerts, Ask Cavnar AI (plain-English questions answered from the restaurant's own data, with proposed actions that always need confirmation), competitor intelligence, AI-search visibility check.",
         ]},
         {"h": "How the dashboard sizes money once connected (no flat assumptions, four figures never added together)", "items": [
             "Measured results: a change the owner made, measured on their own numbers before and after, priced per month at their own sales and costs — an estimate of what the move is worth, never proof the change alone caused it. This is the only figure called a result.",
@@ -353,7 +353,7 @@ def build(audit, results):
             "Doesn't invent numbers: with no inventory data it says so rather than estimating food cost.",
         ]},
         {"h": "How the AI is used", "items": [
-            "Claude (Anthropic) writes and reasons: review replies, weekly digest, labor / food / marketing insights, Ask Cavnar. Ask Cavnar can read the restaurant's reviews, menu margins, schedule, shifts, food cost, competitors, marketing posts and text club; anything that changes something becomes a confirmation card.",
+            "Claude (Anthropic) writes and reasons: review replies, weekly digest, labor / food / marketing insights, Ask Cavnar AI. Ask Cavnar AI can read the restaurant's reviews, menu margins, schedule, shifts, food cost, competitors, marketing posts and text club; anything that changes something becomes a confirmation card.",
             "Perplexity is used only for the AI-visibility check — how the restaurant appears when people ask AI tools for recommendations.",
             "Every AI call is logged with cost and status in the admin console; failures are visible, not silent.",
         ]},
@@ -372,17 +372,17 @@ def build(audit, results):
         {"h": "15 / 30 / 60 seconds", "items": [
             "15s: \"Cavnar AI plugs into your reviews, your POS and your marketing, and every morning tells you what needs attention — labor, food cost, reviews, marketing — in one brief, with the replies and schedules already drafted.\"",
             "30s: see the top section.",
-            "60s: add — \"It's four modules you can take separately or together. Reviews drafts every Google reply in your voice for one-click approval and tracks what people keep complaining about. Labor compares every day against your target by shift and role, flags overtime before payroll, and builds schedules from your sales patterns. Food Cost watches supplier prices and your food cost against target and tells you what to order. Marketing writes and schedules posts, texts and emails and runs a guest text club. Around all of it: a weekly digest, push alerts, and Ask Cavnar, where you ask a question about your own numbers and get an answer, not a report to read. Nothing happens without your approval.\"",
+            "60s: add — \"It's four modules you can take separately or together. Reviews drafts every Google reply in your voice for one-click approval and tracks what people keep complaining about. Labor compares every day against your target by shift and role, flags overtime before payroll, and builds schedules from your sales patterns. Food Cost watches supplier prices and your food cost against target and tells you what to order. Marketing writes and schedules posts, texts and emails and runs a guest text club. Around all of it: a weekly digest, push alerts, and Ask Cavnar AI, where you ask a question about your own numbers and get an answer, not a report to read. Nothing happens without your approval.\"",
         ]}]})
 
     # ── PART 11 — competitive positioning ──────────────────────────────────
     sections.append({"key": "positioning", "title": "Part 11 — Competitive positioning", "tag": "positioning", "qa": [
         ("\"My POS already does this.\"", "\"It has the data — we read it from there. What it doesn't do is watch it every day against your target, compare it with your reviews and your marketing, and tell you what changed. We're the reader, not another data source.\""),
-        ("\"Toast already gives me reports.\"", "\"Good ones. When did you last open the labor one? Cavnar turns the report into a three-line brief every morning and an alert when it drifts — so it gets read.\""),
+        ("\"Toast already gives me reports.\"", "\"Good ones. When did you last open the labor one? Cavnar AI turns the report into a three-line brief every morning and an alert when it drifts — so it gets read.\""),
         ("\"I already have an accountant.\"", "\"Keep them. They tell you what happened last month; this tells you what's happening this week, while you can still do something about it.\""),
         ("\"My managers tell me this stuff.\"", "\"Then you'll be checking their read against the numbers, which makes them better managers. And it covers the days they're off.\""),
-        ("\"I already use ChatGPT.\"", "\"For writing, it's great. It doesn't have your reviews or your shifts, and it doesn't wake up on its own. Cavnar is connected and runs daily.\""),
-        ("\"I have five different restaurant tools doing this.\"", "\"That's part of the audit — which of the five you'd keep. Cavnar's job is to pull what they produce into one place and interpret it, and to replace the ones you only kept for one feature.\""),
+        ("\"I already use ChatGPT.\"", "\"For writing, it's great. It doesn't have your reviews or your shifts, and it doesn't wake up on its own. Cavnar AI is connected and runs daily.\""),
+        ("\"I have five different restaurant tools doing this.\"", "\"That's part of the audit — which of the five you'd keep. Cavnar AI's job is to pull what they produce into one place and interpret it, and to replace the ones you only kept for one feature.\""),
     ]})
 
     # ── PART 12 — objections ───────────────────────────────────────────────
@@ -422,7 +422,7 @@ def build(audit, results):
         ("Clear variance targets", "Ask what happens when they miss — that's the alerting conversation."),
         ("Weekly inventory discipline", "Rare. Say so. The audit will show food/bar as strong and that's credible."),
         ("Recipes costed and current", "Menu margin conversation, not food-cost-drift conversation."),
-        ("Strong manager accountability", "Position Cavnar as the managers' tool, not the owner's watchtower."),
+        ("Strong manager accountability", "Position Cavnar AI as the managers' tool, not the owner's watchtower."),
         ("Reviews answered same day, personally", "Reviews module is a time saving, not a reputation rescue. Say that."),
     ]})
     return sections

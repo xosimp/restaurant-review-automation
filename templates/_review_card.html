@@ -6,7 +6,7 @@
     <div class="rv2-row scroll-reveal {{ 'urgent' if r.urgency=='high' }} {{ 'posted' if r.response_status=='posted' }} {{ 'approved' if r.response_status=='approved' }} {{ 'skipped' if r.response_status=='skipped' }}" id="rc-{{ r.id }}" data-reveal-delay="{{ delay|default(0) }}s" data-platform="{{ r.platform }}" data-yelp-id="{{ restaurant.yelp_business_id or '' }}" data-cats="{{ (r.categories|join(' '))|lower if r.categories else '' }}" data-author="{{ r.author|lower if r.author else '' }}" data-rating="{{ r.rating }}" data-status="{{ r.response_status }}">
       <div class="rv2-head">
         <div class="rv2-av">{{ r.author[0].upper() if r.author else '?' }}</div>
-        <div class="rv2-who"><b>{{ r.author|e if r.author else 'Anonymous' }}</b><span class="rv2-stars">{% for i in range(5) %}{% if i < r.rating %}★{% else %}<span>★</span>{% endif %}{% endfor %}</span><span class="rv2-plat">{{ r.platform }}</span>{% if r.review_date %}<span class="rv2-date hb-num">{{ r.review_date|format_date }}</span>{% endif %}{% if r.severity and r.severity in ('safety','legal') %}<span class="rv2-sevchip {{ r.severity }}" title="Severity tier — how serious this is, separate from how urgent the alert was">{{ r.severity_label }}</span>{% endif %}{% if r.processed %}{% set _stars_say = 'positive' if (r.rating or 0) >= 4 else ('negative' if (r.rating or 0) and r.rating <= 2 else 'neutral') %}<span class="schip {{ r.sentiment or 'neutral' }}"{% if (r.sentiment or 'neutral') == _stars_say %} hidden{% endif %}>{{ r.sentiment or 'neutral' }}</span>{% else %}{# Not analysed yet — it used to be filtered out of this list entirely while still counting in the badge above, so the owner saw a number pointing at nothing. Saying "pending" beats inventing a neutral sentiment it was never given. #}<span class="schip pending" title="Cavnar hasn't analysed this review yet">analysis pending</span>{% endif %}{% if r.urgency=='high' %}<span class="rv2-urg">Urgent</span>{% endif %}</div>
+        <div class="rv2-who"><b>{{ r.author|e if r.author else 'Anonymous' }}</b><span class="rv2-stars">{% for i in range(5) %}{% if i < r.rating %}★{% else %}<span>★</span>{% endif %}{% endfor %}</span><span class="rv2-plat">{{ r.platform }}</span>{% if r.review_date %}<span class="rv2-date hb-num">{{ r.review_date|format_date }}</span>{% endif %}{% if r.severity and r.severity in ('safety','legal') %}<span class="rv2-sevchip {{ r.severity }}" title="Severity tier — how serious this is, separate from how urgent the alert was">{{ r.severity_label }}</span>{% endif %}{% if r.processed %}{% set _stars_say = 'positive' if (r.rating or 0) >= 4 else ('negative' if (r.rating or 0) and r.rating <= 2 else 'neutral') %}<span class="schip {{ r.sentiment or 'neutral' }}"{% if (r.sentiment or 'neutral') == _stars_say %} hidden{% endif %}>{{ r.sentiment or 'neutral' }}</span>{% else %}{# Not analysed yet — it used to be filtered out of this list entirely while still counting in the badge above, so the owner saw a number pointing at nothing. Saying "pending" beats inventing a neutral sentiment it was never given. #}<span class="schip pending" title="Cavnar AI hasn't analysed this review yet">analysis pending</span>{% endif %}{% if r.urgency=='high' %}<span class="rv2-urg">Urgent</span>{% endif %}</div>
         <button class="rv2-x" aria-label="Remove review" title="Remove review" onclick="deleteReview({{ r.id }},this)">✕</button>
       </div>
       <div class="rtext">{{ r.text|e }}</div>
@@ -38,7 +38,7 @@
       </div>
       {% if r.draft_response %}
       <div class="draft-box" id="draft-box-{{ r.id }}">
-        <div class="draft-lbl">Cavnar's reply</div>
+        <div class="draft-lbl">Cavnar AI's reply</div>
         {# Click-to-edit (friction #7): a drafted or skipped reply opens its
            editor from the text itself. Edit is not a Skip, so it records no
            "no" against auto-approve trust (client_api._do_skip). Approved and
@@ -51,7 +51,7 @@
            so "a complimentary dinner on us" went to Google unread (M-1).
            approveR and saveDraft read data-flag-reason and ask first. #}
         {% if r.draft_needs_review and r.response_status != 'posted' %}
-        <div class="ai-caveat draft-flag" id="draft-flag-{{ r.id }}" data-flag-reason="{{ (r.draft_review_reason or 'states something Cavnar cannot confirm')|e }}" style="margin:8px 0 0"><span aria-hidden="true">⚠</span><span><b>Read this one before you post it.</b> This reply {{ (r.draft_review_reason or 'states something Cavnar cannot confirm')|e }}.</span></div>
+        <div class="ai-caveat draft-flag" id="draft-flag-{{ r.id }}" data-flag-reason="{{ (r.draft_review_reason or 'states something Cavnar AI cannot confirm')|e }}" style="margin:8px 0 0"><span aria-hidden="true">⚠</span><span><b>Read this one before you post it.</b> This reply {{ (r.draft_review_reason or 'states something Cavnar AI cannot confirm')|e }}.</span></div>
         {% endif %}
         <div class="draft-actions" id="draft-actions-{{ r.id }}">
           {% if r.response_status=='posted' %}

@@ -154,7 +154,7 @@ def test_a_starting_target_never_turns_red(db):
     rep = _night(db, r.id, SAT, 9200.0, {"Food": 5600.0}, budget_net=8480.0,
                  labor={"pct": 36.0, "target_pct": 30.0})
     lab = {c["key"]: c for c in access.render(rep, {"role": "owner"}, r)["scorecard"]["components"]}["labor"]
-    assert lab["tone"] == "warn" and "Cavnar's starting target" in lab["value"]
+    assert lab["tone"] == "warn" and "Cavnar AI's starting target" in lab["value"]
 
 
 def test_a_tough_night_reads_tough(db):

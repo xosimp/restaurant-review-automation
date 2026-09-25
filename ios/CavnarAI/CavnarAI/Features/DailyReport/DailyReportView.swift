@@ -98,7 +98,7 @@ struct DailyReportView: View {
             Button("Re-run this night") { Task { await viewModel.closeDay(rerun: true) } }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Cavnar builds a new version from the latest data. This version stays in the version list.")
+            Text("Cavnar AI builds a new version from the latest data. This version stays in the version list.")
         }
     }
 

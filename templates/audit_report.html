@@ -236,7 +236,7 @@ details .b ul{margin:6px 0 0;padding-left:16px}
     <div class="mods">
       {% for m in r.recommended_modules or [] %}<div class="mod"><div class="for">Recommended</div><h4>{{ m.label }}</h4><p>{{ m.does }}</p></div>{% endfor %}
       {% for m in r.upcoming_modules or [] %}<div class="mod" style="opacity:.8"><div class="for">Upcoming</div><h4>{{ m.label }}<span class="up">not yet available</span></h4><p>{{ m.does }}</p></div>{% endfor %}
-      {% if not r.recommended_modules %}<div class="mod"><h4>Cavnar AI platform</h4><p>A daily brief across labor, food cost, reviews and marketing, a weekly AI digest, alerts, and Ask Cavnar for plain-English questions about your own numbers.</p></div>{% endif %}
+      {% if not r.recommended_modules %}<div class="mod"><h4>Cavnar AI platform</h4><p>A daily brief across labor, food cost, reviews and marketing, a weekly AI digest, alerts, and Ask Cavnar AI for plain-English questions about your own numbers.</p></div>{% endif %}
     </div>
     <p class="small" style="margin-top:14px">Cavnar AI is designed to help identify, monitor and act on opportunities like these. Nothing it drafts — review replies, schedules, posts — goes out without your approval.</p>
   </section>

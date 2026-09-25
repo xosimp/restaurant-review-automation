@@ -584,7 +584,7 @@ def refusal_reason(live, metric) -> str:
 
 
 def no_metric_reply() -> dict:
-    return {"code": "no_metric", "reason": "There is nothing here Cavnar can measure it against yet",
+    return {"code": "no_metric", "reason": "There is nothing here Cavnar AI can measure it against yet",
             "in_flight_until": None}
 
 

@@ -233,7 +233,7 @@ td.r,th.r{text-align:right}
   <div class="fl">
     <div id="m-rpower-status" class="sub"></div>
     <label>Authorization token</label><input id="rp-token" type="password" placeholder="Bearer token from RPOWER">
-    <div class="sub">Issued by RPOWER to Cavnar — request at integrations@rpower.com. The store is resolved automatically once the token is verified.</div>
+    <div class="sub">Issued by RPOWER to Cavnar AI — request at integrations@rpower.com. The store is resolved automatically once the token is verified.</div>
     <div id="rp-stores" style="display:none;margin-top:8px"><label>Which store is this restaurant?</label><select id="rp-store"></select><button class="btn p" style="margin-top:6px" onclick="rpowerBind()">Bind store</button></div>
     <div style="display:flex;gap:8px;margin-top:6px"><button class="btn p" onclick="rpowerSave()">Verify &amp; save</button><button class="btn" onclick="rpowerSync()">Sync now</button><button class="btn d" onclick="rpowerDisconnect()">Disconnect</button></div>
   </div>
@@ -603,7 +603,7 @@ async function intelligence(){
       <div><div class="k" style="margin-bottom:6px">Recommendation success by kind</div>${table([{h:'Kind',key:'rec_kind'},{h:'Restaurants',key:'restaurants',r:true,cell:r=>`<span class="num">${fmtN(r.restaurants)}</span>`},{h:'Accepted',key:'acceptance_rate',r:true,cell:r=>r.available?`<span class="num">${pct(r.acceptance_rate)}</span>`:'<span class="dim">below floor</span>'},{h:'Improved',key:'success_rate',r:true,cell:r=>r.available?`<span class="num">${pct(r.success_rate)}${r.measured?' <span class="dim">of '+r.measured+'</span>':''}</span>`:'—'},{h:'Days to effect',key:'median_days_to_improvement',r:true,cell:r=>r.available&&r.median_days_to_improvement!=null?`<span class="num">${Math.round(r.median_days_to_improvement)}</span>`:'—'}], kindRows, {id:'int-kind', sort:'success_rate'})}</div>
     </div>
     <div class="grid g2" style="margin-bottom:14px">
-      <div><div class="k" style="margin-bottom:6px">Cavnar cohorts (latest week, rounded as published)</div>${d.benchmarks.length ? table([{h:'Cohort',key:'cohort_label'},{h:'Measure',key:'label'},{h:'n',key:'n',r:true,cell:r=>`<span class="num">${r.n}</span>`},{h:'Owners',key:'orgs',r:true,cell:r=>`<span class="num">${r.orgs==null?'—':r.orgs}</span>`},{h:'p25',key:'p25',r:true,cell:r=>`<span class="num">${r.p25}</span>`},{h:'Median',key:'p50',r:true,cell:r=>`<span class="num">${r.p50}</span>`},{h:'p75',key:'p75',r:true,cell:r=>`<span class="num">${r.p75}</span>`}], d.benchmarks, {id:'int-bench', sort:'cohort'}) : '<div class="empty">Benchmarks publish once a cohort clears the floor.</div>'}</div>
+      <div><div class="k" style="margin-bottom:6px">Cavnar AI cohorts (latest week, rounded as published)</div>${d.benchmarks.length ? table([{h:'Cohort',key:'cohort_label'},{h:'Measure',key:'label'},{h:'n',key:'n',r:true,cell:r=>`<span class="num">${r.n}</span>`},{h:'Owners',key:'orgs',r:true,cell:r=>`<span class="num">${r.orgs==null?'—':r.orgs}</span>`},{h:'p25',key:'p25',r:true,cell:r=>`<span class="num">${r.p25}</span>`},{h:'Median',key:'p50',r:true,cell:r=>`<span class="num">${r.p50}</span>`},{h:'p75',key:'p75',r:true,cell:r=>`<span class="num">${r.p75}</span>`}], d.benchmarks, {id:'int-bench', sort:'cohort'}) : '<div class="empty">Benchmarks publish once a cohort clears the floor.</div>'}</div>
       <div><div class="k" style="margin-bottom:6px">Learning over time</div><div class="card"><div class="cb">${L.weeks.length ? bars(L.weeks.map(w=>({day:w.week, n:w.n})),'n') : '<div class="empty">No feature rows yet — the 3am pass writes one per restaurant per week.</div>'}<div class="dim" style="margin-top:4px">restaurants with a feature row, by week · completeness ${L.weeks.length?Math.round((L.weeks[L.weeks.length-1].completeness||0)*100)+'%':'—'}</div></div></div>
       <div class="k" style="margin:10px 0 6px">Model confidence over time</div>${d.confidence_over_time.length ? table([{h:'Week',key:'week'},{h:'Kind',key:'rec_kind'},{h:'n',key:'n',r:true,cell:r=>`<span class="num">${r.n}</span>`},{h:'Mean confidence',key:'mean_confidence',r:true,cell:r=>`<span class="num">${r.mean_confidence==null?'—':pct(r.mean_confidence)}</span>`},{h:'Accepted',key:'acceptance_rate',r:true,cell:r=>`<span class="num">${pct(r.acceptance_rate)}</span>`},{h:'Improved',key:'success_rate',r:true,cell:r=>`<span class="num">${pct(r.success_rate)}</span>`}], d.confidence_over_time, {id:'int-conf', sort:'week'}) : '<div class="empty">Logged weekly by the learning pass once a kind clears the floor.</div>'}</div>
     </div>
@@ -658,7 +658,7 @@ async function recommendations(arg){
     </div>
     <div class="grid g2" style="margin-bottom:14px">
       ${cmp('With a dollar figure vs without', d.by_dollars, 'rec-dollars')}
-      ${cmp('Cavnar prepares it vs the owner does it', d.by_cavnar_completes, 'rec-cavnar')}
+      ${cmp('Cavnar AI prepares it vs the owner does it', d.by_cavnar_completes, 'rec-cavnar')}
       ${cmp('Cross-module vs one module', d.by_cross_module, 'rec-cross')}
       ${cmp('Model-written vs rule-written', d.by_model_written, 'rec-model')}
       ${cmp('By confidence band', d.by_confidence, 'rec-conf')}

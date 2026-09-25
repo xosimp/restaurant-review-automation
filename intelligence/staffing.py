@@ -246,7 +246,7 @@ def starting_headcount(restaurant_id: int, restaurant=None, roster_roles: dict =
             break
     if not ratios:
         return {"available": False, "own_history": False, "cohort_label": label,
-                "reason": (f"Fewer than {MIN_QUARTILE_N} similar restaurants ({label.lower().replace(' on cavnar', '')}) "
+                "reason": (f"Fewer than {MIN_QUARTILE_N} similar restaurants ({label.lower().replace(' on cavnar ai', '').replace(' on cavnar', '')}) "
                            f"from at least {privacy.MIN_ORGS} separate owners have their staffing measured yet, so no "
                            f"starting headcount is borrowed — the first draft works from your floors alone.")}
     cohort_part = privacy.assert_anonymous({"cohort": cohort, "cohort_label": label, "inferred": False,

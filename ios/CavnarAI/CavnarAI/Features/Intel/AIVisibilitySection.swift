@@ -320,7 +320,7 @@ struct AIVisibilitySection: View {
                     .padding(.top, 8)
             }
             if let done = result.setupDone, let total = result.setupTotal, total > 0 {
-                Text("\(done) of \(total) Cavnar connections set up. These help us read your listing; they don't change what AI search sees.")
+                Text("\(done) of \(total) Cavnar AI connections set up. These help us read your listing; they don't change what AI search sees.")
                     .font(.cavnarBody(12.5))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)

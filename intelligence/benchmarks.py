@@ -81,7 +81,7 @@ MIN_QUARTILE_N = 8
 MAX_BAND_AGE_WEEKS = 8
 MAX_OWN_AGE_WEEKS = 8
 
-PLATFORM_LABEL = "All restaurants on Cavnar"
+PLATFORM_LABEL = "All restaurants on Cavnar AI"
 
 # The published precision per metric: coarse enough that a quartile cannot
 # be read back as one member's exact figure.
@@ -115,7 +115,7 @@ def cohort_label(cohort) -> str:
         return PLATFORM_LABEL
     if categories.is_partition(cohort):
         return categories.partition_label(cohort)
-    return f"{categories.label(cohort)} on Cavnar"
+    return f"{categories.label(cohort)} on Cavnar AI"
 
 
 def publishable_group(cohort) -> bool:
@@ -663,7 +663,7 @@ def context_line(b) -> str | None:
     as-of date and — for an inferred type — that it was inferred."""
     if not b or not b.get("available") or b.get("standing") in (None, "unmeasured"):
         return None
-    who = ("other restaurants on Cavnar — all types, not a like-for-like cohort" if b.get("cohort") == "platform"
+    who = ("other restaurants on Cavnar AI — all types, not a like-for-like cohort" if b.get("cohort") == "platform"
            else f"other {b['cohort_label']}")
     line = (f"{b['label']}: this restaurant is in the {b['standing']} of {b['n']} {who} "
             f"(band {b['p25']:g}–{b['p75']:g}, middle {b['p50']:g}; band as of {b.get('as_of') or 'unknown'}")

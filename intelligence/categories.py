@@ -236,7 +236,7 @@ def confirmed_type(restaurant) -> str | None:
 def label(category) -> str:
     """A type's label. No type means the comparison is platform-wide, and
     it is named that way — never "Restaurants like yours" (NS4 H4)."""
-    return LABELS.get(category or "", "All restaurants on Cavnar")
+    return LABELS.get(category or "", "All restaurants on Cavnar AI")
 
 
 def valid(category) -> bool:
@@ -415,7 +415,7 @@ def partition_label(key) -> str:
         extras.append(_URBANITY_WORDS[int(ub[1:])])
     # Lower-case: it is always read after a count ("12 other counter-service
     # restaurants on Cavnar"); a heading capitalises it itself.
-    return " ".join([base] + extras) + " on Cavnar"
+    return " ".join([base] + extras) + " on Cavnar AI"
 
 
 def rung_note(key, base) -> str | None:

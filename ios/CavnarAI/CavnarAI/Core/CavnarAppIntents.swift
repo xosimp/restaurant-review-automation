@@ -124,6 +124,6 @@ struct CavnarShortcuts: AppShortcutsProvider {
                     shortTitle: "Undo pending send", systemImageName: "arrow.uturn.backward")
         AppShortcut(intent: OpenCommandSheetIntent(),
                     phrases: ["Find in \(.applicationName)", "Search \(.applicationName)"],
-                    shortTitle: "Find in Cavnar", systemImageName: "magnifyingglass")
+                    shortTitle: "Find in Cavnar AI", systemImageName: "magnifyingglass")
     }
 }

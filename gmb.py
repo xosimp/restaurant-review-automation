@@ -603,7 +603,7 @@ def reply_error_message(status_code) -> str:
         return ("Google says this review was removed, so there's nothing to reply to. "
                 "It has been taken out of your queue.")
     if status_code == 401:
-        return ("Google didn't accept Cavnar's connection. Reconnect Google in "
+        return ("Google didn't accept Cavnar AI's connection. Reconnect Google in "
                 "Account → Connections, then use Retry posting.")
     if status_code == 403:
         return ("Google says this login can't reply on this listing. Check you're an owner or "

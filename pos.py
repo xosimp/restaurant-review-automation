@@ -503,7 +503,7 @@ def fetch_business_days(restaurant_id, start_date, end_date):
         raise POSCapabilityError("no POS connected")
     fn = getattr(mod, "fetch_business_days", None)
     if fn is None:
-        raise POSCapabilityError(f"{name} does not report daily sales through Cavnar yet")
+        raise POSCapabilityError(f"{name} does not report daily sales through Cavnar AI yet")
     return fn(restaurant_id, start_date, end_date), name
 
 
@@ -521,7 +521,7 @@ def fetch_order_selections(restaurant_id, business_date):
     fn = getattr(mod, "fetch_order_selections", None)
     if fn is None:
         raise POSCapabilityError(
-            f"{name} does not report item-level sales through Cavnar yet, so recipe "
+            f"{name} does not report item-level sales through Cavnar AI yet, so recipe "
             f"depletion and menu discovery cannot run for this restaurant")
     return fn(restaurant_id, business_date), name
 
@@ -540,7 +540,7 @@ def fetch_order_customers(restaurant_id, business_date):
     fn = getattr(mod, "fetch_order_customers", None)
     if fn is None:
         raise POSCapabilityError(
-            f"{name} does not share guest records through Cavnar yet, so campaign "
+            f"{name} does not share guest records through Cavnar AI yet, so campaign "
             f"visit matching and opt-in invites cannot run for this restaurant")
     return fn(restaurant_id, business_date), name
 
@@ -673,7 +673,7 @@ def fetch_day_sales(restaurant_id, business_date):
         raise POSCapabilityError("no POS connected")
     fn = getattr(mod, "fetch_day_sales", None)
     if fn is None:
-        raise POSCapabilityError(f"{name} does not report a day's sales detail through Cavnar yet")
+        raise POSCapabilityError(f"{name} does not report a day's sales detail through Cavnar AI yet")
     try:
         raw = fn(restaurant_id, business_date)
     except NotImplementedError as e:
@@ -724,5 +724,5 @@ def fetch_day_closed(restaurant_id, business_date):
         raise POSCapabilityError("no POS connected")
     fn = getattr(mod, "fetch_day_closed", None)
     if fn is None:
-        raise POSCapabilityError(f"{name} keeps no close-day record Cavnar can read")
+        raise POSCapabilityError(f"{name} keeps no close-day record Cavnar AI can read")
     return bool(fn(restaurant_id, business_date)), name

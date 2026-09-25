@@ -172,7 +172,7 @@ tr.full td .num{{color:var(--accent);font-weight:700}}
     <div class="mod"><i>Reviews</i><div><b>Answers every review in your voice</b><p>Google and Yelp replies drafted for you — approve and it posts. An urgent one-star review hits your phone the moment it lands.</p></div></div>
     <div class="mod"><i>Marketing</i><div><b>Runs your marketing from what's selling</b><p>Posts, texts and emails written from your own menu and numbers — scheduled, sent, and measured against sales.</p></div></div>
   </div>
-  <div class="alerts"><b>Ask Cavnar anything</b><p>"Why was Saturday slow?" "Which dish is losing money?" "Who's close to overtime?" Answered from your data in seconds — plus customizable alerts to your phone for anything you can't miss.</p></div>
+  <div class="alerts"><b>Ask Cavnar AI anything</b><p>"Why was Saturday slow?" "Which dish is losing money?" "Who's close to overtime?" Answered from your data in seconds — plus customizable alerts to your phone for anything you can't miss.</p></div>
 </div>
 
 <div class="vs">

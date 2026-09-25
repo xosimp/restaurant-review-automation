@@ -3249,8 +3249,8 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             if _start.get("available"):
                 result["review"]["lines"].append(
                     f"Staffing numbers marked borrowed come from {_start.get('n')}+ "
-                    f"{(_start.get('cohort_label') or 'Restaurants on Cavnar')[:1].lower()}"
-                    f"{(_start.get('cohort_label') or 'Restaurants on Cavnar')[1:]} (people on the floor per $1k of "
+                    f"{(_start.get('cohort_label') or 'Restaurants on Cavnar AI')[:1].lower()}"
+                    f"{(_start.get('cohort_label') or 'Restaurants on Cavnar AI')[1:]} (people on the floor per $1k of "
                     f"sales, scaled to {_start.get('basis')})"
                     + (" — the type was inferred from the restaurant's name, not set" if _start.get("inferred") else "")
                     + " — this restaurant has no schedule history of its own yet.")
@@ -3553,7 +3553,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 _restore_draft(restaurant_id, _fallback["history_id"], _history_id)
                 _fb = dict(_fallback["payload"])
                 _fb["gate"] = {"ran": True, "kept": "original", "dates": _fallback["dates"],
-                               "reason": (f"Cavnar rewrote the weakest days to fix them, but the rewrite was no better "
+                               "reason": (f"Cavnar AI rewrote the weakest days to fix them, but the rewrite was no better "
                                           f"on those days, so your original draft was kept.")}
                 _ops.finish_async_job(job_id, "done", _fb)
                 return
@@ -3592,7 +3592,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 pass
             _fb = dict(_fallback["payload"])
             _fb["gate"] = {"ran": True, "kept": "original", "dates": _fallback["dates"],
-                           "reason": "Cavnar tried to rewrite the weakest days but couldn't just now, so your draft is as it was."}
+                           "reason": "Cavnar AI tried to rewrite the weakest days but couldn't just now, so your draft is as it was."}
             _ops.finish_async_job(job_id, "done", _fb)
             return
         # The owner gets a sentence, never the exception or the traceback.

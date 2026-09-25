@@ -170,7 +170,7 @@ def test_the_owner_confirms_the_profile_on_the_web_and_the_mobile_twin_shares_th
     assert p["suggestion"]["text"] == "We think you're an Italian restaurant — is that right?"
     assert 0 < p["suggestion"]["confidence_pct"] <= 90
     assert {c["value"] for c in p["choices"]["service_model"]} == set(categories.SERVICE_MODELS)
-    assert got["targets"]["labor"]["label"] == "Cavnar's starting target"
+    assert got["targets"]["labor"]["label"] == "Cavnar AI's starting target"
     bad = client.post("/api/account-settings/restaurant-profile", json={"service_model": "buffet"})
     assert bad.status_code == 400
     ok = client.post("/api/account-settings/restaurant-profile",
@@ -622,7 +622,7 @@ def test_members_need_eight_live_weeks_and_half_their_measures(db_path):
     conn.commit()
     conn.close()
     out = bm.compute(db_path=db_path)
-    assert out["skipped"] == {"fewer than 8 weeks live on Cavnar": 1, "less than half of its measures on file": 1}
+    assert out["skipped"] == {"fewer than 8 weeks live on Cavnar AI": 1, "less than half of its measures on file": 1}
 
 
 # ══ #42: disclosure control on what is published ════════════════════════════
@@ -717,12 +717,12 @@ def test_the_admin_table_is_rounded_as_published_and_admin_only(db_path):
     rows = bm.cohort_table(db_path=db_path)
     lab = next(r for r in rows if r["metric"] == "labor_pct_28d")
     assert all((lab[q] * 2) == int(lab[q] * 2) for q in ("p25", "p50", "p75"))
-    assert lab["cohort_label"] == "counter-service restaurants on Cavnar" and lab["orgs"] == 6
+    assert lab["cohort_label"] == "counter-service restaurants on Cavnar AI" and lab["orgs"] == 6
     import admin_routes
     src = open(admin_routes.__file__).read()
     i = src.index("def admin_api_intelligence")
     assert 'if not current_user.get("is_admin")' in src[i:i + 900]
-    assert "Cavnar cohorts" in open(admin_routes.__file__.replace("admin_routes.py", "templates/admin.html")).read()
+    assert "Cavnar AI cohorts" in open(admin_routes.__file__.replace("admin_routes.py", "templates/admin.html")).read()
 
 
 def test_the_public_status_page_never_prints_a_count(monkeypatch):

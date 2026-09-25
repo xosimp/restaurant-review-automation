@@ -857,7 +857,7 @@ def draft_campaign_message(restaurant, campaign_type="general", topic=""):
     offers = invented_offers(text, offer_source)
     if offers:
         raise ValueError("campaign copy rejected: it offers " + ", ".join(offers[:3])
-                         + ", which nobody told Cavnar the restaurant is running")
+                         + ", which nobody told Cavnar AI the restaurant is running")
     # The Response Validation Layer on guest_sms (workstream A) replaces the
     # bare check_public_reply: the same residue / link / phone check, now
     # WITH the never-say list the prompt carried and the check did not (NS6

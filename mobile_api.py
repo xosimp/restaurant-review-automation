@@ -3462,7 +3462,7 @@ def mobile_guest_campaign_draft(current_user):
         # The guard refused the copy (an invented offer, a link, too long):
         # say which, so the owner knows why nothing came back (M-24).
         if str(e).startswith("campaign copy rejected: "):
-            return jsonify(ok=False, error="Cavnar didn't use that draft — "
+            return jsonify(ok=False, error="Cavnar AI didn't use that draft — "
                            + str(e)[len("campaign copy rejected: "):] + ". Try again, or write it yourself."), 422
         import ops
         ops.capture(e, job="guest_campaign_draft", context=f"restaurant_id={rid}")

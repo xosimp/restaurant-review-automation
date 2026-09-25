@@ -17,7 +17,7 @@ final class BenchmarkCardTests: XCTestCase {
              "who": {"kind": "self", "text": "vs your own previous 13 weeks", "n": 13, "as_of": "9/20/26", "inferred": false},
              "strength": null,
              "below_minimum": {"text": "Not enough restaurants like yours yet — here's how you compare to your own last 13 weeks.",
-                               "why_not": "no current band of at least 8 other pizza restaurants on Cavnar with this measured yet"},
+                               "why_not": "no current band of at least 8 other pizza restaurants on Cavnar AI with this measured yet"},
              "rows": [{"metric": "labor_pct_28d", "label": "Labor %", "kind": "self", "value_text": "35%",
                        "standing": "worse than your normal", "tone": "warn", "behind": true,
                        "against": "your own previous 13 weeks", "middle_text": "30.3%", "as_of": "9/20/26",
@@ -38,7 +38,7 @@ final class BenchmarkCardTests: XCTestCase {
 
     func testThePeerStrengthIsAPercentageWithItsFourRows() throws {
         let card = try decode(BenchmarkCard.self, """
-            {"ok": true, "who": {"kind": "peers", "text": "Compared to 11 other Pizza restaurants on Cavnar", "n": 11, "as_of": "9/20/26"},
+            {"ok": true, "who": {"kind": "peers", "text": "Compared to 11 other Pizza restaurants on Cavnar AI", "n": 11, "as_of": "9/20/26"},
              "strength": {"pct": 68, "label": "68% comparison strength", "reason": "11 other restaurants — 20 makes a full comparison",
                           "meaning": "How well supported this comparison is — not how well you are doing",
                           "footer": "The overall figure combines all four — the weakest pulls it down most.",
@@ -104,14 +104,14 @@ final class BenchmarkCardTests: XCTestCase {
     func testTheServersTargetLabelsOnFoodCost() throws {
         let c = try decode(FoodCostAnalytics.FoodCostCOGS.self, """
             {"ok": true, "pct": 32.1, "target": 30, "variance_pts": 2.1,
-             "food_cost_target_label": "Cavnar's starting target", "food_cost_target_source": "default"}
+             "food_cost_target_label": "Cavnar AI's starting target", "food_cost_target_source": "default"}
             """)
-        XCTAssertEqual(c.varianceLine(2.1, 30), "+2.1 pts vs Cavnar's starting target of 30%")
+        XCTAssertEqual(c.varianceLine(2.1, 30), "+2.1 pts vs Cavnar AI's starting target of 30%")
         XCTAssertFalse(c.targetIsOwnersOrSeeded)
         let old = try decode(FoodCostAnalytics.FoodCostCOGS.self, #"{"ok": true, "pct": 32.1, "target": 30}"#)
         XCTAssertTrue(old.targetIsOwnersOrSeeded)
-        let t = try decode(FoodCostTrendTarget.self, #"{"pct": 4.5, "weekly": 120, "basis": "history", "label": "Cavnar's starting target"}"#)
-        XCTAssertEqual(FoodCostTrendChart.captionName(t), "Cavnar's starting target")
+        let t = try decode(FoodCostTrendTarget.self, #"{"pct": 4.5, "weekly": 120, "basis": "history", "label": "Cavnar AI's starting target"}"#)
+        XCTAssertEqual(FoodCostTrendChart.captionName(t), "Cavnar AI's starting target")
         let untagged = try decode(FoodCostTrendTarget.self, #"{"pct": 4.5, "weekly": 120, "basis": "history"}"#)
         XCTAssertEqual(FoodCostTrendChart.captionName(untagged), "Your target")
     }
