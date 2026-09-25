@@ -853,6 +853,22 @@ async function refreshIgToken() {
   status.style.color = data.ok ? 'var(--green)' : 'var(--ember)';
   status.textContent = data.ok ? '✓ Tokens refreshed — new expiry: ' + data.expires : 'Error: ' + (data.error || 'failed');
 }
+// The target and rate fields the admin actually edited: the server records
+// them as the owner's even when typed back as the default (re-audit #45).
+var cavTouched = {};
+(function () {
+  var ids = ['labor_target_pct', 'food_cost_target', 'hourly_rate'];
+  function mark(k) { return function () { cavTouched[k] = true; }; }
+  for (var i = 0; i < ids.length; i++) {
+    var el = document.getElementById(ids[i]);
+    if (el) { el.addEventListener('input', mark(ids[i])); }
+  }
+})();
+function cavTouchedList() {
+  var out = [];
+  for (var k in cavTouched) { if (cavTouched.hasOwnProperty(k)) { out.push(k); } }
+  return out;
+}
 async function saveSettings() {
   const btn = document.querySelector('.btn-save');
   const status = document.getElementById('save-status');
@@ -907,6 +923,7 @@ async function saveSettings() {
     module_labor:    document.getElementById('setting-mod-labor').checked ? 1 : 0,
     module_inventory:document.getElementById('setting-mod-inventory').checked ? 1 : 0,
     module_marketing:document.getElementById('setting-mod-marketing').checked ? 1 : 0,
+    touched:         cavTouchedList(),
   };
   const res = await fetch(window.location.pathname, {
     method: 'POST',

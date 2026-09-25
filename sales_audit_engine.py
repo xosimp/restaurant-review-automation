@@ -212,16 +212,40 @@ def concept_class(answers):
     return _TYPE_FROM_RESTAURANT_TYPE.get(_txt(answers, "restaurant_type") or "")
 
 
+# The service model each picked type names (intelligence.categories.
+# SERVICE_MODELS), so the audit reads the registry through the same
+# type-and-format lookup as the engine and target seeding (re-audit #4).
+_SERVICE_MODEL_FOR_CLASS = {"family": "full_service", "fine_dining": "full_service",
+                            "fast_casual": "counter", "sports_bar": "bar_led", "bar": "bar_led",
+                            "brewery": "bar_led", "wine_bar": "bar_led"}
+
+
 def _bench(cat, cls):
     """{band, source, note, source_kind} from benchmark_registry for the
-    picked type, or None when the registry has no entry for it."""
+    picked type — a PUBLISHED figure only, since the audit sizes dollars
+    against it (re-audit #31, R1-12: "$38k/yr labor opportunity" against a
+    counter-service rule of thumb) — or None. A rule of thumb is not a
+    sizing figure; `_context` returns it to show beside the result."""
     import benchmark_registry as _br
     metric = {"labor": "labor_pct", "food": "food_cost_pct"}[cat]
-    e = _br.lookup(metric, cls) if cls else None
+    e = _br.lookup(metric, cls, published_only=True,
+                   service_model=_SERVICE_MODEL_FOR_CLASS.get(cls)) if cls else None
     if not e:
         return None
     return {"band": (e["low"], e["high"]), "source": e["source"], "note": e.get("note") or "",
             "source_kind": e.get("source_kind"), "label": e.get("label")}
+
+
+def _context(cat, cls):
+    """A rule-of-thumb band for the picked type, as a sentence to show
+    beside the result — never sized against — or None."""
+    import benchmark_registry as _br
+    metric = {"labor": "labor_pct", "food": "food_cost_pct"}[cat]
+    e = _br.lookup(metric, cls, service_model=_SERVICE_MODEL_FOR_CLASS.get(cls)) if cls else None
+    if not e or e.get("source_kind") == "published":
+        return None
+    return (f"For context only, not sized against: {_br.band_text(e)} for {e.get('label')} "
+            f"({_br.cite(e)}).")
 
 
 def _not_assessed(key, label, what, owner, missing):
@@ -489,13 +513,19 @@ def calc_labor(a, fin, cls, owner):
     if owner_target is None and L is not None:
         missing.append("Ask what labor target %s actually aims for — it replaces the generic benchmark." % owner)
     if bench is None:
+        ctx = _context("labor", cls)
         if owner_target is None:
             # No published labor figure for this type and no target of the
             # owner's: the labor-% gap is not assessed. Overtime, which needs
-            # no benchmark, still sizes below.
-            if L is not None:
+            # no benchmark, still sizes below. A rule of thumb for the type
+            # is shown as context, never sized against (re-audit #31).
+            if L is not None and ctx:
+                missing.append("There is no published labor figure for this type — only an operator rule of "
+                               "thumb — so the labor %% gap is sized only against %s's own target. %s"
+                               % (owner, ctx))
+            elif L is not None:
                 missing.append("Pick the type of restaurant in \"Compare against published figures for\" — there is "
-                               "no published labor figure for this type, so the labor %% gap is not assessed rather "
+                               "no published labor figure for this type, so the labor % gap is not assessed rather "
                                "than scored against full-service.")
             L = None
             bench = {"band": (0.0, 0.0), "source": "", "note": ""}
@@ -554,6 +584,9 @@ def calc_labor(a, fin, cls, owner):
         gap_calc["assumptions"].append(bench["note"])
     else:
         gap_calc["assumptions"].append("Target is the owner's own, not a generic benchmark.")
+        _ctx_l = _context("labor", cls)
+        if _ctx_l:
+            gap_calc["assumptions"].append(_ctx_l)
 
     conf = "high" if (fin["labor_pct"]["source"] == "owner" and fin["annual_revenue"]["source"] == "owner") else "moderate"
     if L <= target:
@@ -622,10 +655,22 @@ def calc_food(a, fin, cls, owner):
             return out
         return _insufficient("food", "Food Cost", missing)
 
-    bench = (BENCHMARKS["food"]["combined"] if cls else None) if combined else _bench("food", cls)
+    # Dollars are sized only against a published figure or the owner's own
+    # target (re-audit #31, R1-12). The blended food + beverage band has no
+    # citable source and a rule of thumb is not a study: both are context.
+    bench = None if combined else _bench("food", cls)
+    ctx = (("For context only, not sized against: %d–%d%% blended food + beverage COGS "
+            "(no citable source)." % BENCHMARKS["food"]["combined"]["band"]) if (combined and cls)
+           else (None if combined else _context("food", cls)))
     owner_target = _num(a, "food_target_pct")
     if bench is None:
         if owner_target is None:
+            if ctx:
+                return _insufficient("food", "Food Cost", missing + [
+                    "There is no published food cost figure for this type — only a rule of thumb — so the food cost "
+                    "gap is sized only against %s's own target. Ask what food cost target %s works to. %s"
+                    % (owner, owner, ctx)],
+                    note="Not sized — no published food cost figure for this type; the rule of thumb is context only.")
             return _not_assessed("food", "Food Cost", "food cost", owner, missing)
         bench = {"band": (owner_target, owner_target), "source": "the owner's own food cost target", "note": ""}
     band = bench["band"]
@@ -639,6 +684,8 @@ def calc_food(a, fin, cls, owner):
         gap_calc["assumptions"].append("Owner's figure combines food and beverage, so it is compared with a blended COGS band and the bar category is not sized separately.")
     if owner_target is None:
         gap_calc["assumptions"].append(bench["note"])
+    elif ctx:
+        gap_calc["assumptions"].append(ctx)
     conf = "high" if (fin["food_pct"]["source"] == "owner" and basis == "Actual (from inventory)" and not combined) else ("moderate" if fin["food_pct"]["source"] == "owner" else "low")
 
     if F <= target:

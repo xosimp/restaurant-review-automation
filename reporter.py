@@ -1237,11 +1237,17 @@ def rating_tag(report, brand):
 LABOR_WATCH_PTS = 4.0
 
 
-def labor_tag(labor_pct, target, brand):
-    """(colour, label) for the digest's labor section against the owner's
-    target (notify.labor_target_for)."""
+def labor_tag(labor_pct, target, brand, starting=False):
+    """(colour, label) for the digest's labor section against the target
+    (thresholds.target_for). On Cavnar's starting target — one nobody set
+    (`starting`) — the tag names it and caps at a watch: "Over target" in
+    red against a 30% no one chose was the bug (re-audit #10, R2-3)."""
     lp = float(labor_pct or 0)
     t = float(target)
+    if starting:
+        if lp <= t:
+            return brand["good"], "Under starting target"
+        return brand["warn"], "Above starting target"
     if lp <= t:
         return brand["good"], "On target"
     if lp <= t + LABOR_WATCH_PTS:
@@ -1454,8 +1460,9 @@ def _digest_parts(report: WeeklyReport, restaurant_name: str, owner_name: str = 
                 lp = labor_data.get("overall_labor_pct", 0)
                 ls = labor_data.get("total_sales", 0)
                 lc = labor_data.get("total_labor_cost", 0)
-                from notify import labor_target_for as _ltf_d
-                l_color, l_label = labor_tag(lp, _ltf_d(_rest), BRAND)
+                import thresholds as _thr_d
+                _tgt_d = _thr_d.target_for(_rest, "labor")
+                l_color, l_label = labor_tag(lp, _tgt_d["pct"], BRAND, starting=not _tgt_d["alerts_allowed"])
                 sections.append(
                     report_eyebrow("Labor Optimizer", tag=l_label, tag_color=l_color) +
                     report_stats([

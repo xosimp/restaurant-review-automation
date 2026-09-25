@@ -62,7 +62,10 @@ def test_ranges_never_a_single_number():
 
 
 def test_labor_takes_larger_of_gap_and_overtime_never_sum():
-    r = engine.compute(FULL)
+    # A sports bar has only a rule of thumb for labor, so the gap is sized
+    # against the owner's own target (re-audit #31); this pinned the gap to
+    # the rule of thumb's 32% top.
+    r = engine.compute(dict(FULL, lab_target_pct="32"))
     lab = r["categories"]["labor"]
     # gap: 2,400,000 × (34 − 32)% = 48,000 → likely 24,000. OT: 900×52/3 = 15,600 → likely 10,920.
     assert lab["likely"] == 24000
@@ -74,7 +77,9 @@ def test_labor_takes_larger_of_gap_and_overtime_never_sum():
 
 
 def test_food_waste_not_added_on_top_of_gap():
-    r = engine.compute(FULL)
+    # Sized against the owner's own 33%: a sports bar's food band is a rule
+    # of thumb, context only (re-audit #31).
+    r = engine.compute(dict(FULL, food_target_pct="33"))
     food = r["categories"]["food"]
     # food sales = 2.4M × 55% = 1.32M; gap 36−33 = 3 pts → 39,600 → likely 19,800; waste 31,200 → likely 12,500. Max wins.
     assert food["likely"] == 19800
@@ -525,10 +530,17 @@ def test_an_unknown_concept_is_not_assessed_never_scored_as_full_service():
 
 def test_the_audit_reads_the_registry_through_the_type_picker():
     import benchmark_registry as br
+    # Dollars are sized only against a PUBLISHED figure (re-audit #31): a
+    # rule of thumb is context, never a sizing band. This pinned the rule of
+    # thumb as the band the audit sized against.
     for pick, cat in (("Sports bar", "sports_bar"), ("Fast casual / counter", "fast_casual"), ("Fine dining", "fine_dining")):
-        b = engine._bench("labor", engine.concept_class({"benchmark_type": pick}))
+        cls = engine.concept_class({"benchmark_type": pick})
         e = br.lookup("labor_pct", cat)
-        assert b["band"] == (e["low"], e["high"]) and b["source"] == e["source"]
+        assert engine._bench("labor", cls) is None
+        assert br.band_text(e) in engine._context("labor", cls)
+    full = engine._bench("labor", engine.concept_class({"benchmark_type": "Full-service restaurant"}))
+    e = br.lookup("labor_pct", "family", published_only=True)
+    assert full["band"] == (e["low"], e["high"]) and full["source"] == e["source"]
     assert engine.concept_class({"benchmark_type": "None of these — don't compare"}) is None
     assert engine._bench("labor", None) is None
 
@@ -542,3 +554,25 @@ def test_revenue_per_star_is_sized_only_for_an_independent():
         assert rv["likely"] == 0 and "independent" in rv["current_state"]
     unknown = engine.compute(base)["categories"]["reviews"]
     assert unknown["likely"] == 0 and any("independent" in m for m in unknown["missing"])
+
+
+def test_a_rule_of_thumb_or_unsourced_band_never_sizes_dollars():
+    """Re-audit #31 (R1-12): a prospect was shown a labor opportunity sized
+    against a counter-service rule of thumb, and a food gap against the
+    unsourced blended food + beverage band. With no owner target neither is
+    sized, and the band is shown as context; the owner's own target sizes it."""
+    base = {"benchmark_type": "Fast casual / counter", "fin_annual_revenue": "1500000",
+            "lab_labor_pct": "36", "food_cost_pct": "35", "food_sales": "1200000"}
+    r = engine.compute(base)
+    lab, food = r["categories"]["labor"], r["categories"]["food"]
+    assert lab["likely"] == 0 and any("For context only" in m for m in lab["missing"])
+    assert food["likely"] == 0 and any("For context only" in m for m in food["missing"])
+    own = engine.compute(dict(base, lab_target_pct="30"))["categories"]["labor"]
+    assert own["likely"] > 0 and any("For context only" in x for x in own["calc"]["assumptions"])
+    comb = dict(base, benchmark_type="Full-service restaurant", food_includes_bev="Combined")
+    cf = engine.compute(comb)["categories"]["food"]
+    assert cf["likely"] == 0 and any("no citable source" in m for m in cf["missing"])
+    cf_own = engine.compute(dict(comb, food_target_pct="30"))["categories"]["food"]
+    assert cf_own["likely"] > 0 and "owner's own" in cf_own["calc"]["benchmark_source"]
+    # The full-service published figure still sizes (the NRA median).
+    assert engine.compute(dict(base, benchmark_type="Full-service restaurant"))["categories"]["labor"]["likely"] > 0

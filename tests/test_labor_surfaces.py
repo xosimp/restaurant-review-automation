@@ -143,9 +143,12 @@ def test_a_sub_week_period_makes_no_monthly_claim(monkeypatch):
     assert p["savings_breakdown"]["labor_vs_industry_monthly"] == 0
 
 
-def test_a_measured_period_still_makes_the_claim(monkeypatch):
+def test_a_measured_period_still_makes_no_industry_dollar_claim(monkeypatch):
+    # Re-audit #2 (R3-5, R4-1): the only published labor figure includes
+    # benefits, so no "$ under industry" is computed from it even on a
+    # measured period. This pinned the dollars as > 0.
     p = _labor_payload(monkeypatch, _base_analysis(overall_labor_pct=25.0))
-    assert p["savings_breakdown"]["labor_vs_industry_monthly"] > 0
+    assert p["savings_breakdown"]["labor_vs_industry_monthly"] == 0
 
 
 def test_the_default_wage_makes_no_dollar_claim(monkeypatch):

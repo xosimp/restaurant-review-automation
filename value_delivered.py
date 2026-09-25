@@ -356,15 +356,22 @@ def opportunity(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None)
                 _lab_items = []
                 v = float(labor.get("potential_savings_monthly", 0) or 0)
                 import thresholds as _thr
+                # The gap is against Cavnar's starting target when the owner
+                # set none, and the item says so (re-audit #10, R4-26).
+                _tgt = _thr.target_for(restaurant, "labor")
+                _lab_label = ("Scheduling against your target" if _tgt["source"] == "set"
+                              else "Scheduling against Cavnar's starting target")
                 if v > 0:
-                    _dated(_lab_items, withheld, restaurant, {"key": "labor", "label": "Scheduling against your target",
-                                                          "monthly": round(v, 2), "module": "labor"},
+                    _dated(_lab_items, withheld, restaurant, {"key": "labor", "label": _lab_label,
+                                                          "monthly": round(v, 2), "module": "labor",
+                                                          "target_label": _tgt["label"],
+                                                          "target_source": _tgt["source"]},
                            ("labor",), {"labor": labor}, db_path)
                     # Hours × Cavnar's assumed $26/hr is not a dollar gap the
                     # restaurant has (Benchmarking audit #14): a current item
                     # on the default rate is withheld, and says why.
                     if _lab_items and _thr.labor_cost_basis(restaurant) == "default":
-                        withheld.append({"key": "labor", "label": "Scheduling against your target", "module": "labor",
+                        withheld.append({"key": "labor", "label": _lab_label, "module": "labor",
                                          "source": "labor", "state": "default_rate",
                                          "reason": "labor cost rests on the assumed $26/hr, not your pay rates"})
                     else:

@@ -94,21 +94,31 @@ def labor_industry_benchmark(restaurant) -> dict | None:
     if ind.get("inferred"):
         import benchmark_registry as _br
         basis += f"; {_br.INFERRED_NOTE}"
+    # `comparable` False (the NRA median includes benefits; this labor % is
+    # wages from shifts) makes the figure context only: no dollar gap, no
+    # standing (re-audit #2, R3-5/R4-1).
     return {"pct": float(ind["median"]), "basis": basis, "inferred": bool(ind.get("inferred")),
-            "source_kind": ind.get("source_kind")}
+            "source_kind": ind.get("source_kind"), "comparable": ind.get("comparable") is True,
+            "definition_note": ind.get("definition_note")}
 
 
 def labor_vs_industry_monthly(overall_pct, total_sales, period_days, hours_are_estimated=False,
                               sales_data_missing=False, analysis_failed=False, industry_pct=None,
-                              cost_basis=None) -> int:
+                              cost_basis=None, comparable=False) -> int:
     """Monthly dollars this restaurant's labor % runs under the industry
     figure for its type (`industry_pct`, from labor_industry_benchmark), or
-    0 when that cannot be said honestly: no benchmark for the type,
-    estimated hours understate labor (and so overstate the gap), missing
-    sales or a sub-week period leave no monthly rate to compare, or the
-    labor cost rests on the $26/hr default (`cost_basis == "default"`,
-    Benchmarking audit #14) — an assumed wage is not a gap."""
-    if industry_pct is None or cost_basis == "default":
+    0 when that cannot be said honestly: no benchmark for the type, a
+    figure that is not measured the same way (`comparable` False — every
+    published labor figure today, re-audit #2: the NRA median includes
+    benefits), estimated hours understate labor (and so overstate the gap),
+    missing sales or a sub-week period leave no monthly rate to compare, or
+    the labor cost rests on the $26/hr default (`cost_basis == "default"`,
+    Benchmarking audit #14) — an assumed wage is not a gap.
+
+    labor.savings_breakdown no longer calls this (it sends 0): no client
+    draws the tile. Candidate for future cleanup after additional
+    verification — tests pin its floors."""
+    if industry_pct is None or cost_basis == "default" or not comparable:
         return 0
     try:
         pct, sales, days = float(overall_pct or 0), float(total_sales or 0), int(period_days or 0)
@@ -148,7 +158,9 @@ LABOR_COST_BASIS_LABELS = {
 
 def labor_cost_basis(restaurant) -> str:
     """'role_rates' | 'owner_blended' | 'default' for a Restaurant or row
-    dict. Pure: reads role_rates_json and hourly_rate only."""
+    dict. Pure: reads role_rates_json, hourly_rate and hourly_rate_source.
+    A rate the owner entered is theirs even when it is exactly $26
+    (`hourly_rate_source == "set"`, re-audit #45)."""
     def g(k):
         return restaurant.get(k) if isinstance(restaurant, dict) else getattr(restaurant, k, None)
     if restaurant is None:
@@ -166,7 +178,7 @@ def labor_cost_basis(restaurant) -> str:
         rate = float(g("hourly_rate") or 0)
     except (TypeError, ValueError):
         rate = 0.0
-    if rate > 0 and abs(rate - LABOR_DEFAULT_HOURLY_RATE) > 1e-9:
+    if rate > 0 and (abs(rate - LABOR_DEFAULT_HOURLY_RATE) > 1e-9 or g("hourly_rate_source") == "set"):
         return "owner_blended"
     return "default"
 
@@ -227,13 +239,47 @@ def target_alerts_allowed(restaurant, kind) -> bool:
     return target_source(restaurant, kind) != "default"
 
 
+def target_value(restaurant, kind) -> float:
+    """The target % itself: the stored value when it is a positive number,
+    else Cavnar's default for the kind. notify.labor_target_for reads it."""
+    field = _TARGET_FIELDS[kind][0]
+    if restaurant is not None:
+        own = restaurant.get(field) if isinstance(restaurant, dict) else getattr(restaurant, field, None)
+        try:
+            v = float(own)
+            if v > 0:
+                return v
+        except (TypeError, ValueError):
+            pass
+    return TARGET_DEFAULTS[kind]
+
+
+def target_for(restaurant, kind) -> dict:
+    """The ONE read of a labor ("labor") or food-cost ("food") target for
+    every surface that judges a figure against it (Benchmarking re-audit
+    #10, R2-3/R3-16/R4-26): {pct, source, label, alerts_allowed, phrase}.
+    `label` is "your target" or "Cavnar's starting target"; on a starting
+    target nothing is "over" in red — a tag, a colour or a severity caps at
+    a watch, and no alert fires (`alerts_allowed` False)."""
+    pct = target_value(restaurant, kind)
+    src = target_source(restaurant, kind)
+    return {"pct": pct, "source": src, "label": target_label(restaurant, kind),
+            "alerts_allowed": src != "default", "phrase": target_phrase(restaurant, kind, pct)}
+
+
 def seeded_targets(restaurant) -> dict:
-    """The update that seeds a not-yet-set target from the PUBLISHED median
-    for the owner-confirmed type ({} when the type is unconfirmed or the
-    owner already set one). With no published median the default stays,
-    labelled as the default."""
+    """The update that seeds a not-yet-set target from a PUBLISHED median
+    for the owner-CONFIRMED type and service model that is measured the way
+    Cavnar measures it ({} when the profile is unconfirmed; nothing for a
+    target the owner set). With no such figure the target is Cavnar's
+    default — the value reset to it, labelled as the default, alerts off
+    (re-audit #3, R1-03/R2-4/R4-6/R3-26): the NRA labor median includes
+    benefits and the NRA food median counts non-alcohol beverages, so
+    neither seeds a wages-only labor % or a COGS food cost %, and a
+    counter-service Italian never gets the full-service figure (#4)."""
     try:
         from intelligence import categories
+        from intelligence import metrics_registry as _mr
         import benchmark_registry as _br
     except Exception:
         return {}
@@ -242,17 +288,22 @@ def seeded_targets(restaurant) -> dict:
     if not prof.get("confirmed") or not concept:
         return {}
     out = {}
-    for kind, metric in (("labor", "labor_pct"), ("food", "food_cost_pct")):
+    for kind, metric, engine_metric in (("labor", "labor_pct", "labor_pct_28d"),
+                                        ("food", "food_cost_pct", "food_cost_pct_28d")):
         field, src_field = _TARGET_FIELDS[kind]
         if target_source(restaurant, kind) == "set":
             continue
-        e = _br.lookup(metric, concept, published_only=True)
+        e = _br.lookup(metric, concept, published_only=True, definition=_mr.definition(engine_metric),
+                       service_model=prof.get("service_model"))
         if e and e.get("median") is not None:
             out[field] = float(e["median"])
             out[src_field] = "seeded"
         else:
+            out[field] = TARGET_DEFAULTS[kind]
             out[src_field] = "default"
     return out
+
+
 # ── Group strongest / weakest (CA1 H13, fix I12; Benchmarking #19) ───────
 # A location is ranked "strongest" or "weakest" by rating only when at least
 # this many reviews stand behind its rating in the window — the group Home

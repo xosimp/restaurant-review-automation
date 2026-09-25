@@ -19,7 +19,8 @@ rules (Never-Say audit NS4 H3, C2, M5; workstream B):
   so nothing may call them an industry figure.
 
 Seeded from sales_audit_engine.BENCHMARKS (the sourced, type-specific bands
-the in-person audit already used). Layer 0: pure, no database, no clock.
+the in-person audit already used). Layer 0: pure, no database; the one
+clock read is an entry's age limit (`is_stale`, which takes `today`).
 `for_restaurant` reaches intelligence.categories inside the function (the
 package's __init__ imports models).
 
@@ -39,6 +40,21 @@ ALL = "*"
 _FULL_SERVICE = ("steakhouse", "italian", "seafood", "family")
 _BAR_TYPES = ("bar", "wine_bar", "brewery")
 
+# Which confirmed service models (intelligence.categories.SERVICE_MODELS) a
+# figure describes (Benchmarking re-audit #4, R2-17/R4-2): a counter-service
+# Italian never gets the full-service NRA median. An entry without
+# `service_models` describes every format.
+_BAR_SERVICE = ("bar_led", "full_service")
+
+# How long a figure may be quoted, in years after its data year (else its
+# publication year) — the re-audit's #32 (R1-16): an annual abstract is
+# superseded by the next one; a rule of thumb is re-checked every few years.
+_ANNUAL_ABSTRACT_MAX_AGE = 3
+_RULE_OF_THUMB_MAX_AGE = 5
+
+# What the NRA food figure (and every band derived from it) measures.
+_NRA_FOOD_DEFINITION = "food_nonalc_bev_cost_pct_sales"
+
 _NRA_2025 = ("National Restaurant Association, 2025 Restaurant Operations Data Abstract")
 _NRA_SHORT = "NRA 2025 Restaurant Operations Data Abstract"
 
@@ -50,6 +66,7 @@ ENTRIES = (
      # NRA counts benefits; Cavnar's labor % is wages from shifts. A
      # comparison asked for with Cavnar's definition is refused (#14).
      "definition": "labor_incl_benefits",
+     "service_models": ("full_service",), "max_age_years": _ANNUAL_ABSTRACT_MAX_AGE,
      "source": _NRA_2025 + ": full-service median labor (incl. benefits) 36.5% of sales in 2024; "
                "profitable full-service operators median 34.2%.",
      "short": _NRA_SHORT, "source_kind": "published", "year": 2025, "data_year": 2024,
@@ -57,21 +74,29 @@ ENTRIES = (
      "note": "Band top set at the profitable-operator median. Wage markets vary; the owner's own target wins."},
     {"metric": "labor_pct", "category": "fine_dining", "label": "fine-dining restaurants",
      "low": 33.0, "high": 38.0, "unit": "%",
+     "definition": None, "service_models": ("full_service",), "max_age_years": _RULE_OF_THUMB_MAX_AGE,
+     "median_basis": "operator rule of thumb for fine-dining labor %, which does not say what it counts",
      "source": "Operator rule of thumb; service-heavy formats carry more labor.",
      "short": "operator rule of thumb", "source_kind": "rule_of_thumb", "year": 2025, "data_year": None,
      "applies_to": ("fine_dining",), "note": "Not a published study. Prefer the owner's own target."},
     {"metric": "labor_pct", "category": "fast_casual", "label": "counter-service restaurants",
      "low": 25.0, "high": 30.0, "unit": "%",
+     "definition": None, "service_models": ("counter",), "max_age_years": _RULE_OF_THUMB_MAX_AGE,
+     "median_basis": "operator rule of thumb for counter-service labor %, which does not say what it counts",
      "source": "Operator rule of thumb for counter-service formats.",
      "short": "operator rule of thumb", "source_kind": "rule_of_thumb", "year": 2025, "data_year": None,
      "applies_to": ("fast_casual",), "note": "Not a published study. Prefer the owner's own target."},
     {"metric": "labor_pct", "category": "bar", "label": "bar-led concepts",
      "low": 25.0, "high": 30.0, "unit": "%",
+     "definition": None, "service_models": _BAR_SERVICE, "max_age_years": _RULE_OF_THUMB_MAX_AGE,
+     "median_basis": "operator rule of thumb for bar-led labor %, which does not say what it counts",
      "source": "Operator rule of thumb for bar-dominant concepts.",
      "short": "operator rule of thumb", "source_kind": "rule_of_thumb", "year": 2025, "data_year": None,
      "applies_to": _BAR_TYPES, "note": "Not a published study. Prefer the owner's own target."},
     {"metric": "labor_pct", "category": "sports_bar", "label": "sports bars",
      "low": 27.0, "high": 32.0, "unit": "%",
+     "definition": None, "service_models": _BAR_SERVICE, "max_age_years": _RULE_OF_THUMB_MAX_AGE,
+     "median_basis": "operator rule of thumb for sports-bar labor %, which does not say what it counts",
      "source": "Operator rule of thumb. Bar-forward concepts run lower labor % because beverage sales carry little labor.",
      "short": "operator rule of thumb", "source_kind": "rule_of_thumb", "year": 2025, "data_year": None,
      "applies_to": ("sports_bar",), "note": "Less authoritative than the NRA figure. Prefer the owner's own target."},
@@ -80,7 +105,8 @@ ENTRIES = (
     {"metric": "food_cost_pct", "category": "full_service", "label": "full-service restaurants",
      "low": 28.0, "high": 32.0, "median": 32.0, "unit": "%",
      "median_basis": "median food and non-alcohol beverage cost of full-service operators",
-     "definition": "food_nonalc_bev_cost_pct_sales",
+     "definition": _NRA_FOOD_DEFINITION,
+     "service_models": ("full_service",), "max_age_years": _ANNUAL_ABSTRACT_MAX_AGE,
      "source": _NRA_2025 + ": full-service food and non-alcohol beverage cost median 32.0% of sales in 2024.",
      "short": _NRA_SHORT, "source_kind": "published", "year": 2025, "data_year": 2024,
      # Not steakhouses: steak-heavy menus run higher (the source's own note).
@@ -88,26 +114,36 @@ ENTRIES = (
      "note": "Menu type moves this a lot — steak-heavy menus run higher, pizza far lower."},
     {"metric": "food_cost_pct", "category": "fine_dining", "label": "fine-dining restaurants",
      "low": 30.0, "high": 35.0, "unit": "%", "source": "Operator rule of thumb.",
+     "definition": None, "service_models": ("full_service",), "max_age_years": _RULE_OF_THUMB_MAX_AGE,
+     "median_basis": "operator rule of thumb for fine-dining food cost %, which does not say what it counts",
      "short": "operator rule of thumb", "source_kind": "rule_of_thumb", "year": 2025, "data_year": None,
      "applies_to": ("fine_dining",), "note": "Not a published study. Prefer the owner's own target."},
     {"metric": "food_cost_pct", "category": "fast_casual", "label": "counter-service restaurants",
      "low": 26.0, "high": 31.0, "unit": "%", "source": "Operator rule of thumb.",
+     "definition": None, "service_models": ("counter",), "max_age_years": _RULE_OF_THUMB_MAX_AGE,
+     "median_basis": "operator rule of thumb for counter-service food cost %, which does not say what it counts",
      "short": "operator rule of thumb", "source_kind": "rule_of_thumb", "year": 2025, "data_year": None,
      "applies_to": ("fast_casual",), "note": "Not a published study. Prefer the owner's own target."},
     {"metric": "food_cost_pct", "category": "sports_bar", "label": "sports bars",
      "low": 28.0, "high": 33.0, "unit": "%",
      "source": "NRA full-service median, widened one point for shareables/wings-heavy menus.",
+     # Derived from the NRA figure, so it measures what that figure measures.
+     "definition": _NRA_FOOD_DEFINITION, "service_models": _BAR_SERVICE, "max_age_years": _ANNUAL_ABSTRACT_MAX_AGE,
+     "median_basis": "NRA full-service food and non-alcohol beverage cost median, widened a point",
      "short": "NRA full-service median, widened a point", "source_kind": "rule_of_thumb", "year": 2025,
      "data_year": 2024, "applies_to": ("sports_bar",), "note": "Prefer the owner's own target."},
     {"metric": "food_cost_pct", "category": "bar", "label": "bar-led concepts",
      "low": 28.0, "high": 33.0, "unit": "%",
      "source": "NRA full-service median, widened one point (as sports bars).",
+     "definition": _NRA_FOOD_DEFINITION, "service_models": _BAR_SERVICE, "max_age_years": _ANNUAL_ABSTRACT_MAX_AGE,
+     "median_basis": "NRA full-service food and non-alcohol beverage cost median, widened a point",
      "short": "NRA full-service median, widened a point", "source_kind": "rule_of_thumb", "year": 2025,
      "data_year": 2024, "applies_to": _BAR_TYPES, "note": "Prefer the owner's own target."},
 
     # ── prime cost (labor + COGS) — the one all-restaurant figure ───────
     {"metric": "prime_cost_pct", "category": "general", "label": "restaurants in general",
      "low": 60.0, "high": 65.0, "unit": "%",
+     "definition": "prime_cost_labor_plus_cogs_pct_sales", "max_age_years": _RULE_OF_THUMB_MAX_AGE,
      "source": "Widely used operator target: prime cost (labor + COGS) under 60–65% of sales.",
      "short": "widely used operator target", "source_kind": "rule_of_thumb", "year": 2025, "data_year": None,
      "applies_to": (ALL,), "note": "A target operators use, not a measured average."},
@@ -115,6 +151,7 @@ ENTRIES = (
     # ── bar pour cost — about the bar program, whatever the restaurant ──
     {"metric": "pour_cost_pct", "category": "bar_program", "label": "bar programs",
      "low": 18.0, "high": 24.0, "unit": "%",
+     "definition": "pour_cost_pct_beverage_sales", "max_age_years": _ANNUAL_ABSTRACT_MAX_AGE,
      "source": "Bar-industry consensus (Backbar, Sculpture Hospitality, DoorDash for Merchants guides): "
                "blended pour cost 18–24%.",
      "short": "bar-industry vendor guides", "source_kind": "vendor", "year": 2025, "data_year": None,
@@ -123,6 +160,9 @@ ENTRIES = (
     # ── revenue per rating star — independents only ────────────────────
     {"metric": "revenue_per_star_pct", "category": "independent", "label": "independent restaurants",
      "low": 5.0, "high": 9.0, "unit": "%",
+     # A peer-reviewed study, not an annual abstract: cited for longer, and
+     # due for re-review by 2031.
+     "definition": "revenue_change_per_yelp_star_independents", "max_age_years": 15,
      "source": "Luca, M. (Harvard Business School, 2016) 'Reviews, Reputation, and Revenue: The Case of "
                "Yelp.com': a one-star increase in Yelp rating was associated with a 5–9% revenue increase "
                "for independent restaurants (Seattle).",
@@ -161,18 +201,53 @@ def entries(metric=None) -> list:
 
 
 def definitions_differ(e, definition) -> bool:
-    """True when an entry states what it measures and it is not
-    `definition` (Benchmarking audit #14, BM3-15): the NRA labor median
-    includes benefits; Cavnar's labor % is wages from shifts. An entry with
-    no stated definition is not known to differ."""
-    return bool(definition and e and e.get("definition") and e.get("definition") != definition)
+    """True when `definition` is asked for and the entry does not measure
+    exactly that (Benchmarking audit #14, BM3-15; re-audit #32, R4-5): the
+    NRA labor median includes benefits; Cavnar's labor % is wages from
+    shifts. An entry that does not state what it measures (`definition`
+    None — every operator rule of thumb) is NOT known to match, so it is
+    treated as differing: unknown means not comparable."""
+    if not definition or not e:
+        return False
+    return e.get("definition") != definition
 
 
-def lookup(metric, category, published_only=False, definition=None):
+def is_stale(e, today=None) -> bool:
+    """True when the entry is older than its `max_age_years`, counted from
+    its data year (else its publication year) — re-audit #32 (R1-16): a
+    figure with no age limit was quoted forever."""
+    if not e or not e.get("max_age_years"):
+        return False
+    base = e.get("data_year") or e.get("year")
+    if not base:
+        return False
+    if today is None:
+        from datetime import date as _date
+        today = _date.today()
+    return int(today.year) > int(base) + int(e["max_age_years"])
+
+
+def service_model_fits(e, service_model) -> bool:
+    """Whether the entry describes this confirmed service model
+    (intelligence.categories.SERVICE_MODELS). An entry that names no
+    service model describes every format; an unknown service model is not a
+    disagreement (re-audit #4, R2-17/R4-2)."""
+    sms = (e or {}).get("service_models")
+    if not sms or not service_model:
+        return True
+    return service_model in sms
+
+
+def lookup(metric, category, published_only=False, definition=None, service_model=None, today=None):
     """The entry for `metric` that applies to restaurant type `category`,
-    or None. A type-specific entry wins over an all-restaurant one. With
-    `published_only`, a rule of thumb or vendor figure is no entry. With
-    `definition`, an entry that measures something else is no entry."""
+    or None — the ONE lookup the engine, target seeding, the blend, the peer
+    ledger and the sales audit share. A type-specific entry wins over an
+    all-restaurant one. With `published_only`, a rule of thumb or vendor
+    figure is no entry. With `definition`, an entry that measures something
+    else — or does not say what it measures — is no entry. With
+    `service_model`, an entry for another format is no entry (a
+    counter-service Italian never gets the full-service NRA median). An
+    entry past its age limit is never an entry."""
     cat = (category or "").strip().lower() or None
     best = None
     for e in ENTRIES:
@@ -182,6 +257,10 @@ def lookup(metric, category, published_only=False, definition=None):
             continue
         if definitions_differ(e, definition):
             continue
+        if not service_model_fits(e, service_model):
+            continue
+        if is_stale(e, today):
+            continue
         applies = e.get("applies_to") or ()
         if cat and cat in applies:
             return _copy(e, cat)
@@ -190,26 +269,58 @@ def lookup(metric, category, published_only=False, definition=None):
     return _copy(best, cat) if best else None
 
 
-def for_category(metric, category, source=None, published_only=False, definition=None):
+def for_category(metric, category, source=None, published_only=False, definition=None, service_model=None):
     """lookup() plus the type's provenance: `category_source` is 'set' or
     'inferred', and `inferred` is True when Cavnar guessed the type."""
-    e = lookup(metric, category, published_only=published_only, definition=definition)
+    e = lookup(metric, category, published_only=published_only, definition=definition,
+               service_model=service_model)
     if e is None:
         return None
     e["category_source"] = source
     e["inferred"] = source == "inferred"
+    e["service_model"] = service_model
     return e
+
+
+def confirmed_service_model(restaurant):
+    """The owner-confirmed service model, or None (unconfirmed profile or
+    no restaurant). Never raises."""
+    if restaurant is None:
+        return None
+    try:
+        from intelligence import categories
+        prof = categories.profile_for(restaurant)
+    except Exception:
+        return None
+    return prof.get("service_model") if prof.get("confirmed") else None
 
 
 def for_restaurant(metric, restaurant, published_only=False, definition=None):
     """The entry for this restaurant's type (its confirmed concept, its own
-    `category`, else the name-inferred one), or None. Never raises."""
+    `category`, else the name-inferred one) AND its confirmed service
+    model, or None. Never raises."""
     try:
         from intelligence import categories
         cat, src = categories.category_for(restaurant) if restaurant is not None else (None, None)
     except Exception:
         cat, src = None, None
-    return for_category(metric, cat, src, published_only=published_only, definition=definition)
+    return for_category(metric, cat, src, published_only=published_only, definition=definition,
+                        service_model=confirmed_service_model(restaurant))
+
+
+def definition_note(e, what, definition) -> str | None:
+    """Why an entry is context rather than a comparison for a metric
+    labelled `what` (e.g. "Labor %") measured as `definition`, or None when
+    the entry measures exactly that. Names what the figure counts when the
+    source says, and says plainly when it does not."""
+    if not e or not definitions_differ(e, definition):
+        return None
+    what = (what or "figure").lower()
+    if e.get("definition"):
+        return (f"The published figure is the {e.get('median_basis') or 'published figure'}; this restaurant's "
+                f"{what} is measured differently, so it is context, not a like-for-like comparison.")
+    return (f"The {cite(e) or 'figure'} does not say what it counts, so it is context for this restaurant's "
+            f"{what}, not a like-for-like comparison.")
 
 
 def why_absent(metric) -> str | None:
@@ -263,15 +374,55 @@ def line(e, what=None) -> str:
     return s + "."
 
 
-def facts(e, key_prefix="benchmark") -> list:
+def engine_metric(registry_metric) -> str | None:
+    """The metrics_registry key whose published figure is `registry_metric`
+    (labor_pct -> labor_pct_28d), or None for a metric the engine does not
+    compare (prime cost, pour cost, revenue per star)."""
+    try:
+        from intelligence import metrics_registry as _mr
+    except Exception:
+        return None
+    return next((k for k, v in _mr.METRICS.items() if v.get("industry") == registry_metric), None)
+
+
+def facts(e, key_prefix="benchmark", own_value=None) -> list:
     """The entry as response_validation Facts (contract: kind 'benchmark',
     source {source, year, cohort_label, n}) — one per figure it carries, so
-    a sentence quoting the band or the median binds to a registered value."""
+    a sentence quoting the band or the median binds to a registered value.
+
+    The source also carries the shared fact contract (re-audit fix round):
+    `metric` (the metrics_registry key), `better`, `comparable` (False when
+    the figure measures something else or does not say what it measures —
+    context only, so no directional claim may bind to it),
+    `definition_note`, `inferred`, `own_value` (the restaurant's own figure
+    when the caller has it), and `standing` / `strength_pct` (None: a
+    published figure is never a ranked standing)."""
     if not e:
         return []
+    metric = engine_metric(e.get("metric"))
+    better, own_def, label = None, None, None
+    if metric:
+        try:
+            from intelligence import metrics_registry as _mr
+            m = _mr.meta(metric)
+            better, own_def, label = m.get("better"), _mr.definition(metric), m.get("label")
+        except Exception:
+            pass
+    # With no Cavnar definition to hold it against, the figure is not known
+    # to be like for like: not comparable.
+    comparable = bool(own_def) and not definitions_differ(e, own_def)
+    try:
+        own = float(own_value) if own_value is not None else None
+    except (TypeError, ValueError):
+        own = None
     src = {"source": e.get("short") or e.get("source"), "year": e.get("year"), "data_year": e.get("data_year"),
            "cohort_label": e.get("label"), "n": None, "source_kind": e.get("source_kind"),
-           "inferred": bool(e.get("inferred")), "restaurant_category": e.get("restaurant_category")}
+           "inferred": bool(e.get("inferred")), "restaurant_category": e.get("restaurant_category"),
+           "metric": metric, "better": better, "comparable": comparable,
+           "definition_note": (None if comparable else
+                               (definition_note(e, label, own_def) if own_def else
+                                f"{cite(e) or 'This figure'} is context, not a like-for-like comparison.")),
+           "own_value": own, "standing": None, "strength_pct": None}
     base = f"{key_prefix}.{e['metric']}.{e['category']}"
     out = []
     for part in ("low", "high", "median"):

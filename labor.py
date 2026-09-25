@@ -1197,16 +1197,15 @@ def savings_breakdown(analysis: dict, analysis_failed: bool = False, restaurant=
     # reason travels (`dollars_withheld: "default_rate"`). The overtime
     # premium is labor.py's own figure and is not a comparison, so it stays.
     basis = _thr.labor_cost_basis(restaurant) if restaurant is not None else None
+    _tgt = _thr.target_for(restaurant, "labor") if restaurant is not None else None
     default_rate = basis == "default"
     monthly = 0 if (sample or default_rate) else int(round(float(a.get("potential_savings_monthly") or 0)))
     ot = 0 if sample else int(round(float(a.get("overtime_premium") or 0)))
-    vs_ind = _thr.labor_vs_industry_monthly(
-        a.get("overall_labor_pct"), a.get("total_sales"), period_days,
-        hours_are_estimated=bool(a.get("hours_are_estimated")),
-        sales_data_missing=bool(a.get("sales_data_missing")),
-        analysis_failed=bool(analysis_failed or a.get("analysis_failed") or sample
-                             or a.get("period_too_short_to_project")),
-        industry_pct=(_ind or {}).get("pct"), cost_basis=basis)
+    # No "$ under industry" (re-audit #2, R3-5/R4-1): the only published
+    # labor figure includes benefits and this labor % is wages from shifts,
+    # so no dollar gap is computed from it. The keys stay, at 0, because
+    # shipped iOS decodes them as non-optional Doubles; no client draws them.
+    vs_ind = 0
     return {
         "labor_monthly": monthly,
         "labor_annual": monthly * 12,
@@ -1221,8 +1220,12 @@ def savings_breakdown(analysis: dict, analysis_failed: bool = False, restaurant=
         "dollars_withheld": "sample" if sample else ("default_rate" if default_rate else None),
         "cost_basis": basis,
         "cost_basis_label": _thr.LABOR_COST_BASIS_LABELS.get(basis) if basis else None,
-        "labor_target_source": _thr.target_source(restaurant, "labor") if restaurant is not None else None,
-        "labor_target_label": _thr.target_label(restaurant, "labor") if restaurant is not None else None,
+        "labor_target_source": _tgt["source"] if _tgt else None,
+        "labor_target_label": _tgt["label"] if _tgt else None,
+        # Whether the published figure is measured the same way (never, for
+        # labor today) and why not, for the context line both apps draw.
+        "labor_industry_comparable": bool((_ind or {}).get("comparable")),
+        "labor_industry_note": (_ind or {}).get("definition_note"),
     }
 
 

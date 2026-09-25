@@ -323,7 +323,8 @@ def record_assignments(restaurants, members, partitions, groups, db_path=DB_PATH
                     if len(others) >= benchmarks.MIN_QUARTILE_N and len(set(others)) >= privacy.MIN_ORGS                             and plat.get("metrics"):
                         rung = "platform"
                 if rung == "self" and fam in _FAMILY_INDUSTRY and (m.get("profile") or {}).get("confirmed"):
-                    if _br.lookup(_FAMILY_INDUSTRY[fam], (m.get("profile") or {}).get("concept")):
+                    if _br.lookup(_FAMILY_INDUSTRY[fam], (m.get("profile") or {}).get("concept"),
+                                  service_model=(m.get("profile") or {}).get("service_model")):
                         rung = "published"
                 prof = m.get("profile") or {}
                 conn.execute(

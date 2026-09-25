@@ -86,20 +86,26 @@ class _FoodCostWithheld(Exception):
     rendered. Not an error — a deliberate, silent withholding."""
 
 
-def inv_banner_gradient(annual_waste, annual_recoverable):
-    """Compute a red-to-green CSS gradient based on waste severity and recovery opportunity.
-    Industry benchmarks: <$5K excellent | $5-15K normal | $15-30K concerning | >$30K serious
+# How red the waste banner runs, by where the waste RATE sits against the
+# owner's own waste target (inventory's benchmark_tone: "Under / Near / Over
+# / Well over target", or Cavnar's 4-5% starting target when none is set).
+# It used to band ANNUAL WASTE DOLLARS as "industry benchmarks" (<$5K
+# excellent ... >$30K serious) with no source and no sales scaling —
+# benchmark_registry.ABSENT says no waste benchmark exists (re-audit #43,
+# R1-19/R4-31). A week with nothing logged, or no data, reads mild.
+_WASTE_BANNER_RED = {"good": 0.15, "neutral": 0.15, "warn": 0.60, "bad": 0.90}
+
+
+def inv_banner_gradient(waste_tone, annual_waste, annual_recoverable):
+    """A red-to-green CSS gradient: red from the waste rate against the
+    owner's target (`waste_tone`, inventory's benchmark_tone), green from
+    the share of the waste that is recoverable.
     Recovery %: >60% deep green | 40-60% medium | 20-40% muted | <20% near neutral
-    """
-    # Red intensity 0.0-1.0
-    if annual_waste < 5000:
-        red_i = 0.15
-    elif annual_waste < 15000:
-        red_i = 0.15 + (annual_waste - 5000) / 10000 * 0.45
-    elif annual_waste < 30000:
-        red_i = 0.60 + (annual_waste - 15000) / 15000 * 0.30
-    else:
-        red_i = 0.90
+
+    No template, script or iOS view reads `banner_gradient` today (traced:
+    rg over templates/, static/, ios/, tests/). Candidate for future cleanup
+    after additional verification."""
+    red_i = _WASTE_BANNER_RED.get(waste_tone or "neutral", 0.15)
     # Green intensity 0.0-1.0
     rec_pct = (annual_recoverable / annual_waste * 100) if annual_waste > 0 else 0
     if rec_pct > 60:
@@ -437,7 +443,8 @@ def index(current_user):
             raise _FoodCostWithheld()
         from inventory import analysis_for as _analysis_for_dash
         _inv_items, _inv_live, inv = _analysis_for_dash(rid)
-        inv['banner_gradient'] = inv_banner_gradient(inv['annual_waste_projection'], inv['annual_recoverable'])
+        inv['banner_gradient'] = inv_banner_gradient(inv.get('benchmark_tone'), inv['annual_waste_projection'],
+                                                     inv['annual_recoverable'])
         try:
             from inventory import compute_item_trends as _cit_dash, build_price_watch as _bpw_dash
             inv['price_watch'] = _bpw_dash(_cit_dash(rid, _inv_items))
@@ -568,6 +575,7 @@ def index(current_user):
     # The tiles are labor.savings_breakdown's (computed above): one
     # definition for web and iOS, each figure with its kind (NS3 R1).
     import thresholds as _thr
+    _tgt_l, _tgt_f = _thr.target_for(restaurant, "labor"), _thr.target_for(restaurant, "food")
     _inv_value = int(inv.get("recoverable_monthly", 0)) if inv.get("is_live") else 0
     # The "3.1% sales lift from responding to reviews" figure had no source in
     # the product and was worded as the owner's own number (CA4 F5, CA1 R16):
@@ -608,6 +616,15 @@ def index(current_user):
         "labor_vs_industry_annual":  _labor_sb_row["labor_vs_industry_annual"]  if _mod_l else 0,
         "labor_industry_pct":        _labor_sb_row["labor_industry_pct"] if _mod_l else None,
         "labor_industry_basis":      _labor_sb_row["labor_industry_basis"] if _mod_l else None,
+        # The industry mark is context only when it is measured differently
+        # (re-audit #2), and the targets say whose they are (#10): the
+        # labels both apps render, from thresholds.target_for.
+        "labor_industry_comparable": _labor_sb_row.get("labor_industry_comparable", False) if _mod_l else False,
+        "labor_industry_note":       _labor_sb_row.get("labor_industry_note") if _mod_l else None,
+        "labor_target_label":        _tgt_l["label"],
+        "labor_target_source":       _tgt_l["source"],
+        "food_cost_target_label":    _tgt_f["label"],
+        "food_cost_target_source":   _tgt_f["source"],
         "sales_lift_yr":             _sales_lift_yr,
         # What each labor figure is (NS3 R1) — one map for web and iOS.
         "labor_kinds":               _labor_sb_row["kinds"],

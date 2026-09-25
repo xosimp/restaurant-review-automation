@@ -221,12 +221,16 @@ def test_dish_colours_read_the_owners_target_or_the_published_band():
     own = cogs.dish_reference(Restaurant(name="T", owner_email="t@x.test", food_cost_target=28.0))
     assert own["kind"] == "target" and own["pct"] == 28.0
     assert cogs.dish_tone(29.0, own) == "good" and cogs.dish_tone(33.0, own) == "warn" and cogs.dish_tone(40.0, own) == "bad"
+    # Re-audit #2/#10: the NRA food median counts non-alcohol beverages, so
+    # it is context, never the colour line; with no target of the owner's
+    # the dishes read against Cavnar's starting target, capped at a watch.
+    # This pinned the NRA band top (32%) and, for a steakhouse, no reference.
     italian = cogs.dish_reference(Restaurant(name="I", owner_email="i@x.test", category="italian",
                                              food_cost_target=None))
-    assert italian["kind"] == "published" and italian["pct"] == 32.0 and "NRA 2025" in italian["basis"]
-    # A steakhouse has no food-cost entry: no reference, and every dish is neutral.
-    assert cogs.dish_reference(Restaurant(name="S", owner_email="s@x.test", category="steakhouse",
-                                          food_cost_target=None)) is None
+    assert italian["kind"] == "starting_target" and italian["pct"] == 30.0
+    steak = cogs.dish_reference(Restaurant(name="S", owner_email="s@x.test", category="steakhouse",
+                                           food_cost_target=None))
+    assert steak["kind"] == "starting_target" and cogs.dish_tone(45.0, steak) == "warn"
     assert cogs.dish_tone(38.0, None) == "neutral"
 
 
@@ -279,10 +283,13 @@ def test_home_win_says_the_same_as_the_label():
 def test_food_cost_label_names_the_kind_of_band():
     import benchmark_registry as br
     import cogs
-    assert cogs.band_label(30.0, bench=br.lookup("food_cost_pct", "italian")) == \
+    # Only a band the engine calls comparable gives a verdict (re-audit #2);
+    # these pinned verdicts from raw, not-like-for-like entries.
+    assert cogs.band_label(30.0, bench=dict(br.lookup("food_cost_pct", "italian"), comparable=True)) == \
         ("Within the industry band (NRA 2025)", "neutral")
-    assert cogs.band_label(40.0, bench=br.lookup("food_cost_pct", "fine_dining")) == \
+    assert cogs.band_label(40.0, bench=dict(br.lookup("food_cost_pct", "fine_dining"), comparable=True)) == \
         ("Above the rule-of-thumb band", "bad")
+    assert cogs.band_label(40.0, bench=br.lookup("food_cost_pct", "fine_dining")) == (None, None)
     assert cogs.band_name({"source_kind": "vendor"}) == "vendor guidance"
 
 

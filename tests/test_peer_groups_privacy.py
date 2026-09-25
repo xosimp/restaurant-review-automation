@@ -183,9 +183,12 @@ def test_the_owner_confirms_the_profile_on_the_web_and_the_mobile_twin_shares_th
     assert r.profile_confirmed_at
     # The confirmed concept wins over any guess or category (#7).
     assert categories.category_for(r) == ("italian", "set")
-    # Targets not set by the owner are seeded from the published median (#13).
-    assert (r.labor_target_pct, r.labor_target_source) == (34.2, "seeded")
-    assert (r.food_cost_target, r.food_cost_target_source) == (32.0, "seeded")
+    # Targets not set by the owner are seeded only from a published median
+    # measured the way Cavnar measures it (re-audit #3): the NRA labor
+    # median includes benefits and the food median counts non-alcohol
+    # beverages, so both stay Cavnar's default. This pinned 34.2 / 32.0.
+    assert (r.labor_target_pct, r.labor_target_source) == (30.0, "default")
+    assert (r.food_cost_target, r.food_cost_target_source) == (30.0, "default")
     # The change is recorded with its old and new values (#29).
     ev = get_conn(db_path).execute("SELECT event_data FROM activity_log WHERE restaurant_id=? AND "
                                    "event_type='profile_changed'", (rid,)).fetchall()
@@ -212,7 +215,10 @@ def test_a_set_target_is_never_reseeded_and_an_owner_edit_marks_it_set(db_path):
     r = get_restaurant(rid, db_path=db_path)
     assert r.labor_target_source == "set" and thresholds.target_label(r, "labor") == "your target"
     seed = thresholds.seeded_targets(r)
-    assert "labor_target_pct" not in seed and seed["food_cost_target"] == 32.0
+    # Re-audit #3: no like-for-like published food figure, so the default
+    # (reset to its value) — this pinned the NRA 32.0.
+    assert "labor_target_pct" not in seed and seed["food_cost_target"] == 30.0 \
+        and seed["food_cost_target_source"] == "default"
     # A form re-sending the unchanged default confirms nothing.
     rid2 = _mk(db_path, "Form Resend")
     update_restaurant(rid2, {"labor_target_pct": 30.0}, db_path=db_path)
@@ -220,7 +226,8 @@ def test_a_set_target_is_never_reseeded_and_an_owner_edit_marks_it_set(db_path):
     # A confirmed type with no published median keeps the default, labelled.
     pizza = _mk(db_path, "Counter Pie", profile=("counter", "pizza"))
     assert thresholds.seeded_targets(get_restaurant(pizza, db_path=db_path)) == \
-        {"labor_target_source": "default", "food_cost_target_source": "default"}
+        {"labor_target_pct": 30.0, "labor_target_source": "default",
+         "food_cost_target": 30.0, "food_cost_target_source": "default"}
     assert thresholds.seeded_targets(get_restaurant(_mk(db_path, "Nonna Unconfirmed"), db_path=db_path)) == {}
 
 
@@ -452,7 +459,9 @@ def test_a_published_figure_defined_differently_is_context_not_a_comparison():
     assert e["definition"] == "labor_incl_benefits" and "including benefits" in e["median_basis"]
     assert "profitable full-service operators' median" in e["median_basis"]
     assert br.lookup("labor_pct", "italian", definition="wages_from_shifts") is None
-    assert br.lookup("labor_pct", "fast_casual", definition="wages_from_shifts") is not None   # none stated
+    # A rule of thumb that does not say what it counts is not like for like
+    # either (re-audit #32, R4-5) — this pinned it as comparable.
+    assert br.lookup("labor_pct", "fast_casual", definition="wages_from_shifts") is None
     r = Restaurant(name="Nonna", owner_email="n@x.test", category="italian")
     ind = eng.compare(None, "labor_pct_28d", kinds=("industry",), restaurant=r, rows=[])["comparisons"][0]
     assert ind["available"] and ind["comparable"] is False and "including benefits" in ind["definition_note"]

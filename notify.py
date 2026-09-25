@@ -393,16 +393,12 @@ def labor_target_for(restaurant, db_path=DB_PATH) -> float:
     Home and "3.5pts over your 26% target" by SMS — and a band that follows
     the trailing figure rises with bad performance, silencing the alert at
     exactly the wrong time. A derived figure is not "your target"; the
-    band is no longer used as one. Takes a Restaurant or a row dict."""
-    own = restaurant.get("labor_target_pct") if isinstance(restaurant, dict) \
-        else getattr(restaurant, "labor_target_pct", None)
-    try:
-        value = float(own)
-        if value > 0:
-            return value
-    except (TypeError, ValueError):
-        pass
-    return DEFAULT_LABOR_TARGET_PCT
+    band is no longer used as one. Takes a Restaurant or a row dict.
+
+    The value is thresholds.target_value — the same number target_for()
+    hands every surface with its source and label (re-audit #10)."""
+    import thresholds as _thr
+    return _thr.target_value(restaurant, "labor")
 
 
 # ── who an alert's push may reach (#33) ──────────────────────────────────────

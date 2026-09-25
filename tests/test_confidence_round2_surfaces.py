@@ -352,7 +352,9 @@ def test_t3_digest_labor_and_waste_tags():
     assert reporter.waste_tag(0, B)[2] == "Not measured" and reporter.waste_tag(0, B)[1] == B["muted"]
     assert reporter.waste_tag(120, B)[2] == "Low waste"
     src = inspect.getsource(reporter._digest_parts)
-    assert "lp <= 32" not in src and "labor_target_for" in src
+    # The one target read, with its source (re-audit #10) — this pinned
+    # notify.labor_target_for, which knows no provenance.
+    assert "lp <= 32" not in src and 'target_for(_rest, "labor")' in src
 
 
 def test_t3_the_monthly_email_uses_the_value_sections_headings(db, monkeypatch):

@@ -143,7 +143,7 @@ def test_asks_snapshot_registers_the_engines_bands_and_a_peer_claim_binds(db_pat
 
 
 def test_the_published_figure_in_asks_snapshot_is_a_fact(db_path):
-    rid = _rid(db_path, "Nonna", "italian")
+    rid = _rid(db_path, "Nonna", "italian", service_model="full_service")  # re-audit #4: the NRA figure is full-service only
     text, facts = ask_cavnar._intelligence_bundle(rid)
     assert "PUBLISHED INDUSTRY BENCHMARKS" in text and "34.2%" in text
     pub = [f for f in facts if (f.get("source") or {}).get("source_kind") == "published"]
@@ -198,7 +198,7 @@ def test_the_schedule_prompt_never_states_an_all_types_band_for_hours(db_path):
 
 
 def test_the_food_read_registers_the_published_food_cost_figure(db_path):
-    rid = _rid(db_path, "Trattoria Uno", "italian")
+    rid = _rid(db_path, "Trattoria Uno", "italian", service_model="full_service")  # re-audit #4
     ctx = inventory.food_read_context(rid, "prompt", {}, [])
     pub = [f for f in ctx.facts if f.kind == "benchmark" and (f.source or {}).get("source_kind")]
     assert pub and all(f.key.startswith("benchmark.food_cost_pct") for f in pub)
