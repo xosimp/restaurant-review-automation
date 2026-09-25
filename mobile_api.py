@@ -1003,6 +1003,27 @@ def mobile_dna(current_user):
     return jsonify(**payload), (200 if payload.get("ok") else 400)
 
 
+@mobile_bp.route("/benchmarks/card")
+@mobile_login_required
+def mobile_benchmarks_card(current_user):
+    """Twin of /api/benchmarks/card — the "How you compare" card
+    (benchmark_views.card), one body."""
+    import benchmark_views
+    payload = benchmark_views.card(current_user, request.args.get("module") or None)
+    return jsonify(**payload), (200 if payload.get("ok") else 400)
+
+
+@mobile_bp.route("/benchmarks/locations")
+@mobile_login_required
+def mobile_benchmarks_locations(current_user):
+    """Location to location (benchmark_views.location_compare) for the
+    phone's locations sheet — the group Home's table on the web, which
+    carries it inside /api/home/brief/group."""
+    import benchmark_views
+    payload = benchmark_views.location_compare(current_user)
+    return jsonify(**payload), (200 if payload.get("ok") else 400)
+
+
 @mobile_bp.route("/data-health")
 @mobile_login_required
 def mobile_data_health(current_user):
@@ -2028,9 +2049,24 @@ def mobile_menu_profitability(current_user):
     can't compute."""
     import inventory_ledger as _il
     try:
-        return jsonify(ok=True, **_il.menu_profitability(current_user["restaurant_id"]))
+        out = _il.menu_profitability(current_user["restaurant_id"])
     except Exception as e:
         return jsonify(ok=False, error=f"Couldn't work out menu margins: {e}"), 500
+    # Each dish's colour, decided here (Benchmarking #35; BM3-16, BM1-18):
+    # against the owner's food-cost target, else the top of the published
+    # band for the restaurant's type (the Benchmark Engine's `industry`),
+    # else nothing — neutral ink, never a band for another kind of
+    # restaurant. Both clients draw `cost_tone`; neither keeps a band.
+    import cogs as _cogs
+    try:
+        ref = _cogs.dish_reference(get_restaurant(current_user["restaurant_id"]))
+    except Exception as e:
+        print(f"[menu margins] no dish reference: {e}")
+        ref = None
+    for item in out.get("priced") or ():
+        item["cost_tone"] = _cogs.dish_tone(item.get("food_cost_pct"), ref)
+    out["cost_reference"] = ref
+    return jsonify(ok=True, **out)
 
 
 @mobile_bp.route("/food-cost/waste-sources")

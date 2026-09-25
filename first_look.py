@@ -133,11 +133,17 @@ def build(google_place_id, restaurant_id=None, deep=False):
             # "ahead of your own neighbourhood" that the Intel tab put behind.
             from competitor_intel_format import market_rating
             mk = market_rating(rivals)
-            if mk["market_rating_n"] >= MIN_COMPETITORS:
+            # The standing's one floor (competitor_intel_format.
+            # MARKET_MIN_MATCHED, Benchmarking #38): rivals matched on
+            # cuisine and price, the widened-radius fallback left out.
+            if mk["market_matched_n"] >= MIN_COMPETITORS:
                 out["neighbourhood"] = {
                     "count": mk["market_rating_n"],
+                    "matched": mk["market_matched_n"],
                     "avg_rating": mk["market_rating"],
                     "reviews": mk["market_rating_reviews"],
+                    "effective_reviews": mk["market_effective_reviews"],
+                    "radius_km": mk["market_radius_km"],
                     "basis": "weighted by each restaurant's review count",
                     "best": max(rivals, key=lambda c: float(c["rating"]))["name"],
                 }
@@ -169,17 +175,25 @@ def lines(look):
         avg = hood["avg_rating"]
         n = hood["count"]
         # The same standing rule as the Intel tab (competitor_intel_format.
-        # market_standing): "ahead" needs a real lead, not 0.1 of a star.
+        # market_standing): matched rivals only, and "ahead" or "behind"
+        # only beyond the gap's standard error (Benchmarking #38). The
+        # neighbourhood was built on the matched floor, so an older cached
+        # one without `matched` counts its rivals as matched.
         from competitor_intel_format import market_standing
-        st = market_standing({"own_rating": rating, "own_rating_basis": "google_all_time"},
-                             {"market_rating": avg})["standing"]
+        st = market_standing({"own_rating": rating, "own_rating_basis": "google_all_time",
+                              "own_rating_count": count},
+                             {"market_rating": avg, "market_matched_n": hood.get("matched", n),
+                              "market_effective_reviews": hood.get("effective_reviews", hood.get("reviews")),
+                              "market_radius_km": hood.get("radius_km")})["standing"]
+        radius = hood.get("radius_km")
+        where = f"within {radius:g} km of you" if radius else "nearest you"
         if st == "ahead":
-            out.append(f"The {n} comparable restaurants nearest you average {avg} — "
+            out.append(f"The {n} comparable restaurants {where} average {avg} — "
                        f"you are ahead of your own neighbourhood.")
         elif st == "behind":
-            out.append(f"The {n} comparable restaurants nearest you average {avg}. "
+            out.append(f"The {n} comparable restaurants {where} average {avg}. "
                        f"That gap is the first thing I will go after.")
-        else:
-            out.append(f"The {n} comparable restaurants nearest you average {avg} — "
+        elif st == "level":
+            out.append(f"The {n} comparable restaurants {where} average {avg} — "
                        f"you are level with them.")
     return out

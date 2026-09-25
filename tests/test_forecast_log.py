@@ -489,9 +489,12 @@ def test_recoverable_is_labelled_an_opportunity_with_its_basis():
 def test_the_benchmark_comment_matches_the_bands_the_code_uses():
     code = inspect.getsource(__import__("inventory").analyse_inventory)
     comment = code.split("# Waste rate against Cavnar's STARTING target")[1].split("purchases_window comes")[0]
-    for band in ("<=4%", "<=6%", "<=10%", "<=15%", ">15%"):
+    # Benchmarking #36: four bands against the owner's target T (else the
+    # 4-5% starting band) — this pinned the old five fixed cuts.
+    for band in ("<=T (4%) under target", "<=T+1 (6%) near target", "<=2T (10%) over", "well over target"):
         assert band in comment
-    for cut in ("waste_rate_pct <= 4", "waste_rate_pct <= 6", "waste_rate_pct <= 10", "waste_rate_pct <= 15"):
+    for cut in ("waste_rate_pct <= _lo", "waste_rate_pct <= _hi + WASTE_NEAR_PTS",
+                "waste_rate_pct <= _hi * WASTE_WELL_OVER_MULTIPLE"):
         assert cut in code
 
 
@@ -541,10 +544,14 @@ def test_every_surface_reads_one_market_average():
     assert mobile_api._market_rating(comps) == one
     assert "market_rating(rivals)" in _src("first_look.py")
     assert "_cif.market_rating(" in _src("hosted_dashboard.py")
-    # standing: a real lead, and never against an imported sample
+    # standing: a real lead, and never against an imported sample. Since
+    # Benchmarking #38 a standing also needs three rivals matched on cuisine
+    # and price (this pinned a standing on two unmatched ones).
     g = {"own_rating": 5.0, "own_rating_basis": "google_all_time"}
-    assert cif.market_standing(g, one)["standing"] == "level"                   # +0.2 is not a lead
-    assert cif.market_standing(dict(g, own_rating=5.2), one)["standing"] == "ahead"
+    assert cif.market_standing(g, one)["standing"] is None                      # two unmatched rivals
+    matched = dict(one, market_matched_n=3)
+    assert cif.market_standing(g, matched)["standing"] == "level"               # +0.2 is not a lead
+    assert cif.market_standing(dict(g, own_rating=5.2), matched)["standing"] == "ahead"
     assert cif.market_standing({"own_rating": 3.0, "own_rating_basis": "imported_sample"}, one)["standing"] is None
 
 

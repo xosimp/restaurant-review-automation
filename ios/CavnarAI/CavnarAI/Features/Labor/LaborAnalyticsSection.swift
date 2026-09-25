@@ -15,6 +15,8 @@ struct LaborAnalyticsSection: View {
             if let stats = laborStats {
                 moneyTiles(stats)
                 benchmarkBar(stats)
+                // How you compare — the Benchmark Engine's card (#23).
+                HowYouCompareCard(module: "labor")
                 LaborRibbonChart(points: ribbonPoints, target: stats.target,
                                  subtitle: viewModel.daily.isEmpty ? "8-week trend" : "last \(viewModel.daily.count) days")
                 WeekRadarChart(dowSummary: stats.dowSummary, target: stats.target,
@@ -173,14 +175,15 @@ struct LaborAnalyticsSection: View {
             // with its source and year (NS4 H3: no registry entry, no line).
             if let industry, let ind = stats.savingsBreakdown.industryPctText {
                 let diff = pct - industry
-                let isBelow = diff <= 0
-                // Green only when the read may carry a positive word at all.
-                let positive = Self.positiveAllowed(stats)
+                // Neutral ink either side (Benchmarking #34, BM3-15): the
+                // industry mark is a reference, not a verdict — it includes
+                // benefits and this figure is wages from shifts, so neither
+                // side of it is a win or a failure.
                 HomeMixedText.make(Self.industryLine(diff: diff, industryText: ind),
-                                   size: 14, color: isBelow ? (positive ? .cavnarGreen : .cavnarInk2) : .cavnarRed, numberWeight: 700)
+                                   size: 14, color: .cavnarInk2, numberWeight: 700)
                     .fixedSize(horizontal: false, vertical: true)
                 if let basis = stats.savingsBreakdown.laborIndustryBasis, !basis.isEmpty {
-                    HomeMixedText.make("Benchmark: \(basis).", size: 12.5, color: .cavnarInk3)
+                    HomeMixedText.make("Benchmark: \(basis). \(Self.industryDefinitionNote)", size: 12.5, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -191,6 +194,10 @@ struct LaborAnalyticsSection: View {
     /// "3.2 points below the 34.5% industry benchmark" — a difference of two
     /// percentages is points, and the benchmark is a published figure, not
     /// "other similar restaurants".
+    /// Why the industry mark is a reference and not a target: the published
+    /// figure is not the same measure as this restaurant's labor %.
+    static let industryDefinitionNote = "It includes benefits; yours is wages from your shifts, so it is a reference, not a like-for-like target."
+
     static func industryLine(diff: Double, industryText: String) -> String {
         let pts = String(format: "%.1f", abs(diff))
         return "Your labor is \(pts) point\(pts == "1.0" ? "" : "s") \(diff <= 0 ? "below" : "above") the \(industryText) industry benchmark"

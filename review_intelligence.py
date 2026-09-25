@@ -682,7 +682,13 @@ def competitor_benchmark(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         blob = json.loads(r.competitor_intel)
     except Exception:
         return {"available": False, "reason": "competitor intel is not readable"}
-    comps = [c for c in (blob.get("competitors") or []) if c.get("rating")]
+    # The local market as Intel defines it (competitor_intel_format — the
+    # engine's `market` kind lives there; Benchmarking #48): a rival the
+    # widened-radius fallback picked up (no cuisine, no price match) or one
+    # whose rating rests on a handful of reviews is not the owner's market.
+    import competitor_intel_format as _cif
+    comps = [c for c in (blob.get("competitors") or [])
+             if c.get("rating") and not c.get("rating_is_provisional") and _cif.market_member(c) != "widened"]
     # A "median" of two ratings is the average of two businesses (NS4 L4).
     if len(comps) < MIN_BENCHMARK_COMPETITORS:
         return {"available": False,
@@ -711,7 +717,14 @@ def competitor_benchmark(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     # and the model wrote that it trails its market. Intel made the same fix
     # (mobile_api own_rating). With no Google rating there is no gap.
     google = _f(getattr(r, "gbp_rating", None)) or None
+    # The standing Intel shows (market_standing: matched rivals only, a
+    # neutral tie inside the gap's standard error), so Reviews and Intel
+    # never disagree about where the owner stands.
+    _own = _cif.own_rating(google, getattr(r, "gbp_review_count", None))
+    _st = _cif.market_standing(_own, _cif.market_rating(blob.get("competitors") or []))
     return {
+        "standing": _st.get("standing"), "standing_label": _st.get("standing_label"),
+        "standing_basis": _st.get("standing_basis") or _st.get("standing_why_not"),
         "available": True,
         "our_rating_90d": ours_90d,
         "our_reviews_90d": (row["n"] if row else 0) or 0,

@@ -62,6 +62,8 @@ struct FoodCostAnalyticsSection: View {
                     // about or how soft the usage figures underneath were.
                     positionStrip(analytics)
                     statStrip(analytics)
+                    // How you compare — the Benchmark Engine's card (#23).
+                    HowYouCompareCard(module: "food_cost")
                     // The CFO read: what is DRIVING the cost, ranked by the
                     // dollars each driver carries, the stored root cause with
                     // its alternative and its confidence, and the month-end

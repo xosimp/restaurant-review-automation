@@ -916,3 +916,43 @@ Published posts contribute `dish_posts_28d`, `offer_posts_28d`,
 sales lift, occasion posts vs engagement, offer posts vs lift, weekly
 cadence vs lift. The former `specials_28d` feature is gone — it matched
 content types the generator never wrote.
+
+## The Benchmark Engine on the owner's screens (Benchmarking audit, workstream O, 9/24/26)
+
+Every comparison an owner sees on a screen now comes from `intelligence.engine`
+through `benchmark_views` (L2), which shapes and never compares:
+
+- **How you compare** (`benchmark_views.card`, `/api/benchmarks/card` + mobile
+  twin) on Labor, Food Cost, Reviews and Marketing, and a compact Home strip.
+  It says who (the engine's headline kind: peers → the restaurant's own
+  previous 13 weeks → the published figure), how many, as of when, the
+  comparison strength % (only for a band comparison; its Why? rows are the
+  engine's four strength dimensions), the standing per metric, and one Ask
+  action per metric the restaurant is behind on. Below the minimum it says
+  "Not enough restaurants like yours yet — here's how you compare to your own
+  last 13 weeks" and carries the engine's `why_not` — the self benchmark is the
+  headline until peers clear their floors (#18).
+- **Location to location** (`benchmark_views.location_compare`, in the group
+  Home and the phone's locations sheet): the engine's `location` kind, each
+  location first read against its own normal (the engine's `self`), then
+  against the median of the owner's other locations, a gap called only when
+  it is wider than the location's own noise band and the others' median one
+  combined. The group "strongest / weakest" (home_brief's group brief and
+  single-location portfolio line, reporter's group digest) is one rule,
+  `benchmark_views.rank_by_rating`: the platform's rating floor
+  (`thresholds.GROUP_RANK_MIN_REVIEWS` = `RATING_MIN_REVIEWS`), each location's
+  own-normal verdict, and a name only for a gap beyond 2 standard errors
+  (`thresholds.RATING_SIGMA`).
+- **Module helpers read the engine** (#48): `thresholds.labor_industry_benchmark`
+  and `cogs`'s food-cost band (`cogs._engine_industry_food_cost`, which also
+  feeds the dish colours `cogs.dish_reference`) read the engine's `industry`
+  comparison; `review_intelligence.competitor_benchmark` reads Intel's market
+  definition (`competitor_intel_format`, the engine's `market` kind). The
+  waste label (`inventory.analyse_inventory`) is a read against the owner's
+  target, not a comparison with other restaurants, so the engine does not
+  apply there; it now reads "Under / Near / Over / Well over target". No old
+  helper was left without callers.
+- **The local market standing** (`competitor_intel_format.market_standing`,
+  #38): at least 3 rivals matched on cuisine and price, the widened-radius
+  fallback out of the average, one venue capped at 500 reviews of weight, n
+  and radius said, and a symmetric neutral tie inside one standard error.

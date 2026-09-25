@@ -469,9 +469,13 @@ def accuracy(record) -> dict:
         basis = f"Not enough history yet — {measured} measured, needs {MIN_MEASURED}"
         if c_centre is not None:
             basis += f" ({r.get('prior_label') or 'other restaurants on Cavnar'}: {pi} of {pm} improved — not counted until your own are in)"
+        # cohort_label: the group the stand-in came from, by name, so a client
+        # never prefixes a generic "other restaurants on Cavnar" (BM1-22,
+        # Benchmarking #40).
         return {"pct": None, "basis": basis, "n": measured, "improved": improved,
                 "source": "cohort" if c_centre is not None else "none", "low": None, "high": None,
-                "lift": None, "prior": None}
+                "lift": None, "prior": None,
+                "cohort_label": (r.get("prior_label") or None) if c_centre is not None else None}
     prior_source = "do_nothing"
     if c_centre is not None and c_centre < centre:
         # Peers saw this kind do WORSE than chance: the prior may sit lower.
@@ -499,7 +503,8 @@ def accuracy(record) -> dict:
                      "untaken_improved": dn["untaken_improved"], "untaken_n": dn["untaken_n"],
                      "do_nothing_rate": round(dn["rate"], 3), "source": dn["source"]},
             "prior": {"source": prior_source, "centre": round(centre, 3), "weight": SHRINK_K,
-                      "cohort_measured": pm or None, "cohort_improved": pi if pm else None}}
+                      "cohort_measured": pm or None, "cohort_improved": pi if pm else None},
+            "cohort_label": (r.get("prior_label") or None) if prior_source == "cohort" else None}
 
 
 def recency(lag_days, grace_days, horizon_days):

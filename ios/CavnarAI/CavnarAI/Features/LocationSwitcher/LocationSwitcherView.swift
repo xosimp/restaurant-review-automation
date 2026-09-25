@@ -57,6 +57,21 @@ struct LocationSwitcherView: View {
                     .disabled(tappedName != nil)
                     .animation(.easeOut(duration: 0.25), value: tappedName)
                 }
+                // The group view on the phone: the owner's locations side by
+                // side on the Benchmark Engine's `location` kind (#19) —
+                // each against its own normal first, a gap only beyond noise.
+                if viewModel.locations.count > 1 {
+                    Section {
+                        LocationComparisonSection()
+                            .listRowBackground(Color.clear)
+                            .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+                    } header: {
+                        Text("HOW YOUR LOCATIONS COMPARE")
+                            .font(.cavnarBody(13, weight: 700))
+                            .tracking(1.4)
+                            .foregroundStyle(Color.cavnarInk3)
+                    }
+                }
             }
             .scrollContentBackground(.hidden)
             .overlay {

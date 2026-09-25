@@ -42,6 +42,8 @@ struct MarketingAnalyticsSection: View {
                         .cavnarCard()
                 }
                 attributionCard
+                // How you compare — the Benchmark Engine's card (#23).
+                HowYouCompareCard(module: "marketing")
             }
 
             if !viewModel.recentTopics.isEmpty {

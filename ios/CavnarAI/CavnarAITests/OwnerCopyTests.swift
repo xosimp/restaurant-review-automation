@@ -113,8 +113,10 @@ final class OwnerCopyTests: XCTestCase {
         }
         let industry = OwnerCopy.laborMoneyTiles(isLive: true, monthly: 0, annual: 0, vsIndustryMonthly: 900,
                                                  vsIndustryAnnual: 10800, industryText: "34.5%", periodDays: 14)
-        XCTAssertEqual(industry.first?.label, "Under 34.5% industry / mo")
-        XCTAssertTrue(industry.allSatisfy { !$0.label.lowercased().contains("advantage") && $0.tone != .good })
+        // Benchmarking #34: no "$ under industry" tile — the published figure
+        // includes benefits, this restaurant's labor is wages from shifts.
+        // (This used to pin "Under 34.5% industry / mo".)
+        XCTAssertTrue(industry.isEmpty)
     }
 
     func testSampleDataCarriesNoDollarsAndAZeroBenchmarkGapIsHidden() {

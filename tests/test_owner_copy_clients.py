@@ -139,7 +139,9 @@ def test_web_labor_money_is_a_gap_never_green_and_never_on_sample_data():
     assert 'class="x good stat-n"' not in s
     assert "{% if labor.is_live and savings_breakdown.labor_monthly > 0 %}" in s
     assert "Gap to target / mo" in s and "Per year · projected" in s
-    assert "labor.is_live and _ind and savings_breakdown.labor_vs_industry_monthly > 0" in s  # hidden at $0 and without a benchmark for the type
+    # Benchmarking #34: no "$ under industry" tile at all (this pinned its
+    # $0 / no-benchmark guard).
+    assert "labor.is_live and _ind and savings_breakdown.labor_vs_industry_monthly > 0" not in s
     assert "Overtime premium · " in s  # names its window
     # ...and not over stale shifts (Data Freshness #33): the registry's labor
     # source withholds the good tone too.

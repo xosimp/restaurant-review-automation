@@ -35,6 +35,9 @@ struct ReviewsAnalyticsSection: View {
                 }
                 .pickerStyle(.segmented)
 
+                // How you compare — the Benchmark Engine's card (#23).
+                HowYouCompareCard(module: "reviews")
+
                 // Raised above the analytics when the backend could not tie
                 // every figure in the AI passage back to this restaurant's
                 // own data — see ai_guard.verify_figures.

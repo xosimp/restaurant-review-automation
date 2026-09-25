@@ -144,6 +144,16 @@ struct HomeView: View {
                                     .belowFold(heroAppeared, delay: 0.13)
                             }
 
+                            // How you compare (Benchmarking #23): who the
+                            // restaurant is compared to and where it stands,
+                            // behind-first, each behind metric with its Ask.
+                            // Its own read; nothing when there is nothing
+                            // to compare.
+                            HomeBenchmarkStrip()
+                                .padding(.horizontal, 20)
+                                .padding(.top, 10)
+                                .belowFold(heroAppeared, delay: 0.14)
+
                             // The activity strip — what Cavnar AI is doing
                             // right now, rotating; tap for the feed. Shows
                             // nothing for an account with nothing armed.

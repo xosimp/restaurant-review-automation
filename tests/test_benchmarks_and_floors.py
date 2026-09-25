@@ -186,14 +186,16 @@ def test_both_clients_hide_the_industry_tiles_without_a_figure():
     dash = _read("templates", "dashboard.html")
     assert "labor_industry_pct if savings_breakdown.labor_industry_pct else 34.5" not in dash
     assert "{% set _ind = savings_breakdown.labor_industry_pct %}" in dash
-    assert "{% elif labor.is_live and _ind and savings_breakdown.labor_vs_industry_monthly > 0 %}" in dash
+    # Benchmarking #34: the "$ under industry" tiles are gone on both clients
+    # (this pinned the web's tile branch and the iOS tile guard).
+    assert "{% elif labor.is_live and _ind and savings_breakdown.labor_vs_industry_monthly > 0 %}" not in dash
     # L7: the verdict is against the owner's target, and the tile says so.
     assert "<span>Vs industry</span>" not in dash and "<span>Vs your target</span>" in dash
     sec = _read("ios", "CavnarAI", "CavnarAI", "Features", "Labor", "LaborAnalyticsSection.swift")
     assert "industryLow = 33.0" not in sec and "33–36%" not in sec
     assert "industryText: b.industryPctText" in sec
     oc = _read("ios", "CavnarAI", "CavnarAI", "Models", "OwnerCopy.swift")
-    assert "if vsIndustryMonthly > 0, let industryText, !industryText.isEmpty {" in oc
+    assert "if vsIndustryMonthly > 0, let industryText, !industryText.isEmpty {" not in oc
     vm = _read("ios", "CavnarAI", "CavnarAI", "Features", "Labor", "LaborViewModel.swift")
     assert "laborIndustryPct ?? 34.5" not in vm and "var industryPctText: String?" in vm
 
@@ -204,7 +206,9 @@ def test_food_cost_is_labelled_only_against_a_band_for_its_type():
     assert cogs.band_label(30.0) == (None, None)
     assert not hasattr(cogs, "INDUSTRY_BAND")
     fs = br.lookup("food_cost_pct", "italian")
-    assert cogs.band_label(30.0, bench=fs) == ("Within the industry band", "neutral")
+    # The label names its source kind (Benchmarking #37); this pinned the
+    # bare "industry band" for every kind of entry.
+    assert cogs.band_label(30.0, bench=fs) == ("Within the industry band (NRA 2025)", "neutral")
     assert cogs.band_label(30.0, target=31) == ("On target", "good")
 
 

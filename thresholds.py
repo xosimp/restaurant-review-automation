@@ -70,18 +70,32 @@ LABOR_INDUSTRY_MIN_DAYS = 7
 
 
 def labor_industry_benchmark(restaurant) -> dict | None:
-    """{pct, basis, inferred, entry}: the published labor median for this
-    restaurant's type, or None when the registry has no published entry
-    for it (no entry, no benchmark). The basis names the source and year
-    and says when the type was inferred rather than set."""
-    import benchmark_registry as _br
-    e = _br.for_restaurant("labor_pct", restaurant, published_only=True)
-    if not e or e.get("median") is None:
+    """{pct, basis, inferred, source_kind}: the published labor median for
+    this restaurant's type, or None when there is no PUBLISHED entry with a
+    stated median for it (no entry, no benchmark). The basis names the
+    source and year and says when the type was inferred rather than set.
+
+    Read from the Benchmark Engine's `industry` comparison (intelligence.
+    engine; Benchmarking #48), the one place a published figure is chosen
+    for a restaurant, so the labor tile, Ask and the How you compare card
+    quote the same entry. A rule of thumb never feeds a figure here. (The
+    `entry` key it used to carry had no reader.)"""
+    try:
+        from intelligence import engine as _engine
+        cm = _engine.compare(getattr(restaurant, "id", None), "labor_pct_28d", kinds=("industry",),
+                             restaurant=restaurant, rows=[])
+    except Exception as e:
+        print(f"[thresholds] labor industry benchmark unavailable: {e}")
         return None
-    basis = f"{e.get('median_basis') or 'published median'}, {e['median']:g}% ({_br.cite(e)})"
-    if e.get("inferred"):
+    ind = next((c for c in cm.get("comparisons") or () if c.get("kind") == "industry"), None)
+    if not ind or not ind.get("available") or ind.get("source_kind") != "published" or ind.get("median") is None:
+        return None
+    basis = f"{ind.get('median_basis') or 'published median'}, {float(ind['median']):g}% ({ind.get('source')})"
+    if ind.get("inferred"):
+        import benchmark_registry as _br
         basis += f"; {_br.INFERRED_NOTE}"
-    return {"pct": float(e["median"]), "basis": basis, "inferred": bool(e.get("inferred")), "entry": e}
+    return {"pct": float(ind["median"]), "basis": basis, "inferred": bool(ind.get("inferred")),
+            "source_kind": ind.get("source_kind")}
 
 
 def labor_vs_industry_monthly(overall_pct, total_sales, period_days, hours_are_estimated=False,
@@ -105,14 +119,45 @@ def labor_vs_industry_monthly(overall_pct, total_sales, period_days, hours_are_e
     return max(0, int(round((bench - pct) / 100 * monthly_sales)))
 
 
-# ── Group strongest / weakest (CA1 H13, fix I12) ─────────────────────────
-# A location is ranked "strongest" or "weakest" by rating only when at least
-# this many reviews stand behind its rating in the window — the group Home
-# brief, the single-location brief's portfolio line and the group digest all
-# read this one floor (they had 3 / none / none).
-GROUP_RANK_MIN_REVIEWS = 3
-
 # ── A night's rating (CA1 D6, fix I11) ───────────────────────────────────
 # The same floor metrics.measure("avg_rating") applies: under five reviews a
 # rating is a handful of guests, not a reading.
 RATING_MIN_REVIEWS = 5
+
+# ── Group strongest / weakest (CA1 H13, fix I12; Benchmarking #19) ───────
+# A location is ranked "strongest" or "weakest" by rating only when at least
+# this many reviews stand behind its rating in the window — the group Home
+# brief, the single-location brief's portfolio line and the group digest all
+# read this one floor. It was 3, below the platform's own rating floor, so a
+# location was named "weakest" on three reviews (BM1-19, BM3-18): it is now
+# that floor.
+GROUP_RANK_MIN_REVIEWS = RATING_MIN_REVIEWS
+
+# Spread of star ratings on the 1-5 scale, skewed hard to 4 and 5: a stated
+# assumption (the same 1.1 models.py uses for competitor rating moves), not
+# something estimated from data Cavnar does not hold. The standard error of
+# a mean rating on n reviews is about RATING_SIGMA / sqrt(n).
+RATING_SIGMA = 1.1
+
+
+def rating_se(n):
+    """The standard error of a mean rating on `n` reviews, or None with none."""
+    try:
+        n = int(n or 0)
+    except (TypeError, ValueError):
+        return None
+    return RATING_SIGMA / (n ** 0.5) if n > 0 else None
+
+
+def rating_gap_beyond_noise(a, n_a, b, n_b, z=1.0) -> bool:
+    """Whether two mean ratings differ by more than `z` standard errors of
+    their difference (review counts n_a, n_b). An unknown count is never
+    "beyond noise": a gap is called only when the volume behind it is known."""
+    try:
+        a, b = float(a), float(b)
+    except (TypeError, ValueError):
+        return False
+    se_a, se_b = rating_se(n_a), rating_se(n_b)
+    if se_a is None or se_b is None:
+        return False
+    return abs(a - b) > z * (se_a ** 2 + se_b ** 2) ** 0.5
