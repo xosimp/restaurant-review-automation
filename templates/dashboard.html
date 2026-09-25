@@ -659,6 +659,10 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none;box
 span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .cbtn.cbtn-inline.cf-pill{color:var(--cf-c);border-color:var(--paper3);height:auto}
 .cf-pill.good{--cf-c:var(--green)}.cf-pill.warn{--cf-c:var(--amber)}
+/* The pill's tip: short, and quick (a native title waits ~1s). */
+.cf-pill[data-tip]{position:relative}
+.cf-pill[data-tip]:after{content:attr(data-tip);position:absolute;right:0;bottom:calc(100% + 8px);z-index:30;white-space:nowrap;padding:6px 10px;border-radius:8px;background:var(--ink);color:var(--paper);font-family:'Apfel Grotezk',sans-serif;font-size:12.5px;font-weight:500;letter-spacing:0;text-transform:none;box-shadow:0 8px 22px rgba(0,0,0,.35);opacity:0;visibility:hidden;transform:translateY(3px);transition:opacity .12s ease .1s,transform .12s ease .1s,visibility 0s linear .22s;pointer-events:none}
+.cf-pill[data-tip]:hover:after,.cf-pill[data-tip]:focus-visible:after{opacity:1;visibility:visible;transform:none;transition-delay:.1s,.1s,0s}
 .cf-pill.cau,.cbtn.cbtn-inline.cf-pill.cau{border-color:var(--amber)}
 /* On a panel that is dark in both themes (the shift-quality panel): the
    dark palette's values, as the component's own tokens. */
@@ -2147,8 +2151,10 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
    size, face and tracking, with a thin rule between the two. */
 .hb-sh .k.rv2-kicks{display:flex;align-items:center;gap:0}
 .hb-sh .k.rv2-kicks .sep{display:inline-block;width:1px;height:11px;background:var(--hb-line);margin:0 10px}
-.hb-sh .k.rv2-kicks .rv2-kick-link{height:auto;padding:0;font:inherit;letter-spacing:inherit;text-transform:inherit;color:var(--ink3);background:none;border:0;box-shadow:none}
-.hb-sh .k.rv2-kicks .rv2-kick-link:hover{color:var(--ember);background:none;transform:none}
+.hb-sh .k.rv2-kicks .rv2-kick-link{height:auto;min-width:0;padding:0!important;margin:0!important;font:inherit;font-weight:inherit;letter-spacing:inherit;line-height:inherit;text-transform:inherit;color:var(--ember);background:none;border:0;border-radius:0;box-shadow:none}
+.hb-sh .k.rv2-kicks .rv2-kick-link:hover{background:none;transform:none;text-decoration:underline;text-underline-offset:3px}
+/* The rule sits the same 12px from both words. */
+.hb-sh .k.rv2-kicks .sep{margin:0 12px}
 .hb-sub .sep{color:var(--ink3);opacity:.5}
 /* The 3-second status under the greeting (density fix #1): "Last night ·
    ● Good day 78/100 · $8,420 net · +$420 vs budget", the dot and verdict in
@@ -2223,7 +2229,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-range{display:flex;gap:2px}
 .hb-range button{background:none;border:none;border-radius:999px;padding:5px 11px;font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:600;color:var(--ink3);cursor:pointer}
 .hb-range button.on{background-color:var(--hb-tint2);color:var(--ember)}
-.hb-hero svg{display:block;width:100%;height:190px;margin-top:30px;overflow:visible}
+.hb-hero svg{display:block;width:100%;height:190px;margin-top:64px;overflow:visible}   /* a peak (and its value tip) never meets the text above, 9/25/26 */
 .hb-hero .ax{display:flex;justify-content:space-between;font-size:11px;color:var(--ink3);margin-top:4px}
 /* signals row */
 .hb-sig{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;margin-top:34px;padding-top:24px;border-top:1px solid var(--hb-line)}
@@ -2477,6 +2483,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-ev+.rec-ans>.cbtn:first-child,.hb-focus .ft .rec-ans+.hb-ask{margin-left:10px;padding-left:12px;border-left:1px solid var(--hb-line);border-radius:0}
 .hb-focus .ft .rec-ans+.hb-ask{margin-left:0}
 .rec-ans-done{font-size:12.5px;color:var(--ink3);font-weight:500}
+.rec-ans.rec-ans-gone,.rec-ans-gone+.sep,.rec-line:has(.rec-ans-gone){display:none}
+.hb-focus .ft .rec-ans-gone+.hb-ask{border-left:0;padding-left:0}
 /* Why not? — the one reason picker behind every "Not for us" (rec-ROI #22):
    a recessed strip under the line it answers, six one-tap reasons, an
    optional note, Skip and Cancel. */
@@ -2531,7 +2539,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-tl .it .t .hb-tl-acts .rec-ans{margin-top:0}
 /* "Ask" centred on the line's first row of text (it sat ~4px high once the
    line's action moved under it, 9/25/26). */
-.hb-tl .it>.cbtn[data-ask]{margin-top:4px}
+.hb-tl .it>.cbtn[data-ask]{margin-top:2px}
 .hb-tl .it .t .hb-tl-acts .sep{display:inline-block;width:1px;height:18px;background:var(--hb-line);margin:0 14px 0 12px}
 /* the ledger: sentences with the count in Space Grotesk */
 .fc2-recipe{padding:10px 0;border-bottom:1px solid var(--paper2)}
@@ -2915,12 +2923,15 @@ svg:hover .hb-xh{opacity:1}
     // clause, and its confidence as a pill, not a second line). The label
     // and any caution ride on its title; a caution also rings it amber.
     if(o.pill){
-      var pt=n.pct==null?'\u2014':n.pct+'%',tip=esc(n.label+(n.reason?' \u2014 '+n.reason:'')+(n.caution?'. '+n.caution:''));
+      // A short tip (owner, 9/25/26 - the whole reason and caution was far too
+      // long): the label and the reason's first clause; Why? has the rest.
+      var r1=String(n.reason||'').split(/\s[\u2014\-]\s|;/)[0].replace(/^\s+|\s+$/g,'');if(r1.length>60)r1=r1.slice(0,57).replace(/\s+\S*$/,'')+'\u2026';
+      var pt=n.pct==null?'\u2014':n.pct+'%',tip=esc(n.label+(r1?' \u00b7 '+r1:''));
       var pc='cf-pill '+n.tone+(n.caution?' cau':'')+(o.cls?' '+esc(o.cls):'');
       if(n.dims)return '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm '+pc+'" data-conf-pct="'+(n.pct==null?'':n.pct)+'" data-explain="'+esc(panel(n))+'" data-explain-title="How sure is this?" data-explain-kicker="Confidence"'
         +(o.key?' data-explain-key="'+esc(o.key)+'" data-explain-surface="'+esc(o.surface||'home')+'" data-explain-module="'+esc(o.module||o.surface||'home')+'"':'')
-        +' title="'+tip+'" aria-label="'+esc(n.label)+' \u2014 why?"><span class="hb-num">'+pt+'</span></button>';
-      return '<span class="'+pc+'" data-conf-pct="'+(n.pct==null?'':n.pct)+'" title="'+tip+'"><span class="hb-num">'+pt+'</span></span>';
+        +' data-tip="'+tip+'" aria-label="'+esc(n.label)+' \u2014 why?"><span class="hb-num">'+pt+'</span></button>';
+      return '<span class="'+pc+'" data-conf-pct="'+(n.pct==null?'':n.pct)+'" data-tip="'+tip+'"><span class="hb-num">'+pt+'</span></span>';
     }
     var h='<div class="cf '+n.tone+(o.cls?' '+esc(o.cls):'')+'" data-conf-pct="'+(n.pct==null?'':n.pct)+'">'
       // A band from an older server has no percentage to draw, so no meter;
@@ -3848,7 +3859,7 @@ svg:hover .hb-xh{opacity:1}
     if(uw.length)netLine+='<div class="delta"><span>plus '+uw.length+' improvement'+(uw.length===1?'':'s')+' with no dollar figure</span></div>';
     var h='<div class="hb-lit-layer" aria-hidden="true"><i></i></div><div class="hd"><div><div class="hb-h3"><span>Measured results</span></div><div class="big'+(big<0?' neg':'')+'"><span id="hb-big" class="hb-num">$0</span><small>a month, measured'+(isNet?', net':'')+'</small></div>'+netLine+(vals.length>1?'<div class="delta hb-num'+(delta<0?' bad':'')+'">'+(delta>=0?'+':'−')+'$'+Math.abs(Math.round(delta)).toLocaleString()+'/mo <span>over the last '+rangeLabel+'</span></div>':'')+_hbValueFrom(v)+(v.caveat?'<div class="delta"><span>'+esc(v.caveat)+'</span></div>':'')+'</div>';
     h+='<div class="hb-range">'+['1M','3M','1Y'].map(function(r){return '<button class="'+(r===_hbRange?'on':'')+'" onclick="hbRange(\''+r+'\')">'+r+'</button>';}).join('')+'</div></div>';
-    if(vals.length>1){h+=glowLine(vals,1000,190,EMBER2,{pad:10,prefix:'$',labels:sel.map(function(p){return mdy(p.date);})});h+='<div class="ax hb-num"><span>'+mdy(sel[0].date)+'</span><span>'+mdy(sel[sel.length-1].date)+'</span></div>';}
+    if(vals.length>1){h+=glowLine(vals,1000,190,EMBER2,{pad:18,prefix:'$',labels:sel.map(function(p){return mdy(p.date);})});h+='<div class="ax hb-num"><span>'+mdy(sel[0].date)+'</span><span>'+mdy(sel[sel.length-1].date)+'</span></div>';}
     else h+='<div class="hb-empty" style="margin-top:14px">The curve starts on the second day of tracking.</div>';
     el.innerHTML=h;countUp(document.getElementById('hb-big'),Math.abs(big),big<0?'−$':'$');
   }
@@ -7024,7 +7035,7 @@ svg:hover .hb-xh{opacity:1}
   }
   function item(it){
     var a=ANSWER[it.answer]||[it.answer,''],cls=a[1];
-    var surf=(it.surfaces||[]).length?' · shown on '+esc((it.surfaces||[]).slice(0,3).join(', ').replace(/_/g,' ')):'';
+    var surf='';   // "shown on …" removed from each row (owner, 9/25/26)
     return '<div class="rh-it '+cls+'"><span class="dot"></span><div class="hd"><div class="t">'+prose(it.title||it.key)+'</div><div class="when">'+utcDay(it.first_shown_at)+'</div></div>'
       +'<div class="m"><span class="rh-ans '+cls+'">'+esc(a[0])+'</span><span>'+esc(MOD[it.module]||it.module||'')+surf+'</span>'+(it.answered_at&&it.answer!=='open'?'<span>'+(it.answer==='expired'?'expired ':(it.answer==='superseded'?'replaced ':(it.answer==='snoozed'?'snoozed ':'answered ')))+utcDay(it.answered_at)+'</span>':'')+(it.implemented_at&&it.answer!=='implemented'?'<span>change made '+utcDay(it.implemented_at)+'</span>':'')+'</div>'
       +reasonLine(it)+result(it)+'</div>';
@@ -7140,6 +7151,15 @@ svg:hover .hb-xh{opacity:1}
 .rv-diag-more>summary::-webkit-details-marker{display:none}
 .rv-diag-more>summary:after{content:'\203A';font-size:17px;line-height:1;font-weight:700;transition:transform .15s ease}
 .rv-diag-more[open]>summary:after{transform:rotate(90deg)}
+/* More detail (owner, 9/25/26): headings in sand (--ink3), lines in the
+   normal text colour at the cause's size, even room between each. */
+.rv-diag-more[open]>summary{margin-bottom:6px}
+.rv-diag-more .rv-diag-row{gap:5px;margin-top:16px}
+.rv-diag-more .rv-diag-row .k{font-size:11.5px;color:var(--ink3);letter-spacing:.12em}
+.rv-diag-more .rv-diag-row .v,.rv-diag-more .rv-diag-row.alt .v{font-size:16.5px;line-height:1.55;color:var(--ink)}
+.rv-diag-more .rv-diag-ev{margin-top:4px}
+/* Room between the diagnosis card and How you compare under it. */
+.rv-diag+section.bm-card,#review-diagnosis+section.bm-card,#review-diagnosis+.bm-card{margin-top:18px}
 .rv-diag-bd{padding:14px 16px;display:flex;flex-direction:column;gap:13px}
 .rv-diag-row{display:flex;flex-direction:column;gap:3px}
 .rv-diag-row .k{font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
@@ -7208,6 +7228,8 @@ svg:hover .hb-xh{opacity:1}
    just moving the page. Ember to match the rest of the motion language. */
 @keyframes rv2JumpFlash{0%{background:var(--hb-tint2)}100%{background:transparent}}
 .rv2-jump-flash{animation:rv2JumpFlash 1.8s ease}
+.rv2-spot{position:relative;border-radius:14px;box-shadow:0 0 0 2px var(--ember),0 0 0 6px color-mix(in srgb,var(--ember) 18%,transparent),0 18px 40px -20px color-mix(in srgb,var(--ember) 55%,transparent);transition:box-shadow .3s ease}
+.rv2-spot-tag{position:absolute;top:-11px;left:18px;z-index:2;font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--paper);background:var(--ember);padding:3px 10px;border-radius:999px;box-shadow:0 6px 16px -6px var(--ember)}
 .rv2-topics{display:flex;flex-direction:column;margin-top:12px}
 .rv2-topic{display:grid;grid-template-columns:1fr 130px 40px;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--hb-line2);background:none;border-left:none;border-right:none;border-bottom:none;font-family:inherit;text-align:left;cursor:pointer;color:var(--ink);font-size:14px;border-radius:4px}
 .rv2-topic:first-child{border-top:none}
@@ -13710,13 +13732,16 @@ function recAnswer(btn,extra){
   for(var i=0;i<all.length;i++)all[i].disabled=true;
   fetch('/api/recs/event',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(apiJson).then(function(d){
     if(!d||!d.ok){for(var j=0;j<all.length;j++)all[j].disabled=false;if(picker)picker.unlock();if(typeof toast==='function')toast((d&&d.error)||'Couldn\'t save that','error');return;}
-    if(picker)picker.close();
+    if(picker){picker._toasted=1;picker.close();}
     var also=(btn.getAttribute('data-rec-also')||'').split('|');
     for(var a=0;a<also.length;a++){if(!also[a]||also[a]===key)continue;
       var ab={key:also[a],event:ev,surface:body.surface,module:body.module};if(body.kind)ab.kind=body.kind;
       if(body.reason_code)ab.reason_code=body.reason_code;if(body.reason)ab.reason=body.reason;
       fetch('/api/recs/event',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(ab)}).catch(function(){});}
-    if(box){box.style.display='';box.innerHTML='<span class="rec-ans-done">'+recEsc(recAnswerSentence(ev,d))+'</span>';}
+    // The answer is said in a green toast and the buttons go (owner,
+    // 9/25/26) - no sentence left inside the card.
+    if(box){box.innerHTML='';box.classList.add('rec-ans-gone');}
+    if(typeof toast==='function')toast(recAnswerSentence(ev,d),'success');
     /* The panels keep a five-minute session copy; an answered line must not
        come back from it. */
     cavDel('review_insight');cavDel('mkt_brief');cavDel('labor_insight');
@@ -13990,7 +14015,11 @@ function renderReviewDiagnosis(d){
   var ids=dg.evidence_review_ids||[];
   if(ids.length){
     var bl='';
-    for(var j=0;j<ids.length;j++){bl+='<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-review-id="'+ids[j]+'">Review #'+ids[j]+'</button>';}
+    // Named by who wrote it and the stars (owner, 9/25/26 - "#9934" means
+    // nothing on a page that never numbers reviews), from the card already
+    // on the page; an unloaded one reads "A review".
+    for(var j=0;j<ids.length;j++){var rc=document.getElementById('rc-'+ids[j]),aw=rc&&rc.querySelector('.rv2-who b'),au=aw?(aw.textContent||'').replace(/^\s+|\s+$/g,''):'',rt=rc&&rc.getAttribute('data-rating');
+      bl+='<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-review-id="'+ids[j]+'">'+(au?_rvEsc(au)+(rt?' \u00b7 '+_rvEsc(rt)+'\u2605':''):'A review')+'</button>';}
     more+='<div class="rv-diag-row"><div class="k">Reviews this rests on</div><div class="rv-diag-ev">'+bl+'</div></div>';
   }
   h+='<details class="rv-diag-more"><summary>More detail</summary>'+more+'</details>';
@@ -14451,12 +14480,25 @@ function clearFilters(){
 // two chart pills scroll to their own chart, the two inbox pills set the
 // matching filter pill, scroll to the first matching review and flash it,
 // same as filterByTopic() already does for the topic heatmap.
+// The review a jump landed on stays marked (owner, 9/25/26 - a 1.8s flash
+// was gone before the scroll settled): an ember ring and a "The review you
+// opened" tag, until the next jump, a click elsewhere, or twelve seconds.
+var _rvSpotT=null;
+function _rvSpotClear(){
+  var o=document.querySelectorAll('.rv2-spot');for(var i=0;i<o.length;i++){o[i].classList.remove('rv2-spot');var t=o[i].querySelector('.rv2-spot-tag');if(t)t.parentNode.removeChild(t);}
+  clearTimeout(_rvSpotT);
+}
 function _rvFlashJump(el){
   if(!el) return;
+  _rvSpotClear();
   el.classList.remove('rv2-jump-flash');
   void el.offsetWidth;
-  el.classList.add('rv2-jump-flash');
+  el.classList.add('rv2-jump-flash','rv2-spot');
+  var tag=document.createElement('div');tag.className='rv2-spot-tag';tag.textContent='The review you opened';
+  el.insertBefore(tag,el.firstChild);
   setTimeout(function(){ el.classList.remove('rv2-jump-flash'); }, 1800);
+  _rvSpotT=setTimeout(_rvSpotClear,12000);
+  setTimeout(function(){document.addEventListener('click',function once(e){if(!el.contains(e.target)){_rvSpotClear();document.removeEventListener('click',once,true);}},true);},400);
 }
 function reviewsPillJump(kind){
   if(kind==='rating'||kind==='rr'){
