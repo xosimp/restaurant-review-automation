@@ -264,6 +264,8 @@ def test_the_waste_alert_counts_every_flagged_item(db_path, monkeypatch):
     analysis = {"waste_items": items[:6], "waste_items_total": 450.0, "waste_items_count": 9}
     monkeypatch.setattr(inventory, "analysis_for", lambda rid_: ([{"item": "x"}], True, analysis))
     monkeypatch.setattr(notify, "_waste_alert_worsened", lambda *a, **k: True)
+    # Counts current (the gate has its own test, DH4-16).
+    monkeypatch.setattr(notify, "_food_source", lambda *a, **k: (True, {"state": "current"}))
     fired = []
     monkeypatch.setattr(notify, "raise_alert", lambda rid_, t, sms, subj, lines=None, **k: fired.append(
         (t, sms, lines, k.get("value"))))

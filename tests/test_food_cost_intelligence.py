@@ -527,9 +527,14 @@ def test_the_projection_is_labelled_a_forecast(db_path, monkeypatch):
     monkeypatch.setattr(cogs, "build_food_cost_pct",
                         lambda r, days=28, db_path=None, today=None: {
                             "ok": True, "cogs": 18000.0, "pct": 30.0, "target": 28.0})
+    # A current labor period: prime cost now refuses an undated or stale
+    # one (DH1-3), so the fixture carries the period the analysis covers.
+    _end = (date.today() - timedelta(days=1)).isoformat()
+    _start = (date.today() - timedelta(days=28)).isoformat()
     monkeypatch.setattr("labor.analyse_shifts_for_restaurant",
                         lambda r: {"is_live": True, "total_sales": 60000.0,
-                                   "overall_labor_pct": 30.0})
+                                   "overall_labor_pct": 30.0,
+                                   "date_range": {"start": _start, "end": _end, "days": 28}})
     out = fci.profitability_projection(rid, db_path=db_path)
     assert out["available"] is True
     assert out["claim_kind"] == "forecast"
@@ -636,6 +641,8 @@ def test_a_forecast_is_stored_and_later_scored(db_path):
     last_week = date.today() - timedelta(days=7)
     fci.record_forecast(rid, "waste_week", last_week.isoformat(), 400.0, basis="test", db_path=db_path)
     _snapshot(db_path, rid, days_ago=7, waste=500.0)
+    # Waste was logged that week: a week with none is unscorable (DH3-15).
+    _event(db_path, rid, _ingredient(db_path, rid, "Ribeye"), "waste", 2.0, days_ago=7)
     out = fci.score_forecasts(rid, db_path=db_path)
     assert out["scored"] == 1
     conn = models.get_conn(db_path)

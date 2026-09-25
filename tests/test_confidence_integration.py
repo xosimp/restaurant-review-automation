@@ -177,6 +177,11 @@ def test_h8_a_weekly_forecast_is_scored_by_the_nightly_pass(db):
                "VALUES (?, 'post', ?, ?, ?)", (rid, f"p{i}", reach, f"2026-08-1{i + 1} 12:00:00"))
     assert forecast_log.restaurants_due(today=date(2026, 8, 12), db_path=db) == []      # the week is open
     assert rid in forecast_log.restaurants_due(today=date(2026, 8, 20), db_path=db)
+    # The nightly metrics sync refreshed reach after the week closed — reach
+    # is unscorable while it is failing or before it has (DH3-15).
+    _x(db, "INSERT INTO job_cursors (key, value) VALUES (?, ?)",
+       (f"metrics_sync:{rid}", json.dumps({"last_attempt_at": "2026-08-17 03:00:00",
+                                           "last_ok_at": "2026-08-17 03:00:00", "error": None})))
     assert forecast_log.score_due(rid, today=date(2026, 8, 20), db_path=db)["scored"] == 1
     row = forecast_log.frozen(rid, "marketing_reach_week", date(2026, 8, 12), db_path=db)
     assert row["actual"] == 400.0 and row["error_pct"] == 25.0

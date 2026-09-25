@@ -2897,6 +2897,23 @@ def _dish_line(dishes) -> str:
     return "Dishes it hits: " + "; ".join(parts) + (f" and {more} more" if more > 0 else "") + "."
 
 
+def _food_source(rid, key, db_path=DB_PATH):
+    """(ok, state) for a food alert's source: ok when the freshness registry
+    reads it current or aging with no error — never stale, unknown or
+    failing (DH4-16, DH3-4). An unreadable registry is not ok: an alert
+    that cannot say its data is current does not go out."""
+    try:
+        import data_freshness as _df
+        r = models.get_restaurant(rid, db_path=db_path)
+        s = _df.source_state(r, key, db_path=db_path) if r is not None else None
+    except Exception as e:
+        print(f"[notify] {key} freshness unreadable rid={rid}: {e}")
+        return False, None
+    if not s:
+        return False, None
+    return (s.get("state") in ("current", "aging") and not s.get("error")), s
+
+
 def check_extra_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
     """The two daily triggers added by the settings audit — food waste and
     an AI-visibility drop — run right after check_daily_alerts(). Same
@@ -2945,7 +2962,15 @@ def check_extra_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                 # restaurants that have no inventory connected.
                 from inventory import analysis_for
                 items, is_live, analysis = analysis_for(rid)
-                waste_items = (analysis or {}).get("waste_items") or [] if (items and is_live) else []
+                # Only on current counts (DH4-16): the waste rate and the
+                # items it flags rest on the counted stock, and a stale or
+                # uncounted inventory is a reason to count, not a push. The
+                # week's waste itself is summed from dated waste events
+                # (inventory_ledger.waste_in_window, DH1-1), never the
+                # undated cached rollup.
+                inv_ok, _inv_state = _food_source(rid, "inventory", db_path)
+                waste_items = ((analysis or {}).get("waste_items") or []
+                               if (items and is_live and inv_ok) else [])
                 flagged = [x for x in waste_items if float(x.get("waste_cost") or 0) > 0]
                 # The FULL totals, never the display slice: waste_items is the
                 # top 6, and summing it read "$345 of waste flagged" where the
@@ -2961,10 +2986,12 @@ def check_extra_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                 # what was last alerted on.
                 if (n_flagged >= 3 or total >= 150) and _waste_alert_worsened(rid, total, db_path=db_path):
                     top = ", ".join(x.get("item", "?") for x in flagged[:3])
+                    span = (f"{analysis.get('week_start')}–{analysis.get('week_end')}"
+                            if analysis.get("week_start") and analysis.get("week_end") else "this week")
                     _fire("food_waste",
-                          f"Cavnar AI: ${total:,.0f} of waste flagged this week at {name} ({top}).",
+                          f"Cavnar AI: ${total:,.0f} of waste logged {span} at {name} ({top}).",
                           f"Food waste flagged — {name}",
-                          [f"${total:,.0f} of waste across {n_flagged} items this week.",
+                          [f"${total:,.0f} of waste across {n_flagged} items, logged {span}.",
                            f"Biggest: {top}.", "Open Food Cost to see the breakdown."],
                           value=total)
             except Exception as e:
@@ -2990,6 +3017,9 @@ def check_extra_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                 # one nobody counted (inventory.analysis_for marks it
                 # count_stale) — that is a reason to count, not a push
                 # (CA1 N4/F21, CA3 F14).
+                # count_stale is each item's OWN count (DH3-3): a recount of
+                # lettuce today no longer makes a 40-day-old chicken count
+                # current.
                 crit = [x for x in crit if not x.get("count_stale") and not x.get("count_discrepancy")]
                 # One recommendation per item ("stock_low:Salmon"): an item
                 # the owner already answered is left out, the rest still go.
@@ -3016,7 +3046,13 @@ def check_extra_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
             try:
                 from inventory import load_inventory_for_restaurant, compute_item_trends, build_price_watch
                 _pw_items, _pw_live = load_inventory_for_restaurant(rid)
-                watch = build_price_watch(compute_item_trends(rid, _pw_items)) if (_pw_items and _pw_live) else []
+                # A price climb is news only on a recent invoice (DH3-4): a
+                # five-week-old increase is not texted as today's. The
+                # `prices` source dates the newest applied invoice or priced
+                # delivery; the alert names it.
+                prices_ok, prices_state = _food_source(rid, "prices", db_path)
+                watch = (build_price_watch(compute_item_trends(rid, _pw_items))
+                         if (_pw_items and _pw_live and prices_ok) else [])
                 big = [w for w in watch if w.get("is_big_8") and (w.get("change_pct") or 0) >= 5]
                 quiet = silenced_keys(rid, db_path)
                 big = [w for w in big if alert_rec("price_spike", subject=w["item"])["key"] not in quiet]
@@ -3025,12 +3061,19 @@ def check_extra_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                     exposure, dishes = _price_spike_impact(rid, top["item"])
                     money = f" — about ${exposure:,.0f}/month" if exposure else ""
                     dish_line = _dish_line(dishes)
+                    ps = prices_state or {}
+                    seen = ps.get("as_of")
+                    seen_word = ("invoice" if ps.get("last_invoice_iso") and
+                                 ps.get("as_of_iso") == ps.get("last_invoice_iso") else "priced delivery")
+                    seen_line = f"Price as of the last {seen_word}, {seen}." if seen else ""
                     _fire("price_spike",
-                          f"Cavnar AI: {top['item']} is up {abs(top['change_pct']):.0f}% at {name}{money}."
+                          f"Cavnar AI: {top['item']} is up {abs(top['change_pct']):.0f}% at {name}{money}"
+                          + (f" (last {seen_word} {seen})" if seen else "") + "."
                           + (f" Hits {', '.join(d['dish'] for d in dishes[:2])}." if dishes else ""),
                           f"Ingredient price climbing — {name}",
                           [f"{top['item']} moved from ${top['old_price']:.2f} to ${top['new_price']:.2f}"
                            f" ({abs(top['change_pct']):.0f}%).",
+                           seen_line,
                            (f"At what you use, that is about <strong>${exposure:,.0f} a month</strong>."
                             if exposure else ""),
                            dish_line,

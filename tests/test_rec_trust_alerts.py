@@ -225,6 +225,12 @@ def test_the_price_spike_alert_says_the_monthly_exposure_and_the_dishes_it_hits(
     import inventory, food_cost_intelligence, menu_intelligence
     rid = _rid(db_path)
     update_restaurant(rid, {"alert_food_waste": 1}, db_path=db_path)
+    # A recent applied invoice: the price alert needs one (DH3-4).
+    inv_day = (date.today() - timedelta(days=2)).isoformat()
+    c = get_conn(db_path)
+    c.execute("INSERT INTO invoice_imports (restaurant_id, supplier, invoice_date, applied_at) VALUES (?,?,?,?)",
+              (rid, "Sysco", inv_day, inv_day + " 12:00:00"))
+    c.commit(); c.close()
     monkeypatch.setattr(inventory, "analysis_for", lambda *a, **k: ([], False, {}))
     monkeypatch.setattr(inventory, "load_inventory_for_restaurant", lambda *a, **k: ([{"item": "Salmon"}], True))
     monkeypatch.setattr(inventory, "compute_item_trends", lambda *a, **k: [])

@@ -334,7 +334,7 @@ def _inventory_context(restaurant_id):
     reorder_names = ", ".join(x["item"] for x in reorder) or "none"
     return (
         "FOOD COST\n"
-        f"- Weekly waste cost: ${a['total_waste_cost_week']:,.0f}\n"
+        f"- Waste logged {a.get('week_start', '')}–{a.get('week_end', '')}: ${a['total_waste_cost_week']:,.0f}\n"
         f"- Projected monthly waste: ${a['monthly_waste_projection']:,.0f} (a projection from one week's waste, not a month measured)\n"
         f"- Recoverable waste (above each category's tolerance): ${float(a.get('recoverable_monthly') or 0):,.0f} a month — "
         f"an opportunity projected from one week, not money saved\n"

@@ -217,13 +217,27 @@ def frozen(restaurant_id: int, kind: str, period_of, db_path: str = DB_PATH):
 # ── the actuals, one resolver per kind ──────────────────────────────────────
 
 def _waste_actual(restaurant_id, start, end, row, db_path):
+    """The week's waste from its snapshot — or None (unscorable) when no
+    waste event was logged in the week at all (DH3-15). A week nobody
+    logged is not a $0 week: scored as 0 it read as a large miss, and the
+    accuracy record then withheld future forecasts for the wrong reason. A
+    snapshot with no waste figure is unscorable too, never 0."""
+    conn = get_conn(db_path)
+    try:
+        logged = conn.execute(
+            "SELECT COUNT(*) AS n FROM ingredient_stock_events WHERE restaurant_id=? AND event_type='waste' "
+            "AND event_date BETWEEN ? AND ?", (restaurant_id, start.isoformat(), end.isoformat())).fetchone()
+    finally:
+        conn.close()
+    if not logged or not int(logged["n"] or 0):
+        return None
     from waste_trend import load_waste_history
     weeks, _t = load_waste_history(restaurant_id, None, db_path=db_path,
                                    since=start.isoformat(), until=end.isoformat())
     for w in weeks:
         try:
             if week_bounds(w["week_end"])[1] == end:
-                return _f(w.get("waste"), 0.0)
+                return None if w.get("waste") is None else _f(w.get("waste"), 0.0)
         except Exception:
             continue
     return None
@@ -248,7 +262,29 @@ def _rating_actual(restaurant_id, start, end, row, db_path):
     return _f(v)
 
 
+def _reach_sync_ok(restaurant_id, end, db_path):
+    """True when the nightly Meta metrics sync (scheduler.metrics_sync_state)
+    has succeeded since `end` and is not failing — so the stored reach for
+    the week is the refreshed figure, not whatever was cached when the sync
+    stopped (DH3-15). A deliberate function-scope upward import, as in
+    data_freshness._metrics_sync: the scheduler owns the key it writes."""
+    try:
+        import scheduler
+        from time_utils import parse_stamp
+        st = scheduler.metrics_sync_state(restaurant_id, db_path=db_path) or {}
+    except Exception:
+        return False
+    if not st or st.get("error"):
+        return False
+    ok = parse_stamp(st.get("last_ok_at"))
+    return ok is not None and ok.date() > end
+
+
 def _reach_actual(restaurant_id, start, end, row, db_path):
+    """The week's summed post reach — None (unscorable) while the metrics
+    sync is failing or has not succeeded since the week closed (DH3-15)."""
+    if not _reach_sync_ok(restaurant_id, end, db_path):
+        return None
     conn = get_conn(db_path)
     try:
         r = conn.execute(

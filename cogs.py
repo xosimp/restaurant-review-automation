@@ -38,6 +38,31 @@ DEFAULT_WINDOW_DAYS = 28
 SNAPSHOT_TOLERANCE_DAYS = 10
 
 
+def local_today(restaurant_id):
+    """The restaurant's own calendar date — the day boundary of every COGS
+    window and of "through yesterday" (DH1-14). On a UTC host the server's
+    date.today() is tomorrow after 7pm Central, so "yesterday" was local
+    today, the archive never spanned it, and every evening load fell
+    through to a live POS call — the traffic RPOWER asked us not to send."""
+    try:
+        from time_utils import restaurant_now_by_id
+        return restaurant_now_by_id(restaurant_id).date()
+    except Exception:
+        return date.today()
+
+
+def last_delivery_date(restaurant_id, db_path=None):
+    """ISO date of the newest logged delivery (receiving event), or None."""
+    from models import get_conn, DB_PATH
+    conn = get_conn(db_path or DB_PATH)
+    try:
+        row = conn.execute("SELECT MAX(event_date) AS d FROM ingredient_stock_events "
+                           "WHERE restaurant_id=? AND event_type='receiving'", (restaurant_id,)).fetchone()
+    finally:
+        conn.close()
+    return str(row["d"])[:10] if row and row["d"] else None
+
+
 def _f(v, default=0.0):
     try:
         return float(v)
@@ -125,7 +150,7 @@ def _archived_net_sales(restaurant_id, start, end, today=None):
         d1 = date.fromisoformat(str(end)[:10])
     except ValueError:
         return None
-    yesterday = (today or date.today()) - timedelta(days=1)
+    yesterday = (today or local_today(restaurant_id)) - timedelta(days=1)
     if d1 > yesterday:
         d1 = yesterday
     if d1 < d0:
@@ -237,7 +262,7 @@ def net_sales_in_window(restaurant_id, start, end):
         return None, "POS reported no sales for this window"
     try:
         d0 = date.fromisoformat(str(start)[:10])
-        d1 = min(date.fromisoformat(str(end)[:10]), date.today() - timedelta(days=1))
+        d1 = min(date.fromisoformat(str(end)[:10]), local_today(restaurant_id) - timedelta(days=1))
     except ValueError:
         return None, "window dates unreadable"
     if d1 >= d0:
@@ -294,7 +319,7 @@ def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, t
     from models import get_restaurant
     from waste_trend import load_waste_history
 
-    today = today or date.today()
+    today = today or local_today(restaurant_id)
     end = today
     start = today - timedelta(days=days - 1)
 
@@ -336,11 +361,21 @@ def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, t
         })
         closing = None
 
+    # COGS rests on the deliveries logged in the window: with none, food
+    # cost % would read opening − closing alone and look excellent exactly
+    # when the owner stopped logging deliveries (DH3-4). Withheld, naming
+    # the last delivery that was logged.
     purchases, n_receipts = purchases_in_window(restaurant_id, start, end, db_path=db_path)
+    last_delivery = None
     if n_receipts == 0:
+        try:
+            last_delivery = last_delivery_date(restaurant_id, db_path=db_path)
+        except Exception:
+            last_delivery = None
         missing.append({
             "component": "purchases",
-            "why": "no deliveries were recorded in this window",
+            "why": (f"deliveries not logged since {_mdy(last_delivery)}" if last_delivery
+                    else "no deliveries have been logged"),
         })
 
     net_sales, sales_why = net_sales_in_window(restaurant_id, start, end)
@@ -358,6 +393,7 @@ def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, t
         "closing": closing, "closing_date": closing_day,
         "purchases": purchases if n_receipts else None,
         "purchase_events": n_receipts,
+        "last_delivery": last_delivery,
         "net_sales": net_sales,
         "target": target,
         "window_days": days,

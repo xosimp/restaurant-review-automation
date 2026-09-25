@@ -62,7 +62,8 @@ _LOCK = threading.Lock()
 # What an owner calls each source in a status line.
 OWNER_LABEL = {
     "pos": "POS sales", "labor": "Shifts", "sales": "Sales", "reviews": "Reviews",
-    "inventory": "Inventory counts", "purchases": "Deliveries", "marketing": "Marketing metrics",
+    "inventory": "Inventory counts", "purchases": "Deliveries", "waste": "Waste log", "prices": "Prices",
+    "marketing": "Marketing metrics",
     "visibility": "AI visibility", "competitor": "Competitors", "weather": "Weather",
     "dsr": "Daily report",
 }
@@ -518,6 +519,8 @@ def _connect_hint(key) -> str:
             "reviews": "Connect Google in Account → Connections",
             "inventory": "Count your inventory on Food Cost",
             "purchases": "Log a delivery on Food Cost",
+            "waste": "Log waste on Food Cost",
+            "prices": "Apply a supplier invoice on Food Cost",
             "marketing": "Connect Instagram or Facebook in Account → Connections",
             "competitor": "Refresh competitors on Intel",
             "visibility": "Run an AI visibility check on Intel",

@@ -106,7 +106,14 @@ def count_freshness(restaurant_id, ingredient_ids=None, db_path=DB_PATH, today=N
     quantity depends on its own count), or the restaurant's newest count when
     no ids are given. Never counted is stale."""
     from datetime import date as _date
-    today = today or _date.today()
+    if today is None:
+        # The restaurant's own date, the rule inventory.analysis_for uses
+        # for the same counts (DH1-14).
+        try:
+            from time_utils import restaurant_now_by_id
+            today = restaurant_now_by_id(restaurant_id).date()
+        except Exception:
+            today = _date.today()
     conn = get_conn(db_path)
     try:
         if ingredient_ids:

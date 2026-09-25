@@ -219,7 +219,7 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
                           # another period: the footer never calls it
                           # measured (T3, B4 M8).
                           "claim_kind": pp.get("claim_kind") or "forecast",
-                          "text": f"Prime cost month to date: {pp['prime_cost_pct']:.1f}% of sales{vs}.",
+                          "text": f"Prime cost month to date: {pp['prime_cost_pct']:.1f}% of sales{vs}" + (f" ({pp['labor_from']})." if pp.get("labor_from") else "."),
                           "ask": "What's driving my prime cost this month?"})
 
     # ── the one thing ──

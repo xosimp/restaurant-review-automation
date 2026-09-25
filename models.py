@@ -847,6 +847,10 @@ def ensure_columns(db_path: str = DB_PATH):
         # this keeps the discrepancy visible so the item is flagged for a
         # count instead of reading "critically low" (CA3 F14).
         ("ingredients", "count_discrepancy_qty", "REAL"),
+        # When inventory_ledger.recompute_rollups last refreshed this row's
+        # cached figures (UTC). waste_last_week is only as current as this;
+        # "waste this week" is read from dated events (DH1-1).
+        ("ingredients", "rollup_at", "TEXT"),
         # When is_demo was turned off (admin). The seeded history stays in
         # place — never hard-deleted — and the restaurant is kept out of
         # cross-restaurant learning until every feature window has rolled
