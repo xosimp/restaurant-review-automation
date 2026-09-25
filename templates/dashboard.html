@@ -4985,6 +4985,7 @@ svg:hover .hb-xh{opacity:1}
 .dr-note b{color:var(--ink2);font-weight:600}
 #panel-dsr .hb-stat.bad .v{color:var(--hb-bad)}
 #panel-dsr .hb-stat.good .v{color:var(--hb-good)}
+#panel-dsr .hb-stat.warn .v{color:var(--hb-warn)}
 #panel-dsr .hb-stats{margin-top:0}
 .dr-hero{margin-bottom:18px}
 .dr-hero-top{display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap}
@@ -5161,6 +5162,10 @@ svg:hover .hb-xh{opacity:1}
   function tile(k,v,s,cls){return '<div class="hb-stat'+(cls?' '+cls:'')+'"><div class="k">'+esc(k)+'</div><div class="v">'+v+'</div>'+(s?'<div class="s">'+s+'</div>':'')+'</div>';}
   function note(html){return html?'<div class="dr-note">'+html+'</div>':'';}
   function cap(t){t=String(t||'');return t.charAt(0).toUpperCase()+t.slice(1);}
+  // A coverage entry (dsr/block_labor._coverage) is {employee, role,
+  // shift_start}; an older report may carry a bare name.
+  function people(list){var out=[];for(var i=0;i<(list||[]).length;i++){var x=list[i],nm=(x&&typeof x==='object')?(x.employee||x.name||''):x;
+    if(nm)out.push(esc(nm)+(x&&x.role?' <span class="dr-dim">('+esc(x.role)+')</span>':''));}return out;}
   function row(t,cls,m){return '<div class="hb-row '+(cls||'watch')+'"><span class="d"></span><span class="t wrap">'+t+'</span>'+(m?'<span class="m">'+m+'</span>':'')+'</div>';}
 
   // ── showing the page ─────────────────────────────────────────────────────
@@ -5176,8 +5181,27 @@ svg:hover .hb-xh{opacity:1}
   function setViews(kind){var bs=document.querySelectorAll('#panel-dsr [data-dr="view"]');
     for(var i=0;i<bs.length;i++)bs[i].setAttribute('aria-pressed',bs[i].getAttribute('data-kind')===kind?'true':'false');}
   function stopPoll(){if(st.poll){clearInterval(st.poll);st.poll=null;}st.tick=null;}
+  // The email's "View full report" names its location (?rid=, dsr/deliver
+  // report_url): a group owner whose session sits on a sibling location is
+  // switched to the report's own first - the server decides whether this
+  // login may (/api/switch-location) - and the night opens after the
+  // reload. Read once, then dropped from the address (D2-7).
+  var ridAsked=false;
+  function otherLocation(){
+    if(ridAsked||typeof window.switchLocation!=='function')return 0;ridAsked=true;
+    var m=/[?&]rid=(\d+)/.exec(window.location.search||''),rid=m?+m[1]:0;
+    if(!rid)return 0;
+    var q=(window.location.search||'').replace(/([?&])rid=\d+&?/,'$1').replace(/[?&]$/,'');
+    if(window.history&&history.replaceState)history.replaceState(null,null,window.location.pathname+q+window.location.hash);
+    var meta=document.querySelector('meta[name="cavnar-restaurant-id"]'),here=meta?+meta.getAttribute('content'):0;
+    return (here&&rid!==here)?rid:0;
+  }
   window.dsrOpen=function(kind,date,opts){
-    opts=opts||{};kind=kind||'night';stopPoll();st.token++;
+    opts=opts||{};kind=kind||'night';
+    var other=otherLocation();
+    if(other){var bx=body();if(bx)bx.innerHTML=loading('Opening that location’s report');show();
+      window.switchLocation(other,function(){window.dsrOpen(kind,date,opts);});return;}
+    stopPoll();st.token++;
     st.kind=kind;st.date=date||null;st.version=opts.version||null;
     if(!opts.keepExpect){st.expect=null;st.waits=0;}
     var h=hashFor(kind,date);
@@ -5314,7 +5338,7 @@ svg:hover .hb-xh{opacity:1}
     var fis=p.fiscal||f.fiscal||{},kick='Daily report'+(fis.label?' · '+fis.label:(fis.period?' · Period '+fis.period+' · Week '+fis.week:''));
     var sub=[];
     if(fis.week_start&&fis.week_end)sub.push('Week of '+hn(esc(md(fis.week_start)))+' – '+hn(esc(md(fis.week_end))));
-    var src=(B.sales&&B.sales.source)?(SOURCE[B.sales.source]||B.sales.source):'';
+    var src=(B.sales&&B.sales.source)?(has(SOURCE,B.sales.source)?SOURCE[B.sales.source]:B.sales.source):'';
     if(src)sub.push(esc(src));
     var h=headHtml(date,kick,sub.length?'<div class="hb-sub">'+sub.join(' <span class="sep">·</span> ')+'</div>':'');
     // status, version, provenance, the one action
@@ -5395,7 +5419,7 @@ svg:hover .hb-xh{opacity:1}
       +esc(why||(n&&mgr?'The summary rests on figures outside your view, so it isn\u2019t shown here. Every figure you can read is below.':'No summary was written for this night. Every measured figure is below.'))+'</div></section>';
     if(sc)h+=scoreHtml(sc)+winsRisksHtml(sc);
     if(mgr){h+=shiftHtml(p.shift);h+=opsHtml(p.operations);}
-    h+=kpisHtml(p&&p.kpis);
+    h+=kpisHtml(notIn(p&&p.kpis,mgr&&p.operations));
     n=n||{};
     if(!sc){var ww=n.went_well||[],na=n.needs_attention||[];
       if(ww.length||na.length){h+='<div class="dr-two">';
@@ -5473,6 +5497,10 @@ svg:hover .hb-xh{opacity:1}
       :'<div class="sub dim" title="'+esc(k.peers.why_not||'')+'">'+esc(k.peers.label)+': no fair comparison yet</div>';}
     return h+'</div>';
   }
+  // The manager's Top KPIs never repeat a tile Operations already shows.
+  function notIn(list,other){if(!list||!other||!other.length)return list;var seen={},out=[],i;
+    for(i=0;i<other.length;i++)if(other[i]&&other[i].key)seen[other[i].key]=1;
+    for(i=0;i<list.length;i++)if(!(list[i]&&seen[list[i].key]))out.push(list[i]);return out;}
   function kpisHtml(list){
     if(!list||!list.length)return '';
     var h='<div class="hb-sh"><div><div class="k">Top KPIs</div><h2>The numbers, with direction <small>against the same weekday</small></h2></div></div><div class="dr-kpis">';
@@ -5528,7 +5556,7 @@ svg:hover .hb-xh{opacity:1}
 
   // ── the blocks ───────────────────────────────────────────────────────────
   function section(name,b,p){
-    var ready=b.status==='ready',src=b.source?(SOURCE[b.source]||b.source):'';
+    var ready=b.status==='ready',src=has(SOURCE,b.source)?SOURCE[b.source]:(b.source||'');
     var h='<details class="dr-sec" id="dr-sec-'+name+'" open><summary><span class="ttl">'+esc(BLOCK[name])+'</span>'
       +(src?'<span class="src">'+esc(src)+'</span>':'')
       +(ready?'':'<span class="dr-pill '+(b.status==='awaiting'?'awaiting':'')+'">'+esc(BSTATUS[b.status]||b.status)+'</span>')
@@ -5593,8 +5621,8 @@ svg:hover .hb-xh{opacity:1}
       return h;},
     labor:function(b){
       var m=b.metrics||{},d=b.detail||{},t='';
-      if(has(m,'pct')){var s='of net sales';if(isNum(m.target_pct))s+=' · target '+hn(pct(m.target_pct,0));if(isNum(m.vs_target_pts))s+=' · '+hn((m.vs_target_pts>0?'+':(m.vs_target_pts<0?'−':''))+Math.abs(m.vs_target_pts).toFixed(1)+' pts');
-        t+=tile('Labor',esc(pct(m.pct)),s,isNum(m.vs_target_pts)?(m.vs_target_pts>0?'bad':'good'):'');}
+      if(has(m,'pct')){var s='of net sales';if(isNum(m.target_pct))s+=' · '+esc(d.target_label||'target')+' '+hn(pct(m.target_pct,0));if(isNum(m.vs_target_pts))s+=' · '+hn((m.vs_target_pts>0?'+':(m.vs_target_pts<0?'−':''))+Math.abs(m.vs_target_pts).toFixed(1)+' pts');
+        t+=tile('Labor',esc(pct(m.pct)),s,isNum(m.vs_target_pts)?(m.vs_target_pts>0?(d.target_source==='default'?'warn':'bad'):'good'):'');}
       if(has(m,'cost'))t+=tile('Labor cost',esc(money(m.cost)));
       if(has(m,'hours'))t+=tile('Hours',esc(cnt(m.hours)));
       if(isNum(m.overtime_hours))t+=tile('Overtime',esc(cnt(m.overtime_hours))+'<small>hrs</small>','',m.overtime_hours>0?'bad':'');
@@ -5606,7 +5634,9 @@ svg:hover .hb-xh{opacity:1}
       var ob=d.observations||[],l='';for(var i=0;i<ob.length;i++)if(ob[i]&&ob[i].text)l+=row(prose(ob[i].text),'watch');
       if(l)h+='<div class="dr-list">'+l+'</div>';
       var cv=d.coverage||{};if(cv.measured===false&&cv.reason)h+=note('No-shows and late clock-ins: '+esc(cv.reason)+'.');
-      else if(cv.measured){var nm=[];for(var j=0;j<(cv.no_shows||[]).length;j++)nm.push(esc(cv.no_shows[j].name||cv.no_shows[j]));if(nm.length)h+=note('<b>No-shows:</b> '+nm.join(', '));}
+      else if(cv.measured){var nm=people(cv.no_shows),lt=people(cv.late);
+        if(nm.length)h+=note('<b>No-shows:</b> '+nm.join(', '));
+        if(lt.length)h+=note('<b>Late clock-ins:</b> '+lt.join(', '));}
       return h;},
     food:function(b){
       var m=b.metrics||{},d=b.detail||{},t='',est=d.estimate||{};
@@ -5688,7 +5718,9 @@ svg:hover .hb-xh{opacity:1}
       return h;},
     closeout:function(b){
       var d=b.detail||{},f=d.fields||{},lb=d.labels||{},order=d.order||[],h='',any=false;
-      h+='<div class="dr-note" style="margin:0 0 10px">Filed by '+esc(d.submitted_by||'the manager')+(d.filed_at_label?' · '+hn(esc(d.filed_at_label)):'')+' · in their own words, never edited</div>';
+      // The section's summary line already says who filed it (summaryLine).
+      var by=d.submitted_by?[]:['Filed by the manager'];if(d.filed_at_label)by.push((d.submitted_by?'Filed ':'')+hn(esc(d.filed_at_label)));by.push('in their own words, never edited');
+      h+='<div class="dr-note" style="margin:0 0 10px">'+cap(by.join(' · '))+'</div>';
       for(var i=0;i<order.length;i++){var k=order[i],v=f[k];if(!v)continue;any=true;
         h+='<div class="dr-co-r"><div class="k">'+esc(lb[k]||k)+'</div><div class="v">'+esc(v)+'</div></div>';}
       if(!any)h+='<div class="dr-why">The close-out was filed with every line blank.</div>';
@@ -5735,7 +5767,9 @@ svg:hover .hb-xh{opacity:1}
       if(d.started===false&&d.status==='final'){done();if(typeof toast==='function')toast('That night is already final','success');window.dsrOpen('night',d.business_date);return;}
       // The run starts on a thread: until its version shows, the last one
       // (already finished) must not be mistaken for the answer.
-      st.expect=rerun?ver+1:(d.version?d.version+1:1);st.waits=0;
+      // Close day on a night still in flight continues the same version
+      // (dsr/pipeline.run_night); only a finished one gets a new version.
+      st.expect=rerun?ver+1:(d.version&&TERMINAL[d.status]?d.version+1:(d.version||1));st.waits=0;
       window.dsrOpen('night',d.business_date,{keepExpect:true});
     }).catch(function(){done();btn.disabled=true;errNear(btn,'The answer didn’t arrive. Open the night again before pressing a second time.');});
   }
@@ -5765,7 +5799,10 @@ svg:hover .hb-xh{opacity:1}
     for(var i=0;i<cs.length;i++)c.push({h:cs[i],k:'cat:'+cs[i],t:'money',g:'cat'});
     c.push({h:'Gross',k:'gross',t:'money',g:'tot'},{h:'Net',k:'net',t:'money',g:'tot',strong:1});
     if(owner)c.push({h:'Budget gross',k:'budget_gross',t:'money',g:'bud'},{h:'Budget net',k:'budget_net',t:'money',g:'bud'},{h:'vs Budget',k:'vs_budget_net',t:'delta',g:'bud',pk:'vs_budget_net_pct'});
-    c.push({h:'Last year',k:'last_year_net',t:'money',g:'ly'},{h:'vs LY',k:'vs_last_year_net',t:'delta',g:'ly',pk:'vs_last_year_net_pct'},{h:'Labor %',k:'labor_pct',t:'pct',g:'lab'});
+    c.push({h:'Last year',k:'last_year_net',t:'money',g:'ly'},{h:'vs LY',k:'vs_last_year_net',t:'delta',g:'ly',pk:'vs_last_year_net_pct'});
+    // A login without Labor has the labor figures stripped (access.redact_grid):
+    // no column of dashes that reads as "not measured".
+    if((g.withheld||[]).indexOf('labor')<0)c.push({h:'Labor %',k:'labor_pct',t:'pct',g:'lab'});
     return c;
   }
   var GROUP={cat:'Sales by category',tot:'Sales',bud:'Budget',ly:'Last year',lab:'Labor',note:'The day'};
@@ -21962,7 +21999,10 @@ function _locBusy() {
   var panel = document.getElementById('loc-switcher-panel'); if (panel) panel.style.display = 'none';
   return function() { window._locSwitching = false; if (bar.parentNode) bar.parentNode.removeChild(bar); if (nm) nm.textContent = was; };
 }
-window.switchLocation = function(rid) {
+/* onFail (optional) runs when the switch is refused or never answers - a
+   caller that stopped to wait for the reload (the DSR email link) goes on
+   with the location it is on. */
+window.switchLocation = function(rid, onFail) {
   if (window._locSwitching) return;
   window._locSwitching = true;
   var undo = _locBusy();
@@ -21973,8 +22013,8 @@ window.switchLocation = function(rid) {
   }).then(apiJson).then(function(d) {
     /* Every cached AI read belongs to the location it was read for. */
     if (d.ok) { cavWipe(); window.location.reload(); }
-    else { undo(); toast(d.error || 'Could not switch location', 'error'); }
-  }).catch(function() { undo(); toast('Could not switch location — check your connection.', 'error'); });
+    else { undo(); toast(d.error || 'Could not switch location', 'error'); if (onFail) onFail(d); }
+  }).catch(function() { undo(); toast('Could not switch location — check your connection.', 'error'); if (onFail) onFail(null); });
 };
 
 // Labor, Food Cost, Account and the other server-rendered tabs are drawn
