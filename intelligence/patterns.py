@@ -17,7 +17,7 @@ they never carry a name, and `privacy.assert_anonymous` runs on every row
 before it is stored.
 """
 import json
-from datetime import date
+from datetime import date, timedelta
 
 import models as _models_mod
 from models import DB_PATH
@@ -103,6 +103,44 @@ def _split(rows, behaviour):
     return with_, without
 
 
+# Bounds (Benchmarking audit BM4-14, Top-50 #46). Discovery walks cohorts in
+# name order from a cursor in job_cursors and stops at the wall clock; the
+# next night resumes after the last cohort it finished, so the same tail is
+# never starved. A hypothesis whose p is clearly above MAX_P stops shuffling
+# early (Besag–Clifford sequential stop): at every EARLY_STOP_EVERY shuffles,
+# once EARLY_STOP_HITS shuffled differences have matched the observed one,
+# p is at least that share and nothing more is learned by continuing.
+DISCOVER_WALL_SECONDS = 120
+CURSOR_KEY = "intelligence_patterns"
+EARLY_STOP_EVERY = 200
+EARLY_STOP_HITS = 20
+
+
+def permutation_test_sequential(a, b, shuffles=SHUFFLES, seed=7, every=EARLY_STOP_EVERY, stop_hits=EARLY_STOP_HITS):
+    """stats.permutation_test with a sequential stop: (observed, p, shuffles
+    run). Same seed and the same shuffle sequence, so a test that runs to the
+    end returns exactly permutation_test's p."""
+    import random
+    a = [float(x) for x in a if x is not None]
+    b = [float(x) for x in b if x is not None]
+    if not a or not b:
+        return None, None, 0
+    observed = mean(a) - mean(b)
+    pool = a + b
+    na = len(a)
+    rng = random.Random(seed)
+    hits = done = 0
+    for _ in range(shuffles):
+        rng.shuffle(pool)
+        diff = mean(pool[:na]) - mean(pool[na:])
+        if abs(diff) >= abs(observed) - 1e-12:
+            hits += 1
+        done += 1
+        if every and done % every == 0 and hits >= stop_hits:
+            break
+    return observed, (hits + 1) / (done + 1), done
+
+
 def test_hypothesis(rows, h, shuffles=SHUFFLES) -> dict | None:
     """One hypothesis over one cohort's latest rows. None when a side is
     too small; otherwise a candidate with its statistics (not yet judged)."""
@@ -111,10 +149,136 @@ def test_hypothesis(rows, h, shuffles=SHUFFLES) -> dict | None:
     b = [r["features"].get(h["outcome"]) for r in without if r["features"].get(h["outcome"]) is not None]
     if len(a) < privacy.MIN_GROUP or len(b) < privacy.MIN_GROUP:
         return None
-    diff, p = permutation_test(a, b, shuffles=shuffles)
+    diff, p, ran = permutation_test_sequential(a, b, shuffles=shuffles)
     d = cohen_d(a, b)
     return {"key": h["key"], "n_with": len(a), "n_without": len(b), "effect": diff, "p_value": p, "cohen_d": d,
-            "mean_with": mean(a), "mean_without": mean(b)}
+            "mean_with": mean(a), "mean_without": mean(b), "shuffles_run": ran}
+
+
+# ── prospective mode (BM4-5, BM1-16; Top-50 #45) ─────────────────────────────
+#
+# The cross-sectional hypotheses above compare different restaurants in the
+# same week: nothing in them FOLLOWED anything. A prospective hypothesis
+# reads the behaviour from a restaurant's week-t feature row and the outcome
+# as the change of the outcome feature from week t to week t + HORIZON_WEEKS
+# (the intel_features series), one pair per restaurant (its latest complete
+# pair). The permutation shuffles "did it / didn't" WITHIN each restaurant
+# type, and only types with MIN_GROUP on each side contribute, so pooling a
+# coffee shop with a sports bar cannot manufacture an effect (Simpson's
+# paradox). Stored with `prospective: true` and `pooled_types`. Dormant
+# until a type has MIN_GROUP restaurants on each side with 13 weeks between
+# their rows — every type today.
+HORIZON_WEEKS = 13
+PROSPECTIVE_HYPOTHESES = (
+    {"key": "prospective_reply_fast_rating", "behaviour": ("response_24h_rate_30d", ">=", 0.5),
+     "outcome": "avg_rating_30d", "better": "higher", "unit": "★",
+     "did": "replied to at least half their reviews within a day", "outcome_text": "their average rating",
+     "rec_kinds": ("reply", "respond", "reviews", "urgent")},
+    {"key": "prospective_adjust_schedule_labor", "behaviour": ("schedule_adjust_rate", ">=", 0.5),
+     "outcome": "labor_pct_28d", "better": "lower", "unit": " pts",
+     "did": "adjusted at least half their weekly schedules before publishing", "outcome_text": "labor %",
+     "rec_kinds": ("trim_day", "schedule", "labor")},
+    {"key": "prospective_waste_food_cost", "behaviour": ("waste_sales_pct_28d", "<=", 2.0),
+     "outcome": "food_cost_pct_28d", "better": "lower", "unit": " pts",
+     "did": "held logged waste under 2% of sales (logging it regularly)", "outcome_text": "food cost %",
+     "rec_kinds": ("cut_waste", "count", "inventory")},
+    {"key": "prospective_post_cadence_lift", "behaviour": ("posts_28d", ">=", 4),
+     "outcome": "post_lift_median_28d", "better": "higher", "unit": " pts",
+     "did": "published weekly or more", "outcome_text": "the median sales lift after a post",
+     "rec_kinds": ("post_this_week", "first_post", "post")},
+    {"key": "prospective_acting_on_recs", "behaviour": ("recs_done_28d", ">=", 1),
+     "outcome": "outcomes_improved_rate_90d", "better": "higher", "unit": " pts",
+     "did": "acted on at least one recommendation in a month", "outcome_text": "their measured-improvement rate",
+     "rec_kinds": ()},
+)
+
+
+def _week_plus(week, weeks):
+    y, w = str(week).split("-W")
+    return _features.iso_week(date.fromisocalendar(int(y), int(w), 1) + timedelta(weeks=weeks))
+
+
+def prospective_pairs(db_path=DB_PATH, weeks_back=HORIZON_WEEKS + 12) -> dict:
+    """{restaurant_id: {"t": features at week t, "t_h": features at week t +
+    HORIZON_WEEKS, "week": t}} — each real restaurant's latest complete pair,
+    from the cross-restaurant view of the series (waste gated, demo
+    accounts out)."""
+    by_week = _features.weekly_by_restaurant(weeks=weeks_back, db_path=db_path)
+    per = {}
+    for wk, rows in by_week.items():
+        for rid, f in rows.items():
+            per.setdefault(rid, {})[wk] = f
+    out = {}
+    for rid, series in per.items():
+        for wk in sorted(series, reverse=True):
+            try:
+                later = _week_plus(wk, HORIZON_WEEKS)
+            except (ValueError, TypeError):
+                continue
+            if later in series:
+                out[rid] = {"t": series[wk], "t_h": series[later], "week": wk}
+                break
+    return out
+
+
+def _stratified_effect(strata):
+    """Σ_s c_s (mean_with_s − mean_without_s) ÷ Σ_s c_s with c_s =
+    n_w·n_wo ÷ (n_w + n_wo) — a Mantel–Haenszel-style weighted difference."""
+    num = den = 0.0
+    for a, b in strata:
+        c = len(a) * len(b) / float(len(a) + len(b))
+        num += c * (sum(a) / len(a) - sum(b) / len(b))
+        den += c
+    return num / den if den else None
+
+
+def test_prospective(pairs, h, strata_of, shuffles=SHUFFLES, seed=7) -> dict | None:
+    """One prospective hypothesis over {rid: pair}: behaviour at week t,
+    outcome = change to week t + HORIZON_WEEKS, permuted within strata
+    (strata_of(rid) → the restaurant's type). None when no stratum has
+    MIN_GROUP restaurants on each side."""
+    import random
+    feat, op, thr = h["behaviour"]
+    by = {}
+    for rid, p in pairs.items():
+        x = (p["t"] or {}).get(feat)
+        y0, y1 = (p["t"] or {}).get(h["outcome"]), (p["t_h"] or {}).get(h["outcome"])
+        if x is None or y0 is None or y1 is None:
+            continue
+        ok = {">=": x >= thr, "<=": x <= thr, ">": x > thr, "<": x < thr}[op]
+        s = by.setdefault(strata_of(rid) or "untyped", ([], []))
+        (s[0] if ok else s[1]).append(float(y1) - float(y0))
+    strata = [(a, b) for a, b in by.values() if len(a) >= privacy.MIN_GROUP and len(b) >= privacy.MIN_GROUP]
+    if not strata:
+        return None
+    observed = _stratified_effect(strata)
+    rng = random.Random(seed)
+    hits = done = 0
+    for _ in range(shuffles):
+        shuffled = []
+        for a, b in strata:
+            pool = a + b
+            rng.shuffle(pool)
+            shuffled.append((pool[:len(a)], pool[len(a):]))
+        if abs(_stratified_effect(shuffled)) >= abs(observed) - 1e-12:
+            hits += 1
+        done += 1
+        if done % EARLY_STOP_EVERY == 0 and hits >= EARLY_STOP_HITS:
+            break
+    all_a = [v for a, _b in strata for v in a]
+    all_b = [v for _a, b in strata for v in b]
+    return {"key": h["key"], "n_with": len(all_a), "n_without": len(all_b), "effect": observed,
+            "p_value": (hits + 1) / (done + 1), "cohen_d": cohen_d(all_a, all_b), "mean_with": mean(all_a),
+            "mean_without": mean(all_b), "strata": len(strata), "shuffles_run": done, "prospective": True}
+
+
+def _prospective_sentence(h, cand, cohort_label, n_total):
+    eff = cand["effect"]
+    direction = "higher" if eff > 0 else "lower"
+    size = f"{abs(eff):.2f}" if h["unit"] == "★" else f"{abs(eff):.1f}"
+    return (f"Across {n_total} {cohort_label.lower()}, those that {h['did']} saw {h['outcome_text']} end "
+            f"{size}{h['unit']} {direction} over the following {HORIZON_WEEKS} weeks than those that did not — "
+            f"measured after the behaviour, compared within each type; an association, not proof of cause.")
 
 
 def _sentence(h, cand, cohort_label, n_total):
@@ -160,20 +324,59 @@ def strength_fields(d) -> dict:
     return d
 
 
-def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles=SHUFFLES) -> dict:
+def _cursor(conn, value=None):
+    """The last cohort a bounded discovery pass finished ('' = start over)."""
+    if value is None:
+        try:
+            row = conn.execute("SELECT value FROM job_cursors WHERE key=?", (CURSOR_KEY,)).fetchone()
+            return str(row["value"] or "") if row else ""
+        except Exception:
+            return ""
+    conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now')) "
+                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=datetime('now')",
+                 (CURSOR_KEY, str(value)))
+
+
+def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles=SHUFFLES,
+             wall_seconds=DISCOVER_WALL_SECONDS) -> dict:
     """Run every hypothesis over every cohort that clears the floor, plus
-    platform-wide. `cohorts` is {restaurant_id: category or None}."""
+    platform-wide — cross-sectional and prospective. `cohorts` is
+    {restaurant_id: category or None}.
+
+    Bounded and resumable (CLAUDE.md): cohorts run in name order from the
+    cursor, the first one always runs, and once `wall_seconds` has passed the
+    pass stops and records the last cohort it finished. Only cohorts actually
+    tested tonight can have a pattern retired for failing; a cohort below the
+    floor is retired whether tested or not."""
+    import time
     latest = _features.latest_by_restaurant(db_path=db_path)
     cohorts = cohorts or {}
-    groups = {"platform": list(latest.values())}
-    for rid, row in latest.items():
+    groups = {"platform": list(latest)}
+    for rid in latest:
         c = cohorts.get(rid)
         if c:
-            groups.setdefault(c, []).append(row)
-    candidates = []
-    for cohort, rows in groups.items():
-        if not privacy.cohort_ok(len(rows)):
-            continue
+            groups.setdefault(c, []).append(rid)
+    eligible = sorted(c for c, rids in groups.items() if privacy.cohort_ok(len(rids)))
+    conn = get_conn(db_path)
+    try:
+        after = _cursor(conn)
+    finally:
+        conn.close()
+    order = [c for c in eligible if c > after] + [c for c in eligible if c <= after]
+    try:
+        pairs = prospective_pairs(db_path=db_path)
+    except Exception as e:
+        print(f"[intelligence.patterns] prospective series unavailable: {e}")
+        pairs = {}
+    deadline = time.monotonic() + float(wall_seconds if wall_seconds is not None else DISCOVER_WALL_SECONDS)
+    candidates, tested_now = [], set()
+    stopped_early, last_done = False, after
+    for i, cohort in enumerate(order):
+        if i > 0 and time.monotonic() > deadline:
+            stopped_early = True
+            break
+        rids = groups[cohort]
+        rows = [latest[r] for r in rids]
         for h in HYPOTHESES:
             cand = test_hypothesis(rows, h, shuffles=shuffles)
             if cand:
@@ -181,6 +384,17 @@ def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles
                 cand["n_total"] = len(rows)
                 cand["hypothesis"] = h
                 candidates.append(cand)
+        members = {r: pairs[r] for r in rids if r in pairs}
+        strata_of = (lambda r: cohorts.get(r)) if cohort == "platform" else (lambda r, _c=cohort: _c)
+        for h in PROSPECTIVE_HYPOTHESES:
+            cand = test_prospective(members, h, strata_of, shuffles=shuffles)
+            if cand:
+                cand["cohort"] = cohort
+                cand["n_total"] = cand["n_with"] + cand["n_without"]
+                cand["hypothesis"] = h
+                candidates.append(cand)
+        tested_now.add(cohort)
+        last_done = cohort
     qs = benjamini_hochberg([c["p_value"] for c in candidates])
     for c, q in zip(candidates, qs):
         c["q_value"] = q
@@ -204,10 +418,20 @@ def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles
                    "effect": privacy.round_effect(c["effect"], 3), "effect_unit": h["unit"],
                    "cohen_d": privacy.round_effect(c["cohen_d"], 3), "p_value": round(c["p_value"], 4),
                    "q_value": round(c["q_value"], 4), "confidence": _confidence(c),
-                   "sentence": _sentence(h, c, label, c["n_total"]),
+                   "sentence": (_prospective_sentence(h, c, label, c["n_total"]) if c.get("prospective")
+                                else _sentence(h, c, label, c["n_total"])),
                    "evidence": {"n": c["n_total"], "mean_with": privacy.round_effect(c["mean_with"], 3),
                                 "mean_without": privacy.round_effect(c["mean_without"], 3), "behaviour": list(h["behaviour"]),
-                                "outcome": h["outcome"], "rec_kinds": list(h["rec_kinds"])}}
+                                "outcome": h["outcome"], "rec_kinds": list(h["rec_kinds"]),
+                                # BM4-5: whether the outcome was measured AFTER
+                                # the behaviour, and whether every type was
+                                # pooled (platform) — a pooled pattern never
+                                # supports a type-sensitive recommendation.
+                                "prospective": bool(c.get("prospective")),
+                                "pooled_types": c["cohort"] == "platform"}}
+            if c.get("prospective"):
+                row["evidence"].update(horizon_weeks=HORIZON_WEEKS, strata=c.get("strata"),
+                                       outcome_measure="change over the horizon")
             privacy.assert_anonymous(row)
             conn.execute(
                 "INSERT INTO intel_patterns (key, cohort, hypothesis, n_with, n_without, effect, effect_unit, cohen_d, p_value, "
@@ -225,17 +449,21 @@ def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles
         # every pattern whose cohort has dropped below the floor (NS4 H5): it
         # was only ever retired "among cohorts we could test", so a cohort
         # that shrank kept its patterns active, and quoted, indefinitely.
-        tested = {c["cohort"] for c in candidates} | {c for c, rows in groups.items() if privacy.cohort_ok(len(rows))}
+        # Only cohorts TESTED tonight: a cohort the wall clock never reached
+        # keeps its patterns until the next pass reaches it (BM4-14).
+        tested = set(tested_now)
         for r in conn.execute("SELECT key, cohort FROM intel_patterns WHERE status='active'").fetchall():
             below_floor = not privacy.cohort_ok(len(groups.get(r["cohort"]) or []))
             if below_floor or (r["cohort"] in tested and r["key"] not in active_keys):
                 conn.execute("UPDATE intel_patterns SET status='retired', computed_at=datetime('now') WHERE key=?", (r["key"],))
                 retired += 1
+        # A completed sweep resets the cursor so the next night starts over.
+        _cursor(conn, last_done if stopped_early else "")
         conn.commit()
     finally:
         conn.close()
-    return {"cohorts_tested": sorted(c for c, rows in groups.items() if privacy.cohort_ok(len(rows))),
-            "candidates": len(candidates), "active": written, "retired": retired}
+    return {"cohorts_tested": sorted(tested_now), "candidates": len(candidates), "active": written,
+            "retired": retired, "complete": not stopped_early, "resumed_after": after or None}
 
 
 # An active pattern not re-confirmed within this long is not served: the

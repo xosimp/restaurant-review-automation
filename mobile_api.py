@@ -994,6 +994,15 @@ def mobile_benchmarks(current_user):
     return jsonify(**payload), (200 if payload.get("ok") else 400)
 
 
+@mobile_bp.route("/dna")
+@mobile_login_required
+def mobile_dna(current_user):
+    """Twin of /api/dna — the restaurant's own DNA profile."""
+    import intelligence
+    payload = intelligence.dna_payload(current_user)
+    return jsonify(**payload), (200 if payload.get("ok") else 400)
+
+
 @mobile_bp.route("/data-health")
 @mobile_login_required
 def mobile_data_health(current_user):

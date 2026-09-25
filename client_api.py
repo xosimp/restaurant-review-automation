@@ -8432,6 +8432,21 @@ def benchmarks_api(current_user):
     return resp, (200 if payload.get("ok") else 400)
 
 
+@client_bp.route("/api/dna")
+@login_required
+def dna_api(current_user):
+    """Restaurant DNA (intelligence.dna): this restaurant's own operational
+    profile — each dimension's figure, its trend against 4 weeks ago, how it
+    was measured, and what an unmeasured one needs — projected by the
+    login's module view permissions. Never another restaurant's figure.
+    Twin: /mobile/api/dna."""
+    import intelligence
+    payload = intelligence.dna_payload(current_user)
+    resp = jsonify(**payload)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp, (200 if payload.get("ok") else 400)
+
+
 @client_bp.route("/api/data-health")
 @login_required
 def data_health_api(current_user):

@@ -71,6 +71,70 @@ BENCHMARK_KEYS = ("avg_rating_30d", "response_24h_rate_30d", "reply_rate_30d", "
                   "post_lift_median_28d", "post_engagement_rate_28d", "outcomes_improved_rate_90d")
 
 
+# Waste-logging regularity (DNA dimension F3; Benchmarking audit BM4-16,
+# Top-50 #27): the share of the last WASTE_REGULARITY_WEEKS seven-day
+# windows with at least one logged waste event. `waste_sales_pct_28d` from a
+# restaurant that logs two small events a month reads near 0% — "doesn't
+# log waste" passing as "low waste" — so the figure enters a cross-
+# restaurant band, a pattern or the DNA only at WASTE_REGULARITY_MIN or
+# above (cross_restaurant_view). The restaurant's own screens still see it.
+# Not in FEATURE_KEYS: a data-quality signal, not counted in completeness.
+WASTE_REGULARITY_KEY = "waste_log_regularity_8w"
+WASTE_REGULARITY_WEEKS = 8
+WASTE_REGULARITY_MIN = 0.75
+
+
+def waste_logging_regular(f: dict) -> bool:
+    """True when a feature row's waste log is regular enough for its waste
+    % to be compared with anyone else's (F3 >= WASTE_REGULARITY_MIN). A row
+    written before the regularity was measured is not regular."""
+    r = (f or {}).get(WASTE_REGULARITY_KEY)
+    try:
+        return r is not None and float(r) >= WASTE_REGULARITY_MIN
+    except (TypeError, ValueError):
+        return False
+
+
+def cross_restaurant_view(f: dict) -> dict:
+    """A feature row as cross-restaurant learning may read it: the waste %
+    withdrawn (None — unmeasured, never 0) unless waste is logged regularly.
+    Every cross-restaurant reader (latest_by_restaurant, weekly_by_restaurant)
+    goes through this."""
+    f = dict(f or {})
+    if f.get("waste_sales_pct_28d") is not None and not waste_logging_regular(f):
+        f["waste_sales_pct_28d"] = None
+    return f
+
+
+def waste_log_regularity(conn, restaurant_id, today: date):
+    """(share, windows_with_waste) over the last WASTE_REGULARITY_WEEKS
+    seven-day windows ending today, or (None, 0) when the restaurant has not
+    kept an inventory that long — no stock history is unmeasured, not
+    irregular."""
+    start = today - timedelta(days=7 * WASTE_REGULARITY_WEEKS - 1)
+    try:
+        first = conn.execute(
+            "SELECT MIN(d) FROM (SELECT MIN(substr(event_date,1,10)) AS d FROM ingredient_stock_events "
+            "WHERE restaurant_id=? UNION ALL SELECT MIN(substr(created_at,1,10)) FROM ingredients "
+            "WHERE restaurant_id=?)", (restaurant_id, restaurant_id)).fetchone()[0]
+    except Exception:
+        return None, 0
+    if not first or str(first)[:10] > start.isoformat():
+        return None, 0
+    rows = conn.execute("SELECT DISTINCT substr(event_date,1,10) AS d FROM ingredient_stock_events "
+                        "WHERE restaurant_id=? AND event_type='waste' AND substr(event_date,1,10) >= ? "
+                        "AND substr(event_date,1,10) <= ?",
+                        (restaurant_id, start.isoformat(), today.isoformat())).fetchall()
+    windows = set()
+    for r in rows:
+        try:
+            windows.add((today - date.fromisoformat(r["d"])).days // 7)
+        except (TypeError, ValueError):
+            continue
+    hit = sum(1 for k in windows if 0 <= k < WASTE_REGULARITY_WEEKS)
+    return round(hit / float(WASTE_REGULARITY_WEEKS), 3), hit
+
+
 def iso_week(day: date) -> str:
     y, w, _ = day.isocalendar()
     return f"{y}-W{w:02d}"
@@ -190,6 +254,10 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
                 f["waste_sales_pct_28d"] = round(float(waste) / (float(sales) * 7) * 100, 2)
         except Exception:
             pass
+        try:
+            f[WASTE_REGULARITY_KEY] = waste_log_regularity(conn, restaurant_id, today)[0]
+        except Exception as e:
+            print(f"[intelligence] waste regularity unavailable for {restaurant_id}: {e}")
 
         # ── marketing ──────────────────────────────────────────────────────
         try:
@@ -399,7 +467,7 @@ def latest_by_restaurant(db_path: str = DB_PATH, max_age_weeks: int = 3) -> dict
     # privacy floor and the cohort percentiles (CA3 F7).
     from .jobs import seeded_restaurant_ids
     seeded = seeded_restaurant_ids(db_path=db_path)
-    return {r["restaurant_id"]: {"week": r["week"], "features": json.loads(r["features_json"]),
+    return {r["restaurant_id"]: {"week": r["week"], "features": cross_restaurant_view(json.loads(r["features_json"])),
                                  "completeness": r["completeness"]} for r in rows if r["restaurant_id"] not in seeded}
 
 
@@ -418,7 +486,7 @@ def weekly_by_restaurant(weeks: int = 8, db_path: str = DB_PATH) -> dict:
     for r in rows:
         if r["restaurant_id"] in seeded:
             continue
-        out.setdefault(r["week"], {})[r["restaurant_id"]] = json.loads(r["features_json"])
+        out.setdefault(r["week"], {})[r["restaurant_id"]] = cross_restaurant_view(json.loads(r["features_json"]))
     return out
 
 

@@ -66,6 +66,8 @@ OWNER_LABEL = {
     "marketing": "Marketing metrics",
     "visibility": "AI visibility", "competitor": "Competitors", "weather": "Weather",
     "dsr": "Daily report", "depletion": "Depletion",
+    # Benchmarking audit BM3-9 (Top-50 #22): the peer bands comparisons rest on.
+    "cohort": "Peer comparison",
 }
 
 # The module flags an owner sees, and the modules each one turns on. Intel

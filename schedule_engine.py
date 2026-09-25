@@ -2455,6 +2455,11 @@ def _score_schedule_quality(restaurant_id, rows, result, **extra):
         # evidence from this read's own measured completeness.
         try:
             import rec_trust as _rt_sq
+            # Slots staffed from other restaurants' borrowed headcount cap
+            # the read's Evidence until the restaurant's own weeks replace
+            # them (BM3-13, Top-50 #33).
+            quality["borrowed_slots"] = _rt_sq.borrowed_slots(result.get("starting_headcount"),
+                                                              result.get("typical_headcount"))
             _rt_sq.attach_schedule_confidence(restaurant_id, quality, quality["recommendation_items"])
         except Exception as _rtx:
             print(f"[schedule] recommendation confidence failed: {_rtx}")

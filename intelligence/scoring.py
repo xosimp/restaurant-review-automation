@@ -99,13 +99,41 @@ def capped_counts(per_restaurant, max_share=MAX_RESTAURANT_SHARE):
     return round(measured, 3), round(improved, 3)
 
 
+# Priors read the cohort's recent record, not all of history (BM3-12,
+# Top-50 #32): a 365-day window, and within it each clear result weighted
+# 0.5 ** (age / PRIOR_HALF_LIFE_DAYS) in the `*_recent` figures.
+PRIOR_WINDOW_DAYS = 365
+PRIOR_HALF_LIFE_DAYS = 180
+
+
+def _age_days(at, now):
+    from datetime import datetime
+    try:
+        t = datetime.strptime(str(at or "")[:10], "%Y-%m-%d")
+    except ValueError:
+        return None
+    return max(0.0, (now - t).total_seconds() / 86400.0)
+
+
 def kind_stats(rec_kind: str, cohort: str = None, restaurant_id: int = None, db_path: str = DB_PATH,
-               exclude_restaurant_id: int = None) -> dict:
+               exclude_restaurant_id: int = None, window_days: int = None, half_life_days: float = None,
+               now=None) -> dict:
     """Rates for one kind. With `restaurant_id` it is that restaurant's own
     record (Level 1); with `cohort` the cohort's; otherwise platform-wide.
     `exclude_restaurant_id` leaves one restaurant out of a cohort or
-    platform figure (the restaurant the figure is a prior for)."""
+    platform figure (the restaurant the figure is a prior for).
+
+    `window_days` reads only events of the last that many days (priors pass
+    PRIOR_WINDOW_DAYS). `half_life_days` adds, for a cross-restaurant
+    figure, `measured_recent` / `improved_recent` / `success_rate_recent`:
+    the capped counts with each clear result weighted 0.5 ** (age ÷
+    half-life) — recency only ever re-weights measured results, it never
+    lets a cohort figure stand below the privacy floors above."""
+    from datetime import datetime, timedelta
+    now = now or datetime.utcnow()
     where, args = ["rec_kind=?"], [rec_kind]
+    if window_days:
+        where.append("event_at >= ?"); args.append((now - timedelta(days=int(window_days))).strftime("%Y-%m-%d"))
     if restaurant_id is not None:
         where.append("restaurant_id=?"); args.append(restaurant_id)
     elif cohort:
@@ -119,11 +147,88 @@ def kind_stats(rec_kind: str, cohort: str = None, restaurant_id: int = None, db_
         where.append(f"restaurant_id NOT IN ({SEEDED_RESTAURANT_SQL})"); args.append(f"-{SEEDED_HISTORY_DAYS} days")
     conn = get_conn(db_path)
     try:
-        rows = conn.execute(f"SELECT restaurant_id, source_key, action, outcome, days_to_effect FROM intel_rec_events "
-                            f"WHERE {' AND '.join(where)}", args).fetchall()
+        rows = conn.execute(f"SELECT restaurant_id, source_key, action, outcome, days_to_effect, event_at "
+                            f"FROM intel_rec_events WHERE {' AND '.join(where)}", args).fetchall()
     finally:
         conn.close()
-    return _summarise(rows, cross=restaurant_id is None)
+    out = _summarise(rows, cross=restaurant_id is None)
+    if half_life_days and restaurant_id is None:
+        per = {}
+        for r in rows:
+            if r["action"] != "measured" or r["outcome"] not in CLEAR:
+                continue
+            age = _age_days(r["event_at"], now)
+            w = 0.5 ** ((age or 0.0) / float(half_life_days))
+            n, k = per.get(r["restaurant_id"], (0.0, 0.0))
+            per[r["restaurant_id"]] = (n + w, k + (w if r["outcome"] == "improved" else 0.0))
+        mc, ic = capped_counts(per)
+        out["measured_recent"], out["improved_recent"] = mc, ic
+        out["success_rate_recent"] = round(ic / mc, 3) if mc else None
+        out["half_life_days"] = half_life_days
+    if window_days:
+        out["window_days"] = int(window_days)
+    return out
+
+
+# A kind this restaurant has no record of is RANKED with help from similar
+# restaurants' results (BM3-12, Top-50 #32): each peer's clear results
+# weighted by recency (PRIOR_HALF_LIFE_DAYS) and by how close its Restaurant
+# DNA is to this restaurant's — 1 ÷ (1 + distance) when the two profiles are
+# comparable, SIMILARITY_UNMATCHED when they are the same type but not yet
+# comparable — over the capped counts (no restaurant above
+# MAX_RESTAURANT_SHARE). Below the privacy floor or PRIOR_MIN_RESULTS clear
+# results it is unavailable. Ranking only: it never produces or lifts a
+# confidence %.
+SIMILARITY_UNMATCHED = 0.5
+PRIOR_MIN_RESULTS = 10          # rec_learning.PRIOR_MIN_MEASURED
+
+
+def similar_prior(rec_kind: str, restaurant_id: int, cohort: str, db_path: str = DB_PATH, now=None) -> dict:
+    """{available, rate, restaurants, measured, weighted} — the similarity-
+    and recency-weighted improved share of `rec_kind` among the cohort's
+    OTHER real restaurants over PRIOR_WINDOW_DAYS. Anonymous by
+    construction (counts and a rate only)."""
+    from datetime import datetime, timedelta
+    now = now or datetime.utcnow()
+    out = {"available": False, "rate": None, "restaurants": 0, "measured": 0, "weighted": 0.0}
+    if not cohort:
+        return dict(out, reason="no restaurant type")
+    from .jobs import SEEDED_RESTAURANT_SQL, SEEDED_HISTORY_DAYS
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            f"SELECT restaurant_id, outcome, event_at FROM intel_rec_events WHERE rec_kind=? AND cohort=? "
+            f"AND action='measured' AND restaurant_id != ? AND event_at >= ? "
+            f"AND restaurant_id NOT IN ({SEEDED_RESTAURANT_SQL})",
+            (rec_kind, cohort, restaurant_id, (now - timedelta(days=PRIOR_WINDOW_DAYS)).strftime("%Y-%m-%d"),
+             f"-{SEEDED_HISTORY_DAYS} days")).fetchall()
+    finally:
+        conn.close()
+    clear = [r for r in rows if r["outcome"] in CLEAR]
+    peers = {r["restaurant_id"] for r in clear}
+    out.update(restaurants=len(peers), measured=len(clear))
+    if not privacy.cohort_ok(len(peers)) or len(clear) < PRIOR_MIN_RESULTS:
+        return dict(out, reason="too few similar restaurants have measured this")
+    sims = {}
+    try:
+        from . import dna
+        mine = (dna.latest(restaurant_id, db_path=db_path) or {}).get("dims") or {}
+        theirs = dna.latest_by_restaurant(db_path=db_path)
+        for p in peers:
+            d = dna.distance(mine, theirs.get(p) or {}) if mine else None
+            sims[p] = (1.0 / (1.0 + d)) if d is not None else SIMILARITY_UNMATCHED
+    except Exception as e:
+        print(f"[intelligence.scoring] DNA similarity unavailable: {e}")
+    per = {}
+    for r in clear:
+        age = _age_days(r["event_at"], now) or 0.0
+        w = sims.get(r["restaurant_id"], SIMILARITY_UNMATCHED) * 0.5 ** (age / float(PRIOR_HALF_LIFE_DAYS))
+        n, k = per.get(r["restaurant_id"], (0.0, 0.0))
+        per[r["restaurant_id"]] = (n + w, k + (w if r["outcome"] == "improved" else 0.0))
+    mc, ic = capped_counts(per)
+    if not mc:
+        return dict(out, reason="no weight")
+    return privacy.assert_anonymous(dict(out, available=True, rate=round(ic / mc, 4), weighted=round(mc, 3)))
 
 
 def _rec(r):

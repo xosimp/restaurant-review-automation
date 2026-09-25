@@ -138,13 +138,32 @@ def run_features(db_path=DB_PATH, today: date = None, wall_seconds=FEATURE_WALL_
     computed = failed = 0
     last_done = start_after
     stopped_early = False
+    # Restaurant DNA (dna.py, Top-50 #24) is written beside the feature row
+    # by the same bounded pass and cursor, from the features just computed.
+    # The normalisation (stated anchors below MIN_ROBUST_N, robust z above)
+    # is read once per pass.
+    try:
+        from . import dna as _dna
+        norms = _dna.platform_norms(db_path=db_path)
+    except Exception as e:
+        print(f"[intelligence] DNA norms unavailable: {e}")
+        _dna, norms = None, None
 
     def one(r):
         try:
-            _features.compute_and_store(r.id, today=today, db_path=db_path)
-            return r.id, None
+            f = _features.compute_and_store(r.id, today=today, db_path=db_path)
         except Exception as e:      # one restaurant's failure never stops the pass
             return r.id, e
+        if _dna is not None:
+            try:
+                _dna.compute_and_store(r.id, today=today, db_path=db_path, features=f, restaurant=r, norms=norms)
+            except Exception as e:  # the profile failing never fails the feature row
+                try:
+                    import ops
+                    ops.capture(e, job="intelligence_dna", context=f"restaurant_id={r.id}")
+                except Exception:
+                    pass
+        return r.id, None
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         for i in range(0, len(order), workers):
@@ -180,19 +199,44 @@ def run_learning(db_path=DB_PATH, today: date = None) -> dict:
     out["patterns"] = patterns.discover(db_path=db_path, cohorts=cohorts, today=today)
     out["benchmarks"] = benchmarks.compute(db_path=db_path, cohorts=cohorts, today=today)
     out["confidence_log"] = log_confidence(db_path=db_path, cohorts=cohorts, today=today)
+    # The engine's comparisons, materialised per restaurant after tonight's
+    # bands (BM4-14, Top-50 #46): bounded and resumable like every pass here.
+    try:
+        from . import comparison_cache
+        out["benchmark_facts"] = comparison_cache.materialise(db_path=db_path, today=today)
+    except Exception as e:
+        print(f"[intelligence] benchmark facts not materialised: {e}")
+        out["benchmark_facts"] = {"error": str(e)}
+    # Neighbour predictions (predict.py): weekly, bounded, resumable — and
+    # unavailable below the floors, which is every restaurant today.
+    try:
+        from . import predict
+        out["effects"] = predict.run_weekly(db_path=db_path, today=today)
+    except Exception as e:
+        print(f"[intelligence] effects not computed: {e}")
+        out["effects"] = {"error": str(e)}
     return out
+
+
+# The confidence log reads the learning table over this window only
+# (BM4-14): it selected every intel_rec_events row ever written, every night.
+CONFIDENCE_LOG_WINDOW_DAYS = 365
 
 
 def log_confidence(db_path=DB_PATH, cohorts: dict = None, today: date = None) -> dict:
     """The week's acceptance and success by kind, per cohort and platform-
-    wide, so the dashboard can draw model confidence over time."""
-    week = _features.iso_week(today or date.today())
+    wide, so the dashboard can draw model confidence over time — over the
+    last CONFIDENCE_LOG_WINDOW_DAYS of events."""
+    from datetime import timedelta
+    today = today or date.today()
+    week = _features.iso_week(today)
+    since = (today - timedelta(days=CONFIDENCE_LOG_WINDOW_DAYS)).isoformat()
     cohorts = cohorts or {}
     written = 0
     conn = get_conn(db_path)
     try:
         rows = conn.execute("SELECT restaurant_id, source_key, rec_kind, action, outcome, confidence_at, days_to_effect "
-                            "FROM intel_rec_events").fetchall()
+                            "FROM intel_rec_events WHERE event_at >= ?", (since,)).fetchall()
     finally:
         conn.close()
     groups = {}

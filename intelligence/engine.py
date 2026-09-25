@@ -312,14 +312,23 @@ def _location(restaurant_id, metric, restaurant, db_path, viewer=None):
 # ── compare ────────────────────────────────────────────────────────────────
 
 def compare(restaurant_id, metric, *, kinds=None, viewer=None, restaurant=None, db_path=DB_PATH,
-            today=None, rows=None) -> dict:
+            today=None, rows=None, use_cache=False) -> dict:
     """Every comparison for one metric: {version, metric, label, unit,
     better, comparability, own, headline, comparisons[], facts[]}. Never
-    raises: an unreadable kind is unavailable with its reason."""
+    raises: an unreadable kind is unavailable with its reason.
+
+    use_cache: read the nightly materialised row (comparison_cache) when it
+    is fresh and covers `kinds` — never for the viewer-dependent `location`
+    kind, which is always computed live."""
     m = reg.meta(metric)
     if not m:
         return {"version": ENGINE_VERSION, "metric": metric, "available": False, "why_not": "unknown metric"}
     want = tuple(kinds or KINDS)
+    if use_cache and today is None:
+        from . import comparison_cache
+        hit = comparison_cache.read(restaurant_id, metric, kinds=want, db_path=db_path)
+        if hit is not None and hit.get("version") == ENGINE_VERSION:
+            return hit
     if restaurant is None:
         try:
             restaurant = _models_mod.get_restaurant(restaurant_id, db_path=db_path) if db_path != DB_PATH \

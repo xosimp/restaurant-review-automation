@@ -73,7 +73,7 @@ The live A/B of schedule generation (`schedule_experiments`, admin-only). One ro
 The reviewed step from a winning arm to every restaurant's default (ROI audit #46): `experiment`, `arm`, `flags_json` (the arm's flags, so the promotion holds after the experiment is retired in code), `verdict_text` (the readout's words it rested on), `note`, `promoted_by`/`promoted_at`, `reverted_by`/`reverted_at`. A partial unique index keeps one live (unreverted) promotion per experiment; reverted rows stay as the trail. `schedule_experiments.promote` refuses any arm the readout does not call the winner. Created at boot by `init_schedule_experiments`.
 
 ### `schedule_recommendation_events` / `schedule_pattern_dismissals` / `staff_first_seen`
-The accept/dismiss ledger for recommendations (a kind shown ten times and never accepted stops being shown); the owner's dismissed learned patterns; and the earliest date and most shifts ever seen per name, so tenure survives the rolling upload window.
+The accept/dismiss ledger for recommendations (a kind shown ten times and never accepted stops being shown); the owner's dismissed learned patterns; and the earliest date and most shifts ever seen per name, so tenure survives the rolling upload window. `staff_first_seen.last_seen` (Benchmarking audit BM4-8, boot ALTER in `init_schedule_intel`) is the newest shift date ever seen per name — `remember_tenure` keeps the MAX, so an older upload never makes a current employee look departed; NULL until the next upload. Restaurant DNA's retention dimension reads it.
 
 ### `staff_settings` (extended) / `shift_change_requests` (extended)
 `time_windows` (per-weekday earliest/latest), `certifications`, and the employee's own `preferred_dayparts` and `desired_hours`. Shift requests carry `kind` (drop | swap) and the target shift for a swap.
@@ -275,3 +275,23 @@ patterns with n, effect, p, q, confidence, status active|retired),
 `intel_confidence_log` (weekly acceptance and success by kind). Invariant:
 no row in `intel_patterns`, `intel_benchmarks` or `intel_confidence_log`
 describes fewer than `privacy.MIN_COHORT` restaurants.
+
+Benchmarking audit (9/24/26, workstream D), all DDL in `init_db`:
+- `intel_rec_events` gains `metric`, `effect_pct`, `effect_z` (signed so
+  positive means better), `baseline_kind`, `after_end`, `tags_json` — filled
+  by `feedback.sync` from `recommendation_outcomes` and the episode's
+  `rec_instances.tags`, only on a `measured` row whose result the learning
+  counts (cleared otherwise); index on `event_at` (the confidence log reads
+  365 days).
+- `intel_dna` (restaurant_id, week, `dims_json` `{dim: {raw, z, n, basis,
+  norm}}`, `coverage`, `version`, computed_at; UNIQUE(restaurant_id, week)) —
+  Restaurant DNA; ratios, rates, shares and bands only, never dollars; a
+  dimension below its minimum data has raw NULL and says what it needs.
+- `intel_benchmark_facts` (restaurant_id, metric, week, `payload_json`,
+  `available`, computed_at; UNIQUE(restaurant_id, metric, week)) — the
+  engine's comparisons materialised nightly; the viewer-dependent `location`
+  kind is never stored; rows older than 8 weeks are pruned by the pass.
+- `intel_effects` (restaurant_id, rec_kind, metric, week, `available`,
+  `payload_json`, computed_at; UNIQUE(restaurant_id, rec_kind, metric,
+  week)) — the weekly neighbour prediction fact; unavailable below its
+  floors.
