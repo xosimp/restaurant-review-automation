@@ -170,7 +170,7 @@ def _proposal_visible(viewer, row):
         return False
 
 
-def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=None):
+def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=None, present=True):
     """Everything still open, most pressing first.
 
     Each item: {key, kind, title, detail, severity, module, action, count}.
@@ -464,10 +464,13 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
         else:
             i["rec_key"] = i["key"]
             i["answerable"] = rec_delivery.answerable(i["key"])
-    rec_delivery.present_now(restaurant_id, "queue", [
-        {"key": i["key"], "module": _LEDGER_MODULE.get(i["module"], "ops"), "title": i["title"],
-         "position": n} for n, i in enumerate(live) if not is_task(i["key"])],
-        user_id=(viewer or {}).get("id"), db_path=db_path)
+    # present=False: a background read (the iOS widget's count, `?peek=1`)
+    # is not the owner seeing the queue, so nothing is recorded as shown (F3-6).
+    if present:
+        rec_delivery.present_now(restaurant_id, "queue", [
+            {"key": i["key"], "module": _LEDGER_MODULE.get(i["module"], "ops"), "title": i["title"],
+             "position": n} for n, i in enumerate(live) if not is_task(i["key"])],
+            user_id=(viewer or {}).get("id"), db_path=db_path)
     return {"items": live, "snoozed": len(out) - len(live) - len(shown) - len(answered),
             "shown_elsewhere": len(shown),
             "note": ("Everything still open, across every module. Snoozing puts an item back "

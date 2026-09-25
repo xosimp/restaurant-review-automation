@@ -10,7 +10,7 @@ import WidgetKit
 struct PendingSendLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: PendingSendAttributes.self) { context in
-            PendingSendLockView(attributes: context.attributes, state: context.state)
+            PendingSendLockView(attributes: context.attributes, state: context.state, isStale: context.isStale)
                 .padding(16)
                 .activityBackgroundTint(Color.cavnarPaper)
                 .activitySystemActionForegroundColor(Color.cavnarInk)
@@ -31,7 +31,8 @@ struct PendingSendLiveActivity: Widget {
                             .font(.cavnarBody(14, weight: 700))
                             .lineLimit(1)
                         Spacer()
-                        PendingSendUndoButton(actionId: context.attributes.actionId, state: context.state)
+                        PendingSendUndoButton(actionId: context.attributes.actionId, state: context.state,
+                                              isStale: context.isStale)
                     }
                 }
             } compactLeading: {
@@ -53,6 +54,7 @@ struct PendingSendLiveActivity: Widget {
 private struct PendingSendLockView: View {
     let attributes: PendingSendAttributes
     let state: PendingSendAttributes.ContentState
+    let isStale: Bool
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -68,7 +70,7 @@ private struct PendingSendLockView: View {
                 statusLine
             }
             Spacer(minLength: 8)
-            PendingSendUndoButton(actionId: attributes.actionId, state: state)
+            PendingSendUndoButton(actionId: attributes.actionId, state: state, isStale: isStale)
         }
     }
 
@@ -112,9 +114,10 @@ private struct PendingSendCountdown: View {
 private struct PendingSendUndoButton: View {
     let actionId: Int
     let state: PendingSendAttributes.ContentState
+    let isStale: Bool
 
     var body: some View {
-        if state.status == "pending" {
+        if state.offersUndo(isStale: isStale) {
             Button(intent: UndoPendingSendIntent(actionId: actionId)) {
                 Text("Undo")
                     .font(.cavnarBody(14, weight: 700))

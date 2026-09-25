@@ -111,6 +111,15 @@ struct DailyReportListView: View {
             }
             .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isClosing))
             .disabled(viewModel.isClosing)
+            .confirmationDialog(DSRCloseGate.question,
+                                isPresented: Binding(get: { viewModel.confirmingEarlyClose },
+                                                     set: { viewModel.confirmingEarlyClose = $0 }),
+                                titleVisibility: .visible) {
+                Button("Close it anyway") {
+                    Task { if let route = await viewModel.closeTonight(early: true) { open(route) } }
+                }
+                Button("Cancel", role: .cancel) {}
+            }
             if let error = viewModel.closeError {
                 Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
                     .fixedSize(horizontal: false, vertical: true)

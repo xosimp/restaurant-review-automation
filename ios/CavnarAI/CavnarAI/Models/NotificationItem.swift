@@ -24,12 +24,29 @@ struct NotificationItem: Codable, Identifiable {
     /// sends neither and the router falls back to `module`.
     var nav: String? = nil
     var restaurantId: Int? = nil
+    /// The alert_log row's own id — two alerts of one type in the same
+    /// second (two 1-star reviews from one fetch) are two rows (F3-10).
+    var alertId: Int? = nil
+    /// The server's own rule for approving in place (a drafted, unflagged
+    /// reply at this location), and the draft itself — shown in full on the
+    /// row before Approve can publish it.
+    var canApprove: Bool? = nil
+    var draft: String? = nil
+    /// The review's own words, and whether it has been answered since.
+    var snippet: String? = nil
+    var resolved: Bool? = nil
+    /// The queued send a "going out" row is about (delayed_actions.id), when
+    /// the server names it — Undo then stops exactly that send.
+    var delayedActionId: Int? = nil
 
     enum CodingKeys: String, CodingKey {
-        case type, label, priority, urgent, unread, module, nav
+        case type, label, priority, urgent, unread, module, nav, draft, snippet, resolved
         case firedAt = "fired_at"
         case reviewId = "review_id"
         case restaurantId = "restaurant_id"
+        case alertId = "id"
+        case canApprove = "can_approve"
+        case delayedActionId = "delayed_action_id"
     }
 
     /// The delayed.py kind a "going out" row is about — the row that can
@@ -45,7 +62,7 @@ struct NotificationItem: Codable, Identifiable {
     var isUrgent: Bool { urgent ?? ((priority ?? 3) <= 1) }
     var isUnread: Bool { unread ?? false }
 
-    var id: String { "\(type)-\(firedAt)" }
+    var id: String { alertId.map { "alert-\($0)" } ?? "\(type)-\(firedAt)" }
 
     // alert_log.fired_at is SQLite's `datetime('now')` — always UTC, always
     // "yyyy-MM-dd HH:mm:ss", no timezone suffix or offset.

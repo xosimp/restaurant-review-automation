@@ -21,10 +21,6 @@ struct CavnarAIApp: App {
         // tinted clear so only the ember shows.
         UIRefreshControl.appearance().tintColor = .clear
 
-        // Hold any nav path posted before a module screen exists, so the
-        // screen can open the section it names once it appears.
-        NavSectionInbox.start()
-
         // Screen titles are headings — the same role an ingredient row's own
         // name plays in Food Cost (Clash Display there too, see
         // IngredientCard) — so every navigationTitle across the app ("Labor",

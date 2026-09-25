@@ -154,10 +154,35 @@ final class ReviewsListViewModel {
     /// "Publish N replies" holds (models.BULK_PUBLISHABLE_SQL) — drafted,
     /// not flagged for a read, not urgent.
     static func canQuickApprove(_ review: Review) -> Bool {
+        canQuickApprove(review, now: Date())
+    }
+
+    /// The bar's recency half too (F3-14): a reply more than
+    /// `quickApproveMaxAgeDays` old is not one the bulk publish may post,
+    /// so it is not one a swipe may post either. A review with no date of its
+    /// own is judged by when it was fetched on the server; here it passes.
+    static func canQuickApprove(_ review: Review, now: Date) -> Bool {
         review.responseStatus == "drafted"
             && !(review.draftResponse ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !review.draftIsFlagged
             && !review.isUrgent
+            && isRecentEnoughForBulk(review.reviewDate, now: now)
+    }
+
+    /// thresholds.REPLY_OWED_MAX_AGE_DAYS — the window BULK_PUBLISHABLE_SQL
+    /// holds a publish-without-reading to.
+    static let quickApproveMaxAgeDays = 30
+
+    static func isRecentEnoughForBulk(_ reviewDate: String?, now: Date) -> Bool {
+        guard let raw = reviewDate else { return true }
+        let p = raw.prefix(10).split(separator: "-")
+        guard p.count == 3, let y = Int(p[0]), let m = Int(p[1]), let d = Int(p[2]) else { return true }
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        guard let day = cal.date(from: DateComponents(year: y, month: m, day: d)),
+              let cutoff = cal.date(byAdding: .day, value: -quickApproveMaxAgeDays, to: cal.startOfDay(for: now))
+        else { return true }
+        return day >= cutoff
     }
 
     private let client: APIClient

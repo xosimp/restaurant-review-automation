@@ -220,9 +220,11 @@ struct ReviewsListView: View {
                     }
                     .buttonStyle(.plain)
                     // Swipe to approve a reply that may be published unread
-                    // (friction audit #21). A flagged or urgent draft has no
-                    // swipe: it keeps the read-first rule.
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    // (friction audit #21). A flagged, urgent or old draft
+                    // has no swipe: it keeps the read-first rule. Not a FULL
+                    // swipe: one flick published to Google with nothing in
+                    // between (F3-14) — the button is the decision.
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         if ReviewsListViewModel.canQuickApprove(review) {
                             Button {
                                 quickApprove(review)

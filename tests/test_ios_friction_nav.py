@@ -25,7 +25,8 @@ def test_one_router_opens_every_nav_path():
     assert "publisher(for: .cavnarOpenNav)" in root
     assert "deepLinkRouter.open(nav)" in root
     router = _src("Push/DeepLinkRouter.swift")
-    for head in ('case "action":', 'case "dsr":', 'case "ask":', 'case "location":'):
+    # "action" and "proposal" share a case: two id spaces, two sheets (F3-2).
+    for head in ('case "action", "proposal":', 'case "dsr":', 'case "ask":', 'case "location":'):
         assert head in router, head
     # A push's own nav wins over the module mirror.
     assert "if let path = NavPath(nav)" in router
@@ -40,7 +41,7 @@ def test_a_pending_send_opens_its_undo_sheet():
 def test_module_screens_receive_their_focus():
     dest = _src("Features/Modules/ModuleDestinationView.swift")
     assert "ReviewsListView(initialFilter: route?.filter" in dest
-    assert "LaborView(focusSection: route?.section)" in dest
+    assert "LaborView(focusSection: route?.section, focusItem: route?.itemId)" in dest
     assert "CavnarBellButton()" in dest
     assert "cavnarShowsLocationTitle, true" in dest
     labor = _src("Features/Labor/LaborView.swift")
@@ -106,7 +107,9 @@ def test_notification_rows_act_in_place():
 def test_the_bell_and_the_switcher_reach_every_screen():
     root = _src("RootView.swift")
     assert ".badge(chrome.notificationsBadge.unreadCount)" in root
-    assert "LocationSwitcherView { didSwitchLocation() }" in root
+    # The reset runs for EVERY switch path, from SessionStore (F3-4).
+    assert "LocationSwitcherView {}" in root
+    assert "session.onLocationSwitched = { _ in didSwitchLocation() }" in root
     assert "CavnarScreenTitle(title: title)" in _src("DesignSystem/ViewModifiers.swift")
     # A store switch no longer replays the landing intro.
     session = _src("Core/SessionStore.swift")

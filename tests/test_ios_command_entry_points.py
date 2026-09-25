@@ -89,6 +89,9 @@ def test_the_widget_extension_never_signs_in_or_calls_the_api():
 def test_signing_out_clears_what_the_lock_screen_shows():
     sync = _read(APP, "Core", "SystemSync.swift")
     signed_out = sync.split("guard let token = Keychain.get(Keychain.Key.sessionToken)", 1)[1].split("return\n", 1)[0]
+    # One helper, called here and by SessionStore at sign-out itself (F3-8).
+    assert "Self.clearForSignOut()" in signed_out
+    signed_out = sync.split("static func clearForSignOut() {", 1)[1].split("\n    }\n", 1)[0]
     assert "WidgetSnapshot.clear()" in signed_out
     assert "PendingSendActivities.endAll()" in signed_out
     assert "shortcutItems = []" in signed_out
@@ -193,7 +196,9 @@ def test_food_cost_actions_sit_above_both_sub_tabs():
     fc = _read(APP, "Features", "FoodCost", "FoodCostQuickEntryView.swift")
     body = fc.split("var body: some View {", 1)[1]
     assert body.index("FoodCostActionRow(") < body.index("if subTab == .tracker {")
-    assert '.onNavSection("inventory")' in fc
+    # The route carries where inside Food Cost (F3-7); the section inbox
+    # that raced it is gone.
+    assert "FoodCostAction(path: focus)" in fc
 
 
 def test_invoices_scan_with_the_camera_and_keep_the_photo_fallback():

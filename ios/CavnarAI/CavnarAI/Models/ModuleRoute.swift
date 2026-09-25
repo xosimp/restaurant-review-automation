@@ -17,13 +17,27 @@ struct ModuleRoute: Hashable {
     var filter: String? = nil
     var section: String? = nil
     var itemId: String? = nil
+    /// The whole path the route came from, query and all — what a screen
+    /// needs beyond the section ("inventory/invoices?scan=camera" opens the
+    /// scanner ON the camera). The one carrier of "where inside the module":
+    /// pushes, notification rows, Home cards, the command sheet and system
+    /// entries all reach the screen through this route (F3-7).
+    var nav: NavPath? = nil
+
+    /// `nav`, or — for a route built from a key and a section alone — the
+    /// path those two name.
+    var navPath: NavPath? {
+        if let nav { return nav }
+        guard let section, !section.isEmpty else { return nil }
+        return NavPath("\(key)/\(section)")
+    }
 
     /// The route a nav path (Core/NavPath.swift) opens inside the Modules
     /// tab, or nil for a head that lives elsewhere (Home, Ask, Account, the
     /// daily report, a pending action). `labelFor` names the module.
     static func from(_ nav: NavPath, labelFor: @escaping (String) -> String = { $0.capitalized }) -> ModuleRoute? {
         func route(_ key: String, filter: String? = nil, section: String? = nil, item: String? = nil) -> ModuleRoute {
-            ModuleRoute(key: key, label: labelFor(key), filter: filter, section: section, itemId: item)
+            ModuleRoute(key: key, label: labelFor(key), filter: filter, section: section, itemId: item, nav: nav)
         }
         let filter = nav.query["filter"]
         switch nav.head {

@@ -2016,6 +2016,9 @@ final class LaborViewModel {
         // After a save of a PUBLISHED week: the people re-emailed because
         // their own shifts moved. Nil on a draft; empty when nobody's did.
         let changedSinceSent: [String]?
+        // A save of a week staff already have emails nobody now: the people
+        // whose shifts moved, who Send will tell (S, 9/25/26).
+        let unsentChanges: [String]?
         // A change inside the owner's notice window: premium pay may be
         // owed where a predictive-scheduling law applies (NS5 H2). Nil
         // from an older backend or when nothing changed inside it.
@@ -2025,11 +2028,20 @@ final class LaborViewModel {
             case whatIf = "what_if"
             case pendingTimeOff = "pending_time_off"
             case changedSinceSent = "changed_since_sent"
+            case unsentChanges = "unsent_changes"
             case lateChangeWarning = "late_change_warning"
         }
     }
 
     private struct RowsBody: Encodable { let rows: [ScheduleRow] }
+
+    /// After a save of a week staff already have: nobody is emailed by the
+    /// save; Send tells the people named.
+    nonisolated static func unsentNotice(_ names: [String]) -> String {
+        if names.isEmpty { return "Saved; nobody's shifts changed." }
+        let who = names.count <= 3 ? names.joined(separator: ", ") : "\(names.count) people"
+        return "Saved. \(who) \(names.count == 1 ? "hasn\u{2019}t" : "haven\u{2019}t") been told \u{2014} Send tells only them."
+    }
 
     // MARK: - Versions, conflicts and the change notice
 
@@ -2042,6 +2054,9 @@ final class LaborViewModel {
     // "Updated schedule sent to Ana, Bob" / "Saved; nobody's shifts
     // changed" — only after a save of a week staff already have.
     var saveNotice: String?
+    /// People whose shifts changed on a week staff already have, not told
+    /// yet — Send (PublishScheduleSheet) tells only them.
+    var unsentChanges: [String] = []
     var isReloadingAfterConflict = false
 
     private struct VersionsEnvelope: Decodable {
@@ -2841,7 +2856,10 @@ final class LaborViewModel {
                 // The version just written is now the latest; the next
                 // save must name it or it would read as a conflict.
                 if let v = latestVersion { latestVersion = v + 1 } else { await loadLatestVersion() }
-                if let changed = response.changedSinceSent {
+                if let unsent = response.unsentChanges {
+                    unsentChanges = unsent
+                    saveNotice = Self.unsentNotice(unsent)
+                } else if let changed = response.changedSinceSent {
                     saveNotice = changed.isEmpty
                         ? "Saved; nobody's shifts changed."
                         : "Updated schedule sent to \(changed.joined(separator: ", "))."

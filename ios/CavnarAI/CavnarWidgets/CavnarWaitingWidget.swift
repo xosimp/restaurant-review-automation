@@ -50,8 +50,19 @@ struct WaitingWidgetView: View {
     }
 
     private var link: URL? {
-        if let snap, snap.waitingCount > 0 { return URL(string: "cavnarai://command") }
-        return URL(string: "cavnarai://nav/dsr")
+        URL(string: snap?.link(now: entry.date) ?? "cavnarai://nav/dsr")
+    }
+
+    /// The waiting line only while its count is current; an old count is
+    /// never shown as now's (F3-8).
+    private func waiting(_ snap: WidgetSnapshot) -> String? {
+        snap.waitingIsCurrent(now: entry.date) ? snap.waitingLine : nil
+    }
+
+    /// Last night's net, with the night's date — only while current.
+    private func night(_ snap: WidgetSnapshot) -> (date: String?, net: String)? {
+        guard snap.nightIsCurrent(now: entry.date), let net = snap.netLabel else { return nil }
+        return (snap.nightLabel, net)
     }
 
     var body: some View {
@@ -77,7 +88,13 @@ struct WaitingWidgetView: View {
     @ViewBuilder
     private var inline: some View {
         if let snap {
-            Text(snap.waitingCount > 0 ? snap.waitingLine : (snap.netLabel.map { "Last night \($0)" } ?? snap.waitingLine))
+            if let line = waiting(snap), snap.waitingCount > 0 {
+                Text(line)
+            } else if let n = night(snap) {
+                Text([n.date, n.net].compactMap { $0 }.joined(separator: " "))
+            } else {
+                Text(waiting(snap) ?? "Open Cavnar AI")
+            }
         } else {
             Text("Open Cavnar AI")
         }
@@ -85,7 +102,7 @@ struct WaitingWidgetView: View {
 
     @ViewBuilder
     private var circular: some View {
-        if let snap {
+        if let snap, waiting(snap) != nil {
             VStack(spacing: 0) {
                 Text("\(snap.waitingCount)")
                     .font(.cavnarNumber(22, weight: 700))
@@ -101,13 +118,13 @@ struct WaitingWidgetView: View {
     private var rectangular: some View {
         if let snap {
             VStack(alignment: .leading, spacing: 1) {
-                Text(snap.waitingLine)
+                Text(waiting(snap) ?? "Open Cavnar AI to refresh")
                     .font(.cavnarBody(14, weight: 700))
-                if let net = snap.netLabel {
+                if let n = night(snap) {
                     HStack(spacing: 4) {
-                        Text("Last night")
-                            .font(.cavnarBody(12))
-                        Text(net)
+                        Text(n.date ?? "Last night")
+                            .font(.cavnarNumber(12))
+                        Text(n.net)
                             .font(.cavnarNumber(13, weight: 600))
                             .privacySensitive()
                         if let change = snap.changeLabel {
@@ -116,8 +133,8 @@ struct WaitingWidgetView: View {
                                 .privacySensitive()
                         }
                     }
-                } else if let night = snap.nightLabel {
-                    Text("Report \(night)").font(.cavnarBody(12))
+                } else if snap.nightIsCurrent(now: entry.date), let label = snap.nightLabel {
+                    Text("Report \(label)").font(.cavnarBody(12))
                 }
             }
         } else {
@@ -131,18 +148,21 @@ struct WaitingWidgetView: View {
     @ViewBuilder
     private var small: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("CAVNAR AI")
+            // Which store, for an owner with more than one.
+            Text((snap?.restaurantName ?? "Cavnar AI").uppercased())
                 .font(.cavnarBody(10.5, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarEmber2)
+                .lineLimit(1)
             if let snap {
-                Text(snap.waitingLine)
+                Text(waiting(snap) ?? "Open Cavnar AI to refresh")
                     .font(.cavnarHeadline(17))
-                    .foregroundStyle(snap.waitingCount > 0 ? Color.cavnarInk : Color.cavnarInk2)
+                    .foregroundStyle(waiting(snap) != nil && snap.waitingCount > 0 ? Color.cavnarInk : Color.cavnarInk2)
                     .lineLimit(2)
                 Spacer(minLength: 0)
-                if let net = snap.netLabel {
-                    Text(snap.nightLabel.map { "LAST NIGHT · \($0)" } ?? "LAST NIGHT")
+                if let n = night(snap) {
+                    let net = n.net
+                    Text(n.date.map { "LAST NIGHT · \($0)" } ?? "LAST NIGHT")
                         .font(.cavnarBody(9.5, weight: 700))
                         .tracking(0.8)
                         .foregroundStyle(Color.cavnarInk3)

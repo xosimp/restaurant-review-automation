@@ -27,16 +27,33 @@ final class DeepLinkRouter {
     /// sheet) was the decision, so it sends — as the web's hbAsk does
     /// (friction audit #15). A plain tap on a brief's body only fills it in.
     var pendingAskAutoSend = false
+    /// A past Ask chat to reopen — `ask?conversation=<id>`, a command-sheet
+    /// hit for an old conversation (F3-15). RootView consumes it.
+    var pendingAskConversation: Int?
+    /// The Account sheet a path named — `account/<section>` (nav.py's
+    /// sections: security, notifications, integrations, people, …) or
+    /// "recs". AccountView consumes it (F3-15).
+    var pendingAccountSection: String?
     /// A queued automatic send (delayed_actions id) to show with Undo /
     /// Review — the "goes out at 11am" push and its notification row
     /// (friction audit #3). RootView presents PendingActionSheet for it.
     var pendingActionId: PendingActionRef?
+    /// A stored Ask proposal to show again with its confirm card
+    /// (`proposal/<id>`, or `action/<id>?kind=proposal`). A different id
+    /// space from `pendingActionId`: an Ask proposal opened as a queued send
+    /// read "already went out", or showed an unrelated send with the same
+    /// number (F3-2). RootView presents ProposalReopenSheet for it.
+    var pendingProposalId: PendingActionRef?
+    /// A link asked to change location: RootView opens the switcher on it
+    /// rather than switching (F3-12). Consumed by RootView.
+    var pendingLocationPicker = false
     /// A Daily Sales Report to open on Home's stack — set by a `dsr` push
     /// (`business_date` → that night) or its row in the notification list
     /// (no date there → the list of nights). HomeView consumes it.
     var pendingDailyReport: DailyReportRoute?
-    /// Bumped each time a tap switched the active location, so Home reloads
-    /// for the location it now shows.
+    /// Bumped each time the active location changed — by RootView, from
+    /// SessionStore.onLocationSwitched, whichever screen switched — so Home
+    /// reloads for the location it now shows.
     var locationSwitches = 0
     /// Switches the session to another location of the group; set by
     /// RootView (it owns the SessionStore). Returns true on success.
@@ -58,7 +75,7 @@ final class DeepLinkRouter {
         let current = activeRestaurantId()
         if let target = restaurantId, target > 0, current > 0, target != current, let switchLocation {
             Task {
-                if await switchLocation(target) { locationSwitches += 1 }
+                _ = await switchLocation(target)
                 route(alertType: alertType, reviewId: reviewId, askPrompt: askPrompt,
                       alertId: alertId, recKey: recKey, module: module, businessDate: businessDate,
                       surface: surface, nav: nav, askAutoSend: askAutoSend)
@@ -79,12 +96,24 @@ final class DeepLinkRouter {
         let current = activeRestaurantId()
         if let target = restaurantId, target > 0, current > 0, target != current, let switchLocation {
             Task {
-                if await switchLocation(target) { locationSwitches += 1 }
+                _ = await switchLocation(target)
                 apply(nav, askAutoSend: askAutoSend, askPrompt: askPrompt)
             }
             return
         }
         apply(nav, askAutoSend: askAutoSend, askPrompt: askPrompt)
+    }
+
+    /// A path from a link anyone could have written (SystemEntry `.link`):
+    /// it opens a place and nothing more. An Ask question is filled in for
+    /// the owner to send; a location is offered in the switcher, not
+    /// switched to (F3-12).
+    func openFromLink(_ nav: NavPath) {
+        if nav.head == "location" {
+            pendingLocationPicker = true
+            return
+        }
+        open(nav, askAutoSend: false)
     }
 
     /// The destination of a nav path. Unknown heads degrade to Home, never
@@ -97,10 +126,16 @@ final class DeepLinkRouter {
             pendingTab = .home
             pendingModuleKey = nil
             pendingModuleRoute = nil
-        case "action":
-            // The queued send's own sheet, over whatever is on screen.
+        case "action", "proposal":
+            // The queued send's own sheet — or the Ask proposal's — over
+            // whatever is on screen.
+            let isProposal = nav.head == "proposal" || nav.query["kind"] == "proposal"
             if let id = nav.target.flatMap({ Int($0) }), id > 0 {
-                pendingActionId = PendingActionRef(id: id)
+                if isProposal {
+                    pendingProposalId = PendingActionRef(id: id)
+                } else {
+                    pendingActionId = PendingActionRef(id: id)
+                }
             } else {
                 pendingTab = .home
             }
@@ -111,23 +146,25 @@ final class DeepLinkRouter {
             if let id = nav.target.flatMap({ Int($0) }), id > 0, id != activeRestaurantId(),
                let switchLocation {
                 Task {
-                    if await switchLocation(id) { locationSwitches += 1 }
+                    _ = await switchLocation(id)
                     pendingTab = .home
                 }
             } else {
                 pendingTab = .home
             }
         case "dsr":
-            // dsr/night/<date>, dsr/<date>, or the list of nights.
-            let date = nav.rest.last
             pendingTab = .home
             pendingModuleKey = nil
             pendingModuleRoute = nil
-            pendingDailyReport = DSRFormat.isISODate(date) ? .report(date: date) : .list
+            pendingDailyReport = Self.dailyReportRoute(nav)
         case "ask":
             pendingTab = .ask
             pendingModuleKey = nil
             pendingModuleRoute = nil
+            if let chat = nav.query["conversation"].flatMap({ Int($0) }), chat > 0 {
+                pendingAskConversation = chat
+                return
+            }
             let fromPath = nav.query["q"].map { String($0.prefix(300)) }
             let question = (fromPath?.isEmpty == false ? fromPath : nil) ?? askPrompt
             if let question, !question.isEmpty {
@@ -138,6 +175,7 @@ final class DeepLinkRouter {
             pendingTab = .account
             pendingModuleKey = nil
             pendingModuleRoute = nil
+            pendingAccountSection = nav.head == "recs" ? "recs" : nav.target?.lowercased()
         default:
             guard let target = ModuleRoute.from(nav) else {
                 pendingTab = .home
@@ -164,7 +202,7 @@ final class DeepLinkRouter {
         }
         if let route = pendingModuleRoute {
             return ModuleRoute(key: route.key, label: labelFor(route.key), filter: route.filter,
-                               section: route.section, itemId: route.itemId)
+                               section: route.section, itemId: route.itemId, nav: route.nav)
         }
         guard let key = pendingModuleKey else { return nil }
         return ModuleRoute(key: key, label: labelFor(key))
@@ -271,6 +309,25 @@ final class DeepLinkRouter {
             hapticOnError: false)
     }
 
+    /// The tab a route asked for, handed out once. RootView switches on it
+    /// and this clears it, so the NEXT route to the same tab is a change
+    /// again — onChange never fired for a second "go to Modules" while the
+    /// first one's .modules was still sitting here (F3-1).
+    func consumePendingTab() -> AppTab? {
+        defer { pendingTab = nil }
+        return pendingTab
+    }
+
+    func consumePendingAccountSection() -> String? {
+        defer { pendingAccountSection = nil }
+        return pendingAccountSection
+    }
+
+    func consumePendingAskConversation() -> Int? {
+        defer { pendingAskConversation = nil }
+        return pendingAskConversation
+    }
+
     func consumePendingReviewID() -> Int? {
         defer { pendingReviewID = nil }
         return pendingReviewID
@@ -280,6 +337,22 @@ final class DeepLinkRouter {
     /// push.NOTIFICATION_MODULE may send `module: "dsr"` as well.
     static func isDailyReport(alertType: String, module: String?) -> Bool {
         alertType == "dsr" || module == "dsr"
+    }
+
+    /// The web's reading of a dsr path (dashboard.html cavNavRegister('dsr')):
+    /// bare "dsr" is the LATEST night's report — what "Last night's report"
+    /// (the quick action, the Siri shortcut, the command chip, the registry)
+    /// means; it used to open the list of nights (F3-15). "dsr/night/<date>"
+    /// or "dsr/<date>" is that night, "dsr/week[/<date>]" the week's grid,
+    /// "dsr/list" the list.
+    static func dailyReportRoute(_ nav: NavPath) -> DailyReportRoute {
+        var rest = nav.rest
+        let kind = rest.first.map { $0.lowercased() }
+        if kind == "list" || kind == "nights" { return .list }
+        if kind == "week" || kind == "night" || kind == "period" { rest.removeFirst() }
+        let date = rest.first.flatMap { DSRFormat.isISODate($0) ? $0 : nil }
+        if kind == "week" || kind == "period" { return .week(date: date) }
+        return .report(date: date)
     }
 
     func consumePendingDailyReport() -> DailyReportRoute? {

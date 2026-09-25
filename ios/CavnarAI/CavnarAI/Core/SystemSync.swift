@@ -30,14 +30,79 @@ final class WidgetSnapshotService {
         let items: [Item]?
     }
 
+    private struct LocationsResponse: Decodable {
+        let ok: Bool
+        let locations: [LocationOption]
+    }
+
+    /// Signed out (or a staff-only phone): nothing of the restaurant's may
+    /// stay on the Lock Screen, the icon's quick actions or a countdown.
+    /// SessionStore calls this the moment it signs out — not at the next
+    /// activation, which on a shared back-office phone could be hours away
+    /// (F3-8).
+    static func clearForSignOut() {
+        WidgetSnapshot.clear()
+        WidgetCenter.shared.reloadTimelines(ofKind: WidgetSnapshot.widgetKind)
+        UIApplication.shared.shortcutItems = []
+        PendingSendActivities.endAll()
+    }
+
+    /// The waiting half of one read: the open count and the replies count.
+    struct WaitingPart: Equatable {
+        let count: Int
+        let replies: Int
+    }
+
+    /// The night half of one read. `.none` (all nil) is a real answer — this
+    /// login has no report — which clears the figures; a FAILED read is nil
+    /// and keeps the last good ones.
+    struct NightPart: Equatable {
+        var date: String?
+        var label: String?
+        var net: String?
+        var change: String?
+        var basis: String?
+        var up: Bool?
+        static let none = NightPart()
+    }
+
+    /// The next snapshot from the last one and whichever halves this read
+    /// got. A half that failed keeps its last value AND its own timestamp, so
+    /// it goes stale on its own clock rather than reading "Nothing waiting"
+    /// or losing last night's net (F3-8). A snapshot from another location
+    /// is never carried over. Nil when there is nothing new to save.
+    nonisolated static func merge(previous: WidgetSnapshot?, restaurantId: Int, restaurantName: String?,
+                                  waiting: WaitingPart?, night: NightPart?, now: Date) -> WidgetSnapshot? {
+        guard waiting != nil || night != nil else { return nil }
+        let sameStore = restaurantId > 0 && previous?.restaurantId == restaurantId
+        var snap = sameStore ? (previous ?? .empty) : .empty
+        snap.restaurantId = restaurantId > 0 ? restaurantId : nil
+        snap.restaurantName = restaurantName ?? (sameStore ? snap.restaurantName : nil)
+        if let waiting {
+            snap.waitingCount = waiting.count
+            snap.pendingReplies = waiting.replies
+            snap.waitingUpdatedAt = now
+        } else if !sameStore {
+            snap.waitingUpdatedAt = .distantPast
+        }
+        if let night {
+            snap.nightDate = night.date
+            snap.nightLabel = night.label
+            snap.netLabel = night.net
+            snap.changeLabel = night.change
+            snap.changeBasis = night.basis
+            snap.changeIsUp = night.up
+            snap.nightUpdatedAt = now
+        } else if !sameStore {
+            snap.nightUpdatedAt = .distantPast
+        }
+        snap.updatedAt = now
+        return snap
+    }
+
     func refresh(force: Bool = false) async {
         guard let token = Keychain.get(Keychain.Key.sessionToken), !token.isEmpty else {
-            // Signed out (or a staff-only phone): nothing of the
-            // restaurant's may stay on the Lock Screen.
-            WidgetSnapshot.clear()
-            WidgetCenter.shared.reloadTimelines(ofKind: WidgetSnapshot.widgetKind)
-            UIApplication.shared.shortcutItems = []
-            PendingSendActivities.endAll()
+            Self.clearForSignOut()
             return
         }
         if inFlight { return }
@@ -45,47 +110,68 @@ final class WidgetSnapshotService {
         inFlight = true
         defer { inFlight = false }
 
-        async let actions: ActionsResponse? = try? client.sendWithBearer("/mobile/api/actions", bearer: token)
+        // `peek=1`: a background read for the widget is not the owner seeing
+        // the queue — the server skips presenting its recommendations, as it
+        // does for the report below (F3-6).
+        async let actions: ActionsResponse? = try? client.sendWithBearer(
+            "/mobile/api/actions", query: ["peek": "1"], bearer: token)
         async let pending: PendingSendActivities.PendingResponse? =
             try? client.sendWithBearer("/mobile/api/actions/pending", bearer: token)
         async let night = Self.lastNight(client: client, bearer: token)
-        let (a, p, n) = await (actions, pending, night)
+        async let locations: LocationsResponse? = try? client.sendWithBearer(
+            "/mobile/api/group-locations", bearer: token)
+        let (a, p, n, l) = await (actions, pending, night, locations)
         lastRefresh = Date()
 
-        var snapshot = n ?? WidgetSnapshot.empty
         let items = a?.items ?? []
-        snapshot.waitingCount = items.count
-        snapshot.pendingReplies = items.first(where: { $0.key == "no_response" })?.count ?? 0
-        snapshot.updatedAt = Date()
-        if a != nil || n != nil {
+        let waiting = a.map { _ in
+            WaitingPart(count: items.count,
+                        replies: items.first(where: { $0.key == "no_response" })?.count ?? 0)
+        }
+        // A store's name only means something beside another one.
+        let name = l.flatMap { r in r.locations.count > 1 ? r.locations.first(where: \.active)?.name : nil }
+        if let snapshot = Self.merge(previous: WidgetSnapshot.load(), restaurantId: SessionScope.activeRestaurantId,
+                                     restaurantName: name, waiting: waiting, night: n, now: Date()) {
             WidgetSnapshot.save(snapshot)
             WidgetCenter.shared.reloadTimelines(ofKind: WidgetSnapshot.widgetKind)
         }
-        if a != nil {
+        if let waiting {
             UIApplication.shared.shortcutItems =
-                [QuickAction.approveRepliesItem(waiting: snapshot.pendingReplies)].compactMap { $0 }
+                [QuickAction.approveRepliesItem(waiting: waiting.replies)].compactMap { $0 }
         }
         if let p { PendingSendActivities.sync(p.actions ?? []) }
     }
 
-    /// Last night's net and its measured change, from the same two routes
-    /// Home's Last night card reads. Nil when this login has no report.
-    private static func lastNight(client: APIClient, bearer: String) async -> WidgetSnapshot? {
-        guard let list: DSRListResponse = try? await client.sendWithBearer("/mobile/api/dsr", bearer: bearer),
-              let latest = list.reports.first else { return nil }
-        let report: DSRReport? = try? await client.sendWithBearer("/mobile/api/dsr/\(latest.businessDate)",
-                                                                 bearer: bearer)
-        var snap = WidgetSnapshot.empty
-        snap.nightLabel = latest.displayDate
-        guard let sales = report?.facts.blocks["sales"], sales.isReady else { return snap }
-        if let net = sales.metric("net") { snap.netLabel = DSRFormat.money(net) }
+    /// Last night's net and its measured change. `.none` when this login has
+    /// no report; nil when the read failed. The report is read with
+    /// `peek=1`: a widget refresh is not someone opening the report, so its
+    /// actions are not recorded as shown (F3-6 / D3-8).
+    private static func lastNight(client: APIClient, bearer: String) async -> NightPart? {
+        let list: DSRListResponse
+        do {
+            list = try await client.sendWithBearer("/mobile/api/dsr", query: ["limit": "1"], bearer: bearer)
+        } catch let error as APIClient.APIError where error.status == 403 {
+            return NightPart.none
+        } catch {
+            return nil
+        }
+        guard let latest = list.reports.first else { return NightPart.none }
+        var part = NightPart(date: latest.businessDate, label: latest.displayDate)
+        guard let report: DSRReport = try? await client.sendWithBearer(
+            "/mobile/api/dsr/\(latest.businessDate)", query: ["peek": "1"], bearer: bearer) else {
+            // The list answered and the report didn't: the list's own net.
+            part.net = latest.net.map { DSRFormat.money($0) }
+            return part
+        }
+        guard let sales = report.facts.blocks["sales"], sales.isReady else { return part }
+        if let net = sales.metric("net") { part.net = DSRFormat.money(net) }
         let change = WidgetSnapshotService.change(lastWeek: sales.metric("vs_last_week_pct"),
                                                   yesterday: sales.metric("vs_yesterday_pct"),
                                                   businessDate: latest.businessDate)
-        snap.changeLabel = change?.label
-        snap.changeBasis = change?.basis
-        snap.changeIsUp = change?.up
-        return snap
+        part.change = change?.label
+        part.basis = change?.basis
+        part.up = change?.up
+        return part
     }
 
     /// The same weekday last week when the report measured it — the fair

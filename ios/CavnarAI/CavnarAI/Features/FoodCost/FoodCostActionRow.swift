@@ -23,7 +23,7 @@ enum FoodCostAction: Identifiable, Hashable {
     /// "inventory/order" → the supplier order; "inventory/count" → the
     /// count sheet; "invoice/<id>" → the scanner. Nil: the module itself.
     init?(path: NavPath) {
-        let section = path.head == "inventory" ? (path.target ?? "") : path.head
+        let section = (path.head == "inventory" || path.head == "food") ? (path.target ?? "") : path.head
         switch section {
         case "invoices", "invoice", "scan":
             self = .scan(camera: path.query["scan"] == "camera" || section == "scan")

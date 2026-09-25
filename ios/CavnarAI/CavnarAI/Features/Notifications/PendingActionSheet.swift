@@ -25,7 +25,7 @@ struct PendingAction: Decodable, Identifiable, Equatable {
     /// Where "Review" goes: the schedule or the order it would send.
     var reviewNav: String {
         switch kind {
-        case "schedule_publish": return "labor/schedule"
+        case "schedule_publish", "schedule_changes_send": return "labor/schedule"
         case "order_send": return "inventory/order"
         default: return "home"
         }
@@ -91,6 +91,8 @@ final class PendingActionViewModel {
             if r.ok {
                 undone = true
                 Haptic.success()
+                // The Lock Screen countdown ends with it (F3-9).
+                PendingSendActivities.finish(actionId: action.id, status: "stopped", note: nil)
             } else {
                 errorMessage = r.error ?? "That already went out, or was already undone."
             }

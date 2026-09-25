@@ -79,7 +79,9 @@ final class NotificationsListViewModel {
            let r: PendingResponse = try? await client.send("/mobile/api/actions/pending", hapticOnError: false) {
             pendingActions = r.actions ?? []
         }
-        if notifications.contains(where: { $0.reviewId != nil }),
+        // A server that says `can_approve` per row is the rule; the reviews
+        // read below is only for an older one.
+        if notifications.contains(where: { $0.reviewId != nil && $0.canApprove == nil }),
            let r: ReviewsResponse = try? await client.send(
                "/mobile/api/reviews", query: ["filter": "pending", "limit": "50", "offset": "0"],
                hapticOnError: false) {
@@ -87,17 +89,41 @@ final class NotificationsListViewModel {
         }
     }
 
-    /// The one queued send a "going out" row can undo in place: only when a
-    /// single pending send of its kind exists — with several, the row opens
-    /// them instead of guessing which one it meant.
+    /// The queued send a "going out" row can undo in place (F3-10). The row's
+    /// own `delayed_action_id` when the server sends it. Without it, only
+    /// the NEWEST row of its kind, only when a single pending send of that
+    /// kind exists, and only when that send goes out after the row fired —
+    /// yesterday's "order going out" row (long sent) matched by kind used to
+    /// stop TODAY's order.
     func undoable(_ item: NotificationItem) -> PendingAction? {
-        guard answered[item.id] == nil, let kind = item.undoableKind else { return nil }
-        let matches = pendingActions.filter { $0.kind == kind }
-        return matches.count == 1 ? matches[0] : nil
+        Self.undoTarget(for: item, among: notifications, pending: pendingActions,
+                        answered: answered[item.id] != nil)
     }
 
+    nonisolated static func undoTarget(for item: NotificationItem, among rows: [NotificationItem],
+                                       pending: [PendingAction], answered: Bool) -> PendingAction? {
+        guard !answered, let kind = item.undoableKind else { return nil }
+        if let id = item.delayedActionId {
+            return pending.first { $0.id == id && ($0.status ?? "pending") == "pending" }
+        }
+        let newest = rows.filter { $0.type == item.type }
+            .max { ($0.firedAtDate ?? .distantPast) < ($1.firedAtDate ?? .distantPast) }
+        guard newest?.id == item.id, let fired = item.firedAtDate else { return nil }
+        let matches = pending.filter { $0.kind == kind }
+        guard matches.count == 1, let only = matches.first,
+              let goesOut = CavnarISODate.parse(only.executeAt), goesOut > fired else { return nil }
+        return only
+    }
+
+    /// Approve in place only where the server says it may (`can_approve`)
+    /// AND the draft came with the row to be read first — never a reply
+    /// the owner hasn't seen (F3-10).
     func approvable(_ item: NotificationItem) -> Bool {
-        guard answered[item.id] == nil, let id = item.reviewId else { return false }
+        guard answered[item.id] == nil, let id = item.reviewId,
+              let draft = item.draft, !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
+        }
+        if let can = item.canApprove { return can }
         return approvableReviewIds.contains(id)
     }
 
@@ -112,6 +138,8 @@ final class NotificationsListViewModel {
                 answered[item.id] = "Undone"
                 pendingActions.removeAll { $0.id == action.id }
                 Haptic.success()
+                // The Lock Screen countdown ends with it (F3-9).
+                PendingSendActivities.finish(actionId: action.id, status: "stopped", note: nil)
             } else {
                 rowError = (item.id, r.error ?? "That already went out, or was already undone.")
             }
@@ -122,17 +150,6 @@ final class NotificationsListViewModel {
         }
     }
 
-    private struct ApproveResponse: Decodable {
-        let ok: Bool
-        let autoPosted: Bool?
-        let postError: String?
-        let error: String?
-        enum CodingKeys: String, CodingKey {
-            case ok, error
-            case autoPosted = "auto_posted"
-            case postError = "post_error"
-        }
-    }
 
     func approve(_ item: NotificationItem) async {
         guard let reviewId = item.reviewId else { return }
@@ -140,14 +157,15 @@ final class NotificationsListViewModel {
         rowError = nil
         defer { busyRowId = nil }
         do {
-            let r: ApproveResponse = try await client.send("/mobile/api/reviews/\(reviewId)/approve", method: .post)
+            let r: ReviewPostOutcome = try await client.send("/mobile/api/reviews/\(reviewId)/approve", method: .post)
             if r.ok {
                 approvableReviewIds.remove(reviewId)
-                if let postError = r.postError {
+                if let why = r.shortfall {
+                    // Approved, not live — said, never shown as "Posted".
                     answered[item.id] = "Approved"
-                    rowError = (item.id, postError)
+                    rowError = (item.id, why)
                 } else {
-                    answered[item.id] = r.autoPosted == true ? "Posted" : "Approved"
+                    answered[item.id] = r.posted ? "Posted" : "Approved"
                     Haptic.success()
                 }
             } else {
@@ -358,6 +376,17 @@ struct NotificationsListView: View {
                         .foregroundStyle(Color.cavnarInk3.opacity(0.6))
                 }
             }
+            // The reply Approve would publish, in full, before it can be
+            // approved here (F3-10).
+            if approve, let draft = item.draft {
+                Text(draft)
+                    .font(.cavnarBody(13.5))
+                    .foregroundStyle(Color.cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(10)
+                    .background(Color.cavnarPaper2, in: RoundedRectangle(cornerRadius: CavnarRadius.control))
+                    .padding(.leading, 16)
+            }
             if let error = viewModel.rowError, error.id == item.id {
                 Text(error.message)
                     .font(.cavnarBody(13))
@@ -365,16 +394,14 @@ struct NotificationsListView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+        // Undo only — the safe direction. Publishing a reply is a tap on the
+        // row's own Approve, under the draft it publishes; a full swipe used
+        // to post a reply nobody had read (F3-10).
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             if !busy, let undo {
                 Button(role: .destructive) {
                     Task { await viewModel.undo(item, action: undo) }
                 } label: { Label("Undo", systemImage: "arrow.uturn.backward") }
-            } else if !busy, approve {
-                Button {
-                    Task { await viewModel.approve(item) }
-                } label: { Label("Approve", systemImage: "checkmark") }
-                .tint(Color.cavnarGreen)
             }
         }
     }

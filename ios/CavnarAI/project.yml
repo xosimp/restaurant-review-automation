@@ -125,6 +125,13 @@ targets:
         com.apple.developer.usernotifications.time-sensitive: true
         com.apple.developer.applesignin:
           - Default
+        # Universal links (F3-16): dashboard.cavnar.ai/dashboard opens the
+        # app. The server half is hosted_dashboard.py's
+        # /.well-known/apple-app-site-association (app id
+        # 8DW8XL63K6.ai.cavnar.CavnarAI). Automatic signing adds the
+        # capability to the App ID on the next device build.
+        com.apple.developer.associated-domains:
+          - applinks:dashboard.cavnar.ai
         # Shared with the CavnarWidgets extension: the app writes the widget
         # snapshot here (Shared/WidgetSnapshot.swift). No token is shared.
         com.apple.security.application-groups:

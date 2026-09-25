@@ -41,6 +41,7 @@ struct NavPath: Hashable {
     static let itemModules: [String: String] = [
         "review": "reviews", "schedule": "labor", "person": "labor", "invoice": "inventory",
         "order": "inventory", "issue": "home", "request": "labor", "action": "home", "location": "home",
+        "food": "inventory", "proposal": "home",
     ]
 
     /// The module this path lives in ("review/412" → "reviews").

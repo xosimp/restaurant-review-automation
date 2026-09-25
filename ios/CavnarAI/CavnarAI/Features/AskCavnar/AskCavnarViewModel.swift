@@ -518,12 +518,18 @@ final class AskCavnarViewModel {
     /// last week must not come back with a working Confirm button. The
     /// "[Confirmed: …]" status lines in the transcript show what happened.
     func open(_ conversation: AskConversation) async {
+        await open(conversationId: conversation.id)
+    }
+
+    /// The same, by id — a nav path `ask?conversation=<id>` carries only
+    /// the id (F3-15).
+    func open(conversationId: Int) async {
         guard !isLoading else { return }
         isOpeningConversation = true
         defer { isOpeningConversation = false }
         do {
             let response: ConversationResponse = try await client.send(
-                "/mobile/api/ask-cavnar/conversations/\(conversation.id)", hapticOnError: false)
+                "/mobile/api/ask-cavnar/conversations/\(conversationId)", hapticOnError: false)
             guard response.ok else { return }
             let stored = response.messages ?? []
             messages = stored.map { m in
@@ -532,7 +538,7 @@ final class AskCavnarViewModel {
                 ChatMessage(text: m.content, isUser: m.role == "user",
                             messageId: m.role == "assistant" ? m.id : nil, hasRevealed: true)
             }
-            conversationId = conversation.id
+            self.conversationId = conversationId
             wantsNewConversation = false
             errorBanner = nil
         } catch {

@@ -19,6 +19,10 @@ enum AppPasscode {
         static let salt = "cavnar.app_passcode_salt"
         static let failures = "cavnar.app_passcode_failures"
         static let lockoutUntil = "cavnar.app_passcode_lockout_until"
+        /// The penalty and the monotonic clock reading it started at — the
+        /// wall clock alone could be wound forward in Settings to skip it.
+        static let lockoutPenalty = "cavnar.app_passcode_lockout_penalty"
+        static let lockoutStartedMono = "cavnar.app_passcode_lockout_mono"
     }
 
     static var isSet: Bool { Keychain.get(Key.hash) != nil }
@@ -57,7 +61,30 @@ enum AppPasscode {
 
     static var lockoutRemaining: TimeInterval {
         guard let raw = Keychain.get(Key.lockoutUntil), let until = TimeInterval(raw) else { return 0 }
-        return max(0, until - Date().timeIntervalSince1970)
+        return remaining(until: until,
+                         penalty: Keychain.get(Key.lockoutPenalty).flatMap(TimeInterval.init),
+                         startedMono: Keychain.get(Key.lockoutStartedMono).flatMap(TimeInterval.init),
+                         nowWall: Date().timeIntervalSince1970, nowMono: monotonicNow())
+    }
+
+    /// Seconds since boot on a clock Settings cannot move (it keeps
+    /// counting through sleep).
+    static func monotonicNow() -> TimeInterval {
+        TimeInterval(clock_gettime_nsec_np(CLOCK_MONOTONIC)) / 1_000_000_000
+    }
+
+    /// The lockout left (F3-18). Within one boot it runs on the monotonic
+    /// clock, so changing the device's time neither ends nor extends it.
+    /// After a reboot (the monotonic clock restarted below the stamp) it
+    /// falls back to the wall-clock deadline, capped at the penalty itself —
+    /// winding the clock BACK can't lengthen it past what was earned either.
+    static func remaining(until: TimeInterval, penalty: TimeInterval?, startedMono: TimeInterval?,
+                          nowWall: TimeInterval, nowMono: TimeInterval) -> TimeInterval {
+        guard let penalty, let startedMono else { return max(0, until - nowWall) }
+        if nowMono >= startedMono {
+            return max(0, penalty - (nowMono - startedMono))
+        }
+        return min(penalty, max(0, until - nowWall))
     }
 
     static func recordFailure() {
@@ -72,12 +99,16 @@ enum AppPasscode {
         }
         if penalty > 0 {
             Keychain.set(String(Date().timeIntervalSince1970 + penalty), for: Key.lockoutUntil)
+            Keychain.set(String(penalty), for: Key.lockoutPenalty)
+            Keychain.set(String(monotonicNow()), for: Key.lockoutStartedMono)
         }
     }
 
     static func resetFailures() {
         Keychain.delete(Key.failures)
         Keychain.delete(Key.lockoutUntil)
+        Keychain.delete(Key.lockoutPenalty)
+        Keychain.delete(Key.lockoutStartedMono)
     }
 
     // MARK: - Hashing

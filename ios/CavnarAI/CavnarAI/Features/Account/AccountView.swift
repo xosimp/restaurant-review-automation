@@ -9,6 +9,7 @@ import UIKit
 struct AccountView: View {
     @State private var viewModel = AccountViewModel()
     @Environment(SessionStore.self) private var sessionStore
+    @Environment(DeepLinkRouter.self) private var deepLinkRouter
     @Environment(\.openURL) private var openURL
 
     var body: some View {
@@ -56,6 +57,11 @@ struct AccountView: View {
             // one that's drawn; the system's large top-left title doubled it.
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { cavnarTitleToolbar("Account") }
+            // account/<section> from a notification, the command sheet or a
+            // link: that section's sheet, once Account has loaded (the
+            // sheets read its summary) — F3-15.
+            .onChange(of: deepLinkRouter.pendingAccountSection) { _, _ in openLinkedSection() }
+            .onChange(of: viewModel.summary != nil) { _, _ in openLinkedSection() }
             .task {
                 await viewModel.load()
                 await viewModel.loadBilling()
@@ -89,6 +95,25 @@ struct AccountView: View {
                 }
                 #endif
             }
+        }
+    }
+
+    /// Opens the sheet `account/<section>` names, once Account has loaded.
+    private func openLinkedSection() {
+        guard viewModel.summary != nil, deepLinkRouter.pendingAccountSection != nil,
+              let section = deepLinkRouter.consumePendingAccountSection() else { return }
+        switch AccountLinkSection(section) {
+        case .profile: showingProfile = true
+        case .team: showingTeam = true
+        case .billing: showingBilling = true
+        case .alerts: showingAlerts = true
+        case .automation: showingAutomation = true
+        case .connections: showingConnections = true
+        case .security: showingSecurity = true
+        case .export: showingExportData = true
+        case .help: showingHelp = true
+        case .recommendations: showingRecommendations = true
+        case nil: break
         }
     }
 
@@ -606,5 +631,28 @@ struct AccountView: View {
         .padding(.vertical, 13)
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.cavnarRed.opacity(0.35), lineWidth: 1))
         .padding(.top, 4)
+    }
+}
+
+/// nav.py's Account sections (command_center._ACCOUNT_SECTIONS, the
+/// notification map's "account/security" …) → the app's Account sheets.
+/// Nil for a section the app shows on Account's page itself (appearance).
+enum AccountLinkSection: Equatable {
+    case profile, team, billing, alerts, automation, connections, security, export, help, recommendations
+
+    init?(_ raw: String) {
+        switch raw.lowercased() {
+        case "restaurant", "profile": self = .profile
+        case "people", "team", "staff": self = .team
+        case "billing": self = .billing
+        case "notifications", "alerts": self = .alerts
+        case "automation": self = .automation
+        case "integrations", "connections": self = .connections
+        case "security": self = .security
+        case "data", "export": self = .export
+        case "support", "help": self = .help
+        case "recs", "recommendations": self = .recommendations
+        default: return nil
+        }
     }
 }

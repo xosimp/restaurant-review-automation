@@ -40,9 +40,9 @@ struct ModuleDestinationView: View {
         case "reviews":
             ReviewsListView(initialFilter: route?.filter, focusReviewId: route?.itemId.flatMap { Int($0) })
         case "inventory":
-            FoodCostQuickEntryView()
+            FoodCostQuickEntryView(focus: route?.navPath)
         case "labor":
-            LaborView(focusSection: route?.section)
+            LaborView(focusSection: route?.section, focusItem: route?.itemId)
         case "marketing":
             MarketingView()
         case "intel":

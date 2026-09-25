@@ -18,6 +18,15 @@ struct PendingSendAttributes: ActivityAttributes {
         /// The server's own sentence after an Undo that didn't take
         /// ("That already went out, or was already undone.").
         var note: String?
+
+        /// Undo is offered only while it can still work: pending, not past
+        /// its send time, and not a stale activity the app has not caught up
+        /// with. An Undo made in the app, the push or the notification list
+        /// ends the activity too, but one left running past `fireAt` must not
+        /// keep an Undo that answers "already went out" (F3-9).
+        func offersUndo(isStale: Bool, now: Date = Date()) -> Bool {
+            status == "pending" && !isStale && fireAt > now
+        }
     }
 
     /// delayed_actions.id — what Undo cancels.
@@ -29,15 +38,23 @@ struct PendingSendAttributes: ActivityAttributes {
 
     /// "Schedule goes out" / "Order goes out" — the kicker.
     var kicker: String {
-        kind == "order_send" ? "Supplier order goes out" : "Schedule goes out"
+        switch kind {
+        case "order_send": return "Supplier order goes out"
+        case "schedule_changes_send": return "Schedule changes go out"
+        default: return "Schedule goes out"
+        }
     }
 
     /// The delayed kinds that send something outside the restaurant and so
     /// earn a countdown. Anything else is left to the in-app activity feed.
-    static let countdownKinds: Set<String> = ["schedule_publish", "order_send"]
+    static let countdownKinds: Set<String> = ["schedule_publish", "order_send", "schedule_changes_send"]
 
     static func plainTitle(kind: String) -> String {
-        kind == "order_send" ? "Supplier order" : "Next week's schedule"
+        switch kind {
+        case "order_send": return "Supplier order"
+        case "schedule_changes_send": return "Changes to the sent schedule"
+        default: return "Next week's schedule"
+        }
     }
 }
 

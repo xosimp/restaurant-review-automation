@@ -52,7 +52,9 @@ final class DeepLinkRoutingTests: XCTestCase {
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
         XCTAssertEqual(switchedTo, 7)
-        XCTAssertEqual(router.locationSwitches, 1)
+        // Home's reload is no longer the router's to trigger: SessionStore
+        // calls onLocationSwitched for every switch and RootView resets
+        // (F3-4 / F3-11), so a stubbed switch leaves the counter alone.
         XCTAssertEqual(router.pendingReviewID, 42)
     }
 

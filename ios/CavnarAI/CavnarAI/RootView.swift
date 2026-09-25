@@ -245,6 +245,8 @@ struct RootView: View {
                 return await switcher.switchTo(LocationOption(id: target, name: "", active: false))
             }
             PushManager.shared.router = deepLinkRouter
+            // Every location switch, whichever screen made it (F3-4, F3-11).
+            session.onLocationSwitched = { _ in didSwitchLocation() }
         }
         .onChange(of: sessionStore.isLocked) { _, locked in
             if !locked, sessionStore.pendingPasscodeSetup {
@@ -378,8 +380,11 @@ struct RootView: View {
                 modulesPath = NavigationPath()
             }
         }
+        // Consumed, not just read: onChange only fires when the value
+        // CHANGES, so a second "go to Modules" while pendingTab was still
+        // .modules from the first one never switched tabs (F3-1).
         .onChange(of: deepLinkRouter.pendingTab) { _, tab in
-            if let tab { selectedTab = tab }
+            if tab != nil, let next = deepLinkRouter.consumePendingTab() { selectedTab = next }
         }
         // Observed on the prompt itself rather than the tab: a second brief
         // tapped while Ask is already selected doesn't change pendingTab, so
@@ -389,6 +394,12 @@ struct RootView: View {
         // report itself. HomeView pushes it.
         .onChange(of: deepLinkRouter.pendingDailyReport) { _, route in
             if route != nil { selectedTab = .home }
+        }
+        // A past chat (a command-sheet hit for it): Ask, on that chat.
+        .onChange(of: deepLinkRouter.pendingAskConversation) { _, chat in
+            guard chat != nil, let id = deepLinkRouter.consumePendingAskConversation() else { return }
+            selectedTab = .ask
+            Task { await askCavnarViewModel.open(conversationId: id) }
         }
         .onChange(of: deepLinkRouter.pendingAskPrompt) { _, prompt in
             guard let prompt else { return }
@@ -406,11 +417,20 @@ struct RootView: View {
         // One way in for every "go there": cards, notification rows and the
         // command sheet post a NavPath; the router decides where it lands.
         .onReceive(NotificationCenter.default.publisher(for: .cavnarOpenNav)) { note in
-            if let nav = note.object as? NavPath {
-                deepLinkRouter.open(nav)
-            } else if let raw = note.object as? String, let nav = NavPath(raw) {
+            let nav = (note.object as? NavPath) ?? (note.object as? String).flatMap { NavPath($0) }
+            guard let nav else { return }
+            // A link (a URL anyone could send) opens; it never sends an Ask
+            // question or switches location on its own (F3-12).
+            if note.userInfo?[SystemEntry.fromLinkKey] as? Bool == true {
+                deepLinkRouter.openFromLink(nav)
+            } else {
                 deepLinkRouter.open(nav)
             }
+        }
+        .onChange(of: deepLinkRouter.pendingLocationPicker) { _, wanted in
+            guard wanted else { return }
+            deepLinkRouter.pendingLocationPicker = false
+            chrome.showingLocationSwitcher = true
         }
     }
 
@@ -516,7 +536,9 @@ struct RootView: View {
         }
         .sheet(isPresented: Binding(get: { chrome.showingLocationSwitcher },
                                     set: { chrome.showingLocationSwitcher = $0 })) {
-            LocationSwitcherView { didSwitchLocation() }
+            // The reset itself runs from SessionStore.onLocationSwitched,
+            // which every switch path reaches — not just this one.
+            LocationSwitcherView {}
         }
         // "Goes out at 11am — Undo from Home": the push, its notification
         // row and a card all open the queued send itself (friction #3).
@@ -525,10 +547,16 @@ struct RootView: View {
             PendingActionSheet(actionId: ref.id)
                 .presentationDetents([.medium])
         }
+        // An Ask proposal left open (the command sheet's Waiting on you):
+        // its confirm card again, read back without a model call (F3-2).
+        .sheet(item: Binding(get: { deepLinkRouter.pendingProposalId },
+                             set: { deepLinkRouter.pendingProposalId = $0 })) { ref in
+            ProposalReopenSheet(proposalId: ref.id)
+                .presentationDetents([.medium, .large])
+        }
         .onChange(of: deepLinkRouter.locationSwitches) { _, _ in
-            // A push or command about another location switched there. The
-            // Modules stack is reset by the deep link that follows it
-            // (ModulesGridView), not here — this can land after that push.
+            // Any switch (see didSwitchLocation): the badge and the title
+            // line re-read for the location now on screen.
             Task {
                 await chrome.notificationsBadge.refresh()
                 await chrome.loadLocations(isOwner: sessionStore.currentUser?.isOwner == true)
@@ -580,15 +608,19 @@ struct RootView: View {
         Task { await playIntroSequence() }
     }
 
-    /// A switch made from the location switcher (any screen's title, or
-    /// Home). Everything on screen belonged to the old location: the Modules
-    /// stack starts over at the grid, Home reloads, the badge and the title
-    /// line re-read (friction audit #32 / #50).
+    /// Any switch — the chrome switcher, Account → Profile, the command
+    /// sheet, a push or link about another store (SessionStore calls
+    /// onLocationSwitched for all of them, synchronously, before the caller
+    /// opens what it switched for). Everything on screen belonged to
+    /// the old location: both stacks start over, Home reloads, the badge and
+    /// the title line re-read, and the widget is rewritten for the new store
+    /// (friction audit #32 / #50; F3-4, F3-8, F3-11).
     private func didSwitchLocation() {
         modulesPath = NavigationPath()
         homePath = NavigationPath()
-        // HomeView reloads on this, as it does for a push's switch.
+        // HomeView reloads on this; the observer above re-reads the chrome.
         deepLinkRouter.locationSwitches += 1
+        Task { await WidgetSnapshotService.shared.refresh(force: true) }
     }
 
     /// A tab's content is built when it is selected or once it has been

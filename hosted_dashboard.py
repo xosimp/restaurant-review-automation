@@ -344,6 +344,31 @@ def sitemap():
     return Response(xml, mimetype="application/xml")
 
 
+# Universal links (F3-16): dashboard.cavnar.ai/dashboard links in emails and
+# texts open the iOS app (SystemEntry.destination reads ?nav=, ?review= and
+# the #fragment) instead of Safari. Only the exact /dashboard path — the login,
+# billing and admin pages stay web. The app id is the Apple team
+# (project.yml DEVELOPMENT_TEAM) + the bundle id; the app side is the
+# com.apple.developer.associated-domains entitlement. Apple's CDN fetches
+# this without cookies or redirects, so it must be served public, as JSON.
+APPLE_APP_ID = "8DW8XL63K6.ai.cavnar.CavnarAI"
+
+
+def apple_app_site_association():
+    return {"applinks": {"details": [{
+        "appIDs": [APPLE_APP_ID],
+        "components": [{"/": "/dashboard", "comment": "The dashboard, with ?nav=, ?review= or a #path"}],
+    }]}}
+
+
+@app.route("/.well-known/apple-app-site-association")
+@app.route("/apple-app-site-association")
+def apple_app_site_association_file():
+    import json as _json
+    from flask import Response
+    return Response(_json.dumps(apple_app_site_association()), mimetype="application/json")
+
+
 @app.route("/robots.txt")
 def robots():
     from flask import Response

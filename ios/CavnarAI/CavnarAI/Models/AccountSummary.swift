@@ -26,8 +26,12 @@ struct AccountProfile: Decodable {
     /// show "request received" instead of the button again on a later
     /// visit, without a separate round trip.
     let deletionRequestedAt: String?
+    /// False for a login the server won't take hours or closures from —
+    /// the Hours & closures sheet is then read only. Nil on an older server.
+    var hoursCanEdit: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
+        case hoursCanEdit = "hours_can_edit"
         case deletionRequestedAt = "deletion_requested_at"
         case restaurantName = "restaurant_name"
         case signOffName = "sign_off_name"

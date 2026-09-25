@@ -347,9 +347,14 @@ struct InvoiceScanSheet: View {
                 }
                 .ignoresSafeArea()
             }
-            .onAppear {
+            // After the sheet's own presentation has settled: a cover asked
+            // for in the same onAppear is dropped by SwiftUI while the sheet
+            // is still animating in, and the quick action landed on the sheet
+            // with no camera (F3-18).
+            .task {
                 guard startWithCamera, !didAutoOpenCamera, DocumentCameraView.isAvailable else { return }
                 didAutoOpenCamera = true
+                try? await Task.sleep(for: .milliseconds(600))
                 showingCamera = true
             }
         }
