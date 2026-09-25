@@ -7413,8 +7413,18 @@ def get_notifications_unread_count(current_user):
     from models import unread_notification_count
     # `scope=group`: the badge over every location the list shows (#24).
     locs = _notification_locations(current_user["restaurant_id"], current_user, request.args.get("scope"))
-    return jsonify(ok=True, count=sum(unread_notification_count(
-        current_user["id"], rid, visible=notification_visibility(current_user)) for rid, _ in locs))
+    count = sum(unread_notification_count(current_user["id"], rid, visible=notification_visibility(current_user))
+                for rid, _ in locs)
+    # `urgent`: the rows that still need someone (P0/P1, not yet handled) —
+    # the web bell's red count (density audit #39). The same rows and the
+    # same rule the list itself shows under "Needs you".
+    try:
+        body, _ = _do_get_notifications(current_user["restaurant_id"], current_user,
+                                        scope=request.args.get("scope"))
+        urgent = sum(1 for n in body.get("notifications") or [] if n.get("urgent") and not n.get("resolved"))
+    except Exception:
+        urgent = 0
+    return jsonify(ok=True, count=count, urgent=urgent)
 
 
 # ── Startup ───────────────────────────────────────────────────────────────────

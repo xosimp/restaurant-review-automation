@@ -234,7 +234,10 @@ def test_a_delivered_digest_presents_what_it_rendered_once(db_path, monkeypatch)
     # is not presented and its link names no recommendation (re-audit C8).
     assert _shown(db_path, rid) == [("cut_waste:Salmon", "weekly_email")]
     html = sent[0]["payload"]["html"]
-    assert "Call the fish supplier" in html and f"rec={move.replace(':', '%3A')}" not in html
+    # ONE action (density audit #11): the one thing is this week's action,
+    # so the model's move is not rendered beside it as a second one.
+    assert "Cut salmon waste" in html and "Call the fish supplier" not in html
+    assert f"rec={move.replace(':', '%3A')}" not in html
 
 
 def test_a_failed_digest_presents_nothing(db_path, monkeypatch):

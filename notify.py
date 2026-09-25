@@ -660,42 +660,57 @@ def keyed_sms_text(sms_text: str, rec: str = None, rid: int = None) -> str:
     return head + keyed + tail
 
 
-def _alert_email_html(restaurant_name: str, headline: str, body_lines: list, cta_label: str = "View on dashboard", restaurant_id: int = None, cta_url: str = None) -> str:
-    def _safe(s): return _html.escape(str(s)) if s else ""
-    # Light, always. This used to read restaurants.email_theme — a column the
-    # web dashboard silently POSTs its OWN dark-mode switch into on every page
-    # load (/api/theme), so a client who preferred a dark dashboard started
-    # getting dark alert emails they never asked for, while every other email
-    # Cavnar AI sends stayed a light card. A UI preference is not an email
-    # design decision; the column is left alone, it just no longer steers this.
-    page_bg, card_bg, card_border = "#f7f4ef", "#ffffff", "rgba(0,0,0,.08)"
-    text_primary, text_body, header_sub = "#1a1410", "rgba(0,0,0,.65)", "#7a6f65"
-    footer_border, footer_text = "rgba(0,0,0,.08)", "#9a8f85"
-    body_html = "".join(f'<p style="font-size:14px;color:{text_body};line-height:1.6;margin:0 0 10px">{l}</p>' for l in body_lines)
-    return f"""
-<div style="background:{page_bg};padding:24px 0">
-<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;background:{card_bg};border:1px solid {card_border};border-radius:12px;padding:28px;color:{text_primary}">
-  <div style="border-top:3px solid #c84b2f;padding-top:20px;margin-bottom:20px">
-    <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="150" height="26" alt="Cavnar AI" style="display:block;width:150px;height:26px;border:0;outline:none;margin:0 0 6px">
-    <p style="font-size:11px;color:{header_sub};margin:0;letter-spacing:1px;text-transform:uppercase">Alert &mdash; {_safe(restaurant_name)}</p>
-  </div>
-  <h3 style="font-size:16px;font-weight:600;margin:0 0 12px;color:{text_primary}">{_safe(headline)}</h3>
-  {body_html}
-  <div style="margin-top:20px">
-    <a href="{_html.escape(cta_url or CTA_PLACEHOLDER, quote=True)}"
-       style="display:inline-block;background:#c84b2f;color:white;padding:11px 22px;
-              border-radius:8px;text-decoration:none;font-size:13px;font-weight:600">
-      {cta_label} &#8594;
-    </a>
-  </div>
-  <hr style="border:none;border-top:1px solid {footer_border};margin:24px 0"/>
-  <p style="font-size:12px;color:{footer_text};margin:0">
-    Cavnar AI &middot;
-    <a href="https://cavnar.ai" style="color:#c84b2f;text-decoration:none">cavnar.ai</a>
-    &middot; Reply to this email or log in to manage alert settings.
-  </p>
-</div>
-</div>"""
+# The alert email's CTA when a reply to the review is already written
+# (density audit #46): the bell posts that draft in two taps, and the email
+# used to say only "Respond now".
+DRAFT_CTA_LABEL = "A reply is drafted: read and post it"
+
+# A leading emoji or symbol on an alert headline ("🔴 1★ review…"). The SMS
+# keeps its emoji; the email's H1 does not (DESIGN_SYSTEM.md → Email).
+_LEADING_SYMBOLS = re.compile(r"^[^\w$\"'(]+")
+
+
+def _alert_email_html(restaurant_name: str, headline: str, body_lines: list, cta_label: str = "View on dashboard",
+                      restaurant_id: int = None, cta_url: str = None, draft_ready: bool = False) -> str:
+    """An alert email on the shared report_shell (density audit #46): kicker
+    "Alert", the headline as the H1 without its emoji, the restaurant as the
+    subtitle, the body lines in BRAND colours, and one CTA — "A reply is
+    drafted: read and post it" when `draft_ready`. It had its own frame with
+    literal hexes.
+
+    Light, always. This used to read restaurants.email_theme — a column the
+    web dashboard silently POSTs its OWN dark-mode switch into on every page
+    load (/api/theme), so a client who preferred a dark dashboard started
+    getting dark alert emails they never asked for, while every other email
+    Cavnar AI sends stayed a light card. A UI preference is not an email
+    design decision; the column is left alone, it just no longer steers this.
+
+    The CTA href is CTA_PLACEHOLDER unless given: it is stamped in at
+    delivery (_resolve_cta)."""
+    from emails import BRAND, report_shell, _SANS
+    title = _LEADING_SYMBOLS.sub("", str(headline or "")).strip() or "Alert"
+    body = ""
+    for line in body_lines or []:
+        if not line:
+            continue
+        # The guest's own words, on a rail — the quote the alert is about.
+        if str(line).lstrip().startswith("<em>"):
+            body += (f'<div style="border-left:2px solid {BRAND["border"]};padding:1px 0 1px 13px;margin:0 0 12px;'
+                     f'font-family:{_SANS};font-size:14px;color:{BRAND["body"]};line-height:1.6">{line}</div>')
+        else:
+            body += (f'<p style="font-family:{_SANS};font-size:14.5px;color:{BRAND["ink"]};line-height:1.6;'
+                     f'margin:0 0 12px">{line}</p>')
+    foot = (f'<p style="font-family:{_SANS};font-size:12px;color:{BRAND["muted"]};margin:0">'
+            f'Reply to this email or open Account &rarr; Notifications to change which alerts you get.</p>')
+    label = DRAFT_CTA_LABEL if draft_ready else (cta_label or "View on dashboard")
+    return report_shell(
+        kicker="Alert",
+        title=_html.escape(title),
+        subtitle=_html.escape(str(restaurant_name or "")),
+        sections=[body, foot],
+        cta_label=f"{_html.escape(label)} &rarr;",
+        cta_url=_html.escape(cta_url or CTA_PLACEHOLDER, quote=True),
+    )
 
 
 def send_test_sms(restaurant_id: int) -> dict:
@@ -2194,6 +2209,8 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
         # _sms_safe_excerpt's docstring. Email/push keep preview/ellipsis
         # above, unchanged.
         sms_preview, sms_ellipsis = _sms_safe_excerpt(text)
+        # A reply already written for this review makes it the email's CTA.
+        drafted = bool(str(getattr(review, "draft_response", "") or "").strip())
 
         # Health alert — highest priority
         if row["alert_health"] and _is_health_alert(text, getattr(review, "urgency", None),
@@ -2214,6 +2231,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
                 ],
                 cta_label="Respond now",
                 restaurant_id=restaurant_id,
+                draft_ready=drafted,
             )
             blast(sms, f"Health or safety mention — {restaurant_name}", html, "health", review.id)
             continue
@@ -2235,6 +2253,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
                 ],
                 cta_label="Respond now",
                 restaurant_id=restaurant_id,
+                draft_ready=drafted,
             )
             blast(sms, f"1-star review — {restaurant_name}", html, "1star", review.id)
 
@@ -2256,6 +2275,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
                 ],
                 cta_label="View & respond",
                 restaurant_id=restaurant_id,
+                draft_ready=drafted,
             )
             blast(sms, f"5-star review — {restaurant_name}", html, "5star", review.id)
 
@@ -2278,6 +2298,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
                     "Middling reviews usually name something specific and fixable.",
                 ],
                 restaurant_id=restaurant_id,
+                draft_ready=drafted,
             )
             blast(sms, f"3-star review — {restaurant_name}", html, "3star", review.id)
 
@@ -2297,6 +2318,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
                     f'<em>"{preview}{ellipsis}"</em>',
                 ],
                 restaurant_id=restaurant_id,
+                draft_ready=drafted,
             )
             blast(sms, f"2-star review — {restaurant_name}", html, "2star", review.id)
 
@@ -2319,6 +2341,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
                     f'<em>"{preview}{ellipsis}"</em>',
                 ],
                 restaurant_id=restaurant_id,
+                draft_ready=drafted,
             )
             blast(sms, f"New review — {restaurant_name}", html, "any_review", review.id)
 

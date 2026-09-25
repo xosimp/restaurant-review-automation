@@ -343,8 +343,13 @@ rates and pages are computed after redaction.
   enough}}, by_tag: [{tag, label, module, modules, measured, improved,
   worsened, no_clear_change, unknown, success_rate, enough}], most_effective:
   {tag, label, module, modules, success_rate, measured, improved} | null,
-  min_settled, min_measured}`.
+  totals: {shown, settled, taken, open, measured, improved, taken_enough,
+  measured_enough}, min_settled, min_measured}`.
   Episodes first shown in the window; superseded ones are not counted.
+  `totals` is the #recs record strip: taken of `settled` (a rate only when
+  `taken_enough`, settled ≥ 10), `improved` of `measured` (each change once;
+  a rate only when `measured_enough`, measured ≥ 5), and `open` = shown −
+  settled. Below a floor the page shows "—".
   `answered` = accepted + completed + implemented + dismissed (a taken
   episode whose change was made counts as implemented); `n` = answered +
   ignored (expired unanswered — **in the denominator**); `accept_rate` =

@@ -312,7 +312,10 @@ def test_the_monthly_email_carries_what_worked_for_the_owner(db, monkeypatch):
     rid = _rid(db)
     _full_world(db, rid)
     sections = emails._monthly_review_sections(rid)
-    block = next((b for b in sections if "What worked for you" in b), None)
+    # Headed with the label Home and #recs use (density audit #11): "What
+    # worked for you" asserted causation over before/after data.
+    assert not any("What worked for you" in b for b in sections)
+    block = next((b for b in sections if "Measured alongside your changes" in b), None)
     assert block is not None
     for line in owner_report.email_lines(rid):
         assert line.replace("'", "&#x27;") in block or line in block

@@ -928,9 +928,12 @@ def run_weekly_digests():
                 # (rec_delivery; the weekly_email and digest surfaces).
                 with rec_delivery.collect() as shown:
                     if len(items) == 1:
-                        html = render_html(first_rep, first_rest.name, owner_name=owner_name,
-                                           restaurant_id=first_rest.id, owner_view=True)
-                        subject = f"Your week at {first_rest.name}"
+                        # The subject carries the week's verdict, the
+                        # same sentence as the H1 (density audit #11).
+                        from reporter import render_digest
+                        _dg = render_digest(first_rep, first_rest.name, owner_name=owner_name,
+                                            restaurant_id=first_rest.id, owner_view=True)
+                        html, subject = _dg["html"], _dg["subject"]
                         preheader = _emails.digest_preheader(first_rep, first_rest)
                     else:
                         html = render_group_html(items, owner_name=owner_name,

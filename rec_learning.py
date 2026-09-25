@@ -502,7 +502,21 @@ def summary(restaurant_id, days=30, viewer=None, db_path=DB_PATH) -> dict:
         m.update({"n": n, "accept_rate": round(took / n, 3) if n else None, "accept_rate_low": lo,
                   "accept_rate_high": hi, "enough": n >= MIN_SETTLED_FOR_RATE})
     by_tag = _by_tag([e for e in eps if _taken(e) and e["verdict"]])
+    # The record in three figures (#recs' strip, density audit #40): taken
+    # of what settled, measured better of what was measured (each change
+    # once, _one_per_window), and what is still open. Each rate carries its
+    # own floor (`*_enough`), below which the page shows "—", never a rate.
+    shown = sum(m["shown"] for m in by_module.values())
+    settled = sum(m["n"] for m in by_module.values())
+    took_all = sum(m["accepted"] + m["completed"] + m["implemented"] for m in by_module.values())
+    results = _one_per_window([e for e in eps if _taken(e) and e["verdict"]])
+    measured = sum(1 for e in results if e["verdict"] in CLEAR_VERDICTS)
+    totals = {"shown": shown, "settled": settled, "taken": took_all, "open": max(shown - settled, 0),
+              "measured": measured, "improved": sum(1 for e in results if e["verdict"] == "improved"),
+              "taken_enough": settled >= MIN_SETTLED_FOR_RATE,
+              "measured_enough": measured >= MIN_MEASURED_FOR_RATE}
     return {"ok": True, "days": days, "since": since_d.strftime("%Y-%m-%d"), "by_module": by_module,
+            "totals": totals,
             "by_tag": by_tag, "most_effective": most_effective(by_tag),
             "min_settled": MIN_SETTLED_FOR_RATE, "min_measured": MIN_MEASURED_FOR_RATE}
 

@@ -1058,16 +1058,75 @@ def footer_source(lines, data_as_of=None, stale=None) -> str:
     return f"Every figure above is from your own data — measured, except {listed}." + when
 
 
-def _email_html(brief, restaurant_name):
+# The most lines the morning brief EMAIL shows (density audit #46); the rest
+# are "N more in the app". Home and the push are unchanged.
+EMAIL_MAX_LINES = 5
+_EMAIL_FIRST = ("action", "bad")
+
+
+def email_lines(brief) -> tuple:
+    """(the lines the email shows, how many it leaves for the app). At most
+    EMAIL_MAX_LINES, the brief's own order kept: the lines that need the
+    owner (action, bad) are kept first, the rest fill what is left."""
+    lines = list(brief.get("lines") or [])
+    if len(lines) <= EMAIL_MAX_LINES:
+        return lines, 0
+    need = [i for i, l in enumerate(lines) if l.get("tone") in _EMAIL_FIRST][:EMAIL_MAX_LINES]
+    rest = [i for i in range(len(lines)) if i not in need][:EMAIL_MAX_LINES - len(need)]
+    keep = sorted(need + rest)
+    return [lines[i] for i in keep], len(lines) - len(keep)
+
+
+def email_headline(brief) -> str:
+    """The brief email's H1, a state (density audit #46): how many lines
+    need the owner this morning, counted from the brief's own tones — never
+    a model sentence."""
+    n = sum(1 for l in brief.get("lines") or [] if l.get("tone") in _EMAIL_FIRST)
+    if n:
+        return f"{n} thing{'' if n == 1 else 's'} need{'s' if n == 1 else ''} you this morning"
+    return "Nothing needs you this morning"
+
+
+def night_verdict(restaurant_id, today=None, viewer=None, db_path=DB_PATH):
+    """Last night's verdict for the brief email, from the shared "Last
+    night" contract (dsr.access.summary: verdict, tone, overall) exactly as
+    this login may read it — {"label", "tone", "overall"} or None. Never
+    recomputed here, and None when the summary carries none."""
+    try:
+        from dsr import access, store, memory
+        viewer = memory._user(viewer)
+        if access.view_for(viewer) is None:
+            return None
+        day = (today or date.today()) - timedelta(days=1)
+        report = store.get_finished_report(restaurant_id, day, db_path=db_path)
+        if not report:
+            return None
+        sm = access.summary(report, viewer) or {}
+        if not sm.get("verdict"):
+            return None
+        return {"label": str(sm["verdict"]), "tone": sm.get("tone"), "overall": sm.get("overall")}
+    except Exception as e:
+        print(f"[morning_brief] night verdict unreadable rid={restaurant_id}: {e}")
+        return None
+
+
+def _email_html(brief, restaurant_name, verdict=None):
+    """The morning brief email on the shared report_shell (density audit
+    #46): a state headline ("2 things need you this morning"), last night's
+    verdict under it when the report has one, at most EMAIL_MAX_LINES lines
+    in BRAND colours, and "N more in the app" as the one button when the
+    brief has more. It had its own frame with literal hexes and no headline
+    beyond "Your morning brief"."""
     import html
     from time_utils import mdy
-    from emails import BRAND as _BRAND
-    dot = {"good": "#2d6a4f", "bad": "#c0392b", "action": "#c84b2f", "neutral": "#7a736a"}
+    from emails import BRAND as _BRAND, report_shell, report_paragraph, _SANS, _NUM
+    dot = {"good": _BRAND["good"], "bad": _BRAND["bad"], "action": _BRAND["ember"], "neutral": _BRAND["muted"]}
+    shown, more = email_lines(brief)
     rows = "".join(
-        f'<tr><td style="padding:10px 0;border-top:1px solid #ece7dd;vertical-align:top;width:14px">'
-        f'<div style="width:8px;height:8px;border-radius:4px;background:{dot.get(l["tone"], "#7a736a")};'
-        f'margin-top:6px"></div></td><td style="padding:10px 0 10px 8px;border-top:1px solid #ece7dd;'
-        f'font-size:15px;line-height:1.55;color:#1a1714">{html.escape(l["text"])}'
+        f'<tr><td style="padding:10px 0;border-top:1px solid {_BRAND["rule"]};vertical-align:top;width:14px">'
+        f'<div style="width:8px;height:8px;border-radius:4px;background:{dot.get(l["tone"], _BRAND["muted"])};'
+        f'margin-top:6px"></div></td><td style="padding:10px 0 10px 8px;border-top:1px solid {_BRAND["rule"]};'
+        f'font-family:{_SANS};font-size:15px;line-height:1.55;color:{_BRAND["ink"]}">{html.escape(l["text"])}'
         + (f'<br><span style="font-size:12px;color:{_BRAND["muted"]}">{html.escape(_conf_label(l))}</span>'
            if _conf_label(l) else "")
         # The line's direct action leads (friction #46): the inbox, the
@@ -1084,20 +1143,37 @@ def _email_html(brief, restaurant_name):
            f'style="font-size:13px;color:{_BRAND["muted"] if (l.get("action") or {}).get("nav") else _BRAND["ember"]};text-decoration:none">Ask about this &rarr;</a>'
            if l.get("ask") else "")
         + '</td></tr>'
-        for l in brief["lines"])
+        for l in shown)
     # Honest about provenance: the weather and the holidays are public
     # facts, not measured from the restaurant's data.
     # And honest about forecasts: today's expected sales and the projected
     # prime cost are FROM the restaurant's data but are not measurements, and
     # the footer used to cover them with "measured" (CA1 H9 / red flag 18).
-    source = footer_source(brief["lines"], brief.get("data_as_of"), brief.get("stale_sources"))
-    as_of = f' · Data as of {html.escape(brief["data_as_of"])}' if brief.get("data_as_of") else ""
-    return (f'<p style="font-size:12px;letter-spacing:1px;text-transform:uppercase;color:#7a736a;'
-            f'margin:0 0 6px">{html.escape(restaurant_name)} · {mdy(brief["date"])}{as_of}</p>'
-            f'<h1 style="font-size:22px;margin:0 0 14px;color:#0e0c0a">Your morning brief</h1>'
-            f'<table role="presentation" style="width:100%;border-collapse:collapse">{rows}</table>'
-            f'<p style="font-size:13px;color:#7a736a;margin:18px 0 0">{source} '
-            f'Open Cavnar AI and ask about any line.</p>')
+    # Said of the lines the email shows.
+    source = footer_source(shown, brief.get("data_as_of"), brief.get("stale_sources"))
+    as_of = f' &middot; Data as of {html.escape(brief["data_as_of"])}' if brief.get("data_as_of") else ""
+    sections = []
+    if verdict and verdict.get("label"):
+        tone = {"good": _BRAND["good"], "warn": _BRAND["warn"], "bad": _BRAND["bad"]}.get(verdict.get("tone"),
+                                                                                       _BRAND["muted"])
+        score = (f' <span style="font-family:{_NUM};font-weight:700;color:{_BRAND["strong"]}">'
+                 f'{int(verdict["overall"])}/100</span>' if verdict.get("overall") is not None else "")
+        sections.append(report_paragraph(
+            f'<span style="display:inline-block;width:8px;height:8px;border-radius:4px;background:{tone};'
+            f'margin-right:7px;vertical-align:middle"></span>Last night: '
+            f'<strong style="color:{tone}">{html.escape(verdict["label"])}</strong>{score}'))
+    sections.append(f'<table role="presentation" style="width:100%;border-collapse:collapse">{rows}</table>'
+                    f'<p style="font-family:{_SANS};font-size:13px;color:{_BRAND["muted"]};margin:18px 0 0">'
+                    f'{source} Open Cavnar AI and ask about any line.</p>')
+    import config
+    return report_shell(
+        kicker="Morning brief",
+        title=html.escape(email_headline(brief)),
+        subtitle=f'{html.escape(restaurant_name)} &middot; {mdy(brief["date"])}{as_of}',
+        sections=sections,
+        cta_label=(f"{more} more in the app &rarr;" if more else "Open Cavnar AI &rarr;"),
+        cta_url=html.escape(config.base_url() + "/", quote=True),
+    )
 
 
 def recipients(restaurant_id, db_path=DB_PATH, include_opted_out=False):
@@ -1247,19 +1323,23 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
                                                                  user_id=u["id"], db_path=db_path))
             pushed += 1
         elif u.get("email"):
-            from emails import deliver as _deliver, _branded_email, sender as _sender
+            from emails import deliver as _deliver, sender as _sender
             lead_line = next((l for l in brief["lines"] if l["tone"] == "action"),
                              brief["lines"][0]) if brief["lines"] else {"text": ""}
+            # On report_shell (density audit #46): a whole document, capped
+            # at EMAIL_MAX_LINES — only the lines it shows are presented.
+            verdict = night_verdict(restaurant_id, today=today, viewer=u, db_path=db_path)
             result = _deliver(email_type="send_morning_brief", restaurant_id=restaurant_id, payload={
                 "from": _sender("client"), "to": [u["email"]],
                 "subject": f"Your morning brief — {name}",
                 # The lead line, which is what the push shows too.
                 "preheader": lead_line["text"][:140] if brief["lines"] else "",
-                "html": _branded_email(_email_html(brief, name))})
+                "html": _email_html(brief, name, verdict=verdict)})
             # Read .ok explicitly rather than leaning on SendResult.__bool__.
             if getattr(result, "ok", False):
                 emailed += 1
-                _safe(_present, restaurant_id, brief, "brief_email", u["id"], db_path)
+                _safe(_present, restaurant_id, dict(brief, lines=email_lines(brief)[0]), "brief_email",
+                      u["id"], db_path)
     return {"sent": pushed + emailed, "push": pushed, "email": emailed, "empty": empty,
             "recipients": len(people)}
 

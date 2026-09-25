@@ -181,7 +181,24 @@ html{background:var(--bg-base);min-height:100%}
 .notif-row:hover{background:var(--paper2)}
 .notif-row.is-unread{background:var(--paper2)}
 .notif-row .nd{flex-shrink:0;width:6px;height:6px;border-radius:50%;background:var(--paper3);display:block}
-.notif-row.is-urgent .nd{background:var(--ember)}
+.notif-row.is-urgent .nd{background:var(--red)}
+/* The bell's one-line read (density audit #39): counted from the rows. */
+.notif-sum{padding:9px 14px;border-bottom:1px solid var(--paper3);font-size:13px;line-height:1.45;color:var(--ink2)}
+.notif-sum b{font-weight:700;color:var(--red)}
+.notif-sum.calm b{color:var(--ink)}
+/* The bell's badge: a red count for urgent-unresolved only; a small grey dot
+   when there is something unread but nothing urgent. */
+#notif-badge{position:absolute;top:-2px;right:-4px;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--red);color:var(--paper);font-family:'Space Grotesk',sans-serif;font-size:10.5px;font-weight:700;line-height:16px;text-align:center;box-sizing:border-box}
+#notif-badge.dot{top:2px;right:2px;min-width:0;width:7px;height:7px;padding:0;background:var(--ink3)}
+/* The user menu (density audit #39): What's new and Sign out, behind the name. */
+.hdr-user-btn{display:flex;align-items:center;gap:6px;position:relative;color:var(--ink3)}
+.hdr-user-btn .chev{opacity:.7}
+#changelog-badge{position:absolute;top:0;right:-6px;width:7px;height:7px;border-radius:50%;background:var(--ink3)}
+.user-menu{position:absolute;right:0;top:calc(100% + 8px);min-width:180px;background:var(--paper);border:1px solid var(--paper3);border-radius:10px;box-shadow:var(--elev-float);z-index:1001;padding:6px;display:flex;flex-direction:column;gap:2px}
+.user-menu[hidden]{display:none}
+.user-menu .cbtn{width:100%;justify-content:flex-start}
+.user-menu .logout-form{display:block;width:100%}
+.user-menu .um-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ember);margin-left:6px;vertical-align:middle}
 .notif-row .nl{flex:1;min-width:0;font-size:12px;color:var(--ink);font-weight:500}
 .notif-row.is-unread .nl{font-weight:600}
 .notif-row .nt{font-size:11px;color:var(--ink3);white-space:nowrap;flex-shrink:0}
@@ -993,7 +1010,7 @@ details[open]>summary~*{animation:askIn .3s ease both}
 @keyframes askFabHalo{0%{transform:scale(.86);opacity:.7}70%{opacity:0}100%{transform:scale(1.3);opacity:0}}
 .ask-fab:hover{transform:translateY(-2px) scale(1.04);box-shadow:inset 0 1px 0 rgba(255,255,255,.5),inset 0 -1px 0 rgba(0,0,0,.25),0 2px 4px rgba(0,0,0,.3),0 22px 44px -10px rgba(200,75,47,.85),0 0 0 9px rgba(200,75,47,.14)}
 .ask-fab:active{transform:scale(.94);box-shadow:inset 0 2px 6px rgba(0,0,0,.4),0 6px 14px -6px rgba(200,75,47,.6),0 0 0 6px rgba(200,75,47,.10)}
-.ask-fab.open:before{animation:none}
+.ask-fab.open:before,.ask-fab.seen:before{animation:none}
 .ask-fab canvas{position:relative;display:block;width:38px;height:38px;filter:drop-shadow(0 1px 1.5px rgba(0,0,0,.35))}
 @media (prefers-reduced-motion:reduce){.ask-fab:before{animation:none}}
 .ask-fab-l{position:absolute;right:calc(100% + 12px);top:50%;transform:translateY(-50%) translateX(6px);white-space:nowrap;font-family:'Clash Display',sans-serif;font-size:14px;color:#f0ebe0;background:#161618;border:1px solid rgba(232,149,106,.3);border-radius:999px;padding:7px 13px;opacity:0;pointer-events:none;transition:opacity .18s,transform .18s}
@@ -1029,7 +1046,13 @@ details[open]>summary~*{animation:askIn .3s ease both}
 .ask-sugg button:hover{background:rgba(200,75,47,.18);transform:translateY(-1px)}
 .ask-b{display:flex;gap:8px;align-items:flex-start;max-width:92%}
 .ask-b.user{align-self:flex-end;justify-content:flex-end}
-.ask-b .bb{padding:10px 14px;font-size:13.5px;line-height:1.55;white-space:pre-wrap;word-wrap:break-word;border-radius:18px 18px 18px 4px;background:var(--paper2);color:var(--ink);border:1px solid rgba(14,12,10,.06);min-width:0}
+.ask-b .bb{padding:10px 14px;font-size:15px;line-height:1.55;white-space:pre-wrap;word-wrap:break-word;border-radius:18px 18px 18px 4px;background:var(--paper2);color:var(--ink);border:1px solid rgba(14,12,10,.06);min-width:0}
+/* An answer's structure (density audit #12): headings, lists, paragraphs. */
+.ask-b.ai .bb{white-space:normal}
+.ask-b.ai .bb p{margin:0 0 8px}.ask-b.ai .bb p:last-child{margin-bottom:0}
+.ask-b.ai .bb .ask-h{font-size:15px;font-weight:700;color:var(--ink);margin:12px 0 4px}.ask-b.ai .bb .ask-h:first-child{margin-top:0}
+.ask-b.ai .bb .ask-ol,.ask-b.ai .bb .ask-ul{margin:0 0 8px;padding-left:22px}.ask-b.ai .bb li{margin:0 0 4px}
+.ask-b.ai .bb .ask-ol>li::marker{font-family:'Space Grotesk',sans-serif;font-weight:700;color:var(--ember)}
 [data-theme="dark"] .ask-b .bb{border-color:rgba(255,255,255,.05)}
 .ask-b.user .bb{border-radius:18px 18px 4px 18px;background:linear-gradient(180deg,#d95b3d,#c84b2f);color:#fff;border-color:transparent;box-shadow:none}
 .ask-b .bb b{font-weight:700}
@@ -1039,6 +1062,11 @@ details[open]>summary~*{animation:askIn .3s ease both}
 .ask-eva{align-self:flex-start;max-width:92%;margin-top:-6px}
 .ask-eva-warn{font-size:12px;line-height:1.45;color:var(--red);border-left:2px solid var(--red);padding:2px 0 2px 8px;margin-bottom:7px}
 .ask-eva-chips{display:flex;flex-wrap:wrap;gap:5px}
+.ask-eva-line{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;font-size:12.5px;color:var(--ink3)}
+.ask-eva-line .cf{display:inline-flex;font-size:12.5px}
+.ask-eva-mods{font-size:12.5px;color:var(--ink3)}
+.cbtn.ask-eva-unv{color:var(--red)}
+.ask-eva-why{margin-top:7px}
 .ask-eva-chip{font-size:10.5px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--ink3);background:var(--paper2);border:1px solid var(--paper3);border-radius:999px;padding:3px 8px}
 .ask-eva .cf.ask-eva-cf{margin-top:7px}
 .ask-prop{align-self:flex-start;max-width:92%;background:var(--paper2);border:1px solid var(--ember);border-radius:14px;padding:12px 14px}
@@ -1075,6 +1103,14 @@ details[open]>summary~*{animation:askIn .3s ease both}
 .ask-send.on,.ask-send:not(:disabled):hover{background:linear-gradient(180deg,#e8956a,#c84b2f);color:#fff;box-shadow:0 8px 20px rgba(200,75,47,.4)}
 .ask-send:disabled{opacity:.55;cursor:default;box-shadow:none}
 @media(max-width:520px){.ask-panel{right:12px;bottom:90px;height:min(620px,calc(100vh - 110px))}.ask-fab{right:16px;bottom:16px}}
+/* Expanded: a 720px side sheet on a large monitor (density audit #49). The
+   same panel, the same conversation - only the frame changes, and the
+   choice is remembered in this browser. Below 900px there is no room for
+   it and the control is hidden. */
+@media(min-width:900px){.ask-panel.wide{top:16px;bottom:16px;right:16px;width:720px;height:auto;max-width:calc(100vw - 32px)}
+.ask-panel.wide .ask-b{max-width:84%}}
+@media(max-width:899px){.ask-chip.ask-wide-btn{display:none}}
+.ask-panel.wide .ask-wide-btn{background:rgba(200,75,47,.16)}
 
 
 .toast{position:fixed;bottom:24px;right:24px;padding:13px 20px 13px 16px;border-radius:9px;font-size:14.5px;font-weight:500;z-index:999;opacity:0;pointer-events:none;border-left:4px solid transparent;background:var(--ink);color:var(--paper);border-left-color:rgba(255,255,255,.18);box-shadow:0 8px 28px rgba(0,0,0,.35)}
@@ -1555,7 +1591,6 @@ function loadFailed(el, d){
       {% if current_user.is_admin %}
       <img src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCABEAEQDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwCiZ7n1QfhTGluj1dfyrTbTwOsimnx6crcBzmvxD21NH2XJIxtkxGS4/KkEMp/j/St8aSP+eh/SnDSVPSf+VaUpyq39nFv0TZEmo/E7HPGF+7n8qDbsed5/KulXRN3AnGf92po/DFzJwkyn6qaieI5HaWj9GCXNsck1sSPvn8qz1trrzZ/tPmFc/ufIKDjnruH0/WvQv+EM1TqjQn6kiq9x4L1sDKwRP/uyCtqWL5Hf80TKDZxDW0Ixtk1I+vywDFFdQ/hXXVbH9myn6Yoro+vx7RI9i+7L08UsMZeRYVUdyDVa71S00yLfeTWkI/vSvtH8+a5LU/Fni2fSriKbRGLMoVSto+c5615fBZ6t4m1wrfS3JlkbHzozMTnoFAz+Ar0cnyOlJOriWnbZL9f8jPF4qcXyQPbR478GCBIn1Kzkudx3ySXD+X7AKqjgfWtfTtVs9QXdp13ptyP+ndkY/l1rj/Dvwo8NW9o114i1K9tEj++9zbPbxr/wJhj8zXUW3w/8JPA0/hWxXVJLdtj3IuFjjR8dDIx698LmvuqFWdFKlSpW8krHkTw8Zp1J1Fbve5eLOp5Vh36VJDeTROJIZirD8j7EVhX9n4o0dUJutLCs2BE900uB9dua2bCJ7q2kS9glS4RMM0ERdQxHAUn73UGtsTXppOliYW7pruZYehKpapQldd15HcaDeQakmI3kSdRl4y2fxB7it9Lc7PvH8RmvLPAOpMniKCK7BBiJMsm0qoj5Usw/g+hr2G68mG3EhZVTGd27jFfmeaYCnhq37v4Xqv8AI+gw9Wc4e+tTP+yMeQQaKxLzxJZQ3DRre8D0GRRXi/uzqXMcXdyabc20ttNOzRSoUcAsCQRg8jkUvhnRNi2dzYfbpBaS+XE8UkQKgHIAzgjjrnP1r02XwNpzji0H/fOKw9c0j/hFwl4kTR2TNiVuqo3QZ9M9M+tfU5Rl2JwFa8vhf6HFHF0Kz5W9zH8S20csEkF99oS3nlRrh5pvNOAwbaFXI5IAPPT1q5NLbjUjdW8ylpUCy7osRyY6HqPmHY+nFZ11bQ3mpC9XUJLiFH81reQAAAg8bsdjznFbNhq2i3brbou92GMursoPTPQdzX2ixVStU5py16BDD0KNPlpw0J5LVZyqPc2yc5HlwZJ/Esak+zR28TpGWYsxdnI5ZuP8B+VZGvLodncLPPzNkEIkhCDBzwM9T0+lZWreKrr/AFdvCLiSUlY0XOWOOOB2FRUmnJuWrGmlFJKxZspLWG91G7kkigX5d/mEBSuMHOe/0rlLjxBq+qTPBZrMYixEY5OF7ew4rUPhnUtR0+3muUVrpblZJI85ATHP6gfnXpGg+Dze2EF3AFt9wy22LP4cmvh87q1K9RUIU+Zx16vf0R0wnGnDmk7I+e7/AO1xXckdy8nmKecmivWfEPw1urnV55vOVgx4PT9KK8WOY0YpKej6mvs09UzsHku7eaCJbHXZXmOFBnUfjzU8U8c+rDRtQsb0rNGRIk8yujL3BHevmH4e6j8WrXRTZwgTaeqbbeDV3bEY6/uxncPx4r1T4d+ItQ0qRLzXLB0uSmx7e3fzQW9QzEkCv1JUXCWrPnFl2KmrxpsteIfBV9YXN3L4Yklgt40ZtlxcJKgA52jHzL7ZzXJQN4xknVYo7VXHH3Sc/wCNb99d31xq9/fKkUYvMkrgnbn098cZrX0O4tY4UivEZgON+Oa5vYzT0Pcp5fiYQ/eK/pqzmrXwhrd/KJdammkz0VFCAf1rtvD/AIXg09S8NssbsMFjy2PrWrBrmkQRhfPlfA4zGxNMn8U2oGLa1nlP+1hB/WumNKxksHiZOyg/y/MddWrxRusZKh42jY+gIxmmaLr97oaiG7kkkXbtAj7n1welZN9r1/cZChIAf7gyfzNZMjs2S24sepJ5qHg1Jt7XPSpZXUlG1V6dtzr/APhIL/UWa4jXcu4rnp0/nRXIpqOqwxJDb3RjijUKq+Sp4HvRXhVOEssqzc507t7u7/zN/qdWOkWrf15D3RRtAGNxwag8tWkOR+VFFfVSPVZI6iNUCgDIyaegAGcdaKKSFEUeuBUqAdaKKoscQPSmFVx0oooExhUZ6UUUUAf/2Q==" style="width:28px;height:28px;border-radius:50%;object-fit:cover;border:1.5px solid #2a2520" alt="Will Cavnar">
       {% endif %}
-      <span class="hdr-user">{{ restaurant.owner_name or current_user.username }}</span>
     </div>
     <a href="https://status.cavnar.ai" target="_blank" id="status-indicator" style="display:none"></a>
     <button type="button" class="cbtn cbtn-text cbtn-sm hdr-cmdk" id="hdr-cmdk" onclick="cavPalette.open()" title="Go to, find or do anything" aria-label="Go to, find or do anything (Command K)">⌘K</button>
@@ -1566,7 +1601,7 @@ function loadFailed(el, d){
           <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
           <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
         </svg>
-        <span id="notif-badge" style="display:none;position:absolute;top:2px;right:2px;width:7px;height:7px;border-radius:50%;background:#c84b2f;border:1.5px solid #e8956a"></span>
+        <span id="notif-badge" style="display:none" aria-live="polite"></span>
       </button>
       <div id="notif-panel" style="display:none;position:absolute;right:0;top:calc(100% + 8px);width:280px;background:white;border:1px solid var(--paper3);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:999;overflow:hidden">
         <div style="padding:10px 14px;border-bottom:1px solid var(--paper3);display:flex;align-items:center;justify-content:space-between"><span style="font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)">Recent alerts</span><button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" aria-label="Close" onclick="document.getElementById('notif-panel').style.display='none'">✕</button></div>
@@ -1604,12 +1639,20 @@ function loadFailed(el, d){
         </div>
       </div>
     </div>
-    <!-- Changelog / What's New -->
+    <!-- The user menu: What's new and Sign out, behind the name (density
+         audit #39). Sign out was a bordered button on every screen and What's
+         new carried the same ember dot as a health alert. The wrap keeps its
+         id: the changelog panel anchors to it and closes on a click outside. -->
     <div style="position:relative" id="changelog-wrap">
-      <button id="changelog-btn" onclick="openChangelog()" title="What's new" style="background:none;border:none;cursor:pointer;padding:4px 6px;display:flex;align-items:center;gap:4px;color:var(--ink3);font-size:20px;font-weight:600;position:relative">
-        ✦
-        <span id="changelog-badge" style="display:none;position:absolute;top:2px;right:0;width:7px;height:7px;border-radius:50%;background:#c84b2f;border:1.5px solid #e8956a"></span>
+      <button type="button" id="user-menu-btn" class="cbtn cbtn-text cbtn-sm hdr-user-btn" onclick="toggleUserMenu()" aria-haspopup="true" aria-expanded="false" aria-controls="user-menu" title="Account menu">
+        <span class="hdr-user">{{ restaurant.owner_name or current_user.username }}</span>
+        <svg class="chev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+        <span id="changelog-badge" style="display:none" aria-hidden="true"></span>
       </button>
+      <div id="user-menu" class="user-menu" role="menu" hidden>
+        <button type="button" id="changelog-btn" role="menuitem" class="cbtn cbtn-text cbtn-sm" onclick="toggleUserMenu(false);openChangelog()">What's new<span id="changelog-menu-dot" class="um-dot" style="display:none"></span></button>
+        <form method="post" action="/logout" class="logout-form"><button type="submit" role="menuitem" class="cbtn cbtn-text cbtn-sm">Sign out</button></form>
+      </div>
       <div id="changelog-panel" style="display:none;position:absolute;right:0;top:calc(100% + 8px);width:320px;background:white;border:1px solid var(--paper3);border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.15);z-index:1001;overflow:hidden">
         <div style="padding:12px 16px;border-bottom:1px solid var(--paper3);display:flex;align-items:center;justify-content:space-between">
           <div style="font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)">What's new</div>
@@ -1620,7 +1663,6 @@ function loadFailed(el, d){
         </div>
       </div>
     </div>
-    <form method="post" action="/logout" class="logout-form"><button type="submit" class="cbtn cbtn-secondary cbtn-sm logout-btn">Sign out</button></form>
   </div>
 </header>
 <div class="tabs" role="tablist" aria-label="Dashboard sections">
@@ -6547,7 +6589,7 @@ svg:hover .hb-xh{opacity:1}
   }
   function goSettings(){
     var t=el('tab-account');if(t&&typeof switchTab==='function')switchTab('account',t);
-    setTimeout(function(){if(window.acctGo)window.acctGo('restaurant');var c=el('as-dsr-card');if(c&&c.scrollIntoView)c.scrollIntoView({behavior:'smooth',block:'start'});},250);
+    setTimeout(function(){if(window.acctGo)window.acctGo('report');var c=el('as-dsr-card');if(c&&c.scrollIntoView)c.scrollIntoView({behavior:'smooth',block:'start'});},250);
   }
 
   // Switching views keeps the reader on the same stretch of time: from a
@@ -6659,6 +6701,7 @@ svg:hover .hb-xh{opacity:1}
 .rh-more{display:flex;justify-content:center;margin-top:18px}
 .rh-err{font-size:13.5px;color:var(--red);margin-top:10px}
 #panel-recs .hb-sh{margin-bottom:16px}
+.rh-strip{margin-top:20px}
 @media (max-width:860px){.rh-wrap{padding:18px 16px 56px}.rh-mod{grid-template-columns:1fr auto}.rh-mod .bar{grid-column:1/3;grid-row:2}.rh-mod .c{grid-column:1/3}}
 @media (prefers-reduced-motion:reduce){.rh-mod .bar i{animation:none}}
 </style>
@@ -6773,12 +6816,31 @@ svg:hover .hb-xh{opacity:1}
     st.items=(g.timeline&&g.timeline.items)||[];st.next=(g.timeline&&g.timeline.next_before)||null;
     st.out={};var rows=(g.outcomes&&g.outcomes.outcomes)||[];for(var i=0;i<rows.length;i++)st.out[rows[i].id]=rows[i];
     st.caveat=(g.outcomes&&g.outcomes.caveat)||'';
-    var h=worked(g.worked)+followed(g.summary);
+    // The one thing on this page only the owner can do comes first: the
+    // check-ins (density audit #40). Then the record in three tiles, then
+    // what was measured alongside, then what was followed, then history.
+    var h='';
     var cks=typeof recCheckinCandidates==='function'?recCheckinCandidates(rows,st.items):[];
     if(cks.length){h+='<div class="hb-sh"><div><div class="k">Check in</div><h2>Did you make these changes? <small>'+cks.length+' result'+(cks.length===1?'':'s')+' landed</small></h2></div></div>';
       for(var c=0;c<cks.length&&c<5;c++)h+=recCheckinHtml(cks[c],'home');}
+    h+=strip(g.summary)+worked(g.worked)+followed(g.summary);
     h+='<div class="hb-sh"><div><div class="k dim">Everything shown</div><h2>Every recommendation <small>newest first</small></h2></div></div><section class="hb-card" aria-label="Every recommendation"><div id="rh-tl"></div><div class="rh-err" id="rh-tl-err"></div></section>';
     b.innerHTML=h;renderTimeline();linked();
+  }
+  // Three tiles (density audit #40): taken of shown, measured better, open
+  // now - from the server's own totals. A rate below its floor is "—" with
+  // the count that would fill it, never a percentage of two.
+  function strip(s){
+    var t=s&&s.totals;if(!t)return '';
+    var took=t.taken_enough?('<span class="hb-num">'+t.taken+'</span><small>of '+t.settled+'</small>'):'—';
+    var tookS=t.taken_enough?('of the '+t.settled+' answered or left, in '+s.days+' days'):(t.settled+' of '+(s.min_settled||10)+' settled — not enough yet');
+    var bet=t.measured_enough?('<span class="hb-num">'+t.improved+'</span><small>of '+t.measured+'</small>'):'—';
+    var betS=t.measured_enough?'measured results that improved':(t.measured+' of '+(s.min_measured||5)+' measured — not enough yet');
+    return '<div class="hb-stats rh-strip" role="group" aria-label="Your record in three figures">'
+      +'<div class="hb-stat"><div class="k">Taken</div><div class="v">'+took+'</div><div class="s">'+esc(tookS)+'</div></div>'
+      +'<div class="hb-stat'+(t.measured_enough&&t.improved*2>=t.measured?' good':'')+'"><div class="k">Measured better</div><div class="v">'+bet+'</div><div class="s">'+esc(betS)+'</div></div>'
+      +'<div class="hb-stat"><div class="k">Open now</div><div class="v"><span class="hb-num">'+(t.open||0)+'</span></div><div class="s">shown, not yet answered</div></div>'
+      +'</div>';
   }
   function worked(w){
     if(!w||!w.ok)return '';
@@ -7336,6 +7398,7 @@ svg:hover .hb-xh{opacity:1}
     <div class="ask-ttl"><b>Ask Cavnar AI</b><span>Your restaurant intelligence consultant</span></div>
     <div class="ask-chips">
       <button class="ask-chip" onclick="askToggleHistory()" title="Chat history" aria-label="Chat history"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg></button>
+      <button class="ask-chip ask-wide-btn" id="ask-cavnar-wide" onclick="askToggleWide()" title="Expand" aria-label="Expand to a side sheet" aria-pressed="false"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg></button>
       <button class="ask-chip" onclick="askNewChat()" title="New chat" aria-label="New chat"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>
       <button class="ask-chip" onclick="toggleAskCavnar()" title="Close" aria-label="Close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
     </div>
@@ -10498,6 +10561,27 @@ svg:hover .hb-xh{opacity:1}
 .ac-ring .ar{fill:none;stroke:var(--ember);stroke-width:9;stroke-linecap:round;stroke-dasharray:314;stroke-dashoffset:314;transition:stroke-dashoffset 1.2s cubic-bezier(.3,0,.15,1);filter:drop-shadow(0 0 6px var(--ac-glow))}
 .ac-ring .n{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'Space Grotesk',sans-serif;font-variant-numeric:tabular-nums}
 .ac-ring .n b{font-size:30px;font-weight:600;color:var(--ink);line-height:1}
+/* Toned by the score (density audit #36): ember is never a status (DS 9). */
+.ac-ring.good .ar{stroke:var(--green);filter:none}.ac-ring.warn .ar{stroke:var(--amber);filter:none}.ac-ring.bad .ar{stroke:var(--red);filter:none}
+/* The overview's one sentence and one fix (density audit #36). */
+.ac-say{margin:0 0 12px;font-size:16px;line-height:1.5;color:var(--ink);width:100%}
+.ac-say b{font-weight:600}
+.ac-more{position:relative}
+.ac-more>summary{list-style:none}.ac-more>summary::-webkit-details-marker{display:none}
+.ac-more-menu{position:absolute;left:0;top:calc(100% + 6px);z-index:6;min-width:200px;display:flex;flex-direction:column;gap:2px;padding:6px;background:var(--paper);border:1px solid var(--ac-line);border-radius:10px;box-shadow:var(--elev-float)}
+.ac-more-menu .cbtn{justify-content:flex-start;width:100%}
+/* Data health at the top of Integrations (density audit #36). */
+.ac-dh-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.ac-dh-row .pct{font-family:'Space Grotesk',sans-serif;font-size:28px;font-weight:600;color:var(--ink);line-height:1}
+.ac-dh-row .pct.good{color:var(--green)}.ac-dh-row .pct.warn{color:var(--amber)}.ac-dh-row .pct.bad{color:var(--red)}
+.ac-dh-row .bar{flex:1 1 160px;height:8px;border-radius:999px;background:var(--hb-line2);overflow:hidden}
+.ac-dh-row .bar i{display:block;height:100%;width:0;border-radius:999px;background:var(--ink3)}
+.ac-dh-row .bar i.good{background:var(--green)}.ac-dh-row .bar i.warn{background:var(--amber)}.ac-dh-row .bar i.bad{background:var(--red)}
+.ac-dh-why{font-size:13.5px;color:var(--ink3);margin-top:8px}
+.ac-pos-other{display:contents}.ac-pos-other[hidden]{display:none}
+/* The hidden attribute wins inside Account: rows, rail links and cbtns set
+   their own display, which silently beat it (a hidden row still showed). */
+#panel-account [hidden]{display:none!important}
 .ac-ring .n span{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:4px}
 .ac-hgrid{display:flex;flex-direction:column;gap:16px}
 .ac-hgrp-h{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin:0 0 6px 12px}
@@ -10528,7 +10612,7 @@ svg:hover .hb-xh{opacity:1}
 .ac-section{scroll-margin-top:calc(var(--cav-chrome) + 16px);margin-bottom:44px}
 .ac-h{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--ac-line)}
 .ac-h h2{font-family:'Clash Display',sans-serif;font-size:22px;font-weight:600;color:var(--ink);margin:0;letter-spacing:-.005em}
-.ac-h p{margin:5px 0 0;font-size:15px;color:var(--ink3);max-width:60ch}
+.ac-h p{margin:5px 0 0;font-size:13.5px;color:var(--ink3);max-width:60ch}
 .ac-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
 .ac-grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}
 .ac-card{background:var(--ac-card);border:1px solid var(--ac-line);border-radius:14px;padding:20px 22px;box-shadow:0 2px 10px rgba(14,12,10,.05);transition:box-shadow .15s,transform .15s}
@@ -10551,7 +10635,7 @@ svg:hover .hb-xh{opacity:1}
 #panel-account .ac-row .c .ac-select,#panel-account .ac-inline .ac-select{width:auto;min-width:200px}
 #panel-account .ac-select{-webkit-appearance:none;appearance:none;padding-right:36px;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%238a8279' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 13px center;background-size:12px 8px}
 .ac-card-h h3{font-size:16px;font-weight:700;color:var(--ink);margin:0;letter-spacing:-.005em}
-.ac-card-h p{margin:3px 0 0;font-size:15px;color:var(--ink3);line-height:1.5}
+.ac-card-h p{margin:3px 0 0;font-size:13.5px;color:var(--ink3);line-height:1.5}
 .ac-card-h .r{flex:none;display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
 .ac-note{font-size:14px;color:var(--ink3);line-height:1.5;margin-top:10px}
 .ac-note a{color:var(--ember);text-decoration:none;font-weight:600}
@@ -10561,7 +10645,11 @@ svg:hover .hb-xh{opacity:1}
 .ac-row:first-child,.ac-card-h + .ac-row,.ac-rows > .ac-row:first-child{border-top:none}
 .ac-row .l{min-width:0}
 .ac-row .l b{display:block;font-size:15px;font-weight:600;color:var(--ink)}
-.ac-row .l span{display:block;font-size:15px;color:var(--ink3);margin-top:2px;line-height:1.5}
+.ac-row .l span{display:block;font-size:13.5px;color:var(--ink3);margin-top:2px;line-height:1.5}
+/* Density audit #37: a row explanation over eight words sits behind an "i"
+   (acctQuietHelp), so the page reads like settings, not documentation. */
+.cbtn.ac-info{width:18px;height:18px;min-height:0;padding:0;margin-left:6px;border-radius:50%;border:1px solid var(--paper3);font-family:'Space Grotesk',sans-serif;font-size:11px;font-weight:700;line-height:1;color:var(--ink3);vertical-align:1px}
+.cbtn.ac-info[aria-expanded="true"]{color:var(--ember);border-color:var(--ember)}
 .ac-row .c{flex:none;display:flex;align-items:center;gap:8px}
 /* DSR settings: the years that run differently, listed under their row */
 .ac-row.as-dsr-years{align-items:flex-start}
@@ -10766,25 +10854,30 @@ svg:hover .hb-xh{opacity:1}
           </div>
           <div class="ac-chips" aria-label="Account status">
             <span class="ac-chip ember"><i></i>{% if is_full_tier %}Full plan &middot; all modules{% else %}{{ active_modules|length }} module{{ '' if active_modules|length == 1 else 's' }}{% endif %}</span>
-            <span class="ac-chip" id="ac-sub-chip"><i></i>Checking subscription&hellip;</span>
-            <span class="ac-chip {{ 'good' if restaurant.gmb_refresh_token else '' }}"><i></i>Google {{ 'connected' if restaurant.gmb_refresh_token else 'not connected' }}</span>
-            <span class="ac-chip {{ 'bad' if _pos_err else ('good' if _pos_on else '') }}"><i></i>POS {{ 'needs attention' if _pos_err else ('connected' if _pos_on else 'not connected') }}</span>
-            {% if restaurant.two_fa_enabled %}<span class="ac-chip good"><i></i>2FA on</span>{% endif %}
           </div>
         </div>
       </div>
-      <div class="ac-qa" role="group" aria-label="Quick actions">
-        <div class="ac-qa-label">Quick actions</div>
-        {% if _is_owner %}<button class="cbtn cbtn-primary cbtn-sm" onclick="acctGo('people','team-name')">Invite a teammate</button>{% endif %}
-        <button class="cbtn cbtn-secondary cbtn-sm" onclick="acctGo('integrations')">Connect an integration</button>
-        <a class="cbtn cbtn-secondary cbtn-sm" id="ac-qa-billing" href="#" onclick="return acctBillingQuick(event)">Manage subscription</a>
-        <button class="cbtn cbtn-secondary cbtn-sm" onclick="acctGo('data','exp-first')">Export data</button>
-        <a class="cbtn cbtn-secondary cbtn-sm" href="mailto:will@cavnar.ai?subject=Question about {{restaurant.name}}">Contact Will</a>
+      {# One sentence and one fix (density audit #36): what needs the owner,
+         counted from the six health items, and the one button for the worst
+         of them. The chips that restated three of those items and the five
+         quick actions are gone; the actions are one "More" away. #}
+      <div class="ac-qa" role="group" aria-label="What to do first">
+        <p class="ac-say" id="ac-health-say" aria-live="polite">Checking your setup&hellip;</p>
+        <button type="button" class="cbtn cbtn-primary cbtn-sm" id="ac-fix-btn" hidden></button>
+        <details class="ac-more"><summary class="cbtn cbtn-text cbtn-sm">More</summary>
+          <div class="ac-more-menu">
+            {% if _is_owner %}<button type="button" class="cbtn cbtn-text cbtn-sm" onclick="acctGo('people','team-name')">Invite a teammate</button>{% endif %}
+            <button type="button" class="cbtn cbtn-text cbtn-sm" onclick="acctGo('integrations')">Connect an integration</button>
+            <a class="cbtn cbtn-text cbtn-sm" id="ac-qa-billing" href="#" onclick="return acctBillingQuick(event)">Manage subscription</a>
+            <button type="button" class="cbtn cbtn-text cbtn-sm" onclick="acctGo('data','exp-first')">Export data</button>
+            <a class="cbtn cbtn-text cbtn-sm" href="mailto:will@cavnar.ai?subject=Question about {{restaurant.name}}">Contact Will</a>
+          </div>
+        </details>
       </div>
     </div>
 
     <div class="ac-health" aria-labelledby="ac-health-h">
-      <div class="ac-ring" role="img" aria-label="Account setup score">
+      <div class="ac-ring" id="ac-health-ringbox" role="img" aria-label="Account setup score">
         <svg viewBox="0 0 118 118" aria-hidden="true"><circle class="tr" cx="59" cy="59" r="50"/><circle class="ar" id="ac-health-ring" cx="59" cy="59" r="50"/></svg>
         <div class="n"><b id="ac-health-score">&hellip;</b><span>set up</span></div>
       </div>
@@ -10807,13 +10900,13 @@ svg:hover .hb-xh{opacity:1}
     <nav class="ac-nav" id="ac-nav" aria-label="Account sections">
       <a href="#account/overview" data-go="overview"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>Overview</a>
       <a href="#account/restaurant" data-go="restaurant"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 7l6-4 6 4v6H2z"/><path d="M6 13V9h4v4"/></svg>Restaurant</a>
+      {% if _is_owner %}<a href="#account/report" data-go="report" id="ac-nav-report" hidden><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2.5" y="1.5" width="11" height="13" rx="1.5"/><path d="M5 5.5h6M5 8h6M5 10.5h4"/></svg>Daily report</a>{% endif %}
       <a href="#account/people" data-go="people"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="5.5" r="2.5"/><path d="M1.5 13c0-2.5 2-4 4.5-4s4.5 1.5 4.5 4"/><circle cx="11.5" cy="6" r="2"/><path d="M11 9.5c2 0 3.5 1.3 3.5 3.5"/></svg>People</a>
       <a href="#account/billing" data-go="billing"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="3.5" width="13" height="9" rx="1.5"/><path d="M1.5 7h13"/></svg>Billing</a>
       <a href="#account/notifications" data-go="notifications"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 11V7a4 4 0 018 0v4l1 1H3z"/><path d="M6.5 13.5a1.5 1.5 0 003 0"/></svg>Notifications</a>
-      <a href="#account/automation" data-go="automation"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.5l1.6 3.4 3.7.4-2.8 2.5.8 3.7L8 9.6l-3.3 1.9.8-3.7L2.7 5.3l3.7-.4z"/></svg>Automation &amp; AI</a>
+      <a href="#account/automation" data-go="automation"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.5l1.6 3.4 3.7.4-2.8 2.5.8 3.7L8 9.6l-3.3 1.9.8-3.7L2.7 5.3l3.7-.4z"/></svg>Automation, AI &amp; memory</a>
       <a href="#account/integrations" data-go="integrations"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 10L3.5 12.5a2 2 0 01-2.8-2.8L4 7"/><path d="M10 6l2.5-2.5a2 2 0 012.8 2.8L12 9"/><path d="M5.5 10.5l5-5"/></svg>Integrations</a>
       <a href="#account/security" data-go="security"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.5l5.5 2v4c0 3.5-2.5 6-5.5 7-3-1-5.5-3.5-5.5-7v-4z"/><path d="M5.5 8l2 2 3-3.5"/></svg>Security</a>
-      <a href="#account/appearance" data-go="appearance"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 2a6 6 0 010 12z" fill="currentColor" stroke="none"/></svg>Appearance</a>
       <a href="#account/data" data-go="data"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><ellipse cx="8" cy="4" rx="5.5" ry="2"/><path d="M2.5 4v8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2V4"/><path d="M2.5 8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2"/></svg>Data &amp; privacy</a>
       <a href="#account/support" data-go="support"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M6.2 6.3a1.9 1.9 0 013.7.5c0 1.2-1.9 1.4-1.9 2.6"/><circle cx="8" cy="11.6" r=".6" fill="currentColor"/></svg>Support</a>
       <div class="hint">Everything here is also in the iPhone app under Account.</div>
@@ -10824,7 +10917,7 @@ svg:hover .hb-xh{opacity:1}
     <!-- ══════════════ RESTAURANT ══════════════ -->
     <section class="ac-section" id="acct-restaurant" data-nav="account/restaurant" aria-labelledby="acct-restaurant-h">
       <div class="ac-h"><div><h2 id="acct-restaurant-h">Restaurant</h2><p>Who you are, how to reach you, and the facts the AI writes from.</p></div>
-        <button onclick="toggleProfileEdit()" id="profile-edit-btn" class="cbtn cbtn-primary cbtn-sm">Edit profile</button></div>
+        <button onclick="toggleProfileEdit()" id="profile-edit-btn" class="cbtn cbtn-secondary cbtn-sm">Edit profile</button></div>
 
       <div id="profile-edit" class="ac-card accent" style="display:none;margin-bottom:14px">
         <div class="ac-card-h"><div><h3>Edit profile</h3><p>Contact details and how the AI sounds when it writes for you. Saved together.</p></div></div>
@@ -10884,7 +10977,7 @@ svg:hover .hb-xh{opacity:1}
 
       <div class="ac-card" style="margin-top:14px">
         <div class="ac-card-h"><div><h3>Hours &amp; closures</h3><p>Used when generating schedules and when the AI mentions your hours. Leave a day blank if it varies.</p></div>
-          <div class="r"><span class="ac-status" id="as-hours-status"></span><button class="cbtn cbtn-primary cbtn-sm" onclick="saveAccountHours()">Save hours</button></div></div>
+          <div class="r"><span class="ac-status" id="as-hours-status"></span><button class="cbtn cbtn-secondary cbtn-sm" onclick="saveAccountHours()">Save hours</button></div></div>
         {# Prefill (friction audit U2-19): Google's listed hours, and Monday's
            times copied to every day. Neither saves on its own - Save hours does. #}
         <div class="ac-inline" style="margin-bottom:10px;gap:8px;flex-wrap:wrap"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="asHoursFromGoogle(this)">Fill from Google</button><button type="button" class="cbtn cbtn-text cbtn-sm" onclick="asHoursSameEveryDay()">Same every day</button></div>
@@ -10904,7 +10997,7 @@ svg:hover .hb-xh{opacity:1}
           <div class="r"><span class="ac-status" id="as-rp-status"></span></div></div>
         <div class="ac-card accent" id="as-rp-suggest" hidden style="margin-bottom:12px">
           <div class="ac-row" style="border-top:0"><div class="l"><b id="as-rp-suggest-text"></b><span id="as-rp-suggest-why"></span></div>
-            <div class="c ac-inline">{% if _is_owner %}<button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="rpAcceptSuggestion()">Yes, that&rsquo;s right</button><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="rpFocus()">No, let me pick</button>{% endif %}</div></div>
+            <div class="c ac-inline">{% if _is_owner %}<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="rpAcceptSuggestion()">Yes, that&rsquo;s right</button><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="rpFocus()">No, let me pick</button>{% endif %}</div></div>
         </div>
         <div class="ac-rows">
           <div class="ac-row"><div class="l"><b>How you serve</b><span>The split every comparison respects: a counter spot is never compared with a full-service dining room.</span></div>
@@ -10919,7 +11012,7 @@ svg:hover .hb-xh{opacity:1}
             <div class="c"><input class="ac-input ac-num" type="text" id="as-rp-opened" inputmode="numeric" maxlength="4" placeholder="2019" aria-label="Year you opened" style="width:110px"{% if not _is_owner %} disabled{% endif %}></div></div>
           <div class="ac-row"><div class="l"><b>Your targets</b><span id="as-rp-targets">Loading&hellip;</span></div><div class="c"></div></div>
         </div>
-        <div class="ac-inline" style="margin-top:12px">{% if _is_owner %}<button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="saveRestaurantProfile()">Confirm profile</button>{% endif %}<span class="ac-note" id="as-rp-confirmed" style="margin-top:0"></span></div>
+        <div class="ac-inline" style="margin-top:12px">{% if _is_owner %}<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="saveRestaurantProfile()">Confirm profile</button>{% endif %}<span class="ac-note" id="as-rp-confirmed" style="margin-top:0"></span></div>
         {% if not _is_owner %}<div class="ac-note">Only the account owner can change the restaurant profile.</div>{% endif %}
       </div>
 
@@ -10948,8 +11041,18 @@ svg:hover .hb-xh{opacity:1}
         <div class="ac-note" id="as-tg-ro" hidden>Only the account owner can change targets and pay rates.</div>
       </div>
 
-      <div class="ac-card" id="as-dsr-card" style="margin-top:14px" hidden>
-        <div class="ac-card-h"><div><h3>Daily report</h3><p>The nightly sales report and the weekly grid: your week, your periods, and which of your categories each POS department counts toward. Owner only.</p></div>
+    </section>
+
+    {% if _is_owner %}
+    <!-- ══════════════ DAILY REPORT (owner only) ══════════════
+         Its own rail item (density audit #38): the fiscal calendar and the
+         POS department map are 300-second configuration, and they sat on
+         the same scroll as the owner's phone number. Shown once
+         /api/dsr/settings says this login can edit it (loadDsrSettings). -->
+    <section class="ac-section" id="acct-report" data-nav="account/report" aria-labelledby="acct-report-h" hidden>
+      <div class="ac-h"><div><h2 id="acct-report-h">Daily report</h2><p>How the nightly report is built and sent. Owner only.</p></div></div>
+      <div class="ac-card" id="as-dsr-card" hidden>
+        <div class="ac-card-h"><div><h3>Nightly report and weekly grid</h3><p>Your week, your periods, and where each POS department counts.</p></div>
           <div class="r"><span class="ac-status" id="as-dsr-status"></span></div></div>
         <div class="ac-rows">
           <div class="ac-row"><div class="l"><b>Build the daily report every night</b><span>After close, from the POS. Owner logins get the owner report; manager logins get the manager report.</span></div>
@@ -10976,6 +11079,7 @@ svg:hover .hb-xh{opacity:1}
         <div class="ac-rows" id="as-dsr-cats"><div class="ac-note">Loading&hellip;</div></div>
       </div>
     </section>
+    {% endif %}
 
     <!-- ══════════════ PEOPLE ══════════════ -->
     <section class="ac-section" id="acct-people" data-nav="account/people" aria-labelledby="acct-people-h">
@@ -10995,7 +11099,7 @@ svg:hover .hb-xh{opacity:1}
               <option value="client">Co-owner</option>
               <option value="member">Teammate</option>
             </select>
-            <button onclick="inviteTeam(this)" class="cbtn cbtn-primary cbtn-sm">Add</button>
+            <button onclick="inviteTeam(this)" class="cbtn cbtn-secondary cbtn-sm">Add</button>
           </div>
           <div class="ac-note">They get a temporary password by email. A co-owner can do everything you can; a manager sees what you open to them below.</div>
           {% endif %}
@@ -11031,7 +11135,7 @@ svg:hover .hb-xh{opacity:1}
               <input class="ac-input" id="staff-new-role" placeholder="Job (Server)" aria-label="Job" list="staff-role-options">
               <datalist id="staff-role-options"></datalist>
               <input class="ac-input ac-num" id="staff-new-pin" inputmode="numeric" placeholder="PIN" maxlength="8" aria-label="PIN" style="flex:0 0 96px">
-              <button onclick="createStaff(this)" class="cbtn cbtn-primary cbtn-sm">Add</button>
+              <button onclick="createStaff(this)" class="cbtn cbtn-secondary cbtn-sm">Add</button>
             </div>
           </div>
         </div>
@@ -11056,7 +11160,7 @@ svg:hover .hb-xh{opacity:1}
         </div>
         <div id="acct-pause-on" hidden>
           <div class="ac-row"><div class="l"><b>Paused</b><span id="acct-pause-until">Resumes soon.</span></div>
-            <div class="c"><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="acctResume(this)">Resume now</button></div></div>
+            <div class="c"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="acctResume(this)">Resume now</button></div></div>
         </div>
         <div class="ac-status" id="acct-pause-status" hidden></div>
       </div>
@@ -11070,8 +11174,12 @@ svg:hover .hb-xh{opacity:1}
               <div><dt>Amount</dt><dd class="ac-big" id="billing-amount-prominent">&mdash;</dd></div>
               <div style="grid-column:1 / -1"><dt>Payment method</dt><dd id="billing-pm">&mdash;</dd></div>
             </dl>
+            {# The measured figure only (value_delivered.delivered, net of what
+               got worse) - never the opportunity, surfaced or avoided figure
+               (CLAUDE.md value rule). #}
+            <div class="ac-note" id="billing-value" aria-live="polite"></div>
             <div class="ac-inline" style="margin-top:16px">
-              <a id="billing-portal-link" href="#" target="_blank" rel="noopener" class="cbtn cbtn-primary cbtn-sm">Manage payment method</a>
+              <a id="billing-portal-link" href="#" target="_blank" rel="noopener" class="cbtn cbtn-secondary cbtn-sm">Manage payment method</a>
               <a id="billing-invoice-link" href="#" target="_blank" rel="noopener" class="cbtn cbtn-secondary cbtn-sm">Invoice history</a>
             </div>
           </div>
@@ -11091,11 +11199,24 @@ svg:hover .hb-xh{opacity:1}
 
     <!-- ══════════════ NOTIFICATIONS ══════════════ -->
     <section class="ac-section" id="acct-notifications" data-nav="account/notifications" aria-labelledby="acct-notifications-h">
-      <div class="ac-h"><div><h2 id="acct-notifications-h">Notifications</h2><p>What reaches you, how, and when. Alerts are near-real-time; the digest is a weekly summary.</p></div></div>
+      <div class="ac-h"><div><h2 id="acct-notifications-h">Notifications</h2><p>What reaches you, how, and when.</p></div></div>
+      {# The one dial that fixes "too much" or "too little" leads the section
+         (density audit #38); it sat folded under the morning brief. Shown
+         with the brief's own settings (owner-only: loadOpsSettings). #}
+      <div class="ac-card" id="as-level-card" hidden style="margin-bottom:16px">
+        <div class="ac-card-h"><div><h3>How much to hear from Cavnar AI</h3><p id="as-level-note">Calm: the brief, results and the close. Normal adds the pre-dinner pulse, up to four a day.</p></div>
+          <div class="r"><span class="ac-status" id="as-level-status"></span></div></div>
+        <input type="hidden" id="as-briefing-level" value="normal">
+        <div class="dr-views" role="group" aria-label="How much to hear from Cavnar AI">
+          <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-level="calm" aria-pressed="false" onclick="acctSetLevel('calm')">Calm</button>
+          <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-level="normal" aria-pressed="true" onclick="acctSetLevel('normal')">Normal</button>
+          <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-level="all" aria-pressed="false" onclick="acctSetLevel('all')">Everything</button>
+        </div>
+      </div>
       <div class="ac-grid">
         <div class="ac-card">
           <div class="ac-card-h"><div><h3>Alerts</h3><p>Who gets texted or emailed, and for what.</p></div>
-            <div class="r"><button class="cbtn cbtn-primary cbtn-sm" onclick="openAlertsModal()">Manage alerts</button></div></div>
+            <div class="r"><button class="cbtn cbtn-secondary cbtn-sm" onclick="openAlertsModal()">Manage alerts</button></div></div>
           <div class="ac-kv" style="grid-template-columns:1fr">
             <div><dt>Contacts</dt><dd id="alerts-contacts-summary" class="muted">Loading&hellip;</dd></div>
             <div><dt>Triggers</dt><dd id="alerts-types-summary" class="muted"></dd></div>
@@ -11131,8 +11252,6 @@ svg:hover .hb-xh{opacity:1}
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-hold-alerts" onchange="saveMorningBrief()" aria-label="Hold alerts through service"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
             <div class="ac-row"><div class="l"><b>Text the manager tonight\u2019s lineup notes</b><span>The staff briefing, sent to whoever issues are routed to, with a link to read it with the team.</span></div>
               <div class="c"><select class="ac-select" id="as-preshift-hour" onchange="saveMorningBrief()" aria-label="Lineup notes hour"></select></div></div>
-            <div class="ac-row"><div><div class="ac-row-l">How much to hear from Cavnar AI</div><div class="ac-note">Calm is the brief, results and the close. Normal adds the pre-dinner pulse, coverage and opportunities, up to four a day. Everything is what it says.</div></div>
-              <div class="c"><select class="ac-select" id="as-briefing-level" onchange="saveMorningBrief()" aria-label="Briefing level"><option value="calm">Calm</option><option value="normal">Normal</option><option value="all">Everything</option></select></div></div>
           </div>
           <div class="ac-status" id="as-ops-status" style="margin-top:8px"></div>
           </div>
@@ -11147,7 +11266,7 @@ svg:hover .hb-xh{opacity:1}
 
     <!-- ══════════════ AUTOMATION & AI ══════════════ -->
     <section class="ac-section" id="acct-automation" data-nav="account/automation" aria-labelledby="acct-automation-h">
-      <div class="ac-h"><div><h2 id="acct-automation-h">Automation &amp; AI</h2><p>What the AI is allowed to do on its own, and how it sounds when it speaks for you.</p></div></div>
+      <div class="ac-h"><div><h2 id="acct-automation-h">Automation, AI &amp; memory</h2><p>What the AI may do on its own, how it sounds, and what it remembers.</p></div></div>
       <div class="ac-grid" id="account-settings-card">
         <!-- The work Cavnar does on its own (Friction #27): moved out of
              Notifications, where it hid under the morning brief. The
@@ -11170,7 +11289,7 @@ svg:hover .hb-xh{opacity:1}
         </div>
         <div class="ac-card">
           <div class="ac-card-h"><div><h3>Auto-approve 5-star replies</h3><p>Drafted replies to 5-star reviews are approved automatically &mdash; and posted, when Google Business is connected. Capped per day, with a pause switch.</p></div>
-            <div class="r"><span class="ac-status" id="as-auto-status"></span><button class="cbtn cbtn-primary cbtn-sm" onclick="saveAutoApprove()">Save rule</button></div></div>
+            <div class="r"><span class="ac-status" id="as-auto-status"></span><button class="cbtn cbtn-secondary cbtn-sm" onclick="saveAutoApprove()">Save rule</button></div></div>
           <div class="ac-rows">
             <div class="ac-row"><div class="l"><b>Turn on auto-approve</b><span>Only 5-star reviews. Everything else still waits for you.</span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-auto-enabled" onchange="acctCapMeter()" aria-label="Turn on auto-approve"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
@@ -11196,11 +11315,45 @@ svg:hover .hb-xh{opacity:1}
           </dl>
         </div>
       </div>
+      <!-- Moved from Security (density audit #38): what the assistant
+           remembers, what the owner decided, and why it stopped asking. -->
+      <div class="ac-card" id="acct-memory-card" style="margin-top:16px">
+        <div class="ac-card-h"><div><h3>What Cavnar AI remembers</h3><p>Facts the assistant was told to keep &mdash; they shape every answer. Anyone on this account can add one; you can remove any of them.</p></div></div>
+        <div id="acct-memory-list" class="ac-status">Loading&hellip;</div>
+        <div class="ac-inline" style="margin-top:10px">
+          <input class="ac-input" id="acct-memory-new" maxlength="300" placeholder="Something the assistant should always know &mdash; &ldquo;we close Mondays&rdquo;, &ldquo;never discount the tasting menu&rdquo;" aria-label="A fact to remember">
+          <button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="acctRemember(this)">Remember</button>
+        </div>
+      </div>
+      <div class="ac-card" id="acct-decisions-card">
+        <div class="ac-card-h"><div><h3>What you&rsquo;ve decided</h3><p>Every recommendation, issue and proposal, what you did with it, and what was measured afterwards. Ask Cavnar AI reads this before it recommends anything.</p></div></div>
+        <div id="acct-decisions-list" class="ac-status">Loading&hellip;</div>
+        <div class="ac-note" style="margin-top:10px">What you followed by area, what worked, results to check in on and every recommendation shown: <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rh="open">Your recommendations &rarr;</button></div>
+      </div>
+      <div class="ac-card" id="acct-trust-card">
+        <div class="ac-card-h"><div><h3>Why Cavnar AI stopped asking</h3><p>Nothing runs on its own until your own record earns it. This is that record.</p></div></div>
+        <div id="acct-trust-list" class="ac-status">Loading&hellip;</div>
+      </div>
     </section>
 
     <!-- ══════════════ INTEGRATIONS ══════════════ -->
     <section class="ac-section" id="acct-integrations" data-nav="account/integrations" aria-labelledby="acct-integrations-h">
-      <div class="ac-h"><div><h2 id="acct-integrations-h">Integrations</h2><p>What Cavnar AI reads from and posts to. A connection that stops syncing says so here.</p></div></div>
+      <div class="ac-h"><div><h2 id="acct-integrations-h">Integrations</h2><p>What Cavnar AI reads from and posts to.</p></div></div>
+      {# Data health leads (density audit #36): the same score as Home's
+         drawer (GET /api/data-health), so "is my data live?" has its answer
+         here, and the health grid's Integrations item reads it too. #}
+      <div class="ac-card" id="acct-dh-card" style="margin-bottom:16px">
+        <div class="ac-card-h"><div><h3>Data health</h3><p>How current the data behind your recommendations is.</p></div>
+          <div class="r"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dh-open="1">Details</button></div></div>
+        <div class="ac-dh-row"><span class="pct" id="acct-dh-pct">&hellip;</span><span class="bar" aria-hidden="true"><i id="acct-dh-bar"></i></span></div>
+        <div class="ac-dh-why" id="acct-dh-why"></div>
+      </div>
+      {% set _pos_any = _pos_on or _pos_err %}
+      {% set _pos_idle = [] %}
+      {% if not restaurant.toast_restaurant_guid %}{% set _pi = _pos_idle.append('Toast') %}{% endif %}
+      {% if not restaurant.square_location_id %}{% set _pi = _pos_idle.append('Square') %}{% endif %}
+      {% if not restaurant.clover_merchant_id %}{% set _pi = _pos_idle.append('Clover') %}{% endif %}
+      {% if not restaurant.rpower_store_mid %}{% set _pi = _pos_idle.append('RPower') %}{% endif %}
       <div class="ac-grid">
         <div class="ac-conn">
           {% if restaurant.gmb_refresh_token %}{% set _gl2 = conn_lines.google if conn_lines else None %}<div class="ic {{ 'err' if (_gl2 and _gl2.tone == 'bad') else ('warn' if (_gl2 and _gl2.tone == 'warn') else 'on') }}" aria-hidden="true"><img src="/static/brand/integrations/google.svg" alt=""></div><div class="t"><b>Google Business Profile</b><span{% if _gl2 and _gl2.tone in ('bad', 'warn') %} class="warn"{% endif %}>{{ _gl2.line if _gl2 else 'Connected' }} &mdash; approved replies post to Google</span></div>
@@ -11217,10 +11370,15 @@ svg:hover .hb-xh{opacity:1}
           {% else %}<div class="ic" aria-hidden="true"><img src="/static/brand/integrations/instagram.svg" alt=""></div><div class="t"><b>Instagram &amp; Facebook</b><span>Not connected</span></div>
           <div class="a"><button onclick="igConnect()" class="cbtn cbtn-secondary cbtn-sm">Connect</button></div>{% endif %}
         </div>
-        {{ pos_card('Toast POS', '/static/brand/integrations/toast.png', restaurant.toast_restaurant_guid, restaurant.toast_sync_error, restaurant.toast_last_synced, 'toastSyncNow', 'toastDisconnect', 'openToastClientModal', (conn_lines.pos if (conn_lines and conn_lines.pos and conn_lines.pos.provider == 'toast') else None)) }}
-        {{ pos_card('Square POS', '/static/brand/integrations/square.svg', restaurant.square_location_id, restaurant.square_sync_error, restaurant.square_last_synced, 'squareSyncNow', 'squareDisconnect', 'openSquareModal', (conn_lines.pos if (conn_lines and conn_lines.pos and conn_lines.pos.provider == 'square') else None)) }}
-        {{ pos_card('Clover POS', '/static/brand/integrations/clover.svg', restaurant.clover_merchant_id, restaurant.clover_sync_error, restaurant.clover_last_synced, 'cloverSyncNow', 'cloverDisconnect', 'openCloverModal', (conn_lines.pos if (conn_lines and conn_lines.pos and conn_lines.pos.provider == 'clover') else None)) }}
-        {{ pos_card('RPower POS', '/static/brand/integrations/rpower.png', restaurant.rpower_store_mid, restaurant.rpower_sync_error, restaurant.rpower_last_synced, 'rpowerSyncNow', 'rpowerDisconnect', 'openRpowerConnect', (conn_lines.pos if (conn_lines and conn_lines.pos and conn_lines.pos.provider == 'rpower') else None)) }}
+        {% if _pos_any and not restaurant.toast_restaurant_guid %}<div class="ac-pos-other" hidden>{% endif %}{{ pos_card('Toast POS', '/static/brand/integrations/toast.png', restaurant.toast_restaurant_guid, restaurant.toast_sync_error, restaurant.toast_last_synced, 'toastSyncNow', 'toastDisconnect', 'openToastClientModal', (conn_lines.pos if (conn_lines and conn_lines.pos and conn_lines.pos.provider == 'toast') else None)) }}{% if _pos_any and not restaurant.toast_restaurant_guid %}</div>{% endif %}
+        {% if _pos_any and not restaurant.square_location_id %}<div class="ac-pos-other" hidden>{% endif %}{{ pos_card('Square POS', '/static/brand/integrations/square.svg', restaurant.square_location_id, restaurant.square_sync_error, restaurant.square_last_synced, 'squareSyncNow', 'squareDisconnect', 'openSquareModal', (conn_lines.pos if (conn_lines and conn_lines.pos and conn_lines.pos.provider == 'square') else None)) }}{% if _pos_any and not restaurant.square_location_id %}</div>{% endif %}
+        {% if _pos_any and not restaurant.clover_merchant_id %}<div class="ac-pos-other" hidden>{% endif %}{{ pos_card('Clover POS', '/static/brand/integrations/clover.svg', restaurant.clover_merchant_id, restaurant.clover_sync_error, restaurant.clover_last_synced, 'cloverSyncNow', 'cloverDisconnect', 'openCloverModal', (conn_lines.pos if (conn_lines and conn_lines.pos and conn_lines.pos.provider == 'clover') else None)) }}{% if _pos_any and not restaurant.clover_merchant_id %}</div>{% endif %}
+        {% if _pos_any and not restaurant.rpower_store_mid %}<div class="ac-pos-other" hidden>{% endif %}{{ pos_card('RPower POS', '/static/brand/integrations/rpower.png', restaurant.rpower_store_mid, restaurant.rpower_sync_error, restaurant.rpower_last_synced, 'rpowerSyncNow', 'rpowerDisconnect', 'openRpowerConnect', (conn_lines.pos if (conn_lines and conn_lines.pos and conn_lines.pos.provider == 'rpower') else None)) }}{% if _pos_any and not restaurant.rpower_store_mid %}</div>{% endif %}
+        {# Once a POS is live, the providers not in use fold into one row
+           (density audit #36): three "Not connected" rows implied something
+           was missing. #}
+        {% if _pos_any and _pos_idle %}<div class="ac-conn ac-pos-switch"><div class="ic" aria-hidden="true">&#8644;</div><div class="t"><b>Switch POS</b><span>{{ _pos_idle|join(', ') }}</span></div>
+          <div class="a"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" aria-expanded="false" onclick="acctPosOthers(this)">Show</button></div></div>{% endif %}
         <div class="ac-conn"><div class="ic" aria-hidden="true"><img class="wide" src="/static/brand/integrations/stripe.svg" alt=""></div><div class="t"><b>Stripe</b><span>Billing runs through Stripe &mdash; manage it under Billing</span></div><div class="a"><button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="acctGo('billing')">Billing &rarr;</button></div></div>
       </div>
 
@@ -11271,7 +11429,7 @@ svg:hover .hb-xh{opacity:1}
           </div>
         </div>
         <div class="ac-inline">
-          <button onclick="saveWebhook()" class="cbtn cbtn-primary" id="wh-save-btn">Save webhook</button>
+          <button onclick="saveWebhook()" class="cbtn cbtn-secondary" id="wh-save-btn">Save webhook</button>
           <button onclick="testWebhook()" id="wh-test-btn" class="cbtn cbtn-secondary" style="display:none">Send test</button>
           <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="deleteWebhook()" id="wh-delete-btn" style="display:none">Remove</button>
         </div>
@@ -11282,23 +11440,6 @@ svg:hover .hb-xh{opacity:1}
     <!-- ══════════════ SECURITY ══════════════ -->
     <section class="ac-section" id="acct-security" data-nav="account/security" aria-labelledby="acct-security-h">
       <div class="ac-h"><div><h2 id="acct-security-h">Security</h2><p>How this account is protected, and what&rsquo;s been happening on it.</p></div></div>
-      <div class="ac-card" id="acct-memory-card">
-        <div class="ac-card-h"><div><h3>What Cavnar AI remembers</h3><p>Facts the assistant was told to keep &mdash; they shape every answer. Anyone on this account can add one; you can remove any of them.</p></div></div>
-        <div id="acct-memory-list" class="ac-status">Loading&hellip;</div>
-        <div class="ac-inline" style="margin-top:10px">
-          <input class="ac-input" id="acct-memory-new" maxlength="300" placeholder="Something the assistant should always know &mdash; &ldquo;we close Mondays&rdquo;, &ldquo;never discount the tasting menu&rdquo;" aria-label="A fact to remember">
-          <button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="acctRemember(this)">Remember</button>
-        </div>
-      </div>
-      <div class="ac-card" id="acct-decisions-card">
-        <div class="ac-card-h"><div><h3>What you&rsquo;ve decided</h3><p>Every recommendation, issue and proposal, what you did with it, and what was measured afterwards. Ask Cavnar AI reads this before it recommends anything.</p></div></div>
-        <div id="acct-decisions-list" class="ac-status">Loading&hellip;</div>
-        <div class="ac-note" style="margin-top:10px">What you followed by area, what worked, results to check in on and every recommendation shown: <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rh="open">Your recommendations &rarr;</button></div>
-      </div>
-      <div class="ac-card" id="acct-trust-card">
-        <div class="ac-card-h"><div><h3>Why Cavnar AI stopped asking</h3><p>Nothing runs on its own until your own record earns it. This is that record.</p></div></div>
-        <div id="acct-trust-list" class="ac-status">Loading&hellip;</div>
-      </div>
       <div class="ac-grid">
         <div class="ac-card">
           <div class="ac-card-h"><div><h3>Security checkup</h3><p>Six things that keep this account yours.</p></div>
@@ -11310,7 +11451,7 @@ svg:hover .hb-xh{opacity:1}
           <div class="ac-card-h"><div><h3>Sign-in protection</h3></div></div>
           <div class="ac-rows">
             <div class="ac-row"><div class="l"><b>Two-factor authentication</b><span>{% if restaurant.two_fa_enabled %}A code by {{ 'text' if restaurant.two_fa_method == 'sms' else 'email' }} on new-device sign-ins.{% else %}Adds a one-time code on new-device sign-ins.{% endif %}</span></div>
-              <div class="c">{% if restaurant.two_fa_enabled %}<span class="ac-chip sm good"><i></i>On</span><button onclick="toggle2FA(false)" class="cbtn cbtn-secondary cbtn-sm">Disable</button>{% else %}<button onclick="document.getElementById('twofa-modal').style.display='flex'" class="cbtn cbtn-primary cbtn-sm">Enable</button>{% endif %}</div></div>
+              <div class="c">{% if restaurant.two_fa_enabled %}<span class="ac-chip sm good"><i></i>On</span><button onclick="toggle2FA(false)" class="cbtn cbtn-secondary cbtn-sm">Disable</button>{% else %}<button onclick="document.getElementById('twofa-modal').style.display='flex'" class="cbtn cbtn-secondary cbtn-sm">Enable</button>{% endif %}</div></div>
             <div class="ac-row"><div class="l"><b>Password</b><span>Change it any time; every other device is signed out.</span></div>
               <div class="c"><button class="cbtn cbtn-secondary cbtn-sm" onclick="document.getElementById('pw-modal').style.display='flex'">Change</button></div></div>
             <div class="ac-row"><div class="l"><b>Recovery email</b><span id="rec-status">Loading&hellip;</span></div></div>
@@ -11321,7 +11462,7 @@ svg:hover .hb-xh{opacity:1}
           </div>
           <div id="rec-verify" style="display:none;gap:8px;margin-top:8px;align-items:center">
             <input class="ac-input ac-num" id="rec-code" inputmode="numeric" maxlength="6" placeholder="6-digit code" aria-label="Verification code" style="width:140px">
-            <button onclick="recVerify(this)" class="cbtn cbtn-primary cbtn-sm">Verify</button>
+            <button onclick="recVerify(this)" class="cbtn cbtn-secondary cbtn-sm">Verify</button>
           </div>
           {% if restaurant.two_fa_enabled %}
           <div class="ac-row" style="margin-top:10px"><div class="l"><b>Backup codes</b><span><span id="bc-remaining" class="ac-num">&hellip;</span> unused &middot; one-time codes if you lose access to your email or phone</span></div>
@@ -11353,16 +11494,6 @@ svg:hover .hb-xh{opacity:1}
       </div>
     </section>
 
-    <!-- ══════════════ APPEARANCE ══════════════ -->
-    <section class="ac-section" id="acct-appearance" data-nav="account/appearance" aria-labelledby="acct-appearance-h">
-      <div class="ac-h"><div><h2 id="acct-appearance-h">Appearance</h2><p>Saved to this browser.</p></div></div>
-      <div class="ac-card">
-        <div class="ac-rows">
-          <div class="ac-row"><div class="l"><b>Dates &amp; numbers</b><span>Dates show as M/D/YY. Money and percentages use tabular figures so columns line up.</span></div><div class="c"><span class="ac-chip sm ac-num">9/15/26 &middot; $1,240 &middot; 28.4%</span></div></div>
-        </div>
-      </div>
-    </section>
-
     <!-- ══════════════ DATA & PRIVACY ══════════════ -->
     <section class="ac-section" id="acct-data" data-nav="account/data" aria-labelledby="acct-data-h">
       <div class="ac-h"><div><h2 id="acct-data-h">Data &amp; privacy</h2><p>Your data is yours. Take a copy, decide how long we keep it, or close the account.</p></div></div>
@@ -11375,7 +11506,7 @@ svg:hover .hb-xh{opacity:1}
             {% if mod_inventory %}<label><input type="checkbox" class="exp-scope" value="food_cost"> Food cost</label>{% endif %}
             <label><input type="checkbox" class="exp-scope" value="settings"> Settings</label>
           </div>
-          <button onclick="exportData(this)" class="cbtn cbtn-primary cbtn-sm">Email me my data</button>
+          <button onclick="exportData(this)" class="cbtn cbtn-secondary cbtn-sm">Email me my data</button>
         </div>
         <div class="ac-card">
           <div class="ac-card-h"><div><h3>Retention</h3><p>How long review history stays on file.</p></div></div>
@@ -11394,36 +11525,36 @@ svg:hover .hb-xh{opacity:1}
     <!-- ══════════════ SUPPORT ══════════════ -->
     <section class="ac-section" id="acct-support" data-nav="account/support" aria-labelledby="acct-support-h" style="margin-bottom:0">
       <div class="ac-h"><div><h2 id="acct-support-h">Support</h2><p>A person, not a queue.</p></div></div>
-      <div class="ac-grid">
-        <div class="ac-card accent">
-          <div class="ac-consult">
-            <div class="ph"><img src="/static/will.png" alt="Will Cavnar"></div>
-            <div><b>Will Cavnar</b><span>Founder &middot; your dedicated restaurant intelligence consultant. Same-day response, always.</span></div>
-          </div>
-          <div class="ac-inline" style="margin-top:16px">
-            <a href="mailto:will@cavnar.ai" class="cbtn cbtn-primary cbtn-sm">Email Will</a>
-            <a href="https://calendly.com/will-cavnar/30min" target="_blank" rel="noopener" class="cbtn cbtn-secondary cbtn-sm">Book a call</a>
-            <a href="https://status.cavnar.ai" target="_blank" rel="noopener" class="cbtn cbtn-secondary cbtn-sm"><span id="acct-status-dot" class="ac-statusdot" style="margin-right:4px"></span>System status</a>
-            <button class="cbtn cbtn-secondary cbtn-sm" onclick="openChangelog()">What&rsquo;s new</button>
-          </div>
+      {# One card and a FAQ link (density audit #38): the report form, the
+         referral and the eleven questions each open from here. #}
+      <div class="ac-card accent">
+        <div class="ac-consult">
+          <div class="ph"><img src="/static/will.png" alt="Will Cavnar"></div>
+          <div><b>Will Cavnar</b><span>Founder &middot; your restaurant intelligence consultant. Same-day response.</span></div>
         </div>
-        <div class="ac-card">
-          <div class="ac-card-h"><div><h3>Report a problem</h3><p>What happened, and where? Screenshots welcome by email.</p></div></div>
+        <div class="ac-inline" style="margin-top:16px;flex-wrap:wrap">
+          <a href="mailto:will@cavnar.ai" class="cbtn cbtn-secondary cbtn-sm">Email Will</a>
+          <a href="https://calendly.com/will-cavnar/30min" target="_blank" rel="noopener" class="cbtn cbtn-secondary cbtn-sm">Book a call</a>
+          <a href="https://status.cavnar.ai" target="_blank" rel="noopener" class="cbtn cbtn-text cbtn-sm"><span id="acct-status-dot" class="ac-statusdot" style="margin-right:4px"></span>System status</a>
+          <button type="button" class="cbtn cbtn-text cbtn-sm" aria-expanded="false" aria-controls="ac-faq-fold" onclick="acctFold(this,'ac-faq-fold')"><span class="lbl">Help &amp; FAQ</span></button>
+          <button type="button" class="cbtn cbtn-text cbtn-sm" aria-expanded="false" aria-controls="ac-bug-fold" onclick="acctFold(this,'ac-bug-fold')"><span class="lbl">Report a problem</span></button>
+          <button type="button" class="cbtn cbtn-text cbtn-sm" aria-expanded="false" aria-controls="ac-ref-fold" onclick="acctFold(this,'ac-ref-fold')"><span class="lbl">Refer an owner &middot; a free month</span></button>
+        </div>
+        <div class="ac-fold" id="ac-bug-fold" hidden style="margin-top:14px">
           <label class="ac-lbl" for="bug-msg" style="position:absolute;left:-9999px">Describe the problem</label>
-          <textarea class="ac-textarea" id="bug-msg" rows="3" placeholder="What happened, and where?"></textarea>
+          <textarea class="ac-textarea" id="bug-msg" rows="3" placeholder="What happened, and where? Screenshots welcome by email."></textarea>
           <button onclick="reportBug(this)" class="cbtn cbtn-secondary cbtn-sm" style="margin-top:10px">Send report</button>
         </div>
-        <div class="ac-card">
-          <div class="ac-card-h"><div><h3>Know another restaurant owner?</h3><p>Send them an intro &mdash; get <b style="color:var(--ember)">one free month ($349)</b> if they sign up.</p></div></div>
-          <div class="ac-form" style="grid-template-columns:1fr 1fr">
+        <div class="ac-fold" id="ac-ref-fold" hidden style="margin-top:14px">
+          <div class="ac-note" style="margin-top:0">Send another owner an intro &mdash; a free month (<span class="ac-num">$349</span>) if they sign up.</div>
+          <div class="ac-form" style="grid-template-columns:1fr 1fr;margin-top:10px">
             <div class="ac-field"><label for="referral-name">Restaurant name</label><input class="ac-input" type="text" id="referral-name" placeholder="Restaurant name"></div>
             <div class="ac-field"><label for="referral-email">Owner email</label><input class="ac-input" type="email" id="referral-email" placeholder="Owner email"></div>
             <div class="ac-field wide"><label for="referral-note">Personal note (optional)</label><textarea class="ac-textarea" id="referral-note" rows="2" placeholder="Optional personal note&hellip;"></textarea></div>
           </div>
-          <div class="ac-inline" style="margin-top:12px"><button onclick="sendReferral()" class="cbtn cbtn-primary cbtn-sm">Send referral</button><span id="referral-status" class="ac-status" style="display:none"></span></div>
+          <div class="ac-inline" style="margin-top:12px"><button onclick="sendReferral()" class="cbtn cbtn-secondary cbtn-sm">Send referral</button><span id="referral-status" class="ac-status" style="display:none"></span></div>
         </div>
-        <div class="ac-card">
-          <div class="ac-card-h"><div><h3>Help &amp; FAQ</h3></div></div>
+        <div class="ac-fold" id="ac-faq-fold" hidden style="margin-top:14px">
           <div id="faq-list">
             <div class="faq-group"><div class="faq-group-title">Getting started</div>
               <div class="faq-item"><button type="button" class="faq-q" aria-expanded="false" onclick="toggleFaq(this)">How is Cavnar AI set up for my restaurant?<span class="faq-arrow">&#9662;</span></button><div class="faq-a">Will personally sets up every restaurant &mdash; connecting your Google Business Profile, POS system, and configuring the modules you're paying for. You won't need to do any technical setup yourself; if something looks disconnected or missing, contact Will.</div></div>
@@ -11472,8 +11603,50 @@ var ASK_ORB_SM = '<canvas class="hb-orb ask-av" data-orb-state="working" width="
 var ASK_ORB_LG = '<canvas class="hb-orb ask-av-lg" data-orb-state="searching" width="64" height="64" aria-hidden="true"></canvas>';
 var ASK_SPARK = '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.8 5.2L19 9l-5.2 1.8L12 16l-1.8-5.2L5 9l5.2-1.8L12 2zM19 14l.9 2.6 2.6.9-2.6.9L19 21l-.9-2.6-2.6-.9 2.6-.9L19 14zM5 15l.7 2 2 .7-2 .7L5 20.4l-.7-2-2-.7 2-.7L5 15z"/></svg>';
 function _askEsc(t){return String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
-// Bold and bullets only — the same light markdown pass the Home inline ask uses.
-function _askMd(t){return _askEsc(t).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/^#{1,6}\s+/gm,'').replace(/^\s*[-*]\s+/gm,'• ').replace(/(^|[^*])\*(?!\*)([^*\n]+)\*(?!\*)/g,'$1$2').replace(/\*\*/g,'').replace(/\n{3,}/g,'\n\n');}
+// An answer's structure, kept (density audit #12): the prompt asks the
+// model for "## " headings and numbered lists for priorities
+// (ask_cavnar.py), and this pass used to strip the headings and flatten
+// the lists into prose. Headings become .ask-h, "1. " lines a real <ol>,
+// "- " lines a <ul>, the rest paragraphs; every figure ($, %, a number or a
+// M/D/YY date) is set in the number face (.hb-num, DS 2). Escaped first,
+// so nothing the model wrote becomes markup.
+var _ASK_NUM = /(\$-?\d[\d,]*(?:\.\d+)?[kKM]?|-?\d[\d,]*(?:\.\d+)?%|\d+(?:[\/.,:]\d+)*)/g;
+function _askInline(t){
+  return _askEsc(t).replace(_ASK_NUM,'<span class="hb-num">$1</span>')
+    .replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/(^|[^*])\*(?!\*)([^*\n]+)\*(?!\*)/g,'$1$2').replace(/\*\*/g,'');
+}
+function _askMd(t){
+  var lines = String(t == null ? '' : t).split(/\r?\n/), out = [], para = [], list = null, m;
+  function flushPara(){ if (para.length) { out.push('<p>' + para.join('<br>') + '</p>'); para = []; } }
+  function closeList(){ if (list) { out.push('</' + list + '>'); list = null; } }
+  function openList(kind){ if (list !== kind) { closeList(); out.push('<' + kind + ' class="ask-' + kind + '">'); list = kind; } }
+  for (var i = 0; i < lines.length; i++) {
+    var ln = lines[i];
+    if (/^\s*$/.test(ln)) { flushPara(); closeList(); continue; }
+    if ((m = /^\s*#{1,6}\s+(.*)$/.exec(ln))) { flushPara(); closeList(); out.push('<div class="ask-h">' + _askInline(m[1]) + '</div>'); continue; }
+    if ((m = /^\s*\d+[.)]\s+(.*)$/.exec(ln))) { flushPara(); openList('ol'); out.push('<li>' + _askInline(m[1]) + '</li>'); continue; }
+    if ((m = /^\s*[-*\u2022]\s+(.*)$/.exec(ln))) { flushPara(); openList('ul'); out.push('<li>' + _askInline(m[1]) + '</li>'); continue; }
+    closeList();
+    para.push(_askInline(ln));
+  }
+  flushPara(); closeList();
+  return out.join('');
+}
+// Where the panel scrolls after an answer lands: the TOP of the answer
+// (density audit #12). Every block appended after it (the evidence line,
+// a confirm card, suggestions, "Was this useful?") used to scroll the panel
+// to the bottom, so a long answer landed on its feedback row with the lead
+// sentence above the fold. _askAnchor is the answer's row while one is
+// showing; a new question clears it.
+var _askAnchor = null;
+function _askScroll(messages){
+  if (!messages) return;
+  if (_askAnchor && _askAnchor.parentNode === messages) {
+    messages.scrollTop += _askAnchor.getBoundingClientRect().top - messages.getBoundingClientRect().top - 8;
+  } else {
+    messages.scrollTop = messages.scrollHeight;
+  }
+}
 function _askIsDark(){return document.documentElement.getAttribute('data-theme')==='dark';}
 // What the panel shows before the owner types.
 //
@@ -11600,12 +11773,40 @@ document.addEventListener('DOMContentLoaded', function() {
 function _askStoredConversation() {
   try { var v = parseInt(sessionStorage.getItem(ASK_CONV_KEY) || '', 10); return isFinite(v) && v > 0 ? v : null; } catch (e) { return null; }
 }
+// The expanded side sheet (density audit #49), remembered per browser.
+function _askApplyWide(on) {
+  var panel = document.getElementById('ask-cavnar-panel');
+  var b = document.getElementById('ask-cavnar-wide');
+  if (panel) panel.classList.toggle('wide', !!on);
+  if (b) { b.setAttribute('aria-pressed', on ? 'true' : 'false'); b.title = on ? 'Shrink' : 'Expand'; }
+}
+window.askToggleWide = function() {
+  var panel = document.getElementById('ask-cavnar-panel');
+  var on = !(panel && panel.classList.contains('wide'));
+  _askApplyWide(on);
+  try { localStorage.setItem('cavAskWide', on ? '1' : '0'); } catch (e) {}
+};
+// The FAB's halo pulses until Ask has been opened once this session
+// (density audit #39): after that it is a quiet button, not a second
+// moving object in the corner of every screen.
+function _askFabSeen() {
+  var fab = document.getElementById('ask-cavnar-fab');
+  if (fab) fab.classList.add('seen');
+  try { sessionStorage.setItem('cavAskSeen', '1'); } catch (e) {}
+}
+document.addEventListener('DOMContentLoaded', function () {
+  var seen = false, wide = false;
+  try { seen = sessionStorage.getItem('cavAskSeen') === '1'; wide = localStorage.getItem('cavAskWide') === '1'; } catch (e) {}
+  if (seen) { var f = document.getElementById('ask-cavnar-fab'); if (f) f.classList.add('seen'); }
+  if (wide) _askApplyWide(true);
+});
 window.toggleAskCavnar = function() {
   var panel = document.getElementById('ask-cavnar-panel');
   var fab = document.getElementById('ask-cavnar-fab');
   var isOpen = panel.style.display === 'flex';
   panel.style.display = isOpen ? 'none' : 'flex';
   if (fab) fab.classList.toggle('open', !isOpen);
+  if (!isOpen) _askFabSeen();
   if (isOpen) _askFocus = null;
   if (!isOpen) {
     var _stored = _askStoredConversation();
@@ -11654,7 +11855,8 @@ function _appendAskCavnarMessage(text, isUser) {
   if (isUser) bubble.textContent = text; else { bubble.innerHTML = _askMd(text); _askStagger(bubble); }
   wrap.appendChild(bubble);
   messages.appendChild(wrap);
-  messages.scrollTop = messages.scrollHeight;
+  _askAnchor = isUser ? null : wrap;
+  _askScroll(messages);
   return bubble;
 }
 
@@ -11687,6 +11889,7 @@ function _appendAskCavnarLoadingBubble() {
   bubble.appendChild(status);
   wrap.appendChild(bubble);
   messages.appendChild(wrap);
+  _askAnchor = null;
   messages.scrollTop = messages.scrollHeight;
   if (window.CavnarOrb) {
     if (_askCavnarLoadingOrb) CavnarOrb.destroy(_askCavnarLoadingOrb);
@@ -11883,51 +12086,63 @@ function _appendAskCavnarEvidence(d) {
   var badCauses = d.unsupported_causes || [], badNames = d.unsupported_names || [];
   if (!mods.length && !bad.length && !badCauses.length && !badNames.length && !cfHtml) return;
   var messages = document.getElementById('ask-cavnar-messages');
+  // ONE line under the answer (density audit #12): the modules it read, its
+  // measured confidence, and "N unverified" when a figure, a cause or a
+  // name failed the check. The warnings themselves sit behind that control
+  // (they were up to three red paragraphs, as loud as the answer). Nothing
+  // is dropped: ai_guard's rule for interactive text is keep it and caveat
+  // it, and the caveat is one tap away, in red.
+  var warns = [];
+  if (bad.length) warns.push('Couldn’t verify ' + bad.join(', ') + ' against your data — treat '
+                             + (bad.length > 1 ? 'those figures' : 'that figure') + ' as unconfirmed.');
+  if (badCauses.length) warns.push('Unsupported cause — Cavnar AI gave a reason here that nothing it read supports (“'
+                                   + String(badCauses[0]).slice(0, 120) + '”). Treat it as a guess, not a finding.');
+  if (badNames.length) warns.push('Unverified name — ' + badNames.slice(0, 2).join(', ')
+                                  + ' doesn’t appear in anything Cavnar read. Check before acting on it.');
+  var nUnver = bad.length + badCauses.length + badNames.length;
   var row = document.createElement('div');
   row.className = 'ask-eva';
-
-  if (bad.length) {
-    // Deliberately loud, and deliberately not a reason to hide the answer —
-    // ai_guard's rule for interactive text is keep it and caveat it.
-    var warn = document.createElement('div');
-    warn.className = 'ask-eva-warn';
-    warn.textContent = 'Couldn’t verify ' + bad.join(', ') + ' against your data — treat '
-                     + (bad.length > 1 ? 'those figures' : 'that figure') + ' as unconfirmed.';
-    row.appendChild(warn);
+  var line = document.createElement('div');
+  line.className = 'ask-eva-line';
+  if (mods.length) {
+    var ms = document.createElement('span');
+    ms.className = 'ask-eva-mods';
+    ms.textContent = mods.join(' \u00b7 ');
+    line.appendChild(ms);
   }
-  if (badCauses.length) {
-    var cw = document.createElement('div');
-    cw.className = 'ask-eva-warn';
-    cw.textContent = 'Unsupported cause — Cavnar AI gave a reason here that nothing it read supports (“'
-                   + String(badCauses[0]).slice(0, 120) + '”). Treat it as a guess, not a finding.';
-    row.appendChild(cw);
-  }
-  if (badNames.length) {
-    var nw = document.createElement('div');
-    nw.className = 'ask-eva-warn';
-    nw.textContent = 'Unverified name — ' + badNames.slice(0, 2).join(', ')
-                   + ' doesn’t appear in anything Cavnar read. Check before acting on it.';
-    row.appendChild(nw);
-  }
-
-  var chips = document.createElement('div');
-  chips.className = 'ask-eva-chips';
-  for (var i = 0; i < mods.length; i++) {
-    var c = document.createElement('span');
-    c.className = 'ask-eva-chip';
-    c.textContent = mods[i];
-    chips.appendChild(c);
-  }
-  if (chips.childNodes.length) row.appendChild(chips);
   if (cfHtml) {
     // Low is amber, like every other surface - it was red here (CA4 F9),
     // which means bad, not unsure.
     var cfBox = document.createElement('div');
     cfBox.innerHTML = cfHtml;
-    if (cfBox.firstChild) row.appendChild(cfBox.firstChild);
+    if (cfBox.firstChild) line.appendChild(cfBox.firstChild);
   }
+  var drawer = null;
+  if (nUnver) {
+    var tog = document.createElement('button');
+    tog.type = 'button';
+    tog.className = 'cbtn cbtn-text cbtn-inline cbtn-sm ask-eva-unv';
+    tog.setAttribute('aria-expanded', 'false');
+    tog.textContent = nUnver + ' unverified \u00b7 Why?';
+    drawer = document.createElement('div');
+    drawer.className = 'ask-eva-why';
+    drawer.hidden = true;
+    for (var w = 0; w < warns.length; w++) {
+      var wd = document.createElement('div');
+      wd.className = 'ask-eva-warn';
+      wd.textContent = warns[w];
+      drawer.appendChild(wd);
+    }
+    tog.onclick = function () {
+      drawer.hidden = !drawer.hidden;
+      tog.setAttribute('aria-expanded', drawer.hidden ? 'false' : 'true');
+    };
+    line.appendChild(tog);
+  }
+  row.appendChild(line);
+  if (drawer) row.appendChild(drawer);
   messages.appendChild(row);
-  messages.scrollTop = messages.scrollHeight;
+  _askScroll(messages);
 }
 
 /* The confirm card, on any surface - Ask's chat, the command palette, Home's
@@ -11938,7 +12153,7 @@ function _appendAskCavnarEvidence(d) {
 function _appendAskCavnarProposal(p) {
   var messages = document.getElementById('ask-cavnar-messages');
   cavPropCard(p, messages);
-  messages.scrollTop = messages.scrollHeight;
+  _askScroll(messages);
 }
 function cavPropCard(p, host, opts) {
   opts = opts || {};
@@ -12045,7 +12260,7 @@ function _appendAskCavnarSuggestions(list) {
   for (var j = 0; j < sg.length; j++) h += '<div class="ask-sug-i"><span class="t">' + recEsc(sg[j].text) + '</span>' + recControlsHtml(sg[j].rec_key, 'ask', 'ask') + '</div>';
   box.innerHTML = h;
   messages.appendChild(box);
-  messages.scrollTop = messages.scrollHeight;
+  _askScroll(messages);
 }
 
 // "Was this useful?" — one tap rates the answer (POST
@@ -12062,7 +12277,7 @@ function _appendAskCavnarFeedback(mid) {
     + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask-fb="1">Yes</button>'
     + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask-fb="0">No</button>';
   messages.appendChild(row);
-  messages.scrollTop = messages.scrollHeight;
+  _askScroll(messages);
 }
 function _askFeedbackPost(row, helpful, note, then) {
   var bs = row.querySelectorAll('button');
@@ -14050,6 +14265,7 @@ function _loadChangelog() {
   fetch('/api/changelog').then(apiJson).then(function(d) {
     _changelogLoaded = true;
     document.getElementById('changelog-badge').style.display = 'none';
+    var _cmd = document.getElementById('changelog-menu-dot'); if (_cmd) _cmd.style.display = 'none';
     var list = document.getElementById('changelog-list');
     if (!d.ok || !d.entries || !d.entries.length) {
       list.innerHTML = '<div style="padding:14px 16px;font-size:12px;color:var(--ink3)">No updates yet.</div>';
@@ -14085,19 +14301,31 @@ function _escHtml(s) {
   fetch('/api/changelog/unread-count').then(apiJson).then(function(d){
     if (d.ok && d.count > 0) {
       document.getElementById('changelog-badge').style.display = 'block';
+      var _cmd = document.getElementById('changelog-menu-dot'); if (_cmd) _cmd.style.display = 'inline-block';
     }
   }).catch(function(){});
 })();
 // The theme is forced dark before paint (top of <head>), so there is no
 // choice to sync: the per-load POST that used to live here was a database
 // write on every page view that could only ever write "dark" (CLIENT-38).
-// Close changelog panel on outside click
+// The user menu (What's new, Sign out). toggleUserMenu(false) closes it.
+function toggleUserMenu(force) {
+  var m = document.getElementById('user-menu'), b = document.getElementById('user-menu-btn');
+  if (!m) return;
+  var open = (force === undefined) ? m.hidden : !!force;
+  m.hidden = !open;
+  if (b) b.setAttribute('aria-expanded', open ? 'true' : 'false');
+  if (open) { var p = document.getElementById('changelog-panel'); if (p) p.style.display = 'none'; }
+}
+// Close changelog panel (and the user menu) on outside click
 document.addEventListener('click', function(e) {
   var wrap = document.getElementById('changelog-wrap');
   if (wrap && !wrap.contains(e.target)) {
     document.getElementById('changelog-panel').style.display = 'none';
+    toggleUserMenu(false);
   }
 });
+document.addEventListener('keydown', function(e) { if (e.key === 'Escape') toggleUserMenu(false); });
 
 function deleteReview(id, btn) {
   if (!confirm('Remove this review from your dashboard? This cannot be undone.')) return;
@@ -20227,8 +20455,9 @@ function loadOpsSettings() {
       ph += '<option value="' + n + '"' + (d.settings.preshift_nudge_hour === n ? ' selected' : '') + '>' + nl + '</option>';
     }
     ps.innerHTML = ph;
-    var bl = document.getElementById('as-briefing-level');
-    if (bl) bl.value = d.settings.briefing_level || 'normal';
+    var lc = document.getElementById('as-level-card');
+    if (lc) lc.hidden = false;
+    acctShowLevel(d.settings.briefing_level || 'normal');
   }).catch(function() {});
   fetch('/api/issues/routing', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
     if (!d || !d.ok) return;
@@ -20286,6 +20515,9 @@ function loadDsrSettings() {
     if (!d || !d.ok || !d.can_edit) return;
     var card = document.getElementById('as-dsr-card');
     if (card) card.hidden = false;
+    var sec = document.getElementById('acct-report'), nav = document.getElementById('ac-nav-report');
+    if (sec) sec.hidden = false;
+    if (nav) nav.hidden = false;
     var s = d.settings || {};
     document.getElementById('as-dsr-enabled').checked = !!s.dsr_enabled;
     document.getElementById('as-dsr-notify').checked = !!s.dsr_notify;
@@ -20447,14 +20679,31 @@ document.addEventListener('change', function(e) {
   _dsrSaveCategory(dept, cat);
 });
 
-function saveMorningBrief() {
+// The notification level dial (density audit #38): three segments over the
+// one hidden value saveMorningBrief sends with the rest of the brief.
+var _LEVEL_NOTES = {calm: 'The brief, results and the close. Nothing else.',
+                    normal: 'Adds the pre-dinner pulse, coverage and opportunities, up to four a day.',
+                    all: 'Everything Cavnar AI has to say, as it happens.'};
+function acctShowLevel(v) {
+  var inp = document.getElementById('as-briefing-level');
+  if (inp) inp.value = v;
+  var bs = document.querySelectorAll('#as-level-card [data-level]');
+  for (var i = 0; i < bs.length; i++) bs[i].setAttribute('aria-pressed', bs[i].getAttribute('data-level') === v ? 'true' : 'false');
+  var n = document.getElementById('as-level-note');
+  if (n && _LEVEL_NOTES[v]) n.textContent = _LEVEL_NOTES[v];
+}
+function acctSetLevel(v) {
+  acctShowLevel(v);
+  saveMorningBrief('as-level-status');
+}
+function saveMorningBrief(statusId) {
   asPost('/api/morning-brief/settings', {
     enabled: document.getElementById('as-mb-enabled').checked,
     hour: parseInt(document.getElementById('as-mb-hour').value, 10),
     hold_alerts: document.getElementById('as-hold-alerts').checked,
     preshift_nudge_hour: parseInt(document.getElementById('as-preshift-hour').value, 10),
     briefing_level: (document.getElementById('as-briefing-level') || {}).value || 'normal'
-  }, 'as-ops-status', 'Saved');
+  }, (typeof statusId === 'string' && statusId) || 'as-ops-status', 'Saved');
 }
 
 function saveIssueRouting(role) {
@@ -22994,6 +23243,7 @@ document.addEventListener('click', function(e) {
         + '<button type="button" class="cbtn cbtn-text notif-filter-btn' + (_urgentOnly ? ' is-on' : '') + '" data-filter="urgent">Needs you</button>'
         + '</div>';
     }
+    filterBar = summaryLine() + filterBar;
     var foot = _unreadCount() ? '<div class="notif-foot"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-notif-readall="1">Mark all read</button></div>' : '';
     if (!shown.length) {
       list.innerHTML = filterBar + '<div style="padding:12px 14px;font-size:12px;color:var(--ink3)">Nothing needs you right now.</div>' + foot;
@@ -23051,6 +23301,7 @@ document.addEventListener('click', function(e) {
       n.resolved = true; n.can_approve = false;
       markOpened(n);
       renderList();
+      setBadge(_unreadCount(), _urgentOpen());
       if (typeof toast === 'function') toast(d.auto_posted ? 'Posted to Google' : 'Reply approved', 'success');
       if (window.hbDirty) hbDirty();
     }).catch(function() { done(); if (typeof toast === 'function') toast('Couldn’t confirm that went through — check the review before trying again.', 'error'); });
@@ -23064,7 +23315,7 @@ document.addEventListener('click', function(e) {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({type: n.type, alert_id: n.id || null})
     }).catch(function(){});
-    setBadge(_unreadCount());
+    setBadge(_unreadCount(), _urgentOpen());
   }
 
   // Every row carries the module (and review, when there is one) the alert is
@@ -23085,7 +23336,7 @@ document.addEventListener('click', function(e) {
         sessionStorage.setItem('cavnar_pending_nav', path);
         sessionStorage.setItem('cavnar_pending_open', JSON.stringify({type: n.type, alert_id: n.id || null, rid: +n.restaurant_id}));
       } catch (e) {}
-      n.opened = true; n.unread = false; setBadge(_unreadCount());
+      n.opened = true; n.unread = false; setBadge(_unreadCount(), _urgentOpen());
       switchLocation(+n.restaurant_id);
       return;
     }
@@ -23109,21 +23360,62 @@ document.addEventListener('click', function(e) {
     }
   }
 
-  function setBadge(count) {
+  // The badge means urgent (density audit #39): a red count of the urgent
+  // rows nobody has handled yet; a quiet grey dot when something is unread
+  // but nothing is urgent; nothing otherwise. It was one ember dot for
+  // anything unread - a changelog note weighed the same as a 1-star review.
+  var _urgentN = 0;
+  function _urgentOpen() { var c = 0; for (var i = 0; i < _items.length; i++) if (_items[i].urgent && !_items[i].resolved) c++; return c; }
+  function setBadge(count, urgent) {
     var el = document.getElementById('notif-badge');
     if (!el) return;
-    if (count > 0) {
+    if (urgent != null) _urgentN = urgent;
+    var btn = document.getElementById('notif-btn');
+    if (_urgentN > 0) {
+      var was = el.textContent;
+      el.className = '';
+      el.textContent = _urgentN > 9 ? '9+' : String(_urgentN);
       el.style.display = 'block';
-      el.classList.remove('cm-pop'); void el.offsetWidth; el.classList.add('cm-pop');
+      if (was !== el.textContent) { el.classList.remove('cm-pop'); void el.offsetWidth; el.classList.add('cm-pop'); }
+      if (btn) btn.title = _urgentN + ' need' + (_urgentN === 1 ? 's' : '') + ' you';
+    } else if (count > 0) {
+      el.className = 'dot';
+      el.textContent = '';
+      el.style.display = 'block';
+      if (btn) btn.title = count + ' unread';
     } else {
+      el.className = '';
+      el.textContent = '';
       el.style.display = 'none';
+      if (btn) btn.title = 'Alerts';
     }
   }
 
   function refreshBadge() {
     fetch('/api/notifications/unread-count' + (_scope ? '?scope=' + _scope : '')).then(apiJson).then(function(d){
-      setBadge((d && d.count) || 0);
+      setBadge((d && d.count) || 0, (d && d.urgent != null) ? +d.urgent : null);
     }).catch(function(){});
+  }
+
+  // One deterministic line over the list (density audit #39): "3 need you:
+  // 2 replies ready, 1 health mention", counted from the rows themselves -
+  // never a model sentence.
+  function summaryLine() {
+    var open = [], i, ready = 0, health = 0;
+    for (i = 0; i < _items.length; i++) if (_items[i].urgent && !_items[i].resolved) open.push(_items[i]);
+    if (!open.length) {
+      var un = _unreadCount();
+      return '<div class="notif-sum calm"><b>Nothing needs you</b>' + (un ? ' \u00b7 ' + un + ' unread' : '') + '</div>';
+    }
+    for (i = 0; i < open.length; i++) {
+      if (open[i].can_approve && open[i].draft) ready++;
+      else if (open[i].type === 'health') health++;
+    }
+    var other = open.length - ready - health, bits = [];
+    if (ready) bits.push(ready + (ready === 1 ? ' reply' : ' replies') + ' ready to post');
+    if (health) bits.push(health + ' health mention' + (health === 1 ? '' : 's'));
+    if (other) bits.push(other + (bits.length ? ' other alert' : ' urgent alert') + (other === 1 ? '' : 's'));
+    return '<div class="notif-sum"><b>' + open.length + ' need' + (open.length === 1 ? 's' : '') + ' you</b>: ' + esc(bits.join(', ')) + '</div>';
   }
 
   // No _loaded latch: the list used to be fetched once per page load and then
@@ -23142,7 +23434,7 @@ document.addEventListener('click', function(e) {
         for (var i = 0; i < _items.length; i++) { if (_items[i].urgent && !_items[i].resolved) { _urgentOnly = true; break; } }
       }
       renderList();
-      setBadge(_unreadCount());
+      setBadge(_unreadCount(), _urgentOpen());
     }).catch(function(){
       _busy = false;
       var list = document.getElementById('notif-list');
@@ -23171,7 +23463,7 @@ document.addEventListener('click', function(e) {
         // Reading the list the old way moves the read mark over everything.
         fetch('/api/notifications' + (_scope ? '?scope=' + _scope : '')).then(apiJson).then(function(){
           for (var r = 0; r < _items.length; r++) _items[r].unread = false;
-          renderList(); setBadge(0);
+          renderList(); setBadge(0, _urgentOpen());
         }).catch(function(){});
       }
       return;
@@ -25450,7 +25742,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
 // ── Account: command-center behaviour (section rail, health, quick actions) ─
 // ES5 only, like the rest of this file.
 (function(){
-  var SECTIONS=['overview','restaurant','people','billing','notifications','automation','integrations','security','appearance','data','support'];
+  var SECTIONS=['overview','restaurant','report','people','billing','notifications','automation','integrations','security','data','support'];
   window._acctData=window._acctData||{};
   function $(id){return document.getElementById(id);}
   function flag(name){var p=$('panel-account');return p?(p.getAttribute('data-'+name)||''):'';}
@@ -25531,50 +25823,89 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   // Six checks from what the page already knows: facts stamped on
   // #panel-account by the template, plus the responses the existing loaders
   // already fetch (they stash into window._acctData). Zero extra requests.
-  function setItem(key,state,sub){
+  // Each item also keeps a short phrase for the overview's one sentence
+  // (density audit #36) - "Toast stopped syncing", "nobody receives alerts".
+  var _say={};
+  function setItem(key,state,sub,say){
     var el=document.querySelector('.ac-hitem[data-health="'+key+'"]');if(!el)return;
     el.classList.remove('ok','warn','bad');el.classList.add(state);
     var s=el.querySelector('span');if(s)s.textContent=sub;
+    _say[key]={state:state,say:say||sub};
   }
+  // The one fix per item: the button label and where it goes. The worst
+  // item gets the overview's one primary button.
+  var FIX={
+    integrations:['Fix your data connection',function(){acctGo('integrations');}],
+    notifications:['Set up alerts',function(){acctGo('notifications');if(window.openAlertsModal)openAlertsModal();}],
+    subscription:['Update your payment method',function(){var a=$('ac-qa-billing');if(a&&a.getAttribute('data-portal'))window.open(a.href,'_blank','noopener');else acctGo('billing');}],
+    security:['Turn on two-factor',function(){acctGo('security');}],
+    profile:['Finish your profile',function(){acctGo('restaurant');var pe=$('profile-edit');if(pe&&pe.style.display==='none'&&window.toggleProfileEdit)toggleProfileEdit();}],
+    people:['Invite a teammate',function(){acctGo('people','team-name');}]
+  };
+  var FIX_ORDER=['integrations','notifications','subscription','security','profile','people'];
+  function sayAndFix(score){
+    var bad=[],warn=[],k,i;
+    for(i=0;i<FIX_ORDER.length;i++){k=FIX_ORDER[i];var it=_say[k];if(!it)continue;if(it.state==='bad')bad.push(k);else if(it.state==='warn'&&it.say!=='Checking…')warn.push(k);}
+    var say=$('ac-health-say'),btn=$('ac-fix-btn'),lead=bad.length?bad:warn,txt;
+    function list(keys){var out=[];for(var j=0;j<keys.length&&j<3;j++)out.push(_say[keys[j]].say);return out.join('; ');}
+    if(bad.length)txt='<b>'+bad.length+' thing'+(bad.length===1?' needs':'s need')+' you:</b> '+esc(list(bad))+'.';
+    else if(warn.length)txt='<b>Nearly set up.</b> Worth doing: '+esc(list(warn))+'.';
+    else txt='<b>Everything that matters is set up.</b>';
+    if(say)say.innerHTML=txt;
+    if(btn){
+      var f=lead.length?FIX[lead[0]]:null;
+      btn.hidden=!f;
+      if(f){btn.textContent=f[0];btn.onclick=f[1];}
+    }
+  }
+  function esc(v){return String(v==null?'':v).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
   window.acctHealthRefresh=function(){
     if(!$('ac-health-grid'))return;
     var d=window._acctData,pts=0,max=6;
 
     var pd=parseInt(flag('profile-done'),10)||0;
     if(pd>=4){pts+=1;setItem('profile','ok','Complete — contact, timezone and brand voice all set');}
-    else if(pd>=2){pts+=.5;setItem('profile','warn',(4-pd)+' of 4 details missing — the AI writes better with them');}
-    else setItem('profile','bad','Add your contact details and how you sound');
+    else if(pd>=2){pts+=.5;setItem('profile','warn',(4-pd)+' of 4 details missing — the AI writes better with them',(4-pd)+' profile detail'+(4-pd===1?'':'s')+' missing');}
+    else setItem('profile','bad','Add your contact details and how you sound','your profile is mostly empty');
 
     if(d.team===undefined&&d.staff===undefined)setItem('people','warn','Checking…');
     else{
       var tm=(d.team||0)>1,st=(d.staff||0)>0;
       if(tm&&st){pts+=1;setItem('people','ok',d.team+' logins · '+d.staff+' staff signed up');}
-      else if(tm||st){pts+=.6;setItem('people','warn',tm?'Teammates in — no staff have signed up yet':d.staff+' staff signed up · only you use the dashboard');}
-      else setItem('people','bad','Just you — invite a teammate or post the staff join code');
+      else if(tm||st){pts+=.6;setItem('people','warn',tm?'Teammates in — no staff have signed up yet':d.staff+' staff signed up · only you use the dashboard',tm?'no staff have signed up':'only you use the dashboard');}
+      else setItem('people','bad','Just you — invite a teammate or post the staff join code','only you are on the account');
     }
 
-    var conn=parseInt(flag('conn'),10)||0,cerr=flag('conn-err')==='1';
-    if(cerr)setItem('integrations','bad','A POS connection needs attention');
+    // Driven by Data health when it has a figure (density audit #36): "3
+    // connected" read green while the data under them could be days old.
+    var conn=parseInt(flag('conn'),10)||0,cerr=flag('conn-err')==='1',dh=d.dataHealth;
+    if(cerr)setItem('integrations','bad','A POS connection needs attention','your POS stopped syncing');
+    else if(dh&&dh.pct!=null){
+      var dp=Math.round(+dh.pct);
+      if(dp>=80){pts+=1;setItem('integrations','ok','Data '+dp+'% current · '+conn+' connected');}
+      else if(dp>=50){pts+=.5;setItem('integrations','warn','Data '+dp+'% current — a source is aging','data is '+dp+'% current');}
+      else setItem('integrations','bad','Data '+dp+'% current'+(dh.reason?' — '+dh.reason:''),'data is only '+dp+'% current');
+    }
     else if(conn>=2){pts+=1;setItem('integrations','ok',conn+' connected — replies post, data flows');}
-    else if(conn===1){pts+=.5;setItem('integrations','warn','1 connected — add your POS for live labor and sales');}
-    else setItem('integrations','bad','Nothing connected — start with Google Business');
+    else if(conn===1){pts+=.5;setItem('integrations','warn','1 connected — add your POS for live labor and sales','connect your POS');}
+    else setItem('integrations','bad','Nothing connected — start with Google Business','nothing is connected');
 
     var al=flag('alerts')==='1',dg=flag('digest')==='1',contacts=d.alertContacts;
     if(al&&(contacts===undefined||contacts>0)){pts+=1;setItem('notifications','ok','Alerts on'+(dg?' · weekly digest on':''));}
-    else if(al||dg){pts+=.5;setItem('notifications','warn',al?'Alerts on, but no contact to send them to':'Digest on · no real-time alerts');}
-    else setItem('notifications','bad','No alerts — you’d only find problems by logging in');
+    else if(al||dg){pts+=.5;setItem('notifications','warn',al?'Alerts on, but no contact to send them to':'Digest on · no real-time alerts',al?'nobody receives alerts':'no real-time alerts');}
+    else setItem('notifications','bad','No alerts — you’d only find problems by logging in','no alerts are on');
 
     var sec=d.securityScore;
     if(sec===undefined)setItem('security','warn','Checking…');
     else if(sec>=70){pts+=1;setItem('security','ok','Checkup '+sec+' / 100');}
-    else if(sec>=40){pts+=.5;setItem('security','warn','Checkup '+sec+' / 100 — turn on two-factor');}
-    else setItem('security','bad','Checkup '+sec+' / 100 — start with two-factor');
+    else if(sec>=40){pts+=.5;setItem('security','warn','Checkup '+sec+' / 100 — turn on two-factor','two-factor is off');}
+    else setItem('security','bad','Checkup '+sec+' / 100 — start with two-factor','the security checkup is '+sec+' / 100');
 
     var b=d.billing;
     if(b===undefined)setItem('subscription','warn','Checking…');
     else if(b&&b.ok&&b.status==='active'){pts+=1;setItem('subscription','ok','Active · next charge '+(b.next_date||'—'));}
     else if(b&&b.ok&&b.status==='trialing'){pts+=1;setItem('subscription','ok','Trial — first charge on day 31');}
-    else if(b&&b.ok&&b.status==='past_due')setItem('subscription','bad','Payment past due — update your card');
+    else if(b&&b.ok&&b.status==='past_due')setItem('subscription','bad','Payment past due — update your card','the payment is past due');
     else if(b&&b.error)setItem('subscription','warn','Couldn’t reach billing just now — try again in a minute');
     else setItem('subscription','warn','No subscription on file — Will can set one up');
 
@@ -25594,6 +25925,10 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var score=Math.round(pts/max*100);
     var n=$('ac-health-score');if(n)n.textContent=score;
     var ring=$('ac-health-ring');if(ring)ring.style.strokeDashoffset=String(314-314*score/100);
+    // Toned by the score (density audit #36): good 90+, amber 60-89, red
+    // under 60 - a 40% setup no longer reads like a 95% one.
+    var rb=$('ac-health-ringbox');if(rb){rb.classList.remove('good','warn','bad');rb.classList.add(score>=90?'good':(score>=60?'warn':'bad'));rb.setAttribute('aria-label','Account setup score '+score+' of 100');}
+    sayAndFix(score);
     var sub=$('ac-health-sub');
     if(sub)sub.textContent=score>=90?'Everything that matters is set up.':(score>=60?'Nearly there — the items below would make Cavnar AI work harder for you.':'A few things to set up before Cavnar AI can do its best work.');
   };
@@ -25619,6 +25954,60 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     acctHealthRefresh();
   };
 
+  // Data health at the top of Integrations (density audit #36): the Home
+  // drawer's own read (cavDataHealth.fetch), shared, never recomputed.
+  window.acctApplyDataHealth=function(d){
+    var o=(d&&d.ok&&d.overall)||null,pct=o&&o.pct!=null?Math.round(+o.pct):null;
+    window._acctData.dataHealth=o;
+    var tone=pct==null?'':(pct>=80?'good':(pct>=50?'warn':'bad'));
+    var el=$('acct-dh-pct');if(el){el.className='pct hb-num '+tone;el.textContent=pct==null?'—':pct+'%';}
+    var bar=$('acct-dh-bar');if(bar){bar.className=tone;bar.style.width=(pct==null?0:pct)+'%';}
+    var why=$('acct-dh-why');if(why)why.textContent=(o&&(o.reason||o.label))||((d&&d.error)||'');
+    acctHealthRefresh();
+  };
+  // Billing's measured line (density audit #47): the measured figure only -
+  // delivered.net_monthly, net of what got worse - never the opportunity,
+  // surfaced or avoided figure (CLAUDE.md value rule).
+  window.acctBillingValue=function(){
+    var box=$('billing-value');if(!box)return;
+    fetch('/api/value',{credentials:'same-origin'}).then(apiJson).then(function(v){
+      var d=(v&&v.delivered)||null;if(!d){box.textContent='';return;}
+      var wz=d.worsened||{},n=+d.evaluated||0,net=isFinite(+d.net_monthly)?+d.net_monthly:+(d.monthly||0);
+      var h;
+      if((+d.wins||0)>0||(+wz.count||0)>0){
+        h='Measured, net: <span class="ac-num">'+(net<0?'−':'')+'$'+Math.abs(Math.round(net)).toLocaleString('en-US')+'/mo</span> · '
+          +n+' change'+(n===1?'':'s')+' measured';
+      }else if(+d.in_flight>0){
+        h='Nothing measured yet — '+d.in_flight+' change'+(+d.in_flight===1?'':'s')+' being measured';
+      }else h='Nothing measured yet';
+      box.innerHTML=h+' · <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rh="open">See the record</button>';
+    }).catch(function(){box.textContent='';});
+  };
+  // "Switch POS": the providers not in use, folded once one is live.
+  window.acctPosOthers=function(btn){
+    var rows=document.querySelectorAll('#acct-integrations .ac-pos-other'),open=btn.getAttribute('aria-expanded')!=='true';
+    for(var i=0;i<rows.length;i++)rows[i].hidden=!open;
+    btn.setAttribute('aria-expanded',open?'true':'false');btn.textContent=open?'Hide':'Show';
+  };
+  // Row explanations over eight words go behind an "i" (density audit #37).
+  // The words stay in the DOM (and without script they simply show); a
+  // row whose line is filled by a loader (an id) is left alone.
+  var _quieted=false;
+  function acctQuietHelp(){
+    if(_quieted)return;_quieted=true;
+    var spans=document.querySelectorAll('#panel-account .ac-row > .l > span'),n=0;
+    for(var i=0;i<spans.length;i++){
+      var sp=spans[i];if(sp.id||sp.querySelector('[id]'))continue;
+      var words=(sp.textContent||'').replace(/^\s+|\s+$/g,'').split(/\s+/).length;if(words<=8)continue;
+      var lbl=sp.previousElementSibling;if(!lbl||lbl.tagName!=='B')continue;
+      sp.id='ac-help-'+(++n);sp.hidden=true;
+      var b=document.createElement('button');b.type='button';b.className='cbtn cbtn-text ac-info';
+      b.setAttribute('aria-expanded','false');b.setAttribute('aria-controls',sp.id);b.setAttribute('aria-label','What this means');b.textContent='i';
+      b.onclick=(function(target){return function(e){e.preventDefault();target.hidden=!target.hidden;this.setAttribute('aria-expanded',target.hidden?'false':'true');};})(sp);
+      lbl.appendChild(b);
+    }
+  }
+
   // ── Opening the tab ──────────────────────────────────────────────────────
   // One entry point for both ways in (tab click; landing on the tab). The
   // guard collapses the corner case where both paths fire on the same load.
@@ -25630,11 +26019,14 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var now=Date.now();if(_openedAt&&now-_openedAt<5*60*1000){acctHealthRefresh();return;}_openedAt=now;
     loadBillingInfo();loadSessions();loadAlertsSummary();loadAccountSettings();
     if(window._acctExtras)window._acctExtras();
+    acctQuietHelp();
+    if(window.cavDataHealth)cavDataHealth.fetch(false).then(acctApplyDataHealth);
     if(!_lazyWired){
       _lazyWired=true;
       // The email-history table is the heaviest thing here and sits three
       // sections down: fetch it when it scrolls into view, not on open.
       cavnarWhenVisible($('email-history-card'),loadEmailHistory);
+      cavnarWhenVisible($('billing-card'),acctBillingValue);
     }
     acctHealthRefresh();
   };

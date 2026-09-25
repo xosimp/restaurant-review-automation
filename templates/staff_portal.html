@@ -6,19 +6,27 @@
 <meta name="robots" content="noindex,nofollow">
 <title>{{ employee_name }} — {{ restaurant.name }}</title>
 <link rel="stylesheet" href="/static/css/cavnar-buttons.css">
+<link rel="stylesheet" href="/static/fonts/cavnar-fonts.css">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
+  /* The design system's dark tokens, by their DS names (DESIGN_SYSTEM.md 1),
+     at the iPhone app's deeper dark values - this page is read on a phone.
+     --card and --line stay as aliases for the rules below. */
   :root{
-    --paper:#0c0c0c; --card:#151515; --line:#262626;
+    --paper:#0c0c0c; --paper2:#121212; --paper3:#262626; --surface:#151515;
+    --card:var(--surface); --line:var(--paper3);
     --ink:#f0ebe0; --ink2:#cdbfa9; --ink3:#8f847b;
-    --ember:#d4583a; --ember2:#e8956a; --green:#4ead7a; --red:#e05555;
+    --ember:#d4583a; --ember2:#e8956a; --green:#4ead7a; --red:#e05555; --amber:#d4a030;
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--paper);color:var(--ink);
-       font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;
+       font-family:'Apfel Grotezk',-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;
        -webkit-font-smoothing:antialiased;padding:26px 18px 60px}
+  /* Every time, date and count in the number face (DS 2). */
+  .num{font-family:'Space Grotesk',sans-serif;font-variant-numeric:tabular-nums}
   .wrap{max-width:520px;margin:0 auto}
   .kicker{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember2)}
-  h1{font-size:25px;line-height:1.15;margin:9px 0 3px;letter-spacing:-.01em}
+  h1{font-family:'Clash Display',sans-serif;font-weight:500;font-size:25px;line-height:1.15;margin:9px 0 18px;letter-spacing:-.01em}
   .sub{color:var(--ink3);font-size:14px;margin:0 0 22px}
 
   .tabs{display:flex;gap:7px;margin-bottom:20px}
@@ -40,7 +48,7 @@
   .shift.off{border-left-color:var(--line);opacity:.62}
   .shift .day{font-size:15px;font-weight:700}
   .shift .date{font-size:12.5px;color:var(--ink3);margin-left:6px;font-weight:400}
-  .shift .time{font-size:18px;font-weight:700;margin-top:6px}
+  .shift .time{font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:700;margin-top:6px}
   .shift .meta{font-size:13px;color:var(--ink2);margin-top:3px}
   .shift .none{font-size:14px;color:var(--ink3);margin-top:5px}
 
@@ -50,6 +58,8 @@
   .task span{font-size:15.5px}
   .task.done span{text-decoration:line-through;color:var(--ink3)}
   .progress{font-size:13px;color:var(--ink3);margin-bottom:10px}
+  .pbar{height:6px;border-radius:999px;background:var(--paper3);overflow:hidden;margin:-4px 0 12px}
+  .pbar i{display:block;height:100%;border-radius:999px;background:var(--green)}
 
   .row{background:var(--card);border:1px solid var(--line);border-radius:10px;
        padding:13px 15px;margin-bottom:8px;display:flex;justify-content:space-between;
@@ -81,6 +91,32 @@
 .to-st{font-size:12px;color:var(--ink3);white-space:nowrap}
 .av-row{display:flex;align-items:center;gap:10px;margin-top:8px}
 #avail-notes{width:100%;padding:9px 12px;border:1px solid var(--paper3);border-radius:8px;font:inherit;color:var(--ink);background:var(--paper)}
+  /* Tonight's shift, first (density audit #13): the one fact an employee
+     opens this for, at hero size, with what else is waiting on them. */
+  .hero{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--green);
+        border-radius:14px;padding:16px 18px;margin-bottom:14px}
+  .hero.off{border-left-color:var(--line)}
+  .hero .k{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
+  .hero .t{font-family:'Space Grotesk',sans-serif;font-size:30px;font-weight:700;line-height:1.1;margin-top:6px;letter-spacing:-.01em}
+  .hero .t.txt{font-family:'Clash Display',sans-serif;font-weight:500;font-size:22px}
+  .hero .m{font-size:14.5px;color:var(--ink2);margin-top:6px}
+  .hero .x{display:flex;flex-wrap:wrap;gap:6px 12px;margin-top:10px;font-size:13.5px;color:var(--ink2)}
+  .hero .x b{font-family:'Space Grotesk',sans-serif;color:var(--ink)}
+  .hero .x .ask{color:var(--ember2);font-weight:600}
+  /* Asked of you: time-sensitive, so under the hero on an ember rail. */
+  #asks-body .sr-row{border-left:3px solid var(--ember)}
+  /* Off days on one line; per-shift actions in a small menu. */
+  .offline{font-size:13.5px;color:var(--ink3);margin:2px 0 12px}
+  .offline b{color:var(--ink2);font-weight:600}
+  .shift .hd{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .cbtn.more-btn{min-width:34px;padding:0 8px;font-size:18px;line-height:1;letter-spacing:.08em}
+  .shift-menu{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+  .shift-menu[hidden]{display:none}
+  /* Availability, what I'd like and time off: one disclosure, closed. */
+  .disc{margin-top:26px}
+  .disc .cbtn{width:100%;justify-content:space-between}
+  .disc-body[hidden]{display:none}
+  .disc-body{margin-top:6px}
   /* Shift requests: a shift you can't work, and the open ones you can take */
   .shift .drop{margin-top:8px}
   .sr-row{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:8px}
@@ -119,7 +155,6 @@
 <div class="wrap">
   <div class="kicker">{{ restaurant.name }}</div>
   <h1>{{ employee_name }}</h1>
-  <p class="sub" id="today-line">&nbsp;</p>
 
   <div class="ended" id="session-ended" role="alert">
     Your shift session ended, so nothing here is up to date. Sign in again to carry on.
@@ -128,17 +163,24 @@
 
   <div class="tabs">
     <button type="button" class="on" data-tab="schedule">Schedule</button>
-    <button type="button" data-tab="tasks">Tasks</button>
+    <button type="button" data-tab="tasks" id="tasks-tab">Tasks</button>
     <button type="button" data-tab="profile">Profile</button>
   </div>
 
   <section id="tab-schedule" class="on">
+    <div id="next-shift" class="hero" aria-live="polite"><div class="k">Your next shift</div><div class="t txt">Loading…</div></div>
+    <div id="asks-body"></div>
     <div id="brief-body"></div>
     <div id="sched-body" class="load">Loading your shifts…</div>
     <div id="req-body"></div>
-  <div id="avail-body" class="card"></div>
-  <div id="pref-body" class="card"></div>
-  <div id="timeoff-body" class="card"></div>
+    <div class="disc">
+      <button type="button" class="cbtn cbtn-secondary" id="disc-btn" aria-expanded="false" aria-controls="disc-body">Availability &amp; time off <span aria-hidden="true">&#9662;</span></button>
+      <div class="disc-body" id="disc-body" hidden>
+        <div id="avail-body"></div>
+        <div id="pref-body"></div>
+        <div id="timeoff-body"></div>
+      </div>
+    </div>
   </section>
 
   <section id="tab-tasks">
@@ -240,6 +282,55 @@
     $('brief-body').innerHTML = html + '</div>';
   }).catch(function(){});
 
+  // ── Your next shift (density audit #13) ─────────────────────────────────
+  // One card at the top: today's shift (or the next one), its role and
+  // hours, how many tasks are on today's list and how many colleagues are
+  // waiting on an answer - each filled in as its own request lands. ES5.
+  var hero = {shifts: null, tasks: null, asks: 0};
+  function renderHero() {
+    var el = $('next-shift'); if (!el) return;
+    var d = hero.shifts, html = '', off = false;
+    if (!d) return;
+    if (!d.ok) { el.className = 'hero off'; el.innerHTML = '<div class="k">Your next shift</div><div class="m">Could not load your shifts.</div>'; return; }
+    if (!d.published) {
+      el.className = 'hero off';
+      el.innerHTML = '<div class="k">Your next shift</div><div class="t txt">Not published yet</div>'
+                   + '<div class="m">Your shifts show up here the moment your manager sends the week.</div>';
+      return;
+    }
+    var next = null, i;
+    for (i = 0; i < (d.week || []).length; i++) {
+      var w = d.week[i], wl = w.shifts || (w.shift ? [w.shift] : []);
+      if (wl.length) { next = {day: w, legs: wl}; break; }
+    }
+    if (!next) {
+      off = true;
+      html = '<div class="k">Your next shift</div><div class="t txt">Off all week</div><div class="m">No shifts in the next 7 days.</div>';
+    } else {
+      var day = next.day, legs = next.legs, times = [], roles = [], hrs = 0;
+      for (i = 0; i < legs.length; i++) {
+        times.push(esc(legs[i].start || legs[i].shift_start || '') + '–' + esc(legs[i].end || legs[i].shift_end || ''));
+        if (legs[i].role && roles.indexOf(legs[i].role) < 0) roles.push(legs[i].role);
+        hrs += +(legs[i].hours || legs[i].scheduled_hours || 0) || 0;
+      }
+      var when = day.is_today ? 'Today' : esc(day.weekday) + ' · <span class="num">' + mdyShort(day.date) + '</span>';
+      html = '<div class="k">' + when + '</div><div class="t">' + times.join(' and ') + '</div>'
+           + '<div class="m">' + esc(roles.join(' / ')) + (hrs ? (roles.length ? ' · ' : '') + '<span class="num">' + (Math.round(hrs * 10) / 10) + '</span>h' : '') + '</div>';
+      var x = [];
+      if (day.is_today && hero.tasks && hero.tasks.total) {
+        var left = hero.tasks.total - hero.tasks.done;
+        x.push(left ? '<span><b>' + left + '</b> task' + (left === 1 ? '' : 's') + ' left today</span>' : '<span>Today’s tasks done ✓</span>');
+      }
+      if (x.length || hero.asks) html += '<div class="x">' + x.join('') + '</div>';
+    }
+    if (hero.asks) {
+      if (html.indexOf('class="x"') < 0) html += '<div class="x"></div>';
+      html = html.replace('<div class="x">', '<div class="x"><span class="ask"><b>' + hero.asks + '</b> swap' + (hero.asks === 1 ? '' : 's') + ' waiting on you</span>');
+    }
+    el.className = 'hero' + (off ? ' off' : '');
+    el.innerHTML = html;
+  }
+
   // ── Schedule ────────────────────────────────────────────────────────────
   function mdyShort(iso) {
     // 9/21/26 — the one date format an owner or employee sees (DESIGN_SYSTEM → Dates and times).
@@ -248,53 +339,45 @@
   }
   function renderShifts(d){
     var el = $('sched-body');
+    hero.shifts = d || {ok: false}; renderHero();
     if (!d.ok) { el.className = 'err'; el.textContent = 'Could not load your shifts.'; return; }
     el.className = '';
-    if (!d.published) {
-      el.innerHTML = '<div class="empty">Your manager hasn\u2019t published next week yet. '
-                   + 'Your shifts show up here the moment it goes out.</div>';
-      $('today-line').textContent = '';
-      return;
-    }
+    if (!d.published) { el.innerHTML = ''; return; }
     // The shifts API names them start / end / hours (labor.employee_shifts_from_csv).
     function sStart(s) { return s.start || s.shift_start || ''; }
     function sEnd(s) { return s.end || s.shift_end || ''; }
-    // A double is two legs on one day; show every one of them.
-    var todayLegs = d.today ? (d.today.legs || [d.today]) : [];
-    var todayText = [];
-    for (var t = 0; t < todayLegs.length; t++) todayText.push(sStart(todayLegs[t]) + ' – ' + sEnd(todayLegs[t]));
-    $('today-line').textContent = todayLegs.length
-      ? 'Today: ' + todayText.join(' and ')
-      : "You're off today.";
 
-    var html = '<h2>Next 7 days</h2>';
+    // Working days as cards; the days off as one line (density audit #13).
+    var html = '<h2>Next 7 days</h2>', offs = [];
     for (var i = 0; i < d.week.length; i++) {
       var day = d.week[i];
       var legs = day.shifts || (day.shift ? [day.shift] : []);
-      var cls = 'shift' + (day.is_today ? ' today' : '') + (day.off ? ' off' : '');
+      if (!legs.length) { offs.push(esc(String(day.weekday || '').slice(0, 3)) + (day.is_today ? ' (today)' : '')); continue; }
+      var cls = 'shift' + (day.is_today ? ' today' : '');
       html += '<div class="' + cls + '">'
-            + '<div><span class="day">' + esc(day.weekday) + '</span>'
-            + '<span class="date">' + mdyShort(day.date) + (day.is_today ? ' · today' : '') + '</span></div>';
+            + '<div class="hd"><div><span class="day">' + esc(day.weekday) + '</span>'
+            + '<span class="date num">' + mdyShort(day.date) + (day.is_today ? ' · today' : '') + '</span></div>'
+            // A published shift you can't make: ask to drop it, or swap it
+            // with a colleague's. A manager answers either one. In a menu,
+            // so seven days are not fourteen text buttons.
+            + '<button type="button" class="cbtn cbtn-text cbtn-sm more-btn" aria-expanded="false" aria-controls="menu-' + esc(day.date) + '" aria-label="Can’t work or swap ' + esc(day.weekday) + '">…</button></div>';
+      var menu = '';
       for (var j = 0; j < legs.length; j++) {
         var s = legs[j];
         var hrs = s.hours || s.scheduled_hours;
         html += '<div class="time">' + esc(sStart(s)) + ' – ' + esc(sEnd(s)) + '</div>'
               + '<div class="meta">' + esc(s.role || '')
-              + (hrs ? ' · ' + esc(hrs) + 'h' : '') + '</div>';
+              + (hrs ? ' · <span class="num">' + esc(hrs) + '</span>h' : '') + '</div>';
         if (s['break']) html += '<div class="brk">Break ' + esc(s['break']) + '</div>';
         if (s.notes) html += '<div class="meta">' + esc(s.notes) + '</div>';
-        // A published shift you can't make: ask to drop it, or swap it
-        // with a colleague's. A manager answers either one.
-        html += '<div class="drop"><button type="button" class="cbtn cbtn-text cbtn-sm" data-drop-date="' + esc(day.date) + '" data-drop-start="' + esc(sStart(s)) + '">Can\u2019t work this</button>'
-              + '<button type="button" class="cbtn cbtn-text cbtn-sm" data-swap-date="' + esc(day.date) + '" data-swap-start="' + esc(sStart(s)) + '">Swap with a colleague</button></div>';
+        var which = legs.length > 1 ? ' (' + esc(sStart(s)) + ')' : '';
+        menu += '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-drop-date="' + esc(day.date) + '" data-drop-start="' + esc(sStart(s)) + '">Can’t work this' + which + '</button>'
+              + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-swap-date="' + esc(day.date) + '" data-swap-start="' + esc(sStart(s)) + '">Swap with a colleague' + which + '</button>';
       }
-      if (legs.length) {
-        html += '<div class="swap-slot" id="swap-' + esc(day.date) + '"></div>';
-      } else {
-        html += '<div class="none">Off</div>';
-      }
-      html += '</div>';
+      html += '<div class="shift-menu drop" id="menu-' + esc(day.date) + '" hidden>' + menu + '</div>'
+            + '<div class="swap-slot" id="swap-' + esc(day.date) + '"></div></div>';
     }
+    if (offs.length) html += '<div class="offline">Off <b>' + offs.join(', ') + '</b></div>';
     el.innerHTML = html;
   }
   fetch('/staff/api/shifts').then(function(r){ return r.json(); }).then(renderShifts).catch(function(){
@@ -317,13 +400,16 @@
   }
   function reqRender(d) {
     var el = $('req-body'); if (!el) return;
-    var mine = d.requests || [], open = d.open || [], asks = d.asks || [], html = '', i;
+    var mine = d.requests || [], open = d.open || [], asks = d.asks || [], html = '', ahtml = '', i;
     // A colleague asked to trade with you: nothing moves unless you say yes.
+    // Rendered directly under the hero (density audit #13): a colleague and
+    // a manager are waiting, and it used to sit below all seven days.
+    hero.asks = asks.length; renderHero();
     if (asks.length) {
-      html += '<h2>Asked of you</h2>';
+      ahtml += '<h2>Asked of you</h2>';
       for (i = 0; i < asks.length; i++) {
         var a = asks[i];
-        html += '<div class="sr-row"><div class="when"><span class="kind">Swap</span>' + esc(a.employee_name) + '\u2019s ' + fmtShort(a.date) + ' ' + esc(a.shift_start)
+        ahtml += '<div class="sr-row"><div class="when"><span class="kind">Swap</span>' + esc(a.employee_name) + '\u2019s ' + fmtShort(a.date) + ' ' + esc(a.shift_start)
               + ' for your ' + fmtShort(a.target_date) + ' ' + esc(a.target_start || '') + '</div>'
               + (a.reason ? '<div class="meta">' + esc(a.reason) + '</div>' : '')
               + '<div class="meta">' + (a.status === 'approved' ? 'Your manager approved it \u2014 it goes ahead if you accept.' : 'Your manager decides too; both shifts move only when you and they say yes.') + '</div>'
@@ -332,6 +418,7 @@
               + '<div class="sr-msg" id="ask-msg-' + a.id + '"></div></div>';
       }
     }
+    var ab = $('asks-body'); if (ab) ab.innerHTML = ahtml;
     if (mine.length) {
       html += '<h2>My requests</h2>';
       for (i = 0; i < mine.length; i++) {
@@ -412,6 +499,22 @@
     var el = ev.target; if (!el || !el.getAttribute) return;
     var d = el.getAttribute('data-swap-who'); if (d) fillTheirShifts(d);
   });
+  document.addEventListener('click', function (ev) {
+    var b = ev.target;
+    while (b && b !== document.body && !(b.className && String(b.className).indexOf('more-btn') >= 0)) b = b.parentNode;
+    if (!b || b === document.body) return;
+    var m = $(b.getAttribute('aria-controls')); if (!m) return;
+    m.hidden = !m.hidden;
+    b.setAttribute('aria-expanded', m.hidden ? 'false' : 'true');
+  });
+  (function () {
+    var db = $('disc-btn'), body = $('disc-body');
+    if (!db || !body) return;
+    db.onclick = function () {
+      body.hidden = !body.hidden;
+      db.setAttribute('aria-expanded', body.hidden ? 'false' : 'true');
+    };
+  })();
   document.addEventListener('click', function (ev) {
     var el = ev.target;
     while (el && el !== document.body && !(el.getAttribute && (el.getAttribute('data-drop-date') || el.getAttribute('data-withdraw') || el.getAttribute('data-claim') || el.getAttribute('data-swap-date') || el.getAttribute('data-swap-send') || el.getAttribute('data-swap-cancel') || el.getAttribute('data-swap-accept') || el.getAttribute('data-swap-decline')))) el = el.parentNode;
@@ -607,8 +710,12 @@
       }
       var done = 0;
       for (var i = 0; i < d.tasks.length; i++) if (d.tasks[i].done) done++;
+      hero.tasks = {done: done, total: d.tasks.length}; renderHero();
+      var left = d.tasks.length - done, tt = $('tasks-tab');
+      if (tt) tt.textContent = left ? 'Tasks · ' + left + ' left' : 'Tasks ✓';
       var html = '<h2>' + esc(d.role) + ' · today</h2>'
-               + '<div class="progress">' + done + ' of ' + d.tasks.length + ' done</div>'
+               + '<div class="progress"><span class="num">' + done + '</span> of <span class="num">' + d.tasks.length + '</span> done</div>'
+               + '<div class="pbar" role="progressbar" aria-valuemin="0" aria-valuemax="' + d.tasks.length + '" aria-valuenow="' + done + '"><i style="width:' + Math.round(done / d.tasks.length * 100) + '%"></i></div>'
                + '<div class="sr-msg" id="task-msg" role="status"></div>';
       for (var j = 0; j < d.tasks.length; j++) {
         var t = d.tasks[j];
