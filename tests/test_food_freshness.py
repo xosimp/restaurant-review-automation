@@ -317,7 +317,9 @@ def test_prime_cost_names_its_labor_period(db_path, monkeypatch):
 
 def test_an_opportunity_on_a_stale_labor_period_is_withheld(db_path, monkeypatch):
     """DH1-4: "$1,900/mo available" from a June labor period."""
-    rid = _restaurant(db_path, module_labor=1, module_inventory=0)
+    # hourly_rate: the owner's own rate — on the $26 default the gap is
+    # withheld for that reason instead (Benchmarking audit #14).
+    rid = _restaurant(db_path, module_labor=1, module_inventory=0, hourly_rate=19.0)
     labor_a = {"is_live": True, "potential_savings_monthly": 1900.0,
                "date_range": {"start": _ago(90), "end": _ago(60), "days": 30}}
     monkeypatch.setattr("labor.analyse_shifts_for_restaurant", lambda r: labor_a)

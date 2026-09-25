@@ -211,6 +211,16 @@ def target_label(restaurant, kind) -> str:
     return "your target" if target_source(restaurant, kind) == "set" else STARTING_TARGET_LABEL
 
 
+def target_phrase(restaurant, kind, value) -> str:
+    """The target in a sentence: "your 30% target", or "Cavnar's starting
+    target of 30%" when the owner has not set one (#13)."""
+    try:
+        v = f"{float(value):g}%"
+    except (TypeError, ValueError):
+        v = "—"
+    return f"your {v} target" if target_source(restaurant, kind) == "set" else f"{STARTING_TARGET_LABEL} of {v}"
+
+
 def target_alerts_allowed(restaurant, kind) -> bool:
     """No over-target alert on an unconfirmed default (#13): an SMS saying a
     steakhouse is "over your 30% target" when nobody set 30 is the bug."""

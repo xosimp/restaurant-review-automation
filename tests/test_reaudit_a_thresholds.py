@@ -171,7 +171,7 @@ def test_every_over_target_check_uses_the_same_comparison():
 
 def test_exactly_three_points_over_is_an_alert(db_path, sent):
     rid = _rid(db_path)
-    update_restaurant(rid, {"alert_labor_over": 1, "urgent_via_sms": 1, "labor_target_pct": 30.0}, db_path=db_path)
+    update_restaurant(rid, {"alert_labor_over": 1, "urgent_via_sms": 1, "labor_target_pct": 30.0, "labor_target_source": "set"}, db_path=db_path)
     _labor_period(db_path, rid, 33.0)
     notify.check_daily_alerts(db_path=db_path)
     assert len(_log(db_path, rid, "labor_over")) == 1
@@ -184,7 +184,7 @@ def test_the_labor_sms_names_its_period_in_mdy(db_path, sent, monkeypatch):
     raised = []
     monkeypatch.setattr(notify, "raise_alert", lambda rid_, t, sms, subj, **k: raised.append(sms))
     rid = _rid(db_path)
-    update_restaurant(rid, {"alert_labor_over": 1, "urgent_via_sms": 1, "labor_target_pct": 30.0}, db_path=db_path)
+    update_restaurant(rid, {"alert_labor_over": 1, "urgent_via_sms": 1, "labor_target_pct": 30.0, "labor_target_source": "set"}, db_path=db_path)
     start, end = _labor_period(db_path, rid, 36.0)
     notify.check_daily_alerts(db_path=db_path)
     sms = " ".join(raised)

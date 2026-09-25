@@ -54,10 +54,15 @@ other modules need.
 | Table / column | Holds | Privacy |
 |---|---|---|
 | `restaurants.category` | the owner's or admin's category (taxonomy in `categories.py`); inferred from name/vibe/menu when unset and labelled so | own row |
+| `restaurants` profile columns (Benchmarking #7) | `service_model` (counter / full_service / bar_led / daytime), `concept` (a taxonomy value), `bar_led`, `ownership` (independent / franchise / corporate), `opened_year`, `profile_source` (set / inferred), `profile_confirmed_at`; `google_types` + `google_price_level` (the restaurant's own listing, a cross-check for the guess only) | own row; the peer partition is built from the CONFIRMED profile only |
+| `restaurants.exclude_from_learning` | a test or internal account: out of every cross-restaurant figure exactly as a demo is (`jobs.REAL_RESTAURANT_SQL`) | — |
+| `restaurants.labor_target_source`, `food_cost_target_source` | set / seeded / default — where a target came from (#13) | own row |
 | `intel_features` | one row per restaurant-week: `features_json` of ratios, rates and counts; `completeness` 0–1 | no names, no dollars, no people; tenant-keyed |
 | `intel_rec_events` | one row per recommendation event: kind, action (presented / done / not for us / hidden / snoozed / accepted / tracking / implemented / measured / confirmed / dismissed / auto / ignored), outcome (improved / worsened / no clear change / unknown), days to effect, confidence at the time | kind is a key prefix, never text |
 | `intel_patterns` | discovered patterns: cohort, behaviour, outcome, n with / n without, effect, p, q, confidence, sentence, status | counts and effects only |
-| `intel_benchmarks` | per cohort × metric × week: n, p25, p50, p75, mean, and `vals_json` (the member values, sorted and unlabelled — server-side only, so the band shown to a member can leave its own row out) | stored over ≥ MIN_COHORT; SHOWN only through `benchmarks.published()` (viewer excluded, ≥ 8 others, coarse step, ≤ 8 weeks old) |
+| `intel_benchmarks` | per cohort × metric × week: n, p25, p50, p75, mean, `vals_json` (the member values, sorted), `members_json` (each value beside an organisation HASH), `orgs` (distinct organisations) and `max_org_share` — server-side only, so the band shown to a member leaves its whole organisation out. The cohort is a peer PARTITION key (`sm:<service model>[|bar][|protein|starch|mixed][|v<band>]`) or `platform` (behaviour metrics only). Frozen for the ISO week: the first computation of a week stands | stored over ≥ MIN_COHORT members from ≥ `privacy.MIN_ORGS` organisations; SHOWN only through `benchmarks.published()` (viewer's organisation excluded, ≥ 8 others from ≥ 5 organisations, none over ⅓, spread gate, Harrell–Davis quartiles at a coarse step, ≤ 8 weeks old) |
+| `intel_peer_assignments` | per restaurant × week × family (format / labor / food): the rung reached (self / published / platform / peers), the partition, a hash of the peer set (never the ids), n and organisations with the viewer's own out, profile source and confirmation date, measured drift (#29) | tenant-keyed; server-side |
+| `intel_cohort_series` | per cohort × metric × week: n and the median over the BALANCED panel, with the window's joined / left counts (#44) | aggregates over ≥ MIN_COHORT |
 | `intel_confidence_log` | per week × cohort × kind: mean confidence, acceptance, success | aggregates |
 | `intel_rec_events` effect columns (boot ALTERs) | `metric`, `effect_pct`, `effect_z` (signed so positive = better), `baseline_kind`, `after_end`, `tags_json` — what a counted result MOVED (BM4-6) | tenant-keyed; filled only for results `rec_learning.learned_verdict` counts |
 | `intel_dna` | one row per restaurant-week of its Restaurant DNA: `dims_json` `{dim: {raw, z, n, basis, norm}}`, `coverage`, `version` | ratios, rates, shares and bands only — never dollars; `assert_anonymous` on every row |
@@ -94,17 +99,19 @@ Ask, the queue, decisions and the ledger share (legacy
 |---|---|---|
 | `privacy.py` | all | `MIN_COHORT`, the forbidden-key list, `assert_anonymous()` (recursive; used by tests and by the admin payload builder), effect rounding |
 | `stats.py` | all | pure-Python mean / sd / Cohen's d / percentiles / least-squares slope / **permutation test** (seeded, two-sided) / **Benjamini–Hochberg** |
-| `categories.py` | 3 | taxonomy; `category_for(restaurant)` → (category, source) |
+| `categories.py` | 3 | taxonomy; `category_for(restaurant)` → (category, source) — the confirmed concept first; `profile_for` / `partition_key(profile, family)` (the hard split: service model; × bar-led for labor and food; × menu family for food cost and waste) / `partition_label`; `infer_detail` (format before cuisine, name before menu, Google types, a confidence) and `suggestion` ("We think you're a pizzeria — is that right?"); `clean_profile` / `profile_payload` for the Account block |
 | `features.py` | 1 | `compute(rid, week_end)` from own tables; `store()`; `latest_by_restaurant()` |
 | `memory.py` | 1 | `restaurant_memory(rid)`: busiest weekdays, seasonality, own recommendation record by kind, what worked, what was ignored, metric slopes; `lines()` for the prompt |
 | `feedback.py` | 1 | `sync()` derives events; `record()` for new callers |
 | `scoring.py` | 2 | `kind_stats(kind, cohort)`: acceptance, success, median days; `rank_kinds()` |
 | `patterns.py` | 2/3 | declarative `HYPOTHESES`; `discover()` per cohort and platform-wide; `active(cohort)` |
-| `benchmarks.py` | 3 | `compute()` weekly; `published(cohort, metric, exclude_value)` — what may be shown; `benchmark(rid, metric, cohort_source=)` with standing, `cohort_label` (the cohort used: "All restaurants on Cavnar" for platform), `inferred`, `as_of`; `context_line(b)` — the one prompt wording |
-| `trends.py` | 2/3 | weekly medians per cohort × metric, slope, `emerging()` |
+| `benchmarks.py` | 3 | `compute()` weekly over each member's confirmed partition (eligible members only: ≥ 8 live weeks, completeness ≥ 0.5, not excluded, a non-default labor cost basis for labor-cost metrics; one per Google listing); `published(cohort, metric, exclude_org=)` — what may be shown; `benchmark(rid, metric)` — the wrapper older callers keep: the confirmed partition, never an all-types band for a non-behaviour metric ("no like-for-like peers yet"); `context_line(b)`; `cohort_table()` rounded as published (admin) |
+| `metrics_registry.py` | 3 | one row per metric: comparability (behaviour / format / economics), `partition_family`, `DEFINITIONS` (what Cavnar's figure measures), the spread ceilings of the quality gate, `module_key` for aliases |
+| `engine.py` | 3 | the Benchmark Engine: `compare()` / `compare_all()` / `facts()` / `prompt_lines()`; the peers kind walks the ladder (below) |
+| `trends.py` | 2/3 | weekly medians per cohort × metric over a balanced panel (present ≥ 6 of 8 weeks), joined / left, slope, `emerging()`; `persist()` writes `intel_cohort_series` in the learning pass |
 | `confidence.py` | all | `score(rid, rec_kind)` → `{score, band, factors[], caution}` — the kind-level model, read by the admin dashboard; NOT what owners see (see Recommendation Confidence below). `metric` is accepted and not read |
 | `dashboard.py` | admin | the Intelligence page payload, passed through `assert_anonymous` |
-| `staffing.py` | 1 → 3 | people on the floor per role family and daypart per $1k of sales (`staff_per_1k.<family>.<daypart>` in each feature row); cohort bands come from `benchmarks.compute`; `starting_headcount` lends a restaurant with no history of its own the cohort median scaled by ITS OWN sales, only over `MIN_COHORT`, through `assert_anonymous`, labelled borrowed |
+| `staffing.py` | 1 → 3 | people on the floor per role family and daypart per $1k of sales (`staff_per_1k.<family>.<daypart>` in each feature row); partition bands (with the sales band once the restaurant's own is measured) come from `benchmarks.compute`; `starting_headcount` lends a restaurant with a CONFIRMED profile and no history of its own the PUBLISHED median (≥ 8 others from ≥ 5 organisations, 0.05 step) scaled by ITS OWN sales, labelled borrowed; `payload()` ships the rounded headcount, the group label and n — never `people_per_1k` (#10) |
 | `dna.py` | 1 → 3 | Restaurant DNA (BM4 §5, Top-50 #24): `measure`/`compute`/`store` the ~30 dimensions (22+ buildable today; S5 beverage share dormant; B10 retention dormant until `last_seen` fills), `normalise` (stated anchors below `MIN_ROBUST_N` = 30 measuring a dimension, robust z = (x − median) ÷ 1.4826·MAD from 30, clipped ±3; the centre and scale ride with each value), `distance(a, b)` (Gower-style, missing-aware; None below 60% shared weight or 4 shared structural dimensions), `prediction_weights`, `profile(rid)` — the owner's own read — and `payload_for(user)` |
 | `predict.py` | 3 | `predict_effect(rid, kind, metric, tags)` → a fact of kind `prediction` for the P2 rule; `neighbours()` (server-side only); `run_weekly()` into `intel_effects`. Dormant below its floors (every restaurant today) |
 | `comparison_cache.py` | 3 | `materialise()` the engine's comparisons nightly into `intel_benchmark_facts` (bounded, cursor-resumable); `read()` — `engine.compare(..., use_cache=True)` serves a fresh row |
@@ -117,9 +124,11 @@ Ask, the queue, decisions and the ledger share (legacy
   4, wall-clock bound of 4 minutes, and a cursor in `job_cursors` so the
   next night resumes where this one stopped — `run_daily_fetch`'s pattern.
 - **`intelligence_learning`** nightly at 4am: `feedback.sync` →
-  `patterns.discover` → `benchmarks.compute` → confidence log →
-  `comparison_cache.materialise` → `predict.run_weekly`. Trends are NOT
-  persisted here; they are computed on read (`intelligence.trends`, BM4-17).
+  `patterns.discover` → `benchmarks.compute` (over `jobs.peer_partitions`)
+  → the peer assignment ledger (`jobs.record_assignments`) →
+  `trends.persist` (the balanced-panel cohort series, `intel_cohort_series`;
+  BM4-17: this line used to say trends were persisted when they were not)
+  → confidence log → `comparison_cache.materialise` → `predict.run_weekly`.
   Reads only the materialized tables, so its cost is O(restaurants ×
   hypotheses), not O(rows). Every step that walks cohorts or restaurants is
   bounded and resumable (Benchmarking audit BM4-14): discovery by a wall
@@ -859,6 +868,28 @@ behaviour effect.
   restaurants, and each quartile rounded to a coarse per-metric step (0.5
   points for a %, 0.1★, 0.05 for a rate). Under 8 the band is withheld.
   `benchmarks.band()` stays internal (staffing scales its median to people).
+- **Organisations, not locations** (Benchmarking #9, BM1-5, BM2-4, BM4-2):
+  every floor counts distinct organisations (`privacy.org_key`:
+  `organization_id`, else `location_group|owner_email`, else the restaurant
+  alone). A published band needs ≥ 8 others from ≥ `MIN_ORGS` (5)
+  organisations, the VIEWER'S WHOLE ORGANISATION is taken out of the band
+  it sees (each member value sits beside an org hash in `members_json`), no
+  one organisation may be over a third of it, and one Google listing counts
+  once. A test or internal account (`exclude_from_learning`) is never a
+  member.
+- **Disclosure control** (#42): quartiles come from the Harrell–Davis
+  estimator (a Beta-weighted average of every member, never one member's
+  figure), the rating step is 0.25★, and what is stored for a week is
+  frozen for it — a member joining or leaving cannot be differenced out of
+  two nights. Owner-facing patterns carry no group means and need ≥ 8
+  organisations a side (`patterns.owner_projection`, #11); the admin
+  projection keeps the means. The admin cohort table is rounded as
+  published and is_admin only (#47); the public status page says "one or
+  more locations", never a count.
+- **The quality gate** (#39): never an `other` or untyped group; a band whose
+  interquartile range is over its metric's ceiling
+  (`metrics_registry.spread_ok`) is withheld as "too spread out for a middle
+  to mean anything".
 - **Nothing stale is served** (NS4 H5): a band older than
   `MAX_BAND_AGE_WEEKS` (8), this restaurant's own figure older than
   `MAX_OWN_AGE_WEEKS` (8), and an active pattern not re-confirmed in
@@ -956,3 +987,55 @@ through `benchmark_views` (L2), which shapes and never compares:
   #38): at least 3 rivals matched on cuisine and price, the widened-radius
   fallback out of the average, one venue capped at 500 reviews of weight, n
   and radius said, and a symmetric neutral tie inside one standard error.
+
+
+## Peer groups: the confirmed profile, the partition and the ladder (Benchmarking audit, workstream P, 9/24/26)
+
+**Who a restaurant is compared with.** The owner confirms a restaurant
+profile in Account → Restaurant profile (web block, iOS sheet
+`AccountRestaurantProfileSheet`, admin brand modal; routes
+`/api/account-settings/restaurant-profile` and its mobile twin, owner-only):
+how it serves, its concept, bar-led, ownership and the year it opened. The
+save is the confirmation (`profile_source='set'`, `profile_confirmed_at`)
+and a `profile_changed` activity event records the old and new values. A
+type Cavnar guessed (`categories.infer_detail`: format words before cuisine,
+the name before the menu, the restaurant's own Google types, a confidence)
+only pre-fills "We think you're X — is that right?": it never joins a
+group, never counts toward a floor, and no published dollar figure is
+computed on it.
+
+**The partition** (`categories.partition_key`) is the hard split a band is
+read from: the service model for every format metric (rating, marketing
+rates, and behaviour metrics' like-for-like rung); × bar-led for labor
+metrics; × menu family (protein / starch / mixed, from the concept) for food
+cost and waste; a staffing ratio also by sales band once the restaurant's
+own is measured. A partition change needs the owner's confirmation or
+`jobs.DRIFT_WEEKS` (4) consecutive weeks of measured drift (alcohol share
+against bar-led); a change is logged as `comparison_group_changed`, which
+`confidence._recent_changes` counts.
+
+**The ladder** (`engine.compare`, peers kind): the restaurant's own figure
+must clear its floor ("about N more measured days to a comparison"); then
+R1 the published figure for the confirmed type (quoted as context with its
+definition when it measures something else — the NRA labor median includes
+benefits, Cavnar's labor % is wages from shifts, so it is never compared or
+blended); R2 all of Cavnar for behaviour metrics only; R3 the confirmed
+partition. A small group's band is blended toward a like-for-like published
+median by n/(n+8) and says so. The ledger (`intel_peer_assignments`) records
+the rung reached each week; reaching a higher rung is logged as
+`benchmark_rung_up`.
+
+**Structural features** (`features.STRUCTURAL_KEYS`, #43): `ticket_band`,
+`volume_band` and `daypart_mix` (one definition with DNA), `alcohol_share`
+(DSR categories, only where mapped), `delivery_share`, `weekly_open_hours`,
+`urbanity_band` — band indices and shares, never dollars, None when not
+measured. They are peer coordinates and the drift detector's input.
+
+**Targets and the labor cost basis** (#13, #14): a target records where it
+came from (`thresholds.target_source`: set / seeded / default). Confirming
+a type seeds a target the owner has not set from the published median for
+it; otherwise Cavnar's starting target stays and is labelled so; no
+over-target alert or issue fires on an unconfirmed default. The labor cost
+basis (`thresholds.labor_cost_basis`: role_rates / owner_blended / default;
+pos_wages reserved) withholds the industry dollars, the gap-to-target
+dollars and a place in labor-cost bands while it is the $26/hr default.

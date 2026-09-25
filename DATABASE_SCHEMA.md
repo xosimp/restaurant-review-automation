@@ -276,6 +276,33 @@ patterns with n, effect, p, q, confidence, status active|retired),
 no row in `intel_patterns`, `intel_benchmarks` or `intel_confidence_log`
 describes fewer than `privacy.MIN_COHORT` restaurants.
 
+Benchmarking audit (9/24/26, workstream P), all DDL at boot:
+- `restaurants` gains the owner-confirmed profile — `service_model`
+  (counter | full_service | bar_led | daytime), `concept` (a
+  `categories.TAXONOMY` value), `bar_led`, `ownership` (independent |
+  franchise | corporate), `opened_year`, `profile_source` (set | inferred),
+  `profile_confirmed_at` — plus `exclude_from_learning` (a test or internal
+  account: out of every cross-restaurant figure), `labor_target_source` /
+  `food_cost_target_source` (set | seeded | default; NULL on an old row reads
+  "default" at the 30% default, else "set") and `google_types` /
+  `google_price_level` (the restaurant's own Google listing). Each has the
+  four touch points (dataclass, `ensure_columns`, the `update_restaurant`
+  whitelist, `get_restaurant`). `update_restaurant` stamps a target it is
+  handed without a source as `set` only when the value CHANGED, and records a
+  `profile_changed` activity event with the old and new values of every
+  profile field that changed.
+- `intel_benchmarks` gains `orgs`, `max_org_share` and `members_json`
+  (`[[value, org hash], …]`, server-side only); the cohort is a peer
+  partition key (`sm:…`) or `platform` (behaviour metrics only); a week's
+  row is written once and frozen (a row from before `members_json` is
+  replaced, and is never shown). Invariant: no stored band rests on fewer
+  than `privacy.MIN_ORGS` organisations.
+- `intel_peer_assignments` (restaurant × week × family: rung, partition key,
+  peer-set hash — never ids — n, orgs, profile source and confirmation date,
+  drift; UNIQUE per restaurant, week and family).
+- `intel_cohort_series` (cohort × metric × week: n, the balanced-panel
+  median, n_joined, n_left; UNIQUE per cohort, metric and week).
+
 Benchmarking audit (9/24/26, workstream D), all DDL in `init_db`:
 - `intel_rec_events` gains `metric`, `effect_pct`, `effect_z` (signed so
   positive means better), `baseline_kind`, `after_end`, `tags_json` — filled

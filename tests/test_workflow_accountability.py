@@ -58,6 +58,8 @@ def test_critically_low_stock_becomes_the_managers_issue(db_path, monkeypatch):
 def test_labor_over_target_becomes_an_issue_once_a_week(db_path, monkeypatch):
     import issues, labor
     rid = _rid(db_path, module_labor=1)
+    # The owner's own target: no issue opens on Cavnar's unconfirmed default (#13).
+    models.update_restaurant(rid, {"labor_target_source": "set"}, db_path=db_path)
     _routed(db_path, rid)
     monkeypatch.setattr(labor, "analyse_shifts_for_restaurant",
                         lambda r: {"is_live": True, "overall_labor_pct": 34.2})

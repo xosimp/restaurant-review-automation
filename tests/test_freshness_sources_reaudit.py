@@ -472,7 +472,10 @@ def test_s15_status_page_counts_locations_never_names(db, monkeypatch):
     c = models.get_conn(db)
     row = c.execute("SELECT status, message FROM service_status WHERE service_key='labor_analytics'").fetchone()
     c.close()
-    assert row["status"] == "degraded" and "Secret Bistro" not in row["message"] and "1 location" in row["message"]
+    # Never a name, and no longer a count either: "1 location" on a public
+    # page told a competitor the platform's size (Benchmarking audit #47).
+    assert row["status"] == "degraded" and "Secret Bistro" not in row["message"] and "1 location" not in row["message"]
+    assert "one or more locations" in row["message"]
 
 
 # ── S16: an admin save keeps Places-only review fetching on ────────────────

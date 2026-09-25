@@ -156,7 +156,7 @@ def _labor(db_path, rid, pct):
 
 def test_labor_one_point_over_target_is_not_an_alert(db_path, sent):
     rid = _rid(db_path)
-    update_restaurant(rid, {"alert_labor_over": 1, "labor_target_pct": 30.0, "urgent_via_email": 1}, db_path=db_path)
+    update_restaurant(rid, {"alert_labor_over": 1, "labor_target_pct": 30.0, "labor_target_source": "set", "urgent_via_email": 1}, db_path=db_path)
     _labor(db_path, rid, 31.0)
     notify.check_daily_alerts(db_path=db_path)
     assert _log(db_path, rid, "labor_over") == []
@@ -167,7 +167,7 @@ def test_labor_over_by_the_shared_threshold_alerts_with_an_mdy_period_and_its_ow
     monkeypatch.setattr(notify, "_alert_email_html",
                         lambda name, headline, lines, **k: captured.extend(lines) or "<p></p>")
     rid = _rid(db_path)
-    update_restaurant(rid, {"alert_labor_over": 1, "labor_target_pct": 30.0, "urgent_via_email": 1}, db_path=db_path)
+    update_restaurant(rid, {"alert_labor_over": 1, "labor_target_pct": 30.0, "labor_target_source": "set", "urgent_via_email": 1}, db_path=db_path)
     start, end = _labor(db_path, rid, 34.0)
     notify.check_daily_alerts(db_path=db_path)
     assert len(_log(db_path, rid, "labor_over")) == 1
