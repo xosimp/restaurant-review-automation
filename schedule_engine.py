@@ -830,31 +830,63 @@ def _last_published_csv(restaurant_id, before_date):
     return (row["schedule_csv"] if row else "") or ""
 
 
-def _cohort_block(restaurant_id, restaurant) -> str:
-    """Hours per $1k of sales against the cohort — a ratio, no dollars, no
-    names, and only when the cohort clears the intelligence layer's floor."""
+COHORT_BLOCK_HEADER = "HOW THIS RESTAURANT'S LABOR COMPARES"
+_COHORT_METRICS = ("labor_hours_per_1k_28d", "labor_hours_per_1k_day_28d", "labor_hours_per_1k_night_28d")
+
+
+def cohort_comparisons(restaurant_id, restaurant) -> list:
+    """The Benchmark Engine's peer comparisons for hours per $1k of sales
+    (whole day, lunch/day, dinner/night) that have a like-for-like band of
+    the restaurant's own type. Hours per $1k is an economics metric, so an
+    all-types band is never one of them (BM1-4, BM2-3, BM3-7). Never raises."""
     try:
-        import intelligence
-        cohort, src = intelligence.cohort_for(restaurant) if restaurant else (None, None)
-        lines = []
-        for metric, label in (("labor_hours_per_1k_28d", "over the whole day"),
-                              ("labor_hours_per_1k_day_28d", "at lunch/day"),
-                              ("labor_hours_per_1k_night_28d", "at dinner/night")):
-            b = intelligence.benchmark(restaurant_id, metric, cohort=cohort, cohort_source=src)
-            if b.get("available") and b.get("value") is not None and b.get("standing") not in (None, "unmeasured"):
-                # The cohort actually used, its size with this restaurant
-                # left out, the band's as-of date and an inferred type
-                # (NS4 H4/H5/M5).
-                who = ("other restaurants on Cavnar (all types)" if b.get("cohort") == "platform"
-                       else f"other {b['cohort_label'].lower()}")
-                lines.append(f"  {label}: this restaurant runs {b['value']:g} labor hours per $1k of sales; "
-                             f"{b['n']} {who} run {b['p25']:g}–{b['p75']:g} (middle {b['p50']:g}; "
-                             f"band as of {b.get('as_of') or 'unknown'})"
-                             + (" — type inferred from the restaurant's name" if b.get("inferred") else "") + ".")
-        if not lines:
+        from intelligence import engine
+        out = []
+        for metric in _COHORT_METRICS:
+            cm = engine.compare(restaurant_id, metric, kinds=("peers",), restaurant=restaurant)
+            peers = next((c for c in cm.get("comparisons") or () if c.get("kind") == "peers"), {})
+            if peers.get("available") and peers.get("value") is not None and \
+                    peers.get("standing") not in (None, "unmeasured"):
+                out.append(cm)
+        return out
+    except Exception:
+        return []
+
+
+def cohort_facts(restaurant_id, restaurant=None) -> list:
+    """The response_validation benchmark facts behind the cohort block, so
+    a schedule note that quotes the band binds to it (BM3-3)."""
+    if restaurant is None:
+        try:
+            from models import get_restaurant
+            restaurant = get_restaurant(restaurant_id)
+        except Exception:
+            restaurant = None
+    facts = []
+    for cm in cohort_comparisons(restaurant_id, restaurant):
+        facts += cm.get("facts") or []
+    return facts
+
+
+def _cohort_block(restaurant_id, restaurant) -> str:
+    """Hours per $1k of sales against the restaurant's own type on Cavnar —
+    a ratio, no dollars, no names — in the engine's one wording
+    (engine.prompt_lines: the peer group and how it was chosen, set or
+    guessed, measured at k of m, as of when, comparison strength %), and
+    only when a like-for-like band clears the engine's floors."""
+    try:
+        from intelligence import engine
+        comps = cohort_comparisons(restaurant_id, restaurant)
+        if not comps:
             return ""
-        return ("\n\nHOW THIS RESTAURANT'S LABOR COMPARES (an anonymous cohort ratio — a reason to hold the line on "
-                "hours where it runs heavy, never a reason to add):\n" + "\n".join(lines))
+        lines = [f"  {ln}" for ln in engine.prompt_lines(comps)]
+        # This restaurant's own figure beside each band.
+        for i, cm in enumerate(comps):
+            peers = next(c for c in cm["comparisons"] if c.get("kind") == "peers")
+            lines[i] += f" This restaurant runs {float(peers['value']):g} labor hours per $1k of sales."
+        return (f"\n\n{COHORT_BLOCK_HEADER} (an anonymous peer-group ratio — a reason to hold the line on "
+                "hours where it runs heavy, never a reason to add; no ranking word under 75% comparison "
+                "strength):\n" + "\n".join(lines))
     except Exception:
         return ""
 

@@ -7,13 +7,22 @@ Two modes, chosen by Claude per-question rather than hard-coded here:
 questions about the restaurant's OWN numbers are answered strictly from
 the data snapshot (never invent a figure that isn't there — say so and
 suggest what to check instead), while general restaurant-consultant
-questions (marketing ideas, staffing strategy, menu pricing, industry
-benchmarks, or just conversation) draw on Claude's own expertise the same
-way any other AI assistant would, optionally grounded in the real
-snapshot data when it's relevant. The snapshot is still the model's only
-source of truth for this restaurant's actual figures — that half of the
-rule never loosens — but it's no longer the model's only allowed source
-of information overall.
+questions (marketing ideas, staffing strategy, menu pricing, or just
+conversation) draw on Claude's own expertise the same way any other AI
+assistant would, optionally grounded in the real snapshot data when it's
+relevant. The snapshot is still the model's only source of truth for this
+restaurant's actual figures — that half of the rule never loosens.
+
+Comparisons with other restaurants are NOT general expertise: a figure
+about other businesses comes only from the snapshot or a tool — a
+published industry figure with its source and year (benchmark_registry),
+or a Benchmark Engine comparison naming its peer group, how many, as of
+when and its comparison strength % (intelligence.engine). Anything else is
+general knowledge, said as such, with no figure. A group is named as the
+engine names it ("12 other Pizza on Cavnar", "12 other restaurants on
+Cavnar, all types") — "restaurants like yours" only for a like-for-like
+group of this restaurant's own type — and the Response Validation Layer's
+B1 and P2 rules hold every answer to that.
 """
 import json
 import re
@@ -589,47 +598,106 @@ def _dsr_context(viewer):
     return memory.context_block(viewer.id, tools.dsr_user(viewer), today)
 
 
-def _intelligence_context(restaurant_id):
-    """What this restaurant's own history says, and — only when enough
-    similar restaurants exist — where it stands among them and what held
-    across them (intelligence/). Counts and effects, never another
-    restaurant."""
+# The published industry figures Ask may quote, by the permission module
+# whose figure each is (a login denied Labor or Food Cost gets neither).
+_PUBLISHED_METRICS = (("labor_pct", "Labor %", ("labor",)), ("food_cost_pct", "Food cost %", ("inventory",)),
+                      ("prime_cost_pct", "Prime cost %", ("labor", "inventory")))
+# The benchmark facts behind the last snapshot's intelligence section, per
+# restaurant and permission set — read by the Response Validation Layer so
+# a peer or published claim the model makes from the snapshot binds (BM3-3).
+# Same lifetime and bound as the snapshot cache it sits beside.
+_INTEL_FACTS = {}
+
+
+def _denied_of(viewer):
+    return frozenset(getattr(viewer, "_ask_denied", ()) or ()) if viewer is not None else frozenset()
+
+
+def _intelligence_bundle(restaurant_id, viewer=None):
+    """(section text, benchmark facts). What this restaurant's own history
+    says, where it stands among other restaurants on Cavnar when a fair
+    comparison exists (the Benchmark Engine: a like-for-like type band, or
+    the all-types band only for a behaviour metric), what held across
+    them, and the published industry figures for its type — projected by
+    the viewer's module permissions (BM1-17). Counts and effects, never
+    another restaurant."""
+    denied = _denied_of(viewer)
+    facts = []
     try:
         import intelligence
-        lines = intelligence.context_lines(restaurant_id)
+        lines, facts = intelligence.context_bundle(restaurant_id, denied_modules=denied)
     except Exception:
         lines = []
     # The published industry figures for THIS restaurant's type, each with
     # its source and year (benchmark_registry, NS4 H3/M7) — the only
-    # industry numbers Ask may quote as figures.
+    # industry numbers Ask may quote as figures — and each a fact B1 binds.
     bench_lines = []
     try:
         import benchmark_registry as _br
         from models import get_restaurant as _gr_bench
         _r = _gr_bench(restaurant_id)
-        for metric, what in (("labor_pct", "Labor %"), ("food_cost_pct", "Food cost %"),
-                             ("prime_cost_pct", "Prime cost %")):
+        for metric, what, mods in _PUBLISHED_METRICS:
+            if any(m in denied for m in mods):
+                continue
             e = _br.for_restaurant(metric, _r)
             if e:
                 bench_lines.append(_br.line(e, what))
+                facts = facts + _br.facts(e, key_prefix="published")
     except Exception:
         bench_lines = []
-    if not lines and not bench_lines:
-        return ""
     out = ""
     if lines:
         out += ("WHAT THIS RESTAURANT'S HISTORY AND OTHER RESTAURANTS ON CAVNAR SHOW\n"
-                "- Own-history lines are this restaurant's. Cohort lines are aggregates over the cohort each line "
-                "names (never a named restaurant): a type cohort only when it says so, and 'all types' when it is "
-                "every restaurant on Cavnar — call that one 'restaurants on Cavnar', never 'restaurants like yours'. "
-                "Quote a band with its as-of date. Use a pattern as support for a recommendation, never as proof "
-                "about this restaurant; say the count when you cite one.\n"
-                + "\n".join(f"- {l}" for l in lines[:10]) + "\n")
+                "- Own-history lines are this restaurant's. Comparison lines are aggregates over the peer group "
+                "each line names (never a named restaurant), with how that group was chosen, how many of it "
+                "measured the figure and a comparison strength %. A same-type group only when the line says so; "
+                "the all-types group is 'other restaurants on Cavnar, all types' — never 'restaurants like "
+                "yours'. Quote a band with its group, size and as-of date. A comparison under 75% strength gets "
+                "no ranking word (top quarter, well above) — say 'about the middle' or give the band. Use a "
+                "pattern as support for a recommendation, never as proof about this restaurant; say the count "
+                "when you cite one.\n"
+                + "\n".join(f"- {l}" for l in lines[:12]) + "\n")
     if bench_lines:
         out += ("PUBLISHED INDUSTRY BENCHMARKS FOR THIS TYPE OF RESTAURANT (quote a figure only with its source "
                 "and year; a rule of thumb is a rule of thumb)\n"
                 + "\n".join(f"- {l}" for l in bench_lines) + "\n")
-    return out
+    _intel_facts_put((int(restaurant_id), denied), facts)
+    return out, facts
+
+
+def _intel_facts_put(key, facts):
+    import time
+    now = time.time()
+    _INTEL_FACTS.pop(key, None)
+    while _INTEL_FACTS:
+        k = next(iter(_INTEL_FACTS))
+        if len(_INTEL_FACTS) >= _CONTEXT_CACHE_MAX or now - _INTEL_FACTS[k][0] >= _CONTEXT_TTL_SECONDS:
+            _INTEL_FACTS.pop(k, None)
+        else:
+            break
+    _INTEL_FACTS[key] = (now, list(facts or ()))
+
+
+def snapshot_benchmark_facts(restaurant_id, viewer=None) -> list:
+    """The benchmark facts behind the snapshot this viewer was handed: the
+    ones its build recorded, else built again (the snapshot came from the
+    cache after the facts aged out). Never raises."""
+    import time
+    if not restaurant_id:
+        return []
+    hit = _INTEL_FACTS.get((int(restaurant_id), _denied_of(viewer)))
+    if hit and time.time() - hit[0] < _CONTEXT_TTL_SECONDS:
+        return list(hit[1])
+    try:
+        return _intelligence_bundle(restaurant_id, viewer=viewer)[1]
+    except Exception as e:
+        print(f"[ask_cavnar] benchmark facts unavailable rid={restaurant_id}: {e}")
+        return []
+
+
+def _intelligence_context(restaurant_id, viewer=None):
+    """The snapshot's intelligence section (_intelligence_bundle's text)."""
+    return _intelligence_bundle(restaurant_id, viewer=viewer)[0]
 
 
 def _commitments_context(restaurant_id):
@@ -744,9 +812,12 @@ def invalidate_context(restaurant_id=None):
     (models.on_restaurant_change)."""
     if restaurant_id is None:
         _CONTEXT_CACHE.clear()
+        _INTEL_FACTS.clear()
     else:
         for key in [k for k in _CONTEXT_CACHE if k[0] == int(restaurant_id)]:
             _CONTEXT_CACHE.pop(key, None)
+        for key in [k for k in _INTEL_FACTS if k[0] == int(restaurant_id)]:
+            _INTEL_FACTS.pop(key, None)
 
 
 import models as _models_listen
@@ -832,9 +903,11 @@ def build_context(restaurant):
     for always in (_memory_context, _decisions_context, _intelligence_context, _alerts_context, _commitments_context,
                    _feedback_context):
         try:
-            # The alerts section is filtered to what this viewer may see.
-            section = always(restaurant.id, viewer=restaurant) if always in (_alerts_context, _decisions_context) \
-                else always(restaurant.id)
+            # The alerts section is filtered to what this viewer may see, and
+            # so is the intelligence section (no labor or food figures for a
+            # login denied those modules, BM1-17).
+            section = always(restaurant.id, viewer=restaurant) if always in (
+                _alerts_context, _decisions_context, _intelligence_context) else always(restaurant.id)
             if section:
                 parts.append(section)
         except Exception:
@@ -906,7 +979,7 @@ _SYSTEM_STATIC = """You are Cavnar AI, an AI-powered restaurant intelligence con
 
 2. EVERYTHING ELSE — restaurant industry advice, marketing ideas, menu strategy, staffing/scheduling best practices, general business questions, or just conversation: answer using your own knowledge and expertise as an experienced restaurant consultant, same as you would in any other context. Weave in this restaurant's real data from the snapshot when it's genuinely relevant, but don't limit yourself to only what's in the snapshot for these — you're free to think and advise.
 
-BENCHMARKS AND COMPARISONS. An industry average, what "most restaurants" do, what is "typical", or how this restaurant compares with others is a figure about OTHER businesses. Give one as a number only when the snapshot carries it — a PUBLISHED INDUSTRY BENCHMARKS line (quote its source and year) or a cohort line (quote its cohort, size and as-of date). Anything else from your own knowledge is said as general industry knowledge, not measured here — in those words — and carries no figure. Never say "restaurants like yours" or "similar restaurants" unless a cohort line for this restaurant's type says so.
+BENCHMARKS AND COMPARISONS. An industry average, what "most restaurants" do, what is "typical", or how this restaurant compares with others is a figure about OTHER businesses. Give one as a number only when the snapshot carries it — a PUBLISHED INDUSTRY BENCHMARKS line (quote its source and year) or a comparison line (quote its peer group as the line names it, how many, and the as-of date). Anything else from your own knowledge is said as general industry knowledge, not measured here — in those words — and carries no figure. Never say "restaurants like yours" or "similar restaurants" unless a comparison line for this restaurant's own type says so; the all-types group is "other restaurants on Cavnar, all types". A ranking word (top quarter, well above, percentile) only on a comparison of 75% strength or more. Never say what "restaurants like yours" achieved by a percentage unless a line gives that measured result.
 
 Use judgment about which mode (or blend) a question calls for — "how do I get my labor cost down" wants both this restaurant's real labor % AND general scheduling advice, for example.
 
@@ -1189,18 +1262,36 @@ def _typed_facts(corpus) -> list:
     the snapshot text and everything else back figures as measured through
     context_text (the engine's hybrid mode)."""
     import response_validation as rv
-    facts = []
+    facts, bench = [], []
     for c in (corpus or [])[1:]:
         try:
             p = json.loads(c) if isinstance(c, str) else None
         except (TypeError, ValueError):
             p = None
         if isinstance(p, dict) and not _is_sample(p) and not p.get("error"):
+            if _is_engine_payload(p):
+                # read_platform_intelligence: its comparisons become the
+                # engine's benchmark facts, with their group, size, date and
+                # strength — never bare "benchmarks.0.p50" numbers with no
+                # source (BM3-3, BM4-4).
+                try:
+                    from intelligence import engine as _eng
+                    bench += _eng.facts(p["comparisons"])
+                except Exception as e:
+                    print(f"[ask_cavnar] engine facts unreadable: {e}")
+                p = {k: v for k, v in p.items() if k not in ("comparisons", "benchmarks")}
             facts += rv.facts_from_dict(p)
-    return facts[:600]
+    return bench + facts[:600]
 
 
-def _validation_context(corpus, restaurant_id, confidence=None, actions_done=(), data_state=None):
+def _is_engine_payload(p) -> bool:
+    comps = p.get("comparisons")
+    return isinstance(comps, list) and bool(comps) and all(
+        isinstance(c, dict) and "metric" in c and isinstance(c.get("comparisons"), list) for c in comps)
+
+
+def _validation_context(corpus, restaurant_id, confidence=None, actions_done=(), data_state=None,
+                        bench_facts=()):
     """The Response Validation Layer's context for one Ask answer."""
     import response_validation as rv
     text = "\n".join(str(c) for c in corpus or [])
@@ -1224,8 +1315,12 @@ def _validation_context(corpus, restaurant_id, confidence=None, actions_done=(),
     # floors and "never cut below" default (A2; schedule_rules.cut_floor).
     import schedule_rules as _sr
     cut = _sr.cut_policy(restaurant_id) if restaurant_id else {}
+    # The snapshot's benchmark facts (the engine's bands and the registry's
+    # published figures the intelligence section stated) first, then the
+    # tool payloads' typed facts.
     return rv.ValidationContext(
-        restaurant_id=restaurant_id, surface="ask", facts=_typed_facts(corpus), context_text=text,
+        restaurant_id=restaurant_id, surface="ask", facts=list(bench_facts or ()) + _typed_facts(corpus),
+        context_text=text,
         untrusted=_untrusted_blocks(corpus), cause_anchors=_cause_anchors(corpus),
         names_allowed=allowed, tenant_names_denied=denied, confidence=confidence,
         data_state=dict(data_state or {}),
@@ -1273,7 +1368,8 @@ def answer_data_state(restaurant_id, tools_used, consulted=(), snapshot_keys=())
         return {}
 
 
-def _finish(answer, corpus, tools_used, consulted, depth, restaurant_id, actions_done=(), snapshot_keys=()):
+def _finish(answer, corpus, tools_used, consulted, depth, restaurant_id, actions_done=(), snapshot_keys=(),
+            viewer=None):
     """(answer, meta) as the owner receives them, through the Response
     Validation Layer (workstream A). Two passes over one context: the first
     finds what does not check out (figures, causes, names — the flags the
@@ -1286,11 +1382,15 @@ def _finish(answer, corpus, tools_used, consulted, depth, restaurant_id, actions
     object. The figure check is recorded under the text shown (H4). The
     context carries the registry's data_state over what the answer read
     (answer_data_state), so a stale source is disclosed deterministically,
-    not only when the system prompt was followed (DH3-7)."""
+    not only when the system prompt was followed (DH3-7). The snapshot's
+    benchmark facts (snapshot_benchmark_facts, for this viewer) are typed
+    facts, so a peer or published claim binds to the figure it came from
+    (BM3-3)."""
     import dataclasses
     import response_validation as rv
     _ds = answer_data_state(restaurant_id, tools_used, consulted, snapshot_keys)
-    ctx = _validation_context(corpus, restaurant_id, actions_done=actions_done, data_state=_ds)
+    ctx = _validation_context(corpus, restaurant_id, actions_done=actions_done, data_state=_ds,
+                              bench_facts=snapshot_benchmark_facts(restaurant_id, viewer))
     first = rv.validate(answer, ctx)
     meta = _meta(answer, corpus, tools_used, consulted, depth, restaurant_id, verdict=first)
     # Carried out so an unattended caller (the weekly plan) checks its items
@@ -1764,7 +1864,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
 
         if getattr(message, "stop_reason", None) != "tool_use":
             answer, meta = _finish(_answer_of(message), seen_corpus, tools_used, consulted, depth, restaurant.id,
-                                   actions_done=actions_done, snapshot_keys=_snapshot_keys)
+                                   actions_done=actions_done, snapshot_keys=_snapshot_keys, viewer=restaurant)
             return (answer, truncated, proposals, meta)
 
         # Echo the assistant turn back verbatim — the API requires the
@@ -1884,7 +1984,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
                 restaurant_id=restaurant.id, action="ask_cavnar", readiness=_ready_ask,
             )
             answer, meta = _finish(_answer_of(final), seen_corpus, tools_used, consulted, depth, restaurant.id,
-                                   actions_done=actions_done, snapshot_keys=_snapshot_keys)
+                                   actions_done=actions_done, snapshot_keys=_snapshot_keys, viewer=restaurant)
             return (answer, getattr(final, "stop_reason", None) == "max_tokens", proposals, meta)
 
     # Ran out of rounds (or of time) — answer with what it has rather than
@@ -1896,7 +1996,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
         restaurant_id=restaurant.id, action="ask_cavnar", readiness=_ready_ask,
     )
     answer, meta = _finish(_answer_of(final), seen_corpus, tools_used, consulted, depth, restaurant.id,
-                           actions_done=actions_done, snapshot_keys=_snapshot_keys)
+                           actions_done=actions_done, snapshot_keys=_snapshot_keys, viewer=restaurant)
     return (answer, getattr(final, "stop_reason", None) == "max_tokens", proposals, meta)
 
 

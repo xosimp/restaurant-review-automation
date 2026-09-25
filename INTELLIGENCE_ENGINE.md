@@ -152,13 +152,37 @@ Ask, the queue, decisions and the ledger share (legacy
   `confidence.score()`, and not `card_confidence` (superseded 9/24/26). Old
   clients read its `score` (always a number), `band`, `label`, `reason`.
 - Ask gets two tools (`read_restaurant_memory`, `read_platform_intelligence`)
-  and one short context section, present only when the cohort clears the
-  floor, with counts and effects only. Each line names the cohort ACTUALLY
-  used — "other Pizza on Cavnar", or "other restaurants on Cavnar — all
-  types, not a like-for-like cohort" for a platform band — never "restaurants
-  like yours" (NS4 H4); carries the band's as-of date (M/D/YY) and the week
-  of this restaurant's own figure; and says when the type was inferred from
-  the name rather than set (NS4 M5).
+  and one short context section (`intelligence.context_bundle`), with counts
+  and effects only. Since the Benchmarking audit (9/24/26, workstream V)
+  the comparison lines are the Benchmark Engine's (`engine.compare_all` +
+  `engine.prompt_lines`): a band of the restaurant's own type, or the
+  all-types band ONLY for a behaviour metric — never an all-types labor %,
+  food cost % or hours-per-$1k band. Each line names the group exactly as
+  the engine does — "12 other Pizza on Cavnar", or "12 other restaurants on
+  Cavnar, all types" — never "restaurants like yours" for the all-types
+  group; says how the group was chosen ("peer group: restaurants of the
+  same type (Pizza), the type set by the owner" / "… inferred from the
+  restaurant's name, not set by the owner"), how many measured the figure
+  ("measured at k of m in the group": k members measured this metric that
+  week, m the most that measured any benchmarked metric), the as-of date
+  (M/D/YY) and the comparison strength %. The schedule prompt's cohort
+  block (`schedule_engine._cohort_block`) uses the same lines.
+- **Every benchmark a model is handed is a fact** (`engine.facts`, kind
+  "benchmark", with `source_kind` / `engine_kind`, `n`, `min_n`, `as_of`,
+  `restaurant_category`, `strength_pct`, `standing`, `comparable`): Ask's
+  snapshot records them beside its text (`ask_cavnar.snapshot_benchmark_facts`)
+  and types the `read_platform_intelligence` payload's `comparisons` through
+  `engine.facts`; the schedule note's context registers the cohort block's
+  facts; the labor and food reads register the registry's published
+  figures. The Response Validation Layer's B1 binds every peer or industry
+  claim to one of them for the same measure, or the claim is not said
+  (response_validation's docstring has the whole rule, and P2 the rule
+  and fact shape for "restaurants like yours reduced X by N%").
+- **Projected by the login.** The context section, both tools and their
+  facts leave out every metric of a module the login may not view
+  (`intelligence.visible` / `metric_module` over
+  `permissions.MODULE_VIEW_PERMISSIONS`): no labor or food cost figure —
+  own, peer or published — for a login denied Labor or Food Cost (BM1-17).
 - Every event that answers a recommendation is already recorded; the sync
   turns it into learning. Future modules call `feedback.record` directly.
 
@@ -254,8 +278,9 @@ platform's, without this restaurant) may move it, only when it stands on
 at least `MIN_COHORT` restaurants that MEASURED the kind and
 `PRIOR_MIN_MEASURED` (10) measured results; the factor is
 asserted anonymous where `score()` builds it and again before a card uses
-it, and the card says "restaurants like yours: X of Y measured … improved"
-— counts only (`basis`: own | cohort | platform). It used to be computed
+it, and the card names the group the prior was read from ("Pizza on
+Cavnar: X of Y measured … improved", `prior_label` = the cohort's label,
+else "other restaurants on Cavnar") — counts only (`basis`: own | cohort | platform). It used to be computed
 and then ignored.
 
 ## Recommendation Confidence (`confidence_engine`, `rec_trust`, `data_freshness`)
@@ -369,8 +394,8 @@ word and the object rides beside it as `confidence_detail`.
   saw the kind do worse than chance). It never produces a figure on its
   own and never lifts one (B1 H9, B2 #3: 4 own results all worsened and a
   10-of-12 cohort read 86% high); below the own floor the basis names it
-  ("at restaurants like yours: 10 of 12 improved — not counted until your
-  own are in") and the figure is `null`. `kind_record` fills the cohort's
+  by its group ("(Pizza on Cavnar: 10 of 12 improved — not counted until
+  your own are in)", `prior_label`) and the figure is `null`. `kind_record` fills the cohort's
   `prior_*` counts at any own count for this. Its other additive fields
   (group Q): `base_rate`, `base_rate_source`, `base_rate_n`,
   `base_rate_basis`, `untaken`, `rate_recent` / `rate_recent_n_eff` /
@@ -687,9 +712,18 @@ split, outcome feature, direction, sentence template. Adding one is one
 dict. The test is a seeded two-sided permutation test on the difference of
 means (2,000 shuffles; exact enough at cohort sizes and free of SciPy),
 with Cohen's d as the effect floor and Benjamini–Hochberg across the
-night's hypotheses. Sentences say counts and effects ("Across 14 similar
-restaurants, those replying to reviews within a day averaged 0.3★ higher
-over the following 90 days") and never a name.
+night's hypotheses. Sentences say counts and effects and never a name.
+Every hypothesis compares restaurants' latest rows side by side — the
+behaviour and the outcome cover the SAME weeks — so a sentence says "at
+the same time as", never "over the following" ("Across 14 pizza on
+Cavnar, those replying to at least half their reviews within a day saw
+their rating move 0.30★ higher than those that did not, measured at the
+same time as the replying (not after it)"; BM1-16, BM4-5). A pattern found
+across every restaurant on Cavnar pools every type and carries
+`pooled_types`; `patterns.pooled_on_economics` keeps such a pattern about
+labor, food cost or waste out of `support_for` (the K1 pattern-support
+factor) and out of Ask's context, since a type difference would pass as a
+behaviour effect.
 
 ## Privacy safeguards
 

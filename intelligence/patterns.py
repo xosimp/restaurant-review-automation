@@ -15,6 +15,15 @@ A pattern that stops meeting the bar is retired, not deleted — the
 dashboard shows what used to hold. Sentences carry counts and effects;
 they never carry a name, and `privacy.assert_anonymous` runs on every row
 before it is stored.
+
+Every hypothesis compares restaurants' latest rows side by side: the
+behaviour and the outcome are measured over the SAME weeks, so a sentence
+says "at the same time as", never "over the following" (BM1-16, BM4-5). A
+pattern found across every restaurant on Cavnar ("platform") pools every
+type of restaurant and is marked `pooled_types`; such a pattern never
+supports a recommendation about an economics metric (labor %, food cost %,
+waste — metrics_registry), where a type difference would pass as a
+behaviour effect (pooled_on_economics).
 """
 import json
 from datetime import date
@@ -42,7 +51,7 @@ SHUFFLES = 2000
 HYPOTHESES = (
     {"key": "reply_fast_rating", "behaviour": ("response_24h_rate_30d", ">=", 0.5), "outcome": "avg_rating_delta",
      "better": "higher", "unit": "★",
-     "sentence": "those replying to at least half their reviews within a day moved {effect_abs:.2f}★ {direction} over the following 90 days than those that did not",
+     "sentence": "those replying to at least half their reviews within a day saw their rating move {effect_abs:.2f}★ {direction} than those that did not, measured at the same time as the replying (not after it)",
      "rec_kinds": ("reply", "respond", "reviews", "urgent")},
     {"key": "reply_rate_rating", "behaviour": ("reply_rate_30d", ">=", 0.8), "outcome": "avg_rating_30d",
      "better": "higher", "unit": "★",
@@ -157,7 +166,24 @@ def strength_fields(d) -> dict:
     d["strength_pct"] = int(round(c * 100)) if c is not None else None
     d["strength_label"] = STRENGTH_LABEL
     d["strength_basis"] = STRENGTH_BASIS
+    d["pooled_types"] = d.get("cohort") == "platform"
     return d
+
+
+def pooled_on_economics(p) -> bool:
+    """A platform-pooled pattern (every type of restaurant together) about
+    an economics metric — labor %, food cost %, waste, hours or staff per
+    $1k (metrics_registry) — on either side of its split. It is never
+    support for a recommendation: a coffee shop and a steakhouse differ on
+    those for reasons that have nothing to do with the behaviour."""
+    if not (p or {}).get("pooled_types") and (p or {}).get("cohort") != "platform":
+        return False
+    from . import metrics_registry as reg
+    ev = p.get("evidence") or {}
+    beh = ev.get("behaviour") or []
+    keys = [ev.get("outcome")] + ([beh[0]] if beh else [])
+    return any(reg.comparability(k) == reg.ECONOMICS or str(k or "").startswith(("labor_", "food_cost", "waste_"))
+               for k in keys if k)
 
 
 def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles=SHUFFLES) -> dict:
@@ -207,7 +233,8 @@ def discover(db_path=DB_PATH, cohorts: dict = None, today: date = None, shuffles
                    "sentence": _sentence(h, c, label, c["n_total"]),
                    "evidence": {"n": c["n_total"], "mean_with": privacy.round_effect(c["mean_with"], 3),
                                 "mean_without": privacy.round_effect(c["mean_without"], 3), "behaviour": list(h["behaviour"]),
-                                "outcome": h["outcome"], "rec_kinds": list(h["rec_kinds"])}}
+                                "outcome": h["outcome"], "rec_kinds": list(h["rec_kinds"]),
+                                "pooled_types": c["cohort"] == "platform"}}
             privacy.assert_anonymous(row)
             conn.execute(
                 "INSERT INTO intel_patterns (key, cohort, hypothesis, n_with, n_without, effect, effect_unit, cohen_d, p_value, "
@@ -298,9 +325,12 @@ def all_patterns(db_path=DB_PATH, limit=100) -> list:
 
 
 def support_for(rec_kind: str, cohort: str = None, db_path=DB_PATH) -> dict | None:
-    """The strongest active pattern whose rec_kinds cover this kind."""
+    """The strongest active pattern whose rec_kinds cover this kind — never
+    a platform-pooled one about an economics metric (pooled_on_economics)."""
     kind = (rec_kind or "").split(":")[0]
     for p in active(cohort, db_path=db_path):
+        if pooled_on_economics(p):
+            continue
         kinds = p["evidence"].get("rec_kinds") or []
         if rec_kind in kinds or kind in kinds:
             return p

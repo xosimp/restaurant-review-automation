@@ -1199,35 +1199,61 @@ def _read_dish_scorecard(restaurant_id):
     return menu_intelligence.dish_scorecard(restaurant_id)
 
 
-def _read_restaurant_memory(restaurant_id):
+def _read_restaurant_memory(restaurant_id, _viewer=None):
     import intelligence
     mem = intelligence.restaurant_memory(restaurant_id)
+    # Projected by the login's module permissions: no labor or food figure
+    # for a login denied that module (BM1-17).
+    denied = _denied(_viewer)
+    feats = (mem["features"] or {}).get("features")
+    if isinstance(feats, dict) and denied:
+        feats = {k: v for k, v in feats.items() if intelligence.visible(k, denied)}
+    slopes = {k: v for k, v in (mem["slopes"] or {}).items() if intelligence.visible(k, denied)}
     return {"busiest_days": mem["busiest_days"], "seasonality": mem["seasonality"],
             "record": {"worked": mem["record"]["worked"], "ignored": mem["record"]["ignored"],
                        "by_kind": {k: {"accepted": v["accepted"], "declined": v["declined"], "measured": v["measured"],
                                        "improved": v["improved"], "success_rate": v["success_rate"]}
                                    for k, v in mem["record"]["by_kind"].items()}},
-            "slopes": mem["slopes"], "features": (mem["features"] or {}).get("features"),
+            "slopes": slopes, "features": feats,
             "note": "This restaurant's own history only."}
 
 
-def _read_platform_intelligence(restaurant_id):
+def _read_platform_intelligence(restaurant_id, _viewer=None):
+    """How this restaurant compares with other restaurants on Cavnar,
+    through the Benchmark Engine: `comparisons` (engine.compare_all — a
+    like-for-like band of its own type, the all-types band only for a
+    behaviour metric, never one for labor % or food cost %), each with its
+    peer group, n, as_of, comparison strength % and why_not when there is
+    none; `lines` (engine.prompt_lines, the one wording); `benchmarks`,
+    the headline band per metric for older readers; patterns. Projected by
+    the login's module permissions (BM1-17). Ask types the comparisons as
+    benchmark facts (ask_cavnar._typed_facts), so a claim binds to them."""
     import intelligence
     from models import get_restaurant
+    from intelligence import benchmarks as _b, engine as _eng, patterns as _p
     r = get_restaurant(restaurant_id)
     cohort, source = intelligence.cohort_for(r) if r else (None, None)
-    from intelligence import benchmarks as _b, patterns as _p
-    # Each band names the cohort it was actually read from (a platform band
-    # is "All restaurants on Cavnar", not "like yours"), its size with this
-    # restaurant left out, and its as_of date; an inferred type says so
-    # (NS4 H4/H5/M5, NS6 §B).
-    bands = [b for b in _b.all_for(restaurant_id, cohort=cohort, cohort_source=source)]
+    denied = _denied(_viewer)
+    comps = [c for c in _eng.compare_all(restaurant_id, kinds=("peers", "platform", "industry"), restaurant=r)
+             if intelligence.visible(c.get("metric"), denied)]
+    for c in comps:
+        c.pop("facts", None)
+    bands = []
+    for c in comps:
+        by = {x["kind"]: x for x in c.get("comparisons") or ()}
+        head = next((by[k] for k in ("peers", "platform") if by.get(k, {}).get("available")), None) or \
+            by.get("peers") or {"available": False}
+        bands.append(dict(head, metric=c["metric"], label=c.get("label")))
+    pats = [p for p in _p.active(cohort, limit=8)
+            if intelligence._pattern_visible(p, denied) and not _p.pooled_on_economics(p)]
     return {"cohort": cohort, "cohort_label": _b.cohort_label(cohort), "cohort_source": source,
             "inferred": source == "inferred",
-            "benchmarks": bands, "patterns": _p.active(cohort, limit=8),
-            "note": (f"Quartile bands are over at least {_b.MIN_QUARTILE_N} other restaurants (this one left out), "
-                     f"no older than {_b.MAX_BAND_AGE_WEEKS} weeks, each with its as_of date — quote the date and the "
-                     "cohort_label with any band. A band marked unavailable means too few restaurants yet. "
+            "comparisons": comps, "lines": _eng.prompt_lines(comps), "benchmarks": bands, "patterns": pats,
+            "note": (f"Each comparison names its peer group: a band of this restaurant's own type on Cavnar, or "
+                     f"'other restaurants on Cavnar, all types' (behaviour metrics only). Bands are over at least "
+                     f"{_b.MIN_QUARTILE_N} other restaurants (this one left out), no older than "
+                     f"{_b.MAX_BAND_AGE_WEEKS} weeks. Quote the group, n and as_of with any band; under 75% comparison "
+                     "strength use no ranking word. A comparison that is unavailable carries why_not — say it. "
                      + ("This restaurant's type was inferred from its name, not set by the owner — say so. "
                         if source == "inferred" else ""))}
 
@@ -2096,6 +2122,7 @@ TOOLS = [
         "kind": "read",
         "fn": _read_restaurant_memory,
         "module": None,
+        "wants_viewer": True,
         "spec": {
             "name": "read_restaurant_memory",
             "description": (
@@ -2111,14 +2138,18 @@ TOOLS = [
         "kind": "read",
         "fn": _read_platform_intelligence,
         "module": None,
+        "wants_viewer": True,
         "spec": {
             "name": "read_platform_intelligence",
             "description": (
-                "WHERE THIS RESTAURANT STANDS AMONG RESTAURANTS LIKE IT, and the operational patterns that held "
-                "across them: benchmark bands (p25/median/p75) for rating, response time, labor, food cost, waste "
-                "and campaigns, plus statistically tested patterns with counts and effects. Aggregates over at "
-                "least five restaurants; never another restaurant's figures. Says 'not enough similar restaurants' "
-                "when the cohort is too small — repeat that honestly rather than guessing."
+                "HOW THIS RESTAURANT COMPARES WITH OTHER RESTAURANTS ON CAVNAR, for the peer group each comparison "
+                "names — restaurants of its own type on Cavnar, or 'other restaurants on Cavnar, all types' (only "
+                "for measures comparable across types, never labor or food cost) — plus the published industry "
+                "figure for its type and statistically tested patterns with counts and effects. Bands are over at "
+                "least 8 other restaurants and no older than 8 weeks; each carries its group, size, as_of date "
+                "and a comparison strength %. Quote the group as named, the size and the date; no ranking word "
+                "under 75% strength. A comparison marked unavailable says why (usually too few restaurants of "
+                "the type yet) — repeat that honestly rather than guessing. Never another restaurant's figures."
             ),
             "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
         },
