@@ -735,7 +735,6 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 /* A chip on a constant (a target, a balance, a count of places tracked) is
    not a status: no tone, no breathing dot (#31). */
 .hb-chip.neutral .dot{display:none}
-.hb-chip.neutral{box-shadow:none}
 /* A module's Today line (#48): one deterministic sentence under the h1,
    built from the counts and stored reads the page already holds. */
 .mod-today{margin-top:6px;font-size:15px;line-height:1.5;color:var(--ink2);max-width:760px}
@@ -982,7 +981,8 @@ svg[data-pts] rect:hover{filter:drop-shadow(0 0 6px rgba(200,75,47,.5))}
 #hb-tip{box-shadow:var(--elev-float);border:1px solid var(--sf-ai-line)}
 /* rows and expandable sections */
 .hb-row{transition:background-color .18s ease,transform .18s ease;border-radius:8px}
-.hb-row:hover{background:var(--sf-recess)}
+/* No hover wash on list rows (9/25/26): only the charts light up under the
+   cursor; a row isn't a control. */
 details>summary{transition:color .18s ease}
 details[open]>summary~*{animation:askIn .3s ease both}
 /* section rules carry a short ember mark */
@@ -2110,7 +2110,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 .hb-h1{font-family:'Clash Display',sans-serif;font-weight:500;font-size:clamp(30px,3.2vw,40px);line-height:1.04;letter-spacing:-.012em;color:var(--ink);margin:8px 0 8px;text-wrap:balance}
 .hb-h1{word-spacing:.14em}
 .hb-h1 .hb-head{color:var(--ink3)}
-.hb-h1 .hb-head.bad{color:var(--hb-bad)}.hb-h1 .hb-head.warn{color:var(--hb-warn)}.hb-h1 .hb-head.good{color:var(--hb-good)}.hb-h1 .hb-head.neutral{color:var(--ink2)}
+.hb-h1 .hb-head.bad{color:var(--hb-bad)}.hb-h1 .hb-head.warn{color:var(--hb-warn)}.hb-h1 .hb-head.good{color:var(--hb-good)}.hb-h1 .hb-head.neutral{color:var(--ink3)}
 .hb-sub{font-size:14.5px;color:var(--ink3);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 /* Shared section-header row (Inbox, Schedule, History, ...) — this had no
    rule of its own at all, so the schedule subtitle ("... X% target ...") rendered
@@ -2153,6 +2153,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 /* One tap: the server's quick actions, a row of buttons under the header. */
 .hb-quick{flex:1 1 100%;display:flex;gap:8px;flex-wrap:wrap;margin-top:-12px}
 .hb-quick[hidden]{display:none}
+.hb-quick .hb-qa .hb-num{color:var(--ember);font-weight:700}
 /* The confirm card an outward Home action opens in place (hbPublish). */
 .hb-pub-confirm{margin:10px 0 4px}
 .hb-pub-confirm .ask-prop{max-width:none}
@@ -2360,7 +2361,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-card.rail.good{border-left-color:var(--hb-good)}
 .hb-card.rail.ember{border-left-color:var(--ember)}
 .hb-h3{font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin:0 0 10px;display:flex;justify-content:space-between;align-items:baseline;gap:10px}
-.hb-h3 .cnt{font-family:'Space Grotesk',sans-serif;letter-spacing:0;color:var(--ink3);font-weight:600}
+.hb-h3 .cnt{font-family:inherit;letter-spacing:.08em;color:var(--ink3);font-weight:600}
+/* A label is words in the heading's own face; only its numbers, and a pure
+   count, take the number face (9/25/26: "the past 6 months" was set whole
+   in Space Grotesk). */
+.hb-h3 .cnt.n,.hb-h3 .cnt .hb-num{font-family:'Space Grotesk',sans-serif;letter-spacing:0}
 .hb-grid{display:grid;gap:16px;margin-top:16px}
 #hb-attn-card{margin-top:22px}
 .hb-grid.c2{grid-template-columns:minmax(0,7fr) minmax(0,5fr)}
@@ -2441,6 +2446,12 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 /* Done / Not for us / Track on a module recommendation (rec_ledger) — Home's answer row, inline */
 .rec-ans{display:inline-flex;align-items:center;flex-wrap:wrap;gap:0;margin-top:4px}
 .rec-ans .cbtn+.cbtn{margin-left:10px;padding-left:12px;border-left:1px solid var(--hb-line)}
+/* One row of small text answers (9/25/26): Evidence | Done | Pass and
+   Done | Pass | Ask about this read as one set - one size, one baseline, a
+   thin rule between each. */
+.hb-row .rec-ans,.hb-focus .ft .rec-ans{margin-top:0}
+.hb-ev+.rec-ans>.cbtn:first-child,.hb-focus .ft .rec-ans+.hb-ask{margin-left:10px;padding-left:12px;border-left:1px solid var(--hb-line);border-radius:0}
+.hb-focus .ft .rec-ans+.hb-ask{margin-left:0}
 .rec-ans-done{font-size:12.5px;color:var(--ink3);font-weight:500}
 /* Why not? — the one reason picker behind every "Not for us" (rec-ROI #22):
    a recessed strip under the line it answers, six one-tap reasons, an
@@ -2494,6 +2505,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-tl .it .t .rec-ans{display:flex;margin-top:6px}
 .hb-tl .it .t .hb-tl-acts{display:flex;align-items:center;flex-wrap:wrap;gap:8px 0;margin-top:8px}
 .hb-tl .it .t .hb-tl-acts .rec-ans{margin-top:0}
+/* "Ask" centred on the line's first row of text (it sat ~4px high once the
+   line's action moved under it, 9/25/26). */
+.hb-tl .it>.cbtn[data-ask]{margin-top:4px}
 .hb-tl .it .t .hb-tl-acts .sep{display:inline-block;width:1px;height:18px;background:var(--hb-line);margin:0 14px 0 12px}
 /* the ledger: sentences with the count in Space Grotesk */
 .fc2-recipe{padding:10px 0;border-bottom:1px solid var(--paper2)}
@@ -2615,7 +2629,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-focus .ev>span{transition:border-color .18s ease,transform .18s ease,background-color .18s ease}
 .hb-focus .ev>span:hover{border-color:var(--hb-copper);transform:translateY(-1px)}
 .hb-rcpt .it{border-color:transparent;transition:background-color .18s ease}
-.hb-rcpt .it:hover{background:var(--hb-tint)}
+
 .hb-stat{transition:border-color .18s ease,transform .18s ease}.hb-stat:hover{border-color:var(--hb-line);transform:translateY(-1px)}
 /* alive: the monitoring pill and the signal that travels the join */
 .hb-live{display:inline-flex;align-items:center;gap:8px;font-family:'Apfel Grotezk',sans-serif;font-size:12.5px;font-weight:600;letter-spacing:.01em;text-transform:none;color:var(--ink3)}
@@ -2627,12 +2641,18 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-fresh-k .hb-num{letter-spacing:0;color:var(--ink2)}
 .hb-fresh-it{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:var(--hb-inner);border:1px solid var(--hb-line2);line-height:1.35}
 .hb-fresh-it b{font-weight:700;color:var(--ink2)}
+/* The basis is one inline run, so the pill's flex gap never lands between
+   the parts of a date ("9 / 13 / 26", 9/25/26); only the % is coloured:
+   90-100 green, 0 red, anything between amber. */
+.hb-fresh-it .bs{display:inline}
+.hb-fresh-it .pc{font-weight:700}
+.hb-fresh .hb-fresh-it .pc.hi{color:var(--hb-good)}.hb-fresh .hb-fresh-it .pc.mid{color:var(--hb-warn)}.hb-fresh .hb-fresh-it .pc.zero{color:var(--hb-bad)}
 .hb-fresh-it i{width:7px;height:7px;border-radius:50%;background:var(--ink3);flex-shrink:0}
 .hb-fresh-it.current i{background:var(--hb-good);box-shadow:0 0 7px var(--hb-good)}
 .hb-fresh-it.aging i,.hb-fresh-it.disconnected i{background:var(--hb-warn);box-shadow:0 0 7px var(--hb-warn)}
 .hb-fresh-it.stale{border-color:var(--hb-warn)}.hb-fresh-it.stale i{background:var(--hb-warn);box-shadow:0 0 9px var(--hb-warn)}
 .hb-fresh-it.sample i{background:repeating-linear-gradient(135deg,var(--ink3) 0 2px,transparent 2px 4px)}
-.hb-fresh-it .pc{color:var(--ink2);font-weight:600}
+.hb-fresh-it .pc{color:var(--ink2);font-weight:700}
 /* Data Health (Data Freshness #21-23): the kicker opens the drawer (the
    explanation modal, dark in both themes, so its rows use the Why? panel's
    .cf-p tokens); each module header carries one .hb-fresh chip from the
@@ -3143,6 +3163,12 @@ svg:hover .hb-xh{opacity:1}
   function ago(s){var d=parseTs(s);if(!d)return '—';var m=Math.round((Date.now()-d)/60000);if(m<1)return 'just now';if(m<60)return m+'m ago';var h=Math.round(m/60);if(h<48)return h+'h ago';return Math.round(h/24)+'d ago';}
   function mdy(x){var d=x instanceof Date?x:(typeof x==='string'&&/^\d{4}-\d{2}-\d{2}/.test(x)?new Date(x.slice(0,4),+x.slice(5,7)-1,+x.slice(8,10)):new Date(x));if(isNaN(d))return esc(x||'');return (d.getMonth()+1)+'/'+d.getDate()+'/'+String(d.getFullYear()).slice(-2);}
   function dateKicker(iso){return mdy(iso?new Date(iso):new Date());}
+  // "September 25th, 2026" for the restaurant's own date (Home's kicker).
+  function longDate(iso){
+    var m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso||'')),d=m?new Date(+m[1],+m[2]-1,+m[3]):new Date();
+    var n=d.getDate(),t=(n%100>=11&&n%100<=13)?'th':(['th','st','nd','rd'][n%10]||'th');
+    return ['January','February','March','April','May','June','July','August','September','October','November','December'][d.getMonth()]+' '+n+t+', '+d.getFullYear();
+  }
   // "Friday" for the restaurant's own date (the date part of local_now, so
   // the viewer's time zone never moves it to another day).
   function weekdayName(iso){
@@ -3303,7 +3329,7 @@ svg:hover .hb-xh{opacity:1}
       var lbl=f.label||MODLABEL[f.module||f.key]||f.source||f.module||f.key||'';if(!lbl)continue;
       var basis=f.basis||f.note||(f.as_of?'as of '+f.as_of:'');
       var pc=(typeof f.pct==='number'&&isFinite(f.pct))?Math.round(f.pct):null;
-      h+='<span class="hb-fresh-it '+st+'" title="'+esc(basis)+'"><i></i><b>'+esc(lbl)+'</b>'+(st==='disconnected'&&basis?' disconnected ·':'')+(basis?' '+num(basis):(FRESH_WORD[st]?' '+esc(FRESH_WORD[st]):''))+(pc!=null&&st!=='sample'&&st!=='off'?' <span class="pc hb-num">'+pc+'%</span>':'')+'</span>';}
+      h+='<span class="hb-fresh-it '+st+'" title="'+esc(basis)+'"><i></i><b>'+esc(lbl)+'</b>'+(st==='disconnected'&&basis?' disconnected ·':'')+(basis?' <span class="bs">'+num(basis)+'</span>':(FRESH_WORD[st]?' '+esc(FRESH_WORD[st]):''))+(pc!=null&&st!=='sample'&&st!=='off'?' <span class="pc hb-num '+(pc>=90?'hi':(pc<=0?'zero':'mid'))+'">'+pc+'%</span>':'')+'</span>';}
     return h+'</div>';
   }
   // Bars with an optional target rule; bars over target glow red. Text uses currentColor (the tile sets it).
@@ -3692,9 +3718,8 @@ svg:hover .hb-xh{opacity:1}
   function renderTop(d){
     var c=d.context||{};
     var k=document.getElementById('hb-kicker');
-    var ctx=c.restaurant_name+((c.location_name&&c.location_name!==c.restaurant_name)?' — '+c.location_name:'');
-    if(c.view==='location'&&c.group_name)ctx=c.group_name+' · '+(c.location_name||c.restaurant_name);
-    if(k)k.textContent=dateKicker(d.local_now)+' · '+ctx;
+    // The date in words, alone (owner's call, 9/25/26): "September 25th, 2026".
+    if(k)k.textContent=longDate(d.local_now);
     var h=document.getElementById('hb-h1');
     if(h)h.innerHTML=esc(greeting(d.local_now))+(d.greeting_name?', '+esc(d.greeting_name):'')+'. <span class="hb-head '+esc(d.brief.tone)+'">'+esc(d.brief.headline)+'</span>';
     var sub=document.getElementById('hb-sub');var parts=[];
@@ -3960,7 +3985,7 @@ svg:hover .hb-xh{opacity:1}
       else if(fMod&&MODLABEL[fMod])h+='<button type="button" class="cbtn cbtn-primary" data-open-module="'+esc(fMod)+'">Open '+esc(MODLABEL[fMod])+'</button>';}
     else if(!clear&&!ff&&!att.length&&recs.length&&recs[0].metric){h+='<button type="button" class="cbtn cbtn-primary" data-track-key="'+esc(recs[0].key)+'" data-track-title="'+esc(recs[0].title)+'" data-track-metric="'+esc(recs[0].metric)+'">Track this</button>';}
     h+=fAns;
-    if(ask)h+='<button type="button" class="cbtn cbtn-text cbtn-inline" data-ask="'+esc(ask)+'">Ask about this →</button>';
+    if(ask)h+='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm hb-ask" data-ask="'+esc(ask)+'">Ask about this →</button>';
     return h+'</div></section>';
   }
   // ── action lines ──────────────────────────────────────────────────────────
@@ -4184,7 +4209,7 @@ svg:hover .hb-xh{opacity:1}
     var xk=a.rec_key||a.title||'',done=_hbExtraDone[xk];
     return '<div class="hb-row hb-att '+esc(a.severity)+(i>=3?' hb-attn-more':'')+'"'+(i>=3?' hidden':'')+' data-same="'+esc(hbSame(a.key))+'" data-extra-key="'+esc(xk)+'"><span class="d"></span><div class="t wrap">'+num(a.title)+'</div>'
       +(a.mod?'<span class="m">'+esc(a.mod)+'</span>':'')+(a.act||'')
-      +(a.explain?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-explain="'+esc(a.explain)+'" data-explain-title="'+esc(a.title)+'" data-explain-kicker="A question, not a finding"'+(a.rec_key?' data-explain-key="'+esc(a.rec_key)+'"':'')+'>Evidence</button>':'')
+      +(a.explain?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm hb-ev" data-explain="'+esc(a.explain)+'" data-explain-title="'+esc(a.title)+'" data-explain-kicker="A question, not a finding"'+(a.rec_key?' data-explain-key="'+esc(a.rec_key)+'"':'')+'>Evidence</button>':'')
       +(done?'<span class="rec-ans">'+done+'</span>':(a.ans||''))+'</div>';
   }
   // The card's one sentence (density fix #48), deterministic from the rows
@@ -4192,17 +4217,18 @@ svg:hover .hb-xh{opacity:1}
   // review, Salmon runs out by 6pm." Critical first (and an open high-
   // severity issue counts as critical), then what is worth handling today.
   function hbAttnLine(items,iss){
-    iss=iss||[];var n=items.length+iss.length;if(!n)return '';
-    var crit=[],imp=[],i;
-    for(i=0;i<items.length;i++){if(items[i].severity==='critical')crit.push(items[i]);else if(items[i].severity==='important')imp.push(items[i]);}
-    for(i=0;i<iss.length;i++){var x=iss[i];if(x.status==='open'&&x.severity==='high')crit.push(x);else if(x.status==='open')imp.push(x);}
-    var lead=crit.length?crit:imp;
-    var names=[];for(i=0;i<lead.length&&names.length<2;i++){var t=String(lead[i].title||'').replace(/[.\s]+$/,'');if(t)names.push(t);}
-    if(!lead.length){names=[];for(i=0;i<items.length&&names.length<2;i++){var w=String(items[i].title||'').replace(/[.\s]+$/,'');if(w)names.push(w);}
-      return n+' to watch'+(names.length?': '+names.join(', '):'')+'.';}
-    var k=lead.length,word=crit.length?(k===1?'needs you now':'need you now'):(k===1?'is worth handling today':'are worth handling today');
-    var rest=k-names.length;
-    return (k===n?k+' '+word:n+' flagged → '+k+' '+word)+(names.length?': '+names.join(', ')+(rest>0?' and '+rest+' more':''):'')+'.';
+    // Counts only, and only with two or more items (9/25/26): the line used
+    // to name the first items, which with one item restated the row right
+    // under it word for word.
+    iss=iss||[];var n=items.length+iss.length;if(n<2)return '';
+    var crit=0,imp=0,i;
+    for(i=0;i<items.length;i++){if(items[i].severity==='critical')crit++;else if(items[i].severity==='important')imp++;}
+    for(i=0;i<iss.length;i++){var x=iss[i];if(x.status==='open'&&x.severity==='high')crit++;else if(x.status==='open')imp++;}
+    var watch=n-crit-imp,parts=[];
+    if(crit)parts.push(crit+(crit===1?' needs you now':' need you now'));
+    if(imp)parts.push(imp+' worth handling today');
+    if(watch)parts.push(watch+' to watch');
+    return n+' flagged: '+parts.join(', ')+'.';
   }
   function renderAttention(d,used){
     var items=(d.attention||[]).slice(used&&used.att?1:0).concat(_hbAttnExtra),iss=_hbIssues||[],total=items.length+iss.length;
@@ -4362,7 +4388,8 @@ svg:hover .hb-xh{opacity:1}
     // jumping when its reads arrive.
     h+='<section id="hb-day" aria-label="The day"><div class="hb-card quiet" style="margin-top:34px" aria-hidden="true"><div class="hb-skel" style="width:38%"></div><div class="hb-skel" style="width:82%"></div><div class="hb-skel" style="width:64%"></div></div></section>';
     h+=renderRecs(d,used&&used.rec?1:0);
-    if(!fresh)h+=renderReadiness(d);
+    // The connection pills are shown only to a brand-new account (above, as
+    // its setup steps): past that they restated the Data health strip.
     // Still open and the close-out: work, so outside the collapsed results.
     h+='<section id="hb-open" aria-label="Still open"></section>';
     h+='<details class="hb-results" id="hb-results" data-nav="home/results"'+(hbResultsOpen()?' open':'')+'><summary><span class="hb-h3">Results</span><span id="hb-results-line">'+num(hbResultsLine(d.value,null,null))+'</span></summary>';
@@ -4472,24 +4499,6 @@ svg:hover .hb-xh{opacity:1}
   // platform can make that a single-module tool cannot, so it gets its own
   // card, with the evidence, what would confirm it, and what else explains
   // it - all of which the payload already carried.
-  function renderConnections(c){
-    if(!c)return '';
-    // The focus card already leads with fix_first, which IS links[0] when
-    // there is a link. The rest are Needs-attention rows (hbLinkRows,
-    // density fix #5) - each carries Done / Not for us, and a decision is
-    // never inside a collapsed section. Results keeps the explanation: what
-    // each one rests on, what would confirm it and what else explains it.
-    var lead=(c.fix_first&&(c.fix_first.link_headline||c.fix_first.what))||'';
-    var ls=(c.links||[]).filter(function(l){return l.headline!==lead;});
-    if(!ls.length)return '';
-    var h='<section class="hb-card hb-rise" style="margin-top:16px" aria-label="What connects"><div class="hb-h3"><span>What connects</span><span class="cnt">'+ls.length+' thing'+(ls.length===1?'':'s')+' no single module could see</span></div>';
-    for(var i=0;i<ls.length;i++){var x=ls[i];
-      h+='<div class="hb-row important"><span class="d"></span><span class="t wrap">'+num(x.headline)
-        +(x.confirm_by?'<span class="hb-att-ev" style="display:block"><strong>To confirm:</strong> '+num(x.confirm_by)+'</span>':'')
-        +(x.alternative?'<span class="hb-att-ev" style="display:block"><strong>Could also be:</strong> '+num(x.alternative)+'</span>':'')
-        +'</span><span class="m">'+esc((x.modules||[]).map(function(mm){return MODLABEL[mm]||mm;}).join(' + '))+'</span></div>';}
-    return h+'</section>';
-  }
   // ── what got better ───────────────────────────────────────────────────────
   // Records, streaks and complaints that stopped. Everything else on this
   // page looks for trouble; a restaurant that quietly improved used to hear
@@ -4498,7 +4507,7 @@ svg:hover .hb-xh{opacity:1}
     if(!n)return '';
     var items=n.items||[];
     if(!items.length)return '';
-    var h='<section class="hb-card rail good hb-rise" style="margin-top:16px" aria-label="What got better"><div class="hb-h3"><span>What got better</span><span class="cnt">'+items.length+'</span></div>';
+    var h='<section class="hb-card rail good hb-rise" style="margin-top:16px" aria-label="What got better"><div class="hb-h3"><span>What got better</span><span class="cnt n">'+items.length+'</span></div>';
     for(var i=0;i<Math.min(items.length,4);i++){var g=items[i];
       h+='<div class="hb-row good"><span class="d"></span><span class="t wrap"><strong>'+num(g.headline)+'</strong><br><span style="font-weight:500;opacity:.85">'+num(g.summary)+'</span></span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="'+esc(g.ask||('What\'s behind this: '+g.headline))+'">Ask →</button></div>';
     }
@@ -4687,7 +4696,7 @@ svg:hover .hb-xh{opacity:1}
   function renderWorked(w,v){
     if(!w||!w.ok)return '';
     var ss=w.sentences||[],f=w.facts||{},mn=f.minimums||{};
-    var h='<section class="hb-card rail ember hb-rise hb-worked" style="margin-top:16px" aria-label="Measured alongside your changes"><div class="hb-h3"><span>Measured alongside your changes</span><span class="cnt">'+esc(f.window||'')+'</span></div>';
+    var h='<section class="hb-card rail ember hb-rise hb-worked" style="margin-top:16px" aria-label="Measured alongside your changes"><div class="hb-h3"><span>Measured alongside your changes</span><span class="cnt">'+num(f.window||'')+'</span></div>';
     if(!w.enough||!ss.length){
       var d=(v&&v.delivered)||{};if(!v||!(d.wins||(d.unpriced_wins||[]).length||d.in_flight||(d.worsened&&d.worsened.count)))return '';
       return h+'<div class="hb-empty">Not enough yet. Cavnar shows what was measured alongside your changes once '+(mn.settled_for_rate||10)+' recommendations in one area have been answered or left, or '+(mn.results_per_metric||2)+' measured results land on one number.</div></section>';}
@@ -4893,7 +4902,6 @@ svg:hover .hb-xh{opacity:1}
     var dsrOn=!!(g.dsr&&g.dsr.ok&&(g.dsr.reports||[]).length);
     lines=lines.filter(function(l){return !(dsrOn&&l.key==='yesterday'&&l.source==='dsr');});
     acts=acts.filter(function(y){return !shown[hbSame(y.key)];});
-    var conn=renderConnections(g.cross);
     hbStatus(g.dsr);
     // One milestone at a time, as a card at the top of the day (friction
     // #43): the modal it used to be opened over the morning read and had to
@@ -4915,7 +4923,7 @@ svg:hover .hb-xh{opacity:1}
     h+='<div class="hb-grid" style="margin-top:14px">';
     // The brief as a timeline - a rail with a tone dot per line - rather
     // than a list: it is read top to bottom once, before service.
-    h+='<div class="hb-card hb-rise" style="--i:0"><div class="hb-h3"><span>Before service</span>'+(lines.length?'<span class="cnt">'+lines.length+'</span>':'')+'</div>';
+    h+='<div class="hb-card hb-rise" style="--i:0"><div class="hb-h3"><span>Before service</span>'+(lines.length?'<span class="cnt n">'+lines.length+'</span>':'')+'</div>';
     if(!lines.length)h+='<div class="hb-empty">Your brief fills in as your numbers come in.</div>';
     // A keyed line the owner can answer carries Done / Not for us (re-audit
     // K6): the server records these lines as shown on Home, so the answer
@@ -4950,7 +4958,9 @@ svg:hover .hb-xh{opacity:1}
     h='';
     h+=_hbMeasured(gl,res,g);
     h+=(monday?'':receipts);
-    h+=conn;
+    // What connects was removed (9/25/26): its lead is the one thing card and
+    // every other link is a Needs-attention row whose Evidence opens the same
+    // "To confirm" and "Could also be" - it said each finding a third time.
     // What improved without anyone pressing "Track this" sits beside what
     // did - the two answer the same question from opposite ends.
     h+=renderGoodNews(g.news);
@@ -5278,7 +5288,7 @@ svg:hover .hb-xh{opacity:1}
     // and one sentence naming the location that needs a look (#48).
     h+=hbGroupTotal(p);
     var at=g.attention||[];
-    h+='<div class="hb-card hb-rise" id="hb-attn-card" style="margin-top:22px"><div class="hb-h3"><span>Needs attention · all locations</span>'+(at.length>3?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-attn-more="'+(at.length-3)+'" aria-expanded="false">+'+(at.length-3)+' more</button>':(at.length?'<span class="cnt">'+at.length+'</span>':''))+'</div>';
+    h+='<div class="hb-card hb-rise" id="hb-attn-card" style="margin-top:22px"><div class="hb-h3"><span>Needs attention · all locations</span>'+(at.length>3?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-attn-more="'+(at.length-3)+'" aria-expanded="false">+'+(at.length-3)+' more</button>':(at.length?'<span class="cnt n">'+at.length+'</span>':''))+'</div>';
     if(g.summary_line)h+='<div class="hb-attn-line">'+num(g.summary_line)+'</div>';
     if(!at.length)h+='<div class="hb-clear"><span class="ok">✓</span><span>Nothing needs you at any location.</span></div>';
     for(var a=0;a<at.length;a++){var x=at[a];h+='<div class="hb-row '+esc(x.severity)+(a>=3?' hb-attn-more':'')+'"'+(a>=3?' hidden':'')+'><span class="d"></span><span class="t">'+num(x.text)+'</span><span class="m">'+esc(x.location)+'</span><button class="cbtn cbtn-secondary cbtn-sm" data-group-open="'+(+x.restaurant_id)+'" data-group-nav="'+esc(x.nav||'')+'">'+esc(x.action_label||'Open')+'</button></div>';}
@@ -6870,7 +6880,7 @@ svg:hover .hb-xh{opacity:1}
   function worked(w){
     if(!w||!w.ok)return '';
     var ss=w.sentences||[],f=w.facts||{},mn=f.minimums||{};
-    if(!w.enough||!ss.length)return '<section class="hb-card quiet rh-worked" aria-label="Measured alongside your changes"><div class="hb-h3"><span>Measured alongside your changes</span><span class="cnt">'+esc(f.window||'')+'</span></div><div class="hb-empty">Not enough yet. Cavnar shows what was measured alongside your changes once '+(mn.settled_for_rate||10)+' recommendations in one area have been answered or left, or '+(mn.results_per_metric||2)+' measured results land on one number — and never estimates to fill the gap.</div></section>';
+    if(!w.enough||!ss.length)return '<section class="hb-card quiet rh-worked" aria-label="Measured alongside your changes"><div class="hb-h3"><span>Measured alongside your changes</span><span class="cnt">'+num(f.window||'')+'</span></div><div class="hb-empty">Not enough yet. Cavnar shows what was measured alongside your changes once '+(mn.settled_for_rate||10)+' recommendations in one area have been answered or left, or '+(mn.results_per_metric||2)+' measured results land on one number — and never estimates to fill the gap.</div></section>';
     var h='<section class="hb-card hero hb-focus rh-worked" aria-label="Measured alongside your changes"><div class="hb-kicker">Measured alongside your changes</div><div class="lead">'+prose(ss[0])+'</div>';
     if(ss.length>1){h+='<div class="more">';for(var i=1;i<ss.length;i++)h+='<div class="why">'+prose(ss[i])+'</div>';h+='</div>';}
     h+='<div class="why" style="opacity:.75">'+esc(f.caveat||'Measured before and after, not proven cause.')+'</div>';
@@ -7166,7 +7176,7 @@ svg:hover .hb-xh{opacity:1}
 .rv2-list{display:flex;flex-direction:column;margin-top:8px}
 .rv2-row{position:relative;display:grid;grid-template-columns:1fr;padding:18px 12px 18px 18px;border-top:1px solid var(--hb-line2);transition:background .12s ease}
 .rv2-row:first-child{border-top:none}
-.rv2-row:hover{background:var(--hb-tint)}
+
 .rv2-row:before{content:'';position:absolute;left:0;top:16px;bottom:16px;width:3px;border-radius:2px;background:transparent}
 .rv2-row.urgent:before{background:var(--hb-bad);box-shadow:0 0 10px rgba(255,92,92,.5)}
 .rv2-row.approved:before{background:var(--hb-good)}
@@ -7182,6 +7192,7 @@ svg:hover .hb-xh{opacity:1}
    generic (no-status-yet) case. Ordered so a row carrying more than one
    class (e.g. still urgent AND approved) resolves the same way its own
    ribbon color above already does. */
+.rv2-row:hover{background:var(--hb-tint)}
 .rv2-row.urgent:hover{background:rgba(255,92,92,.10)}
 .rv2-row.approved:hover{background:rgba(53,214,124,.10)}
 .rv2-row.posted:hover{background:rgba(106,171,255,.10)}
@@ -7709,7 +7720,6 @@ svg:hover .hb-xh{opacity:1}
    inside one disclosure - a hairline between rows, no per-row ember. */
 .lb2-srow{position:relative;border-top:1px solid var(--hb-line2);transition:background-color .15s ease}
 .lb2-srow:first-of-type{border-top:none}
-.lb2-srow:hover{background:var(--sf-recess)}
 .lb2-srow>.lb2-subsection{margin:0;padding:13px 6px;cursor:pointer;user-select:none;-webkit-user-select:none}
 .lb2-srow .lb2-subsection-title{font-size:16px}
 .lb2-team{margin-top:22px}
@@ -15998,7 +16008,7 @@ function in2LoadQueries(){
   var el=document.getElementById('in2-queries');if(!el)return;
   fetch('/api/intel/ai-visibility/queries',{credentials:'same-origin'}).then(apiJson).then(function(d){
     if(!d||!d.ok||!(d.queries||[]).length){el.hidden=true;return;}
-    var runs=d.runs||[],h='<div class="hb-h3"><span>By question</span><span class="cnt">'+runs.length+' check'+(runs.length===1?'':'s')+'</span></div><div class="in2-qgrid">';
+    var runs=d.runs||[],h='<div class="hb-h3"><span>By question</span><span class="cnt"><span class="hb-num">'+runs.length+'</span> check'+(runs.length===1?'':'s')+'</span></div><div class="in2-qgrid">';
     for(var i=0;i<d.queries.length;i++){var q=d.queries[i],cells='';
       for(var j=0;j<q.appeared.length;j++){var a=q.appeared[j];cells+='<i class="in2-qc'+(a===true?' on':(a===false?' off':''))+'" title="'+esc(runs[j]&&runs[j].at?mdy(String(runs[j].at).slice(0,10)):'')+'"></i>';}
       h+='<div class="in2-q"><span class="t">'+esc(q.query)+'</span><span class="c">'+cells+'</span><span class="n hb-num">'+q.appearances+'/'+q.asked+'</span></div>';}

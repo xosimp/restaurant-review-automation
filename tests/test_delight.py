@@ -451,7 +451,9 @@ def test_the_web_renders_the_receipts_it_computes():
 
 def test_the_web_renders_cross_module_links():
     src = _dashboard()
-    assert "function renderConnections(" in src
+    # The What connects card was removed (9/25/26): the lead link is the one
+    # thing and every other link is a Needs-attention row (hbLinkRows).
+    assert "function hbLinkRows(" in src and "function renderConnections(" not in src
     assert "/api/cross-module" in src
 
 

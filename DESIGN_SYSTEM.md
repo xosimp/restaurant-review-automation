@@ -98,6 +98,8 @@ tabular figures wherever digits line up in a column.
 
 ### Dates and times (one format, everywhere)
 
+**One exception (owner's call, 9/25/26):** Home's kicker above the greeting reads the date in words, "September 25th, 2026" (`longDate`). Everywhere else stays M/D/YY.
+
 Every date an owner reads is **M/D/YY with no leading zeros: `9/21/26`**. On
 web, iOS, email, push, the activity feed, and in any sentence a job or a
 model writes. A range is `9/14/26 – 9/20/26`; a time is `6:45pm` (no

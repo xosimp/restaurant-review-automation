@@ -218,9 +218,10 @@ console.log(JSON.stringify([
  hbAttnLine([{severity:'watch',title:'Rating steady'}],[]),
  hbAttnLine([],[])]));"""
     a, b, c, d = _node(js)
-    assert a == "5 flagged → 2 need you now: Reply to the Hendersons’ 1★ review, POS sync failed."
-    assert b == "1 is worth handling today: Trim Tuesday lunch."
-    assert c == "1 to watch: Rating steady." and d == ""
+    # Counts only, never the rows' own words (9/25/26: one item was said
+    # twice, once in this line and once in its row); nothing under two items.
+    assert a == "5 flagged: 2 need you now, 2 worth handling today, 1 to watch."
+    assert b == "" and c == "" and d == ""
 
 
 def test_the_results_row_carries_the_measured_figure_never_an_opportunity():
@@ -269,8 +270,9 @@ def test_decisions_leave_collapsed_results_for_needs_attention():
     follow = _fn("renderFollow")
     assert "_hbAttnExtra=hbLossRows(g.loss).concat(hbLinkRows(g.cross));" in follow
     assert "hbAttnRedraw(d);" in follow
-    loss, conn = _fn("renderLoss"), _fn("renderConnections")
-    assert "recControlsHtml" not in loss and "recControlsHtml" not in conn
+    loss = _fn("renderLoss")
+    assert "recControlsHtml" not in loss
+    assert "function renderConnections(" not in SRC     # removed 9/25/26: the links are rows
     assert "recControlsHtml(f.rec_key,'home','ops')" in _fn("hbLossRows")
     assert "recControlsHtml(x.rec_key,'home','home')" in _fn("hbLinkRows")
 
