@@ -543,6 +543,18 @@ def test_two_names_that_slug_alike_each_open_their_own_record(db):
 
 # ── F3-5: role and pay rate are refused in words, pay rate read as a number ─
 
+def test_a_shift_request_decision_is_logged_in_m_d_yy(db, monkeypatch):
+    import strategy_routes
+    rid = _restaurant(db)
+    monkeypatch.setattr(shift_requests, "decide", lambda *a, **k: {
+        "employee_name": "Ana", "date": "2026-09-26", "shift_start": "5:00pm", "status": "open"})
+    logged = []
+    monkeypatch.setattr(client_api, "log_account_event", lambda r, t, current_user=None, detail=None, **k:
+                        logged.append(detail))
+    out, status = _call(strategy_routes._do_shift_request_decide, _user(rid), 7, body={"decision": "approve"})
+    assert status == 200 and logged == ["Ana 9/26/26 5:00pm: open"]
+
+
 def test_a_changed_role_or_pay_rate_is_refused_not_saved_silently(db):
     import strategy_routes
     rid = _restaurant(db)

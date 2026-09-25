@@ -2126,8 +2126,10 @@ def _do_shift_request_decide(u, request_id):
         return {"ok": False, "error": str(e)}, 400
     if not row:
         return {"ok": False, "error": "That request was already answered, or is not yours."}, 404
+    from time_utils import mdy
+    # The account log is owner-facing: M/D/YY, as time off's is (F2-15).
     log_account_event(_rid(u), "shift_request_decided", current_user=u,
-                      detail=f"{row['employee_name']} {row['date']} {row['shift_start']}: {row['status']}")
+                      detail=f"{row['employee_name']} {mdy(row['date'])} {row['shift_start']}: {row['status']}")
     return {"ok": True, "request": row}, 200
 
 
