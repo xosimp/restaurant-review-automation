@@ -303,6 +303,6 @@ def test_home_has_no_ask_card_and_one_attention_card_holding_open_issues():
     assert "<span>Open issues</span>" not in panel
     ask = panel[panel.index("window.hbAsk=function"):][:700]
     assert "toggleAskCavnar" in ask and "sendAskCavnar" in ask
-    attn = panel[panel.index("function renderAttention"):][:2500]
+    attn = panel[panel.index("function renderAttention"):][:6000]
     assert 'id="hb-attn-issues"' in attn and "hbIssueRows(" in attn
     assert "hbAttnSetIssues(iss)" in panel

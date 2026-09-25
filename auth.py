@@ -3116,6 +3116,9 @@ _MODULE_PREFIXES = (
     ("/api/schedule-status",        "labor"),
     ("/api/download-schedule",      "labor"),
     ("/mobile/api/labor",           "labor"),
+    # One person record (people.py, Friction #25): the team as Labor sees it.
+    ("/api/people",                 "labor"),
+    ("/mobile/api/people",          "labor"),
     # Food Cost
     ("/api/food-cost",              "inventory"),
     ("/api/inv-insight",            "inventory"),

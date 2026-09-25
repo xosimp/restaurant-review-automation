@@ -401,8 +401,11 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
         # Where the item opens (nav.py) — the item itself, never the top of
         # its module (Friction audit #2). On the action too, where Home's
         # "Still open" rows read it.
-        i["nav"] = nav_for(i)
-        if isinstance(i.get("action"), dict):
+        # An item that already names its target (one invoice, the unsent
+        # week) keeps it; nav_for fills in the rest.
+        own = (i.get("action") or {}).get("nav") if isinstance(i.get("action"), dict) else None
+        i["nav"] = own or nav_for(i)
+        if isinstance(i.get("action"), dict) and not own:
             i["action"]["nav"] = i["nav"]
         if is_task(i["key"]):
             i["answerable"] = False

@@ -531,7 +531,8 @@ def test_h16_the_server_caps_match_what_web_and_ios_render():
     assert home_brief.HOME_ATTENTION_SHOWN == 4 and home_brief.HOME_RECS_SHOWN == 3
     web = open("templates/dashboard.html").read()
     # web: the focus card takes the first item, then three rows / three cards
-    assert "Math.min(items.length,3)" in web and "Math.min(recs.length,3)" in web
+    # (friction #11: rows past the third are drawn hidden behind "+N more", in place)
+    assert "(i>=3?' hb-attn-more':'')" in web and "(i>=3?' hidden':'')" in web and "Math.min(recs.length,3)" in web
     ios = open("ios/CavnarAI/CavnarAI/Features/Home/HomeRecommendations.swift").read()
     assert ".prefix(3)" in ios
     # iOS shows the lead card plus three rows before "+N more" (friction

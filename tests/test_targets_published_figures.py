@@ -207,7 +207,9 @@ def test_no_new_bare_target_reads():
                # the cache's input key names the target columns; it judges nothing (re-audit #28)
                "intelligence/engine.py": 2, "issues.py": 1, "labor.py": 1, "mobile_api.py": 3, "models.py": 14,
                "morning_brief.py": 2, "notify.py": 3, "rec_trust.py": 2, "schedule_economics.py": 11,
-               "schedule_engine.py": 2, "thresholds.py": 2}
+               "schedule_engine.py": 2, "thresholds.py": 2,
+               # the owner's own target controls (Friction #26): the settings route reads and writes the columns
+               "strategy_routes.py": 4}
     pat = re.compile(r"food_cost_target\b|labor_target_pct\b|labor_target_for\(")
     found = {}
     for base, dirs, files in os.walk(ROOT):

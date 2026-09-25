@@ -13,7 +13,17 @@ only ever what someone typed — and the analysis says when it is absent.
 """
 from datetime import date, timedelta
 
-from models import get_conn, DB_PATH
+import models as _models
+from models import DB_PATH
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time (CLAUDE.md, bound imports): the
+    default path follows models.DB_PATH as it is now, not as it was when
+    this module was first imported."""
+    if db_path is None or db_path == DB_PATH:
+        return _models.get_conn()
+    return _models.get_conn(db_path)
 
 MAX_ROWS = 400
 

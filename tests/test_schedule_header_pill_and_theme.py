@@ -394,7 +394,8 @@ def test_rv2_inbox_no_longer_draws_a_duplicate_divider():
     m = re.search(r"\.rv2-inbox\{([^}]*)\}", s)
     assert m, ".rv2-inbox rule not found"
     assert "border-top" not in m.group(1) and "padding-top" not in m.group(1)
-    assert '<div id="rv-inbox-reviews" class="rv2-inbox">\n    <div class="hb-sh"><div><div class="k">Inbox</div>' in s
+    # (the inbox gained its nav anchor, Friction #33)
+    assert re.search(r'<div id="rv-inbox-reviews" class="rv2-inbox"[^>]*>\n    <div class="hb-sh"><div><div class="k">Inbox</div>', s)
 
 
 def test_rv2_hero_kicker_has_space_before_the_rating_number():

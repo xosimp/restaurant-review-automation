@@ -232,10 +232,13 @@ def test_links_from_outside_open_the_item():
 
 def test_every_take_me_there_uses_the_nav():
     src = _src()
-    assert "if (n.nav && window.cavNav) { cavNav(n.nav); return; }" in src, "the bell"
+    # the bell: its nav, else the review, else its module; another location's row switches first (H #24)
+    assert "var path = n.nav || (n.review_id ? 'review/' + n.review_id" in src, "the bell"
+    assert "if (typeof window.cavNav === 'function' && path) { window.cavNav(path); return; }" in src
     assert "window.hbOpen=function(module,nav){\n    if(nav&&window.cavNav){cavNav(nav);return;}" in src
     assert src.count("esc(a.action.nav||'')") == 2, "attention rows and the focus card's also-row"
-    assert 'data-nav-go="\'+esc(y.nav)+\'"' in src, "Still open lands on the item (a proposal reopens)"
+    # Still open lands on the item (a proposal reopens): the row's own nav rides into hbQueueActs (merged with O1)
+    assert "+hbQueueActs(hbWithNav(y))" in src and "if(!o.route&&!o.nav&&y.nav)o.nav=y.nav;" in src
     assert "renderQuick(d.quick_actions||[])" in src, "the server's quick actions are drawn"
 
 
@@ -265,7 +268,8 @@ def test_full_page_reloads_after_the_named_actions_are_gone():
     assert "toast('Reply retracted','success');if(window.rvReloadInbox)rvReloadInbox()" in src
     assert "toast('Profile saved','success');cavRefreshFromServer(['acct-restaurant']" in src
     assert "?tab=competitor';" not in src, "a competitor refresh re-reads the panel in place"
-    assert 'onclick="rvBannerRefresh(this)"' in src
+    # new reviews land in the inbox in place (H #20) — the banner no longer reloads
+    assert 'onclick="rvShowNew()"' in src and "location.reload" not in src[src.index("window.rvShowNew=function"):][:600]
 
 
 def test_panels_stop_refetching_on_every_visit():
