@@ -80,7 +80,10 @@ final class FrictionNavigationTests: XCTestCase {
         let router = DeepLinkRouter()
         router.open(NavPath("labor/requests")!)
         let route = router.consumePendingModuleRoute(labelFor: { _ in "Labor" })
-        XCTAssertEqual(route, ModuleRoute(key: "labor", label: "Labor", section: "requests"))
+        // The route now carries the nav it came from (re-audit F3-7); the focus is the same.
+        XCTAssertEqual(route?.key, "labor")
+        XCTAssertEqual(route?.section, "requests")
+        XCTAssertEqual(route?.nav?.raw, "labor/requests")
         XCTAssertNil(router.consumePendingModuleRoute(labelFor: { $0 }))
     }
 

@@ -232,6 +232,7 @@ final class EdgeLaborSchedulingTests: XCTestCase {
     func testSendToStaffAfterASuccessfulSendDoesNotEmailEveryoneAgain() async {
         let posts = Box(0)
         let vm = PublishScheduleViewModel(client: publishClient(posts: posts))
+        vm.scheduleId = 7       // a send names its week; the server refuses one that doesn't (F2-10)
         await vm.publish()
         XCTAssertEqual(vm.lastResult?.ok, true)
         await vm.publish()      // the button still reads "Send to N staff"
@@ -242,6 +243,7 @@ final class EdgeLaborSchedulingTests: XCTestCase {
         // The in-flight guard that does exist.
         let posts = Box(0)
         let vm = PublishScheduleViewModel(client: publishClient(posts: posts))
+        vm.scheduleId = 7
         async let a: Void = vm.publish()
         async let b: Void = vm.publish()
         _ = await (a, b)

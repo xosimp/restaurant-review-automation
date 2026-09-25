@@ -22,13 +22,16 @@ final class ReviewDetailViewModelTests: XCTestCase {
         let client = makeClient { request in
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (response, Data("""
-            {"ok": true, "auto_posted": false}
+            {"ok": true, "auto_posted": true, "post_status": "posted"}
             """.utf8))
         }
         let viewModel = ReviewDetailViewModel(review: makeReview(), client: client)
 
         await viewModel.approve()
 
+        // Complete means the reply is live (re-audit F3-3): an approve the
+        // server says wasn't posted keeps the owner on the review (this
+        // pinned {"auto_posted": false} as a plain success).
         XCTAssertTrue(viewModel.didComplete)
         XCTAssertNil(viewModel.errorMessage)
     }
