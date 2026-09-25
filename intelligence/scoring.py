@@ -35,6 +35,13 @@ that let one card expire are no floor for a success rate one restaurant
 measured. `acceptance_available` / `success_available` say which cleared;
 `available` is either. `exclude_restaurant_id` leaves the asking restaurant
 out of its own prior.
+
+Organisations, not locations (Benchmarking re-audit #14, R1-02, R4-23): a
+cross-restaurant figure also needs privacy.MIN_ORGS organisations behind
+it (`answered_orgs` / `measured_orgs`), the asking restaurant's WHOLE
+organisation is left out of its prior (a group owner could otherwise
+subtract their own locations' results and read the one outsider's), and
+the share cap is per organisation (privacy.org_key), not per location.
 """
 import models as _models_mod
 from models import DB_PATH
@@ -106,6 +113,35 @@ PRIOR_WINDOW_DAYS = 365
 PRIOR_HALF_LIFE_DAYS = 180
 
 
+def org_map(ids, db_path=DB_PATH, conn=None) -> dict:
+    """{restaurant_id: organisation key (privacy.org_key)} for `ids`. A
+    restaurant with no row is its own organisation. Server-side only."""
+    ids = sorted({int(i) for i in ids or () if i is not None})
+    if not ids:
+        return {}
+    own = conn is None
+    conn = conn or get_conn(db_path)
+    try:
+        rows = conn.execute(f"SELECT id, organization_id, location_group, owner_email FROM restaurants "
+                            f"WHERE id IN ({','.join('?' for _ in ids)})", ids).fetchall()
+    finally:
+        if own:
+            conn.close()
+    out = {i: f"r{i}" for i in ids}
+    for r in rows:
+        out[int(r["id"])] = privacy.org_key(dict(r))
+    return out
+
+
+def _without_org(rows, orgs, exclude_restaurant_id):
+    """rows minus every row of the excluded restaurant's organisation."""
+    if exclude_restaurant_id is None:
+        return list(rows)
+    mine = orgs.get(int(exclude_restaurant_id), f"r{int(exclude_restaurant_id)}")
+    return [r for r in rows if r["restaurant_id"] != exclude_restaurant_id
+            and orgs.get(r["restaurant_id"], f"r{r['restaurant_id']}") != mine]
+
+
 def _age_days(at, now):
     from datetime import datetime
     try:
@@ -149,9 +185,14 @@ def kind_stats(rec_kind: str, cohort: str = None, restaurant_id: int = None, db_
     try:
         rows = conn.execute(f"SELECT restaurant_id, source_key, action, outcome, days_to_effect, event_at "
                             f"FROM intel_rec_events WHERE {' AND '.join(where)}", args).fetchall()
+        orgs = (org_map([r["restaurant_id"] for r in rows] + [exclude_restaurant_id], conn=conn)
+                if restaurant_id is None else {})
     finally:
         conn.close()
-    out = _summarise(rows, cross=restaurant_id is None)
+    if restaurant_id is None:
+        # The asking restaurant's whole organisation is out of its prior.
+        rows = _without_org(rows, orgs, exclude_restaurant_id)
+    out = _summarise(rows, cross=restaurant_id is None, orgs=orgs)
     if half_life_days and restaurant_id is None:
         per = {}
         for r in rows:
@@ -159,8 +200,9 @@ def kind_stats(rec_kind: str, cohort: str = None, restaurant_id: int = None, db_
                 continue
             age = _age_days(r["event_at"], now)
             w = 0.5 ** ((age or 0.0) / float(half_life_days))
-            n, k = per.get(r["restaurant_id"], (0.0, 0.0))
-            per[r["restaurant_id"]] = (n + w, k + (w if r["outcome"] == "improved" else 0.0))
+            o = orgs.get(r["restaurant_id"], f"r{r['restaurant_id']}")
+            n, k = per.get(o, (0.0, 0.0))
+            per[o] = (n + w, k + (w if r["outcome"] == "improved" else 0.0))
         mc, ic = capped_counts(per)
         out["measured_recent"], out["improved_recent"] = mc, ic
         out["success_rate_recent"] = round(ic / mc, 3) if mc else None
@@ -204,11 +246,14 @@ def similar_prior(rec_kind: str, restaurant_id: int, cohort: str, db_path: str =
              f"-{SEEDED_HISTORY_DAYS} days")).fetchall()
     finally:
         conn.close()
+    orgs = org_map([r["restaurant_id"] for r in rows] + [restaurant_id], db_path=db_path)
+    rows = _without_org(rows, orgs, restaurant_id)
     clear = [r for r in rows if r["outcome"] in CLEAR]
     peers = {r["restaurant_id"] for r in clear}
+    n_orgs = len({orgs.get(p, f"r{p}") for p in peers})
     out.update(restaurants=len(peers), measured=len(clear))
-    if not privacy.cohort_ok(len(peers)) or len(clear) < PRIOR_MIN_RESULTS:
-        return dict(out, reason="too few similar restaurants have measured this")
+    if not privacy.cohort_ok(len(peers)) or n_orgs < privacy.MIN_ORGS or len(clear) < PRIOR_MIN_RESULTS:
+        return dict(out, reason="too few similar restaurants (or organisations) have measured this")
     sims = {}
     try:
         from . import dna
@@ -223,8 +268,9 @@ def similar_prior(rec_kind: str, restaurant_id: int, cohort: str, db_path: str =
     for r in clear:
         age = _age_days(r["event_at"], now) or 0.0
         w = sims.get(r["restaurant_id"], SIMILARITY_UNMATCHED) * 0.5 ** (age / float(PRIOR_HALF_LIFE_DAYS))
-        n, k = per.get(r["restaurant_id"], (0.0, 0.0))
-        per[r["restaurant_id"]] = (n + w, k + (w if r["outcome"] == "improved" else 0.0))
+        o = orgs.get(r["restaurant_id"], f"r{r['restaurant_id']}")      # capped per organisation
+        n, k = per.get(o, (0.0, 0.0))
+        per[o] = (n + w, k + (w if r["outcome"] == "improved" else 0.0))
     mc, ic = capped_counts(per)
     if not mc:
         return dict(out, reason="no weight")
@@ -258,7 +304,7 @@ def _bucket(actions):
     return None
 
 
-def _summarise(rows, cross=True) -> dict:
+def _summarise(rows, cross=True, orgs=None) -> dict:
     restaurants = {r["restaurant_id"] for r in rows}
     acts = {}
     for r in rows:
@@ -292,10 +338,15 @@ def _summarise(rows, cross=True) -> dict:
     out["success_rate_shrunk"] = shrink(out["success_rate"], len(clear))
     out["acceptance_rate_shrunk"] = shrink(out["acceptance_rate"], denominator)
     if cross:
+        orgs = orgs or {}
+
+        def _o(rid):
+            return orgs.get(rid, f"r{rid}")
         per = {}
         for r in clear:
-            n, k = per.get(r["restaurant_id"], (0, 0))
-            per[r["restaurant_id"]] = (n + 1, k + (1 if r["outcome"] == "improved" else 0))
+            o = _o(r["restaurant_id"])        # the share cap is per organisation
+            n, k = per.get(o, (0, 0))
+            per[o] = (n + 1, k + (1 if r["outcome"] == "improved" else 0))
         mc, ic = capped_counts(per)
         out["measured_capped"], out["improved_capped"] = mc, ic
         out["success_rate_capped"] = round(ic / mc, 3) if mc else None
@@ -303,13 +354,19 @@ def _summarise(rows, cross=True) -> dict:
         # Below the floor the rates are still computed for the engine's own
         # weighting, but nothing here may be shown as a cohort fact — and
         # each figure has its own population.
-        out["acceptance_available"] = privacy.cohort_ok(len(answered_restaurants))
-        out["success_available"] = privacy.cohort_ok(len(measured_restaurants))
+        out["answered_orgs"] = len({_o(r) for r in answered_restaurants})
+        out["measured_orgs"] = len({_o(r) for r in measured_restaurants})
+        out["acceptance_available"] = (privacy.cohort_ok(len(answered_restaurants))
+                                       and out["answered_orgs"] >= privacy.MIN_ORGS)
+        out["success_available"] = (privacy.cohort_ok(len(measured_restaurants))
+                                    and out["measured_orgs"] >= privacy.MIN_ORGS)
         out["available"] = out["acceptance_available"] or out["success_available"]
         if not out["available"]:
-            out["reason"] = f"fewer than {privacy.MIN_COHORT} restaurants have answered this kind"
+            out["reason"] = (f"fewer than {privacy.MIN_COHORT} restaurants from {privacy.MIN_ORGS} organisations "
+                             "have answered this kind")
         elif not out["success_available"]:
-            out["reason"] = f"fewer than {privacy.MIN_COHORT} restaurants have a measured result for this kind"
+            out["reason"] = (f"fewer than {privacy.MIN_COHORT} restaurants from {privacy.MIN_ORGS} organisations "
+                             "have a measured result for this kind")
     else:
         out["acceptance_available"] = out["success_available"] = out["available"] = True
     return out
@@ -354,9 +411,10 @@ def rank_kinds(cohort: str = None, db_path: str = DB_PATH, limit: int = 20) -> l
     by_kind = {}
     for r in rows:
         by_kind.setdefault(r["rec_kind"], []).append(r)
+    orgs = org_map([r["restaurant_id"] for r in rows], db_path=db_path)
     out = []
     for kind, rs in by_kind.items():
-        s = _summarise(rs)
+        s = _summarise(rs, orgs=orgs)
         s["rec_kind"] = kind
         if not s["available"]:
             s = {"rec_kind": kind, "restaurants": s["restaurants"], "available": False, "reason": s["reason"]}
@@ -374,4 +432,4 @@ def platform_totals(db_path: str = DB_PATH) -> dict:
                             "FROM intel_rec_events").fetchall()
     finally:
         conn.close()
-    return _summarise(rows)
+    return _summarise(rows, orgs=org_map([r["restaurant_id"] for r in rows], db_path=db_path))

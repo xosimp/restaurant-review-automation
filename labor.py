@@ -1842,8 +1842,9 @@ def labor_read_context(analysis: dict, prompt: str, restaurant_id=None, industry
         facts.append(rv.Fact(f"labor.{key}", value, "$", "opportunity", period, data_days=days))
     if industry:
         try:
-            import benchmark_registry
-            facts += benchmark_registry.facts(industry)
+            # The engine's industry facts, carrying source.comparable: a
+            # comparison with a figure measured differently is dropped (#6).
+            facts += list((_industry_read(industry) or {}).get("facts") or [])
         except Exception as e:
             print(f"[labor] benchmark facts unavailable: {e}")
     data_state = {}
@@ -2132,30 +2133,58 @@ _WEATHER_WORDS_RE = re.compile(r"\b(?:weather|rain(?:y|s|ing|ed|fall)?|snow\w*|s
 
 
 def industry_band_for(restaurant_id=None, restaurant=None):
-    """The benchmark_registry labor_pct entry for this restaurant's type, or
-    None (no entry, no benchmark — NS4 H3). Never raises."""
+    """The published labor figure for this restaurant's CONFIRMED type, as
+    the Benchmark Engine's industry kind serves it (intelligence.
+    industry_read: {line, facts, comparable, definition_note, low, high,
+    median, …}), or None — no entry for the type, or a type Cavnar only
+    guessed (Benchmarking re-audit #5, R3-8; NS4 H3). Never raises."""
     try:
         if restaurant is None and restaurant_id:
             from models import get_restaurant
             restaurant = get_restaurant(restaurant_id)
         if restaurant is None:
             return None
-        import benchmark_registry
-        return benchmark_registry.for_restaurant("labor_pct", restaurant)
+        import intelligence
+        return intelligence.industry_read(restaurant, "labor_pct_28d")
     except Exception:
         return None
 
 
-def industry_prompt_line(entry) -> str:
-    """The one industry line a labor prompt may carry: the band for this
-    restaurant's type with its source, year and whether the type was
-    inferred — or an instruction that there is none."""
-    import benchmark_registry
+def _industry_read(entry):
+    """`entry` as an industry read: the engine's (industry_band_for) as it
+    is, or a bare benchmark_registry entry measured against Cavnar's labor %
+    definition — its facts carrying source.comparable / definition_note."""
     if not entry:
+        return None
+    if "facts" in entry and "line" in entry:
+        return entry
+    import benchmark_registry
+    import intelligence
+    from intelligence import metrics_registry as _mr
+    comparable = not benchmark_registry.definitions_differ(entry, _mr.definition("labor_pct_28d"))
+    note = None if comparable else (
+        f"The published figure is the {entry.get('median_basis') or 'published figure'}; this restaurant's labor % "
+        "is wages from shifts, so it is context, not a like-for-like comparison.")
+    facts = benchmark_registry.facts(entry)
+    for f in facts:
+        f["source"].setdefault("comparable", comparable)
+        f["source"].setdefault("definition_note", note)
+        f["source"].setdefault("metric", "labor_pct_28d")
+    c = {"line": benchmark_registry.line(entry, "Labor %"), "comparable": comparable, "definition_note": note}
+    return dict(entry, line=intelligence.industry_line(c), facts=facts, comparable=comparable, definition_note=note)
+
+
+def industry_prompt_line(entry) -> str:
+    """The one industry line a labor prompt may carry: the published figure
+    for this restaurant's confirmed type with its source and year — marked
+    CONTEXT ONLY when it is measured differently (the NRA median includes
+    benefits) — or an instruction that there is none."""
+    read = _industry_read(entry)
+    if not read:
         return ("- Industry benchmark: none for this type of restaurant. Do not state or imply an industry "
                 "figure or compare this restaurant with other restaurants.")
     return ("- Industry benchmark (quote only with its source, never as this restaurant's own figure): "
-            + benchmark_registry.line(entry, "Labor %"))
+            + read["line"])
 
 
 def labor_window_line(analysis: dict, now=None, restaurant_id=None) -> tuple:

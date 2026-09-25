@@ -26,8 +26,10 @@ Six kinds of comparison, each either available or carrying `why_not`:
   location  compared to the owner's other locations (organization_id) —
             own data, so no privacy floor, and only for logins that may
             switch locations.
-  market    nearby competitors — carried by Intel; named here so the
-            vocabulary is whole.
+  market    nearby competitors, rating only: Intel's matched-rival,
+            review-weighted standing with its tie band
+            (competitor_intel_format.market_comparison) — the one market
+            comparison the Reviews read and Intel both quote.
 
 The headline is peers when available, else self, else industry; `why_not`
 is always filled for a kind that cannot be shown — that is how the engine
@@ -494,8 +496,10 @@ def compare(restaurant_id, metric, *, kinds=None, viewer=None, restaurant=None, 
             elif kind == "location":
                 comps.append(_location(restaurant_id, metric, restaurant, db_path, viewer))
             elif kind == "market":
-                comps.append({"kind": "market", "available": False,
-                              "why_not": "the nearby-competitor comparison is on Intel"})
+                # Intel's matched-rival standing, the one market comparison
+                # (Benchmarking re-audit #30, R3-19, R4-13).
+                import competitor_intel_format as _cif
+                comps.append(_cif.market_comparison(restaurant, metric))
         except Exception as e:
             print(f"[benchmark_engine] {kind} for {restaurant_id}/{metric} failed: {e}")
             comps.append({"kind": kind, "available": False, "why_not": "could not be computed right now"})

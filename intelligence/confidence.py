@@ -129,7 +129,9 @@ def score(restaurant_id: int, rec_kind: str, metric: str = None, cohort: str = N
         from models import get_restaurant
         restaurant = get_restaurant(restaurant_id, db_path=db_path)
     if cohort is None and restaurant is not None:
-        cohort, _src = categories.category_for(restaurant)
+        # Only a type the owner SET reads another restaurant's record — a
+        # guess never does (Benchmarking re-audit R2-7, #20).
+        cohort = categories.confirmed_type(restaurant)
     factors = []
 
     own = scoring.kind_stats(rec_kind, restaurant_id=restaurant_id, db_path=db_path)
@@ -186,7 +188,9 @@ def score(restaurant_id: int, rec_kind: str, metric: str = None, cohort: str = N
         factors.append({"name": "data_completeness", "value": round(float(latest["completeness"]), 3),
                         "note": f"{int(round(latest['completeness'] * 100))}% of the measures this engine reads are on file"})
 
-    sup = patterns.support_for(rec_kind, cohort=cohort, db_path=db_path)
+    # Patterns from the restaurant's confirmed peer groups (and the
+    # all-types ones), never its type's (#21).
+    sup = patterns.support_for(rec_kind, cohort=patterns.viewer_cohorts(restaurant), db_path=db_path)
     if sup:
         factors.append({"name": "pattern_support", "value": float(sup["confidence"]), "note": sup["sentence"]})
 

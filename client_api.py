@@ -1228,7 +1228,7 @@ def sentiment_trend_api(current_user):
 @client_bp.route("/api/review-insight")
 @login_required
 def review_insight_api(current_user):
-    insight, status = _do_review_insight(current_user["restaurant_id"])
+    insight, status = _do_review_insight(current_user["restaurant_id"], viewer=current_user)
     return jsonify(**insight), status
 
 
@@ -1293,7 +1293,8 @@ def rv_flags(verdict, text="") -> dict:
 
 
 def _review_insight_rv_context(rid, text, prompt, *, rstats, top_issues, weekly_rows, this_week, last_week,
-                               trend, money, bench, diags, op_lines, urgent_rows, low_count, registry_state=None):
+                               trend, money, bench, diags, op_lines, urgent_rows, low_count, registry_state=None,
+                               market=None):
     """The ValidationContext for the Reviews read (surface review_insight).
 
     Facts: the MEASURED block typed from the figures the prompt is built from
@@ -1333,10 +1334,14 @@ def _review_insight_rv_context(rid, text, prompt, *, rstats, top_issues, weekly_
                     "month"),
                   F("revenue_at_risk.monthly_high", abs(money.get("monthly_high") or 0) or None, "$", "projection",
                     "month")]
-    if (bench or {}).get("available"):
-        facts += [F("competitors.our_google_rating", bench.get("our_google_rating"), "★", "measured"),
-                  F("competitors.median_rating", bench.get("competitor_median"), "★", "measured"),
-                  F("competitors.count", bench.get("competitor_count"), "count", "measured")]
+    # The market the read may quote is the engine's `market` kind — Intel's
+    # matched-rival, review-weighted standing — typed as a benchmark with
+    # its standing, so "you trail nearby competitors" said of a restaurant
+    # Intel calls level is dropped (Benchmarking re-audit #30, R3-19). The
+    # old unweighted median of every rival is no longer a fact.
+    if (market or {}).get("available"):
+        import competitor_intel_format as _cif_rv
+        facts += [_rvm._as_fact(f) for f in _cif_rv.market_facts(market)]
     anchors = []
     if diags:
         d = diags[0]
@@ -1348,7 +1353,8 @@ def _review_insight_rv_context(rid, text, prompt, *, rstats, top_issues, weekly_
     stale = []
     if diags and diags[0].get("stale"):
         stale.append("the stored diagnosis")
-    if (bench or {}).get("stale") and _re_rvc.search(r"\b(?:competitor|median|intel)", text or "", _re_rvc.I):
+    if ((bench or {}).get("stale") or (market or {}).get("stale")) and \
+            _re_rvc.search(r"\b(?:competitor|median|intel|market|nearby)", text or "", _re_rvc.I):
         stale.append("competitor ratings")
     try:
         tenants = _models_mod.other_tenant_names(rid)
@@ -1511,9 +1517,20 @@ def review_insight_floor_payload(rstats, n_window, floor) -> dict:
             "generated_at": datetime.utcnow().isoformat(timespec="seconds")}
 
 
-def _do_review_insight(rid):
+def _review_sees_locations(rid, viewer):
+    """Whether this login's review read carries the cross-location themes:
+    it may switch locations and its organisation has more than one."""
+    try:
+        import review_intelligence as _ri_sl
+        return _ri_sl.sees_locations(viewer) and len(_ri_sl.location_siblings(rid)) >= 2
+    except Exception:
+        return False
+
+
+def _do_review_insight(rid, viewer=None):
     """The Reviews module's AI read — shared by the web route above and
-    mobile_api.py's own /reviews/insight.
+    mobile_api.py's own /reviews/insight. `viewer` is the login (the
+    cross-location themes are shown only to one that may switch locations).
 
     This used to be a summariser wearing a consultant's voice. Every
     substantive claim in its output had already been computed in Python before
@@ -1542,7 +1559,11 @@ def _do_review_insight(rid):
     so the warning showed once and silently vanished for the next five
     minutes.
     """
-    cached = _cache_get("review-insight:" + str(rid))
+    # One cached read per restaurant — and a separate one for a login shown
+    # its other locations' review themes, so a manager of one location never
+    # reads a sibling aggregate generated for the owner (re-audit #42).
+    _ck = "review-insight:" + str(rid) + (":locations" if _review_sees_locations(rid, viewer) else "")
+    cached = _cache_get(_ck)
     if cached:
         return _review_insight_recs(rid, dict(cached) if isinstance(cached, dict) else {"insight": cached}), 200
     try:
@@ -1723,9 +1744,20 @@ def _do_review_insight(rid):
         _ops_ctx = _ri.operational_context(rid)
         _money = _ri.revenue_at_risk(rid)
         _bench = _ri.competitor_benchmark(rid)
+        try:
+            from intelligence import engine as _eng_mk
+            _market = next((c for c in _eng_mk.compare(rid, "avg_rating_30d", kinds=("market",), restaurant=restaurant,
+                                                       rows=[]).get("comparisons") or ()
+                            if c.get("kind") == "market"), None) or {}
+        except Exception as _mke:
+            print(f"[review-insight] market comparison unavailable for {rid}: {_mke}")
+            _market = {}
         _sev = _ri.severity_breakdown(rid)
         _parts = _ri.daypart_breakdown(rid)
-        _locs = _ri.location_comparison(rid)
+        # The sibling-location comparison is for a login that may switch
+        # locations, like the engine's location kind (R1-18); the cached read
+        # is keyed on whether it carries one.
+        _locs = _ri.location_comparison(rid, viewer=viewer)
         # Diagnoses are READ here, not generated — generating would put a
         # Sonnet call per cluster on the critical path of every tab open. The
         # scheduler refreshes them daily; this reads whatever is current,
@@ -1760,21 +1792,31 @@ def _do_review_insight(rid):
             _ev.append("By daypart: " + ", ".join(
                 f"{d['daypart'].replace('_',' ')} {d['negative_pct']}% of {d['total']}"
                 for d in _hot_parts) + ".")
-        if _bench.get("available") and _bench.get("gap_vs_median") is not None:
-            # Google rating against their Google ratings — like for like
-            # (M-18). The recent sample is named apart and never compared.
-            _ev.append(f"Against the {_bench['competitor_count']} competitors Intel tracks: "
-                       f"your Google rating is {_bench['our_google_rating']}★ vs a "
-                       f"{_bench['competitor_median']}★ median of theirs "
-                       f"({_bench['gap_vs_median']:+.2f}), intel as of {_bench.get('as_of') or 'unknown'}"
+        if _market.get("available"):
+            # The engine's `market` kind — Intel's standing over rivals
+            # matched on cuisine and price, review-weighted, with its tie
+            # band — never a separate unweighted median (Benchmarking
+            # re-audit #30, R3-19). Google rating against their Google
+            # ratings, like for like (M-18).
+            _ev.append(f"Against the nearby market Intel tracks ({_market['n']} rated restaurants, "
+                       f"{_market['matched']} matched on cuisine and price, weighted by review volume): "
+                       f"your Google rating is {_market['own_value']}★ against the market's "
+                       f"{_market['market_rating']}★ — "
+                       f"{_market['standing_label']} ({_market['standing_basis']}); intel as of "
+                       f"{_market.get('as_of') or 'unknown'}. Say where the restaurant stands only in those words"
                        # Its stale flag was computed and dropped (NS4 L4).
                        + (" — STALE: older than Intel's refresh window, so say how old it is if you use it"
-                          if _bench.get("stale") else "") + ".")
+                          if _market.get("stale") else "") + ".")
+        elif _bench.get("available"):
+            _ev.append(f"No fair market comparison: {_market.get('why_not') or 'not enough matched rivals'} — do "
+                       "not compare this restaurant's rating with its competitors'.")
         if _locs.get("available") and _locs.get("outlier_themes"):
             _o = _locs["outlier_themes"][0]
-            _ev.append(f"Across your locations, {_o['category'].replace('_',' ')} is "
-                       f"{int(_o['our_share']*100)}% of this location's complaints vs "
-                       f"{int(_o['peer_share']*100)}% at the others.")
+            # A share of the location's REVIEWS mentioning the complaint —
+            # the denominator is every review (R1-18), never "complaints".
+            _ev.append(f"Across your locations, {int(_o['our_share']*100)}% of this location's reviews "
+                       f"complain about {_o['category'].replace('_',' ')} vs "
+                       f"{int(_o['peer_share']*100)}% of reviews at the others.")
         if _money.get("available"):
             _ev.append(f"Revenue implication of the {_money['rating_delta']:+.2f}-star 30-day move in the "
                        f"all-time average rating: "
@@ -1902,7 +1944,8 @@ def _do_review_insight(rid):
         import re as _re_ri
         _ri_ctx_parts = dict(registry_state=_ready_ri.get("data_state"),
                              rstats=rstats, top_issues=top_issues, weekly_rows=weekly_rows, this_week=this_week,
-                             last_week=last_week, trend=_trend, money=_money, bench=_bench, diags=_diags,
+                             last_week=last_week, trend=_trend, money=_money, bench=_bench, market=_market,
+                             diags=_diags,
                              op_lines=_ri._operational_lines(_ops_ctx), urgent_rows=urgent_rows,
                              low_count=not trend_weeks)
 
@@ -1988,7 +2031,7 @@ def _do_review_insight(rid):
             _stored_ri = dict(_stored_ri)
             _stored_ri["diagnoses"] = _diags[:3]
             _stored_ri["diagnosis"] = _diags[0] if _diags else None
-            _cache_set("review-insight:" + str(rid), _stored_ri)
+            _cache_set(_ck, _stored_ri)
             return _review_insight_recs(rid, dict(_stored_ri)), 200
 
         from ai_utils import create_with_retry, extract_text, model_for
@@ -2029,7 +2072,7 @@ def _do_review_insight(rid):
                         "withheld": True, **rv_flags(None), "diagnoses": _diags[:3],
                         "diagnosis": _diags[0] if _diags else None, "stale": False,
                         "generated_at": datetime.utcnow().isoformat(timespec="seconds")}
-            _cache_set("review-insight:" + str(rid), held)
+            _cache_set(_ck, held)
             return _review_insight_recs(rid, dict(held)), 200
         if _rating_next is not None:
             try:
@@ -2045,7 +2088,7 @@ def _do_review_insight(rid):
         # unverified names, the trend's confidence, the diagnosis's own age —
         # was computed, rendered once, and then silently dropped for the next
         # five minutes while the text it qualified kept being shown.
-        _cache_set("review-insight:" + str(rid), payload)
+        _cache_set(_ck, payload)
         # Stored with the model's own text, so a later engine version
         # re-validates it rather than serving this verdict (insight_store.get).
         _ist_ri.put(rid, "reviews", _fp_ri, payload, raw=_raw_ri)
@@ -2053,7 +2096,7 @@ def _do_review_insight(rid):
     except Exception as _re:
         import traceback
         print(f"[review-insight ERROR] {_re}\n{traceback.format_exc()}")
-        stale = _insight_cache.get("review-insight:" + str(rid))
+        stale = _insight_cache.get(_ck)
         if not stale:
             # The stored read survives a deploy; the in-memory one does not.
             try:

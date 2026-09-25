@@ -840,6 +840,18 @@ labor, food cost or waste out of `support_for` (the K1 pattern-support
 factor) and out of Ask's context, since a type difference would pass as a
 behaviour effect.
 
+The groups are the owner-confirmed peer partitions the bands use, not the
+restaurant type (Benchmarking re-audit #21): each hypothesis runs inside
+the partition of its own metric family (`patterns.family_of` — a labor
+outcome among restaurants that staff alike, a food one within a menu
+family), over the members a band may have (`jobs.eligible_members`: live 8
+weeks, half its measures on file, one per Google listing, no test account),
+and a labor-cost outcome never counts a restaurant on the $26/hr default
+wage. A reader passes the viewer's groups (`patterns.viewer_cohorts` →
+`{family: partition key}`); with none — an unconfirmed profile — only the
+all-types patterns are served (`patterns.active(None)`; the admin view is
+`all_cohorts=True`).
+
 ## Privacy safeguards
 
 - `intel_features` holds ratios, rates and counts. Sales appear only as
@@ -900,7 +912,10 @@ behaviour effect.
 - **Outside benchmarks** (an NRA median, an operator rule of thumb, Luca's
   revenue per star) are not this engine's: they live in
   `benchmark_registry.py` by restaurant type, and a type with no entry gets
-  no industry figure anywhere.
+  no industry figure anywhere. They reach a model only through the engine's
+  `industry` kind (`intelligence.industry_read` — see the workstream V
+  section below): never for a guessed type, and marked context only when
+  measured differently.
 - Level 1 reads only `WHERE restaurant_id = ?`. The Ask context names the
   restaurant's own figures only to its own owner.
 
@@ -1039,3 +1054,68 @@ over-target alert or issue fires on an unconfirmed default. The labor cost
 basis (`thresholds.labor_cost_basis`: role_rates / owner_blended / default;
 pos_wages reserved) withholds the industry dollars, the gap-to-target
 dollars and a place in labor-cost bands while it is the $26/hr default.
+
+## Published figures, the checker, priors and the market (Benchmarking re-audit, workstream V, 9/24/26)
+
+**One road for published figures to a model** (#5). Ask's snapshot, the
+labor read, the food read's facts, the day-2 onboarding email and the admin
+client-settings hints read the engine's `industry` kind through
+`intelligence.industry_read(restaurant, metric)` → `{comparison, line,
+facts, comparable, definition_note, …}` — none of them call
+`benchmark_registry.for_restaurant` any more. A type Cavnar only guessed
+gets nothing (the engine refuses it). A figure measured differently from
+Cavnar's (the NRA labor median includes benefits; its food figure is food +
+non-alcohol beverage cost) comes with `intelligence.CONTEXT_ONLY_NOTE` in
+its prompt line and `source.comparable: False` + `definition_note` on its
+facts. Prime cost % stays a registry lookup in Ask: it is one
+all-restaurant operator target, the same for every type.
+
+**The checker** (response_validation B1 / P2, #6–#9, #19): a fact for a
+guessed type binds nothing; any positioning against a figure measured
+differently is dropped (a bare quote is caveated with its definition); the
+grammar knows the engine's own labels, "your peer group / cohort", "beats
+the group", "better than average", "one of the lowest", "among the best"
+and nearby competitors; a claim binds to the metric it names ("labor %" is
+not the hours band) and is dropped when it could be several metrics whose
+standings disagree; the side a sentence puts the restaurant on is resolved
+against the metric's better direction and the fact's standing; a
+contradicted ranking or an unbound peer claim is dropped on every surface.
+A numberless "restaurants like yours cut labor after …" needs a prediction
+fact for the same metric and recommendation kind. The contract keys it
+reads on a fact's source: `comparable`, `definition_note`, `inferred`,
+`standing`, `metric`, `better`, `strength_pct` (with a layer-0 fallback for
+`better`, pinned against `metrics_registry`).
+
+**Ask** (#18) has no "general industry knowledge" licence: with no
+comparison line, it says there is no fair comparison and why.
+`intelligence.context_lines` adds one "No fair comparison with other
+restaurants for <module> yet — <why_not>" line per visible module that has
+none.
+
+**The confirmed type** (#20): `categories.confirmed_type(restaurant)` is
+the one accessor for a type a cross-restaurant read may use — None unless
+the owner (or admin) set it. Recommendation priors (`rec_learning`), the
+confidence model's cohort (`confidence.score`) and the Ask tool's label
+read it; patterns read the confirmed partitions (#21, above).
+
+**Recommendation priors by organisation** (#14): `scoring.kind_stats` and
+`similar_prior` leave the asking restaurant's whole organisation out
+(`privacy.org_key`), need `privacy.MIN_ORGS` organisations as well as
+MIN_COHORT restaurants (`answered_orgs` / `measured_orgs`), and cap the
+share per organisation. `rec_learning.kind_record` returns only the capped
+counts — `prior_measured_raw` / `prior_improved_raw` are gone.
+
+**Peer freshness** (#24): Data Health's "Peer benchmarks" source is dated
+by the restaurant's confirmed partition bands (the oldest family's newest
+band; the all-types band when it has none) and ages out at 56 days, the
+engine's `MAX_BAND_AGE_WEEKS` × 7.
+
+**One market comparison** (#30): the engine's `market` kind is Intel's
+matched-rival, review-weighted standing with its tie band
+(`competitor_intel_format.market_comparison`, rating only), and the Reviews
+read quotes it — "ahead / level / behind" in Intel's words — typed as a
+benchmark fact (`market_facts`), instead of its own unweighted median of
+every rival. The Reviews read's cross-location themes (#42) are scoped by
+organisation, shown only to a login that may switch locations (the read is
+cached per restaurant and per that), and worded as a share of each
+location's reviews.

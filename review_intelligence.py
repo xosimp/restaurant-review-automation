@@ -740,7 +740,48 @@ def competitor_benchmark(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     }
 
 
-def location_comparison(restaurant_id: int, days: int = 90, db_path: str = DB_PATH) -> dict:
+def sees_locations(viewer) -> bool:
+    """Whether a login may be shown its other locations' figures — the
+    engine's location-kind gate (permissions.LOCATION_SWITCH; an admin
+    always). Closed when there is no viewer (Benchmarking re-audit #42,
+    R1-18)."""
+    if not viewer:
+        return False
+    if (viewer.get("is_admin") if isinstance(viewer, dict) else getattr(viewer, "is_admin", False)):
+        return True
+    try:
+        from permissions import has_permission, LOCATION_SWITCH
+        return bool(has_permission(viewer, LOCATION_SWITCH))
+    except Exception:
+        return False
+
+
+def location_siblings(restaurant_id: int, db_path: str = DB_PATH) -> list:
+    """[{id, label}] — every location of this restaurant's ORGANISATION
+    (privacy.org_key: organization_id, else location group and owner), this
+    one included, by label; [] when it is not found."""
+    from intelligence import privacy
+    conn = get_conn(db_path)
+    try:
+        me = _one_row(conn, "SELECT id, organization_id, location_group, owner_email FROM restaurants WHERE id=?",
+                      (restaurant_id,))
+        if not me:
+            return []
+        rows = _rows_raw(conn, """
+            SELECT id, COALESCE(location_name, name) AS label, organization_id, location_group, owner_email
+            FROM restaurants
+            WHERE (organization_id IS NOT NULL AND organization_id = ?)
+               OR (location_group IS NOT NULL AND location_group != '' AND location_group = ?)
+               OR id = ?
+        """, (me["organization_id"], me["location_group"], restaurant_id))
+    finally:
+        conn.close()
+    mine = privacy.org_key(dict(me))
+    return sorted(({"id": r["id"], "label": r["label"]} for r in rows if privacy.org_key(dict(r)) == mine),
+                  key=lambda r: str(r["label"] or ""))
+
+
+def location_comparison(restaurant_id: int, days: int = 90, db_path: str = DB_PATH, viewer=None) -> dict:
     """The same complaint themes across every location in this group.
 
     Home's multi-location rollup compares siblings on urgent count, awaiting
@@ -748,21 +789,18 @@ def location_comparison(restaurant_id: int, days: int = 90, db_path: str = DB_PA
     what is wrong with it. For a brand, "location B's wait-time complaints run
     three times location A's" is the highest-value review question there is.
 
-    Scoped by location_group AND owner_email, the tenancy boundary the rest of
-    the codebase uses.
+    Scoped by the ORGANISATION (privacy.org_key — organization_id, else the
+    location group and owner), and shown only to a login that may switch
+    locations (sees_locations; closed with no viewer), like the engine's
+    location kind (Benchmarking re-audit #42, R1-18). A theme's share is of
+    each location's REVIEWS, not of its complaints.
     """
-    from models import get_restaurant
-    r = get_restaurant(restaurant_id)
-    if not r or not getattr(r, "location_group", None):
+    if not sees_locations(viewer):
+        return {"available": False, "reason": "shown only to logins that manage locations"}
+    sibs = location_siblings(restaurant_id, db_path=db_path)
+    if len(sibs) < 2:
         return {"available": False, "reason": "single location"}
     conn = get_conn(db_path)
-    sibs = _rows_raw(conn, """
-        SELECT id, COALESCE(location_name, name) AS label FROM restaurants
-        WHERE location_group=? AND owner_email=? ORDER BY label
-    """, (r.location_group, r.owner_email))
-    if len(sibs) < 2:
-        conn.close()
-        return {"available": False, "reason": "single location"}
 
     out = []
     for s in sibs:

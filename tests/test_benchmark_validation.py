@@ -100,9 +100,16 @@ def test_the_labor_reads_sourced_nra_sentence_survives_its_own_production_contex
     entry = br.for_category("labor_pct", "italian", "set")
     ctx = labor.labor_read_context({"overall_labor_pct": 36.1}, "Labor ran 36.1% this period.",
                                    restaurant_id=None, industry=entry)
-    s = "Labor ran 36.1%, above the industry median of 34.2% (NRA 2025 Restaurant Operations Data Abstract)."
+    # The sourced figure binds (it is not "a cohort under five")...
+    s = ("The NRA median of 34.2% includes benefits, so it is context, not a like-for-like comparison "
+         "(NRA 2025 Restaurant Operations Data Abstract).")
     v = rv.validate(s, ctx)
-    assert v.text == s and "B1" not in v.codes
+    assert v.text == s and v.verdict == "pass"
+    # ...but it measures something else (benefits in), so a comparison with
+    # it is dropped (Benchmarking re-audit #6, R1-04, R3-5).
+    s2 = "Labor ran 36.1%, above the industry median of 34.2% (NRA 2025 Restaurant Operations Data Abstract)."
+    v2 = rv.validate(s2, ctx)
+    assert v2.verdict == "refuse" and "B1" in v2.codes
 
 
 def test_an_all_types_group_is_known_by_its_source_whatever_its_label():
@@ -134,12 +141,15 @@ def test_asks_snapshot_registers_the_engines_bands_and_a_peer_claim_binds(db_pat
     assert peers and all(f["kind"] == "benchmark" and f["source"]["n"] == 12 for f in peers)
     assert ask_cavnar.snapshot_benchmark_facts(viewer) == facts
     ctx = ask_cavnar._validation_context([text], viewer, bench_facts=facts)
-    v = rv.validate("Your labor is above restaurants similar to yours.", ctx)
+    # The viewer runs 27% against a 29% middle: its labor is BELOW the group
+    # (the better side). The old "above" pinned a false claim (R3-1).
+    v = rv.validate("Your labor is below restaurants similar to yours.", ctx)
     assert v.verdict == "pass" and "12 other counter-service restaurants on Cavnar" in v.text, v.findings
-    # And without them the same claim has nothing to bind to.
-    v0 = rv.validate("Your labor is above restaurants similar to yours.",
+    assert rv.validate("Your labor is above restaurants similar to yours.", ctx).verdict == "refuse"
+    # And without them the same claim has nothing to bind to — not said (R3-4).
+    v0 = rv.validate("Your labor is below restaurants similar to yours.",
                      ask_cavnar._validation_context([text], viewer))
-    assert v0.verdict == "caveat" and "B1" in v0.codes
+    assert v0.verdict == "refuse" and "B1" in v0.codes
 
 
 def test_the_published_figure_in_asks_snapshot_is_a_fact(db_path):
@@ -148,9 +158,14 @@ def test_the_published_figure_in_asks_snapshot_is_a_fact(db_path):
     assert "PUBLISHED INDUSTRY BENCHMARKS" in text and "34.2%" in text
     pub = [f for f in facts if (f.get("source") or {}).get("source_kind") == "published"]
     assert any(f["value"] == 34.2 for f in pub)
-    v = rv.validate("The industry median for full-service restaurants is 34.2% labor.",
-                    ask_cavnar._validation_context([text], rid, bench_facts=facts))
-    assert v.text and "NRA 2025" in v.text and v.verdict == "pass"
+    # Quoted as a figure it stands, cited — with the definition caveat, since
+    # the NRA median includes benefits and Cavnar's labor % does not (#5, #6).
+    ctx = ask_cavnar._validation_context([text], rid, bench_facts=facts)
+    v = rv.validate("The industry median for full-service restaurants is 34.2% labor.", ctx)
+    assert v.text and "NRA 2025" in v.text and v.verdict == "caveat"
+    assert any("measured differently" in c for c in v.actions["caveats"])
+    # Compared with, it is not said at all.
+    assert rv.validate("Your labor is below the industry median of 34.2%.", ctx).verdict == "refuse"
 
 
 def test_the_platform_intelligence_tool_is_typed_as_engine_facts(db_path):
@@ -201,7 +216,15 @@ def test_the_food_read_registers_the_published_food_cost_figure(db_path):
     rid = _rid(db_path, "Trattoria Uno", "italian")
     ctx = inventory.food_read_context(rid, "prompt", {}, [])
     pub = [f for f in ctx.facts if f.kind == "benchmark" and (f.source or {}).get("source_kind")]
-    assert pub and all(f.key.startswith("benchmark.food_cost_pct") for f in pub)
+    # The engine's industry kind is the one road (Benchmarking re-audit #5):
+    # its facts, marked measured differently (food + non-alcohol beverage
+    # cost is not Cavnar's COGS %).
+    assert pub and all(f.key.startswith("bench.food_cost_pct_28d.industry") for f in pub)
+    assert all(f.source["engine_kind"] == "industry" and f.source["comparable"] is False for f in pub)
+    # A type Cavnar only guessed ("… Trattoria" by name) gets no published figure at all (R3-8).
+    guessed = _rid(db_path, "Luigi Trattoria")
+    assert categories.category_for(models.get_restaurant(guessed, db_path=db_path))[1] == "inferred"
+    assert not [f for f in inventory.food_read_context(guessed, "prompt", {}, []).facts if f.kind == "benchmark"]
 
 
 # ── #12: projected by the viewer's module permissions ──────────────────────

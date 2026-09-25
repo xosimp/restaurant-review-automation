@@ -1874,5 +1874,65 @@
     }
    }
   ]
+ },
+ "bench_bottom": {
+  "surface": "ask",
+  "confidence": {
+   "pct": 70
+  },
+  "facts": [
+   {
+    "key": "labor.pct",
+    "value": 33.4,
+    "unit": "%"
+   }
+  ],
+  "facts_from": [
+   [
+    "engine",
+    "pizza_bottom",
+    "labor_pct_28d"
+   ],
+   [
+    "engine",
+    "pizza_bottom",
+    "avg_rating_30d"
+   ],
+   [
+    "engine",
+    "pizza_bottom",
+    "labor_hours_per_1k_28d"
+   ]
+  ]
+ },
+ "bench_bottom_digest": {
+  "surface": "digest",
+  "confidence": {
+   "pct": 70
+  },
+  "facts": [
+   {
+    "key": "labor.pct",
+    "value": 33.4,
+    "unit": "%"
+   }
+  ],
+  "facts_from": [
+   [
+    "engine",
+    "pizza_bottom",
+    "labor_pct_28d"
+   ],
+   [
+    "engine",
+    "pizza_bottom",
+    "avg_rating_30d"
+   ],
+   [
+    "engine",
+    "pizza_bottom",
+    "labor_hours_per_1k_28d"
+   ]
+  ]
  }
 }

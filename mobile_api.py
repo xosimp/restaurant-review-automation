@@ -1557,7 +1557,7 @@ def mobile_sentiment_trend(current_user):
 @mobile_bp.route("/reviews/insight")
 @mobile_login_required
 def mobile_review_insight(current_user):
-    payload, status = _capi._do_review_insight(current_user["restaurant_id"])
+    payload, status = _capi._do_review_insight(current_user["restaurant_id"], viewer=current_user)
     # ok tracks the actual status. This hardcoded ok=True, so the error
     # payload ("Analysis unavailable — check back shortly") arrived at the
     # app labelled as a successful insight.

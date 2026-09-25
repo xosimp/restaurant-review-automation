@@ -1686,18 +1686,21 @@ def food_read_context(restaurant_id, prompt, analysis, facts, cause_anchors=(), 
         anchors += rv.anchor(a, "likely")
     for a in alt_anchors or ():
         anchors += rv.anchor(a, "association")
-    # The published food cost figure for this restaurant's type — the band
-    # the FOOD COST POSITION label ("Within the industry band") is read
-    # against (cogs.food_cost_pct) — as benchmark facts, so a sentence that
+    # The published food cost figure for this restaurant's CONFIRMED type,
+    # as the Benchmark Engine's industry kind serves it (Benchmarking
+    # re-audit #5, R1-04, R3-8) — as benchmark facts, so a sentence that
     # quotes it binds and names its source and year (B1, BM3-3). No entry
-    # for the type, no fact, and a claim about "the industry" has nothing
-    # to bind to.
+    # for the type, or a type Cavnar only guessed: no fact, and a claim about
+    # "the industry" has nothing to bind to. The NRA figure is food and
+    # non-alcohol beverage cost, not Cavnar's COGS %: its facts carry
+    # comparable False, so a comparison with it is dropped (#6).
     facts = list(facts or [])
     if restaurant_id:
         try:
-            import benchmark_registry as _br_food
+            import intelligence as _intel_food
             from models import get_restaurant as _gr_food
-            facts += _br_food.facts(_br_food.for_restaurant("food_cost_pct", _gr_food(restaurant_id)))
+            got = _intel_food.industry_read(_gr_food(restaurant_id), "food_cost_pct_28d")
+            facts += list((got or {}).get("facts") or [])
         except Exception as e:
             print(f"[inventory] food benchmark facts unavailable for {restaurant_id}: {e}")
     return rv.ValidationContext(restaurant_id=restaurant_id, surface="food_insight", facts=facts,

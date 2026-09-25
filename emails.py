@@ -1826,32 +1826,43 @@ def create_stripe_checkout(module_count: int, owner_email: str,
 # ── Onboarding email sequence ─────────────────────────────────────────────────
 
 def benchmark_sentence(metric: str, restaurant_id: int = None, what: str = "") -> str:
-    """The one benchmark sentence an email may carry for `metric`: the band
-    for this restaurant's type from benchmark_registry with its source and
-    year (and "we inferred your type" when Cavnar guessed it), or — with no
-    entry for the type — the owner's own target, never an industry figure
-    (NS4 H3). Plain text; the caller escapes it."""
+    """The one benchmark sentence an email may carry for `metric`: the
+    published figure for this restaurant's CONFIRMED type, as the Benchmark
+    Engine's industry kind serves it, with its source and year — and, when
+    it is measured differently from Cavnar's figure (the NRA labor median
+    includes benefits), said to be context, not a comparison — or, with no
+    figure for the type or a type Cavnar only guessed, the owner's own
+    target, never an industry figure (NS4 H3; Benchmarking re-audit #5,
+    R1-17). Plain text; the caller escapes it."""
+    read, guessed = None, False
     try:
-        import benchmark_registry as _br
+        import intelligence as _intel_bs
+        from intelligence import categories as _cats_bs
         from models import get_restaurant as _gr_bs
         r = _gr_bs(restaurant_id) if restaurant_id else None
-        e = _br.for_restaurant(metric, r) if r is not None else None
+        engine_metric = {"labor_pct": "labor_pct_28d", "food_cost_pct": "food_cost_pct_28d"}.get(metric)
+        read = _intel_bs.industry_read(r, engine_metric) if (r is not None and engine_metric) else None
+        guessed = r is not None and _cats_bs.category_for(r)[1] == "inferred"
+        e = (read or {}).get("comparison")
     except Exception:
         e = None
     if not e:
         return (f"The dashboard measures your {what} against the target you set in Settings — there's no "
-                "published industry figure for your type of restaurant, so we don't quote one.")
+                "published industry figure for your confirmed type of restaurant, so we don't quote one."
+                + (" (Confirm your type under Account → Restaurant profile.)" if guessed else ""))
+    band = f"{e['low']:g}–{e['high']:g}%" if e.get("low") is not None and e.get("high") is not None else ""
     if e.get("median") is not None:
         s = (f"For {e['label']}, the {e.get('median_basis') or 'published median'} is {e['median']:g}% "
-             f"({_br.cite(e)}) — the dashboard measures you against your own target.")
+             f"({e.get('source')}) — the dashboard measures you against your own target.")
     elif e.get("source_kind") == "published":
-        s = (f"For {e['label']}, {_br.cite(e)} puts {what} at {_br.band_text(e)} — the dashboard measures you "
+        s = (f"For {e['label']}, {e.get('source')} puts {what} at {band} — the dashboard measures you "
              "against your own target.")
     else:
         s = (f"For {e['label']}, an operator rule of thumb (not a published study) puts {what} at "
-             f"{_br.band_text(e)} — the dashboard measures you against your own target.")
-    if e.get("inferred"):
-        s += " (We guessed your type from your restaurant's name; confirm it under Account → Restaurant profile.)"
+             f"{band} — the dashboard measures you against your own target.")
+    if e.get("comparable") is False:
+        s += (" It's measured differently from the figure Cavnar shows you, so it's context, not a "
+              "comparison.")
     return s
 
 

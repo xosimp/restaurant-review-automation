@@ -386,7 +386,9 @@ def test_an_old_band_and_an_old_own_value_are_not_served(db_path):
     c.commit(); c.close()
     b = intelligence.benchmark(rid, "labor_pct_28d")
     assert b["available"] is False
-    assert intelligence.context_lines(rid) == []
+    # No comparison is stated — only why there is none (re-audit R3-13).
+    lines = intelligence.context_lines(rid)
+    assert lines and all(ln.startswith("No fair comparison") for ln in lines)
 
 
 def _cohort(db_path, vals, cat="mexican"):
@@ -456,7 +458,9 @@ def test_an_inferred_type_never_makes_a_cohort(db_path):
     assert categories.category_for(models.get_restaurant(ids[0], db_path)) == ("mexican", "inferred")
     benchmarks.compute(db_path=db_path, cohorts={r: "mexican" for r in ids})
     assert benchmarks._row("mexican", "labor_pct_28d", db_path=db_path) is None
-    assert intelligence.context_lines(ids[0]) == []
+    lines = intelligence.context_lines(ids[0])
+    assert all(ln.startswith("No fair comparison") for ln in lines)              # only why (R3-13)
+    assert any("confirm" in ln for ln in lines)
     b = intelligence.benchmark(ids[0], "labor_pct_28d")
     assert b["available"] is False and "confirm" in b["reason"]
     from intelligence import jobs
@@ -690,7 +694,11 @@ def test_the_day2_email_quotes_a_benchmark_only_for_the_type(db_path):
 def test_ask_names_its_cohort_and_labels_general_knowledge(db_path):
     import ask_cavnar, ask_cavnar_tools
     assert "BENCHMARKS AND COMPARISONS" in ask_cavnar._SYSTEM_STATIC
-    assert "general industry knowledge, not measured here" in ask_cavnar._SYSTEM_STATIC
+    # The "general industry knowledge" licence is gone (Benchmarking
+    # re-audit R3-13): with no line for a comparison Ask says there is no
+    # fair one and why — it never fills the gap from its own knowledge.
+    assert "general industry knowledge, not measured here" not in ask_cavnar._SYSTEM_STATIC
+    assert "no fair comparison" in ask_cavnar._SYSTEM_STATIC and "not from your own" in ask_cavnar._SYSTEM_STATIC
     rid = _rid(db_path, name="Nonna", category="italian")
     ctx = ask_cavnar._intelligence_context(rid)
     assert "RESTAURANTS LIKE IT" not in ctx and "PUBLISHED INDUSTRY BENCHMARKS" in ctx and "34.2%" in ctx

@@ -207,6 +207,30 @@ def ineligible(member, row) -> str | None:
     return None
 
 
+def eligible_members(latest, members) -> tuple[dict, dict]:
+    """({restaurant_id: member}, {reason: count}) — the restaurants that may
+    stand in any cross-restaurant group: not ineligible(), and one per
+    Google listing (a duplicate listing is the same business twice). The
+    one membership rule for bands and patterns (Benchmarking re-audit #21,
+    R1-09): a restaurant with no member row is taken as its own
+    organisation. Pure over its inputs."""
+    elig, seen_place, skipped = {}, {}, {}
+    for rid in sorted(latest or {}):
+        m = (members or {}).get(rid) or {"org": f"r{rid}", "org_hash": privacy.org_hash(f"r{rid}")}
+        why = ineligible(m, (latest or {})[rid]) if (members or {}).get(rid) else None
+        if why:
+            skipped[why] = skipped.get(why, 0) + 1
+            continue
+        pid = m.get("place_id")
+        if pid:
+            if pid in seen_place:
+                skipped["duplicate listing"] = skipped.get("duplicate listing", 0) + 1
+                continue
+            seen_place[pid] = rid
+        elig[rid] = m
+    return elig, skipped
+
+
 # ── the peer partition, with hysteresis (Benchmarking audit #20, #30) ─────
 # The partition is the owner-CONFIRMED profile. A measured signal that
 # disagrees with it (alcohol share against bar-led) moves it only after

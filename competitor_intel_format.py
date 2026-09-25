@@ -421,3 +421,74 @@ def market_standing(own: dict, market: dict) -> dict:
              + f" · a gap inside ±{margin:.1f}★ reads as level")
     return {"own_vs_market": gap, "standing": standing, "standing_label": label, "standing_tone": tone,
             "standing_basis": basis, "standing_margin": margin, "standing_why_not": None}
+
+
+# ── the Benchmark Engine's `market` kind (Benchmarking re-audit #30) ────────
+# One market comparison: the engine's `market` kind is Intel's matched-rival
+# standing (market_rating + market_standing above), and the Reviews read
+# quotes it instead of its own unweighted median of every rival (R3-19,
+# R4-13) — so Intel's "About level with the block" and the Reviews read
+# never disagree. Rating only: nearby competitors are compared on nothing
+# else.
+MARKET_METRIC = "avg_rating_30d"
+MARKET_GROUP_LABEL = "nearby restaurants Intel tracks, weighted by review volume"
+
+
+def market_comparison(restaurant, metric=MARKET_METRIC) -> dict:
+    """The engine's `market` comparison for one metric: {kind "market",
+    available, standing ("ahead" | "level" | "behind"), standing_label,
+    standing_basis, own_value, market_rating, gap, margin, n (rated rivals
+    in the market figure), matched, cohort_label, as_of, stale, better} —
+    or unavailable with why_not. Never raises."""
+    import json as _json
+    out = {"kind": "market", "available": False}
+    if metric != MARKET_METRIC:
+        return dict(out, why_not="nearby competitors are compared on rating only")
+    if restaurant is None or not getattr(restaurant, "competitor_intel", None):
+        return dict(out, why_not="no competitor read on Intel yet")
+    try:
+        blob = _json.loads(restaurant.competitor_intel) or {}
+    except Exception:
+        return dict(out, why_not="the competitor read is not readable")
+    own = own_rating(getattr(restaurant, "gbp_rating", None), getattr(restaurant, "gbp_review_count", None))
+    market = market_rating(blob.get("competitors") or [])
+    st = market_standing(own, market)
+    if not st.get("standing"):
+        why = st.get("standing_why_not") or (
+            "needs this restaurant's Google rating — the only figure comparable to competitors' ratings"
+            if own.get("own_rating_basis") != "google_all_time" else "no rated competitors in the market")
+        return dict(out, why_not=why)
+    try:
+        from ai_guard import freshness
+        fresh = freshness(getattr(restaurant, "competitor_updated_at", None))
+    except Exception:
+        fresh = {"as_of": None, "stale": True}
+    return {"kind": "market", "available": True, "standing": st["standing"], "standing_label": st["standing_label"],
+            "standing_basis": st["standing_basis"], "own_value": own.get("own_rating"),
+            "market_rating": market.get("market_rating"), "gap": st.get("own_vs_market"),
+            "margin": st.get("standing_margin"), "n": int(market.get("market_rating_n") or 0),
+            "matched": int(market.get("market_matched_n") or 0), "min_n": MARKET_MIN_MATCHED,
+            "cohort_label": MARKET_GROUP_LABEL, "as_of": fresh.get("as_of"), "stale": bool(fresh.get("stale")),
+            "better": "higher", "comparable": True}
+
+
+def market_facts(c, metric=MARKET_METRIC) -> list:
+    """response_validation Fact dicts for an available market comparison:
+    the market rating as a benchmark (engine_kind "market", its standing,
+    better "higher" — the contract keys B1 reads), the owner's Google
+    rating as measured and the gap as computed."""
+    if not c or not c.get("available"):
+        return []
+    src = {"source": "Intel's nearby-competitor read", "source_kind": "market", "engine_kind": "market",
+           "cohort_label": c.get("cohort_label"), "n": c.get("n"), "min_n": c.get("min_n"),
+           "as_of": c.get("as_of"), "standing": c.get("standing"), "metric": metric, "better": "higher",
+           "own_value": c.get("own_value"), "comparable": True, "inferred": False, "stale": c.get("stale")}
+    out = [{"key": f"bench.{metric}.market.rating", "value": float(c["market_rating"]), "unit": "★",
+            "kind": "benchmark", "entity": "market", "period": None, "as_of": c.get("as_of"), "source": src}]
+    if c.get("own_value") is not None:
+        out.append({"key": "market.own_google_rating", "value": float(c["own_value"]), "unit": "★",
+                    "kind": "measured", "period": None})
+    if c.get("gap") is not None:
+        out.append({"key": "market.gap", "value": abs(float(c["gap"])), "unit": "★", "kind": "computed",
+                    "period": None})
+    return out

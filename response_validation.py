@@ -72,7 +72,7 @@ THE RULES (codes are stable; PROMPT_LIBRARY.md → Response Validation):
          guessed "most restaurants run 31%" never reaches an owner);
        * a claim with no figure binds to a benchmark fact for the SAME
          metric as its subject (labor, food cost, rating, replies …),
-         else caveat / drop;
+         else it is dropped (interactive too — R3-4);
        * a Cavnar peer group (source_kind "cohort", or the all-types group)
          needs n ≥ the fact's min_n (else COHORT_MIN_N, 8); a published
          figure (source_kind published / rule_of_thumb / vendor) needs a
@@ -83,17 +83,52 @@ THE RULES (codes are stable; PROMPT_LIBRARY.md → Response Validation):
          yours" / "similar to yours" on it is rewritten to that;
        * a bound claim names its group: "(N other <group>, as of M/D/YY)"
          for a peer group, "(source year)" for a published figure;
-       * a ranking word ("top quartile", "well above", "percentile") needs
-         the fact's strength_pct ≥ STRONG_CLAIM_PCT (75); below it the
-         phrase becomes "about the middle" when the fact's standing says
-         so, else caveat / drop; a ranking the fact's standing
-         contradicts is caveat / drop         rewrite / caveat / drop
+       * the grammar also knows the engine's own vocabulary (Benchmarking
+         re-audit R3-2): its group labels ("counter-service restaurants on
+         Cavnar", and every cohort_label in the facts said verbatim),
+         "your peer group / cohort", "beats the group", "better than
+         average", "nearby competitors";
+       * a claim binds to the SAME METRIC it names (R3-3): "labor %" is
+         not the hours-per-$1k band ("hours per", "swing", "lunch /
+         dinner", "within a day", "lift", "engagement" pick the metric);
+         a sentence that could be about several metrics whose standings
+         disagree is dropped; "industry / NRA / published" prefers the
+         published fact, anything else a Cavnar group;
+       * a fact for a type Cavnar guessed (source.inferred) binds nothing:
+         dropped; a published figure measured differently
+         (source.comparable False, e.g. the NRA labor median incl.
+         benefits) is context only — any positioning against it (above,
+         below, near, inside, than …) is dropped, a bare quote gets its
+         definition_note as a caveat unless it already says so (R1-04,
+         R3-5, R4-4);
+       * a ranking word or form ("top quartile", "well above",
+         "percentile", "better than most", "one of the lowest", "among
+         the best", "beats", "outperforms") needs the fact's strength_pct
+         ≥ STRONG_CLAIM_PCT (75); below it the phrase becomes "about the
+         middle" when the fact's standing says so, else caveat / drop;
+       * the side of the group a sentence puts the restaurant on (higher
+         / lower / better / worse … than, above / below / ahead of /
+         behind / trails the group, one of the lowest) is resolved
+         against the metric's better direction (source.better, else the
+         metric's name) — the group as the subject ("… than you") turns
+         it round — and a side the fact's standing contradicts, or any
+         side at "about the middle" / Intel's "level", is dropped (R3-1);
+       * a contradicted ranking and a peer claim with no fact behind it
+         are dropped on EVERY surface, interactive too (R3-4) — a caveat
+         stays only for a missing source/year or an aged benchmark; a
+         sentence that says there is NO comparison ("can't compare you
+         yet") claims nothing and passes     rewrite / caveat / drop
   P2 a prediction about similar restaurants ("restaurants like / similar
      to yours reduced / cut / improved X by N%") needs a fact of kind
      "prediction" whose value matches N at its written precision and whose
      source.n_restaurants ≥ PREDICTION_MIN_RESTAURANTS (5); with none the
-     sentence is dropped. Likelihood words in it ("high likelihood", "very
-     likely", "likely") are capped by the K1 target level of the
+     sentence is dropped. The same claim with no number ("restaurants
+     like yours typically cut labor after tightening prep") needs a
+     prediction fact just the same (R3-12), and a prediction fact binds
+     only to the sentence's own measure (source.metric) and to the
+     recommendation's kind (policy rec_kind vs source.rec_kind).
+     Likelihood words in it ("high likelihood", "very likely", "likely")
+     are capped by the K1 target level of the
      recommendation's own confidence, never by the size of the effect.
      The prediction fact (the Restaurant DNA layer builds it):
        Fact(key="predict.<rec_kind>.<metric>.effect_pct", value=11.0,
@@ -1051,7 +1086,16 @@ _BENCH_RE = re.compile(
     r"leaders\s+in\s+your|(?:your\s+)?peers|"
     r"nationwide|national\s+average|than\s+most|like\s+most\s+" + _MOD + _GROUP_NOUNS + r"|"
     r"restaurants\s+in\s+your\s+area|area['’]s\s+typical|(?:most|the\s+other)\s+competitors|area\s+restaurants|"
-    r"compared\s+(?:to|with)\s+(?:competitors|other\s+restaurants|peers|similar\s+\w+|the\s+area|the\s+industry))"
+    r"compared\s+(?:to|with)\s+(?:competitors|other\s+restaurants|peers|similar\s+\w+|the\s+area|the\s+industry)|"
+    # The engine's own vocabulary (Benchmarking re-audit R3-2): its group
+    # labels ("counter-service restaurants on Cavnar"), the group by name,
+    # a ranking against it, and the nearby market Intel compares with.
+    + _GROUP_NOUNS + r"\s+on\s+Cavnar|(?:your|the|this)\s+(?:peer\s+group|cohort|comparison\s+group)|"
+    r"(?:beats?|beating|outperforms?|outperforming|leads?|leading|trails?|trailing)\s+(?:the|your)\s+"
+    r"(?:group|cohort|pack|field)|(?:ahead\s+of|behind)\s+most\b|"
+    r"(?:better|worse)\s+than\s+(?:the\s+)?average\b(?!\s+(?:for|on|in|this|last|week|month|day|night|shift|"
+    r"service|\w+day)\b)|"
+    r"(?:nearby|local)\s+(?:competitors|rivals|restaurants)|(?:the|your)\s+local\s+market)"
     r"(?!\w)", re.I)
 # "Like yours" and its synonyms: allowed only beside a comparable
 # like-for-like peer group (BM4 §4.9).
@@ -1063,6 +1107,75 @@ _LIKE_YOURS_RE = re.compile(
 _RANK_WORD_RE = re.compile(
     r"\b(?:(?:in\s+)?(?:the\s+)?" + _RANK + r"|percentiles?|(?:well|far|way)\s+(?:above|below|ahead\s+of|behind|under|"
     r"over)|best[- ]in[- ](?:class|category)|leads?\s+(?:the|your)\s+(?:group|cohort|pack))", re.I)
+# The other ranking forms (R3-1, R3-2): "better than most", "beats",
+# "outperforms", "one of the lowest", "among the best", "better than
+# average", "leads the group". Each is a ranking, held to the same strength
+# as a quartile word — and read for its direction below.
+_RANK_FORM_RE = re.compile(
+    r"\b(?:(?:\w+er|more|less|fewer)\b(?:\s+[^\s.;]+){0,3}?\s+than\s+most|(?:ahead\s+of|behind)\s+most|beats?\b|beating|outperform\w*|"
+    r"outpac\w*|(?:one\s+of\s+the|among\s+the)\s+(?:lowest|highest|best|worst|leanest|strongest|weakest|top|"
+    r"bottom|cheapest|costliest)|(?:better|worse)\s+than\s+(?:the\s+)?average|leads?\s+(?:the|your)\s+"
+    r"(?:group|cohort|pack|field|market))\b", re.I)
+
+# ── B1 direction (R3-1): which side of the group a sentence puts the
+# restaurant on, resolved against the metric's better direction. ──
+_GROUPISH = (r"(?:median|middle|midpoint|average|band|range|group|cohort|pack|field|market|block|them|others|peers?|"
+             r"most|rest|competitors|rivals|figure|benchmark|typical|" + _GROUP_NOUNS[3:-1] + r")")
+# "higher … than", "better … than" (up to five words between).
+_DIR_THAN_RE = re.compile(
+    r"\b(?P<w>higher|lower|better|worse|more|fewer|less|leaner|stronger|weaker|faster|slower|cheaper|costlier)\b"
+    r"(?P<mid>(?:\s+[^\s.;]+){0,5}?)\s+than\s+(?P<obj>[^\s.;,]+(?:\s+[^\s.;,]+)?)", re.I)
+# "above / below / ahead of / behind / beats / trails … <the group>".
+_DIR_PREP_RE = re.compile(
+    r"\b(?P<w>above|below|under|over|ahead\s+of|behind|beats?|beating|outperform\w*|outpac\w*|exceed\w*|"
+    r"trail\w*|lead(?:s|ing)?)\s+(?P<obj>(?:[\w'’%.$★-]+\s+){0,3}?(?:you(?:rs)?\b|" + _GROUPISH + r"\b))", re.I)
+_DIR_SUPER_RE = re.compile(r"\b(?:one\s+of\s+the|among\s+the)\s+(?P<w>lowest|highest|best|worst|leanest|strongest|"
+                           r"weakest|top|bottom|cheapest|costliest)\b", re.I)
+_DIR_BETTER = {"better", "stronger", "faster", "leaner", "ahead of", "beat", "beats", "beating", "best", "top",
+               "leanest", "strongest", "lead", "leads", "leading"}
+_DIR_WORSE = {"worse", "weaker", "slower", "behind", "worst", "bottom", "weakest"}
+_DIR_HIGH = {"higher", "more", "above", "over", "highest", "costlier", "costliest"}
+_DIR_LOW = {"lower", "fewer", "less", "below", "under", "lowest", "cheaper", "cheapest"}
+_NEGATED_RE = re.compile(r"\b(?:not|never|no\s+longer)\s+(?:\w+\s+){0,2}$|n['’]t\s+(?:\w+\s+){0,2}$", re.I)
+# A lower-is-better metric, for a fact that does not say (the contract's
+# source.better; pinned against metrics_registry by a test).
+_LOWER_BETTER_RE = re.compile(r"labou?r|food_cost|prime|waste|hours_per|staff_per|cogs|pour", re.I)
+# Which of several metrics on the same topic a sentence names (R3-3): a
+# claim binds to the metric it says, not to whichever band shares a word.
+_M_HOURS = re.compile(r"\bhours?\s+(?:per|for\s+every|a\s+\$|each)\b|\blabou?r[- ]hours\b|\bstaff(?:ing)?\s+hours\b|"
+                      r"\bper\s+\$?1(?:,000|k)\b|\bhours?/\$", re.I)
+_M_DAY = re.compile(r"\b(?:lunch|daytime|day\s*part|day\s+shifts?|by\s+day)\b", re.I)
+_M_NIGHT = re.compile(r"\b(?:dinner|night|evening)", re.I)
+_M_SWING = re.compile(r"\bswings?\b|\bday[- ]to[- ]day\b|\bvolatil|\bvar(?:y|ies|iation|iance)\b|\bconsisten|"
+                      r"\bstead(?:y|ier|iness)\b|\bup\s+and\s+down\b", re.I)
+_M_LABOR_PCT = re.compile(r"\blabou?r\s*(?:%|percent\w*|cost\w*|ratio|share|as\s+a\s+(?:share|percent\w*))|"
+                          r"\bpayroll\b|\blabou?r\s+(?:runs?|ran|is|was|at|of)\s+\d", re.I)
+_M_24H = re.compile(r"\bwithin\s+(?:a\s+day|24\s+hours?|the\s+day)\b|\bsame[- ]day\b|\b24[- ]hours?\b|\bquick(?:ly|er)?\b|"
+                    r"\bfast(?:er)?\b|\bpromptly\b", re.I)
+_M_LIFT = re.compile(r"\blift\b|\bsales\s+after\b|\bbump\b", re.I)
+_M_ENGAGE = re.compile(r"\bengag\w*|\blikes\b|\binteractions?\b", re.I)
+# The sentence names the published (industry) figure rather than a Cavnar group.
+_INDUSTRY_WORDS_RE = re.compile(r"\bindustry\b|\bpublished\b|\bNRA\b|\bnational(?:ly)?\b|\bnationwide\b|"
+                                r"\bstudy\b|\brule\s+of\s+thumb\b", re.I)
+# Any positioning against a figure: a comparative, a ranking, "inside the
+# band", "in line with", "near". Against a figure measured differently
+# (source.comparable False) none of it may be said.
+_COMPARE_ANY_RE = re.compile(
+    r"\b(?:higher|lower|better|worse|more|fewer|less|leaner|above|below|under|over|ahead|behind|beats?|beating|"
+    r"outperform\w*|exceed\w*|trail\w*|inside|within|outside|in\s+line|on\s+par|near|close\s+to|match\w*|"
+    r"between|than)\b", re.I)
+# A sentence saying there is NO comparison ("Cavnar can't compare you with
+# other restaurants yet — confirm your profile"): what the Ask snapshot's
+# "No fair comparison" line asks the model to say (R3-13). Without a figure
+# it claims nothing about another business.
+_NO_COMPARISON_RE = re.compile(
+    r"\b(?:no\s+(?:fair\s+|like[- ]for[- ]like\s+)?comparison|(?:can(?:no|['’])t|cannot|can\s+not|unable\s+to|"
+    r"not\s+(?:yet\s+)?able\s+to|isn['’]t\s+(?:yet\s+)?(?:possible|able)\s+to)\s+(?:\w+\s+){0,2}?compare|"
+    r"not\s+enough\s+(?:\w+\s+){0,3}?(?:to\s+compare|for\s+a\s+(?:fair\s+)?comparison)|too\s+few\s+(?:\w+\s+){0,3}?"
+    r"(?:to\s+compare|for\s+a\s+(?:fair\s+)?comparison))", re.I)
+# A sentence that already says the figure is context, measured differently.
+_CONTEXT_SAID_RE = re.compile(r"\bcontext\b|measured\s+differently|incl(?:udes?|uding|\.)\s+benefits|"
+                              r"like[- ]for[- ]like|defined\s+differently|different\s+definition", re.I)
 _MEMBER_VALUE_RE = re.compile(r"\b(?:a|one|another)\s+(?:restaurant|caf[eé]|bar|spot|place|kitchen)\s+"
                               r"(?:like\s+yours|nearby|in\s+your\s+(?:area|cohort|group))\b", re.I)
 # A Cavnar peer group's floor when the fact names none — mirrors
@@ -1099,6 +1212,16 @@ _PREDICTION_RE = re.compile(
     r"\b[^.;]{0,80}?\b(?:reduced|cut|lowered|improved|raised|increased|grew|lifted|boosted|trimmed|dropped|"
     r"brought\s+down|saw\s+[^.;]{0,40}?\b(?:fall|drop|rise|climb|improve|shrink|grow))\b[^.;]{0,60}?"
     r"(?P<n>\d+(?:\.\d+)?)\s?(?:%|percent)", re.I)
+# The same claim with no number (R3-12): "restaurants like yours typically
+# cut labor after tightening weekday prep" is what worked for peers — it
+# needs a prediction fact as much as the numbered form does.
+_PREDICTION_WORDS_RE = re.compile(
+    r"\b(?:(?:similar|comparable|peer)\s+" + _MOD + _GROUP_NOUNS + r"|" + _GROUP_NOUNS +
+    r"\s+(?:(?:most|very)\s+)?(?:like|similar\s+to|comparable\s+to|close\s+to)\s+(?:yours|you)|"
+    r"(?:ones|those)\s+(?:most\s+)?like\s+yours|" + _GROUP_NOUNS + r"\s+with\s+a\s+profile\s+(?:close|similar)\s+to\s+yours)"
+    r"\b(?P<mid>[^.;]{0,80}?)\b(?P<verb>reduced|cut|cuts|lowered|improved|improve|raised|increased|grew|lifted|"
+    r"boosted|trimmed|dropped|brought\s+down|saw\s+[^.;]{0,40}?\b(?:fall|drop|rise|climb|improve|shrink|grow)|"
+    r"got\s+(?:better\s+)?results|(?:had|have|found)\s+success)\b", re.I)
 _LIKELIHOOD_RE = (
     (re.compile(r"\b(?:an?\s+)?(?:very\s+)?high\s+(?:likelihood|probability|chance)\b", re.I),
      {3: "a good chance", 2: "a fair chance", 1: "some chance"}),
@@ -1729,6 +1852,8 @@ class _Run:
             if c.get("year"):
                 continue
             k = c["kind"]
+            if k == "money" and c["value"] in (1.0, 1000.0) and re.search(r"\bper\s*$", t[:c["start"]], re.I):
+                continue      # the unit of a rate ("hours per $1k of sales"), not a figure claimed
             # The unit is the figure's OWN token: the words right after it,
             # whitespace only between — never past a comma or another figure
             # ("labor ran 34.8%, 8.8 points over" is a % and then points).
@@ -2301,8 +2426,8 @@ class _Run:
         to its size floor — as opposed to a published figure, which is held
         to a source and a year (BM1-1: registry facts carry a label and no
         n, and were dropped as "a cohort under five")."""
-        if src.get("source_kind") in ("cohort", "platform") or src.get("engine_kind") in ("peers", "platform") \
-                or self._bench_platform(src):
+        if src.get("source_kind") in ("cohort", "platform", "market") \
+                or src.get("engine_kind") in ("peers", "platform", "market") or self._bench_platform(src):
             return True
         if src.get("source_kind"):
             return False
@@ -2318,15 +2443,135 @@ class _Run:
     def _sentence_topics(t):
         return {k for k, sr, _f in _BENCH_TOPIC_RE if sr.search(t)}
 
+    @staticmethod
+    def _fact_metric(f):
+        """The metric a benchmark fact is for: source.metric (the contract),
+        else the key's second segment (bench.<metric>.…, published.<metric>.…)."""
+        src = f.source if isinstance(f.source, dict) else {}
+        if src.get("metric"):
+            return str(src["metric"])
+        parts = str(f.key or "").split(".")
+        return parts[1] if len(parts) >= 3 else None
+
+    @staticmethod
+    def _metric_named(metric, t):
+        """True when the sentence names this metric by its own words, False
+        when it names a sibling instead, None when the metric has no words
+        of its own beyond its topic (R3-3)."""
+        mt = str(metric or "").lower()
+        hours, day, night = bool(_M_HOURS.search(t)), bool(_M_DAY.search(t)), bool(_M_NIGHT.search(t))
+        if "hours_per_1k_day" in mt:
+            return hours and day
+        if "hours_per_1k_night" in mt:
+            return hours and night
+        if "hours_per_1k" in mt:
+            return hours and not (day or night)
+        if "labor_pct_sd" in mt or mt.endswith("_sd_28d"):
+            return bool(_M_SWING.search(t))
+        if "labor_pct" in mt:
+            return bool(_M_LABOR_PCT.search(t)) and not _M_SWING.search(t) and not hours
+        if "response_24h" in mt:
+            return bool(_M_24H.search(t))
+        if "reply_rate" in mt or "response_rate" in mt:
+            return not _M_24H.search(t)
+        if "post_lift" in mt:
+            return bool(_M_LIFT.search(t))
+        if "post_engagement" in mt:
+            return bool(_M_ENGAGE.search(t))
+        return None
+
+    def _bench_better(self, f, src):
+        """"higher" | "lower" | None — which direction is better for the
+        fact's metric: source.better (the contract), else the metric's name."""
+        b = src.get("better")
+        if b in ("higher", "lower"):
+            return b
+        mt = self._fact_metric(f) or ""
+        if not mt:
+            return None
+        return "lower" if _LOWER_BETTER_RE.search(mt) else "higher"
+
+    @staticmethod
+    def _standing_side(standing):
+        """better | worse | middle | None for an engine standing ("top
+        quarter", "below the middle", "about the middle") or Intel's market
+        standing ("ahead", "level", "behind")."""
+        s = str(standing or "").strip().lower()
+        if not s or s == "unmeasured":
+            return None
+        if re.search(r"\b(?:top|above|better|ahead|leads?|leanest|best|cheapest)\b", s):
+            return "better"
+        if re.search(r"\b(?:bottom|below|worse|behind|trails?|costliest|worst)\b", s):
+            return "worse"
+        if re.search(r"\b(?:middle|level|in\s+line|normal|about)\b", s):
+            return "middle"
+        return None
+
+    @staticmethod
+    def _claimed_side(s, better):
+        """The side of the group a sentence puts the restaurant on — better
+        or worse — from its comparatives ("higher … than", "below the
+        median", "ahead of", "one of the lowest"), resolved against the
+        metric's direction; None when it says none, or says both."""
+        sides = set()
+
+        def add(word, obj, start):
+            w = " ".join(word.lower().split())
+            if _NEGATED_RE.search(s[max(0, start - 30):start]):
+                return
+            if w in _DIR_BETTER or w.startswith(("outperform", "outpac", "lead")):
+                side = "better"
+            elif w in _DIR_WORSE or w.startswith("trail"):
+                side = "worse"
+            elif w in _DIR_HIGH or w.startswith("exceed"):
+                side = None if better is None else ("better" if better == "higher" else "worse")
+            elif w in _DIR_LOW:
+                side = None if better is None else ("better" if better == "lower" else "worse")
+            else:
+                return
+            if side is None:
+                return
+            if re.match(r"you(?:rs)?\b", obj or "", re.I):
+                side = "worse" if side == "better" else "better"     # the group is the subject
+            sides.add(side)
+
+        for mm in _DIR_THAN_RE.finditer(s):
+            obj = mm.group("obj") or ""
+            if re.match(r"your\s+(?:own|last|usual|normal|typical|previous|prior)\b|(?:last|this)\s+"
+                        r"(?:week|month|year)\b|(?:it|they)\s+(?:was|were|did)\b", obj, re.I):
+                continue      # against its own past, not the group
+            add(mm.group("w"), obj, mm.start())
+        for mm in _DIR_PREP_RE.finditer(s):
+            add(mm.group("w"), mm.group("obj"), mm.start())
+        for mm in _DIR_SUPER_RE.finditer(s):
+            add(mm.group("w"), "", mm.start())
+        return sides.pop() if len(sides) == 1 else None
+
+    def _bench_match(self, scan, benches):
+        """The benchmark phrase a sentence carries: the grammar, else one of
+        the facts' own group labels said verbatim ("counter-service
+        restaurants on Cavnar", R3-2)."""
+        m = _BENCH_RE.search(scan)
+        if m:
+            return m.group(0)
+        low = scan.lower()
+        for f in benches:
+            lab = str(self._bench_src(f).get("cohort_label") or "").strip().lower()
+            if len(lab) >= 8 and lab in low:
+                return lab
+        return None
+
     def benchmarks(self, s):
         if self._p2_bound:
             return s
         scan = _blank_own(s)
-        m = _BENCH_RE.search(scan)
-        if not m:
+        benches = [f for f in self.facts.benchmarks if f.value is not None]
+        span = self._bench_match(scan, benches)
+        if not span:
             return s
         t, claims = self._claims(scan)
-        benches = [f for f in self.facts.benchmarks if f.value is not None]
+        if not claims and _NO_COMPARISON_RE.search(t):
+            return s          # says there is no comparison — claims none
         sizes = {float(self._bench_src(f).get("n")) for f in benches
                  if isinstance(self._bench_src(f).get("n"), (int, float))}
         # A figure in a benchmark sentence is either the restaurant's own
@@ -2353,37 +2598,79 @@ class _Run:
             # A peer or industry figure no benchmark fact holds is not said —
             # on an interactive surface too: "most restaurants run 31%"
             # reached owners with a soft label (BM1-1, BM3-2).
-            self.emit("B1", "drop", "drop", m.group(0), "a peer or industry figure no benchmark fact holds")
+            self.emit("B1", "drop", "drop", span, "a peer or industry figure no benchmark fact holds")
             return s
         if matched:
             pool = matched
         else:
             # A claim with no figure binds to a benchmark for the metric the
             # sentence is about (BM3-5), never to whichever fact came first.
-            pool =[f for f in benches if self._bench_topic(f) in topics]
+            pool = [f for f in benches if self._bench_topic(f) in topics]
             # The middle of a band stands for the band.
             pool.sort(key=lambda f: 0 if re.search(r"(?:^|[._])(?:p50|median)$", f.key) else 1)
         # A fact that names where it came from before one that does not.
         pool.sort(key=lambda f: 0 if isinstance(f.source, dict) and f.source else 1)
+        # The kind of figure the sentence names: the published one when it
+        # says "industry" / "NRA", else a Cavnar group (a peer claim never
+        # binds to a published figure while a band for it exists).
+        want_published = bool(_INDUSTRY_WORDS_RE.search(t))
+        pool.sort(key=lambda f: 0 if self._bench_group(self._bench_src(f)) != want_published else 1)
+        # The same METRIC, not the same topic (R3-3): "labor %" is not the
+        # hours-per-$1k band, and a sentence that could be either, when the
+        # two disagree, is not said.
+        metrics = list(dict.fromkeys(self._fact_metric(f) for f in pool))
+        named = [mt for mt in metrics if self._metric_named(mt, t)]
+        if named:
+            pool = [f for f in pool if self._fact_metric(f) in named]
+            metrics = named
+        if len(metrics) > 1:
+            standings = {}
+            for f in pool:
+                st = self._bench_src(f).get("standing")
+                if st and st != "unmeasured":
+                    standings.setdefault(self._fact_metric(f), st)
+            if len(set(standings.values())) > 1:
+                self.emit("B1", "drop", "drop", span, "a peer claim that could be about any of several measures "
+                          "whose comparisons disagree (" + "; ".join(f"{k}: {v}" for k, v in standings.items()) + ")")
+                return s
         if not pool:
-            self.emit("B1", "caveat", "drop", m.group(0), "a peer or industry comparison with no benchmark behind it "
-                      "for the same measure", "A comparison here has no sourced benchmark behind it.")
+            # A peer claim with nothing behind it is not said, on any surface
+            # (R3-4): a caveat under a false ranking still reads as Cavnar's.
+            self.emit("B1", "drop", "drop", span, "a peer or industry comparison with no benchmark behind it "
+                      "for the same measure")
             return s
         f = pool[0]
         src = self._bench_src(f)
         platform = self._bench_platform(src)
         group = self._bench_group(src)
+        if src.get("inferred"):
+            # A type Cavnar guessed compares with no one (R1-04, R3-8).
+            self.emit("B1", "drop", "drop", span, "a comparison for a restaurant type Cavnar only guessed")
+            return s
         if group:
             n = src.get("n")
             min_n = src.get("min_n") if isinstance(src.get("min_n"), (int, float)) else COHORT_MIN_N
             if not isinstance(n, (int, float)) or isinstance(n, bool) or n < min_n:
-                self.emit("B1", "drop", "drop", m.group(0),
+                self.emit("B1", "drop", "drop", span,
                           f"a Cavnar peer group under its minimum of {int(min_n)} other restaurants")
                 return s
         elif not (src.get("source") and src.get("year")):
-            self.emit("B1", "caveat", "drop", m.group(0), "benchmark without a source and year",
+            self.emit("B1", "caveat", "drop", span, "benchmark without a source and year",
                       "A comparison here has no sourced benchmark behind it.")
             return s
+        if src.get("comparable") is False:
+            # Measured differently (the NRA labor median includes benefits;
+            # Cavnar's labor % is wages from shifts): context, never a
+            # comparison (R1-04, R3-5, R4-4).
+            if (_COMPARE_ANY_RE.search(t) or _RANK_WORD_RE.search(s) or _RANK_FORM_RE.search(s)
+                    or _LIKE_YOURS_RE.search(s)):
+                self.emit("B1", "drop", "drop", span, "a comparison with a figure measured differently "
+                          "(context only)")
+                return s
+            if not _CONTEXT_SAID_RE.search(s):
+                self.emit("B1", "caveat", None, span, "a figure measured differently, quoted as context",
+                          src.get("definition_note") or "The published figure is measured differently from "
+                          "yours — context, not a like-for-like comparison.")
         # "Like yours" / "similar to yours" only beside a comparable
         # like-for-like peer group — never the all-types group or a
         # published figure, which are named for what they are.
@@ -2398,13 +2685,15 @@ class _Run:
                 repl = _cap_like(lm.group(0), repl)
             s = s[:lm.start()] + repl + s[lm.end():]
             self.rewrite("B1", lm.group(0), repl)
-        # A ranking word needs a comparison strong enough to rank on, and
-        # the standing the comparison actually shows (BM3-10, BM4 §4.7).
+        # A ranking needs the standing the comparison actually shows
+        # (BM3-10, BM4 §4.7) — contradicted, it is not said on any surface
+        # (R3-4).
+        standing = str(src.get("standing") or "")
+        sp = src.get("strength_pct")
+        weak = not group or not isinstance(sp, (int, float)) or sp < STRONG_CLAIM_PCT
         rk = _RANK_WORD_RE.search(s)
         if rk:
             word = rk.group(0)
-            standing = str(src.get("standing") or "")
-            sp = src.get("strength_pct")
             top = re.search(r"\b(?:top|upper|best|leads?)\b", word, re.I)
             bottom = re.search(r"\b(?:bottom|lower)\b", word, re.I)
             contradicts = bool(standing) and standing != "unmeasured" and (
@@ -2413,20 +2702,32 @@ class _Run:
                 (re.search(r"quart", word, re.I) and ((top and standing != "top quarter") or
                                                      (bottom and standing != "bottom quarter"))))
             if contradicts:
-                self.emit("B1", "caveat", "drop", word, f"a ranking the comparison does not show ({standing})",
-                          "A ranking here isn't what the comparison shows.")
+                self.emit("B1", "drop", "drop", word, f"a ranking the comparison does not show ({standing})")
                 return s
-            if not group or not isinstance(sp, (int, float)) or sp < STRONG_CLAIM_PCT:
-                if group and standing == "about the middle":
-                    repl = "about in line with" if re.match(r"(?:well|far|way)\b", word, re.I) else "about the middle"
-                    s = s[:rk.start()] + repl + s[rk.end():]
-                    self.rewrite("B1", word, repl)
-                else:
-                    why = (f"{int(sp)}% comparison strength" if isinstance(sp, (int, float)) else
-                           "no comparison strength" if group else "a published figure carries no ranking")
-                    self.emit("B1", "caveat", "drop", word, f"a ranking word on a comparison too weak to rank on ({why})",
-                              "This comparison isn't strong enough to rank on.")
-                    return s
+            if weak and group and standing == "about the middle":
+                repl = "about in line with" if re.match(r"(?:well|far|way)\b", word, re.I) else "about the middle"
+                s = s[:rk.start()] + repl + s[rk.end():]
+                self.rewrite("B1", word, repl)
+        # Which side of the group the sentence puts the restaurant on,
+        # against the metric's better direction and the fact's standing
+        # (R3-1): "below the median" on labor is the better side; said of a
+        # restaurant in the bottom quarter it is false.
+        side = self._claimed_side(s, self._bench_better(f, src))
+        std_side = self._standing_side(standing)
+        if side and std_side in ("better", "worse") and side != std_side:
+            self.emit("B1", "drop", "drop", span, f"a comparison its standing contradicts ({standing})")
+            return s
+        if side and std_side == "middle":
+            self.emit("B1", "drop", "drop", span, f"a difference the comparison does not show ({standing})")
+            return s
+        # A ranking word or form needs a comparison strong enough to rank on.
+        rk = _RANK_WORD_RE.search(s) or _RANK_FORM_RE.search(s)
+        if rk and weak:
+            why = (f"{int(sp)}% comparison strength" if isinstance(sp, (int, float)) else
+                   "no comparison strength" if group else "a published figure carries no ranking")
+            self.emit("B1", "caveat", "drop", rk.group(0), f"a ranking word on a comparison too weak to rank on ({why})",
+                      "This comparison isn't strong enough to rank on.")
+            return s
         # Every bound claim names its group: how many and as of when for a
         # peer group, the source and year for a published figure (BM3-5).
         low = s.lower()
@@ -2443,15 +2744,15 @@ class _Run:
                 cite = f"as of {as_of}"
             if cite:
                 s = _end_insert(s.rstrip(), f" ({cite})")
-                self.rewrite("B1", m.group(0), f"({cite})")
+                self.rewrite("B1", span, f"({cite})")
         else:
-            named = (str(src["source"]).lower() in low) or (str(src["year"]) in s)
-            if not named:
+            named_src = (str(src["source"]).lower() in low) or (str(src["year"]) in s)
+            if not named_src:
                 cite = f"{src.get('source')} {src.get('year')}"
                 s = _end_insert(s.rstrip(), f" ({cite})")
-                self.rewrite("B1", m.group(0), f"({cite})")
+                self.rewrite("B1", span, f"({cite})")
         if src.get("stale"):
-            self.emit("B1", "caveat", "drop", m.group(0), "benchmark past its age limit",
+            self.emit("B1", "caveat", "drop", span, "benchmark past its age limit",
                       "A benchmark here is older than its age limit.")
         return s
 
@@ -2464,20 +2765,38 @@ class _Run:
         self._p2_bound = False
         scan = _blank_own(s)
         m = _PREDICTION_RE.search(scan)
-        if not m:
-            return s
-        raw = m.group("n")
-        try:
-            v = float(raw)
-        except ValueError:
-            return s
-        d = len(raw.split(".")[1]) if "." in raw else 0
-        tol = 0.5 * 10 ** -d + 1e-9
+        v = tol = None
+        if m:
+            raw = m.group("n")
+            try:
+                v = float(raw)
+            except ValueError:
+                return s
+            d = len(raw.split(".")[1]) if "." in raw else 0
+            tol = 0.5 * 10 ** -d + 1e-9
+        else:
+            # The numberless form (R3-12): "restaurants like yours cut labor
+            # after …" — never about the restaurant itself ("…, you cut").
+            m = _PREDICTION_WORDS_RE.search(scan)
+            if not m or re.search(r"\byou(?:r|rs)?\b", m.group("mid"), re.I):
+                return s
+        # The sentence's measure and the recommendation it is about: a
+        # prediction fact binds only to the same metric and kind (R3-12).
+        topics = self._sentence_topics(_normalise(scan))
+        want_kind = self.ctx.policy.get("rec_kind")
         ok = []
         for f in self.ctx.facts:
-            if f.kind != "prediction" or f.value is None or abs(abs(f.value) - v) > tol:
+            if f.kind != "prediction" or f.value is None:
+                continue
+            if v is not None and abs(abs(f.value) - v) > tol:
                 continue
             src = f.source if isinstance(f.source, dict) else {}
+            if topics and src.get("metric"):
+                ftopic = next((k for k, _s, fr in _BENCH_TOPIC_RE if fr.search(str(src["metric"]))), None)
+                if ftopic is not None and ftopic not in topics:
+                    continue
+            if want_kind and src.get("rec_kind") and str(src["rec_kind"]) != str(want_kind):
+                continue
             n = src.get("n_restaurants")
             floor = max(PREDICTION_MIN_RESTAURANTS, src.get("min_n") or 0) \
                 if isinstance(src.get("min_n"), (int, float)) else PREDICTION_MIN_RESTAURANTS
@@ -2485,7 +2804,7 @@ class _Run:
                 ok.append(f)
         if not ok:
             self.emit("P2", "drop", "drop", m.group(0)[:60], "a prediction about similar restaurants with no "
-                      "measured prediction behind it")
+                      "measured prediction behind it for the same measure and recommendation")
             return s
         self._p2_bound = True
         L = self.level

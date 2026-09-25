@@ -602,6 +602,8 @@ def _dsr_context(viewer):
 # whose figure each is (a login denied Labor or Food Cost gets neither).
 _PUBLISHED_METRICS = (("labor_pct", "Labor %", ("labor",)), ("food_cost_pct", "Food cost %", ("inventory",)),
                       ("prime_cost_pct", "Prime cost %", ("labor", "inventory")))
+# The engine metric whose `industry` kind carries each published figure.
+_ENGINE_METRIC = {"labor_pct": "labor_pct_28d", "food_cost_pct": "food_cost_pct_28d"}
 # The benchmark facts behind the last snapshot's intelligence section, per
 # restaurant and permission set — read by the Response Validation Layer so
 # a peer or published claim the model makes from the snapshot binds (BM3-3).
@@ -628,21 +630,35 @@ def _intelligence_bundle(restaurant_id, viewer=None):
         lines, facts = intelligence.context_bundle(restaurant_id, denied_modules=denied)
     except Exception:
         lines = []
-    # The published industry figures for THIS restaurant's type, each with
-    # its source and year (benchmark_registry, NS4 H3/M7) — the only
-    # industry numbers Ask may quote as figures — and each a fact B1 binds.
+    # The published industry figures for THIS restaurant's CONFIRMED type,
+    # each with its source and year — the only industry numbers Ask may
+    # quote as figures — and each a fact B1 binds. Read through the
+    # engine's industry kind (Benchmarking re-audit #5): nothing for a type
+    # Cavnar only guessed, and a figure measured differently (the NRA labor
+    # median includes benefits) is marked context only, its facts
+    # comparable False so a comparison against it is dropped.
     bench_lines = []
     try:
+        import intelligence as _intel_pub
         import benchmark_registry as _br
         from models import get_restaurant as _gr_bench
         _r = _gr_bench(restaurant_id)
         for metric, what, mods in _PUBLISHED_METRICS:
             if any(m in denied for m in mods):
                 continue
-            e = _br.for_restaurant(metric, _r)
-            if e:
-                bench_lines.append(_br.line(e, what))
-                facts = facts + _br.facts(e, key_prefix="published")
+            engine_metric = _ENGINE_METRIC.get(metric)
+            if engine_metric:
+                got = _intel_pub.industry_read(_r, engine_metric)
+                if got:
+                    bench_lines.append(got["line"])
+                    facts = facts + got["facts"]
+            else:
+                # Prime cost: an all-restaurant operator target, the same
+                # for every type (never a guessed type's figure).
+                e = _br.lookup(metric, None)
+                if e:
+                    bench_lines.append(_br.line(e, what))
+                    facts = facts + _br.facts(e, key_prefix="published")
     except Exception:
         bench_lines = []
     out = ""
@@ -659,7 +675,8 @@ def _intelligence_bundle(restaurant_id, viewer=None):
                 + "\n".join(f"- {l}" for l in lines[:12]) + "\n")
     if bench_lines:
         out += ("PUBLISHED INDUSTRY BENCHMARKS FOR THIS TYPE OF RESTAURANT (quote a figure only with its source "
-                "and year; a rule of thumb is a rule of thumb)\n"
+                "and year; a rule of thumb is a rule of thumb; a line marked CONTEXT ONLY is measured differently "
+                "from this restaurant's figure — quote it as context and never compare the restaurant with it)\n"
                 + "\n".join(f"- {l}" for l in bench_lines) + "\n")
     _intel_facts_put((int(restaurant_id), denied), facts)
     return out, facts
@@ -979,7 +996,7 @@ _SYSTEM_STATIC = """You are Cavnar AI, an AI-powered restaurant intelligence con
 
 2. EVERYTHING ELSE — restaurant industry advice, marketing ideas, menu strategy, staffing/scheduling best practices, general business questions, or just conversation: answer using your own knowledge and expertise as an experienced restaurant consultant, same as you would in any other context. Weave in this restaurant's real data from the snapshot when it's genuinely relevant, but don't limit yourself to only what's in the snapshot for these — you're free to think and advise.
 
-BENCHMARKS AND COMPARISONS. An industry average, what "most restaurants" do, what is "typical", or how this restaurant compares with others is a figure about OTHER businesses. Give one as a number only when the snapshot carries it — a PUBLISHED INDUSTRY BENCHMARKS line (quote its source and year) or a comparison line (quote its peer group as the line names it, how many, and the as-of date). Anything else from your own knowledge is said as general industry knowledge, not measured here — in those words — and carries no figure. Never say "restaurants like yours" or "similar restaurants" unless a comparison line for this restaurant's own type says so; the all-types group is "other restaurants on Cavnar, all types". A ranking word (top quarter, well above, percentile) only on a comparison of 75% strength or more. Never say what "restaurants like yours" achieved by a percentage unless a line gives that measured result.
+BENCHMARKS AND COMPARISONS. An industry average, what "most restaurants" do, what is "typical", or how this restaurant compares with others is a figure about OTHER businesses. Give one as a number only when the snapshot carries it — a PUBLISHED INDUSTRY BENCHMARKS line (quote its source and year) or a comparison line (quote its peer group as the line names it, how many, and the as-of date). Nothing else about other businesses is said as a comparison or a figure — not from your own knowledge either: when the snapshot has no line for it, say Cavnar has no fair comparison for this restaurant yet and give the reason its "No fair comparison" line states (for example, confirm the restaurant profile in Account). Never say "restaurants like yours" or "similar restaurants" unless a comparison line for this restaurant's own type says so; the all-types group is "other restaurants on Cavnar, all types". A ranking (top quarter, well above, percentile, better than most, one of the lowest) only on a comparison of 75% strength or more, and only on the side its line states — for labor % and food cost % lower is better. Never say what "restaurants like yours" did or achieved, with a figure or without, unless a line gives that measured result.
 
 Use judgment about which mode (or blend) a question calls for — "how do I get my labor cost down" wants both this restaurant's real labor % AND general scheduling advice, for example.
 
