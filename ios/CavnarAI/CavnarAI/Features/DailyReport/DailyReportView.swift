@@ -81,6 +81,13 @@ struct DailyReportView: View {
         // Restarted every time polling is asked for; cancelled when the
         // screen goes away, so nothing polls behind another screen.
         .task(id: viewModel.pollGeneration) { await viewModel.followProgress() }
+        .confirmationDialog(DSRCloseGate.question,
+                            isPresented: Binding(get: { viewModel.confirmingEarlyClose },
+                                                 set: { viewModel.confirmingEarlyClose = $0 }),
+                            titleVisibility: .visible) {
+            Button("Close it anyway") { Task { await viewModel.closeDay(early: true) } }
+            Button("Cancel", role: .cancel) {}
+        }
         .confirmationDialog("Re-run \(viewModel.displayDate)?", isPresented: $confirmingRerun, titleVisibility: .visible) {
             Button("Re-run this night") { Task { await viewModel.closeDay(rerun: true) } }
             Button("Cancel", role: .cancel) {}
@@ -300,7 +307,7 @@ struct DailyReportView: View {
                 Task { await viewModel.closeDay() }
             } label: {
                 Group {
-                    if viewModel.isSubmitting { CavnarShimmerText(text: "Closing the day") } else { Text("Close day") }
+                    if viewModel.isSubmitting { CavnarShimmerText(text: "Closing the day") } else { Text(viewModel.closeDayLabel) }
                 }
                 .frame(maxWidth: .infinity)
             }
@@ -348,11 +355,16 @@ struct DailyReportView: View {
         if let t = report.tomorrow {
             DSRTomorrowCard(tomorrow: t, recommendation: staffingRecommendation(report.narrative))
         }
+        // Under Tomorrow, as on the web (D3-13).
+        if let footer = report.narrative?.verification?.footer {
+            HomeMixedText.make(footer, size: 12, color: .cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
 
-        if !report.orderedBlocks.isEmpty {
+        if !report.displayedBlocks.isEmpty {
             HomeSectionHeader(kicker: "The night", title: "Block by block")
                 .padding(.top, 8)
-            ForEach(Array(report.orderedBlocks.enumerated()), id: \.element.name) { index, entry in
+            ForEach(Array(report.displayedBlocks.enumerated()), id: \.element.name) { index, entry in
                 blockCard(entry.name, entry.block)
                     .cavnarRowEntrance(index: index, clock: clock)
             }
@@ -360,6 +372,14 @@ struct DailyReportView: View {
 
         if let y = report.yesterday, !y.items.isEmpty {
             DSRYesterdayCard(yesterday: y)
+        }
+        // A block this login's view leaves out is SAID, not silently
+        // missing — "withheld" is not "absent" (D3-13).
+        if let line = report.withheldLine {
+            Text(line)
+                .font(.cavnarBody(13))
+                .foregroundStyle(Color.cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
         }
 
         footer(report)
@@ -467,12 +487,8 @@ struct DailyReportView: View {
                 }
             }
         }
-        // Kept of checked, and — as the web says — how many were dropped
-        // because a figure didn't trace, and any estimates counted apart.
-        if let footer = n.verification?.footer {
-            HomeMixedText.make(footer, size: 12, color: .cavnarInk3)
-                .fixedSize(horizontal: false, vertical: true)
-        }
+        // The verification footer (kept of checked, dropped, estimates
+        // counted apart) is drawn under Tomorrow now, where the web has it.
     }
 
     private func titledCard<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
@@ -496,6 +512,15 @@ struct DailyReportView: View {
     @ViewBuilder
     private func footer(_ report: DSRReport) -> some View {
         VStack(alignment: .leading, spacing: 10) {
+            // A night that couldn't finish, or finished provisional: "Try
+            // again now" for any console login, as on the web (D3-9).
+            if viewModel.phase == .failed || viewModel.phase == .provisional {
+                closeDayControl
+            }
+            if let why = report.checklist?.rerun?.reason ?? viewModel.checklist?.rerun?.reason, !why.isEmpty {
+                Text(why).font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if viewModel.canRerun {
                 Button {
                     Haptic.light()
@@ -508,7 +533,7 @@ struct DailyReportView: View {
                 }
                 .buttonStyle(CavnarSecondaryButtonStyle())
                 .disabled(viewModel.isSubmitting)
-                if !showsProgress, let error = viewModel.actionError {
+                if !showsProgress, !viewModel.canCloseDay, let error = viewModel.actionError {
                     Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -568,7 +593,9 @@ struct DSRBlockBody: View {
                 if let line = joined([
                     // An "all" gross the POS couldn't complete says so
                     // here, never the items figure passed off as it.
-                    m("gross").map { "Gross \(DSRFormat.money($0))" } ?? block.grossNotMeasured,
+                    // Gross isn't in a manager's payload at all: nothing
+                    // is said about it then (neither a figure nor a gap).
+                    m("gross").map { "Gross \(DSRFormat.money($0))" } ?? (block.has("gross") ? block.grossNotMeasured : nil),
                     m("transactions").map { "\(DSRFormat.count($0)) checks" },
                     m("guests").map { "\(DSRFormat.count($0)) guests" },
                     m("avg_ticket").map { "\(DSRFormat.money($0)) avg check" },
@@ -685,13 +712,9 @@ struct DSRBlockBody: View {
                     HomeMixedText.make(line, size: 13.5, color: .cavnarInk3)
                 }
             }
-            DSRTileRow(tiles: [
-                DSRStatTile(label: "Labor cost", value: DSRFormat.money(m("cost"))),
-                DSRStatTile(label: "Hours", value: DSRFormat.count(m("hours"))),
-                DSRStatTile(label: "Overtime", value: m("overtime_hours").map { "\(DSRFormat.count($0)) hrs" } ?? DSRFormat.dash),
-            ] + [("No-shows", "no_shows"), ("Late", "late_arrivals")].compactMap { label, key in
-                m(key).map { DSRStatTile(label: label, value: DSRFormat.count($0)) }
-            })
+            // The web's labor tiles, in its order and words (D3-13): After
+            // 6pm, No-shows, Late clock-ins, Shift quality when measured.
+            DSRTileRow(tiles: laborTiles)
             if !block.observations.isEmpty {
                 DSRLineList(lines: block.observations.map { DSRLine(text: $0) }, dot: .cavnarInk3)
             }
@@ -699,6 +722,60 @@ struct DSRBlockBody: View {
                 Text(note).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
             }
         }
+    }
+
+    private var laborTiles: [DSRStatTile] {
+        var tiles = [
+            DSRStatTile(label: "Labor cost", value: DSRFormat.money(m("cost"))),
+            DSRStatTile(label: "Hours", value: DSRFormat.count(m("hours"))),
+            DSRStatTile(label: "Overtime", value: m("overtime_hours").map { "\(DSRFormat.count($0)) hrs" } ?? DSRFormat.dash),
+        ]
+        // Share of the night's hours worked after 6pm, against its share of
+        // sales — only when both were measured.
+        if let hours = m("hours_after_6pm_share_pct"), let sales = m("sales_after_6pm_share_pct") {
+            tiles.append(DSRStatTile(label: "After 6pm", value: "\(DSRFormat.pct(hours)) of hours",
+                                     detail: "against \(DSRFormat.pct(sales)) of sales"))
+        }
+        if let v = m("no_shows") { tiles.append(DSRStatTile(label: "No-shows", value: DSRFormat.count(v))) }
+        if let v = m("late_arrivals") { tiles.append(DSRStatTile(label: "Late clock-ins", value: DSRFormat.count(v))) }
+        if let v = m("shift_quality") {
+            tiles.append(DSRStatTile(label: "Shift quality", value: DSRFormat.count(v),
+                                     detail: "the published day\u{2019}s score"))
+        }
+        return tiles
+    }
+
+    private var foodTiles: [DSRStatTile] {
+        var tiles = [
+            DSRStatTile(label: "Est. food cost", value: DSRFormat.pct(m("est_food_cost_pct")),
+                        detail: m("est_food_cost").map { DSRFormat.money($0) }),
+            DSRStatTile(label: "Waste logged", value: DSRFormat.money(m("waste_logged")),
+                        detail: m("waste_inferred").map { "\(DSRFormat.money($0)) inferred" }),
+            DSRStatTile(label: "Variance", value: DSRFormat.money(m("variance_cost")),
+                        detail: m("variance_items").map { "\(DSRFormat.count($0)) item\($0 == 1 ? "" : "s")" }),
+        ]
+        // Running low, as on the web (D3-13).
+        if let low = m("critical_low") {
+            tiles.append(DSRStatTile(label: "Running low", value: "\(DSRFormat.count(low)) critical",
+                                     tone: low > 0 ? .cavnarRed : .cavnarInk,
+                                     detail: m("low_stock").map { "\(DSRFormat.count($0)) more low" }))
+        }
+        return tiles
+    }
+
+    private var reviewTiles: [DSRStatTile] {
+        var tiles = [
+            DSRStatTile(label: "Received", value: DSRFormat.count(m("received"))),
+            // No night rating under the floor (I11): the dash says why.
+            DSRStatTile(label: "Average", value: DSRFormat.rating(m("avg_rating")),
+                        detail: m("avg_rating") == nil ? block.ratingNote : nil),
+            DSRStatTile(label: "Urgent", value: DSRFormat.count(m("urgent")),
+                        tone: (m("urgent") ?? 0) > 0 ? .cavnarRed : .cavnarInk),
+        ]
+        // As on the web (D3-13), when measured.
+        if let v = m("drafts_awaiting") { tiles.append(DSRStatTile(label: "Drafts waiting", value: DSRFormat.count(v))) }
+        if let v = m("replies_posted") { tiles.append(DSRStatTile(label: "Replies posted", value: DSRFormat.count(v))) }
+        return tiles
     }
 
     /// The food block's drivers total, under its new name or its old one,
@@ -722,14 +799,7 @@ struct DSRBlockBody: View {
 
     private var food: some View {
         VStack(alignment: .leading, spacing: 14) {
-            DSRTileRow(tiles: [
-                DSRStatTile(label: "Est. food cost", value: DSRFormat.pct(m("est_food_cost_pct")),
-                            detail: m("est_food_cost").map { DSRFormat.money($0) }),
-                DSRStatTile(label: "Waste logged", value: DSRFormat.money(m("waste_logged")),
-                            detail: m("waste_inferred").map { "\(DSRFormat.money($0)) inferred" }),
-                DSRStatTile(label: "Variance", value: DSRFormat.money(m("variance_cost")),
-                            detail: m("variance_items").map { "\(DSRFormat.count($0)) item\($0 == 1 ? "" : "s")" }),
-            ])
+            DSRTileRow(tiles: foodTiles)
             // The % withheld under the coverage floor, and why (I11) — the
             // dash above is not a zero.
             if let note = block.foodCoverageNote {
@@ -788,14 +858,7 @@ struct DSRBlockBody: View {
 
     private var reviews: some View {
         VStack(alignment: .leading, spacing: 14) {
-            DSRTileRow(tiles: [
-                DSRStatTile(label: "Received", value: DSRFormat.count(m("received"))),
-                // No night rating under the floor (I11): the dash says why.
-                DSRStatTile(label: "Average", value: DSRFormat.rating(m("avg_rating")),
-                            detail: m("avg_rating") == nil ? block.ratingNote : nil),
-                DSRStatTile(label: "Urgent", value: DSRFormat.count(m("urgent")),
-                            tone: (m("urgent") ?? 0) > 0 ? .cavnarRed : .cavnarInk),
-            ])
+            DSRTileRow(tiles: reviewTiles)
             let rows = block.reviewRows
             if !rows.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {

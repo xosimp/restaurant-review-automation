@@ -81,6 +81,13 @@ struct DSRInsight: Decodable, Hashable, Identifiable {
 }
 
 struct DSRTomorrow: Decodable, Hashable {
+    /// "Tomorrow · Friday · 9/26/26" — the weekday AND the M/D/YY date, as
+    /// the web heads it (D3-13).
+    var heading: String {
+        ["Tomorrow", weekday, date.flatMap { DSRFormat.isISODate($0) ? CavnarDate.mdy($0) : nil }]
+            .compactMap { $0 }.joined(separator: " \u{00B7} ")
+    }
+
     struct Item: Decodable, Hashable, Identifiable {
         let kind: String?
         let tone: String?
@@ -88,12 +95,34 @@ struct DSRTomorrow: Decodable, Hashable {
         var id: String { (kind ?? "") + text }
     }
     struct Forecast: Decodable, Hashable { let text: String; let basis: String? }
+    /// The forecast's AI confidence. `pct` is null when too little of what
+    /// the forecast uses was measured — the server then sends `label` "—";
+    /// the based-on and missing lines still stand (DB, 9/25/26). `watch`:
+    /// what to keep an eye on. Every field lenient, so one odd field never
+    /// drops the Tomorrow card.
     struct Confidence: Decodable, Hashable {
-        let pct: Int
+        let pct: Int?
+        let label: String?
         let basedOn: [String]
         let missing: [String]
+        let watch: [String]
         let track: String?
-        enum CodingKeys: String, CodingKey { case pct, missing, track; case basedOn = "based_on" }
+        enum CodingKeys: String, CodingKey { case pct, label, missing, watch, track; case basedOn = "based_on" }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            if let i = try? c.decodeIfPresent(Int.self, forKey: .pct) { pct = i }
+            else if let d = try? c.decodeIfPresent(Double.self, forKey: .pct) { pct = Int(d.rounded()) }
+            else { pct = nil }
+            label = try? c.decodeIfPresent(String.self, forKey: .label)
+            basedOn = (try? c.decodeIfPresent([String].self, forKey: .basedOn)) ?? []
+            missing = (try? c.decodeIfPresent([String].self, forKey: .missing)) ?? []
+            watch = (try? c.decodeIfPresent([String].self, forKey: .watch)) ?? []
+            track = try? c.decodeIfPresent(String.self, forKey: .track)
+        }
+
+        /// "70%", or the server's "—" when there is no figure — never 0%.
+        var figure: String { pct.map { "\($0)%" } ?? (label?.isEmpty == false ? label! : "\u{2014}") }
     }
     let date: String?
     let weekday: String?
@@ -279,7 +308,7 @@ struct DSRTomorrowCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            DSRKicker(text: "Tomorrow" + (tomorrow.weekday.map { " · \($0)" } ?? ""))
+            DSRKicker(text: tomorrow.heading)
             if tomorrow.items.isEmpty {
                 Text("Nothing on the books to prep for.").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
             }
@@ -318,9 +347,16 @@ struct DSRTomorrowCard: View {
             if let cf = tomorrow.confidence {
                 VStack(alignment: .leading, spacing: 3) {
                     DSRKicker(text: "AI confidence")
-                    Text("\(cf.pct)%").font(.cavnarNumber(26, weight: 600)).foregroundStyle(Color.cavnarInk)
-                    Text("Based on " + cf.basedOn.joined(separator: " · ")).font(.cavnarBody(12.5))
-                        .foregroundStyle(Color.cavnarInk2).fixedSize(horizontal: false, vertical: true)
+                    Text(cf.figure).font(.cavnarNumber(26, weight: 600))
+                        .foregroundStyle(cf.pct == nil ? Color.cavnarInk3 : Color.cavnarInk)
+                    if !cf.basedOn.isEmpty {
+                        Text("Based on " + cf.basedOn.joined(separator: " · ")).font(.cavnarBody(12.5))
+                            .foregroundStyle(Color.cavnarInk2).fixedSize(horizontal: false, vertical: true)
+                    }
+                    if !cf.watch.isEmpty {
+                        Text("Watch: " + cf.watch.joined(separator: " · ")).font(.cavnarBody(12))
+                            .foregroundStyle(Color.cavnarInk2).fixedSize(horizontal: false, vertical: true)
+                    }
                     if !cf.missing.isEmpty {
                         Text("Missing: " + cf.missing.joined(separator: " · ")).font(.cavnarBody(12))
                             .foregroundStyle(Color.cavnarInk3).fixedSize(horizontal: false, vertical: true)

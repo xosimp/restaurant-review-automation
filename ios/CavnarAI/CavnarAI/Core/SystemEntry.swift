@@ -8,6 +8,11 @@ import UIKit
 /// #31, #47; U3-12).
 enum SystemDestination: Equatable {
     case nav(NavPath)
+    /// A path from a LINK — a `cavnarai://` or dashboard.cavnar.ai URL,
+    /// which any web page or message can carry. It may open a place; it may
+    /// not act: an Ask question is filled in, never sent, and a location is
+    /// offered in the switcher, never switched to (F3-12).
+    case link(NavPath)
     /// The command sheet (find or ask anything).
     case commandSheet
 }
@@ -46,9 +51,18 @@ enum SystemEntry {
     @discardableResult
     static func handle(url: URL) -> Bool {
         guard let destination = destination(for: url) else { return false }
-        open(destination)
+        open(fromLink(destination))
         return true
     }
+
+    /// A URL's destination as a link: nobody in the app chose it.
+    nonisolated static func fromLink(_ destination: SystemDestination) -> SystemDestination {
+        if case .nav(let path) = destination { return .link(path) }
+        return destination
+    }
+
+    /// `userInfo` key on a `.cavnarOpenNav` post that came from a link.
+    nonisolated static let fromLinkKey = "cavnar.fromLink"
 
     @discardableResult
     static func handle(shortcut item: UIApplicationShortcutItem) -> Bool {
@@ -68,6 +82,11 @@ enum SystemEntry {
             if let last = lastPosted, last.raw == path.raw, Date().timeIntervalSince(last.at) < 1 { return }
             lastPosted = (path.raw, Date())
             NotificationCenter.default.post(name: .cavnarOpenNav, object: path)
+        case .link(let path):
+            if let last = lastPosted, last.raw == path.raw, Date().timeIntervalSince(last.at) < 1 { return }
+            lastPosted = (path.raw, Date())
+            NotificationCenter.default.post(name: .cavnarOpenNav, object: path,
+                                            userInfo: [fromLinkKey: true])
         }
     }
 
@@ -162,90 +181,39 @@ enum QuickAction: String, CaseIterable {
     }
 }
 
-// MARK: - Section hand-off
-
-/// The last nav path posted, for a module screen to open the SECTION it
-/// names ("inventory/invoices" → the invoice scanner, "labor/requests" →
-/// the requests block). The router brings the module on screen; the module
-/// screen reads what inside it was asked for. It hears every
-/// `.cavnarOpenNav`, whoever posted it — a push, a card, the command sheet.
-@MainActor
-final class NavSectionInbox {
-    static let shared = NavSectionInbox()
-
-    private var latest: NavPath?
-    private var at: Date?
-    private var observer: NSObjectProtocol?
-
-    /// How long a path waits for its screen. Long enough for an unlock and
-    /// a push; short enough that opening Food Cost tomorrow doesn't replay
-    /// yesterday's scan.
-    static let window: TimeInterval = 45
-
-    private init() {
-        observer = NotificationCenter.default.addObserver(forName: .cavnarOpenNav, object: nil,
-                                                          queue: .main) { note in
-            guard let path = note.object as? NavPath else { return }
-            MainActor.assumeIsolated { NavSectionInbox.shared.record(path) }
-        }
-    }
-
-    /// Start listening. Called once at launch so a path posted before any
-    /// module screen exists is still held.
-    static func start() { _ = shared }
-
-    func record(_ path: NavPath, now: Date = Date()) {
-        latest = path
-        at = now
-    }
-
-    /// The pending path for `module` (NavPath.module), handed out once.
-    func consume(module: String, now: Date = Date()) -> NavPath? {
-        guard let path = latest, let at, path.module == module,
-              now.timeIntervalSince(at) < Self.window else { return nil }
-        latest = nil
-        return path
-    }
-}
-
-private struct NavSectionReceiver: ViewModifier {
-    let module: String
-    let action: (NavPath) -> Void
-
-    func body(content: Content) -> some View {
-        content
-            .onAppear { deliver() }
-            .onReceive(NotificationCenter.default.publisher(for: .cavnarOpenNav).receive(on: RunLoop.main)) { _ in
-                deliver()
-            }
-    }
-
-    private func deliver() {
-        if let path = NavSectionInbox.shared.consume(module: module) { action(path) }
-    }
-}
-
-extension View {
-    /// Runs `action` with a nav path aimed at `module` — on appear (the
-    /// router just pushed this screen) or while on screen.
-    func onNavSection(_ module: String, perform action: @escaping (NavPath) -> Void) -> some View {
-        modifier(NavSectionReceiver(module: module, action: action))
-    }
-}
-
 // MARK: - Scene hooks
 
 /// Quick actions reach a SwiftUI app only through a scene delegate: the
 /// cold-launch item arrives in the connection options, a warm one in
-/// `performActionFor`. URLs are left to SwiftUI's `.onOpenURL`.
+/// `performActionFor`. URLs come to both this and SwiftUI's `.onOpenURL`.
 @MainActor
 final class CavnarSceneDelegate: NSObject, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession,
                options connectionOptions: UIScene.ConnectionOptions) {
-        NavSectionInbox.start()
         if let item = connectionOptions.shortcutItem {
             SystemEntry.handle(shortcut: item)
         }
+        // A widget tap or link that LAUNCHED the app arrives here, in the
+        // connection options. With this class as the scene delegate,
+        // SwiftUI's .onOpenURL was never shown to fire for that cold launch
+        // (F3-18), so the delegate routes it too. A second delivery of the
+        // same link within a second is dropped by SystemEntry.
+        for context in connectionOptions.urlContexts {
+            SystemEntry.handle(url: context.url)
+        }
+        for activity in connectionOptions.userActivities
+        where activity.activityType == NSUserActivityTypeBrowsingWeb {
+            if let url = activity.webpageURL { SystemEntry.handle(url: url) }
+        }
+    }
+
+    func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+        for context in URLContexts { SystemEntry.handle(url: context.url) }
+    }
+
+    func scene(_ scene: UIScene, continue userActivity: NSUserActivity) {
+        guard userActivity.activityType == NSUserActivityTypeBrowsingWeb, let url = userActivity.webpageURL else { return }
+        SystemEntry.handle(url: url)
     }
 
     func windowScene(_ windowScene: UIWindowScene, performActionFor shortcutItem: UIApplicationShortcutItem,

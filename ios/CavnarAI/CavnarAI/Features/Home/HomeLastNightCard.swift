@@ -40,7 +40,9 @@ struct HomeLastNightCard: View {
 
     private func ready(_ night: DSRSummary, _ report: DSRReport?, gap: Int?) -> some View {
         let phase = report?.phase ?? night.phase
-        let summary = report?.narrative?.executiveSummary?.text
+        // The list's lead is this login's own (the operations summary for a
+        // manager); the report's executive summary is the older server's.
+        let summary = night.lead ?? report?.narrative?.executiveSummary?.text
         let sales = report?.facts.blocks["sales"]
         return VStack(alignment: .leading, spacing: 12) {
             HomeSectionHeader(kicker: LastNightGap.kicker(gap: gap), title: "Daily report", trailing: night.displayDate)
@@ -58,13 +60,13 @@ struct HomeLastNightCard: View {
             } label: {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        if let sales, sales.isReady, let net = sales.metric("net") {
+                        if let net = (sales?.isReady == true ? sales?.metric("net") : nil) ?? night.net {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(DSRFormat.money(net))
                                     .font(.cavnarNumber(30, weight: 600))
                                     .foregroundStyle(Color.cavnarInk)
                                     .cavnarSensitive()
-                                if let vs = sales.metric("vs_yesterday_pct") {
+                                if let vs = sales?.metric("vs_yesterday_pct") {
                                     (Text(DSRFormat.signedPct(vs)).font(.cavnarNumber(13, weight: 700))
                                         .foregroundStyle(DSRFormat.tone(vs))
                                      + Text(" net vs yesterday").font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3))
@@ -140,8 +142,12 @@ final class HomeLastNightViewModel {
                 state = .hidden
                 return
             }
+            // peek=1: drawing Home's card is not opening the report, so the
+            // night's actions are not recorded as shown to this login
+            // (D3-8). The report is read for the comparison and the running
+            // checklist line only.
             let report: DSRReport? = try? await client.send("/mobile/api/dsr/\(latest.businessDate)",
-                                                            hapticOnError: false)
+                                                            query: ["peek": "1"], hapticOnError: false)
             state = .ready(latest, report, list.tonight?.value)
         } catch is CancellationError {
         } catch let error as APIClient.APIError where error.status == 403 {

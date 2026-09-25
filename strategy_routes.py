@@ -565,9 +565,12 @@ def _do_invoice_apply(u, import_id):
 # ── the action queue ──────────────────────────────────────────────────────────
 
 def _do_actions(u):
-    """Everything still open for this login, most pressing first."""
+    """Everything still open for this login, most pressing first.
+    `?peek=1` reads without presenting — the iOS widget's background count
+    is not the owner seeing the queue (F3-6)."""
     import action_queue
-    return {"ok": True, **action_queue.items(_rid(u), viewer=u, today=_local_today(u))}, 200
+    peek = request.args.get("peek") == "1"
+    return {"ok": True, **action_queue.items(_rid(u), viewer=u, today=_local_today(u), present=not peek)}, 200
 
 
 # ── the Command Center (command_center.py; Friction audit #14, #48) ──────────
@@ -3089,7 +3092,10 @@ def _do_dsr_get(u, day):
     if not report:
         return {"ok": False, "error": "There's no report for that night yet."}, 404
     payload = access.render(report, u, restaurant=get_restaurant(_rid(u)), versions=store.versions(_rid(u), d))
-    _dsr_present_view(u, d, payload)
+    # `?peek=1`: a card or widget drawing the night's figures is not someone
+    # reading the report, so its actions are not presented (D3-8 / F3-6).
+    if request.args.get("peek") != "1":
+        _dsr_present_view(u, d, payload)
     return {"ok": True, **payload}, 200
 
 

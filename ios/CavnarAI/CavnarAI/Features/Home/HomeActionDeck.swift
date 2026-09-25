@@ -239,7 +239,10 @@ private struct ActionDeckCard: View {
         .padding(.top, 16)
         .padding(.bottom, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(height: height)
+        // A floor, not a fixed height: at the largest Dynamic Type sizes the
+        // title and detail grow and a fixed height clipped the CTA row off
+        // the card (F3-18). At default sizes it is the same 156pt card.
+        .frame(minHeight: height)
         .background(
             ZStack {
                 shape.fill(Self.obsidian)

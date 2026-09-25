@@ -65,17 +65,31 @@ final class CommandEntryPointsTests: XCTestCase {
 
     // MARK: Section hand-off
 
-    func testASectionPathIsHandedToItsModuleOnceAndOnlyWhileFresh() {
-        let inbox = NavSectionInbox.shared
-        let now = Date()
-        inbox.record(NavPath("inventory/order")!, now: now)
-        XCTAssertNil(inbox.consume(module: "labor", now: now))
-        XCTAssertEqual(inbox.consume(module: "inventory", now: now)?.raw, "inventory/order")
-        XCTAssertNil(inbox.consume(module: "inventory", now: now), "handed out once")
+    /// The route is the one carrier of "where inside the module" (F3-7): the
+    /// whole path, query and all, reaches the screen whoever opened it.
+    func testTheRouteCarriesTheWholePathToTheModuleScreen() {
+        let router = DeepLinkRouter()
+        router.open(NavPath("inventory/invoices?scan=camera")!)
+        let route = router.consumePendingModuleRoute(labelFor: { $0 })
+        XCTAssertEqual(route?.key, "inventory")
+        XCTAssertEqual(route?.navPath?.query["scan"], "camera")
+        XCTAssertEqual(route?.navPath.flatMap(FoodCostAction.init(path:)), .scan(camera: true))
+        // A push's own route (no query) still names its section.
+        XCTAssertEqual(ModuleRoute(key: "inventory", label: "", section: "order").navPath
+            .flatMap(FoodCostAction.init(path:)), .order)
+        XCTAssertEqual(FoodCostAction(path: NavPath("food/order")!), .order)
+    }
 
-        inbox.record(NavPath("request/time_off-12")!, now: now)
-        XCTAssertNil(inbox.consume(module: "labor", now: now.addingTimeInterval(NavSectionInbox.window + 1)),
-                     "a stale path must not reopen a section tomorrow")
+    func testOneLaborHandlerReadsEverySpellingOfASection() {
+        XCTAssertEqual(ModuleRoute.from(NavPath("request/time_off-12")!)?.section
+            .flatMap(LaborFocus.init(section:)), .timeOff)
+        XCTAssertEqual(ModuleRoute.from(NavPath("request/shift-3")!)?.section
+            .flatMap(LaborFocus.init(section:)), .requests)
+        XCTAssertEqual(LaborFocus(section: "waiting"), .waiting)
+        XCTAssertEqual(LaborFocus(section: "labor-requests"), nil)
+        XCTAssertEqual(ModuleRoute.from(NavPath("person/dana-k")!)?.itemId, "dana-k")
+        XCTAssertEqual(ModuleRoute.from(NavPath("person/dana-k")!)?.section
+            .flatMap(LaborFocus.init(section:)), .team)
     }
 
     func testFoodCostOpensWhatThePathNames() {
@@ -207,7 +221,7 @@ final class CommandEntryPointsTests: XCTestCase {
         vm.phone = "3125550100"
         vm.email = ""
         vm.posId = "1042"
-        vm.payRate = "15.50"
+        // Pay is the role's rate and read only on the sheet (F3-5): never sent.
         XCTAssertTrue(vm.changes(from: person).isEmpty)
         vm.phone = "3125550199"
         XCTAssertEqual(vm.changes(from: person), ["phone": .string("3125550199")])

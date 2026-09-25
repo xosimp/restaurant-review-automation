@@ -14,6 +14,15 @@ struct FoodCostQuickEntryView: View {
     @State private var showSuccessToast = false
     /// The action row's sheet (Friction audit #28).
     @State private var actionSheet: FoodCostAction?
+    /// Where the link that pushed this screen pointed inside Food Cost —
+    /// "inventory/invoices?scan=camera", "inventory/order", "invoice/12"
+    /// (ModuleRoute.navPath). Opened once, on first appear (F3-7).
+    var focus: NavPath? = nil
+    @State private var focusSpent = false
+
+    init(focus: NavPath? = nil) {
+        self.focus = focus
+    }
 
     private func openSheet(_ action: FoodCostAction) {
         actionSheet = action
@@ -91,9 +100,15 @@ struct FoodCostQuickEntryView: View {
             }
         }
         // "inventory/invoices", "inventory/order", "inventory/count" — from
-        // a quick action, a shortcut, a card or the command sheet.
-        .onNavSection("inventory") { path in
-            if let action = FoodCostAction(path: path) { actionSheet = action }
+        // a push, a notification row, a Home card, a quick action, a
+        // shortcut or the command sheet: all of them arrive as this screen's
+        // route. Presented a beat after the push lands — a sheet asked for
+        // mid-push is dropped by SwiftUI.
+        .task {
+            guard !focusSpent, let focus, let action = FoodCostAction(path: focus) else { return }
+            focusSpent = true
+            try? await Task.sleep(for: .milliseconds(450))
+            actionSheet = action
         }
         .task {
             if let restaurantId = sessionStore.currentUser?.restaurantId {

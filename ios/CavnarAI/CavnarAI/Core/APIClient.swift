@@ -579,10 +579,11 @@ actor APIClient {
         _ path: String,
         method: HTTPMethod = .get,
         body: (any Encodable)? = nil,
+        query: [String: String] = [:],
         bearer: String
     ) async throws -> Response {
         let request = try buildRequest(path: path, method: method.rawValue,
-                                       body: body, query: [:], bearerOverride: bearer)
+                                       body: body, query: query, bearerOverride: bearer)
         return try await perform(request, path: path, mayRetry: method == .get)
     }
 
@@ -599,16 +600,16 @@ actor APIClient {
         if http.statusCode == 401 || http.statusCode == 403 {
             if let decoded = try? JSONDecoder.cavnar.decode(ErrorEnvelope.self, from: data),
                let message = decoded.error {
-                throw APIError(kind: .server, message: message)
+                throw APIError(kind: .server, message: message, status: http.statusCode, body: data)
             }
             throw SessionExpiredError()
         }
         guard (200..<300).contains(http.statusCode) else {
             if let decoded = try? JSONDecoder.cavnar.decode(ErrorEnvelope.self, from: data),
                let message = decoded.error {
-                throw APIError(kind: .server, message: message)
+                throw APIError(kind: .server, message: message, status: http.statusCode, body: data)
             }
-            throw APIError(kind: .server, message: "That didn't work. Try again.")
+            throw APIError(kind: .server, message: "That didn't work. Try again.", status: http.statusCode, body: data)
         }
         do {
             return try JSONDecoder.cavnar.decode(Response.self, from: data)

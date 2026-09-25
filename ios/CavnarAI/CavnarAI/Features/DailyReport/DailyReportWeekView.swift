@@ -117,11 +117,23 @@ struct DSRWeekTable {
 
     init(grid: DSRGrid) {
         let budget = grid.showsBudget
+        // A login without labor sees no Labor % column at all — the server
+        // strips the values (redact_grid), and a column of dashes read as
+        // "not measured" (D3-13).
+        let labor = grid.showsLabor
         var cols = grid.categories.map { Column(title: $0, width: 82) }
-        cols += [Column(title: "Gross", width: 86), Column(title: "Net", width: 86)]
-        if budget { cols += [Column(title: "Budget", width: 86), Column(title: "vs budget", width: 78)] }
-        cols += [Column(title: "Last year", width: 86), Column(title: "vs last yr", width: 78),
-                 Column(title: "Labor %", width: 68), Column(title: "Notes", width: 230, numeric: false)]
+        // Gross is withheld from a manager (DB, 9/25/26): no column of dashes.
+        let gross = grid.showsGross
+        if gross { cols += [Column(title: "Gross", width: 86)] }
+        cols += [Column(title: "Net", width: 86)]
+        // The web's three budget columns (D3-13): gross, net, and net against it.
+        if budget {
+            cols += [Column(title: "Budget gross", width: 96), Column(title: "Budget net", width: 90),
+                     Column(title: "vs budget", width: 78)]
+        }
+        cols += [Column(title: "Last year", width: 86), Column(title: "vs last yr", width: 78)]
+        if labor { cols += [Column(title: "Labor %", width: 68)] }
+        cols += [Column(title: "Notes", width: 230, numeric: false)]
         columns = cols
 
         func money(_ v: Double?) -> Cell { Cell(text: DSRFormat.money(v), tone: v == nil ? .muted : .plain) }
@@ -134,18 +146,24 @@ struct DSRWeekTable {
 
         var out: [Row] = grid.days.map { d in
             var cells = grid.categories.map { money(d.category($0)) }
-            cells += [money(d.gross), money(d.net)]
-            if budget { cells += [money(d.budgetNet), change(d.vsBudgetNetPct)] }
-            cells += [money(d.lastYearNet), change(d.vsLastYearNetPct), pct(d.laborPct), note(d.notes)]
+            if gross { cells += [money(d.gross)] }
+            cells += [money(d.net)]
+            if budget { cells += [money(d.budgetGross), money(d.budgetNet), change(d.vsBudgetNetPct)] }
+            cells += [money(d.lastYearNet), change(d.vsLastYearNetPct)]
+            if labor { cells += [pct(d.laborPct)] }
+            cells += [note(d.notes)]
             return Row(id: d.date, label: d.displayLabel, opens: d.status == nil ? nil : d.date,
                        provisional: d.provisional == true || d.status == "provisional", isTotal: false, cells: cells)
         }
 
         func totalRow(_ id: String, _ label: String, _ t: DSRGridTotals, note text: String?) -> Row {
             var cells = grid.categories.map { money(t.category($0)) }
-            cells += [money(t.gross), money(t.net)]
-            if budget { cells += [money(t.budgetNet), change(t.vsBudgetNetPct)] }
-            cells += [money(t.lastYearNet), change(t.vsLastYearNetPct), pct(t.laborPct), note(text)]
+            if gross { cells += [money(t.gross)] }
+            cells += [money(t.net)]
+            if budget { cells += [money(t.budgetGross), money(t.budgetNet), change(t.vsBudgetNetPct)] }
+            cells += [money(t.lastYearNet), change(t.vsLastYearNetPct)]
+            if labor { cells += [pct(t.laborPct)] }
+            cells += [note(text)]
             return Row(id: id, label: label, opens: nil, provisional: false, isTotal: true, cells: cells)
         }
 

@@ -32,8 +32,22 @@ enum SessionScope {
         generation += 1
         self.userId = userId ?? 0
         self.restaurantId = restaurantId ?? 0
+        // Kept past the process: a lock-screen action can launch the app in
+        // the background with no scene and no SessionStore, and it still has
+        // to know which location this phone is on (F3-13). A plain id, not a
+        // secret; 0 once signed out.
+        UserDefaults.standard.set(self.restaurantId, forKey: persistedKey)
         // A different restaurant may keep a different clock.
         RestaurantClock.reset()
+    }
+
+    static let persistedKey = "cavnar.session.restaurant_id"
+
+    /// The location this phone's session is on: this process's own when a
+    /// session has begun, else the last one any process recorded (a cold
+    /// background launch). 0 when signed out or never known.
+    static var activeRestaurantId: Int {
+        restaurantId > 0 ? restaurantId : UserDefaults.standard.integer(forKey: persistedKey)
     }
 
     /// A cache key private to this user at this restaurant.
@@ -442,7 +456,22 @@ final class SessionStore {
         // hasShownHomeIntro is left alone: the landing intro is once per
         // sign-in, and replaying it on every store switch was an animation
         // standing between a multi-unit owner and the numbers (friction #50).
+        //
+        // Every switch — the chrome switcher, Account → Profile, the command
+        // sheet, a push about another store — ends here, so this is where the
+        // app hears about it. A direct call, synchronous, before the caller
+        // goes on to open whatever it switched for: RootView resets both
+        // stacks, reloads Home, the title line, the badge and the widget
+        // FIRST, so the link that follows lands on a clean stack (F3-4 /
+        // F3-11). Account's own switcher used to reload only its own screen,
+        // and Home then published the new store's replies under the old
+        // store's count.
+        onLocationSwitched?(restaurantId)
     }
+
+    /// Set by RootView: what everything outside the session must do when
+    /// the location changes. See didSwitchLocation.
+    @ObservationIgnored var onLocationSwitched: ((Int) -> Void)?
 
     private struct LogoutBody: Encodable {
         let apnsToken: String?
@@ -481,6 +510,10 @@ final class SessionStore {
         // and configureCaching() would happily restore it (audit 1.2).
         SecureCache.purgeAll()
         SessionScope.begin(userId: nil, restaurantId: nil)
+        // The Lock Screen widget, the icon's quick actions and any countdown
+        // showed this restaurant's figures until the next activation — on a
+        // shared phone, hours (F3-8). Now, with the session.
+        WidgetSnapshotService.clearForSignOut()
         // Anything queued offline belongs to the session that queued it.
         Task {
             await PendingWriteQueue.shared.clear()

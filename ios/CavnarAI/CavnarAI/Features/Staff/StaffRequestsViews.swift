@@ -167,6 +167,9 @@ struct StaffRequestsView: View {
     @State private var showingTimeOff = false
     @State private var busy: Set<String> = []
     @State private var message: String?
+    /// The open shift "Pick this up" is asking about — claiming it puts
+    /// the shift on this person's schedule, so it is confirmed first (F3-18).
+    @State private var claiming: StaffShiftChange?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -218,6 +221,16 @@ struct StaffRequestsView: View {
         .sheet(isPresented: $showingTimeOff, onDismiss: { Task { await reload() } }) {
             StaffTimeOffSheet()
         }
+        .confirmationDialog(claiming.map { "Pick up \($0.whenLabel)?" } ?? "",
+                            isPresented: Binding(get: { claiming != nil }, set: { if !$0 { claiming = nil } }),
+                            titleVisibility: .visible, presenting: claiming) { shift in
+            Button("Pick it up") {
+                Task { await post("open\(shift.id)", "/staff/api/open-shifts/\(shift.id)/claim") }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("It goes on your schedule.")
+        }
     }
 
     func reload() async {
@@ -233,8 +246,13 @@ struct StaffRequestsView: View {
         message = nil
         do {
             let r: StaffOKResponse = try await staff.authed(path, method: .post, body: body ?? [String: String]())
-            if !r.ok { message = r.error ?? "That didn't go through." }
-            Haptic.success()
+            // The success haptic only for a success (F3-18): it played over
+            // "That didn't go through" too.
+            if r.ok {
+                Haptic.success()
+            } else {
+                message = r.error ?? "That didn't go through."
+            }
         } catch let error as APIClient.APIError {
             message = error.message
         } catch {
@@ -309,7 +327,7 @@ struct StaffRequestsView: View {
             HomeMixedText.make(shift.whenLabel + (shift.role.map { " · \($0)" } ?? ""), size: 15, weight: 700,
                                color: .cavnarInk)
             textButton("Pick this up", busy: busy.contains("open\(shift.id)")) {
-                await post("open\(shift.id)", "/staff/api/open-shifts/\(shift.id)/claim")
+                claiming = shift
             }
         }
     }

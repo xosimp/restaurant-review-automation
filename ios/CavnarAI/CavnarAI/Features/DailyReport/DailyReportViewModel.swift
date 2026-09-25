@@ -142,12 +142,22 @@ final class DailyReportViewModel {
     /// The stage that is running now, e.g. "awaiting_close".
     var currentStage: String? { checklist?.status ?? report?.status }
 
-    /// Close day: nothing has started, or the night is still waiting on the
-    /// POS to close (Close day forces it). Anyone with the console may.
+    /// Close day: nothing has started, the night is still waiting on the
+    /// POS to close (Close day forces it), or it ended failed or provisional
+    /// — "Try again now", which the server takes from any console login as a
+    /// new version (failed) or an upgrade (provisional), as the web offers it
+    /// (D3-9). Before, a manager on the phone had no button on a night that
+    /// couldn't finish. Anyone with the console may.
     var canCloseDay: Bool {
         guard selectedVersion == nil, !runStarted, !isSubmitting else { return false }
-        if phase == .notStarted { return true }
+        if phase == .notStarted || phase == .failed || phase == .provisional { return true }
         return phase == .running && (currentStage == "scheduled" || currentStage == "awaiting_close")
+    }
+
+    /// The Close day button's words: "Try again now" on a night that ended
+    /// failed or provisional, as on the web.
+    var closeDayLabel: String {
+        (phase == .failed || phase == .provisional) ? "Try again now" : "Close day"
     }
 
     /// Re-run: the owner's, on a finished night. The server enforces the
@@ -297,11 +307,16 @@ final class DailyReportViewModel {
     private struct CloseBody: Encodable {
         let date: String?
         let rerun: Bool?
+        var early: Bool? = nil
     }
+
+    /// The POS hasn't closed the day: the view asks, and a yes re-posts
+    /// with `early: true` (DSRCloseGate).
+    var confirmingEarlyClose = false
 
     /// POST /mobile/api/dsr/close, then follow the night on /status. The
     /// run happens on the server's own thread; this only starts it.
-    func closeDay(rerun: Bool = false) async {
+    func closeDay(rerun: Bool = false, early: Bool = false) async {
         guard !isSubmitting else { return }
         isSubmitting = true
         actionError = nil
@@ -309,7 +324,7 @@ final class DailyReportViewModel {
         do {
             let r: DSRCloseResponse = try await client.send(
                 "/mobile/api/dsr/close", method: .post,
-                body: CloseBody(date: businessDate, rerun: rerun ? true : nil),
+                body: CloseBody(date: businessDate, rerun: rerun ? true : nil, early: early ? true : nil),
                 retryTransient: false)
             guard r.ok else {
                 actionError = r.error ?? "That didn\u{2019}t start."
@@ -327,6 +342,9 @@ final class DailyReportViewModel {
                 // Already final — nothing to run; show it.
                 try? await fetchReport()
             }
+        } catch let error as APIClient.APIError where !early && DSRCloseGate.isBeforeClose(error) {
+            // Not a failure: the POS day is still open. Ask first.
+            confirmingEarlyClose = true
         } catch let error as APIClient.APIError {
             actionError = error.message
         } catch is CancellationError {
@@ -381,24 +399,31 @@ final class DailyReportListViewModel {
     private(set) var isClosing = false
     var closeError: String?
 
-    private struct CloseBody: Encodable {}
+    private struct CloseBody: Encodable { var early: Bool? = nil }
+
+    /// The POS hasn't closed the day: the list asks, and a yes re-posts with
+    /// `early: true` (DSRCloseGate).
+    var confirmingEarlyClose = false
 
     /// Close day for tonight (the server picks tonight's business date).
     /// Returns the night to open — following its progress when it started —
     /// or nil with `closeError` set to the server's sentence.
-    func closeTonight() async -> DailyReportRoute? {
+    func closeTonight(early: Bool = false) async -> DailyReportRoute? {
         guard !isClosing else { return nil }
         isClosing = true
         closeError = nil
         defer { isClosing = false }
         do {
             let r: DSRCloseResponse = try await client.send("/mobile/api/dsr/close", method: .post,
-                                                            body: CloseBody(), retryTransient: false)
+                                                            body: CloseBody(early: early ? true : nil),
+                                                            retryTransient: false)
             guard r.ok, let date = r.businessDate, DSRFormat.isISODate(date) else {
                 closeError = r.error ?? "That didn\u{2019}t start."
                 return nil
             }
             return .report(date: date, follow: DSRFollow.after(r))
+        } catch let error as APIClient.APIError where !early && DSRCloseGate.isBeforeClose(error) {
+            confirmingEarlyClose = true
         } catch let error as APIClient.APIError {
             closeError = error.message
         } catch is CancellationError {

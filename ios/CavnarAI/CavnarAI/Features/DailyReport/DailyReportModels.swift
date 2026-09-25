@@ -95,13 +95,20 @@ struct DSRSummary: Decodable, Hashable, Identifiable {
     let provisional: Bool
     let missing: [String]
     let finalizedAt: String?
+    /// The night's net sales when its Sales block is ready — nil otherwise,
+    /// never 0 — and the lead this login may read (the executive summary
+    /// for an owner, the operations summary for a manager). What Home's card
+    /// and the widget draw from, so neither has to open the report (and
+    /// record its actions as shown) just to draw a card (D3-8).
+    var net: Double? = nil
+    var lead: String? = nil
 
     var id: String { businessDate + "#" + String(version ?? 0) }
     var displayDate: String { label ?? CavnarDate.mdy(businessDate) }
     var phase: DSRPhase { DSRPhase(status: status, provisional: provisional) }
 
     enum CodingKeys: String, CodingKey {
-        case label, version, status, provisional, missing
+        case label, version, status, provisional, missing, net, lead
         case businessDate = "business_date"
         case finalizedAt = "finalized_at"
     }
@@ -115,6 +122,8 @@ struct DSRSummary: Decodable, Hashable, Identifiable {
         provisional = (try c.decodeIfPresent(Bool.self, forKey: .provisional)) ?? false
         missing = (try c.decodeIfPresent([String].self, forKey: .missing)) ?? []
         finalizedAt = try c.decodeIfPresent(String.self, forKey: .finalizedAt)
+        net = try? c.decodeIfPresent(Double.self, forKey: .net)
+        lead = try? c.decodeIfPresent(String.self, forKey: .lead)
     }
 }
 
@@ -256,6 +265,28 @@ struct DSRReport: Decodable {
     var orderedBlocks: [(name: String, block: DSRBlock)] {
         DSRBlock.order.compactMap { name in facts.blocks[name].map { (name, $0) } }
     }
+
+    /// What the report draws, block by block, as the web does (D3-13): every
+    /// measured block, and — once the night has finished — a "Not collected
+    /// for this night" card for a block that is missing but NOT withheld. A
+    /// withheld block is named in `withheldLine` instead.
+    var displayedBlocks: [(name: String, block: DSRBlock)] {
+        guard phase.isTerminal else { return orderedBlocks }
+        return DSRBlock.order.compactMap { (name: String) -> (name: String, block: DSRBlock)? in
+            if let b = facts.blocks[name] { return (name, b) }
+            if facts.withheld.contains(name) { return nil }
+            return (name, DSRBlock.notCollected)
+        }
+    }
+
+    /// "Not part of your view: Food, Labor. The owner decides what a manager
+    /// login can read." Nil when nothing is withheld.
+    var withheldLine: String? {
+        let names = facts.withheld.map { DSRBlock.titles[$0] ?? $0.capitalized }
+        guard !names.isEmpty else { return nil }
+        return "Not part of your view: \(names.joined(separator: ", ")). "
+            + "The owner decides what a manager login can read."
+    }
 }
 
 struct DSRFacts: Decodable {
@@ -316,6 +347,10 @@ struct DSRBlock: Hashable {
 
     var isReady: Bool { status == "ready" }
 
+    /// The stand-in for a block the night has no row for (the web's words).
+    static let notCollected = DSRBlock(json: .object(["status": .string("unavailable"),
+                                                      "reason": .string("Not collected for this night")]))
+
     /// A measured figure, or nil when it is null, absent, or withheld.
     func metric(_ key: String) -> Double? { metrics[key] ?? nil }
 
@@ -373,6 +408,9 @@ struct DSRAction: Decodable, Hashable, Identifiable {
     /// "before_service" → "this_week"). Absent on an older report.
     var urgencyBasis: String? = nil
     var urgencyAdjusted: UrgencyAdjusted? = nil
+    /// "model" when the effort is the model's own guess — said as such, as
+    /// on the web (D3-13).
+    var effortSource: String? = nil
     /// F6 (rec_learning.attach_dollar_calibration): the dollars corrected by
     /// this restaurant's measured results for the kind — null means show
     /// `dollars_monthly` as it is — how many results, and the note ("adjusted
@@ -397,23 +435,33 @@ struct DSRAction: Decodable, Hashable, Identifiable {
         case dollarsAdjusted = "dollars_adjusted"
         case calibrationN = "calibration_n"
         case calibrationNote = "calibration_note"
+        case effortSource = "effort_source"
     }
 
-    /// "Moved from Before service to This week — nothing it cites moved 10%
-    /// (2 points) from what it is compared with." Nil unless the server
-    /// moved it.
-    var urgencyAdjustedLine: String? {
-        guard let adj = urgencyAdjusted, adj.from != nil || adj.to != nil else { return nil }
-        func words(_ s: String?) -> String? {
-            guard let s, !s.isEmpty else { return nil }
-            let w = s.replacingOccurrences(of: "_", with: " ")
+    /// The web's words for the server's urgency enum (dashboard.html
+    /// URGENCY): "before_service" is "Today" to an owner (D3-13).
+    static func urgencyWords(_ raw: String?) -> String? {
+        guard let raw, !raw.isEmpty else { return nil }
+        switch raw {
+        case "before_service", "today": return "Today"
+        case "this_week": return "This week"
+        case "next_schedule": return "Next schedule"
+        case "next_order": return "Next order"
+        default:
+            let w = raw.replacingOccurrences(of: "_", with: " ")
             return w.prefix(1).uppercased() + w.dropFirst()
         }
-        var s = "Moved"
-        if let f = words(adj.from) { s += " from \(f)" }
-        if let t = words(adj.to) { s += " to \(t)" }
-        if let why = adj.why, !why.isEmpty { s += " \u{2014} \(why)" }
-        return s
+    }
+
+    /// "Cavnar AI marked this Today; moved to This week because nothing it
+    /// cites moved 10% (2 points) from what it is compared with" — the
+    /// web's sentence (D3-13). Nil unless the server moved it.
+    var urgencyAdjustedLine: String? {
+        guard let adj = urgencyAdjusted, adj.from != nil || adj.to != nil else { return nil }
+        let from = Self.urgencyWords(adj.from) ?? "Today"
+        let to = Self.urgencyWords(adj.to) ?? "This week"
+        let why = (adj.why?.isEmpty == false ? adj.why! : "the figures it cites don\u{2019}t show that urgency")
+        return "Cavnar AI marked this \(from); moved to \(to) because \(why)"
     }
 
     /// The dollars to show and what corrected them — the adjusted figure
@@ -448,15 +496,11 @@ struct DSRAction: Decodable, Hashable, Identifiable {
 
     /// "This week", "Next schedule", "Tonight" — the server's own words,
     /// made readable.
-    var urgencyLabel: String? {
-        guard let u = urgency, !u.isEmpty else { return nil }
-        let words = u.replacingOccurrences(of: "_", with: " ")
-        return words.prefix(1).uppercased() + words.dropFirst()
-    }
+    var urgencyLabel: String? { Self.urgencyWords(urgency) }
 
     var effortLabel: String? {
         guard let e = effort, !e.isEmpty else { return nil }
-        return "\(e) effort"
+        return "\(e) effort" + (effortSource == "model" ? " (Cavnar AI\u{2019}s estimate)" : "")
     }
 }
 
@@ -695,9 +739,11 @@ struct DSRChecklist: Decodable {
     let closedBy: String?
     let nextAttemptAt: String?
     let missing: [String]
+    /// Set when a re-run was refused: `{reason}` — the sentence is shown.
+    var rerun: DSRRerunNote? = nil
 
     enum CodingKeys: String, CodingKey {
-        case label, version, status, provisional, stages, blocks, narrative, missing
+        case label, version, status, provisional, stages, blocks, narrative, missing, rerun
         case businessDate = "business_date"
         case statusLabel = "status_label"
         case closedBy = "closed_by"
@@ -718,9 +764,46 @@ struct DSRChecklist: Decodable {
         closedBy = try c.decodeIfPresent(String.self, forKey: .closedBy)
         nextAttemptAt = try c.decodeIfPresent(String.self, forKey: .nextAttemptAt)
         missing = (try? c.decodeIfPresent([String].self, forKey: .missing)) ?? []
+        rerun = try? c.decodeIfPresent(DSRRerunNote.self, forKey: .rerun)
     }
 
     var phase: DSRPhase { DSRPhase(status: status, provisional: provisional) }
+}
+
+/// A refused re-run (the checklist's `rerun`). Lenient: a bare string is
+/// read as the reason.
+struct DSRRerunNote: Decodable, Hashable {
+    let reason: String?
+    let at: String?
+    enum CodingKeys: String, CodingKey { case reason, at }
+    init(from decoder: Decoder) throws {
+        if let s = try? decoder.singleValueContainer().decode(String.self) {
+            reason = s; at = nil
+            return
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        reason = try? c.decodeIfPresent(String.self, forKey: .reason)
+        at = try? c.decodeIfPresent(String.self, forKey: .at)
+    }
+}
+
+/// POST dsr/close answers 409 `{code: "before_close", needs_confirm: true}`
+/// while the POS has not closed the day; the close is then asked about and
+/// re-posted with `early: true` (DB, 9/25/26).
+enum DSRCloseGate {
+    private struct Body: Decodable {
+        let code: String?
+        let needsConfirm: Bool?
+        enum CodingKeys: String, CodingKey { case code; case needsConfirm = "needs_confirm" }
+    }
+
+    static let question = "The POS hasn\u{2019}t closed the day yet \u{2014} close it anyway?"
+
+    static func isBeforeClose(_ error: APIClient.APIError) -> Bool {
+        guard error.status == 409, let data = error.body,
+              let b = try? JSONDecoder().decode(Body.self, from: data) else { return false }
+        return b.code == "before_close" || b.needsConfirm == true
+    }
 }
 
 /// GET /dsr/<date>/status: the checklist, or `exists: false` when nothing
@@ -802,6 +885,11 @@ struct DSRGrid: Decodable {
     }
 
     var showsBudget: Bool { !withheld.contains("budget") }
+    /// False for a login without LABOR_VIEW: redact_grid strips the labor
+    /// values and names "labor" in `withheld`.
+    var showsLabor: Bool { !withheld.contains("labor") }
+    /// False for a manager: gross (and gross_items) are the owner's.
+    var showsGross: Bool { !withheld.contains("gross") }
 }
 
 struct DSRGridDay: Decodable, Identifiable {

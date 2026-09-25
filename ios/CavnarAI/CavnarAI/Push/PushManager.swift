@@ -250,6 +250,21 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         let path: String
         let decision: String?
         let failureTitle: String
+        /// The queued send an Undo stops — its Live Activity ends with it
+        /// (F3-9).
+        var cancelsActionId: Int? = nil
+        /// An Approve & post: the answer says whether Google took it.
+        var postsReply = false
+    }
+
+    /// What an Approve & post answer means for the owner who pressed it from
+    /// the lock screen (F3-3). The route answers 200 `{ok: true}` when the
+    /// reply was APPROVED — `post_status` failed / not_connected / not_google
+    /// when it didn't go live — so `ok` alone read as "posted" when nothing
+    /// went live. Nil: it posted.
+    nonisolated static func approvePostShortfall(_ outcome: ReviewPostOutcome) -> String? {
+        guard let why = outcome.shortfall else { return nil }
+        return "Approved, but not posted: \(why) Tap to open it."
     }
 
     /// The call a background action identifier makes for this payload, or
@@ -261,11 +276,11 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
         case approvePostAction:
             guard let id = reviewId(from: cavnar["review_id"]) else { return nil }
             return BackgroundAction(path: "/mobile/api/reviews/\(id)/approve", decision: nil,
-                                    failureTitle: "Couldn't post that reply")
+                                    failureTitle: "Couldn't post that reply", postsReply: true)
         case undoAction:
             guard let id = reviewId(from: cavnar["delayed_action_id"]) else { return nil }
             return BackgroundAction(path: "/mobile/api/actions/\(id)/cancel", decision: nil,
-                                    failureTitle: "Couldn't undo that")
+                                    failureTitle: "Couldn't undo that", cancelsActionId: id)
         case approveRequestAction, denyRequestAction:
             guard let id = reviewId(from: cavnar["request_id"]) else { return nil }
             let kind = (cavnar["request_kind"] as? String ?? "shift").lowercased()
@@ -293,17 +308,29 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
             await postFailure(action.failureTitle, "Open Cavnar AI and sign in to do this.", userInfo: userInfo)
             return
         }
+        // An app passcode is the owner saying this phone is shared: the
+        // device's own unlock (all `.authenticationRequired` asks for) is not
+        // enough to post a reply or decide a request from the lock screen.
+        // Undo — the safe direction — still works (F3-13).
+        if Self.needsAppUnlock(action, passcodeSet: AppPasscode.isSet) {
+            await postFailure(action.failureTitle, "Open Cavnar AI to do this.", userInfo: userInfo)
+            return
+        }
         // The server acts on the location this phone is signed into. An
         // alert about another location of the group can't be answered from
         // here without switching, so it says so instead of failing oddly.
-        let active = await MainActor.run { SessionScope.restaurantId }
+        // The persisted id, not only this process's: a lock-screen button
+        // can launch the app in the background with no session built yet,
+        // where this process's id is still 0 and the guard used to be
+        // skipped (F3-13).
+        let active = await MainActor.run { SessionScope.activeRestaurantId }
         if let restaurantId, restaurantId > 0, active > 0, restaurantId != active {
             await postFailure(action.failureTitle,
                               "It's for another location — tap to open it there.", userInfo: userInfo)
             return
         }
         do {
-            let response: APIClient.OKResponse
+            let response: ReviewPostOutcome
             if let decision = action.decision {
                 response = try await APIClient.shared.sendWithBearer(
                     action.path, method: .post, body: DecisionBody(decision: decision), bearer: token)
@@ -313,12 +340,26 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
             }
             if !response.ok {
                 await postFailure(action.failureTitle, response.error ?? "Tap to open it.", userInfo: userInfo)
+            } else if action.postsReply,
+                      let shortfall = approvePostShortfall(response) {
+                await postFailure("Reply approved, not posted", shortfall, userInfo: userInfo)
+            } else if let id = action.cancelsActionId {
+                await MainActor.run {
+                    PendingSendActivities.finish(actionId: id, status: "stopped", note: nil)
+                }
             }
         } catch let error as APIClient.APIError {
             await postFailure(action.failureTitle, error.message, userInfo: userInfo)
         } catch {
             await postFailure(action.failureTitle, "Tap to open it and try again.", userInfo: userInfo)
         }
+    }
+
+    /// Whether a lock-screen action must wait for the app's own unlock:
+    /// anything outward (post a reply, decide a request) while an app
+    /// passcode is set. Undo stops a send and is always allowed.
+    nonisolated static func needsAppUnlock(_ action: BackgroundAction, passcodeSet: Bool) -> Bool {
+        passcodeSet && action.cancelsActionId == nil
     }
 
     nonisolated private static func postFailure(_ title: String, _ body: String,

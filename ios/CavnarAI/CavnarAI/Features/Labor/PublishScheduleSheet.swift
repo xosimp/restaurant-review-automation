@@ -50,10 +50,29 @@ struct PublishResult: Decodable {
     let alreadyPublished: Bool?
     /// Published to the staff portal with no emails (nobody has an address).
     let note: String?
+    /// A week staff already had: only the people whose shifts changed were
+    /// told (the save no longer emails anyone; Send does).
+    let changesSent: Bool?
 
     enum CodingKeys: String, CodingKey {
         case ok, sent, unreachable, failed, error, status, acknowledged, note
         case alreadyPublished = "already_published"
+        case changesSent = "changes_sent"
+    }
+
+    // Lenient: a changes-only send may answer without every list.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        ok = (try? c.decode(Bool.self, forKey: .ok)) ?? false
+        sent = (try? c.decodeIfPresent([Sent].self, forKey: .sent)) ?? []
+        unreachable = (try? c.decodeIfPresent([Unreachable].self, forKey: .unreachable)) ?? []
+        failed = (try? c.decodeIfPresent([Failed].self, forKey: .failed)) ?? []
+        error = try? c.decodeIfPresent(String.self, forKey: .error)
+        status = try? c.decodeIfPresent(String.self, forKey: .status)
+        acknowledged = try? c.decodeIfPresent(Bool.self, forKey: .acknowledged)
+        alreadyPublished = try? c.decodeIfPresent(Bool.self, forKey: .alreadyPublished)
+        note = try? c.decodeIfPresent(String.self, forKey: .note)
+        changesSent = try? c.decodeIfPresent(Bool.self, forKey: .changesSent)
     }
 
     struct Sent: Decodable, Identifiable {
@@ -107,11 +126,21 @@ final class PublishScheduleViewModel {
     // should read first — needs-review rows, a rule break, a weak score.
     // Sending again with `acknowledge: true` is the owner saying they did.
     var blockers: [String] = []
+    /// The gate's own keys for the blockers on screen — what Send names when
+    /// the owner acknowledges them (`acknowledge: [keys]`), so a blocker that
+    /// appeared after they read the list is never acknowledged unseen.
+    var blockerKeys: [String] = []
     var acknowledgeBlockers = false
+    /// People whose shifts changed since the week went out and who haven't
+    /// been told (the save's `unsent_changes`). Send tells only them.
+    var unsentChanges: [String] = []
     // A refusal that is not a gate: the login cannot send (403), or the
     // server said no. Separate from errorMessage, which hides the whole
     // sheet behind an error when nothing has loaded.
     var publishError: String?
+
+    /// Told once a send went through (Labor clears its unsent-changes list).
+    var onSent: (() -> Void)?
 
     var editingContact: StaffContact?
     var isSavingContact = false
@@ -198,29 +227,49 @@ final class PublishScheduleViewModel {
         }
     }
 
-    private struct PublishBody: Encodable {
-        let scheduleId: Int?
+    /// Always names the week (the server refuses a publish without one) and,
+    /// when the owner read the gate's blockers, acknowledges exactly the keys
+    /// shown — `true` only for an older gate that sent no keys.
+    struct PublishBody: Encodable {
+        let scheduleId: Int
         let acknowledge: Bool
+        var keys: [String] = []
         enum CodingKeys: String, CodingKey {
             case acknowledge
             case scheduleId = "schedule_id"
         }
         func encode(to encoder: Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
-            try c.encodeIfPresent(scheduleId, forKey: .scheduleId)
-            try c.encode(acknowledge, forKey: .acknowledge)
+            try c.encode(scheduleId, forKey: .scheduleId)
+            if acknowledge && !keys.isEmpty {
+                try c.encode(keys, forKey: .acknowledge)
+            } else {
+                try c.encode(acknowledge, forKey: .acknowledge)
+            }
         }
     }
 
-    /// 409 from the gate: `{needs_ack, blockers, schedule_id}`.
-    private struct GateResponse: Decodable {
+    /// 409 from the gate: `{needs_ack, blockers, blocker_keys,
+    /// blocker_items: [{key, text}], schedule_id}`.
+    struct GateResponse: Decodable {
+        struct Item: Decodable { let key: String; let text: String }
         let needsAck: Bool?
         let blockers: [String]?
+        let blockerKeys: [String]?
+        let blockerItems: [Item]?
         let scheduleId: Int?
         enum CodingKeys: String, CodingKey {
             case blockers
             case needsAck = "needs_ack"
+            case blockerKeys = "blocker_keys"
+            case blockerItems = "blocker_items"
             case scheduleId = "schedule_id"
+        }
+
+        /// The lines to show and the keys they carry, items first.
+        var shown: (lines: [String], keys: [String]) {
+            if let items = blockerItems, !items.isEmpty { return (items.map(\.text), items.map(\.key)) }
+            return (blockers ?? [], blockerKeys ?? [])
         }
     }
 
@@ -233,19 +282,29 @@ final class PublishScheduleViewModel {
     /// second tap re-emailed the whole roster (CLIENT-36).
     func publish(resend: Bool = false) async {
         guard !isPublishing else { return }
-        guard resend || !hasSent else { return }
+        // A week already sent from this sheet goes again only by the owner's
+        // explicit resend — or when shifts changed since, and Send tells
+        // just those people.
+        guard resend || !hasSent || !unsentChanges.isEmpty else { return }
+        guard let scheduleId else {
+            publishError = "Open the week you want to send first."
+            return
+        }
         isPublishing = true
         publishError = nil
         defer { isPublishing = false }
         do {
             let result: PublishResult = try await client.send(
                 "/mobile/api/labor/publish-schedule", method: .post,
-                body: PublishBody(scheduleId: scheduleId, acknowledge: acknowledgeBlockers))
+                body: PublishBody(scheduleId: scheduleId, acknowledge: acknowledgeBlockers, keys: blockerKeys))
             lastResult = result
             if result.ok {
                 Haptic.success()
                 blockers = []
+                blockerKeys = []
                 acknowledgeBlockers = false
+                unsentChanges = []
+                onSent?()
             } else {
                 publishError = result.error ?? "Couldn't send the schedule."
             }
@@ -253,8 +312,9 @@ final class PublishScheduleViewModel {
         } catch let error as APIClient.APIError {
             if error.status == 409, let gate = error.decodeBody(GateResponse.self), gate.needsAck == true {
                 // Not a failure: the week has something to read first.
-                blockers = gate.blockers ?? []
-                if let id = gate.scheduleId { scheduleId = id }
+                blockers = gate.shown.lines
+                blockerKeys = gate.shown.keys
+                if let id = gate.scheduleId { self.scheduleId = id }
                 acknowledgeBlockers = false
                 Haptic.warning()
             } else {
@@ -276,10 +336,13 @@ struct PublishScheduleSheet: View {
     @State private var confirmingResend = false
     @Environment(\.dismiss) private var dismiss
 
-    /// The schedule_history row to send; nil means the latest.
-    init(scheduleId: Int? = nil) {
+    /// The schedule_history row to send — required by the server now; the
+    /// sheet says so rather than sending without one.
+    init(scheduleId: Int? = nil, unsentChanges: [String] = [], onSent: (() -> Void)? = nil) {
         let vm = PublishScheduleViewModel()
         vm.scheduleId = scheduleId
+        vm.unsentChanges = unsentChanges
+        vm.onSent = onSent
         _viewModel = State(initialValue: vm)
     }
 
@@ -400,7 +463,26 @@ struct PublishScheduleSheet: View {
 
     @ViewBuilder
     private var publishButton: some View {
-        if viewModel.hasSent {
+        if !viewModel.unsentChanges.isEmpty {
+            // A week staff already have, changed since: Send tells only
+            // the people whose shifts moved.
+            Button {
+                Task { await viewModel.publish() }
+            } label: {
+                Group {
+                    if viewModel.isPublishing {
+                        CavnarShimmerText(text: "Sending…")
+                    } else {
+                        Text(viewModel.unsentChanges.count == 1
+                             ? "Tell \(viewModel.unsentChanges[0]) about the change"
+                             : "Tell the \(viewModel.unsentChanges.count) people whose shifts changed")
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isPublishing))
+            .disabled(viewModel.isPublishing)
+        } else if viewModel.hasSent {
             // Sent. Another send re-emails everyone, so it is a separate,
             // quieter action that asks first (CLIENT-36).
             Button {
@@ -490,8 +572,10 @@ struct PublishScheduleSheet: View {
 
     private func resultCard(_ result: PublishResult) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let line = result.alreadyPublished == true
-                ? "This week was already sent to staff — nothing went out twice." : result.note {
+            if let line = result.changesSent == true
+                ? "Only the people whose shifts changed were told."
+                : (result.alreadyPublished == true
+                   ? "This week was already sent to staff — nothing went out twice." : result.note) {
                 Text(line)
                     .font(.cavnarBody(14, weight: 600))
                     .foregroundStyle(Color.cavnarInk2)

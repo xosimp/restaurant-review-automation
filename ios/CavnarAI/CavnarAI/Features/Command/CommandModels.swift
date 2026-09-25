@@ -209,9 +209,20 @@ struct CommandWaitingItem: Decodable, Identifiable, Hashable {
         return (kind, id)
     }
 
-    /// Where a tap goes: the server's `nav`, else the item's module.
+    /// Where a tap goes: the server's `nav`, else the item's module. An Ask
+    /// proposal ("ask:<id>") opens as a proposal whatever head the server
+    /// gave it — `action/<id>` is also a queued send's address, a different
+    /// id space (F3-2).
     var destination: NavPath? {
-        NavPath(nav) ?? NavPath(module)
+        if let id = proposalId { return NavPath("proposal/\(id)") }
+        return NavPath(nav) ?? NavPath(module)
+    }
+
+    /// The stored Ask proposal this row is, for key "ask:<id>".
+    var proposalId: Int? {
+        let parts = key.split(separator: ":", maxSplits: 1)
+        guard parts.count == 2, parts[0] == "ask", let id = Int(parts[1]), id > 0 else { return nil }
+        return id
     }
 }
 

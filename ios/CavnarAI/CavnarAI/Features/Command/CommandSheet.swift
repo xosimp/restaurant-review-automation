@@ -434,9 +434,8 @@ struct CommandSheet: View {
             let nav = hit.nav
             dismiss()
             Task {
-                if let switchLocation = router.switchLocation, await switchLocation(loc.id) {
-                    router.locationSwitches += 1
-                }
+                // SessionStore reports the switch; RootView resets.
+                if let switchLocation = router.switchLocation { _ = await switchLocation(loc.id) }
                 if let nav { SystemEntry.open(NavPath(nav) ?? NavPath("home")!) }
             }
             return
@@ -462,9 +461,7 @@ struct CommandSheet: View {
     private func switchTo(_ loc: LocationOption) {
         dismiss()
         Task {
-            if let switchLocation = router.switchLocation, await switchLocation(loc.id) {
-                router.locationSwitches += 1
-            }
+            if let switchLocation = router.switchLocation { _ = await switchLocation(loc.id) }
         }
     }
 }

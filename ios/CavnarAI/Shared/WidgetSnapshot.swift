@@ -12,10 +12,16 @@ import Foundation
 /// (DSRFormat), so the widget cannot drift into a second number format.
 struct WidgetSnapshot: Codable, Equatable {
     /// The location the figures belong to — a group owner's phone shows one
-    /// store at a time, and the widget says which.
+    /// store at a time, and the widget says which. Set for a login with more
+    /// than one location (nil otherwise: there is nothing to tell apart).
     var restaurantName: String?
+    /// Which location wrote this — a snapshot from another location is
+    /// never merged into this one's.
+    var restaurantId: Int?
     /// "9/24/26" — the business date of the report the net came from.
     var nightLabel: String?
+    /// The same night, ISO — the widget's link opens that night's report.
+    var nightDate: String?
     /// "$4,210", or nil when the night has no measured net (never "$0").
     var netLabel: String?
     /// "+8%" / "−3%", with the basis it was measured against.
@@ -27,10 +33,15 @@ struct WidgetSnapshot: Codable, Equatable {
     /// Drafted replies waiting for approval — the quick action's subtitle.
     var pendingReplies: Int
     var updatedAt: Date
+    /// When each half was last READ — each has its own: a failed read of one
+    /// keeps the other's last good value rather than zeroing it (F3-8).
+    /// Nil on a snapshot written before these existed (updatedAt stands in).
+    var waitingUpdatedAt: Date?
+    var nightUpdatedAt: Date?
 
-    static let empty = WidgetSnapshot(restaurantName: nil, nightLabel: nil, netLabel: nil, changeLabel: nil,
-                                      changeBasis: nil, changeIsUp: nil, waitingCount: 0, pendingReplies: 0,
-                                      updatedAt: .distantPast)
+    static let empty = WidgetSnapshot(restaurantName: nil, restaurantId: nil, nightLabel: nil, nightDate: nil,
+                                      netLabel: nil, changeLabel: nil, changeBasis: nil, changeIsUp: nil,
+                                      waitingCount: 0, pendingReplies: 0, updatedAt: .distantPast)
 
     /// Shared container both targets are entitled to (project.yml).
     static let appGroup = "group.ai.cavnar.CavnarAI"
@@ -38,12 +49,34 @@ struct WidgetSnapshot: Codable, Equatable {
     /// The widget's WidgetKit `kind` — the app reloads it by name.
     static let widgetKind = "CavnarWaitingWidget"
 
-    /// A snapshot older than this is shown as "Open Cavnar to refresh"
-    /// rather than as today's numbers.
+    /// Last night's figures stay good for a day and a half — the next
+    /// night's report replaces them.
     static let staleAfter: TimeInterval = 36 * 3600
+    /// "3 things waiting" is a count of right now: past a few hours it is
+    /// "Open Cavnar to refresh", never a morning's count read as the
+    /// evening's (F3-8).
+    static let waitingStaleAfter: TimeInterval = 6 * 3600
 
+    func waitingIsCurrent(now: Date = Date()) -> Bool {
+        now.timeIntervalSince(waitingUpdatedAt ?? updatedAt) <= Self.waitingStaleAfter
+    }
+
+    func nightIsCurrent(now: Date = Date()) -> Bool {
+        now.timeIntervalSince(nightUpdatedAt ?? updatedAt) <= Self.staleAfter
+    }
+
+    /// Nothing in it is current any more.
     func isStale(now: Date = Date()) -> Bool {
-        now.timeIntervalSince(updatedAt) > Self.staleAfter
+        !waitingIsCurrent(now: now) && !nightIsCurrent(now: now)
+    }
+
+    /// The widget's link: that night's report when the snapshot knows the
+    /// date (bare "dsr" is the latest night), the command sheet while
+    /// something is waiting.
+    func link(now: Date = Date()) -> String {
+        if waitingIsCurrent(now: now), waitingCount > 0 { return "cavnarai://command" }
+        if let nightDate, !nightDate.isEmpty { return "cavnarai://nav/dsr/night/" + nightDate }
+        return "cavnarai://nav/dsr"
     }
 
     /// "3 things waiting" / "1 thing waiting" / "Nothing waiting".

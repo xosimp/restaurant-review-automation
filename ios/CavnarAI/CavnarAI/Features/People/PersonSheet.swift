@@ -33,13 +33,52 @@ struct PersonRecord: Decodable, Equatable {
     let rating: JSONValue?
     let certifications: [String]?
     let posId: String?
-    let payRate: Double?
+    /// The rate this person's hours are costed at. Read only here: rates
+    /// are per ROLE (people._pay_rate), set in Labor → Rates. The server
+    /// sends `{role, rate, source}`; a bare number or text is read too.
+    /// Decoding only a number left the field blank for everyone (F3-5).
+    private(set) var payRate: Double?
+    /// The role the rate belongs to, and whether it is that role's own rate
+    /// ("role") or the restaurant's blended one ("blended").
+    let payRateRole: String?
+    let payRateSource: String?
+    /// Whether this login may change the record (`_may_rate`); a view-only
+    /// login sees the facts without Save (F3-5).
+    let canEdit: Bool?
+    /// Which fields this login may change, per field (`{"role": false,
+    /// "pay_rate": true, …}`). Nil on an older server: role shown as a field,
+    /// pay read only.
+    let editable: [String: Bool]?
 
     enum CodingKeys: String, CodingKey {
-        case key, name, role, active, phone, email, hours, availability, rating, certifications
+        case key, name, role, active, phone, email, hours, availability, rating, certifications, editable
         case pinSet = "pin_set"
         case posId = "pos_id"
         case payRate = "pay_rate"
+        case payRateAmount = "pay_rate_amount"
+        case canEdit = "can_edit"
+    }
+
+    /// Whether `field` may be changed here: the server's `editable` map when
+    /// it sent one, else `fallback`.
+    func mayEdit(_ field: String, fallback: Bool) -> Bool {
+        guard canEdit != false else { return false }
+        return editable?[field] ?? fallback
+    }
+
+    private struct PayRate: Decodable {
+        let rate: Double?
+        let role: String?
+        let source: String?
+        enum CodingKeys: String, CodingKey { case rate, role, source }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            if let d = try? c.decodeIfPresent(Double.self, forKey: .rate) { rate = d }
+            else if let s = try? c.decodeIfPresent(String.self, forKey: .rate) { rate = Double(s) }
+            else { rate = nil }
+            role = try? c.decodeIfPresent(String.self, forKey: .role)
+            source = try? c.decodeIfPresent(String.self, forKey: .source)
+        }
     }
 
     init(from decoder: Decoder) throws {
@@ -59,9 +98,29 @@ struct PersonRecord: Decodable, Equatable {
         if let s = try? c.decodeIfPresent(String.self, forKey: .posId) { posId = s }
         else if let n = try? c.decodeIfPresent(Int.self, forKey: .posId) { posId = String(n) }
         else { posId = nil }
-        if let d = try? c.decodeIfPresent(Double.self, forKey: .payRate) { payRate = d }
-        else if let s = try? c.decodeIfPresent(String.self, forKey: .payRate) { payRate = Double(s) }
-        else { payRate = nil }
+        if let d = try? c.decodeIfPresent(Double.self, forKey: .payRate) {
+            payRate = d; payRateRole = nil; payRateSource = nil
+        } else if let s = try? c.decodeIfPresent(String.self, forKey: .payRate) {
+            payRate = Double(s); payRateRole = nil; payRateSource = nil
+        } else if let o = try? c.decodeIfPresent(PayRate.self, forKey: .payRate) {
+            payRate = o.rate; payRateRole = o.role; payRateSource = o.source
+        } else {
+            payRate = nil; payRateRole = nil; payRateSource = nil
+        }
+        canEdit = try? c.decodeIfPresent(Bool.self, forKey: .canEdit)
+        editable = try? c.decodeIfPresent([String: Bool].self, forKey: .editable)
+        // The flat figure, when the server sends it, is the one to show.
+        if let amount = try? c.decodeIfPresent(Double.self, forKey: .payRateAmount) { payRate = amount }
+    }
+
+    /// "$15.00/h · Server's rate" / "$14.00/h · blended rate" — nil when no
+    /// rate is set (never "$0").
+    var payRateLine: String? {
+        guard let payRate else { return nil }
+        let money = "$" + String(format: "%.2f", payRate) + "/h"
+        if payRateSource == "role", let role = payRateRole, !role.isEmpty { return money + " \u{00B7} \(role) rate" }
+        if payRateSource == "blended" { return money + " \u{00B7} blended rate" }
+        return money
     }
 
     /// A readable line for a fact whose shape the server owns ("20–32 h",
@@ -103,6 +162,7 @@ final class PersonSheetViewModel {
     var phone = ""
     var email = ""
     var posId = ""
+    /// Only sent when the server says this login may set the pay rate.
     var payRate = ""
     private(set) var isSaving = false
     private(set) var saveMessage: String?
@@ -121,6 +181,30 @@ final class PersonSheetViewModel {
         let ok: Bool
         let person: PersonRecord?
         let error: String?
+        /// The fields the server actually wrote (people.update_person).
+        var changed: [String]? = nil
+    }
+
+    /// What the sheet sent that the server did not write — each named, so
+    /// "Saved." is never said over a change that was dropped (F3-5). The
+    /// server's names: a role is written as the login's `job_title`.
+    nonisolated static func unsaved(sent: [String], changed: [String]?) -> [String] {
+        guard let changed else { return [] }
+        let wrote = Set(changed)
+        return sent.filter { key in
+            key == "role" ? !(wrote.contains("role") || wrote.contains("job_title")) : !wrote.contains(key)
+        }.sorted()
+    }
+
+    nonisolated static func label(forField key: String) -> String {
+        switch key {
+        case "role": return "Role"
+        case "pay_rate": return "Pay rate"
+        case "phone": return "Phone"
+        case "email": return "Email"
+        case "pos_id": return "POS id"
+        default: return key.replacingOccurrences(of: "_", with: " ").capitalized
+        }
     }
 
     static func path(for key: String) -> String {
@@ -170,13 +254,17 @@ final class PersonSheetViewModel {
     func changes(from person: PersonRecord) -> [String: AnyCodableValue] {
         var out: [String: AnyCodableValue] = [:]
         func trimmed(_ s: String) -> String { s.trimmingCharacters(in: .whitespacesAndNewlines) }
-        if trimmed(role) != (person.role ?? "") { out["role"] = .string(trimmed(role)) }
+        if person.mayEdit("role", fallback: true), trimmed(role) != (person.role ?? "") {
+            out["role"] = .string(trimmed(role))
+        }
         if trimmed(phone) != (person.phone ?? "") { out["phone"] = .string(trimmed(phone)) }
         if trimmed(email) != (person.email ?? "") { out["email"] = .string(trimmed(email)) }
         if trimmed(posId) != (person.posId ?? "") { out["pos_id"] = .string(trimmed(posId)) }
-        let rate = Double(trimmed(payRate).replacingOccurrences(of: "$", with: ""))
-        if rate != person.payRate {
-            out["pay_rate"] = rate.map { .double($0) } ?? .null
+        // Pay is sent only where the server says this login may set it;
+        // otherwise it is the role's rate, read only here.
+        if person.mayEdit("pay_rate", fallback: false) {
+            let rate = Double(trimmed(payRate).replacingOccurrences(of: "$", with: ""))
+            if let rate, rate != person.payRate { out["pay_rate"] = .double(rate) }
         }
         return out
     }
@@ -196,8 +284,15 @@ final class PersonSheetViewModel {
             let r: PersonResponse = try await client.send(Self.path(for: person.key), method: .post, body: body)
             if r.ok {
                 if let updated = r.person { apply(updated) }
-                saveMessage = "Saved."
-                Haptic.success()
+                let dropped = Self.unsaved(sent: Array(body.keys), changed: r.changed)
+                if dropped.isEmpty {
+                    saveMessage = "Saved."
+                    Haptic.success()
+                } else {
+                    let names = dropped.map(Self.label(forField:)).joined(separator: ", ")
+                    saveError = "Not saved: \(names). "
+                        + (dropped.contains("role") ? "A role is changed in Labor \u{2192} Roster." : "Try again.")
+                }
             } else {
                 saveError = r.error ?? "Couldn't save that."
             }
@@ -264,30 +359,55 @@ struct PersonSheet: View {
             kv("PIN", last: true, person.pinSet == true ? "Set" : "Not set")
         }
 
-        AccountSection(kicker: "Contact and pay") {
-            VStack(alignment: .leading, spacing: 12) {
-                field("Role", text: $viewModel.role, keyboard: .default)
-                field("Phone", text: $viewModel.phone, keyboard: .phonePad)
-                field("Email", text: $viewModel.email, keyboard: .emailAddress)
-                field("POS id", text: $viewModel.posId, keyboard: .asciiCapable)
-                field("Pay rate ($/h)", text: $viewModel.payRate, keyboard: .decimalPad)
-                Button {
-                    Haptic.light()
-                    Task { await viewModel.save() }
-                } label: {
-                    Group {
-                        if viewModel.isSaving { CavnarShimmerText(text: "Saving…") } else { Text("Save") }
+        if !person.mayEdit("pay_rate", fallback: false) {
+            AccountSection(kicker: "Pay") {
+                kv("Pay rate", last: true, person.payRateLine ?? "Not set")
+                Text("Rates are per role \u{2014} change them in Labor \u{2192} Rates.")
+                    .font(.cavnarBody(12.5))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .padding(.top, 6)
+            }
+        }
+
+        if person.canEdit == false {
+            AccountSection(kicker: "Contact") {
+                kv("Role", person.role?.isEmpty == false ? person.role! : "Not set")
+                kv("Phone", person.phone?.isEmpty == false ? person.phone! : "Not set")
+                kv("Email", person.email?.isEmpty == false ? person.email! : "Not set")
+                kv("POS id", last: true, person.posId?.isEmpty == false ? person.posId! : "Not set")
+            }
+        } else {
+            AccountSection(kicker: "Contact") {
+                VStack(alignment: .leading, spacing: 12) {
+                    if person.mayEdit("role", fallback: true) {
+                        field("Role", text: $viewModel.role, keyboard: .default)
+                    } else {
+                        kv("Role", person.role?.isEmpty == false ? person.role! : "Not set")
                     }
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isSaving))
-                .disabled(viewModel.isSaving)
-                if let message = viewModel.saveMessage {
-                    Text(message).font(.cavnarBody(14)).foregroundStyle(Color.cavnarGreen)
-                }
-                if let error = viewModel.saveError {
-                    Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
-                        .fixedSize(horizontal: false, vertical: true)
+                    field("Phone", text: $viewModel.phone, keyboard: .phonePad)
+                    field("Email", text: $viewModel.email, keyboard: .emailAddress)
+                    field("POS id", text: $viewModel.posId, keyboard: .asciiCapable)
+                    if person.mayEdit("pay_rate", fallback: false) {
+                        field("Pay rate ($/h)", text: $viewModel.payRate, keyboard: .decimalPad)
+                    }
+                    Button {
+                        Haptic.light()
+                        Task { await viewModel.save() }
+                    } label: {
+                        Group {
+                            if viewModel.isSaving { CavnarShimmerText(text: "Saving…") } else { Text("Save") }
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isSaving))
+                    .disabled(viewModel.isSaving)
+                    if let message = viewModel.saveMessage {
+                        Text(message).font(.cavnarBody(14)).foregroundStyle(Color.cavnarGreen)
+                    }
+                    if let error = viewModel.saveError {
+                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
         }

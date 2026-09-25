@@ -25,13 +25,18 @@ struct LaborView: View {
     /// "schedule", "overtime" (nav.py; friction audit #3). Opened and
     /// scrolled to once the page has loaded, then spent.
     var focusSection: String? = nil
+    /// The item the link named inside that section — a person's key for
+    /// "person/<key>" (F3-15), which opens their sheet.
+    var focusItem: String? = nil
     @State private var focusSpent = false
+    @State private var focusPerson: PersonSheetTarget?
     // What was sent, reachable from Labor itself — it lived only under
     // Account → More (friction audit #50).
     @State private var showingScheduleHistory = false
 
-    init(focusSection: String? = nil) {
+    init(focusSection: String? = nil, focusItem: String? = nil) {
         self.focusSection = focusSection
+        self.focusItem = focusItem
     }
 
     var body: some View {
@@ -172,12 +177,6 @@ struct LaborView: View {
                                      onSend: { showingPublishSchedule = true })
                     }
                 }
-                // Where a card, a push or the command sheet pointed inside
-                // Labor ("labor/requests", "request/time_off-12",
-                // "labor/schedule").
-                .onNavSection("labor") { path in
-                    openSection(path, proxy: proxy)
-                }
                 .cavnarEmberRefreshable {
                     await viewModel.load()
                     await viewModel.loadAvailability()
@@ -196,6 +195,7 @@ struct LaborView: View {
             }
         }
         .cavnarModuleBackground()
+        .sheet(item: $focusPerson) { target in PersonSheet(target: target) }
         // The ribbon itself always shows once there's a hero card, even
         // with zero upcoming events — the panel's own empty-state copy
         // covers that case, rather than the whole feature disappearing
@@ -326,7 +326,9 @@ struct LaborView: View {
             await setupViewModel.loadSignals()
         }
         .sheet(isPresented: $showingPublishSchedule) {
-            PublishScheduleSheet(scheduleId: viewModel.scheduleResult?.historyId)
+            PublishScheduleSheet(scheduleId: viewModel.scheduleResult?.historyId,
+                                 unsentChanges: viewModel.unsentChanges,
+                                 onSent: { viewModel.unsentChanges = [] })
         }
         .sheet(item: $explainingRow) { row in
             AssignmentExplanationSheet(row: row, explanation: viewModel.scheduleResult?.explanation(for: row))
@@ -655,30 +657,6 @@ struct LaborView: View {
     private static let scheduleID = "labor-schedule"
     private static let reviewID = "labor-schedule-review"
 
-    /// Opens the section a nav path names (Friction audit #18): requests and
-    /// a request item land on "Waiting on you" with both request sections
-    /// open; the schedule and a schedule item on the drafted week; the team
-    /// and a person on the roster.
-    private func openSection(_ path: NavPath, proxy: ScrollViewProxy) {
-        subTab = .overview
-        let section = path.head == "labor" ? (path.target ?? "") : path.head
-        switch section {
-        case "requests", "request", "time-off", "timeoff":
-            viewModel.timeOffExpanded = true
-            setupViewModel.requestsExpanded = true
-            let pending = LaborWaitingOnYou.count(timeOff: viewModel.timeOff, shifts: setupViewModel.shiftRequests)
-            scrollToReveal(pending > 0 ? Self.waitingID : Self.requestsID, proxy: proxy)
-        case "schedule":
-            // No draft yet: the top of Labor, where the week is built.
-            if viewModel.scheduleResult?.ok == true { scrollToReveal(Self.scheduleID, proxy: proxy) }
-        case "team", "roster", "person":
-            setupViewModel.rosterExpanded = true
-            scrollToReveal(Self.rosterID, proxy: proxy)
-        default:
-            break
-        }
-    }
-
     /// Scrolls the just-opened section into view once its expand animation
     /// has room to settle — firing scrollTo in the same instant as the
     /// disclosure's own height-change animation reliably centers against
@@ -689,30 +667,45 @@ struct LaborView: View {
     /// CavnarDropdown.swift — firing ~0.06s before the container had
     /// actually finished growing, scrolling to a position that was still
     /// shifting underneath it).
-    /// Opens and scrolls to `focusSection`, once. An unknown section just
-    /// leaves the page at its top.
+    /// Opens and scrolls to `focusSection`, once, when the page has loaded.
+    /// The ONE handler for "where inside Labor": every way in (a push, a
+    /// notification row, a Home card, the command sheet, a quick action)
+    /// arrives as this screen's route. A second, inbox-driven handler used to
+    /// race this one and could land a time-off link on Shift requests (F3-7).
+    /// An unknown section just leaves the page at its top.
     private func revealFocus(proxy: ScrollViewProxy) {
-        guard !focusSpent, let section = focusSection?.lowercased() else { return }
+        guard !focusSpent, let section = focusSection else { return }
         focusSpent = true
         subTab = .overview
-        switch section {
-        case "requests", "shift_requests", "shifts":
+        switch LaborFocus(section: section) {
+        case .waiting:
+            viewModel.timeOffExpanded = true
+            setupViewModel.requestsExpanded = true
+            let pending = LaborWaitingOnYou.count(timeOff: viewModel.timeOff, shifts: setupViewModel.shiftRequests)
+            scrollToReveal(pending > 0 ? Self.waitingID : Self.requestsID, proxy: proxy)
+        case .requests:
             setupViewModel.requestsExpanded = true
             scrollToReveal(Self.requestsID, proxy: proxy)
-        case "timeoff", "time_off", "time-off":
+        case .timeOff:
             viewModel.timeOffExpanded = true
             scrollToReveal(Self.timeOffID, proxy: proxy)
-        case "team", "roster", "people":
+        case .team:
             setupViewModel.rosterExpanded = true
             scrollToReveal(Self.rosterID, proxy: proxy)
-        case "overtime":
+            // person/<key>: that person's sheet, over the roster (F3-15).
+            if let key = focusItem, !key.isEmpty {
+                focusPerson = PersonSheetTarget(key: key, name: "")
+            }
+        case .overtime:
             viewModel.overtimeExpanded = true
             scrollToReveal(Self.overtimeID, proxy: proxy)
-        case "availability":
+        case .availability:
             scrollToReveal(Self.availabilityID, proxy: proxy)
-        case "schedule":
+        case .schedule:
             viewModel.scheduleResultExpanded = true
-        default:
+            // No draft yet: the top of Labor, where the week is built.
+            if viewModel.scheduleResult?.ok == true { scrollToReveal(Self.scheduleID, proxy: proxy) }
+        case nil:
             break
         }
     }
@@ -1720,6 +1713,25 @@ private struct ShimmerText: View {
                     .mask(Text(text).font(font))
                     .allowsHitTesting(false)
                 )
+        }
+    }
+}
+
+/// The sections a link can name inside Labor (nav.py; friction audit #3, #18)
+/// — every spelling the server, the web and older builds use, folded to one.
+enum LaborFocus: Equatable {
+    case waiting, requests, timeOff, team, overtime, availability, schedule
+
+    init?(section: String) {
+        switch section.lowercased() {
+        case "waiting", "request": self = .waiting
+        case "requests", "shift_requests", "shifts": self = .requests
+        case "timeoff", "time_off", "time-off": self = .timeOff
+        case "team", "roster", "people", "person": self = .team
+        case "overtime": self = .overtime
+        case "availability": self = .availability
+        case "schedule": self = .schedule
+        default: return nil
         }
     }
 }

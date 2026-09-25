@@ -349,20 +349,24 @@ final class DailyReportWeekTests: XCTestCase {
         let g = try grid(owner: true)
         XCTAssertTrue(g.showsBudget)
         let table = DSRWeekTable(grid: g)
+        // The web's three budget columns (D3-13).
         XCTAssertEqual(table.columns.map(\.title),
-                       ["Food", "Liquor", "Gross", "Net", "Budget", "vs budget", "Last year", "vs last yr", "Labor %", "Notes"])
+                       ["Food", "Liquor", "Gross", "Net", "Budget gross", "Budget net", "vs budget",
+                        "Last year", "vs last yr", "Labor %", "Notes"])
         let tuesday = try XCTUnwrap(table.rows.first { $0.id == "2026-09-22" })
-        XCTAssertEqual(tuesday.cells.map(\.text)[4], "$7,300")
-        XCTAssertEqual(tuesday.cells.map(\.text)[5], "\u{2212}4.5%")
-        XCTAssertEqual(tuesday.cells[5].tone, .bad)
-        XCTAssertEqual(tuesday.cells[7].tone, .good)
+        XCTAssertEqual(tuesday.cells.map(\.text)[5], "$7,300")
+        XCTAssertEqual(tuesday.cells.map(\.text)[6], "\u{2212}4.5%")
+        XCTAssertEqual(tuesday.cells[6].tone, .bad)
+        XCTAssertEqual(tuesday.cells[8].tone, .good)
+        XCTAssertTrue(table.rows.allSatisfy { $0.cells.count == table.columns.count })
     }
 
     func testAManagersWeekHasNoBudgetAtAll() throws {
         let g = try grid(owner: false)
         XCTAssertFalse(g.showsBudget)
         let table = DSRWeekTable(grid: g)
-        XCTAssertFalse(table.columns.map(\.title).contains("Budget"))
+        XCTAssertFalse(table.columns.map(\.title).contains("Budget net"))
+        XCTAssertFalse(table.columns.map(\.title).contains("Budget gross"))
         XCTAssertFalse(table.columns.map(\.title).contains("vs budget"))
         XCTAssertTrue(table.rows.allSatisfy { $0.cells.count == table.columns.count })
     }
@@ -374,7 +378,7 @@ final class DailyReportWeekTests: XCTestCase {
         XCTAssertEqual(wednesday.cells[0].text, "\u{2014}")
         XCTAssertEqual(wednesday.cells[0].tone, .muted)
         XCTAssertEqual(wednesday.cells[3].text, "\u{2014}", "net")
-        XCTAssertEqual(wednesday.cells[6].text, "$6,100", "last year is still known")
+        XCTAssertEqual(wednesday.cells[7].text, "$6,100", "last year is still known")
         XCTAssertFalse(wednesday.cells.map(\.text).contains("$0"))
     }
 
@@ -408,7 +412,7 @@ final class DailyReportWeekTests: XCTestCase {
         let table = DSRWeekTable(grid: g)
         let tue = try XCTUnwrap(table.rows.first { $0.id == "2026-09-22" })
         XCTAssertNil(tue.opens)
-        let budgetAt = try XCTUnwrap(table.columns.firstIndex { $0.title == "Budget" })
+        let budgetAt = try XCTUnwrap(table.columns.firstIndex { $0.title == "Budget net" })
         let netAt = try XCTUnwrap(table.columns.firstIndex { $0.title == "Net" })
         XCTAssertEqual(tue.cells[budgetAt].text, "$7,300", "a budget for a night not yet run still shows")
         XCTAssertEqual(tue.cells[netAt].text, "\u{2014}")
@@ -422,7 +426,7 @@ final class DailyReportWeekTests: XCTestCase {
 
         let mgr = try serverWeek("manager")
         XCTAssertFalse(mgr.showsBudget)
-        XCTAssertFalse(DSRWeekTable(grid: mgr).columns.contains { $0.title == "Budget" })
+        XCTAssertFalse(DSRWeekTable(grid: mgr).columns.contains { $0.title == "Budget net" })
     }
 
     func testNeighbouringWeeks() {
@@ -526,6 +530,28 @@ final class DailyReportViewModelTests: XCTestCase {
 
     private static func text(_ key: String) -> String {
         String(decoding: DailyReportDecodingTests.payload(key), as: UTF8.self)
+    }
+
+    /// D3-9: "Try again now" on a night that couldn't finish or finished
+    /// provisional, for a manager too, as the web offers it.
+    func testAManagerCanTryAFailedOrProvisionalNightAgain() async throws {
+        for status in ["failed", "provisional"] {
+            var obj = try XCTUnwrap(JSONSerialization.jsonObject(with: DailyReportDecodingTests.payload("manager"))
+                                    as? [String: Any])
+            obj["status"] = status
+            if var checklist = obj["checklist"] as? [String: Any] {
+                checklist["status"] = status
+                obj["checklist"] = checklist
+            }
+            let text = String(decoding: try JSONSerialization.data(withJSONObject: obj), as: UTF8.self)
+            let server = ScriptedServer(routes: [("/dsr/2026-09-22", 200, text)])
+            let vm = DailyReportViewModel(businessDate: "2026-09-22", client: client(server))
+            await vm.load()
+            XCTAssertFalse(vm.isOwner)
+            XCTAssertFalse(vm.canRerun, "re-run stays the owner's")
+            XCTAssertTrue(vm.canCloseDay, status)
+            XCTAssertEqual(vm.closeDayLabel, "Try again now")
+        }
     }
 
     func testAnOwnersFinishedNightCanBeReRunButNotClosed() async {

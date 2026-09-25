@@ -216,3 +216,41 @@ struct Review: Codable, Identifiable, Hashable {
         )
     }
 }
+
+/// What an approve (or retry-post) answer says about Google. The route
+/// answers `ok: true` for an APPROVED reply whether or not it went live, so
+/// `ok` alone read as "posted" (F3-3). `post_status` — posted, failed,
+/// not_connected, not_google — and its sentence `post_note` are the answer;
+/// an older server sends only `auto_posted` / `post_error`.
+struct ReviewPostOutcome: Decodable, Equatable {
+    let ok: Bool
+    var error: String? = nil
+    var autoPosted: Bool? = nil
+    var postError: String? = nil
+    var postStatus: String? = nil
+    var postNote: String? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case ok, error
+        case autoPosted = "auto_posted"
+        case postError = "post_error"
+        case postStatus = "post_status"
+        case postNote = "post_note"
+    }
+
+    var posted: Bool { postStatus.map { $0 == "posted" } ?? (autoPosted == true) }
+
+    /// Why it isn't live, in the server's words when it gave them; nil when
+    /// it posted, or when an older server said nothing either way.
+    var shortfall: String? {
+        if posted { return nil }
+        if let note = postNote?.trimmingCharacters(in: .whitespaces), !note.isEmpty { return note }
+        if let e = postError?.trimmingCharacters(in: .whitespaces), !e.isEmpty { return e }
+        switch postStatus {
+        case "not_connected": return "Google isn\u{2019}t connected, so it wasn\u{2019}t posted."
+        case "not_google": return "This review isn\u{2019}t on Google, so there was nowhere to post it."
+        case "failed": return "Google didn\u{2019}t take it."
+        default: return autoPosted == false ? "It wasn\u{2019}t posted to Google." : nil
+        }
+    }
+}

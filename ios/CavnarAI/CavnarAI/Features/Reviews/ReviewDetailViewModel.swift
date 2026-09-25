@@ -87,23 +87,11 @@ final class ReviewDetailViewModel {
         }
     }
 
-    private struct ApproveResponse: Decodable {
-        let ok: Bool
-        let autoPosted: Bool?
-        /// Set when the reply was approved but the Google post itself
-        /// failed. The post runs synchronously server-side now, so
-        /// autoPosted == false with a postError is a real, finished
-        /// failure — not "still working". Without decoding it the app
-        /// showed a plain "Approved" banner and the owner had no way to
-        /// know the reply never reached Google, or to try again.
-        let postError: String?
-
-        enum CodingKeys: String, CodingKey {
-            case ok
-            case autoPosted = "auto_posted"
-            case postError = "post_error"
-        }
-    }
+    /// The answer, with `post_status` / `post_note` (ReviewPostOutcome):
+    /// an approved reply that did not reach Google is a real, finished
+    /// outcome — not "still working" — and the owner is told why and
+    /// offered Retry posting.
+    private typealias ApproveResponse = ReviewPostOutcome
 
     /// Non-nil when the last approve/retry approved the reply but could not
     /// publish it — the view shows the reason and a Retry posting button.
@@ -146,13 +134,13 @@ final class ReviewDetailViewModel {
                 "/mobile/api/reviews/\(review.id)/approve", method: .post
             )
             Haptic.success()
-            let status = (response.autoPosted == true) ? "posted" : "approved"
-            postFailure = response.postError
+            let status = response.posted ? "posted" : "approved"
+            postFailure = response.shortfall
             finalStatus = status
             currentStatus = status
             // A failed post keeps the owner on this screen, where the retry
             // is, instead of popping back to the list as a plain success.
-            didComplete = (response.postError == nil)
+            didComplete = (response.shortfall == nil)
         } catch let error as APIClient.APIError where error.isRetryable && !error.mayHaveReachedServer {
             // Never left the phone, so replaying it later is safe.
             await queueApprove()
@@ -423,14 +411,14 @@ final class ReviewDetailViewModel {
                 errorMessage = "Couldn't retry — try again."
                 return false
             }
-            if response.autoPosted == true {
+            if response.posted {
                 Haptic.success()
                 postFailure = nil
                 currentStatus = "posted"
                 finalStatus = "posted"
                 return true
             }
-            postFailure = response.postError ?? "Google isn't connected yet."
+            postFailure = response.shortfall ?? "Google isn't connected yet."
             return false
         } catch let error as APIClient.APIError {
             errorMessage = error.message
