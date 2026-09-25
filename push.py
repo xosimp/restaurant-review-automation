@@ -223,6 +223,9 @@ PRIORITY = {
     # A data source that stopped updating is worth today; its return is news
     # (notify.check_data_source_alerts, Data Freshness #18).
     "data_source_down": P2_OPPORTUNITY, "data_source_restored": P3_INFO,
+    # To Will only (ops.alert_will): the scheduler stopped or a job is
+    # overdue — every restaurant's data is going stale (DH2-2).
+    "platform_alert": P1_ACT_NOW,
 }
 # Which module a notification opens — the web tab ids (?tab=). The ONE map:
 # client_api._NOTIFICATION_MODULE is this dict (the bell's rows carry it),
@@ -256,6 +259,7 @@ NOTIFICATION_MODULE = {
     # directly; iOS's DeepLinkRouter has its own "login" special-case.
     "login": "account", "staff_signin": "account", "connection_lost": "account",
     "data_source_down": "account", "data_source_restored": "account",
+    "platform_alert": "home",
 }
 
 
@@ -275,6 +279,7 @@ ACTIONABLE_TYPES = frozenset({
     "schedule_drafted",
     "food_waste", "critical_low", "price_spike", "order_send_held", "order_send_voided",
     "ai_visibility_drop", "issue", "issue_escalated", "connection_lost", "data_source_down",
+    "platform_alert",
 })
 
 

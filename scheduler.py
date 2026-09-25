@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from status_manager import record_scheduler_heartbeat, run_health_checks
 import emails as _emails
 import ops as _ops
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo as _ZI_sch
 from time_utils import parse_stored_dt, mdy
 def _chi_now():
@@ -378,6 +378,22 @@ def _record_places_gap(rid, name, total, stored_new):
     _ops.capture(RuntimeError(detail), job="review_fetch_gap", context=f"restaurant_id={rid}")
 
 
+RATING_REFRESH_HOURS = 12
+
+
+def _rating_refresh_due(restaurant, now=None) -> bool:
+    """True when Google's published rating (restaurants.gbp_rating_updated_at)
+    is missing or older than RATING_REFRESH_HOURS."""
+    from time_utils import parse_stamp
+    stamp = parse_stamp(getattr(restaurant, "gbp_rating_updated_at", None))
+    if stamp is None:
+        return True
+    now = now or datetime.now(timezone.utc)
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return (now - stamp) >= timedelta(hours=RATING_REFRESH_HOURS)
+
+
 def run_daily_fetch():
     """Fetch reviews for all live clients, analyse, draft, alert on urgent."""
     try:
@@ -492,6 +508,16 @@ def run_daily_fetch():
                             reviews += _gbp
                             gbp_listing = (loc_id, _gbp)
                             fetched_ok = True
+                            # Google's own published rating, refreshed with the
+                            # reviews at most every RATING_REFRESH_HOURS. Only the
+                            # admin fetch used to write it, so the rating alert
+                            # (which now needs a recent rating) went quiet.
+                            try:
+                                if _rating_refresh_due(restaurant):
+                                    from gmb import fetch_location_rating
+                                    fetch_location_rating(rid, token, loc_id)
+                            except Exception as _re:
+                                log.warning(f"GBP rating refresh [{restaurant.name}]: {_re}")
                             try:
                                 from gmb import fetch_gmb_logo_url
                                 fetch_gmb_logo_url(rid, token, acct_id, loc_id)

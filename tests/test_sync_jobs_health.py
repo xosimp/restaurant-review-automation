@@ -811,3 +811,31 @@ def test_the_daily_data_health_sweep_feeds_the_admin_rollup(tmpdb, monkeypatch):
     d = admin_ops._load_everything()
     rec = admin_ops.location_record(next(r for r in d["rests"] if r["id"] == rid), d)
     assert rec["data_health"]["as_of"] and rec["data_health"]["failing"][0]["source"] == "pos"
+
+
+# ── Google's published rating refreshes with the scheduled fetch ──────────
+
+def test_the_google_rating_refreshes_with_the_scheduled_gbp_fetch():
+    """Only the admin fetch wrote gbp_rating_updated_at, so the rating alert
+    — which now needs a recent rating — would have gone quiet for good."""
+    import types
+    from datetime import datetime, timedelta, timezone
+    import scheduler
+    now = datetime(2026, 9, 24, 18, 0, tzinfo=timezone.utc)
+    fresh = types.SimpleNamespace(gbp_rating_updated_at=(now - timedelta(hours=2)).isoformat())
+    old = types.SimpleNamespace(gbp_rating_updated_at=(now - timedelta(hours=13)).isoformat())
+    never = types.SimpleNamespace(gbp_rating_updated_at=None)
+    assert not scheduler._rating_refresh_due(fresh, now)
+    assert scheduler._rating_refresh_due(old, now) and scheduler._rating_refresh_due(never, now)
+    src = open(scheduler.__file__, encoding="utf-8").read()
+    gbp = src[src.index("_gbp = fetch_reviews_via_gmb(token, loc_id, rid)"):]
+    assert "fetch_location_rating(rid, token, loc_id)" in gbp[:1200]
+
+
+def test_the_platform_alert_push_type_is_registered():
+    """ops.alert_will pushes "platform_alert"; unregistered, it fell back to
+    the reviews module at informational priority."""
+    import push
+    assert push.module_of("platform_alert") == "home"
+    assert push.PRIORITY["platform_alert"] == push.P1_ACT_NOW
+    assert "platform_alert" in push.ACTIONABLE_TYPES
