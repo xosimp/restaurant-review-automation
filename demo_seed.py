@@ -147,18 +147,25 @@ def _seed_simple_ejs(db_path: str = DB_PATH):
     redeploy must not silently undo work done in the admin panel.
     """
     from datetime import date, timedelta
+    # Erik's LIVE account carries the same name (9/25/26), so the demo is
+    # found by name AND the demo flag, oldest first; a live restaurant with
+    # this name is never selected, seeded or logged into. With no demo row
+    # left, a live one of the same name means "don't make another".
     conn = get_conn(db_path)
     try:
-        row = conn.execute("SELECT id, is_demo FROM restaurants WHERE name=? LIMIT 1",
-                           (SIMPLE_EJS_NAME,)).fetchone()
+        row = conn.execute("SELECT id, is_demo FROM restaurants WHERE name=? AND COALESCE(is_demo,0)=1 "
+                           "ORDER BY id LIMIT 1", (SIMPLE_EJS_NAME,)).fetchone()
+        live = conn.execute("SELECT id FROM restaurants WHERE name=? AND COALESCE(is_demo,0)=0 "
+                            "ORDER BY id LIMIT 1", (SIMPLE_EJS_NAME,)).fetchone()
     finally:
         conn.close()
 
     if row:
         rid = row["id"]
-        if not row["is_demo"]:
-            print(f"[auto-seed] {SIMPLE_EJS_NAME} (id={rid}) is no longer flagged demo — leaving it alone")
-            return rid
+    elif live:
+        print(f"[auto-seed] {SIMPLE_EJS_NAME} (id={live['id']}) is a live account and there is no demo — "
+              "leaving it alone")
+        return None
     else:
         rid = create_restaurant(Restaurant(
             name=SIMPLE_EJS_NAME, owner_email=SIMPLE_EJS_EMAIL, owner_name="Erik",

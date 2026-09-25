@@ -87,6 +87,11 @@ def _pick_review(week_idx):
 def main():
     p = os.path.join(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "."), "reviews.db")
     conn = sqlite3.connect(p)
+    # Seed data only ever goes into the DEMO: Erik's live account has the
+    # same name, so refuse unless restaurant RID is still flagged is_demo.
+    flag = conn.execute("SELECT is_demo FROM restaurants WHERE id=?", (RID,)).fetchone()
+    if not flag or not flag[0]:
+        raise SystemExit(f"restaurant {RID} is not a demo account; refusing to seed reviews into it")
     existing = conn.execute("SELECT COUNT(*) FROM reviews WHERE restaurant_id=?", (RID,)).fetchone()[0]
     assert existing == 0, "restaurant 4 already has %d reviews — refusing to touch real data" % existing
 

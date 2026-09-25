@@ -87,3 +87,34 @@ def test_the_gia_mia_demo_stays_gone():
     routes = open(os.path.join(root, "admin_routes.py"), encoding="utf-8").read()
     assert "reseed-demo-data" not in routes and "seed-labor-history" not in routes
     assert "reseed-demo-data" not in open(os.path.join(root, "templates", "admin.html"), encoding="utf-8").read()
+
+
+def test_the_simple_ejs_seed_never_touches_the_live_account_of_the_same_name(db_path):
+    """Erik's live account is also "Simple EJ's" (9/25/26). The demo seed
+    finds its own row by name AND is_demo, so the live one is never seeded,
+    and with no demo left it does not create another beside the live one."""
+    import demo_seed
+    live = create_restaurant(Restaurant(name=demo_seed.SIMPLE_EJS_NAME, owner_email="erik@x.test", is_demo=0),
+                             db_path=db_path)
+    assert demo_seed._seed_simple_ejs(db_path) is None
+    import models
+    conn = models.get_conn(db_path)
+    n = conn.execute("SELECT COUNT(*) FROM restaurants WHERE name=?", (demo_seed.SIMPLE_EJS_NAME,)).fetchone()[0]
+    shifts = conn.execute("SELECT COUNT(*) FROM labor_daily_history WHERE restaurant_id=?", (live,)).fetchone()[0]
+    conn.close()
+    assert n == 1 and shifts == 0
+
+
+def test_the_simple_ejs_seed_picks_the_demo_when_both_exist(db_path):
+    import demo_seed
+    live = create_restaurant(Restaurant(name=demo_seed.SIMPLE_EJS_NAME, owner_email="erik@x.test", is_demo=0),
+                             db_path=db_path)
+    demo = create_restaurant(Restaurant(name=demo_seed.SIMPLE_EJS_NAME, owner_email="d@x.test", is_demo=1),
+                             db_path=db_path)
+    assert demo_seed._seed_simple_ejs(db_path) == demo
+    import models
+    conn = models.get_conn(db_path)
+    assert conn.execute("SELECT COUNT(*) FROM labor_daily_history WHERE restaurant_id=?", (live,)).fetchone()[0] == 0
+    conn.close()
+    assert not (get_restaurant(live, db_path=db_path).hours_notes or "")
+    assert get_restaurant(demo, db_path=db_path).hours_notes
