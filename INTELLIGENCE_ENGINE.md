@@ -60,7 +60,7 @@ other modules need.
 | `intel_features` | one row per restaurant-week: `features_json` of ratios, rates and counts; `completeness` 0–1 | no names, no dollars, no people; tenant-keyed |
 | `intel_rec_events` | one row per recommendation event: kind, action (presented / done / not for us / hidden / snoozed / accepted / tracking / implemented / measured / confirmed / dismissed / auto / ignored), outcome (improved / worsened / no clear change / unknown), days to effect, confidence at the time | kind is a key prefix, never text |
 | `intel_patterns` | discovered patterns: cohort, behaviour, outcome, n with / n without, effect, p, q, confidence, sentence, status | counts and effects only |
-| `intel_benchmarks` | per cohort × metric × week: n, p25, p50, p75, mean, `vals_json` (the member values, sorted), `members_json` (each value beside an organisation HASH), `orgs` (distinct organisations) and `max_org_share` — server-side only, so the band shown to a member leaves its whole organisation out. The cohort is a peer PARTITION key (`sm:<service model>[|bar][|protein|starch|mixed][|v<band>]`) or `platform` (behaviour metrics only). Frozen for the ISO week: the first computation of a week stands | stored over ≥ MIN_COHORT members from ≥ `privacy.MIN_ORGS` organisations; SHOWN only through `benchmarks.published()` (viewer's organisation excluded, ≥ 8 others from ≥ 5 organisations, none over ⅓, spread gate, Harrell–Davis quartiles at a coarse step, ≤ 8 weeks old) |
+| `intel_benchmarks` | per cohort × metric × week: n, p25, p50, p75, mean, `vals_json` (the member values, sorted), `members_json` (each value beside an organisation HASH), `orgs` (distinct organisations) and `max_org_share` — server-side only, so the band shown to a member leaves its whole organisation out. The cohort is a peer PARTITION key (`sm:<service model>[|bar][|protein|starch][|t<ticket band>][|v<volume band>][|u<urbanity band>]` — the ladder's rungs) or `platform` (behaviour metrics only). Frozen for the ISO week: the first computation of a week stands | stored over ≥ MIN_COHORT members from ≥ `privacy.MIN_ORGS` organisations; SHOWN only through `benchmarks.published()` (a viewer required and its organisation excluded, an organisation over ⅓ held to ⅓, ≥ 8 others from ≥ 5 organisations, spread gate, Harrell–Davis quartiles at a coarse step, ≤ 8 weeks old) |
 | `intel_peer_assignments` | per restaurant × week × family (format / labor / food): the rung reached (self / published / platform / peers), the partition, a hash of the peer set (never the ids), n and organisations with the viewer's own out, profile source and confirmation date, measured drift (#29) | tenant-keyed; server-side |
 | `intel_cohort_series` | per cohort × metric × week: n and the median over the BALANCED panel, with the window's joined / left counts (#44) | aggregates over ≥ MIN_COHORT |
 | `intel_confidence_log` | per week × cohort × kind: mean confidence, acceptance, success | aggregates |
@@ -903,14 +903,35 @@ behaviour effect.
   points for a %, 0.1★, 0.05 for a rate). Under 8 the band is withheld.
   `benchmarks.band()` stays internal (staffing scales its median to people).
 - **Organisations, not locations** (Benchmarking #9, BM1-5, BM2-4, BM4-2):
-  every floor counts distinct organisations (`privacy.org_key`:
-  `organization_id`, else `location_group|owner_email`, else the restaurant
-  alone). A published band needs ≥ 8 others from ≥ `MIN_ORGS` (5)
-  organisations, the VIEWER'S WHOLE ORGANISATION is taken out of the band
-  it sees (each member value sits beside an org hash in `members_json`), no
-  one organisation may be over a third of it, and one Google listing counts
-  once. A test or internal account (`exclude_from_learning`) is never a
-  member.
+  every floor counts distinct organisations. `privacy.org_key(row)` reads
+  one row: `organization_id`, else `location_group|owner_email`, else the
+  normalised owner email alone, else the restaurant. The band builders
+  (`jobs.member_info`) and the viewer (`benchmarks.viewer_org`) read
+  `privacy.org_map` / `org_members`, which also join restaurants an
+  owner-level login holds in common (never a manager's or an admin's) and
+  a shared Stripe customer, transitively (fix round #13, R1-01: two
+  ungrouped restaurants under one email were two "organisations"). A
+  published band needs ≥ 8 others from ≥ `MIN_ORGS` (5) organisations, the
+  VIEWER'S WHOLE ORGANISATION is taken out of the band it sees (each member
+  value sits beside an org hash in `members_json`; `viewer_org` returns the
+  organisation's hashes including the keys a band frozen earlier in the
+  week used, so the key change never leaves a viewer inside its own band),
+  and one Google listing counts once. An organisation over a third of what
+  a viewer would see is HELD to a third — its surplus locations sit out,
+  the same ones for every viewer that ISO week (`benchmarks.
+  cap_organisations`) — and the band is withheld only when that leaves
+  fewer than 8 others or 5 organisations (fix round #35, R2-10: the first
+  multi-location customer in a format used to withhold it from everyone).
+  A test or internal account (`exclude_from_learning`) and a lapsed
+  customer (billing not trial/active) are never members.
+- **One publishing gate** (fix round #41): `benchmarks.published()` needs
+  a viewer (`exclude_org`) — with none, nothing is shown (the unused
+  `industry_intelligence` facade therefore publishes no band) — and
+  refuses an all-types (`platform`) row for any metric that is not a
+  behaviour metric, in the reader as well as the writer. Trends
+  (`trends.panel_series`) use the same eligibility, the ≥ 8 / ≥ 5
+  organisation floor with the third cap, and a Harrell–Davis median; they
+  have no viewer, so they are an admin read only.
 - **Disclosure control** (#42): quartiles come from the Harrell–Davis
   estimator (a Beta-weighted average of every member, never one member's
   figure), the rating step is 0.25★, and what is stored for a week is
@@ -920,10 +941,12 @@ behaviour effect.
   projection keeps the means. The admin cohort table is rounded as
   published and is_admin only (#47); the public status page says "one or
   more locations", never a count.
-- **The quality gate** (#39): never an `other` or untyped group; a band whose
+- **The quality gate** (#39): never an `other` or untyped group, nor a
+  partition with `other` or `mixed` as a coordinate; a band whose
   interquartile range is over its metric's ceiling
-  (`metrics_registry.spread_ok`) is withheld as "too spread out for a middle
-  to mean anything".
+  (`metrics_registry.spread_ok`: rating ≤ 0.4★, the review and outcome
+  shares ≤ 0.3, labor % ≤ 0.2 of its median — fix round #23) is withheld
+  as "too spread out for a middle to mean anything".
 - **Nothing stale is served** (NS4 H5): a band older than
   `MAX_BAND_AGE_WEEKS` (8), this restaurant's own figure older than
   `MAX_OWN_AGE_WEEKS` (8), and an active pattern not re-confirmed in
@@ -1133,23 +1156,64 @@ computed on it.
 **The partition** (`categories.partition_key`) is the hard split a band is
 read from: the service model for every format metric (rating, marketing
 rates, and behaviour metrics' like-for-like rung); × bar-led for labor
-metrics; × menu family (protein / starch / mixed, from the concept) for food
-cost and waste; a staffing ratio also by sales band once the restaurant's
-own is measured. A partition change needs the owner's confirmation or
-`jobs.DRIFT_WEEKS` (4) consecutive weeks of measured drift (alcohol share
-against bar-led); a change is logged as `comparison_group_changed`, which
-`confidence._recent_changes` counts.
+metrics; × menu family (protein or starch, from the concept) for food cost
+and waste — a concept with no menu family (asian, family, fast casual, the
+bars, `other`) has NO food-cost group rather than a catch-all "mixed" one
+(`categories.food_family`, fix round #22); a staffing ratio also by sales
+band once the restaurant's own is measured. Only the owner moves a
+partition (fix round #38, R2-13): measured drift (alcohol share against
+bar-led) over `jobs.DRIFT_WEEKS` (4) CONSECUTIVE ISO weeks, a measured
+format that contradicts the profile (a counter at a $35+ ticket, a
+full-service room under $12) or a confirmation over a year old becomes
+`review` in the Account payload (`jobs.profile_review` →
+`categories.profile_review`: {kind, text, service_model, concept,
+bar_led}), a question the owner answers with a save. A change is logged as
+`comparison_group_changed`, which `confidence._recent_changes` counts.
 
-**The ladder** (`engine.compare`, peers kind): the restaurant's own figure
-must clear its floor ("about N more measured days to a comparison"); then
-R1 the published figure for the confirmed type (quoted as context with its
-definition when it measures something else — the NRA labor median includes
-benefits, Cavnar's labor % is wages from shifts, so it is never compared or
-blended); R2 all of Cavnar for behaviour metrics only; R3 the confirmed
-partition. A small group's band is blended toward a like-for-like published
-median by n/(n+8) and says so. The ledger (`intel_peer_assignments`) records
-the rung reached each week; reaching a higher rung is logged as
-`benchmark_rung_up`.
+**The ladder** (`categories.partition_ladder`, read by `engine._peers`,
+`benchmarks.benchmark`, `staffing` and the ledger; fix round #34/#36): each
+member stands in every rung of its ladder, and a viewer reads the FINEST
+rung whose band clears every floor. Finest first: the confirmed partition
+narrowed by the coordinates the restaurant measures — the ticket band
+(`|t<n>`, every family), the volume band (`|v<n>`, labor and staffing) and
+the urbanity band (`|u<n>`, labor: the first proxy for a wage market; there
+is no state or wage index yet) — then with fewer of them, then the
+partition itself, then the service model alone (labor, food and staffing
+drop the bar-led split last; food keeps its menu family). Economics metrics
+stop there; a behaviour metric goes on to all of Cavnar (the `platform`
+kind), which LEADS the card's headline for a behaviour metric when no
+partition band exists (R3-27). The comparison carries `level` (0 = finest)
+of `levels`, and a group wider than the confirmed partition says so in its
+label ("… (a wider group — too few bar-led ones have this measured yet)").
+The labels name the coordinates ("with an average ticket of $20–35", "of
+similar sales volume", "in urban areas"). A DNA-weighted band inside each
+group (R4-12) is not built yet. Before any of it, the restaurant's own
+figure must clear its floor ("about N more measured days to a
+comparison"); the published figure for the confirmed type is quoted as
+context with its definition when it measures something else (the NRA labor
+median includes benefits, Cavnar's labor % is wages from shifts). The
+small-group blend toward a published median (`engine._blend`) is DORMANT:
+it needs a published figure measured the same way as Cavnar's and none is
+registered, so no band is blended today — candidate for future cleanup
+after additional verification.
+
+**The ledger** (`intel_peer_assignments`, `jobs.record_assignments`)
+records per family the rung the restaurant would be SHOWN (fix round #44,
+R2-19/R4-30): `peers` only when a band on its ladder passes
+`benchmarks.publish_row` for a metric it measures (n and organisations are
+that band's, its organisation out), `platform` only when an all-types
+behaviour band does, `published` only for a figure defined the same way as
+Cavnar's; `partition_key` stays the confirmed partition. Reaching a higher
+rung is logged as `benchmark_rung_up` (with the group reached). The
+comparison's `measured` and `members` counts are taken with the viewer's
+organisation out, like `n` (R1-15).
+
+**The nightly pass** (`jobs.run_learning`, fix round #40): each stage is
+guarded (`ops.capture`; a failure is recorded and the later stages still
+run), `benchmarks.compute` commits per metric, and this week's bands are
+written — and so frozen — only once the feature pass has reached every
+restaurant this ISO week (`jobs.features_sweep_complete`: the cursor is back
+at 0 and moved this week); until then the previous bands keep serving.
 
 **Structural features** (`features.STRUCTURAL_KEYS`, #43): `ticket_band`,
 `volume_band` and `daypart_mix` (one definition with DNA), `alcohol_share`

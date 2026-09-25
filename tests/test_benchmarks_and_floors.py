@@ -63,7 +63,10 @@ def _rid(db_path, name="Probe Bistro", **kw):
     # (Benchmarking audit #14, #39).
     kw.setdefault("created_at", (date.today() - timedelta(days=120)).isoformat() + "T00:00:00")
     kw.setdefault("hourly_rate", 18.0)
-    rid = create_restaurant(Restaurant(name=name, owner_email=kw.pop("owner_email", "o@x.test"), **kw),
+    # One owner email per restaurant: two restaurants under one email are one
+    # organisation now (fix round R1-01), and a peer fixture needs owners.
+    email = kw.pop("owner_email", None) or f"{''.join(ch for ch in name.lower() if ch.isalnum())}@x.test"
+    rid = create_restaurant(Restaurant(name=name, owner_email=email, **kw),
                             db_path=db_path)
     if cat is not None:
         update_restaurant(rid, {"category": cat}, db_path=db_path)

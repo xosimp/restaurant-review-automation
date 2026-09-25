@@ -174,6 +174,7 @@ def test_the_schedule_prompts_cohort_block_is_the_engines_and_registers_its_fact
     block = schedule_engine._cohort_block(viewer, r)
     assert schedule_engine.COHORT_BLOCK_HEADER in block and "12 other counter-service restaurants on Cavnar" in block
     assert "peer group: counter-service restaurants — split by how they serve" in block
+    # 12 of 12: the viewer is out of both counts, as it is out of n (fix round R1-15; this pinned 13 of 13).
     assert "measured at 12 of 12" in block and "% comparison strength" in block
     ctx = labor.schedule_note_context("Build next week." + block, restaurant_id=viewer)
     # The band's figures, plus the restaurant's own figure as a computed
@@ -297,5 +298,6 @@ def test_prompt_lines_say_how_the_group_was_chosen_how_many_measured_and_how_str
     line = engine.prompt_lines([cm])[0]
     assert "peer group: counter-service restaurants — split by how they serve" in line
     assert "from the profile the owner confirmed" in line
+    # 12 of 12: counted with the viewer out, as n is (fix round R1-15; this pinned 13 of 13).
     assert "measured at 12 of 12 in the group" in line and "% comparison strength" in line
     assert "as of " in line and "12 other counter-service restaurants on Cavnar" in line

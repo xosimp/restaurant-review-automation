@@ -1,8 +1,10 @@
 """Trend detection: how a cohort's weekly median of a metric is moving.
 
-A slope over at least MIN_WEEKS_FOR_TREND weekly points, each point an
-aggregate over ≥ MIN_COHORT restaurants. Emerging trends are the steepest
-relative movers. Nothing here names a restaurant.
+A slope over at least MIN_WEEKS_FOR_TREND weekly points, each point a
+Harrell–Davis median over at least benchmarks.MIN_QUARTILE_N eligible
+restaurants from privacy.MIN_ORGS organisations — the bands' publishing
+gate (fix round #41). Emerging trends are the steepest relative movers.
+Nothing here names a restaurant; trends are an admin read.
 
 Over a BALANCED PANEL (Benchmarking audit #44, BM2-7): a cohort's median
 moved when two lean pizzerias signed up, and "labor % is falling across
@@ -20,7 +22,7 @@ from models import DB_PATH
 from . import privacy, categories
 from . import features as _features
 from . import metrics_registry as _reg
-from .stats import percentile, slope
+from .stats import harrell_davis, slope
 
 PANEL_WEEKS = 8
 PANEL_MIN_PRESENT = 6
@@ -49,15 +51,36 @@ def _groups_for(week_rows, cohorts, metric):
     return groups
 
 
-def panel_series(weeks: int = PANEL_WEEKS, cohorts: dict = None, db_path=DB_PATH) -> dict:
+def panel_series(weeks: int = PANEL_WEEKS, cohorts: dict = None, db_path=DB_PATH, members: dict = None) -> dict:
     """{cohort: {metric: {"points": [{week, n, p50}], "n_panel", "n_joined",
     "n_left"}}} — each point the median over the balanced panel present that
-    week, only weeks that clear the floor."""
-    from .benchmarks import coarse
+    week, only weeks that clear the floor.
+
+    Through the bands' publishing gate (fix round #41, R1-10): members must
+    be eligible (jobs.ineligible — live weeks, completeness, excluded and
+    lapsed accounts; the $26 default wage out of labor-cost metrics), a point
+    needs benchmarks.MIN_QUARTILE_N restaurants from privacy.MIN_ORGS
+    organisations with no organisation over a third (held to a third, as a
+    band is), and the median is Harrell–Davis at the metric's coarse step —
+    never one member's exact figure. Trends have no viewer, so they are an
+    admin read (intelligence.dashboard); an owner surface must go through
+    benchmarks.published()."""
+    from .benchmarks import coarse, cap_organisations, labor_sourced, MIN_QUARTILE_N
+    from .jobs import member_info, ineligible
     by_week = _features.weekly_by_restaurant(weeks=weeks, db_path=db_path)
     order = sorted(by_week)
     if not order:
         return {}
+    if members is None:
+        try:
+            members = member_info(db_path=db_path)
+        except Exception:
+            members = {}
+    members = members or {}
+
+    def org(rid):
+        return (members.get(rid) or {}).get("org_hash") or privacy.org_hash(f"r{rid}")
+
     need = min(PANEL_MIN_PRESENT, len(order))
     out = {}
     for metric in _features.BENCHMARK_KEYS:
@@ -66,8 +89,12 @@ def panel_series(weeks: int = PANEL_WEEKS, cohorts: dict = None, db_path=DB_PATH
             for cohort, items in _groups_for(by_week[week], cohorts, metric).items():
                 for rid, f in items:
                     v = f.get(metric)
-                    if v is not None:
-                        present.setdefault(cohort, {}).setdefault(rid, {})[week] = float(v)
+                    m = members.get(rid)
+                    if v is None or (m and ineligible(m, {"completeness": None})):
+                        continue
+                    if m and metric in _reg.LABOR_COST_METRICS and not labor_sourced(m):
+                        continue
+                    present.setdefault(cohort, {}).setdefault(rid, {})[week] = float(v)
         for cohort, rids in present.items():
             panel = {rid: wk for rid, wk in rids.items() if len(wk) >= need}
             first, last = order[0], order[-1]
@@ -75,10 +102,13 @@ def panel_series(weeks: int = PANEL_WEEKS, cohorts: dict = None, db_path=DB_PATH
             left = sum(1 for wk in rids.values() if first in wk and last not in wk)
             pts = []
             for week in order:
-                vals = [wk[week] for wk in panel.values() if week in wk]
-                if not privacy.cohort_ok(len(vals)):
+                pairs = [(wk[week], org(rid)) for rid, wk in panel.items() if week in wk]
+                pairs, _dropped = cap_organisations(pairs, week)
+                orgs, _share = privacy.org_counts([o for _v, o in pairs])
+                if len(pairs) < MIN_QUARTILE_N or orgs < privacy.MIN_ORGS:
                     continue
-                pts.append({"week": week, "n": len(vals), "p50": coarse(metric, percentile(vals, 50))})
+                vals = [v for v, _o in pairs]
+                pts.append({"week": week, "n": len(vals), "p50": coarse(metric, harrell_davis(vals, 50))})
             if pts:
                 out.setdefault(cohort, {})[metric] = {"points": pts, "n_panel": len(panel),
                                                       "n_joined": joined, "n_left": left}
@@ -124,10 +154,9 @@ def emerging(limit: int = 6, cohorts: dict = None, db_path=DB_PATH) -> list:
 def persist(cohorts: dict = None, members: dict = None, db_path=DB_PATH, today: date = None) -> dict:
     """Write the balanced-panel series into intel_cohort_series (the
     learning pass, nightly): one row per cohort, metric and week, the
-    window's joined/left on each. `members` is accepted for the pass's
-    signature; eligibility is the feature readers' (demo and excluded
-    accounts are already out)."""
-    series = panel_series(cohorts=cohorts, db_path=db_path)
+    window's joined/left on each. `members` (jobs.member_info) decides
+    eligibility and counts organisations, as for a band (#41)."""
+    series = panel_series(cohorts=cohorts, db_path=db_path, members=members)
     written = 0
     conn = get_conn(db_path)
     try:

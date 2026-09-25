@@ -169,24 +169,195 @@ MIN_ORGS = 5                  # distinct organisations behind a published band
 MAX_ORG_SHARE = 1.0 / 3.0     # the largest organisation's share of a band
 
 
+def _field(row, k):
+    if isinstance(row, dict):
+        return row.get(k)
+    try:
+        return row[k]
+    except Exception:
+        return getattr(row, k, None)
+
+
+def _email(v) -> str:
+    return str(v or "").strip().lower()
+
+
 def org_key(row) -> str:
-    """The organisation a restaurant belongs to: its organization_id, else
-    its (location group, owner email) pair, else the restaurant alone.
-    `row` is a dict, sqlite Row or object with those attributes."""
-    def g(k):
-        if isinstance(row, dict):
-            return row.get(k)
-        try:
-            return row[k]
-        except Exception:
-            return getattr(row, k, None)
-    org = g("organization_id")
+    """The organisation a restaurant belongs to, from its own row: its
+    organization_id, else its (location group, owner email) pair, else its
+    normalised owner email alone, else the restaurant (fix round R1-01 /
+    R2-11: two ungrouped restaurants under one owner email were two
+    "organisations", so one owner could clear the floors with their own
+    sites and solve a real peer's figure out of the band). `row` is a dict,
+    sqlite Row or object with those attributes.
+
+    One row cannot see a login shared across restaurants or a Stripe
+    customer; org_map() joins those as well, and the band builders read it."""
+    org = _field(row, "organization_id")
     if org:
         return f"o{int(org)}"
-    group = (g("location_group") or "").strip().lower()
+    email = _email(_field(row, "owner_email"))
+    group = (_field(row, "location_group") or "").strip().lower()
     if group:
-        return f"g{group}|{(g('owner_email') or '').strip().lower()}"
-    return f"r{g('id')}"
+        return f"g{group}|{email}"
+    if email:
+        return f"e{email}"
+    return f"r{_field(row, 'id')}"
+
+
+def legacy_org_key(row) -> str:
+    """org_key as it was before the owner-email fallback — the key a band
+    frozen before the fix round stored its members under. Read only to take
+    a viewer's organisation out of such a band (benchmarks.viewer_org)."""
+    org = _field(row, "organization_id")
+    if org:
+        return f"o{int(org)}"
+    group = (_field(row, "location_group") or "").strip().lower()
+    if group:
+        return f"g{group}|{_email(_field(row, 'owner_email'))}"
+    return f"r{_field(row, 'id')}"
+
+
+# Logins whose access to two restaurants makes them one owner: owner-level
+# roles only (a manager or employee who works two jobs does not merge two
+# independent restaurants), never a Cavnar admin.
+_OWNER_ROLES = ("owner", "client")
+_ORG_COLS = "id, organization_id, location_group, owner_email, stripe_customer_id"
+
+
+def _union_rows(rows, links) -> dict:
+    """{restaurant_id: canonical key} — a union-find over `rows` joined by
+    organisation, owner email and Stripe customer, plus the (restaurant,
+    restaurant) pairs in `links`. A component's key is the smallest org_key
+    in it, so it is stable while the component is."""
+    parent = {}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[max(ra, rb)] = min(ra, rb)
+
+    by, keys = {}, {}
+    for r in rows:
+        rid = int(_field(r, "id"))
+        parent[rid] = rid
+        keys[rid] = org_key(r)
+        for tag, v in (("o", _field(r, "organization_id")), ("e", _email(_field(r, "owner_email"))),
+                       ("s", str(_field(r, "stripe_customer_id") or "").strip())):
+            if v:
+                by.setdefault((tag, str(v)), []).append(rid)
+    for ids in by.values():
+        for other in ids[1:]:
+            union(ids[0], other)
+    for a, b in links or ():
+        if a in parent and b in parent:
+            union(a, b)
+    comp = {}
+    for rid in parent:
+        comp.setdefault(find(rid), []).append(rid)
+    out = {}
+    for ids in comp.values():
+        canon = min(keys[i] for i in ids)
+        for i in ids:
+            out[i] = canon
+    return out
+
+
+def _login_links(conn, ids=None) -> list:
+    """(restaurant, restaurant) pairs one owner-level login holds (its
+    memberships and its home restaurant). No auth tables → no links."""
+    marks = ",".join("?" * len(_OWNER_ROLES))
+    try:
+        rows = conn.execute(
+            "SELECT m.user_id AS u, m.restaurant_id AS r FROM memberships m JOIN users us ON us.id=m.user_id "
+            f"WHERE COALESCE(m.is_active,1)=1 AND COALESCE(us.is_admin,0)=0 AND LOWER(COALESCE(m.role,'')) IN ({marks}) "
+            "UNION SELECT id AS u, restaurant_id AS r FROM users WHERE COALESCE(is_admin,0)=0 AND "
+            f"LOWER(COALESCE(role,'client')) IN ({marks})", _OWNER_ROLES + _OWNER_ROLES).fetchall()
+    except Exception:
+        return []
+    per_user = {}
+    for r in rows:
+        if r["r"] is not None:
+            per_user.setdefault(r["u"], set()).add(int(r["r"]))
+    links = []
+    for rs in per_user.values():
+        rs = sorted(rs)
+        if len(rs) < 2 or (ids is not None and not (set(rs) & set(ids))):
+            continue
+        links.extend((rs[0], x) for x in rs[1:])
+    return links
+
+
+def _conn(db_path):
+    """models.get_conn resolved at call time (CLAUDE.md, bound imports)."""
+    import models as _m
+    if db_path is None or db_path == getattr(_m, "DB_PATH", None):
+        return _m.get_conn()
+    return _m.get_conn(db_path)
+
+
+def org_map(db_path=None) -> dict:
+    """{restaurant_id: organisation key} for every restaurant: organisation,
+    owner email, an owner-level login shared between restaurants and the
+    Stripe customer, joined transitively (R1-01). What the nightly band
+    builders count organisations by (jobs.member_info). Read lazily from the
+    data layer, like the tenant names — this module is L0 otherwise.
+    Consumers outside the band builders call org_key() and must not depend
+    on this."""
+    conn = _conn(db_path)
+    try:
+        rows = [dict(r) for r in conn.execute(f"SELECT {_ORG_COLS} FROM restaurants").fetchall()]
+        links = _login_links(conn)
+    finally:
+        conn.close()
+    return _union_rows(rows, links)
+
+
+ORG_MAX_HOPS = 8     # an organisation is a handful of joins wide
+
+
+def org_members(restaurant_id, db_path=None) -> tuple:
+    """(organisation key, [row of every restaurant in it]) — the component
+    org_map() puts `restaurant_id` in, found by widening from that one
+    restaurant rather than scanning every row (a card asks per request)."""
+    rid = int(restaurant_id)
+    conn = _conn(db_path)
+    have = {}
+    try:
+        frontier = {rid}
+        for _ in range(ORG_MAX_HOPS):
+            if not frontier:
+                break
+            q = ",".join("?" * len(frontier))
+            for r in conn.execute(f"SELECT {_ORG_COLS} FROM restaurants WHERE id IN ({q})", tuple(frontier)):
+                have[int(r["id"])] = dict(r)
+            rows = [have[i] for i in frontier if i in have]
+            found = set()
+            for col, vals in (("organization_id", {r["organization_id"] for r in rows if r.get("organization_id")}),
+                              ("LOWER(TRIM(owner_email))", {_email(r.get("owner_email")) for r in rows} - {""}),
+                              ("TRIM(stripe_customer_id)", {str(r.get("stripe_customer_id") or "").strip()
+                                                            for r in rows} - {""})):
+                if vals:
+                    vals = sorted(vals, key=str)
+                    found |= {int(x[0]) for x in conn.execute(
+                        f"SELECT id FROM restaurants WHERE {col} IN ({','.join('?' * len(vals))})",
+                        tuple(vals)).fetchall()}
+            for a, b in _login_links(conn, ids=set(have)):
+                found |= {a, b}
+            frontier = found - set(have)
+        links = _login_links(conn, ids=set(have))
+    finally:
+        conn.close()
+    if rid not in have:
+        return f"r{rid}", []
+    rows = list(have.values())
+    return _union_rows(rows, links).get(rid) or f"r{rid}", rows
 
 
 def org_hash(key) -> str:

@@ -208,15 +208,20 @@ def metric_row(cm) -> dict | None:
         # The engine may keep a not-comparable figure out of the headline;
         # it is still worth showing as context beside the owner's figure.
         head = "industry"
-    if head == "peers":
-        c = by["peers"]
+    if head in ("peers", "platform"):
+        # platform leads only for a behaviour metric (engine.compare), where
+        # the all-types band is a fair peer set; its label says "all types".
+        c = by[head]
         st = c.get("standing")
         pct = (c.get("strength") or {}).get("pct")
+        n_txt = (c.get("cohort_label") if head == "platform"
+                 else f"{c.get('n')} other {_lc_label(c.get('cohort_label'))}")
         row.update(standing=outcome_words(st, cm.get("better")), standing_key=st, as_of=c.get("as_of"),
                    strength_pct=pct, value=c.get("value"), value_text=fmt(c.get("value"), unit),
-                   against=f"{c.get('n')} other {_lc_label(c.get('cohort_label'))}",
-                   middle_text=fmt(c.get("p50"), unit), group=("peers", c.get("cohort")),
-                   tag=(f"vs {c.get('n')} like yours" + (f" · {pct}% comparison strength" if pct is not None else "")))
+                   against=n_txt, middle_text=fmt(c.get("p50"), unit), group=(head, c.get("cohort")),
+                   tag=((f"vs {c.get('n')} restaurants, all types" if head == "platform"
+                         else f"vs {c.get('n')} like yours")
+                        + (f" · {pct}% comparison strength" if pct is not None else "")))
         row["tone"] = "good" if st in _AHEAD else ("warn" if st in _BEHIND else "neutral")
         row["behind"] = st in _BEHIND
     elif head == "self":

@@ -12,16 +12,22 @@ Six kinds of comparison, each either available or carrying `why_not`:
             the baseline's own uncertainty (≤10% false calls on an unchanged
             restaurant). Meaningful at any platform size, so it is the
             headline until peers clear their floors.
-  peers     compared to restaurants like it: the published band of its
-            owner-CONFIRMED peer partition (service model; × bar-led for
-            labor and food cost; × menu family for food cost and waste —
-            categories.partition_key), the viewer's whole organisation left
-            out, at least MIN_QUARTILE_N others from privacy.MIN_ORGS
-            organisations, coarse, frozen weekly, at most 8 weeks old. A
-            small group is blended toward the published median by
-            n/(n+BLEND_KAPPA), and says so. A guessed type compares with no
-            one; the restaurant's own figure below its floor reads "about N
-            more measured days to a comparison".
+  peers     compared to restaurants like it: the published band of the
+            finest group on its ladder that clears every floor — its
+            owner-CONFIRMED partition (service model; × bar-led for labor
+            and food cost; × menu family for food cost and waste —
+            categories.partition_key) narrowed by the ticket band, volume
+            band and market it measures, then the partition itself, then
+            the service model alone, said in the label (`level` of
+            `levels`); the viewer's whole organisation left out, at least
+            MIN_QUARTILE_N others from privacy.MIN_ORGS organisations,
+            coarse, frozen weekly, at most 8 weeks old. The small-group
+            blend toward a published median (_blend) is DORMANT: it needs a
+            published figure measured the same way as Cavnar's, and none is
+            registered (the NRA labor and food medians are defined
+            differently). A guessed type compares with no one; the
+            restaurant's own figure below its floor reads "about N more
+            measured days to a comparison".
   platform  compared to every restaurant on Cavnar — ONLY for behaviour
             metrics (metrics_registry.platform_allowed); an all-types band
             for labor %, food cost % or hours per $1k is never shown.
@@ -35,7 +41,8 @@ Six kinds of comparison, each either available or carrying `why_not`:
   market    nearby competitors — carried by Intel; named here so the
             vocabulary is whole.
 
-The headline is peers when available, else self, else industry; `why_not`
+The headline is peers when available, else (behaviour metrics only) the
+all-types platform band, else self, else industry; `why_not`
 is always filled for a kind that cannot be shown — that is how the engine
 knows when NOT to benchmark. Every kind that ranks the restaurant's own
 figure asks own_eligible() first: a labor cost on the $26/hr default (or
@@ -122,6 +129,10 @@ LABOR_SOURCED_MIN = 0.8
 # A small peer group is blended toward the published median with weight
 # n / (n + BLEND_KAPPA) on the group (Benchmarking audit #20, BM2 §6): a
 # 9-restaurant group is not treated as gospel, and the blend fades as n grows.
+# Dormant (fix round R2-9/R1-16): _blend_entry finds no published figure
+# measured the same way, so no band is blended today. Candidate for future
+# cleanup after additional verification — or re-sourcing, if a like-for-like
+# published figure is ever registered.
 BLEND_KAPPA = 8
 
 
@@ -713,11 +724,11 @@ def _viewer_org(restaurant_id, db_path, memo=None):
         memo["viewer_org"] = org
     return org
 
-
-def _band_kind(kind, restaurant_id, metric, cohort, type_source, db_path, today, rows, entry=None, *,
-               level=None, levels=None, _memo=None):
-    """A published band (peers: the restaurant's confirmed partition;
-    platform: every restaurant), the viewer's whole organisation taken out,
+def _band_kind(kind, restaurant_id, metric, cohort, type_source, db_path, today, rows, entry=None,
+               exclude=None, *, level=None, levels=None, _memo=None):
+    """A published band (peers: a rung of the restaurant's confirmed
+    ladder; platform: every restaurant), the viewer's whole organisation
+    taken out (`exclude`: benchmarks.viewer_org, read once by the caller),
     with its standing and strength."""
     row = _bm._row(cohort, metric, db_path=db_path, today=today)
     if not row:
@@ -726,7 +737,8 @@ def _band_kind(kind, restaurant_id, metric, cohort, type_source, db_path, today,
                             f"{'restaurants on Cavnar' if kind == 'platform' else _bm.cohort_label(cohort).replace(' on Cavnar', '').lower()} "
                             "with this measured yet")}
     v_now, v_at, own_week, own_stale = _own_at(rows, metric, today=today, band_week=row.get("week"))
-    exclude = _viewer_org(restaurant_id, db_path, _memo)
+    if exclude is None:
+        exclude = _viewer_org(restaurant_id, db_path, _memo)
     p = _bm.published(cohort, metric, exclude_org=exclude, db_path=db_path, today=today)
     if not p or p.get("withheld"):
         return {"kind": kind, "available": False, "value": v_now,
@@ -759,15 +771,26 @@ def _band_kind(kind, restaurant_id, metric, cohort, type_source, db_path, today,
     # both AFTER the viewer's organisation is taken out, so they agree with
     # n (re-audit #44, R1-15). Counts only, never a member.
     try:
-        out["measured"] = int(p["n"])
-        out["members"] = max(out["measured"], _members(cohort, row.get("week"), db_path, exclude_org=exclude))
+        out["measured"] = int(p.get("measured") or p["n"])
+        out["members"] = max(out["measured"], _bm.group_size(cohort, row.get("week"), exclude_org=exclude,
+                                                             db_path=db_path))
+        if p.get("capped"):
+            out["capped"] = int(p["capped"])
     except Exception:
         pass
     return out
 
 
 def _peers(restaurant_id, metric, restaurant, db_path, today, rows, industry_entry=None, _memo=None):
-    """The peers kind: the owner-confirmed partition or why there is none."""
+    """The peers kind, down the ladder (fix round #34/#36): the finest group
+    on the restaurant's ladder (categories.partition_ladder — its confirmed
+    partition narrowed by the ticket band, volume band and market it
+    measures, then the partition itself, then the service model alone) whose
+    band clears every floor; `level` is the rung used (0 = finest) of
+    `levels`, and a group WIDER than the confirmed partition says so in its
+    label. Economics metrics stop at the service model; the all-types band
+    is the platform kind's, for behaviour metrics only. Or why there is
+    none."""
     prof = categories.profile_for(restaurant) if restaurant is not None else None
     if not prof or not prof.get("confirmed"):
         sug = categories.suggestion(restaurant) if restaurant is not None else None
@@ -777,11 +800,10 @@ def _peers(restaurant_id, metric, restaurant, db_path, today, rows, industry_ent
         if sug:
             out["suggestion"] = sug
         return out
-    fam = reg.partition_family(metric)
-    key = categories.partition_key(prof, "labor" if fam == "staff" else fam)
+    feats = (rows[-1].get("features") or {}) if rows else {}
+    ladder, key, why = _bm.peer_ladder(restaurant, metric, feats)
     if not key:
-        return {"kind": "peers", "available": False,
-                "why_not": "set the restaurant's concept in Account → Restaurant profile to compare food cost"}
+        return {"kind": "peers", "available": False, "why_not": why}
     own_now = None
     if rows and rows[-1]["week"] >= _bm._week_floor(today, _bm.MAX_OWN_AGE_WEEKS):
         own_now = _num((rows[-1].get("features") or {}).get(metric))
@@ -789,8 +811,25 @@ def _peers(restaurant_id, metric, restaurant, db_path, today, rows, industry_ent
         return {"kind": "peers", "available": False, "cohort": key,
                 "cohort_label": _bm.cohort_label(key),
                 "why_not": _own_progress(restaurant_id, metric, db_path, today)}
-    return _band_kind("peers", restaurant_id, metric, key, "set", db_path, today, rows, entry=industry_entry,
-                      _memo=_memo)
+    exclude = _viewer_org(restaurant_id, db_path, _memo)
+    base_i = categories.ladder_base_index(ladder, key)
+    tried = []
+    for level, rung in enumerate(ladder):
+        c = _band_kind("peers", restaurant_id, metric, rung, "set", db_path, today, rows, entry=industry_entry,
+                       exclude=exclude, level=level, levels=len(ladder), _memo=_memo)
+        c["level"], c["levels"] = level, len(ladder)
+        if c.get("available"):
+            note = categories.rung_note(rung, key)
+            if note:
+                c["cohort_label"] = f"{c['cohort_label']} ({note})"
+                c["wider_than_profile"] = True
+            return c
+        tried.append(c)
+    # Nothing on the ladder clears the floors: the confirmed partition's own
+    # reason (it is the group the owner chose).
+    out = dict(tried[min(base_i, len(tried) - 1)]) if tried else {"kind": "peers", "available": False}
+    out.setdefault("cohort", key)
+    return out
 
 
 def _members(cohort, week, db_path, exclude_org=None):
@@ -1085,7 +1124,12 @@ def compare(restaurant_id, metric, *, kinds=None, viewer=None, restaurant=None, 
             print(f"[benchmark_engine] {kind} for {restaurant_id}/{metric} failed: {e}")
             comps.append({"kind": kind, "available": False, "why_not": "could not be computed right now"})
     by = {c["kind"]: c for c in comps}
-    head = next((by[k] for k in ("peers", "self", "industry") if by.get(k, {}).get("available")), None)
+    # For a behaviour metric the all-types band is a fair peer set, so it
+    # leads before the restaurant's own normal (fix round #34, R3-27: the
+    # card said "about your normal" while Ask said "top quarter of all
+    # restaurants on Cavnar").
+    order = ("peers", "platform", "self", "industry") if reg.platform_allowed(metric) else ("peers", "self", "industry")
+    head = next((by[k] for k in order if by.get(k, {}).get("available")), None)
     own_val = None
     if own_row and own_row["week"] >= _bm._week_floor(today, _bm.MAX_OWN_AGE_WEEKS):
         own_val = _num((own_row.get("features") or {}).get(metric))
@@ -1147,6 +1191,9 @@ def headline_text(m, c) -> str:
         if c.get("inferred"):
             s += " — your type was guessed from your name; confirm it to sharpen this"
         return s + "."
+    if c["kind"] == "platform":
+        return (f"Compared to {c['cohort_label']} (as of {c['as_of']}), your {label.lower()} is "
+                f"{c['standing']}.")
     if c["kind"] == "self":
         note = f", {c['basis_note']}" if c.get("basis_note") else ""
         return (f"Your {label.lower()} is {_fmt(c['value'], unit)}{note} — {c['verdict']} "
@@ -1334,6 +1381,10 @@ def payload_for(user, metric=None, module=None, db_path=DB_PATH) -> dict:
     if not rid:
         return {"ok": False, "error": "No restaurant on this login."}
     if metric and not reg.meta(metric):
+        return {"ok": False, "error": "Unknown metric."}
+    # A staffing ratio (people per $1k) never leaves the server — the
+    # borrowed headcount is what a screen sees (staffing.payload; R1-14).
+    if metric and str(metric).startswith("staff_per_1k."):
         return {"ok": False, "error": "Unknown metric."}
     # A module alias (food, food_cost) is checked as the permission key it
     # names (inventory): the raw alias is no MODULE_VIEW_PERMISSIONS key, so
