@@ -63,7 +63,18 @@ final class WidgetSnapshotService {
         var change: String?
         var basis: String?
         var up: Bool?
+        /// The night's verdict, tone and score (density #50) — the stored
+        /// scorecard's, as Home's card reads it; nil when there is none.
+        var verdict: String?
+        var tone: String?
+        var score: Int?
         static let none = NightPart()
+
+        mutating func setVerdict(_ v: HomeLastNightCard.Verdict?) {
+            verdict = v?.label
+            tone = v?.tone
+            score = v?.overall
+        }
     }
 
     /// The next snapshot from the last one and whichever halves this read
@@ -92,6 +103,9 @@ final class WidgetSnapshotService {
             snap.changeLabel = night.change
             snap.changeBasis = night.basis
             snap.changeIsUp = night.up
+            snap.nightVerdict = night.verdict
+            snap.nightTone = night.tone
+            snap.nightScore = night.score
             snap.nightUpdatedAt = now
         } else if !sameStore {
             snap.nightUpdatedAt = .distantPast
@@ -157,12 +171,14 @@ final class WidgetSnapshotService {
         }
         guard let latest = list.reports.first else { return NightPart.none }
         var part = NightPart(date: latest.businessDate, label: latest.displayDate)
+        part.setVerdict(HomeLastNightCard.verdict(latest, nil))
         guard let report: DSRReport = try? await client.sendWithBearer(
             "/mobile/api/dsr/\(latest.businessDate)", query: ["peek": "1"], bearer: bearer) else {
             // The list answered and the report didn't: the list's own net.
             part.net = latest.net.map { DSRFormat.money($0) }
             return part
         }
+        part.setVerdict(HomeLastNightCard.verdict(latest, report))
         guard let sales = report.facts.blocks["sales"], sales.isReady else { return part }
         if let net = sales.metric("net") { part.net = DSRFormat.money(net) }
         let change = WidgetSnapshotService.change(lastWeek: sales.metric("vs_last_week_pct"),

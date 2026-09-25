@@ -5,10 +5,19 @@ import SwiftUI
 /// thin platform bars, what posts did to sales, and the recent pieces.
 struct MarketingAnalyticsSection: View {
     let viewModel: MarketingAnalyticsViewModel
+    /// The output counts the Content tab used to lead with — this month,
+    /// generated, published — kept here as one line (density #10): what
+    /// Cavnar produced, beside what it did.
+    var counts: MarketingStats? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             briefCard
+            if let c = counts {
+                HomeMixedText.make("\(c.thisMonth) this month \u{00B7} \(c.generated) generated \u{00B7} \(c.published) published",
+                                   size: CavnarType.caption, weight: 600, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             if viewModel.isLoading && viewModel.performance == nil {
                 // Analyzing performance/attribution across several requests

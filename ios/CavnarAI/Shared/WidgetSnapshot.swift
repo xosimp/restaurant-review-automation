@@ -28,6 +28,14 @@ struct WidgetSnapshot: Codable, Equatable {
     var changeLabel: String?
     var changeBasis: String?
     var changeIsUp: Bool?
+    /// Last night's verdict from the stored scorecard — "Good day", its
+    /// tone ("good" / "warn" / "bad") and the 0–100 score (density #50):
+    /// a dot beside LAST NIGHT, and the medium widget's verdict line. Nil
+    /// when the night has no scorecard (a manager's login, an older
+    /// server), and on a snapshot written before these existed.
+    var nightVerdict: String? = nil
+    var nightTone: String? = nil
+    var nightScore: Int? = nil
     /// Open items in the action queue for this login (0 = nothing waiting).
     var waitingCount: Int
     /// Drafted replies waiting for approval — the quick action's subtitle.
@@ -77,6 +85,13 @@ struct WidgetSnapshot: Codable, Equatable {
         if waitingIsCurrent(now: now), waitingCount > 0 { return "cavnarai://command" }
         if let nightDate, !nightDate.isEmpty { return "cavnarai://nav/dsr/night/" + nightDate }
         return "cavnarai://nav/dsr"
+    }
+
+    /// "Good day 82/100" — the verdict with its score when both exist;
+    /// nil without a verdict.
+    var verdictLine: String? {
+        guard let v = nightVerdict, !v.isEmpty else { return nil }
+        return nightScore.map { "\(v) \($0)/100" } ?? v
     }
 
     /// "3 things waiting" / "1 thing waiting" / "Nothing waiting".

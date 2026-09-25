@@ -195,15 +195,18 @@ struct IntelView: View {
 
         return Group {
             if let nameRange {
-                (Text(String(intro[intro.startIndex..<nameRange.lowerBound])).foregroundStyle(Color.cavnarInk)
+                (Text(String(intro[intro.startIndex..<nameRange.lowerBound])).foregroundStyle(Color.cavnarInk2)
                     + Text(String(intro[nameRange])).foregroundStyle(Color.cavnarEmber)
-                    + Text(String(intro[nameRange.upperBound...])).foregroundStyle(Color.cavnarInk))
+                    + Text(String(intro[nameRange.upperBound...])).foregroundStyle(Color.cavnarInk2))
             } else {
-                Text(intro).foregroundStyle(Color.cavnarInk)
+                Text(intro).foregroundStyle(Color.cavnarInk2)
             }
         }
-        .font(.cavnarHeadline(22))
-        .lineSpacing(5)
+        // Body size (density #35): a paragraph of AI prose at 22pt Clash was
+        // the heaviest text on the screen, louder than the standing above.
+        .font(.cavnarBody(CavnarType.emphasis))
+        .lineSpacing(4)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: - Market analysis — well/poorly/recommendations read as one
@@ -227,10 +230,8 @@ struct IntelView: View {
             }
             .foregroundStyle(Color.cavnarEmber)
 
-            ForEach(summary.sections) { section in
-                marketSection(section)
-            }
-
+            // What to do comes first, directly under the rating bars
+            // (density #35); the analysis it rests on follows.
             if !summary.displayRecommendations.isEmpty {
                 recommendationsSection(summary.displayRecommendations)
             } else if let note = summary.emptyRecommendationsNote {
@@ -241,6 +242,10 @@ struct IntelView: View {
                     .font(.cavnarBody(14))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+
+            ForEach(summary.sections) { section in
+                marketSection(section)
             }
         }
         .padding(.vertical, 18)
@@ -262,8 +267,12 @@ struct IntelView: View {
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
     }
 
-    // MARK: - Summary stat row (bare — no card, just numbers + hairline dividers)
+    // MARK: - Hero line — the owner's standing in one line (density #35)
 
+    /// "4.4★ · 0.2 ahead of 6 nearby", in the standing's tone. It was three
+    /// equal tiles (Tracked / Market avg / You) and the owner had to compare
+    /// two of them to learn where they stood; "Tracked: 6" weighed the same
+    /// as their own rating. The rating is the screen's one 40pt figure.
     private func statRow(_ summary: IntelSummary) -> some View {
         let count = summary.competitors.count
         // Volume-weighted, computed server-side. The old figure was a flat
@@ -272,46 +281,28 @@ struct IntelView: View {
         // a market average.
         let avgRating = summary.marketRating
             ?? (count > 0 ? summary.competitors.reduce(0.0) { $0 + $1.rating } / Double(count) : 0)
+        let line = Self.heroLine(summary, market: count > 0 ? avgRating : nil, nearby: count)
 
         return VStack(spacing: 10) {
-            HStack(spacing: 0) {
-                statTile(value: plainStatValue("\(count)"), label: "Tracked")
-                Rectangle().fill(Color.cavnarPaper3).frame(width: 1, height: 28)
-                statTile(
-                    value: count > 0 ? ratingText(avgRating, numberSize: 20, tone: Color.cavnarInk) : plainStatValue("—"),
-                    label: "Market avg"
-                )
-                Rectangle().fill(Color.cavnarPaper3).frame(width: 1, height: 28)
-                if let own = summary.ownRating {
-                    // Colored relative to the competitor average, not an
-                    // absolute threshold — a 4.1 that's genuinely ahead of a
-                    // weak local market should read as good news exactly as
-                    // much as a 4.1 that's behind a strong one should read as
-                    // a gap to close. An absolute >=4.0-is-green cutoff doesn't
-                    // know which of those it's looking at, and the competitor
-                    // row accents below already use this same relative logic —
-                    // this tile was the one place on the page disagreeing
-                    // with itself.
-                    // Coloured against the market ONLY when both numbers are
-                    // the same kind. An average over the reviews we imported is
-                    // not comparable to competitors' all-time Google ratings,
-                    // and it used to be rendered red or green against them.
-                    statTile(
-                        value: ratingText(own, numberSize: 20, tone: Self.ownRatingTone(summary, own: own, market: avgRating)),
-                        label: summary.restaurantName ?? "Your rating"
-                    )
-                } else {
-                    statTile(value: plainStatValue("\(summary.recommendations.count)"), label: "Action items")
+            if let own = summary.ownRating {
+                // Coloured against the market ONLY when both numbers are
+                // the same kind (ownRatingTone): an average over imported
+                // reviews is not comparable to competitors' all-time Google
+                // ratings.
+                let tone = Self.ownRatingTone(summary, own: own, market: avgRating)
+                VStack(spacing: 4) {
+                    ratingText(own, numberSize: CavnarType.heroNumber, tone: tone)
+                        .cavnarSensitive()
+                    HomeMixedText.make(line, size: CavnarType.body, weight: 700,
+                                       color: tone == .cavnarInk ? .cavnarInk2 : tone)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-            }
-            // Where the owner stands, in the server's words (I10) — the
-            // same rule web and the first look use. Nothing when the two
-            // ratings aren't the same kind of number.
-            if let line = summary.standingLine {
-                HomeMixedText.make(line, size: 13, weight: 600,
-                                   color: summary.standingTone?.color ?? .cavnarInk2)
+                .frame(maxWidth: .infinity)
+                .accessibilityElement(children: .combine)
+            } else {
+                HomeMixedText.make(line, size: CavnarType.body, weight: 700, color: .cavnarInk2)
                     .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity)
             }
             // n and radius behind the standing, and its tie band (#38) — or
@@ -324,6 +315,20 @@ struct IntelView: View {
                     .frame(maxWidth: .infinity)
             }
         }
+    }
+
+    /// "0.2 ahead of 6 nearby" / "level with 6 nearby" from the server's
+    /// own gap (I10) — only when it made the comparison. Otherwise the
+    /// market figure, untoned, beside the count ("market avg 4.2★ · 6
+    /// nearby"), never a verdict on two different kinds of number.
+    static func heroLine(_ s: IntelSummary, market: Double?, nearby: Int) -> String {
+        let who = "\(nearby) nearby"
+        if s.standing != nil, let gap = s.ownVsMarket {
+            if abs(gap) < 0.05 { return "level with \(who)" }
+            return "\(String(format: "%.1f", abs(gap))) \(gap > 0 ? "ahead of" : "behind") \(who)"
+        }
+        if let market { return "market avg \(String(format: "%.1f", market))\u{2605} \u{00B7} \(who)" }
+        return nearby > 0 ? "\(who) tracked" : "No nearby restaurants tracked yet"
     }
 
     /// The own-rating tile's colour: the server's standing tone when it made

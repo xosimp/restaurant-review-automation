@@ -39,6 +39,8 @@ struct MarketingView: View {
     @State private var selectedDay = 0
     /// True for a beat after "Write this" succeeds so the button can say so.
     @State private var justWrote = false
+    /// GET /mobile/api/marketing/header — nil on an older server.
+    @State private var header: MarketingHeader?
     @FocusState private var focusedField: MarketingContentField?
 
     var body: some View {
@@ -52,8 +54,8 @@ struct MarketingView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     if subTab == .content {
-                        if let stats = viewModel.stats {
-                            pulseRow(stats)
+                        if viewModel.stats != nil {
+                            outcomeRow
                             // How current the post metrics are (DH4-8),
                             // amber when the nightly pull is stale or failing.
                             if let sync = viewModel.metricsSync {
@@ -73,7 +75,7 @@ struct MarketingView: View {
                             .frame(maxWidth: .infinity)
                         }
                     } else {
-                        MarketingAnalyticsSection(viewModel: analyticsViewModel)
+                        MarketingAnalyticsSection(viewModel: analyticsViewModel, counts: viewModel.stats)
                     }
                 }
                 .padding(20)
@@ -131,6 +133,13 @@ struct MarketingView: View {
         .cavnarTabSwipeNavigation($subTab, primaryTab: .content, secondaryTab: .analytics)
         .keyboardNavToolbar($focusedField)
         .task { await viewModel.load() }
+        // The content tab's one outcome figure reads the 30-day window —
+        // the window alone, not the whole Analytics load (which records the
+        // brief's lines as shown).
+        .task { await analyticsViewModel.setWindow(30) }
+        // The web h1's status line (marketing_signals.header_summary), when
+        // the server has the route; the window above is the fallback.
+        .task { header = try? await APIClient.shared.send("/mobile/api/marketing/header", hapticOnError: false) }
         // Reopening the app after a while re-reads whichever tab is on
         // screen rather than showing earlier numbers as current (audit 4.2).
         .refreshOnForeground(lastLoaded: viewModel.lastLoadedAt) {
@@ -187,29 +196,104 @@ struct MarketingView: View {
 
     // MARK: - Pulse
 
-    /// Three numbers in a row, no card — a heartbeat, not a dashboard. The
-    /// heavy stats card up top made the page open on a wall of chrome
-    /// before the thing you came to do.
+    /// Whether marketing is working, not how busy Cavnar was (density #10):
+    /// ONE outcome — the last 30 days' reach against the 30 before, toned —
+    /// and the next post that is scheduled. The output counts (this month,
+    /// generated, published) moved to Analytics. No card: a heartbeat, not
+    /// a dashboard.
     @ViewBuilder
-    private func pulseRow(_ stats: MarketingStats) -> some View {
-        HStack(alignment: .top, spacing: 0) {
-            pulseStat("\(stats.thisMonth)", "This month")
-            pulseStat("\(stats.generated)", "Generated")
-            pulseStat("\(stats.published)", "Published")
+    private var outcomeRow: some View {
+        let outcome = Self.outcome(analyticsViewModel.window)
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("LAST \(header?.days ?? analyticsViewModel.window?.days ?? 30) DAYS")
+                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
+                    .tracking(1.2)
+                    .foregroundStyle(Color.cavnarInk3)
+                if let status = header?.status, !status.isEmpty {
+                    // The server's one sentence, the same the web h1 reads.
+                    HomeMixedText.make(status, size: CavnarType.emphasis, weight: 700,
+                                       color: header?.toneColor ?? .cavnarInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if analyticsViewModel.window?.posts ?? 0 > 0, let reach = analyticsViewModel.window?.reach {
+                        HomeMixedText.make("\(reach.formatted()) reached", size: CavnarType.secondary,
+                                           weight: 600, color: .cavnarInk3)
+                    }
+                } else {
+                    HomeMixedText.make(outcome.headline, size: CavnarType.tileNumber, weight: 700,
+                                       color: .cavnarInk, numberColor: .cavnarInk)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    if let change = outcome.change {
+                        HomeMixedText.make(change, size: CavnarType.secondary, weight: 700, color: outcome.tone)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("NEXT POST")
+                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
+                    .tracking(1.2)
+                    .foregroundStyle(Color.cavnarInk3)
+                if let next = header?.nextScheduled, let when = next.whenLabel {
+                    HomeMixedText.make(when, size: CavnarType.body, weight: 700, color: .cavnarInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let platform = next.platform {
+                        Text(platform.capitalized)
+                            .font(.cavnarBody(CavnarType.caption))
+                            .foregroundStyle(Color.cavnarInk3)
+                    }
+                } else if let next = Self.nextScheduled(compose.scheduled) {
+                    HomeMixedText.make(next.whenLabel, size: CavnarType.body, weight: 700, color: .cavnarInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(next.platform.capitalized)
+                        .font(.cavnarBody(CavnarType.caption))
+                        .foregroundStyle(Color.cavnarInk3)
+                } else {
+                    Text("Nothing scheduled")
+                        .font(.cavnarBody(CavnarType.body, weight: 700))
+                        .foregroundStyle(Color.cavnarAmber)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 4)
         .padding(.bottom, 2)
+        .accessibilityElement(children: .combine)
     }
 
-    private func pulseStat(_ value: String, _ label: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(value)
-                .font(.cavnarNumber(24, weight: 700))
-                .foregroundStyle(Color.cavnarInk)
-                .cavnarNumberGlow()
-            Text(label).font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
+    /// The outcome line from the 30-day window: reach and its change
+    /// against the prior 30 days. "Nothing posted in 30 days" (amber) when
+    /// nothing went out; the server's change note when the change is null
+    /// (too few posts to compare), never a made-up 0%. Pure, so the rule is
+    /// pinned by tests.
+    struct Outcome: Equatable {
+        let headline: String
+        let change: String?
+        let tone: Color
+    }
+
+    static func outcome(_ w: MarketingWindow?) -> Outcome {
+        guard let w else { return Outcome(headline: "\u{2014}", change: nil, tone: .cavnarInk3) }
+        guard w.posts > 0 else {
+            return Outcome(headline: "Nothing posted", change: "No posts in the last \(w.days) days",
+                           tone: .cavnarAmber)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        let reach = "\(w.reach.formatted()) reached"
+        guard let pct = w.change.reach else {
+            return Outcome(headline: reach, change: w.changeNote, tone: .cavnarInk3)
+        }
+        let rounded = Int(pct.rounded())
+        let arrow = rounded >= 0 ? "\u{25B2}" : "\u{25BC}"
+        return Outcome(headline: reach,
+                       change: "\(arrow) \(abs(rounded))% vs the \(w.days) days before",
+                       tone: rounded >= 0 ? .cavnarGreen : .cavnarAmber)
+    }
+
+    /// The soonest post still waiting to go out.
+    static func nextScheduled(_ posts: [ScheduledPost]) -> ScheduledPost? {
+        posts.filter(\.isPending).min { $0.scheduledFor < $1.scheduledFor }
     }
 
     // MARK: - Shelf
@@ -871,5 +955,58 @@ struct MarketingView: View {
         scrollToDraft = UUID()
         try? await Task.sleep(for: .seconds(1.4))
         justWrote = false
+    }
+}
+
+/// GET /mobile/api/marketing/header — the web Marketing h1's status
+/// (marketing_signals.header_summary): "Reach up 18% vs the 30 days
+/// before" / "Nothing posted in 12 days", its tone, and the next scheduled
+/// post. Every field lenient; an older server sends none, and the content
+/// tab reads the 30-day window itself.
+struct MarketingHeader: Decodable, Equatable {
+    struct Next: Decodable, Equatable {
+        let date: String?
+        let time: String?
+        let platform: String?
+        init(from decoder: Decoder) throws {
+            let c = try? decoder.container(keyedBy: CodingKeys.self)
+            date = (try? c?.decodeIfPresent(String.self, forKey: .date)) ?? nil
+            time = (try? c?.decodeIfPresent(String.self, forKey: .time)) ?? nil
+            platform = (try? c?.decodeIfPresent(String.self, forKey: .platform)) ?? nil
+        }
+        enum CodingKeys: String, CodingKey { case date, time, platform }
+        /// "9/26/26 · 5:00pm"
+        var whenLabel: String? {
+            guard let date, !date.isEmpty else { return nil }
+            guard let time, !time.isEmpty else { return date }
+            return "\(date) \u{00B7} \(time)"
+        }
+    }
+
+    let status: String?
+    let tone: String?
+    let days: Int?
+    let nextScheduled: Next?
+
+    enum CodingKeys: String, CodingKey {
+        case status, tone, days
+        case nextScheduled = "next_scheduled"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try? decoder.container(keyedBy: CodingKeys.self)
+        status = (try? c?.decodeIfPresent(String.self, forKey: .status)) ?? nil
+        tone = (try? c?.decodeIfPresent(String.self, forKey: .tone)) ?? nil
+        days = (try? c?.decodeIfPresent(Int.self, forKey: .days)) ?? nil
+        nextScheduled = (try? c?.decodeIfPresent(Next.self, forKey: .nextScheduled)) ?? nil
+    }
+
+    var toneColor: Color {
+        switch tone {
+        case "good": return .cavnarGreen
+        case "warn": return .cavnarAmber
+        case "bad": return .cavnarRed
+        default: return .cavnarInk
+        }
     }
 }

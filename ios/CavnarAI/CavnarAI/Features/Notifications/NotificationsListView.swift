@@ -225,7 +225,30 @@ struct NotificationsListView: View {
     /// Twenty rows in one flat list is an audit log. A busy week is mostly
     /// things that have already been dealt with, and the two or three that
     /// still need someone are what an owner opened this for.
-    @State private var urgentOnly = false
+    /// nil until the owner picks: then "Needs you" whenever something is
+    /// urgent, "Everything" otherwise (density #39) — the bell used to open
+    /// on the chronological feed with the urgent items mixed into the FYIs.
+    @State private var urgentChoice: Bool?
+
+    private var hasUrgent: Bool { viewModel.notifications.contains(where: \.isUrgent) }
+    private var urgentOnly: Bool { Self.defaultsToUrgent(choice: urgentChoice, hasUrgent: hasUrgent) }
+
+    static func defaultsToUrgent(choice: Bool?, hasUrgent: Bool) -> Bool {
+        guard hasUrgent else { return false }
+        return choice ?? true
+    }
+
+    /// "3 need you · 11 for your information" — the 3-second answer to
+    /// "how many need me?". Nil for an empty list.
+    static func summaryLine(_ items: [NotificationItem]) -> String? {
+        guard !items.isEmpty else { return nil }
+        let urgent = items.filter(\.isUrgent).count
+        let fyi = items.count - urgent
+        var parts: [String] = []
+        parts.append(urgent > 0 ? "\(urgent) need\(urgent == 1 ? "s" : "") you" : "Nothing needs you")
+        if fyi > 0 { parts.append("\(fyi) for your information") }
+        return parts.joined(separator: " \u{00B7} ")
+    }
 
     private var shown: [NotificationItem] {
         urgentOnly ? viewModel.notifications.filter(\.isUrgent) : viewModel.notifications
@@ -271,8 +294,17 @@ struct NotificationsListView: View {
                     .padding(.top, 40)
                 } else {
                     List {
-                        if viewModel.notifications.contains(where: \.isUrgent) {
-                            Picker("", selection: $urgentOnly) {
+                        if let summary = Self.summaryLine(viewModel.notifications) {
+                            HomeMixedText.make(summary, size: CavnarType.body, weight: 700,
+                                               color: hasUrgent ? .cavnarInk : .cavnarInk2,
+                                               numberColor: hasUrgent ? .cavnarRed : nil)
+                                .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 8, trailing: 0))
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                        }
+                        if hasUrgent {
+                            Picker("", selection: Binding(get: { urgentOnly },
+                                                          set: { urgentChoice = $0 })) {
                                 Text("Everything").tag(false)
                                 Text("Needs you").tag(true)
                             }

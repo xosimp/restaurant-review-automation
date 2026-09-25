@@ -15,13 +15,14 @@ struct LaborAnalyticsSection: View {
             if let stats = laborStats {
                 moneyTiles(stats)
                 benchmarkBar(stats)
-                // How you compare — the Benchmark Engine's card (#23).
-                HowYouCompareCard(module: "labor")
                 LaborRibbonChart(points: ribbonPoints, target: stats.target,
                                  subtitle: viewModel.daily.isEmpty ? "8-week trend" : "last \(viewModel.daily.count) days")
                 WeekRadarChart(dowSummary: stats.dowSummary, target: stats.target,
                                subtitle: [stats.dateRange.start, stats.dateRange.end].compactMap { $0 }.map(Self.shortDate).joined(separator: " – "),
                                positiveAllowed: Self.positiveAllowed(stats))
+                // How you compare — the Benchmark Engine's card (#23) —
+                // after the restaurant's own read and charts (density #34).
+                HowYouCompareCard(module: "labor")
             } else if viewModel.isLoading {
                 CavnarWorkingLine().padding(.vertical, 20)
             }
