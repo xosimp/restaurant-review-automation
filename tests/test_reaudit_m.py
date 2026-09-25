@@ -514,7 +514,7 @@ def test_m8_track_with_nothing_to_measure_says_it_is_only_hidden(db_path, monkey
 
 def test_m8_track_is_not_offered_where_nothing_can_be_measured():
     html = client_api.rec_controls_html("insight_intel:a", "intel", "intel")
-    assert 'data-rec-event="accepted"' not in html and "Not for us" in html
+    assert 'data-rec-event="accepted"' not in html and ">Pass<" in html
     assert 'data-rec-event="accepted"' in client_api.rec_controls_html("insight_food:a", "food", "food")
     dash = _read("templates", "dashboard.html")
     assert "REC_TRACKABLE[m]?" in dash and "if(d&&d.message)return String(d.message);" in dash

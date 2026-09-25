@@ -400,7 +400,7 @@ struct HomeRecommendations: View {
                         submit(rec, kind: kind)
                     }
                 } label: {
-                    Text(kind == "done" ? "Done" : "Not for us")
+                    Text(kind == "done" ? "Done" : "Pass")
                         .font(.cavnarBody(12.5, weight: 600))
                         .foregroundStyle(Color.cavnarInk3)
                 }

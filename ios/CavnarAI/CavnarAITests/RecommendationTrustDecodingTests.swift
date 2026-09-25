@@ -44,7 +44,7 @@ final class RecommendationTrustDecodingTests: XCTestCase {
 
     func testAnswerConfirmationsSayWhatHappensNext() {
         XCTAssertEqual(RecAnswer.completed.label, "Done")
-        XCTAssertEqual(RecAnswer.notForUs.label, "Not for us")
+        XCTAssertEqual(RecAnswer.notForUs.label, "Pass")
         XCTAssertEqual(RecAnswer.accepted.label, "Track")
         XCTAssertEqual(RecAnswer.completed.confirmation, "Done \u{2014} Cavnar won\u{2019}t suggest it again")
         XCTAssertEqual(RecAnswer.notForUs.confirmation, "Noted \u{2014} it won\u{2019}t come back")

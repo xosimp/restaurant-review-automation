@@ -666,7 +666,7 @@ struct RecTimelineItem: Decodable, Identifiable, Equatable {
         case "accepted": return trackerId != nil ? "Tracked" : "Accepted"
         case "completed": return "Done"
         case "implemented": return "Made the change"
-        case "dismissed": return "Not for us"
+        case "dismissed": return "Passed"
         case "snoozed": return "Not today"
         case "expired": return "Went unanswered"
         case "superseded": return "Replaced by a newer one"

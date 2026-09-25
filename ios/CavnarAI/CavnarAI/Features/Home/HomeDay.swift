@@ -13,7 +13,7 @@ struct HomeDayCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HomeSectionHeader(kicker: "The day", title: "This morning's brief", trailing: dateLabel)
+            HomeSectionHeader(kicker: "Today", title: Date.now.formatted(.dateTime.weekday(.wide)), trailing: dateLabel)
             VStack(alignment: .leading, spacing: 0) {
                 if viewModel.isLoading && viewModel.lines.isEmpty {
                     CavnarWorkingLine().padding(.vertical, 10)

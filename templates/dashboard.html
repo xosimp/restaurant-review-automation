@@ -857,13 +857,14 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .cbtn.ai-strip{position:fixed;left:20px;bottom:22px;z-index:997;display:flex;align-items:center;justify-content:flex-start;gap:9px;height:auto;max-width:min(420px,calc(100vw - 120px));padding:9px 14px 9px 12px;border-radius:999px;background:var(--paper);border:1px solid var(--paper3);box-shadow:0 8px 24px rgba(0,0,0,.14),0 0 0 1px rgba(0,0,0,.03);color:var(--ink2);font-family:'Apfel Grotezk',sans-serif;font-size:13px;font-weight:600;cursor:pointer;transition:transform .18s,box-shadow .18s,opacity .3s;opacity:0}
 .cbtn.ai-strip.on{opacity:1}
 /* The orbit: an ember light travelling the pill's edge while Cavnar AI is
-   working. A conic gradient spun behind an inset fill (:after), so only a
-   1.5px ring of it shows; the pill's own border steps aside for it. */
-.cbtn.ai-strip{overflow:hidden;isolation:isolate}
-.cbtn.ai-strip.on{border-color:transparent}
-.ai-strip:before{content:'';position:absolute;left:50%;top:50%;width:160%;aspect-ratio:1;z-index:-2;background:conic-gradient(from 0deg,var(--paper3) 0 55%,var(--ember) 90%,var(--ember2) 95%,var(--paper3) 100%);transform:translate(-50%,-50%) rotate(0deg);animation:aiOrbit 3.6s linear infinite}
-.ai-strip:after{content:'';position:absolute;inset:1.5px;z-index:-1;border-radius:inherit;background:var(--paper)}
-@keyframes aiOrbit{to{transform:translate(-50%,-50%) rotate(360deg)}}
+   working. A dash drawn ON the pill's own outline (an SVG rect sized to the
+   pill by aiOrbitSize), so it moves at one speed the whole way round. It
+   used to be a conic gradient spun about the centre, which on a pill ~8x
+   wider than tall raced round the ends and crawled along the long edges -
+   it read as the light stalling and refilling one side (9/25/26). */
+.ai-strip .orbit{position:absolute;left:-1px;top:-1px;pointer-events:none;overflow:visible;filter:drop-shadow(0 0 3px var(--ember))}
+.ai-strip .orbit rect{fill:none;stroke:var(--ember);stroke-width:1.5;stroke-linecap:round;stroke-dasharray:14 86;animation:aiOrbit 3.6s linear infinite}
+@keyframes aiOrbit{from{stroke-dashoffset:0}to{stroke-dashoffset:-100}}
 .cbtn.ai-strip:hover{transform:translateY(-1px);box-shadow:0 12px 30px rgba(0,0,0,.18),0 0 0 1px rgba(200,75,47,.12)}
 .ai-strip .dot{position:relative;width:8px;height:8px;border-radius:50%;background:var(--ember);box-shadow:0 0 8px var(--ember);flex-shrink:0}
 .ai-strip .dot:after{content:'';position:absolute;inset:-4px;border-radius:50%;background:var(--ember);opacity:.35;animation:aiBreath 2.4s ease-in-out infinite}
@@ -905,7 +906,7 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
    watched screen is never perfectly still. */
 .hb-card svg[data-pts] path[stroke]{animation:hbChartBreath 7s ease-in-out infinite}
 @keyframes hbChartBreath{0%,100%{opacity:1}50%{opacity:.78}}
-@media (prefers-reduced-motion:reduce){.ai-strip:before,.ai-strip .dot:after,.ai-feed .it.now .d:after,.ai-feed .it.in,.ai-feed.on,.ask-steps .st,.ask-in,.hb-card svg[data-pts] path[stroke]{animation:none!important;opacity:1}.ai-strip .txt{transition:none}}
+@media (prefers-reduced-motion:reduce){.ai-strip .orbit rect,.ai-strip .dot:after,.ai-feed .it.now .d:after,.ai-feed .it.in,.ai-feed.on,.ask-steps .st,.ask-in,.hb-card svg[data-pts] path[stroke]{animation:none!important;opacity:1}.ai-strip .txt{transition:none}}
 @media(max-width:640px){.ai-strip{left:12px;bottom:14px;max-width:calc(100vw - 110px);font-size:12px}.ai-feed{left:12px;bottom:60px}}
 /* ── Brand layer ─────────────────────────────────────────────────────────
    One surface hierarchy for every module, lit the way Home is lit.
@@ -994,6 +995,10 @@ details[open]>summary~*{animation:askIn .3s ease both}
 .hb-sh h2:before{align-self:center;margin:2px 10px 0 0}
 /* premium empty states: the AI is watching, and says what for */
 .pe{position:relative;display:flex;flex-direction:column;align-items:center;gap:8px;padding:30px 20px!important;border-radius:14px;background:var(--sf-ai),var(--surface);border:1px dashed var(--sf-ai-line)}
+/* .pe's display:flex beat the hidden attribute, so a hidden empty state
+   ("No reviews match this filter" under a list that matched) still showed
+   (9/25/26). Hidden wins. */
+.pe[hidden]{display:none!important}
 .pe-dot{position:relative;width:10px;height:10px;border-radius:50%;background:var(--ember);box-shadow:0 0 12px var(--ember)}
 .pe-dot:after{content:'';position:absolute;inset:-5px;border-radius:50%;background:var(--ember);opacity:.35;animation:hbBreath 2.4s ease-in-out infinite}
 .pe-next{font-size:12.5px;color:var(--ink3);margin-top:2px}
@@ -1924,7 +1929,13 @@ cavNavRegister('action', function (p) {
    under the tabs, built from its data-nav elements (Account keeps its own
    rail). A section names itself with data-nav-label, else its heading. */
 function cavRailBuild(panel) {
-  if (!panel || panel.id === 'panel-account') return;
+  // Reviews has two sections and names them in its own Inbox | Analytics
+  // kicker (9/25/26), so it takes no rail either.
+  if (!panel || panel.id === 'panel-account' || panel.id === 'panel-reviews') {
+    var old = panel && panel.querySelector(':scope > .cav-rail');
+    if (old) old.parentNode.removeChild(old);
+    return;
+  }
   var mod = panel.id.replace('panel-', ''), canon = CAV_NAV_CANON[mod] || mod;
   var secs = panel.querySelectorAll('[data-nav^="' + canon + '/"]'), items = [], i;
   for (i = 0; i < secs.length; i++) {
@@ -2149,6 +2160,12 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 .hb-sh .k{font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember)}
 .hb-sh h2{font-family:'Clash Display',sans-serif;font-size:23.5px;font-weight:500;color:var(--ink);margin-top:5px;display:flex;align-items:baseline;flex-wrap:wrap;gap:10px}
 .hb-sh h2 small{font-family:'Apfel Grotezk',sans-serif;font-size:15.5px;font-weight:400;color:var(--ink3)}
+/* Reviews' Inbox | Analytics kicker (9/25/26): the link is the kicker's own
+   size, face and tracking, with a thin rule between the two. */
+.hb-sh .k.rv2-kicks{display:flex;align-items:center;gap:0}
+.hb-sh .k.rv2-kicks .sep{display:inline-block;width:1px;height:11px;background:var(--hb-line);margin:0 10px}
+.hb-sh .k.rv2-kicks .rv2-kick-link{height:auto;padding:0;font:inherit;letter-spacing:inherit;text-transform:inherit;color:var(--ink3);background:none;border:0;box-shadow:none}
+.hb-sh .k.rv2-kicks .rv2-kick-link:hover{color:var(--ember);background:none;transform:none}
 .hb-sub .sep{color:var(--ink3);opacity:.5}
 /* The 3-second status under the greeting (density fix #1): "Last night ·
    ● Good day 78/100 · $8,420 net · +$420 vs budget", the dot and verdict in
@@ -2222,7 +2239,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-range{display:flex;gap:2px}
 .hb-range button{background:none;border:none;border-radius:999px;padding:5px 11px;font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:600;color:var(--ink3);cursor:pointer}
 .hb-range button.on{background-color:var(--hb-tint2);color:var(--ember)}
-.hb-hero svg{display:block;width:100%;height:190px;margin-top:6px;overflow:visible}
+.hb-hero svg{display:block;width:100%;height:190px;margin-top:30px;overflow:visible}
 .hb-hero .ax{display:flex;justify-content:space-between;font-size:11px;color:var(--ink3);margin-top:4px}
 /* signals row */
 .hb-sig{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;margin-top:34px;padding-top:24px;border-top:1px solid var(--hb-line)}
@@ -2409,6 +2426,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-focus .money{font-family:'Space Grotesk',sans-serif;font-size:34px;font-weight:600;letter-spacing:-.025em;color:var(--ink);line-height:1}
 .hb-focus .money small{font-family:'Apfel Grotezk',sans-serif;font-size:13.5px;color:var(--ink3);font-weight:400;letter-spacing:0;margin-left:7px}
 .hb-focus .ft .sp{display:none}
+/* The primary beside Could also be... is the same 36px; its glow made it
+   read bigger, so on this card it keeps only the plain shadow (9/25/26). */
+.hb-focus .ft .cbtn-primary,.hb-focus .ft .cbtn-primary:hover{box-shadow:inset 0 1px 0 rgba(255,255,255,.16),var(--cb-shadow)}
 .hb-focus-cf{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin-top:14px}
 .hb-focus .ft .also{display:inline-flex;align-items:center;gap:12px;flex-wrap:wrap}
 .hb-focus .ft .also .m{font-size:14.5px;font-weight:600;color:var(--ink2);padding:6px 11px;border-radius:999px;background:var(--hb-inner);border:1px solid var(--hb-line2)}
@@ -2511,6 +2531,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-tl .it .t{flex:1;min-width:0;font-size:16px;font-weight:500;color:var(--ink2);line-height:1.5}
 .hb-tl .it .t strong{color:var(--ink);font-weight:600}
 .hb-tl .it .t .rec-ans{display:flex;margin-top:6px}
+.hb-tl .it .t .hb-tl-acts{display:flex;align-items:center;flex-wrap:wrap;gap:8px 0;margin-top:8px}
+.hb-tl .it .t .hb-tl-acts .rec-ans{margin-top:0}
+.hb-tl .it .t .hb-tl-acts .sep{display:inline-block;width:1px;height:18px;background:var(--hb-line);margin:0 14px 0 12px}
 /* the ledger: sentences with the count in Space Grotesk */
 .fc2-recipe{padding:10px 0;border-bottom:1px solid var(--paper2)}
 .fc2-recipe-h{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;font-size:14.5px;color:var(--ink)}
@@ -2870,6 +2893,13 @@ svg:hover .hb-xh{opacity:1}
   // '' when there is nothing to say (no confidence, or "unknown"). The
   // caution rides on the line, as on iOS - "the data under this is out of
   // date" was hidden behind Why? on the web (B4 M6).
+  // The first clause of a sentence, lowercased: "No track record here yet"
+  // for both "no track record here yet - it can't read above 70%..." and
+  // "No track record here yet - it can't read high...".
+  function cfSameHead(a,b){
+    function head(t){return String(t||'').toLowerCase().split(/\s[\u2014\-:]\s|[.:;]/)[0].replace(/^\s+|\s+$/g,'');}
+    var x=head(a);return !!x&&x===head(b);
+  }
   function line(c,o){
     o=o||{};var n=norm(c);if(!n)return '';
     // o.pill: the same confidence as one small "72%" pill whose tap opens
@@ -2895,7 +2925,9 @@ svg:hover .hb-xh{opacity:1}
         +(o.key?' data-explain-key="'+esc(o.key)+'" data-explain-surface="'+esc(o.surface||'home')+'" data-explain-module="'+esc(o.module||o.surface||'home')+'"':'')
         +' aria-label="Why '+esc(n.label)+'?">Why?</button>';
     }
-    if(n.caution&&!o.noCaution)h+='<span class="cf-c">'+num(n.caution)+'</span>';
+    // The caution is left off when the reason already on the line says the
+    // same thing ("no track record here yet - ..." twice, 9/25/26).
+    if(n.caution&&!o.noCaution&&!(n.reason&&!o.noReason&&cfSameHead(n.reason,n.caution)))h+='<span class="cf-c">'+num(n.caution)+'</span>';
     return h+'</div>';
   }
   // The claim tag (J5): AI-written beats the kind, because the owner's
@@ -3148,6 +3180,12 @@ svg:hover .hb-xh{opacity:1}
   function ago(s){var d=parseTs(s);if(!d)return '—';var m=Math.round((Date.now()-d)/60000);if(m<1)return 'just now';if(m<60)return m+'m ago';var h=Math.round(m/60);if(h<48)return h+'h ago';return Math.round(h/24)+'d ago';}
   function mdy(x){var d=x instanceof Date?x:(typeof x==='string'&&/^\d{4}-\d{2}-\d{2}/.test(x)?new Date(x.slice(0,4),+x.slice(5,7)-1,+x.slice(8,10)):new Date(x));if(isNaN(d))return esc(x||'');return (d.getMonth()+1)+'/'+d.getDate()+'/'+String(d.getFullYear()).slice(-2);}
   function dateKicker(iso){return mdy(iso?new Date(iso):new Date());}
+  // "Friday" for the restaurant's own date (the date part of local_now, so
+  // the viewer's time zone never moves it to another day).
+  function weekdayName(iso){
+    var m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso||'')),d=m?new Date(+m[1],+m[2]-1,+m[3]):new Date();
+    return ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][d.getDay()];
+  }
   function greeting(iso){var d=iso?new Date(iso):new Date();var h=d.getHours();return h<12?'Good morning':h<17?'Good afternoon':'Good evening';}
   function reduced(){return !!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);}
   // Catmull-Rom → cubic bezier, same idea as CavnarChart.smoothPath on iOS.
@@ -3932,12 +3970,14 @@ svg:hover .hb-xh{opacity:1}
     var ffKey=ff&&(ff.rec_key||ff.key)||'';
     if(alt)h+='<button type="button" class="cbtn cbtn-secondary" data-explain="'+esc(alt)+'" data-explain-title="What else could explain it" data-explain-kicker="A question, not a finding"'+(ffKey?' data-explain-key="'+esc(ffKey)+'"':'')+'>Could also be…</button>';
     // The one thing is a recommendation like any other (rec-ROI #26): Done /
-    // Not for us beside its own evidence, before any other item's button,
-    // when the server says it can be answered - the same ledger door as
+    // Pass when the server says it can be answered - the same ledger door as
     // every module line. A lead that is the top card keeps that card's own
-    // answers (it is held out of the grid below).
-    if(ff&&ff.rec_key&&ff.answerable&&typeof recControlsHtml==='function')h+=recControlsHtml(ff.rec_key,'home','home');
-    else if(!ff&&!att.length&&!clear&&recs.length&&lead===recs[0].title)h+='<span class="hb-rec-ans"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(recs[0].key)+'" data-dismiss-kind="done" data-track-title="'+esc(recs[0].title)+'" data-track-metric="'+esc(recs[0].metric||'')+'">Done</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(recs[0].key)+'" data-dismiss-kind="not_for_us" data-track-title="'+esc(recs[0].title)+'">Not for us</button></span>';
+    // answers (it is held out of the grid below). Order (9/25/26): the two
+    // buttons side by side (Could also be... and the one primary), then
+    // Done | Pass, then Ask; the answers are built here, appended later.
+    var fAns='';
+    if(ff&&ff.rec_key&&ff.answerable&&typeof recControlsHtml==='function')fAns=recControlsHtml(ff.rec_key,'home','home');
+    else if(!ff&&!att.length&&!clear&&recs.length&&lead===recs[0].title)fAns='<span class="hb-rec-ans"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(recs[0].key)+'" data-dismiss-kind="done" data-track-title="'+esc(recs[0].title)+'" data-track-metric="'+esc(recs[0].metric||'')+'">Done</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(recs[0].key)+'" data-dismiss-kind="not_for_us" data-track-title="'+esc(recs[0].title)+'">Pass</button></span>';
     // One lead, one action (density fix #23): the focus card holds the one
     // thing and nothing else. When the lead IS the most urgent attention
     // item its action is here, the page's one primary (#24); when a finding
@@ -3950,6 +3990,7 @@ svg:hover .hb-xh{opacity:1}
       if(fAct)h+='<button type="button" class="cbtn cbtn-primary" data-cav-go="'+esc(fAct.nav)+'">'+esc(fAct.label||'Open')+'</button>';
       else if(fMod&&MODLABEL[fMod])h+='<button type="button" class="cbtn cbtn-primary" data-open-module="'+esc(fMod)+'">Open '+esc(MODLABEL[fMod])+'</button>';}
     else if(!clear&&!ff&&!att.length&&recs.length&&recs[0].metric){h+='<button type="button" class="cbtn cbtn-primary" data-track-key="'+esc(recs[0].key)+'" data-track-title="'+esc(recs[0].title)+'" data-track-metric="'+esc(recs[0].metric)+'">Track this</button>';}
+    h+=fAns;
     if(ask)h+='<button type="button" class="cbtn cbtn-text cbtn-inline" data-ask="'+esc(ask)+'">Ask about this →</button>';
     return h+'</div></section>';
   }
@@ -4040,7 +4081,7 @@ svg:hover .hb-xh{opacity:1}
       // observed outcome when the card names a metric - the same thing
       // Track this does - so acting on a recommendation without pressing
       // Track no longer leaves the value ledger empty.
-      +'<span class="hb-rec-ans"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(r.key)+'" data-dismiss-kind="done" data-track-title="'+esc(r.title)+'" data-track-metric="'+esc(r.metric||'')+'">Done</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(r.key)+'" data-dismiss-kind="not_for_us" data-track-title="'+esc(r.title)+'">Not for us</button></span></div>'
+      +'<span class="hb-rec-ans"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(r.key)+'" data-dismiss-kind="done" data-track-title="'+esc(r.title)+'" data-track-metric="'+esc(r.metric||'')+'">Done</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dismiss-key="'+esc(r.key)+'" data-dismiss-kind="not_for_us" data-track-title="'+esc(r.title)+'">Pass</button></span></div>'
       +((more||moreActs)?'<details class="hb-rec-more"><summary>Details</summary>'+more+(moreActs?'<div class="ft">'+moreActs+'</div>':'')+'</details>':'')
       +'</div>';
   }
@@ -4887,7 +4928,7 @@ svg:hover .hb-xh{opacity:1}
     var day=hbMilestone(unseen);
     if(monday)day+=receipts;
     if(evening)day+=renderCloseout();
-    var h='<div class="hb-sh first"><div><div class="k">Today</div><h2>The day <small>'+esc(dateKicker(d.local_now))+'</small></h2></div></div>';
+    var h='<div class="hb-sh first"><div><div class="k">Today</div><h2>'+esc(weekdayName(d.local_now))+' <small>'+esc(dateKicker(d.local_now))+'</small></h2></div></div>';
     h+=renderLastNight(g.dsr);
     hbAttnSetIssues(iss);
     h+='<div class="hb-grid" style="margin-top:14px">';
@@ -4905,7 +4946,10 @@ svg:hover .hb-xh{opacity:1}
       // The line's direct action first — send, open the order, answer the
       // replies — and "Ask →" as the secondary (friction #46).
       var act=(l.action&&l.action.nav)?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-nav-go="'+esc(l.action.nav)+'">'+esc(l.action.label)+'</button>':'';
-      h+='<div class="it '+(TONE[l.tone]||'watch')+'" style="--i:'+i+'"><span class="d"></span><span class="t">'+num(l.text)+ans+'</span>'+act+'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="'+esc(l.ask)+'">Ask →</button></div>';}h+='</div>';}
+      // The action sits in the answers' row, right after Done | Pass behind
+      // a thin rule (9/25/26), instead of at the far right of the line.
+      var acts=(ans||act)?'<span class="hb-tl-acts">'+ans+(ans&&act?'<span class="sep" aria-hidden="true"></span>':'')+act+'</span>':'';
+      h+='<div class="it '+(TONE[l.tone]||'watch')+'" style="--i:'+i+'"><span class="d"></span><span class="t">'+num(l.text)+acts+'</span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="'+esc(l.ask)+'">Ask →</button></div>';}h+='</div>';}
     // K8: how far the demand forecast in this brief has been off here,
     // measured against the nights that closed (dsr_metrics vs_forecast).
     var da=g.brief&&(g.brief.demand_accuracy||(g.brief.brief&&g.brief.brief.demand_accuracy));
@@ -7309,7 +7353,7 @@ svg:hover .hb-xh{opacity:1}
   <div class="rv2-why" id="rv-why" hidden></div>
   <div id="rv-inbox-header"></div>
   <div id="rv-inbox-reviews" class="rv2-inbox" data-nav="reviews/inbox">
-    <div class="hb-sh"><div><div class="k">Inbox</div><h2>Every review, with a reply ready<small><span class="count-lbl" style="margin-left:0">{{ reviews|length }} review{{ 's' if reviews|length != 1 }}</span></small></h2></div><div style="display:flex;gap:8px"><button class="cbtn cbtn-secondary" onclick="document.getElementById('rr-modal').style.display='flex'">+ Request a review</button><button class="cbtn cbtn-secondary" onclick="exportReviews()">Export CSV</button></div></div>
+    <div class="hb-sh"><div><div class="k rv2-kicks"><span>Inbox</span><span class="sep" aria-hidden="true"></span><button type="button" class="cbtn cbtn-text cbtn-inline rv2-kick-link" data-nav-go="reviews/analytics">Analytics</button></div><h2>Every review, with a reply ready<small><span class="count-lbl" style="margin-left:0">{{ reviews|length }} review{{ 's' if reviews|length != 1 }}</span></small></h2></div><div style="display:flex;gap:8px"><button class="cbtn cbtn-secondary" onclick="document.getElementById('rr-modal').style.display='flex'">+ Request a review</button><button class="cbtn cbtn-secondary" onclick="exportReviews()">Export CSV</button></div></div>
     <div class="toolbar">
       <div class="search-wrap"><svg class="search-ico" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input class="search-input" id="rsearch" aria-label="Search reviews" placeholder="Search name, keyword, rating, platform…" value="{{ rsearch }}" oninput="debouncedFilter()" onkeydown="if(event.key==='Escape'){this.value='';filterReviews();}"></div>
       <div class="filter-pills">
@@ -7390,7 +7434,7 @@ svg:hover .hb-xh{opacity:1}
   <span class="ask-fab-l">Ask Cavnar AI</span>
 </button>
 <div id="ai-feed" class="ai-feed" role="dialog" aria-label="What Cavnar AI has been doing"></div>
-<button type="button" id="ai-strip" class="ai-strip cbtn" onclick="aiFeedToggle()" aria-expanded="false" aria-controls="ai-feed" title="What Cavnar AI is doing"><i class="dot" aria-hidden="true"></i><span class="txt">Cavnar AI</span><span class="new" id="ai-new"></span></button>
+<button type="button" id="ai-strip" class="ai-strip cbtn" onclick="aiFeedToggle()" aria-expanded="false" aria-controls="ai-feed" title="What Cavnar AI is doing"><svg class="orbit" aria-hidden="true" width="0" height="0"><rect pathLength="100"></rect></svg><i class="dot" aria-hidden="true"></i><span class="txt">Cavnar AI</span><span class="new" id="ai-new"></span></button>
 
 <div id="ask-cavnar-panel" class="ask-panel" style="display:none">
   <div class="ask-head">
@@ -11986,6 +12030,20 @@ function _setAskCavnarLoadingState(bubble, label, state) {
   var strip = document.getElementById('ai-strip'), feed = document.getElementById('ai-feed'), badge = document.getElementById('ai-new');
   if (!strip || !feed) return;
   var data = null, seenKeys = {}, rot = 0, rotTimer = null, pollTimer = null, open = false;
+  // Size the orbit's rect to the pill's outer edge (its text, so its width,
+  // changes as the lines rotate).
+  function aiOrbitSize() {
+    var svg = strip.querySelector('.orbit'), r = svg && svg.querySelector('rect');
+    if (!r) return;
+    var w = strip.offsetWidth, h = strip.offsetHeight;
+    if (!w || !h) return;
+    svg.setAttribute('width', w); svg.setAttribute('height', h);
+    r.setAttribute('x', 0.75); r.setAttribute('y', 0.75);
+    r.setAttribute('width', Math.max(0, w - 1.5)); r.setAttribute('height', Math.max(0, h - 1.5));
+    r.setAttribute('rx', Math.max(0, (h - 1.5) / 2)); r.setAttribute('ry', Math.max(0, (h - 1.5) / 2));
+  }
+  window.addEventListener('resize', aiOrbitSize);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { aiOrbitSize(); });
   function esc(x) { return String(x == null ? '' : x).replace(/[&<>"']/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; }); }
   function nums(x) { return esc(x).replace(/(\$?\d[\d,.]*%?)/g, '<span class="n">$1</span>'); }
   function ago(iso) {
@@ -12014,9 +12072,9 @@ function _setAskCavnarLoadingState(bubble, label, state) {
     var txt = strip.querySelector('.txt');
     if (!w.length) { txt.innerHTML = 'Cavnar AI'; return; }
     var next = w[rot % w.length]; rot++;
-    if (reduced()) { txt.innerHTML = nums(next.text); return; }
+    if (reduced()) { txt.innerHTML = nums(next.text); aiOrbitSize(); return; }
     txt.className = 'txt swap';
-    setTimeout(function () { txt.innerHTML = nums(next.text); txt.className = 'txt'; }, 360);
+    setTimeout(function () { txt.innerHTML = nums(next.text); txt.className = 'txt'; aiOrbitSize(); }, 360);
   }
   function badgeCount() {
     var since = seenAt(), n = 0, es = (data && data.entries) || [];
@@ -12053,7 +12111,7 @@ function _setAskCavnarLoadingState(bubble, label, state) {
       if (!d || !d.ok) return;
       var first = !data; data = d; render();
       try { var ev = document.createEvent('CustomEvent'); ev.initCustomEvent('cavnar:activity', false, false, d); document.dispatchEvent(ev); } catch (e2) {}
-      if (first) { strip.className = 'ai-strip cbtn on'; rot = 0; rotate(); if (rotTimer) clearInterval(rotTimer); rotTimer = setInterval(rotate, 7000); }
+      if (first) { strip.className = 'ai-strip cbtn on'; rot = 0; rotate(); aiOrbitSize(); if (rotTimer) clearInterval(rotTimer); rotTimer = setInterval(rotate, 7000); }
     }).catch(function () {});
   }
   window.aiFeedToggle = function () {
@@ -13370,14 +13428,14 @@ function recControlsHtml(key,surface,module,opts){
   var also=(opts&&opts.also&&opts.also.length)?' data-rec-also="'+recEsc(opts.also.join('|'))+'"':'';
   var b='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rec-key="'+recEsc(key)+'" data-rec-surface="'+recEsc(surface)+'" data-rec-module="'+recEsc(m)+'"'+also+' ';
   return '<span class="rec-ans">'+b+'data-rec-event="completed">Done</button>'
-    +b+'data-rec-event="dismissed" data-rec-kind="not_for_us">Not for us</button>'
+    +b+'data-rec-event="dismissed" data-rec-kind="not_for_us">Pass</button>'
     +(!(opts&&opts.noTrack)&&REC_TRACKABLE[m]?b+'data-rec-event="accepted">Track</button>':'')+'</span>';
 }
 /* A lone "Not for us" for a line whose own button is its yes (an overtime
    move, a content idea, a roadmap card): the same attributes, the same
    handler, the same reason picker. */
 function recNotForUsHtml(key,surface,module){
-  return '<span class="rec-ans"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rec-key="'+recEsc(key)+'" data-rec-surface="'+recEsc(surface)+'" data-rec-module="'+recEsc(module||surface)+'" data-rec-event="dismissed" data-rec-kind="not_for_us">Not for us</button></span>';
+  return '<span class="rec-ans"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rec-key="'+recEsc(key)+'" data-rec-surface="'+recEsc(surface)+'" data-rec-module="'+recEsc(module||surface)+'" data-rec-event="dismissed" data-rec-kind="not_for_us">Pass</button></span>';
 }
 /* The server says what the answer actually did (a tracker started, or only
    hidden); these are the fallbacks for an older server. */
@@ -14404,6 +14462,8 @@ function filterReviews(){
   });
   staggerCards();
   rvAnsweredDivider();
+  // The empty state shows only when nothing matched (it never did before).
+  var emp=document.getElementById('rv-empty');if(emp)emp.hidden=shown>0;
   var countEl=document.querySelector('.count-lbl');
   var label=shown+' review'+(shown!==1?'s':'');
   if(topicF) label+=' — '+topicF.replace(/_/g,' ');
@@ -16988,9 +17048,9 @@ function renderQualityWarnings(quality) {
     html += '<div class="sq-rec' + (st === 'accepted' ? ' done' : (st === 'dismissed' ? ' done' : '')) + '">'
       + '<span style="flex:0 0 5px;width:5px;height:5px;border-radius:50%;background:var(--amber);margin-top:8px"></span>'
       + '<span class="tx">' + _escHtml(rec) + (recConf && window.cavConfLine ? cavConfLine(recConf, {key: recObj.rec_key || recObj.key, surface: 'schedule_review', module: 'schedule', cls: 'on-dark'}) : '') + '</span>'
-      + (st ? '<span class="st">' + (st === 'accepted' ? 'done' : 'not for us') + '</span>'
+      + (st ? '<span class="st">' + (st === 'accepted' ? 'done' : 'passed') + '</span>'
             : '<span class="acts"><button type="button" class="cbtn cbtn-icon cbtn-text cbtn-success cbtn-sm" title="Did it" aria-label="Did it" data-rec-action="accepted" data-rec="' + _escAttr(rec) + '">&#10003;</button>'
-              + '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" title="Not for us" aria-label="Not for us" data-rec-action="dismissed" data-rec="' + _escAttr(rec) + '">&#10005;</button></span>')
+              + '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" title="Pass" aria-label="Pass" data-rec-action="dismissed" data-rec="' + _escAttr(rec) + '">&#10005;</button></span>')
       + '</div>';
   }
   if (hidden.length) {
@@ -22578,7 +22638,7 @@ function revokeOtherSessions(btn){
         // One tap sets the suggested price (POST /food-cost/reprice/apply);
         // "Not for us" answers the same rec_ledger key everywhere.
         var act=x.suggested_price?('<button type="button" class="cbtn cbtn-primary cbtn-sm" data-reprice-dish="'+_fcEsc(x.dish)+'" data-reprice-price="'+x.suggested_price+'">Set '+_fcMoney(x.suggested_price)+'</button>'):'';
-        if(x.rec_key)act+=' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rec-key="'+_fcEsc(x.rec_key)+'" data-rec-surface="food" data-rec-module="food" data-rec-event="dismissed" data-rec-kind="not_for_us">Not for us</button>';
+        if(x.rec_key)act+=' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rec-key="'+_fcEsc(x.rec_key)+'" data-rec-surface="food" data-rec-module="food" data-rec-event="dismissed" data-rec-kind="not_for_us">Pass</button>';
         h+='<tr><td><b>'+_fcEsc(x.dish)+'</b></td><td>'+why.join(', ')+'</td>'
           +'<td class="r hb-num">'+_fcMoney(x.sell_price)+'</td><td class="r hb-num">'+_fcMoney(x.suggested_price)+'</td><td class="r hb-num">'+_fcMoney(x.monthly_margin_lost,0)+'</td><td class="r"><span class="rec-ans">'+act+'</span></td></tr>';}
       h+='</tbody></table></div>'+(d.assumption?'<div class="hb-empty" style="font-size:12px">'+_fcEsc(d.assumption)+'</div>':'');
@@ -22800,7 +22860,7 @@ function loadWinback(){
       // One tap that names who it reaches (friction #41): the card is the
       // confirm surface — the text and the head count are both on it.
       +'<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button type="button" class="cbtn cbtn-primary cbtn-sm" id="guest-winback-send" data-winback-id="'+w.id+'">Text these '+(+w.segment_size||0)+' guest'+(w.segment_size===1?'':'s')+'</button>'
-      +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-winback-dismiss="'+w.id+'">Not for us</button>'
+      +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-winback-dismiss="'+w.id+'">Pass</button>'
       +'<span style="font-size:12px;color:var(--ink3)">Texts go out '+recEsc(w.sms_window||'during the day')+'; nobody gets two inside three days.</span></div>';
     box.hidden=false;
   }).catch(function(){});

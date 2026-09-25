@@ -43,7 +43,7 @@ enum RecAnswer: String, CaseIterable, Sendable {
     var label: String {
         switch self {
         case .completed: return "Done"
-        case .notForUs:  return "Not for us"
+        case .notForUs:  return "Pass"
         case .accepted:  return "Track"
         }
     }

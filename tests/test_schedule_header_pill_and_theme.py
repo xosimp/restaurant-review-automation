@@ -322,7 +322,7 @@ def test_reviews_kicker_and_inbox_label_match_food_costs_bumped_size():
     # all-time rating when there is one, never "last 8 weeks" over it.
     assert ("<div class=\"hb-kicker\">{{ 'Google rating (all time)' if restaurant.gbp_rating"
             " else 'Average rating · all reviews' }}</div>") in panel
-    assert '<div class="k">Inbox</div>' in panel
+    assert '<div class="k rv2-kicks"><span>Inbox</span>' in panel
 
 
 def test_no_pill_has_an_ember_glow_or_border_on_any_module():
@@ -395,7 +395,7 @@ def test_rv2_inbox_no_longer_draws_a_duplicate_divider():
     assert m, ".rv2-inbox rule not found"
     assert "border-top" not in m.group(1) and "padding-top" not in m.group(1)
     # (the inbox gained its nav anchor, Friction #33)
-    assert re.search(r'<div id="rv-inbox-reviews" class="rv2-inbox"[^>]*>\n    <div class="hb-sh"><div><div class="k">Inbox</div>', s)
+    assert re.search(r'<div id="rv-inbox-reviews" class="rv2-inbox"[^>]*>\n    <div class="hb-sh"><div><div class="k rv2-kicks"><span>Inbox</span>', s)
 
 
 def test_rv2_hero_kicker_has_space_before_the_rating_number():

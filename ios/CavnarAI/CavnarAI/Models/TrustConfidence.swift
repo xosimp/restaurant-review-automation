@@ -365,6 +365,18 @@ struct ConfidenceDisplay: Equatable {
         }
     }
 
+    /// Whether two sentences open with the same clause (text before " — ",
+    /// " - ", ":" or "."), ignoring case.
+    static func sameHead(_ a: String?, _ b: String?) -> Bool {
+        func head(_ t: String?) -> String {
+            let s = (t ?? "").lowercased()
+            let cut = s.range(of: #"\s[\x{2014}\-:]\s|[.:;]"#, options: .regularExpression)
+            return (cut.map { String(s[..<$0.lowerBound]) } ?? s).trimmingCharacters(in: .whitespaces)
+        }
+        let x = head(a)
+        return !x.isEmpty && x == head(b)
+    }
+
     static func percentText(_ pct: Int?) -> String { pct.map { "\($0)%" } ?? "\u{2014}" }
 
     static func fraction(_ pct: Int?) -> Double? { pct.map { Double(max(0, min(100, $0))) / 100 } }
@@ -423,7 +435,9 @@ struct ConfidenceDisplay: Equatable {
         isRenderable = measured || c.band != nil || c.label != nil
         reason = sample ? (c.reason.flatMap { $0.range(of: "sample", options: .caseInsensitive) != nil ? $0 : nil }
                            ?? "Sample data \u{2014} not measurable until your own data is in") : c.reason
-        caution = c.caution
+        // The caution is dropped when the reason on the line already says the
+        // same thing ("No track record here yet" twice, 9/25/26).
+        caution = Self.sameHead(reason, c.caution) ? nil : c.caution
         meterFraction = Self.fraction(shownPct)
         meaning = c.meaning ?? (measured ? Self.engineMeaning : nil)
 
