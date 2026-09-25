@@ -660,6 +660,31 @@ def attention_answerable(a) -> bool:
 HOME_ATTENTION_SHOWN = 4
 HOME_RECS_SHOWN = 3
 
+# Where each attention item's button lands (nav.py). "Reply now" used to
+# open the whole inbox unfiltered and "See the list" the top of Food Cost
+# (Friction audit #2): the item names its filter or section now, and an item
+# not listed here opens its module.
+ATTENTION_NAV = {
+    "urgent_reviews": "reviews?filter=urgent", "stale_low_reviews": "reviews?filter=pending",
+    "awaiting_approval": "reviews?filter=pending", "low_response_rate": "reviews?filter=pending",
+    "google_not_connected": "account/integrations", "reviews_stale": "account/integrations",
+    "pos_sync": "account/integrations", "social_not_connected": "account/integrations",
+    "overtime": "labor/schedule", "inventory_stale": "inventory/count", "critical_low": "inventory/order",
+}
+# The same for the header's quick actions (quick_actions[].nav).
+QUICK_NAV = {
+    "publish": "reviews?filter=pending", "urgent": "reviews?filter=urgent", "ask": "ask",
+    "schedule": "labor/schedule", "order": "inventory/order", "post": "marketing",
+}
+
+
+def attention_nav(key, module) -> str:
+    """The nav path an attention item (or anything keyed like one) opens."""
+    import nav as _nav
+    if key in ATTENTION_NAV:
+        return ATTENTION_NAV[key]
+    return _nav.path({"competitor": "intel", "food": "inventory"}.get(module, module or "home"))
+
 
 def ledger_key(key):
     return LEDGER_KEY.get(key, key)
@@ -1181,7 +1206,8 @@ def _build(current_user, present=True):
             srcs = sources if sources is not None else sources_of(module)
             conf = card_confidence(trust_ctx, rec_key or ledger_key(key), ev, srcs)
         item = {"key": key, "rec_key": rec_key, "severity": severity, "title": title, "detail": detail, "module": module,
-                "action": {"label": action_label, "kind": action, "module": module},
+                "action": {"label": action_label, "kind": action, "module": module,
+                           "nav": attention_nav(key, module)},
                 "since": since, "evidence": evidence, "location": restaurant.location_name or None,
                 "confidence": conf}
         item.update(extra)
@@ -2247,6 +2273,8 @@ def _build(current_user, present=True):
         quick.append({"key": "post", "label": "Draft a post", "kind": "open_module", "module": "marketing", "count": None})
     quick.append({"key": "alerts", "label": "All alerts", "kind": "alerts", "module": None, "count": sum(1 for a in alert_items if a["new"] and not a["resolved"]) or None})
     quick = quick[:6]
+    for _q in quick:
+        _q["nav"] = QUICK_NAV.get(_q["key"])
     ask = (["What should I focus on today?"] + ask)[:5]
 
     # ── location context ───────────────────────────────────────────────────

@@ -429,6 +429,39 @@ the conclusion was updated in the last few minutes (real `generated_at`).
 space is empty, and — from `/api/activity` — the real line for what Cavnar
 AI is doing about it ("Watching for new reviews · next sweep at 4pm").
 
+**Confirm and undo — one policy, three tiers** (Friction audit 9/25/26 #10;
+web and iOS, and every surface that acts: buttons, Ask, the command palette,
+notification actions).
+1. **Reversible → act at once, then Undo.** No dialog. The thing leaves the
+   screen immediately and the toast carries the way back:
+   `toast(msg, type, {label: 'Undo', fn})` (7s instead of 3.6s). Where the
+   server has no inverse, `cavUndoable(msg, commit, restore)` holds the
+   request that makes it final until the Undo window ends — a page closed
+   inside the window keeps the thing (the safe side). Deleting a chat,
+   stopping a competitor, removing a webhook; skip/dismiss/snooze.
+2. **Outward → a confirm card that names what goes out and how many.**
+   Posting, publishing, texting, emailing, ordering. The card is Ask's own
+   (`.ask-prop`, `cavPropCard(p, host, {onDone})` over a
+   `build_proposal` payload — from Ask, from `/api/command/propose`, or a
+   stored proposal reopened): every field the route receives, the words
+   that go out, the dollars. **Enter never confirms** — a click, or ⌘Enter
+   while the card is on screen. Bulk sends name their count and are capped.
+   Home's "Publish N replies" opens this card; it used to post on one tap.
+   Where an automation queues the send (`delayed.py`), the Undo lives in the
+   activity strip until it runs.
+3. **`confirm()` only for security and account-destructive steps** — two-factor
+   off, backup codes, revoking a teammate, a new join code, disconnecting an
+   integration, co-owner access. Everything else is tier 1 or tier 2.
+
+**Where a link lands.** Anything that sends the owner somewhere names the
+item, not the module: a `nav` path (nav.py — `review/412`,
+`reviews?filter=urgent`, `labor/schedule`, `account/notifications`) opened
+with `cavNav(path)` on web and `NavPath` on iOS. A section is any element with
+`data-nav="<module>/<section>"`; a button that goes somewhere carries
+`data-nav-go="<path>"`. The landed item gets one ember ring that fades
+(`.cav-flash`, 1.5s; a still outline under reduced motion). Back returns to
+the previous place, never out of the app.
+
 ### 10b. Money labels and positive status
 
 The rules that keep an owner from reading a gap as money made (never-say
@@ -543,6 +576,14 @@ day is a short page.
 | Tool with nothing to show | `.fc2-tool-empty` — a bold one-line state, then what is missing and where it gets fixed. A Load that resolves to a bare sentence reads as if nothing happened |
 | Paste-to-draft | `.fc2-menu-draft` — ai tone (`--sf-ai`); a textarea, one secondary button, an `.ac-status` line that carries the result and the next batch |
 | Escaping | `esc()` / `num()` (numbers → `.hb-num`) |
+| Command palette | `#cav-palette` (`.cpal`, `<script id="cav-palette-js">`, `cavPalette.open()`) — ⌘K / Ctrl+K from anywhere, `/` when not typing, and the `⌘K` hint in the header (`.hdr-cmdk`). A 560px floating panel over `--scrim` at 12vh; the field (`Apfel` 17px), grouped rows (`.cpal-g` kicker, `.cpal-row` = `cbtn cbtn-text` with label, `.s` sub-line, `.t` tag — ember when it sends), a key-hint footer. Empty = the day: Waiting on you (`/api/actions`), One tap (Home's quick actions), Go to, Locations. Typing = Actions, Go to, Found (`/api/command/search`), and always last "Ask Cavnar: “…”" (Tab). An action opens its confirm card in the panel (tier 2 of §10); nothing else in it acts. Phone width: full-bleed, no footer, no header hint |
+| Modal | `cModal.open(id)` / `cModal.close(id)` — Escape closes the top one (then the Ask panel, then a header popover), a click on the backdrop closes it (not the two-factor setup), focus returns to what opened it, one stacking level (`.cmodal` → `--z-modal`). Older modals are adopted by id (`CAV_MODALS`) and close through their own close function. Busy overlays (posting, upload) are not modals |
+| Inline field | `cField(anchor, {label, value, placeholder, hint, inputmode, save, after, onSave(value, done)})` → `.cav-field` under the anchor's row (`.cav-field-row`, `.ac-row`, `li`, `tr`) with the current value in it; Enter saves, Escape cancels, `done(msg)` keeps it open with the line in `--red`. Never `prompt()` |
+| Undo toast | `toast(msg, type, {label: 'Undo', fn})` → `.toast.has-act` with one `.toast-act` text button; `cavUndoable(msg, commit, restore)` for a delete with no server inverse (§10, tier 1) |
+| Confirm card (any surface) | `cavPropCard(p, host, {onDone})` — the `.ask-prop` card on Home (`.hb-pub-confirm`), in the palette (`.cpal-card`) and in Ask, one renderer; Confirm (`[data-prop-confirm]`) posts only `fields_shown` and records the answer on `proposal_id` |
+| Section rail | `.cav-rail` (`cavRailBuild(panel)`) — a panel with two or more `data-nav` sections gets a sticky row of `cbtn cbtn-text cbtn-sm` links under the tabs, labelled by `data-nav-label` or the section's heading. Account keeps its own `.ac-nav` rail (each link an address, `#account/<section>`) |
+| Sticky chrome | `.tabs` sticks under `.hdr` (`top:56px`); `--cav-chrome` (header + tabs, measured) is what anything sticking or scrolling into view clears (`[data-nav]{scroll-margin-top}`, `.ac-nav`, `.cav-rail`) |
+| One tap | `#hb-quick` (`.hb-quick`) under Home's header — the server's `quick_actions` as `cbtn-sm` buttons (the publish one primary), each landing on its `nav`; Ask and All alerts are left to the FAB and the bell |
 | Data health (how current the data is) | A composition, no new pattern: Home's `.hb-fresh` kicker reads "DATA HEALTH 71% · DATA AS OF 9/22/26" as a `cbtn-text cbtn-muted` button (`data-dh-open`) that opens the explanation modal with the Why? panel's `.cf-p` rows (one per source, a `.dh-dot` in the row's tone, reliability and "next sync" as its detail line), "Not connected" rows with the one fix, the module confidence-impact rows, and a `cbtn-primary` Sync now with the `.dr-pulse` bar while it waits. Under each module header one `.dh-badge` holding a single `.hb-fresh-it` chip (the weakest source's line) + a `cbtn-text` "Data health". Amber (`--amber`) for a stale or failing line (`.dh-line.warn`), never red. iOS: `HomeFreshnessStrip`'s kicker opens `DataHealthSheet` (built on `AccountSheetKit`: hero % + sections), `DataHealthModuleBadge` under a module's own freshness line, `ServerStatusCaption` for a server status line (Reviews' fetch line, Marketing's "Metrics synced", AI visibility's "Measured") |
 | Recommendation answer row | `.rec-ans` via `recControlsHtml(key, surface, module)` (JS) or `client_api.rec_controls_html` (server-rendered insight HTML) — Done / Not for us / Track as `cbtn-text cbtn-inline cbtn-sm` with `data-rec-key`; one delegated listener posts `/api/recs/event` and swaps the row for a muted `.rec-ans-done` sentence. Home's `.hb-rec-ans` answer row, inline under a module's recommendation line (`.rec-line` under a read, `.rec-cites` for the reviews an Intel recommendation cites). An answered line is not rendered again anywhere. What the answer did is the server's: a tracker that started reads "Measuring labor % until 10/21/26" (`recTrackerLine`), a refused one its `tracker_refused.reason`; Home's toasts say the same. `recNotForUsHtml(key, surface, module)` is the lone "Not for us" for a line whose own button is its yes (an overtime move, a content idea, a roadmap card) |
 | Why not? (reason picker) | `.rsn` via `recReasonPicker(after, {onPick(code, note, picker), onCancel, skipLabel})` — ONE component behind every "Not for us": module lines (the `[data-rec-key]` listener), Home's cards (`hbAskWhy`), the second ✕ on Needs attention ("Just hide it" as its skip), content ideas, roadmap cards, overtime moves, Ask's "Not now", the brief's lines, the win-back text's "Not for us" and the schedule review's ✕ (both send `reason_code` + `reason` with their own routes). A recessed strip under the line it answers: `.rsn-k` "Why not?" kicker (ember2) + one-line hint, `.rsn-opts` the six `rec_ledger.REASON_CODES` as `cbtn-secondary cbtn-sm` in the owner's words (Already doing this · Doesn't fit us · Too costly · Bad timing · Don't trust the numbers · Other), `.rsn-ft` an optional note `.ac-input` (Enter with a note = Other) + Skip + Cancel. One tap on a reason answers; the caller posts `reason_code` (+ `reason`) |

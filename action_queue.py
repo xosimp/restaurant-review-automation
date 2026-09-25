@@ -371,6 +371,12 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
     # for us apply. Only recommendations are presented.
     import rec_delivery
     for i in live:
+        # Where the item opens (nav.py) — the item itself, never the top of
+        # its module (Friction audit #2). On the action too, where Home's
+        # "Still open" rows read it.
+        i["nav"] = nav_for(i)
+        if isinstance(i.get("action"), dict):
+            i["action"]["nav"] = i["nav"]
         if is_task(i["key"]):
             i["answerable"] = False
         else:
@@ -387,3 +393,29 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
 
 
 _LEDGER_MODULE = {"reviews": "reviews", "inventory": "food", "labor": "labor", "ask": "ask", "issues": "ops"}
+
+
+def nav_for(item) -> str:
+    """The nav path (nav.py) one queue item opens: the issue, the stored
+    Ask proposal (reopened without a model call), the unsent week, the
+    request, the pending invoices — else its module."""
+    import nav
+    key = str(item.get("key") or "")
+    kind = item.get("kind")
+    ident = key.split(":", 1)[1] if ":" in key else ""
+    if kind == "issue" and ident.isdigit():
+        return nav.path("issue", ident)
+    if kind == "proposal" and ident.isdigit():
+        return nav.path("action", ident)
+    if kind in ("shift_request", "time_off") and ident.isdigit():
+        return nav.request(kind, ident)
+    if kind == "schedule" and key.startswith("schedule_unsent:") and ident.isdigit():
+        return nav.path("schedule", ident)
+    if kind == "schedule":
+        return "labor/schedule"
+    if kind == "invoice":
+        return "inventory/invoices"
+    if kind == "reviews":
+        return nav.path("reviews", filter="pending")
+    module = item.get("module")
+    return nav.path({"issues": "home", "food": "inventory"}.get(module, module or "home"))
