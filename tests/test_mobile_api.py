@@ -2944,6 +2944,15 @@ def test_home_pulse_overnight_and_publish_cta(client, db_path):
     assert item["action"] == "publish_replies"
 
 
+def test_home_carries_the_brief_headline_and_tone(client, db_path):
+    # Density #1: the phone's hero is web Home's H1 in its tone, not a slogan.
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    data = client.get("/mobile/api/home", headers=_auth_headers(token)).get_json()
+    assert data["brief"]["headline"]
+    assert data["brief"]["tone"] in ("bad", "warn", "neutral", "good")
+
+
 def test_home_needs_attention_leads_with_urgent_unanswered_reviews(client, db_path):
     rid = _restaurant(db_path)
     review_id = _add_review(db_path, rid)

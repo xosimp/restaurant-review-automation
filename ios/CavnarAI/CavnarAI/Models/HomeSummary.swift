@@ -87,6 +87,11 @@ struct HomeSummary: Codable {
     /// lenient; an older server omits them.
     var dataHealth: HomeDataHealth? = nil
     var freshnessUnavailableFlag: LenientFlag? = nil
+    /// Web Home's H1 — home_brief's headline and its tone — which the hero
+    /// renders in place of a slogan (density #1). Lenient; nil on an older
+    /// server or when the brief couldn't be built, and the hero keeps its
+    /// greeting line.
+    var brief: HomeBriefHead? = nil
 
     var freshnessUnavailable: Bool { freshnessUnavailableFlag?.value == true }
 
@@ -134,6 +139,7 @@ struct HomeSummary: Codable {
         case dataAsOf = "data_as_of"
         case dataHealth = "data_health"
         case freshnessUnavailableFlag = "freshness_unavailable"
+        case brief
     }
 
     /// "9/22/26" — `data_as_of` in the owner's format whether the server
@@ -300,6 +306,26 @@ struct HomeFreshnessList: Codable, Hashable {
 /// unknown, and whether an "All clear" may be drawn at all (home_brief:
 /// nothing flagged, a live source, none stale). Lenient: `stale` and
 /// `all_clear` are nil from an older server.
+/// `brief` on GET /mobile/api/home: `{headline, tone}` from home_brief —
+/// "2 things need you now" / "bad". Every field lenient; an unreadable
+/// headline decodes as nil and the hero keeps its greeting.
+struct HomeBriefHead: Codable, Hashable {
+    let headline: String?
+    let tone: String?
+
+    init(headline: String?, tone: String?) {
+        self.headline = headline; self.tone = tone
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try? decoder.container(keyedBy: CodingKeys.self)
+        headline = (try? c?.decodeIfPresent(String.self, forKey: .headline)) ?? nil
+        tone = (try? c?.decodeIfPresent(String.self, forKey: .tone)) ?? nil
+    }
+
+    enum CodingKeys: String, CodingKey { case headline, tone }
+}
+
 struct HomeMonitoring: Codable, Hashable {
     let countLive: Int?
     let stalestAsOf: String?
@@ -738,9 +764,10 @@ struct ModuleKPI: Codable, Hashable {
     let sublabel: String
 }
 
-/// "12/14 · replies · 86%" with a breathing dot — `tone` is "good", "warn"
-/// or nil (ember), decided server-side from the same thresholds the alerts
-/// use (mobile_api.py's _home_pulse).
+/// "12/14 · replies · 86%" with a breathing dot — `tone` is "bad" (a named
+/// threshold crossed: labor LABOR_OVER_TARGET_PTS over target, an urgent
+/// review owed a reply), "warn", "good" or nil (ember), decided server-side
+/// from the same thresholds the alerts use (mobile_api.py's _home_pulse).
 struct ModulePulse: Codable, Hashable {
     let value: String
     let label: String

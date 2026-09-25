@@ -13,11 +13,11 @@ struct HomeSectionHeader: View {
         HStack(alignment: .lastTextBaseline) {
             VStack(alignment: .leading, spacing: 5) {
                 Text(kicker.uppercased())
-                    .font(.cavnarBody(11.5, weight: 700))
+                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
                     .tracking(1.6)
                     .foregroundStyle(Color.cavnarEmber2)
                 Text(title)
-                    .font(.cavnarHeadline(19))
+                    .font(.cavnarHeadline(CavnarType.section))
                     .foregroundStyle(Color.cavnarInk)
             }
             Spacer(minLength: 12)

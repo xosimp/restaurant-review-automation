@@ -62,6 +62,19 @@ struct DSRScorecard: Decodable, Hashable {
 /// components in a 2×2 grid.
 struct DSRScorecardCard: View {
     let card: DSRScorecard
+    /// The night's Sales block, for the net and net-vs-budget beside the
+    /// verdict (the report's hero, density #2). Nil, or a block that isn't
+    /// ready, draws neither; a view without the budget (a manager) has no
+    /// `budget_net` and so no budget line.
+    var sales: DSRBlock? = nil
+
+    /// Net minus budget, in dollars — only when both were measured.
+    static func vsBudget(_ sales: DSRBlock?) -> Double? {
+        guard let s = sales, s.isReady, let net = s.metric("net"), let budget = s.metric("budget_net") else {
+            return nil
+        }
+        return net - budget
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -76,7 +89,8 @@ struct DSRScorecardCard: View {
                 Spacer(minLength: 8)
                 if let overall = card.overall {
                     VStack(alignment: .trailing, spacing: 2) {
-                        (Text("\(overall)").font(.cavnarNumber(30, weight: 600)).foregroundColor(.cavnarInk)
+                        // The screen's one 40pt figure: the status (§2).
+                        (Text("\(overall)").font(.cavnarNumber(CavnarType.heroNumber, weight: 600)).foregroundColor(.cavnarInk)
                          + Text("/100").font(.cavnarNumber(14)).foregroundColor(.cavnarInk3))
                         Text("OVERALL").font(.cavnarBody(10.5, weight: 700)).tracking(1.2)
                             .foregroundStyle(Color.cavnarInk3)
@@ -84,6 +98,22 @@ struct DSRScorecardCard: View {
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("Overall performance \(overall) out of 100")
                 }
+            }
+            if let s = sales, s.isReady, let net = s.metric("net") {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    (Text(DSRFormat.money(net)).font(.cavnarNumber(CavnarType.tileNumber, weight: 600))
+                        .foregroundColor(.cavnarInk)
+                     + Text(" net").font(.cavnarBody(CavnarType.secondary)).foregroundColor(.cavnarInk3))
+                        .cavnarSensitive()
+                    if let vs = Self.vsBudget(s) {
+                        Text("\(vs >= 0 ? "+" : "\u{2212}")\(DSRFormat.money(abs(vs))) vs budget")
+                            .font(.cavnarNumber(CavnarType.secondary, weight: 700))
+                            .foregroundStyle(vs >= 0 ? Color.cavnarGreen : Color.cavnarAmber)
+                            .cavnarSensitive()
+                    }
+                    Spacer(minLength: 0)
+                }
+                .accessibilityElement(children: .combine)
             }
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10, alignment: .top),
                                 GridItem(.flexible(), spacing: 10, alignment: .top)], spacing: 10) {

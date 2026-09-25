@@ -36,7 +36,8 @@ struct CavnarWaitingWidget: Widget {
         }
         .configurationDisplayName("Cavnar AI")
         .description("What's waiting on you, and last night's sales.")
-        .supportedFamilies([.systemSmall, .accessoryRectangular, .accessoryInline, .accessoryCircular])
+        .supportedFamilies([.systemSmall, .systemMedium, .accessoryRectangular, .accessoryInline,
+                            .accessoryCircular])
     }
 }
 
@@ -78,7 +79,92 @@ struct WaitingWidgetView: View {
             circular
         case .accessoryRectangular:
             rectangular
+        case .systemMedium:
+            medium
         default:
+            small
+        }
+    }
+
+    /// The verdict's dot colour — green good, amber warn, red bad; nil
+    /// for no verdict (no dot is drawn, never a guessed one).
+    static func toneColor(_ tone: String?) -> Color? {
+        switch tone {
+        case "good": return .cavnarGreen
+        case "warn": return .cavnarAmber
+        case "bad": return .cavnarRed
+        default: return nil
+        }
+    }
+
+    /// "LAST NIGHT · 9/24/26" with the verdict's dot beside it (density #50).
+    private func lastNightKicker(_ snap: WidgetSnapshot, date: String?) -> some View {
+        HStack(spacing: 5) {
+            if let dot = Self.toneColor(snap.nightTone) {
+                Circle().fill(dot).frame(width: 7, height: 7)
+                    .accessibilityHidden(true)
+            }
+            Text(date.map { "LAST NIGHT · \($0)" } ?? "LAST NIGHT")
+                .font(.cavnarBody(9.5, weight: 700))
+                .tracking(0.8)
+                .foregroundStyle(Color.cavnarInk3)
+        }
+    }
+
+    // MARK: Home Screen, medium
+
+    /// "3 things waiting · Last night: Good day 82/100 · $8,420" — the
+    /// waiting count on the left, the night's verdict with its score and
+    /// the net on the right (density #50).
+    @ViewBuilder
+    private var medium: some View {
+        if let snap {
+            HStack(alignment: .top, spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text((snap.restaurantName ?? "Cavnar AI").uppercased())
+                        .font(.cavnarBody(10.5, weight: 700))
+                        .tracking(1.2)
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .lineLimit(1)
+                    Text(waiting(snap) ?? "Open Cavnar AI to refresh")
+                        .font(.cavnarHeadline(18))
+                        .foregroundStyle(waiting(snap) != nil && snap.waitingCount > 0 ? Color.cavnarInk : Color.cavnarInk2)
+                        .lineLimit(3)
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 5) {
+                    if snap.nightIsCurrent(now: entry.date) {
+                        lastNightKicker(snap, date: snap.nightLabel)
+                        if let verdict = snap.verdictLine {
+                            Text(verdict)
+                                .font(.cavnarBody(14, weight: 700))
+                                .foregroundStyle(Color.cavnarInk)
+                                .lineLimit(2)
+                        }
+                        if let n = night(snap) {
+                            Text(n.net)
+                                .font(.cavnarNumber(22, weight: 600))
+                                .foregroundStyle(Color.cavnarInk)
+                                .privacySensitive()
+                            if let change = snap.changeLabel {
+                                Text(change)
+                                    .font(.cavnarNumber(12, weight: 700))
+                                    .foregroundStyle(snap.changeIsUp == false ? Color.cavnarRed : Color.cavnarGreen)
+                                    .privacySensitive()
+                            }
+                        }
+                    } else {
+                        Text("No report for last night yet")
+                            .font(.cavnarBody(12))
+                            .foregroundStyle(Color.cavnarInk3)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else {
             small
         }
     }
@@ -162,10 +248,7 @@ struct WaitingWidgetView: View {
                 Spacer(minLength: 0)
                 if let n = night(snap) {
                     let net = n.net
-                    Text(n.date.map { "LAST NIGHT · \($0)" } ?? "LAST NIGHT")
-                        .font(.cavnarBody(9.5, weight: 700))
-                        .tracking(0.8)
-                        .foregroundStyle(Color.cavnarInk3)
+                    lastNightKicker(snap, date: n.date)
                     Text(net)
                         .font(.cavnarNumber(22, weight: 600))
                         .foregroundStyle(Color.cavnarInk)

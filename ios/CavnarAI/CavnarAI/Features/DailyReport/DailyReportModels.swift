@@ -102,6 +102,17 @@ struct DSRSummary: Decodable, Hashable, Identifiable {
     /// record its actions as shown) just to draw a card (D3-8).
     var net: Double? = nil
     var lead: String? = nil
+    /// The night's verdict from the stored scorecard (dsr.access.summary,
+    /// density #1): "Good day", its tone ("good"/"warn"/"bad"), the 0–100
+    /// score, net minus budget for a view allowed the budget, and the first
+    /// risk this view may read. Every one optional — an older server, a
+    /// night with no scorecard, or a manager without the budget sends none,
+    /// and the card draws nothing for it.
+    var verdict: String? = nil
+    var tone: String? = nil
+    var overall: Int? = nil
+    var vsBudget: Double? = nil
+    var firstRisk: String? = nil
 
     var id: String { businessDate + "#" + String(version ?? 0) }
     var displayDate: String { label ?? CavnarDate.mdy(businessDate) }
@@ -109,8 +120,11 @@ struct DSRSummary: Decodable, Hashable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case label, version, status, provisional, missing, net, lead
+        case verdict, tone, overall
         case businessDate = "business_date"
         case finalizedAt = "finalized_at"
+        case vsBudget = "vs_budget"
+        case firstRisk = "first_risk"
     }
 
     init(from decoder: Decoder) throws {
@@ -124,6 +138,15 @@ struct DSRSummary: Decodable, Hashable, Identifiable {
         finalizedAt = try c.decodeIfPresent(String.self, forKey: .finalizedAt)
         net = try? c.decodeIfPresent(Double.self, forKey: .net)
         lead = try? c.decodeIfPresent(String.self, forKey: .lead)
+        verdict = try? c.decodeIfPresent(String.self, forKey: .verdict)
+        tone = try? c.decodeIfPresent(String.self, forKey: .tone)
+        if let i = try? c.decodeIfPresent(Int.self, forKey: .overall) {
+            overall = i
+        } else if let d = try? c.decodeIfPresent(Double.self, forKey: .overall) {
+            overall = Int(d.rounded())
+        }
+        vsBudget = try? c.decodeIfPresent(Double.self, forKey: .vsBudget)
+        firstRisk = try? c.decodeIfPresent(String.self, forKey: .firstRisk)
     }
 }
 
@@ -217,15 +240,24 @@ struct DSRReport: Decodable {
     /// Both views (9/25/26): numbers with direction, the manager's shift and
     /// operations, AI insights, tomorrow and yesterday's predictions graded.
     let kpis: [DSRKPI]
+    /// The owner's Top KPIs without the score's four components (the score
+    /// card above already carries them) — nil on an older server, and the
+    /// report falls back to `kpis`. See `topKPIs`.
+    var kpisHeadline: [DSRKPI]? = nil
     let operations: [DSRKPI]
     let shift: DSRShift?
     let insights: [DSRInsight]
     let tomorrow: DSRTomorrow?
     let yesterday: DSRYesterday?
 
+    /// What "Top KPIs" draws: `kpis_headline` when the server sent it,
+    /// else `kpis` (density #2).
+    var topKPIs: [DSRKPI] { kpisHeadline ?? kpis }
+
     enum CodingKeys: String, CodingKey {
         case view, label, fiscal, version, status, provisional, trigger, facts, narrative, checklist, versions, scorecard
         case kpis, operations, shift, insights, tomorrow, yesterday
+        case kpisHeadline = "kpis_headline"
         case businessDate = "business_date"
         case finalizedAt = "finalized_at"
     }
@@ -249,6 +281,7 @@ struct DSRReport: Decodable {
         versions = (try? c.decodeIfPresent([DSRVersion].self, forKey: .versions)) ?? []
         scorecard = try? c.decodeIfPresent(DSRScorecard.self, forKey: .scorecard)
         kpis = (try? c.decodeIfPresent([DSRKPI].self, forKey: .kpis)) ?? []
+        kpisHeadline = (try? c.decodeIfPresent([DSRKPI].self, forKey: .kpisHeadline)) ?? nil
         operations = (try? c.decodeIfPresent([DSRKPI].self, forKey: .operations)) ?? []
         shift = try? c.decodeIfPresent(DSRShift.self, forKey: .shift)
         insights = (try? c.decodeIfPresent([DSRInsight].self, forKey: .insights)) ?? []

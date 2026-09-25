@@ -6,6 +6,24 @@ struct ReviewsAnalyticsSection: View {
     @State private var selectedTopic: TopicWeekRow?
     /// A review a diagnosis cites, tapped open.
     @State private var evidenceTarget: EvidenceTarget?
+    /// The caveat banners behind the one-line summary (density #34).
+    @State private var showingCaveats = false
+
+    /// One line for every caveat on the read — nil when there is none.
+    private var caveatSummary: String? {
+        Self.caveatSummary(unverified: !viewModel.unsupportedFigures.isEmpty || !viewModel.unsupportedNames.isEmpty
+                                        || viewModel.causesUnverified,
+                           stale: viewModel.insightIsStale)
+    }
+
+    static func caveatSummary(unverified: Bool, stale: Bool) -> String? {
+        switch (unverified, stale) {
+        case (true, true): return "Some of this read is unverified, and it is an older read."
+        case (true, false): return "Some of this read couldn\u{2019}t be checked against your data."
+        case (false, true): return "This is an older read."
+        default: return nil
+        }
+    }
 
     struct EvidenceTarget: Hashable {
         let reviewID: Int
@@ -35,24 +53,50 @@ struct ReviewsAnalyticsSection: View {
                 }
                 .pickerStyle(.segmented)
 
-                // How you compare — the Benchmark Engine's card (#23).
-                HowYouCompareCard(module: "reviews")
-
-                // Raised above the analytics when the backend could not tie
-                // every figure in the AI passage back to this restaurant's
-                // own data — see ai_guard.verify_figures.
-                if !viewModel.unsupportedFigures.isEmpty {
-                    CavnarCaveat.unverifiedFigures(viewModel.unsupportedFigures)
-                }
-                if !viewModel.unsupportedNames.isEmpty {
-                    CavnarCaveat.unverifiedNames(viewModel.unsupportedNames)
-                }
-                // A reason the read gave that no stored diagnosis backs (H2).
-                if viewModel.causesUnverified {
-                    CavnarCaveat.unverifiedCauses(viewModel.unsupportedCauses)
-                }
-                if viewModel.insightIsStale {
-                    CavnarCaveat.olderRead(asOf: viewModel.insightAsOf)
+                // The restaurant's own read first, its money figure next,
+                // the charts, and How you compare LAST (density #34) — a
+                // peer's number before your own read the wrong way round.
+                // The up-to-four caveat banners that stood above the read
+                // are one line now, with the banners behind "Why?".
+                if let line = caveatSummary {
+                    Button {
+                        Haptic.light()
+                        withAnimation(.easeOut(duration: 0.2)) { showingCaveats.toggle() }
+                    } label: {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Image(systemName: "exclamationmark.circle")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Color.cavnarAmber)
+                            Text(line)
+                                .font(.cavnarBody(CavnarType.caption, weight: 600))
+                                .foregroundStyle(Color.cavnarInk2)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(showingCaveats ? "Hide" : "Why?")
+                                .font(.cavnarBody(CavnarType.caption, weight: 700))
+                                .foregroundStyle(Color.cavnarEmber2)
+                            Spacer(minLength: 0)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    if showingCaveats {
+                        // Raised when the backend could not tie every figure
+                        // in the AI passage back to this restaurant's own
+                        // data — see ai_guard.verify_figures.
+                        if !viewModel.unsupportedFigures.isEmpty {
+                            CavnarCaveat.unverifiedFigures(viewModel.unsupportedFigures)
+                        }
+                        if !viewModel.unsupportedNames.isEmpty {
+                            CavnarCaveat.unverifiedNames(viewModel.unsupportedNames)
+                        }
+                        // A reason the read gave that no stored diagnosis backs (H2).
+                        if viewModel.causesUnverified {
+                            CavnarCaveat.unverifiedCauses(viewModel.unsupportedCauses)
+                        }
+                        if viewModel.insightIsStale {
+                            CavnarCaveat.olderRead(asOf: viewModel.insightAsOf)
+                        }
+                    }
                 }
 
                 // The AI read itself. It was fetched on every open and then
@@ -88,15 +132,16 @@ struct ReviewsAnalyticsSection: View {
                 // that, and it renders only when a diagnosis actually exists:
                 // an owner whose reviews do not yet support a cause sees
                 // nothing here, never a cause produced to fill the space.
-                if let diagnosis = viewModel.diagnosis {
-                    diagnosisCard(diagnosis)
-                }
                 // The whole restaurant's revenue range, from the move in its
                 // all-time rating — its own block, never inside a complaint's
                 // card, where it read as what that complaint costs (M-19).
+                // The tab's money figure, right under the read (density #34).
                 if let m = viewModel.revenueAtRisk, m.available,
                    let low = m.monthlyLow, let high = m.monthlyHigh {
                     revenueBlock(low: low, high: high, m: m)
+                }
+                if let diagnosis = viewModel.diagnosis {
+                    diagnosisCard(diagnosis)
                 }
 
                 if let performance = viewModel.performance {
@@ -125,6 +170,10 @@ struct ReviewsAnalyticsSection: View {
                 } else if viewModel.isLoading {
                     trendChartSkeleton
                 }
+
+                // How you compare — the Benchmark Engine's card (#23) —
+                // after the restaurant's own read (density #34).
+                HowYouCompareCard(module: "reviews")
             }
             .padding(20)
         }

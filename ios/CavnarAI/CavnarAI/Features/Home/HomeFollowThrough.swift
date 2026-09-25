@@ -967,7 +967,18 @@ final class HomeFollowThroughViewModel {
 // MARK: - Section
 
 struct HomeFollowThrough: View {
+    /// Which half of the follow-through this instance draws (density #4).
+    /// `.work` stays open on Home: what is still open, check-ins that ask a
+    /// question, the loss and cross-module findings (both carry Done / Not
+    /// for us — DS §12 keeps decisions out of collapsed sections), and the
+    /// close-out. `.results` is what was measured, drawn inside Home's one
+    /// collapsed "Results" disclosure. `.worth` is the Worth card alone,
+    /// which lives in the measured-results sheet now instead of restating
+    /// the band on Home. `.all` is the old single stack.
+    enum Part { case all, work, results, worth }
+
     let viewModel: HomeFollowThroughViewModel
+    var part: Part = .all
     /// False when HomeView renders the close-out in the day's slot (after 8pm).
     var showsCloseOut: Bool = true
     /// When /mobile/api/home last answered (HomeViewModel.lastLoadedAt).
@@ -986,73 +997,19 @@ struct HomeFollowThrough: View {
         !viewModel.actions.isEmpty || !viewModel.goals.isEmpty || !viewModel.results.isEmpty
     }
 
+    private var drawsWork: Bool { part == .all || part == .work }
+    private var drawsResults: Bool { part == .all || part == .results }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            if !viewModel.actions.isEmpty {
-                HomeSectionHeader(kicker: "Follow-through", title: "Still open",
-                                  trailing: "\(viewModel.actions.count)")
-                VStack(spacing: 0) {
-                    ForEach(Array(viewModel.actions.enumerated()), id: \.element.id) { index, item in
-                        actionRow(item, showsDivider: index < viewModel.actions.count - 1)
-                    }
-                }
-                .cavnarCard()
+            if drawsWork {
+                workSections
             }
-
-            if !viewModel.goals.isEmpty {
-                HomeSectionHeader(kicker: "Where you're heading", title: "Goals")
-                VStack(spacing: 0) {
-                    ForEach(Array(viewModel.goals.enumerated()), id: \.element.id) { index, goal in
-                        lineRow(goal.summary ?? [goal.label, goal.stateLabel].compactMap { $0 }.joined(separator: ": "),
-                                tone: goal.tone,
-                                showsDivider: index < viewModel.goals.count - 1)
-                    }
-                }
-                .cavnarCard()
+            if drawsResults {
+                resultSections
             }
-
-            if !viewModel.results.isEmpty || !viewModel.checkInsDue.isEmpty {
-                HomeSectionHeader(kicker: "Measured", title: "What your changes did")
-                if !viewModel.results.isEmpty {
-                    VStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(viewModel.results.enumerated()), id: \.element.id) { index, r in
-                            resultRow(r, showsDivider: index < viewModel.results.count - 1)
-                        }
-                        if let caveat = viewModel.caveat {
-                            CavnarCaveat(title: "Before and after, not proof", detail: caveat)
-                                .padding(.top, 10)
-                        }
-                        recordLink.padding(.top, 10)
-                    }
-                    .cavnarCard()
-                }
-                // A result that landed asks whether the owner made the
-                // change — the answer changes how the result reads.
-                ForEach(viewModel.checkInsDue) { outcome in
-                    RecCheckInCard(outcome: outcome, surface: "home") { await viewModel.load() }
-                }
-            }
-
-            goodNewsCard
-
-            if let worked = viewModel.whatWorked {
-                WhatWorkedCard(whatWorked: worked)
-            }
-
-            valueCard
-
-            if let month = viewModel.month {
-                HomeMonthlyReviewCard(month: month)
-            }
-
-            connectionsCard
-
-            lossCard
-
-            // Before 8pm the handoff sits here, at the end; after 8pm
-            // HomeView puts it in the day's slot instead (HomeCloseOutCard).
-            if showsCloseOut {
-                HomeCloseOutCard(viewModel: viewModel)
+            if part == .worth {
+                valueCard
             }
         }
         .task(id: homeLoadedAt) {
@@ -1061,6 +1018,106 @@ struct HomeFollowThrough: View {
         }
         .sheet(isPresented: $showingRecord, onDismiss: { Task { await viewModel.load() } }) {
             RecommendationHistoryView()
+        }
+    }
+
+    /// True when `.results` has anything to draw — HomeView hides the
+    /// Results disclosure's body rows when not, and its closed row still
+    /// says what was measured.
+    static func hasResults(_ vm: HomeFollowThroughViewModel) -> Bool {
+        !vm.goals.isEmpty || !vm.results.isEmpty || !vm.goodNews.isEmpty
+            || vm.whatWorked != nil || vm.month != nil
+    }
+
+    /// The work half — always open on Home.
+    @ViewBuilder
+    private var workSections: some View {
+        if !viewModel.actions.isEmpty {
+            HomeSectionHeader(kicker: "Follow-through", title: "Still open",
+                              trailing: "\(viewModel.actions.count)")
+            VStack(spacing: 0) {
+                ForEach(Array(viewModel.actions.enumerated()), id: \.element.id) { index, item in
+                    actionRow(item, showsDivider: index < viewModel.actions.count - 1)
+                }
+            }
+            .cavnarCard()
+        }
+
+        // A result that landed asks whether the owner made the change —
+        // a question, so it stays with the work, never inside a collapsed
+        // section.
+        if part == .work {
+            ForEach(viewModel.checkInsDue) { outcome in
+                RecCheckInCard(outcome: outcome, surface: "home") { await viewModel.load() }
+            }
+        }
+
+        connectionsCard
+
+        lossCard
+
+        // Before 8pm the handoff sits here, at the end; after 8pm
+        // HomeView puts it in the day's slot instead (HomeCloseOutCard).
+        if showsCloseOut {
+            HomeCloseOutCard(viewModel: viewModel)
+        }
+    }
+
+    /// The measured half — inside Home's collapsed Results. What got
+    /// better is one list with what the owner's changes did (one
+    /// "measured" card, not two), and Worth moved to the results sheet.
+    @ViewBuilder
+    private var resultSections: some View {
+        if !viewModel.goals.isEmpty {
+            HomeSectionHeader(kicker: "Where you're heading", title: "Goals")
+            VStack(spacing: 0) {
+                ForEach(Array(viewModel.goals.enumerated()), id: \.element.id) { index, goal in
+                    lineRow(goal.summary ?? [goal.label, goal.stateLabel].compactMap { $0 }.joined(separator: ": "),
+                            tone: goal.tone,
+                            showsDivider: index < viewModel.goals.count - 1)
+                }
+            }
+            .cavnarCard()
+        }
+
+        if !viewModel.results.isEmpty || !viewModel.goodNews.isEmpty
+            || (part == .all && !viewModel.checkInsDue.isEmpty) {
+            HomeSectionHeader(kicker: "Measured", title: "What your changes did")
+            if !viewModel.results.isEmpty || !viewModel.goodNews.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(viewModel.results.enumerated()), id: \.element.id) { index, r in
+                        resultRow(r, showsDivider: index < viewModel.results.count - 1)
+                    }
+                    if let caveat = viewModel.caveat, !viewModel.results.isEmpty {
+                        CavnarCaveat(title: "Before and after, not proof", detail: caveat)
+                            .padding(.top, 10)
+                    }
+                    // What got better, merged in (density #4): the same
+                    // measured story, one card instead of two.
+                    goodNewsRows(leadsCard: viewModel.results.isEmpty)
+                    if !viewModel.results.isEmpty {
+                        recordLink.padding(.top, 10)
+                    }
+                }
+                .cavnarCard()
+            }
+            if part == .all {
+                ForEach(viewModel.checkInsDue) { outcome in
+                    RecCheckInCard(outcome: outcome, surface: "home") { await viewModel.load() }
+                }
+            }
+        }
+
+        if let worked = viewModel.whatWorked {
+            WhatWorkedCard(whatWorked: worked)
+        }
+
+        if part == .all {
+            valueCard
+        }
+
+        if let month = viewModel.month {
+            HomeMonthlyReviewCard(month: month)
         }
     }
 
@@ -1111,11 +1168,20 @@ struct HomeFollowThrough: View {
     /// What got better. Everything else on this screen looks for trouble —
     /// a restaurant that quietly improved used to hear exactly the same
     /// from Cavnar AI as one that did not.
+    ///
+    /// Drawn inside "What your changes did" (density #4) under an "Also
+    /// got better" kicker — or leading that card when there is no result
+    /// of the owner's own yet.
     @ViewBuilder
-    private var goodNewsCard: some View {
+    private func goodNewsRows(leadsCard: Bool) -> some View {
         if !viewModel.goodNews.isEmpty {
-            HomeSectionHeader(kicker: "Measured", title: "What got better")
             VStack(alignment: .leading, spacing: 0) {
+                Text(leadsCard ? "WHAT GOT BETTER" : "ALSO GOT BETTER")
+                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
+                    .tracking(1.4)
+                    .foregroundStyle(Color.cavnarInk3)
+                    .padding(.top, leadsCard ? 0 : 14)
+                    .padding(.bottom, 2)
                 ForEach(Array(viewModel.goodNews.prefix(4).enumerated()), id: \.element.id) { index, item in
                     VStack(spacing: 0) {
                         HStack(alignment: .top, spacing: 12) {
@@ -1145,7 +1211,6 @@ struct HomeFollowThrough: View {
                         .padding(.top, 10)
                 }
             }
-            .cavnarCard()
         }
     }
 

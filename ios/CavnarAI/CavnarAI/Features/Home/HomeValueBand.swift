@@ -84,7 +84,7 @@ struct HomeValueBand: View {
                     Text(figure < 0 ? "\u{2212}$" : "$")
                     CavnarAnimatableNumber(value: animatedTotal, format: { Self.digits(abs(Int($0.rounded()))) })
                 }
-                .font(.cavnarNumber(46, weight: 600))
+                .font(.cavnarNumber(CavnarType.cardNumber, weight: 600))
                 .foregroundStyle(figureTone)
                 .cavnarNumberGlow(figureTone)
                 .cavnarSensitive()

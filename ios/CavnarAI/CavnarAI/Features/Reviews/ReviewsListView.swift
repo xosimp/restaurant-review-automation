@@ -162,6 +162,37 @@ struct ReviewsListView: View {
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
                                 .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 14, trailing: 16))
+                            // What the reviews are about, in one line
+                            // (density #32) — the server's why line (the
+                            // rating's move, the stored top complaint) on
+                            // any chip; an older server's fallback reads the
+                            // newest reviews the "All" list holds. A tap
+                            // opens the urgent ones, or the analysis.
+                            if let why = ReviewsWhyLine.make(urgent: stats.urgent, server: viewModel.why)
+                                ?? (viewModel.filter == .all
+                                    ? ReviewsWhyLine.make(urgent: stats.urgent, reviews: viewModel.reviews) : nil) {
+                                Button {
+                                    Haptic.light()
+                                    withAnimation(.easeOut(duration: 0.2)) {
+                                        if stats.urgent > 0 { viewModel.filter = .urgent } else { subTab = .analytics }
+                                    }
+                                } label: {
+                                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                        HomeMixedText.make(why, size: CavnarType.secondary, weight: 600,
+                                                           color: stats.urgent > 0 ? .cavnarRed : .cavnarInk2)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                        Text(stats.urgent > 0 ? "Open \u{2192}" : "See why \u{2192}")
+                                            .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                                            .foregroundStyle(Color.cavnarEmber2)
+                                        Spacer(minLength: 0)
+                                    }
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 12, trailing: 16))
+                            }
                         }
                     }
                     Section {

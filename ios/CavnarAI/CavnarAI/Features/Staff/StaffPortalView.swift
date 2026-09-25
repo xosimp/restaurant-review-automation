@@ -105,6 +105,11 @@ struct StaffPortalView: View {
         if let shifts, shifts.published == false {
             emptyCard("No schedule has been posted yet. It'll show up here as soon as your manager publishes one.")
         } else if let week = shifts?.week {
+            // "When do I work next?" answered first (density #13), with
+            // the swap / can't-make-it actions on it — then the week.
+            if let next = Self.nextShift(week) {
+                nextShiftCard(next.day, when: next.when)
+            }
             sectionLabel("NEXT 7 DAYS")
             ForEach(week) { day in
                 dayRow(day)
@@ -114,6 +119,57 @@ struct StaffPortalView: View {
         } else {
             loadingCard("Loading your shifts…")
         }
+    }
+
+    /// The first day in the week with a shift, and how to say when it is:
+    /// "Today", "Tomorrow" (the day after today in the list), or the
+    /// weekday. Nil when every day is off.
+    static func nextShift(_ week: [StaffWeekDay]) -> (day: StaffWeekDay, when: String)? {
+        guard let i = week.firstIndex(where: { !$0.off && $0.shift != nil }) else { return nil }
+        let day = week[i]
+        if day.isToday { return (day, "Today") }
+        if i > 0, week[i - 1].isToday { return (day, "Tomorrow") }
+        return (day, day.weekday)
+    }
+
+    private func nextShiftCard(_ day: StaffWeekDay, when: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("NEXT SHIFT")
+                .font(.cavnarBody(CavnarType.kicker, weight: 700))
+                .kerning(1.4)
+                .foregroundStyle(Color.cavnarEmber2)
+            if let shift = day.shift {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(when)
+                        .font(.cavnarHeadline(CavnarType.section))
+                        .foregroundStyle(Color.cavnarInk)
+                    Text(shift.timeRange)
+                        .font(.cavnarNumber(CavnarType.tileNumber, weight: 600))
+                        .foregroundStyle(Color.cavnarInk)
+                }
+                if let role = shift.role, !role.isEmpty {
+                    Text(role)
+                        .font(.cavnarBody(CavnarType.body))
+                        .foregroundStyle(Color.cavnarInk2)
+                }
+                if shift.shiftStart != nil {
+                    HStack(spacing: 18) {
+                        Button("Swap with a colleague") { changing = ShiftChange(day: day, mode: .swap) }
+                        Button("Can\u{2019}t make it") { changing = ShiftChange(day: day, mode: .drop) }
+                    }
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .buttonStyle(.plain)
+                    .padding(.top, 2)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(Color.cavnarPaper2, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.cavnarEmber.opacity(0.35), lineWidth: 1))
+        .padding(.bottom, 8)
+        .accessibilityElement(children: .contain)
     }
 
     private func dayRow(_ day: StaffWeekDay) -> some View {

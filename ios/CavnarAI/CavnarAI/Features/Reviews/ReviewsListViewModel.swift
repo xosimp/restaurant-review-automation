@@ -307,8 +307,18 @@ final class ReviewsListViewModel {
     /// The header figures. Separate from the list so a paging request
     /// doesn't re-fetch them.
     func loadStats() async {
-        stats = try? await client.send("/mobile/api/review-stats", hapticOnError: false)
+        async let s: ReviewStats? = try? client.send("/mobile/api/review-stats", hapticOnError: false)
+        // The why line's server half (density #32): the rating's move and
+        // the stored top complaint. Nil on an older server — the line then
+        // reads from the reviews on the phone alone.
+        async let w: ReviewsWhyPayload? = try? client.send("/mobile/api/reviews/why-line", hapticOnError: false)
+        let (stats, why) = await (s, w)
+        self.stats = stats
+        self.why = why
     }
+
+    /// GET /mobile/api/reviews/why-line, when the server has it.
+    var why: ReviewsWhyPayload?
 
     /// Called after a detail screen completes an approve/skip so the list
     /// reflects the new status in place — load() fetches every review

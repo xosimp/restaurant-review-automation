@@ -136,6 +136,41 @@ Home's Needs attention, the Results row. `.hb-kicker` is the page kicker
 above the H1 only. No `h3` of its own, no ember kicker inside a card. Headings get
 `text-wrap: balance` where supported; body copy uses `line-height:1.5–1.65`.
 
+### iOS: `CavnarType`, and one 40pt figure per screen
+
+iOS names the scale (`CavnarType` in `Font+Cavnar.swift`). A screen reaches
+for a token, not a literal; the face stays the helper's (`cavnarBody` words,
+`cavnarHeadline` titles, `cavnarNumber` figures), so Dynamic Type still maps
+each size to its text style. The census that prompted it (9/25/26) found 18
+body sizes, 4 kicker sizes and hero figures from 27 to 56pt.
+
+| Token | pt | Use |
+|---|---|---|
+| `kicker` | 11.5 | uppercase tracked label above a section or figure |
+| `caption` | 12.5 | meta, timestamps, basis lines |
+| `secondary` | 13.5 | a line under a figure or title; helper copy |
+| `body` | 15 | body copy, row titles |
+| `emphasis` | 16.5 | the one sentence a card opens on |
+| `section` | 21 | a section title (Clash) — `HomeSectionHeader` |
+| `tileNumber` | 22 | a stat-strip or grid tile figure |
+| `cardNumber` | 30 | a card's own figure |
+| `heroNumber` | 40 | the screen's status figure |
+
+**One 40pt figure per screen, and it is the status figure** — the number
+that answers "are we OK?" in three seconds: labor % against target, food
+cost % against target, the report's score, the owner's rating against the
+market on Intel. Anything else that wants to be big is `cardNumber` or
+smaller. A measured-results figure is never the page's largest number
+(Home's value band is `cardNumber`, inside the collapsed Results).
+
+Migrated so far (density round, 9/25/26): Home (section headers, Results,
+last-night card, recommendation rows, pulse strip, module tiles), the daily
+report's score card and titled cards, Food Cost Analytics' hero and stat
+strip, Labor's groups and schedule block, Intel's hero line, Reviews' why
+line, Marketing's outcome row, Notifications' summary, the staff portal's
+next shift. Other screens move module by module; a new screen starts on
+the tokens.
+
 ---
 
 ## 3. Spacing & radius
