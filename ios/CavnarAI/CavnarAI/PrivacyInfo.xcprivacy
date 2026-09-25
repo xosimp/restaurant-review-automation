@@ -125,8 +125,10 @@
 	<!-- Required Reason API usage — the two categories this app's own
 	     code actually touches (checked directly, not assumed):
 	       - UserDefaults: AppPreferences, the Face ID/biometric-lock
-	         preference, etc. — always this app's own keys, never an App
-	         Group, never reading anything written by another app -> CA92.1
+	         preference, etc. — this app's own keys -> CA92.1; and the
+	         widget snapshot (Shared/WidgetSnapshot.swift) in the
+	         group.ai.cavnar.CavnarAI App Group, read only by this app's own
+	         CavnarWidgets extension -> 1C8F.1
 	       - File Timestamp: SecureCache reads the modification date of
 	         cache files it wrote itself, inside the app's own container,
 	         never a user-picked file -> C617.1 -->
@@ -138,6 +140,7 @@
 			<key>NSPrivacyAccessedAPITypeReasons</key>
 			<array>
 				<string>CA92.1</string>
+				<string>1C8F.1</string>
 			</array>
 		</dict>
 		<dict>

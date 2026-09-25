@@ -149,6 +149,24 @@ struct ModulesGridView: View {
             // one that's drawn; the system's large top-left title doubled it.
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { cavnarTitleToolbar("Modules") }
+            // Find or ask anything — the command sheet (Friction audit #47).
+            .toolbar {
+                cavnarToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        Haptic.light()
+                        CommandSheetRequest.request()
+                    } label: {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Color.cavnarEmber)
+                            .cavnarToolbarIconGlass()
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Find or ask")
+                }
+            }
             .task {
                 await viewModel.load()
                 pushToPendingModuleIfDeepLinked()

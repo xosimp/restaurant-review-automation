@@ -12,6 +12,12 @@ struct FoodCostQuickEntryView: View {
     @State private var analyticsViewModel = FoodCostAnalyticsViewModel()
     @State private var subTab: FoodCostSubTab = .tracker
     @State private var showSuccessToast = false
+    /// The action row's sheet (Friction audit #28).
+    @State private var actionSheet: FoodCostAction?
+
+    private func openSheet(_ action: FoodCostAction) {
+        actionSheet = action
+    }
 
     var body: some View {
         // No NavigationStack of its own — pushed inside Home's or the
@@ -20,8 +26,14 @@ struct FoodCostQuickEntryView: View {
             CavnarSegmentedControl(selection: $subTab, options: FoodCostSubTab.allCases) { $0.rawValue }
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
-                .padding(.bottom, 16)
+                .padding(.bottom, 12)
                 .cavnarRibbonHeaderAnchor()
+
+            // The daily jobs first, on both sub-tabs — they used to sit
+            // under ~10 charts on Analytics (Friction audit #28, U3-7).
+            FoodCostActionRow(open: { openSheet($0) })
+                .padding(.horizontal, 16)
+                .padding(.bottom, 14)
 
             if subTab == .tracker {
                 tracker
@@ -69,6 +81,20 @@ struct FoodCostQuickEntryView: View {
             }
         }
         .overlay(alignment: .top) { successToast }
+        .sheet(item: $actionSheet) { action in
+            switch action {
+            case .scan(let camera): InvoiceScanSheet(startWithCamera: camera)
+            case .count: CountSheetView()
+            case .order: SupplierOrderSheet()
+            case .recipes: RecipeDraftsSheet()
+            case .margins: MenuMarginsSheet()
+            }
+        }
+        // "inventory/invoices", "inventory/order", "inventory/count" — from
+        // a quick action, a shortcut, a card or the command sheet.
+        .onNavSection("inventory") { path in
+            if let action = FoodCostAction(path: path) { actionSheet = action }
+        }
         .task {
             if let restaurantId = sessionStore.currentUser?.restaurantId {
                 analyticsViewModel.configureCaching(restaurantId: restaurantId)

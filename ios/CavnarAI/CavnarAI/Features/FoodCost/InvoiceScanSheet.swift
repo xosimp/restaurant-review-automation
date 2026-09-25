@@ -136,11 +136,46 @@ final class InvoiceScanViewModel {
     func scan(_ item: PhotosPickerItem) async {
         errorMessage = nil
         appliedCount = nil
+        extraPagesNote = nil
         isScanning = true
         defer { isScanning = false }
         do {
-            guard let raw = try await item.loadTransferable(type: Data.self),
-                  let jpeg = await Task.detached(priority: .userInitiated, operation: {
+            guard let raw = try await item.loadTransferable(type: Data.self) else {
+                errorMessage = "That photo couldn't be read. Try another."
+                return
+            }
+            await upload(raw)
+        } catch is CancellationError {
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Pages from the document camera (Friction audit #28). The server reads
+    /// one image per invoice, so the first page is read and the owner is
+    /// told plainly when there were more — never silently dropped.
+    func scan(pages: [UIImage]) async {
+        guard let first = pages.first else { return }
+        errorMessage = nil
+        appliedCount = nil
+        extraPagesNote = pages.count > 1
+            ? "Read page 1 of \(pages.count). Scan each further page on its own so its lines are read too."
+            : nil
+        isScanning = true
+        defer { isScanning = false }
+        guard let raw = first.jpegData(compressionQuality: 0.9) else {
+            errorMessage = "That scan couldn't be read. Try again."
+            return
+        }
+        await upload(raw)
+    }
+
+    /// Set when a camera scan had pages beyond the first.
+    var extraPagesNote: String?
+
+    private func upload(_ raw: Data) async {
+        do {
+            guard let jpeg = await Task.detached(priority: .userInitiated, operation: {
                       Self.downscaledJPEG(raw)
                   }).value else {
                 errorMessage = "That photo couldn't be read. Try another."
@@ -244,8 +279,13 @@ final class InvoiceScanViewModel {
 }
 
 struct InvoiceScanSheet: View {
+    /// Open straight onto the camera — the Scan invoice quick action, the
+    /// App Shortcut and Food Cost's action row (Friction audit #28).
+    var startWithCamera: Bool = false
     @State private var viewModel = InvoiceScanViewModel()
     @State private var pickerItem: PhotosPickerItem?
+    @State private var showingCamera = false
+    @State private var didAutoOpenCamera = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -299,6 +339,19 @@ struct InvoiceScanSheet: View {
                     pickerItem = nil
                 }
             }
+            .fullScreenCover(isPresented: $showingCamera) {
+                DocumentCameraView { pages in
+                    showingCamera = false
+                    guard !pages.isEmpty else { return }
+                    Task { await viewModel.scan(pages: pages) }
+                }
+                .ignoresSafeArea()
+            }
+            .onAppear {
+                guard startWithCamera, !didAutoOpenCamera, DocumentCameraView.isAvailable else { return }
+                didAutoOpenCamera = true
+                showingCamera = true
+            }
         }
     }
 
@@ -312,15 +365,45 @@ struct InvoiceScanSheet: View {
                 .font(.cavnarBody(14))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
-            PhotosPicker(selection: $pickerItem, matching: .images) {
-                HStack(spacing: 8) {
-                    Image(systemName: "doc.text.viewfinder").font(.system(size: 13, weight: .semibold))
-                    Text(viewModel.invoice == nil ? "Choose invoice photo" : "Scan another")
+            // The camera is the way in; the photo library is the fallback
+            // (and the only way on a device without a camera).
+            if DocumentCameraView.isAvailable {
+                Button {
+                    Haptic.light()
+                    showingCamera = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "camera.viewfinder").font(.system(size: 13, weight: .semibold))
+                        Text(viewModel.invoice == nil ? "Scan with camera" : "Scan another")
+                    }
+                    .frame(maxWidth: .infinity)
                 }
-                .frame(maxWidth: .infinity)
+                .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isScanning))
+                .disabled(viewModel.isScanning)
+                PhotosPicker(selection: $pickerItem, matching: .images) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "photo.on.rectangle").font(.system(size: 13, weight: .semibold))
+                        Text("Choose a photo instead")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarSecondaryButtonStyle())
+                .disabled(viewModel.isScanning)
+            } else {
+                PhotosPicker(selection: $pickerItem, matching: .images) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "doc.text.viewfinder").font(.system(size: 13, weight: .semibold))
+                        Text(viewModel.invoice == nil ? "Choose invoice photo" : "Scan another")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isScanning))
+                .disabled(viewModel.isScanning)
             }
-            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isScanning))
-            .disabled(viewModel.isScanning)
+            if let note = viewModel.extraPagesNote {
+                HomeMixedText.make(note, size: 13.5, color: .cavnarAmber)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .cavnarCard()
     }

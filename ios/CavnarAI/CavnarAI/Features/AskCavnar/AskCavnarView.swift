@@ -839,9 +839,18 @@ private struct AskFeedbackRow: View {
 /// The assistant can compose and explain an action but never perform one
 /// that leaves the building — this card is the confirmation step, and
 /// confirming calls the same endpoint the app's own button uses.
-private struct ProposalCard: View {
+/// Also the command sheet's confirm card (Features/Command) — one card for
+/// every proposal, wherever it was proposed.
+struct ProposalCard: View {
     let proposal: AskProposal
     var viewModel: AskCavnarViewModel?
+
+    // Spelled out: the @State members below would make the synthesized
+    // initializer private to this file.
+    init(proposal: AskProposal, viewModel: AskCavnarViewModel? = nil) {
+        self.proposal = proposal
+        self.viewModel = viewModel
+    }
 
     // `Phase`, not `State`: a nested type named State shadows SwiftUI's
     // @State wrapper and the file stops compiling.

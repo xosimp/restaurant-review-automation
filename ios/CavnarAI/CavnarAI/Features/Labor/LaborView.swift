@@ -52,6 +52,13 @@ struct LaborView: View {
                                 // background/border) — see heroCard's own
                                 // comment.
                                 heroCard(stats)
+                                // What staff are waiting on, answered in
+                                // place, before any chart (Friction #18).
+                                LaborWaitingOnYou(viewModel: viewModel, setupViewModel: setupViewModel) {
+                                    setupViewModel.requestsExpanded = true
+                                    scrollToReveal(Self.requestsID, proxy: proxy)
+                                }
+                                .id(Self.waitingID)
                                 // Why labor ran over, and the check that
                                 // would confirm it — answerable (#25).
                                 if let diagnosis = analyticsViewModel.diagnosis {
@@ -59,6 +66,7 @@ struct LaborView: View {
                                 }
                                 if let result = viewModel.scheduleResult, result.ok {
                                     scheduleResultSection(result)
+                                        .id(Self.scheduleID)
                                 }
                                 if let error = viewModel.scheduleError {
                                     Text(error)
@@ -149,6 +157,27 @@ struct LaborView: View {
                 // — the other standard half of keyboard dismissal, next to
                 // AvailabilityManagerSection's tap-to-dismiss.
                 .scrollDismissesKeyboard(.immediately)
+                // Send pinned to the bottom once a week is drafted, instead
+                // of under the whole table (Friction #19, U3-9).
+                .safeAreaInset(edge: .bottom) {
+                    if subTab == .overview, let result = viewModel.scheduleResult, result.ok,
+                       result.historyId != nil {
+                        LaborSendBar(issues: (result.review?.hardCount ?? 0) + (result.review?.softCount ?? 0),
+                                     unsaved: viewModel.hasUnsavedFixes || viewModel.optimizerUnsaved,
+                                     onReview: {
+                                         withAnimation(.easeOut(duration: 0.3)) {
+                                             proxy.scrollTo(Self.reviewID, anchor: .top)
+                                         }
+                                     },
+                                     onSend: { showingPublishSchedule = true })
+                    }
+                }
+                // Where a card, a push or the command sheet pointed inside
+                // Labor ("labor/requests", "request/time_off-12",
+                // "labor/schedule").
+                .onNavSection("labor") { path in
+                    openSection(path, proxy: proxy)
+                }
                 .cavnarEmberRefreshable {
                     await viewModel.load()
                     await viewModel.loadAvailability()
@@ -622,6 +651,33 @@ struct LaborView: View {
     private static let intelID = "labor-intel"
     private static let teamID = "labor-team"
     private static let targetsID = "labor-targets"
+    private static let waitingID = "labor-waiting"
+    private static let scheduleID = "labor-schedule"
+    private static let reviewID = "labor-schedule-review"
+
+    /// Opens the section a nav path names (Friction audit #18): requests and
+    /// a request item land on "Waiting on you" with both request sections
+    /// open; the schedule and a schedule item on the drafted week; the team
+    /// and a person on the roster.
+    private func openSection(_ path: NavPath, proxy: ScrollViewProxy) {
+        subTab = .overview
+        let section = path.head == "labor" ? (path.target ?? "") : path.head
+        switch section {
+        case "requests", "request", "time-off", "timeoff":
+            viewModel.timeOffExpanded = true
+            setupViewModel.requestsExpanded = true
+            let pending = LaborWaitingOnYou.count(timeOff: viewModel.timeOff, shifts: setupViewModel.shiftRequests)
+            scrollToReveal(pending > 0 ? Self.waitingID : Self.requestsID, proxy: proxy)
+        case "schedule":
+            // No draft yet: the top of Labor, where the week is built.
+            if viewModel.scheduleResult?.ok == true { scrollToReveal(Self.scheduleID, proxy: proxy) }
+        case "team", "roster", "person":
+            setupViewModel.rosterExpanded = true
+            scrollToReveal(Self.rosterID, proxy: proxy)
+        default:
+            break
+        }
+    }
 
     /// Scrolls the just-opened section into view once its expand animation
     /// has room to settle — firing scrollTo in the same instant as the
@@ -951,6 +1007,7 @@ struct LaborView: View {
                 // the server sent one, or there is pending time off to say.
                 if result.review != nil || !(result.pendingTimeOff ?? [:]).isEmpty {
                     ScheduleReviewPanel(viewModel: viewModel, result: result)
+                        .id(Self.reviewID)
                 }
 
                 // The Shift Quality Engine's verdict. Placed above the shift
@@ -985,29 +1042,28 @@ struct LaborView: View {
                 // The schedule used to end at a CSV download — the people
                 // who actually work the shifts never saw it. Send is the
                 // main act; the CSV rides along for the office.
-                // Publishing sends the STORED week. With fixes or Cavnar's
-                // changes still unsaved, staff would get the week the
-                // manager has already corrected on screen — so Send waits
-                // for Save, as it does on the web.
+                // Publishing sends the STORED week, so Send waits for Save,
+                // as it does on the web. A saved draft's Send lives in the
+                // pinned bar (LaborSendBar) — one primary on the screen, in
+                // thumb reach, never under the whole table (Friction #19).
+                // A result with no history id can't be sent from the bar,
+                // so it keeps its Send here.
                 let unsaved = viewModel.hasUnsavedFixes || viewModel.optimizerUnsaved
-                if unsaved {
-                    Text("Save your changes before sending — staff get the saved week.")
-                        .font(.cavnarBody(14))
-                        .foregroundStyle(Color.cavnarInk3)
-                }
                 HStack(spacing: 10) {
-                    Button {
-                        Haptic.light()
-                        showingPublishSchedule = true
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "paperplane.fill").font(.system(size: 13, weight: .semibold))
-                            Text("Send to staff")
+                    if result.historyId == nil {
+                        Button {
+                            Haptic.light()
+                            showingPublishSchedule = true
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "paperplane.fill").font(.system(size: 13, weight: .semibold))
+                                Text("Send to staff")
+                            }
+                            .frame(maxWidth: .infinity)
                         }
-                        .frame(maxWidth: .infinity)
+                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: unsaved))
+                        .disabled(unsaved)
                     }
-                    .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: unsaved))
-                    .disabled(unsaved)
 
                     if let csvURL = Self.csvFile(for: result) {
                         ShareLink(item: csvURL, preview: SharePreview("Schedule CSV", image: Image(systemName: "tablecells"))) {

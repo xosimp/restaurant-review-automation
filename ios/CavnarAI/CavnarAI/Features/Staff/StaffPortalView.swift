@@ -11,10 +11,20 @@ struct StaffPortalView: View {
     @State private var tasks: StaffTasksResponse?
     @State private var profile: StaffProfile?
     @State private var loadError: String?
+    /// A shift the employee can't make: hand it back or swap it (Friction #49).
+    @State private var changing: ShiftChange?
+
+    struct ShiftChange: Identifiable {
+        let day: StaffWeekDay
+        let mode: StaffShiftChangeSheet.Mode
+        var id: String { day.date + (mode == .swap ? "|swap" : "|drop") }
+    }
 
     enum Tab: String, CaseIterable {
         case schedule = "Schedule"
         case tasks = "Tasks"
+        // Time off and shift changes — the web portal's two forms (U3-21).
+        case requests = "Requests"
         case profile = "Profile"
     }
 
@@ -29,6 +39,7 @@ struct StaffPortalView: View {
                         switch tab {
                         case .schedule: scheduleSection
                         case .tasks:    tasksSection
+                        case .requests: StaffRequestsView()
                         case .profile:  profileSection
                         }
                     }
@@ -39,6 +50,9 @@ struct StaffPortalView: View {
             .padding(.horizontal, 20)
         }
         .task { await reload() }
+        .sheet(item: $changing, onDismiss: { Task { await reload() } }) { change in
+            StaffShiftChangeSheet(day: change.day, mode: change.mode)
+        }
     }
 
     private var header: some View {
@@ -133,6 +147,19 @@ struct StaffPortalView: View {
                 }
             }
             Spacer(minLength: 0)
+            if day.shift?.shiftStart != nil {
+                Menu {
+                    Button("Can\u{2019}t work this") { changing = ShiftChange(day: day, mode: .drop) }
+                    Button("Swap with a colleague") { changing = ShiftChange(day: day, mode: .swap) }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel("Change this shift")
+            }
         }
         .padding(.vertical, 12)
         .padding(.trailing, 14)

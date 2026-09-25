@@ -21,6 +21,10 @@ struct CavnarAIApp: App {
         // tinted clear so only the ember shows.
         UIRefreshControl.appearance().tintColor = .clear
 
+        // Hold any nav path posted before a module screen exists, so the
+        // screen can open the section it names once it appears.
+        NavSectionInbox.start()
+
         // Screen titles are headings — the same role an ingredient row's own
         // name plays in Food Cost (Clash Display there too, see
         // IngredientCard) — so every navigationTitle across the app ("Labor",
@@ -42,6 +46,15 @@ struct CavnarAIApp: App {
             RootView()
                 .environment(sessionStore)
                 .environment(staffSessionStore)
+                // Ways in from outside the app (Friction audit #47): a widget
+                // or Live Activity tap (cavnarai://nav/…, cavnarai://command)
+                // and a dashboard.cavnar.ai link. Each becomes a nav path
+                // for the router — or nothing, for a link that isn't ours
+                // (the auth callbacks keep their own handling).
+                .onOpenURL { url in SystemEntry.handle(url: url) }
+                .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                    if let url = activity.webpageURL { SystemEntry.handle(url: url) }
+                }
         }
     }
 }

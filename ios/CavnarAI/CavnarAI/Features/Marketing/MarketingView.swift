@@ -27,6 +27,8 @@ struct MarketingView: View {
     @State private var showingPreview = false
     @State private var showingSchedule = false
     @State private var schedulePlatform = "instagram"
+    /// The confirm before "Post to all connected" publishes (Friction #41).
+    @State private var confirmingPostAll = false
     @State private var shelfDestination: MarketingShelfDestination?
     /// Bumped when a calendar day's "Write this" finishes — the ScrollViewReader
     /// watches it and moves to the caption box. A token rather than a Bool so
@@ -500,27 +502,66 @@ struct MarketingView: View {
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
     }
 
+    /// ONE primary — "Post to Instagram and Facebook" — with a switch per
+    /// connected channel, on by default (Friction audit #41, U3-16). It
+    /// posts outside the restaurant, so it confirms first, naming where
+    /// the caption goes (DESIGN_SYSTEM §10's confirm/undo policy).
     @ViewBuilder
     private var socialPublish: some View {
-        HStack(spacing: 10) {
+        let hasMedia = compose.media != nil
+        let targets = viewModel.socialTargets(hasMedia: hasMedia)
+        VStack(alignment: .leading, spacing: 10) {
             if viewModel.channels.instagram {
-                Button {
-                    Task { await viewModel.postToInstagram(imageURL: compose.media?.url) }
-                } label: {
-                    Text("Post to Instagram").frame(maxWidth: .infinity)
+                Toggle(isOn: $viewModel.instagramSelected) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Instagram").font(.cavnarBody(15, weight: 600)).foregroundStyle(Color.cavnarInk)
+                        if !hasMedia {
+                            Text("Needs a photo — add one above.")
+                                .font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                        } else if viewModel.alreadyPosted(to: "Instagram") {
+                            Text("Posted").font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarGreen)
+                        }
+                    }
                 }
-                .buttonStyle(CavnarPrimaryButtonStyle())
-                .disabled(viewModel.isPosting || viewModel.isOverLimit || compose.media == nil
-                          || viewModel.alreadyPosted(to: "Instagram"))
+                .tint(Color.cavnarEmber)
+                .disabled(!hasMedia || viewModel.alreadyPosted(to: "Instagram"))
             }
             if viewModel.channels.facebook {
-                Button {
-                    Task { await viewModel.postToFacebook() }
-                } label: {
-                    Text("Post to Facebook").frame(maxWidth: .infinity)
+                Toggle(isOn: $viewModel.facebookSelected) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Facebook").font(.cavnarBody(15, weight: 600)).foregroundStyle(Color.cavnarInk)
+                        if viewModel.alreadyPosted(to: "Facebook") {
+                            Text("Posted").font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarGreen)
+                        }
+                    }
                 }
-                .buttonStyle(CavnarPrimaryButtonStyle())
-                .disabled(viewModel.isPosting || viewModel.isOverLimit || viewModel.alreadyPosted(to: "Facebook"))
+                .tint(Color.cavnarEmber)
+                .disabled(viewModel.alreadyPosted(to: "Facebook"))
+            }
+            Button {
+                Haptic.light()
+                confirmingPostAll = true
+            } label: {
+                Group {
+                    if viewModel.isPosting {
+                        CavnarShimmerText(text: "Posting…", color: .white)
+                    } else {
+                        Text(targets.isEmpty ? "Post" : "Post to \(MarketingViewModel.channelList(targets))")
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: targets.isEmpty || viewModel.isPosting
+                                                  || viewModel.isOverLimit))
+            .disabled(targets.isEmpty || viewModel.isPosting || viewModel.isOverLimit)
+            .confirmationDialog("Post this caption to \(MarketingViewModel.channelList(targets))?",
+                                isPresented: $confirmingPostAll, titleVisibility: .visible) {
+                Button(targets.count == 1 ? "Post to \(targets[0])" : "Post to \(targets.count) channels") {
+                    Task { await viewModel.postToAll(imageURL: compose.media?.url) }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("It goes live on your page right away.")
             }
         }
     }

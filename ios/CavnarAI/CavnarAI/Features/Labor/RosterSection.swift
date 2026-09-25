@@ -391,6 +391,7 @@ private struct RosterDetailSheet: View {
     @State private var windows: [String: TimeWindow] = [:]
     @State private var certifications: [String] = []
     @State private var toast: String?
+    @State private var showingPerson = false
     @FocusState private var focused: Field?
 
     private enum Field: Hashable, CaseIterable { case minHours, maxHours }
@@ -405,6 +406,19 @@ private struct RosterDetailSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     hero
+                    // Contact, PIN and pay live in the one person record
+                    // (Friction audit #25); this sheet keeps scheduling.
+                    Button {
+                        Haptic.light()
+                        showingPerson = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "person.text.rectangle").font(.system(size: 13, weight: .semibold))
+                            Text("Contact, login and pay")
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarSecondaryButtonStyle())
                     if !editable {
                         Text("Read-only on this login — an owner or manager can change these.")
                             .font(.cavnarBody(13.5))
@@ -430,6 +444,9 @@ private struct RosterDetailSheet: View {
             .scrollDismissesKeyboard(.immediately)
             .accountSheetChrome(name)
             .keyboardNavToolbar($focused)
+        }
+        .sheet(isPresented: $showingPerson) {
+            PersonSheet(target: PersonSheetTarget(key: nil, name: name))
         }
         .onAppear(perform: sync)
         .onChange(of: viewModel.settingsToast) { _, message in
