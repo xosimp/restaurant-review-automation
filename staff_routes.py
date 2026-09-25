@@ -621,7 +621,27 @@ def api_preferences(current_user):
     rid, name = _staff_context(current_user)
     import staff_settings
     st = staff_settings.for_name(rid, name) if name else {}
-    return jsonify(ok=True, preferred_dayparts=st.get("preferred_dayparts") or [], desired_hours=st.get("desired_hours"))
+    return jsonify(ok=True, preferred_dayparts=st.get("preferred_dayparts") or [], desired_hours=st.get("desired_hours"),
+                   schedule_texts=_schedule_texts(current_user["id"], rid))
+
+
+def _schedule_texts(user_id, rid, value=None):
+    """Read (value None) or set this employee's own "text me when my
+    schedule is posted" (memberships.schedule_texts_at). Only ever set from
+    their own tick on an unchecked-by-default box — the signup consent
+    covered the one-time code, nothing more (Friction audit #17)."""
+    from models import get_conn as _gc
+    conn = _gc()
+    try:
+        if value is not None:
+            conn.execute("UPDATE memberships SET schedule_texts_at=CASE WHEN ? THEN datetime('now') ELSE NULL END "
+                         "WHERE user_id=? AND restaurant_id=?", (1 if value else 0, user_id, rid))
+            conn.commit()
+        row = conn.execute("SELECT schedule_texts_at FROM memberships WHERE user_id=? AND restaurant_id=?",
+                           (user_id, rid)).fetchone()
+    finally:
+        conn.close()
+    return bool(row and row["schedule_texts_at"])
 
 
 @staff_bp.route("/api/preferences", methods=["POST"])
@@ -633,6 +653,9 @@ def api_preferences_save(current_user):
     if not name:
         return jsonify(ok=False, error="No employee name on this session."), 400
     body = request.get_json(silent=True) or {}
+    if set(body) == {"schedule_texts"}:
+        # The texts switch alone: nothing about dayparts or hours changes.
+        return jsonify(ok=True, schedule_texts=_schedule_texts(current_user["id"], rid, bool(body["schedule_texts"])))
     import staff_settings
     try:
         row = staff_settings.upsert(rid, name, preferred_dayparts=body.get("preferred_dayparts") if "preferred_dayparts" in body else None,

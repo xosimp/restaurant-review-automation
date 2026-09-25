@@ -664,7 +664,13 @@ def _do_closeout_get(u):
     from models import get_restaurant
     r = get_restaurant(_rid(u))
     day = closeout.business_date_for(r)
+    try:
+        suggested = closeout.suggestions(_rid(u), day.isoformat())
+    except Exception:
+        suggested = {"callouts": None, "influence": None, "sources": {}}
     return {"ok": True, "business_date": day.isoformat(),
+            # Editable prefill for two lines, never saved on its own (#40).
+            "suggested": suggested,
             "closeout": closeout.get(_rid(u), day.isoformat()),
             "previous": closeout.latest(_rid(u), before=(day.isoformat())),
             "fields": list(closeout.FIELDS), "dsr_fields": list(closeout.DSR_FIELDS),
@@ -3516,6 +3522,206 @@ def _forget(rid, route, key):
         conn.close()
 
 
+# ── People: one person record (Friction audit #25) ───────────────────────────
+
+def _do_people_list(u):
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see the team.")
+    import people
+    return {"ok": True, "people": people.list_people(_rid(u))}, 200
+
+
+def _do_person_get(u, key):
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see the team.")
+    import people
+    p = people.get_person(_rid(u), key)
+    if not p:
+        return {"ok": False, "error": "That person isn't on the roster."}, 404
+    p["can_edit"] = _may_rate(u)
+    p["can_manage_login"] = _principal(u)
+    return {"ok": True, "person": p}, 200
+
+
+def _do_person_set(u, key):
+    """Partial update: each field goes to the store that already owns it
+    (people.update_person). A PIN or job title is the owner's."""
+    if not _may_rate(u):
+        return _forbidden("Your login can view the team but not change it.")
+    import people
+    from client_api import log_account_event
+    try:
+        person, changed = people.update_person(_rid(u), key, _body(), updated_by=_who(u),
+                                               may_manage_logins=_principal(u))
+    except people.PersonError as e:
+        return {"ok": False, "error": str(e)}, 400
+    if changed:
+        log_account_event(_rid(u), "person_updated", current_user=u,
+                          detail=f"{person['name']}: {', '.join(c for c in changed if c != 'pin') or 'PIN'}"
+                                 + (" (PIN reset)" if "pin" in changed and len(changed) > 1 else ""))
+    person["can_edit"] = True
+    person["can_manage_login"] = _principal(u)
+    return {"ok": True, "person": person, "changed": changed}, 200
+
+
+# ── The draft that is waiting to go out (Friction audit #4, #16) ─────────────
+
+def _open_draft_id(rid, today):
+    """The newest drafted week staff don't have: unpublished, not replaced,
+    for a week that has not ended, with no published copy of the same week."""
+    from models import get_conn as _gc
+    conn = _gc()
+    try:
+        row = conn.execute(
+            "SELECT h.id FROM schedule_history h WHERE h.restaurant_id=? AND h.published_at IS NULL "
+            "AND h.superseded_by IS NULL AND COALESCE(h.week_end, h.week_start) >= ? "
+            "AND NOT EXISTS (SELECT 1 FROM schedule_history p WHERE p.restaurant_id=h.restaurant_id "
+            "AND p.week_start=h.week_start AND p.published_at IS NOT NULL) "
+            "ORDER BY h.id DESC LIMIT 1", (rid, today.isoformat())).fetchone()
+    except Exception:
+        row = None
+    finally:
+        conn.close()
+    return row["id"] if row else None
+
+
+def _do_publish_check(u):
+    """What pressing Send would do, before it is pressed: the week, the
+    blockers the publish gate would ask about, and who each channel reaches.
+    With no schedule_id: the open draft (or schedule_id null when none)."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see the schedule.")
+    from client_api import publish_review
+    from labor import employees_in_schedule
+    from models import get_conn as _gc
+    import people
+    rid = _rid(u)
+    sid = request.args.get("schedule_id", type=int) or _open_draft_id(rid, _local_today(u))
+    if not sid:
+        return {"ok": True, "schedule_id": None}, 200
+    conn = _gc()
+    try:
+        row = conn.execute("SELECT id, week_start, week_end, published_at, schedule_csv FROM schedule_history "
+                           "WHERE id=? AND restaurant_id=?", (sid, rid)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return {"ok": False, "error": "Not found"}, 404
+    try:
+        blockers = [b["text"] for b in publish_review(rid, row["id"])["blockers"]]
+    except Exception:
+        blockers = []
+    names = employees_in_schedule(row["schedule_csv"] or "")
+    summary = people.reach_summary(people.reach(rid, names))
+    from permissions import has_permission, SCHEDULE_PUBLISH
+    return {"ok": True, "schedule_id": row["id"], "week_start": row["week_start"], "week_end": row["week_end"],
+            "published_at": row["published_at"], "blockers": blockers, "reach": summary,
+            "texts_available": people.staff_sms_ready(),
+            "can_publish": bool(u.get("is_admin")) or has_permission(u, SCHEDULE_PUBLISH)}, 200
+
+
+# ── The owner's own targets and rates (Friction audit #26) ───────────────────
+
+_TARGET_BOUNDS = {"labor_target_pct": (5.0, 80.0), "food_cost_target": (5.0, 80.0),
+                  "waste_target_pct": (0.0, 50.0), "monthly_revenue_target": (0.0, 100000000.0),
+                  "hourly_rate": (2.0, 250.0)}
+
+
+def _targets_payload(rid):
+    import json as _json
+    import staff_settings as _ss
+    from models import get_restaurant
+    r = get_restaurant(rid)
+    try:
+        rates = {k: float(v) for k, v in (_json.loads(r.role_rates_json or "{}") or {}).items() if k != "_default"}
+    except Exception:
+        rates = {}
+    roles = []
+    try:
+        for e in _ss.roster(rid):
+            role = (e.get("role") or "").strip()
+            if role and role.lower() not in {x.lower() for x in roles}:
+                roles.append(role)
+    except Exception:
+        pass
+    for k in rates:
+        if k.lower() not in {x.lower() for x in roles}:
+            roles.append(k)
+    return {"labor_target_pct": r.labor_target_pct, "food_cost_target": r.food_cost_target,
+            "waste_target_pct": r.waste_target_pct, "monthly_revenue_target": r.monthly_revenue_target,
+            "hourly_rate": r.hourly_rate, "week_start_day": int(getattr(r, "week_start_day", 0) or 0),
+            "role_rates": rates, "roles": sorted(roles, key=str.lower),
+            "sources": {"labor_target_pct": getattr(r, "labor_target_source", None),
+                        "food_cost_target": getattr(r, "food_cost_target_source", None),
+                        "hourly_rate": getattr(r, "hourly_rate_source", None)}}
+
+
+def _do_targets_get(u):
+    if not _sees_labor(u) and not _principal(u):
+        return _forbidden()
+    return {"ok": True, "targets": _targets_payload(_rid(u)), "can_edit": _principal(u)}, 200
+
+
+def _do_targets_set(u):
+    """The owner sets their own targets and rates; admin stays an override
+    (it writes the same columns). Any subset; each value is checked."""
+    if not _principal(u):
+        return _forbidden("Only the account owner can change targets and pay rates.")
+    import json as _json
+    from models import update_restaurant, get_restaurant
+    from client_api import log_account_event
+    b = _body()
+    upd = {}
+    for k, (lo, hi) in _TARGET_BOUNDS.items():
+        if k not in b:
+            continue
+        v = b.get(k)
+        if v in (None, "") and k == "waste_target_pct":
+            upd[k] = None
+            continue
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": f"{k.replace('_', ' ')} must be a number."}, 400
+        if not lo <= v <= hi:
+            return {"ok": False, "error": f"{k.replace('_', ' ')} must be between {lo:g} and {hi:g}."}, 400
+        upd[k] = v
+    if "week_start_day" in b:
+        try:
+            wd = int(b.get("week_start_day"))
+        except (TypeError, ValueError):
+            wd = -1
+        if not 0 <= wd <= 6:
+            return {"ok": False, "error": "Pick the day your payroll week starts."}, 400
+        upd["week_start_day"] = wd
+    if "role_rates" in b:
+        raw = b.get("role_rates")
+        if not isinstance(raw, dict):
+            return {"ok": False, "error": "Pay rates are one rate per role."}, 400
+        rates = {}
+        for role, rate in raw.items():
+            role = " ".join(str(role or "").split())[:60]
+            if not role or rate in (None, ""):
+                continue
+            try:
+                rate = float(rate)
+            except (TypeError, ValueError):
+                return {"ok": False, "error": f"The rate for {role} must be a number."}, 400
+            if not 2.0 <= rate <= 250.0:
+                return {"ok": False, "error": f"The rate for {role} must be between $2 and $250 an hour."}, 400
+            rates[role] = round(rate, 2)
+        upd["role_rates_json"] = _json.dumps(rates) if rates else None
+    if not upd:
+        return {"ok": False, "error": "Nothing to change."}, 400
+    before = get_restaurant(_rid(u))
+    update_restaurant(_rid(u), upd)
+    changed = [k for k in upd if getattr(before, k, None) != upd[k]]
+    if changed:
+        log_account_event(_rid(u), "targets_changed", current_user=u,
+                          detail=", ".join(k.replace("_json", "").replace("_", " ") for k in changed))
+    return {"ok": True, "targets": _targets_payload(_rid(u))}, 200
+
+
 _ROUTES = [
     # (path, methods, body, endpoint)
     ("/issues", ["GET"], _do_issues_list, "issues_list"),
@@ -3635,6 +3841,12 @@ _ROUTES = [
     ("/ask-cavnar/feedback", ["POST"], _do_ask_feedback, "ask_feedback"),
     ("/dsr/<day>", ["GET"], _do_dsr_get, "dsr_get"),
     ("/dsr/<day>/status", ["GET"], _do_dsr_status, "dsr_status"),
+    ("/people", ["GET"], _do_people_list, "people_list"),
+    ("/people/<key>", ["GET"], _do_person_get, "person_get"),
+    ("/people/<key>", ["POST"], _do_person_set, "person_set"),
+    ("/labor/publish-check", ["GET"], _do_publish_check, "publish_check"),
+    ("/account/targets", ["GET"], _do_targets_get, "targets_get"),
+    ("/account/targets", ["POST"], _do_targets_set, "targets_set"),
 ]
 
 

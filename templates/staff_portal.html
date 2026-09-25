@@ -512,8 +512,19 @@
     }
     html += '</div><div class="pref-hrs"><label for="pref-hours" class="meta" style="margin:0">Hours a week</label><input type="number" id="pref-hours" min="0" max="80" step="1" inputmode="numeric" value="' + (d.desired_hours == null ? '' : esc(d.desired_hours)) + '" placeholder="—"></div>'
           + '<div class="av-row"><button type="button" class="cbtn cbtn-primary cbtn-sm" id="pref-save">Save</button><span class="meta" id="pref-status"></span></div>'
-          + '<div class="pref-note">A wish, not a rule — the schedule honours it where coverage allows.</div>';
+          + '<div class="pref-note">A wish, not a rule — the schedule honours it where coverage allows.</div>'
+          // Texts about the schedule are their own consent: the signup
+          // box covered the one-time code only. Unchecked unless they
+          // ticked it here; saved the moment it changes.
+          + '<label class="optin" style="display:flex;gap:10px;align-items:flex-start;margin-top:14px"><input type="checkbox" id="pref-texts"' + (d.schedule_texts ? ' checked' : '') + '> <span class="meta" style="margin:0">Text me when my schedule is posted. Message and data rates may apply; reply STOP to stop.</span></label><span class="meta" id="pref-texts-status"></span>';
     el.innerHTML = html;
+    $('pref-texts').onchange = function () {
+      var st = $('pref-texts-status'), on = this.checked;
+      fetch('/staff/api/preferences', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({schedule_texts: on})})
+        .then(function (r) { return r.json(); })
+        .then(function (r) { st.textContent = r.ok ? (r.schedule_texts ? 'Saved — you’ll get a text when a week is posted.' : 'Saved — no schedule texts.') : (r.error || 'Could not save.'); })
+        .catch(function () { st.textContent = 'Could not save — check your connection.'; });
+    };
     var btns = el.querySelectorAll('.pref-dp');
     for (var j = 0; j < btns.length; j++) btns[j].onclick = function () {
       var on = this.className.indexOf(' on') < 0;

@@ -8322,6 +8322,17 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
     return {"blockers": out, "soft": soft, "schedule_id": row["id"]}
 
 
+def _drop_share(token, schedule_id):
+    """Remove a share link made for a send that did not go out, so the
+    status list never shows someone as sent who was not."""
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM schedule_shares WHERE token=? AND schedule_id=?", (token, schedule_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=False):
     """Shared by the route, the mobile twin and delayed.py (auto-publish).
     Returns (payload, http_status). `actor` is the user dict acting, or
@@ -8426,17 +8437,62 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
     except Exception as _rle:
         print(f"[publish] implementation not recorded for {rid}: {_rle}")
 
+    # Each person on the channel they signed up with (Friction audit #17):
+    # the app when their phone has it, a text when they ticked "text me when
+    # my schedule is posted", email as the fallback. Everyone gets their own
+    # share link; the portal has the week either way.
+    import people as _people
+    names = employees_in_schedule(row["schedule_csv"])
+    try:
+        reachable = _people.reach(rid, names)
+    except Exception as _re:
+        _ops.capture(_re, job="schedule_publish_reach", context=f"restaurant_id={rid}")
+        reachable = {n: {"push_user_id": None, "sms": None,
+                         "email": ((contacts.get(n.lower()) or {}).get("email") or "").strip() or None}
+                     for n in names}
     sent, unreachable, failed, failed_tokens = [], [], [], []
-    for name in employees_in_schedule(row["schedule_csv"]):
-        contact = contacts.get(name.lower()) or {}
-        email = (contact.get("email") or "").strip()
+    for name in names:
+        ch = reachable.get(name) or {}
+        email = (ch.get("email") or "").strip()
+        shifts = employee_shifts_from_csv(row["schedule_csv"], name)
+        if ch.get("push_user_id"):
+            token = create_schedule_share(rid, schedule_id, name, sent_to="app")
+            try:
+                import push as _push
+                queued = _push.fire_push(rid, "staff_schedule", f"Your schedule — {restaurant.name}",
+                                         f"The week of {week_label} is posted: {len(shifts)} shift"
+                                         f"{'' if len(shifts) == 1 else 's'}.",
+                                         data={"kind": "staff_schedule", "module": "staff", "schedule_id": schedule_id},
+                                         user_ids=[ch["push_user_id"]])
+            except Exception as _pe:
+                print(f"[publish] push failed for {name}: {_pe}")
+                queued = 0
+            if queued:
+                sent.append({"employee_name": name, "sent_to": "app", "channel": "push", "shifts": len(shifts)})
+                continue
+            _drop_share(token, schedule_id)
+        if ch.get("sms"):
+            token = create_schedule_share(rid, schedule_id, name, sent_to=ch["sms"])
+            try:
+                from notify import send_sms as _send_sms_staff
+                texted = bool(_send_sms_staff(
+                    ch["sms"], f"{restaurant.name}: your schedule for the week of {week_label} is posted "
+                               f"({len(shifts)} shift{'' if len(shifts) == 1 else 's'}). {base_url}/s/{token} "
+                               f"Reply STOP to stop these texts.", use_case="staff"))
+            except Exception as _se:
+                print(f"[publish] staff text failed for {name}: {_se}")
+                texted = False
+            if texted:
+                sent.append({"employee_name": name, "sent_to": ch["sms"], "channel": "sms", "shifts": len(shifts)})
+                continue
+            _drop_share(token, schedule_id)
         if not email:
-            unreachable.append({"employee_name": name, "reason": "no email address on file"})
+            unreachable.append({"employee_name": name,
+                                "reason": "no app, text consent or email address on file"})
             continue
 
         token = create_schedule_share(rid, schedule_id, name, sent_to=email)
         link = f"{base_url}/s/{token}"
-        shifts = employee_shifts_from_csv(row["schedule_csv"], name)
         try:
             from emails import send_staff_schedule_email
             send_staff_schedule_email(
@@ -8453,7 +8509,7 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
             _log_email(rid, "staff_schedule", email, f"Your schedule — {week_label}")
         except Exception:
             pass
-        sent.append({"employee_name": name, "sent_to": email, "shifts": len(shifts)})
+        sent.append({"employee_name": name, "sent_to": email, "channel": "email", "shifts": len(shifts)})
 
     actor_name = (actor.get("username") or actor.get("email") or "automation") if isinstance(actor, dict) else "automation"
     if failed and not sent:
@@ -8506,8 +8562,8 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
         print(f"[schedule] week projection not frozen rid={rid}: {_fx}")
     note = None
     if not sent:
-        note = ("Published to the staff portal. Nobody has an email address on file, so no emails went out."
-                if not failed else None)
+        note = ("Published to the staff portal. Nobody has the app, agreed to texts, or has an email "
+                "address on file, so nothing went out." if not failed else None)
     return dict(ok=True, schedule_id=schedule_id, week_label=week_label,
                 sent=sent, unreachable=unreachable, failed=failed,
                 acknowledged=bool(blockers), portal_only=not sent, note=note,

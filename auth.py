@@ -351,6 +351,11 @@ def init_auth(db_path: str = DB_PATH):
         "ALTER TABLE users ADD COLUMN phone TEXT",
         "ALTER TABLE memberships ADD COLUMN claimed_by_phone TEXT",
         "ALTER TABLE memberships ADD COLUMN claimed_at TEXT",
+        # The employee's own "text me when my schedule is posted" — set from
+        # an unchecked-by-default box on the staff portal, cleared by
+        # unticking it. The signup text consent covers the one-time code
+        # only; a schedule text needs this (people.reach, Friction #17).
+        "ALTER TABLE memberships ADD COLUMN schedule_texts_at TEXT",
         # A short, typeable version of the portal token. The 32-character URL
         # token is fine to tap in a link and miserable to read off a whiteboard
         # and type on a phone, which is exactly what signup asks people to do.

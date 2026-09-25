@@ -311,21 +311,42 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
                 unsent = None
         finally:
             conn.close()
+        # A request is answered where it appears (Friction audit #18): the
+        # item carries Approve as its action and Deny as `alt`, both the
+        # decide routes the Labor tab uses, and a nav to the request itself.
+        def _decide(kind_path, rid_, decision, label):
+            return {"label": label, "method": "POST",
+                    "route": {"web": f"/api/labor/{kind_path}/{rid_}/decide",
+                              "mobile": f"/mobile/api/labor/{kind_path}/{rid_}/decide"},
+                    "body": {"decision": decision}}
         for r in reqs:
             what = "swap" if (r["kind"] or "") == "swap" else "drop"
+            act = dict(_decide("shift-requests", r["id"], "approve", "Approve"), module="labor",
+                       nav=f"request/shift_request-{r['id']}",
+                       alt=_decide("shift-requests", r["id"], "deny", "Deny"))
             add(f"shift_request:{r['id']}", "shift_request",
                 f"{r['employee_name']} asked to {what} {mdy(r['date'])} {r['shift_start'] or ''}".rstrip(),
-                "important", {"label": "Answer it", "module": "labor"},
-                detail="Waiting on your answer", module="labor")
+                "important", act, detail="Waiting on your answer", module="labor")
         for r in offs:
+            act = dict(_decide("time-off", r["id"], "approve", "Approve"), module="labor",
+                       nav=f"request/time_off-{r['id']}",
+                       alt=_decide("time-off", r["id"], "deny", "Deny"))
             add(f"time_off:{r['id']}", "time_off",
                 f"{r['employee_name']} asked for time off from {mdy(r['start_date'])}",
-                "important", {"label": "Answer it", "module": "labor"},
-                detail=f"Through {mdy(r['end_date'])}", module="labor")
+                "important", act, detail=f"Through {mdy(r['end_date'])}", module="labor")
         if unsent:
+            # "Send now" sends THIS week (Friction audit #4): the publish
+            # route with its id — the gate still answers needs_ack for a
+            # week with blockers — and a nav that opens the draft itself.
             add(f"schedule_unsent:{unsent['id']}", "schedule",
                 f"The week of {mdy(unsent['week_start'])} is drafted but staff don't have it",
-                "critical", {"label": "Send now", "module": "labor", "history_id": unsent["id"]},
+                "critical", {"label": "Send now", "module": "labor", "history_id": unsent["id"],
+                             "method": "POST",
+                             "route": {"web": "/api/labor/publish-schedule",
+                                       "mobile": "/mobile/api/labor/publish-schedule"},
+                             "body": {"schedule_id": unsent["id"]},
+                             "nav": f"schedule/{unsent['id']}",
+                             "alt": {"label": "Open it", "nav": f"schedule/{unsent['id']}"}},
                 detail="It starts within three days", module="labor")
 
     # ── next week's schedule ──
@@ -339,7 +360,8 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
             conn.close()
         if not row:
             add("schedule:next-week", "schedule", "Next week's schedule isn't built",
-                "important", {"label": "Build it", "module": "labor"}, module="labor")
+                "important", {"label": "Build it", "module": "labor", "nav": "labor/schedule"},
+                module="labor")
 
     hidden = _snoozed(restaurant_id, today, db_path)
     rank = {"critical": 0, "important": 1, "watch": 2}

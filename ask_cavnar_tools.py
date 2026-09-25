@@ -1545,6 +1545,23 @@ def _read_period(restaurant_id, date=None, _viewer=None):
 # ── Tool registry ───────────────────────────────────────────────────────────
 # `kind` drives everything: "read" executes, "write" only ever proposes.
 
+def _read_time_off(restaurant_id):
+    """Pending time off and swap/drop requests, by id — what decide_time_off
+    and decide_shift_request name. Names and dates only: the employee's own
+    free-text reason is not handed to the model (it is third-party text)."""
+    import time_off
+    import shift_requests
+    from time_utils import mdy
+    offs = [{"request_id": r["id"], "employee": r["employee_name"],
+             "from": mdy(r["start_date"]), "through": mdy(r["end_date"])}
+            for r in time_off.pending(restaurant_id)][:_MAX_ROWS]
+    swaps = [{"request_id": r["id"], "employee": r["employee_name"], "kind": r.get("kind") or "drop",
+              "date": mdy(r["date"]), "shift_start": r.get("shift_start"), "role": r.get("role")}
+             for r in shift_requests.for_manager(restaurant_id) if r.get("status") == "pending"][:_MAX_ROWS]
+    return {"time_off": offs, "shift_requests": swaps,
+            "note": "Answer one with decide_time_off or decide_shift_request — the owner confirms."}
+
+
 TOOLS = [
     {
         # First in the list on purpose: it is the one the model should reach
@@ -2543,6 +2560,56 @@ TOOLS = [
             "input_schema": {"type": "object", "properties": {}},
         },
     },
+    # Answering the team (Friction audit #18): the same decide routes the
+    # Labor tab's Approve / Deny buttons post. Proposed, never performed —
+    # an answer changes who can be scheduled and the employee is told.
+    {
+        "kind": "write",
+        "confirm": True,
+        "route": {"web": "/api/labor/time-off/{request_id}/decide",
+                  "mobile": "/mobile/api/labor/time-off/{request_id}/decide", "method": "POST"},
+        "summary": "{decision} {who}'s time off",
+        "module": "module_labor",
+        "spec": {
+            "name": "decide_time_off",
+            "description": (
+                "Propose approving or denying one pending time-off request. Call read_time_off first "
+                "for the request id. Does NOT decide — the owner confirms first."
+            ),
+            "input_schema": {"type": "object", "required": ["request_id", "decision"], "properties": {
+                "request_id": {"type": "integer", "description": "From read_time_off."},
+                "decision": {"type": "string", "enum": ["approve", "deny"]}}},
+        },
+    },
+    {
+        "kind": "write",
+        "confirm": True,
+        "route": {"web": "/api/labor/shift-requests/{request_id}/decide",
+                  "mobile": "/mobile/api/labor/shift-requests/{request_id}/decide", "method": "POST"},
+        "summary": "{decision} {who}'s shift request",
+        "module": "module_labor",
+        "spec": {
+            "name": "decide_shift_request",
+            "description": (
+                "Propose approving or denying one pending shift swap or drop request. Call "
+                "read_time_off first for the request id. Does NOT decide — the owner confirms first."
+            ),
+            "input_schema": {"type": "object", "required": ["request_id", "decision"], "properties": {
+                "request_id": {"type": "integer", "description": "From read_time_off."},
+                "decision": {"type": "string", "enum": ["approve", "deny"]}}},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_time_off,
+        "module": "module_labor",
+        "spec": {
+            "name": "read_time_off",
+            "description": ("Pending time-off and shift swap/drop requests, each with its id, the person, "
+                            "the dates or shift, and what they wrote. Use before proposing an answer."),
+            "input_schema": {"type": "object", "properties": {}},
+        },
+    },
 ]
 
 _BY_NAME = {t["spec"]["name"]: t for t in TOOLS}
@@ -2793,6 +2860,25 @@ def build_proposal(name, tool_input, restaurant_id=None):
         route["mobile"] = route["mobile"].replace("{review_id}", str(review_id))
         summary = summary.replace("{review_id}", str(review_id))
         args = {k: v for k, v in args.items() if k != "review_id"}
+    # A request is addressed the same way (decide_time_off /
+    # decide_shift_request): the id in the path, the decision in the body,
+    # and the card names the person from the stored request — never from the
+    # model's words.
+    if "{request_id}" in route.get("web", "") or "{request_id}" in route.get("mobile", ""):
+        try:
+            request_id = int(args.get("request_id"))
+        except (TypeError, ValueError):
+            return None
+        if args.get("decision") not in ("approve", "deny"):
+            return None
+        who = _request_person(name, request_id, restaurant_id) if restaurant_id is not None else None
+        if restaurant_id is not None and not who:
+            return None
+        route["web"] = route["web"].replace("{request_id}", str(request_id))
+        route["mobile"] = route["mobile"].replace("{request_id}", str(request_id))
+        summary = summary.replace("{decision}", "Approve" if args["decision"] == "approve" else "Deny")
+        summary = summary.replace("{who}", who or f"request #{request_id}")
+        args = {k: v for k, v in args.items() if k != "request_id"}
 
     out = {
         "action": name,
@@ -2832,6 +2918,7 @@ _FIELD_LABELS = {
     "message": "Message", "link_url": "Link", "target_day": "For", "title": "Title", "detail": "Detail",
     "severity": "Severity", "assignee_contact_id": "Assigned contact #", "caption": "Caption",
     "image_url": "Image", "topic": "Topic", "name": "Name", "email": "Email",
+    "decision": "Answer",
 }
 
 
@@ -2948,6 +3035,27 @@ def _review_row(restaurant_id, review_id):
         conn.close()
 
 
+def _request_row(name, request_id, restaurant_id):
+    """The PENDING request a decide_* proposal names, at this restaurant, or
+    None — a proposal for someone else's or an answered request is refused."""
+    from models import get_conn as _gc
+    table = "staff_time_off" if name == "decide_time_off" else "shift_change_requests"
+    conn = _gc()
+    try:
+        row = conn.execute(f"SELECT * FROM {table} WHERE id=? AND restaurant_id=? AND status='pending'",
+                           (int(request_id), restaurant_id)).fetchone()
+    except Exception:
+        row = None
+    finally:
+        conn.close()
+    return dict(row) if row else None
+
+
+def _request_person(name, request_id, restaurant_id):
+    row = _request_row(name, request_id, restaurant_id)
+    return (row or {}).get("employee_name")
+
+
 def proposal_details(name, args, restaurant_id) -> dict:
     """{"details": [{"label", "value"}], "preview": text that would go out,
     "at_stake": dollars or None} for one proposal — read from the same data
@@ -3060,4 +3168,15 @@ def proposal_details(name, args, restaurant_id) -> dict:
                 details.append({"label": "Needs a look first",
                                 "value": "; ".join(blockers[:4]) + (" …" if len(blockers) > 4 else "")
                                          + " — review it on the Labor tab and send it from there."})
+    elif name in ("decide_time_off", "decide_shift_request"):
+        from time_utils import mdy, mdy_range
+        row = _request_row(name, args.get("request_id"), restaurant_id)
+        if row:
+            details.append({"label": "Who", "value": row.get("employee_name")})
+            if name == "decide_time_off":
+                details.append({"label": "Dates", "value": mdy_range(row.get("start_date"), row.get("end_date"))})
+            else:
+                details.append({"label": "Shift", "value": f"{(row.get('kind') or 'drop').title()} "
+                                                           f"{mdy(row.get('date'))} {row.get('shift_start') or ''}".strip()})
+            details.append({"label": "Answer", "value": "Approve" if args.get("decision") == "approve" else "Deny"})
     return {"details": [d for d in details if d.get("value")], "preview": preview, "at_stake": stake}

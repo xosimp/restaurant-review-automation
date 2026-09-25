@@ -220,3 +220,68 @@ def summarise(entry) -> str:
     if not bits and entry.get("went_well"):
         bits.append(entry["went_well"])
     return f"{who} at close — " + " · ".join(bits) if bits else ""
+
+
+def suggestions(restaurant_id, business_date, db_path=DB_PATH) -> dict:
+    """What the system already knows about tonight, offered as editable
+    prefill for two lines (Friction audit #40): {"callouts": str|None,
+    "influence": str|None, "sources": {field: sentence}}.
+
+    callouts  — tonight's "hasn't clocked in" issues still open: the
+                coverage check (intraday.coverage_gaps) opened one per person
+                on the published schedule who never arrived. A late arrival
+                closes theirs, so it is not suggested.
+    influence — tonight's dated events and reservations (demand_signals) and
+                the holiday, if tonight is one.
+
+    A suggestion is never saved on its own: the closer sees it in the box and
+    keeps, edits or clears it."""
+    import staff_settings as _ss
+    day = business_date if isinstance(business_date, str) else business_date.isoformat()
+    out = {"callouts": None, "influence": None, "sources": {}}
+    conn = get_conn(db_path)
+    try:
+        try:
+            rows = conn.execute("SELECT source_key FROM ops_issues WHERE restaurant_id=? AND kind='coverage' "
+                                "AND status!='resolved' AND source_key LIKE ? ORDER BY id",
+                                (restaurant_id, f"coverage:{day}:%")).fetchall()
+        except Exception:
+            rows = []
+    finally:
+        conn.close()
+    keys = [r["source_key"].split(":", 2)[2] for r in rows if (r["source_key"] or "").count(":") >= 2]
+    if keys:
+        try:
+            names = {_ss.name_key(e["name"]): e["name"]
+                     for e in _ss.roster(restaurant_id, db_path=db_path, include_inactive=True)}
+        except Exception:
+            names = {}
+        who = []
+        for k in keys:
+            n = names.get(k) or " ".join(w.capitalize() for w in k.split())
+            if n not in who:
+                who.append(n)
+        out["callouts"] = ", ".join(who)
+        out["sources"]["callouts"] = "Scheduled tonight and never clocked in"
+    bits = []
+    try:
+        import demand_signals
+        for s in demand_signals.upcoming(restaurant_id, day, day, db_path=db_path):
+            label = (s.get("label") or "").strip()
+            if label:
+                bits.append(label + (f" ({s['covers']} covers booked)" if s.get("covers") else ""))
+    except Exception:
+        pass
+    try:
+        import demand
+        from datetime import datetime
+        for h in demand.upcoming_holidays(restaurant_id, now=datetime.fromisoformat(day), days=0,
+                                          db_path=db_path) or []:
+            if h.get("date") == day and h.get("name") and h["name"] not in bits:
+                bits.append(h["name"])
+    except Exception:
+        pass
+    if bits:
+        out["influence"] = "; ".join(bits)
+        out["sources"]["influence"] = "From tonight's events, reservations and holidays on file"
+    return out
