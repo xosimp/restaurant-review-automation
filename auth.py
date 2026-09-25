@@ -3174,6 +3174,9 @@ _UNGATED_PREFIXES = (
     # The Restaurant Data Health Score reads every module's sources; its
     # Sync now only re-pulls the POS the restaurant already connected.
     "/api/data-health", "/mobile/api/data-health",
+    # The Benchmark Engine spans modules; its payload is projected by the
+    # login's module view permissions inside (intelligence.engine.payload_for).
+    "/api/benchmarks", "/mobile/api/benchmarks",
     "/api/notifications", "/mobile/api/notifications", "/api/actions", "/mobile/api/actions",
     "/api/issues", "/mobile/api/issues", "/api/goals", "/mobile/api/goals",
     "/api/outcomes", "/mobile/api/outcomes", "/api/decisions", "/mobile/api/decisions",

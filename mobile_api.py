@@ -984,6 +984,16 @@ def _home_module_tiles(rid, restaurant):
             "inv": inv, "inv_live": inv_live}
 
 
+@mobile_bp.route("/benchmarks")
+@mobile_login_required
+def mobile_benchmarks(current_user):
+    """Twin of /api/benchmarks — the Benchmark Engine's comparisons."""
+    from intelligence import engine
+    payload = engine.payload_for(current_user, metric=request.args.get("metric") or None,
+                                 module=request.args.get("module") or None)
+    return jsonify(**payload), (200 if payload.get("ok") else 400)
+
+
 @mobile_bp.route("/data-health")
 @mobile_login_required
 def mobile_data_health(current_user):

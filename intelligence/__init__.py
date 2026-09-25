@@ -15,7 +15,7 @@ at least `privacy.MIN_COHORT` restaurants and never carry a name.
     cohort_for(restaurant)            (category, source) for a restaurant
 """
 from models import DB_PATH
-from . import privacy, categories, features, memory, feedback, scoring, patterns, benchmarks, trends, confidence, jobs, dashboard, staffing  # noqa: F401
+from . import privacy, categories, features, memory, feedback, scoring, patterns, benchmarks, trends, confidence, jobs, dashboard, staffing, metrics_registry, engine  # noqa: F401
 
 
 def restaurant_memory(restaurant_id, db_path=DB_PATH):
@@ -105,3 +105,24 @@ def context_lines(restaurant_id, restaurant=None, db_path=DB_PATH) -> list:
         lines.append(f"Pattern ({', '.join(bits) or 'measured across the cohort'} — an association, not a cause "
                      f"and not a probability): {p['sentence']}")
     return lines
+
+
+# ── the Benchmark Engine (Benchmarking audit 9/24/26) ──────────────────────
+# Every comparison a restaurant is shown goes through these: one vocabulary
+# (self, peers, platform, industry, location, market), one comparison-
+# strength %, one wording for prompts and one set of validation facts.
+
+def compare(restaurant_id, metric, **kw):
+    return engine.compare(restaurant_id, metric, **kw)
+
+
+def compare_all(restaurant_id, module=None, **kw):
+    return engine.compare_all(restaurant_id, module=module, **kw)
+
+
+def benchmark_facts(comparisons):
+    return engine.facts(comparisons)
+
+
+def benchmark_prompt_lines(comparisons):
+    return engine.prompt_lines(comparisons)

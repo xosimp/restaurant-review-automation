@@ -1,0 +1,529 @@
+"""Level 3: the Benchmark Engine — every comparison a restaurant is shown,
+through one function, one vocabulary and one set of facts (Benchmarking
+audit 9/24/26, BM4 §4).
+
+Six kinds of comparison, each either available or carrying `why_not`:
+
+  self      compared to this restaurant's own normal — its trailing 13
+            weeks (and the same week last year where one exists), judged
+            against its own week-to-week swing. Meaningful at any platform
+            size, so it is the headline until peers clear their floors.
+  peers     compared to restaurants like it: the published band of its own
+            type on Cavnar (benchmarks.published — viewer excluded, at least
+            MIN_QUARTILE_N others, coarse, at most 8 weeks old).
+  platform  compared to every restaurant on Cavnar — ONLY for behaviour
+            metrics (metrics_registry.platform_allowed); an all-types band
+            for labor %, food cost % or hours per $1k is never shown.
+  industry  a published figure for the restaurant's type (benchmark_registry),
+            quoted with its source and year.
+  location  compared to the owner's other locations (organization_id) —
+            own data, so no privacy floor, and only for logins that may
+            switch locations.
+  market    nearby competitors — carried by Intel; named here so the
+            vocabulary is whole.
+
+The headline is peers when available, else self, else industry; `why_not`
+is always filled for a kind that cannot be shown — that is how the engine
+knows when NOT to benchmark. A comparison-strength percentage (never
+words) says how well supported a band comparison is: peer count, band age,
+whether the restaurant's type was set or guessed, and the quality of the
+restaurant's own figure. A gap inside the band's uncertainty reads "about
+the middle", never a quartile word.
+
+facts() turns every figure into a response_validation Fact (kind
+"benchmark" for bands and published figures, "computed" for the
+restaurant's own baseline), so a peer claim binds to a figure the engine
+emitted — or is not said. prompt_lines() is the one wording for prompts.
+
+Level 3 of intelligence/: never imports the app's request layer.
+"""
+import math
+from datetime import date, timedelta
+
+import models as _models_mod
+from models import DB_PATH
+from . import benchmarks as _bm
+from . import categories
+from . import features as _features
+from . import metrics_registry as reg
+from .stats import percentile
+
+KINDS = ("self", "peers", "platform", "industry", "location", "market")
+ENGINE_VERSION = 1
+
+# Comparison strength (a % like every confidence in the product).
+STRENGTH_FULL_N = 20            # others at which peer count stops raising strength
+STRENGTH_FRESH_WEEKS = 2        # a band this young is fully fresh; 0 at MAX_BAND_AGE_WEEKS
+INFERRED_TYPE_CAP = 74          # a type Cavnar guessed from the name
+PLATFORM_CAP = 60               # an all-types band, even for a behaviour metric
+# The restaurant's own normal.
+SELF_BASELINE_WEEKS = 13        # weeks of history the normal is read from
+SELF_GAP_WEEKS = 4              # the latest weeks' rows overlap the current window
+SELF_MIN_POINTS = 6
+# "Compared to your other locations" needs this many measured.
+LOCATION_MIN = 2
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time (CLAUDE.md, bound imports)."""
+    if db_path is None or db_path == DB_PATH:
+        return _models_mod.get_conn()
+    return _models_mod.get_conn(db_path)
+
+
+def _num(x):
+    if x is None:
+        return None
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return None
+
+
+def _fmt(x, unit=""):
+    if x is None:
+        return "—"
+    if unit == "share":
+        return f"{round(x * 100)}%"
+    if unit == "%":
+        return f"{x:g}%"
+    if unit == "★":
+        return f"{x:.1f}★"
+    return f"{x:g}"
+
+
+def _mdy(d):
+    from time_utils import mdy
+    return mdy(d) if d else None
+
+
+# ── standing ───────────────────────────────────────────────────────────────
+
+def standing(value, band, metric, n):
+    """(standing, margin) of `value` in a published band: "about the middle"
+    whenever the gap to the median sits inside the median's own uncertainty
+    (≈ 1.25·IQR/1.35/√n, never under the metric's published step);
+    otherwise a quartile word from the better-direction."""
+    v = _num(value)
+    p25, p50, p75 = _num(band.get("p25")), _num(band.get("p50")), _num(band.get("p75"))
+    if v is None or p50 is None or p25 is None or p75 is None:
+        return "unmeasured", None
+    step = reg.meta(metric).get("step") or 0
+    iqr = max(0.0, p75 - p25)
+    se = 1.25 * iqr / 1.35 / math.sqrt(max(1, int(n or 1)))
+    margin = max(step, se)
+    if abs(v - p50) <= margin:
+        return "about the middle", round(margin, 3)
+    higher = reg.meta(metric).get("better", "higher") == "higher"
+    good = v > p50 if higher else v < p50
+    far = (v >= p75) if higher else (v <= p25)
+    far_bad = (v <= p25) if higher else (v >= p75)
+    if good:
+        return ("top quarter" if far else "above the middle"), round(margin, 3)
+    return ("bottom quarter" if far_bad else "below the middle"), round(margin, 3)
+
+
+def strength(n, band_week=None, type_source=None, platform=False, own_stale=False, completeness=None,
+             today=None) -> dict:
+    """The comparison-strength object for a band comparison, in the K1
+    shape: {pct, label, dimensions, caps_applied, reason}. The geometric
+    mean of the measured dimensions (peer count, band freshness, own-figure
+    quality, type similarity), then the caps: a guessed type ≤
+    INFERRED_TYPE_CAP, an all-types band ≤ PLATFORM_CAP."""
+    dims = {}
+    dims["size"] = min(1.0, max(0.0, (n or 0) / float(STRENGTH_FULL_N)))
+    age = None
+    mon = _bm._week_monday(band_week) if band_week else None
+    if mon:
+        age = max(0.0, ((today or date.today()) - mon).days / 7.0)
+        span = max(1.0, _bm.MAX_BAND_AGE_WEEKS - STRENGTH_FRESH_WEEKS)
+        dims["freshness"] = 1.0 if age <= STRENGTH_FRESH_WEEKS else max(0.0, 1.0 - (age - STRENGTH_FRESH_WEEKS) / span)
+    own = 0.5 if own_stale else 1.0
+    if completeness is not None:
+        own *= max(0.0, min(1.0, float(completeness)))
+    dims["own"] = own
+    dims["similarity"] = 0.6 if platform else (0.74 if type_source == "inferred" else 1.0)
+    vals = [v for v in dims.values() if v is not None]
+    if not vals or any(v <= 0 for v in vals):
+        pct = 0
+    else:
+        pct = 100.0 * math.exp(sum(math.log(v) for v in vals) / len(vals))
+    caps = []
+    if type_source == "inferred" and pct > INFERRED_TYPE_CAP:
+        pct, caps = float(INFERRED_TYPE_CAP), caps + ["inferred_type"]
+    if platform and pct > PLATFORM_CAP:
+        pct, caps = float(PLATFORM_CAP), caps + ["all_types"]
+    pct = int(round(pct))
+    weakest = min(dims, key=lambda k: dims[k])
+    reason = {"size": f"{n} other restaurants — {STRENGTH_FULL_N} makes a full comparison",
+              "freshness": "the band is several weeks old",
+              "own": "this restaurant's own figure is incomplete or old",
+              "similarity": ("an all-types band" if platform else "the type was guessed from the name")}[weakest]
+    return {"pct": pct, "label": f"{pct}% comparison strength", "dimensions": {k: round(v, 3) for k, v in dims.items()},
+            "caps_applied": caps, "reason": reason,
+            "meaning": "How well supported this comparison is — not how well you are doing"}
+
+
+# ── the kinds ──────────────────────────────────────────────────────────────
+
+def _series(restaurant_id, db_path, weeks=60):
+    try:
+        return _features.series(restaurant_id, weeks=weeks, db_path=db_path)
+    except Exception:
+        return []
+
+
+def _self(restaurant_id, metric, rows, today=None) -> dict:
+    """This restaurant against its own normal: the median of its weekly
+    figures SELF_GAP_WEEKS..SELF_GAP_WEEKS+SELF_BASELINE_WEEKS weeks back,
+    with a normal swing of 1.4826 × the median absolute deviation (never
+    under the metric's step). "about your normal" inside that swing."""
+    m = reg.meta(metric)
+    floor = _bm._week_floor(today, _bm.MAX_OWN_AGE_WEEKS)
+    cur = rows[-1] if rows else None
+    if not cur or cur["week"] < floor:
+        return {"kind": "self", "available": False, "why_not": "no current figure for this restaurant yet"}
+    value = _num((cur.get("features") or {}).get(metric))
+    if value is None:
+        return {"kind": "self", "available": False, "why_not": "not measured yet for this restaurant"}
+    cur_mon = _bm._week_monday(cur["week"])
+    base = []
+    last_year = None
+    for r in rows[:-1]:
+        mon = _bm._week_monday(r["week"])
+        v = _num((r.get("features") or {}).get(metric))
+        if mon is None or v is None or cur_mon is None:
+            continue
+        back = (cur_mon - mon).days // 7
+        if SELF_GAP_WEEKS <= back < SELF_GAP_WEEKS + SELF_BASELINE_WEEKS:
+            base.append(v)
+        if 51 <= back <= 53 and last_year is None:
+            last_year = v
+    if len(base) < SELF_MIN_POINTS:
+        return {"kind": "self", "available": False, "value": value,
+                "why_not": f"needs {SELF_MIN_POINTS} weeks of this restaurant's own history (has {len(base)})"}
+    med = percentile(base, 50)
+    mad = percentile([abs(x - med) for x in base], 50)
+    noise = max(m.get("step") or 0, 1.4826 * mad)
+    delta = value - med
+    higher = m.get("better", "higher") == "higher"
+    if abs(delta) <= noise:
+        verdict = "about your normal"
+    else:
+        verdict = "better than your normal" if (delta > 0) == higher else "worse than your normal"
+    out = {"kind": "self", "available": True, "value": round(value, 3), "baseline": round(med, 3),
+           "baseline_label": f"your own previous {SELF_BASELINE_WEEKS} weeks", "points": len(base),
+           "delta": round(delta, 3), "noise_band": round(noise, 3), "verdict": verdict,
+           "week": cur["week"], "as_of": _mdy(cur_mon + timedelta(days=6)) if cur_mon else None}
+    if last_year is not None:
+        out["last_year"] = round(last_year, 3)
+    return out
+
+
+def _band_kind(kind, restaurant_id, metric, cohort, type_source, db_path, today, rows):
+    """A published band (peers: the restaurant's type; platform: every
+    restaurant), the viewer's own figure taken out, with its standing and
+    strength."""
+    row = _bm._row(cohort, metric, db_path=db_path, today=today)
+    if not row:
+        return {"kind": kind, "available": False,
+                "why_not": (f"no current band of at least {_bm.MIN_QUARTILE_N} other "
+                            f"{'restaurants on Cavnar' if kind == 'platform' else _bm.cohort_label(cohort)} "
+                            "with this measured yet")}
+    v_now, v_at, own_week, own_stale = _bm._own(restaurant_id, metric, db_path=db_path, today=today,
+                                               band_week=row.get("week"))
+    p = _bm.published(cohort, metric, exclude_value=v_at, db_path=db_path, today=today)
+    if not p or p.get("withheld"):
+        return {"kind": kind, "available": False, "value": v_now,
+                "why_not": (p or {}).get("reason") or "the band is withheld"}
+    st, margin = standing(v_now, p, metric, p["n"])
+    completeness = (rows[-1].get("completeness") if rows else None)
+    out = {"kind": kind, "available": True, "value": v_now, "cohort": cohort,
+           "cohort_label": (f"{p['n']} other restaurants on Cavnar, all types" if kind == "platform"
+                            else p["cohort_label"]),
+           "type_source": ("platform" if kind == "platform" else type_source),
+           "inferred": kind == "peers" and type_source == "inferred",
+           "n": p["n"], "min_n": _bm.MIN_QUARTILE_N, "p25": p["p25"], "p50": p["p50"], "p75": p["p75"],
+           "week": p["week"], "as_of": p["as_of"], "own_week": own_week, "own_stale": own_stale,
+           "standing": st, "margin": margin, "comparable": True,
+           "strength": strength(p["n"], p["week"], type_source, platform=(kind == "platform"),
+                                own_stale=own_stale, completeness=completeness, today=today)}
+    return out
+
+
+def _industry(metric, restaurant):
+    m = reg.meta(metric)
+    key = m.get("industry")
+    if not key:
+        return {"kind": "industry", "available": False, "why_not": "no published figure for this metric"}
+    import benchmark_registry
+    e = benchmark_registry.for_restaurant(key, restaurant)
+    if not e:
+        return {"kind": "industry", "available": False,
+                "why_not": "no published figure for this restaurant's type"}
+    return {"kind": "industry", "available": True, "source": benchmark_registry.cite(e),
+            "source_kind": e.get("source_kind"), "year": e.get("year"), "label": e.get("label"),
+            "low": e.get("low"), "high": e.get("high"), "median": e.get("median"),
+            "median_basis": e.get("median_basis"), "inferred": bool(e.get("inferred")),
+            "type_source": e.get("category_source"), "line": benchmark_registry.line(e, m.get("label")),
+            "_entry": e}
+
+
+def _location(restaurant_id, metric, restaurant, db_path, viewer=None):
+    """This location against the owner's other locations (organization_id)
+    — the owner's own data, so no cross-restaurant floor."""
+    if viewer is not None and not viewer.get("is_admin"):
+        try:
+            from permissions import has_permission, LOCATION_SWITCH
+            if not has_permission(viewer, LOCATION_SWITCH):
+                return {"kind": "location", "available": False, "why_not": "shown only to logins that manage locations"}
+        except Exception:
+            return {"kind": "location", "available": False, "why_not": "shown only to logins that manage locations"}
+    # organization_id is a column the Restaurant dataclass does not carry.
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT organization_id FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+        org = row["organization_id"] if row else None
+        sibs = (conn.execute("SELECT id, name FROM restaurants WHERE organization_id=? ORDER BY id", (org,)).fetchall()
+                if org else [])
+    finally:
+        conn.close()
+    if not org:
+        return {"kind": "location", "available": False, "why_not": "a single location"}
+    if len(sibs) < LOCATION_MIN:
+        return {"kind": "location", "available": False, "why_not": "a single location"}
+    latest = _features.latest_by_restaurant(db_path=db_path)
+    locs = []
+    for s in sibs:
+        v = _num(((latest.get(s["id"]) or {}).get("features") or {}).get(metric))
+        if v is not None:
+            locs.append({"restaurant_id": s["id"], "name": s["name"], "value": round(v, 3),
+                         "this": s["id"] == restaurant_id})
+    if len(locs) < LOCATION_MIN or not any(l["this"] for l in locs):
+        return {"kind": "location", "available": False,
+                "why_not": f"fewer than {LOCATION_MIN} of your locations have this measured"}
+    higher = reg.meta(metric).get("better", "higher") == "higher"
+    locs.sort(key=lambda l: l["value"], reverse=higher)
+    rank = next(i for i, l in enumerate(locs) if l["this"]) + 1
+    return {"kind": "location", "available": True, "locations": locs, "rank": rank, "of": len(locs),
+            "median": round(percentile([l["value"] for l in locs], 50), 3)}
+
+
+# ── compare ────────────────────────────────────────────────────────────────
+
+def compare(restaurant_id, metric, *, kinds=None, viewer=None, restaurant=None, db_path=DB_PATH,
+            today=None, rows=None) -> dict:
+    """Every comparison for one metric: {version, metric, label, unit,
+    better, comparability, own, headline, comparisons[], facts[]}. Never
+    raises: an unreadable kind is unavailable with its reason."""
+    m = reg.meta(metric)
+    if not m:
+        return {"version": ENGINE_VERSION, "metric": metric, "available": False, "why_not": "unknown metric"}
+    want = tuple(kinds or KINDS)
+    if restaurant is None:
+        try:
+            restaurant = _models_mod.get_restaurant(restaurant_id, db_path=db_path) if db_path != DB_PATH \
+                else _models_mod.get_restaurant(restaurant_id)
+        except Exception:
+            restaurant = None
+    if rows is None:
+        rows = _series(restaurant_id, db_path)
+    cat, src = (None, None)
+    try:
+        cat, src = categories.category_for(restaurant) if restaurant is not None else (None, None)
+    except Exception:
+        pass
+    comps = []
+    for kind in want:
+        try:
+            if kind == "self":
+                comps.append(_self(restaurant_id, metric, rows, today))
+            elif kind == "peers":
+                if not cat or cat == "other":
+                    comps.append({"kind": "peers", "available": False,
+                                  "why_not": "this restaurant's type isn't set, so there is no like-for-like group"})
+                else:
+                    comps.append(_band_kind("peers", restaurant_id, metric, cat, src, db_path, today, rows))
+            elif kind == "platform":
+                if not reg.platform_allowed(metric):
+                    comps.append({"kind": "platform", "available": False,
+                                  "why_not": f"{m['label']} depends on the type of restaurant, so an all-types "
+                                             "comparison would mislead"})
+                else:
+                    comps.append(_band_kind("platform", restaurant_id, metric, "platform", None, db_path, today, rows))
+            elif kind == "industry":
+                comps.append(_industry(metric, restaurant))
+            elif kind == "location":
+                comps.append(_location(restaurant_id, metric, restaurant, db_path, viewer))
+            elif kind == "market":
+                comps.append({"kind": "market", "available": False,
+                              "why_not": "the nearby-competitor comparison is on Intel"})
+        except Exception as e:
+            print(f"[benchmark_engine] {kind} for {restaurant_id}/{metric} failed: {e}")
+            comps.append({"kind": kind, "available": False, "why_not": "could not be computed right now"})
+    by = {c["kind"]: c for c in comps}
+    head = next((by[k] for k in ("peers", "self", "industry") if by.get(k, {}).get("available")), None)
+    own_row = rows[-1] if rows else None
+    own_val = None
+    if own_row and own_row["week"] >= _bm._week_floor(today, _bm.MAX_OWN_AGE_WEEKS):
+        own_val = _num((own_row.get("features") or {}).get(metric))
+    out = {"version": ENGINE_VERSION, "metric": metric, "label": m["label"], "unit": m.get("unit"),
+           "better": m.get("better"), "comparability": m.get("comparability"), "module": m.get("module"),
+           "own": {"value": own_val, "week": own_row["week"] if own_row else None, "measured": own_val is not None},
+           "headline": {"kind": head["kind"], "text": headline_text(m, head)} if head else
+                       {"kind": None, "text": no_comparison_text(m, by)},
+           "comparisons": [{k: v for k, v in c.items() if not k.startswith("_")} for c in comps]}
+    out["facts"] = facts([out], _entries={metric: by.get("industry", {}).get("_entry")})
+    return out
+
+
+def compare_all(restaurant_id, module=None, *, kinds=None, viewer=None, restaurant=None, db_path=DB_PATH,
+                today=None) -> list:
+    """compare() for every metric of a module (or every registered metric),
+    reading the restaurant's feature history once."""
+    rows = _series(restaurant_id, db_path)
+    if restaurant is None:
+        try:
+            restaurant = _models_mod.get_restaurant(restaurant_id, db_path=db_path) if db_path != DB_PATH \
+                else _models_mod.get_restaurant(restaurant_id)
+        except Exception:
+            restaurant = None
+    return [compare(restaurant_id, mt, kinds=kinds, viewer=viewer, restaurant=restaurant, db_path=db_path,
+                    today=today, rows=rows) for mt in reg.metrics_for(module)]
+
+
+# ── words and facts ────────────────────────────────────────────────────────
+
+def headline_text(m, c) -> str:
+    label, unit = m["label"], m.get("unit")
+    if c["kind"] == "peers":
+        s = (f"Compared to {c['n']} other {c['cohort_label']} (as of {c['as_of']}), your {label.lower()} is "
+             f"{c['standing']}")
+        if c.get("inferred"):
+            s += " — your type was guessed from your name; confirm it to sharpen this"
+        return s + "."
+    if c["kind"] == "self":
+        return (f"Your {label.lower()} is {_fmt(c['value'], unit)} — {c['verdict']} "
+                f"({_fmt(c['baseline'], unit)} over {c['baseline_label']}).")
+    if c["kind"] == "industry":
+        return c.get("line") or ""
+    return ""
+
+
+def no_comparison_text(m, by) -> str:
+    why = (by.get("peers") or {}).get("why_not") or (by.get("self") or {}).get("why_not") or "not enough data yet"
+    return f"No fair comparison for {m['label'].lower()} yet — {why}."
+
+
+def prompt_lines(comparisons) -> list:
+    """The one wording every prompt carries for engine comparisons: who the
+    peers are, how many, as of when, how strong — or why there is none."""
+    out = []
+    for cm in comparisons or ():
+        if not isinstance(cm, dict) or not cm.get("label"):
+            continue
+        label, unit = cm["label"], cm.get("unit")
+        parts = []
+        for c in cm.get("comparisons") or ():
+            if not c.get("available"):
+                continue
+            k = c["kind"]
+            if k in ("peers", "platform"):
+                who = (f"{c['n']} other restaurants on Cavnar, all types (a behaviour metric, comparable "
+                       "across types)" if k == "platform" else f"{c['n']} other {c['cohort_label']}")
+                s = (f"compared to {who}: {c['standing']} (middle {_fmt(c['p50'], unit)}, band "
+                     f"{_fmt(c['p25'], unit)}–{_fmt(c['p75'], unit)}; as of {c['as_of']}; "
+                     f"{c['strength']['pct']}% comparison strength)")
+                if c.get("inferred"):
+                    s += " — type guessed from the name, not set by the owner"
+                parts.append(s)
+            elif k == "self":
+                parts.append(f"vs its own previous {SELF_BASELINE_WEEKS} weeks: {_fmt(c['value'], unit)} against "
+                             f"{_fmt(c['baseline'], unit)} — {c['verdict']} (normal swing ±{_fmt(c['noise_band'], unit if unit != 'share' else '')})")
+            elif k == "industry":
+                parts.append(f"published: {c.get('line')}")
+            elif k == "location":
+                parts.append(f"ranks {c['rank']} of {c['of']} of the owner's locations")
+        if parts:
+            out.append(f"{label}: " + "; ".join(parts) + ".")
+        else:
+            out.append(f"{label}: no fair comparison — say so rather than comparing "
+                       f"({(cm.get('headline') or {}).get('text') or 'not enough data'}).")
+    return out
+
+
+def facts(comparisons, _entries=None) -> list:
+    """response_validation Fact dicts for every figure the comparisons
+    carry. Bands and published figures are kind "benchmark" with source
+    {source_kind: peers|platform|industry kind, cohort_label, n, min_n,
+    as_of, comparable, restaurant_category, strength_pct, inferred}; the
+    restaurant's own baseline is kind "computed". A peer claim binds to
+    these or is not said."""
+    import benchmark_registry
+    out = []
+    for cm in comparisons or ():
+        metric = cm.get("metric")
+        unit = {"share": "", "★": "★", "%": "%"}.get(cm.get("unit"), "")
+        for c in cm.get("comparisons") or ():
+            if not c.get("available"):
+                continue
+            k = c["kind"]
+            if k in ("peers", "platform"):
+                src = {"source": "Cavnar anonymous cohort", "source_kind": ("cohort" if k == "peers" else "platform"),
+                       "engine_kind": k, "cohort_label": c.get("cohort_label"), "n": c.get("n"),
+                       "min_n": c.get("min_n"), "as_of": c.get("as_of"), "comparable": bool(c.get("comparable")),
+                       "restaurant_category": ("platform" if k == "platform" else c.get("cohort")),
+                       "strength_pct": (c.get("strength") or {}).get("pct"), "inferred": bool(c.get("inferred")),
+                       "standing": c.get("standing")}
+                for part in ("p25", "p50", "p75"):
+                    if c.get(part) is not None:
+                        out.append({"key": f"bench.{metric}.{k}.{part}", "value": float(c[part]), "unit": unit,
+                                    "kind": "benchmark", "entity": "cohort", "period": None, "as_of": c.get("as_of"),
+                                    "source": dict(src)})
+            elif k == "industry":
+                e = (_entries or {}).get(metric)
+                if e:
+                    for f in benchmark_registry.facts(e, key_prefix=f"bench.{metric}.industry"):
+                        f["source"]["engine_kind"] = "industry"
+                        out.append(f)
+            elif k == "self":
+                out.append({"key": f"bench.{metric}.self.baseline", "value": float(c["baseline"]), "unit": unit,
+                            "kind": "computed", "entity": "own", "period": None, "as_of": c.get("as_of"),
+                            "source": {"source_kind": "self", "engine_kind": "self"}})
+    return out
+
+
+# ── the route body ─────────────────────────────────────────────────────────
+
+def payload_for(user, metric=None, module=None, db_path=DB_PATH) -> dict:
+    """The body /api/benchmarks and /mobile/api/benchmarks return: the
+    login's restaurant, projected by its module view permissions."""
+    rid = (user or {}).get("restaurant_id")
+    if not rid:
+        return {"ok": False, "error": "No restaurant on this login."}
+    if metric and not reg.meta(metric):
+        return {"ok": False, "error": "Unknown metric."}
+    mods = [reg.meta(metric).get("module")] if metric else ([module] if module else None)
+    allowed = _visible_modules(user)
+    if mods and any(mo and allowed is not None and mo not in allowed for mo in mods if mo):
+        return {"ok": False, "error": "This login can't see that module."}
+    if metric:
+        comps = [compare(rid, metric, viewer=user, db_path=db_path)]
+    else:
+        comps = [c for c in compare_all(rid, module=module, viewer=user, db_path=db_path)
+                 if allowed is None or not c.get("module") or c.get("module") in allowed]
+    for c in comps:
+        c.pop("facts", None)
+    return {"ok": True, "comparisons": comps}
+
+
+def _visible_modules(user):
+    """The permission-module keys this login may view, or None for no
+    restriction (admin, or no user)."""
+    if user is None or user.get("is_admin"):
+        return None
+    try:
+        from permissions import MODULE_VIEW_PERMISSIONS, has_permission
+        return {k for k, perm in MODULE_VIEW_PERMISSIONS.items() if has_permission(user, perm)}
+    except Exception:
+        return set()

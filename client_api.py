@@ -8416,6 +8416,22 @@ def home_brief_group_api(current_user):
     return resp, status
 
 
+@client_bp.route("/api/benchmarks")
+@login_required
+def benchmarks_api(current_user):
+    """The Benchmark Engine (intelligence.engine): every comparison for one
+    metric (?metric=) or one module's metrics (?module=labor|food_cost|
+    reviews|marketing) — self, peers, platform, industry, location — each
+    available or with its reason, projected by the login's module view
+    permissions. Twin: /mobile/api/benchmarks."""
+    from intelligence import engine
+    payload = engine.payload_for(current_user, metric=request.args.get("metric") or None,
+                                 module=request.args.get("module") or None)
+    resp = jsonify(**payload)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp, (200 if payload.get("ok") else 400)
+
+
 @client_bp.route("/api/data-health")
 @login_required
 def data_health_api(current_user):
