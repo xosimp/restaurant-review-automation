@@ -114,7 +114,8 @@ def test_the_date_range_no_longer_repeats_the_target_next_to_it():
     assert "target" not in m.group(1).lower()
     assert 'id="labor-period"' in m.group(1)
     # the stat chip still carries it, further along in the header
-    assert re.search(r'<span class="l">target</span>', panel)
+    # (its label is the server's — "your target" or "Cavnar's starting target", re-audit #10)
+    assert re.search(r'<span class="l">\{\{ _tl \}\}</span>', panel)
 
 
 def test_the_stale_gap_paragraph_is_gone():
@@ -290,14 +291,17 @@ def test_vs_industry_is_toned_by_whether_its_actually_good():
     (never-say C, NS1 #4, NS4 L7)."""
     panel = _labor_panel()
     m = re.search(
-        r"<i class=\"\{% if not labor.is_live %\}\{% elif _lp > _lt \+ 3 %\}bad\{% elif _lp > _lt %\}warn\{% elif _status_ok %\}good\{% endif %\}\">"
+        r"<i class=\"\{% if not labor.is_live %\}\{% elif _lp > _lt \+ 3 %\}\{\{ _tbad \}\}\{% elif _lp > _lt %\}warn\{% elif _status_ok %\}good\{% endif %\}\">"
         r"\{% if not labor.is_live %\}sample\{% elif _lp > _lt \+ 8 %\}needs attention\{% elif _lp > _lt \+ 3 %\}above target"
         r"\{% elif _lp > _lt %\}slightly over\{% elif not _status_ok %\}— partial data"
         r"\{% elif _lp <= _lt - 3 %\}well under target\{% else %\}on target\{% endif %\}</i>",
         panel,
     )
     assert m, "Vs industry's <i> label has no tone class"
-    assert "<span>Vs your target</span>" in panel
+    # The heading names whose target it is (re-audit #10), and over Cavnar's
+    # starting target the tone stops at amber.
+    assert "<span>Vs {{ _tl }}</span>" in panel
+    assert "{% set _tbad = 'warn' if (savings_breakdown and savings_breakdown.labor_target_source == 'default') else 'bad' %}" in _src()
     assert "excellent" not in m.group(0)
     css = _src()
     assert ".lb2-sg .k i.good{color:var(--hb-good)}" in css

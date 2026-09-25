@@ -36,7 +36,7 @@ SCENARIOS = {
     # measures (completeness 0.45), so the strength is 72% — under 75%. (These
     # were guessed types capped at 74%; a guessed type no longer makes a
     # group at all — Benchmarking audit #8, workstream P.)
-    "tacos_inferred": {"category": "mexican", "set": True, "n": 12, "viewer_completeness": 0.45,
+    "tacos_inferred": {"category": "mexican", "set": True, "n": 12, "viewer_completeness": 0.45, "history": True,
                        "base": {"labor_pct_28d": 26.0}, "viewer": {"labor_pct_28d": 24.0}},
     # A weak comparison, the viewer at the middle: a ranking word is rewritten.
     "tacos_middle": {"category": "mexican", "set": True, "n": 12, "viewer_completeness": 0.45,
@@ -49,9 +49,17 @@ SCENARIOS = {
                      "base": {"labor_pct_28d": 28.0, "avg_rating_30d": 4.2, "labor_hours_per_1k_28d": 3.0},
                      "steps": {"avg_rating_30d": 0.04},
                      "viewer": {"labor_pct_28d": 33.4, "avg_rating_30d": 3.9, "labor_hours_per_1k_28d": 2.5}},
+    # A strong comparison (fix round, re-audit #15/#16): the size of the group
+    # now caps the strength (about 20 others reach ranking level), and a
+    # quartile word needs the viewer's own week-to-week swing — so this group
+    # is 24 restaurants from 24 owners and the viewer has 16 weeks of history.
+    "pizza_strong": {"category": "pizza", "set": True, "n": 24, "history": True,
+                     "steps": {"reply_rate_30d": 0.01, "labor_pct_28d": 0.1},
+                     "base": {"labor_pct_28d": 28.0, "reply_rate_30d": 0.5},
+                     "viewer": {"labor_pct_28d": 26.5, "reply_rate_30d": 0.95}},
     # A lone sushi bar among 12 pizza places: only the all-types band, and
     # only for a behaviour metric.
-    "platform": {"category": "sushi", "set": True, "n": 12, "alone": True,
+    "platform": {"category": "sushi", "set": True, "n": 12, "alone": True, "history": True,
                  "base": {"reply_rate_30d": 0.5, "labor_pct_28d": 28.0},
                  "viewer": {"reply_rate_30d": 0.95, "labor_pct_28d": 22.0}},
 }
@@ -78,7 +86,7 @@ def _scenario(name):
     from datetime import timedelta
     live = (date.today() - timedelta(days=120)).isoformat() + "T00:00:00"
 
-    def add(rid_name, category, vals, set_type=True, email="x", completeness=1.0):
+    def add(rid_name, category, vals, set_type=True, email="x", completeness=1.0, history=False):
         # Live 17 weeks, a real labor cost basis, and — when the type is set —
         # an owner-confirmed profile: the peer group is the confirmed partition
         # (counter service here; the lone sushi bar is full service).
@@ -91,6 +99,15 @@ def _scenario(name):
                                         rid))
         conn.execute("INSERT OR REPLACE INTO intel_features (restaurant_id, week, features_json, completeness) "
                      "VALUES (?,?,?,?)", (rid, week, json.dumps(vals), completeness))
+        if history:
+            # Its own weekly history, steady with a small swing, so the engine
+            # knows its own noise (standing() needs it for a quartile word).
+            for back in range(1, 17):
+                wk = feat.iso_week(date.today() - timedelta(weeks=back))
+                jig = (1 if back % 2 else -1)
+                past = {k: round(v + jig * (0.1 if v > 1 else 0.005), 3) for k, v in vals.items()}
+                conn.execute("INSERT OR REPLACE INTO intel_features (restaurant_id, week, features_json, "
+                             "completeness) VALUES (?,?,?,?)", (rid, wk, json.dumps(past), completeness))
         conn.commit()
         conn.close()
         return rid
@@ -105,7 +122,7 @@ def _scenario(name):
                   set_type=sc["set"] or sc.get("alone"), email=f"p{i}")
         cohorts[rid] = peer_cat
     viewer = add(f"{names[sc['category']]} Viewer", sc["category"], sc["viewer"], set_type=sc["set"], email="v",
-                 completeness=sc.get("viewer_completeness", 1.0))
+                 completeness=sc.get("viewer_completeness", 1.0), history=sc.get("history", False))
     cohorts[viewer] = sc["category"]
     bm.compute(db_path=db)          # each one's confirmed partition
     # A fixed as-of date, so a case can quote it: the band's week stays this

@@ -61,10 +61,17 @@ def test_a_friday_rec_is_judged_on_seven_watched_nights_against_its_baseline_onc
                                                                 for i in range(400)})
     rid = create_restaurant(Restaurant(name="Gap Co", owner_email="g@x.com"), db_path=db)
     text = "Fill the gap on Friday night: nobody on Bartender."
-    si.record_recommendation(rid, "coverage", text, "accepted")
-    rec_ledger.record(rid, si.schedule_rec_key("coverage", text), "accepted")
     # Four Fridays before, three with a coverage issue; then one clean one.
     fri = _fridays(db, rid, {-4: 1, -3: 1, -2: 0, -1: 1, 0: 0})
+    si.record_recommendation(rid, "coverage", text, "accepted")
+    rec_ledger.record(rid, si.schedule_rec_key("coverage", text), "accepted")
+    # Accepted the Saturday after Friday -1, so -1 is before it on every
+    # weekday. (Accepted "now" on a Friday made that night -1 itself — the
+    # acceptance day counts as after — and the test failed every Friday.)
+    c = models.get_conn(db)
+    c.execute("UPDATE schedule_recommendation_events SET created_at=? WHERE restaurant_id=?",
+              ((fri - dt.timedelta(days=6)).isoformat() + " 12:00:00", rid))
+    c.commit(); c.close()
     one_night = fri + dt.timedelta(days=5)
     assert si.measure_accepted_recommendations(rid, db_path=db, today=one_night) == 0     # one night decides nothing
     _fridays(db, rid, {k: 0 for k in range(1, 7)})                                         # seven clean Fridays

@@ -1934,5 +1934,30 @@
     "labor_hours_per_1k_28d"
    ]
   ]
+ },
+ "bench_strong": {
+  "surface": "ask",
+  "confidence": {
+   "pct": 70
+  },
+  "facts": [
+   {
+    "key": "labor.pct",
+    "value": 27.0,
+    "unit": "%"
+   }
+  ],
+  "facts_from": [
+   [
+    "engine",
+    "pizza_strong",
+    "labor_pct_28d"
+   ],
+   [
+    "engine",
+    "pizza_strong",
+    "reply_rate_30d"
+   ]
+  ]
  }
 }
