@@ -137,8 +137,9 @@ def test_the_check_in_asks_both_questions_and_rereads_the_result():
 
 @pytest.mark.parametrize("needle", [
     "ff.rec_key&&ff.answerable&&typeof recControlsHtml==='function'",           # the one thing
-    "lkey&&l.answerable&&typeof recControlsHtml==='function'",                   # What connects
-    "x.rec_key&&x.answerable&&typeof recControlsHtml==='function'",              # its other links
+    # What connects: every link past the focus card's lead is a Needs-
+    # attention row with its answers (density fix #5, hbLinkRows).
+    "x.rec_key&&x.answerable&&typeof recControlsHtml==='function'",
     "f.rec_key&&f.answerable&&typeof recControlsHtml==='function'?recControlsHtml(f.rec_key,'home','ops')",  # loss flags
     "rk=x.rec_key||x.key||''",                                                    # DSR actions by rec_key
     "x.answered?'<div class=\"ft\"><span class=\"rec-ans-done\">Answered</span></div>'",  # ...kept, without buttons

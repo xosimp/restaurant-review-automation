@@ -2534,6 +2534,69 @@ def _group_issue_confidence(rid, issues, labor, inv, rs, lab_ev):
     return issues
 
 
+def _location_last_night(rid, user):
+    """The newest night's report row for one location, as `user` may read
+    it (dsr.access.summary with the location's restaurant, so the verdict
+    and score are the report's own), or None when there is none or the
+    login has no DSR. Never raises."""
+    try:
+        from dsr import access, store
+        if access.view_for(user) is None:
+            return None
+        rows = store.list_reports(rid, limit=1)
+        if not rows:
+            return None
+        return access.summary(rows[0], user, get_restaurant(rid))
+    except Exception as e:
+        print(f"[group] last night unavailable for {rid}: {e}")
+        return None
+
+
+def group_last_night(locs):
+    """The group's total strip for the newest night any location reported:
+    net summed over the locations that measured THAT night (never averaged,
+    never mixing two nights), how many of how many, and vs budget only when
+    every one of them carries it — a partial budget sum would read as the
+    group's. None when no location has a measured night."""
+    nights = [l.get("last_night") for l in locs if isinstance(l.get("last_night"), dict)]
+    measured = [n for n in nights if isinstance(n.get("net"), (int, float)) and n.get("business_date")]
+    if not measured:
+        return None
+    day = max(str(n["business_date"])[:10] for n in measured)
+    same = [n for n in measured if str(n["business_date"])[:10] == day]
+    budgets = [n.get("vs_budget") for n in same]
+    from time_utils import mdy
+    return {"business_date": day, "label": mdy(day), "net": round(sum(float(n["net"]) for n in same), 2),
+            "locations": len(same), "of": len(locs),
+            "vs_budget": (round(sum(float(b) for b in budgets), 2)
+                          if budgets and all(isinstance(b, (int, float)) for b in budgets) else None)}
+
+
+def _lower_first(text):
+    t = str(text or "").strip().rstrip(".")
+    return t[:1].lower() + t[1:] if len(t) > 1 and t[1:2].islower() else t
+
+
+def group_summary_line(locs):
+    """The group Home's one sentence (density fix #48), deterministic from
+    the rows' own issue lines: "Evanston needs a look: labor 31.2% — 3.2 pts
+    over target, 3 urgent reviews unanswered." — the worst location first,
+    its first two issues, then how many more need a look. None when every
+    location is healthy (the headline already says so)."""
+    rank = {"critical": 0, "important": 1}
+    needing = sorted([l for l in locs if l.get("health") in rank],
+                     key=lambda l: (rank[l["health"]], -len(l.get("issues") or []), l.get("name") or ""))
+    if not needing:
+        return None
+    top = needing[0]
+    why = [_lower_first(i.get("text")) for i in (top.get("issues") or [])[:2] if i.get("text")]
+    line = f"{top['name']} needs a look" + (f": {', '.join(why)}" if why else "")
+    more = len(needing) - 1
+    if more:
+        line += f" · {_plural(more, 'more location')} too"
+    return line + "."
+
+
 def build_group_brief(current_user, fresh=False):
     """The consolidated view for an owner with several locations: one row per
     location, the attention list across all of them, and the portfolio
@@ -2557,6 +2620,11 @@ def build_group_brief(current_user, fresh=False):
     conn.close()
     for l in locs:
         l["active"] = l["id"] == current_user["restaurant_id"]
+        # Each location's last night (density fix #19): the same row its own
+        # Home's status line reads (dsr.access.summary — the scorecard's
+        # verdict, net, vs budget), for this login, so the table and the
+        # switcher can compare locations on the night, not only on reviews.
+        l["last_night"] = _location_last_night(l["id"], current_user)
     rank = {"critical": 0, "important": 1, "watch": 2}
     attention = []
     import nav as _nav_g
@@ -2605,7 +2673,9 @@ def build_group_brief(current_user, fresh=False):
                       "weakest": _rank["weakest"],
                       "ranking_basis": _rank["basis"],
                       "heaviest_labor": ({"location": heaviest["name"], "id": heaviest["id"], "pct": heaviest["labor"]["pct"], "over": heaviest["labor"]["over"]} if heaviest and heaviest["labor"]["over"] > 0 else None),
-                      "biggest_issue": ({"location": attention[0]["location"], "id": attention[0]["restaurant_id"], "issue": attention[0]["text"]} if attention else None)},
+                      "biggest_issue": ({"location": attention[0]["location"], "id": attention[0]["restaurant_id"], "issue": attention[0]["text"]} if attention else None),
+                      "last_night": group_last_night(locs)},
+        "summary_line": group_summary_line(locs),
     }
     # Location to location on the engine's `location` kind (#19): each
     # location against its own normal, then against the others, a gap

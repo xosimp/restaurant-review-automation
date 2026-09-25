@@ -241,7 +241,10 @@ def test_every_take_me_there_uses_the_nav():
     assert src.count("esc(a.action.nav||'')") == 2, "attention rows and the focus card's also-row"
     # Still open lands on the item (a proposal reopens): the row's own nav rides into hbQueueActs (merged with O1)
     assert "+hbQueueActs(hbWithNav(y))" in src and "if(!o.route&&!o.nav&&y.nav)o.nav=y.nav;" in src
-    assert "renderQuick(d.quick_actions||[])" in src, "the server's quick actions are drawn"
+    # Drawn, less the ones a Needs-attention row already carries (density
+    # fix #20); the palette's One tap keeps every one.
+    assert "renderQuick(hbQuickUnsaid(d.quick_actions||[],d))" in src, "the server's quick actions are drawn"
+    assert "window._hbQuick=d.quick_actions||[];" in src
 
 
 def test_publish_n_replies_opens_the_confirm_card():

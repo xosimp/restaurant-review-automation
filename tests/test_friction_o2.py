@@ -404,5 +404,8 @@ def test_cross_module_findings_and_cost_drivers_name_where_to_act():
     assert fci.driver_action({"kind": "portion", "dish": "Burger"})["nav"] == "inventory/menu?dish=Burger"
     assert fci.driver_action({"kind": "waste"})["nav"] == "inventory/count"
     s = _src()
-    assert "data-cav-go=\"'+esc(l.act.nav)+'\"" in s and "data-cav-go=\"'+wtEsc(x.act.nav)+'\"" in s
+    # Home's links are Needs-attention rows since density fix #5 (hbLinkRows),
+    # and the focus card's lead link acts from the card itself.
+    assert "data-cav-go=\"'+esc(x.act.nav)+'\"" in s and "data-cav-go=\"'+wtEsc(x.act.nav)+'\"" in s
+    assert "data-cav-go=\"'+esc(fAct.nav)+'\"" in s
     assert "closest('[data-cav-go]')" in s
