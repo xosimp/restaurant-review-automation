@@ -487,6 +487,11 @@ def accuracy(record) -> dict:
     else:
         vs = f"vs about {int(round(100 * dn['rate']))}% by chance"
     basis = f"improved {improved} of {measured} times {vs}"
+    if prior_source == "cohort":
+        # The one time peers move the figure — only ever DOWN — the owner is
+        # told why (BM3-12, Top-50 #32).
+        basis += (f" — {r.get('prior_label') or 'other restaurants on Cavnar'} saw this rarely help "
+                  f"({pi} of {pm}), which lowers it")
     return {"pct": pct, "basis": basis, "n": measured, "improved": improved, "source": "own",
             "low": int(round(lo * 100)), "high": int(round(hi * 100)),
             "p_beats": round(p, 4), "beats_label": f"{pct}% likely to beat doing nothing",

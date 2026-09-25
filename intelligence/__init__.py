@@ -42,11 +42,14 @@ def recommendation_history(restaurant_id, limit=100, db_path=DB_PATH):
     return feedback.history(restaurant_id, limit=limit, db_path=db_path)
 
 
-def recommendation_success(rec_kind, cohort=None, restaurant_id=None, db_path=DB_PATH, exclude_restaurant_id=None):
+def recommendation_success(rec_kind, cohort=None, restaurant_id=None, db_path=DB_PATH, exclude_restaurant_id=None,
+                           window_days=None, half_life_days=None):
     """scoring.kind_stats. A cohort figure used as one restaurant's prior
-    passes exclude_restaurant_id so its own rows are not in it."""
+    passes exclude_restaurant_id so its own rows are not in it, and
+    window_days (scoring.PRIOR_WINDOW_DAYS) so it is the recent record."""
     return scoring.kind_stats(rec_kind, cohort=cohort, restaurant_id=restaurant_id, db_path=db_path,
-                              exclude_restaurant_id=exclude_restaurant_id)
+                              exclude_restaurant_id=exclude_restaurant_id, window_days=window_days,
+                              half_life_days=half_life_days)
 
 
 def pattern_discovery(db_path=DB_PATH):
@@ -190,3 +193,28 @@ def benchmark_facts(comparisons):
 
 def benchmark_prompt_lines(comparisons):
     return engine.prompt_lines(comparisons)
+
+
+# ── Restaurant DNA and prediction (Benchmarking audit BM4 §5) ───────────────
+# The restaurant's own operational profile, the similarity between two
+# profiles (server-side), and the neighbour prediction fact (dormant below
+# its floors). See intelligence/dna.py and intelligence/predict.py.
+
+def dna_profile(restaurant_id, db_path=DB_PATH, modules=None):
+    from . import dna
+    return dna.profile(restaurant_id, db_path=db_path, modules=modules)
+
+
+def dna_payload(user, db_path=DB_PATH):
+    from . import dna
+    return dna.payload_for(user, db_path=db_path)
+
+
+def dna_distance(a, b, weights=None):
+    from . import dna
+    return dna.distance(a, b, weights)
+
+
+def predict_effect(restaurant_id, rec_kind, metric, tags=None, db_path=DB_PATH):
+    from . import predict
+    return predict.predict_effect(restaurant_id, rec_kind, metric, tags=tags, db_path=db_path)

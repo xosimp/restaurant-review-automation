@@ -78,6 +78,12 @@ SHRINK_K = 5                   # pseudo-observations pulling a rate to its prior
 # alone (below).
 W_ACCEPT, W_SUCCESS = 0.2, 1.0
 MIN_WEIGHT, MAX_WEIGHT = 0.75, 1.25
+# A kind with no record here may be ranked with help from similar
+# restaurants' results, within these bounds only (BM3-12, Top-50 #32).
+COLD_PRIOR_BOUNDS = (0.9, 1.1)
+# The cohort record a prior reads: the last PRIOR_WINDOW_DAYS only
+# (intelligence.scoring.PRIOR_WINDOW_DAYS; a test holds them in step).
+PRIOR_WINDOW_DAYS = 365
 # The upward ceiling scales with the LOWER end of the 90% Wilson interval of
 # this restaurant's own measured success for the kind (or its best subject
 # tag) above the prior: 3 of 3 (lower bound 0.53) allows about 1.01, 30 of
@@ -698,6 +704,7 @@ class Effectiveness:
         self.db_path = db_path
         self.now = now or datetime.utcnow()
         self._priors = {}
+        self._cold = {}
         self._base_rates = base_rates
         self.kinds, self.tags = {}, {}
         self.worse_keys, self.worse_kinds = {}, {}
@@ -778,7 +785,8 @@ class Effectiveness:
                 # five restaurants that let one card expire are no floor for a
                 # success rate one restaurant measured (re-audit B3).
                 s = intelligence.recommendation_success(kind, cohort=self.cohort, db_path=self.db_path,
-                                                        exclude_restaurant_id=self.rid)
+                                                        exclude_restaurant_id=self.rid,
+                                                        window_days=PRIOR_WINDOW_DAYS)
                 privacy.assert_anonymous(s)
                 if s.get("answered") and privacy.cohort_ok(s.get("answered_restaurants")):
                     acc = float(s.get("acceptance_rate_shrunk") or 0.5)
@@ -790,6 +798,32 @@ class Effectiveness:
                 print(f"[rec_learning] cohort prior unavailable for {kind}: {e}")
         self._priors[kind] = (acc, suc)
         return acc, suc
+
+    def cold_prior(self, kind):
+        """{weight, restaurants, rate} for a kind this restaurant has no
+        record of, from intelligence.scoring.similar_prior (the cohort's
+        other restaurants, weighted by DNA similarity and recency, capped
+        per restaurant, over the privacy floors) — or None. The weight is
+        1 + W_SUCCESS × (shrunk rate − this kind's do-nothing rate), held
+        to COLD_PRIOR_BOUNDS: peers can nudge the order of a new kind's
+        cards, never decide it."""
+        if kind in self._cold:
+            return self._cold[kind]
+        out = None
+        if self.cohort:
+            try:
+                from intelligence import scoring as _scoring
+                sp = _scoring.similar_prior(kind, self.rid, self.cohort, db_path=self.db_path, now=self.now)
+                if sp.get("available") and sp.get("rate") is not None:
+                    base = self.base_rate(kind)
+                    rate = _shrink(sp["rate"], sp.get("weighted") or 0.0, base)
+                    w = 1.0 + W_SUCCESS * (rate - base)
+                    out = {"weight": round(min(COLD_PRIOR_BOUNDS[1], max(COLD_PRIOR_BOUNDS[0], w)), 3),
+                           "restaurants": int(sp["restaurants"]), "rate": round(rate, 3)}
+            except Exception as e:
+                print(f"[rec_learning] similar-restaurant prior unavailable for {kind}: {e}")
+        self._cold[kind] = out
+        return out
 
     def _delta(self, s, prior):
         acc_p, suc_p = prior
@@ -814,11 +848,20 @@ class Effectiveness:
             why.append(f"{kind}: taken {ks['taken']} of {ks['settled']}, {ks['improved']} of {ks['measured']} "
                        f"measured improved")
         w = 1.0 + (sum(deltas) / len(deltas) if deltas else 0.0)
+        cold = None
+        if not learned:
+            # No record of its own: ranked with help from similar
+            # restaurants' results (BM3-12, Top-50 #32), bounded to
+            # COLD_PRIOR_BOUNDS and said. Ranking only — never a %.
+            cold = self.cold_prior(kind)
+            if cold is not None:
+                w = cold["weight"]
+                why.append(f"ranked with help from {cold['restaurants']} similar restaurants' results")
         ratio, _n_cal = self.calibration_ratio(kind)
         if ratio is not None:
             w *= ratio
             why.append(f"measured dollars run {ratio:.2f}× the estimate")
-        w = min(self.ceiling(learned, kind), max(MIN_WEIGHT, w))
+        w = min(self.ceiling(learned, kind) if cold is None else COLD_PRIOR_BOUNDS[1], max(MIN_WEIGHT, w))
         key_pen = min(WORSE_KEY_CAP, sum(WORSE_KEY_STEP * 0.5 ** (a / WORSE_HALF_LIFE_DAYS)
                                          for a in self.worse_keys.get(key, [])))
         kind_pen = min(WORSE_KIND_CAP, sum(WORSE_KIND_STEP * 0.5 ** (a / WORSE_HALF_LIFE_DAYS)
@@ -1042,7 +1085,8 @@ def kind_record(restaurant_id, kind, db_path=DB_PATH, restaurant=None, now=None,
         cohort = intelligence.cohort_for(restaurant)[0] if restaurant is not None else None
         if cohort:
             s = intelligence.recommendation_success(kind, cohort=cohort, db_path=db_path,
-                                                    exclude_restaurant_id=restaurant_id)
+                                                    exclude_restaurant_id=restaurant_id,
+                                                    window_days=PRIOR_WINDOW_DAYS)
             privacy.assert_anonymous(s)
             # The capped counts (scoring.MAX_RESTAURANT_SHARE): one peer's
             # eight results among twelve no longer stand as the cohort.

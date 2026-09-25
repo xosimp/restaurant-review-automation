@@ -247,8 +247,9 @@ def test_the_cohort_prior_is_used_only_over_the_floor_and_only_anonymous(db, mon
     models.update_restaurant(rid, {"category": "pizza"})
     calls = []
 
-    def fake(kind, cohort=None, restaurant_id=None, db_path=None, exclude_restaurant_id=None):
-        calls.append((cohort, exclude_restaurant_id))
+    def fake(kind, cohort=None, restaurant_id=None, db_path=None, exclude_restaurant_id=None, window_days=None,
+             half_life_days=None):
+        calls.append((cohort, exclude_restaurant_id, window_days))
         return {"restaurants": 7, "answered_restaurants": 7, "measured_restaurants": 6, "available": True,
                 "answered": 40, "measured": 20, "improved": 14, "measured_capped": 20.0, "improved_capped": 14.0,
                 "acceptance_rate_shrunk": 0.8, "success_rate_shrunk": 0.7}
@@ -260,7 +261,8 @@ def test_the_cohort_prior_is_used_only_over_the_floor_and_only_anonymous(db, mon
     base = rec_learning.BASE_RATE_STATED
     acc, suc = m.prior("trim_day")
     assert acc == 0.8 and abs(suc - (14 + base * rec_learning.SHRINK_K) / (20 + rec_learning.SHRINK_K)) < 1e-9
-    assert calls == [("pizza", rid)]
+    # ... and only its recent record (BM3-12, Top-50 #32): the last 365 days.
+    assert calls == [("pizza", rid, rec_learning.PRIOR_WINDOW_DAYS)]
     # below the floor, or carrying an identity: even acceptance, the base rate for success
     monkeypatch.setattr(intelligence, "recommendation_success",
                         lambda *a, **k: {"restaurants": 4, "answered_restaurants": 4, "measured_restaurants": 4,

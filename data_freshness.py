@@ -70,6 +70,12 @@ SOURCES = {
     # one day of slack (a night it ran late) before recency falls, so
     # "more than one day behind" is exactly where it starts to (DH2-4).
     "depletion":  {"label": "Depletion",      "expected_lag": 1.0,  "grace": 1.0, "horizon": 7},
+    # The peer bands a comparison rests on (Benchmarking audit BM3-9,
+    # Top-50 #22), dated by intel_benchmarks.computed_at for the
+    # restaurant's own type (else the all-types band): weekly bands, a week
+    # of grace, and 49 days to 0 — benchmarks.MAX_BAND_AGE_WEEKS (8), past
+    # which a band is withheld anyway.
+    "cohort":     {"label": "Peer benchmarks", "expected_lag": 7.0, "grace": 7.0, "horizon": 49},
 }
 # How often each source is refreshed when everything works, in hours, and
 # the owner's word for it. "Live" is said only of a source refreshed more
@@ -84,6 +90,7 @@ CADENCE = {
     "waste": (None, "when waste is logged"), "prices": (None, "when invoices are applied"),
     "visibility": (168, "weekly"), "competitor": (168, "weekly"), "weather": (6, "every 6 hours"),
     "dsr": (24, "nightly, after close"), "depletion": (24, "nightly"),
+    "cohort": (24, "nightly"),
 }
 LIVE_WITHIN_HOURS = 1
 
@@ -162,7 +169,9 @@ TOOL_SOURCES = {
     "read_outcomes": ("sales", "labor", "reviews"),
     "read_goals": ("sales", "labor", "reviews"),
     "read_decisions": ("sales", "labor", "reviews"),
-    "read_platform_intelligence": ("labor", "sales", "reviews", "inventory"),
+    # The platform read quotes peer bands too, so its answer is only as
+    # current as the bands (BM3-9).
+    "read_platform_intelligence": ("labor", "sales", "reviews", "inventory", "cohort"),
     "read_demand_forecast": ("sales", "pos", "weather"),
     # The Data Health answer reads every source (DH5 §2.6).
     "read_data_health": tuple(SOURCES),
@@ -928,6 +937,32 @@ def _competitor(r, conn, today, now, ctx, db_path=None):
     return _data_date_state("competitor", d, today, "Competitors read")
 
 
+def _cohort(r, conn, today, now, ctx, db_path=None):
+    """Dated by the newest intel_benchmarks row for the restaurant's own
+    type (categories.category_for), else the all-types ('platform') band —
+    the comparison it would be shown. No band ever computed is not_connected:
+    no figure rests on it yet."""
+    cat = None
+    try:
+        from intelligence import categories
+        cat = categories.category_for(r)[0]
+    except Exception:
+        cat = None
+    row = None
+    for cohort in ([cat] if cat else []) + ["platform"]:
+        try:
+            row = conn.execute("SELECT MAX(computed_at) AS t, MAX(n) AS n FROM intel_benchmarks WHERE cohort=?",
+                               (cohort,)).fetchone()
+        except Exception:
+            row = None
+        if row and row["t"]:
+            break
+    d = _as_date(row["t"] if row else None)
+    if d is None:
+        return _result("cohort", None, None, "No peer comparison computed yet", state="not_connected")
+    return _data_date_state("cohort", d, today, "Peer bands computed")
+
+
 def _weather(r, conn, today, now, ctx, db_path=None):
     """The cached forecast's age in hours, read by weather.py's own rule
     (G11: weather_cached_at is UTC with an offset now, server-local naive
@@ -1114,7 +1149,8 @@ def _with_health(res, key, restaurant, conn):
 _READERS = {"pos": _pos, "labor": _labor, "sales": _sales, "reviews": _reviews, "inventory": _inventory,
             "purchases": _purchases, "waste": _waste, "prices": _prices,
             "marketing": _marketing, "visibility": _visibility,
-            "competitor": _competitor, "weather": _weather, "dsr": _dsr, "depletion": _depletion}
+            "competitor": _competitor, "weather": _weather, "dsr": _dsr, "depletion": _depletion,
+            "cohort": _cohort}
 
 
 def source_state(restaurant, key, db_path=None, now=None, context=None) -> dict:

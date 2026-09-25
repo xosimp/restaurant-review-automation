@@ -494,6 +494,66 @@ def outbound_label(conf) -> str:
 SCHEDULE_PANEL_KEY = "schedule_quality:read"
 
 
+# A schedule built on a starting headcount borrowed from other restaurants
+# (intelligence.staffing.starting_headcount) is capped on Evidence (BM3-13,
+# Top-50 #33): at BORROWED_CAP while none of the staffed slots are the
+# restaurant's own, lifting in proportion as its own weeks replace them.
+BORROWED_CAP = 49
+
+
+def _slot_key(key):
+    if isinstance(key, (tuple, list)) and len(key) >= 2:
+        return str(key[0]).strip().lower(), str(key[1]).strip().lower()
+    s = str(key or "")
+    if "|" in s:
+        a, b = s.split("|", 1)
+        return a.strip().lower(), b.strip().lower()
+    return None
+
+
+def borrowed_slots(start, typical=None):
+    """{borrowed, total, own} — the (weekday, daypart, role) slots a draft
+    staffs from the borrowed starting headcount (`start`, the
+    starting_headcount payload) and the slots it staffs from the
+    restaurant's own typical headcount — or None when nothing is borrowed.
+    A slot the restaurant's own history covers is its own, whatever the
+    borrowed figure says (staffing.merge_into_typical's rule)."""
+    if not isinstance(start, dict) or not start.get("available"):
+        return None
+    own = set()
+    for key, roles in (typical or {}).items():
+        sk = _slot_key(key)
+        if not sk or not isinstance(roles, dict):
+            continue
+        for role, n in roles.items():
+            if n:
+                own.add((sk[0], sk[1], str(role).strip().lower()))
+    borrowed = set()
+    for s in start.get("by_slot") or []:
+        k = (str(s.get("day") or "").strip().lower(), str(s.get("daypart") or "").strip().lower(),
+             str(s.get("role") or "").strip().lower())
+        if all(k) and (s.get("people") or 0) > 0 and k not in own:
+            borrowed.add(k)
+    if not borrowed:
+        return None
+    return {"borrowed": len(borrowed), "own": len(own), "total": len(borrowed | own)}
+
+
+def borrowed_cap(slots):
+    """(cap, reason) for a schedule with borrowed slots, else (None, None):
+    BORROWED_CAP with none of its own, rising linearly with the share of
+    slots that are its own — never 100 while any slot is borrowed."""
+    if not slots or not slots.get("borrowed"):
+        return None, None
+    n, total = int(slots["borrowed"]), max(1, int(slots.get("total") or slots["borrowed"]))
+    own_share = max(0.0, min(1.0, (total - n) / float(total)))
+    cap = min(99.0, float(BORROWED_CAP) + (100.0 - BORROWED_CAP) * own_share)
+    shifts = f"{n} shift{'s' if n != 1 else ''}"
+    if own_share <= 0:
+        return float(BORROWED_CAP), f"{shifts} use other restaurants' staffing, none of yours yet"
+    return round(cap, 1), f"{shifts} of {total} use other restaurants' staffing; your own weeks cover the rest"
+
+
 def schedule_evidence(quality) -> dict:
     """The Evidence Strength input of the Shift Quality read and of every
     suggestion built from it: the one read of this schedule (n 1 of 1),
@@ -507,12 +567,21 @@ def schedule_evidence(quality) -> dict:
     sc = qc.get("score")
     reasons = [str(x) for x in (qc.get("reasons") or []) if x]
     if not isinstance(sc, (int, float)) or isinstance(sc, bool):
+        bcap, breason = borrowed_cap((quality or {}).get("borrowed_slots"))
+        if bcap is not None:
+            return {"n": 1, "n_full": 1, "kind": "count", "basis": "the Shift Quality read of this schedule",
+                    "cap": bcap, "cap_reason": breason}
         return {"n": None, "basis": "The read's completeness wasn't measured"}
     sc = max(0.0, min(100.0, float(sc)))
     basis = "the Shift Quality read of this schedule"
     why = ("every input on file" if not reasons else reasons[0].rstrip(".").rstrip())
-    return {"n": 1, "n_full": 1, "kind": "count", "basis": basis, "cap": sc,
-            "cap_reason": f"its inputs are {int(round(sc))}% complete — {why}"}
+    out = {"n": 1, "n_full": 1, "kind": "count", "basis": basis, "cap": sc,
+           "cap_reason": f"its inputs are {int(round(sc))}% complete — {why}"}
+    # Borrowed staffing (BM3-13): the lower of the two caps binds, and says so.
+    bcap, breason = borrowed_cap((quality or {}).get("borrowed_slots"))
+    if bcap is not None and bcap < out["cap"]:
+        out["cap"], out["cap_reason"] = bcap, breason
+    return out
 
 
 def attach_schedule_confidence(restaurant_id, quality, items, db_path=None, ctx=None) -> list:
