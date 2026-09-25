@@ -97,7 +97,11 @@ def test_card_with_peers_names_who_how_many_and_the_strength_as_a_percentage(db_
     assert d["below_minimum"] is None
     s = d["strength"]
     assert isinstance(s["pct"], int) and s["label"] == f"{s['pct']}% comparison strength"
-    assert [r["title"] for r in s["rows"]] == ["Peer count", "Band freshness", "Your own figure", "Type match"]
+    # Every strength dimension the engine used is a row — the re-audit's six
+    # (it pinned the old four, "Type match" included).
+    assert [r["title"] for r in s["rows"]] == ["Peer count", "Band freshness", "Your own figure",
+                                               "How alike the group is", "How closely the group agrees",
+                                               "Separate owners"]
     assert all(r["pct"] is None or 0 <= r["pct"] <= 100 for r in s["rows"]) and s["meaning"]
     row = next(r for r in d["rows"] if r["metric"] == "labor_pct_28d")
     assert row["kind"] == "peers" and isinstance(row["strength_pct"], int)

@@ -122,7 +122,7 @@ final class BenchmarkCardTests: XCTestCase {
               {"id": 3, "name": "East", "value_text": "38%", "vs_own": "about your normal",
                "vs_group": "behind your other locations", "tone": "warn", "called": true, "group_median_text": "30.4%"},
               {"id": 4, "name": "New", "value_text": "31%", "vs_own": null,
-               "vs_group": "not called — needs 6 weeks of history to tell a gap from noise", "tone": "neutral", "called": false}]}],
+               "vs_group": "not called — needs 7 weeks of history to tell a gap from noise", "tone": "neutral", "called": false}]}],
              "why_not": null}
             """)
         let east = try XCTUnwrap(lc.metrics.first?.locations.first)

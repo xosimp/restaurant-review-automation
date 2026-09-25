@@ -18134,6 +18134,12 @@ function loadRestaurantProfile() {
       box.hidden = false;
       document.getElementById('as-rp-suggest-text').textContent = sug.text;
       document.getElementById('as-rp-suggest-why').textContent = 'A guess from ' + (sug.cues && sug.cues.length ? sug.cues.join(', ') : 'your name') + ' \u2014 ' + (sug.confidence_pct || 0) + '% confident. Until you confirm, no other restaurant is compared with you.';
+    } else if (p.review && p.confirmed) {
+      // A confirmed profile Cavnar's own data now questions (re-audit #38):
+      // nothing moves until the owner says yes.
+      box.hidden = false;
+      document.getElementById('as-rp-suggest-text').textContent = p.review.text;
+      document.getElementById('as-rp-suggest-why').textContent = 'From your own figures. Who you are compared with does not change until you confirm.';
     } else { box.hidden = true; }
     document.getElementById('as-rp-confirmed').textContent = p.confirmed ? ('Confirmed' + (p.confirmed_at && window.mdy ? ' ' + window.mdy(rpLocalDay(p.confirmed_at)) : '') + '.') : 'Not confirmed yet.';
     var t = d.targets || {}, parts = [];
@@ -18153,9 +18159,11 @@ function rpLocalDay(stamp) {
 }
 function rpFocus() { var el = document.getElementById('as-rp-sm'); if (el) el.focus(); }
 function rpAcceptSuggestion() {
-  var sug = RP_DATA && RP_DATA.profile && RP_DATA.profile.suggestion; if (!sug) return;
+  var prof = (RP_DATA && RP_DATA.profile) || {};
+  var sug = prof.confirmed ? prof.review : prof.suggestion; if (!sug) return;
   if (sug.service_model) document.getElementById('as-rp-sm').value = sug.service_model;
   if (sug.concept) document.getElementById('as-rp-concept').value = sug.concept;
+  if (sug.bar_led === true || sug.bar_led === false) document.getElementById('as-rp-bar').checked = sug.bar_led;
   if (!document.getElementById('as-rp-sm').value) { rpFocus(); asFlash('as-rp-status', 'Pick how you serve, then confirm.'); return; }
   saveRestaurantProfile();
 }

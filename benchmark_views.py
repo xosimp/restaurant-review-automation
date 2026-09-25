@@ -83,7 +83,9 @@ _STRENGTH_ROWS = (
     ("size", "Peer count"),
     ("freshness", "Band freshness"),
     ("own", "Your own figure"),
-    ("similarity", "Type match"),
+    ("similarity", "How alike the group is"),
+    ("spread", "How closely the group agrees"),
+    ("orgs", "Separate owners"),
 )
 
 
@@ -106,21 +108,31 @@ def strength_detail(c) -> dict | None:
     basis = {
         "size": f"{n} other restaurants measured this — {full_n} makes a full comparison",
         "freshness": f"the group's figures as of {c.get('as_of') or '—'}",
-        "own": ("your own figure is incomplete or older than the group's" if (dims.get("own") or 1) < 1
-                else "your own figure is complete and current"),
+        "own": ("your own figure for this measure rests on few days or is older than the group's"
+                if (dims.get("own") if dims.get("own") is not None else 1) < 1
+                else "your own figure for this measure is well measured and current"),
         "similarity": ("every type of restaurant on Cavnar — a behaviour measure, comparable across types"
                        if c.get("kind") == "platform" else
                        ("your type was guessed from your name — confirm it in Account to sharpen this"
-                        if c.get("inferred") else "your type, as you set it")),
+                        if c.get("inferred") else
+                        (f"a wider group than your profile — rung {int(c.get('level') or 0) + 1} of {c.get('levels')}"
+                         if c.get("wider_than_profile") else
+                         "restaurants in your confirmed group — a finer split would be more alike"))),
+        "spread": "how tightly the group's own figures sit around the middle",
+        "orgs": (f"{c.get('orgs')} separate owners in the group" if c.get("orgs") is not None
+                 else "separate owners in the group"),
     }
     rows = []
     for key, title in _STRENGTH_ROWS:
         v = dims.get(key)
+        if v is None and key in ("spread", "orgs"):
+            continue
         rows.append({"key": key, "title": title,
                      "pct": None if v is None else int(round(max(0.0, min(1.0, float(v))) * 100)),
                      "basis": basis[key]})
     caps = list(s.get("caps_applied") or ())
-    footer = "The overall figure combines all four — the weakest pulls it down most."
+    footer = ("The group's size sets the ceiling; under it the overall figure combines the others — "
+              "the weakest pulls it down most.")
     if "inferred_type" in caps or c.get("inferred"):
         footer += f" A type guessed from the name holds it at {inferred_cap}% or below."
     if "all_types" in caps or c.get("kind") == "platform":
@@ -587,7 +599,7 @@ def location_compare(user, db_path=DB_PATH) -> dict:
             o_noise = [o["noise"] for o in others if o["noise"] is not None]
             e["group_median_text"] = fmt(med, cm.get("unit"))
             if e["noise"] is None or not o_noise:
-                e.update(vs_group="not called — needs 6 weeks of history to tell a gap from noise",
+                e.update(vs_group="not called — needs 7 weeks of history to tell a gap from noise",
                          tone="neutral", called=False)
                 continue
             band = (e["noise"] ** 2 + percentile(o_noise, 50) ** 2) ** 0.5

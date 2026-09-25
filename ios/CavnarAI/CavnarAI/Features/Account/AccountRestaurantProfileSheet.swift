@@ -25,6 +25,21 @@ struct RestaurantProfilePayload: Decodable {
             case confidencePct = "confidence_pct"
         }
     }
+    /// "Is it still right?" for a CONFIRMED profile (re-audit #38): drift in
+    /// the restaurant's own figures, a format that contradicts it, or a
+    /// yearly re-confirm. Nothing moves until the owner saves.
+    struct Review: Decodable {
+        let kind: String?
+        let text: String
+        let serviceModel: String?
+        let concept: String?
+        let barLed: Bool?
+        enum CodingKeys: String, CodingKey {
+            case kind, text, concept
+            case serviceModel = "service_model"
+            case barLed = "bar_led"
+        }
+    }
     struct Choices: Decodable {
         let serviceModel: [RestaurantProfileChoice]
         let concept: [RestaurantProfileChoice]
@@ -43,9 +58,10 @@ struct RestaurantProfilePayload: Decodable {
         let confirmed: Bool
         let confirmedAt: String?
         let suggestion: Suggestion?
+        let review: Review?
         let choices: Choices
         enum CodingKeys: String, CodingKey {
-            case concept, ownership, confirmed, suggestion, choices
+            case concept, ownership, confirmed, suggestion, review, choices
             case serviceModel = "service_model"
             case barLed = "bar_led"
             case openedYear = "opened_year"
@@ -114,6 +130,8 @@ struct AccountRestaurantProfileSheet: View {
                         }
                         if let s = p.suggestion, !p.confirmed {
                             suggestionCard(s)
+                        } else if let r = p.review, p.confirmed {
+                            reviewCard(r)
                         }
                         profileSection(p)
                         targetsSection
@@ -172,6 +190,30 @@ struct AccountRestaurantProfileSheet: View {
                         Button("Yes, that's right") {
                             if let sm = s.serviceModel { serviceModel = sm }
                             if let c = s.concept { concept = c }
+                            if !serviceModel.isEmpty { Task { await save() } }
+                        }
+                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: isSaving))
+                    }
+                    .padding(.top, 4)
+                }
+            }
+            .padding(.vertical, 9)
+        }
+    }
+
+    private func reviewCard(_ r: RestaurantProfilePayload.Review) -> some View {
+        AccountSection(kicker: "Is this still right?") {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(r.text).font(.cavnarBody(16, weight: 700)).foregroundStyle(Color.cavnarInk)
+                Text("From your own figures. Who you're compared with doesn't change until you confirm.")
+                    .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+                if canEdit {
+                    HStack(spacing: 10) {
+                        Button("Yes, update it") {
+                            if let sm = r.serviceModel { serviceModel = sm }
+                            if let c = r.concept { concept = c }
+                            if let b = r.barLed { barLed = b }
                             if !serviceModel.isEmpty { Task { await save() } }
                         }
                         .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: isSaving))
