@@ -1170,8 +1170,11 @@ def dsr_tomorrow_sections(d: dict) -> list:
         if fc.get("text"):
             lines.append(f"Cavnar&rsquo;s forecast: {esc(fc['text'])} ({esc(fc.get('basis') or '')})")
         cf = t.get("confidence") or {}
-        if cf.get("pct") is not None:
-            lines.append(f"AI confidence {int(cf['pct'])}% &mdash; based on {esc(', '.join(cf.get('based_on') or []))}")
+        if cf:
+            # No % until the forecast's range has a measured record (D1-6): "—" and why.
+            figure = f"{int(cf['pct'])}%" if cf.get("pct") is not None else "&mdash;"
+            lines.append(f"AI confidence {figure} &mdash; based on {esc(', '.join(cf.get('based_on') or []))}"
+                         + (f" ({esc(cf['track'])})" if cf.get("pct") is None and cf.get("track") else ""))
         if lines:
             # The weekday and its M/D/YY date, as the app's Tomorrow card.
             from time_utils import mdy as _mdy

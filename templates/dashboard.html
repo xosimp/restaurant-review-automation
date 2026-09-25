@@ -5625,7 +5625,8 @@ svg:hover .hb-xh{opacity:1}
     h+='</div><div class="hb-card"><div class="hb-h3"><span>Cavnar\u2019s forecast</span></div>';
     if(fc)h+='<div class="dr-fc">'+hn(esc(fc.text))+'</div><div class="dr-note">'+esc(cap(fc.basis||''))+'</div>';
     else h+='<div class="hb-empty">Not enough history for this weekday yet.</div>';
-    if(cf){h+='<div class="dr-conf"><div class="k">AI confidence</div><div class="v">'+hn(cf.pct)+'<small>%</small></div><div class="sub">Based on '+esc((cf.based_on||[]).join(' \u00b7 '))+'</div>'
+    if(cf){h+='<div class="dr-conf"><div class="k">AI confidence</div><div class="v">'+(isNum(cf.pct)?hn(cf.pct)+'<small>%</small>':'\u2014')+'</div><div class="sub">Based on '+esc((cf.based_on||[]).join(' \u00b7 '))+'</div>'
+      +((cf.watch||[]).length?'<div class="sub dim">Worth watching: '+esc(cf.watch.join(' \u00b7 '))+'</div>':'')
       +((cf.missing||[]).length?'<div class="sub dim">Missing: '+esc(cf.missing.join(' \u00b7 '))+'</div>':'')+'<div class="sub dim">'+esc(cf.track||'')+'</div></div>';}
     return h+'</div></div>';
   }
@@ -5850,8 +5851,18 @@ svg:hover .hb-xh{opacity:1}
     var date=btn.getAttribute('data-date')||null,rerun=btn.getAttribute('data-rerun')==='1';
     var ver=+(btn.getAttribute('data-version')||0);
     var done=typeof cbtnBusy==='function'?cbtnBusy(btn,rerun?'Starting the re-run':'Starting'):function(){};
-    var b={};if(date)b.date=date;if(rerun)b.rerun=true;
+    var b={};if(date)b.date=date;if(rerun)b.rerun=true;if(btn.getAttribute('data-early')==='1')b.early=true;
     post('/api/dsr/close',b).then(function(d){
+      // The POS hasn't closed the day: the owner confirms the restaurant
+      // really closed early; a manager is told to ask the owner (D1-1).
+      if(d&&d.code==='before_close'){done();
+        if(!d.needs_confirm){errNear(btn,d.error||'The POS hasn\u2019t closed the day yet.');return;}
+        var w=document.createElement('div');w.className='dr-note';
+        w.innerHTML=esc(d.error||'The POS hasn\u2019t closed the day yet.')+' <button type="button" class="cbtn cbtn-primary cbtn-sm" data-early-go="1">Close it now</button> <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-early-no="1">Cancel</button>';
+        if(btn.parentNode)btn.parentNode.insertBefore(w,btn.nextSibling);
+        w.querySelector('[data-early-go]').onclick=function(){if(w.parentNode)w.parentNode.removeChild(w);btn.setAttribute('data-early','1');closeDay(btn);};
+        w.querySelector('[data-early-no]').onclick=function(){if(w.parentNode)w.parentNode.removeChild(w);};
+        return;}
       if(!d||!d.ok){done();errNear(btn,(d&&d.error)||'Couldn’t start it.');return;}
       if(d.started===false&&d.status==='final'){done();if(typeof toast==='function')toast('That night is already final','success');window.dsrOpen('night',d.business_date);return;}
       // The run starts on a thread: until its version shows, the last one
@@ -18649,6 +18660,9 @@ function fc2LoadCountSheet(){
   var el=document.getElementById('fc2-count');if(!el)return;
   fetch('/api/food-cost/count-sheet',{credentials:'same-origin'}).then(apiJson).then(function(d){
     if(!d||!d.ok||!(d.items||[]).length){el.hidden=true;return;}
+    // Where the ledger stood when this sheet opened: a delivery received
+    // after it is asked about on save, never guessed (re-audit F2-7).
+    window._fc2LedgerMark=(typeof d.ledger_mark==='number')?d.ledger_mark:null;
     var h=fc2BlockHead(FC2_ICON.count,'Inventory','Count sheet',d.items.length,'Filled with what the ledger expects on hand. Change only what differs, then save \u2014 each change is a recount.')+'<div class="fc2-count-grid">';
     for(var i=0;i<d.items.length;i++){var it=d.items[i];var exp=(it.expected==null)?'':(Math.round(it.expected*100)/100);
       h+='<label class="fc2-count-row"><span class="n">'+esc(it.name)+(it.unit?' <small>'+esc(it.unit)+'</small>':'')+'</span><input type="number" step="any" min="0" class="ac-input ac-num" data-ing="'+esc(it.ingredient_id)+'" data-expected="'+esc(exp)+'" value="'+esc(exp)+'" aria-label="Count for '+esc(it.name)+'"></label>';}
@@ -18674,13 +18688,24 @@ function fc2LogWaste(btn){
     fc2LoadCountSheet();
   }).catch(function(){done();});
 }
-function fc2SaveCount(btn){
+function fc2SaveCount(btn,deliveries){
   var rows=document.querySelectorAll('#fc2-count input[data-ing]'),items=[];
   for(var i=0;i<rows.length;i++){var v=rows[i].value;if(v===''||v===rows[i].getAttribute('data-expected'))continue;items.push({ingredient_id:parseInt(rows[i].getAttribute('data-ing'),10),counted:parseFloat(v)});}
   var st=document.getElementById('fc2-count-status');
   if(!items.length){if(st)st.textContent='Nothing changed \u2014 the ledger already matches your count.';return;}
   var done=cbtnBusy(btn,'Saving\u2026');
-  fetch('/api/food-cost/count-sheet',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:items})}).then(apiJson).then(function(d){
+  var body={items:items};
+  if(window._fc2LedgerMark!=null)body.ledger_mark=window._fc2LedgerMark;
+  if(deliveries)body.deliveries=deliveries;
+  fetch('/api/food-cost/count-sheet',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(apiJson).then(function(d){
+    if(d&&d.needs_confirm&&d.deliveries&&!deliveries){done();
+      // A delivery arrived after this sheet opened: does the count include it?
+      if(st)st.innerHTML=esc(d.error||'A delivery was received after you opened this sheet — does your count include it?')
+        +' <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ans="counted">Yes, it’s in the count</button>'
+        +' <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-ans="after">No, it came after</button>';
+      var bs=st?st.querySelectorAll('[data-ans]'):[];
+      for(var k=0;k<bs.length;k++)bs[k].onclick=function(){fc2SaveCount(btn,this.getAttribute('data-ans'));};
+      return;}
     done();if(st)st.textContent=d&&d.ok?('Saved \u2014 '+d.written+' recount'+(d.written===1?'':'s')+'.'):((d&&d.error)||'Could not save.');
     if(d&&d.ok)fc2LoadCountSheet();
   }).catch(function(){done();if(st)st.textContent='Could not save \u2014 check your connection.';});
@@ -19500,6 +19525,14 @@ function loadAccountSettings() {
 
     var h = d.hours || {};
     buildAccountHoursGrid(h.open || {}, h.close || {});
+    // Hours and closed dates are the owner's (re-audit F2-3): a teammate reads them.
+    var hEdit = h.can_edit !== false;
+    var hGrid = document.getElementById('as-hours-grid');
+    if (hGrid) { var hIns = hGrid.querySelectorAll('input,select'); for (var hi = 0; hi < hIns.length; hi++) hIns[hi].disabled = !hEdit; }
+    var hSave = document.querySelector('[onclick="saveAccountHours()"]');
+    if (hSave) hSave.hidden = !hEdit;
+    var hSt = document.getElementById('as-hours-status');
+    if (hSt && !hEdit) hSt.textContent = 'Only the account owner can change hours and closed dates.';
     asRenderClosures(h.closures || []);
 
     document.getElementById('as-retention').value = String(d.data_retention_months || 0);
