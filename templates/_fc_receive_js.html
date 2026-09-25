@@ -10,6 +10,8 @@
   function loadPurchaseOrders(){
     var el = document.getElementById('po-history');if(!el)return;
     fetch('/api/food-cost/purchase-orders?status=sent').then(apiJson).then(function(d){
+      /* The counts-only status line counts what waits to arrive (density #48). */
+      if(window.fc2StockStatus && d && d.ok) fc2StockStatus({deliveries: (d.orders || []).length});
       if(!d.ok || !d.orders || !d.orders.length){ el.innerHTML=''; return; }
       var html = '<div class="hb-kicker" style="margin-top:14px">Waiting to arrive</div>';_poOpen={};
       d.orders.slice(0,8).forEach(function(po){

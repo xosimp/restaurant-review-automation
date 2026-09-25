@@ -33,8 +33,9 @@ def test_the_review_savings_line_prices_replies_at_the_servers_rate():
     body = _fn("cvReplyRate")
     assert "/api/value" in body and "reply_rate" in body
     assert "cvReplyRate(function(rate)" in SRC
-    # The caption's own words read the same rate (hosted_dashboard passes it).
-    assert "savings_breakdown.reply_rate" in SRC and "At $5 a reply" not in SRC
+    # The Reviews header's reply-writing caption is gone (density round #33:
+    # Home's worth section owns that figure); no copy of the rate anywhere.
+    assert "At $5 a reply" not in SRC and "of reply writing on" not in SRC
 
 
 def test_marketing_is_not_offered_track():

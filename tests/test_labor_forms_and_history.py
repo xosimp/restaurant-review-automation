@@ -104,7 +104,8 @@ def test_optimized_is_spelled_the_american_way_everywhere_its_shown():
 
 def test_the_two_section_headings_are_promoted_not_10px_kickers():
     panel_src = _src()
-    assert '<div class="lb2-subsection-title">Employee Availability</div>' in panel_src
+    # Availability is a heading inside Roster & settings now (density #28).
+    assert '<div class="lb2-sub lb2-av-hd"><span>Employee Availability<small>' in panel_src
     assert 'Operational Score <span id="team-coverage-chip" class="lb2-subsection-chip">' in panel_src
     css = panel_src
     m = re.search(r"\.lb2-subsection-title\{([^}]*)\}", css)

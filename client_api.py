@@ -1296,6 +1296,20 @@ def sentiment_trend_api(current_user):
     except Exception as e:
         return jsonify(weeks=[], error=_safe_err(e))
 
+@client_bp.route("/api/reviews/why-line")
+@login_required
+def reviews_why_line_api(current_user):
+    """The line above the Reviews inbox (density round #32): the rating's
+    direction and the top complaint from the stored diagnosis. Counts and
+    stored rows only - no model call. Gated to the Reviews module by the
+    /api/reviews prefix (auth._MODULE_PREFIXES)."""
+    import review_intelligence as _ri
+    try:
+        return jsonify(ok=True, **_ri.inbox_why(current_user["restaurant_id"]))
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e))
+
+
 @client_bp.route("/api/review-insight")
 @login_required
 def review_insight_api(current_user):
@@ -3952,6 +3966,22 @@ def marketing_performance_window(current_user):
     except (TypeError, ValueError):
         days = 30
     return jsonify(ok=True, **performance_window(current_user["restaurant_id"], days=days))
+
+
+@client_bp.route("/api/marketing/header")
+@login_required
+def marketing_header_api(current_user):
+    """The Marketing h1's status and its three chips (density round #10):
+    counts from rows already written, no model call. The body is
+    marketing_signals.header_summary, so a phone twin can read the same one."""
+    from marketing_signals import header_summary
+    rid = current_user["restaurant_id"]
+    if not _restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
+    try:
+        return jsonify(ok=True, **header_summary(rid))
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e))
 
 
 @client_bp.route("/api/marketing/attribution")

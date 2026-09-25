@@ -679,3 +679,69 @@ def performance_window(restaurant_id, days=30, db_path: str = DB_PATH) -> dict:
             for r in by_platform
         ],
     }
+
+
+# ── The Marketing header (density round #10) ───────────────────────────────
+#
+# The three-second layer Marketing never had: a status in words, three
+# measured chips (posts in the window, reach against the window before, the
+# next scheduled post) - all counts from rows already written. No model
+# call; the reach change keeps performance_window's floor (a % only when
+# both windows hold MIN_POSTS_FOR_CHANGE posts), so it is None, never 0.
+
+QUIET_AFTER_DAYS = 10     # "Nothing posted in N days" from this many days on
+REACH_MOVE_PCT = 5        # a reach change inside ±5% reads as "level"
+
+
+def header_summary(restaurant_id, days=30, db_path: str = DB_PATH) -> dict:
+    """{"status", "tone", "posts", "days", "reach_change", "change_note",
+    "days_since_post", "last_post", "next_scheduled"} for the Marketing h1."""
+    from time_utils import mdy
+    win = performance_window(restaurant_id, days=days, db_path=db_path)
+    conn = get_conn(db_path)
+    try:
+        last = conn.execute(
+            "SELECT MAX(COALESCE(posted_at, created_at)) AS t FROM marketing_content_log "
+            "WHERE restaurant_id=? AND post_id IS NOT NULL", (restaurant_id,)).fetchone()
+        nxt = conn.execute(
+            "SELECT scheduled_for, platform FROM marketing_scheduled_posts "
+            "WHERE restaurant_id=? AND status='scheduled' ORDER BY scheduled_for ASC LIMIT 1",
+            (restaurant_id,)).fetchone()
+    finally:
+        conn.close()
+    last_at = last["t"] if last else None
+    since = None
+    if last_at:
+        try:
+            when = datetime.strptime(str(last_at).replace("T", " ")[:10], "%Y-%m-%d")
+            since = max(0, (datetime.utcnow() - when).days)
+        except ValueError:
+            since = None
+    reach_change = (win.get("change") or {}).get("reach")
+    posts = win.get("posts") or 0
+    if last_at is None:
+        status, tone = "Nothing posted yet", "neutral"
+    elif since is not None and since >= QUIET_AFTER_DAYS:
+        status, tone = f"Nothing posted in {since} days", "warn"
+    elif reach_change is not None and abs(reach_change) >= REACH_MOVE_PCT:
+        up = reach_change > 0
+        status = f"Reach {'up' if up else 'down'} {abs(round(reach_change))}% vs the {days} days before"
+        tone = "good" if up else "warn"
+    elif reach_change is not None:
+        status, tone = f"Reach level with the {days} days before", "neutral"
+    else:
+        status, tone = f"{posts} post{'' if posts == 1 else 's'} in the last {days} days", "neutral"
+    next_scheduled = None
+    if nxt and nxt["scheduled_for"]:
+        raw = str(nxt["scheduled_for"])
+        clock = ""
+        try:
+            hh, mm = int(raw[11:13]), int(raw[14:16])
+            clock = f"{(hh % 12) or 12}:{mm:02d}{'am' if hh < 12 else 'pm'}"   # 6:45pm (DS Dates and times)
+        except (ValueError, IndexError):
+            clock = ""
+        next_scheduled = {"date": mdy(raw[:10]), "time": clock, "platform": nxt["platform"]}
+    return {"status": status, "tone": tone, "posts": posts, "days": days,
+            "reach_change": reach_change, "change_note": win.get("change_note"),
+            "days_since_post": since, "last_post": mdy(str(last_at)[:10]) if last_at else None,
+            "next_scheduled": next_scheduled}

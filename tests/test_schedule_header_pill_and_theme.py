@@ -644,7 +644,9 @@ def test_skipped_reviews_get_a_gray_ribbon():
 def test_approval_method_heading_renamed():
     s = _src()
     assert "How replies got approved" not in s
-    assert '<span>Approval Method</span>' in s
+    # Density round #44: charts are named by the question they answer.
+    assert '<span>Approval Method</span>' not in s
+    assert '<span>How your replies were approved</span>' in s
 
 
 def test_rating_number_carries_no_status_color_only_the_dot_does():

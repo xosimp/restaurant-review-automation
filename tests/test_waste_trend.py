@@ -618,8 +618,9 @@ def test_target_and_avg_lines_wait_for_the_bars_to_finish():
         "both the target line and the avg path should carry the delayed draw-in"
 
 
-def test_gauge_and_ledger_bars_animate_on_scroll_not_on_tab_open():
-    """renderFcGauge() and _fc2Ledger() used to trigger their fill/count-up
+def test_ledger_bars_animate_on_scroll_not_on_tab_open():
+    """(The recoverable gauge was removed in the density round, #25.)
+    renderFcGauge() and _fc2Ledger() used to trigger their fill/count-up
     the instant the tab opened, whether or not the gauge or either ledger
     (both well down the page, under the whole trend card) were actually
     on screen yet — same class of bug Labor's role donut already had
@@ -627,9 +628,9 @@ def test_gauge_and_ledger_bars_animate_on_scroll_not_on_tab_open():
     zero-filled resting state) still has to run immediately; only the
     reveal trigger moves inside the visibility gate."""
     html = _dashboard_html()
-    gauge_body = html.split("function renderFcGauge(){", 1)[1].split("\n  function loadMenuMargins", 1)[0]
+    assert "function renderFcGauge(" not in html
     ledger_body = html.split("function _fc2Ledger(", 1)[1].split("\n  function renderWasteDonut", 1)[0]
-    for name, body in (("renderFcGauge", gauge_body), ("_fc2Ledger", ledger_body)):
+    for name, body in (("_fc2Ledger", ledger_body),):
         assert "cavnarWhenVisible(el,function(){" in body, f"{name} doesn't gate its reveal on scroll visibility"
         # The reveal (dashoffset / .on class / countUp) must be *inside*
         # the cavnarWhenVisible callback, not before it.

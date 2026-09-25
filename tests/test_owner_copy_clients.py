@@ -138,7 +138,10 @@ def test_web_labor_money_is_a_gap_never_green_and_never_on_sample_data():
     s = _dash()
     assert 'class="x good stat-n"' not in s
     assert "{% if labor.is_live and savings_breakdown.labor_monthly > 0 %}" in s
-    assert "Gap to target / mo" in s and "Per year · projected" in s
+    # Density round #26: the monthly gap is said once, in the header beside
+    # the labor %, only on live data; the yearly restatement is gone.
+    assert "{% set _gap_ok = labor.is_live and savings_breakdown and savings_breakdown.labor_monthly > 0 %}" in s
+    assert "/mo over {{ _tl }}" in s and "Per year · projected" not in s
     # Benchmarking #34: no "$ under industry" tile at all (this pinned its
     # $0 / no-benchmark guard).
     assert "labor.is_live and _ind and savings_breakdown.labor_vs_industry_monthly > 0" not in s
@@ -153,7 +156,7 @@ def test_web_gap_chip_only_says_on_target_under_the_contract():
     i = s.index("fetch('/api/labor-gap')")
     body = s[i:s.index("});\n}", i)]
     assert "var gapOk=d.is_live!==false&&d.projectable!==false&&!d.sales_data_missing" in body
-    on = body.index("'On target ✓'")
+    on = body.index("gapEl.textContent='on target'")
     assert body.rfind("else if(gapOk&&d.over_target===false)", 0, on) > 0
     assert "d.reason" in body  # the dash carries the server's reason
     assert "#6fcf97" not in body
