@@ -217,6 +217,7 @@ Every root module, its layer and its one-line job. The test fails when a module 
 | `db_restore` | 1 | the `RESTORE_FROM` boot-time restore (`docs/ops/RECOVERY.md`) |
 | `ordering` | 2 | supplier order sending |
 | `outcomes` | 2 | before/after trackers with the causation caveat |
+| `nav` | 0 | the nav path — one address for every place and item an owner is sent to (`<head>[/<rest>][?query]`: modules, sections, item ids, filters); `path()` builds one, `module_of()` names its module. Web opens it with `cavNav`, iOS with `NavPath` (Friction audit 9/25/26) |
 | `permissions` | 0 | roles and module view gates |
 | `pos` | 0 | provider registry and capability dispatch |
 | `pos_health` | 0 | `pos_sync_state(r)`: one provider-agnostic reading of the POS sync (provider, last success, error, age, state) over every provider's `{provider}_last_synced`/`_sync_error` columns — RPOWER included — for Home, the status page, admin, mobile connections and Data Freshness; connected means credentials (never a leftover stamp), the freshest credentialed provider is read, and current / aging / stale is `data_freshness`'s `pos` row (`age_state`: a deliberate function-scope L0→L2 import, so every surface names a POS state by one rule) |

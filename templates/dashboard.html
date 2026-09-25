@@ -11738,6 +11738,54 @@ function switchTab(n,btn){
   history.replaceState(null,null,'#'+n);
   fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})}).catch(function(){});
 }
+// Nav paths (Friction audit, 9/25/26): one address for every place and
+// item, the same string the server sends on attention items, the action
+// queue, notifications and command results (nav.py) and iOS opens
+// (NavPath.swift). "reviews?filter=urgent", "review/412", "labor/schedule",
+// "person/dana-k". A module registers what it can focus with
+// cavNavRegister(head, fn); fn gets {head, rest, query, raw} and returns
+// false to fall back. Anything unknown opens its module, else Home. ES5.
+var _cavNavHandlers = {};
+var CAV_NAV_MODULE = {review:'reviews', schedule:'labor', person:'labor', invoice:'inventory', order:'inventory',
+                      issue:'home', request:'labor', action:'home', location:'home'};
+var CAV_NAV_TAB = {home:'home', reviews:'reviews', labor:'labor', inventory:'inventory', food:'inventory',
+                   marketing:'marketing', intel:'competitor', competitor:'competitor', account:'account'};
+function cavNavRegister(head, fn) { _cavNavHandlers[String(head).toLowerCase()] = fn; }
+function cavNavParse(path) {
+  var raw = String(path || '').replace(/^#/, '').trim();
+  if (!raw) return null;
+  var qi = raw.indexOf('?'), base = qi >= 0 ? raw.slice(0, qi) : raw, qs = qi >= 0 ? raw.slice(qi + 1) : '';
+  var segs = base.split('/'), query = {};
+  for (var i = 0; i < segs.length; i++) { try { segs[i] = decodeURIComponent(segs[i]); } catch (e) {} }
+  if (qs) {
+    var pairs = qs.split('&');
+    for (var j = 0; j < pairs.length; j++) {
+      var kv = pairs[j].split('='), k = kv[0], v = kv.length > 1 ? kv.slice(1).join('=') : '';
+      try { query[decodeURIComponent(k)] = decodeURIComponent(v.replace(/\+/g, ' ')); } catch (e2) { query[k] = v; }
+    }
+  }
+  var head = (segs[0] || '').toLowerCase();
+  return {raw: raw, head: head, rest: segs.slice(1), query: query, module: CAV_NAV_MODULE[head] || head};
+}
+function cavNavOpenModule(module) {
+  var tab = CAV_NAV_TAB[module] || 'home', btn = document.getElementById('tab-' + tab);
+  if (!btn) { tab = 'home'; btn = document.getElementById('tab-home'); }
+  if (btn && typeof switchTab === 'function') switchTab(tab, btn);
+  return tab;
+}
+function cavNav(path) {
+  var p = cavNavParse(path);
+  if (!p) return false;
+  var fn = _cavNavHandlers[p.head];
+  if (fn) { try { if (fn(p) !== false) return true; } catch (e) {} }
+  cavNavOpenModule(p.module);
+  // A section anchor inside the module: any element with data-nav="<path>".
+  var sec = p.rest.length ? document.querySelector('[data-nav="' + p.head + '/' + p.rest[0] + '"]') : null;
+  if (sec && sec.scrollIntoView) sec.scrollIntoView({behavior: 'smooth', block: 'start'});
+  else window.scrollTo(0, 0);
+  return true;
+}
+window.cavNav = cavNav; window.cavNavRegister = cavNavRegister; window.cavNavParse = cavNavParse;
 // Restore active tab from hash on page load
 document.addEventListener('DOMContentLoaded', function(){
   // Tab indicator — position on active tab without animation
