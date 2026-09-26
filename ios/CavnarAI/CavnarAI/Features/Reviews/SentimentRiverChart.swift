@@ -10,7 +10,7 @@ struct SentimentRiverChart: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            CavnarChartHeader(kicker: "Sentiment trend", title: "Sentiment River",
+            CavnarChartHeader(kicker: "Sentiment trend", title: "Reviews · per week",
                               detail: "Positive, neutral and negative by week — the average rating rides on top.")
             CavnarAnimatedCanvas(duration: 3.1, height: 250, replayKey: weeks.map(\.id).joined(), ambient: true) { ctx, size, t, clock in
                 draw(&ctx, size: size, t: t, clock: clock)

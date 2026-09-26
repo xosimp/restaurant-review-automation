@@ -99,6 +99,40 @@ final class ReviewDetailViewModel {
         }
     }
 
+    private struct NewTemplateBody: Encodable {
+        let title: String
+        let body: String
+    }
+
+    /// The reply on screen kept as a template — the web editor's "Save as
+    /// template" (POST /mobile/api/templates, the route the app never
+    /// called). Returns nil on success, else the sentence to show.
+    func saveAsTemplate(title: String) async -> String? {
+        let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = editedDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return "Give it a name you\u{2019}ll recognise." }
+        guard !body.isEmpty else { return "Nothing to save \u{2014} write a reply first." }
+        do {
+            let response: APIClient.OKResponse = try await client.send(
+                "/mobile/api/templates", method: .post, body: NewTemplateBody(title: name, body: body))
+            guard response.ok else { return response.error ?? "Couldn\u{2019}t save that template." }
+            Haptic.success()
+            await loadTemplates()
+            return nil
+        } catch let error as APIClient.APIError {
+            return error.message
+        } catch {
+            return "Couldn\u{2019}t save that template."
+        }
+    }
+
+    /// DELETE /mobile/api/templates/<id>; gone from the picker at once.
+    func deleteTemplate(_ template: ResponseTemplate) async {
+        templates.removeAll { $0.id == template.id }
+        let _: APIClient.OKResponse? = try? await client.send(
+            "/mobile/api/templates/\(template.id)", method: .delete, hapticOnError: false)
+    }
+
     func applyTemplate(_ template: ResponseTemplate) {
         editedDraft = template.body
         scheduleDraftSave()

@@ -6,6 +6,9 @@ struct ReviewDetailView: View {
     @State private var showingTemplates = false
     @State private var showingRetractConfirm = false
     @State private var showingDeleteConfirm = false
+    @State private var showingSaveTemplate = false
+    @State private var templateName = ""
+    @State private var templateNote: String?
     @State private var postedOverlayLabel: String?
     @FocusState private var isDraftFocused: Bool
     var onCompleted: (String) -> Void
@@ -177,10 +180,22 @@ struct ReviewDetailView: View {
         }
 
         .sheet(isPresented: $showingTemplates) {
-            TemplatePickerSheet(templates: viewModel.templates) { template in
+            TemplatePickerSheet(templates: viewModel.templates, onSelect: { template in
                 viewModel.applyTemplate(template)
                 showingTemplates = false
+            }, onDelete: { template in
+                Task { await viewModel.deleteTemplate(template) }
+            })
+        }
+        .alert("Save as template", isPresented: $showingSaveTemplate) {
+            TextField("e.g. Positive 5-star standard", text: $templateName)
+            Button("Save template") {
+                let name = templateName
+                Task { templateNote = await viewModel.saveAsTemplate(title: name) ?? "Template saved" }
             }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Name it so you\u{2019}ll recognise it in Templates.")
         }
         .confirmationDialog(
             "Post this reply anyway?",
@@ -448,6 +463,23 @@ struct ReviewDetailView: View {
                     .onChange(of: viewModel.editedDraft) { _, _ in
                         viewModel.scheduleDraftSave()
                     }
+                if !isFinal && !viewModel.editedDraft.isEmpty {
+                    HStack(spacing: 10) {
+                        Button("Save as template") {
+                            Haptic.light()
+                            templateName = ""
+                            templateNote = nil
+                            showingSaveTemplate = true
+                        }
+                        .font(.cavnarBody(14, weight: 600))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        if let note = templateNote {
+                            Text(note)
+                                .font(.cavnarBody(13))
+                                .foregroundStyle(note == "Template saved" ? Color.cavnarGreen : Color.cavnarRed)
+                        }
+                    }
+                }
             }
         }
     }
@@ -625,17 +657,30 @@ struct ReviewDetailView: View {
 private struct TemplatePickerSheet: View {
     let templates: [ResponseTemplate]
     let onSelect: (ResponseTemplate) -> Void
+    var onDelete: ((ResponseTemplate) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
+    /// Deleted here, so the row leaves at once (the parent's list is a copy).
+    @State private var removed: Set<Int> = []
 
     var body: some View {
         NavigationStack {
-            List(templates) { template in
+            List(templates.filter { !removed.contains($0.id) }) { template in
                 Button {
                     onSelect(template)
                 } label: {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(template.title).font(.cavnarBody(14.5, weight: 600)).foregroundStyle(Color.cavnarInk)
                         Text(template.body).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3).lineLimit(2)
+                    }
+                }
+                .swipeActions(edge: .trailing) {
+                    if let onDelete {
+                        Button(role: .destructive) {
+                            removed.insert(template.id)
+                            onDelete(template)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
                     }
                 }
             }

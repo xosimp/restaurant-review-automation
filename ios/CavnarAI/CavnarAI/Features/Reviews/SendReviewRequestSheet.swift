@@ -7,6 +7,18 @@ private final class SendReviewRequestViewModel {
     var isSending = false
     var errorMessage: String?
     var didSend = false
+    /// GET /mobile/api/review-request-stats — the web modal's "Sent this
+    /// month · All time" line, which the phone never read.
+    var stats: Stats?
+
+    struct Stats: Decodable, Equatable {
+        let totalSent: Int
+        let sentThisMonth: Int
+        enum CodingKeys: String, CodingKey {
+            case totalSent = "total_sent"
+            case sentThisMonth = "sent_this_month"
+        }
+    }
 
     private let client: APIClient
 
@@ -30,6 +42,10 @@ private final class SendReviewRequestViewModel {
         let error: String?
     }
 
+    func loadStats() async {
+        stats = try? await client.send("/mobile/api/review-request-stats", hapticOnError: false)
+    }
+
     func send(name: String, email: String, phone: String, message: String,
               smsConsent: Bool) async {
         isSending = true
@@ -43,6 +59,7 @@ private final class SendReviewRequestViewModel {
             )
             if response.ok {
                 didSend = true
+                await loadStats()
             } else {
                 errorMessage = response.error ?? "Couldn't send that request."
             }
@@ -124,6 +141,11 @@ struct SendReviewRequestSheet: View {
                         .tint(Color.cavnarEmber)
                     }
 
+                    if let stats = viewModel.stats {
+                        HomeMixedText.make("Sent this month: \(stats.sentThisMonth) · All time: \(stats.totalSent)",
+                                           size: 14, color: .cavnarInk3)
+                    }
+
                     if let error = viewModel.errorMessage {
                         Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
                     }
@@ -175,6 +197,7 @@ struct SendReviewRequestSheet: View {
             .toolbar { cavnarTitleToolbar("Request a Review") }
             .keyboardNavToolbar($focusedField)
             .cavnarPostedOverlay(postedLabel) { dismiss() }
+            .task { await viewModel.loadStats() }
         }
     }
 }

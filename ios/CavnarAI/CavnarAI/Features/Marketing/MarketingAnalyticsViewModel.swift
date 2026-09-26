@@ -77,6 +77,15 @@ final class MarketingAnalyticsViewModel {
     var performance: MarketingPerformance?
     var recentTopics: [MarketingRecentTopic] = []
     var insight: AIInsight?
+    /// GET /mobile/api/marketing/diagnosis (strategy_routes, both prefixes):
+    /// why one guest text did better than another — the web shows it under
+    /// the brief as its most likely cause; the phone never read it.
+    var diagnosis: LaborDiagnosis?
+
+    private struct DiagnosisResponse: Decodable {
+        let ok: Bool
+        let diagnosis: LaborDiagnosis?
+    }
     var isLoadingInsight = false
     var isLoading = false
     var isRefreshingMetrics = false
@@ -109,12 +118,15 @@ final class MarketingAnalyticsViewModel {
         async let windowResult: MarketingWindow? = try? client.send(
             "/mobile/api/marketing/performance-window", query: ["days": String(windowDays)])
         async let attributionResult: MarketingAttribution? = try? client.send("/mobile/api/marketing/attribution")
+        async let diagnosisResult: DiagnosisResponse? = try? client.send(
+            "/mobile/api/marketing/diagnosis", hapticOnError: false)
 
         performance = await performanceResult
         insight = await insightResult
         recentTopics = await topicsResult?.topics ?? []
         window = await windowResult
         attribution = await attributionResult
+        diagnosis = await diagnosisResult?.diagnosis
         isLoadingInsight = false
     }
 

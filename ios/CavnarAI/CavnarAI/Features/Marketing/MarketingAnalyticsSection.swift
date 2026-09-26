@@ -13,6 +13,11 @@ struct MarketingAnalyticsSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             briefCard
+            // Under the brief, as on the web: the guest texts' most likely
+            // cause. Renders nothing until two campaigns can be compared.
+            if let diagnosis = viewModel.diagnosis {
+                LaborDiagnosisCard(diagnosis: diagnosis, title: "WHY SOME TEXTS DID BETTER", surface: "marketing")
+            }
             if let c = counts {
                 HomeMixedText.make("\(c.thisMonth) this month \u{00B7} \(c.generated) generated \u{00B7} \(c.published) published",
                                    size: CavnarType.caption, weight: 600, color: .cavnarInk3)

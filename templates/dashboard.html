@@ -7564,6 +7564,9 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
       <input id="rr-name"  type="text"  placeholder="Customer name" style="font-family:'Apfel Grotezk',sans-serif;font-size:13px;padding:10px 13px;border:1px solid var(--paper3);border-radius:8px;width:100%;outline:none;color:var(--ink);background:white">
       <input id="rr-email" type="email" placeholder="Email address" style="font-family:'Apfel Grotezk',sans-serif;font-size:13px;padding:10px 13px;border:1px solid var(--paper3);border-radius:8px;width:100%;outline:none;color:var(--ink);background:white">
       <input id="rr-phone" type="tel"   placeholder="Phone number for SMS (optional)" style="font-family:'Apfel Grotezk',sans-serif;font-size:13px;padding:10px 13px;border:1px solid var(--paper3);border-radius:8px;width:100%;outline:none;color:var(--ink);background:white">
+      <!-- The personal line the phone has always been able to add; the
+           server (_do_send_review_request) puts it in the email and text. -->
+      <textarea id="rr-message" maxlength="200" rows="2" placeholder="A personal note (optional)" style="font-family:'Apfel Grotezk',sans-serif;font-size:13px;padding:10px 13px;border:1px solid var(--paper3);border-radius:8px;width:100%;outline:none;color:var(--ink);background:white;resize:vertical"></textarea>
       <!-- Every other outbound SMS in this product goes only to a contact
            who consented. A review request texted whatever number was typed
            in, with nothing recording that the guest agreed to it. -->
@@ -10722,10 +10725,39 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
     })();
     </script>
     {% endif %}
+    {# Who opened, closed or moved (/api/intel/movement, in2LoadMoves): the
+       weekly snapshots were stored and never shown on either platform. #}
+    <div id="in2-moves" hidden></div>
     {% endif %}
     <div id="comp-refresh-result" style="margin-top:12px;font-size:12px;display:none"></div>
   </div>
   <script>function in2Jump(id){var el=document.getElementById(id);if(el)el.scrollIntoView({behavior:'smooth',block:'start'});}
+  /* What changed in the competitor set (/api/intel/movement): who arrived
+     and who left between the last two weekly checks, and the rating moves
+     past normal ups and downs (confidence_z, models.competitor_movement).
+     Before two checks exist it says so rather than showing "no change". */
+  function in2LoadMoves(){
+    var box=document.getElementById('in2-moves');if(!box)return;
+    fetch('/api/intel/movement',{credentials:'same-origin'}).then(apiJson).then(function(d){
+      if(!d||!d.ok){box.hidden=true;return;}
+      var rows='',i,a,m;
+      for(i=0;i<(d.arrived||[]).length;i++){a=d.arrived[i];
+        rows+='<div class="row"><div class="t"><div class="tt"><b>'+recEsc(a.name)+'</b><span class="cu">New nearby</span></div></div></div>';}
+      for(i=0;i<(d.gone||[]).length;i++){a=d.gone[i];
+        rows+='<div class="row"><div class="t"><div class="tt"><b>'+recEsc(a.name)+'</b><span class="cu">No longer nearby</span></div></div></div>';}
+      var sig=(d.significant||[]).slice(0,3);
+      for(i=0;i<sig.length;i++){m=sig[i];
+        rows+='<div class="row"><div class="t"><div class="tt"><b>'+recEsc(m.name)+'</b></div><div class="m">Rating '+(m.rating_change>0?'up':'down')+' over '+recEsc(d.days)+' days</div></div>'
+          +'<div class="rt"><div class="r hb-num">'+recEsc(m.rating_then)+' \u2192 '+recEsc(m.rating_now)+'<small>\u2605</small></div>'
+          +(m.reviews_added?'<div class="c"><span class="hb-num">+'+recEsc(m.reviews_added)+'</span> reviews</div>':'')+'</div></div>';}
+      var when=d.compared_from?mdy(d.compared_from):'';
+      var sub=!d.compared_from?'Openings and closings show once there are two weekly checks to compare.'
+        :(rows?'New and gone since the check on <span class="hb-num">'+when+'</span>':'No competitor opened, closed or moved past normal ups and downs since <span class="hb-num">'+when+'</span>.');
+      box.innerHTML='<div class="hb-kicker" style="margin-top:22px">What changed</div><div class="in2-upd" style="margin-top:4px">'+sub+'</div>'
+        +(rows?'<div class="in2-comp">'+rows+'</div>':'');
+      box.hidden=false;
+    }).catch(function(){box.hidden=true;});
+  }
   /* The competitor recommendations with their answer row and the competitor
      reviews each one cites (audit #21 / #31). An insight the checks could
      not verify promotes none, and "nothing worth acting on" is said plainly. */
@@ -14392,7 +14424,7 @@ function switchTab(n,btn){
   if(n==='reviews'){var _rvA=document.getElementById('rv-panel-analytics');if(!_rvA||_rvA.open)_rvLoadAnalytics();}
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
   if(n==='inventory'){switchFcTab('analytics');}
-  if(n==='competitor'){switchIntelTab('competitors');if(typeof in2LoadRecs==='function'&&cavStale('intel-recs'))in2LoadRecs();}
+  if(n==='competitor'){switchIntelTab('competitors');if(typeof in2LoadRecs==='function'&&cavStale('intel-recs'))in2LoadRecs();if(typeof in2LoadMoves==='function'&&cavStale('intel-moves'))in2LoadMoves();}
   if(n==='labor'){renderBars();if(_perfTab==='trend')loadLaborTrend(false);else renderLaborHero();if(typeof renderRoleDonut==='function'&&!window._donutDone){window._donutDone=true;renderRoleDonut();}if(window.loadScheduleHistory&&!window._schedHistDone){window._schedHistDone=true;loadScheduleHistory();}}
   if(n==='account'&&window.acctOnOpen){acctOnOpen();}
   // Recent topics load from the metrics poller's first tick (refreshMetrics);
@@ -15097,7 +15129,8 @@ function sendReviewRequest(btn){
   fetch('/api/send-review-request', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({name: name, email: email, phone: phone, sms_consent: consent})
+    body: JSON.stringify({name: name, email: email, phone: phone, sms_consent: consent,
+                          message: (document.getElementById('rr-message') || {value: ''}).value.trim()})
   }).then(apiJson).then(function(d){
     btn.disabled = false;
     btn.innerHTML = orig;
@@ -15109,6 +15142,7 @@ function sendReviewRequest(btn){
       emailEl.value = '';
       if(phoneEl) phoneEl.value = '';
       nameEl.value  = '';
+      var msgEl = document.getElementById('rr-message'); if(msgEl) msgEl.value = '';
       loadReviewRequestStats();
       setTimeout(function(){ document.getElementById('rr-modal').style.display='none'; }, 800);
     } else {
@@ -21864,7 +21898,7 @@ function refreshCompetitorIntel(btn){
       fetch('/api/competitor-intel-status/'+jobId).then(apiJson).then(function(s){
         if(s.status === 'pending'){setTimeout(poll, 2000);return;}
         _resetBtn();
-        if(s.ok){toast('Competitor data updated','success');cavRefreshFromServer(['panel-competitor'],function(){if(typeof switchIntelTab==='function')switchIntelTab('competitors');if(typeof in2LoadRecs==='function')in2LoadRecs();});}
+        if(s.ok){toast('Competitor data updated','success');cavRefreshFromServer(['panel-competitor'],function(){if(typeof switchIntelTab==='function')switchIntelTab('competitors');if(typeof in2LoadRecs==='function')in2LoadRecs();if(typeof in2LoadMoves==='function')in2LoadMoves();});}
         else{toast('Error: '+(s.error||'failed'),'error');}
       }).catch(function(){setTimeout(poll, 2000);});
     };
@@ -21953,7 +21987,7 @@ function runAIVisibility(btn) {
   // fetch, here for the ~10s of live AI queries.
   var _aivRadar = document.getElementById('aiv-radar');
   if (_aivRadar) _aivRadar.innerHTML = cavnarRadarHtml('', 150);
-  var msgs = ['Querying AI assistants...', 'Running local search queries...', 'Scoring GBP completeness...', 'Building your checklist...'];
+  var msgs = ['Querying AI assistants...', 'Running local search queries...', 'Scoring your listing strength...', 'Building your checklist...'];
   var mi = 0;
   var ticker = setInterval(function() {
     mi = (mi + 1) % msgs.length;
@@ -24877,7 +24911,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       var tries=0;(function poll(){tries++;if(tries>40){toast('Still working — check back in a minute','error');return;}
         fetch('/api/competitor-intel-status/'+d.job_id).then(apiJson).then(function(s){
           if(s.status==='pending'){setTimeout(poll,2000);return;}
-          if(s.ok){toast('Competitors updated','success');cavRefreshFromServer(['panel-competitor'],function(){if(typeof switchIntelTab==='function')switchIntelTab('competitors');if(typeof in2LoadRecs==='function')in2LoadRecs();});}
+          if(s.ok){toast('Competitors updated','success');cavRefreshFromServer(['panel-competitor'],function(){if(typeof switchIntelTab==='function')switchIntelTab('competitors');if(typeof in2LoadRecs==='function')in2LoadRecs();if(typeof in2LoadMoves==='function')in2LoadMoves();});}
           else toast(s.error||'Refresh failed','error');
         }).catch(function(){setTimeout(poll,2000);});})();
     });

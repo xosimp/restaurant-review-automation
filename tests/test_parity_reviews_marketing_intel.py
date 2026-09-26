@@ -57,21 +57,27 @@ def rid(db_path):
 
 
 @pytest.fixture
-def web(rid, monkeypatch):
+def owner(rid, db_path):
+    """A real login row, so anything keyed to the user (a draft's
+    created_by) satisfies its foreign key."""
+    uid = auth.create_user(rid, "owner", "owner@x.test", "correct-horse-battery", db_path=db_path)
+    return {"id": uid, "restaurant_id": rid, "is_admin": 0, "username": "owner"}
+
+
+@pytest.fixture
+def web(owner, monkeypatch):
     app = Flask(__name__, template_folder=os.path.join(ROOT, "templates"))
     app.register_blueprint(client_api.client_bp)
-    monkeypatch.setattr(auth, "get_current_user",
-                        lambda: {"id": 1, "restaurant_id": rid, "is_admin": 0, "username": "owner"})
+    monkeypatch.setattr(auth, "get_current_user", lambda: dict(owner))
     return app.test_client()
 
 
 @pytest.fixture
-def phone(rid, monkeypatch):
+def phone(owner, monkeypatch):
     app = Flask(__name__)
     app.register_blueprint(mobile_api.mobile_bp)
     monkeypatch.setattr(auth, "get_session_user",
-                        lambda token: {"id": 1, "restaurant_id": rid, "is_admin": 0, "username": "owner"}
-                        if token == "t" else None)
+                        lambda token: dict(owner) if token == "t" else None)
     client = app.test_client()
     client.environ_base["HTTP_AUTHORIZATION"] = "Bearer t"
     return client
@@ -309,3 +315,114 @@ def test_5d_marketing_performance_is_one_body(web, phone):
     assert a == b and a["ok"] is True
     import inspect
     assert "_capi._do_mkt_performance" in inspect.getsource(mobile_api.mobile_marketing_performance)
+
+
+# ── 6. Ask about this on iOS, with the web's question and entity ────────────
+
+def test_6_ios_asks_about_a_review_and_an_intel_rec_like_the_web():
+    web = _read("templates", "dashboard.html")
+    review_q = "About this review: what is the guest really saying, and is my reply right?"
+    assert review_q in web
+    detail = _swift("Reviews", "ReviewDetailView.swift")
+    assert review_q in detail
+    assert 'AskScreen(panel: "reviews", entityType: "review", entityId: "\\(viewModel.review.id)")' in detail
+    assert "'About this Intel recommendation: '+r.text" in web and "data-ask-rec=\"'+recEsc(r.key)" in web
+    intel = _swift("Intel", "IntelView.swift")
+    assert 'question: "About this Intel recommendation: \\(rec.text)"' in intel
+    assert 'AskScreen(panel: "competitor", entityType: "rec", entityId: key)' in intel
+
+
+# ── 7. Competitor movement is shown on both Intel screens ───────────────────
+
+def test_7_movement_route_is_one_body_and_says_when_it_cannot_compare(web, phone):
+    a = web.get("/api/intel/movement").get_json()
+    b = phone.get("/mobile/api/intel/movement").get_json()
+    assert a == b and a["ok"] is True
+    assert a["compared_from"] is None and a["arrived"] == [] and a["gone"] == []
+
+
+def test_7_both_clients_render_what_changed_with_an_honest_empty_state():
+    src = _read("templates", "dashboard.html")
+    fn = src[src.index("function in2LoadMoves(){"):]
+    fn = fn[:fn.index("\n  }\n")]
+    assert "fetch('/api/intel/movement'" in fn
+    assert "two weekly checks to compare" in fn, "no comparison yet is not 'no change'"
+    assert "mdy(d.compared_from)" in fn, "dates read M/D/YY"
+    assert 'id="in2-moves"' in src and "in2LoadMoves()" in src[src.index("if(n==='competitor')"):][:400]
+    vm = _swift("Intel", "IntelViewModel.swift")
+    assert '"/mobile/api/intel/movement"' in vm
+    view = _swift("Intel", "IntelView.swift")
+    assert "movementSection(movement)" in view
+    assert "two weekly checks to compare" in view and "CavnarDate.mdy(from)" in view
+
+
+# ── 8. Smaller parity fixes ─────────────────────────────────────────────────
+
+def test_8a_ios_stopping_a_competitor_has_an_undo_window():
+    view = _swift("Intel", "IntelView.swift")
+    stop = view[view.index("private func stopTracking(_ c: Competitor)"):]
+    stop = stop[:stop.index("private func undoRemoval()")]
+    assert "Task.sleep(for: .seconds(7))" in stop
+    assert stop.index("Task.sleep") < stop.index("viewModel.removeCompetitor(placeId: c.placeId)"), \
+        "the server call waits for the Undo window"
+    assert 'Text("Undo")' in view and ".onDisappear { undoRemoval() }" in view
+    assert "Undo toast (iOS)" in _read("DESIGN_SYSTEM.md")
+
+
+def test_8b_ios_saves_and_deletes_review_templates(phone, rid):
+    made = phone.post("/mobile/api/templates", json={"title": "Five star", "body": "Thanks so much!"}).get_json()
+    assert made["ok"] is True
+    assert [t["title"] for t in phone.get("/mobile/api/templates").get_json()["templates"]] == ["Five star"]
+    assert phone.delete(f"/mobile/api/templates/{made['id']}").get_json()["ok"] is True
+    assert phone.get("/mobile/api/templates").get_json()["templates"] == []
+    vm = _swift("Reviews", "ReviewDetailViewModel.swift")
+    assert '"/mobile/api/templates", method: .post' in vm
+    assert '"/mobile/api/templates/\\(template.id)", method: .delete' in vm
+    assert 'Button("Save as template")' in _swift("Reviews", "ReviewDetailView.swift")
+
+
+def test_8c_review_request_message_on_web_and_stats_on_ios():
+    src = _read("templates", "dashboard.html")
+    assert 'id="rr-message" maxlength="200"' in src
+    send = src[src.index("fetch('/api/send-review-request'"):][:400]
+    assert "message: (document.getElementById('rr-message')" in send
+    sheet = _swift("Reviews", "SendReviewRequestSheet.swift")
+    assert '"/mobile/api/review-request-stats"' in sheet and "Sent this month:" in sheet
+
+
+def test_8d_ios_guest_campaign_send_carries_the_type():
+    vm = _swift("Marketing", "GuestTextClubViewModel.swift")
+    assert "SendBody(message: draftMessage, segment: selectedSegment, type: campaignType," in vm
+
+
+def test_8e_ios_renders_the_guest_diagnosis(phone):
+    import strategy_routes
+    phone.application.register_blueprint(strategy_routes.strategy_mobile_bp)
+    body = phone.get("/mobile/api/marketing/diagnosis").get_json()
+    assert body["ok"] is True and "diagnosis" in body
+    vm = _swift("Marketing", "MarketingAnalyticsViewModel.swift")
+    assert '"/mobile/api/marketing/diagnosis"' in vm
+    assert 'LaborDiagnosisCard(diagnosis: diagnosis, title: "WHY SOME TEXTS DID BETTER", surface: "marketing")' \
+        in _swift("Marketing", "MarketingAnalyticsSection.swift")
+
+
+def test_8f_one_name_per_concept_on_both_platforms():
+    ios = "".join(_swift(*p) for p in (("Reviews", "ResponseRingsChart.swift"),
+                                       ("Reviews", "TopicHeatGridChart.swift"),
+                                       ("Reviews", "SentimentRiverChart.swift"),
+                                       ("Intel", "AIVisibilitySection.swift")))
+    for old in ('"Response Rings"', '"Topic Heat Grid"', '"Sentiment River"', "GBP completeness",
+                "GBP COMPLETENESS", "YOUR AI VISIBILITY ROADMAP"):
+        assert old not in ios, old
+    for name in ("How your replies were approved", "What guests talk about", "Reviews · per week",
+                 "LISTING STRENGTH", "GAPS IN YOUR PUBLIC RECORD"):
+        assert name in ios, name
+    assert "GBP completeness" not in _read("templates", "dashboard.html")
+
+
+def test_8g_web_drafts_list_names_who_wrote_and_approved():
+    src = _read("templates", "dashboard.html")
+    by = src[src.index("function _mktDraftByline(x){"):src.index("function useMktDraft(id){")]
+    assert "'Written by ' + _escHtml(x.created_by_name)" in by
+    assert "'approved by ' + _escHtml(x.approved_by_name)" in by
+    assert "+ _mktDraftByline(x)" in src
