@@ -231,12 +231,13 @@ struct ValueChartCard: View {
     ]
 }
 
-/// 1M/3M/6M/1Y/ALL — filters the already-fetched value_history client-side
-/// rather than a network call per tap, since the backend already returns up
-/// to a year of daily snapshots in one response (see mobile_api.py's
-/// _do_mobile_home).
+/// 1M/3M/6M/1Y — the web Home's set too (parity audit #5). Filters the
+/// already-fetched value_history client-side rather than a network call per
+/// tap, since the backend returns up to a year of daily snapshots in one
+/// response (see mobile_api.py's _do_mobile_home) — which is also why there
+/// is no "ALL": it drew the same year as 1Y.
 enum ChartRange: String, CaseIterable, Identifiable {
-    case oneMonth = "1M", threeMonths = "3M", sixMonths = "6M", oneYear = "1Y", all = "ALL"
+    case oneMonth = "1M", threeMonths = "3M", sixMonths = "6M", oneYear = "1Y"
 
     var id: String { rawValue }
 
@@ -246,7 +247,6 @@ enum ChartRange: String, CaseIterable, Identifiable {
         case .threeMonths: return 90
         case .sixMonths: return 180
         case .oneYear: return 365
-        case .all: return nil
         }
     }
 
@@ -256,7 +256,6 @@ enum ChartRange: String, CaseIterable, Identifiable {
         case .threeMonths: return "over 3 months"
         case .sixMonths: return "over 6 months"
         case .oneYear: return "this year"
-        case .all: return "all time"
         }
     }
 }

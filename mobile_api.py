@@ -1119,6 +1119,20 @@ def mobile_home_modules(current_user):
                                                        user=current_user)["modules"]), 200
 
 
+@mobile_bp.route("/home/brief/group")
+@mobile_login_required
+def mobile_home_brief_group(current_user):
+    """Twin of /api/home/brief/group — every location in the owner's group
+    (home_brief.build_group_brief, one body): each location's status, what
+    needs the owner there and last night's net, the attention list across
+    them and the portfolio strip. Scoped by the builder to the login's own
+    group (LOCATION_SWITCH, location_group AND owner_email) — never another
+    owner's locations."""
+    import home_brief
+    payload, status = home_brief.build_group_brief(current_user, fresh=request.args.get("fresh") == "1")
+    return jsonify(**payload), status
+
+
 def _do_mobile_home(current_user):
     rid = current_user["restaurant_id"]
     restaurant = get_restaurant(rid)
@@ -1320,20 +1334,31 @@ def _do_mobile_home(current_user):
             # Web Home's H1 — the brief's own headline and its tone
             # ("bad"/"warn"/"neutral"/"good") — so the phone's hero says
             # what state the restaurant is in, not a slogan (density #1).
+            # The whole brief object (lines, counts, overnight, data_as_of)
+            # — a superset of the {headline, tone} older builds read.
             _bh = _brief_payload.get("brief") or {}
-            _brief_head = ({"headline": _bh.get("headline"), "tone": _bh.get("tone")}
-                           if _bh.get("headline") else None)
+            _brief_head = dict(_bh) if _bh.get("headline") else None
+            _brief_rest = _brief_passthrough(_brief_payload)
         else:
             _brief_recs, _brief_wins, _brief_ready = [], [], None
             _brief_quieter, _brief_assignees, _brief_head = [], [], None
             _brief_fresh = _freshness_unavailable()
+            _brief_rest = {}
     except Exception as _hbe:
         print(f"[home] brief unavailable, using local attention list: {_hbe}")
         _brief_recs, _brief_wins, _brief_ready = [], [], None
         _brief_quieter, _brief_assignees, _brief_head = [], [], None
         _brief_fresh = _freshness_unavailable()
+        _brief_rest = {}
 
     return {
+        # Every other key web Home reads from /api/home/brief, as the web
+        # has it (parity audit #1): the "since your last visit" changes,
+        # quick actions, the signal charts, the undo for the last hidden
+        # recommendation (`dismissed`), what's coming up, alerts, Ask
+        # suggestions and the location context. First, so the phone's own
+        # keys below keep their established shapes.
+        **_brief_rest,
         "ok": True,
         "recommendations": _brief_recs,
         # Kinds gone quieter after four unanswered episodes, and who a card
@@ -1383,6 +1408,22 @@ def _do_mobile_home(current_user):
         # the same rule the web Home uses.
         "local_now": _home_local_now(restaurant),
     }, 200
+
+
+# home_brief keys the phone carries under its own name, in its own shape:
+# the attention list is `needs_attention` (the app's flat cta/action pair)
+# and the week's receipts are `weekly_receipts` (_home_weekly_receipts).
+# tests/test_home_parity.py holds every other brief key to being present.
+MOBILE_HOME_ALIASES = {"attention": "needs_attention", "receipts": "weekly_receipts"}
+
+
+def _brief_passthrough(brief_payload):
+    """Every top-level home_brief key the phone's payload does not build
+    itself, as the web receives it. Generic on purpose: a key added to the
+    brief reaches the phone without anyone remembering to copy it here — the
+    drift that left iOS without changes, quick actions, charts and undo."""
+    return {k: v for k, v in (brief_payload or {}).items()
+            if k not in MOBILE_HOME_ALIASES and k != "ok"}
 
 
 def _freshness_unavailable():
@@ -1726,19 +1767,14 @@ def mobile_review_request_stats(current_user):
 @mobile_bp.route("/notifications")
 @mobile_login_required
 def mobile_notifications(current_user):
-    payload, status = _capi._do_get_notifications(
-        current_user["restaurant_id"], viewer=current_user)
-    # Mark as seen — per LOGIN now, not per restaurant. The old stamp lived
-    # on restaurants.notifications_seen_at, so one co-owner opening the list
-    # cleared the other's badge; and it was written in isoformat while
-    # alert_log.fired_at uses SQLite's space separator, which made the
-    # unread count structurally blind to anything fired today.
-    if payload.get("ok"):
-        try:
-            from models import mark_notifications_seen
-            mark_notifications_seen(current_user["id"], current_user["restaurant_id"])
-        except Exception:
-            pass
+    """Twin of /api/notifications, one body (client_api._do_read_notifications):
+    `scope=group` lists every location's alerts for a login that may switch
+    between them, and `mark=0` reads without moving the read mark — a row is
+    read when it is opened (POST /notifications/opened), as on the web. An
+    older build sends neither and keeps "opening the list reads it all".
+    The mark is per LOGIN (notification_reads), never per restaurant."""
+    payload, status = _capi._do_read_notifications(current_user, request.args.get("scope"),
+                                                   mark=request.args.get("mark") != "0")
     return jsonify(**payload), status
 
 
@@ -1820,17 +1856,11 @@ def mobile_notifications_engagement(current_user):
 @mobile_bp.route("/notifications/unread-count")
 @mobile_login_required
 def mobile_notifications_unread_count(current_user):
-    from models import unread_notification_count
-    count = unread_notification_count(current_user["id"], current_user["restaurant_id"],
-                                      visible=_capi.notification_visibility(current_user))
-    # `urgent`: the same rows and rule as the web bell's red count (density
-    # audit #39) — still needing someone (P0/P1, not yet handled).
-    try:
-        body, _ = _capi._do_get_notifications(current_user["restaurant_id"], current_user)
-        urgent = sum(1 for n in body.get("notifications") or [] if n.get("urgent") and not n.get("resolved"))
-    except Exception:
-        urgent = 0
-    return jsonify(ok=True, count=count, urgent=urgent)
+    """Twin of /api/notifications/unread-count, one body: the unread count
+    and the urgent count (density audit #39) over the locations the list
+    reads — `scope=group` for every location, as the list itself."""
+    payload, status = _capi._do_notifications_unread(current_user, request.args.get("scope"))
+    return jsonify(**payload), status
 
 
 # ── Changelog ─────────────────────────────────────────────────────────────

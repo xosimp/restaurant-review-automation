@@ -49,6 +49,13 @@ struct ChangelogView: View {
                                             .foregroundStyle(Color.cavnarEmber)
                                     }
                                 }
+                                // When it shipped, M/D/YY — the web list's
+                                // date beside its tag (parity audit #11).
+                                if let date = entry.displayDate {
+                                    Text(date)
+                                        .font(.cavnarNumber(12.5, weight: 600))
+                                        .foregroundStyle(Color.cavnarInk3)
+                                }
                                 if let body = entry.body, !body.isEmpty {
                                     Text(body).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3)
                                 }

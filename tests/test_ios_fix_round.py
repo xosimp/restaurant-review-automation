@@ -90,7 +90,10 @@ def test_the_widget_and_home_card_read_with_peek():
     assert re.search(r'"/mobile/api/actions", query: \["peek": "1"\]', sync)
     assert re.search(r'"/mobile/api/dsr/\\\(latest\.businessDate\)", query: \["peek": "1"\]', sync)
     card = _read(APP, "Features", "Home", "HomeLastNightCard.swift")
-    assert 'query: ["peek": "1"]' in card
+    # Home's card reads the list row alone now (parity audit #9): one call,
+    # and the report itself is never opened — so nothing is presented.
+    assert '"/mobile/api/dsr", query: ["limit": "1"]' in card
+    assert '"/mobile/api/dsr/\\(' not in card
 
 
 # ── F3-16: universal links ───────────────────────────────────────────────────

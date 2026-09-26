@@ -164,7 +164,22 @@ final class DensityRoundTests: XCTestCase {
              {"type": "b", "label": "B", "fired_at": "2026-09-25 08:00:00", "urgent": false},
              {"type": "c", "label": "C", "fired_at": "2026-09-25 08:00:00", "urgent": false}]
             """)
-        XCTAssertEqual(NotificationsListView.summaryLine(items), "1 needs you \u{00B7} 2 for your information")
+        // The web bell's words (parity audit #7): what still needs someone,
+        // by kind — not a count of the FYIs.
+        XCTAssertEqual(NotificationsListView.summaryLine(items), "1 needs you: 1 urgent alert")
+        let mixed = try decode([NotificationItem].self, """
+            [{"type": "1star", "label": "A", "fired_at": "2026-09-25 08:00:00", "urgent": true,
+              "can_approve": true, "draft": "Thank you"},
+             {"type": "health", "label": "B", "fired_at": "2026-09-25 08:00:00", "urgent": true},
+             {"type": "1star", "label": "C", "fired_at": "2026-09-25 08:00:00", "urgent": true, "resolved": true},
+             {"type": "labor_over", "label": "D", "fired_at": "2026-09-25 08:00:00", "urgent": true}]
+            """)
+        XCTAssertEqual(NotificationsListView.summaryLine(mixed),
+                       "3 need you: 1 reply ready to post, 1 health mention, 1 other alert")
+        let calm = try decode([NotificationItem].self, """
+            [{"type": "b", "label": "B", "fired_at": "2026-09-25 08:00:00", "urgent": false, "unread": true}]
+            """)
+        XCTAssertEqual(NotificationsListView.summaryLine(calm), "Nothing needs you \u{00B7} 1 unread")
         XCTAssertNil(NotificationsListView.summaryLine([]))
     }
 

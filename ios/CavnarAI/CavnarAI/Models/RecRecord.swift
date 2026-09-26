@@ -517,6 +517,36 @@ struct RecSummary: Decodable, Equatable {
         }
     }
 
+    /// The record in three figures (rec_learning.summary `totals`, the web's
+    /// #recs strip): taken of what settled, measured better of what was
+    /// measured, and what is still open. Each rate has its own floor
+    /// (`*_enough`); below it the tile says "—", never a rate of two.
+    struct Totals: Decodable, Equatable {
+        let shown: Int
+        let settled: Int
+        let taken: Int
+        let open: Int
+        let measured: Int
+        let improved: Int
+        let takenEnough: Bool
+        let measuredEnough: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case shown, settled, taken, open, measured, improved
+            case takenEnough = "taken_enough"
+            case measuredEnough = "measured_enough"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            func int(_ k: CodingKeys) -> Int { (try? c.decodeIfPresent(Int.self, forKey: k)) ?? 0 }
+            shown = int(.shown); settled = int(.settled); taken = int(.taken); open = int(.open)
+            measured = int(.measured); improved = int(.improved)
+            takenEnough = ((try? c.decodeIfPresent(Bool.self, forKey: .takenEnough)) ?? nil) ?? false
+            measuredEnough = ((try? c.decodeIfPresent(Bool.self, forKey: .measuredEnough)) ?? nil) ?? false
+        }
+    }
+
     let ok: Bool
     let days: Int?
     let since: String?
@@ -525,9 +555,11 @@ struct RecSummary: Decodable, Equatable {
     let mostEffective: MostEffective?
     let minSettled: Int?
     let minMeasured: Int?
+    /// Absent on an older server — the strip then doesn't draw.
+    let totals: Totals?
 
     enum CodingKeys: String, CodingKey {
-        case ok, days, since
+        case ok, days, since, totals
         case byModule = "by_module"
         case byTag = "by_tag"
         case mostEffective = "most_effective"
@@ -545,6 +577,7 @@ struct RecSummary: Decodable, Equatable {
         mostEffective = try? c.decodeIfPresent(MostEffective.self, forKey: .mostEffective)
         minSettled = try? c.decodeIfPresent(Int.self, forKey: .minSettled)
         minMeasured = try? c.decodeIfPresent(Int.self, forKey: .minMeasured)
+        totals = try? c.decodeIfPresent(Totals.self, forKey: .totals)
     }
 
     /// Modules with anything shown, most shown first.
@@ -556,6 +589,34 @@ struct RecSummary: Decodable, Equatable {
 }
 
 enum RecSummaryFormat {
+    /// One of the record's three tiles, as the web's #recs strip says it.
+    struct Tile: Equatable {
+        let label: String
+        let value: String
+        let detail: String
+        /// Measured better on at least half of what was measured.
+        let good: Bool
+    }
+
+    /// Acted on / Measured better / Open now (rec_learning.summary totals).
+    /// A rate below its floor is "—" with the count that would fill it —
+    /// never a rate of two.
+    static func tiles(_ t: RecSummary.Totals, days: Int, minSettled: Int?, minMeasured: Int?) -> [Tile] {
+        [
+            Tile(label: "Acted on",
+                 value: t.takenEnough ? "\(t.taken) of \(t.settled)" : "\u{2014}",
+                 detail: t.takenEnough ? "of the \(t.settled) answered or left, in \(days) days"
+                                       : "\(t.settled) of \(minSettled ?? 10) settled \u{2014} not enough yet",
+                 good: false),
+            Tile(label: "Measured better",
+                 value: t.measuredEnough ? "\(t.improved) of \(t.measured)" : "\u{2014}",
+                 detail: t.measuredEnough ? "measured results that improved"
+                                          : "\(t.measured) of \(minMeasured ?? 5) measured \u{2014} not enough yet",
+                 good: t.measuredEnough && t.improved * 2 >= t.measured),
+            Tile(label: "Open now", value: "\(t.open)", detail: "shown, not yet answered", good: false),
+        ]
+    }
+
     /// The module's name where an owner reads it.
     static func moduleLabel(_ key: String) -> String {
         switch key {

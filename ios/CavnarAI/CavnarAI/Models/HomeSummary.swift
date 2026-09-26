@@ -92,6 +92,24 @@ struct HomeSummary: Codable {
     /// server or when the brief couldn't be built, and the hero keeps its
     /// greeting line.
     var brief: HomeBriefHead? = nil
+    /// The rest of what web Home reads from the brief (parity audit #1),
+    /// now on /mobile/api/home too. Every one lenient — an odd value is
+    /// empty, never a Home that fails to decode — and absent from an older
+    /// server or a summary cached before them.
+    /// The header's one-tap actions, ranked server-side (home_brief).
+    var quickActions: HomeLenientList<HomeQuickAction>? = nil
+    /// "Since your last visit: …" — what changed since this login last
+    /// looked.
+    var changes: HomeChanges? = nil
+    /// The trend behind each pulse chip: the weekly rating, labor by
+    /// weekday against target, last week's waste by item.
+    var charts: HomeCharts? = nil
+    /// Recommendations this login hid, newest first — the undo.
+    var dismissed: HomeLenientList<HomeDismissedRec>? = nil
+    /// What went right (home_brief wins). Decoded for parity; web Home
+    /// counts them in the brief and draws no list of its own, so neither
+    /// does the phone.
+    var wins: HomeLenientList<HomeWin>? = nil
 
     var freshnessUnavailable: Bool { freshnessUnavailableFlag?.value == true }
 
@@ -140,6 +158,8 @@ struct HomeSummary: Codable {
         case dataHealth = "data_health"
         case freshnessUnavailableFlag = "freshness_unavailable"
         case brief
+        case quickActions = "quick_actions"
+        case changes, charts, dismissed, wins
     }
 
     /// "9/22/26" — `data_as_of` in the owner's format whether the server

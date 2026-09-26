@@ -9,20 +9,34 @@ import Observation
 struct HomeDayCard: View {
     @State private var viewModel = HomeDayViewModel()
     let dateLabel: String?
+    /// What the page above already says — the one thing and every Needs
+    /// attention item, by job (HomeBriefFilter.same) — so a brief line
+    /// about the same job is left out, as the web's `hbShownKeys` does.
+    var shownKeys: Set<String> = []
+    /// Where a line's own action lands (its `action.nav`).
+    var onOpenNav: (String) -> Void = { _ in }
     var onOpenIssues: () -> Void = {}
 
+    /// The lines this card draws: the web's rule, applied to the brief.
+    private var lines: [HomeDayViewModel.BriefLine] {
+        var shown = shownKeys
+        if !viewModel.issues.isEmpty { shown.insert("issues") }
+        return HomeBriefFilter.visible(viewModel.lines, shown: shown)
+    }
+
     var body: some View {
+        let lines = self.lines
         VStack(alignment: .leading, spacing: 12) {
             HomeSectionHeader(kicker: "Today", title: Date.now.formatted(.dateTime.weekday(.wide)), trailing: dateLabel)
             VStack(alignment: .leading, spacing: 0) {
                 if viewModel.isLoading && viewModel.lines.isEmpty {
                     CavnarWorkingLine().padding(.vertical, 10)
-                } else if viewModel.lines.isEmpty {
+                } else if lines.isEmpty {
                     Text("Your brief fills in as your numbers come in.")
                         .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
                         .padding(.vertical, 8)
                 } else {
-                    ForEach(Array(viewModel.lines.enumerated()), id: \.element.id) { index, line in
+                    ForEach(Array(lines.enumerated()), id: \.element.id) { index, line in
                         VStack(spacing: 0) {
                             HStack(alignment: .top, spacing: 12) {
                                 Circle().fill(line.toneColor).frame(width: 8, height: 8).padding(.top, 6)
@@ -35,8 +49,28 @@ struct HomeDayCard: View {
                                         HomeMixedText.make(record + ".", size: 12.5, weight: 500, color: .cavnarInk3)
                                             .fixedSize(horizontal: false, vertical: true)
                                     }
-                                    if let ask = line.ask, !ask.isEmpty {
-                                        HomeAskLink(question: ask, label: "Ask")
+                                    // The line's direct action first — send,
+                                    // open the order, answer the replies —
+                                    // and Ask as the secondary (web #46).
+                                    HStack(spacing: 16) {
+                                        if let act = line.action {
+                                            Button {
+                                                Haptic.light()
+                                                onOpenNav(act.nav)
+                                            } label: {
+                                                HStack(spacing: 3) {
+                                                    Text(act.label).font(.cavnarBody(13, weight: 700))
+                                                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold))
+                                                }
+                                                .foregroundStyle(Color.cavnarEmber2)
+                                                .frame(minHeight: 44)
+                                                .contentShape(Rectangle())
+                                            }
+                                            .buttonStyle(.plain)
+                                        }
+                                        if let ask = line.ask, !ask.isEmpty {
+                                            HomeAskLink(question: ask, label: "Ask")
+                                        }
                                     }
                                     // A brief line that stands for a
                                     // recommendation is answered where it
@@ -51,7 +85,7 @@ struct HomeDayCard: View {
                                 Spacer(minLength: 0)
                             }
                             .padding(.vertical, 9)
-                            if index < viewModel.lines.count - 1 { AccountRowDivider() }
+                            if index < lines.count - 1 { AccountRowDivider() }
                         }
                     }
                 }
@@ -141,18 +175,39 @@ final class HomeDayViewModel {
         /// K4: "forecast" on today's line (demand.forecast_day), and the
         /// like — a small tag beside it. Absent on an older server.
         var claimKind: String? = nil
+        /// The job the line stands for (`rec`) and where its figures came
+        /// from (`source`: "dsr" on the report's "yesterday" line) — what
+        /// the web filters on (parity audit #3).
+        var rec: String? = nil
+        var source: String? = nil
+        /// The line's direct action ({label, nav}: "Reply now" →
+        /// reviews?filter=urgent), drawn before Ask.
+        var action: LineAction? = nil
         var id: String { (key ?? "") + text }
 
+        struct LineAction: Decodable, Hashable {
+            let label: String
+            let nav: String
+        }
+
         enum CodingKeys: String, CodingKey {
-            case key, text, tone, ask, answerable
+            case key, text, tone, ask, answerable, rec, source, action
             case recKey = "rec_key"
             case recKeys = "rec_keys"
             case claimKind = "claim_kind"
         }
 
+        init(key: String?, text: String, rec: String? = nil, source: String? = nil) {
+            self.key = key; self.text = text; self.rec = rec; self.source = source
+            tone = nil; ask = nil; recKey = nil; recKeys = nil; answerable = nil
+        }
+
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             claimKind = try? c.decodeIfPresent(String.self, forKey: .claimKind)
+            rec = (try? c.decodeIfPresent(String.self, forKey: .rec)) ?? nil
+            source = (try? c.decodeIfPresent(String.self, forKey: .source)) ?? nil
+            action = (try? c.decodeIfPresent(LineAction.self, forKey: .action)) ?? nil
             key = try? c.decodeIfPresent(String.self, forKey: .key)
             text = try c.decode(String.self, forKey: .text)
             tone = try? c.decodeIfPresent(String.self, forKey: .tone)
@@ -255,8 +310,9 @@ final class HomeDayViewModel {
         // The focus and money lines have their own cards on Home; an
         // all-clear alone is not a brief.
         demandAccuracy = brief?.brief?.demandAccuracy
-        lines = (brief?.brief?.lines ?? []).filter { $0.key != "fix_first" && $0.key != "money" }
-        if lines.count == 1, lines[0].key == "all_clear" { lines = [] }
+        // Every line; HomeDayCard filters what the page already says
+        // (HomeBriefFilter) against what Home knows at draw time.
+        lines = brief?.brief?.lines ?? []
         issues = iss?.issues ?? []
     }
 
@@ -319,5 +375,54 @@ struct HomeCloseOutCard: View {
                     c.equipment.map { "equipment: \($0)" }, c.maintenance.map { "maintenance: \($0)" }]
             .compactMap { $0 }
         return bits.isEmpty ? "\(who) filed tonight's handoff." : "\(who): " + bits.joined(separator: " · ")
+    }
+}
+
+/// One item, once (web `hbSame` / `hbShownKeys`, friction #11): the same job
+/// reached Home several ways — the one thing, a Needs-attention row, a brief
+/// line — each with its own key. `same` maps each surface's key onto one
+/// job, and `visible` drops a brief line whose job the page already shows,
+/// with the server's `morning_brief.shown_on_home` rule (parity audit #3).
+/// Pure, so the rule is pinned by tests.
+enum HomeBriefFilter {
+    private static let jobs: [String: String] = [
+        "urgent_reviews": "replies", "stale_low_reviews": "replies", "awaiting_approval": "replies",
+        "reviews_awaiting_approval": "replies", "low_response_rate": "replies", "no_response": "replies",
+        "reviews": "replies", "critical_low": "stock", "stock": "stock", "issues": "issues",
+        "labor_overtime": "overtime",
+    ]
+
+    static func same(_ key: String?) -> String? {
+        guard let k = key?.trimmingCharacters(in: .whitespaces), !k.isEmpty else { return nil }
+        if let job = jobs[k] { return job }
+        if k.hasPrefix("stock_low:") { return "stock" }
+        return k
+    }
+
+    /// The jobs the page above the brief already says: every Needs
+    /// attention item (its type and the key it is answered under) and the
+    /// one thing's key.
+    static func shownKeys(attention: [NeedsAttentionItem], focusKey: String?) -> Set<String> {
+        var s = Set<String>()
+        for a in attention {
+            if let j = same(a.type) { s.insert(j) }
+            if let j = same(a.recKey) { s.insert(j) }
+        }
+        if let j = same(focusKey) { s.insert(j) }
+        return s
+    }
+
+    static func visible(_ lines: [HomeDayViewModel.BriefLine], shown: Set<String>) -> [HomeDayViewModel.BriefLine] {
+        // An all-clear alone is not a brief.
+        if lines.count == 1, lines[0].key == "all_clear" { return [] }
+        return lines.filter { l in
+            // The one thing and the money line have their own card.
+            if l.key == "fix_first" || l.key == "money" { return false }
+            // The report's "Last night" line: the Last night card says it.
+            if l.key == "yesterday" && l.source == "dsr" { return false }
+            if let j = same(l.rec), shown.contains(j) { return false }
+            if let j = same(l.key), shown.contains(j) { return false }
+            return true
+        }
     }
 }

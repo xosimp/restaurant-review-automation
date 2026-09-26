@@ -3844,12 +3844,13 @@ svg:hover .hb-xh{opacity:1}
   function renderHero(d){
     var el=document.getElementById('hb-hero');if(!el)return;
     var v=d.value||{},hist=v.history||[];
-    var days=_hbRange==='1M'?30:_hbRange==='3M'?90:365;
+    // 1M / 3M / 6M / 1Y: the phone's set too (parity audit #5).
+    var days=_hbRange==='1M'?30:_hbRange==='3M'?90:_hbRange==='6M'?180:365;
     var cut=new Date(Date.now()-days*864e5);
     var sel=hist.filter(function(p){var t=new Date(p.date);return !isNaN(t)&&t>=cut;});if(sel.length<2)sel=hist.slice(-Math.max(2,Math.min(hist.length,days)));
     var vals=sel.map(function(p){return +p.value||0;});
     var delta=vals.length>1?vals[vals.length-1]-vals[0]:0;
-    var rangeLabel=_hbRange==='1M'?'month':_hbRange==='3M'?'3 months':'year';
+    var rangeLabel=_hbRange==='1M'?'month':_hbRange==='3M'?'3 months':_hbRange==='6M'?'6 months':'year';
     // Net of what got worse (re-audit K4): once anything tracked got worse,
     // the headline is the improvements LESS those losses, says so, and says
     // both sides - the improvements alone read as if nothing had gone the
@@ -3860,7 +3861,7 @@ svg:hover .hb-xh{opacity:1}
     var netLine=isNet?'<div class="delta hb-net"><span>'+esc(hbNetSentence(v.net_monthly+(+wz.monthly||0),typeof v.wins==='number'?v.wins:undefined,wz))+'</span></div>':'';
     if(uw.length)netLine+='<div class="delta"><span>plus '+uw.length+' improvement'+(uw.length===1?'':'s')+' with no dollar figure</span></div>';
     var h='<div class="hb-lit-layer" aria-hidden="true"><i></i></div><div class="hd"><div><div class="hb-h3"><span>Measured results</span></div><div class="big'+(big<0?' neg':'')+'"><span id="hb-big" class="hb-num">$0</span><small>a month, measured'+(isNet?', net':'')+'</small></div>'+netLine+(vals.length>1?'<div class="delta hb-num'+(delta<0?' bad':'')+'">'+(delta>=0?'+':'−')+'$'+Math.abs(Math.round(delta)).toLocaleString()+'/mo <span>over the last '+rangeLabel+'</span></div>':'')+_hbValueFrom(v)+(v.caveat?'<div class="delta"><span>'+esc(v.caveat)+'</span></div>':'')+'</div>';
-    h+='<div class="hb-range">'+['1M','3M','1Y'].map(function(r){return '<button class="'+(r===_hbRange?'on':'')+'" onclick="hbRange(\''+r+'\')">'+r+'</button>';}).join('')+'</div></div>';
+    h+='<div class="hb-range">'+['1M','3M','6M','1Y'].map(function(r){return '<button class="'+(r===_hbRange?'on':'')+'" onclick="hbRange(\''+r+'\')">'+r+'</button>';}).join('')+'</div></div>';
     if(vals.length>1){h+=glowLine(vals,1000,190,EMBER2,{pad:18,prefix:'$',labels:sel.map(function(p){return mdy(p.date);})});h+='<div class="ax hb-num"><span>'+mdy(sel[0].date)+'</span><span>'+mdy(sel[sel.length-1].date)+'</span></div>';}
     else h+='<div class="hb-empty" style="margin-top:14px">The curve starts on the second day of tracking.</div>';
     el.innerHTML=h;countUp(document.getElementById('hb-big'),Math.abs(big),big<0?'−$':'$');
@@ -4456,8 +4457,11 @@ svg:hover .hb-xh{opacity:1}
     // jumping when its reads arrive.
     h+='<section id="hb-day" aria-label="The day"><div class="hb-card quiet" style="margin-top:34px" aria-hidden="true"><div class="hb-skel" style="width:38%"></div><div class="hb-skel" style="width:82%"></div><div class="hb-skel" style="width:64%"></div></div></section>';
     h+=renderRecs(d,used&&used.rec?1:0);
-    // The connection pills are shown only to a brand-new account (above, as
-    // its setup steps): past that they restated the Data health strip.
+    // Readiness follows the recommendations whenever setup is incomplete
+    // (DS 11b step 5, as iOS draws it; parity audit #4): a partly connected
+    // account still sees the next step that lights up the rest. It led the
+    // page above for a brand-new account, and hides itself once complete.
+    if(!fresh)h+=renderReadiness(d);
     // Still open and the close-out: work, so outside the collapsed results.
     h+='<section id="hb-open" aria-label="Still open"></section>';
     h+='<details class="hb-results" id="hb-results" data-nav="home/results"'+(hbResultsOpen()?' open':'')+'><summary><span class="hb-h3">Results</span><span id="hb-results-line">'+num(hbResultsLine(d.value,null,null))+'</span></summary>';

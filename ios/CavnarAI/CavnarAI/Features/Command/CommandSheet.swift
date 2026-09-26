@@ -147,16 +147,49 @@ struct CommandSheet: View {
             AccountKicker(text: "One tap")
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    if let replies = viewModel.waiting.first(where: { $0.key == "no_response" }), (replies.count ?? 0) > 0 {
-                        chip("Replies (\(replies.count ?? 0))", icon: "checkmark.bubble") { go("reviews?filter=pending") }
+                    // The server's ranked quick actions, as the web palette
+                    // shows them (parity audit #10) — Home's own list. The
+                    // built-in chips below are the fallback until Home has
+                    // loaded (or on an older server).
+                    let quick = HomeQuickActionsStore.current.filter { $0.kind != "alerts" && $0.destination != nil }
+                    if !quick.isEmpty {
+                        ForEach(quick) { q in
+                            chip(q.chipLabel, icon: Self.quickIcon(q)) {
+                                go(q.kind == "ask" ? "ask" : (q.destination ?? "home"))
+                            }
+                        }
+                    } else {
+                        fallbackChips
                     }
-                    chip("Last night", icon: "chart.bar.doc.horizontal") { go("dsr") }
-                    chip("Scan invoice", icon: "doc.text.viewfinder") { go("inventory/invoices?scan=camera") }
-                    chip("Requests", icon: "person.2") { go("labor/requests") }
-                    chip("Ask Cavnar AI", icon: "sparkles") { go("ask") }
                 }
             }
         }
+    }
+
+    private static func quickIcon(_ q: HomeQuickAction) -> String {
+        switch q.kind {
+        case "publish_replies": return "checkmark.bubble"
+        case "ask": return "sparkles"
+        default:
+            switch q.module {
+            case "reviews": return "star.bubble"
+            case "labor": return "calendar"
+            case "inventory": return "shippingbox"
+            case "marketing": return "megaphone"
+            default: return "arrow.up.right"
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var fallbackChips: some View {
+        if let replies = viewModel.waiting.first(where: { $0.key == "no_response" }), (replies.count ?? 0) > 0 {
+            chip("Replies (\(replies.count ?? 0))", icon: "checkmark.bubble") { go("reviews?filter=pending") }
+        }
+        chip("Last night", icon: "chart.bar.doc.horizontal") { go("dsr") }
+        chip("Scan invoice", icon: "doc.text.viewfinder") { go("inventory/invoices?scan=camera") }
+        chip("Requests", icon: "person.2") { go("labor/requests") }
+        chip("Ask Cavnar AI", icon: "sparkles") { go("ask") }
     }
 
     private func chip(_ label: String, icon: String, action: @escaping () -> Void) -> some View {

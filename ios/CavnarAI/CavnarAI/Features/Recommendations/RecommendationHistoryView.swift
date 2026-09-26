@@ -30,11 +30,23 @@ struct RecommendationHistoryView: View {
                             .background(Color.cavnarEmber.opacity(0.12))
                             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     } subtitle: {
-                        Text("What you followed, and what it did.")
+                        // The web record's words (parity audit #6).
+                        Text("What Cavnar AI suggested, what you did with it, and what was measured afterwards. "
+                             + "Anything left unanswered counts as not acted on.")
                     }
 
                     CavnarSegmentedControl(selection: $viewModel.window,
                                            options: RecommendationHistoryViewModel.Window.allCases) { $0.label }
+
+                    // The one thing on this page only the owner can do comes
+                    // first: the check-ins. Then the record in three tiles,
+                    // what was measured alongside, what was followed, and
+                    // the history — the web's order (density audit #40).
+                    checkInSection
+                    statStrip
+                    if let worked = viewModel.whatWorked {
+                        WhatWorkedCard(whatWorked: worked)
+                    }
 
                     followedSection
                     mostEffectiveSection
@@ -50,7 +62,11 @@ struct RecommendationHistoryView: View {
             .accountSheetChrome("Recommendations")
             .task { await viewModel.load() }
             .onChange(of: viewModel.window) { _, _ in
-                Task { await viewModel.loadSummary() }
+                Task {
+                    async let s: Void = viewModel.loadSummary()
+                    async let w: Void = viewModel.loadWhatWorked()
+                    _ = await (s, w)
+                }
             }
             .confirmationDialog("Stop measuring this?", isPresented: $showingStopConfirm,
                                 titleVisibility: .visible, presenting: confirmingStop) { outcome in
@@ -61,6 +77,50 @@ struct RecommendationHistoryView: View {
             } message: { _ in
                 Text("For a change you reversed, or one that no longer applies. Nothing from it is counted.")
             }
+        }
+    }
+
+    // MARK: - Check in
+
+    /// Results that landed and wait on "Did you make this change?" — at most
+    /// five, each joined to its recommendation in the timeline.
+    @ViewBuilder
+    private var checkInSection: some View {
+        let due = viewModel.checkInsDue
+        if !due.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                HomeSectionHeader(kicker: "Check in", title: "Did you make these changes?",
+                                  trailing: "\(due.count) result\(due.count == 1 ? "" : "s") landed")
+                ForEach(due) { o in
+                    RecCheckInCard(outcome: o, surface: "ios") { await viewModel.reloadOutcomes() }
+                }
+            }
+        }
+    }
+
+    // MARK: - The record in three figures
+
+    @ViewBuilder
+    private var statStrip: some View {
+        if let s = viewModel.summary, let totals = s.totals {
+            let tiles = RecSummaryFormat.tiles(totals, days: s.days ?? viewModel.window.rawValue,
+                                               minSettled: s.minSettled, minMeasured: s.minMeasured)
+            VStack(alignment: .leading, spacing: 8) {
+                AccountKicker(text: "Your record")
+                HStack(alignment: .top, spacing: 8) {
+                    ForEach(tiles, id: \.label) { tile in
+                        AccountStatTile(label: tile.label, value: tile.value,
+                                        tone: tile.good ? .cavnarGreen : .cavnarInk,
+                                        detail: nil, valueIsNumber: true)
+                    }
+                }
+                // Each tile's basis, in full — the tiles are too narrow for it.
+                ForEach(tiles, id: \.label) { tile in
+                    HomeMixedText.make(tile.label + ": " + tile.detail, size: 12.5, weight: 500, color: .cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .accessibilityElement(children: .combine)
         }
     }
 
@@ -155,6 +215,7 @@ struct RecommendationHistoryView: View {
                     RecTimelineRow(
                         item: item,
                         outcome: viewModel.outcome(for: item),
+                        showsCheckIn: !viewModel.checkInIds.contains(item.trackerId ?? -1),
                         stopping: viewModel.stopping,
                         onStop: { outcome in
                             confirmingStop = outcome
@@ -205,6 +266,8 @@ struct RecommendationHistoryView: View {
 private struct RecTimelineRow: View {
     let item: RecTimelineItem
     let outcome: RecOutcome?
+    /// False when the check-in already asks at the top of the page.
+    var showsCheckIn: Bool = true
     let stopping: Int?
     let onStop: (RecOutcome) -> Void
     let onCheckedIn: () async -> Void
@@ -294,7 +357,7 @@ private struct RecTimelineRow: View {
                 HomeMixedText.make(recheck, size: 13, weight: 500,
                                    color: o.recheckVerdict == "held" ? .cavnarGreen : .cavnarInk3)
             }
-            if RecCheckIn.isDue(o) {
+            if showsCheckIn, RecCheckIn.isDue(o) {
                 RecCheckInCard(outcome: o, surface: "ios", onAnswered: onCheckedIn)
                     .padding(.top, 4)
             }
@@ -336,15 +399,44 @@ final class RecommendationHistoryViewModel {
         item.trackerId.flatMap { outcomesById[$0] }
     }
 
+    /// GET /recs/what-worked — "Measured alongside your changes", over 90
+    /// days at least (its sentences carry their own window), as the web.
+    var whatWorked: WhatWorked?
+
+    /// The check-ins at the top: results that landed with no answer yet,
+    /// each joined to its recommendation in the timeline, newest first, up
+    /// to five (the web's `recCheckinCandidates`).
+    var checkInsDue: [RecOutcome] {
+        var seen = Set<Int>()
+        var out: [RecOutcome] = []
+        for item in items {
+            guard let id = item.trackerId, !seen.contains(id), let o = outcomesById[id], RecCheckIn.isDue(o) else { continue }
+            seen.insert(id)
+            out.append(o)
+            if out.count == 5 { break }
+        }
+        return out
+    }
+
+    var checkInIds: Set<Int> { Set(checkInsDue.map(\.id)) }
+
+    func loadWhatWorked() async {
+        let days = max(90, window.rawValue)
+        let w: WhatWorked? = try? await client.send("/mobile/api/recs/what-worked", query: ["days": "\(days)"],
+                                                    hapticOnError: false)
+        whatWorked = w
+    }
+
     func load() async {
         isLoading = true
         defer { isLoading = false }
         errorMessage = nil
         async let s: Void = loadSummary()
+        async let w: Void = loadWhatWorked()
         async let o: Void = reloadOutcomes()
         async let t: RecTimelinePage? = try? client.send("/mobile/api/recs/timeline",
                                                          query: ["limit": "\(Self.pageSize)"], hapticOnError: false)
-        _ = await (s, o)
+        _ = await (s, w, o)
         if let page = await t, page.ok {
             items = page.items
             nextBefore = page.nextBefore

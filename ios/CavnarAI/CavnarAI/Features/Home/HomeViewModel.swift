@@ -74,6 +74,41 @@ final class HomeViewModel {
         }
     }
 
+    private struct ProposeBody: Encodable {
+        let action: String
+        let args: [String: String]
+    }
+
+    /// "Publish N replies" asks first with the same confirm card the web
+    /// and Ask render (/command/propose → approve_all_reviews, no model
+    /// call): every reply that would post, in its own words, and how many
+    /// the public-reply check holds back (parity audit #2). Nil when the
+    /// route isn't there or can't build it — Home then confirms with the
+    /// count, as before.
+    func proposePublish() async -> AskProposal? {
+        let r: CommandProposeResponse? = try? await client.send(
+            "/mobile/api/command/propose", method: .post,
+            body: ProposeBody(action: "approve_all_reviews", args: [:]), hapticOnError: false)
+        guard let r, r.ok else { return nil }
+        return r.proposal
+    }
+
+    private struct UndoBody: Encodable {
+        let key: String
+        let undo: Bool
+    }
+
+    /// "Restore hidden": the newest recommendation this login hid comes back
+    /// (POST /home/dismiss {key, undo: true} — the web's undo), then Home
+    /// re-reads. False when the server refused it.
+    func restoreHidden(_ rec: HomeDismissedRec) async -> Bool {
+        let r: APIClient.OKResponse? = try? await client.send(
+            "/mobile/api/home/dismiss", method: .post, body: UndoBody(key: rec.key, undo: true))
+        guard r?.ok == true else { return false }
+        await load()
+        return true
+    }
+
     func load() async {
         adoptCurrentSession()
         let generation = SessionScope.generation
@@ -82,6 +117,7 @@ final class HomeViewModel {
         if summary == nil {
             summary = await cache.loadOffMain()
             if let cached = summary { ModuleAccess.shared.record(cached.modules) }
+            if let cached = summary?.quickActions?.items { HomeQuickActionsStore.update(cached) }
         }
         isLoading = summary == nil
         errorMessage = nil
@@ -95,6 +131,8 @@ final class HomeViewModel {
             summary = fetched
             ModuleAccess.shared.record(fetched.modules)
             cache.save(fetched)
+            // The command sheet's "One tap" row reads Home's own ranked list.
+            HomeQuickActionsStore.update(fetched.quickActions?.items ?? [])
             lastLoadedAt = Date()
         } catch let error as APIClient.APIError {
             guard generation == SessionScope.generation else { return }
