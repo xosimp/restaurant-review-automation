@@ -411,12 +411,62 @@ def test_another_restaurants_chat_id_reads_as_nonexistent(db_path):
 
 
 def test_the_history_list_is_bounded_oldest_chats_fall_off(db_path):
-    from models import create_ask_conversation, list_ask_conversations, _ASK_CONVERSATIONS_KEEP
+    from models import create_ask_conversation, list_ask_conversations, save_ask_message, _ASK_CONVERSATIONS_KEEP
     rid = _restaurant(db_path)
-    ids = [create_ask_conversation(rid, db_path=db_path) for _ in range(_ASK_CONVERSATIONS_KEEP + 3)]
+    ids = []
+    for n in range(_ASK_CONVERSATIONS_KEEP + 3):
+        cid = create_ask_conversation(rid, db_path=db_path)
+        # A chat is listed once something was said in it (an empty one never is).
+        save_ask_message(rid, "user", f"question {n}", conversation_id=cid, db_path=db_path)
+        ids.append(cid)
     kept = [c["id"] for c in list_ask_conversations(rid, limit=1000, db_path=db_path)]
     assert len(kept) == _ASK_CONVERSATIONS_KEEP
     assert ids[0] not in kept and ids[-1] in kept
+
+
+def test_a_chat_with_nothing_said_in_it_is_not_listed(client, db_path, monkeypatch):
+    """New chat is lazy on both clients now, but a row can still exist with
+    no turns (an older client's POST, or a first question that failed after
+    new_conversation made the row). The history list never shows it: there
+    is nothing to reopen."""
+    from models import create_ask_conversation, list_ask_conversations, save_ask_message
+    rid = _restaurant(db_path)
+    _login_as(monkeypatch, rid)
+    said = save_ask_message(rid, "user", "how were sales", db_path=db_path)
+    empty = create_ask_conversation(rid, db_path=db_path)
+    assert [c["id"] for c in list_ask_conversations(rid, db_path=db_path)] == [said]
+    body = client.get("/api/ask-cavnar/conversations").get_json()
+    assert [c["id"] for c in body["conversations"]] == [said]
+    # Once the empty chat gets its first question it is listed, newest first.
+    save_ask_message(rid, "user", "and labor?", conversation_id=empty, db_path=db_path)
+    assert [c["id"] for c in list_ask_conversations(rid, db_path=db_path)] == [empty, said]
+    # The shared body the web and mobile routes both call.
+    payload, status = client_api._do_list_ask_conversations(rid)
+    assert status == 200 and [c["id"] for c in payload["conversations"]] == [empty, said]
+
+
+def test_web_new_chat_is_lazy_and_the_fallback_keeps_the_chat():
+    """Template rules for the web Ask panel: New chat never POSTs a
+    conversation (the first question carries new_conversation), the plain
+    JSON fallback sends the same body as the stream (conversation_id,
+    new_conversation, screen), and a truncated answer says so."""
+    import os
+    import re
+    src = open(os.path.join(os.path.dirname(__file__), "..", "templates", "dashboard.html")).read()
+    new_chat = src[src.index("window.askNewChat=function(){"):]
+    new_chat = new_chat[:new_chat.index("};")]
+    assert "jsend(" not in new_chat and "fetch(" not in new_chat
+    assert "_askNewChat=true" in new_chat
+    send = src[src.index("window.sendAskCavnar = function() {"):]
+    send = send[:send.index("</script>")]
+    assert "new_conversation: !!window._askNewChat" in send
+    # Both doors post the one body; no client-built history goes to either.
+    assert len(re.findall(r"body: askBody", send)) == 2
+    assert "history:" not in send
+    assert "if (d.ok && d.truncated) _appendAskCavnarTruncated();" in send
+    trunc = src[src.index("function _appendAskCavnarTruncated()"):]
+    assert "Answer was cut short" in trunc[:trunc.index("\n}\n")]
+    assert ".ask-trunc{" in src
 
 
 def test_pre_conversation_messages_are_adopted_into_one_chat(db_path):

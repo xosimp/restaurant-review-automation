@@ -1095,6 +1095,7 @@ details[open]>summary~*{animation:askIn .3s ease both}
 .ask-fb{align-self:flex-start;display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;font-size:12.5px;color:var(--ink3)}
 .ask-fb .q{font-weight:600}
 .ask-fb .rec-ans-done{font-size:12.5px}
+.ask-trunc{align-self:flex-start;max-width:92%;margin-top:-6px;font-size:12.5px;font-weight:600;color:var(--amber);border-left:2px solid var(--amber);padding:2px 0 2px 8px}
 .ask-fb .ac-input{flex:1 1 160px;min-width:0;width:auto;padding:5px 9px;font-size:12.5px;border:1px solid var(--paper3)}
 .ask-fb.note{align-self:stretch;max-width:92%;flex-wrap:nowrap}
 .ask-fb.note .q,.ask-fb.note .cbtn{flex:0 0 auto;white-space:nowrap}
@@ -11832,11 +11833,9 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 
 <!-- Ask Cavnar — AI copilot over the restaurant's own live data -->
 <script>
-// The backend has no memory of its own between calls (each is a stateless
-// Claude request) — this array IS the conversation's memory, sent back as
-// "history" on every subsequent question so a short follow-up like "yes"
-// resolves against what was actually being discussed. Same fix as the iOS
-// app's AskCavnarViewModel.messages, for identical behavior on both.
+// The open chat's turns as this page holds them. The server replays the
+// chat's own stored turns into each question (stream and plain JSON alike),
+// so this is never sent; it tracks what is on screen.
 var _askCavnarHistory = [];
 var _askCavnarHeaderOrb = null;
 var _askCavnarLoadingOrb = null;
@@ -11984,6 +11983,7 @@ window.askRememberConversation = function(id) {
 function _askRestore(id) {
   fetch('/api/ask-cavnar/conversations/' + id, {credentials: 'same-origin'}).then(apiJson).then(function(d) {
     if (!d || !d.ok) { try { sessionStorage.removeItem(ASK_CONV_KEY); } catch (e) {} return; }
+    if (window._askNewChat) return;
     if (!window._askConversationId) window._askConversationId = id;
     var box = document.getElementById('ask-cavnar-messages');
     var msgs = d.messages || [];
@@ -12522,6 +12522,19 @@ function _appendAskCavnarSuggestions(list) {
   _askScroll(messages);
 }
 
+// An answer the model cut off at its length limit ("truncated" on the
+// answer): one amber line under the bubble, the same words as iOS.
+function _appendAskCavnarTruncated() {
+  var messages = document.getElementById('ask-cavnar-messages');
+  if (!messages) return;
+  var n = document.createElement('div');
+  n.className = 'ask-trunc';
+  n.setAttribute('role', 'note');
+  n.textContent = 'Answer was cut short \u2014 ask a follow-up for the rest.';
+  messages.appendChild(n);
+  _askScroll(messages);
+}
+
 // "Was this useful?" — one tap rates the answer (POST
 // /api/ask-cavnar/feedback, message_id); a No then offers one optional line
 // of what was missing, sent as the same rating with a note (the rating is
@@ -12706,10 +12719,6 @@ window.sendAskCavnar = function() {
   var question = input.value.trim();
   if (!question) return;
   var btn = document.getElementById('ask-cavnar-send-btn');
-  // Captured BEFORE this question is added to history below, so it's
-  // exactly the prior back-and-forth — the backend appends "question"
-  // itself as the final turn (see ask_cavnar.py's "history" contract).
-  var historyToSend = _askCavnarHistory.slice();
   _appendAskCavnarMessage(question, true);
   input.value = '';
   input.disabled = true;
@@ -12732,7 +12741,11 @@ window.sendAskCavnar = function() {
     loadingBubble.remove();
     var answer = d.ok ? d.answer : (d.error || 'Something went wrong — try again.');
     _appendAskCavnarMessage(answer, false);
-    if (d.ok && d.conversation_id) askRememberConversation(d.conversation_id);
+    // The model stopped at its length limit, so the answer ends mid-thought.
+    // Said under the bubble, as iOS does, so half an answer never reads as
+    // the whole of it.
+    if (d.ok && d.truncated) _appendAskCavnarTruncated();
+    if (d.ok && d.conversation_id) { askRememberConversation(d.conversation_id); window._askNewChat = false; }
     if (d.ok) {
       _askCavnarHistory.push({role: 'user', content: question});
       _askCavnarHistory.push({role: 'assistant', content: answer});
@@ -12755,10 +12768,17 @@ window.sendAskCavnar = function() {
   // Streamed, because the tool loop can take several round trips and a
   // silent spinner for that long reads as broken. Falls back to the plain
   // JSON endpoint if the stream fails for any reason.
+  // One body for both doors, so the fallback answers in the same chat the
+  // stream would have: the open chat's id, or new_conversation after New
+  // chat (the chat is created by the first question, never by the button),
+  // and the screen. No client history either way - the server replays the
+  // chat's own stored turns, as the stream does.
+  var askBody = JSON.stringify({question: question, conversation_id: window._askNewChat ? null : (window._askConversationId || null),
+                                new_conversation: !!window._askNewChat, screen: askScreen()});
   fetch('/api/ask-cavnar/stream', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({question: question, conversation_id: window._askConversationId || null, screen: askScreen()})
+    body: askBody
   }).then(function(resp) {
     if (!resp.ok || !resp.body) throw new Error('stream unavailable');
     _askStarted = true;
@@ -12812,7 +12832,7 @@ window.sendAskCavnar = function() {
     fetch('/api/ask-cavnar', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({question: question, history: historyToSend, screen: askScreen()})
+      body: askBody
     }).then(apiJson).then(_finish).catch(function() {
       _finish({ok: false, error: 'Network error — try again.'});
     });
@@ -24709,6 +24729,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     jget('/api/ask-cavnar/conversations/'+id,function(d){
       if(!d.ok){toast(d.error||'Could not open that chat','error');return;}
       if(window.askRememberConversation)askRememberConversation(id);else window._askConversationId=id;
+      window._askNewChat=false;
       var msgs=d.messages||[];
       _askCavnarHistory=msgs.filter(function(m){return m.role==='user'||m.role==='assistant';}).map(function(m){return {role:m.role,content:m.content};});
       var box=document.getElementById('ask-cavnar-messages');
@@ -24716,15 +24737,17 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       var h=document.getElementById('ask-cavnar-history');if(h)h.style.display='none';
     });
   };
+  // Lazy, as on iOS: New chat only clears the screen and marks the next
+  // question new_conversation, so the server creates the chat with its first
+  // question. POSTing here left an empty row in the history for every New
+  // chat nobody asked anything in.
   window.askNewChat=function(){
-    jsend('/api/ask-cavnar/conversations',{},function(d){
-      if(!d.ok){toast(d.error||'Could not start a chat','error');return;}
-      if(window.askRememberConversation)askRememberConversation(d.conversation_id);else window._askConversationId=d.conversation_id;_askCavnarHistory=[];
-      if(window.askSetFocus)askSetFocus(null);
-      var box=document.getElementById('ask-cavnar-messages');if(box)box.innerHTML=_askEmptyHtml();
-      var h=document.getElementById('ask-cavnar-history');if(h)h.style.display='none';
-      var inp=document.getElementById('ask-cavnar-input');if(inp)inp.focus();
-    });
+    window._askConversationId=null;window._askNewChat=true;_askCavnarHistory=[];
+    try{sessionStorage.removeItem(ASK_CONV_KEY);}catch(e){}
+    if(window.askSetFocus)askSetFocus(null);
+    var box=document.getElementById('ask-cavnar-messages');if(box)box.innerHTML=_askEmptyHtml();
+    var h=document.getElementById('ask-cavnar-history');if(h)h.style.display='none';
+    var inp=document.getElementById('ask-cavnar-input');if(inp)inp.focus();
   };
   // Reversible, so no dialog: the chat leaves the list at once and the
   // delete waits out the Undo window (cavUndoable, DESIGN_SYSTEM.md §10).

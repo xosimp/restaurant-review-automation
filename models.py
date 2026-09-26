@@ -10083,7 +10083,12 @@ def list_ask_conversations(restaurant_id, limit: int = _ASK_CONVERSATIONS_KEEP,
     title, a preview of the last thing said, when, and how many turns — the
     preview and the count over the turns THIS viewer may read (the same
     clause get_ask_history reads a chat's turns by), so a chat another
-    login once wrote into never previews their words (re-audit B5)."""
+    login once wrote into never previews their words (re-audit B5).
+
+    A chat with no turns this viewer may read is not listed: a New chat
+    nobody asked anything in, or one whose first question failed after the
+    row was made, is nothing to reopen. The row itself is kept (a client may
+    still be about to ask in it) and ages out with the rest."""
     conn = get_conn(db_path)
     msg_where, msg_args = _viewer_clause(viewer_id, "m.")
     conv_where, conv_args = _viewer_clause(viewer_id, "c.")
@@ -10095,8 +10100,9 @@ def list_ask_conversations(restaurant_id, limit: int = _ASK_CONVERSATIONS_KEEP,
             "  (SELECT content FROM ask_cavnar_messages m WHERE m.conversation_id=c.id" + msg_where +
             "   ORDER BY m.id DESC LIMIT 1) AS preview "
             "FROM ask_cavnar_conversations c WHERE c.restaurant_id=?" + conv_where +
+            " AND EXISTS (SELECT 1 FROM ask_cavnar_messages m WHERE m.conversation_id=c.id" + msg_where + ")"
             " ORDER BY c.updated_at DESC, c.id DESC LIMIT ?",
-            [*msg_args, *msg_args, restaurant_id, *conv_args, limit]
+            [*msg_args, *msg_args, restaurant_id, *conv_args, *msg_args, limit]
         ).fetchall()
     finally:
         conn.close()

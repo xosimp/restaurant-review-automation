@@ -260,7 +260,8 @@ def test_the_header_popovers_load_with_the_pulse_not_text():
 
 def test_every_question_carries_the_screen_and_the_chat_survives_a_reload():
     send = SRC[SRC.index("window.sendAskCavnar = function"):SRC.index("window.sendAskCavnar = function") + 9000]
-    assert send.count("screen: askScreen()") == 2          # the stream and the fallback
+    # One body carries the screen, and the stream and the fallback both post it.
+    assert send.count("screen: askScreen()") == 1 and send.count("body: askBody") == 2
     assert "askRememberConversation(d.conversation_id)" in send
     assert "sessionStorage.setItem(ASK_CONV_KEY" in SRC
     card = open("templates/_review_card.html", encoding="utf-8").read()
