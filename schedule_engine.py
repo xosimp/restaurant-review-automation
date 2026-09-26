@@ -2846,6 +2846,17 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                         if not _row_fields_look_sane(_row):
                             _row["needs_review"] = True
 
+                # A row with no shift times, or a weekday where the role
+                # belongs, is not a shift: the model once wrote
+                # "2026-09-16,Wednesday,Bartender,Wednesday,,,," and the
+                # role "Wednesday" then surfaced on the rules screen as if
+                # it were a real role (owner, 9/26/26). It is dropped and
+                # counted with the other unreadable lines, never saved.
+                if (not (_row.get("shift_start") or "").strip() or not (_row.get("shift_end") or "").strip()
+                        or (_row.get("role") or "").strip() in _WEEKDAYS):
+                    _dropped_rows.append(_line[:120])
+                    continue
+
                 _enforce_close_time(_row, _real_day, _close_times, _role_close_buffers)
 
                 # Times win over the model's own arithmetic — see

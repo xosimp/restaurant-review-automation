@@ -2411,7 +2411,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-grid.c3{grid-template-columns:repeat(3,minmax(0,1fr))}
 .hb-stack{display:flex;flex-direction:column;gap:16px;min-width:0}
 .hb-sh.first{margin-top:38px}
-.hb-sh .k.dim{color:var(--ink3)}
+/* Section kickers are orange everywhere (owner, 9/26/26): .dim no longer
+   greys one out. */
+.hb-sh .k.dim{color:var(--ember)}
 /* signal tiles become three cards instead of three hairline columns */
 .hb-sig.cards{gap:16px;border-top:none;padding-top:0;margin-top:22px}
 .hb-sig.cards .hb-sg{border-right:none;margin-right:0;padding:20px 22px 18px;background:var(--surface);border:1px solid var(--hb-line);border-radius:16px;box-shadow:0 1px 2px rgba(14,12,10,.04),0 14px 30px -20px rgba(14,12,10,.16);transition:box-shadow .18s ease,transform .18s ease}
@@ -2637,6 +2639,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-rise{opacity:0;transform:translateY(6px);animation:hbRise .42s cubic-bezier(.2,.9,.3,1) forwards;animation-delay:calc(var(--i,0)*70ms)}
 @keyframes hbRise{to{opacity:1;transform:none}}
 .hb-focus .lead .hb-num,.hb-tl .t .hb-num,.hb-rec .t .hb-num,.hb-rcpt .t .hb-num,.hb-chk .t .hb-num{color:var(--ember)}
+.hb-focus .lead .hb-num.plain{color:inherit}
 @media (prefers-reduced-motion:reduce){.hb-rise{animation:none!important;opacity:1;transform:none}.hb-join .ln:before,.hb-join .ln:after{animation:none!important}.hb-join .ln:after{opacity:0}.hb-goal .bar i{transition:none}.hb-card.lift:hover,.hb-sig.cards .hb-sg:hover{transform:none}}
 /* ── Premium pass: three layers, one light source, ember that moves ────
    Foreground = the two hero cards (deeper shadow, a warm ambient glow that
@@ -4039,7 +4042,11 @@ svg:hover .hb-xh{opacity:1}
     var modTxt=mods.length>1?mods.map(function(mm){return MODLABEL[mm]||mm;}).join(' + '):'';
     h+='<div class="hb-h3 hb-focus-hd"><span>'+esc(kick)+(modTxt?' <span class="mods">\u00b7 '+esc(modTxt)+'</span>':'')+'</span>'
       +(fconf&&!clear?cavConfLine(fconf,{key:fkey,surface:'home',module:'home',pill:1}):'')+'</div>';
-    h+='<div class="lead">'+num(lead)+'</div>';
+    // Only the headline figure is ember (owner, 9/26/26): in "2 people
+    // over 40h" the 2 is the finding, the 40 is the rule it is measured by.
+    var leadH=num(lead),firstNum=leadH.indexOf('<span class="hb-num">');
+    if(firstNum>=0){var cut=firstNum+21;leadH=leadH.slice(0,cut)+leadH.slice(cut).split('<span class="hb-num">').join('<span class="hb-num plain">');}
+    h+='<div class="lead">'+leadH+'</div>';
     if(why)h+='<div class="why">'+num(why)+'</div>';
     var basis='';
     if(ev.length){basis+='<div style="margin-bottom:10px"><strong>What it rests on:</strong><ul style="margin:6px 0 0;padding-left:18px">';for(var e=0;e<ev.length;e++)basis+='<li>'+num(ev[e])+'</li>';basis+='</ul></div>';}
@@ -5717,6 +5724,11 @@ svg:hover .hb-xh{opacity:1}
 .dr-bud-grid .h{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3)}
 .dr-bud-grid .d{font-size:14px;color:var(--ink2)}
 .dr-bud-ft,.dr-imp-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px}
+.dr-imp-pick{position:relative;overflow:hidden}
+.dr-imp-pick .dr-imp-input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.dr-imp-pick:focus-within{outline:2px solid var(--ember);outline-offset:2px}
+.dr-imp-name{font-size:13.5px;color:var(--ink2);max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dr-imp-name:empty{display:none}
 .dr-imp{margin-top:16px}
 .dr-imp-err{margin:10px 0 0;padding-left:18px;font-size:13px;color:var(--red);line-height:1.5}
 /* Home's "Last night" card */
@@ -6683,7 +6695,9 @@ svg:hover .hb-xh{opacity:1}
       +'<section class="hb-card quiet dr-imp" id="dr-imp"'+(asLink?' hidden':'')+' aria-label="Import last year"><div class="hb-h3"><span>Last year, from your old workbooks</span></div>'
       +'<div class="hb-empty">Your POS keeps about a month. Upload past nights — one row per night with gross, net and your categories — and Last year fills in from them. '
       +'<a class="cbtn cbtn-text cbtn-inline cbtn-sm" href="/api/dsr/history/template.csv" download>Download the template</a></div>'
-      +'<div class="dr-imp-row"><input class="ac-input" type="file" id="dr-imp-file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" aria-label="Workbook to import" style="max-width:360px">'
+      // The file picker is a branded button (owner, 9/26/26): no native
+      // box, no "no file selected"; the chosen file's name shows beside it.
+      +'<div class="dr-imp-row"><label class="cbtn cbtn-secondary cbtn-sm dr-imp-pick">Choose a file<input type="file" id="dr-imp-file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" aria-label="Workbook to import" class="dr-imp-input"></label><span class="dr-imp-name" id="dr-imp-name"></span>'
       +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="import">Import last year</button><span class="ac-status" id="dr-imp-status"></span></div><ul class="dr-imp-err" id="dr-imp-err" hidden></ul></section>';
   }
   function saveBudget(btn){
@@ -6784,6 +6798,11 @@ svg:hover .hb-xh{opacity:1}
     else if(a==='import'){e.preventDefault();importFile(t);}
     else if(a==='imp-open'){e.preventDefault();var ic=el('dr-imp');if(ic){ic.hidden=false;var lk=t.closest?t.closest('.dr-imp-link'):null;if(lk)lk.hidden=true;var fi=el('dr-imp-file');if(fi)fi.focus();}}
     else if(a==='settings'){e.preventDefault();goSettings();}
+  });
+  // The chosen workbook's name beside the branded picker.
+  document.addEventListener('change',function(e){
+    var t=e.target;if(!t||t.id!=='dr-imp-file')return;
+    var nm=el('dr-imp-name');if(nm)nm.textContent=(t.files&&t.files[0])?t.files[0].name:'';
   });
   document.addEventListener('change',function(e){
     var t=e.target;if(!t||t.getAttribute('data-dr')!=='version')return;
@@ -7983,7 +8002,9 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .lb2-sig-2{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:6px;border-top:none;padding-top:6px}
 .lb2-bn .row{flex-wrap:wrap}
 .lb2-srow>[id$="-panel"]{padding:0 18px 18px}
-.lb2-srow .lb2-avail{margin-top:0;background:var(--surface);border-color:var(--hb-line2)}
+/* An opened schedule section has no box around it (owner, 9/26/26): its
+   content sits flush under its title, aligned with it. */
+.lb2-srow .lb2-avail{margin-top:0;background:none;border:none;border-radius:0;padding:4px 6px 16px}
 .lb2-srow .lb2-subsection-title{color:var(--ink)}
 @media (prefers-reduced-motion:reduce){.lb2-srow,.lb2-srow:hover{transform:none;transition:none}}
 /* Schedule History — a scannable activity timeline, not a card grid.
@@ -14851,7 +14872,10 @@ function _loadChangelog() {
   });
 }
 function _escHtml(s) {
-  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  // Any value, not only strings: a number (a quality score of 72) threw
+  // here, which aborted reopening a drafted week in the editor with
+  // "Could not open that week" (owner, 9/26/26). 0 stays "0".
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 // Check for unread on load
 (function(){
@@ -25763,9 +25787,12 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   function _lbSw(field,on,ro){return '<label class="ac-switch"><input type="checkbox" data-rst-f="'+field+'"'+(on?' checked':'')+(ro?' disabled':'')+'><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label>';}
   // Chip toggles: one button per choice, lit when picked. The attr names
   // the group so a delegated click knows what to save.
-  function _chipTog(choices,picked,attr,ro){
+  // A certification's stored key reads as words on screen (owner, 9/26/26):
+  // food_handler -> "Food handler". The key stays the value sent back.
+  function _certLabel(c){c=String(c||'').replace(/_/g,' ');return c.charAt(0).toUpperCase()+c.slice(1);}
+  function _chipTog(choices,picked,attr,ro,label){
     var o='',i,on={};for(i=0;i<(picked||[]).length;i++)on[String(picked[i]).toLowerCase()]=1;
-    for(i=0;i<choices.length;i++){var c=String(choices[i]);o+='<button type="button" class="cbtn cbtn-secondary cbtn-sm ct'+(on[c.toLowerCase()]?' on':'')+(ro?' ro':'')+'" '+attr+'="'+esc(c)+'" aria-pressed="'+(on[c.toLowerCase()]?'true':'false')+'"'+(ro?' disabled':'')+'>'+esc(c)+'</button>';}
+    for(i=0;i<choices.length;i++){var c=String(choices[i]);o+='<button type="button" class="cbtn cbtn-secondary cbtn-sm ct'+(on[c.toLowerCase()]?' on':'')+(ro?' ro':'')+'" '+attr+'="'+esc(c)+'" aria-pressed="'+(on[c.toLowerCase()]?'true':'false')+'"'+(ro?' disabled':'')+'>'+esc(label?label(c):c)+'</button>';}
     return o||'<span class="ac-note" style="margin:0">Nothing to pick from.</span>';
   }
   function _chipVals(box,attr){var out=[],els=box?box.querySelectorAll('.ct.on['+attr+']'):[],i;for(i=0;i<els.length;i++)out.push(els[i].getAttribute(attr));return out;}
@@ -25920,7 +25947,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
         // Experienced: the owner's word for it, counted by Experience
         // balance without waiting for twenty shifts of history on file.
         h+='<div><div class="k">Experience</div><div class="rul-sw" style="border-top:none;padding-top:2px">'+_lbSw('experienced',!!st.experienced,ro)+'<span class="t">Experienced — knows the job<small>Counts as an experienced hand without waiting for 20 shifts on file.</small></span></div></div>';
-        h+='<div><div class="k">Certifications</div><div class="chip-tog" data-rst-certs="'+nm+'">'+_chipTog(ch.certifications||[],certs,'data-rst-cert',ro)+'</div></div>';
+        h+='<div><div class="k">Certifications</div><div class="chip-tog" data-rst-certs="'+nm+'">'+_chipTog(ch.certifications||[],certs,'data-rst-cert',ro,_certLabel)+'</div></div>';
         var said=[];if((st.preferred_dayparts||[]).length)said.push('prefers '+st.preferred_dayparts.map(function(p){return p==='morning'?'days':(p==='night'?'nights':p);}).join(' and '));if(st.desired_hours!=null&&st.desired_hours!=='')said.push('wants <span class="hb-num">'+esc(st.desired_hours)+'h</span> a week');
         h+='<div><div class="k">What they said</div><div class="said">'+(said.length?said.join(' · '):'Nothing stated yet')+'<small>From the staff portal. A wish the draft honours where coverage allows; it is theirs to change.</small></div></div>';
         var up=((window._laborIntel||{}).could_hold||{})[e.name]||[];
@@ -26022,7 +26049,11 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   };
   function _rulRoles(){
     var seen={},out=[],i,k,floors=(_rules&&_rules.role_floors)||{};
-    function add(r){r=String(r||'').trim();if(!r||seen[r.toLowerCase()])return;seen[r.toLowerCase()]=1;out.push(r);}
+    // A weekday is never a role: a garbled draft row once carried
+    // "Wednesday" in its role column, and it surfaced as a role everywhere
+    // on this screen (owner, 9/26/26).
+    var WD={monday:1,tuesday:1,wednesday:1,thursday:1,friday:1,saturday:1,sunday:1};
+    function add(r){r=String(r||'').trim();if(!r||WD[r.toLowerCase()]||seen[r.toLowerCase()])return;seen[r.toLowerCase()]=1;out.push(r);}
     for(k in floors)if(floors.hasOwnProperty(k))add(k);
     var extra=[(_rules&&_rules.role_arrivals)||{},(_rules&&_rules.role_requirements)||{},(_rules&&_rules.role_cross_training)||{}],x;
     for(x=0;x<extra.length;x++)for(k in extra[x])if(extra[x].hasOwnProperty(k))add(k);
@@ -26124,7 +26155,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     // Certifications a role needs, from the known list.
     h+='<div class="lb2-sub">Certifications<small>what a role must hold; a shift without it is named</small></div><div id="rul-certs">';
     if(!roles.length)h+='<div class="hb-empty">Add a role above first.</div>';
-    for(i=0;i<roles.length;i++)h+='<div class="rul-row" data-cert-role="'+esc(roles[i])+'"><span class="role">'+esc(roles[i])+'</span><div class="chip-tog">'+_chipTog(certs,reqs[roles[i]]||[],'data-cert',ro)+'</div></div>';
+    for(i=0;i<roles.length;i++)h+='<div class="rul-row" data-cert-role="'+esc(roles[i])+'"><span class="role">'+esc(roles[i])+'</span><div class="chip-tog">'+_chipTog(certs,reqs[roles[i]]||[],'data-cert',ro,_certLabel)+'</div></div>';
     h+='</div>';
     // Front-of-house and patio roles: chip pickers over the same roles.
     h+='<div class="lb2-sub">Front of house<small>the roles the section cap and covers apply to</small></div><div class="chip-tog" id="rul-foh">'+_chipTog(roles,d.foh_roles||[],'data-foh',ro)+'</div>';
@@ -27451,7 +27482,7 @@ window.cavPalette = cavPalette;
     h += '<div style="display:flex;flex-wrap:wrap;gap:6px">';
     for (i = 0; i < certs.length; i++) {
       var on = have.indexOf(certs[i]) !== -1;
-      h += '<button type="button" class="cbtn cbtn-sm ' + (on ? 'cbtn-primary' : 'cbtn-secondary') + '" data-pp-cert="' + e(certs[i]) + '" aria-pressed="' + (on ? 'true' : 'false') + '"' + dis + '>' + e(certs[i].replace(/_/g, ' ')) + '</button>';
+      h += '<button type="button" class="cbtn cbtn-sm ' + (on ? 'cbtn-primary' : 'cbtn-secondary') + '" data-pp-cert="' + e(certs[i]) + '" aria-pressed="' + (on ? 'true' : 'false') + '"' + dis + '>' + e(certs[i].charAt(0).toUpperCase() + certs[i].slice(1).replace(/_/g, ' ')) + '</button>';
     }
     h += '</div>';
     var pr = p.pay_rate;

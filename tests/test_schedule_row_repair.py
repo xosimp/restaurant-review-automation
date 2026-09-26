@@ -387,3 +387,16 @@ def test_a_clean_schedule_says_nothing_about_review(monkeypatch):
     result = _run(monkeypatch, csv_text, roster=["Jamie L."])
     assert "NEEDS REVIEW" not in result["schedule_csv"]
     assert result["rows_needing_review"] == 0
+
+
+def test_a_row_with_a_weekday_for_a_role_and_no_times_is_dropped(monkeypatch):
+    # Captured live (9/26/26): "2026-09-16,Wednesday,Bartender,Wednesday,,,,"
+    # - no shift times, and a weekday where the role belongs. Saved, it put
+    # "Wednesday" on the rules screen as if it were a role. It is not a shift.
+    csv_text = (HEADER + "\n" + "2026-08-19,Wednesday,Jamie L.,Server,5:00pm,10:00pm,5.0,closer"
+                + "\n" + "2026-08-19,Wednesday,Bartender,Wednesday,,,,")
+
+    result = _run(monkeypatch, csv_text)
+
+    assert [r["employee"] for r in result["preview_rows"]] == ["Jamie L."]
+    assert all(r["role"] != "Wednesday" for r in result["preview_rows"])
