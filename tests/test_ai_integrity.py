@@ -126,8 +126,11 @@ def test_the_shipped_matcher_uses_whole_phrase_and_proximity():
     _do_ai_visibility_inner and can't be imported. This pins the shipped
     logic so the mirror can't drift away from it silently."""
     src = open("client_api.py").read()
-    assert "def _mentions_this_restaurant(answer):" in src
-    assert 'norm_answer[max(0, m.start() - 40):m.end() + 80]' in src, "proximity window changed"
+    assert "def _mentions_this_restaurant(answer, branded=False):" in src
+    # Widened 9/26/26: a sentence describing the place put the city past 80
+    # characters; a branded answer needs the city anywhere in it.
+    assert 'norm_answer[max(0, m.start() - 60):m.end() + 160]' in src, "proximity window changed"
+    assert "return norm_city in norm_answer" in src
     assert 're.escape(norm_name)' in src, "whole-phrase matching changed"
     # The exact old assignment, not the phrase — the docstring explaining
     # why it was wrong quotes it, and an assertion that matches its own
@@ -147,7 +150,7 @@ def _mentions(answer, name="Gia Mia", city="St. Charles"):
     if not nc:
         return False
     for m in re.finditer(r"(?:^|\s)" + re.escape(nn) + r"(?:\s|$)", na):
-        if nc in na[max(0, m.start() - 40):m.end() + 80]:
+        if nc in na[max(0, m.start() - 60):m.end() + 160]:
             return True
     return False
 

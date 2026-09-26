@@ -1053,3 +1053,14 @@ def test_a_provisional_competitor_is_named_as_such_in_the_prompt(monkeypatch):
     prompt = captured["messages"][0]["content"]
     assert "provisional" in prompt
     assert "do not compare against it as a settled figure" in prompt
+
+
+def test_a_branded_answer_that_describes_the_place_is_a_mention(db_path, monkeypatch):
+    """ "Tell me about Gia Mia" answered with a description whose city sits
+    far past the name was scored "not mentioned" (owner, 9/26/26)."""
+    long_desc = ("Gia Mia Pizza Bar is a family-friendly neighborhood spot and scratch kitchen "
+                 "with a wood-fired oven, a long patio and a lively bar, found in downtown Geneva.")
+    miss = "Try Somewhere Else in Naperville."
+    p = _payload(monkeypatch, db_path, answers=[miss] * 7 + [long_desc])
+    assert p["branded_score"] == 100
+    assert p["ai_score"] == 0

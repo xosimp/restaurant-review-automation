@@ -6318,7 +6318,7 @@ def _do_ai_visibility_inner(rid, force=False):
         return out
     norm_city = _norm(city) if city else ""
 
-    def _mentions_this_restaurant(answer):
+    def _mentions_this_restaurant(answer, branded=False):
         """Did the answer name THIS restaurant, or one that shares its name?
 
         `norm_name in _norm(answer)` on its own is a substring test. Gia Mia
@@ -6344,8 +6344,19 @@ def _do_ai_visibility_inner(rid, force=False):
         # answer that also lists five other towns. Proximity rather than
         # sentence-splitting: "St. Charles" contains a period, so splitting
         # on punctuation tears the city in half and never matches.
+        # A "tell me about X" answer is about the one place asked for: the
+        # name as a whole phrase and the city anywhere in it is a mention.
+        # "Simple EJ's Kitchen & Tap is a family-friendly sports bar ... in
+        # Fox Haven Square, St. Charles" put the city 95 characters after the
+        # name and was scored "not mentioned" while describing the place
+        # (owner, 9/26/26).
+        if branded:
+            return norm_city in norm_answer
+        # An open answer lists several places, so the city still has to sit
+        # near the name - near enough for a sentence describing it (a street
+        # address and a neighbourhood run past 80 characters).
         for m in re.finditer(r"(?:^|\s)" + re.escape(norm_name) + r"(?:\s|$)", norm_answer):
-            window = norm_answer[max(0, m.start() - 40):m.end() + 80]
+            window = norm_answer[max(0, m.start() - 60):m.end() + 160]
             if norm_city in window:
                 return True
         return False
@@ -6463,7 +6474,7 @@ def _do_ai_visibility_inner(rid, force=False):
                 return {"query": q, "kind": kind, "answer": "Could not fetch answer.",
                         "appeared": False, "ok": False, "sources": [],
                         "competitors_named": []}
-            appeared = _mentions_this_restaurant(answer)
+            appeared = _mentions_this_restaurant(answer, branded=(kind == "branded"))
             # Was answer[:400] — the system prompt already asks for "under
             # 80 words" (~440 chars including spaces), so a 400-char cap
             # sat BELOW what a compliant response typically needs and was

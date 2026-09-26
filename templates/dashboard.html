@@ -10614,7 +10614,8 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .in2-aiv-v.sm{font-size:26px}
 .in2-aiv-v small{font-family:'Apfel Grotezk',sans-serif;font-size:14.5px;font-weight:500;letter-spacing:0;color:var(--ink3);white-space:normal}
 .in2-aiv-cap{margin-top:6px;font-size:14px;line-height:1.5;color:var(--ink3)}
-.in2-aiv-card .in2-orbit{margin-top:12px}
+.in2-aiv-card .in2-orbit{height:auto;margin-top:28px;display:flex;justify-content:center}
+.in2-aiv-card .in2-orbit svg{width:100%;max-width:460px;height:auto}
 .in2-aiv-card .in2-gbp{grid-template-columns:1fr;margin-top:12px}
 .in2-aiv-card .in2-gbp .it .l{white-space:normal;overflow:visible}
 .in2-aiv-card .in2-q{margin-top:12px}
@@ -10646,6 +10647,14 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .in2-road .row .t .why{font-size:15px;color:var(--ink2);line-height:1.6;margin-top:8px;display:none}
 .in2-road .row .t .why.on{display:block}
 .in2-road .row .t .ac{display:flex;gap:12px;align-items:center;margin-top:9px;flex-wrap:wrap}
+/* Why this matters | Pass: one size, one baseline, a thin rule between
+   (owner, 9/26/26). */
+.in2-road .row .t .ac .rec-ans{margin-top:0}
+.in2-road .row .t .ac .cbtn-text+.rec-ans{padding-left:12px;border-left:1px solid var(--hb-line)}
+.in2-road .row .t .ac .cbtn-text{font-size:12.5px;line-height:1.3}
+/* The explainer under the gaps reads at body size (owner, 9/26/26). */
+#aiv-roadmap-footer .how-this{font-size:15px}
+#aiv-roadmap-footer .how-this>div{font-size:15.5px;line-height:1.65;color:var(--ink2);max-width:820px}
 .in2-road .row .t .wl{background:none;border:none;padding:0;font-family:'Apfel Grotezk',sans-serif;font-size:13px;color:var(--ink3);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
 .in2-road .row .t .wl:hover{color:var(--ember)}
 .in2-note{margin-top:14px;padding:12px 16px;border-radius:10px;background:var(--hb-tint);font-size:14.5px;line-height:1.6;color:var(--ink2)}
@@ -22520,7 +22529,21 @@ function renderAIVisibility(d) {
       chtml += '</div></div>';
     }
     gbpItemsEl.innerHTML = chtml;
-    var gc = document.getElementById('in2-gbp-cap'); if (gc) gc.textContent = doneN + ' of ' + d.checklist.length + ' profile items done';
+    // The caption counts what the figure counts (owner, 9/26/26: "100%"
+    // over "4 of 11 profile items done" read as a contradiction). The figure
+    // is the listing items Cavnar AI could read; the ones it can't read
+    // until Google is connected, and the setup items (never scored), are
+    // named apart.
+    var pItems = d.checklist.filter(function (x) { return x.kind === 'presence'; });
+    var pRead = pItems.filter(function (x) { return x.measured !== false; });
+    var pDone = pRead.filter(function (x) { return x.done; }).length;
+    var pUnread = pItems.length - pRead.length;
+    var sItems = d.checklist.filter(function (x) { return x.kind === 'setup'; });
+    var sDone = sItems.filter(function (x) { return x.done; }).length;
+    var gc = document.getElementById('in2-gbp-cap');
+    if (gc) gc.textContent = pDone + ' of ' + pRead.length + ' listing items done'
+      + (pUnread ? ' \u00b7 ' + pUnread + ' more need your Google listing connected' : '')
+      + (sItems.length ? ' \u00b7 setup ' + sDone + ' of ' + sItems.length + ' (not scored)' : '');
     var gbpVB = document.getElementById('aiv-gbp-viewall');
     if (gbpVB) {
       if (d.checklist.length > GBP_VISIBLE) {
@@ -25384,8 +25407,10 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     // on the left with a lot of dead space to its right — recenter the
     // ring in a narrower box instead of also captioning the empty space.
     var hasTrend=!!(runs&&runs.length>=2);
-    var H=150,cy=75,R=46;
-    var W=hasTrend?320:170,cx=hasTrend?64:(W/2);
+    // Larger (owner, 9/26/26): the ring and the runs line fill their card
+    // and sit centred in it, with room under the figure above.
+    var H=200,cy=100,R=68;
+    var W=hasTrend?440:220,cx=hasTrend?88:(W/2);
     var circ=2*Math.PI*R,frac=Math.max(0,Math.min(1,(score||0)/100));
     var s='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><defs><linearGradient id="in2og" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e8956a"/><stop offset="1" stop-color="#c84b2f"/></linearGradient><filter id="in2of" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="4"/></filter><linearGradient id="in2lg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c84b2f" stop-opacity=".3"/><stop offset="1" stop-color="#c84b2f" stop-opacity="0"/></linearGradient></defs>';
     s+='<circle cx="'+cx+'" cy="'+cy+'" r="'+R+'" fill="none" stroke="currentColor" stroke-opacity=".08" stroke-width="10"/>';
@@ -25395,19 +25420,19 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     }
     var ang=-Math.PI/2+2*Math.PI*frac,dx=cx+R*Math.cos(ang),dy=cy+R*Math.sin(ang);
     s+='<circle class="hb-hot" cx="'+dx.toFixed(1)+'" cy="'+dy.toFixed(1)+'" r="12" fill="#e8956a" fill-opacity=".3" style="transform-box:fill-box;transform-origin:center;opacity:0;transition:opacity .5s 1.5s" data-tip="1"/><circle cx="'+dx.toFixed(1)+'" cy="'+dy.toFixed(1)+'" r="5" fill="#f2b183" stroke="#fff" stroke-opacity=".85" stroke-width="1.5" style="opacity:0;transition:opacity .5s 1.5s" data-tip="1"/>';
-    s+='<text x="'+cx+'" y="'+(cy+4)+'" text-anchor="middle" font-size="24" font-weight="700" fill="currentColor" id="in2-orbit-n">'+Math.round(score||0)+'</text><text x="'+cx+'" y="'+(cy+19)+'" text-anchor="middle" font-size="9" font-weight="700" letter-spacing="1" fill="currentColor" fill-opacity=".55">AI VISIBILITY</text>';
+    s+='<text x="'+cx+'" y="'+(cy+8)+'" text-anchor="middle" font-size="34" font-weight="700" fill="currentColor" id="in2-orbit-n">'+Math.round(score||0)+'</text><text x="'+cx+'" y="'+(cy+28)+'" text-anchor="middle" font-size="10.5" font-weight="700" letter-spacing="1" fill="currentColor" fill-opacity=".55">AI VISIBILITY</text>';
     if(hasTrend){
-      var L=cx+R+34,Rr=W-8,T=34,B=H-30;
+      var L=cx+R+40,Rr=W-8,T=40,B=H-34;
       var n=runs.length,vals=runs.map(function(r){return +r.ai_score||0;}),lo=Math.max(0,Math.min.apply(null,vals)-10),hi=Math.min(100,Math.max.apply(null,vals)+10),rng=Math.max(1,hi-lo);
       var pts=[];for(var i=0;i<n;i++)pts.push([L+(Rr-L)*i/(n-1),B-(B-T)*((vals[i]-lo)/rng)]);
       var d=window.CavnarCharts?CavnarCharts.smooth(pts):pts.map(function(p,i){return (i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1);}).join(' ');
       var last=pts[n-1];
-      s+='<text x="'+L+'" y="'+(T-12)+'" font-size="10" font-weight="700" letter-spacing="1" fill="currentColor" fill-opacity=".6">LAST '+n+' RUNS</text>';
+      s+='<text x="'+L+'" y="'+(T-14)+'" font-size="11.5" font-weight="700" letter-spacing="1" fill="currentColor" fill-opacity=".6">LAST '+n+' RUNS</text>';
       s+='<path d="'+d+' L'+Rr+' '+B+' L'+L+' '+B+' Z" fill="url(#in2lg)"/>';
-      s+='<path d="'+d+'" fill="none" stroke="#c84b2f" stroke-opacity=".5" stroke-width="6" filter="url(#in2of)" stroke-linecap="round"/><path class="hb-draw" d="'+d+'" fill="none" stroke="#e8956a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
-      for(var q=0;q<n;q++)s+='<circle cx="'+pts[q][0].toFixed(1)+'" cy="'+pts[q][1].toFixed(1)+'" r="'+(q===n-1?4:2.5)+'" fill="'+(q===n-1?'#f2b183':'#e8956a')+'"/>';
+      s+='<path d="'+d+'" fill="none" stroke="#c84b2f" stroke-opacity=".5" stroke-width="6" filter="url(#in2of)" stroke-linecap="round"/><path class="hb-draw" d="'+d+'" fill="none" stroke="#e8956a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>';
+      for(var q=0;q<n;q++)s+='<circle cx="'+pts[q][0].toFixed(1)+'" cy="'+pts[q][1].toFixed(1)+'" r="'+(q===n-1?5:3.5)+'" fill="'+(q===n-1?'#f2b183':'#e8956a')+'"/>';
       var delta=vals[n-1]-vals[n-2];
-      s+='<text x="'+Rr+'" y="'+(H-8)+'" text-anchor="end" font-size="11" font-weight="700" fill="'+(delta>=0?'#4ead7a':'#e3333f')+'">'+(delta===0?'No change since last run':(delta>0?'+'+delta:delta)+' since last run')+'</text>';
+      s+='<text x="'+Rr+'" y="'+(H-8)+'" text-anchor="end" font-size="12.5" font-weight="700" fill="'+(delta>=0?'#4ead7a':'#e3333f')+'">'+(delta===0?'No change since last run':(delta>0?'+'+delta:delta)+' since last run')+'</text>';
     }
     el.innerHTML=s+'</svg>';
     requestAnimationFrame(function(){requestAnimationFrame(function(){var arcs=el.querySelectorAll('.in2-arc');for(var i=0;i<arcs.length;i++)arcs[i].style.strokeDashoffset=arcs[i].getAttribute('data-off');var tips=el.querySelectorAll('[data-tip]');for(var t=0;t<tips.length;t++)tips[t].style.opacity='1';});});
@@ -27731,7 +27756,11 @@ table[data-sortable] th.r .cbtn.csort-btn{flex-direction:row-reverse}
 /* Reviews multi-select (web desk #2) */
 #panel-reviews .rv2-sel{display:inline-flex;align-items:center;justify-content:center;width:22px;height:34px;margin-right:-4px;cursor:pointer;flex-shrink:0}
 #panel-reviews .rv2-sel input,#panel-reviews .rv2-selall input{width:16px;height:16px;accent-color:var(--ember);cursor:pointer;margin:0}
-#panel-reviews .rv2-selall{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--ink3);cursor:pointer;user-select:none}
+/* Select shown reads as one of the filter pills beside it (owner,
+   9/26/26): the pill's type size, colour and height, and a box no taller
+   than the pill's text. */
+#panel-reviews .rv2-selall{display:inline-flex;align-items:center;gap:7px;font-size:12px;line-height:normal;color:var(--ink2);padding:6px 2px;border:1px solid transparent;cursor:pointer;user-select:none}
+#panel-reviews .rv2-selall input{width:13px;height:13px}
 #panel-reviews .rv2-row.is-sel{background:var(--hb-tint)}
 #panel-reviews .rv2-selbar{position:sticky;bottom:16px;z-index:6;display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0 0;padding:12px 16px;border-radius:12px;background:var(--surface);border:1px solid var(--hb-line);box-shadow:var(--elev-float)}
 #panel-reviews .rv2-selbar[hidden]{display:none}
