@@ -26,4 +26,12 @@ final class ModuleAccess {
     }
 
     func isCountsOnly(_ key: String) -> Bool { countsOnly.contains(key) }
+
+    /// Sign-out and location switch (RootView): what one login may open at
+    /// one location is not the next one's. It outlived sign-out, so a
+    /// full-access owner signing in after a counts-only manager opened Food
+    /// Cost counts-only until Home's tiles arrived.
+    func reset() {
+        countsOnly = []
+    }
 }

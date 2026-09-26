@@ -411,6 +411,22 @@ actor APIClient {
                            message: envelope?.error ?? "Something went wrong (\(http.statusCode)).",
                            status: http.statusCode, body: data)
         }
+        // A few routes refuse with 200 `{ok: false, error}` — save-draft on
+        // an empty or over-long reply. Counted as delivered, the queue
+        // dropped the save and replayed the approve behind it, which then
+        // posted the old stored draft. It is the server's "no", with its
+        // 2xx status, so PendingWriteQueue.isRefusal treats it as one.
+        if let answer = try? JSONDecoder.cavnar.decode(QueuedWriteAnswer.self, from: data), answer.ok == false {
+            throw APIError(kind: .server,
+                           message: answer.error ?? "The server didn't accept this change.",
+                           status: http.statusCode, body: data)
+        }
+    }
+
+    /// Just enough of a replayed write's answer to see a refusal.
+    private struct QueuedWriteAnswer: Decodable {
+        let ok: Bool?
+        let error: String?
     }
 
     // MARK: - Server-sent events

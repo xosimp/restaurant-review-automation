@@ -112,6 +112,12 @@ final class AccountViewModel {
             // an expected, normal state (the UI just shows "No active
             // subscription"), not a failure worth an error buzz.
             billing = try await client.send("/mobile/api/account/billing", hapticOnError: false)
+        } catch let error as APIClient.APIError where error.status == 403 {
+            // Billing is the account owner's (403 owner_only). Read as "No
+            // active subscription" it told a manager the restaurant was not
+            // paying; the server's own sentence says what is true.
+            billing = BillingSummary(ok: false, reason: "owner_only", status: nil, nextDate: nil, amount: nil,
+                                     paymentMethod: nil, portalURL: nil, message: error.message, invoices: nil)
         } catch {
             billing = nil
         }
@@ -271,6 +277,7 @@ final class AccountViewModel {
     @discardableResult
     func toggleLoginNotify(_ enabled: Bool) async -> Bool {
         isTogglingLoginNotify = true
+        accountToggleError = nil
         defer { isTogglingLoginNotify = false }
         do {
             _ = try await client.send(
@@ -283,6 +290,7 @@ final class AccountViewModel {
             summary?.account.loginNotify = enabled
             return true
         } catch {
+            accountToggleError = Self.toggleFailure(error)
             await load()  // resync UI state with server if the toggle silently failed
             return false
         }
@@ -295,6 +303,7 @@ final class AccountViewModel {
     @discardableResult
     func toggleMarketingOptOut(_ optedOut: Bool) async -> Bool {
         isTogglingMarketingOptOut = true
+        accountToggleError = nil
         defer { isTogglingMarketingOptOut = false }
         do {
             _ = try await client.send(
@@ -303,6 +312,7 @@ final class AccountViewModel {
             summary?.account.marketingEmailsOptOut = optedOut
             return true
         } catch {
+            accountToggleError = Self.toggleFailure(error)
             await load()
             return false
         }
@@ -315,6 +325,7 @@ final class AccountViewModel {
     @discardableResult
     func toggleMonthlyReview(_ enabled: Bool) async -> Bool {
         isTogglingMonthlyReview = true
+        accountToggleError = nil
         defer { isTogglingMonthlyReview = false }
         do {
             _ = try await client.send(
@@ -323,9 +334,19 @@ final class AccountViewModel {
             summary?.account.monthlyReviewEnabled = enabled
             return true
         } catch {
+            accountToggleError = Self.toggleFailure(error)
             await load()
             return false
         }
+    }
+
+    /// Why the last account switch (sign-in notifications, monthly review,
+    /// product emails) didn't take. They used to snap back with nothing
+    /// said — an owner_only refusal included.
+    var accountToggleError: String?
+
+    static func toggleFailure(_ error: Error) -> String {
+        (error as? APIClient.APIError)?.message ?? "Couldn't save that change. Check your connection and try again."
     }
 
     private struct HistoryResponse: Decodable { let ok: Bool; let history: [LoginHistoryEntry] }

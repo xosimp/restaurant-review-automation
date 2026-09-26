@@ -105,6 +105,8 @@ struct AccountBillingDetailView: View {
     // MARK: - Identity (option A)
 
     private var planTitle: String {
+        // A teammate's phone: billing is the owner's, not "no plan".
+        if live?.reason == "owner_only" { return "Billing is the owner's" }
         guard let billing = live, billing.ok, billing.status != "inactive", let status = billing.status else { return "No active plan" }
         switch status {
         case "active": return "Active plan"

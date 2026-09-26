@@ -578,6 +578,16 @@ in again button; the page stops polling behind it. Pollers skip ticks while
 line the module already uses — the reader must always be able to tell a
 measured figure from an estimate.
 
+**Unsent and dropped offline changes (iOS).** The amber pill at the top of
+RootView says what the offline queue holds ("Offline — 2 changes will send
+when you're back", "1 change waiting to send"). A queued change the app gave
+up on — the server refused it, it depended on one that was refused, it was a
+day old, or it was for the location the owner switched away from — gets a
+second amber note under it, in the same colour and type, rounded rather than
+a capsule because it wraps: "1 change couldn't be sent: Approve response for
+Ann. <the server's reason> Tap to dismiss." It stays until tapped
+(`PendingWriteQueue.droppedNote`); a change is never dropped silently.
+
 **AI at work is a reasoning trail, not a label that keeps changing.** When
 the Ask loop streams `progress` events, the label that was running becomes a
 ticked line above the one running now (`.ask-steps .st` on web, `trail:` on

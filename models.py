@@ -4374,7 +4374,8 @@ def reply_queue_counts(restaurant_id: int, db_path: str = DB_PATH) -> dict:
 
 
 def claim_approval(review_id: int, restaurant_id: int, db_path: str = DB_PATH,
-                   publishable_only: bool = False, allow_flagged: bool = True) -> bool:
+                   publishable_only: bool = False, allow_flagged: bool = True,
+                   expected_draft: str = None) -> bool:
     """Approve a drafted reply as a compare-and-set. True only for the one
     caller that moved THIS restaurant's live, drafted, non-empty reply to
     'approved'; everyone else gets False and nothing changes.
@@ -4392,7 +4393,14 @@ def claim_approval(review_id: int, restaurant_id: int, db_path: str = DB_PATH,
     `allow_flagged=False`: a single approve the owner has not confirmed past
     the reply guard's flag. The flag is held in the same WHERE clause, so a
     draft that turned flagged after the screen opened (an edit on another
-    device, the auto-approve hold) is not posted on a stale "yes"."""
+    device, the auto-approve hold) is not posted on a stale "yes".
+
+    `expected_draft`: the reply text the person approved. Held in the same
+    WHERE clause, so an approve that reaches the server later than it was
+    made (the phone's offline queue) never posts a different reply than the
+    one on the owner's screen — an edit that failed to save, a regenerate
+    from another device. Compared as sent and stripped: a save stores the
+    text stripped, a model draft as written."""
     conn = get_conn(db_path)
     try:
         if publishable_only:
@@ -4408,8 +4416,10 @@ def claim_approval(review_id: int, restaurant_id: int, db_path: str = DB_PATH,
             WHERE id=? AND restaurant_id=? AND response_status IN ('drafted','pending')
               AND deleted_at IS NULL
               AND draft_response IS NOT NULL AND TRIM(draft_response) != ''
-        """ + ("" if allow_flagged else " AND COALESCE(draft_needs_review, 0) = 0"),
-            (review_id, restaurant_id))
+        """ + ("" if allow_flagged else " AND COALESCE(draft_needs_review, 0) = 0")
+            + ("" if expected_draft is None else " AND draft_response IN (?, ?)"),
+            (review_id, restaurant_id) + (() if expected_draft is None
+                                          else (expected_draft, expected_draft.strip())))
         conn.commit()
         return cur.rowcount == 1
     finally:
@@ -7935,6 +7945,11 @@ def get_reviews_data(restaurant_id, filter_by="all", search="", category=None, p
         d = dict(r)
         d["categories"] = json.loads(d["categories"] or "[]")
         d["processed"] = bool(d.get("processed"))
+        # SQLite stores these flags as 0/1. Sent raw, the phone's decoder
+        # (a JSON number is not a Bool) refused the row and with it the
+        # whole inbox, so every flag leaves here as a real boolean.
+        d["draft_needs_review"] = bool(d.get("draft_needs_review"))
+        d["draft_edited"] = bool(d.get("draft_edited"))
         # Whether Retract can possibly work on this review, so a client
         # doesn't have to infer it from response_status alone and offer a
         # button that always 400s (see client_api._do_retract's gate:

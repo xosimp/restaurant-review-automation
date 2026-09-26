@@ -19,6 +19,9 @@ struct RootView: View {
     // them and replayed them, but nothing on screen ever said they existed,
     // so "did my approve go?" had no answer (CLIENT-5).
     @State private var unsentLabels: [String] = []
+    // Queued changes the app gave up on (refused by the server, or a day
+    // old), until the owner taps the note away. They used to vanish.
+    @State private var droppedWrites: [PendingWriteQueue.DroppedWrite] = []
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedTab: AppTab = AppPreferences.shared.defaultTab
     // Cold-launch handoff. iOS draws the launch screen itself (UILaunchScreen
@@ -180,21 +183,40 @@ struct RootView: View {
             }
         }
         .overlay(alignment: .top) {
-            if let status = connectivityStatus {
-                Text(status)
-                    .font(.cavnarBody(13.5, weight: 600))
-                    .foregroundStyle(Color.cavnarInk)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(Color.cavnarAmber.opacity(0.92), in: Capsule())
-                    .padding(.top, 8)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .accessibilityLabel(unsentLabels.isEmpty
-                        ? status
-                        : status + ". Waiting to send: " + unsentLabels.joined(separator: ", "))
+            VStack(spacing: 6) {
+                if let status = connectivityStatus {
+                    Text(status)
+                        .font(.cavnarBody(13.5, weight: 600))
+                        .foregroundStyle(Color.cavnarInk)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(Color.cavnarAmber.opacity(0.92), in: Capsule())
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .accessibilityLabel(unsentLabels.isEmpty
+                            ? status
+                            : status + ". Waiting to send: " + unsentLabels.joined(separator: ", "))
+                }
+                if let note = droppedNote {
+                    // The same amber pill, tapped away once read.
+                    Text(note)
+                        .font(.cavnarBody(13.5, weight: 600))
+                        .foregroundStyle(Color.cavnarInk)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(4)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(Color.cavnarAmber.opacity(0.92), in: RoundedRectangle(cornerRadius: 16))
+                        .padding(.horizontal, 16)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .onTapGesture { Task { await PendingWriteQueue.shared.dismissDropped() } }
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityHint("Dismisses this note")
+                }
             }
+            .padding(.top, 8)
         }
         .animation(.easeOut(duration: 0.25), value: connectivityStatus)
+        .animation(.easeOut(duration: 0.25), value: droppedWrites)
         .task { await refreshUnsent() }
         .onReceive(NotificationCenter.default.publisher(for: PendingWriteQueue.didChange)) { _ in
             Task { await refreshUnsent() }
@@ -238,11 +260,19 @@ struct RootView: View {
             // A tap on another location's alert switches there first, the
             // same way the location switcher does (re-audit A-14).
             let session = sessionStore
-            deepLinkRouter.activeRestaurantId = { session.currentUser?.restaurantId ?? SessionScope.restaurantId }
+            // Before /me answers on a cold launch, the persisted location
+            // (SessionScope.activeRestaurantId) — never 0, which skipped the
+            // switch and opened the alert inside the wrong location.
+            deepLinkRouter.activeRestaurantId = { session.currentUser?.restaurantId ?? SessionScope.activeRestaurantId }
+            let router = deepLinkRouter
             deepLinkRouter.switchLocation = { target in
                 let switcher = LocationSwitcherViewModel()
                 switcher.session = session
-                return await switcher.switchTo(LocationOption(id: target, name: "", active: false))
+                let ok = await switcher.switchTo(LocationOption(id: target, name: "", active: false))
+                if !ok, let why = switcher.errorMessage {
+                    router.locationSwitchFailure = why + " The alert wasn't opened."
+                }
+                return ok
             }
             PushManager.shared.router = deepLinkRouter
             // Every location switch, whichever screen made it (F3-4, F3-11).
@@ -347,6 +377,9 @@ struct RootView: View {
             if !authenticated {
                 warmedTabs = []
                 introWaitingOnLogin = false
+                // Nothing of this session may be the first thing the next
+                // one sees (Ask's opening, the inbox's rows, module access).
+                resetSessionScopedState()
             }
             if authenticated {
                 // Drop the keyboard at the UIKit level before Home mounts.
@@ -434,6 +467,16 @@ struct RootView: View {
             deepLinkRouter.pendingLocationPicker = false
             chrome.showingLocationSwitcher = true
         }
+        // A notification about another location whose switch failed is not
+        // opened in this one; the owner is told why instead.
+        .alert("Couldn't open that", isPresented: Binding(
+            get: { deepLinkRouter.locationSwitchFailure != nil },
+            set: { if !$0 { deepLinkRouter.locationSwitchFailure = nil } }
+        )) {
+            Button("OK", role: .cancel) { deepLinkRouter.locationSwitchFailure = nil }
+        } message: {
+            Text(deepLinkRouter.locationSwitchFailure ?? "")
+        }
     }
 
     /// The amber pill's text: offline, unsent work, or both. Only while
@@ -449,8 +492,16 @@ struct RootView: View {
         }
     }
 
+    /// "1 change couldn't be sent: Approve response for Ann. <why>" — the
+    /// server's own reason for a refusal, so the owner knows what to redo.
+    private var droppedNote: String? {
+        guard sessionStore.isAuthenticated else { return nil }
+        return PendingWriteQueue.droppedNote(droppedWrites)
+    }
+
     private func refreshUnsent() async {
         unsentLabels = await PendingWriteQueue.shared.pendingLabels
+        droppedWrites = await PendingWriteQueue.shared.dropped
     }
 
     // .sensoryFeedback(trigger:) instead of .onChange(of: selectedTab) {
@@ -619,7 +670,24 @@ struct RootView: View {
     /// the old location: both stacks start over, Home reloads, the badge and
     /// the title line re-read, and the widget is rewritten for the new store
     /// (friction audit #32 / #50; F3-4, F3-8, F3-11).
+    /// State RootView keeps alive across a sign-out or a location switch
+    /// that belongs to one user at one location. Ask's chat and opening
+    /// briefing, the notification list's rows and ModuleAccess used to
+    /// survive both: the next account saw the last one's briefing and
+    /// inbox, and a switched owner's next Ask question went to a chat of
+    /// the location they had left (404).
+    private func resetSessionScopedState() {
+        askCavnarViewModel.reset()
+        chrome.notificationsList.notifications = []
+        chrome.notificationsList.hasLoadedOnce = false
+        chrome.notificationsList.errorMessage = nil
+        ModuleAccess.shared.reset()
+    }
+
     private func didSwitchLocation() {
+        resetSessionScopedState()
+        // Ask on screen (or built) greets the new location at once.
+        if tabIsBuilt(.ask) { Task { await askCavnarViewModel.loadInitialIfNeeded() } }
         modulesPath = NavigationPath()
         homePath = NavigationPath()
         // HomeView reloads on this; the observer above re-reads the chrome.

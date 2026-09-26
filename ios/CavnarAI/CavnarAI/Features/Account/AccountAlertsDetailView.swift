@@ -12,7 +12,11 @@ import UIKit
 struct AccountAlertsDetailView: View {
     let viewModel: AccountViewModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(SessionStore.self) private var sessionStore
     @State private var postedLabel: String?
+    /// A morning-brief change the server did not take — it is rolled back
+    /// and said here. The save was `try?`, so a refusal looked saved.
+    @State private var briefError: String?
 
     @State private var draft: AlertSettings
     @State private var contacts: [AlertContact]
@@ -30,6 +34,12 @@ struct AccountAlertsDetailView: View {
     @State private var testPushLabel: String?
     @State private var sendingTestPush = false
     private enum AlertsField: Hashable { case extraEmails, contactName(Int), contactPhone(Int) }
+
+    /// Alert settings, alert contacts and the account's email preferences
+    /// are the account owner's (403 owner_only for anyone else). A teammate
+    /// sees them — what the restaurant is set to — but cannot change them;
+    /// their own phone's test push stays theirs.
+    private var isOwner: Bool { sessionStore.currentUser?.isOwner == true }
     @FocusState private var focusedField: AlertsField?
 
     private static let timeFormatter: DateFormatter = {
@@ -59,6 +69,13 @@ struct AccountAlertsDetailView: View {
                 hero
                 statusStrip
 
+                if !isOwner {
+                    CavnarCaveat(
+                        title: "Only the account owner can change alerts",
+                        detail: "These are the settings your restaurant uses. Ask the owner to change them."
+                    )
+                }
+
                 // The one dial for "too much" or "too little" (the web's
                 // How much to hear from Cavnar AI, density audit #38) —
                 // briefing_level on the same /morning-brief/settings twin.
@@ -69,8 +86,9 @@ struct AccountAlertsDetailView: View {
                                 selection: Binding(get: { brief.briefingLevel },
                                                    set: { level in
                                                        guard level != brief.briefingLevel else { return }
+                                                       let before = brief
                                                        brief.briefingLevel = level
-                                                       saveBrief()
+                                                       saveBrief(rollback: before)
                                                    }),
                                 options: Self.levels
                             ) { Self.levelLabel($0) }
@@ -97,6 +115,7 @@ struct AccountAlertsDetailView: View {
                     AccountSwitchRow(label: "Competitor moves (weekly)", isOn: $draft.alertCompetitorMove)
                     masterAlertPill.padding(.vertical, 9)
                 }
+                .disabled(!isOwner)
 
                 AccountSection(kicker: "How urgent alerts reach you") {
                     AccountSwitchRow(label: "Text alerts", isOn: $draft.urgentViaSms)
@@ -117,6 +136,7 @@ struct AccountAlertsDetailView: View {
                     }
                     .padding(.vertical, 9)
                 }
+                .disabled(!isOwner)
 
                 AccountSection(kicker: "Push notifications") {
                     // A denial is permanent and silent — iOS will not show
@@ -161,7 +181,7 @@ struct AccountAlertsDetailView: View {
                     // reading a banner leaves no tap behind, so switching
                     // alerts off on tap data alone would quietly silence
                     // ones an owner reads every day.
-                    if let nudge {
+                    if let nudge, isOwner {
                         CavnarCaveat(
                             title: "\(nudge.delivered) \u{201C}\(nudge.label)\u{201D} alerts in the last \(nudge.days) days",
                             detail: "You haven't opened one of them. Want to stop pushing these to your phone?"
@@ -172,13 +192,16 @@ struct AccountAlertsDetailView: View {
                             applyNudge(nudge)
                         }
                     }
-                    pushRow("1-star reviews", $draft.al1starPush, on: draft.alert1star)
-                    pushRow("2-star reviews", $draft.al2starPush, on: draft.alert2star)
-                    pushRow("5-star reviews", $draft.al5starPush, on: draft.alert5star)
-                    pushRow("Health or safety mention", $draft.alHealthPush, on: draft.alertHealth)
-                    pushRow("Negative review spike", $draft.alSpikePush, on: draft.alertNegSpike)
-                    pushRow("Unresponded review (48h)", $draft.alUnresPush, on: draft.alertNoResponse)
-                    AccountSwitchRow(label: "Play a sound", isOn: $draft.pushSound)
+                    Group {
+                        pushRow("1-star reviews", $draft.al1starPush, on: draft.alert1star)
+                        pushRow("2-star reviews", $draft.al2starPush, on: draft.alert2star)
+                        pushRow("5-star reviews", $draft.al5starPush, on: draft.alert5star)
+                        pushRow("Health or safety mention", $draft.alHealthPush, on: draft.alertHealth)
+                        pushRow("Negative review spike", $draft.alSpikePush, on: draft.alertNegSpike)
+                        pushRow("Unresponded review (48h)", $draft.alUnresPush, on: draft.alertNoResponse)
+                        AccountSwitchRow(label: "Play a sound", isOn: $draft.pushSound)
+                    }
+                    .disabled(!isOwner)
                     // "Is push actually working on my phone?" had no answer
                     // short of reaching into the database. This login's own
                     // devices only — a test that buzzes a manager's phone
@@ -206,11 +229,11 @@ struct AccountAlertsDetailView: View {
                             label: "Morning brief",
                             detail: "Yesterday, what to fix first, and what is waiting on you — to your phone, or email if the app isn't installed.",
                             isOn: Binding(get: { brief.enabled },
-                                          set: { brief.enabled = $0; saveBrief() })
+                                          set: { let before = brief; brief.enabled = $0; saveBrief(rollback: before) })
                         )
                         AccountKVRow(label: "Send it at") {
                             Picker("", selection: Binding(get: { brief.hour },
-                                                          set: { brief.hour = $0; saveBrief() })) {
+                                                          set: { let before = brief; brief.hour = $0; saveBrief(rollback: before) })) {
                                 ForEach(4..<12, id: \.self) { Text(Self.hourLabel($0)).tag($0) }
                             }
                             .labelsHidden().tint(Color.cavnarEmber)
@@ -219,11 +242,11 @@ struct AccountAlertsDetailView: View {
                             label: "Hold alerts through service",
                             detail: "A two-star review at 12:15 can't be acted on until the rush is over. Held alerts arrive when it ends; health mentions never wait.",
                             isOn: Binding(get: { brief.holdAlerts },
-                                          set: { brief.holdAlerts = $0; saveBrief() })
+                                          set: { let before = brief; brief.holdAlerts = $0; saveBrief(rollback: before) })
                         )
                         AccountKVRow(label: "Lineup notes to the manager", showsDivider: routing != nil) {
                             Picker("", selection: Binding(get: { brief.preshiftNudgeHour },
-                                                          set: { brief.preshiftNudgeHour = $0; saveBrief() })) {
+                                                          set: { let before = brief; brief.preshiftNudgeHour = $0; saveBrief(rollback: before) })) {
                                 Text("Off").tag(0)
                                 ForEach(12..<21, id: \.self) { Text(Self.hourLabel($0)).tag($0) }
                             }
@@ -233,6 +256,9 @@ struct AccountAlertsDetailView: View {
                             issueRoutingRows(routing)
                         }
                     }
+                }
+                if let briefError {
+                    Text(briefError).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
                 }
 
                 AccountSection(kicker: "Quiet hours") {
@@ -257,9 +283,11 @@ struct AccountAlertsDetailView: View {
                         )
                     }
                 }
+                .disabled(!isOwner)
 
                 AccountSection(kicker: "Weekly digest") {
                     AccountSwitchRow(label: "Weekly digest", isOn: $draft.digestEnabled, showsDivider: draft.digestEnabled)
+                        .disabled(!isOwner)
                     if draft.digestEnabled {
                         AccountKVRow(label: "Delivered on") {
                             Picker("", selection: $draft.digestDay) {
@@ -269,6 +297,7 @@ struct AccountAlertsDetailView: View {
                             }
                             .tint(Color.cavnarEmber)
                         }
+                        .disabled(!isOwner)
                         AccountActionRow(
                             label: "Send me a preview",
                             detail: testDigestLabel ?? viewModel.testDigestError,
@@ -287,6 +316,7 @@ struct AccountAlertsDetailView: View {
                     }
                 }
 
+                if isOwner {
                 AccountSection(kicker: "Email preferences") {
                     // The web's Monthly business review switch, on the
                     // same shared body (/account/monthly-review).
@@ -309,6 +339,10 @@ struct AccountAlertsDetailView: View {
                         busy: viewModel.isTogglingMarketingOptOut,
                         showsDivider: false
                     )
+                }
+                if let error = viewModel.accountToggleError {
+                    Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                }
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
@@ -359,11 +393,13 @@ struct AccountAlertsDetailView: View {
                     }
                     .accountCard()
                 }
+                .disabled(!isOwner)
 
                 if let error = viewModel.saveAlertsError {
                     Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
                 }
 
+                if isOwner {
                 Button {
                     var toSave = draft
                     toSave.alertQuietStart = quietHoursEnabled ? Self.timeFormatter.string(from: quietStart) : nil
@@ -387,6 +423,7 @@ struct AccountAlertsDetailView: View {
                 }
                 .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isSavingAlerts))
                 .disabled(viewModel.isSavingAlerts)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(20)
@@ -503,7 +540,7 @@ struct AccountAlertsDetailView: View {
     /// twin the web dashboard reads. Kept separate from `draft` because
     /// they are a different endpoint with a different permission: only a
     /// principal may change them (`canEdit`).
-    struct BriefSettings: Decodable {
+    struct BriefSettings: Decodable, Equatable {
         var enabled = true
         var hour = 7
         var holdAlerts = true
@@ -690,16 +727,34 @@ struct AccountAlertsDetailView: View {
         briefLoaded = true
     }
 
-    private func saveBrief() {
+    /// Saves the brief as it now reads. A refusal or a dropped connection
+    /// puts `before` back (unless another change has landed since) and
+    /// says why — it used to be `try?`, so a failed save looked saved.
+    private func saveBrief(rollback before: BriefSettings) {
+        let attempted = brief
         let payload = BriefPayload(enabled: brief.enabled, hour: brief.hour,
                                    hold_alerts: brief.holdAlerts,
                                    preshift_nudge_hour: brief.preshiftNudgeHour,
                                    briefing_level: brief.briefingLevel)
+        briefError = nil
         Task {
-            let _: APIClient.EmptyResponse? = try? await APIClient.shared.send(
-                "/mobile/api/morning-brief/settings", method: .post, body: payload)
+            let failure: String?
+            do {
+                let r: APIClient.OKResponse = try await APIClient.shared.send(
+                    "/mobile/api/morning-brief/settings", method: .post, body: payload)
+                failure = r.ok ? nil : (r.error ?? Self.briefSaveFailed)
+            } catch let error as APIClient.APIError {
+                failure = error.message
+            } catch {
+                failure = Self.briefSaveFailed
+            }
+            guard let failure else { return }
+            if brief == attempted { brief = before }
+            briefError = failure
         }
     }
+
+    static let briefSaveFailed = "Couldn't save the morning brief settings. Check your connection and try again."
 
     // MARK: - Identity (option A)
 

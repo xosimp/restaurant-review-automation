@@ -58,10 +58,21 @@ final class DeepLinkRouter {
     /// reloads for the location it now shows.
     var locationSwitches = 0
     /// Switches the session to another location of the group; set by
-    /// RootView (it owns the SessionStore). Returns true on success.
-    var switchLocation: ((Int) async -> Bool)?
-    /// The location the session is on now; set by RootView.
-    var activeRestaurantId: () -> Int = { SessionScope.restaurantId }
+    /// RootView (it owns the SessionStore). Returns true on success; on
+    /// failure it may set `locationSwitchFailure` to the server's reason.
+    var switchLocation: (@MainActor (Int) async -> Bool)?
+    /// The location the session is on now; set by RootView. The persisted
+    /// one until /me answers: on a cold launch from a push tap this process
+    /// has no session scope of its own yet, and a 0 here skipped the switch
+    /// and opened location A's alert inside location B.
+    var activeRestaurantId: () -> Int = { SessionScope.activeRestaurantId }
+    /// Why a notification about another location was not opened: its
+    /// location switch failed. Routing on regardless opened the alert inside
+    /// the wrong location ("not found", or another store's review). RootView
+    /// shows it and clears it.
+    var locationSwitchFailure: String?
+    static let switchFailedMessage = "Couldn't switch to the location this is about, so it wasn't opened. "
+        + "Try again, or switch locations from the header first."
 
     /// `module` is the server's own routing (push.NOTIFICATION_MODULE, sent
     /// in every payload and every history row); `restaurantId` is the
@@ -77,7 +88,7 @@ final class DeepLinkRouter {
         let current = activeRestaurantId()
         if let target = restaurantId, target > 0, current > 0, target != current, let switchLocation {
             Task {
-                _ = await switchLocation(target)
+                guard await switchedOrExplained(switchLocation, to: target) else { return }
                 route(alertType: alertType, reviewId: reviewId, askPrompt: askPrompt,
                       alertId: alertId, recKey: recKey, module: module, businessDate: businessDate,
                       surface: surface, nav: nav, askAutoSend: askAutoSend)
@@ -98,12 +109,21 @@ final class DeepLinkRouter {
         let current = activeRestaurantId()
         if let target = restaurantId, target > 0, current > 0, target != current, let switchLocation {
             Task {
-                _ = await switchLocation(target)
+                guard await switchedOrExplained(switchLocation, to: target) else { return }
                 apply(nav, askAutoSend: askAutoSend, askPrompt: askPrompt)
             }
             return
         }
         apply(nav, askAutoSend: askAutoSend, askPrompt: askPrompt)
+    }
+
+    /// Runs the switch; on failure nothing is routed and the owner is told
+    /// why (the switcher's own reason when it gave one).
+    private func switchedOrExplained(_ switchLocation: @MainActor (Int) async -> Bool, to target: Int) async -> Bool {
+        locationSwitchFailure = nil
+        if await switchLocation(target) { return true }
+        if locationSwitchFailure == nil { locationSwitchFailure = Self.switchFailedMessage }
+        return false
     }
 
     /// A path from a link anyone could have written (SystemEntry `.link`):

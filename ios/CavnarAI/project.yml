@@ -72,7 +72,7 @@ targets:
         # Voice Ask (AskVoiceInput.swift): the mic button in Ask's composer
         # types what you say into the question field; you read it and send.
         NSMicrophoneUsageDescription: "Cavnar AI uses the microphone when you tap the mic in Ask, so you can say your question instead of typing it."
-        NSSpeechRecognitionUsageDescription: "Cavnar AI turns what you say in Ask into text in the question field. It is recognized on your iPhone when possible, and nothing is sent until you tap send."
+        NSSpeechRecognitionUsageDescription: "Cavnar AI turns what you say in Ask into text in the question field. Speech is recognized on your iPhone when it supports your language; otherwise the audio goes to Apple to be recognized. Nothing goes to Cavnar AI until you tap send."
         # The auto-publish / supplier-order countdown with Undo (Friction #47).
         NSSupportsLiveActivities: true
         # Home Screen quick actions (Friction #31). Static so they exist before

@@ -13,6 +13,11 @@ import SwiftUI
 struct AccountConnectionsDetailView: View {
     let viewModel: AccountViewModel
     let connections: AccountConnections
+    @Environment(SessionStore.self) private var sessionStore
+    /// Connecting or disconnecting Google and Instagram is the account
+    /// owner's (403 owner_only for a teammate): a teammate sees the status,
+    /// not a button that is refused.
+    private var isOwner: Bool { sessionStore.currentUser?.isOwner == true }
     @State private var showingToastConnect = false
     @State private var showingSquareConnect = false
     @State private var showingCloverConnect = false
@@ -128,7 +133,9 @@ struct AccountConnectionsDetailView: View {
                 Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
             }
 
-            if connections.googleBusiness.connected {
+            if !isOwner {
+                ownerOnlyNote
+            } else if connections.googleBusiness.connected {
                 AccountActionRow(label: "Disconnect", symbol: "xmark", tone: .cavnarRed, showsDivider: false) {
                     Task { await viewModel.disconnectGoogleBusiness() }
                 }
@@ -152,6 +159,12 @@ struct AccountConnectionsDetailView: View {
             }
         }
         .cavnarCard()
+    }
+
+    private var ownerOnlyNote: some View {
+        Text("Only the account owner can connect or disconnect this.")
+            .font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: - Toast (credential form)
@@ -227,7 +240,9 @@ struct AccountConnectionsDetailView: View {
                 Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
             }
 
-            if connections.instagram.connected {
+            if !isOwner {
+                ownerOnlyNote
+            } else if connections.instagram.connected {
                 Text("Posts and scheduled content go straight to your Instagram business account and Facebook page.")
                     .font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)

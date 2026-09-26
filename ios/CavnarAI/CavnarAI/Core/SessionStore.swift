@@ -37,11 +37,36 @@ enum SessionScope {
         // to know which location this phone is on (F3-13). A plain id, not a
         // secret; 0 once signed out.
         UserDefaults.standard.set(self.restaurantId, forKey: persistedKey)
+        // The user too, so a cold launch can resume this exact scope.
+        UserDefaults.standard.set(self.userId, forKey: persistedUserKey)
         // A different restaurant may keep a different clock.
         RestaurantClock.reset()
     }
 
+    /// A cold launch with a stored token: carry on as the identity the last
+    /// process recorded, before /me answers. Without it the launch ran as
+    /// user 0 at restaurant 0 until /me returned — forever when it failed
+    /// (offline): no cache was found (keys u0.r0), queued writes were
+    /// stamped with no location, and a push tap skipped its location switch.
+    /// /me then confirms the scope (`matches`) or begins the right one.
+    /// Returns whether a scope was resumed.
+    @discardableResult
+    static func resume() -> Bool {
+        let rid = UserDefaults.standard.integer(forKey: persistedKey)
+        guard rid > 0 else { return false }
+        generation += 1
+        userId = UserDefaults.standard.integer(forKey: persistedUserKey)
+        restaurantId = rid
+        return true
+    }
+
+    /// Whether this process already runs as this user at this restaurant.
+    static func matches(userId: Int, restaurantId: Int) -> Bool {
+        self.userId == userId && self.restaurantId == restaurantId
+    }
+
     static let persistedKey = "cavnar.session.restaurant_id"
+    static let persistedUserKey = "cavnar.session.user_id"
 
     /// The location this phone's session is on: this process's own when a
     /// session has begun, else the last one any process recorded (a cold
@@ -141,7 +166,12 @@ final class SessionStore {
         // gate — with Face ID off and no passcode set, LockedView would
         // just be a screen with nothing behind its Unlock button.
         self.isLocked = storedToken != nil && (Self.biometricLockPreference || AppPasscode.isSet)
+        // A stored session resumes its own scope now, not when /me answers
+        // (see SessionScope.resume); the queue learns its location with it.
+        let resumed = storedToken != nil && SessionScope.resume()
+        let resumedRestaurant = SessionScope.restaurantId
         Task {
+            if resumed { await PendingWriteQueue.shared.setActiveRestaurant(resumedRestaurant) }
             await client.setToken(storedToken)
             await client.setSessionExpiredHandler { [weak self] in
                 Task { @MainActor in self?.handleSessionExpired() }
@@ -181,11 +211,24 @@ final class SessionStore {
         guard token != nil else { return }
         do {
             let response: MeResponse = try await client.send("/mobile/api/me", hapticOnError: false)
-            if currentUser?.id != response.user.id || currentUser?.restaurantId != response.user.restaurantId {
+            // Compared with the scope this process runs as (resumed at
+            // launch), not with currentUser — which is always nil here, so
+            // every launch began a new generation and discarded Home's first
+            // load, leaving a blank Home with nothing to retry it.
+            let changed = !SessionScope.matches(userId: response.user.id,
+                                                restaurantId: response.user.restaurantId)
+            if changed {
                 SessionScope.begin(userId: response.user.id, restaurantId: response.user.restaurantId)
             }
+            // After begin, which resets it: the restaurant's own clock.
+            RestaurantClock.learn(response.timezone)
             currentUser = response.user
             await PendingWriteQueue.shared.setActiveRestaurant(response.user.restaurantId)
+            // A different scope than the one resumed (the location was
+            // switched on the web, an upgrade that never recorded the user):
+            // everything loaded under the old one was just discarded, so the
+            // app reloads as it does after a location switch.
+            if changed { onLocationSwitched?(response.user.restaurantId) }
         } catch is APIClient.SessionExpiredError {
             // The client's own onSessionExpired handler also fires for
             // this, asynchronously — call it here too rather than wait on
@@ -330,6 +373,23 @@ final class SessionStore {
     private struct MeResponse: Decodable {
         let ok: Bool
         let user: User
+        /// The active restaurant's IANA zone (RestaurantClock); nil from an
+        /// older server.
+        let timezone: String?
+    }
+
+    /// Learns the restaurant's clock for the scope just begun — a sign-in
+    /// or a location switch resets it (SessionScope.begin), and only
+    /// Account and the composer used to teach it again, so an offline count
+    /// sheet could not date itself (RestaurantClock.isKnown). One /me read;
+    /// silent on failure, and dropped if the scope moved on meanwhile.
+    private func learnRestaurantClock() {
+        let generation = SessionScope.generation
+        Task {
+            guard let me: MeResponse = try? await client.send("/mobile/api/me", hapticOnError: false),
+                  generation == SessionScope.generation else { return }
+            RestaurantClock.learn(me.timezone)
+        }
     }
 
     /// The Google Sign-In flow hands back a bearer token via a cavnarai://
@@ -436,6 +496,7 @@ final class SessionStore {
         self.token = token
         self.currentUser = user
         SessionScope.begin(userId: user.id, restaurantId: user.restaurantId)
+        learnRestaurantClock()
         self.isLocked = false
         // The APNs token usually arrives at launch, before a session exists,
         // so its registration 401s and used to be dropped forever (audit
@@ -472,6 +533,7 @@ final class SessionStore {
             currentUser = user
         }
         SessionScope.begin(userId: currentUser?.id, restaurantId: restaurantId)
+        learnRestaurantClock()
         // Cached labor/schedule data belongs to the old location — but the
         // offline queue was just trimmed to the new one, and purging its file
         // too meant those kept writes were lost on the next relaunch (CLIENT-5).
