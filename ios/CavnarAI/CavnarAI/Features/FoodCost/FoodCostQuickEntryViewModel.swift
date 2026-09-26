@@ -7,13 +7,19 @@ struct FoodCostItem: Identifiable {
     var unit: String
     var priceText: String = ""
     var usageText: String = ""
+    /// Added by the owner rather than one of the seven defaults — saved to
+    /// the account (POST /food-cost/custom-item) so it is there next week,
+    /// as the web's "Add custom item" row is.
+    var isCustom = false
+    /// The custom item is on file server-side (removing it deletes it).
+    var customSaved = false
 
-    /// The same seven ingredients the web dashboard starts a fresh
-    /// submission with (templates/dashboard.html's fc-rows default list).
-    /// v1 has no GET endpoint to re-fetch last week's saved item list (only
-    /// POST /mobile/api/food-cost/quickcount exists), so mobile always
-    /// starts from this default set rather than prefilling prior values —
-    /// a deliberate v1 scope cut, not an oversight.
+    /// The seven rows a fresh tracker starts from — only until
+    /// GET /food-cost/tracker answers (client_api._do_food_cost_tracker),
+    /// which serves the same rows the web tracker renders: this week's
+    /// saved prices, the pantry for a ledger account, or these seven plus
+    /// the owner's custom items. The phone used to start from these every
+    /// week, blank, whatever had been saved.
     static let defaults: [FoodCostItem] = [
         FoodCostItem(name: "Chicken Breast", unit: "lb"),
         FoodCostItem(name: "Beef/Steak", unit: "lb"),
@@ -54,6 +60,16 @@ final class FoodCostQuickEntryViewModel {
     var totalWeeklyImpact: Double?
     var submittedAt: String?
     var didSubmit = false
+    /// A ledger account's rows come from the ingredient list — invoices
+    /// keep the prices current and usage comes from sales — so they are
+    /// read-only until the owner taps Edit prices (U2-14), as on the web.
+    var fromPantry = false
+    var isEditing = false
+    /// When prices were last typed in by hand on a ledger account.
+    var typedAt: String?
+    private(set) var hasLoaded = false
+
+    var isReadOnly: Bool { fromPantry && !isEditing }
 
     private let client: APIClient
 
@@ -61,14 +77,98 @@ final class FoodCostQuickEntryViewModel {
         self.client = client
     }
 
+    private struct TrackerResponse: Decodable {
+        struct Row: Decodable {
+            let name: String
+            let unit: String
+            let price: String
+            let usage: String
+            let custom: Bool?
+        }
+        let ok: Bool
+        let items: [Row]
+        let fromPantry: Bool?
+        let submittedAt: String?
+        let typedAt: String?
+        let customItems: [Custom]?
+        struct Custom: Decodable { let name: String }
+        enum CodingKeys: String, CodingKey {
+            case ok, items
+            case fromPantry = "from_pantry"
+            case submittedAt = "submitted_at"
+            case typedAt = "typed_at"
+            case customItems = "custom_items"
+        }
+    }
+
+    /// GET /mobile/api/food-cost/tracker — the rows the web tracker opens
+    /// on. Once per screen; a failure keeps the defaults and says so.
+    func load() async {
+        guard !hasLoaded else { return }
+        do {
+            let r: TrackerResponse = try await client.send("/mobile/api/food-cost/tracker", hapticOnError: false)
+            guard r.ok, !r.items.isEmpty else { return }
+            let saved = Set((r.customItems ?? []).map { $0.name.lowercased() })
+            items = r.items.map { row in
+                let custom = row.custom == true || saved.contains(row.name.lowercased())
+                return FoodCostItem(name: row.name, unit: row.unit, priceText: row.price, usageText: row.usage,
+                                    isCustom: custom, customSaved: custom)
+            }
+            fromPantry = r.fromPantry == true
+            submittedAt = r.submittedAt
+            typedAt = r.typedAt
+            hasLoaded = true
+        } catch is CancellationError {
+        } catch {
+            // The defaults stand; the owner can still type this week's prices.
+        }
+    }
+
     // Returns the new item so the carousel can scroll to reveal it — a
     // blank row appended off the bottom of a 3-card viewport is invisible
     // otherwise, with no indication anything happened.
     @discardableResult
     func addCustomRow() -> FoodCostItem {
-        let newItem = FoodCostItem(name: "", unit: "")
+        let newItem = FoodCostItem(name: "", unit: "", isCustom: true)
         items.append(newItem)
         return newItem
+    }
+
+    private struct CustomItemBody: Encodable { let name: String; let unit: String }
+    private struct NameBody: Encodable { let name: String }
+
+    /// A removed row: a saved custom item is deleted from the account too,
+    /// so it does not come back next week.
+    func remove(_ item: FoodCostItem) {
+        items.removeAll { $0.id == item.id }
+        guard item.customSaved else { return }
+        let name = item.name.trimmingCharacters(in: .whitespaces)
+        Task {
+            do {
+                let _: APIClient.OKResponse = try await client.send(
+                    "/mobile/api/food-cost/custom-item", method: .delete, body: NameBody(name: name))
+            } catch {
+                errorMessage = "\(name) was removed here but is still saved — try removing it again."
+            }
+        }
+    }
+
+    /// New custom rows with a name are saved to the account before the
+    /// count goes up — the web saves each as it is named.
+    private func saveNewCustomItems() async {
+        for idx in items.indices where items[idx].isCustom && !items[idx].customSaved {
+            let name = items[idx].name.trimmingCharacters(in: .whitespaces)
+            guard !name.isEmpty else { continue }
+            do {
+                let r: APIClient.OKResponse = try await client.send(
+                    "/mobile/api/food-cost/custom-item", method: .post,
+                    body: CustomItemBody(name: name, unit: items[idx].unit.trimmingCharacters(in: .whitespaces)))
+                if r.ok { items[idx].customSaved = true }
+            } catch {
+                // The price still goes up with the count; only next week's
+                // pre-filled row is missed.
+            }
+        }
     }
 
     private struct ItemPayload: Encodable {
@@ -174,6 +274,7 @@ final class FoodCostQuickEntryViewModel {
         isSubmitting = true
         errorMessage = nil
         defer { isSubmitting = false }
+        await saveNewCustomItems()
         do {
             let response: QuickcountResponse = try await client.send(
                 "/mobile/api/food-cost/quickcount", method: .post, body: QuickcountBody(items: payloadItems)

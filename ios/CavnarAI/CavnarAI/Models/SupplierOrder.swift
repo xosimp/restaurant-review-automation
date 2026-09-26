@@ -26,30 +26,48 @@ struct SupplierOrderGroup: Decodable, Identifiable {
     let supplierEmail: String
     let items: [SupplierOrderItem]
     let totalCost: Double
+    /// This supplier's own fingerprint — a send for one supplier carries it,
+    /// so another supplier's lines moving does not refuse this one.
+    var draftHash: String? = nil
 
     var id: String { supplierEmail }
+    /// The name the owner reads; the address when no name was set.
+    var displayName: String { supplierName.isEmpty ? supplierEmail : supplierName }
 
     enum CodingKeys: String, CodingKey {
         case supplierName = "supplier_name"
         case supplierEmail = "supplier_email"
         case items
         case totalCost = "total_cost"
+        case draftHash = "draft_hash"
     }
 }
 
+/// One line of a drafted order or a sent PO. Quantities are Doubles: an
+/// owner-edited order carries 2.5 cases, which an Int failed to decode —
+/// and the purchase-order list with it. The money is optional because a
+/// login without FOOD_COST_VIEW receives deliveries with every cost taken
+/// off (client_api.purchase_orders_for).
 struct SupplierOrderItem: Decodable, Identifiable {
     let item: String
     let unit: String
-    let qty: Int
-    let unitCost: Double
-    let lineCost: Double
+    let qty: Double
+    let unitCost: Double?
+    let lineCost: Double?
     /// "critical" (out or below par with no cover) or "soon".
-    let urgency: String
-    let supplierName: String
-    let supplierEmail: String
+    let urgency: String?
+    let supplierName: String?
+    let supplierEmail: String?
+    let ingredientId: Int?
+    /// Last week's waste came off this line's quantity.
+    let trimmedForWaste: Bool?
 
-    var id: String { item }
+    var id: String { lineKey }
     var isCritical: Bool { urgency == "critical" }
+    /// The key the server matches an edited or short line by
+    /// (inventory.apply_order_edits, client_api._po_line_key): the
+    /// ingredient id, or "name:<item>" for a CSV line with none.
+    var lineKey: String { ingredientId.map(String.init) ?? "name:" + item.lowercased() }
 
     enum CodingKeys: String, CodingKey {
         case item, unit, qty, urgency
@@ -57,6 +75,28 @@ struct SupplierOrderItem: Decodable, Identifiable {
         case lineCost = "line_cost"
         case supplierName = "supplier_name"
         case supplierEmail = "supplier_email"
+        case ingredientId = "ingredient_id"
+        case trimmedForWaste = "trimmed_for_waste"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        item = (try? c.decode(String.self, forKey: .item)) ?? ""
+        unit = (try? c.decodeIfPresent(String.self, forKey: .unit)) ?? ""
+        qty = (try? c.decode(Double.self, forKey: .qty)) ?? 0
+        unitCost = try? c.decodeIfPresent(Double.self, forKey: .unitCost)
+        lineCost = try? c.decodeIfPresent(Double.self, forKey: .lineCost)
+        urgency = try? c.decodeIfPresent(String.self, forKey: .urgency)
+        supplierName = try? c.decodeIfPresent(String.self, forKey: .supplierName)
+        supplierEmail = try? c.decodeIfPresent(String.self, forKey: .supplierEmail)
+        ingredientId = try? c.decodeIfPresent(Int.self, forKey: .ingredientId)
+        trimmedForWaste = try? c.decodeIfPresent(Bool.self, forKey: .trimmedForWaste)
+    }
+
+    /// "2", "2.5" — never "2.0".
+    static func qtyString(_ v: Double) -> String {
+        let r = (v * 1000).rounded() / 1000
+        return r == r.rounded() ? String(Int(r)) : String(r)
     }
 }
 
@@ -68,7 +108,8 @@ struct PurchaseOrder: Decodable, Identifiable {
     let supplierName: String
     let supplierEmail: String
     let items: [SupplierOrderItem]
-    let totalCost: Double
+    /// Nil for a login that receives deliveries without the margins.
+    let totalCost: Double?
     /// "sent" while outstanding, "received" once closed.
     let status: String
     let sentAt: String

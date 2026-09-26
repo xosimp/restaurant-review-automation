@@ -12,8 +12,26 @@ struct CountSheetItem: Decodable, Identifiable {
     let unit: String?
     let category: String?
     let expected: Double?
+    /// The newest recount's timestamp — the "last counted" date.
+    var lastRecountAt: String? = nil
     var id: Int { ingredientId }
-    enum CodingKeys: String, CodingKey { case name, unit, category, expected; case ingredientId = "ingredient_id" }
+    enum CodingKeys: String, CodingKey {
+        case name, unit, category, expected
+        case ingredientId = "ingredient_id"
+        case lastRecountAt = "last_recount_at"
+    }
+}
+
+/// A delivery received after the count sheet was opened — the server asks
+/// whether the count includes it rather than guessing (strategy_routes
+/// _do_count_sheet_save, re-audit F2-7).
+struct CountSheetDelivery: Decodable, Identifiable {
+    let ingredientId: Int
+    let qty: Double
+    let name: String
+    let unit: String?
+    var id: Int { ingredientId }
+    enum CodingKeys: String, CodingKey { case qty, name, unit; case ingredientId = "ingredient_id" }
 }
 
 @Observable
@@ -25,12 +43,32 @@ final class CountSheetViewModel {
     var isSaving = false
     var errorMessage: String?
     var savedCount: Int?
+    /// Where the ledger stood when this sheet opened. Sent with the save so
+    /// a delivery received in between is asked about (the web does the
+    /// same); the phone used to send items alone, so the question never
+    /// came and a count taken before the truck silently lost the delivery.
+    var ledgerMark: Int?
+    /// Set when the server asked: did a delivery arrive after this sheet
+    /// was opened, and does the count include it?
+    var pendingDeliveries: [CountSheetDelivery] = []
+    var deliveryQuestion: String?
 
     private let client: APIClient
     init(client: APIClient = .shared) { self.client = client }
 
-    private struct ListResponse: Decodable { let ok: Bool; let items: [CountSheetItem] }
+    private struct ListResponse: Decodable {
+        let ok: Bool
+        let items: [CountSheetItem]
+        let ledgerMark: Int?
+        enum CodingKeys: String, CodingKey { case ok, items; case ledgerMark = "ledger_mark" }
+    }
     private struct SaveResponse: Decodable { let ok: Bool; let written: Int?; let skipped: Int?; let error: String? }
+    private struct ConfirmResponse: Decodable {
+        let needsConfirm: Bool?
+        let deliveries: [CountSheetDelivery]?
+        let error: String?
+        enum CodingKeys: String, CodingKey { case deliveries, error; case needsConfirm = "needs_confirm" }
+    }
     struct SaveBody: Encodable {
         struct Line: Encodable {
             let ingredientId: Int; let counted: Double
@@ -39,8 +77,25 @@ final class CountSheetViewModel {
         let items: [Line]
         /// The day the count was taken (ISO, the restaurant's clock) — sent
         /// only by a count parked offline, so its replay is not filed under
-        /// the day the signal came back. Omitted when nil.
+        /// the day the signal came back. Omitted when nil. A parked count
+        /// carries no ledger mark: nobody is there to answer the delivery
+        /// question when it replays.
         var date: String? = nil
+        var ledgerMark: Int? = nil
+        /// "counted" (the count includes the delivery) or "after" (it came
+        /// after the count, so the server adds it) — only once asked.
+        var deliveries: String? = nil
+        enum CodingKeys: String, CodingKey {
+            case items, deliveries, date
+            case ledgerMark = "ledger_mark"
+        }
+    }
+
+    /// The newest recount on the sheet, M/D/YY — "Not counted yet" when none.
+    var lastCountedLine: String {
+        let last = items.compactMap { $0.lastRecountAt.map { String($0.prefix(10)) } }.max()
+        guard let last, !last.isEmpty else { return "Not counted yet" }
+        return "Last counted \(CavnarDate.mdy(last))"
     }
     /// Recounts parked in the offline queue by the last save.
     var queuedCount: Int?
@@ -57,6 +112,7 @@ final class CountSheetViewModel {
         do {
             let r: ListResponse = try await client.send("/mobile/api/food-cost/count-sheet")
             items = r.items
+            ledgerMark = r.ledgerMark
             counts = Dictionary(uniqueKeysWithValues: r.items.map { ($0.ingredientId, Self.expectedString($0.expected)) })
         } catch let error as APIClient.APIError {
             errorMessage = error.message
@@ -77,13 +133,19 @@ final class CountSheetViewModel {
         }
     }
 
-    func save() async {
+    /// `deliveries` answers the server's question ("counted" or "after");
+    /// nil on the first save, which is what lets the server ask.
+    func save(deliveries: String? = nil) async {
         let lines = changed
         guard !lines.isEmpty else { errorMessage = "Nothing changed from what the ledger expects."; return }
         isSaving = true; errorMessage = nil; savedCount = nil; queuedCount = nil
         defer { isSaving = false }
         do {
-            let r: SaveResponse = try await client.send("/mobile/api/food-cost/count-sheet", method: .post, body: SaveBody(items: lines))
+            let body = SaveBody(items: lines, ledgerMark: ledgerMark, deliveries: deliveries)
+            let r: SaveResponse = try await client.send("/mobile/api/food-cost/count-sheet", method: .post,
+                                                        body: body, retryTransient: false)
+            pendingDeliveries = []
+            deliveryQuestion = nil
             if r.ok {
                 savedCount = r.written ?? lines.count
                 await Haptic.success()
@@ -103,6 +165,13 @@ final class CountSheetViewModel {
             await PendingWriteQueue.shared.enqueue(write)
             queuedCount = lines.count
         } catch let error as APIClient.APIError {
+            if error.status == 409, deliveries == nil,
+               let ask = error.decodeBody(ConfirmResponse.self), ask.needsConfirm == true,
+               let arrived = ask.deliveries, !arrived.isEmpty {
+                pendingDeliveries = arrived
+                deliveryQuestion = ask.error ?? "A delivery was received after you opened this sheet — does your count include it?"
+                return
+            }
             errorMessage = error.message
         } catch {
             errorMessage = "Couldn't save the count."
@@ -145,6 +214,9 @@ struct CountSheetView: View {
                         } icon: {
                             Image(systemName: "clock.arrow.circlepath").foregroundStyle(Color.cavnarInk3)
                         }
+                    }
+                    if let question = viewModel.deliveryQuestion {
+                        deliveryPrompt(question)
                     }
                     if viewModel.isLoading && viewModel.items.isEmpty {
                         CavnarWorkingLine().padding(.vertical, 12)
@@ -192,8 +264,19 @@ struct CountSheetView: View {
                             Text(viewModel.isSaving ? "Saving…" : (viewModel.changed.isEmpty ? "Nothing changed" : "Save \(viewModel.changed.count) recount\(viewModel.changed.count == 1 ? "" : "s")"))
                                 .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isSaving || viewModel.changed.isEmpty))
-                        .disabled(viewModel.isSaving || viewModel.changed.isEmpty)
+                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isSaving || viewModel.changed.isEmpty
+                                                              || viewModel.deliveryQuestion != nil))
+                        .disabled(viewModel.isSaving || viewModel.changed.isEmpty || viewModel.deliveryQuestion != nil)
+
+                        // One line of waste (U2-32), as on the web's count
+                        // sheet: logged as counted waste instead of turning
+                        // up later as an unexplained recount gap.
+                        WasteLogForm(items: viewModel.items) {
+                            // Logged waste lowers what the ledger expects;
+                            // re-read it, but never over recounts typed and
+                            // not yet saved.
+                            if viewModel.changed.isEmpty { Task { await viewModel.load() } }
+                        }
                     }
                 }
                 .padding(20)
@@ -216,5 +299,37 @@ struct CountSheetView: View {
             }
             .task { await viewModel.load() }
         }
+    }
+
+    /// The server's question, with its two answers — the web's buttons.
+    private func deliveryPrompt(_ question: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(question)
+                .font(.cavnarBody(14.5, weight: 600))
+                .foregroundStyle(Color.cavnarInk)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(viewModel.pendingDeliveries) { d in
+                HomeMixedText.make("\(d.name): \(CountSheetViewModel.expectedString(d.qty))\(d.unit.map { " \($0)" } ?? "") received",
+                                   size: 13.5, weight: 500, color: .cavnarInk3)
+            }
+            HStack(spacing: 10) {
+                Button {
+                    Haptic.light()
+                    Task { await viewModel.save(deliveries: "counted") }
+                } label: {
+                    Text("Yes, it\u{2019}s in the count").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarSecondaryButtonStyle())
+                Button {
+                    Haptic.light()
+                    Task { await viewModel.save(deliveries: "after") }
+                } label: {
+                    Text("No, it came after").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarSecondaryButtonStyle())
+            }
+            .disabled(viewModel.isSaving)
+        }
+        .cavnarCard()
     }
 }

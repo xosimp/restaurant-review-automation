@@ -79,7 +79,10 @@ final class HomeViewModel {
         let generation = SessionScope.generation
         // Warm start: paint cached numbers immediately rather than a loading
         // seal, and keep them on screen if the fetch fails.
-        if summary == nil { summary = await cache.loadOffMain() }
+        if summary == nil {
+            summary = await cache.loadOffMain()
+            if let cached = summary { ModuleAccess.shared.record(cached.modules) }
+        }
         isLoading = summary == nil
         errorMessage = nil
         defer { isLoading = false }
@@ -90,6 +93,7 @@ final class HomeViewModel {
             // answer belongs to a session that no longer exists.
             guard generation == SessionScope.generation else { return }
             summary = fetched
+            ModuleAccess.shared.record(fetched.modules)
             cache.save(fetched)
             lastLoadedAt = Date()
         } catch let error as APIClient.APIError {

@@ -97,7 +97,9 @@ struct FoodCostQuickEntryView: View {
         .sheet(item: $actionSheet) { action in
             switch action {
             case .scan(let camera): InvoiceScanSheet(startWithCamera: camera)
+            case .invoice(let id): InvoiceScanSheet(invoiceId: id)
             case .count: CountSheetView()
+            case .waste: WasteLogSheet()
             case .order: SupplierOrderSheet()
             case .recipes: RecipeDraftsSheet()
             case .margins: MenuMarginsSheet()
@@ -119,6 +121,9 @@ struct FoodCostQuickEntryView: View {
                 analyticsViewModel.configureCaching(restaurantId: restaurantId)
             }
         }
+        // The Tracker's rows: this week's saved prices, the pantry, or the
+        // defaults plus custom items — the same rows the web opens on.
+        .task { await viewModel.load() }
         // Analytics loads the first time its tab is shown, not on opening
         // Food Cost: loading it records its recommendations (the read's
         // lines, the diagnosis, the reprice cards) as shown, and on the
@@ -218,6 +223,35 @@ struct FoodCostQuickEntryView: View {
                             .foregroundStyle(Color.cavnarInk3)
                             .lineLimit(1)
                             .minimumScaleFactor(0.85)
+                        // Where these rows came from, as the web's tracker
+                        // says it: the ledger, or the last typed submission.
+                        if viewModel.fromPantry {
+                            HStack(spacing: 10) {
+                                Text("Kept current by scanned invoices; edit only to override.")
+                                    .font(.cavnarBody(13.5))
+                                    .foregroundStyle(Color.cavnarInk3)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 6)
+                                if !viewModel.isEditing {
+                                    Button {
+                                        Haptic.light()
+                                        viewModel.isEditing = true
+                                    } label: {
+                                        Text("Edit prices")
+                                            .font(.cavnarBody(14, weight: 700))
+                                            .foregroundStyle(Color.cavnarEmber2)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            if let typed = viewModel.typedAt {
+                                HomeMixedText.make("Last typed \(CavnarDate.mdy(String(typed.prefix(10))))",
+                                                   size: 13, weight: 500, color: .cavnarInk3)
+                            }
+                        } else if let submitted = viewModel.submittedAt {
+                            HomeMixedText.make("Last submitted \(CavnarDate.mdy(String(submitted.prefix(10))))",
+                                               size: 13, weight: 500, color: .cavnarInk3)
+                        }
                     }
 
                     // Scroll target is the CAROUSEL's own top, not the intro
@@ -231,7 +265,9 @@ struct FoodCostQuickEntryView: View {
                     // available clearance.
                     IngredientCarousel(
                         items: $viewModel.items,
+                        readOnly: viewModel.isReadOnly,
                         onAddRow: { viewModel.addCustomRow() },
+                        onDelete: { viewModel.remove($0) },
                         scrollOuterToTop: {
                             withAnimation(.cavnarEase(0.45)) {
                                 outerProxy.scrollTo("foodCostCarousel", anchor: .top)
@@ -257,6 +293,9 @@ struct FoodCostQuickEntryView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
+                // A ledger account submits only after Edit prices, as the
+                // web hides its submit until then.
+                if !viewModel.isReadOnly {
                 HoldToSubmitButton(
                     isSubmitting: viewModel.isSubmitting,
                     didSubmit: viewModel.didSubmit,
@@ -273,6 +312,7 @@ struct FoodCostQuickEntryView: View {
                             showSuccessToast = false
                         }
                     }
+                }
                 }
 
                 if viewModel.didSubmit {
@@ -437,7 +477,10 @@ private enum CarouselField: Hashable {
 /// canned effect layered on top of a plain scroll.
 private struct IngredientCarousel: View {
     @Binding var items: [FoodCostItem]
+    /// A ledger account's rows before Edit prices: shown, not typed in.
+    var readOnly: Bool = false
     var onAddRow: () -> FoodCostItem
+    var onDelete: (FoodCostItem) -> Void
     // Called alongside this view's own inner scrollTo when a new card is
     // added — see FoodCostQuickEntryView.tracker's own comment for why
     // scrolling THIS window's target card to its own top isn't enough on
@@ -493,10 +536,12 @@ private struct IngredientCarousel: View {
                 ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: cardSpacing) {
                         ForEach($items) { $item in
-                            IngredientCard(item: $item, height: cardHeight, focusedField: $focusedField) {
+                            IngredientCard(item: $item, height: cardHeight, readOnly: readOnly,
+                                           focusedField: $focusedField) {
                                 Haptic.selection()
+                                let removed = item
                                 withAnimation(.easeOut(duration: 0.22)) {
-                                    items.removeAll { $0.id == item.id }
+                                    onDelete(removed)
                                 }
                             }
                             .id(item.id)
@@ -539,6 +584,7 @@ private struct IngredientCarousel: View {
                     )
                 )
 
+                if !readOnly {
                 Button {
                     Haptic.light()
                     let newItem = onAddRow()
@@ -602,6 +648,7 @@ private struct IngredientCarousel: View {
                         .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
                         .foregroundStyle(Color.cavnarEmber2.opacity(0.4))
                 )
+                }
             }
         }
         // decimalPad has no built-in Done key — without this there was no
@@ -654,6 +701,7 @@ private struct IngredientCarousel: View {
 private struct IngredientCard: View {
     @Binding var item: FoodCostItem
     let height: CGFloat
+    var readOnly: Bool = false
     var focusedField: FocusState<CarouselField?>.Binding
     var onDelete: () -> Void
 
@@ -702,6 +750,7 @@ private struct IngredientCard: View {
                     .overlay(Capsule().strokeBorder(Color.cavnarInk.opacity(0.18), lineWidth: 1))
                     .clipShape(Capsule())
                     .padding(.bottom, 2)
+                if !readOnly {
                 Button(action: onDelete) {
                     Image(systemName: "xmark")
                         .font(.system(size: 9, weight: .bold))
@@ -719,6 +768,7 @@ private struct IngredientCard: View {
                 }
                 .accessibilityLabel("Delete entry")
                 .padding(.bottom, 1)
+                }
             }
             HStack(spacing: 24) {
                 statField(label: "PRICE", prefix: "$", text: $item.priceText, field: .price(item.id))
@@ -728,6 +778,8 @@ private struct IngredientCard: View {
         }
         .padding(15)
         .frame(height: height)
+        // Read-only rows (a ledger account before Edit prices) take no input.
+        .disabled(readOnly)
         .background(
             ZStack {
                 Color.cavnarPaper

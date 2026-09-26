@@ -4,7 +4,11 @@ import SwiftUI
 enum FoodCostAction: Identifiable, Hashable {
     /// The invoice scanner; `camera` opens straight onto the camera.
     case scan(camera: Bool)
+    /// One scanned invoice, reopened for its lines (a pending invoice, or
+    /// the action queue's "invoice/<id>").
+    case invoice(Int)
     case count
+    case waste
     case order
     case recipes
     case margins
@@ -12,7 +16,9 @@ enum FoodCostAction: Identifiable, Hashable {
     var id: String {
         switch self {
         case .scan(let camera): return camera ? "scan-camera" : "scan"
+        case .invoice(let id): return "invoice-\(id)"
         case .count: return "count"
+        case .waste: return "waste"
         case .order: return "order"
         case .recipes: return "recipes"
         case .margins: return "margins"
@@ -21,9 +27,15 @@ enum FoodCostAction: Identifiable, Hashable {
 
     /// "inventory/invoices?scan=camera" → the scanner on the camera;
     /// "inventory/order" → the supplier order; "inventory/count" → the
-    /// count sheet; "invoice/<id>" → the scanner. Nil: the module itself.
+    /// count sheet; "inventory/waste" → log waste; "invoice/<id>" → that
+    /// invoice's lines (it used to open a blank scanner, so the action
+    /// queue's "1 invoice to check" led nowhere). Nil: the module itself.
     init?(path: NavPath) {
         let section = (path.head == "inventory" || path.head == "food") ? (path.target ?? "") : path.head
+        if path.head == "invoice", let id = path.target.flatMap({ Int($0) }) {
+            self = .invoice(id)
+            return
+        }
         switch section {
         case "invoices", "invoice", "scan":
             self = .scan(camera: path.query["scan"] == "camera" || section == "scan")
@@ -31,6 +43,8 @@ enum FoodCostAction: Identifiable, Hashable {
             self = .order
         case "count":
             self = .count
+        case "waste":
+            self = .waste
         case "recipes":
             self = .recipes
         case "margins":
@@ -55,6 +69,7 @@ struct FoodCostActionRow: View {
             item("Count", icon: "checklist") { open(.count) }
             item("Order", icon: "paperplane") { open(.order) }
             Menu {
+                Button { open(.waste) } label: { Label("Log waste", systemImage: "trash") }
                 Button { open(.recipes) } label: { Label("Recipes", systemImage: "list.bullet.clipboard") }
                 Button { open(.margins) } label: { Label("Menu margins", systemImage: "chart.pie") }
                 Button { open(.scan(camera: false)) } label: { Label("Invoice from a photo", systemImage: "photo") }

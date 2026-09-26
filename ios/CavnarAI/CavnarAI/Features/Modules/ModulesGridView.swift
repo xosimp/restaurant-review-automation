@@ -33,6 +33,7 @@ final class ModulesGridViewModel {
         defer { isLoading = false }
         do {
             modules = try await fetchModules()
+            ModuleAccess.shared.record(modules)
         } catch let error as APIClient.APIError {
             errorMessage = error.message
         } catch is CancellationError {

@@ -261,6 +261,28 @@ def test_the_ios_send_body_carries_the_draft_hash():
     assert "draft" in body.lower()
 
 
+def test_the_ios_order_is_never_sent_on_one_tap():
+    """iOS emailed a supplier on one tap (per supplier or Send all) with no
+    confirmation, no quantity edits and no already-sent answer; the web has
+    always asked. Every send button now only asks, and the confirmation
+    names the supplier, the line count and the total."""
+    sheet = open("ios/CavnarAI/CavnarAI/Features/FoodCost/SupplierOrderSheet.swift", encoding="utf-8").read()
+    vm = open("ios/CavnarAI/CavnarAI/Features/FoodCost/SupplierOrderViewModel.swift", encoding="utf-8").read()
+    assert "viewModel.send(" not in sheet
+    assert "viewModel.askToSend(group)" in sheet and "viewModel.askToSendAll()" in sheet
+    assert ".confirmationDialog(" in sheet and "viewModel.confirmSend(pending)" in sheet
+    assert "an order for \\(p.lineCount) item" in vm, "the confirmation states the line count"
+    assert "alreadySent" in vm and "resend: true" in vm, "already_sent asks before a resend"
+    assert "setQuantity(" in vm and "lines: lines.isEmpty ? nil : lines" in vm, "edited quantities go up"
+
+
+def test_the_ios_receive_can_record_a_short_delivery_and_says_why_it_failed():
+    src = open("ios/CavnarAI/CavnarAI/Features/FoodCost/FoodCostDeliveries.swift", encoding="utf-8").read()
+    assert "/received" in src and "ReceiveBody(lines: lines)" in src
+    assert "Some were short" in src and "Receive these" in src
+    assert "errors[order.id] = error.message" in src, "a failed receive is shown, never swallowed"
+
+
 # ── A5 order #23 / MOD-FC-9: the phone honours the undo window ──────────────
 
 def test_the_web_send_honours_the_send_delay(apps, db_path, mailed):

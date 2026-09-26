@@ -437,6 +437,9 @@ final class ConfidenceDisplayTests: XCTestCase {
         XCTAssertEqual(ClaimKind.label(kind: "inferred"), "Inferred")
         XCTAssertEqual(ClaimKind.label(kind: "inferred", modelWritten: true), "AI-written")
         XCTAssertEqual(ClaimKind.label(kind: nil, modelWritten: true), "AI-written")
+        // An invoice line's own check, the web's checked / unchecked tag.
+        XCTAssertEqual(ClaimKind.label(kind: "checked"), "Checked")
+        XCTAssertEqual(ClaimKind.label(kind: "unchecked"), "Unchecked")
         XCTAssertNil(ClaimKind.label(kind: "unavailable"))
         XCTAssertNil(ClaimKind.label(kind: nil))
     }

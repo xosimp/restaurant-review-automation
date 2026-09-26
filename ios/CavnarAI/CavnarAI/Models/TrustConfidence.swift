@@ -726,6 +726,10 @@ enum ClaimKind {
         case "suggestion": return "Suggestion"
         case "estimate": return "Estimate"
         case "partial": return "Partial"
+        // A reading's own check (invoices.py "verified"), the web's
+        // "checked" / "unchecked" .ck-tag on an invoice line.
+        case "checked": return "Checked"
+        case "unchecked": return "Unchecked"
         default: return nil
         }
     }

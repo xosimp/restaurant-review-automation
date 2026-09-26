@@ -8,7 +8,7 @@ import Foundation
 //   GET  /mobile/api/dsr/<date>/status      DSRStatusResponse (access.checklist)
 //   POST /mobile/api/dsr/close              DSRCloseResponse
 //   GET  /mobile/api/dsr/week?date=         DSRWeekResponse (rollup.week)
-//   GET  /mobile/api/dsr/period?date=       (not read by the app yet; same DSRGrid shape)
+//   GET  /mobile/api/dsr/period?date=       DSRPeriodResponse (rollup.period; 409 without a fiscal calendar)
 //
 // One stored snapshot, two views: the server has already removed what this
 // login may not read (dsr/access.py) — a whole block, an owner-only line
@@ -880,6 +880,14 @@ struct DSRWeekResponse: Decodable {
     let ok: Bool
     let view: String?
     let week: DSRGrid
+}
+
+/// The fiscal period holding a date — one row per week (`weeks`), the
+/// web's Period view.
+struct DSRPeriodResponse: Decodable {
+    let ok: Bool
+    let view: String?
+    let period: DSRGrid
 }
 
 /// A week (one row per day) or a period (one row per week), from dsr.rollup.

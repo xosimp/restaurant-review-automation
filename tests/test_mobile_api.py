@@ -606,6 +606,45 @@ def test_food_cost_analytics_returns_ok_for_fresh_restaurant(client, db_path, mo
         assert key in data, f"missing {key}"
 
 
+# ── /mobile/api/food-cost/tracker ───────────────────────────────────────────
+
+def test_the_tracker_starts_from_what_the_web_tracker_shows(client, db_path, monkeypatch):
+    """The phone started every week from seven hard-coded rows with no
+    prices and never read the owner's custom items; the web pre-fills this
+    week's submission. Both now read client_api.food_cost_tracker_data."""
+    import inventory_ledger
+    monkeypatch.setattr(inventory_ledger, "list_ingredients", lambda r: [])
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    h = _auth_headers(token)
+    fresh = client.get("/mobile/api/food-cost/tracker", headers=h).get_json()
+    assert fresh["ok"] is True and fresh["from_pantry"] is False
+    assert [r["name"] for r in fresh["items"]][:2] == ["Chicken Breast", "Beef/Steak"]
+    assert all(r["price"] == "" for r in fresh["items"])
+
+    assert client.post("/mobile/api/food-cost/custom-item", headers=h,
+                       json={"name": "Truffle oil", "unit": "oz"}).get_json()["ok"] is True
+    with_custom = client.get("/mobile/api/food-cost/tracker", headers=h).get_json()
+    assert with_custom["items"][-1] == {"name": "Truffle oil", "unit": "oz", "price": "", "usage": "", "custom": True}
+
+    client.post("/mobile/api/food-cost/quickcount", headers=h,
+                json={"items": [{"name": "Butter", "unit": "lb", "price": "4.25", "usage": "10"}]})
+    saved = client.get("/mobile/api/food-cost/tracker", headers=h).get_json()
+    assert [(r["name"], r["price"]) for r in saved["items"]] == [("Butter", "4.25")]
+    assert saved["submitted_at"]
+
+
+def test_the_tracker_is_the_pantry_for_a_ledger_account(client, db_path, monkeypatch):
+    import inventory_ledger
+    monkeypatch.setattr(inventory_ledger, "list_ingredients", lambda r: [
+        {"name": "Mozzarella", "unit": "lb", "unit_cost": 3.456, "avg_daily_usage": 2.0}])
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    d = client.get("/mobile/api/food-cost/tracker", headers=_auth_headers(token)).get_json()
+    assert d["from_pantry"] is True
+    assert d["items"] == [{"name": "Mozzarella", "unit": "lb", "price": "3.46", "usage": "14.0", "custom": False}]
+
+
 # ── /mobile/api/food-cost/trend ─────────────────────────────────────────────
 
 def test_food_cost_trend_requires_auth(client):
@@ -2676,7 +2715,8 @@ def test_account_payload_includes_new_blocks(client, db_path):
     data = client.get("/mobile/api/account", headers=_auth_headers(token)).get_json()
     assert data["reviews"] == {"auto_approve_5star": False, "auto_approve_earned": False, "auto_approve_daily_cap": 5,
                                "auto_approve_paused": False, "auto_approved_today": 0}
-    assert data["data"] == {"data_retention_months": 0}
+    assert data["data"] == {"data_retention_months": 0,
+                            "export_scopes": ["reviews", "labor", "food_cost", "settings"]}
     s = data["alerts"]["settings"]
     assert s["alert_health_bypass_quiet"] is False and s["alert_food_waste"] is False
     assert s["alert_ai_visibility_drop"] is False and s["push_sound"] is True and s["alert_extra_emails"] == ""
@@ -2857,6 +2897,66 @@ def test_export_scopes(client, db_path, monkeypatch):
     assert settings["name"] == "Mobile Test Co" and "two_fa_code" not in settings
     events = client.get("/mobile/api/account/activity", headers=_auth_headers(token)).get_json()["events"]
     assert events[0]["type"] == "data_exported" and events[0]["detail"] == "reviews, settings, labor, food_cost"
+
+
+def test_export_refuses_scopes_for_modules_the_restaurant_does_not_have(client, db_path, monkeypatch):
+    """The web picker hid Labor and Food cost when those modules were off,
+    the phone listed all four, and the route exported whatever it was sent.
+    The route now refuses a scope outside export_scopes_for, and /account
+    tells the phone which scopes to list."""
+    rid = _restaurant(db_path, module_labor=0, module_inventory=0)
+    token = _login(client, db_path, rid)
+    sent = {}
+    _capture_email(monkeypatch, sent)
+    monkeypatch.setattr(mobile_api, "_resend_key", lambda: "k")
+    summary = client.get("/mobile/api/account", headers=_auth_headers(token)).get_json()
+    assert summary["data"]["export_scopes"] == ["reviews", "settings"]
+    only = client.post("/mobile/api/account/export-data", headers=_auth_headers(token), json={"scopes": ["labor"]})
+    assert only.status_code == 403 and only.get_json()["refused"] == ["labor"]
+    assert "attachments" not in sent
+    mixed = client.post("/mobile/api/account/export-data", headers=_auth_headers(token),
+                        json={"scopes": ["reviews", "labor", "food_cost"]}).get_json()
+    assert mixed["ok"] is True and mixed["scopes"] == ["reviews"]
+    assert mixed["refused"] == ["labor", "food_cost"]
+    assert [a["filename"] for a in sent["attachments"]] == ["Mobile Test Co_reviews.csv"]
+
+
+def test_export_scopes_follow_the_restaurants_modules():
+    import types
+    owner = {"role": "owner"}
+    full = types.SimpleNamespace(module_labor=1, module_inventory=1)
+    assert mobile_api.export_scopes_for(full, owner) == ["reviews", "labor", "food_cost", "settings"]
+    assert mobile_api.export_scopes_for(full, {"role": "manager"}) == ["reviews", "labor", "settings"]
+    none = types.SimpleNamespace(module_labor=0, module_inventory=0)
+    assert mobile_api.export_scopes_for(none, owner) == ["reviews", "settings"]
+
+
+def test_a_counts_only_manager_gets_a_counts_food_cost_tile(client, db_path, monkeypatch):
+    """The Modules tiles came from get_active_modules with no permission
+    filter: a manager (FOOD_COST_ENTER without FOOD_COST_VIEW) opened the
+    full Food Cost screen and every analytics call answered 403. The tile
+    now says `mode: counts` and carries no dollar figure."""
+    import inventory
+    rid = _restaurant(db_path)
+    monkeypatch.setattr(inventory, "analysis_for",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no analysis for a counts-only tile")))
+    token = _login(client, db_path, rid, username="mgr", role="manager")
+    tiles = client.get("/mobile/api/home/modules", headers=_auth_headers(token)).get_json()["modules"]
+    food = next(t for t in tiles if t["key"] == "inventory")
+    assert food["mode"] == "counts"
+    assert "$" not in food["kpi"]["value"] and food["pulse"] is None
+    assert all(t["mode"] == "full" for t in tiles if t["key"] != "inventory")
+    # The analytics it would have opened stay refused on the server.
+    denied = client.get("/mobile/api/food-cost/analytics", headers=_auth_headers(token))
+    assert denied.status_code == 403 and denied.get_json()["module_forbidden"] is True
+
+
+def test_an_owner_gets_the_full_food_cost_tile():
+    assert mobile_api._module_tile_mode("inventory", {"role": "owner"}) == "full"
+    assert mobile_api._module_tile_mode("inventory", {"role": "manager"}) == "counts"
+    assert mobile_api._module_tile_mode("labor", {"role": "manager"}) == "full"
+    assert mobile_api._module_tile_mode("inventory", {"role": "employee"}) is None
+    assert mobile_api._module_tile_mode("inventory", None) == "full"
 
 
 def test_activity_log_records_account_events(client, db_path):

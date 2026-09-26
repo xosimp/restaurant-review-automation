@@ -353,6 +353,8 @@ struct HomeView: View {
                     DailyReportListView(open: { path.append($0) })
                 case .week(let date):
                     DailyReportWeekView(date: date, open: { path.append($0) })
+                case .period(let date):
+                    DailyReportWeekView(date: date, period: true, open: { path.append($0) })
                 }
             }
             // A tapped `dsr` push (or its row in the notification list)

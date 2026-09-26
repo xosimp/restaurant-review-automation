@@ -754,6 +754,10 @@ struct ModuleSummary: Codable, Identifiable, Hashable {
     /// static coming-soon entries (built with the memberwise init) keep
     /// compiling untouched.
     var pulse: ModulePulse? = nil
+    /// "full", or "counts" for a Food Cost this login may only count,
+    /// receive and log waste on (mobile_api._module_tile_mode). Nil from an
+    /// older server — read as full.
+    var mode: String? = nil
 
     var id: String { key }
     var isAvailable: Bool { status == "available" }

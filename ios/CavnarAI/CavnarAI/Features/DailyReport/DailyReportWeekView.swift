@@ -7,31 +7,55 @@ import SwiftUI
 /// period to date. The day column stays put while the figures scroll
 /// sideways. A day with no report is in the week with every measured
 /// figure as a dash — never a zero.
+///
+/// Week | Period, as the web's Week and Period views: a period is the
+/// fiscal period holding the date, one row per week, and a week's row
+/// opens that week.
 struct DailyReportWeekView: View {
     var open: (DailyReportRoute) -> Void
     @State private var date: String?
+    @State private var kind: GridKind
     @State private var viewModel = DailyReportWeekViewModel()
 
-    init(date: String?, open: @escaping (DailyReportRoute) -> Void) {
+    enum GridKind: String, CaseIterable, Identifiable {
+        case week = "Week"
+        case period = "Period"
+        var id: String { rawValue }
+    }
+
+    init(date: String?, period: Bool = false, open: @escaping (DailyReportRoute) -> Void) {
         _date = State(initialValue: date)
+        _kind = State(initialValue: period ? .period : .week)
         self.open = open
     }
+
+    private var isPeriod: Bool { kind == .period }
+    private var loadKey: String { kind.rawValue + (date ?? "") }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                CavnarSegmentedControl(selection: $kind, options: GridKind.allCases) { $0.rawValue }
                 header
                 if viewModel.isLoading && viewModel.grid == nil {
                     CavnarSkeletonLines(widths: [1, 1, 1, 1, 1, 0.8]).cavnarCard()
                 } else if let error = viewModel.errorMessage, viewModel.grid == nil {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(error).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarRed)
-                        Button("Try again") { Task { await viewModel.load(date: date) } }
+                        Button("Try again") { Task { await viewModel.load(date: date, period: isPeriod) } }
                             .buttonStyle(CavnarSecondaryButtonStyle())
                     }
                     .cavnarCard()
                 } else if let grid = viewModel.grid {
-                    DSRWeekGrid(table: DSRWeekTable(grid: grid)) { day in open(.report(date: day)) }
+                    DSRWeekGrid(table: DSRWeekTable(grid: grid)) { day in
+                        if grid.kind == "period" {
+                            // A period's row is a week: open it here.
+                            date = day
+                            kind = .week
+                        } else {
+                            open(.report(date: day))
+                        }
+                    }
                         .opacity(viewModel.isLoading ? 0.5 : 1)
                         .animation(.easeOut(duration: 0.2), value: viewModel.isLoading)
                     if !grid.showsBudget {
@@ -44,26 +68,26 @@ struct DailyReportWeekView: View {
             .padding(.top, 8)
             .padding(.bottom, 80)
         }
-        .cavnarEmberRefreshable { await viewModel.load(date: date) }
+        .cavnarEmberRefreshable { await viewModel.load(date: date, period: isPeriod) }
         .cavnarModuleBackground()
-        .navigationTitle("The week")
+        .navigationTitle(isPeriod ? "The period" : "The week")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { cavnarTitleToolbar("The week") }
+        .toolbar { cavnarTitleToolbar(isPeriod ? "The period" : "The week") }
         .cavnarEmberBackButton()
-        .task(id: date) { await viewModel.load(date: date) }
+        .task(id: loadKey) { await viewModel.load(date: date, period: isPeriod) }
     }
 
     private var header: some View {
         HStack(alignment: .center, spacing: 12) {
-            stepButton(-1, systemImage: "chevron.left", label: "Previous week")
+            stepButton(-1, systemImage: "chevron.left", label: isPeriod ? "Previous period" : "Previous week")
             VStack(spacing: 3) {
-                HomeMixedText.make(viewModel.grid?.label ?? "Week", size: 17, weight: 700, color: .cavnarInk)
+                HomeMixedText.make(viewModel.grid?.label ?? kind.rawValue, size: 17, weight: 700, color: .cavnarInk)
                 if let g = viewModel.grid {
                     HomeMixedText.make(CavnarDate.mdyRange(g.start, g.end), size: 13, color: .cavnarInk3)
                 }
             }
             .frame(maxWidth: .infinity)
-            stepButton(1, systemImage: "chevron.right", label: "Next week")
+            stepButton(1, systemImage: "chevron.right", label: isPeriod ? "Next period" : "Next week")
         }
     }
 
@@ -144,7 +168,23 @@ struct DSRWeekTable {
         func pct(_ v: Double?) -> Cell { Cell(text: DSRFormat.pct(v), tone: v == nil ? .muted : .plain) }
         func note(_ s: String?) -> Cell { Cell(text: s ?? "", tone: .muted) }
 
-        var out: [Row] = grid.days.map { d in
+        // A period (rollup.period): one row per week, each opening that week.
+        let weekRows: [Row] = grid.weeks.compactMap { w in
+            guard let t = w.totals else { return nil }
+            var cells = grid.categories.map { money(t.category($0)) }
+            if gross { cells += [money(t.gross)] }
+            cells += [money(t.net)]
+            if budget { cells += [money(t.budgetGross), money(t.budgetNet), change(t.vsBudgetNetPct)] }
+            cells += [money(t.lastYearNet), change(t.vsLastYearNetPct)]
+            if labor { cells += [pct(t.laborPct)] }
+            let measured = t.daysMeasured ?? 0
+            cells += [note(measured >= 7 ? CavnarDate.mdyRange(w.start, w.end)
+                           : "\(measured) of 7 days measured")]
+            return Row(id: "wk-" + w.start, label: w.label ?? CavnarDate.mdyRange(w.start, w.end), opens: w.start,
+                       provisional: false, isTotal: false, cells: cells)
+        }
+
+        var out: [Row] = weekRows + grid.days.map { d in
             var cells = grid.categories.map { money(d.category($0)) }
             if gross { cells += [money(d.gross)] }
             cells += [money(d.net)]
@@ -169,9 +209,14 @@ struct DSRWeekTable {
 
         if let t = grid.totals {
             let measured = t.daysMeasured ?? 0
-            let text = grid.days.isEmpty || measured >= grid.days.count ? nil
-                : "\(measured) of \(grid.days.count) days measured"
-            out.append(totalRow("totals", "Week", t, note: text))
+            if grid.kind == "period" {
+                out.append(totalRow("totals", "Period", t, note: CavnarDate.mdyRange(grid.start, grid.end)
+                                    + " · \(measured) day\(measured == 1 ? "" : "s") measured"))
+            } else {
+                let text = grid.days.isEmpty || measured >= grid.days.count ? nil
+                    : "\(measured) of \(grid.days.count) days measured"
+                out.append(totalRow("totals", "Week", t, note: text))
+            }
         }
         if let p = grid.periodToDate {
             let range = p.start.flatMap { s in p.end.map { CavnarDate.mdyRange(s, $0) } }

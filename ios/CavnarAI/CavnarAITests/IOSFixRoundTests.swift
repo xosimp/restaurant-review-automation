@@ -344,6 +344,8 @@ final class IOSFixRoundTests: XCTestCase {
                        "bare dsr is last night's report, as on the web")
         XCTAssertEqual(DeepLinkRouter.dailyReportRoute(NavPath("dsr/night/2026-09-24")!), .report(date: "2026-09-24"))
         XCTAssertEqual(DeepLinkRouter.dailyReportRoute(NavPath("dsr/week")!), .week(date: nil))
+        // The period is its own view now (the web's Night / Week / Period).
+        XCTAssertEqual(DeepLinkRouter.dailyReportRoute(NavPath("dsr/period/2026-09-24")!), .period(date: "2026-09-24"))
         XCTAssertEqual(DeepLinkRouter.dailyReportRoute(NavPath("dsr/list")!), .list)
     }
 

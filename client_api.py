@@ -3818,6 +3818,29 @@ def inv_insight_api(current_user):
         return jsonify(insight=_msg_inv, error=_msg_inv), _status_inv
 
 
+def waste_trend_analysis(rid):
+    """(analysis, is_live) for a waste-trend target line — shared by the web
+    Waste Trend card and the phone's /mobile/api/food-cost/trend, so the
+    same chart draws the same target dollars on both. The phone twin passed
+    no analysis, so its target came from history (basis "history") while
+    the web's came from this week's live purchases (basis "live").
+
+    A sample pantry's purchases would put the target line somewhere the
+    owner's real history never bought — without a live count the analysis
+    is None and the target comes from the newest week that recorded
+    purchases, or not at all. Best-effort: a failure is (None, is_live)."""
+    from inventory import load_inventory_for_restaurant, analysis_for
+    analysis = None
+    is_live = True
+    try:
+        items, is_live = load_inventory_for_restaurant(rid)
+        if is_live:
+            _, _, analysis = analysis_for(rid, items=items, is_live=is_live)
+    except Exception:
+        analysis = None
+    return analysis, is_live
+
+
 @client_bp.route("/api/food-cost/waste-trend")
 @login_required
 def food_cost_waste_trend(current_user):
@@ -3825,23 +3848,10 @@ def food_cost_waste_trend(current_user):
     and observation, computed once server-side (waste_trend.py). The live
     analysis is passed in so the target line reflects this week's real
     purchases rather than an average of history."""
-    from inventory import load_inventory_for_restaurant, analysis_for
     from waste_trend import build_waste_trend
     rid = current_user["restaurant_id"]
     range_key = (request.args.get("range") or "8w").lower()
-    analysis = None
-    is_live = True
-    try:
-        restaurant = get_restaurant(rid)
-        items, is_live = load_inventory_for_restaurant(rid)
-        # A sample pantry's purchases would put the target line somewhere
-        # the owner's real history never bought — without a live count the
-        # target comes from the newest week that recorded purchases, or
-        # not at all.
-        if is_live:
-            _, _, analysis = analysis_for(rid, items=items, is_live=is_live)
-    except Exception:
-        analysis = None
+    analysis, is_live = waste_trend_analysis(rid)
     try:
         return jsonify(**build_waste_trend(rid, range_key, analysis=analysis, is_live=bool(is_live)))
     except Exception as e:
@@ -5349,6 +5359,99 @@ def _do_food_cost_quickcount(restaurant_id, items):
         # ingredient's drift alert the following week.
         "rejected": rejected,
     }, 200
+
+
+def food_cost_tracker_data(rid):
+    """The price monitor's rows: food_cost_json (current, previous,
+    custom_items), with `current` replaced by the live pantry for a ledger
+    account. The web tracker (hosted_dashboard) renders it at page load and
+    the phone reads it from GET /food-cost/tracker, so both start from the
+    same rows — the phone used to start every week from seven hard-coded
+    ingredients with no prices, whatever had been saved. None when nothing
+    is on file."""
+    import json as _json_fc
+    from models import get_client_data as _gcd_fc
+    data = None
+    try:
+        _fc_raw = _gcd_fc(rid)
+        if _fc_raw and _fc_raw.get("food_cost_json"):
+            data = _json_fc.loads(_fc_raw["food_cost_json"])
+    except Exception:
+        data = None
+    # With a live pantry, the price monitor reads the pantry itself — name,
+    # unit, unit cost, a week's usage — instead of seven sample rows at 0.00
+    # beside the real ingredient list. For a ledger account this is ALWAYS
+    # the case now (friction audit U2-14): invoices keep unit_cost current and
+    # usage is computed from POS x recipes, so the 14 typed fields a week
+    # duplicated them. The rows render read-only with an Edit affordance.
+    # The typed tracker itself (/api/food-cost-quickcount, food_cost_json) is
+    # a candidate for future cleanup after additional verification: its
+    # food_cost_data consumers were not traced end to end.
+    try:
+        import inventory_ledger as _il_fc
+        _pantry = [r for r in (_il_fc.list_ingredients(rid) or []) if r.get("name")]
+        if _pantry:
+            data = dict(data or {})
+            _typed_at = ((data.get("current") or {}).get("submitted_at")
+                         if not (data.get("current") or {}).get("from_pantry") else None)
+            data["current"] = {
+                "from_pantry": True,
+                "typed_at": _typed_at,
+                "items": [{"name": r["name"], "unit": r.get("unit") or "",
+                           "price": (round(float(r["unit_cost"]), 2) if r.get("unit_cost") else ""),
+                           "usage": (round(float(r["avg_daily_usage"]) * 7, 1) if r.get("avg_daily_usage") else "")}
+                          for r in _pantry]}
+    except Exception:
+        pass
+    return data
+
+
+# The seven rows a fresh tracker starts from — the web template's own list
+# (dashboard.html, fc-rows) and the phone's, served by one route.
+FOOD_COST_TRACKER_DEFAULTS = (
+    ("Chicken Breast", "lb"), ("Beef/Steak", "lb"), ("Salmon / Fish", "lb"), ("Shrimp", "lb"),
+    ("Heavy Cream", "qt"), ("Butter", "lb"), ("Produce (misc)", "case"),
+)
+
+
+def _do_food_cost_tracker(restaurant_id):
+    """GET /food-cost/tracker (web and phone): the rows the price monitor
+    opens on, exactly as the web tracker renders them — this week's saved
+    prices when there are some, the live pantry (read-only, `from_pantry`)
+    for a ledger account, otherwise the seven defaults plus the owner's
+    saved custom items with blank prices."""
+    data = food_cost_tracker_data(restaurant_id) or {}
+    current = data.get("current") if isinstance(data.get("current"), dict) else None
+    previous = data.get("previous") if isinstance(data.get("previous"), dict) else None
+
+    def _row(it, custom=False):
+        def _txt(v):
+            return "" if v in (None, "") else str(v)
+        return {"name": str(it.get("name") or ""), "unit": str(it.get("unit") or ""),
+                "price": _txt(it.get("price")), "usage": _txt(it.get("usage")), "custom": custom}
+
+    custom = [ci for ci in (data.get("custom_items") or []) if isinstance(ci, dict) and ci.get("name")]
+    if current and current.get("items"):
+        rows = [_row(it) for it in current["items"] if isinstance(it, dict)]
+    else:
+        rows = [_row({"name": n, "unit": u}) for n, u in FOOD_COST_TRACKER_DEFAULTS]
+        rows += [_row({"name": ci.get("name"), "unit": ci.get("unit")}, custom=True) for ci in custom]
+    return {
+        "ok": True,
+        "items": rows,
+        "from_pantry": bool(current and current.get("from_pantry")),
+        "submitted_at": (current or {}).get("submitted_at"),
+        "typed_at": (current or {}).get("typed_at"),
+        "previous_submitted_at": (previous or {}).get("submitted_at"),
+        "custom_items": [{"name": ci.get("name"), "unit": ci.get("unit") or ""} for ci in custom],
+    }, 200
+
+
+@client_bp.route("/api/food-cost/tracker")
+@login_required
+def food_cost_tracker(current_user):
+    payload, status = _do_food_cost_tracker(current_user["restaurant_id"])
+    return jsonify(**payload), status
 
 
 def _do_save_food_cost_custom_item(restaurant_id, name, unit):

@@ -391,6 +391,41 @@ def test_the_route_survives_the_analysis_failing(client, db_path, monkeypatch):
     assert d["weeks"][0]["waste"] == 150.0
 
 
+def test_the_phone_trend_draws_the_same_live_target_as_the_web_card(client, db_path, monkeypatch):
+    """/mobile/api/food-cost/trend passed no analysis, so its target came
+    from history while the web card's came from this week's live purchases:
+    one chart, two target figures. Both now read client_api.waste_trend_analysis."""
+    import mobile_api
+    rid = _restaurant(db_path)
+    _login(client, db_path, rid)
+    _row(db_path, rid, "2026-09-09", 200.0)
+    _row(db_path, rid, "2026-09-16", 150.0)
+    import inventory
+    monkeypatch.setattr(inventory, "load_inventory_for_restaurant", lambda r: ([], True))
+    monkeypatch.setattr(inventory, "analyse_inventory", lambda *a, **k: {"waste_rate_pct": 5.0, "total_waste_cost_week": 150.0})
+    web = client.get("/api/food-cost/waste-trend").get_json()["target"]
+
+    user = {"id": 1, "restaurant_id": rid, "is_admin": 0, "role": "owner", "username": "erik"}
+    monkeypatch.setattr(auth, "get_session_user", lambda *a, **k: user)
+    monkeypatch.setattr(mobile_api, "get_restaurant", lambda r, *a, **k: models.get_restaurant(r, db_path=db_path), raising=False)
+    app = Flask(__name__)
+    app.register_blueprint(mobile_api.mobile_bp)
+    phone = app.test_client().get("/mobile/api/food-cost/trend",
+                                  headers={"Authorization": "Bearer t"}).get_json()
+    assert phone["ok"] is True, phone
+    assert phone["target"]["basis"] == "live" == web["basis"]
+    assert phone["target"]["weekly"] == web["weekly"] == 135.0
+
+
+def test_both_trend_routes_share_one_target_source():
+    import inspect
+    import mobile_api
+    src = inspect.getsource(mobile_api.mobile_food_cost_trend)
+    assert "waste_trend_analysis(" in src
+    assert "implied_target_weekly(None" not in src
+    assert "waste_trend_analysis(" in inspect.getsource(client_api.food_cost_waste_trend)
+
+
 # ── The page reads the engine, once ───────────────────────────────────────
 
 def test_the_dashboard_fetches_the_trend_from_the_engine_exactly_once():

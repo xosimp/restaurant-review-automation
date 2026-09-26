@@ -95,7 +95,11 @@ final class CommandEntryPointsTests: XCTestCase {
     func testFoodCostOpensWhatThePathNames() {
         XCTAssertEqual(FoodCostAction(path: NavPath("inventory/invoices?scan=camera")!), .scan(camera: true))
         XCTAssertEqual(FoodCostAction(path: NavPath("inventory/invoices")!), .scan(camera: false))
-        XCTAssertEqual(FoodCostAction(path: NavPath("invoice/31")!), .scan(camera: false))
+        // The action queue's "invoice/<id>" opens that invoice's lines, not
+        // a blank scanner; a bare "invoice" is still the scanner.
+        XCTAssertEqual(FoodCostAction(path: NavPath("invoice/31")!), .invoice(31))
+        XCTAssertEqual(FoodCostAction(path: NavPath("invoice")!), .scan(camera: false))
+        XCTAssertEqual(FoodCostAction(path: NavPath("inventory/waste")!), .waste)
         XCTAssertEqual(FoodCostAction(path: NavPath("inventory/order")!), .order)
         XCTAssertEqual(FoodCostAction(path: NavPath("order/sysco")!), .order)
         XCTAssertEqual(FoodCostAction(path: NavPath("inventory/count")!), .count)
