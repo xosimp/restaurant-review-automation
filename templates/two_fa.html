@@ -1,2 +1,254 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Verify &mdash; Cavnar AI</title><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Serif+Display&display=swap" rel="stylesheet"><link rel="stylesheet" href="/static/css/cavnar-buttons.css">
-<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'DM Sans',sans-serif;background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 100%);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}.card{background:white;border-radius:14px;padding:40px 36px;max-width:420px;width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.08)}.logo{text-align:center;margin-bottom:28px;font-family:'DM Serif Display',serif;font-size:24px;color:#0e0c0a}.logo span{color:#c84b2f}h2{font-size:18px;font-weight:700;color:#0e0c0a;margin-bottom:8px;text-align:center}p{font-size:13px;color:#7a736a;text-align:center;margin-bottom:24px;line-height:1.6}.code-input{display:flex;gap:8px;justify-content:center;margin-bottom:20px}.code-input input{width:46px;height:54px;text-align:center;font-size:24px;font-weight:700;border:2px solid #e0dbd0;border-radius:8px;font-family:monospace;color:#0e0c0a;outline:none;transition:border-color .15s}.code-input input:focus{border-color:#c84b2f}.error{color:#c0392b;font-size:13px;text-align:center;margin-bottom:16px;padding:10px;background:#fdf0ef;border-radius:6px;border:1px solid #f5c6c2}.remember{display:flex;align-items:center;gap:8px;font-size:12px;color:#7a736a;margin-bottom:16px;justify-content:center;cursor:pointer}.hint{font-size:11px;color:#7a736a;text-align:center;margin-top:8px}</style></head><body><div class="card"><div class="logo"><svg viewBox="-6 -14 666 128" height="0.8em" style="vertical-align:-0.08em" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M53.43 101.49Q28.81 101.49 14.40 87.46Q0.00 73.43 0.00 50.00Q0.00 26.57 14.40 12.54Q28.81 -1.49 53.43 -1.49Q76.87 -1.49 90.67 9.48Q104.48 20.45 104.48 39.40V41.64H79.55V39.40Q79.55 29.40 73.43 24.70Q67.31 20.00 53.88 20.00Q37.31 20.00 30.52 26.72Q23.73 33.43 23.73 50.00Q23.73 66.57 30.52 73.28Q37.31 80.00 53.88 80.00Q67.31 80.00 73.43 75.30Q79.55 70.60 79.55 60.60V58.36H104.48V60.60Q104.48 79.55 90.67 90.52Q76.87 101.49 53.43 101.49Z"/><path d="M127.87 100.00H102.79L146.52 0.00H178.47L222.50 100.00H196.82L187.42 77.91H137.42ZM155.48 35.97 146.08 57.76H178.76L169.36 35.97L163.24 20.45H161.60Z"/><path d="M266.08 100.00H234.14L192.65 0.00H219.67L249.67 77.31H251.16L280.71 0.00H307.58Z"/><path d="M341.47 100.00H319.08V0.00H342.96L378.78 47.31L392.51 68.36H394.15L393.11 48.21V0.00H415.50V100.00H391.61L354.75 52.24L342.06 33.43H340.57L341.47 51.79Z"/><path d="M451.92 100.00H426.85L470.58 0.00H502.52L546.55 100.00H520.88L511.47 77.91H461.47ZM479.53 35.97 470.13 57.76H502.82L493.41 35.97L487.29 20.45H485.65Z"/><path d="M580.39 100.00H558.00V0.00H613.22Q631.73 0.00 641.80 7.84Q651.88 15.67 651.88 30.00Q651.88 55.07 623.67 57.76V58.96Q629.94 60.60 633.30 63.88Q636.65 67.16 639.79 73.13L654.27 100.00H628.30L614.56 74.03Q611.43 68.06 607.55 65.90Q603.67 63.73 595.16 63.73H580.39ZM580.39 20.15V46.87H613.07Q621.28 46.87 624.86 43.96Q628.45 41.04 628.45 33.43Q628.45 26.12 624.79 23.13Q621.13 20.15 613.07 20.15Z"/><circle cx="250.1" cy="28" r="11" fill="#D4583A"/></svg><span style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;font-weight:800;font-size:0.34em;letter-spacing:0.16em;color:#D4583A;vertical-align:0.62em;margin-left:0.12em;font-style:normal">AI</span></div><h2>Check your email</h2><p>We sent a 6-digit code to<br><strong>{{ masked_email }}</strong><br>Enter it below to sign in.</p>{% if error %}<div class="error">{{ error }}</div>{% endif %}<form method="POST" action="/verify-2fa" id="twofa-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="pending_token" value="{{ pending_token }}"><input type="hidden" name="next_url" value="{{ next_url }}"><div class="code-input"><input type="text" maxlength="1" id="c0" inputmode="numeric" autocomplete="one-time-code"><input type="text" maxlength="1" id="c1" inputmode="numeric"><input type="text" maxlength="1" id="c2" inputmode="numeric"><input type="text" maxlength="1" id="c3" inputmode="numeric"><input type="text" maxlength="1" id="c4" inputmode="numeric"><input type="text" maxlength="1" id="c5" inputmode="numeric"></div><input type="hidden" name="code" id="full-code"><label class="remember"><input type="checkbox" name="remember_device" id="remember" value="1" checked> Remember this device for 30 days</label><button type="submit" class="cbtn cbtn-primary cbtn-lg cbtn-block" style="margin-bottom:12px">Verify &rarr;</button><button type="button" class="cbtn cbtn-secondary cbtn-lg cbtn-block" onclick="resendCode()">Resend code</button></form><p class="hint"><a href="/login" style="color:#7a736a">Back to login</a></p></div><script>var inputs=document.querySelectorAll('.code-input input');inputs.forEach(function(inp,i){  inp.addEventListener('input',function(){    if(inp.value.length===1&&i<5)inputs[i+1].focus();    var code='';inputs.forEach(function(x){code+=x.value;});    document.getElementById('full-code').value=code;    if(code.length===6){setTimeout(function(){document.getElementById('twofa-form').submit();},1200);}  });  inp.addEventListener('keydown',function(e){    if(e.key==='Backspace'&&!inp.value&&i>0)inputs[i-1].focus();  });  inp.addEventListener('paste',function(e){    var t=(e.clipboardData||window.clipboardData).getData('text').replace(/[^0-9]/g,'').slice(0,6);    for(var j=0;j<t.length;j++){if(inputs[j])inputs[j].value=t[j];}    document.getElementById('full-code').value=t;    if(t.length===6){setTimeout(function(){document.getElementById('twofa-form').submit();},1200);}    e.preventDefault();  });});inputs[0].focus();function resendCode(){  fetch('/resend-2fa',{method:'POST',headers:{'Content-Type':'application/json'},    body:JSON.stringify({pending_token:(document.querySelector('[name=pending_token]')||{}).value||''})})    .then(function(r){return r.json();}).then(function(d){      if(d.ok)alert('New code sent!');else alert('Could not resend. Try logging in again.');    });}</script></body></html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Verify — Cavnar AI</title>
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
+<link rel="icon" type="image/png" href="/favicon.png">
+<meta name="theme-color" content="#141110">
+<link rel="stylesheet" href="/static/fonts/cavnar-fonts.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/cavnar-buttons.css">
+<style>
+/* The sign-in page's own tokens and card (templates/login.html), so the
+   second step of signing in looks like the first. Standalone: no
+   dashboard CSS. Digits are Space Grotesk, like every number. */
+*{box-sizing:border-box;margin:0;padding:0}
+*:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:3px}
+input:focus-visible{outline:none}
+:root{--ink:#f0ebe0;--ink2:#c4bdb4;--ink3:#cdbfa9;--paper:#1a1714;--paper2:#231f1b;--paper3:#4a4038;--surface:#201d19;--ember:#e06444;--brand-dot:#D4583A;--red:#e05555;--red-bg:#2a1010;--green:#4ead7a;--bg:#141110;--r:8px}
+@keyframes cardIn{from{opacity:0;transform:translateY(20px) scale(.975)}to{opacity:1;transform:translateY(0) scale(1)}}
+body{font-family:'Apfel Grotezk',sans-serif;background:var(--bg);color:var(--ink);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;position:relative;overflow:hidden}
+.card{background:var(--surface);border-radius:14px;padding:40px 40px 36px;width:100%;max-width:400px;box-shadow:0 0 0 1px rgba(0,0,0,.35),0 0 40px rgba(0,0,0,.55),0 0 100px rgba(0,0,0,.65);position:relative;z-index:1;animation:cardIn .48s cubic-bezier(.22,.68,0,1.1) .08s both}
+@media (prefers-reduced-motion:reduce){.card{animation-duration:.001s}}
+.logo{font-family:'Clash Display',sans-serif;font-size:26px;color:var(--ink);margin-bottom:26px}
+h1{font-family:'Clash Display',sans-serif;font-size:22px;font-weight:600;color:var(--ink);margin-bottom:8px;line-height:1.2}
+.desc{font-size:14px;color:var(--ink3);line-height:1.6;margin-bottom:22px}
+.desc strong{color:var(--ink);font-weight:700}
+.error{background:var(--red-bg);border:1px solid rgba(224,85,85,.35);border-radius:var(--r);padding:10px 14px;font-size:13px;color:var(--red);margin-bottom:16px}
+.code-input{display:flex;gap:8px;justify-content:space-between;margin-bottom:18px}
+.code-input input{width:100%;max-width:48px;height:56px;text-align:center;font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:600;border:1px solid var(--paper3);border-radius:var(--r);color:var(--ink);background:var(--paper);outline:none;transition:border-color .15s,box-shadow .15s}
+.code-input input:focus{border-color:var(--ember);box-shadow:0 0 0 3px rgba(200,75,47,.13)}
+.backup{margin-bottom:18px}
+.backup label{display:block;font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin-bottom:5px}
+.backup input{width:100%;padding:11px 14px;border:1px solid var(--paper3);border-radius:var(--r);font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--ink);background:var(--paper);outline:none;transition:border-color .15s,box-shadow .15s}
+.backup input:focus{border-color:var(--ember);box-shadow:0 0 0 3px rgba(200,75,47,.13)}
+.backup .hint{font-size:12px;color:var(--ink3);margin-top:6px;line-height:1.5}
+.remember{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink3);margin-bottom:16px;cursor:pointer}
+.remember input{accent-color:var(--ember);width:16px;height:16px}
+.status{font-size:13px;line-height:1.5;min-height:20px;margin-top:10px;text-align:center;color:var(--ink3)}
+.status.ok{color:var(--green)}
+.status.err{color:var(--red)}
+.switch{display:flex;justify-content:center;margin-top:14px}
+.footer-note{font-size:12px;color:var(--ink3);text-align:center;margin-top:18px}
+.footer-note a{color:var(--ink3);text-decoration:none}
+.footer-note a:hover{color:var(--ember)}
+[hidden]{display:none!important}
+.cf-layer{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:0}
+.cf-vignette{position:fixed;inset:0;pointer-events:none;z-index:0;background:linear-gradient(180deg,rgba(20,17,16,0) 0%,rgba(20,17,16,.28) 45%,rgba(20,17,16,.90) 100%)}
+</style>
+</head>
+<body>
+<canvas id="cf-aurora" class="cf-layer" aria-hidden="true"></canvas>
+<canvas id="cf-sky" class="cf-layer" aria-hidden="true"></canvas>
+<div class="cf-vignette" aria-hidden="true"></div>
+
+<div class="card">
+  <div class="logo" aria-label="Cavnar AI"><svg viewBox="-6 -14 666 128" height="0.8em" style="vertical-align:-0.08em" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M53.43 101.49Q28.81 101.49 14.40 87.46Q0.00 73.43 0.00 50.00Q0.00 26.57 14.40 12.54Q28.81 -1.49 53.43 -1.49Q76.87 -1.49 90.67 9.48Q104.48 20.45 104.48 39.40V41.64H79.55V39.40Q79.55 29.40 73.43 24.70Q67.31 20.00 53.88 20.00Q37.31 20.00 30.52 26.72Q23.73 33.43 23.73 50.00Q23.73 66.57 30.52 73.28Q37.31 80.00 53.88 80.00Q67.31 80.00 73.43 75.30Q79.55 70.60 79.55 60.60V58.36H104.48V60.60Q104.48 79.55 90.67 90.52Q76.87 101.49 53.43 101.49Z"/><path d="M127.87 100.00H102.79L146.52 0.00H178.47L222.50 100.00H196.82L187.42 77.91H137.42ZM155.48 35.97 146.08 57.76H178.76L169.36 35.97L163.24 20.45H161.60Z"/><path d="M266.08 100.00H234.14L192.65 0.00H219.67L249.67 77.31H251.16L280.71 0.00H307.58Z"/><path d="M341.47 100.00H319.08V0.00H342.96L378.78 47.31L392.51 68.36H394.15L393.11 48.21V0.00H415.50V100.00H391.61L354.75 52.24L342.06 33.43H340.57L341.47 51.79Z"/><path d="M451.92 100.00H426.85L470.58 0.00H502.52L546.55 100.00H520.88L511.47 77.91H461.47ZM479.53 35.97 470.13 57.76H502.82L493.41 35.97L487.29 20.45H485.65Z"/><path d="M580.39 100.00H558.00V0.00H613.22Q631.73 0.00 641.80 7.84Q651.88 15.67 651.88 30.00Q651.88 55.07 623.67 57.76V58.96Q629.94 60.60 633.30 63.88Q636.65 67.16 639.79 73.13L654.27 100.00H628.30L614.56 74.03Q611.43 68.06 607.55 65.90Q603.67 63.73 595.16 63.73H580.39ZM580.39 20.15V46.87H613.07Q621.28 46.87 624.86 43.96Q628.45 41.04 628.45 33.43Q628.45 26.12 624.79 23.13Q621.13 20.15 613.07 20.15Z"/><circle cx="250.1" cy="28" r="11" style="fill:var(--brand-dot)"/></svg><span style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;font-weight:800;font-size:0.34em;letter-spacing:0.16em;color:var(--brand-dot);vertical-align:0.62em;margin-left:0.12em;font-style:normal" aria-hidden="true">AI</span></div>
+
+  <div id="mode-code"{% if backup_mode %} hidden{% endif %}>
+    {% if channel == 'sms' %}
+    <h1>Check your texts</h1>
+    <p class="desc">We texted a 6-digit code to <strong>{{ masked_email }}</strong>. Enter it to sign in.</p>
+    {% elif channel == 'email' %}
+    <h1>Check your email</h1>
+    <p class="desc">We emailed a 6-digit code to <strong>{{ masked_email }}</strong>. Enter it to sign in.</p>
+    {% else %}
+    <h1>Enter your code</h1>
+    <p class="desc">Enter the 6-digit code we sent you to sign in.</p>
+    {% endif %}
+  </div>
+  <div id="mode-backup"{% if not backup_mode %} hidden{% endif %}>
+    <h1>Use a backup code</h1>
+    <p class="desc">Enter one of the backup codes you saved when you turned on two-factor. Each code works once.</p>
+  </div>
+
+  {% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
+
+  <form method="POST" action="/verify-2fa" id="twofa-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="pending_token" value="{{ pending_token }}">
+    <input type="hidden" name="next_url" value="{{ next_url }}">
+    <input type="hidden" name="code" id="full-code">
+    <div class="code-input" id="code-boxes" role="group" aria-label="6-digit code"{% if backup_mode %} hidden{% endif %}>
+      <input type="text" maxlength="1" id="c0" inputmode="numeric" autocomplete="one-time-code" aria-label="Digit 1">
+      <input type="text" maxlength="1" id="c1" inputmode="numeric" aria-label="Digit 2">
+      <input type="text" maxlength="1" id="c2" inputmode="numeric" aria-label="Digit 3">
+      <input type="text" maxlength="1" id="c3" inputmode="numeric" aria-label="Digit 4">
+      <input type="text" maxlength="1" id="c4" inputmode="numeric" aria-label="Digit 5">
+      <input type="text" maxlength="1" id="c5" inputmode="numeric" aria-label="Digit 6">
+    </div>
+    <div class="backup" id="backup-box"{% if not backup_mode %} hidden{% endif %}>
+      <label for="backup-code">Backup code</label>
+      <input type="text" id="backup-code" maxlength="14" placeholder="XXXX-XXXX" autocomplete="off" autocapitalize="characters" spellcheck="false">
+      <div class="hint">8 letters and numbers. The dash and capitals are optional.</div>
+    </div>
+    <label class="remember"><input type="checkbox" name="remember_device" id="remember" value="1" checked> Remember this device for 30 days</label>
+    <button type="submit" class="cbtn cbtn-primary cbtn-lg cbtn-block" id="verify-btn" style="margin-bottom:12px">Verify</button>
+    <button type="button" class="cbtn cbtn-secondary cbtn-lg cbtn-block" id="resend-btn"{% if backup_mode %} hidden{% endif %}>Resend code</button>
+  </form>
+  <p class="status" id="twofa-status" role="status" aria-live="polite"></p>
+  <div class="switch">
+    <button type="button" class="cbtn cbtn-text cbtn-sm" id="mode-switch">{% if backup_mode %}Use the 6-digit code instead{% else %}Use a backup code instead{% endif %}</button>
+  </div>
+  <div class="footer-note"><a href="/login">Back to sign in</a></div>
+</div>
+<script src="/static/cavnar-field.js"></script>
+<script>
+/* ES5 only. Two ways in: the 6-digit code we sent (six boxes, auto-submits
+   on the sixth digit) or a saved backup code (one field; the server takes
+   it in any case, with or without the dash). Status is said inline, in
+   the status line under the buttons, never in a browser dialog. */
+(function(){
+  if (window.CavnarField) {
+    try { window.cavnarField = CavnarField.mount({aurora: document.getElementById('cf-aurora'), sky: document.getElementById('cf-sky')}); } catch (e) {}
+  }
+  var form = document.getElementById('twofa-form');
+  var full = document.getElementById('full-code');
+  var inputs = document.querySelectorAll('#code-boxes input');
+  var boxes = document.getElementById('code-boxes');
+  var backupBox = document.getElementById('backup-box');
+  var backupInput = document.getElementById('backup-code');
+  var status = document.getElementById('twofa-status');
+  var resendBtn = document.getElementById('resend-btn');
+  var switchBtn = document.getElementById('mode-switch');
+  var backupMode = !backupBox.hasAttribute('hidden');
+  var submitting = false;
+
+  function say(msg, kind) {
+    status.textContent = msg || '';
+    status.className = 'status' + (kind ? ' ' + kind : '');
+  }
+  function digits() {
+    var c = '';
+    for (var i = 0; i < inputs.length; i++) c += inputs[i].value;
+    return c;
+  }
+  function submitSoon() {
+    if (submitting) return;
+    submitting = true;
+    setTimeout(function(){ form.submit(); }, 400);
+  }
+  for (var i = 0; i < inputs.length; i++) {
+    (function(inp, i){
+      inp.addEventListener('input', function(){
+        inp.value = inp.value.replace(/[^0-9]/g, '').slice(0, 1);
+        if (inp.value && i < inputs.length - 1) inputs[i + 1].focus();
+        var code = digits();
+        full.value = code;
+        if (code.length === 6) submitSoon();
+      });
+      inp.addEventListener('keydown', function(e){
+        if (e.key === 'Backspace' && !inp.value && i > 0) inputs[i - 1].focus();
+      });
+      inp.addEventListener('paste', function(e){
+        var raw = (e.clipboardData || window.clipboardData).getData('text') || '';
+        e.preventDefault();
+        var t = raw.replace(/[^0-9]/g, '');
+        // A pasted backup code (letters in it, 8 characters) belongs in
+        // the backup field, not truncated into six digit boxes.
+        if (/[a-f]/i.test(raw) && raw.replace(/[^0-9a-f]/gi, '').length === 8) {
+          setMode(true);
+          backupInput.value = raw.replace(/^\s+|\s+$/g, '');
+          return;
+        }
+        t = t.slice(0, 6);
+        for (var j = 0; j < inputs.length; j++) inputs[j].value = t.charAt(j) || '';
+        full.value = t;
+        if (t.length === 6) submitSoon();
+      });
+    })(inputs[i], i);
+  }
+
+  function setMode(backup) {
+    backupMode = backup;
+    document.getElementById('mode-code').hidden = backup;
+    document.getElementById('mode-backup').hidden = !backup;
+    boxes.hidden = backup;
+    backupBox.hidden = !backup;
+    resendBtn.hidden = backup;
+    switchBtn.textContent = backup ? 'Use the 6-digit code instead' : 'Use a backup code instead';
+    say('');
+    if (backup) backupInput.focus(); else inputs[0].focus();
+  }
+  switchBtn.addEventListener('click', function(){ setMode(!backupMode); });
+
+  form.addEventListener('submit', function(e){
+    if (backupMode) {
+      var v = backupInput.value.replace(/^\s+|\s+$/g, '');
+      if (v.replace(/[\s\-]/g, '').length !== 8) {
+        e.preventDefault();
+        say('A backup code is 8 letters and numbers, like 7F3A-92C1.', 'err');
+        backupInput.focus();
+        return;
+      }
+      full.value = v;
+    } else {
+      full.value = digits();
+      if (full.value.length !== 6) {
+        e.preventDefault();
+        say('Enter all 6 digits.', 'err');
+        return;
+      }
+    }
+    submitting = true;
+  });
+
+  // Resend: a fresh code to the same place, then a short cooldown so a
+  // double tap doesn't burn the server's resend budget.
+  var cooldownTimer = null;
+  function cooldown(secs) {
+    resendBtn.disabled = true;
+    function tick() {
+      if (secs <= 0) {
+        clearInterval(cooldownTimer); cooldownTimer = null;
+        resendBtn.disabled = false; resendBtn.textContent = 'Resend code';
+        return;
+      }
+      resendBtn.textContent = 'Resend code in ' + secs + 's';
+      secs--;
+    }
+    tick();
+    cooldownTimer = setInterval(tick, 1000);
+  }
+  resendBtn.addEventListener('click', function(){
+    if (resendBtn.disabled) return;
+    resendBtn.disabled = true;
+    say('Sending a new code…');
+    var pt = (document.querySelector('[name=pending_token]') || {}).value || '';
+    fetch('/resend-2fa', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                          body: JSON.stringify({pending_token: pt})})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d && d.ok) {
+          var where = d.masked ? (' to ' + d.masked) : '';
+          say((d.channel === 'sms' ? 'New code texted' : d.channel === 'email' ? 'New code emailed' : 'New code sent') + where + '.', 'ok');
+          cooldown(30);
+        } else {
+          say((d && d.error) || 'Couldn’t send a new code. Go back and sign in again.', 'err');
+          resendBtn.disabled = false;
+        }
+      })
+      .catch(function(){
+        say('Couldn’t reach Cavnar AI. Check your connection and try again.', 'err');
+        resendBtn.disabled = false;
+      });
+  });
+
+  if (backupMode) backupInput.focus(); else inputs[0].focus();
+})();
+</script>
+</body>
+</html>

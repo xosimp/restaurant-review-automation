@@ -232,9 +232,11 @@ final class SessionStore {
         let user: User?
         let pendingToken: String?
         let maskedEmail: String?
+        /// Where the code went: "sms" or "email" (nil from an older server).
+        let channel: String?
 
         enum CodingKeys: String, CodingKey {
-            case ok, token, user
+            case ok, token, user, channel
             case requiresTwoFactor = "requires_2fa"
             case pendingToken = "pending_token"
             case maskedEmail = "masked_email"
@@ -255,7 +257,8 @@ final class SessionStore {
         let response: LoginResponse = try await client.send(
             "/mobile/api/login", method: .post, body: body, retryTransient: true)
         if response.requiresTwoFactor, let pendingToken = response.pendingToken {
-            return .twoFactorRequired(pendingToken: pendingToken, maskedEmail: response.maskedEmail ?? "")
+            return .twoFactorRequired(pendingToken: pendingToken, maskedEmail: response.maskedEmail ?? "",
+                                      channel: response.channel)
         }
         guard let token = response.token, let user = response.user else {
             throw APIClient.APIError(message: "Unexpected response from server.")
@@ -266,7 +269,7 @@ final class SessionStore {
 
     enum LoginOutcome {
         case loggedIn
-        case twoFactorRequired(pendingToken: String, maskedEmail: String)
+        case twoFactorRequired(pendingToken: String, maskedEmail: String, channel: String?)
     }
 
     struct VerifyTwoFactorBody: Encodable {
@@ -302,6 +305,26 @@ final class SessionStore {
             Keychain.set(deviceToken, for: Keychain.Key.deviceRememberToken)
         }
         try await completeLogin(token: response.token, user: response.user)
+    }
+
+    private struct ResendTwoFactorBody: Encodable {
+        let pendingToken: String
+        enum CodingKeys: String, CodingKey { case pendingToken = "pending_token" }
+    }
+
+    struct ResendTwoFactorResponse: Decodable {
+        let ok: Bool
+        let channel: String?
+        let masked: String?
+        let error: String?
+    }
+
+    /// A fresh code for this sign-in, to the same place the first one went
+    /// (/mobile/api/resend-2fa shares the web's /resend-2fa body and its
+    /// throttle). Never retried on a guess: each call sends a message.
+    func resendTwoFactor(pendingToken: String) async throws -> ResendTwoFactorResponse {
+        try await client.send("/mobile/api/resend-2fa", method: .post,
+                              body: ResendTwoFactorBody(pendingToken: pendingToken))
     }
 
     private struct MeResponse: Decodable {

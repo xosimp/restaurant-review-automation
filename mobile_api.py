@@ -271,7 +271,10 @@ def mobile_login():
         # the same fix in auth_routes.py.
         from auth import make_pending_token
         pending_encoded = make_pending_token(rid, user["id"], pending)
-        return jsonify(ok=True, requires_2fa=True, pending_token=pending_encoded, masked_email=masked)
+        # channel says where the code went ("sms" | "email") so the app can
+        # say "We texted" or "We emailed" as the web page does.
+        return jsonify(ok=True, requires_2fa=True, pending_token=pending_encoded, masked_email=masked,
+                       channel=dest["kind"])
 
     ua = request.headers.get("User-Agent", "Cavnar-iOS")
     token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios", device_id=device_id, restaurant_id=user["restaurant_id"])
@@ -617,6 +620,17 @@ def mobile_verify_2fa():
         device_token = create_trusted_device(rid, user["id"], describe_user_agent(ua) + " · app")
 
     return jsonify(ok=True, token=token, device_token=device_token, user=_public_user(user))
+
+
+@mobile_bp.route("/resend-2fa", methods=["POST"])
+def mobile_resend_2fa():
+    """The phone's Resend code — the web's /resend-2fa body
+    (auth_routes.resend_two_fa): same pending token, same per-address
+    throttle, same destination as the first code."""
+    from auth_routes import resend_two_fa
+    data = request.get_json(silent=True) or {}
+    payload, status = resend_two_fa(data.get("pending_token", ""))
+    return jsonify(**payload), status
 
 
 @mobile_bp.route("/me")

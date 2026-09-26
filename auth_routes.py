@@ -279,7 +279,7 @@ def login():
             import secrets as _sec4
             csrf3 = _sec4.token_hex(16)
             resp3 = make_response(render_template('two_fa.html',
-                masked_email=masked, error=None,
+                masked_email=masked, channel=_dest["kind"], error=None,
                 pending_token=pending_encoded, next_url=next_url, csrf_token=csrf3))
             resp3.set_cookie("csrf_token", csrf3, httponly=True, samesite="Lax")
             return resp3
@@ -327,7 +327,7 @@ def verify_2fa():
         # ~1M possibilities and the pending_token alone used to provide none.
         if _is_rate_limited("2fa:" + ip):
             return render_template('two_fa.html',
-                masked_email="your registered email", error="Too many attempts. Please wait 5 minutes and try again.",
+                masked_email="", channel=None, error="Too many attempts. Please wait 5 minutes and try again.",
                 pending_token=pending_token, next_url=next_url, csrf_token=request.cookies.get('csrf_token',''))
         if not _csrf_ok():
             return redirect("/login")
@@ -359,22 +359,28 @@ def verify_2fa():
             from auth import two_fa_destination as _tfd_v, get_user_by_id as _gubi_v
             _dest_v = _tfd_v(_gubi_v(pending_user_id), rest)
             masked = _dest_v["masked"] if _dest_v else "your registered email"
+            channel_v = _dest_v["kind"] if _dest_v else None
         except Exception as _e_v:
             print(f"[verify_2fa] error: {_e_v}")
             masked = "your registered email"
+            channel_v = None
+        # A backup code typed in ("7f3a 92c1", any case, dash or not) keeps
+        # the page in backup-code mode if it comes back with an error.
+        from models import normalize_backup_code as _nbc
+        _backup_mode = bool(_nbc(code_entered))
         _otp_result = _ctfc(uid, pending_user_id, code_entered, pending=pending_secret, consume=False)
         if _otp_result == "wrong":
             from models import verify_and_consume_backup_code as _vcbc
             if not _vcbc(uid, code_entered):
                 _record_failed_attempt("2fa:" + ip)
                 resp_err = make_response(render_template('two_fa.html',
-                    masked_email=masked, error="Incorrect code. Try again.",
+                    masked_email=masked, channel=channel_v, backup_mode=_backup_mode, error="Incorrect code. Try again.",
                     pending_token=pending_token, next_url=next_url, csrf_token=csrf4))
                 resp_err.set_cookie("csrf_token", csrf4, httponly=True, samesite="Lax")
                 return resp_err
         elif _otp_result != "ok":
             resp_exp = make_response(render_template('two_fa.html',
-                masked_email=masked, error="Code expired. Request a new one.",
+                masked_email=masked, channel=channel_v, backup_mode=_backup_mode, error="Code expired. Request a new one.",
                 pending_token=pending_token, next_url=next_url, csrf_token=csrf4))
             resp_exp.set_cookie("csrf_token", csrf4, httponly=True, samesite="Lax")
             return resp_exp
@@ -422,45 +428,55 @@ def verify_2fa():
         return resp_ok
     return redirect("/login")
 
-@auth_bp.route("/resend-2fa", methods=["POST"])
-def resend_2fa():
-    from models import get_restaurant, update_restaurant
+def resend_two_fa(pending_token):
+    """Send this sign-in a fresh code — the one body behind the web's
+    /resend-2fa and the phone's /mobile/api/resend-2fa. Returns
+    (payload, status).
+
+    Throttled per address on its own key ("2fa-resend:<ip>"), every request
+    counted, so it cannot be used to spray codes. Only the holder of a
+    pending token that login() actually issued can trigger it, and the new
+    code replaces this sign-in's code and nobody else's; it goes to the same
+    login's own email or phone the first one did (SEC-20)."""
     ip = _get_client_ip()
     if _is_rate_limited("2fa-resend:" + ip):
-        return jsonify(ok=False, error="Too many requests — please wait a few minutes")
+        return {"ok": False, "error": "Too many requests. Wait a few minutes and try again."}, 429
     _record_failed_attempt("2fa-resend:" + ip)
-    data_r = request.get_json() or {}
-    pending_token_r = data_r.get("pending_token", "")
     # The same signed token the login page issued. This used to split it in
     # two ("rid:secret"), so the secret carried the user id and never
     # matched: Resend code never worked.
     from auth import read_pending_token as _rpt_r
-    _parsed_r = _rpt_r(pending_token_r)
+    _parsed_r = _rpt_r(pending_token or "")
+    expired = ({"ok": False, "error": "Your sign-in timed out. Log in again."}, 401)
     if not _parsed_r:
-        return jsonify(ok=False, error="Session expired — please log in again")
+        return expired
     uid, _pending_uid_r, pending_secret_r = _parsed_r
     if not uid:
-        return jsonify(ok=False, error="Session expired")
+        return expired
+    from models import get_restaurant
     rest = get_restaurant(uid)
     if not rest:
-        return jsonify(ok=False)
-    # Only the holder of a token actually issued by login() can trigger a resend —
-    # otherwise this endpoint let anyone refresh any restaurant's 2FA code on
-    # demand. The new code replaces this sign-in's code and nobody else's.
+        return expired
     from auth import reissue_two_fa_code as _rtfc
     code = _rtfc(uid, _pending_uid_r, pending_secret_r)
     if not code:
-        return jsonify(ok=False, error="Session expired — please log in again")
-    # The same login's own email or phone the first code went to (SEC-20).
+        return expired
     from auth import two_fa_destination as _tfd_r, send_two_fa_code as _stfc_r, get_user_by_id as _gubi_r
     _dest_r = _tfd_r(_gubi_r(_pending_uid_r), rest)
     if not _dest_r:
-        return jsonify(ok=False, error="Session expired — please log in again")
+        return expired
     try:
         _stfc_r(_dest_r, rest, code)
     except Exception as _e_r:
         print(f"[2fa] resend failed for user {_pending_uid_r}: {_e_r}")
-    return jsonify(ok=True)
+    return {"ok": True, "channel": _dest_r["kind"], "masked": _dest_r["masked"]}, 200
+
+
+@auth_bp.route("/resend-2fa", methods=["POST"])
+def resend_2fa():
+    data_r = request.get_json(silent=True) or {}
+    payload, status = resend_two_fa(data_r.get("pending_token", ""))
+    return jsonify(**payload), status
 
 @auth_bp.route("/logout", methods=["GET", "POST"])
 def logout():

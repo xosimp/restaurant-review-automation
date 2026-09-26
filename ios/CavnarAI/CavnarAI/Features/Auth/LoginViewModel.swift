@@ -32,6 +32,7 @@ final class LoginViewModel {
     }
     var twoFactorPendingToken: String?
     var twoFactorMaskedEmail: String?
+    var twoFactorChannel: String?
 
     private let sessionStore: SessionStore
     private let googleSignIn = GoogleSignInCoordinator()
@@ -55,9 +56,10 @@ final class LoginViewModel {
             switch outcome {
             case .loggedIn:
                 break // SessionStore.isAuthenticated flips; RootView reacts to it.
-            case .twoFactorRequired(let pendingToken, let maskedEmail):
+            case .twoFactorRequired(let pendingToken, let maskedEmail, let channel):
                 twoFactorPendingToken = pendingToken
                 twoFactorMaskedEmail = maskedEmail
+                twoFactorChannel = channel
             }
         } catch let error as APIClient.APIError {
             errorMessage = error.message

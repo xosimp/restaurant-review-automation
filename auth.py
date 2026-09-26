@@ -3159,7 +3159,7 @@ _MODULE_PREFIXES = (
 _UNGATED_PREFIXES = (
     # Signing in and out, the session, and the account's own security. Not a
     # module; owner-only pieces check is_principal in the handler.
-    "/mobile/api/login", "/mobile/api/verify-2fa", "/mobile/api/apple-signin", "/mobile/api/register",
+    "/mobile/api/login", "/mobile/api/verify-2fa", "/mobile/api/resend-2fa", "/mobile/api/apple-signin", "/mobile/api/register",
     "/mobile/api/forgot-password", "/mobile/api/reset-password", "/mobile/api/logout", "/mobile/api/me",
     "/mobile/api/device-tokens", "/api/sessions", "/mobile/api/sessions",
     "/api/change-password", "/api/update-email", "/api/send-2fa-test", "/api/verify-2fa-setup",

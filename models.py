@@ -4549,8 +4549,23 @@ def generate_backup_codes(restaurant_id: int, count: int = 10, db_path: str = DB
     conn.close()
     return codes
 
+def normalize_backup_code(code):
+    """A backup code as it was minted ("ABCD-1234": 8 hex characters, upper
+    case, a dash in the middle), from however someone typed it — lower case,
+    spaces, no dash, a stray dash elsewhere. None when it can't be one (a
+    6-digit emailed code, say), so the caller skips the hash checks."""
+    import re as _re
+    raw = _re.sub(r"[\s\-‐-―−]", "", str(code or "")).upper()
+    if not _re.fullmatch(r"[0-9A-F]{8}", raw):
+        return None
+    return raw[:4] + "-" + raw[4:]
+
+
 def verify_and_consume_backup_code(restaurant_id: int, code: str, db_path: str = DB_PATH) -> bool:
     from werkzeug.security import check_password_hash as _cph
+    code = normalize_backup_code(code)
+    if not code:
+        return False
     conn = get_conn(db_path)
     rows = conn.execute(
         "SELECT id, code_hash FROM two_fa_backup_codes WHERE restaurant_id=? AND used_at IS NULL",
