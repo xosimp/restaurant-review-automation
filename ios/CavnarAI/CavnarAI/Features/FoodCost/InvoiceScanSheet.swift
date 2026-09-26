@@ -22,11 +22,15 @@ struct InvoiceLine: Decodable, Identifiable {
     let note: String?
     /// Already written — by the trusted-supplier rule, or an earlier apply.
     let applied: Bool?
+    /// Whether the reading passed both checks (invoices.py): its arithmetic
+    /// agreed and there was a current cost to compare with. Nil when the
+    /// server did not say. Shown on each line, as the web does.
+    let verified: Bool?
 
     var id: Int { index }
 
     enum CodingKeys: String, CodingKey {
-        case index, description, quantity, unit, note, selected, applied
+        case index, description, quantity, unit, note, selected, applied, verified
         case unitPrice = "unit_price"
         case lineTotal = "line_total"
         case ingredientId = "ingredient_id"
@@ -61,7 +65,8 @@ struct ScannedInvoice: Decodable {
     let invoiceDate: String?
     let lines: [InvoiceLine]
     let totalCheck: InvoiceTotalCheck?
-    let ingredients: [InvoiceIngredient]
+    /// var: a line can become a new ingredient on the spot.
+    var ingredients: [InvoiceIngredient]
     let appliedAt: String?
     let duplicate: Bool?
     /// The rule applied the lines it could check on its own; the rest
@@ -82,6 +87,21 @@ struct ScannedInvoice: Decodable {
     }
 }
 
+/// A scanned invoice still waiting on the owner (invoices.list_imports,
+/// `pending`) — listed so one can be reopened after the sheet was closed.
+struct PendingInvoice: Decodable, Identifiable {
+    let id: Int
+    let supplier: String?
+    let invoiceDate: String?
+    let waiting: Int?
+    let pending: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case id, supplier, waiting, pending
+        case invoiceDate = "invoice_date"
+    }
+}
+
 @Observable
 @MainActor
 final class InvoiceScanViewModel {
@@ -99,6 +119,11 @@ final class InvoiceScanViewModel {
     var isApplying = false
     var errorMessage: String?
     var appliedCount: Int?
+    /// Scanned invoices still waiting on the owner, newest first.
+    var pending: [PendingInvoice] = []
+    var isOpening = false
+    /// The line whose "New ingredient from this line" is being created.
+    var creatingFor: Int?
 
     private let client: APIClient
 
@@ -151,52 +176,160 @@ final class InvoiceScanViewModel {
         }
     }
 
-    /// Pages from the document camera (Friction audit #28). The server reads
-    /// one image per invoice, so the first page is read and the owner is
-    /// told plainly when there were more — never silently dropped.
+    /// Pages from the document camera (Friction audit #28). One page goes
+    /// up as a photo; several go up together as one PDF, which the server
+    /// reads page by page (invoices.py takes a PDF as a document) — only
+    /// the first page used to be read, and a two-page invoice lost the
+    /// second page's lines.
     func scan(pages: [UIImage]) async {
         guard let first = pages.first else { return }
         errorMessage = nil
         appliedCount = nil
-        extraPagesNote = pages.count > 1
-            ? "Read page 1 of \(pages.count). Scan each further page on its own so its lines are read too."
-            : nil
+        extraPagesNote = nil
         isScanning = true
         defer { isScanning = false }
-        guard let raw = first.jpegData(compressionQuality: 0.9) else {
-            errorMessage = "That scan couldn't be read. Try again."
+        if pages.count == 1 {
+            guard let raw = first.jpegData(compressionQuality: 0.9) else {
+                errorMessage = "That scan couldn't be read. Try again."
+                return
+            }
+            await upload(raw)
             return
         }
-        await upload(raw)
+        guard let pdf = await Task.detached(priority: .userInitiated, operation: {
+                  Self.pagesPDF(pages)
+              }).value else {
+            errorMessage = "Those \(pages.count) pages are too much to send at once. Scan a few pages at a time."
+            return
+        }
+        extraPagesNote = "Reading all \(pages.count) pages."
+        await send(pdf, filename: "invoice.pdf", mimeType: "application/pdf")
     }
 
-    /// Set when a camera scan had pages beyond the first.
+    /// Set while a multi-page camera scan is read.
     var extraPagesNote: String?
 
     private func upload(_ raw: Data) async {
+        guard let jpeg = await Task.detached(priority: .userInitiated, operation: {
+                  Self.downscaledJPEG(raw)
+              }).value else {
+            errorMessage = "That photo couldn't be read. Try another."
+            return
+        }
+        await send(jpeg, filename: "invoice.jpg", mimeType: "image/jpeg")
+    }
+
+    private func send(_ data: Data, filename: String, mimeType: String) async {
         do {
-            guard let jpeg = await Task.detached(priority: .userInitiated, operation: {
-                      Self.downscaledJPEG(raw)
-                  }).value else {
-                errorMessage = "That photo couldn't be read. Try another."
-                return
-            }
             let r: ScanResponse = try await client.upload("/mobile/api/food-cost/invoices",
-                                                          fileData: jpeg, filename: "invoice.jpg",
-                                                          mimeType: "image/jpeg")
+                                                          fileData: data, filename: filename,
+                                                          mimeType: mimeType)
             guard r.ok, let inv = r.invoice else {
                 errorMessage = r.error ?? "The invoice couldn't be read."
                 return
             }
-            invoice = inv
-            choices = Dictionary(uniqueKeysWithValues: inv.lines.map { line in
-                (line.index, Choice(include: line.selected && line.applied != true, ingredientId: line.ingredientId,
-                                    cost: line.proposedCost.map { Self.costString($0) } ?? ""))
-            })
+            show(inv)
+            extraPagesNote = nil
             await Haptic.success()
+            await loadPending()
         } catch is CancellationError {
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Puts an invoice on screen with the server's proposal as the working copy.
+    private func show(_ inv: ScannedInvoice) {
+        invoice = inv
+        appliedCount = nil
+        choices = Dictionary(uniqueKeysWithValues: inv.lines.map { line in
+            (line.index, Choice(include: line.selected && line.applied != true, ingredientId: line.ingredientId,
+                                cost: line.proposedCost.map { Self.costString($0) } ?? ""))
+        })
+    }
+
+    // MARK: - Pending invoices (U2-2)
+
+    private struct ListResponse: Decodable { let ok: Bool; let invoices: [PendingInvoice] }
+
+    /// GET /food-cost/invoices — what the web lists as "Waiting on you".
+    func loadPending() async {
+        do {
+            let r: ListResponse = try await client.send("/mobile/api/food-cost/invoices", hapticOnError: false)
+            pending = r.invoices.filter { $0.pending == true }
+        } catch {
+            // Secondary: the scanner works without the list.
+        }
+    }
+
+    /// GET /food-cost/invoices/<id> — reopens one invoice's lines to
+    /// confirm and apply (a pending row, or the "invoice/<id>" link).
+    func open(_ id: Int) async {
+        errorMessage = nil
+        isOpening = true
+        defer { isOpening = false }
+        do {
+            let r: ScanResponse = try await client.send("/mobile/api/food-cost/invoices/\(id)")
+            guard r.ok, let inv = r.invoice else {
+                errorMessage = r.error ?? "That invoice isn\u{2019}t here any more."
+                return
+            }
+            show(inv)
+        } catch let error as APIClient.APIError {
+            errorMessage = error.message
+        } catch is CancellationError {
+        } catch {
+            errorMessage = "Couldn\u{2019}t open that invoice."
+        }
+    }
+
+    // MARK: - New ingredient from a line (U2-23)
+
+    private struct NewIngredientBody: Encodable {
+        let name: String
+        let unit: String
+        let unitCost: Double?
+        enum CodingKeys: String, CodingKey { case name, unit; case unitCost = "unit_cost" }
+    }
+    private struct NewIngredientResponse: Decodable {
+        let ok: Bool
+        let ingredient: InvoiceIngredient?
+        let error: String?
+    }
+
+    /// A line that matches no ingredient becomes one, prefilled with its
+    /// description, unit and the cost the invoice implies — the web's
+    /// "+ New ingredient from this line" (POST /food-cost/ingredients).
+    func createIngredient(from line: InvoiceLine) async {
+        guard creatingFor == nil else { return }
+        errorMessage = nil
+        creatingFor = line.index
+        defer { creatingFor = nil }
+        let typed = choices[line.index].flatMap {
+            FoodCostQuickEntryViewModel.parsedPrice($0.cost.replacingOccurrences(of: "$", with: ""))
+        }
+        let cost = (typed ?? 0) > 0 ? typed : line.unitPrice
+        do {
+            let r: NewIngredientResponse = try await client.send(
+                "/mobile/api/food-cost/ingredients", method: .post,
+                body: NewIngredientBody(name: line.description, unit: line.unit ?? "", unitCost: cost),
+                retryTransient: false)
+            guard r.ok, let ing = r.ingredient else {
+                errorMessage = r.error ?? "Couldn\u{2019}t add that ingredient."
+                return
+            }
+            invoice?.ingredients.append(ing)
+            var c = choices[line.index] ?? Choice(include: true, ingredientId: nil, cost: "")
+            c.ingredientId = ing.id
+            c.include = true
+            if c.cost.isEmpty, let cost { c.cost = Self.costString(cost) }
+            choices[line.index] = c
+            await Haptic.success()
+        } catch let error as APIClient.APIError {
+            errorMessage = error.message
+        } catch is CancellationError {
+        } catch {
+            errorMessage = "Couldn\u{2019}t add that ingredient."
         }
     }
 
@@ -230,6 +363,7 @@ final class InvoiceScanViewModel {
             if r.ok {
                 appliedCount = r.updated?.count ?? lines.count
                 await Haptic.success()
+                await loadPending()
             } else {
                 errorMessage = r.error ?? "Couldn't update those costs."
             }
@@ -254,6 +388,41 @@ final class InvoiceScanViewModel {
               let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options)
         else { return nil }
         return UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.8)
+    }
+
+    /// Every camera page in one PDF, under the server's 4.5 MB (invoices
+    /// .MAX_PDF_BYTES): each page a JPEG at most `maxSide` on its long edge,
+    /// stepping down until the whole file fits. Nil when even the smallest
+    /// step is too big — the owner is asked to scan fewer pages.
+    nonisolated static func pagesPDF(_ pages: [UIImage]) -> Data? {
+        let limit = Int(4.4 * 1024 * 1024)
+        for (maxSide, quality) in [(1800.0, 0.75), (1400.0, 0.65), (1100.0, 0.55), (900.0, 0.5)] {
+            var images: [(CGImage, CGSize)] = []
+            for page in pages {
+                guard let raw = page.jpegData(compressionQuality: 0.9),
+                      let small = downscaledJPEG(raw, maxSide: CGFloat(maxSide)),
+                      let decoded = UIImage(data: small)?.jpegData(compressionQuality: CGFloat(quality)),
+                      let provider = CGDataProvider(data: decoded as CFData),
+                      let cg = CGImage(jpegDataProviderSource: provider, decode: nil,
+                                       shouldInterpolate: true, intent: .defaultIntent)
+                else { return nil }
+                images.append((cg, CGSize(width: cg.width, height: cg.height)))
+            }
+            let data = NSMutableData()
+            guard let consumer = CGDataConsumer(data: data as CFMutableData) else { return nil }
+            var box = CGRect(x: 0, y: 0, width: 612, height: 792)
+            guard let ctx = CGContext(consumer: consumer, mediaBox: &box, nil) else { return nil }
+            for (cg, size) in images {
+                // Points at 144 dpi: legible, and the page keeps its shape.
+                var rect = CGRect(x: 0, y: 0, width: size.width / 2, height: size.height / 2)
+                ctx.beginPage(mediaBox: &rect)
+                ctx.draw(cg, in: rect)
+                ctx.endPage()
+            }
+            ctx.closePDF()
+            if data.length <= limit { return data as Data }
+        }
+        return nil
     }
 
     /// Thumbnail options for `source`: at most `maxSide` on the long edge,
@@ -282,6 +451,9 @@ struct InvoiceScanSheet: View {
     /// Open straight onto the camera — the Scan invoice quick action, the
     /// App Shortcut and Food Cost's action row (Friction audit #28).
     var startWithCamera: Bool = false
+    /// Open on this scanned invoice's lines (a pending invoice, or the
+    /// action queue's "invoice/<id>").
+    var invoiceId: Int? = nil
     @State private var viewModel = InvoiceScanViewModel()
     @State private var pickerItem: PhotosPickerItem?
     @State private var showingCamera = false
@@ -293,6 +465,10 @@ struct InvoiceScanSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     intro
+                    pendingList
+                    if viewModel.isOpening {
+                        CavnarWorkingLine().padding(.vertical, 8)
+                    }
                     if viewModel.isScanning {
                         VStack(alignment: .leading, spacing: 10) {
                             CavnarShimmerText(text: "Reading the invoice…")
@@ -352,7 +528,11 @@ struct InvoiceScanSheet: View {
             // is still animating in, and the quick action landed on the sheet
             // with no camera (F3-18).
             .task {
-                guard startWithCamera, !didAutoOpenCamera, DocumentCameraView.isAvailable else { return }
+                if let invoiceId { await viewModel.open(invoiceId) }
+                await viewModel.loadPending()
+            }
+            .task {
+                guard invoiceId == nil, startWithCamera, !didAutoOpenCamera, DocumentCameraView.isAvailable else { return }
                 didAutoOpenCamera = true
                 try? await Task.sleep(for: .milliseconds(600))
                 showingCamera = true
@@ -411,6 +591,47 @@ struct InvoiceScanSheet: View {
             }
         }
         .cavnarCard()
+    }
+
+    /// "Waiting on you" — scanned invoices not yet applied, each one tap
+    /// from its lines (the web's fc2LoadPendingInvoices). The one on screen
+    /// is left out.
+    @ViewBuilder
+    private var pendingList: some View {
+        let rows = viewModel.pending.filter { $0.id != viewModel.invoice?.id }
+        if !rows.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                HomeMixedText.make("WAITING ON YOU · \(rows.count) SCANNED INVOICE\(rows.count == 1 ? "" : "S")",
+                                   size: 13.5, weight: 700, color: .cavnarEmber2)
+                ForEach(rows) { row in
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.supplier ?? "Supplier not read")
+                                .font(.cavnarBody(15, weight: 600)).foregroundStyle(Color.cavnarInk)
+                            HomeMixedText.make(pendingDetail(row), size: 12.5, weight: 500, color: .cavnarInk3)
+                        }
+                        Spacer(minLength: 8)
+                        Button {
+                            Haptic.light()
+                            Task { await viewModel.open(row.id) }
+                        } label: {
+                            Text("Open").font(.cavnarBody(14, weight: 700)).foregroundStyle(Color.cavnarEmber2)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(viewModel.isOpening || viewModel.isScanning)
+                    }
+                }
+            }
+            .cavnarCard()
+        }
+    }
+
+    private func pendingDetail(_ row: PendingInvoice) -> String {
+        var parts: [String] = []
+        if let d = row.invoiceDate { parts.append(CavnarDate.mdy(d)) }
+        let n = row.waiting ?? 0
+        parts.append("\(n) line\(n == 1 ? "" : "s") to check")
+        return parts.joined(separator: " · ")
     }
 
     private func invoiceCard(_ inv: ScannedInvoice) -> some View {
@@ -481,7 +702,16 @@ struct InvoiceScanSheet: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel(binding.wrappedValue.include ? "Included" : "Not included")
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(line.description).font(.cavnarBody(15, weight: 600)).foregroundStyle(Color.cavnarInk)
+                    HStack(spacing: 6) {
+                        Text(line.description).font(.cavnarBody(15, weight: 600)).foregroundStyle(Color.cavnarInk)
+                        // Whether both checks ran and agreed (invoices.py
+                        // "verified") — never shown on the phone before.
+                        if let verified = line.verified {
+                            ClaimKindTag(kind: verified ? "checked" : "unchecked")
+                                .accessibilityHint(verified ? "The line adds up and the move is plausible"
+                                                   : "Not every check could run on this line. Look before applying.")
+                        }
+                    }
                     HomeMixedText.make(detail(line), size: 12.5, weight: 500, color: .cavnarInk3)
                     if let note = line.note {
                         Text(note).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarAmber)
@@ -492,8 +722,16 @@ struct InvoiceScanSheet: View {
             HStack(spacing: 10) {
                 Picker("Ingredient", selection: Binding(
                     get: { binding.wrappedValue.ingredientId },
-                    set: { binding.wrappedValue.ingredientId = $0 })) {
-                    Text("Pick ingredient").tag(Int?.none)
+                    set: { picked in
+                        // -1 is "New ingredient from this line", not an id.
+                        if picked == Self.newIngredientTag {
+                            Task { await viewModel.createIngredient(from: line) }
+                        } else {
+                            binding.wrappedValue.ingredientId = picked
+                        }
+                    })) {
+                    Text(viewModel.creatingFor == line.index ? "Adding…" : "Pick ingredient").tag(Int?.none)
+                    Text("+ New ingredient from this line").tag(Int?.some(Self.newIngredientTag))
                     ForEach(ingredients) { ing in
                         Text(ing.unit.map { "\(ing.name) (\($0))" } ?? ing.name).tag(Int?.some(ing.id))
                     }
@@ -515,6 +753,8 @@ struct InvoiceScanSheet: View {
         }
         .padding(.vertical, 11)
     }
+
+    private static let newIngredientTag = -1
 
     private func detail(_ line: InvoiceLine) -> String {
         var parts: [String] = []

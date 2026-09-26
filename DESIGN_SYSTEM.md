@@ -350,7 +350,16 @@ a running total; the send button names the recipient and the total
 strip that names the address, the item count and the total with "Send it" /
 "Not yet" — the confirm surface for an outward action, never `confirm()`.
 A read that the ledger keeps current (the ingredient price monitor) opens
-read-only with one "Edit" button that unlocks it.
+read-only with one "Edit" button that unlocks it. **iOS** (`SupplierOrderSheet`):
+the same editable quantity per line and a total at the owner's quantities;
+"Send to …" and "Send all N orders" each open a `.confirmationDialog` whose
+message names the supplier(s), the line count and the total ("Send it" /
+"Not yet"); an order already on an open PO asks again as "Already sent" with
+"Send it again" / "Leave it". Receiving (`DeliveriesSection`): "Received as
+ordered" (secondary) and a "Some were short" text link that opens each line
+with an "Arrived" number field and one primary "Receive these"; an error
+stays under its order. The price monitor's ledger rows open read-only with
+an "Edit prices" text link.
 
 ---
 
@@ -848,7 +857,9 @@ Every block keeps its empty state; a quiet day is a short page.
 | POS sync line (iOS) | `AccountConnectionsDetailView` — under each POS connection header a 6pt dot plus text from `sync_state` / `age_days` (current green, aging/stale amber, error red), dates M/D/YY; RPOWER's row uses a `GlowBadge(systemImage: "server.rack")` tile (no brand mark). Google reads "Google reviews (sampled — Places returns 5 at a time)" when `source` is `places_sampled` |
 | Recipe yield (iOS) | `RecipeDraftsSheet` — a batch draft (`needs_yield`) shows a "Plates" field (`cavnarTextFieldStyle`, number pad) and Accept stays disabled until it holds a yield, sent as `yield`; `unit_skipped` lines are named after Accept |
 | Forecast line tag (iOS) | A computed forecast line (Reviews and Marketing `forecast`, the brief's forecast line) carries `ClaimKindTag("forecast")` |
-| Claim tag (iOS) | `ClaimKindTag` — the web `.ck-tag`: tiny uppercase ink3 on a Paper3 capsule, "AI-written" / "Measured" / "Computed" / "Forecast" / "Inferred" |
+| Claim tag (iOS) | `ClaimKindTag` — the web `.ck-tag`: tiny uppercase ink3 on a Paper3 capsule, "AI-written" / "Measured" / "Computed" / "Forecast" / "Inferred"; also "Checked" / "Unchecked" on a scanned invoice line (`verified`) |
+| Counts-only Food Cost (iOS) | `FoodCostCountsOnlyView` — for a tile with `mode: "counts"` (or a 403 `module_forbidden` on the analytics): kicker "FOOD COST · STOCK", "Counts & deliveries", the status line (last counted · deliveries to receive), Count (primary) and Log waste (secondary), then `DeliveriesSection` with no cost anywhere. The web's counts-only panel |
+| Log waste (iOS) | `WasteLogForm` — kicker "LOG WASTE", an ingredient menu picker, a quantity field and a reason picker (the web's six reasons), one secondary "Log it"; the result in green under it. On the count sheet under the count, and alone as `WasteLogSheet` ("inventory/waste") |
 | The one thing | `HomeOneThingCard` — `.cavnarCard(.hero)`: module names joined by `EmberThread` (two or more only), the action at 18, why, "To confirm:", up to three evidence lines, its `ClaimKindTag` and `ConfidenceLine`, $/month in the number face with what it covers under it (`dollars_basis`; a `money {low, high, label}` range stays a range), "Could also be…" (an alert; records `evidence_viewed`), an Ask link, and its `RecAnswerRow`. After Needs attention, before the recommendations (§11b) |
 | Labor diagnosis | `LaborDiagnosisCard` — `.cavnarCard(.ai)`: "WHY LABOR RAN OVER", the `ConfidenceLine`, summary, most likely cause, it could also be, "Check this" (the action) with its `RecAnswerRow`, cross-checked against. Nothing when there is no cause |
 | Evidence viewed | `RecEvidenceLog.viewed(key:surface:module:)` — call when the owner opens a keyed recommendation's reasoning ("Could also be…", "Why this matters"); once per key per launch, fire and forget |

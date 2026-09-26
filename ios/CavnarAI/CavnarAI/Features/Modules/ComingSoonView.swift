@@ -13,11 +13,14 @@ struct ComingSoonView: View {
             Image(systemName: "hourglass")
                 .font(.system(size: 36))
                 .foregroundStyle(Color.cavnarEmber)
-            Text("\(moduleLabel) is coming to the app soon")
+            Text("\(moduleLabel) is coming soon")
                 .font(.cavnarHeadline(20))
                 .foregroundStyle(Color.cavnarInk)
                 .multilineTextAlignment(.center)
-            Text("This is available on desktop today — mobile support is on the way.")
+            // Not "available on desktop today": the registry's coming-soon
+            // modules (models._MODULE_REGISTRY — Waitlist, Bar & Alcohol)
+            // are not built anywhere yet, web included.
+            Text("It isn\u{2019}t built yet, on the web or in the app. It will open here when it\u{2019}s ready.")
                 .font(.cavnarBody(14.5))
                 .foregroundStyle(Color.cavnarInk3)
                 .multilineTextAlignment(.center)

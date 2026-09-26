@@ -348,7 +348,14 @@ struct AutoApproveSettings: Decodable {
 
 struct DataSettings: Decodable {
     let retentionMonths: Int
-    enum CodingKeys: String, CodingKey { case retentionMonths = "data_retention_months" }
+    /// The Export my data scopes this login may pick (mobile_api
+    /// .export_scopes_for): labor and food cost only when those modules are
+    /// on and this login may read them. Nil from an older server.
+    let exportScopes: [String]?
+    enum CodingKeys: String, CodingKey {
+        case retentionMonths = "data_retention_months"
+        case exportScopes = "export_scopes"
+    }
 }
 
 struct AccountSummary: Decodable {

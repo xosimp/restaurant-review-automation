@@ -105,6 +105,11 @@ final class FoodCostAnalyticsViewModel {
         } catch is CancellationError {
             // View went away mid-fetch; not a failure.
         } catch let error as APIClient.APIError {
+            // A login that may count but not read the margins: the same
+            // answer the counts-only tile carries. Recording it switches
+            // Food Cost to the counts-only screen (ModuleDestinationView)
+            // rather than leaving a refused analytics tab.
+            if error.kind == .moduleForbidden { ModuleAccess.shared.markCountsOnly("inventory") }
             if analytics == nil { errorMessage = error.message }
         } catch is CancellationError {
             // The screen went away mid-load — not a failure (CLIENT-49).

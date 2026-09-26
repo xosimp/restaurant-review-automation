@@ -351,7 +351,8 @@ final class DeepLinkRouter {
         if kind == "list" || kind == "nights" { return .list }
         if kind == "week" || kind == "night" || kind == "period" { rest.removeFirst() }
         let date = rest.first.flatMap { DSRFormat.isISODate($0) ? $0 : nil }
-        if kind == "week" || kind == "period" { return .week(date: date) }
+        if kind == "week" { return .week(date: date) }
+        if kind == "period" { return .period(date: date) }
         return .report(date: date)
     }
 

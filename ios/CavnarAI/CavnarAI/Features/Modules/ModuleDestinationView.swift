@@ -40,7 +40,13 @@ struct ModuleDestinationView: View {
         case "reviews":
             ReviewsListView(initialFilter: route?.filter, focusReviewId: route?.itemId.flatMap { Int($0) })
         case "inventory":
-            FoodCostQuickEntryView(focus: route?.navPath)
+            // A counts-only login (the tile's mode) gets the stock work and
+            // nothing that reads the margins — the web's Counts tab.
+            if ModuleAccess.shared.isCountsOnly("inventory") {
+                FoodCostCountsOnlyView(focus: route?.navPath)
+            } else {
+                FoodCostQuickEntryView(focus: route?.navPath)
+            }
         case "labor":
             LaborView(focusSection: route?.section, focusItem: route?.itemId)
         case "marketing":

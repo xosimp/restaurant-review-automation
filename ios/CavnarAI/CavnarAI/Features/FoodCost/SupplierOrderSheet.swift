@@ -3,9 +3,15 @@ import SwiftUI
 /// The step the Food Cost order list used to stop short of: the computed
 /// quantities, grouped by the supplier who actually fills them, with a way
 /// to send each order and close it out when it arrives.
+///
+/// Every quantity can be changed before sending, and every send is
+/// confirmed with the supplier, the line count and the total — one tap
+/// used to email a supplier (the web has always asked first).
 struct SupplierOrderSheet: View {
     @State private var viewModel = SupplierOrderViewModel()
+    @State private var deliveries = DeliveriesViewModel()
     @Environment(\.dismiss) private var dismiss
+    @FocusState private var focusedLine: String?
 
     var body: some View {
         NavigationStack {
@@ -42,8 +48,8 @@ struct SupplierOrderSheet: View {
                                 sendAllButton(draft)
                             }
                         }
-                        if !viewModel.orders.isEmpty {
-                            historySection
+                        if !deliveries.orders.isEmpty || deliveries.loadError != nil {
+                            DeliveriesSection(viewModel: deliveries)
                         }
                     }
                 }
@@ -64,9 +70,37 @@ struct SupplierOrderSheet: View {
                     .buttonStyle(.plain)
                 }
             }
-            .task { await viewModel.load() }
+            .scrollDismissesKeyboard(.immediately)
+            .task {
+                async let draft: Void = viewModel.load()
+                async let orders: Void = deliveries.load()
+                _ = await (draft, orders)
+            }
+            // A send just made shows up in the orders below.
+            .onChange(of: viewModel.lastResult?.sent.count) { _, _ in
+                Task { await deliveries.load() }
+            }
             .sheet(item: $viewModel.assigningItem) { item in
                 SupplierAssignSheet(viewModel: viewModel, item: item)
+            }
+            // An email to a supplier leaves the restaurant: a confirmation
+            // dialog naming who, how many lines and how much (DESIGN_SYSTEM
+            // "Post to all connected" is the same rule).
+            .confirmationDialog(
+                viewModel.pendingSend?.resend == true ? "Already sent" : "Send this order?",
+                isPresented: Binding(
+                    get: { viewModel.pendingSend != nil },
+                    set: { if !$0 { viewModel.pendingSend = nil } }),
+                titleVisibility: .visible,
+                presenting: viewModel.pendingSend
+            ) { pending in
+                Button(pending.resend ? "Send it again" : "Send it") {
+                    Haptic.light()
+                    Task { await viewModel.confirmSend(pending) }
+                }
+                Button(pending.resend ? "Leave it" : "Not yet", role: .cancel) {}
+            } message: { pending in
+                Text(viewModel.confirmMessage(pending))
             }
         }
     }
@@ -86,7 +120,7 @@ struct SupplierOrderSheet: View {
 
             VStack(spacing: 0) {
                 ForEach(Array(group.items.enumerated()), id: \.element.id) { index, item in
-                    itemRow(item)
+                    itemRow(item, group: group)
                     if index < group.items.count - 1 {
                         Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
                     }
@@ -98,20 +132,23 @@ struct SupplierOrderSheet: View {
                     .font(.cavnarBody(13.5))
                     .foregroundStyle(Color.cavnarInk3)
                 Spacer()
-                Text(Self.currency(group.totalCost))
+                // The total at the owner's quantities, not the draft's.
+                Text(SupplierOrderViewModel.money(viewModel.summary(group).total))
                     .font(.cavnarNumber(15, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                     .cavnarSensitive()
             }
 
             Button {
-                Task { await viewModel.send(supplierEmail: group.supplierEmail) }
+                Haptic.light()
+                focusedLine = nil
+                viewModel.askToSend(group)
             } label: {
                 Group {
                     if viewModel.isSending {
                         CavnarShimmerText(text: "Sending…")
                     } else {
-                        Text("Send to \(group.supplierName)")
+                        Text("Send to \(group.displayName)")
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -122,21 +159,44 @@ struct SupplierOrderSheet: View {
         .cavnarCard()
     }
 
-    private func itemRow(_ item: SupplierOrderItem) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
+    /// A line with its quantity open to change (0 takes it off the order).
+    private func itemRow(_ item: SupplierOrderItem, group: SupplierOrderGroup) -> some View {
+        let key = group.supplierEmail + "|" + item.lineKey
+        let valid = viewModel.quantity(group, item) != nil
+        return HStack(alignment: .center, spacing: 10) {
             Rectangle()
                 .fill(item.isCritical ? Color.cavnarRed : Color.cavnarAmber)
                 .frame(width: 3, height: 16)
                 .clipShape(Capsule())
-            Text(item.item)
-                .font(.cavnarBody(15))
-                .foregroundStyle(Color.cavnarInk)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.item)
+                    .font(.cavnarBody(15))
+                    .foregroundStyle(Color.cavnarInk)
+                if item.trimmedForWaste == true {
+                    Text("trimmed for last week\u{2019}s waste")
+                        .font(.cavnarBody(12.5))
+                        .foregroundStyle(Color.cavnarInk3)
+                }
+            }
             Spacer(minLength: 8)
-            (Text("\(item.qty)").font(.cavnarNumber(15, weight: 700))
-                + Text(item.unit.isEmpty ? "" : " \(item.unit)").font(.cavnarBody(13.5)))
-                .foregroundStyle(Color.cavnarInk)
+            TextField("0", text: Binding(
+                get: { viewModel.quantityText(group, item) },
+                set: { viewModel.setQuantity($0, group: group, item: item) }))
+                .keyboardType(.decimalPad)
+                .multilineTextAlignment(.trailing)
+                .font(.cavnarNumber(15, weight: 700))
+                .foregroundStyle(valid ? Color.cavnarInk : Color.cavnarRed)
+                .frame(width: 64)
+                .padding(.vertical, 5).padding(.horizontal, 8)
+                .background(RoundedRectangle(cornerRadius: 8).stroke(valid ? Color.cavnarPaper3 : Color.cavnarRed, lineWidth: 1))
+                .focused($focusedLine, equals: key)
+                .accessibilityLabel("\(item.item) quantity")
+            Text(item.unit)
+                .font(.cavnarBody(13.5))
+                .foregroundStyle(Color.cavnarInk3)
+                .frame(minWidth: 28, alignment: .leading)
         }
-        .padding(.vertical, 9)
+        .padding(.vertical, 7)
     }
 
     private func unassignedCard(_ items: [SupplierOrderItem]) -> some View {
@@ -160,7 +220,7 @@ struct SupplierOrderSheet: View {
                                 .font(.cavnarBody(15))
                                 .foregroundStyle(Color.cavnarInk)
                             Spacer(minLength: 8)
-                            (Text("\(item.qty)").font(.cavnarNumber(15, weight: 700))
+                            (Text(SupplierOrderItem.qtyString(item.qty)).font(.cavnarNumber(15, weight: 700))
                                 + Text(item.unit.isEmpty ? "" : " \(item.unit)").font(.cavnarBody(13.5)))
                                 .foregroundStyle(Color.cavnarInk3)
                             Image(systemName: "chevron.right")
@@ -180,9 +240,13 @@ struct SupplierOrderSheet: View {
         .cavnarCard()
     }
 
+    /// Confirmed like one supplier's send, naming every supplier, the line
+    /// count and the total; each order then goes with its own quantities.
     private func sendAllButton(_ draft: SupplierOrderDraft) -> some View {
         Button {
-            Task { await viewModel.send() }
+            Haptic.light()
+            focusedLine = nil
+            viewModel.askToSendAll()
         } label: {
             Group {
                 if viewModel.isSending {
@@ -249,53 +313,6 @@ struct SupplierOrderSheet: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .cavnarCard()
-    }
-
-    // MARK: - History
-
-    private var historySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("RECENT ORDERS")
-                .font(.cavnarBody(13.5, weight: 700))
-                .tracking(1.2)
-                .foregroundStyle(Color.cavnarEmber2)
-            VStack(spacing: 0) {
-                ForEach(Array(viewModel.orders.enumerated()), id: \.element.id) { index, order in
-                    HStack(spacing: 10) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            (Text(order.poNumber).font(.cavnarNumber(14.5, weight: 700))
-                                + Text(" · \(order.supplierName)").font(.cavnarBody(14.5)))
-                                .foregroundStyle(Color.cavnarInk)
-                            Text("\(order.items.count) item\(order.items.count == 1 ? "" : "s") · \(Self.currency(order.totalCost))")
-                                .font(.cavnarBody(13.5))
-                                .foregroundStyle(Color.cavnarInk3)
-                                .cavnarSensitive()
-                        }
-                        Spacer(minLength: 8)
-                        if order.isReceived {
-                            Text("Received")
-                                .font(.cavnarBody(13.5, weight: 700))
-                                .foregroundStyle(Color.cavnarGreen)
-                        } else {
-                            Button {
-                                Haptic.light()
-                                Task { await viewModel.markReceived(order) }
-                            } label: {
-                                Text("Mark received")
-                                    .font(.cavnarBody(13.5, weight: 700))
-                                    .foregroundStyle(Color.cavnarEmber2)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.vertical, 11)
-                    if index < viewModel.orders.count - 1 {
-                        Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
-                    }
-                }
-            }
-        }
         .cavnarCard()
     }
 

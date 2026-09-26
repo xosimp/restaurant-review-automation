@@ -12,6 +12,9 @@ enum DailyReportRoute: Hashable {
     case report(date: String?, follow: DSRFollow? = nil)
     case list
     case week(date: String?)
+    /// The fiscal period holding `date`, one row per week — the web's
+    /// Night / Week / Period third view.
+    case period(date: String?)
 }
 
 /// What a just-started run will look like on /status, from the answer to
@@ -458,27 +461,42 @@ final class DailyReportWeekViewModel {
 
     init(client: APIClient = .shared) { self.client = client }
 
-    /// The restaurant's week holding `date` (nil = the latest night's).
-    func load(date: String?) async {
+    /// The restaurant's week holding `date` (nil = the latest night's), or
+    /// with `period` the fiscal period holding it (/dsr/period — the web's
+    /// Period view; the app never read it).
+    func load(date: String?, period: Bool = false) async {
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
         var query: [String: String] = [:]
         if let date, DSRFormat.isISODate(date) { query["date"] = date }
+        // A switch between week and period must not leave the other's grid
+        // on screen under the new title.
+        if let g = grid, (g.kind == "period") != period { grid = nil }
         do {
-            let r: DSRWeekResponse = try await client.send("/mobile/api/dsr/week", query: query, hapticOnError: false)
-            grid = r.week
+            if period {
+                let r: DSRPeriodResponse = try await client.send("/mobile/api/dsr/period", query: query, hapticOnError: false)
+                grid = r.period
+            } else {
+                let r: DSRWeekResponse = try await client.send("/mobile/api/dsr/week", query: query, hapticOnError: false)
+                grid = r.week
+            }
         } catch let error as APIClient.APIError {
+            // 409 without a fiscal calendar: the server's sentence says so.
             errorMessage = error.message
         } catch is CancellationError {
         } catch {
-            errorMessage = "Couldn\u{2019}t load the week."
+            errorMessage = period ? "Couldn\u{2019}t load the period." : "Couldn\u{2019}t load the week."
         }
     }
 
-    /// A day inside the week before / after the one showing.
+    /// A day inside the week (or period) before / after the one showing.
     func neighbour(_ step: Int) -> String? {
-        guard let start = grid?.start else { return nil }
-        return DSRFormat.isoAdding(days: 7 * step, to: start)
+        guard let g = grid else { return nil }
+        if g.kind == "period" {
+            // A period is four or five weeks: step off its first or last day.
+            return step < 0 ? DSRFormat.isoAdding(days: -1, to: g.start) : DSRFormat.isoAdding(days: 1, to: g.end)
+        }
+        return DSRFormat.isoAdding(days: 7 * step, to: g.start)
     }
 }

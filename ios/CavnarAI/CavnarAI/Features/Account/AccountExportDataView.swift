@@ -16,6 +16,14 @@ struct AccountExportDataView: View {
         ("food_cost", "Food cost", "Ingredients, on-hand, par, cost, waste"),
         ("settings", "Settings", "Every self-serve setting, as JSON"),
     ]
+    /// Only the scopes this account has — the web hides Labor and Food cost
+    /// when those modules are off, and the server refuses them; the phone
+    /// listed all four whatever the account had.
+    private var options: [(key: String, label: String, detail: String)] {
+        guard let allowed = viewModel.summary?.data.exportScopes else { return Self.scopeOptions }
+        return Self.scopeOptions.filter { allowed.contains($0.key) }
+    }
+
     private static let retentionOptions: [(months: Int, label: String)] = [
         (0, "Keep everything"), (6, "6 months"), (12, "12 months"), (24, "2 years"), (36, "3 years"),
     ]
@@ -31,7 +39,7 @@ struct AccountExportDataView: View {
                     }
 
                     AccountSection(kicker: "Include in the export") {
-                        ForEach(Array(Self.scopeOptions.enumerated()), id: \.element.key) { index, option in
+                        ForEach(Array(options.enumerated()), id: \.element.key) { index, option in
                             Button {
                                 Haptic.selection()
                                 if scopes.contains(option.key) { scopes.remove(option.key) } else { scopes.insert(option.key) }
@@ -50,7 +58,7 @@ struct AccountExportDataView: View {
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
-                            if index < Self.scopeOptions.count - 1 { AccountRowDivider() }
+                            if index < options.count - 1 { AccountRowDivider() }
                         }
                     }
 
@@ -64,7 +72,7 @@ struct AccountExportDataView: View {
 
                     Button {
                         Task {
-                            await viewModel.exportData(scopes: Self.scopeOptions.map(\.key).filter { scopes.contains($0) })
+                            await viewModel.exportData(scopes: options.map(\.key).filter { scopes.contains($0) })
                             if viewModel.exportDataSucceeded { Haptic.success() }
                         }
                     } label: {

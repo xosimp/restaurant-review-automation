@@ -31,6 +31,11 @@ actor APIClient {
             case billingInactive
             /// 403 module_locked: the plan does not include this module.
             case moduleLocked
+            /// 403 module_forbidden: the plan has the module but this login
+            /// may not read this part of it (a counts-only manager on Food
+            /// Cost's analytics). The server's message says so in words; a
+            /// screen can also switch to what the login may do.
+            case moduleForbidden
         }
 
         let kind: Kind
@@ -728,17 +733,20 @@ private struct ErrorEnvelope: Decodable {
     let sessionExpired: Bool?
     let billingInactive: Bool?
     let moduleLocked: Bool?
+    let moduleForbidden: Bool?
 
     enum CodingKeys: String, CodingKey {
         case ok, error
         case sessionExpired = "session_expired"
         case billingInactive = "billing_inactive"
         case moduleLocked = "module_locked"
+        case moduleForbidden = "module_forbidden"
     }
 
     var kind: APIClient.APIError.Kind {
         if billingInactive == true { return .billingInactive }
         if moduleLocked == true { return .moduleLocked }
+        if moduleForbidden == true { return .moduleForbidden }
         return .server
     }
 }
