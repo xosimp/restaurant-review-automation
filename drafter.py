@@ -214,6 +214,28 @@ def reply_context(restaurant=None, *, restaurant_id=None, review_id=None, review
         policy={"action": action})
 
 
+# The needs-review reason every surface reads after "This reply …" or "Read
+# this reply before you post it: it …" — so each one is a verb phrase.
+DEFAULT_REVIEW_REASON = "states something Cavnar AI cannot confirm"
+# A draft the engine would reword (a certainty or confidence phrase
+# lowered): what publishes is the stored text, which did not pass as written.
+REWORD_REVIEW_REASON = "has wording Cavnar AI would change before it goes out"
+_HELD_PREFIX_RE = re.compile(r"^\s*held from [^:]{1,40}:\s*", re.I)
+
+
+def owner_reason(stored):
+    """A stored draft_review_reason as the verb phrase the owner reads.
+    The auto-approve rule and a bulk publish stored "held from auto-approve:
+    Cavnar AI would reword …", which made "it held from auto-approve:
+    Cavnar AI would reword ….": the prefix is dropped (rows stored before
+    they wrote the plain reason) and the reword sentence becomes its verb
+    phrase. Never empty."""
+    s = _HELD_PREFIX_RE.sub("", str(stored or "")).strip()
+    if s.lower().startswith("cavnar ai would reword"):
+        s = REWORD_REVIEW_REASON
+    return s.rstrip(". ").strip() or DEFAULT_REVIEW_REASON
+
+
 def reply_reason(verdict):
     """The needs-review reason for a refused reply, in the words the card
     shows after "This reply …" — None when the verdict is not a refusal."""
@@ -221,7 +243,7 @@ def reply_reason(verdict):
         return None
     refused = [f for f in verdict.findings if f.get("severity") == "refuse"]
     if not refused:
-        return "states something Cavnar AI cannot confirm"
+        return DEFAULT_REVIEW_REASON
     first = refused[0]
     detail = first.get("detail") or ""
     # check_public_reply's own wording ("the draft contains a link") reads

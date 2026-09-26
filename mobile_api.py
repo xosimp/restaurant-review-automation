@@ -195,8 +195,8 @@ def mobile_apple_signin():
         rest_apple = get_restaurant(user.get("restaurant_id")) if not user.get("is_admin") else None
         device_ok = False
         if rest_apple and rest_apple.two_fa_enabled and device_id:
-            from auth import trusted_device_ok as _tdo_apple
-            device_ok = _tdo_apple(user["restaurant_id"], request.headers.get("X-Device-Token", ""))
+            from auth import remembered_device_ok as _tdo_apple
+            device_ok = _tdo_apple(user, request.headers.get("X-Device-Token", ""))
         needs_2fa = bool(rest_apple and rest_apple.two_fa_enabled and not device_ok)
     except Exception:
         needs_2fa = True   # fail closed rather than skipping a second factor
@@ -247,8 +247,8 @@ def mobile_login():
     # the web's device_token_<rid> cookie) and resends it here.
     device_token = (data.get("device_token") or "").strip()
     two_fa_on = bool(rest and rest.two_fa_enabled and not user.get("is_admin"))
-    from auth import trusted_device_ok
-    device_ok = bool(device_token) and trusted_device_ok(rid, device_token)
+    from auth import remembered_device_ok
+    device_ok = bool(device_token) and remembered_device_ok(user, device_token)
 
     if two_fa_on and not device_ok:
         # This sign-in's own challenge — a second login at the restaurant no
@@ -3121,8 +3121,8 @@ def mobile_generate_schedule(current_user):
     if ai_rate_limited(f"schedule:{rid}", max_calls=3, window_secs=60):
         return jsonify(ok=False, error="Too many schedule generations — please wait a moment and try again."), 429
     body = request.get_json(silent=True) or {}
-    # The web twin (client_api.generate_schedule_json) also accepts GET with
-    # ?week_start=; the body wins when both are sent.
+    # week_start may also come as a query arg (the web twin's older callers);
+    # the body wins when both are sent. Both routes are POST only.
     week_start = (body.get("week_start") or request.args.get("week_start") or "").strip()[:10] or None
     from schedule_engine import check_week_start as _cws
     week_start, _ws_err = _cws(rid, week_start)
@@ -3471,7 +3471,7 @@ def mobile_calendar_idea_seen(current_user):
 CALENDAR_FAILED = "Couldn't build this week's calendar — try again in a moment."
 
 
-def _do_content_calendar(restaurant_id, user_id=None, *, force=True, phone=False):
+def _do_content_calendar(restaurant_id, user_id=None, *, force=True, phone=False, generate=True):
     """This week's content calendar — the one body behind the web's
     GET /api/content-calendar (?force=1 is its Generate week) and the phone's
     POST /marketing/calendar (always a fresh draw). They had drifted: only
@@ -3481,7 +3481,12 @@ def _do_content_calendar(restaurant_id, user_id=None, *, force=True, phone=False
     was a pause. Every idea is keyed and presented (present_calendar_ideas):
     all seven for the web grid, the day the phone opens on for the phone.
 
-    -> ({ok, ideas, stale?, error?}, status)."""
+    `generate=False` is a read: this week's cached calendar or none, never a
+    model call — the web's GET, which CSRF and view-as-read-only do not
+    guard, so it must not spend (the phone's GET /marketing reads the same
+    way). `none_yet` says there is no week to show.
+
+    -> ({ok, ideas, stale?, none_yet?, error?}, status)."""
     import ops
     from marketing import (get_content_calendar_ideas, get_cached_calendar,
                            RECENT_CALENDAR_SECONDS)
@@ -3493,6 +3498,13 @@ def _do_content_calendar(restaurant_id, user_id=None, *, force=True, phone=False
         shown = (_phone_calendar(rid, ideas, user_id) if phone
                  else _capi.present_calendar_ideas(rid, ideas, user_id))
         return dict({"ok": True, "ideas": shown}, **extra), 200
+
+    if not generate:
+        cached = get_cached_calendar(rid)
+        if cached:
+            return _served(cached)
+        return {"ok": False, "ideas": [], "none_yet": True,
+                "error": "No plan for this week yet — Generate week builds one."}, 200
 
     if force:
         # Answer a retry before the rate limiter sees it. The limiter counts
@@ -5359,7 +5371,12 @@ def mobile_google_authorize(current_user):
     ASWebAuthenticationSession. See gmb.get_mobile_auth_url/
     verify_mobile_state for why mobile signs its own state instead of
     reusing the web flow's cookie-bound nonce, and auth_routes.py's
-    google_mobile_callback for the other half of this flow."""
+    google_mobile_callback for the other half of this flow. Owner-only:
+    the callback has no session and trusts the signed state minted here."""
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Google Business connection")
+    if denied:
+        return denied
     from gmb import get_mobile_auth_url
     if not os.getenv("GOOGLE_CLIENT_ID"):
         return jsonify(ok=False, error="Google OAuth not configured"), 500
@@ -5370,6 +5387,10 @@ def mobile_google_authorize(current_user):
 @mobile_login_required
 def mobile_disconnect_google(current_user):
     """Mirrors auth_routes.py's /auth/google/disconnect under bearer auth."""
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Google Business connection")
+    if denied:
+        return denied
     update_restaurant(current_user["restaurant_id"], {
         "gmb_access_token": "", "gmb_refresh_token": "",
         "gmb_account_id": "", "gmb_location_id": "",
@@ -6148,6 +6169,14 @@ def mobile_export_data(current_user):
 def mobile_save_alert_settings(current_user):
     from notify import sync_alert_contacts, consent_on_record
     from models import StaleWrite, expected_version_from, restaurant_version
+    from permissions import principal_only
+    # Restaurant-wide, like the web twin (client_api.save_alert_settings):
+    # alert_extra_emails is added to every alert and digest email
+    # (notify.alert_recipients), so a manager could route the owner's
+    # alerts — food-waste dollars included — to themselves.
+    denied = principal_only(current_user, "alert settings")
+    if denied:
+        return denied
     data = request.get_json() or {}
     rid = current_user["restaurant_id"]
     expected = expected_version_from(data)
@@ -6506,7 +6535,12 @@ def mobile_dismiss_onboarding(current_user):
 def mobile_instagram_authorize(current_user):
     """Same Meta OAuth dialog the web's popup opens, with a signed mobile
     state (see gmb.sign_mobile_state) so the callback can finish via the
-    cavnarai://ig-callback deep link instead of window.opener."""
+    cavnarai://ig-callback deep link instead of window.opener. Owner-only
+    (the callback trusts the signed state minted here)."""
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Instagram and Facebook connection")
+    if denied:
+        return denied
     import urllib.parse
     from gmb import sign_mobile_state
     from meta_api import oauth_dialog_url
@@ -6526,6 +6560,10 @@ def mobile_instagram_authorize(current_user):
 @mobile_bp.route("/connections/instagram", methods=["DELETE"])
 @mobile_login_required
 def mobile_instagram_disconnect(current_user):
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Instagram and Facebook connection")
+    if denied:
+        return denied
     update_restaurant(current_user["restaurant_id"], {
         "ig_token": None, "ig_user_id": None, "ig_token_expires": None,
         "fb_page_token": None, "fb_page_id": None, "fb_token_expires": None,

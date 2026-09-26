@@ -61,7 +61,7 @@ def sent(monkeypatch):
     import emails
     box = {"2fa": [], "reset_code": [], "reset_link": []}
     monkeypatch.setattr(emails, "send_2fa_code",
-                        lambda to, name, code, owner=None: box["2fa"].append((to, code)))
+                        lambda to, name, code, owner=None: box["2fa"].append((to, code)) or True)
     monkeypatch.setattr(emails, "send_password_reset_code_email",
                         lambda to, code: box["reset_code"].append((to, code)) or True)
     monkeypatch.setattr(emails, "send_password_reset_email",

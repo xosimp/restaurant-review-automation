@@ -269,8 +269,17 @@ def test_web_generate_schedule_still_reads_week_start_from_the_query(db, monkeyp
     rid = _restaurant(db, module_labor=1)
     monkeypatch.setattr(ai_utils, "ai_rate_limited", lambda *a, **k: False)
     _web_login(monkeypatch, rid)
-    r = _app().test_client().get("/api/generate-schedule?week_start=next-ish")
+    r = _app().test_client().post("/api/generate-schedule?week_start=next-ish", json={})
     assert r.status_code == 400
+
+
+def test_web_generate_schedule_is_post_only(db, monkeypatch):
+    """A GET is guarded by neither CSRF nor view-as-read-only, and this
+    starts a paid model job — so it is POST only, like the phone's twin."""
+    rid = _restaurant(db, module_labor=1)
+    monkeypatch.setattr(ai_utils, "ai_rate_limited", lambda *a, **k: False)
+    _web_login(monkeypatch, rid)
+    assert _app().test_client().get("/api/generate-schedule").status_code == 405
 
 
 def test_the_web_generate_route_is_the_mobile_body():

@@ -3662,7 +3662,7 @@ def auto_approve_five_stars(rid: int, restaurant) -> int:
     # itself (voice and menu notes — a cause, a sourcing claim or an award is
     # allowed only when its words are there or in the guest's own review),
     # the never-say list, the guest's name and every other tenant's name.
-    from drafter import check_reply
+    from drafter import check_reply, REWORD_REVIEW_REASON
     # 4-star joins the rule only when the owner turned it on. Same cap, same
     # urgency and needs-review gates; negative reviews never go here.
     ratings = (4, 5) if getattr(restaurant, "auto_approve_4star", 0) else (5,)
@@ -3697,7 +3697,7 @@ def auto_approve_five_stars(rid: int, restaurant) -> int:
             # The engine would reword it (a certainty or confidence phrase
             # lowered); what would publish is the stored draft, which it did
             # not pass as written. A person reads it first.
-            refusal = "Cavnar AI would reword part of this reply before it goes out"
+            refusal = REWORD_REVIEW_REASON
         if refusal:
             log.warning(f"Auto-approve skipped review {review_id}: {refusal}")
             # Marked for the owner's review, which also takes it out of the
@@ -3708,7 +3708,10 @@ def auto_approve_five_stars(rid: int, restaurant) -> int:
                 _hc = _gc_held()
                 _hc.execute("UPDATE reviews SET draft_needs_review=1, draft_review_reason=? "
                             "WHERE id=? AND restaurant_id=?",
-                            (f"held from auto-approve: {refusal}", review_id, rid))
+                            # The plain reason: every surface reads it after
+                            # "This reply …" (drafter.owner_reason). Which
+                            # path held it is the log line above.
+                            (refusal, review_id, rid))
                 _hc.commit()
                 _hc.close()
             except Exception as _he:

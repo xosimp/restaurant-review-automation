@@ -630,7 +630,7 @@ _SETTABLE = {
 }
 
 
-def _apply_setting(restaurant_id, setting=None, value=None):
+def _apply_setting(restaurant_id, setting=None, value=None, _viewer=None):
     """Change one account setting. Routed through client_api's own _do_*
     handlers so the assistant and the settings screen can never diverge on
     what a setting means or how it validates.
@@ -656,7 +656,11 @@ def _apply_setting(restaurant_id, setting=None, value=None):
         payload = {"opted_out": bool(value)}
     else:
         payload = {"enabled": bool(value)}
-    result, status = handler(restaurant_id, payload)
+    # The login asking: both settings are the owner's (client_api
+    # _owner_only_setting), so a manager asking Ask is refused like the
+    # settings screen refuses them. None is an unrestricted caller.
+    who = getattr(_viewer, "_ask_dsr_user", None) if _viewer is not None else None
+    result, status = handler(restaurant_id, payload, who)
     return {"ok": status == 200 and result.get("ok", False), "setting": setting, "result": result}
 
 
@@ -1167,7 +1171,10 @@ def _skip_review(restaurant_id, review_id=None):
     except (TypeError, ValueError):
         return {"ok": False, "error": "Which review? Use read_reviews to get the id."}
     result, status = client_api._do_skip(rid, restaurant_id)
-    return {"ok": status == 200 and result.get("ok", False), "review_id": rid}
+    out = {"ok": status == 200 and result.get("ok", False), "review_id": rid}
+    if not out["ok"] and result.get("error"):
+        out["error"] = result["error"]   # e.g. already approved or posted (409)
+    return out
 
 
 
@@ -2011,6 +2018,7 @@ TOOLS = [
         # changes — so this one runs rather than proposing.
         "kind": "action",
         "fn": _apply_setting,
+        "wants_viewer": True,
         "spec": {
             "name": "change_setting",
             "description": (
