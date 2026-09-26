@@ -456,7 +456,13 @@ def test_web_new_chat_is_lazy_and_the_fallback_keeps_the_chat():
     new_chat = src[src.index("window.askNewChat=function(){"):]
     new_chat = new_chat[:new_chat.index("};")]
     assert "jsend(" not in new_chat and "fetch(" not in new_chat
-    assert "_askNewChat=true" in new_chat
+    # New chat's state lives in askResetToNew, which deleting the open chat
+    # shares (web client audit #7).
+    assert "askResetToNew();" in new_chat
+    reset = src[src.index("function askResetToNew(){"):]
+    reset = reset[:reset.index("\n  }\n")]
+    assert "_askNewChat=true" in reset
+    assert "jsend(" not in reset and "fetch(" not in reset
     send = src[src.index("window.sendAskCavnar = function() {"):]
     send = send[:send.index("</script>")]
     assert "new_conversation: !!window._askNewChat" in send

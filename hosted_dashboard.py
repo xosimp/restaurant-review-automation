@@ -723,8 +723,24 @@ def index(current_user):
         _conn_lines = _dh_h.connection_lines(restaurant)
     except Exception as _sfe:
         print(f"[dashboard] source freshness unavailable for {rid}: {_sfe}")
+    # Owner-only controls (billing, close account, the owner's alert and
+    # email switches) are drawn from the same test the routes refuse with
+    # (permissions.is_principal), and the export picker from the scopes the
+    # export route allows (mobile_api.export_scopes_for) — so a manager is
+    # never shown a control that answers 403 or an export that is refused.
+    try:
+        from permissions import is_principal as _is_principal
+        _principal = bool(_is_principal(current_user))
+    except Exception:
+        _principal = current_user.get("role") in ("owner", "client")
+    try:
+        from mobile_api import export_scopes_for as _export_scopes_for
+        _export_scopes = _export_scopes_for(restaurant, current_user)
+    except Exception:
+        _export_scopes = ["reviews", "settings"]
     return render_template('dashboard.html',
         show_welcome=show_welcome,
+        is_principal=_principal, export_scopes=_export_scopes,
         onboarding_steps=onboarding_steps,
         csrf_token=csrf_token,
         current_user=current_user, restaurant=restaurant,

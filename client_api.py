@@ -4626,6 +4626,17 @@ def _do_billing_info(restaurant_id, current_user=None):
         return {"ok": False, "reason": "stripe_error", "error": _safe_err(e)}, 200
 
 
+def _stamp_local_mdy(restaurant, stamp):
+    """A stored UTC stamp as M/D/YY on the restaurant's own clock: the date
+    part of the UTC stamp read a day late for an evening request in the
+    Americas. "" when there is no stamp."""
+    from time_utils import mdy as _mdy_l, parse_stamp as _ps_l, restaurant_tz as _rtz_l
+    dt = _ps_l(stamp)
+    if dt is None:
+        return ""
+    return _mdy_l(dt.astimezone(_rtz_l(restaurant)))
+
+
 def _do_request_account_deletion(rid, current_user=None):
     """Account -> Close my account, on both clients: records the request
     and notifies Will to start the 30-day wind-down (the service is under a
@@ -4656,7 +4667,9 @@ def _do_request_account_deletion(rid, current_user=None):
             log_account_event(rid, "deletion_requested", current_user)
         except Exception:
             pass
-    return {"ok": True, "requested_at": requested_at}, 200
+    return {"ok": True, "requested_at": requested_at,
+            # The date to show, on the restaurant's clock (M/D/YY).
+            "requested_on": _stamp_local_mdy(restaurant, requested_at)}, 200
 
 
 @client_bp.route("/api/account/request-deletion", methods=["POST"])
@@ -8249,6 +8262,7 @@ def _account_settings_payload(rid):
     r = get_restaurant(rid)
     if not r:
         return {"ok": False, "error": "Restaurant not found"}, 404
+    _del_at = __import__("models").get_deletion_requested_at(rid)
 
     def _times(raw):
         try:
@@ -8280,8 +8294,10 @@ def _account_settings_payload(rid):
         "monthly_review_enabled": bool(getattr(r, "monthly_review_enabled", 1)),
         "login_notify": bool(getattr(r, "login_notify", 0)),
         # A close-account request already on file (UTC stamp) — the web's
-        # Ownership & cancellation card says so instead of offering it again.
-        "deletion_requested_at": __import__("models").get_deletion_requested_at(rid),
+        # Ownership & cancellation card says so instead of offering it again,
+        # dated by deletion_requested_on (M/D/YY on the restaurant's clock).
+        "deletion_requested_at": _del_at,
+        "deletion_requested_on": _stamp_local_mdy(r, _del_at),
     }, 200
 
 
