@@ -682,6 +682,11 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .cf-pill[data-tip]:after{content:attr(data-tip);position:absolute;right:0;bottom:calc(100% + 8px);z-index:30;white-space:nowrap;padding:6px 10px;border-radius:8px;background:var(--ink);color:var(--paper);font-family:'Apfel Grotezk',sans-serif;font-size:12.5px;font-weight:500;letter-spacing:0;text-transform:none;box-shadow:0 8px 22px rgba(0,0,0,.35);opacity:0;visibility:hidden;transform:translateY(3px);transition:opacity .12s ease .1s,transform .12s ease .1s,visibility 0s linear .22s;pointer-events:none}
 .cf-pill[data-tip]:hover:after,.cf-pill[data-tip]:focus-visible:after{opacity:1;visibility:visible;transform:none;transition-delay:.1s,.1s,0s}
 .cf-pill.cau,.cbtn.cbtn-inline.cf-pill.cau{border-color:var(--amber)}
+/* An unconfirmed cause, tagged on its own line (markHypothesis). */
+.ai-hyp{display:inline-block;margin-right:8px;padding:1px 8px;border-radius:999px;border:1px dashed var(--amber);color:var(--amber);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;vertical-align:2px;cursor:help}
+/* Opens below when the card it sits in would clip it above (cfTipFlip). */
+.cf-pill[data-tip].tip-down:after{bottom:auto;top:calc(100% + 8px);transform:translateY(-3px)}
+.cf-pill[data-tip].tip-down:hover:after,.cf-pill[data-tip].tip-down:focus-visible:after{transform:none}
 /* On a panel that is dark in both themes (the shift-quality panel): the
    dark palette's values, as the component's own tokens. */
 .cf.on-dark{--cf-c:#c4bdb4;color:rgba(240,235,224,.6)}.cf.on-dark.good{--cf-c:#4ead7a}.cf.on-dark.warn{--cf-c:#d4a030}
@@ -2157,7 +2162,12 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 .hb-h1{word-spacing:.14em}
 .hb-h1 .hb-head{color:var(--ink3)}
 .hb-h1 .hb-head.bad{color:var(--hb-bad)}.hb-h1 .hb-head.warn{color:var(--hb-warn)}.hb-h1 .hb-head.good{color:var(--hb-good)}.hb-h1 .hb-head.neutral{color:var(--ink3)}
-.hb-sub{font-size:14.5px;color:var(--ink3);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+/* Flows as one sentence (9/26/26): as flex items, a change that wrapped
+   pushed the next one onto its own line ("· 1 alert fired" under "budget"). */
+.hb-sub{font-size:14.5px;color:var(--ink3);line-height:1.75}
+.hb-sub>span,.hb-sub>button{display:inline;vertical-align:baseline}
+.hb-sub>.sep{margin:0 6px}
+.hb-sub>.hb-refresh{display:inline-flex;vertical-align:middle;margin-left:2px}
 /* Shared section-header row (Inbox, Schedule, History, ...) — this had no
    rule of its own at all, so the schedule subtitle ("... X% target ...") rendered
    glued directly onto the h2 text before it with no gap and whatever size
@@ -2192,6 +2202,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 .hb-status .miss{color:var(--ink3)}
 .hb-status .cbtn-text{font-size:inherit}
 .hb-status .sep{color:var(--ink3);opacity:.5}
+.hb-status .rdiv{width:1px;height:16px;background:var(--hb-line);margin:0 2px}
 .hb-refresh{background:none;border:none;color:var(--ink3);font-family:inherit;font-size:12px;cursor:pointer;padding:0;display:inline-flex;gap:5px;align-items:center}
 .hb-refresh:hover{color:var(--ember)}
 .hb-top{display:flex;justify-content:space-between;gap:28px;align-items:flex-start;flex-wrap:wrap}
@@ -5141,10 +5152,10 @@ svg:hover .hb-xh{opacity:1}
   function hbStatusHtml(x){
     if(!x||!x.ok)return null;
     var r=(x.reports||[])[0];if(!r)return null;
-    var gap=x.tonight?hbDayGap(r.business_date,x.tonight):null;
-    var when=gap===0?'Tonight':(gap===1?'Last night':mdy(r.business_date));
     var running=!(r.status==='final'||r.status==='provisional'||r.status==='failed');
-    var bits=['<span class="when">'+esc(when)+'</span>'];
+    // No "Last night" kicker (9/26/26): the Report link names the night,
+    // and the line reads as the verdict itself.
+    var bits=[];
     if(running)bits.push('<span class="miss">the report is still coming in</span>');
     else{
       if(r.verdict)bits.push('<span class="vd"><i></i>'+esc(r.verdict)+(r.overall!=null?' <span class="hb-num">'+(+r.overall)+'/100</span>':'')+'</span>');
@@ -5154,8 +5165,29 @@ svg:hover .hb-xh{opacity:1}
         bits.push('<span><span class="fig hb-num '+(vb>=0?'up':'down')+'">'+(vb>0?'+':(vb<0?'−':''))+'$'+Math.abs(vb).toLocaleString('en-US')+'</span> vs budget</span>');}
     }
     return {tone:(!running&&r.tone)||'',html:bits.join('<span class="sep">·</span>')
-      +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dr="open" data-kind="night" data-date="'+esc(r.business_date)+'">'+(running?'Follow it':'Report')+' →</button>'};
+      +'<span class="rdiv" aria-hidden="true"></span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dr="open" data-kind="night" data-date="'+esc(r.business_date)+'">'+(running?'Follow it':'Report')+' →</button>'};
   }
+// A confidence pill's tip opens above; in a card that clips its overflow
+// (the Reviews diagnosis) that cut it off. Measured on hover: when the
+// nearest clipping ancestor leaves too little room above, it opens below.
+(function(){
+  if(typeof document==='undefined')return;
+  function clipTop(el){
+    for(var p=el.parentElement;p&&p!==document.body;p=p.parentElement){
+      var cs=window.getComputedStyle(p);
+      if(cs.overflow!=='visible'||cs.overflowY!=='visible')return p.getBoundingClientRect().top;
+    }
+    return 0;
+  }
+  function flip(e){
+    var t=e.target;if(!t||!t.closest)return;
+    var pill=t.closest('.cf-pill[data-tip]');if(!pill)return;
+    var r=pill.getBoundingClientRect();
+    pill.classList.toggle('tip-down',r.top-clipTop(pill)<44);
+  }
+  document.addEventListener('mouseover',flip,true);
+  document.addEventListener('focusin',flip,true);
+})();
   function hbStatus(x){
     var el=document.getElementById('hb-status');if(!el)return;
     var st=_hbScope==='group'?null:hbStatusHtml(x);
@@ -7923,7 +7955,9 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 /* Where the money went (density round #9) */
 .lb2-went .hb-row .m{white-space:normal;text-align:right}
 .lb2-went .lb2-went-n{font-size:16px;font-weight:700;color:var(--tc,var(--hb-warn))}
-.lb2-went-rows{margin-top:8px}
+.lb2-went-rows{margin-top:16px}
+/* Show all sits clear of the rows (9/26/26). */
+.lb2-went>.cbtn-text{margin-top:16px!important}
 .lb2-money-all .hb-row .m{white-space:normal;text-align:right}
 .lb2-money-all .lb2-ma-h{font-size:15px;font-weight:700;color:var(--ink);margin:16px 0 2px}
 /* Tinted rows (9/25/26): each list in its own colour, a dot and a wash per
@@ -8095,7 +8129,8 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .sr-narr{margin-top:10px;padding-top:10px;border-top:1px solid var(--hb-line2);font-size:13px;color:var(--ink3);line-height:1.6;font-style:italic}
 .sr-narr .sr-k{font-style:normal;margin-bottom:3px}
 #sched-gen-meta{font-size:12px;color:var(--ink3);margin-top:3px}
-#sched-table tr.sched-row{cursor:pointer;transition:background .12s ease}
+#sched-table tr.sched-row{cursor:pointer;transition:background .12s ease,opacity .16s ease}
+#sched-table tr.sched-row.sched-leaving{opacity:0}
 #sched-table tr.sched-row:hover td{background:var(--hb-tint)}
 #sched-table tr.needs-review td{background:var(--amber-bg)}
 #sched-table tr.needs-review td:first-child{box-shadow:inset 3px 0 0 var(--hb-warn)}
@@ -8399,9 +8434,11 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .lb2-bn .pct{font-size:18px;font-weight:600}
 .lb2-bn .pct.good{color:var(--hb-good)}.lb2-bn .pct.bad{color:var(--hb-bad)}
 .lb2-bn .lb2-gap{font-size:15px;font-weight:600;color:var(--hb-warn)}.lb2-bn .lb2-gap .hb-num{font-size:18px;color:var(--hb-warn)}.lb2-bn .lb2-gap.good{color:var(--hb-good)}
-#panel-labor .two-col{margin-top:34px;padding-top:22px;border-top:1px solid var(--hb-line);display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px}
+#panel-labor .two-col{margin-top:30px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px}
 /* No rule above the Every day and person disclosure (owner, 9/26/26). */
 #lb2-money-all{border-top:none}
+/* Details and Every day and person sit closer to the card above (9/26/26). */
+#lb2-details,#lb2-money-all{margin-top:14px}
 /* Inside the Every day and person disclosure the summary's own rule is the
    line; the grid's second one under it doubled it (9/25/26). */
 @media (max-width:1000px){.lb2-sig{grid-template-columns:1fr}.lb2-sg{border-right:none;margin-right:0;padding:0 0 18px;border-bottom:1px solid var(--hb-line2);margin-bottom:18px}.lb2-sg:last-child{border-bottom:none;margin-bottom:0}#panel-labor .two-col{grid-template-columns:1fr}}
@@ -18212,6 +18249,21 @@ document.addEventListener('click', function (ev) {
 
 var _schedConstraints = {};
 
+// Only the rows that changed are replaced (9/26/26): rewriting the whole
+// tbody on every edit, and again when the rules recheck came back, made
+// the table blink under the manager's cursor.
+function _schedPatchTbody(tbody, html) {
+  var tmp = document.createElement('tbody'), fresh = [], k;
+  tmp.innerHTML = html;
+  for (k = 0; k < tmp.children.length; k++) fresh.push(tmp.children[k]);
+  for (k = 0; k < fresh.length; k++) {
+    var old = tbody.children[k];
+    if (!old) tbody.appendChild(fresh[k]);
+    else if (old.outerHTML !== fresh[k].outerHTML) tbody.replaceChild(fresh[k], old);
+  }
+  while (tbody.children.length > fresh.length) tbody.removeChild(tbody.lastElementChild);
+}
+
 function _schedRenderTable(collapse) {
   var tbody = document.getElementById('sched-tbody');
   var _constraints = _schedConstraints || {};
@@ -18256,7 +18308,7 @@ function _schedRenderTable(collapse) {
     }
   }
   if (!_schedRows.length) tHtml = '<tr><td colspan="7" style="padding:14px 12px;color:var(--ink3);font-size:13px">No shifts on this week yet \u2014 add one below.</td></tr>';
-  tbody.innerHTML = tHtml;
+  _schedPatchTbody(tbody, tHtml);
   var toggleBar = document.getElementById('sched-toggle-bar');
   var shiftCount = document.getElementById('sched-shift-count');
   if (toggleBar) toggleBar.style.display = 'flex';
@@ -18980,6 +19032,21 @@ function schedCancelEdit(i) {
 }
 
 function schedRemoveRow(i) {
+  if (!_schedRows[i] || _schedRemoving) return;
+  // The row fades out where it is, then the rows below close up; nothing
+  // else on the table is redrawn (9/26/26).
+  var tr = document.querySelector('#sched-tbody tr[data-sched-row="' + i + '"]');
+  if (tr && !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)) {
+    _schedRemoving = true;
+    tr.className += ' sched-leaving';
+    setTimeout(function () { _schedRemoving = false; _schedRemoveRowNow(i); }, 170);
+    return;
+  }
+  _schedRemoveRowNow(i);
+}
+var _schedRemoving = false;
+
+function _schedRemoveRowNow(i) {
   if (!_schedRows[i]) return;
   _schedRows.splice(i, 1);
   var o = {}, k;
@@ -23023,18 +23090,43 @@ function aiCaveat(title, detail){
   return box;
 }
 
+/* Tags the line of a read that states an unconfirmed cause (see
+   applyFigureCaveat). Lines are matched on their letters and digits, so the
+   read's own icon and "Watch:" prefix do not stop a match. */
+function _hypKey(t){return String(t||'').toLowerCase().replace(/[^a-z0-9]+/g,'');}
+function markHypothesis(el, sentence){
+  var key=_hypKey(sentence).slice(0,60);if(key.length<12)return false;
+  var kids=el.children;
+  for(var i=0;i<kids.length;i++){
+    var row=kids[i];if(_hypKey(row.textContent).indexOf(key)<0)continue;
+    if(!row.querySelector('.ai-hyp')){
+      var tag=document.createElement('span');tag.className='ai-hyp';tag.textContent='Hypothesis';
+      tag.setAttribute('title','Cavnar AI\u2019s guess at the reason: nothing measured links these yet. Check it before acting on it.');
+      var tgt=row.querySelector('span')||row;tgt.insertBefore(tag,tgt.firstChild);
+    }
+    row.classList.add('is-hyp');return true;
+  }
+  return false;
+}
+
 /* Prepends the caveat when the server says the figures in this passage were
    not all traceable to the data behind it. */
 function applyFigureCaveat(el, d){
   if(!el || !d) return;
   // A cause the model stated that no stored diagnosis carries (ai_guard.
-  // unsupported_causes, H2): the sentence stays, flagged as a guess, the
-  // same way an untraced figure is.
+  // unsupported_causes, H2) is Cavnar AI's hypothesis, and reads as one
+  // where it stands (9/26/26): the line itself is tagged Hypothesis, with
+  // why on hover. A banner above the read ("Unsupported cause") sat apart
+  // from the claim and read as the app arguing with itself; it is kept
+  // only for a sentence no line of the read can be matched to.
   if(d.causes_verified===false){
-    var cs=d.unsupported_causes||[];
-    el.insertBefore(aiCaveat('Unsupported cause', cs.length
-      ? 'Cavnar AI gave a reason here that no measured diagnosis supports (\u201c'+String(cs[0]).slice(0,120)+'\u201d). Treat it as a guess, not a finding.'
-      : 'Cavnar AI gave a reason here that no measured diagnosis supports. Treat it as a guess, not a finding.'), el.firstChild);
+    var cs=d.unsupported_causes||[],loose=[];
+    for(var ci=0;ci<cs.length;ci++){if(!markHypothesis(el,cs[ci]))loose.push(cs[ci]);}
+    if(!cs.length||loose.length){
+      el.insertBefore(aiCaveat('Hypothesis', loose.length
+        ? 'Cavnar AI suggests a reason here that nothing measured confirms yet (\u201c'+String(loose[0]).slice(0,120)+'\u201d). Check it before acting on it.'
+        : 'Cavnar AI suggests a reason here that nothing measured confirms yet. Check it before acting on it.'), el.firstChild);
+    }
   }
   if(d.figures_verified!==false) return;
   var n=(d.unsupported_figures||[]).length;
@@ -25694,7 +25786,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     _rvMarkRows(!(d&&d.initial));
     var rv=_rv.review,pend=_rv.pending||{},hard=rv?(+rv.hard||0):0,soft=rv?(+rv.soft||0):0,i;
     var pendNames=[],k;for(k in pend)if(pend.hasOwnProperty(k)&&pend[k]&&pend[k].length)pendNames.push(k);
-    if(!rv&&!pendNames.length){box.style.display='none';box.innerHTML='';if(typeof _schedRenderTable==='function')_schedRenderTable();return;}
+    if(!rv&&!pendNames.length){box.style.display='none';box.innerHTML='';box._h='';if(typeof _schedRenderTable==='function')_schedRenderTable();return;}
     var h='<div class="sr-head"><span class="sr-k">Rules check</span>';
     if(hard)h+='<span class="sr-chip bad"><span class="hb-num">'+hard+'</span> hard</span>';
     if(soft)h+='<span class="sr-chip warn"><span class="hb-num">'+soft+'</span> soft</span>';
@@ -25771,7 +25863,14 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
         +'<button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="improveScheduleWithCavnar(this)">Improve with Cavnar AI</button>'
         +'<span class="sr-note">'+(hard?'Apply fixes puts somebody legal on every row that breaks a hard rule. ':'')+'Improve with Cavnar AI makes legal changes that raise the score and lists each one. You still choose to save.</span></div>';
     }
-    box.innerHTML=h;box.style.display='block';
+    // Redrawn only when it changed, and the table below held where it was
+    // on screen when it does: Safari has no scroll anchoring, so a line
+    // added or dropped here slid the rows under the cursor (9/26/26).
+    if(box._h!==h||box.style.display!=='block'){
+      var tw=document.getElementById('sched-table-wrap'),t0=tw?tw.getBoundingClientRect().top:null;
+      box.innerHTML=h;box._h=h;box.style.display='block';
+      if(tw&&t0!==null&&t0<(window.innerHeight||0)){var dy=tw.getBoundingClientRect().top-t0;if(dy&&box.getBoundingClientRect().top<t0)window.scrollBy(0,dy);}
+    }
     if(typeof _schedRenderTable==='function')_schedRenderTable();
   };
   // One-tap overtime move: the shift goes to the same-role person with

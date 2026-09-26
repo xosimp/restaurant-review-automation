@@ -202,7 +202,8 @@ console.log(JSON.stringify([
     owner, manager, missing, none = _node(js)
     text = re.sub(r"<[^>]+>", "", owner["html"])
     assert owner["tone"] == "good"
-    assert "Last night" in text and "Good day 78/100" in text and "$8,420 net" in text and "+$420 vs budget" in text
+    # No "Last night" kicker on the line (owner, 9/26/26); Report names the night.
+    assert "Last night" not in text and "Good day 78/100" in text and "$8,420 net" in text and "+$420 vs budget" in text
     t2 = re.sub(r"<[^>]+>", "", manager["html"])
     assert "$8,420 net" in t2 and "budget" not in t2 and "/100" not in t2 and manager["tone"] == ""
     assert "Sales weren" in missing["html"] and "$0" not in missing["html"]      # a missing net is never 0

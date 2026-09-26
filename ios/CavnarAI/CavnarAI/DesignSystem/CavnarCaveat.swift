@@ -69,14 +69,16 @@ struct CavnarCaveat: View {
     static func unverifiedCauses(_ causes: [String]) -> CavnarCaveat {
         let named = causes.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
         let detail: String
+        // Said as what it is (9/26/26): Cavnar AI's hypothesis, not a
+        // finding the app disputes with itself.
         if named.isEmpty {
-            detail = "Cavnar AI couldn\u{2019}t match the reason this read gives to anything in your data. Treat the why as a guess until you\u{2019}ve checked it."
+            detail = "Cavnar AI suggests a reason here that nothing measured confirms yet. Check it before acting on it."
         } else if named.count == 1 {
-            detail = "Cavnar AI couldn\u{2019}t match \u{201C}\(named[0])\u{201D} to anything in your data. Treat that reason as a guess until you\u{2019}ve checked it."
+            detail = "\u{201C}\(named[0])\u{201D} is Cavnar AI\u{2019}s guess at the reason: nothing measured links these yet. Check it before acting on it."
         } else {
-            detail = "Cavnar AI couldn\u{2019}t match \(named.count) reasons here (\(named.prefix(2).map { "\u{201C}\($0)\u{201D}" }.joined(separator: ", "))) to anything in your data. Treat them as guesses until you\u{2019}ve checked."
+            detail = "\(named.count) reasons here (\(named.prefix(2).map { "\u{201C}\($0)\u{201D}" }.joined(separator: ", "))) are Cavnar AI\u{2019}s guesses: nothing measured links them yet. Check them before acting on them."
         }
-        return CavnarCaveat(title: "Unverified cause", detail: detail)
+        return CavnarCaveat(title: "Hypothesis", detail: detail)
     }
 
     /// A name the passage used that was never in the data behind it.
