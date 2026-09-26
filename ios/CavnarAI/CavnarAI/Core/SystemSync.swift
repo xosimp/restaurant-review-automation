@@ -42,7 +42,7 @@ final class WidgetSnapshotService {
     /// (F3-8).
     static func clearForSignOut() {
         WidgetSnapshot.clear()
-        WidgetCenter.shared.reloadTimelines(ofKind: WidgetSnapshot.widgetKind)
+        WidgetSnapshot.allWidgetKinds.forEach { WidgetCenter.shared.reloadTimelines(ofKind: $0) }
         UIApplication.shared.shortcutItems = []
         PendingSendActivities.endAll()
     }
@@ -68,12 +68,23 @@ final class WidgetSnapshotService {
         var verdict: String?
         var tone: String?
         var score: Int?
+        /// "+$525 vs budget" and which way — nil for a login without the
+        /// budget (the server sends none) or a night with none set.
+        var budget: String?
+        var budgetUp: Bool?
         static let none = NightPart()
 
         mutating func setVerdict(_ v: HomeLastNightCard.Verdict?) {
             verdict = v?.label
             tone = v?.tone
             score = v?.overall
+        }
+
+        /// Net minus budget in dollars, as the "Last night" widget and the
+        /// spoken answer say it; nil clears it.
+        mutating func setBudget(_ vs: Double?) {
+            budget = vs.map { DSRFormat.signedMoney($0) + " vs budget" }
+            budgetUp = vs.map { $0 >= 0 }
         }
     }
 
@@ -106,6 +117,8 @@ final class WidgetSnapshotService {
             snap.nightVerdict = night.verdict
             snap.nightTone = night.tone
             snap.nightScore = night.score
+            snap.budgetLabel = night.budget
+            snap.budgetIsUp = night.budgetUp
             snap.nightUpdatedAt = now
         } else if !sameStore {
             snap.nightUpdatedAt = .distantPast
@@ -147,7 +160,7 @@ final class WidgetSnapshotService {
         if let snapshot = Self.merge(previous: WidgetSnapshot.load(), restaurantId: SessionScope.activeRestaurantId,
                                      restaurantName: name, waiting: waiting, night: n, now: Date()) {
             WidgetSnapshot.save(snapshot)
-            WidgetCenter.shared.reloadTimelines(ofKind: WidgetSnapshot.widgetKind)
+            WidgetSnapshot.allWidgetKinds.forEach { WidgetCenter.shared.reloadTimelines(ofKind: $0) }
         }
         if let waiting {
             UIApplication.shared.shortcutItems =
@@ -172,6 +185,10 @@ final class WidgetSnapshotService {
         guard let latest = list.reports.first else { return NightPart.none }
         var part = NightPart(date: latest.businessDate, label: latest.displayDate)
         part.setVerdict(HomeLastNightCard.verdict(latest, nil))
+        // The list's own net-minus-budget (dsr.access.summary) — present
+        // only for a view allowed the budget; the report's Sales block
+        // replaces it below when it is ready.
+        part.setBudget(latest.vsBudget)
         guard let report: DSRReport = try? await client.sendWithBearer(
             "/mobile/api/dsr/\(latest.businessDate)", query: ["peek": "1"], bearer: bearer) else {
             // The list answered and the report didn't: the list's own net.
@@ -181,6 +198,7 @@ final class WidgetSnapshotService {
         part.setVerdict(HomeLastNightCard.verdict(latest, report))
         guard let sales = report.facts.blocks["sales"], sales.isReady else { return part }
         if let net = sales.metric("net") { part.net = DSRFormat.money(net) }
+        if let vs = DSRScorecardCard.vsBudget(sales) { part.setBudget(vs) }
         let change = WidgetSnapshotService.change(lastWeek: sales.metric("vs_last_week_pct"),
                                                   yesterday: sales.metric("vs_yesterday_pct"),
                                                   businessDate: latest.businessDate)

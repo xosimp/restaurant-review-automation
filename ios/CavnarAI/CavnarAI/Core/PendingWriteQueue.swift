@@ -117,12 +117,39 @@ actor PendingWriteQueue {
                 )
                 queue.removeFirst()
                 persist()
+            } catch let error as APIClient.APIError
+                        where Self.isRefusal(status: error.status) && QueuedWrite.standsAlone(path: next.path) {
+                // The server read it and said no (the recommendation is no
+                // longer answerable, a count line it could not use). A replay
+                // can never succeed, and left at the head of the queue it
+                // would hold every write behind it for a day. Only writes
+                // nothing else depends on: a refused review draft save must
+                // still stop the approve queued behind it, or the approve
+                // would publish the old stored reply (CLIENT-6).
+                print("[PendingWriteQueue] dropped refused write \(next.path): \(error.message)")
+                queue.removeFirst()
+                persist()
+                continue
             } catch {
-                // Still offline, or the server rejected it — leave the queue
+                // Still offline, or the server is unwell — leave the queue
                 // intact and try again on the next reconnect.
                 return
             }
         }
+    }
+
+    /// A status that is the server's final answer about this write, not a
+    /// passing condition: any 4xx except an expired session (401), a paused
+    /// account (402 — billing can be fixed within the day), a timeout (408),
+    /// too-early (425) and rate limiting (429).
+    static func isRefusal(status: Int?) -> Bool {
+        guard let status, (400..<500).contains(status) else { return false }
+        return ![401, 402, 408, 425, 429].contains(status)
+    }
+
+    /// Parks one of the app's queueable writes (QueuedWrite).
+    func enqueue(_ write: QueuedWrite) {
+        enqueue(path: write.path, method: write.method, bodyJSON: write.bodyJSON, label: write.label)
     }
 
     func clear() {
@@ -141,5 +168,68 @@ actor PendingWriteQueue {
         DispatchQueue.main.async {
             NotificationCenter.default.post(name: Self.didChange, object: nil)
         }
+    }
+}
+
+/// A write the app may park while offline, and exactly what it replays —
+/// built here so the whole set is one list, and testable.
+///
+/// What qualifies: a write an owner makes on the floor, on one bar of
+/// signal, that is safe to land late and safe to land twice. Queued only
+/// when the request certainly never left the phone
+/// (`APIError.mayHaveReachedServer == false`), so a replay is the first
+/// send, not a second one.
+///
+/// Deliberately NOT here: anything that sends to someone outside the app —
+/// a supplier order, a campaign, a published schedule — and time-off /
+/// shift-request decisions. Those two routes are idempotent (a second
+/// decide finds the request no longer pending and answers 404), but every
+/// decision messages the employee (people.tell / shift_requests._notify:
+/// push, text or email), and a decision that reaches staff hours late, with
+/// the owner no longer looking, is not a low-risk write.
+struct QueuedWrite: Equatable {
+    let path: String
+    let method: String
+    let bodyJSON: Data?
+    let label: String
+
+    static let recEventPath = "/mobile/api/recs/event"
+    static let countSheetPath = "/mobile/api/food-cost/count-sheet"
+
+    /// Writes no later write depends on — so one the server refuses can be
+    /// dropped without breaking an order the queue exists to keep.
+    static func standsAlone(path: String) -> Bool {
+        path == recEventPath || path == countSheetPath
+    }
+
+    /// Done or Pass on a recommendation (POST /mobile/api/recs/event). The
+    /// ledger ignores the same answer twice (rec_ledger.record: the episode
+    /// is already closed, `recorded: false`), and a Done's tracker start is
+    /// refused while anything in its family is being measured. "Measure it"
+    /// (accepted) is not queued: the owner starts a tracker to be told which
+    /// metric it measures and until when, and that answer only exists live.
+    static func recAnswer(_ body: APIClient.RecEventBody) -> QueuedWrite? {
+        let label: String
+        if body.event == RecAnswer.completed.event {
+            label = "Mark a recommendation done"
+        } else if body.event == RecAnswer.notForUs.event, body.kind == RecAnswer.notForUs.kind {
+            label = "Pass on a recommendation"
+        } else {
+            return nil
+        }
+        guard let data = try? JSONEncoder().encode(body) else { return nil }
+        return QueuedWrite(path: recEventPath, method: "POST", bodyJSON: data, label: label)
+    }
+
+    /// A count sheet's recounts (POST /mobile/api/food-cost/count-sheet).
+    /// A recount is an absolute figure, not a change: the same count landing
+    /// twice anchors the ledger at the same number, and the second finds no
+    /// gap to call waste. `body.date` pins it to the day it was taken, so a
+    /// replay after midnight is not filed under the next day.
+    static func countSheet(_ body: CountSheetViewModel.SaveBody) -> QueuedWrite? {
+        guard !body.items.isEmpty, let data = try? JSONEncoder().encode(body) else { return nil }
+        let n = body.items.count
+        return QueuedWrite(path: countSheetPath, method: "POST", bodyJSON: data,
+                           label: "Save \(n) recount\(n == 1 ? "" : "s")")
     }
 }

@@ -232,6 +232,21 @@ final class ReviewsListViewModel {
     /// One page. Matches models.REVIEWS_PAGE_SIZE.
     private static let pageSize = 50
 
+    /// When the cached first page on screen was stored; nil once a live
+    /// load lands.
+    private(set) var cachedAt: Date?
+    var stalenessNotice: String? { CacheFreshness.notice(savedAt: cachedAt) }
+
+    /// A cached first page, shown as it was stored — paging state included,
+    /// so the chips' counts read exactly as they did live (CLIENT-30).
+    private func apply(_ cached: ReviewsResponse) {
+        reviews = cached.reviews
+        total = cached.total ?? cached.reviews.count
+        nextOffset = cached.offset ?? cached.reviews.count
+        hasMore = cached.hasMore ?? false
+        fetchLine = cached.fetchLine?.value
+    }
+
     /// category filters to reviews tagged with that topic-heatmap category
     /// (see TopicHeatmapEntry.category); platform filters to one review
     /// platform (e.g. "google"/"yelp"). Both nil/omitted keeps the normal
@@ -239,6 +254,16 @@ final class ReviewsListViewModel {
     func load(category: String? = nil, platform: String? = nil) async {
         generation += 1
         let mine = generation
+        let session = SessionScope.generation
+        // The inbox's first page per chip is kept on the device
+        // (ResponseCache) and painted before the fetch; a category or
+        // platform drill-down is not — it is a one-off look, not the inbox.
+        let cache = (category == nil && platform == nil) ? ResponseCache<ReviewsResponse>(
+            "reviews.inbox.\(filter.serverKey)") : nil
+        if reviews.isEmpty, let hit = await cache?.load(), mine == generation {
+            apply(hit.value)
+            cachedAt = hit.savedAt
+        }
         isLoading = true
         errorMessage = nil
         defer { if mine == generation { isLoading = false } }
@@ -246,9 +271,13 @@ final class ReviewsListViewModel {
             var query = ["filter": filter.serverKey, "limit": "\(Self.pageSize)", "offset": "0"]
             if let category { query["category"] = category }
             if let platform { query["platform"] = platform }
-            let response: ReviewsResponse = try await client.send("/mobile/api/reviews", query: query)
+            let fetched: (value: ReviewsResponse, body: Data) = try await client.sendKeepingBody(
+                "/mobile/api/reviews", query: query)
             // A newer load (another chip, a refresh) owns the list now.
             guard mine == generation else { return }
+            cache?.save(fetched.body, generation: session)
+            cachedAt = nil
+            let response = fetched.value
             reviews = response.reviews
             total = response.total ?? response.reviews.count
             nextOffset = response.offset ?? response.reviews.count

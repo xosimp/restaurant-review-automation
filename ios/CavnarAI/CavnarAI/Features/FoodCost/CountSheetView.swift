@@ -37,7 +37,13 @@ final class CountSheetViewModel {
             enum CodingKeys: String, CodingKey { case counted; case ingredientId = "ingredient_id" }
         }
         let items: [Line]
+        /// The day the count was taken (ISO, the restaurant's clock) — sent
+        /// only by a count parked offline, so its replay is not filed under
+        /// the day the signal came back. Omitted when nil.
+        var date: String? = nil
     }
+    /// Recounts parked in the offline queue by the last save.
+    var queuedCount: Int?
 
     static func expectedString(_ v: Double?) -> String {
         guard let v else { return "" }
@@ -74,7 +80,7 @@ final class CountSheetViewModel {
     func save() async {
         let lines = changed
         guard !lines.isEmpty else { errorMessage = "Nothing changed from what the ledger expects."; return }
-        isSaving = true; errorMessage = nil; savedCount = nil
+        isSaving = true; errorMessage = nil; savedCount = nil; queuedCount = nil
         defer { isSaving = false }
         do {
             let r: SaveResponse = try await client.send("/mobile/api/food-cost/count-sheet", method: .post, body: SaveBody(items: lines))
@@ -85,6 +91,17 @@ final class CountSheetViewModel {
             } else {
                 errorMessage = r.error ?? "Couldn't save the count."
             }
+        } catch let error as APIClient.APIError where error.isRetryable && !error.mayHaveReachedServer {
+            // Counted in the walk-in with no signal: the count never left
+            // the phone, so it waits in the offline queue, dated today on the
+            // restaurant's clock when that clock is known (QueuedWrite).
+            let day = RestaurantClock.isKnown ? CavnarDate.isoDay(Date(), in: RestaurantClock.timeZone) : nil
+            guard let write = QueuedWrite.countSheet(SaveBody(items: lines, date: day)) else {
+                errorMessage = error.message
+                return
+            }
+            await PendingWriteQueue.shared.enqueue(write)
+            queuedCount = lines.count
         } catch let error as APIClient.APIError {
             errorMessage = error.message
         } catch {
@@ -120,6 +137,14 @@ struct CountSheetView: View {
                     if let n = viewModel.savedCount {
                         Text("\(n) recount\(n == 1 ? "" : "s") saved. Food cost reads them tonight.")
                             .font(.cavnarBody(15, weight: 600)).foregroundStyle(Color.cavnarGreen)
+                    }
+                    if let n = viewModel.queuedCount {
+                        Label {
+                            HomeMixedText.make("\(n) recount\(n == 1 ? "" : "s") kept on this phone. "
+                                               + RecAnswer.queuedLine + ".", size: 15, weight: 600, color: .cavnarInk2)
+                        } icon: {
+                            Image(systemName: "clock.arrow.circlepath").foregroundStyle(Color.cavnarInk3)
+                        }
                     }
                     if viewModel.isLoading && viewModel.items.isEmpty {
                         CavnarWorkingLine().padding(.vertical, 12)

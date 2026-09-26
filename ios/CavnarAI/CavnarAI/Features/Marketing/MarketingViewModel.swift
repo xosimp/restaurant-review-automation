@@ -314,30 +314,44 @@ final class MarketingViewModel {
         }
     }
 
+    /// The last good /mobile/api/marketing, painted before the fetch (ResponseCache).
+    @ObservationIgnored private let cache = ResponseCache<MarketingResponse>("marketing.summary")
+    /// When the cached copy on screen was stored; nil once a live load lands.
+    private(set) var cachedAt: Date?
+    var stalenessNotice: String? { CacheFreshness.notice(savedAt: cachedAt) }
+
     func load() async {
+        let generation = SessionScope.generation
+        if stats == nil, let hit = await cache.load() { apply(hit.value); cachedAt = hit.savedAt }
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
         do {
-            let response: MarketingResponse = try await client.send("/mobile/api/marketing")
-            stats = response.stats
-            calendar = response.calendar
-            guestTextable = response.guestTextable ?? 0
-            channels = response.channels ?? MarketingChannels()
-            metricsSync = response.metricsSync?.value
+            let fetched: (value: MarketingResponse, body: Data) = try await client.sendKeepingBody("/mobile/api/marketing")
+            apply(fetched.value)
+            cachedAt = nil
+            cache.save(fetched.body, generation: generation)
             lastLoadedAt = Date()
-            if let types = response.contentTypes, !types.isEmpty {
-                contentTypes = types
-                if !types.contains(where: { $0.id == selectedType }) {
-                    selectedType = types[0].id
-                }
-            }
         } catch let error as APIClient.APIError {
             errorMessage = error.message
         } catch is CancellationError {
             // The screen went away mid-load — not a failure (CLIENT-49).
         } catch {
             errorMessage = "Couldn't load marketing data."
+        }
+    }
+
+    private func apply(_ response: MarketingResponse) {
+        stats = response.stats
+        calendar = response.calendar
+        guestTextable = response.guestTextable ?? 0
+        channels = response.channels ?? MarketingChannels()
+        metricsSync = response.metricsSync?.value
+        if let types = response.contentTypes, !types.isEmpty {
+            contentTypes = types
+            if !types.contains(where: { $0.id == selectedType }) {
+                selectedType = types[0].id
+            }
         }
     }
 

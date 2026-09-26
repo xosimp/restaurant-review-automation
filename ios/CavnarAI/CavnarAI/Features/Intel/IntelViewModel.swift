@@ -270,12 +270,23 @@ final class IntelViewModel {
         self.client = client
     }
 
+    /// The last good /mobile/api/intel, painted before the fetch (ResponseCache).
+    @ObservationIgnored private let cache = ResponseCache<IntelSummary>("intel.summary")
+    /// When the cached copy on screen was stored; nil once a live load lands.
+    private(set) var cachedAt: Date?
+    var stalenessNotice: String? { CacheFreshness.notice(savedAt: cachedAt) }
+
     func load() async {
+        let generation = SessionScope.generation
+        if summary == nil, let hit = await cache.load() { summary = hit.value; cachedAt = hit.savedAt }
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
         do {
-            summary = try await client.send("/mobile/api/intel")
+            let fetched: (value: IntelSummary, body: Data) = try await client.sendKeepingBody("/mobile/api/intel")
+            summary = fetched.value
+            cachedAt = nil
+            cache.save(fetched.body, generation: generation)
             lastLoadedAt = Date()
         } catch let error as APIClient.APIError {
             errorMessage = error.message

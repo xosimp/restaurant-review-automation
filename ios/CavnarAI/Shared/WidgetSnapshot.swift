@@ -36,6 +36,11 @@ struct WidgetSnapshot: Codable, Equatable {
     var nightVerdict: String? = nil
     var nightTone: String? = nil
     var nightScore: Int? = nil
+    /// "+$525 vs budget" / "−$135 vs budget" — the night's net against its
+    /// budget, for a login allowed the budget (dsr/access.py keeps it
+    /// owner-only); nil otherwise, and on a snapshot written before it.
+    var budgetLabel: String? = nil
+    var budgetIsUp: Bool? = nil
     /// Open items in the action queue for this login (0 = nothing waiting).
     var waitingCount: Int
     /// Drafted replies waiting for approval — the quick action's subtitle.
@@ -56,6 +61,11 @@ struct WidgetSnapshot: Codable, Equatable {
     static let storageKey = "cavnar.widget.snapshot.v1"
     /// The widget's WidgetKit `kind` — the app reloads it by name.
     static let widgetKind = "CavnarWaitingWidget"
+    /// The "Last night" widget — the same snapshot, the night half only.
+    static let lastNightWidgetKind = "CavnarLastNightWidget"
+    /// Every widget drawn from this snapshot: the app reloads all of them
+    /// whenever it writes or clears it.
+    static let allWidgetKinds = [widgetKind, lastNightWidgetKind]
 
     /// Last night's figures stay good for a day and a half — the next
     /// night's report replaces them.
@@ -92,6 +102,34 @@ struct WidgetSnapshot: Codable, Equatable {
     var verdictLine: String? {
         guard let v = nightVerdict, !v.isEmpty else { return nil }
         return nightScore.map { "\(v) \($0)/100" } ?? v
+    }
+
+    /// The "Last night" widget's link: that night's report when the
+    /// snapshot knows the date, else the latest night.
+    var nightLink: String {
+        if let nightDate, !nightDate.isEmpty { return "cavnarai://nav/dsr/night/" + nightDate }
+        return "cavnarai://nav/dsr"
+    }
+
+    /// Last night's figures as one spoken sentence — what "How was last
+    /// night?" answers without opening the app:
+    /// "Last night, 9/24/26: $4,210 in net sales, +8% vs last Friday,
+    /// +$525 vs budget. Good day, 82 out of 100."
+    /// Nil while there is no current night with a measured net: the answer
+    /// is then "no report yet", never an old night read as last night's.
+    func lastNightSentence(now: Date = Date()) -> String? {
+        guard nightIsCurrent(now: now), let net = netLabel, !net.isEmpty else { return nil }
+        var parts = ["\(net) in net sales"]
+        if let change = changeLabel {
+            parts.append([change, changeBasis].compactMap { $0 }.joined(separator: " "))
+        }
+        if let budget = budgetLabel { parts.append(budget) }
+        let lead = nightLabel.map { "Last night, \($0): " } ?? "Last night: "
+        var sentence = lead + parts.joined(separator: ", ") + "."
+        if let verdict = nightVerdict, !verdict.isEmpty {
+            sentence += " " + verdict + (nightScore.map { ", \($0) out of 100" } ?? "") + "."
+        }
+        return sentence
     }
 
     /// "3 things waiting" / "1 thing waiting" / "Nothing waiting".

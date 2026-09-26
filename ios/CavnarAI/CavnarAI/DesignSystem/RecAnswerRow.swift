@@ -60,6 +60,10 @@ enum RecAnswer: String, CaseIterable, Sendable {
         }
     }
 
+    /// Under an answer parked offline (PendingWriteQueue) — the review
+    /// screen's "will sync" promise, in the row's own muted line.
+    static let queuedLine = "Will send when you\u{2019}re back online"
+
     var accessibilityHint: String {
         switch self {
         case .completed: return "Marks this done so it isn't suggested again"
@@ -111,12 +115,19 @@ extension APIClient {
                               module: String? = nil, reasonCode: String? = nil) async throws -> RecEventResponse {
         try await send(
             "/mobile/api/recs/event", method: .post,
-            body: RecEventBody(key: key, event: answer.event, surface: surface,
-                               module: module ?? surface, kind: answer.kind,
-                               reasonCode: answer == .notForUs ? reasonCode : nil),
+            body: Self.recEventBody(key: key, answer: answer, surface: surface, module: module,
+                                    reasonCode: reasonCode),
             // An answer is a write the owner watches land; never replayed on
             // a guess.
             retryTransient: false)
+    }
+
+    /// The body one answer posts — shared with the offline queue, so a
+    /// queued answer replays exactly what the live one would have sent.
+    static func recEventBody(key: String, answer: RecAnswer, surface: String,
+                             module: String? = nil, reasonCode: String? = nil) -> RecEventBody {
+        RecEventBody(key: key, event: answer.event, surface: surface, module: module ?? surface,
+                     kind: answer.kind, reasonCode: answer == .notForUs ? reasonCode : nil)
     }
 
     /// `evidence_viewed` — the owner opened a recommendation's reasoning
@@ -219,6 +230,8 @@ struct RecAnswerRow: View {
         let answer: RecAnswer
         let message: String?
         let trackerLine: String?
+        /// Offline: parked in PendingWriteQueue, not yet on the server.
+        var queued = false
     }
     @State private var outcome: Outcome?
     @State private var busy = false
@@ -238,10 +251,13 @@ struct RecAnswerRow: View {
         VStack(alignment: .leading, spacing: 4) {
             if let answered {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Image(systemName: "checkmark")
+                    // Queued offline: a clock, and the sentence says it has
+                    // not gone yet — never the checkmark of a saved answer.
+                    Image(systemName: answered.queued ? "clock.arrow.circlepath" : "checkmark")
                         .font(.system(size: 10, weight: .bold))
                         .accessibilityHidden(true)
-                    HomeMixedText.make(answered.message ?? answered.answer.confirmation,
+                    HomeMixedText.make(answered.queued ? RecAnswer.queuedLine
+                                                       : (answered.message ?? answered.answer.confirmation),
                                        size: 12.5, weight: 500, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -313,6 +329,23 @@ struct RecAnswerRow: View {
             onAnswered?(answer)
         } catch is CancellationError {
             // The screen went away mid-send — nothing to say.
+        } catch let error as APIClient.APIError where error.isRetryable && !error.mayHaveReachedServer {
+            // Never left the phone (a walk-in, a basement): Done and Pass
+            // wait in the offline queue and go when the signal does. Measure
+            // it does not — its answer is the tracker's own sentence
+            // (QueuedWrite.recAnswer).
+            let keys = [key] + alsoKeys.filter { $0 != key && !$0.isEmpty }
+            let writes = keys.compactMap { k in
+                QueuedWrite.recAnswer(APIClient.recEventBody(key: k, answer: answer, surface: surface,
+                                                             module: module, reasonCode: reason?.code))
+            }
+            guard writes.count == keys.count else {
+                errorMessage = error.message
+                return
+            }
+            for write in writes { await PendingWriteQueue.shared.enqueue(write) }
+            outcome = Outcome(key: key, answer: answer, message: nil, trackerLine: nil, queued: true)
+            onAnswered?(answer)
         } catch let error as APIClient.APIError {
             // A write whose answer was lost may still have landed; say so
             // rather than inviting a blind second tap (DESIGN_SYSTEM §10).

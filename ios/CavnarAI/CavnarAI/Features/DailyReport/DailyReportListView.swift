@@ -20,6 +20,7 @@ struct DailyReportListView: View {
                         .font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3)
                         .cavnarCard()
                 } else {
+                    CachedDataNotice(text: viewModel.stalenessNotice)
                     tonightCard
                     if let error = viewModel.errorMessage, viewModel.reports.isEmpty {
                         VStack(alignment: .leading, spacing: 10) {

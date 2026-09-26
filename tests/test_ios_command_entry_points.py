@@ -99,7 +99,10 @@ def test_signing_out_clears_what_the_lock_screen_shows():
 
 def test_app_shortcuts_only_open_the_app_except_undo():
     """Siri must never send, post or approve: every intent but Undo opens
-    the app, and anything outward still meets the in-app confirm card."""
+    the app, and anything outward still meets the in-app confirm card.
+    "How was last night?" answers without opening the app, but only by
+    reading the widget snapshot aloud — no network, no token, unlocked
+    device only."""
     src = _read(APP, "Core", "CavnarAppIntents.swift")
     intents = re.split(r"\nstruct ", src)
     for chunk in intents:
@@ -109,6 +112,13 @@ def test_app_shortcuts_only_open_the_app_except_undo():
         if name == "UndoSoonestPendingSendIntent":
             assert "openAppWhenRun: Bool = false" in chunk
             assert ".requiresAuthentication" in chunk
+            continue
+        if name == "LastNightSummaryIntent":
+            assert "openAppWhenRun: Bool = false" in chunk
+            assert ".requiresAuthentication" in chunk
+            assert "WidgetSnapshot.load()" in chunk
+            for reach in ("client.send", "APIClient", "sendWithBearer", "Keychain", "PendingSendCanceller"):
+                assert reach not in chunk, reach
             continue
         assert "openAppWhenRun: Bool = true" in chunk, name
         assert "client.send" not in chunk and "APIClient" not in chunk, name

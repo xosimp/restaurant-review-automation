@@ -98,24 +98,67 @@ final class MarketingAnalyticsViewModel {
         let topics: [MarketingRecentTopic]
     }
 
+    /// The five answers, as one cached envelope: each part is the server's
+    /// own body under its name (ResponseCache), `window_days` says which
+    /// window the window part measured.
+    private struct CachedAnalytics: Decodable {
+        let windowDays: Int?
+        let performance: MarketingPerformance?
+        let insight: AIInsight?
+        let topics: RecentTopicsResponse?
+        let window: MarketingWindow?
+        let attribution: MarketingAttribution?
+        enum CodingKeys: String, CodingKey {
+            case performance, insight, topics, window, attribution
+            case windowDays = "window_days"
+        }
+    }
+    @ObservationIgnored private let cache = ResponseCache<CachedAnalytics>("marketing.analytics")
+    /// When the cached copy on screen was stored; nil once a live load lands.
+    private(set) var cachedAt: Date?
+    var stalenessNotice: String? { CacheFreshness.notice(savedAt: cachedAt) }
+
     func load() async {
+        let generation = SessionScope.generation
+        if performance == nil, let hit = await cache.load() {
+            performance = hit.value.performance
+            insight = hit.value.insight
+            recentTopics = hit.value.topics?.topics ?? []
+            if hit.value.windowDays == windowDays { window = hit.value.window }
+            attribution = hit.value.attribution
+            cachedAt = hit.savedAt
+        }
         isLoading = true
         isLoadingInsight = true
         defer { isLoading = false }
 
-        async let performanceResult: MarketingPerformance? = try? client.send("/mobile/api/marketing/performance")
-        async let insightResult: AIInsight? = try? client.send("/mobile/api/marketing/insight")
-        async let topicsResult: RecentTopicsResponse? = try? client.send("/mobile/api/marketing/recent-topics")
-        async let windowResult: MarketingWindow? = try? client.send(
-            "/mobile/api/marketing/performance-window", query: ["days": String(windowDays)])
-        async let attributionResult: MarketingAttribution? = try? client.send("/mobile/api/marketing/attribution")
+        async let performanceResult: (value: MarketingPerformance, body: Data)? = try? client.sendKeepingBody(
+            "/mobile/api/marketing/performance")
+        async let insightResult: (value: AIInsight, body: Data)? = try? client.sendKeepingBody(
+            "/mobile/api/marketing/insight")
+        async let topicsResult: (value: RecentTopicsResponse, body: Data)? = try? client.sendKeepingBody(
+            "/mobile/api/marketing/recent-topics")
+        let days = windowDays
+        async let windowResult: (value: MarketingWindow, body: Data)? = try? client.sendKeepingBody(
+            "/mobile/api/marketing/performance-window", query: ["days": String(days)])
+        async let attributionResult: (value: MarketingAttribution, body: Data)? = try? client.sendKeepingBody(
+            "/mobile/api/marketing/attribution")
 
-        performance = await performanceResult
-        insight = await insightResult
-        recentTopics = await topicsResult?.topics ?? []
-        window = await windowResult
-        attribution = await attributionResult
+        let (p, i, t, w, a) = await (performanceResult, insightResult, topicsResult, windowResult, attributionResult)
+        // A part that failed keeps what is on screen (cached or earlier)
+        // rather than blanking a card that had numbers a moment ago.
+        performance = p?.value ?? performance
+        insight = i?.value ?? insight
+        if let t { recentTopics = t.value.topics }
+        window = w?.value ?? window
+        attribution = a?.value ?? attribution
         isLoadingInsight = false
+        guard let p else { return }
+        cachedAt = nil
+        let body = CacheEnvelope.make([("performance", p.body), ("insight", i?.body), ("topics", t?.body),
+                                       ("window", w?.body), ("attribution", a?.body)],
+                                      numbers: [("window_days", days)])
+        cache.save(body, generation: generation)
     }
 
     private struct RefreshResponse: Decodable {
