@@ -3043,6 +3043,9 @@ def _wants_json_response():
 _BILLING_EXEMPT_PREFIXES = (
     "/login", "/logout", "/health", "/static/", "/privacy", "/terms",
     "/api/billing-info", "/api/account/pause", "/api/account/resume",
+    # Closing the account stays reachable too, as it is on the phone
+    # (/mobile/api/account below).
+    "/api/account/request-deletion",
     "/account", "/mobile/api/account", "/mobile/api/login",
     "/mobile/api/logout", "/mobile/api/me", "/mobile/api/forgot-password",
     "/mobile/api/reset-password", "/admin",
