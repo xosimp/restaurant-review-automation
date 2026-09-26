@@ -23,8 +23,8 @@
 [data-theme="dark"]{
   --ink:#f0ebe0;--ink2:#c4bdb4;--ink3:#cdbfa9;
   --paper:#1a1714;--paper2:#231f1b;--paper3:#4a4038;
-  --ember:#e06444;--ember2:#e8956a;
-  --green:#4ead7a;--green-bg:#0c2318;--red:#e05555;--red-bg:#2a1010;
+  --ember:#d4583a;--ember2:#e8956a;
+  --green:#4ead7a;--green-bg:#0c2318;--red:#e3333f;--red-bg:#2a1010;
   --amber:#d4a030;--amber-bg:#251d08;--blue:#6aabff;--blue-bg:#0a1828;
   --surface:#201d19;--hdr-bg:#1a1714;--qw-track:#5c4f3a
 }
@@ -70,16 +70,16 @@ html{background:var(--bg-base);min-height:100%}
 
 
 /* Stat number color states — effect D: deep emboss */
-.stat-glow-green{color:#3ecf6e!important}
-.stat-glow-red{color:#e02828!important}
+.stat-glow-green{color:var(--green)!important}
+.stat-glow-red{color:var(--red)!important}
 /* Named "amber" but rendered var(--ember) — the brand orange, not an
    actual amber/yellow — so every "warn"-tier stat number (a 3.something
    rating, a couple of pending approvals) read as the same color as an
    "urgent, act now" state. Uses the real amber/warn token instead. */
 .stat-glow-amber{color:var(--amber)!important}
 .rv-stat-n{color:var(--ink2)}
-[data-theme="dark"] .stat-glow-green{text-shadow:0 2px 0 rgba(0,0,0,.9),0 -1px 0 rgba(255,255,255,.18),0 3px 12px rgba(0,0,0,.6),0 -2px 4px rgba(62,207,110,.12)!important}
-[data-theme="dark"] .stat-glow-red{text-shadow:0 2px 0 rgba(0,0,0,.9),0 -1px 0 rgba(255,255,255,.14),0 3px 12px rgba(0,0,0,.6),0 -2px 4px rgba(224,40,40,.12)!important}
+[data-theme="dark"] .stat-glow-green{text-shadow:0 2px 0 rgba(0,0,0,.9),0 -1px 0 rgba(255,255,255,.18),0 3px 12px rgba(0,0,0,.6),0 -2px 4px rgba(78,173,122,.12)!important}
+[data-theme="dark"] .stat-glow-red{text-shadow:0 2px 0 rgba(0,0,0,.9),0 -1px 0 rgba(255,255,255,.14),0 3px 12px rgba(0,0,0,.6),0 -2px 4px rgba(227,51,63,.12)!important}
 [data-theme="dark"] .stat-glow-amber{text-shadow:0 2px 0 rgba(0,0,0,.9),0 -1px 0 rgba(255,255,255,.14),0 3px 12px rgba(0,0,0,.6)!important}
 [data-theme="dark"] .rv-stat-n{text-shadow:0 2px 0 rgba(0,0,0,.9),0 -1px 0 rgba(255,255,255,.08),0 3px 8px rgba(0,0,0,.5)}
 
@@ -259,7 +259,7 @@ html{background:var(--bg-base);min-height:100%}
 [data-theme="dark"] .tbl th{background:var(--paper3)!important;color:var(--ink2)!important}
 [data-theme="dark"] .tbl td{border-color:var(--paper3)!important;color:var(--ink2)!important}
 [data-theme="dark"] .tbl tr:hover td{background:#3a3228!important}
-/* Orange buttons — muted in dark mode (--ember is #e06444, too bright) */
+/* Orange tabs — the active tab sits a shade under --ember in dark mode */
 .rv-tab-active{background:var(--ember)!important;color:#fff!important}
 [data-theme="dark"] .rv-tab-active{background:#923020!important}
 #rv-tab-inbox:not(.rv-tab-active),#rv-tab-analytics:not(.rv-tab-active){background:transparent!important;color:var(--ink3)!important}
@@ -430,7 +430,7 @@ body{font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--i
 .tab{padding:8px 16px;border-radius:0;border:none;font-family:'Clash Display',sans-serif;font-size:13px;font-weight:600;cursor:pointer;color:rgba(250,248,245,.45);background:transparent;transition:color .2s;border-bottom:2px solid transparent;position:relative}
 .tab:hover{color:var(--paper)}
 .tab.active{color:var(--paper);border-bottom-color:transparent}
-#tab-indicator{position:absolute;bottom:0;left:0;width:0;height:2px;background:var(--ember);transition:left .42s cubic-bezier(.34,1.56,.64,1),width .42s cubic-bezier(.34,1.56,.64,1);pointer-events:none;border-radius:1px 1px 0 0}
+#tab-indicator{position:absolute;bottom:0;left:0;width:0;height:2px;background:var(--ember);transition:left .42s cubic-bezier(.2,.9,.3,1),width .42s cubic-bezier(.2,.9,.3,1);pointer-events:none;border-radius:1px 1px 0 0}
 .tab .badge{font-size:10px;font-family:'Bricolage Grotesque',sans-serif;font-weight:700;padding:1px 5px;border-radius:10px;background:rgba(255,255,255,.1);margin-left:4px;position:relative;top:-2px}
 .panel{display:none;padding:24px 28px;max-width:1080px;background:transparent}
 .panel.active{display:block}
@@ -445,8 +445,8 @@ body{font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--i
 .stat.ok{background:var(--green-bg);border-color:#b7dfca}
 .stat.warn{background:var(--amber-bg);border-color:#f6d860}
 .stat-n{font-size:26px;font-weight:700;font-family:'Bricolage Grotesque',sans-serif;line-height:1;letter-spacing:-0.5px}
-*[style*="font-weight:800"]{font-family:'Bricolage Grotesque',sans-serif!important;font-weight:700!important}
-#panel-labor strong{font-family:'Bricolage Grotesque',sans-serif}
+/* Inline 800s snap to 700 (Apfel and Space Grotesk ship 700 as their heaviest); the face stays the element's own. Bricolage is only the tab badges and .stat-n (DESIGN_SYSTEM §2); numbers are Space Grotesk via .hb-num. */
+*[style*="font-weight:800"]{font-weight:700!important}
 
 .stat.hi .stat-n{color:var(--red)}
 .stat.ok .stat-n{color:var(--green)}
@@ -511,7 +511,7 @@ html:not([data-theme="dark"]) .empty-state-sm.on-dark .es-sub{color:var(--ink3)}
 @keyframes cardIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 @keyframes checkIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
 @keyframes skeletonPulse{0%,100%{opacity:.45}50%{opacity:1}}
-@keyframes toastBounce{0%{opacity:0;transform:translateY(28px) scale(.9)}50%{opacity:1;transform:translateY(-10px) scale(1.06)}68%{transform:translateY(4px) scale(.98)}82%{transform:translateY(-4px) scale(1.02)}100%{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes toastBounce{0%{opacity:0;transform:translateY(16px)}100%{opacity:1;transform:none}}
 @keyframes btnPress{0%,100%{transform:scale(1)}40%{transform:scale(.92)}}
 @keyframes fadeSlideUp{from{opacity:0;transform:translateY(32px)}to{opacity:1;transform:translateY(0)}}
 @keyframes statShimmer{0%{color:var(--ember)}80%{color:var(--ember)}100%{color:var(--ink)}}
@@ -541,7 +541,7 @@ html:not([data-theme="dark"]) .empty-state-sm.on-dark .es-sub{color:var(--ink3)}
 .cm-compose .cm-caret{position:absolute;left:0;top:0;width:2.5px;background:#e8956a;border-radius:1px}
 /* 05 Reading the Room */
 @keyframes cmRipple{0%{r:6;opacity:.9}100%{r:96;opacity:0}}
-@keyframes cmBlip{0%,100%{transform:scale(0);opacity:0}8%{transform:scale(1.3);opacity:1}14%{transform:scale(1)}70%{transform:scale(1);opacity:1}82%{opacity:0;transform:scale(.6)}}
+@keyframes cmBlip{0%,100%{transform:scale(0);opacity:0}10%{transform:scale(1);opacity:1}70%{transform:scale(1);opacity:1}82%{opacity:0;transform:scale(.6)}}
 .cm-radar .cm-rip{fill:none;stroke:var(--ember);stroke-width:1.2;animation:cmRipple 3s ease-out infinite}
 .cm-radar .cm-blip{transform-box:fill-box;transform-origin:center;animation:cmBlip 6s ease-out infinite}
 /* 06 Building the Week — [data-cycle] elements get .cm-run re-applied every cycle by _cmCycleFrame() */
@@ -581,10 +581,10 @@ html:not([data-theme="dark"]) .empty-state-sm.on-dark .es-sub{color:var(--ink3)}
 #cm-float{position:fixed;bottom:64px;right:20px;z-index:998;background:var(--paper2);border:1px solid var(--paper3);border-radius:12px;padding:12px 14px 10px;box-shadow:0 8px 28px rgba(0,0,0,.28);opacity:0;transform:translateY(8px);transition:opacity .3s,transform .3s;pointer-events:none}
 #cm-float.show{opacity:1;transform:translateY(0)}
 /* 13 Alert Fired */
-@keyframes cmBadgePop{0%{transform:scale(0)}60%{transform:scale(1.25)}100%{transform:scale(1)}}
+@keyframes cmBadgePop{0%{transform:scale(0)}100%{transform:scale(1)}}
 @keyframes cmBadgeRing{0%{transform:scale(1);opacity:.85}100%{transform:scale(4.5);opacity:0}}
 #notif-badge.cm-pop{animation:cmBadgePop .35s cubic-bezier(.2,.9,.3,1)}
-#notif-badge.cm-pop::after{content:'';position:absolute;inset:-1.5px;border-radius:50%;border:1px solid #c84b2f;animation:cmBadgeRing .9s ease-out .1s forwards}
+#notif-badge.cm-pop::after{content:'';position:absolute;inset:-1.5px;border-radius:50%;border:1px solid var(--ember);animation:cmBadgeRing .9s ease-out .1s forwards}
 /* Header popovers (alerts, team messages, what's new) — drop in from the
    button that opened them instead of just appearing */
 @keyframes hdrPanelDrop{from{opacity:0;transform:translateY(-10px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
@@ -669,7 +669,7 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .cf.on-dark{--cf-c:#c4bdb4;color:rgba(240,235,224,.6)}.cf.on-dark.good{--cf-c:#4ead7a}.cf.on-dark.warn{--cf-c:#d4a030}
 .cf.on-dark .cf-r{color:rgba(240,235,224,.6)}.cf.on-dark .cf-m{background:rgba(255,255,255,.1)}
 .cf-m,.cf-p-bar{position:relative;display:inline-block;flex:0 0 auto;border-radius:999px;color:var(--cf-c)}
-.cf-m{width:46px;height:6px;background:var(--paper3)}
+.cf-m{width:38px;height:6px;background:var(--paper3)}
 /* The glow is for a verdict colour; neutral ink would only smudge. */
 .cf.mid .cf-m i{box-shadow:none;background-image:linear-gradient(90deg,rgba(255,255,255,.28),rgba(255,255,255,0) 80%)}
 .cf-m i,.cf-p-bar i{position:absolute;left:0;top:0;bottom:0;border-radius:inherit;background-color:currentColor;background-image:linear-gradient(90deg,rgba(255,255,255,.34),rgba(255,255,255,0) 72%);box-shadow:0 0 9px -1px currentColor;transform-origin:left center;transform:scaleX(0);animation:cmBar .9s cubic-bezier(.2,.8,.2,1) .12s forwards}
@@ -919,7 +919,7 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
                  and the ember thread (the signature motif) tying it to
                  the evidence above it. */
 :root{--sf-ai:linear-gradient(135deg,rgba(200,75,47,.09),rgba(200,75,47,.02) 62%);--sf-ai-line:rgba(200,75,47,.16);--sf-recess:rgba(14,12,10,.035);--glow-ember:0 0 0 1px rgba(200,75,47,.10),0 18px 40px -30px rgba(200,75,47,.18);--elev-card:0 1px 2px rgba(14,12,10,.04),0 14px 30px -20px rgba(14,12,10,.16);--elev-hero:0 2px 6px rgba(14,12,10,.06),0 28px 60px -26px rgba(14,12,10,.28),0 40px 90px -40px rgba(200,75,47,.28);--elev-float:0 2px 6px rgba(14,12,10,.08),0 30px 80px -30px rgba(14,12,10,.38);--ambient:rgba(200,75,47,.13)}
-[data-theme="dark"]{--sf-ai:linear-gradient(135deg,rgba(224,100,68,.15),rgba(224,100,68,.03) 62%);--sf-ai-line:rgba(224,100,68,.22);--sf-recess:rgba(255,255,255,.045);--glow-ember:0 0 0 1px rgba(224,100,68,.16),0 18px 40px -30px rgba(224,100,68,.2);--elev-card:var(--elev-1);--elev-hero:var(--elev-2),0 40px 90px -40px rgba(224,100,68,.35);--elev-float:0 2px 6px rgba(0,0,0,.3),0 30px 80px -30px rgba(0,0,0,.75);--ambient:rgba(224,100,68,.17)}
+[data-theme="dark"]{--sf-ai:linear-gradient(135deg,rgba(212,88,58,.15),rgba(212,88,58,.03) 62%);--sf-ai-line:rgba(212,88,58,.22);--sf-recess:rgba(255,255,255,.045);--glow-ember:0 0 0 1px rgba(212,88,58,.16),0 18px 40px -30px rgba(212,88,58,.2);--elev-card:var(--elev-1);--elev-hero:var(--elev-2),0 40px 90px -40px rgba(212,88,58,.35);--elev-float:0 2px 6px rgba(0,0,0,.3),0 30px 80px -30px rgba(0,0,0,.75);--ambient:rgba(212,88,58,.17)}
 /* hero: the module's focal point */
 .rv2-hero,.lb2-hero{position:relative;padding:26px 28px 24px;border-radius:20px;background:var(--surface);border:1px solid var(--hb-line);box-shadow:var(--elev-hero);overflow:hidden;transition:box-shadow .25s ease,transform .25s ease}
 [data-theme="dark"] .rv2-hero,[data-theme="dark"] .lb2-hero{background:var(--surface-glass),var(--surface);border-color:var(--line-hi)}
@@ -937,7 +937,7 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
    the cursor per frame (the brand layer's mousemove below). */
 .lit:after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;opacity:0;transition:opacity .45s cubic-bezier(.22,.61,.36,1);background-color:rgba(200,75,47,.11);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 0 0 0 0 1'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)' opacity='.07'/%3E%3C/svg%3E");background-size:180px 180px;-webkit-mask-image:radial-gradient(circle var(--lit-r,420px) at var(--mx,50%) var(--my,50%),#000 0%,rgba(0,0,0,.93) 8%,rgba(0,0,0,.8) 16%,rgba(0,0,0,.64) 24%,rgba(0,0,0,.48) 32%,rgba(0,0,0,.34) 40%,rgba(0,0,0,.22) 48%,rgba(0,0,0,.135) 56%,rgba(0,0,0,.075) 64%,rgba(0,0,0,.038) 72%,rgba(0,0,0,.016) 80%,rgba(0,0,0,.005) 90%,transparent 100%);mask-image:radial-gradient(circle var(--lit-r,420px) at var(--mx,50%) var(--my,50%),#000 0%,rgba(0,0,0,.93) 8%,rgba(0,0,0,.8) 16%,rgba(0,0,0,.64) 24%,rgba(0,0,0,.48) 32%,rgba(0,0,0,.34) 40%,rgba(0,0,0,.22) 48%,rgba(0,0,0,.135) 56%,rgba(0,0,0,.075) 64%,rgba(0,0,0,.038) 72%,rgba(0,0,0,.016) 80%,rgba(0,0,0,.005) 90%,transparent 100%)}
 .lit:hover:after{opacity:1}
-[data-theme="dark"] .lit:after{background-color:rgba(224,100,68,.14)}
+[data-theme="dark"] .lit:after{background-color:rgba(212,88,58,.14)}
 /* card tier: the informational surfaces outside Home */
 .ac-card,.fc2-fcp,.data-card,.card{box-shadow:var(--elev-card);transition:box-shadow .2s ease,transform .2s ease,border-color .2s ease}
 .ac-card:hover,.fc2-fcp:hover,.data-card:hover{transform:translateY(-1px);box-shadow:0 2px 5px rgba(14,12,10,.06),0 22px 44px -22px rgba(14,12,10,.22)}
@@ -979,7 +979,7 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .cbtn:active{transform:scale(.985)}
 /* charts: lift, selection, motion */
 svg[data-pts] path[stroke]{filter:drop-shadow(0 2px 6px rgba(14,12,10,.18))}
-[data-theme="dark"] svg[data-pts] path[stroke]{filter:drop-shadow(0 0 8px rgba(224,100,68,.35))}
+[data-theme="dark"] svg[data-pts] path[stroke]{filter:drop-shadow(0 0 8px rgba(212,88,58,.35))}
 svg[data-pts] rect,svg[data-pts] circle{transition:opacity .2s ease,transform .2s ease}
 svg[data-pts]:hover rect:not(:hover){opacity:.7}
 svg[data-pts] rect:hover{filter:drop-shadow(0 0 6px rgba(200,75,47,.5))}
@@ -1122,7 +1122,7 @@ details[open]>summary~*{animation:askIn .3s ease both}
 .toast.toast-success{background:var(--green-bg);color:#166534;border-left-color:var(--green)}
 .toast.toast-error{background:var(--red-bg);color:#991b1b;border-left-color:var(--red)}
 .toast.toast-warning{background:var(--amber-bg);color:#92400e;border-left-color:var(--amber)}
-.toast.show{animation:toastBounce .52s ease forwards}
+.toast.show{animation:toastBounce .36s cubic-bezier(.2,.9,.3,1) forwards}
 .toast.has-act{display:flex;align-items:center;gap:14px}
 .toast.has-act.show{pointer-events:auto}
 .toast .toast-act{color:inherit;font-weight:700;text-decoration:underline;text-underline-offset:3px}
@@ -1546,12 +1546,8 @@ function loadFailed(el, d){
       <svg viewBox="-6 -14 666 128" height="0.8em" style="vertical-align:-0.08em" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M53.43 101.49Q28.81 101.49 14.40 87.46Q0.00 73.43 0.00 50.00Q0.00 26.57 14.40 12.54Q28.81 -1.49 53.43 -1.49Q76.87 -1.49 90.67 9.48Q104.48 20.45 104.48 39.40V41.64H79.55V39.40Q79.55 29.40 73.43 24.70Q67.31 20.00 53.88 20.00Q37.31 20.00 30.52 26.72Q23.73 33.43 23.73 50.00Q23.73 66.57 30.52 73.28Q37.31 80.00 53.88 80.00Q67.31 80.00 73.43 75.30Q79.55 70.60 79.55 60.60V58.36H104.48V60.60Q104.48 79.55 90.67 90.52Q76.87 101.49 53.43 101.49Z"/><path d="M127.87 100.00H102.79L146.52 0.00H178.47L222.50 100.00H196.82L187.42 77.91H137.42ZM155.48 35.97 146.08 57.76H178.76L169.36 35.97L163.24 20.45H161.60Z"/><path d="M266.08 100.00H234.14L192.65 0.00H219.67L249.67 77.31H251.16L280.71 0.00H307.58Z"/><path d="M341.47 100.00H319.08V0.00H342.96L378.78 47.31L392.51 68.36H394.15L393.11 48.21V0.00H415.50V100.00H391.61L354.75 52.24L342.06 33.43H340.57L341.47 51.79Z"/><path d="M451.92 100.00H426.85L470.58 0.00H502.52L546.55 100.00H520.88L511.47 77.91H461.47ZM479.53 35.97 470.13 57.76H502.82L493.41 35.97L487.29 20.45H485.65Z"/><path d="M580.39 100.00H558.00V0.00H613.22Q631.73 0.00 641.80 7.84Q651.88 15.67 651.88 30.00Q651.88 55.07 623.67 57.76V58.96Q629.94 60.60 633.30 63.88Q636.65 67.16 639.79 73.13L654.27 100.00H628.30L614.56 74.03Q611.43 68.06 607.55 65.90Q603.67 63.73 595.16 63.73H580.39ZM580.39 20.15V46.87H613.07Q621.28 46.87 624.86 43.96Q628.45 41.04 628.45 33.43Q628.45 26.12 624.79 23.13Q621.13 20.15 613.07 20.15Z"/><circle cx="250.1" cy="28" r="11" fill="#D4583A"/></svg><span style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;font-weight:800;font-size:0.34em;letter-spacing:0.16em;color:#D4583A;vertical-align:0.62em;margin-left:0.12em;font-style:normal">AI</span>
     </div>
     <div style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#7a736a;margin-bottom:32px">Restaurant Intelligence</div>
-    <div style="display:flex;gap:10px;justify-content:center;margin-bottom:16px">
-      <div style="width:10px;height:10px;border-radius:50%;background:#c84b2f;animation:upulse 1.1s ease-in-out infinite"></div>
-      <div style="width:10px;height:10px;border-radius:50%;background:#c84b2f;animation:upulse 1.1s ease-in-out .18s infinite"></div>
-      <div style="width:10px;height:10px;border-radius:50%;background:#c84b2f;animation:upulse 1.1s ease-in-out .36s infinite"></div>
-    </div>
-    <div style="font-size:13px;color:#a09890;letter-spacing:.02em">Loading your data…</div>
+    <div class="dr-pulse" style="margin:0 auto 16px;background:rgba(240,235,224,.14)" role="status" aria-label="Loading your data"><i></i></div>
+    <div style="font-size:13px;color:#a09890;letter-spacing:.02em">Loading your data</div>
   </div>
 </div>
 <style>
@@ -2130,7 +2126,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
    Same visual language as the iOS Home: glow strokes, ember gradients,
    breathing pulse chips, a hot endpoint dot. Little copy. */
 #panel-home,#panel-dsr,#panel-recs{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.12);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-field:rgba(255,255,255,.55)}
-[data-theme="dark"] #panel-home,[data-theme="dark"] #panel-dsr,[data-theme="dark"] #panel-recs{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(224,100,68,.09);--hb-tint2:rgba(224,100,68,.16);--hb-field:rgba(255,255,255,.05)}
+[data-theme="dark"] #panel-home,[data-theme="dark"] #panel-dsr,[data-theme="dark"] #panel-recs{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(212,88,58,.09);--hb-tint2:rgba(212,88,58,.16);--hb-field:rgba(255,255,255,.05)}
 .hb-wrap{max-width:1120px;margin:0 auto;padding:30px 32px 56px;position:relative;z-index:1}
 .hb-num,.hb-num *{font-family:'Space Grotesk',sans-serif!important;font-variant-numeric:tabular-nums}
 .hb-kicker{font-size:11.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ember)}
@@ -2217,7 +2213,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-lit-layer{position:absolute;inset:-28px -28px;overflow:hidden;border-radius:28px;pointer-events:none;opacity:0;transition:opacity .45s cubic-bezier(.22,.61,.36,1)}
 .hb-hero:hover .hb-lit-layer{opacity:1}
 .hb-lit-layer i{position:absolute;left:0;top:0;width:520px;height:520px;border-radius:50%;will-change:transform;transform:translate3d(calc(var(--mx,50%) - 232px),calc(var(--my,50%) - 232px),0);background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='w'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch' seed='3'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 5 0 0 0 -2.5'/%3E%3C/filter%3E%3Cfilter id='b'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch' seed='3'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -5 0 0 0 2.5'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23w)' opacity='.11'/%3E%3Crect width='100%25' height='100%25' filter='url(%23b)' opacity='.012'/%3E%3C/svg%3E"),radial-gradient(closest-side,rgba(200,75,47,0.1) 0%,rgba(200,75,47,0.093) 8%,rgba(200,75,47,0.08) 16%,rgba(200,75,47,0.064) 24%,rgba(200,75,47,0.048) 32%,rgba(200,75,47,0.034) 40%,rgba(200,75,47,0.022) 48%,rgba(200,75,47,0.0135) 56%,rgba(200,75,47,0.0075) 64%,rgba(200,75,47,0.0038) 72%,rgba(200,75,47,0.0016) 80%,rgba(200,75,47,0.0005) 90%,rgba(200,75,47,0.0) 100%);background-size:180px 180px,100% 100%;-webkit-mask-image:radial-gradient(closest-side,#000 78%,rgba(0,0,0,.6) 90%,transparent 100%);mask-image:radial-gradient(closest-side,#000 78%,rgba(0,0,0,.6) 90%,transparent 100%)}
-[data-theme="dark"] .hb-lit-layer i{background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='w'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch' seed='3'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 5 0 0 0 -2.5'/%3E%3C/filter%3E%3Cfilter id='b'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch' seed='3'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -5 0 0 0 2.5'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23w)' opacity='.012'/%3E%3Crect width='100%25' height='100%25' filter='url(%23b)' opacity='.11'/%3E%3C/svg%3E"),radial-gradient(closest-side,rgba(224,100,68,0.13) 0%,rgba(224,100,68,0.1209) 8%,rgba(224,100,68,0.104) 16%,rgba(224,100,68,0.0832) 24%,rgba(224,100,68,0.0624) 32%,rgba(224,100,68,0.0442) 40%,rgba(224,100,68,0.0286) 48%,rgba(224,100,68,0.0176) 56%,rgba(224,100,68,0.0097) 64%,rgba(224,100,68,0.0049) 72%,rgba(224,100,68,0.0021) 80%,rgba(224,100,68,0.0007) 90%,rgba(224,100,68,0.0) 100%);background-size:180px 180px,100% 100%}
+[data-theme="dark"] .hb-lit-layer i{background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='w'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch' seed='3'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 5 0 0 0 -2.5'/%3E%3C/filter%3E%3Cfilter id='b'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch' seed='3'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -5 0 0 0 2.5'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23w)' opacity='.012'/%3E%3Crect width='100%25' height='100%25' filter='url(%23b)' opacity='.11'/%3E%3C/svg%3E"),radial-gradient(closest-side,rgba(212,88,58,0.13) 0%,rgba(212,88,58,0.1209) 8%,rgba(212,88,58,0.104) 16%,rgba(212,88,58,0.0832) 24%,rgba(212,88,58,0.0624) 32%,rgba(212,88,58,0.0442) 40%,rgba(212,88,58,0.0286) 48%,rgba(212,88,58,0.0176) 56%,rgba(212,88,58,0.0097) 64%,rgba(212,88,58,0.0049) 72%,rgba(212,88,58,0.0021) 80%,rgba(212,88,58,0.0007) 90%,rgba(212,88,58,0.0) 100%);background-size:180px 180px,100% 100%}
 @media (prefers-reduced-motion:reduce){.hb-lit-layer{transition:none}}
 .hb-hero .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap}
 .hb-hero .hd .hb-h3{margin-bottom:10px}
@@ -2630,10 +2626,10 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
    drifts slowly, the "monitoring" light). Middle = .hb-card. Background =
    .hb-card.quiet — inset tint, no border, no shadow — for what should
    recede (still open, close-out). Only the big graphs carry the cursor
-   light (.lit); cards lift on hover and nothing else. Warm secondaries (copper, amber) so the ember reads
+   light (.lit); cards lift on hover and nothing else. A warm copper hover edge (--hb-copper, web only; --hb-amber is the --amber token, no second amber) so the ember reads
    as chosen rather than the only orange the palette has. */
-#panel-home,#panel-dsr,#panel-recs{--hb-copper:#b8643c;--hb-amber:#c9843f;--hb-good2:#2f7f5a;--hb-glow:rgba(200,75,47,.20);--hb-sheen:rgba(255,255,255,.7);--hb-halo:rgba(200,75,47,.18)}
-[data-theme="dark"] #panel-home,[data-theme="dark"] #panel-dsr,[data-theme="dark"] #panel-recs{--hb-copper:#c9784f;--hb-amber:#e6a862;--hb-good2:#5ec38a;--hb-glow:rgba(224,100,68,.30);--hb-sheen:rgba(255,255,255,.07);--hb-halo:rgba(224,100,68,.24)}
+#panel-home,#panel-dsr,#panel-recs{--hb-copper:#b8643c;--hb-amber:var(--amber);--hb-good2:#2f7f5a;--hb-glow:rgba(200,75,47,.20);--hb-sheen:rgba(255,255,255,.7);--hb-halo:rgba(200,75,47,.18)}
+[data-theme="dark"] #panel-home,[data-theme="dark"] #panel-dsr,[data-theme="dark"] #panel-recs{--hb-copper:#c9784f;--hb-amber:var(--amber);--hb-good2:#5ec38a;--hb-glow:rgba(212,88,58,.30);--hb-sheen:rgba(255,255,255,.07);--hb-halo:rgba(212,88,58,.24)}
 .hb-card{will-change:transform}
 .hb-card>*{position:relative;z-index:1}
 .hb-card:hover{transform:translateY(-2px);box-shadow:0 2px 5px rgba(14,12,10,.06),0 24px 44px -22px rgba(14,12,10,.24)}
@@ -2642,7 +2638,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-card.hero{box-shadow:0 2px 6px rgba(14,12,10,.06),0 28px 60px -26px rgba(14,12,10,.28)}
 [data-theme="dark"] .hb-card.hero{box-shadow:var(--elev-2)}
 .hb-card.hero:hover{transform:translateY(-3px)}
-.hb-card.hero .hb-h3 .hb-kicker{color:var(--hb-amber)}
+.hb-card.hero .hb-h3 .hb-kicker{color:var(--ember2)}
 /* background */
 .hb-card.quiet,[data-theme="dark"] .hb-card.quiet{background:var(--hb-inner);border-color:transparent;box-shadow:none}
 .hb-card.quiet:hover,[data-theme="dark"] .hb-card.quiet:hover{transform:none;box-shadow:none;border-color:var(--hb-line2)}
@@ -2658,7 +2654,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .co-more .co-grid{margin-top:12px}
 .hb-card.quiet:after{display:none}
 /* warm secondaries */
-.hb-rec .no{background:linear-gradient(135deg,var(--hb-amber),var(--ember) 70%);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hb-rec .no{background:linear-gradient(135deg,var(--ember2),var(--ember) 70%);-webkit-background-clip:text;background-clip:text;color:transparent}
 .hb-rec:hover{border-color:var(--hb-copper)}
 .hb-stat.good .v{color:var(--hb-good2)}.hb-rcpt .ok,.hb-clear .ok{color:var(--hb-good2)}
 /* A gap still open is a warning, amber - never the ember, which is not status (B4 L7). */
@@ -3206,7 +3202,7 @@ svg:hover .hb-xh{opacity:1}
   var TAB={reviews:'tab-reviews',labor:'tab-labor',inventory:'tab-inventory',marketing:'tab-marketing',intel:'tab-competitor',account:'tab-account'};
   var MODLABEL={reviews:'Reviews',labor:'Labor',inventory:'Food Cost',marketing:'Marketing',intel:'Intel',account:'Account',alerts:'Alerts'};
   var PULSE={reviews:'rating',labor:'labor',inventory:'food cost',marketing:'posts this month',intel:'intel recs'};
-  var EMBER2='#e8956a',RED='#e05555',GREEN='#2d6a4f';
+  var EMBER2='#e8956a',RED='#e3333f',GREEN='#2d6a4f';
   function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
   var NUM_RE=/(\$?[\d][\d,]*(?:\.\d+)?%?★?|[+\-−]\d[\d,.]*(?:\s?pts)?%?)/g;
   function num(v){var parts=esc(v).split(/(&#?[a-z0-9]+;)/i),out='';for(var i=0;i<parts.length;i++){out+=(i%2)?parts[i]:parts[i].replace(NUM_RE,'<span class="hb-num">$1</span>');}return out;}
@@ -3285,7 +3281,7 @@ svg:hover .hb-xh{opacity:1}
     s+='<path'+anim+' d="'+line+'" fill="none" stroke="'+col+'" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';
     s+='<circle class="hb-hot" cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="14" fill="url(#'+id+'h)" style="transform-box:fill-box;transform-origin:center"/>';
     s+='<circle class="hb-dot" cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="4" fill="'+col+'" stroke="#fff" stroke-opacity=".9" stroke-width="1.5"/>';
-    if(hasTarget){for(var q=0;q<pts.length;q++){if(vals[q]>opts.target){s+='<circle class="hb-dot" cx="'+pts[q][0].toFixed(1)+'" cy="'+pts[q][1].toFixed(1)+'" r="9" fill="#e05555" fill-opacity=".22" style="animation-delay:'+(1.2+q*0.08).toFixed(2)+'s"/><circle class="hb-dot" cx="'+pts[q][0].toFixed(1)+'" cy="'+pts[q][1].toFixed(1)+'" r="3.2" fill="#e05555" style="animation-delay:'+(1.2+q*0.08).toFixed(2)+'s"/>';}}}
+    if(hasTarget){for(var q=0;q<pts.length;q++){if(vals[q]>opts.target){s+='<circle class="hb-dot" cx="'+pts[q][0].toFixed(1)+'" cy="'+pts[q][1].toFixed(1)+'" r="9" fill="#e3333f" fill-opacity=".22" style="animation-delay:'+(1.2+q*0.08).toFixed(2)+'s"/><circle class="hb-dot" cx="'+pts[q][0].toFixed(1)+'" cy="'+pts[q][1].toFixed(1)+'" r="3.2" fill="#e3333f" style="animation-delay:'+(1.2+q*0.08).toFixed(2)+'s"/>';}}}
     // Crosshair layer, moved by hbChartHover on mousemove. The point list
     // rides on the svg as data so the handler never recomputes the curve.
     s+='<g class="hb-xh"><line class="hb-xl" x1="0" y1="0" x2="0" y2="'+h+'" stroke="'+col+'" stroke-opacity=".5" stroke-dasharray="3 4"/><circle class="hb-xd" r="5" fill="'+col+'" stroke="#fff" stroke-opacity=".9" stroke-width="1.5"/></g>';
@@ -3598,7 +3594,7 @@ svg:hover .hb-xh{opacity:1}
     var old=document.querySelector('.hb-pub-confirm');if(old&&old.parentNode)old.parentNode.removeChild(old);
     var box=document.createElement('div');box.className='hb-pub-confirm';
     if(host&&host.parentNode)host.parentNode.insertBefore(box,host.nextSibling);else if(btn&&btn.parentNode)btn.parentNode.appendChild(box);
-    box.innerHTML='<div class="dr-pulse" aria-hidden="true"></div>';
+    box.innerHTML='<div class="dr-pulse" aria-hidden="true"><i></i></div>';
     function after(){if(typeof hbSoft==='function')hbSoft(true);else{_hbLoadedAt=0;hbLoad(true);}}
     fetch('/api/command/propose',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'approve_all_reviews',args:{}})})
       .then(apiJson).then(function(d){
@@ -5257,7 +5253,7 @@ svg:hover .hb-xh{opacity:1}
     var old=document.querySelector('.hb-queue-confirm');if(old&&old.parentNode)old.parentNode.removeChild(old);
     var box=document.createElement('div');box.className='hb-queue-confirm';box.style.padding='4px 0 10px 22px';
     if(row&&row.parentNode)row.parentNode.insertBefore(box,row.nextSibling);else if(btn.parentNode)btn.parentNode.appendChild(box);
-    box.innerHTML='<div class="dr-pulse" aria-hidden="true"></div>';
+    box.innerHTML='<div class="dr-pulse" aria-hidden="true"><i></i></div>';
     fetch('/api/command/propose',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:c.action,args:c.args||{}})})
       .then(apiJson).then(function(d){
         if(d&&d.ok&&d.proposal&&typeof cavPropCard==='function'){box.innerHTML='';cavPropCard(d.proposal,box,{onDone:function(){hbRefetchOpen();}});return;}
@@ -5489,7 +5485,7 @@ svg:hover .hb-xh{opacity:1}
 .dr-pill.est{color:var(--ink3)}
 @keyframes drBreath{0%,100%{opacity:1}50%{opacity:.3}}
 /* The sliding ember pulse — quick loading, never a spinner. */
-.dr-pulse{position:relative;height:3px;width:180px;border-radius:2px;background:var(--hb-tint2);overflow:hidden}
+.dr-pulse{display:block;position:relative;height:3px;width:180px;max-width:100%;border-radius:2px;background:var(--hb-tint2,var(--paper3));overflow:hidden}
 .dr-pulse.wide{width:100%;margin:-4px 0 16px}
 /* Outside a panel (the header popovers, the location switch) the per-panel
    --hb-tint2 is not defined, so the track takes the paper hairline. */
@@ -6901,7 +6897,7 @@ svg:hover .hb-xh{opacity:1}
   }
   function more(btn){
     if(!st.next||st.loading)return;st.loading=true;
-    var done=(typeof cbtnBusy==='function')?cbtnBusy(btn,'Loading…'):function(){};
+    var done=(typeof cbtnBusy==='function')?cbtnBusy(btn,'Loading'):function(){};
     get('/api/recs/timeline?limit=25&before='+encodeURIComponent(st.next)).then(function(d){
       done();st.loading=false;
       if(!d||!d.ok){var e=el('rh-tl-err');if(e)e.textContent=(d&&d.error)||'Couldn’t load more.';return;}
@@ -7083,7 +7079,7 @@ svg:hover .hb-xh{opacity:1}
 /* ── Reviews (rv2-*) — same language as Home: one hero chart, chart tiles,
    rows with a stripe, no boxes, no gray. Shares the hb-* rules from Home. */
 #panel-reviews{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.12);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-field:rgba(255,255,255,.55)}
-[data-theme="dark"] #panel-reviews{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(224,100,68,.09);--hb-tint2:rgba(224,100,68,.16);--hb-field:rgba(255,255,255,.05);
+[data-theme="dark"] #panel-reviews{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(212,88,58,.09);--hb-tint2:rgba(212,88,58,.16);--hb-field:rgba(255,255,255,.05);
   /* Reviews-only: the site-wide dark-theme green/red/sand read flat and
      muted next to this page's flat canvas. --hb-good/--hb-bad (above) are
      var(--green)/var(--red) resolved per-element, so overriding the three
@@ -7375,7 +7371,7 @@ svg:hover .hb-xh{opacity:1}
 .rv2-analytics>summary:after,.hb-results>summary:after{content:'';margin-left:auto;flex:0 0 auto;align-self:center;display:block;width:30px;height:30px;border-radius:50%;background:var(--hb-tint,rgba(200,75,47,.08)) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M4.5 2.5 8 6l-3.5 3.5' fill='none' stroke='%23c84b2f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/12px 12px no-repeat;transition:transform .2s ease,background-color .15s ease}
 /* A drawn chevron, centred exactly in its circle (the '›' glyph sat off
    centre in its own box, 9/25/26). */
-[data-theme="dark"] .rv2-analytics>summary:after,[data-theme="dark"] .hb-results>summary:after{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M4.5 2.5 8 6l-3.5 3.5' fill='none' stroke='%23e06444' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")}
+[data-theme="dark"] .rv2-analytics>summary:after,[data-theme="dark"] .hb-results>summary:after{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M4.5 2.5 8 6l-3.5 3.5' fill='none' stroke='%23d4583a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")}
 .rv2-analytics>summary:hover:after,.hb-results>summary:hover:after{background-color:var(--hb-tint2,rgba(200,75,47,.16))}
 /* Disclosure headings read as headings (9/25/26): the kicker and its line
    a size up, and the chevron a clear ember button, not a tiny grey glyph. */
@@ -7652,7 +7648,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 /* ── Labor (lb2-*) — Home/Reviews language: hero ribbon, three chart tiles,
    schedule tools as rows. The three staffing tables keep their own look. */
 #panel-labor{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.12);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-field:rgba(255,255,255,.55)}
-[data-theme="dark"] #panel-labor{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(224,100,68,.09);--hb-tint2:rgba(224,100,68,.16);--hb-field:rgba(255,255,255,.05)}
+[data-theme="dark"] #panel-labor{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(212,88,58,.09);--hb-tint2:rgba(212,88,58,.16);--hb-field:rgba(255,255,255,.05)}
 #panel-labor .hb-chip .v{display:inline-flex;align-items:baseline;gap:2px}
 .lb2-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;align-items:center}
 .lb2-hero{margin-top:30px}
@@ -7767,7 +7763,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .lb2-bench .bar{position:relative;height:10px;border-radius:5px;background:var(--hb-line2);overflow:visible}
 .lb2-bench .bar .fill{position:absolute;left:0;top:0;height:100%;border-radius:5px;background:linear-gradient(90deg,var(--ember),#e8956a);box-shadow:0 0 12px rgba(200,75,47,.45);transform-origin:left;animation:rv2Grow 1.2s cubic-bezier(.3,0,.15,1) both}
 .lb2-bench .bar .fill.good{background:linear-gradient(90deg,#2d6a4f,#4ead7a);box-shadow:0 0 12px rgba(45,106,79,.45)}
-.lb2-bench .bar .fill.bad{background:linear-gradient(90deg,#c0392b,#e05555);box-shadow:0 0 12px rgba(224,85,85,.45)}
+.lb2-bench .bar .fill.bad{background:linear-gradient(90deg,#c0392b,#e3333f);box-shadow:0 0 12px rgba(227,51,63,.45)}
 .lb2-bench .bar .tick{position:absolute;top:-4px;width:2px;height:18px;border-radius:1px}
 .lb2-bench .bar .tick.t{background:var(--hb-good)}.lb2-bench .bar .tick.h{background:var(--ink2)}
 /* The industry mark is a reference, not a verdict (Benchmarking #34): neutral ink, its source printed under the bar. */
@@ -7960,7 +7956,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .lb2-hist .rside{display:flex;align-items:center;gap:10px}
 .lb2-hist .qpill{font-family:'Space Grotesk',sans-serif;font-size:12.5px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap}
 .lb2-hist .qpill.good{background:rgba(74,173,122,.14);color:var(--hb-good)}
-.lb2-hist .qpill.warn{background:rgba(224,85,85,.14);color:var(--hb-bad)}
+.lb2-hist .qpill.warn{background:rgba(227,51,63,.14);color:var(--hb-bad)}
 .lb2-hist .qpill.fair{background:rgba(239,159,39,.16);color:#ef9f27}
 .lb2-hist .rhrs{font-family:'Space Grotesk',sans-serif;font-size:12.5px;color:var(--ink3);white-space:nowrap}
 .lb2-hist .ractions{display:flex;gap:2px;opacity:.55;transition:opacity .15s ease}
@@ -8466,12 +8462,12 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
   <div class="lb2-ops" id="lb2-ops">
     <section class="lb2-op" id="lb2-timeoff" aria-label="Time off">
       <div class="hd"><span class="ic ob-tile" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/><path d="M9 15.5l2 2 4-4"/></svg></span><div class="hd-t"><div class="k">Time off</div><div class="v" id="lb2-timeoff-v"><span class="hb-num" id="lb2-timeoff-n">&ndash;</span><small id="lb2-timeoff-flag">loading</small></div></div></div>
-      <div id="lb2-timeoff-body" class="lb2-op-body">Loading&hellip;</div>
+      <div id="lb2-timeoff-body" class="lb2-op-body"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></div>
       <div class="cap"><span>asked for in the staff portal &middot; an approved range is kept off the next draft</span></div>
     </section>
     <section class="lb2-op" id="lb2-covers" aria-label="Covers">
       <div class="hd"><span class="ic ob-tile" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9" r="2.4"/><path d="M15.5 14.2a4.5 4.5 0 0 1 5 4.3"/></svg></span><div class="hd-t"><div class="k">Covers</div><div class="v" id="lb2-covers-v"><span class="hb-num" id="lb2-covers-n">&ndash;</span><small id="lb2-covers-flag">loading</small></div></div></div>
-      <div id="lb2-covers-body" class="lb2-op-body">Loading&hellip;</div>
+      <div id="lb2-covers-body" class="lb2-op-body"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></div>
       <div class="ac-inline lb2-op-form"><input type="date" class="ac-input" id="lb2-cov-date" aria-label="Date" style="max-width:150px"><input type="number" class="ac-input ac-num" id="lb2-cov-n" min="0" step="1" placeholder="covers" aria-label="Covers" style="max-width:110px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="lb2SaveCover(this)">Save</button></div>
       <details class="fc2-import"><summary>Paste a CSV (date,covers)</summary><textarea id="lb2-cov-csv" rows="4" class="ac-input" style="width:100%;font-family:monospace;font-size:13px" placeholder="date,covers&#10;2026-09-19,212"></textarea><div class="fc2-count-ft"><span class="ac-status" id="lb2-cov-status"></span><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="lb2ImportCovers(this)">Import</button></div></details>
       <div class="cap"><span>the one figure that tells a lean day from a short one &middot; read by the labor analysis</span></div>
@@ -8828,7 +8824,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
         </div>
         <!-- Saved entries -->
         <div id="avail-list" style="display:flex;flex-direction:column;gap:6px">
-          <div style="font-size:13.5px;color:var(--ink3);font-style:italic">Loading availability…</div>
+          <div class="dr-pulse" role="status" aria-label="Loading availability"><i></i></div>
         </div>
       </div>
     </div>
@@ -8862,7 +8858,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
              nobody: each with the roster name it most likely means. -->
         <div id="team-unmatched"></div>
         <div id="team-list" style="display:flex;flex-direction:column;gap:6px">
-          <div style="font-size:13.5px;color:var(--ink3);font-style:italic">Loading your team…</div>
+          <div class="dr-pulse" role="status" aria-label="Loading your team"><i></i></div>
         </div>
 
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:10px">
@@ -9158,13 +9154,13 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
    iOS chart tiles (gauge, ledgers), order list and price watch as rows, the
    weekly price monitor as a quiet table. Tracker + Analytics are one page. */
 #panel-inventory{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.12);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-field:rgba(255,255,255,.55)}
-[data-theme="dark"] #panel-inventory{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(224,100,68,.09);--hb-tint2:rgba(224,100,68,.16);--hb-field:rgba(255,255,255,.05)}
+[data-theme="dark"] #panel-inventory{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(212,88,58,.09);--hb-tint2:rgba(212,88,58,.16);--hb-field:rgba(255,255,255,.05)}
 #panel-inventory .hb-chip .v{display:inline-flex;align-items:baseline;gap:2px}
 #panel-inventory #inv-insight{font-size:16px;line-height:1.65;color:var(--ink2);white-space:pre-wrap;padding-left:0}
 #panel-inventory .lb2-sg .k{font-size:14px}
 #panel-inventory .lb2-sg .v{font-size:34px}
 #panel-inventory .lb2-sg .cap{font-size:15px}
-#panel-inventory .lb2-sg .k i.bad{background:rgba(224,85,85,.16);padding:2px 8px;border-radius:999px;position:relative;top:-1px}
+#panel-inventory .lb2-sg .k i.bad{background:rgba(227,51,63,.16);padding:2px 8px;border-radius:999px;position:relative;top:-1px}
 #panel-inventory .lb2-sg .k i.good{background:rgba(78,173,122,.14);padding:2px 8px;border-radius:999px;position:relative;top:-1px}
 #panel-inventory .lb2-sg .k span{white-space:nowrap}
 #panel-inventory .hb-kicker{font-size:12.5px}
@@ -9185,7 +9181,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .fc2-wt-title{min-width:0;flex:1 1 360px}
 .fc2-wt-verdict{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:7px;font-family:'Clash Display',sans-serif;font-weight:500;font-size:26.5px;letter-spacing:-.01em;color:var(--ink);line-height:1.15}
 .fc2-wt-pill{font-family:'Apfel Grotezk',sans-serif;font-size:13px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:4px 10px;border-radius:999px;background:var(--hb-tint2);color:var(--ember);white-space:nowrap}
-.fc2-wt-pill.good{background:rgba(78,173,122,.14);color:var(--hb-good)}.fc2-wt-pill.bad{background:rgba(224,85,85,.16);color:var(--hb-bad)}.fc2-wt-pill.warn{background:rgba(232,176,74,.14);color:var(--hb-warn)}
+.fc2-wt-pill.good{background:rgba(78,173,122,.14);color:var(--hb-good)}.fc2-wt-pill.bad{background:rgba(227,51,63,.16);color:var(--hb-bad)}.fc2-wt-pill.warn{background:rgba(212,160,48,.14);color:var(--hb-warn)}
 .fc2-wt-ctl{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .fc2-wt-ctl[hidden],.fc2-wt-kpis[hidden],.fc2-wt-leg[hidden],.fc2-wt-obs[hidden]{display:none}
 .fc2-wt-tgl.on{border-color:rgba(78,173,122,.5);color:var(--hb-good)}
@@ -9281,7 +9277,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .fc2-wt-tip .items{margin-top:8px;padding-top:7px;border-top:1px solid var(--hb-line2);color:var(--ink3);line-height:1.5}
 .fc2-wt-tip .items b{color:var(--ink2);font-family:'Space Grotesk',sans-serif;font-weight:600}
 .fc2-wt-tip .flag{display:inline-block;margin:8px 6px 0 0;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:2px 7px;border-radius:999px;background:var(--hb-tint2);color:var(--ember)}
-.fc2-wt-tip .flag.bad{background:rgba(224,85,85,.16);color:var(--hb-bad)}.fc2-wt-tip .flag.good{background:rgba(78,173,122,.14);color:var(--hb-good)}
+.fc2-wt-tip .flag.bad{background:rgba(227,51,63,.16);color:var(--hb-bad)}.fc2-wt-tip .flag.good{background:rgba(78,173,122,.14);color:var(--hb-good)}
 .fc2-wt-tip .hint{margin-top:8px;font-size:12.5px;color:var(--ink3)}
 .fc2-wt-empty{padding:26px 20px 22px;text-align:center;width:100%}
 .fc2-wt-empty .t{font-family:'Clash Display',sans-serif;font-weight:500;font-size:22.5px;color:var(--ink);margin-top:10px}
@@ -9300,8 +9296,8 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .fc2-ledger .r .nm{font-size:13.5px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .fc2-ledger .r .sub{font-size:12px;color:var(--ink3);font-family:'Space Grotesk',sans-serif;margin-top:1px}
 .fc2-ledger .r .bar{height:7px;border-radius:4px;background:var(--hb-line2);overflow:hidden;margin-top:5px;position:relative}
-.fc2-ledger .r .bar i{display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,#7a1c16,#e05555);box-shadow:0 0 10px rgba(224,85,85,.45);transform-origin:left;transform:scaleX(0);transition:transform 1.4s cubic-bezier(.3,0,.15,1)}
-.fc2-ledger .r .bar i.amber{background:linear-gradient(90deg,#b7791f,#e8b04a);box-shadow:0 0 10px rgba(212,160,48,.4)}
+.fc2-ledger .r .bar i{display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,#7a1c16,#e3333f);box-shadow:0 0 10px rgba(227,51,63,.45);transform-origin:left;transform:scaleX(0);transition:transform 1.4s cubic-bezier(.3,0,.15,1)}
+.fc2-ledger .r .bar i.amber{background:linear-gradient(90deg,#b7791f,#d4a030);box-shadow:0 0 10px rgba(212,160,48,.4)}
 .fc2-ledger .r .bar.on i{transform:scaleX(1)}
 .fc2-ledger .r .v{font-family:'Space Grotesk',sans-serif;font-size:14.5px;font-weight:700;color:var(--red);text-align:right;white-space:nowrap}
 .fc2-ledger .r .v.amber{color:var(--hb-warn)}
@@ -10420,7 +10416,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
    read, the iOS Visibility Orbit + GBP grid + query results as tiles, the
    roadmap and nearby competitors as accent rows. */
 #panel-competitor{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.12);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-field:rgba(255,255,255,.55)}
-[data-theme="dark"] #panel-competitor{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(224,100,68,.09);--hb-tint2:rgba(224,100,68,.16);--hb-field:rgba(255,255,255,.05)}
+[data-theme="dark"] #panel-competitor{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(212,88,58,.09);--hb-tint2:rgba(212,88,58,.16);--hb-field:rgba(255,255,255,.05)}
 #panel-competitor .hb-chip .v{display:inline-flex;align-items:baseline;gap:2px}
 .in2-lede{font-family:'Clash Display',sans-serif;font-weight:500;font-size:clamp(19px,2vw,24px);line-height:1.35;letter-spacing:-.005em;color:var(--ink);margin:14px 0 4px;max-width:70ch;text-wrap:balance}
 .in2-lede em{font-style:normal;color:var(--ember)}
@@ -10495,7 +10491,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 /* A bare red text label next to this page's own orange kickers read as
    the same color at a glance — give a genuinely bad reading its own pill
    instead of relying on a text-color difference alone. */
-#in2-aiv .lb2-sg .k i.bad{background:rgba(224,85,85,.16);padding:2px 8px;border-radius:999px}
+#in2-aiv .lb2-sg .k i.bad{background:rgba(227,51,63,.16);padding:2px 8px;border-radius:999px}
 .in2-sec{margin-top:34px;padding-top:22px;border-top:1px solid var(--hb-line)}
 .in2-sec .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:8px}
 .in2-sec .hd h2{font-family:'Clash Display',sans-serif;font-weight:500;font-size:22px;letter-spacing:-.01em;color:var(--ink);margin:4px 0 0}
@@ -10772,7 +10768,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
    shared .hb-skel / .hb-load primitives render inside this panel at all.
    ═══════════════════════════════════════════════════════════════════════════ */
 #panel-account{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.12);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-field:rgba(255,255,255,.55);--ac-card:var(--surface);--ac-line:var(--paper3);--ac-glow:rgba(200,75,47,.14)}
-[data-theme="dark"] #panel-account{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(224,100,68,.09);--hb-tint2:rgba(224,100,68,.16);--hb-field:rgba(255,255,255,.05);--ac-card:var(--surface);--ac-glow:rgba(224,100,68,.2)}
+[data-theme="dark"] #panel-account{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(212,88,58,.09);--hb-tint2:rgba(212,88,58,.16);--hb-field:rgba(255,255,255,.05);--ac-card:var(--surface);--ac-glow:rgba(212,88,58,.2)}
 #panel-account{padding:0;max-width:none}
 .ac-page{max-width:1180px;margin:0 auto;padding:28px 28px 72px}
 
@@ -11255,7 +11251,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
             <div class="c"><select class="ac-select" id="as-rp-own" aria-label="Ownership"{% if not _is_owner %} disabled{% endif %}><option value="">Not set</option></select></div></div>
           <div class="ac-row"><div class="l"><b>Year you opened</b><span>A first-year restaurant is still ramping; its numbers aren&rsquo;t read like a mature one&rsquo;s.</span></div>
             <div class="c"><input class="ac-input ac-num" type="text" id="as-rp-opened" inputmode="numeric" maxlength="4" placeholder="2019" aria-label="Year you opened" style="width:110px"{% if not _is_owner %} disabled{% endif %}></div></div>
-          <div class="ac-row"><div class="l"><b>Your targets</b><span id="as-rp-targets">Loading&hellip;</span></div><div class="c"></div></div>
+          <div class="ac-row"><div class="l"><b>Your targets</b><span id="as-rp-targets"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></span></div><div class="c"></div></div>
         </div>
         <div class="ac-inline" style="margin-top:12px">{% if _is_owner %}<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="saveRestaurantProfile()">Confirm profile</button>{% endif %}<span class="ac-note" id="as-rp-confirmed" style="margin-top:0"></span></div>
         {% if not _is_owner %}<div class="ac-note">Only the account owner can change the restaurant profile.</div>{% endif %}
@@ -11321,7 +11317,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
             <div class="c ac-inline"><input class="ac-input" type="date" id="as-dsr-ystart" aria-label="That year starts" style="width:160px"><input class="ac-input" type="text" id="as-dsr-ylen" inputmode="numeric" maxlength="60" placeholder="4,4,5,4,4,5,4,4,5,4,5,5" aria-label="That year's period lengths" style="width:200px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="dsrAddYear()">Add year</button></div></div>
         </div>
         <div class="ac-card-h" style="margin-top:20px"><div><h3>POS departments</h3><p>Nothing is guessed: a department you haven&rsquo;t placed shows as Unmapped, with its dollars, until you do. A change counts from the next report on.</p></div></div>
-        <div class="ac-rows" id="as-dsr-cats"><div class="ac-note">Loading&hellip;</div></div>
+        <div class="ac-rows" id="as-dsr-cats"><div class="ac-note"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></div></div>
       </div>
     </section>
     {% endif %}
@@ -11333,7 +11329,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
       <div class="ac-grid">
         <div class="ac-card">
           <div class="ac-card-h"><div><h3>Dashboard logins</h3><p>Each teammate gets their own login. The owner can remove access any time.</p></div><div class="r"><span class="ac-chip sm">Team</span></div></div>
-          <div id="acct-team-list" class="ac-list">Loading&hellip;</div>
+          <div id="acct-team-list" class="ac-list"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></div>
           {% if current_user.is_admin or current_user.role in ('client', 'owner') %}
           <div class="ac-inline" style="margin-top:14px">
             <label class="ac-lbl" for="team-name" style="position:absolute;left:-9999px">Name</label>
@@ -11368,7 +11364,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
       {% if _is_owner %}
       <div class="ac-card" style="margin-top:14px" id="staff-accounts-card">
         <div class="ac-card-h"><div><h3>Staff accounts</h3><p>Who has signed up, from which number, and who on your roster hasn&rsquo;t yet.</p></div><div class="r"><span class="ac-chip sm">Employees</span></div></div>
-        <div id="staff-list" class="ac-list">Loading&hellip;</div>
+        <div id="staff-list" class="ac-list"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></div>
         <div id="staff-unclaimed" style="margin-top:8px"></div>
 
         <div class="ac-disc">
@@ -11463,7 +11459,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
           <div class="ac-card-h"><div><h3>Alerts</h3><p>Who gets texted or emailed, and for what.</p></div>
             <div class="r"><button class="cbtn cbtn-secondary cbtn-sm" onclick="openAlertsModal()">Manage alerts</button></div></div>
           <div class="ac-kv" style="grid-template-columns:1fr">
-            <div><dt>Contacts</dt><dd id="alerts-contacts-summary" class="muted">Loading&hellip;</dd></div>
+            <div><dt>Contacts</dt><dd id="alerts-contacts-summary" class="muted"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></dd></div>
             <div><dt>Triggers</dt><dd id="alerts-types-summary" class="muted"></dd></div>
           </div>
           <div class="ac-note">Quiet hours, daily caps and the weekly digest day are all inside <b>Manage alerts</b>.</div>
@@ -11504,7 +11500,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
         <div class="ac-card span" id="email-history-card">
           <div class="ac-card-h"><div><h3>Email history</h3><p>Everything Cavnar AI has sent for you, and whether it landed.</p></div>
             <div class="r"><button onclick="sendTestDigest(this)" class="cbtn cbtn-soft cbtn-sm">Send me a preview digest</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm ac-fold-btn" aria-expanded="false" aria-controls="eh-fold" onclick="acctFold(this,'eh-fold')"><span class="lbl">Show</span> <span class="chev" aria-hidden="true">&#9662;</span></button></div></div>
-          <div class="ac-fold" id="eh-fold" hidden><div id="eh-body" class="ac-list">Loading&hellip;</div></div>
+          <div class="ac-fold" id="eh-fold" hidden><div id="eh-body" class="ac-list"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></div></div>
         </div>
       </div>
     </section>
@@ -11564,7 +11560,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
            remembers, what the owner decided, and why it stopped asking. -->
       <div class="ac-card" id="acct-memory-card" style="margin-top:16px">
         <div class="ac-card-h"><div><h3>What Cavnar AI remembers</h3><p>Facts the assistant was told to keep &mdash; they shape every answer. Anyone on this account can add one; you can remove any of them.</p></div></div>
-        <div id="acct-memory-list" class="ac-status">Loading&hellip;</div>
+        <div id="acct-memory-list" class="ac-status"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></div>
         <div class="ac-inline" style="margin-top:10px">
           <input class="ac-input" id="acct-memory-new" maxlength="300" placeholder="Something the assistant should always know &mdash; &ldquo;we close Mondays&rdquo;, &ldquo;never discount the tasting menu&rdquo;" aria-label="A fact to remember">
           <button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="acctRemember(this)">Remember</button>
@@ -11572,12 +11568,12 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
       </div>
       <div class="ac-card" id="acct-decisions-card">
         <div class="ac-card-h"><div><h3>What you&rsquo;ve decided</h3><p>Every recommendation, issue and proposal, what you did with it, and what was measured afterwards. Ask Cavnar AI reads this before it recommends anything.</p></div></div>
-        <div id="acct-decisions-list" class="ac-status">Loading&hellip;</div>
+        <div id="acct-decisions-list" class="ac-status"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></div>
         <div class="ac-note" style="margin-top:10px">What you followed by area, what worked, results to check in on and every recommendation shown: <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rh="open">Your recommendations &rarr;</button></div>
       </div>
       <div class="ac-card" id="acct-trust-card">
         <div class="ac-card-h"><div><h3>Why Cavnar AI stopped asking</h3><p>Nothing runs on its own until your own record earns it. This is that record.</p></div></div>
-        <div id="acct-trust-list" class="ac-status">Loading&hellip;</div>
+        <div id="acct-trust-list" class="ac-status"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></div>
       </div>
     </section>
 
@@ -11699,7 +11695,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
               <div class="c">{% if restaurant.two_fa_enabled %}<span class="ac-chip sm good"><i></i>On</span><button onclick="toggle2FA(false)" class="cbtn cbtn-secondary cbtn-sm">Disable</button>{% else %}<button onclick="document.getElementById('twofa-modal').style.display='flex'" class="cbtn cbtn-secondary cbtn-sm">Enable</button>{% endif %}</div></div>
             <div class="ac-row"><div class="l"><b>Password</b><span>Change it any time; every other device is signed out.</span></div>
               <div class="c"><button class="cbtn cbtn-secondary cbtn-sm" onclick="document.getElementById('pw-modal').style.display='flex'">Change</button></div></div>
-            <div class="ac-row"><div class="l"><b>Recovery email</b><span id="rec-status">Loading&hellip;</span></div></div>
+            <div class="ac-row"><div class="l"><b>Recovery email</b><span id="rec-status"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></span></div></div>
           </div>
           <div class="ac-inline" style="margin-top:12px">
             <input class="ac-input" id="rec-email" type="email" placeholder="A second address you can always reach" aria-label="Recovery email">
@@ -11718,11 +11714,11 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
         <div class="ac-card">
           <div class="ac-card-h"><div><h3>Active sessions</h3><p>Everywhere this account is signed in right now.</p></div>
             <div class="r"><button onclick="revokeOtherSessions(this)" id="revoke-sessions-btn" class="cbtn cbtn-secondary cbtn-sm">Sign out other devices</button></div></div>
-          <div id="sessions-list" class="ac-list">Loading&hellip;</div>
+          <div id="sessions-list" class="ac-list"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></div>
           {% if restaurant.two_fa_enabled %}
           <div class="ac-card-h" style="margin-top:16px"><div><h3 style="font-size:15px">Trusted devices</h3><p>Skip the code on these for 30 days.</p></div>
             <div class="r"><button onclick="forgetAllTrusted(this)" class="cbtn cbtn-secondary cbtn-sm">Forget all</button></div></div>
-          <div id="trusted-list" class="ac-list">Loading&hellip;</div>
+          <div id="trusted-list" class="ac-list"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></div>
           {% endif %}
         </div>
         <div class="ac-card">
@@ -15278,7 +15274,7 @@ function loadMoreReviews(btn){
   var list=document.querySelector('#rv-inbox-reviews .rv2-list');
   if(!list) return;
   if(_rvOffset===null) _rvOffset=document.querySelectorAll('#rv-inbox-reviews .rv2-row').length;
-  var done=cbtnBusy(btn,'Loading…');
+  var done=cbtnBusy(btn,'Loading');
   var q='offset='+encodeURIComponent(_rvOffset)+'&filter='+encodeURIComponent(rfilter||'all');
   var searchEl=document.getElementById('rsearch');
   if(searchEl&&searchEl.value) q+='&search='+encodeURIComponent(searchEl.value);
@@ -15470,8 +15466,8 @@ function renderWeekRadar(){
   var poly='';var worst=-1,worstV=-1;
   for(var i=0;i<7;i++){var v=vals[i]==null?target:vals[i];var p=pt(i,rad(v));poly+=(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)+' ';if(vals[i]!=null&&vals[i]>worstV){worstV=vals[i];worst=i;}}
   s+='<path class="hb-fill" d="'+poly+'Z" fill="url(#lbRadG)"/><path class="hb-glow" d="'+poly+'Z" fill="none" stroke="#e8956a" stroke-opacity=".6" stroke-width="5" filter="url(#lbRadF)"/><path class="hb-draw" d="'+poly+'Z" fill="none" stroke="#e8956a" stroke-width="2"/>';
-  for(var i=0;i<7;i++){if(vals[i]==null)continue;var p=pt(i,rad(vals[i]));var over=vals[i]>target;s+='<circle class="hb-dot" cx="'+p[0].toFixed(1)+'" cy="'+p[1].toFixed(1)+'" r="'+(over?4.5:3.2)+'" fill="'+(over?'#e05555':'#e8956a')+'" stroke="#fff" stroke-opacity=".9" stroke-width="1.2" style="animation-delay:'+(1.2+i*0.12).toFixed(2)+'s"/>';
-    var lp=pt(i,R+16);s+='<text x="'+lp[0].toFixed(1)+'" y="'+(lp[1]+4).toFixed(1)+'" text-anchor="middle" font-size="13" font-weight="600" font-family="Space Grotesk, sans-serif" fill="'+(over?'#e05555':'currentColor')+'" fill-opacity="'+(over?'1':'.85')+'">'+short[i]+' '+vals[i]+'%</text>';}
+  for(var i=0;i<7;i++){if(vals[i]==null)continue;var p=pt(i,rad(vals[i]));var over=vals[i]>target;s+='<circle class="hb-dot" cx="'+p[0].toFixed(1)+'" cy="'+p[1].toFixed(1)+'" r="'+(over?4.5:3.2)+'" fill="'+(over?'#e3333f':'#e8956a')+'" stroke="#fff" stroke-opacity=".9" stroke-width="1.2" style="animation-delay:'+(1.2+i*0.12).toFixed(2)+'s"/>';
+    var lp=pt(i,R+16);s+='<text x="'+lp[0].toFixed(1)+'" y="'+(lp[1]+4).toFixed(1)+'" text-anchor="middle" font-size="13" font-weight="600" font-family="Space Grotesk, sans-serif" fill="'+(over?'#e3333f':'currentColor')+'" fill-opacity="'+(over?'1':'.85')+'">'+short[i]+' '+vals[i]+'%</text>';}
   el.innerHTML=s+'</svg>';el.style.color='var(--ink3)';
   var n=document.getElementById('lb2-radar-n'),cap=document.getElementById('lb2-radar-cap'),flag=document.getElementById('lb2-radar-flag');
   if(worst>=0){if(n){if(!n.dataset.animated){n.dataset.animated='1';
@@ -16610,10 +16606,10 @@ function _schedHandleResult(data) {
     var absDiff   = Math.abs(diff);
     var proj      = data.projected_revenue ? '$' + Math.round(data.projected_revenue).toLocaleString() : '—';
     var budgetDol = data.labor_budget_dollars ? '$' + Math.round(data.labor_budget_dollars).toLocaleString() : '—';
-    parText.innerHTML = 'Projected revenue: <strong>' + proj + '</strong> &nbsp;&#xB7;&nbsp; '
-      + 'Labor budget (' + (data.labor_target || 30) + '%): <strong>' + budgetDol + '</strong><br>'
-      + 'PAR target: <strong>' + budget + 'h</strong> &nbsp;&#xB7;&nbsp; '
-      + 'This schedule: <strong>' + scheduled + 'h</strong>';
+    parText.innerHTML = 'Projected revenue: <strong class="hb-num">' + proj + '</strong> &nbsp;&#xB7;&nbsp; '
+      + 'Labor budget (<span class="hb-num">' + (data.labor_target || 30) + '%</span>): <strong class="hb-num">' + budgetDol + '</strong><br>'
+      + 'PAR target: <strong class="hb-num">' + budget + 'h</strong> &nbsp;&#xB7;&nbsp; '
+      + 'This schedule: <strong class="hb-num">' + scheduled + 'h</strong>';
     if (diff > 0) {
       parBadge.textContent = '+' + absDiff + 'h over PAR';
       parBadge.style.background = 'rgba(235,87,87,.18)';
@@ -18049,7 +18045,7 @@ function openPublishSchedule(){
   var panel = document.getElementById('publish-sched-panel');
   panel.style.display = 'block';
   var body = document.getElementById('ps-contacts');
-  body.innerHTML = '<div class="dr-pulse" aria-hidden="true"></div>';
+  body.innerHTML = '<div class="dr-pulse" aria-hidden="true"><i></i></div>';
   fetch('/api/labor/staff-contacts').then(apiJson).then(function(d){
     if(!d.ok || !d.contacts || !d.contacts.length){
       body.innerHTML = '<span class="sr-note">Nobody is on this week yet.</span>';
@@ -18832,7 +18828,7 @@ document.addEventListener('click', function(ev) {
 function loadTasksForRole(role) {
   var list = document.getElementById('tasks-list');
   if (!list || !role) return;
-  list.innerHTML = '<div style="font-size:13.5px;color:var(--ink3);font-style:italic">Loading…</div>';
+  list.innerHTML = '<div class="dr-pulse" role="status" aria-label="Loading tasks"><i></i></div>';
   var today = _tasksToday();
   fetch('/api/tasks?role=' + encodeURIComponent(role) + '&date=' + today).then(apiJson).then(function(d) {
     if (!d.ok) { list.innerHTML = '<div style="font-size:13.5px;color:var(--red)">Could not load tasks.</div>'; return; }
@@ -20110,13 +20106,13 @@ function wtDrawChart(){
       // when a target exists), not target (only set while the line is
       // shown) — hiding the line is not the same claim as having no target.
       var fill=targetVal?(over?'url(#fc2wtBarBad)':'url(#fc2wtBarGood)'):'url(#fc2wtBarNeutral)',op=isLast?1:(over?.92:.78);
-      var stroke=f.anomaly==='spike'?' stroke="#e05555" stroke-width="2"':(isLast?' stroke="#e8956a" stroke-width="1.5" stroke-opacity=".9"':' stroke="rgba(255,255,255,.14)" stroke-width="1"');
+      var stroke=f.anomaly==='spike'?' stroke="#e3333f" stroke-width="2"':(isLast?' stroke="#e8956a" stroke-width="1.5" stroke-opacity=".9"':' stroke="rgba(255,255,255,.14)" stroke-width="1"');
       var delay=animate?' style="animation-delay:'+(i*(dense?18:140))+'ms"':'';
       bars+='<rect class="fc2-wt-bar'+(animate?' hb-bar':'')+(on?' on':'')+'" data-i="'+i+'" x="'+x.toFixed(1)+'" y="'+by.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+bh.toFixed(1)+'" rx="'+(dense?3:6)+'" fill="'+fill+'" fill-opacity="'+op+'" filter="url(#fc2wtLift)"'+stroke+delay+'/>';
       if(!dense){
         labels+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-6).toFixed(1)+'" text-anchor="middle" font-size="13" font-weight="'+(isLast?'700':'600')+'" fill="currentColor" fill-opacity="'+(isLast?'1':'.8')+'">'+wtMoney(val)+'</text>';
-        if(f.anomaly==='spike')labels+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-21).toFixed(1)+'" text-anchor="middle" font-size="11.5" font-weight="700" letter-spacing=".3" fill="#e05555">SPIKE</text>';
-        else if(f.worst&&n>=3)labels+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-21).toFixed(1)+'" text-anchor="middle" font-size="11.5" font-weight="700" letter-spacing=".3" fill="#e05555" fill-opacity=".85">WORST</text>';
+        if(f.anomaly==='spike')labels+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-21).toFixed(1)+'" text-anchor="middle" font-size="11.5" font-weight="700" letter-spacing=".3" fill="#e3333f">SPIKE</text>';
+        else if(f.worst&&n>=3)labels+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-21).toFixed(1)+'" text-anchor="middle" font-size="11.5" font-weight="700" letter-spacing=".3" fill="#e3333f" fill-opacity=".85">WORST</text>';
         else if(f.best&&n>=3)labels+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-21).toFixed(1)+'" text-anchor="middle" font-size="11.5" font-weight="700" letter-spacing=".3" fill="#4ead7a" fill-opacity=".9">BEST</text>';
       }
     }
@@ -20224,7 +20220,7 @@ function wtDrawLegend(){
   else h+='<span><i style="background:#c84b2f;opacity:.6"></i>Weekly waste'+(_wt.cat?' · '+wtEsc(_wt.cat):'')+'</span>';
   h+='<span><i style="background:#c84b2f;box-shadow:0 0 0 1.5px #e8956a"></i>This week</span><span><i class="ln"></i>4-week average</span>';
   if(hasT)h+='<span><i class="tg"></i>Target ('+d.target.pct+'% of purchases)</span>';
-  if(d.stats.anomalies&&d.stats.anomalies.length)h+='<span><i style="background:transparent;box-shadow:inset 0 0 0 2px #e05555"></i>Unusual week</span>';
+  if(d.stats.anomalies&&d.stats.anomalies.length)h+='<span><i style="background:transparent;box-shadow:inset 0 0 0 2px #e3333f"></i>Unusual week</span>';
   box.innerHTML=h;
 }
 function wtDrawDrill(){
@@ -20638,13 +20634,13 @@ function _ehFmtDateTime(s){
   if(!m) return _ehEsc(s);
   var y=m[1], mo=parseInt(m[2],10), d=parseInt(m[3],10), h=parseInt(m[4],10), mi=m[5];
   var ap = h>=12?'pm':'am', h12=h%12; if(h12===0)h12=12;
-  return mo+'/'+d+'/'+y+', '+h12+':'+mi+ap;
+  return mo+'/'+d+'/'+y.slice(2)+' · '+h12+':'+mi+ap;
 }
 
 function loadEmailHistory(){
   var el = document.getElementById('eh-body');
   if(!el) return;
-  el.innerHTML = 'Loading…';
+  el.innerHTML = '<div class="dr-pulse" role="status" aria-label="Loading email history"><i></i></div>';
   fetch('/api/email-history').then(apiJson).then(function(d){
     if(!d.ok){ el.innerHTML = '<span style="color:#ef4444">Couldn\'t load email history</span>'; return; }
     if(!d.emails || !d.emails.length){
@@ -21376,12 +21372,12 @@ function saveAlertSettings() {
     body: JSON.stringify(payload)
   }).then(apiJson).then(function(d) {
     if (d.ok) {
-      msg.style.color = '#3ecf6e';
+      msg.style.color = 'var(--green)';
       msg.textContent = 'Saved!';
       loadAlertsSummary();
       setTimeout(function(){ closeAlertsModal(); }, 800);
     } else {
-      msg.style.color = 'var(--ember)';
+      msg.style.color = 'var(--red)';
       msg.textContent = d.error || 'Error saving.';
     }
   }).catch(function() {
@@ -21524,7 +21520,7 @@ function _wireLaborHover(container,pts,vals,target,trend,min,rng){
   function move(clientX){
     var i=idxAt(clientX),p=pts[i],pct=vals[i],xy=_lb2xy(i,n,pct,min,rng),over=pct>target;
     var xPct=(xy[0]/LB2_W*100).toFixed(2),yPct=(xy[1]/LB2_H*100).toFixed(2);
-    dot.style.left=xPct+'%';dot.style.top=yPct+'%';dot.style.background=over?'#e05555':'#e8956a';dot.hidden=false;
+    dot.style.left=xPct+'%';dot.style.top=yPct+'%';dot.style.background=over?'#e3333f':'#e8956a';dot.hidden=false;
     var dateLine=trend?C.esc(p.label):(_laborWeekday(p.label)+' '+C.mdy(p.label));
     var html='<div class="lb2-tip-d">'+dateLine+'</div><div class="lb2-tip-pct '+(over?'bad':'good')+'">'+pct.toFixed(1)+'%<span>'+(over?(pct-target).toFixed(1)+' over target':'at or under target')+'</span></div>';
     if(p.sales)html+='<div class="lb2-tip-row"><span>Sales</span><b>$'+Math.round(p.sales).toLocaleString()+'</b></div>';
@@ -21716,12 +21712,12 @@ function toggleExtraReviews(idx, btn){
   }
 }
 function refreshCompetitorIntel(btn){
-  var _rs='<span style="display:inline-block;width:12px;height:12px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;vertical-align:middle;animation:spin .7s linear infinite"></span>';
+  var _restore=null;
   // "Reading the Room" — inside the big empty-state card when that's where
   // the button lives, taking over its content directly instead of a boxy
   // floating card stacked on top of it; everywhere else (the header's
   // "Refresh" button, already tracking competitors) the button's own
-  // inline spinner is the whole loading state — no extra floating card
+  // busy state (cbtnBusy, the orb) is the whole loading state — no extra floating card
   // stacked on top of a page that already has content on it.
   var _inEmpty=btn.closest&&btn.closest('.in2-empty');
   var _origHtml=null;
@@ -21729,11 +21725,11 @@ function refreshCompetitorIntel(btn){
     _origHtml=_inEmpty.innerHTML;
     _inEmpty.innerHTML=cavnarRadarHtml('Scanning nearby restaurants',230);
   }else{
-    btn.innerHTML='Fetching... '+_rs;btn.disabled=true;btn.style.opacity='0.7';
+    _restore=cbtnBusy(btn,'Fetching');
   }
   function _resetBtn(){
     if(_inEmpty&&_origHtml!==null){_inEmpty.innerHTML=_origHtml;}
-    else{btn.textContent='Refresh';btn.disabled=false;btn.style.opacity='1';}
+    else if(_restore){_restore();_restore=null;}
   }
   fetch('/api/refresh-competitor-intel',{method:'POST'}).then(apiJson).then(function(d){
     if(!d.ok){_resetBtn();toast('Error: '+(d.error||'failed'),'error');return;}
@@ -22664,9 +22660,9 @@ function revokeOtherSessions(btn){
       var lastEl = document.getElementById('webhook-last-status');
       if (wh.last_fired) {
         var _d = new Date(wh.last_fired.replace(' ','T') + 'Z');
-        var _fmt = _d.toLocaleString('en-US', {timeZone:'America/Chicago', month:'numeric', day:'numeric', year:'2-digit', hour:'numeric', minute:'2-digit'});
-        lastEl.textContent = wh.last_status + ' · ' + _fmt + ' CT';
-        lastEl.style.color = (wh.last_status >= 200 && wh.last_status < 300) ? '#2d6a4f' : '#c0392b';
+        var _fmt = (window.mdy ? window.mdy(_d) : '') + ' · ' + cavClock(_d);
+        lastEl.textContent = wh.last_status + ' · ' + _fmt;
+        lastEl.style.color = (wh.last_status >= 200 && wh.last_status < 300) ? 'var(--green)' : 'var(--red)';
       }
       var banner = document.getElementById('wh-disabled-banner');
       if (wh.is_active === false) {
@@ -22700,8 +22696,8 @@ function revokeOtherSessions(btn){
         for (var i = 0; i < d.deliveries.length; i++) {
           var dl = d.deliveries[i];
           var _dd = new Date(dl.created_at.replace(' ','T') + 'Z');
-          var _dfmt = _dd.toLocaleString('en-US', {timeZone:'America/Chicago', month:'numeric', day:'numeric', hour:'numeric', minute:'2-digit'});
-          var statusColor = dl.ok ? '#2d6a4f' : '#c0392b';
+          var _dfmt = (window.mdy ? window.mdy(_dd) : '') + ' · ' + cavClock(_dd);
+          var statusColor = dl.ok ? 'var(--green)' : 'var(--red)';
           html += '<tr><td style="padding:6px 8px;border-top:1px solid var(--paper3)">' + dl.event_type + '</td>'
             + '<td style="padding:6px 8px;border-top:1px solid var(--paper3);color:' + statusColor + '">' + (dl.status || 'failed') + '</td>'
             + '<td style="padding:6px 8px;border-top:1px solid var(--paper3)">' + dl.attempts + '</td>'
@@ -23898,7 +23894,7 @@ document.addEventListener('click', function(e) {
     document.getElementById('tm-inbox-view').style.display = 'none';
     document.getElementById('tm-thread-view').style.display = 'block';
     document.getElementById('tm-thread-name').textContent = username;
-    document.getElementById('tm-thread-body').innerHTML = '<div style="font-size:12px;color:var(--ink3);text-align:center;padding:20px 0">Loading…</div>';
+    document.getElementById('tm-thread-body').innerHTML = '<div style="padding:20px 0"><div class="dr-pulse wide" style="margin:0" role="status" aria-label="Loading the conversation"><i></i></div></div>';
     fetch('/api/team/messages/' + userId).then(apiJson).then(function(d) {
       if (!d.ok) { document.getElementById('tm-thread-body').innerHTML = '<div style="font-size:12px;color:var(--ink3)">Could not load this conversation.</div>'; return; }
       tmRenderThread(d.messages || [], d.my_id);
@@ -24376,8 +24372,8 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   function jget(url,cb){fetch(url).then(apiJson).then(cb).catch(function(){cb({ok:false});});}
   function jsend(url,body,cb,method){fetch(url,{method:method||'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}).then(apiJson).then(cb).catch(function(){cb({ok:false,error:'Network error'});});}
   function busy(btn,label){return cbtnBusy(btn,label||'Working…');}
-  function ago(iso){if(!iso)return '';var t=Date.parse(String(iso).replace(' ','T'));if(isNaN(t))return iso;var m=Math.round((Date.now()-t)/60000);if(m<1)return 'just now';if(m<60)return m+'m ago';var h=Math.round(m/60);if(h<24)return h+'h ago';var d=Math.round(h/24);if(d<30)return d+'d ago';return new Date(t).toLocaleDateString();}
-  function fmtDate(iso){if(!iso)return '';var t=Date.parse(String(iso).replace(' ','T'));return isNaN(t)?iso:new Date(t).toLocaleDateString(undefined,{month:'short',day:'numeric'});}
+  function ago(iso){if(!iso)return '';var t=Date.parse(String(iso).replace(' ','T'));if(isNaN(t))return iso;var m=Math.round((Date.now()-t)/60000);if(m<1)return 'just now';if(m<60)return m+'m ago';var h=Math.round(m/60);if(h<24)return h+'h ago';var d=Math.round(h/24);if(d<30)return d+'d ago';return window.mdy?window.mdy(new Date(t)):String(iso);}
+  function fmtDate(iso){if(!iso)return '';return window.mdy?window.mdy(String(iso)):String(iso);}
   function has(id){return !!document.getElementById(id);}
 
   // ── Profile ──
@@ -24827,7 +24823,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       s+='<path d="'+d+'" fill="none" stroke="#c84b2f" stroke-opacity=".5" stroke-width="6" filter="url(#in2of)" stroke-linecap="round"/><path class="hb-draw" d="'+d+'" fill="none" stroke="#e8956a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
       for(var q=0;q<n;q++)s+='<circle cx="'+pts[q][0].toFixed(1)+'" cy="'+pts[q][1].toFixed(1)+'" r="'+(q===n-1?4:2.5)+'" fill="'+(q===n-1?'#f2b183':'#e8956a')+'"/>';
       var delta=vals[n-1]-vals[n-2];
-      s+='<text x="'+Rr+'" y="'+(H-8)+'" text-anchor="end" font-size="11" font-weight="700" fill="'+(delta>=0?'#4ead7a':'#e05555')+'">'+(delta===0?'No change since last run':(delta>0?'+'+delta:delta)+' since last run')+'</text>';
+      s+='<text x="'+Rr+'" y="'+(H-8)+'" text-anchor="end" font-size="11" font-weight="700" fill="'+(delta>=0?'#4ead7a':'#e3333f')+'">'+(delta===0?'No change since last run':(delta>0?'+'+delta:delta)+' since last run')+'</text>';
     }
     el.innerHTML=s+'</svg>';
     requestAnimationFrame(function(){requestAnimationFrame(function(){var arcs=el.querySelectorAll('.in2-arc');for(var i=0;i<arcs.length;i++)arcs[i].style.strokeDashoffset=arcs[i].getAttribute('data-off');var tips=el.querySelectorAll('[data-tip]');for(var t=0;t<tips.length;t++)tips[t].style.opacity='1';});});
@@ -25396,7 +25392,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
         var said=[];if((st.preferred_dayparts||[]).length)said.push('prefers '+st.preferred_dayparts.map(function(p){return p==='morning'?'days':(p==='night'?'nights':p);}).join(' and '));if(st.desired_hours!=null&&st.desired_hours!=='')said.push('wants <span class="hb-num">'+esc(st.desired_hours)+'h</span> a week');
         h+='<div><div class="k">What they said</div><div class="said">'+(said.length?said.join(' · '):'Nothing stated yet')+'<small>From the staff portal. A wish the draft honours where coverage allows; it is theirs to change.</small></div></div>';
         var up=((window._laborIntel||{}).could_hold||{})[e.name]||[];
-        h+='<div><div class="k">Trained up</div><div>'+(up.length?up.map(function(r){return '<span class="rst-up">'+esc(r)+'</span>';}).join(''):'<span class="said" style="color:var(--ink3)">'+(window._laborIntel?'No station they have shadowed enough to hold yet.':'Loading…')+'</span>')+'</div></div>';
+        h+='<div><div class="k">Trained up</div><div>'+(up.length?up.map(function(r){return '<span class="rst-up">'+esc(r)+'</span>';}).join(''):'<span class="said" style="color:var(--ink3)">'+(window._laborIntel?'No station they have shadowed enough to hold yet.':'<span class="dr-pulse" role="status" aria-label="Loading"><i></i></span>')+'</span>')+'</div></div>';
         h+='</div></td></tr>';
       }
     }
@@ -26503,7 +26499,7 @@ var cavPalette = (function () {
   function propose(action, args) {
     var card = $('cpal-card');
     $('cpal-list').hidden = true; card.hidden = false;
-    card.innerHTML = '<div class="dr-pulse" aria-hidden="true"></div>';
+    card.innerHTML = '<div class="dr-pulse" aria-hidden="true"><i></i></div>';
     fetch('/api/command/propose', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({action: action, args: args || {}})}).then(apiJson).then(function (d) {
       card.innerHTML = '<button type="button" class="cbtn cbtn-text cbtn-sm back">← Back</button>';
@@ -26870,7 +26866,7 @@ window.cavPalette = cavPalette;
   window.openPersonSheet = function (keyOrName) {
     var m = $id('person-modal'), body = $id('person-body'); if (!m || !body) return;
     $id('person-title').textContent = '';
-    body.innerHTML = '<div class="dr-pulse" aria-hidden="true"></div>';
+    body.innerHTML = '<div class="dr-pulse" aria-hidden="true"><i></i></div>';
     m.classList.add('show');
     window._personReturn = document.activeElement;
     getJ('/api/people/' + encodeURIComponent(keyOf(keyOrName) || String(keyOrName)), function (d) {

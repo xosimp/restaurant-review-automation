@@ -825,7 +825,8 @@ def _stripe_dispatch(event):
                             # Send branded receipt to the client
                             try:
                                 from datetime import datetime as _dt
-                                receipt_date = _dt.now().strftime("%B %d, %Y")
+                                from time_utils import mdy as _mdy
+                                receipt_date = _mdy(_dt.now())  # M/D/YY, the owner-facing date form
                                 _emails.deliver_or_raise(email_type="Payment Receipt", restaurant_id=dict(row)["id"], payload={
                                     "from": _emails.sender("client"),
                                     "to": [email],

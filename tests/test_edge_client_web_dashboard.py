@@ -131,7 +131,10 @@ def test_a_loader_replaces_its_loading_placeholder_when_the_request_fails(src, f
 
 
 def test_the_recovery_email_status_starts_on_loading(src):
-    assert re.search(r'id="rec-status">Loading', src)
+    # Starts on the loading state (the ember pulse since the loading-state
+    # pass, DESIGN_SYSTEM §10 — it was the words "Loading…"), never on a
+    # guess like "Not set".
+    assert re.search(r'id="rec-status"><span class="dr-pulse" role="status" aria-label="Loading">', src)
     assert "jget('/api/account/security-summary'" in src
 
 
