@@ -135,6 +135,78 @@ def test_sample_data_sends_no_board_to_the_phone(db):
     assert body["money_went"] == []
 
 
+# ── The board's money is honest (9/25/26 audit) ─────────────────────────────
+
+def _one_server_six_long_days():
+    """One person, six 10h days in one payroll week, $400 of sales a day."""
+    return [{"date": f"2026-09-{d}", "employee": "Ana", "role": "Server", "scheduled_hours": 10,
+             "actual_hours": 10, "sales": 400} for d in range(14, 20)]
+
+
+def test_at_stake_counts_the_overtime_premium_once():
+    """$20/hr, 30% target: $1,200 straight + $200 premium = $1,400 against a
+    $720 target, so $680 is at stake. Each day's over_target_dollars already
+    carries its share of the premium; adding the overtime card on top read
+    $878."""
+    shifts = _one_server_six_long_days()
+    a = labor.analyse_shifts(shifts, hourly_rate=20, labor_target=30)
+    assert a["overtime_premium"] == pytest.approx(200)
+    assert all(o["overtime_premium"] == pytest.approx(33.33) for o in a["overstaffed_days"])
+    s = labor.staffing_board(a, shifts, 20)["summary"]
+    assert s["at_stake"] == pytest.approx(680) and s["at_stake_text"] == "$680"
+    assert (s["over_text"], s["ot_text"]) == ("$480", "$200")
+    assert s["over"] + s["ot"] == pytest.approx(s["at_stake"])
+    assert s["dollars_withheld"] is None
+
+
+def test_on_the_assumed_wage_the_board_and_money_went_withhold_dollars_above_target():
+    """savings_breakdown withholds the gap to target on the default $26/hr
+    (`dollars_withheld: "default_rate"`); the board and Where the money went
+    now do too, keeping the days, hours and people - and the overtime
+    premium, which the tiles keep."""
+    shifts = _one_server_six_long_days()
+    a = labor.analyse_shifts(shifts, hourly_rate=26, labor_target=30)
+    b = labor.staffing_board(a, shifts, 26, cost_basis="default")
+    s = b["summary"]
+    assert s["dollars_withheld"] == "default_rate" and s["at_stake"] is None
+    assert s["at_stake_text"] == "—" and s["over_text"] == "—"
+    assert "Set your pay rates" in s["withheld_text"] and "$26/hr" in s["withheld_text"]
+    assert s["ot"] > 0 and s["ot_text"] != "$0"
+    card = b["overstaffed"][0]
+    assert card["withheld"] is True and card["dollars_text"] == "—" and card["trim_text"] == ""
+    assert card["pct_text"] and card["say"]
+    assert len(b["overstaffed"]) == 6 and b["overtime"][0]["dollars"] > 0
+    went = labor.money_went(a, 26, cost_basis="default")
+    assert [w["kind"] for w in went] == ["overtime"]
+    # The owner's own rate: every dollar shows.
+    assert labor.staffing_board(a, shifts, 26, cost_basis="owner_blended")["summary"]["dollars_withheld"] is None
+    assert {w["kind"] for w in labor.money_went(a, 26, cost_basis="owner_blended")} == {"overtime", "overstaffed"}
+
+
+def test_the_restaurant_read_carries_its_cost_basis_to_web_and_phone(db):
+    rid = _restaurant(db, module_labor=1)           # no pay rates: the assumed wage
+    models.save_client_data(rid, "shifts", _live_shifts(), source="upload", db_path=db)
+    web = labor.analyse_shifts_for_restaurant(rid)
+    assert web["cost_basis"] == "default"
+    assert web["staffing_board"]["summary"]["dollars_withheld"] == "default_rate"
+    assert all(w["kind"] == "overtime" for w in web["money_went"])
+    body = _app().test_client().get("/mobile/api/labor", headers=_bearer(db, rid)).get_json()
+    assert body["staffing_board"] == json.loads(json.dumps(web["staffing_board"]))
+    assert body["money_went"] == json.loads(json.dumps(web["money_went"]))
+
+
+def test_both_clients_say_the_total_adds_up_and_draw_the_withheld_state():
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    html = open(os.path.join(root, "templates", "dashboard.html"), encoding="utf-8").read()
+    swift = open(os.path.join(root, "ios", "CavnarAI", "CavnarAI", "Features", "Labor",
+                              "StaffingBoardSection.swift"), encoding="utf-8").read()
+    assert "above target at straight time + " in html and "above target at straight time + " in swift
+    assert "above target · <span" not in html
+    assert "_sb.summary.dollars_withheld" in html and "staffing_board.summary.dollars_withheld" in html
+    assert "dollarsWithheld" in swift and "withheldText" in swift and "card.withheld" in swift
+
+
 def _history(db, rid, week_start, names):
     csv = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n" + "".join(
         f"{week_start},Monday,{n},Server,4:00pm,10:00pm,6,\n" for n in names)

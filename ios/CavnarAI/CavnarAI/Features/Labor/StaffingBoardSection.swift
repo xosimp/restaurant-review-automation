@@ -89,11 +89,14 @@ struct StaffingCard: Codable, Equatable, Identifiable {
     var mate: StaffingMate? = nil
     var say: String = ""
     var ask: String = ""
+    /// True when the dollars above target are withheld because labor cost
+    /// rests on the assumed wage (labor.staffing_board, cost basis "default").
+    var withheld: Bool = false
 
     var id: String { "\(kind)|\(title)|\(date ?? week ?? "")" }
 
     enum CodingKeys: String, CodingKey {
-        case kind, title, date, role, week, dollars, label, covers, severity, consistency, mate, say, ask
+        case kind, title, date, role, week, dollars, label, covers, severity, consistency, mate, say, ask, withheld
         case dollarsText = "dollars_text"
         case pctText = "pct_text"
         case salesText = "sales_text"
@@ -127,6 +130,7 @@ struct StaffingCard: Codable, Equatable, Identifiable {
         mate = try? c.decodeIfPresent(StaffingMate.self, forKey: .mate)
         say = c.text(.say) ?? ""
         ask = c.text(.ask) ?? ""
+        withheld = (try? c.decodeIfPresent(Bool.self, forKey: .withheld)) ?? false
     }
 }
 
@@ -161,14 +165,22 @@ struct StaffingSummary: Codable, Equatable {
     var atStakeText: String = "$0"
     var overText: String = "$0"
     var otText: String = "$0"
+    /// The overtime premium in dollars (0 when none).
+    var ot: Double = 0
+    /// "default_rate" when labor cost rests on the assumed wage: the dollars
+    /// above target and the total are withheld, and `withheldText` says so.
+    var dollarsWithheld: String? = nil
+    var withheldText: String? = nil
     var biggest: Biggest? = nil
     var quick: Quick? = nil
 
     enum CodingKeys: String, CodingKey {
-        case biggest, quick
+        case biggest, quick, ot
         case atStakeText = "at_stake_text"
         case overText = "over_text"
         case otText = "ot_text"
+        case dollarsWithheld = "dollars_withheld"
+        case withheldText = "withheld_text"
     }
 
     init(from decoder: Decoder) throws {
@@ -176,6 +188,9 @@ struct StaffingSummary: Codable, Equatable {
         atStakeText = c.text(.atStakeText) ?? "$0"
         overText = c.text(.overText) ?? "$0"
         otText = c.text(.otText) ?? "$0"
+        ot = c.number(.ot) ?? 0
+        dollarsWithheld = c.text(.dollarsWithheld)
+        withheldText = c.text(.withheldText)
         biggest = try? c.decodeIfPresent(Biggest.self, forKey: .biggest)
         quick = try? c.decodeIfPresent(Quick.self, forKey: .quick)
     }
@@ -328,6 +343,9 @@ struct LaborMoneyWentCard: View {
     let days: Int?
     /// Everything behind "Show all" — the board's day and person count.
     let moreCount: Int
+    /// Why the dollars above target are left out (the board's
+    /// `withheld_text`), when labor cost rests on the assumed wage.
+    var withheldText: String? = nil
     var onShowAll: () -> Void
 
     var body: some View {
@@ -338,6 +356,12 @@ struct LaborMoneyWentCard: View {
             let top = Array(items.prefix(3))
             ForEach(Array(top.enumerated()), id: \.element.id) { index, item in
                 row(item, worst: index == 0 && items.count > 1)
+            }
+            if let note = withheldText, !note.isEmpty {
+                Text(note)
+                    .font(.cavnarBody(13.5))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if moreCount > top.count {
                 Button {
@@ -446,8 +470,9 @@ struct StaffingBoardSection: View {
                     .font(.cavnarNumber(34, weight: 600))
                     .foregroundStyle(Color.cavnarEmber)
                     .cavnarNumberGlow()
-                HomeMixedText.make("\(s?.overText ?? "$0") above target · \(s?.otText ?? "$0") overtime premium",
-                                   size: 13.5, color: .cavnarInk3)
+                // The two parts do not overlap and add up to the total; on
+                // the assumed wage the dollars above target are withheld.
+                HomeMixedText.make(summaryLine(s), size: 13.5, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(alignment: .top, spacing: 10) {
@@ -476,6 +501,14 @@ struct StaffingBoardSection: View {
                 }
             }
         }
+    }
+
+    private func summaryLine(_ s: StaffingSummary?) -> String {
+        if let s, s.dollarsWithheld != nil {
+            let note = s.withheldText ?? "Set your pay rates to see dollars above target."
+            return s.ot > 0 ? "\(note) · \(s.otText) overtime premium" : note
+        }
+        return "\(s?.overText ?? "$0") above target at straight time + \(s?.otText ?? "$0") overtime premium"
     }
 
     private func tile<Content: View>(kicker: String, hero: Bool = false,
@@ -700,7 +733,9 @@ struct StaffingDecisionCard: View {
         case .over:
             var out: [(String, String)] = [
                 ("What happened:", "\(card.pctText ?? "")% labor on \(card.salesText ?? "") in sales, against \(targetLabel)."),
-                ("The figure:", "labor spent above \(targetLabel) of that day\u{2019}s sales = \(card.dollarsText)."),
+                card.withheld
+                    ? ("The figure:", "withheld. Set your pay rates to see dollars above target \u{2014} until then labor cost rests on Cavnar AI\u{2019}s assumed wage, not your pay rates.")
+                    : ("The figure:", "labor spent above \(targetLabel) of that day\u{2019}s sales = \(card.dollarsText)."),
             ]
             if let t = card.trimText, !t.isEmpty {
                 out.append(("Hours to trim:", "\(card.dollarsText) ÷ your blended rate of $\(String(format: "%.2f", blendedRate ?? 0))/h ≈ \(t)h."))
