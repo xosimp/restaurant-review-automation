@@ -156,7 +156,7 @@ struct AIVisibilitySection: View {
             VStack(alignment: .leading, spacing: 16) {
                 previewRow(
                     icon: "text.bubble.fill", tone: Color.cavnarEmber,
-                    title: "AI query results",
+                    title: "Latest check: what AI said",
                     detail: "The exact questions real guests ask AI tools, and whether your restaurant came up."
                 )
                 previewRow(
@@ -536,7 +536,7 @@ struct AIVisibilitySection: View {
 
     private func queriesSection(_ queries: [AIVisibilityQuery]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("AI QUERY RESULTS")
+            Text("LATEST CHECK: WHAT AI SAID")
                 .font(.cavnarBody(14, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarEmber2)

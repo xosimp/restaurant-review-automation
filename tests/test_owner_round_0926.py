@@ -111,3 +111,16 @@ def test_insight_answers_say_measure_it_and_sit_under_the_confidence():
     src = open(os.path.join(ROOT, "client_api.py"), encoding="utf-8").read()
     assert ">Track</button>" not in src and ">Measure it</button>" in src
     assert "('' if _conf_html else '<br>')" in src
+
+
+def test_account_health_is_condensed_and_more_is_not_clipped():
+    s = _src()
+    assert '<div class="ac-health-hd">' in s
+    assert ".ac-hgrp{display:grid;grid-template-columns:170px minmax(0,1fr)" in s
+    assert ".ac-hero{position:relative;overflow:visible;" in s
+
+
+def test_competitor_movement_and_query_sections_say_what_they_are():
+    s = _src()
+    assert "New and gone" not in s and ">New nearby<" not in s
+    assert "Every check, by question" in s and "Latest check: what AI said" in s

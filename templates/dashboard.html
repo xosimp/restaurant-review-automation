@@ -10825,9 +10825,9 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
           <button type="button" id="aiv-gbp-viewall" class="in2-viewall" style="display:none" onclick="in2RevealMore('aiv-gbp-items',this)"></button>
         </section>
       </div>
-      <section class="in2-aiv-card in2-aiv-wide" id="in2-queries" aria-label="By question" hidden></section>
-      <section class="in2-aiv-card in2-aiv-wide" aria-label="AI query results">
-        <div class="in2-aiv-h"><span class="k">AI query results</span><i id="in2-q-flag"></i></div>
+      <section class="in2-aiv-card in2-aiv-wide" id="in2-queries" aria-label="Every check, by question" hidden></section>
+      <section class="in2-aiv-card in2-aiv-wide" aria-label="Latest check: what AI said">
+        <div class="in2-aiv-h"><span class="k">Latest check: what AI said</span><i id="in2-q-flag"></i></div>
         <div class="in2-aiv-v sm"><span id="in2-q-n" class="hb-num">—</span><small>queries mentioned you</small></div>
         <div class="in2-q" id="aiv-queries"></div>
         <button type="button" id="aiv-q-viewall" class="in2-viewall" style="display:none" onclick="in2RevealMore('aiv-queries',this)"></button>
@@ -10894,9 +10894,9 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
       if(!d||!d.ok){box.hidden=true;return;}
       var rows='',i,a,m;
       for(i=0;i<(d.arrived||[]).length;i++){a=d.arrived[i];
-        rows+='<div class="row"><div class="t"><div class="tt"><b>'+recEsc(a.name)+'</b><span class="cu">New nearby</span></div></div></div>';}
+        rows+='<div class="row"><div class="t"><div class="tt"><b>'+recEsc(a.name)+'</b><span class="cu">Now showing nearby</span></div></div></div>';}
       for(i=0;i<(d.gone||[]).length;i++){a=d.gone[i];
-        rows+='<div class="row"><div class="t"><div class="tt"><b>'+recEsc(a.name)+'</b><span class="cu">No longer nearby</span></div></div></div>';}
+        rows+='<div class="row"><div class="t"><div class="tt"><b>'+recEsc(a.name)+'</b><span class="cu">No longer showing nearby</span></div></div></div>';}
       var sig=(d.significant||[]).slice(0,3);
       for(i=0;i<sig.length;i++){m=sig[i];
         rows+='<div class="row"><div class="t"><div class="tt"><b>'+recEsc(m.name)+'</b></div><div class="m">Rating '+(m.rating_change>0?'up':'down')+' over '+recEsc(d.days)+' days</div></div>'
@@ -10904,7 +10904,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
           +(m.reviews_added?'<div class="c"><span class="hb-num">+'+recEsc(m.reviews_added)+'</span> reviews</div>':'')+'</div></div>';}
       var when=d.compared_from?mdy(d.compared_from):'';
       var sub=!d.compared_from?'Openings and closings show once there are two weekly checks to compare.'
-        :(rows?'New and gone since the check on <span class="hb-num">'+when+'</span>':'No competitor opened, closed or moved past normal ups and downs since <span class="hb-num">'+when+'</span>');
+        :(rows?'Since your check on <span class="hb-num">'+when+'</span>: places that started or stopped showing up in Google\u2019s list of restaurants near you, and ratings that really moved':'Nothing new showing up near you, nothing gone, and no rating moved past normal ups and downs since <span class="hb-num">'+when+'</span>');
       box.innerHTML='<div class="hb-kicker" style="margin-top:22px">What changed</div><div class="in2-upd" style="margin-top:4px">'+sub+'</div>'
         +(rows?'<div class="in2-comp">'+rows+'</div>':'');
       box.hidden=false;
@@ -10961,7 +10961,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .ac-page{max-width:1180px;margin:0 auto;padding:28px 28px 72px}
 
 /* ── Overview header ─────────────────────────────────────────────────────── */
-.ac-hero{position:relative;overflow:hidden;border-radius:16px;border:1px solid var(--line-hi);background:var(--surface-glass),var(--ac-card);padding:28px 30px 26px;box-shadow:var(--elev-1)}
+.ac-hero{position:relative;overflow:visible;border-radius:16px;border:1px solid var(--line-hi);background:var(--surface-glass),var(--ac-card);padding:28px 30px 26px;box-shadow:var(--elev-1)}
 .ac-hero-top{position:relative;display:flex;align-items:flex-start;gap:22px}
 .ac-logo{width:76px;height:76px;border-radius:18px;flex:none;display:flex;align-items:center;justify-content:center;background:var(--ink);color:var(--paper);font-family:'Clash Display',sans-serif;font-size:30px;font-weight:600;letter-spacing:.02em;overflow:hidden;box-shadow:0 0 0 3px var(--hb-tint2),0 8px 24px var(--ac-glow)}
 .ac-logo img{width:100%;height:100%;object-fit:cover}
@@ -10983,7 +10983,11 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .ac-qa-label{width:100%;font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-bottom:2px}
 
 /* ── Account health ──────────────────────────────────────────────────────── */
-.ac-health{display:grid;grid-template-columns:150px minmax(0,1fr);gap:22px;align-items:center;margin-top:16px;padding:20px 24px;border-radius:16px;border:1px solid var(--ac-line);background:var(--ac-card)}
+.ac-health{display:block;margin-top:16px;padding:18px 22px;border-radius:16px;border:1px solid var(--ac-line);background:var(--ac-card)}
+.ac-health-hd{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:12px}
+.ac-health .ac-ring{width:78px;height:78px;margin:0;flex:none}
+.ac-health .ac-ring .n b{font-size:22px}
+.ac-health .ac-ring .n span{font-size:9px;margin-top:2px}
 .ac-ring{position:relative;width:118px;height:118px;margin:0 auto}
 .ac-ring svg{width:100%;height:100%;transform:rotate(-90deg)}
 .ac-ring .tr{fill:none;stroke:var(--hb-line2);stroke-width:9}
@@ -11012,21 +11016,23 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
    their own display, which silently beat it (a hidden row still showed). */
 #panel-account [hidden]{display:none!important}
 .ac-ring .n span{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:4px}
-.ac-hgrid{display:flex;flex-direction:column;gap:16px}
-.ac-hgrp-h{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin:0 0 6px 12px}
+.ac-hgrid{display:flex;flex-direction:column;gap:6px}
+.ac-hgrp{display:grid;grid-template-columns:170px minmax(0,1fr);gap:0 14px;align-items:start;padding-top:6px}
+.ac-hgrp-h{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin:0;padding-top:10px}
 .ac-hgrp-h i{width:8px;height:8px;border-radius:50%;background:var(--ink3)}
 .ac-hgrp-h .n{font-family:'Space Grotesk',sans-serif;font-variant-numeric:tabular-nums;font-weight:600;letter-spacing:0;color:var(--ink2)}
 .ac-hgrp.bad .ac-hgrp-h{color:var(--red)}.ac-hgrp.bad .ac-hgrp-h i{background:var(--red)}
 .ac-hgrp.warn .ac-hgrp-h{color:var(--amber)}.ac-hgrp.warn .ac-hgrp-h i{background:var(--amber)}
 .ac-hgrp.ok .ac-hgrp-h{color:var(--green)}.ac-hgrp.ok .ac-hgrp-h i{background:var(--green)}
 .ac-hgrp-items{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px 14px}
-.ac-hitem{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:10px;border:1px solid transparent;background:transparent;text-align:left;cursor:pointer;font-family:inherit;color:inherit;transition:background .15s,border-color .15s,transform .15s}
+.ac-hitem{display:flex;gap:10px;align-items:flex-start;padding:7px 10px;border-radius:10px;border:1px solid transparent;background:transparent;text-align:left;cursor:pointer;font-family:inherit;color:inherit;transition:background .15s,border-color .15s,transform .15s}
 .ac-hitem:hover{background:var(--paper2);border-color:var(--ac-line);transform:translateY(-1px)}
 .ac-hitem:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
 .ac-hdot{width:10px;height:10px;border-radius:50%;flex:none;margin-top:5px;background:var(--ink3);box-shadow:0 0 0 3px var(--paper2)}
 .ac-hitem.ok .ac-hdot{background:var(--green)}.ac-hitem.warn .ac-hdot{background:var(--amber)}.ac-hitem.bad .ac-hdot{background:var(--red)}
 .ac-hitem b{display:block;font-size:15px;font-weight:600;color:var(--ink)}
-.ac-hitem span{display:block;font-size:14px;color:var(--ink3);margin-top:2px;line-height:1.4}
+.ac-hitem span{display:block;font-size:13.5px;color:var(--ink3);margin-top:1px;line-height:1.4}
+@media (max-width:760px){.ac-hgrp{grid-template-columns:1fr}.ac-hgrp-items{grid-template-columns:1fr}}
 
 /* ── Two-column body: sticky rail + sections ─────────────────────────────── */
 .ac-body{display:grid;grid-template-columns:196px minmax(0,1fr);gap:32px;margin-top:28px;align-items:start}
@@ -11315,13 +11321,17 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
       </div>
     </div>
 
+    {# Condensed (owner, 9/26/26): the ring sits top right beside the title,
+       and each status group is one row - its label left, its items across. #}
     <div class="ac-health" aria-labelledby="ac-health-h">
-      <div class="ac-ring" id="ac-health-ringbox" role="img" aria-label="Account setup score">
-        <svg viewBox="0 0 118 118" aria-hidden="true"><circle class="tr" cx="59" cy="59" r="50"/><circle class="ar" id="ac-health-ring" cx="59" cy="59" r="50"/></svg>
-        <div class="n"><b id="ac-health-score">&hellip;</b><span>set up</span></div>
+      <div class="ac-health-hd">
+        <div class="ac-card-h" style="margin-bottom:0"><div><h3 id="ac-health-h">Account health</h3><p id="ac-health-sub">What&rsquo;s configured, and what would make Cavnar AI work harder for you.</p></div></div>
+        <div class="ac-ring" id="ac-health-ringbox" role="img" aria-label="Account setup score">
+          <svg viewBox="0 0 118 118" aria-hidden="true"><circle class="tr" cx="59" cy="59" r="50"/><circle class="ar" id="ac-health-ring" cx="59" cy="59" r="50"/></svg>
+          <div class="n"><b id="ac-health-score">&hellip;</b><span>set up</span></div>
+        </div>
       </div>
       <div>
-        <div class="ac-card-h" style="margin-bottom:8px"><div><h3 id="ac-health-h">Account health</h3><p id="ac-health-sub">What&rsquo;s configured, and what would make Cavnar AI work harder for you.</p></div></div>
         <div class="ac-hgrid" id="ac-health-grid">
           <button type="button" class="ac-hitem" data-health="profile" onclick="acctGo('restaurant')"><i class="ac-hdot"></i><div><b>Restaurant profile</b><span>&hellip;</span></div></button>
           <button type="button" class="ac-hitem" data-health="people" onclick="acctGo('people')"><i class="ac-hdot"></i><div><b>People</b><span>&hellip;</span></div></button>
@@ -16634,7 +16644,7 @@ function in2LoadQueries(){
   var el=document.getElementById('in2-queries');if(!el)return;
   fetch('/api/intel/ai-visibility/queries',{credentials:'same-origin'}).then(apiJson).then(function(d){
     if(!d||!d.ok||!(d.queries||[]).length){el.hidden=true;return;}
-    var runs=d.runs||[],h='<div class="in2-aiv-h"><span class="k">By question</span><span class="in2-aiv-n"><span class="hb-num">'+runs.length+'</span> check'+(runs.length===1?'':'s')+'</span></div><div class="in2-qgrid">';
+    var runs=d.runs||[],h='<div class="in2-aiv-h"><span class="k">Every check, by question</span><span class="in2-aiv-n"><span class="hb-num">'+runs.length+'</span> check'+(runs.length===1?'':'s')+'</span></div><div class="in2-qgrid">';
     for(var i=0;i<d.queries.length;i++){var q=d.queries[i],cells='';
       for(var j=0;j<q.appeared.length;j++){var a=q.appeared[j];cells+='<i class="in2-qc'+(a===true?' on':(a===false?' off':''))+'" title="'+esc(runs[j]&&runs[j].at?mdy(String(runs[j].at).slice(0,10)):'')+'"></i>';}
       h+='<div class="in2-qrow"><span class="t" title="'+esc(q.query)+'">'+esc(q.query)+'</span><span class="c">'+cells+'</span><span class="n hb-num">'+q.appearances+'/'+q.asked+'</span></div>';}
