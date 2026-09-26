@@ -81,7 +81,8 @@ struct LaborAnalyticsSection: View {
                 numericValue: Double(stats.overstaffedDays.count),
                 format: { "\(Int($0.rounded()))" },
                 label: "Overstaffed days",
-                sublabel: "vs \(stats.understaffedDays.count) understaffed",
+                // The web board's word for these days (labor.staffing_board).
+                sublabel: "vs \(stats.understaffedDays.count) strong day\(stats.understaffedDays.count == 1 ? "" : "s") run lean",
                 tone: stats.overstaffedDays.isEmpty ? Color.cavnarInk3 : Color.cavnarAmber,
                 startFromZero: startFromZero
             )

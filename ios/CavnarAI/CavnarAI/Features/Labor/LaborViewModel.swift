@@ -1162,6 +1162,13 @@ struct LaborStats: Codable {
     /// aging | stale | unknown, stale, basis, as_of, as_of_iso}). Lenient;
     /// absent on an older server, which keeps the local 21-day rule.
     var laborFreshness: LaborFreshness? = nil
+    /// The web Labor tab's decision surfaces, the same objects
+    /// (labor.staffing_board, labor.money_went): null / empty on sample
+    /// data. Lenient; absent on an older server, which then shows neither.
+    var staffingBoard: StaffingBoard? = nil
+    var moneyWent: [MoneyWentItem]? = nil
+    /// The blended hourly rate the board's "Explain why" divides by.
+    var blendedRate: Double? = nil
 
     /// One line naming what is incomplete, or nil when nothing is.
     var caveat: String? {
@@ -1199,6 +1206,9 @@ struct LaborStats: Codable {
         case weekProjectionAccuracy = "week_projection_accuracy"
         case lastYearAvailable = "last_year_available"
         case laborFreshness = "labor_freshness"
+        case staffingBoard = "staffing_board"
+        case moneyWent = "money_went"
+        case blendedRate = "blended_rate"
     }
 }
 
@@ -1659,9 +1669,9 @@ final class LaborViewModel {
     // carries the week, the quality score and what still needs the owner;
     // a fresh generation opens it (see pollSchedule).
     var scheduleResultExpanded = false
-    var overtimeExpanded = false
-    var overstaffedExpanded = false
-    var understaffedExpanded = false
+    /// "Every day and person" — the staffing board (closed, as the web's
+    /// details; a labor/overtime link opens it).
+    var staffingBoardExpanded = false
     var availabilityExpanded = false
     var rolesExpanded = false
     var forecastExpanded = false
