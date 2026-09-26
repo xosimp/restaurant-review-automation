@@ -2000,36 +2000,65 @@ def mobile_set_ingredient_supplier(current_user):
 @mobile_bp.route("/labor/staff-contacts")
 @mobile_login_required
 def mobile_get_staff_contacts(current_user):
-    """Everyone named in the latest generated schedule, paired with however
-    we can reach them. Names come from the schedule itself (which comes from
-    POS shift data), so the list is always the people actually being
-    scheduled rather than a roster that has to be kept in sync by hand."""
+    """Everyone named in a generated schedule, paired with however we can
+    reach them. Names come from the schedule itself (which comes from POS
+    shift data), so the list is always the people actually being scheduled
+    rather than a roster that has to be kept in sync by hand.
+
+    ?schedule_id= names the week being sent: the send sheet used to list
+    the LATEST schedule's people while sending another week, so a week
+    reopened from History showed (and counted) the wrong staff. Without it,
+    the latest week, as before. Each contact carries `channel` — how Send
+    reaches them (people.reach: the app, a text they opted into, email) —
+    and `reachable` counts every channel, not only an email address."""
     from models import get_staff_contacts, get_conn as _gc
     from labor import employees_in_schedule
+    import people
     rid = current_user["restaurant_id"]
+    sid = request.args.get("schedule_id", type=int)
 
     conn = _gc()
     try:
-        row = conn.execute(
-            "SELECT id, week_start, week_end, schedule_csv FROM schedule_history "
-            "WHERE restaurant_id=? ORDER BY id DESC LIMIT 1", (rid,)
-        ).fetchone()
+        if sid:
+            row = conn.execute(
+                "SELECT id, week_start, week_end, schedule_csv FROM schedule_history "
+                "WHERE id=? AND restaurant_id=?", (sid, rid)
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT id, week_start, week_end, schedule_csv FROM schedule_history "
+                "WHERE restaurant_id=? ORDER BY id DESC LIMIT 1", (rid,)
+            ).fetchone()
     finally:
         conn.close()
+    if sid and not row:
+        return jsonify(ok=False, error="Not found"), 404
 
     names = employees_in_schedule(row["schedule_csv"]) if row else []
     saved = {c["employee_name"].lower(): c for c in get_staff_contacts(rid)}
+    try:
+        how = people.reach(rid, names)
+    except Exception:
+        how = {}
+
+    def _channel(n):
+        r = how.get(n) or {}
+        return ("app" if r.get("push_user_id") else "text" if r.get("sms")
+                else "email" if r.get("email") else None)
+
     contacts = [{
         "employee_name": n,
         "email": (saved.get(n.lower()) or {}).get("email", ""),
         "phone": (saved.get(n.lower()) or {}).get("phone", ""),
         "pos_id": (saved.get(n.lower()) or {}).get("pos_id") or "",
+        "channel": _channel(n) if how else ("email" if (saved.get(n.lower()) or {}).get("email") else None),
     } for n in names]
     return jsonify(ok=True, contacts=contacts,
                    schedule_id=(row["id"] if row else None),
                    week_start=(row["week_start"] if row else None),
                    week_end=(row["week_end"] if row else None),
-                   reachable=sum(1 for c in contacts if c["email"]))
+                   reach=people.reach_summary(how) if how else None,
+                   reachable=sum(1 for c in contacts if c["channel"]))
 
 
 @mobile_bp.route("/labor/staff-contacts", methods=["POST"])
@@ -2796,6 +2825,17 @@ def _do_mobile_labor(restaurant_id):
         "dow_summary": analysis.get("dow_summary") or {},
         "savings_breakdown": savings_breakdown,
         "labor_upcoming": labor_upcoming,
+        # The web Labor tab's two decision surfaces, computed once in
+        # labor._analyse_for_restaurant and gated exactly as the template
+        # gates them (live shifts only — the sample week is never scored):
+        # labor.staffing_board (the executive strip and the overstaffed /
+        # lean / overtime decision cards) and labor.money_went (every priced
+        # item, ranked). The phone used to rebuild its own lists from the raw
+        # days, with "near" overtime rows and labels of its own.
+        "staffing_board": analysis.get("staffing_board") if analysis.get("is_live") else None,
+        "money_went": (analysis.get("money_went") or []) if analysis.get("is_live") else [],
+        # The rate the board's "Explain why" divides by (hours to trim).
+        "blended_rate": analysis.get("blended_rate"),
     }, 200
 
 
@@ -2972,7 +3012,8 @@ def mobile_generate_schedule(current_user):
     """Reuses client_api.py's existing background-job machinery
     (_run_schedule_job plus ops.async_jobs) rather than building a second job
     system — the same async-generate-then-poll pattern the web Labor tab
-    already relies on."""
+    already relies on. The ONE body for both surfaces: the web route
+    /api/generate-schedule calls it (client_api.generate_schedule_json)."""
     import threading
     import uuid
     from ai_utils import ai_rate_limited
@@ -2988,7 +3029,9 @@ def mobile_generate_schedule(current_user):
     if ai_rate_limited(f"schedule:{rid}", max_calls=3, window_secs=60):
         return jsonify(ok=False, error="Too many schedule generations — please wait a moment and try again."), 429
     body = request.get_json(silent=True) or {}
-    week_start = (body.get("week_start") or "").strip()[:10] or None
+    # The web twin (client_api.generate_schedule_json) also accepts GET with
+    # ?week_start=; the body wins when both are sent.
+    week_start = (body.get("week_start") or request.args.get("week_start") or "").strip()[:10] or None
     from schedule_engine import check_week_start as _cws
     week_start, _ws_err = _cws(rid, week_start)
     if _ws_err:

@@ -1162,6 +1162,13 @@ struct LaborStats: Codable {
     /// aging | stale | unknown, stale, basis, as_of, as_of_iso}). Lenient;
     /// absent on an older server, which keeps the local 21-day rule.
     var laborFreshness: LaborFreshness? = nil
+    /// The web Labor tab's decision surfaces, the same objects
+    /// (labor.staffing_board, labor.money_went): null / empty on sample
+    /// data. Lenient; absent on an older server, which then shows neither.
+    var staffingBoard: StaffingBoard? = nil
+    var moneyWent: [MoneyWentItem]? = nil
+    /// The blended hourly rate the board's "Explain why" divides by.
+    var blendedRate: Double? = nil
 
     /// One line naming what is incomplete, or nil when nothing is.
     var caveat: String? {
@@ -1199,6 +1206,9 @@ struct LaborStats: Codable {
         case weekProjectionAccuracy = "week_projection_accuracy"
         case lastYearAvailable = "last_year_available"
         case laborFreshness = "labor_freshness"
+        case staffingBoard = "staffing_board"
+        case moneyWent = "money_went"
+        case blendedRate = "blended_rate"
     }
 }
 
@@ -1253,9 +1263,10 @@ struct ScheduleRow: Codable, Identifiable {
     let day: String?
     var employee: String?
     let role: String?
-    let shiftStart: String?
-    let shiftEnd: String?
-    let scheduledHours: String?
+    // var: a shift's times can be edited on the phone (web parity, 9/25/26).
+    var shiftStart: String?
+    var shiftEnd: String?
+    var scheduledHours: String?
     let notes: String?
     // Set server-side only when a row's columns came back scrambled in a
     // way that couldn't be fully auto-repaired (day is always re-derived
@@ -1659,9 +1670,9 @@ final class LaborViewModel {
     // carries the week, the quality score and what still needs the owner;
     // a fresh generation opens it (see pollSchedule).
     var scheduleResultExpanded = false
-    var overtimeExpanded = false
-    var overstaffedExpanded = false
-    var understaffedExpanded = false
+    /// "Every day and person" — the staffing board (closed, as the web's
+    /// details; a labor/overtime link opens it).
+    var staffingBoardExpanded = false
     var availabilityExpanded = false
     var rolesExpanded = false
     var forecastExpanded = false
@@ -1926,6 +1937,9 @@ final class LaborViewModel {
             if r.ok, let updated = r.request {
                 if let i = timeOff.firstIndex(where: { $0.id == id }) { timeOff[i] = updated }
                 timeOffWarning = r.warning
+                // An approval over days the open draft puts that person on
+                // offers to redo just those days (the web's lb2AfterTimeOff).
+                if approve, let offer = Self.redoOffer(for: updated, in: scheduleResult) { redoOffer = offer }
                 await Haptic.success()
             } else {
                 timeOffError = r.error ?? "Couldn't decide that."
@@ -2353,6 +2367,112 @@ final class LaborViewModel {
         } catch {
             return
         }
+    }
+
+    // MARK: - Waiting on you: the drafted week, and a redo after time off
+
+    /// Approved time off that lands on the draft on screen: who, and the
+    /// ISO dates the draft has them on.
+    struct RedoOffer: Equatable {
+        let name: String
+        let dates: [String]
+    }
+    var redoOffer: RedoOffer?
+
+    /// The days of `schedule` that put the person on `request` on shift
+    /// inside its range — nil unless it was approved and there are some.
+    static func redoOffer(for request: TimeOffRequest, in schedule: GeneratedSchedule?) -> RedoOffer? {
+        guard request.status == "approved", let schedule, schedule.historyId != nil,
+              let rows = schedule.previewRows else { return nil }
+        let who = request.employeeName.trimmingCharacters(in: .whitespaces).lowercased()
+        let start = String(request.startDate.prefix(10)), end = String(request.endDate.prefix(10))
+        var dates: [String] = []
+        for row in rows {
+            guard (row.employee ?? "").trimmingCharacters(in: .whitespaces).lowercased() == who,
+                  let d = row.date.map({ String($0.prefix(10)) }), d >= start, d <= end,
+                  !dates.contains(d) else { continue }
+            dates.append(d)
+        }
+        return dates.isEmpty ? nil : RedoOffer(name: request.employeeName, dates: dates.sorted())
+    }
+
+    /// "Redo these days": regenerate only the offered days of the draft.
+    func redoOfferedDays() async {
+        guard let offer = redoOffer else { return }
+        redoOffer = nil
+        selectedRedoDates = Set(offer.dates)
+        await redoSelectedDays()
+    }
+
+    /// The open draft — the newest week staff don't have — as publish-check
+    /// answers it with no schedule_id: blockers, reach, whether this login
+    /// can send. Nil when there is none.
+    var draftCheck: PublishCheck?
+    var isSendingDraft = false
+    var draftSendNote: String?
+    var draftSendError: String?
+
+    func loadDraftCheck() async {
+        do {
+            let c: PublishCheck = try await client.send("/mobile/api/labor/publish-check", hapticOnError: false)
+            draftCheck = (c.ok && c.scheduleId != nil && c.publishedAt == nil) ? c : nil
+        } catch {
+            // Silent: a secondary read; Waiting on you just omits the row.
+        }
+    }
+
+    private struct DraftSendResponse: Decodable {
+        let ok: Bool
+        let error: String?
+        let queued: Bool?
+        let undoMinutes: Int?
+        let alreadyPublished: Bool?
+        let portalOnly: Bool?
+        let note: String?
+        enum CodingKeys: String, CodingKey {
+            case ok, error, queued, note
+            case undoMinutes = "undo_minutes"
+            case alreadyPublished = "already_published"
+            case portalOnly = "portal_only"
+        }
+    }
+
+    /// One tap from Waiting on you — only offered when publish-check found
+    /// nothing to read first. Returns true when the gate answered with
+    /// blockers after all (something changed since the check): the caller
+    /// opens the send sheet, where they are read and acknowledged.
+    func sendDraft(_ scheduleId: Int) async -> Bool {
+        guard !isSendingDraft else { return false }
+        isSendingDraft = true
+        draftSendError = nil
+        draftSendNote = nil
+        defer { isSendingDraft = false }
+        do {
+            let r: DraftSendResponse = try await client.send(
+                "/mobile/api/labor/publish-schedule", method: .post,
+                body: PublishScheduleViewModel.PublishBody(scheduleId: scheduleId, acknowledge: false))
+            if r.ok {
+                Haptic.success()
+                // What actually happened, in the web's words (F2-17).
+                draftSendNote = r.queued == true
+                    ? "Goes to staff in \(r.undoMinutes ?? 0) min \u{2014} undo from the Cavnar AI strip"
+                    : r.alreadyPublished == true ? "Already sent \u{2014} nothing went out twice"
+                    : r.portalOnly == true ? (r.note ?? "Published to the staff portal \u{2014} nobody was notified")
+                    : "Schedule sent"
+                await loadDraftCheck()
+                return false
+            }
+            draftSendError = r.error ?? "Nothing sent."
+        } catch let error as APIClient.APIError {
+            if error.status == 409, let gate = error.decodeBody(PublishScheduleViewModel.GateResponse.self),
+               gate.needsAck == true {
+                return true
+            }
+            draftSendError = error.message
+        } catch {
+            draftSendError = "Nothing sent."
+        }
+        return false
     }
 
     // MARK: - Redo selected days
@@ -2793,6 +2913,112 @@ final class LaborViewModel {
         Haptic.light()
         await rescoreQuality()
         await refreshEditCost()
+    }
+
+    // MARK: - Editing a shift (web parity: pencil, remove, + Add a shift)
+    //
+    // The web's schedule editor changes rows and Save re-scores and stores
+    // them (rescoreSchedule → labor/schedule/score). The phone saves the
+    // same way on every change, as the person swap above already does, so
+    // there is no separate Save / Discard bar here.
+
+    /// "4:00pm" — the engine's and the web editor's time form.
+    static func shiftTimeText(minutes: Int) -> String {
+        let m = ((minutes % 1440) + 1440) % 1440
+        let h = m / 60, mi = m % 60
+        let h12 = h % 12 == 0 ? 12 : h % 12
+        return "\(h12):\(String(format: "%02d", mi))\(h < 12 ? "am" : "pm")"
+    }
+
+    /// Minutes from midnight for "4:00pm", "4pm" or "16:00"; nil otherwise.
+    static func shiftMinutes(_ text: String?) -> Int? {
+        let t = (text ?? "").lowercased().replacingOccurrences(of: " ", with: "")
+        guard !t.isEmpty else { return nil }
+        let suffix = t.hasSuffix("am") ? "am" : (t.hasSuffix("pm") ? "pm" : "")
+        let core = suffix.isEmpty ? t : String(t.dropLast(2))
+        let parts = core.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count <= 2, var h = Int(parts[0]) else { return nil }
+        let mi = parts.count == 2 ? (Int(parts[1]) ?? -1) : 0
+        if suffix == "pm" && h < 12 { h += 12 }
+        if suffix == "am" && h == 12 { h = 0 }
+        guard (0...23).contains(h), (0...59).contains(mi) else { return nil }
+        return h * 60 + mi
+    }
+
+    /// Hours between two times, past midnight when the end is earlier —
+    /// "6" or "6.5", as the web's _schedHoursBetween writes them.
+    static func shiftHours(_ start: String, _ end: String) -> String? {
+        guard let a = shiftMinutes(start), let b = shiftMinutes(end) else { return nil }
+        var d = b - a
+        if d <= 0 { d += 1440 }
+        let h = (Double(d) / 60 * 100).rounded() / 100
+        return h == h.rounded() ? String(Int(h)) : String(h)
+    }
+
+    /// New times on one shift, then the same re-score and save as a swap.
+    func editShiftTimes(rowId: String, start: String, end: String) async {
+        guard var result = scheduleResult, var rows = result.previewRows,
+              let index = rows.firstIndex(where: { $0.id == rowId }),
+              let hours = Self.shiftHours(start, end) else { return }
+        rows[index].shiftStart = start
+        rows[index].shiftEnd = end
+        rows[index].scheduledHours = hours
+        rows[index].needsReview = false
+        rows[index].reviewReason = nil
+        overriddenRows.remove(rowId)
+        overriddenRows.insert(rows[index].id)
+        result.previewRows = rows
+        scheduleResult = result
+        Haptic.light()
+        await rescoreQuality()
+        await refreshEditCost()
+    }
+
+    /// Take one shift off the week.
+    func removeShift(rowId: String) async {
+        guard var result = scheduleResult, var rows = result.previewRows,
+              let index = rows.firstIndex(where: { $0.id == rowId }) else { return }
+        rows.remove(at: index)
+        overriddenRows.remove(rowId)
+        result.previewRows = rows
+        scheduleResult = result
+        Haptic.light()
+        await rescoreQuality()
+        await refreshEditCost()
+    }
+
+    /// Put a new shift on the week. Refused (with the reason) when that
+    /// person already has a shift starting then that day.
+    @discardableResult
+    func addShift(date: String, employee: String, role: String?, start: String, end: String) async -> String? {
+        guard var result = scheduleResult, var rows = result.previewRows else { return "Open a drafted week first." }
+        guard let hours = Self.shiftHours(start, end) else { return "Times read like 4:00pm." }
+        let name = employee.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return "Pick who works it." }
+        let row = ScheduleRow(date: date, day: Self.weekdayName(date), employee: name,
+                              role: (role ?? "").isEmpty ? nil : role, shiftStart: start, shiftEnd: end,
+                              scheduledHours: hours, notes: nil)
+        if rows.contains(where: { $0.id == row.id }) { return "\(name) already has that shift." }
+        rows.append(row)
+        overriddenRows.insert(row.id)
+        result.previewRows = rows
+        scheduleResult = result
+        Haptic.light()
+        await rescoreQuality()
+        await refreshEditCost()
+        return nil
+    }
+
+    /// "Monday" for an ISO date — the row's day, as the server derives it.
+    static func weekdayName(_ iso: String) -> String? {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.dateFormat = "yyyy-MM-dd"
+        guard let d = f.date(from: String(iso.prefix(10))) else { return nil }
+        f.dateFormat = "EEEE"
+        return f.string(from: d)
     }
 
     /// Re-score AND store whatever is currently on screen.

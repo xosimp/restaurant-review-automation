@@ -4363,41 +4363,14 @@ from schedule_engine import (  # noqa: E402,F401
 def generate_schedule_json(current_user):
     """Start async schedule generation. Returns job_id for polling.
 
-    GET is kept because the dashboard's Labor tab has always called it that
-    way; POST is accepted so Ask Cavnar's confirm card can use one verb for
-    both surfaces (the mobile twin is POST-only).
+    Web twin — the one body is mobile_api.mobile_generate_schedule, so the
+    permission check, the one-job-per-restaurant join, the rate limit (429
+    on both; the web copy used to answer 200) and the week checks cannot
+    drift apart. GET is kept because the dashboard's Labor tab has always
+    been allowed to call it that way (week_start may come as a query arg);
+    POST is what the Labor tab and Ask Cavnar's confirm card send.
     """
-    import threading, uuid
-    from ai_utils import ai_rate_limited
-    from permissions import has_permission, SCHEDULE_DRAFT
-    if not (current_user.get("is_admin") or has_permission(current_user, SCHEDULE_DRAFT)):
-        return jsonify(ok=False, error="Your login can view labor but not draft a schedule."), 403
-    # One generation at a time per restaurant: a second press joins the
-    # running job rather than paying for a second model call.
-    running = _ops.active_job("schedule", current_user["restaurant_id"])
-    if running:
-        return jsonify(ok=True, job_id=running, joined=True)
-    if ai_rate_limited(f"schedule:{current_user['restaurant_id']}", max_calls=3, window_secs=60):
-        return jsonify(ok=False, error="Too many schedule generations — please wait a moment and try again.")
-    body = request.get_json(silent=True) or {}
-    week_start = (body.get("week_start") or request.args.get("week_start") or "").strip()[:10] or None
-    from schedule_engine import check_week_start as _cws
-    week_start, _ws_err = _cws(current_user["restaurant_id"], week_start)
-    if _ws_err:
-        return jsonify(ok=False, error=_ws_err), 400
-    dates = [str(d)[:10] for d in (body.get("dates") or []) if str(d)[:10]] or None
-    base_history_id = body.get("history_id") if dates else None
-    if dates and not base_history_id:
-        return jsonify(ok=False, error="Regenerating some days needs the draft they belong to (history_id)."), 400
-    # Checked and started in one transaction: two presses at the same instant
-    # get one job (SCHED-25).
-    job_id, joined = _ops.claim_async_job(str(uuid.uuid4()), "schedule", current_user["restaurant_id"])
-    if joined:
-        return jsonify(ok=True, job_id=job_id, joined=True)
-    t = threading.Thread(target=_run_schedule_job, args=(job_id, current_user["restaurant_id"]),
-                         kwargs={"week_start": week_start, "dates": dates, "base_history_id": base_history_id}, daemon=True)
-    t.start()
-    return jsonify(ok=True, job_id=job_id)
+    return _m("mobile_generate_schedule")(current_user)
 
 
 @client_bp.route("/api/schedule-status/<job_id>", methods=["GET"])

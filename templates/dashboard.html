@@ -18057,7 +18057,8 @@ function openPublishSchedule(){
   panel.style.display = 'block';
   var body = document.getElementById('ps-contacts');
   body.innerHTML = '<div class="dr-pulse" aria-hidden="true"></div>';
-  fetch('/api/labor/staff-contacts').then(apiJson).then(function(d){
+  /* The people on the week being sent, not the newest week on file. */
+  fetch('/api/labor/staff-contacts' + (_schedHistoryId ? '?schedule_id=' + encodeURIComponent(_schedHistoryId) : '')).then(apiJson).then(function(d){
     if(!d.ok || !d.contacts || !d.contacts.length){
       body.innerHTML = '<span class="sr-note">Nobody is on this week yet.</span>';
       return;

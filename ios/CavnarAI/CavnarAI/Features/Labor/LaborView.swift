@@ -40,6 +40,16 @@ struct LaborView: View {
     // What was sent, reachable from Labor itself — it lived only under
     // Account → More (friction audit #50).
     @State private var showingScheduleHistory = false
+    /// A drafted week opened from Waiting on you — its own send sheet.
+    @State private var draftToSend: DraftToSend?
+    /// A shift whose times are being changed, or a new one being added.
+    @State private var editingShift: ShiftEditSheet.Mode?
+    /// A shift the owner asked to take off the week, awaiting the confirm.
+    @State private var removingRow: ScheduleRow?
+
+    struct DraftToSend: Identifiable {
+        let id: Int
+    }
 
     init(focusSection: String? = nil, focusItem: String? = nil) {
         self.focusSection = focusSection
@@ -76,10 +86,12 @@ struct LaborView: View {
                                 laborGroupHeader("Needs you")
                                 // What staff are waiting on, answered in
                                 // place, before any chart (Friction #18).
-                                LaborWaitingOnYou(viewModel: viewModel, setupViewModel: setupViewModel) {
-                                    setupViewModel.requestsExpanded = true
-                                    scrollToReveal(Self.requestsID, proxy: proxy)
-                                }
+                                LaborWaitingOnYou(viewModel: viewModel, setupViewModel: setupViewModel,
+                                                  onOpenRequests: {
+                                                      setupViewModel.requestsExpanded = true
+                                                      scrollToReveal(Self.requestsID, proxy: proxy)
+                                                  },
+                                                  onOpenDraft: { draftToSend = DraftToSend(id: $0) })
                                 .id(Self.waitingID)
                                 if let result = viewModel.scheduleResult, result.ok {
                                     scheduleResultSection(result)
@@ -101,8 +113,16 @@ struct LaborView: View {
                                     scrollToReveal(Self.requestsID, proxy: proxy)
                                 }
                                 .id(Self.requestsID)
-                                if !stats.overtimeRisk.isEmpty {
-                                    overtimeDropdown(stats.overtimeRisk, proxy: proxy)
+                                // Where the money went (the web's, from
+                                // labor.money_went): the three costliest
+                                // items of any kind, right under what
+                                // staff are waiting on. Live shifts only.
+                                if stats.isLive, let went = stats.moneyWent, !went.isEmpty {
+                                    LaborMoneyWentCard(items: went, days: stats.periodDays,
+                                                       moreCount: boardCount(stats)) {
+                                        viewModel.staffingBoardExpanded = true
+                                        scrollToReveal(Self.boardID, proxy: proxy)
+                                    }
                                 }
 
                                 laborGroupHeader("Why")
@@ -117,12 +137,18 @@ struct LaborView: View {
                                 if !stats.roleSummary.isEmpty {
                                     roleSection(stats.roleSummary, dateRange: stats.dateRange)
                                 }
-                                if !stats.overstaffedDays.isEmpty {
-                                    overstaffedDropdown(stats.overstaffedDays, proxy: proxy)
-                                }
-                                if !stats.understaffedDays.isEmpty {
-                                    understaffedDropdown(stats.understaffedDays, proxy: proxy)
-                                }
+                                // Every day and person: the staffing board
+                                // (labor.staffing_board) — the web's
+                                // executive strip and decision cards,
+                                // replacing the phone's own overstaffed /
+                                // under-target / overtime-risk lists.
+                                StaffingBoardSection(
+                                    board: stats.staffingBoard, isLive: stats.isLive,
+                                    targetLabel: stats.savingsBreakdown.laborTargetLabel ?? "your target",
+                                    blendedRate: stats.blendedRate,
+                                    isExpanded: $viewModel.staffingBoardExpanded,
+                                    onExpand: { scrollToReveal(Self.boardID, proxy: proxy) })
+                                .id(Self.boardID)
                                 // The measured layer behind the draft:
                                 // outcomes, rotation, what staff keep doing.
                                 ScheduleIntelSection(viewModel: setupViewModel, onExpand: {
@@ -174,6 +200,7 @@ struct LaborView: View {
                 }
                 .cavnarEmberRefreshable {
                     await viewModel.load()
+                    await viewModel.loadDraftCheck()
                     await viewModel.loadAvailability()
                     await viewModel.loadTimeOff()
                     await viewModel.loadTeam()
@@ -312,6 +339,8 @@ struct LaborView: View {
         .task {
             await viewModel.loadAvailability()
             await viewModel.loadTimeOff()
+            // The drafted week staff don't have yet, for Waiting on you.
+            await viewModel.loadDraftCheck()
         }
         // Loaded up front rather than on expand so both collapsed headers
         // read their real counts ("3 of 8 rated") instead of a placeholder
@@ -324,10 +353,27 @@ struct LaborView: View {
             await setupViewModel.loadRoster()
             await setupViewModel.loadSignals()
         }
-        .sheet(isPresented: $showingPublishSchedule) {
+        .sheet(isPresented: $showingPublishSchedule, onDismiss: { Task { await viewModel.loadDraftCheck() } }) {
             PublishScheduleSheet(scheduleId: viewModel.scheduleResult?.historyId,
                                  unsentChanges: viewModel.unsentChanges,
                                  onSent: { viewModel.unsentChanges = [] })
+        }
+        .sheet(item: $draftToSend, onDismiss: { Task { await viewModel.loadDraftCheck() } }) { draft in
+            PublishScheduleSheet(scheduleId: draft.id)
+        }
+        .sheet(item: $editingShift) { mode in
+            ShiftEditSheet(mode: mode, viewModel: viewModel)
+        }
+        .confirmationDialog(removingRow.map { "Take \($0.employee ?? "this person")\u{2019}s \($0.day ?? "") \($0.shiftStart ?? "") shift off the week?" } ?? "",
+                            isPresented: Binding(get: { removingRow != nil }, set: { if !$0 { removingRow = nil } }),
+                            titleVisibility: .visible) {
+            Button("Remove shift", role: .destructive) {
+                if let row = removingRow { Task { await viewModel.removeShift(rowId: row.id) } }
+                removingRow = nil
+            }
+            Button("Cancel", role: .cancel) { removingRow = nil }
+        } message: {
+            Text("The week is re-scored and saved without it. Staff who already have the week hear about it when you press Send.")
         }
         .sheet(item: $explainingRow) { row in
             AssignmentExplanationSheet(row: row, explanation: viewModel.scheduleResult?.explanation(for: row))
@@ -727,7 +773,8 @@ struct LaborView: View {
         case .waiting:
             viewModel.timeOffExpanded = true
             setupViewModel.requestsExpanded = true
-            let pending = LaborWaitingOnYou.count(timeOff: viewModel.timeOff, shifts: setupViewModel.shiftRequests)
+            let pending = LaborWaitingOnYou.count(timeOff: viewModel.timeOff, shifts: setupViewModel.shiftRequests,
+                                                  draft: viewModel.draftCheck != nil, redo: viewModel.redoOffer != nil)
             scrollToReveal(pending > 0 ? Self.waitingID : Self.requestsID, proxy: proxy)
         case .requests:
             setupViewModel.requestsExpanded = true
@@ -746,8 +793,9 @@ struct LaborView: View {
             }
             showingSetup = true
         case .overtime:
-            viewModel.overtimeExpanded = true
-            scrollToReveal(Self.overtimeID, proxy: proxy)
+            // The board's Overtime lane — people past 40, as the web shows.
+            viewModel.staffingBoardExpanded = true
+            scrollToReveal(Self.boardID, proxy: proxy)
         case .availability:
             viewModel.availabilityExpanded = true
             scrollToReveal(Self.setupID, proxy: proxy)
@@ -810,85 +858,13 @@ struct LaborView: View {
         }
     }
 
-    private static let overtimeID = "labor-overtime"
-    private static let overstaffedID = "labor-overstaffed"
-    private static let understaffedID = "labor-understaffed"
+    private static let boardID = "labor-staffing-board"
 
-    @ViewBuilder
-    private func overtimeDropdown(_ entries: [LaborOvertimeEntry], proxy: ScrollViewProxy) -> some View {
-        // "Overtime risk" as a section covers both people already over 40h
-        // and people approaching it — that's why they share one list with
-        // per-row "overtime"/"near" tags rather than being split into two
-        // sections. The badge should count the section, not a filtered
-        // subset of it (it was previously overtime-only, which disagreed
-        // with the subtitle's "N people flagged" right below it). An
-        // explicit OT-allowed constraint (green tag, not actually a
-        // concern) still doesn't count.
-        let atRisk = entries.filter { !($0.otAllowed ?? false) }.count
-        // Backend returns these in whatever order Python's dict iteration
-        // happened to produce (first-seen-in-the-CSV order), which reads as
-        // random — sorted lowest-to-highest hours here instead.
-        let sorted = entries.sorted { ($0.hours ?? 0) < ($1.hours ?? 0) }
-        CavnarDropdown(
-            title: "Overtime risk",
-            subtitle: "\(entries.count) \(entries.count == 1 ? "person" : "people") flagged this period",
-            badge: atRisk > 0 ? atRisk : nil,
-            tone: .bad,
-            isExpanded: $viewModel.overtimeExpanded,
-            onExpand: { scrollToReveal(Self.overtimeID, proxy: proxy) }
-        ) {
-            VStack(spacing: 8) {
-                ForEach(sorted) { entry in
-                    overtimeRow(entry)
-                }
-            }
-        }
-        .id(Self.overtimeID)
-    }
-
-    private func overtimeRow(_ entry: LaborOvertimeEntry) -> some View {
-        let allowed = entry.otAllowed ?? false
-        let isOvertime = entry.status == "overtime"
-        let rowTone: Color = allowed ? Color.cavnarGreen : (isOvertime ? Color.cavnarRed : Color.cavnarAmber)
-        return HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(entry.employee ?? "Unknown")
-                        .font(.cavnarBody(14.5, weight: 600))
-                        .foregroundStyle(Color.cavnarInk)
-                    if allowed {
-                        Text("CONSTRAINT")
-                            .font(.cavnarBody(13.5, weight: 700))
-                            .tracking(0.4)
-                            .foregroundStyle(Color.cavnarGreen)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.cavnarGreenBg)
-                            .clipShape(Capsule())
-                    }
-                }
-                HStack(spacing: 4) {
-                    Text("Week of \(entry.week ?? "—")")
-                    if let total = entry.totalHours {
-                        Text("· \(String(format: "%.1f", total))h total")
-                    }
-                }
-                .font(.cavnarBody(14))
-                .foregroundStyle(Color.cavnarInk3)
-            }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 2) {
-                Text("\(entry.hours.map { String(format: "%.1f", $0) } ?? "—")h")
-                    .font(.cavnarNumber(14, weight: 600))
-                    .foregroundStyle(rowTone)
-                Text(allowed ? "OT allowed" : (isOvertime ? (entry.premium.map { "≈ $\(Int($0.rounded())) over straight time" } ?? "Review pay") : "Approaching 40h"))
-                    .font(.cavnarBody(13.5, weight: 700))
-                    .foregroundStyle(rowTone)
-            }
-        }
-        .padding(10)
-        .background(rowTone.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+    /// Everything the board holds — what "Show all" under Where the money
+    /// went opens.
+    private func boardCount(_ stats: LaborStats) -> Int {
+        guard let b = stats.staffingBoard else { return 0 }
+        return b.overstaffed.count + b.lean.count + b.overtime.count
     }
 
     @ViewBuilder
@@ -903,87 +879,6 @@ struct LaborView: View {
                 .foregroundStyle(Color.cavnarInk)
             RoleDonutChart(roles: roles, isExpanded: $viewModel.rolesExpanded, dateRange: dateRange)
         }
-    }
-
-    @ViewBuilder
-    private func overstaffedDropdown(_ days: [LaborOverstaffedDay], proxy: ScrollViewProxy) -> some View {
-        CavnarDropdown(
-            title: "Overstaffed days", subtitle: "where the money is going",
-            badge: days.count, tone: .bad,
-            isExpanded: $viewModel.overstaffedExpanded,
-            onExpand: { scrollToReveal(Self.overstaffedID, proxy: proxy) }
-        ) {
-            VStack(spacing: 8) {
-                ForEach(Array(days.prefix(10))) { day in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(day.day).font(.cavnarBody(14, weight: 600)).foregroundStyle(Color.cavnarInk)
-                            Text(day.date).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
-                        }
-                        Spacer()
-                        VStack(alignment: .trailing, spacing: 1) {
-                            Text("$\(Int(day.sales))").font(.cavnarNumber(14, weight: 600)).foregroundStyle(Color.cavnarInk)
-                            Text("\(String(format: "%.1f", day.laborPct))% labor").font(.cavnarBody(14, weight: 600)).foregroundStyle(Color.cavnarRed)
-                            if let over = day.overTargetDollars, over > 0 {
-                                Text("$\(Int(over)) above target").font(.cavnarNumber(13, weight: 600)).foregroundStyle(Color.cavnarInk3)
-                            }
-                        }
-                    }
-                    .padding(10)
-                    .background(Color.cavnarRed.opacity(0.06))
-                    .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
-                }
-                if days.count > 10 {
-                    Text("+ \(days.count - 10) more").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
-                }
-            }
-        }
-        .id(Self.overstaffedID)
-    }
-
-    @ViewBuilder
-    private func understaffedDropdown(_ days: [LaborUnderstaffedDay], proxy: ScrollViewProxy) -> some View {
-        CavnarDropdown(
-            // Was "Understaffed days — possible missed revenue", with a
-            // warning tone and a prompt to add staff. Nothing in this system
-            // measures service time, wait time or covers, so "understaffed"
-            // and "missed revenue" are both assertions the data cannot
-            // support — a day under target on strong sales is usually a good
-            // day. The same unsupported claim was hardcoded into the AI
-            // prompt and has been removed there too.
-            title: "Under target on a strong day", subtitle: "worth a look",
-            badge: days.count, tone: .neutral,
-            isExpanded: $viewModel.understaffedExpanded,
-            onExpand: { scrollToReveal(Self.understaffedID, proxy: proxy) }
-        ) {
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(Array(days.prefix(10))) { day in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(day.day).font(.cavnarBody(14, weight: 600)).foregroundStyle(Color.cavnarInk)
-                            Text(day.date).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
-                        }
-                        Spacer()
-                        VStack(alignment: .trailing, spacing: 1) {
-                            Text("$\(Int(day.sales))").font(.cavnarNumber(14, weight: 600)).foregroundStyle(Color.cavnarInk)
-                            Text("\(String(format: "%.1f", day.laborPct))% labor").font(.cavnarBody(14, weight: 600)).foregroundStyle(Color.cavnarInk2)
-                        }
-                    }
-                    .padding(10)
-                    .background(Color.cavnarPaper2)
-                    .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
-                }
-                if days.count > 10 {
-                    Text("+ \(days.count - 10) more").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
-                }
-                Text("Labor ran under target on these days while sales held up. That is usually a good result. Worth checking whether service kept pace.")
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 2)
-            }
-        }
-        .id(Self.understaffedID)
     }
 
     /// Wrapped in a dropdown that starts CLOSED (density #29) — the full
@@ -1311,6 +1206,21 @@ struct LaborView: View {
                 // Moved here from the summary card above — sitting next to
                 // the table it actually exports reads far more directly
                 // than floating next to an unrelated "hours scheduled" line.
+                // The web editor's "+ Add a shift" (web parity, 9/25/26).
+                Button {
+                    Haptic.light()
+                    editingShift = .add
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "plus").font(.system(size: 11, weight: .bold))
+                        Text("Add a shift").font(.cavnarBody(13, weight: 700))
+                    }
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 8)
                 if let csv {
                     ShareLink(item: csv, preview: SharePreview("Schedule.csv", image: Image("LaunchSeal"))) {
                         Image(systemName: "square.and.arrow.up")
@@ -1329,7 +1239,7 @@ struct LaborView: View {
     }
 
     /// One shift: tap for why this person, long-press to put somebody else
-    /// on it.
+    /// on it, change its times or take it off the week.
     ///
     /// A `Menu` with a primary action gives both without a visible edit
     /// control: the table's job is to be read, and a pencil on every one of
@@ -1365,6 +1275,15 @@ struct LaborView: View {
                 Haptic.light()
                 explainingRow = row
             } label: { Label("Why this person?", systemImage: "questionmark.circle") }
+            // The web editor's pencil and ✕ (web parity, 9/25/26): saved
+            // like a swap — re-scored and stored at once.
+            Button {
+                Haptic.light()
+                editingShift = .edit(row)
+            } label: { Label("Change the times", systemImage: "pencil") }
+            Button(role: .destructive) {
+                removingRow = row
+            } label: { Label("Remove this shift", systemImage: "trash") }
         } label: {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 1) {
