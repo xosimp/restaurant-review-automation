@@ -109,7 +109,9 @@ def test_notification_rows_act_in_place():
 
 def test_the_bell_and_the_switcher_reach_every_screen():
     root = _src("RootView.swift")
-    assert ".badge(chrome.notificationsBadge.unreadCount)" in root
+    # The tab's red system badge counts what is urgent, as the web's red
+    # bell count does; unread-but-not-urgent is the bell's quiet dot.
+    assert ".badge(chrome.notificationsBadge.urgentCount)" in root
     # The reset runs for EVERY switch path, from SessionStore (F3-4).
     assert "LocationSwitcherView {}" in root
     assert "session.onLocationSwitched = { _ in didSwitchLocation() }" in root

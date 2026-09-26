@@ -41,7 +41,12 @@ def _redirect(db_path, monkeypatch):
         monkeypatch.setattr(mod, "get_conn", fake, raising=False)
     monkeypatch.setattr(models, "DB_PATH", db_path)
     import webhooks
+    import marketing_drafts
     monkeypatch.setattr(webhooks, "get_conn", fake, raising=False)
+    # marketing_drafts binds get_conn and DB_PATH at import, so a draft
+    # written through it lands in whatever database was first imported
+    # unless its copy is redirected too.
+    monkeypatch.setattr(marketing_drafts, "get_conn", fake, raising=False)
     monkeypatch.setattr(webhooks, "fire_webhook", lambda *a, **k: None)
     import gmb
     monkeypatch.setattr(gmb, "is_connected", lambda rid: False)

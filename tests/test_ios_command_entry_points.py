@@ -180,7 +180,7 @@ def test_proposal_card_is_one_card_for_every_proposal():
 def test_waiting_on_you_sits_directly_under_the_labor_hero():
     labor = _read(APP, "Features", "Labor", "LaborView.swift")
     hero = labor.index("heroCard(stats)\n")
-    waiting = labor.index("LaborWaitingOnYou(viewModel: viewModel, setupViewModel: setupViewModel)")
+    waiting = labor.index("LaborWaitingOnYou(viewModel: viewModel, setupViewModel: setupViewModel")
     diagnosis = labor.index("LaborDiagnosisCard(diagnosis: diagnosis)")
     assert hero < waiting < diagnosis
     block = _read(APP, "Features", "Labor", "LaborWaitingOnYou.swift")
