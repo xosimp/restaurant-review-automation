@@ -123,4 +123,7 @@ def test_account_health_is_condensed_and_more_is_not_clipped():
 def test_competitor_movement_and_query_sections_say_what_they_are():
     s = _src()
     assert "New and gone" not in s and ">New nearby<" not in s
-    assert "Every check, by question" in s and "Latest check: what AI said" in s
+    # One card: the history rides on each answer, not a second list of the same questions.
+    assert "What AI said, by question" in s
+    assert "Every check, by question" not in s and 'id="in2-queries"' not in s
+    assert "function in2PaintQHist()" in s and "in2PaintQHist();" in s

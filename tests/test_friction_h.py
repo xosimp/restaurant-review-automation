@@ -79,8 +79,8 @@ def _review(db_path, rid, text="Cold food and a long wait.", rating=2, status="d
 
 def _fn(name):
     """A top-level or window.* function's source: from its name to the brace
-    that closes its body (quoted text skipped, so a brace in a string does
-    not count)."""
+    that closes its body (quoted text and comments skipped, so a brace in a
+    string, or an apostrophe in a comment, does not count)."""
     for pat in (f"function {name}(", f"window.{name}=function", f"window.{name} = function"):
         i = SRC.find(pat)
         if i < 0:
@@ -95,6 +95,12 @@ def _fn(name):
                     continue
                 if c == quote:
                     quote = None
+            elif SRC.startswith("//", k):
+                k = SRC.find("\n", k)
+                continue
+            elif SRC.startswith("/*", k):
+                k = SRC.index("*/", k) + 2
+                continue
             elif c in "'\"":
                 quote = c
             elif c == "{":

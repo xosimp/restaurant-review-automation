@@ -156,7 +156,7 @@ struct AIVisibilitySection: View {
             VStack(alignment: .leading, spacing: 16) {
                 previewRow(
                     icon: "text.bubble.fill", tone: Color.cavnarEmber,
-                    title: "Latest check: what AI said",
+                    title: "What AI said, by question",
                     detail: "The exact questions real guests ask AI tools, and whether your restaurant came up."
                 )
                 previewRow(

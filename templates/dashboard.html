@@ -7794,7 +7794,6 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .diag-cause{font-size:16px;line-height:1.55;color:var(--ink);margin-top:6px}
 .diag-alt{font-size:14px;line-height:1.55;color:var(--ink2);margin-top:6px}.diag-alt b{color:var(--ink3);font-weight:600}
 .diag-evs{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.diag-ev{font-size:12px;color:var(--ink3);padding:4px 9px;border-radius:999px;border:1px solid var(--paper3)}.diag-ev b{color:var(--ink)}
-.in2-qgrid{display:flex;flex-direction:column;margin-top:10px}
 .in2-q .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.in2-q .c{display:flex;gap:4px}.in2-q .n{color:var(--ink3);font-size:12px;min-width:34px;text-align:right}
 .in2-qc{width:9px;height:9px;border-radius:50%;background:var(--paper3);display:inline-block}.in2-qc.on{background:var(--ember);box-shadow:0 0 6px var(--ember)}.in2-qc.off{background:var(--paper3);opacity:.5}
 .lb2-sig{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;margin-top:34px;padding-top:24px;border-top:1px solid var(--hb-line)}
@@ -10590,6 +10589,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .in2-q .q .h .tag{flex-shrink:0;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:999px;background:rgba(227,51,63,.14);color:var(--hb-bad)}
 .in2-q .q.hit .h .tag{background:rgba(78,173,122,.16);color:var(--hb-good)}
 .in2-q .q .a{font-size:13.5px;color:var(--ink3);line-height:1.5;margin-top:4px}
+.in2-q .q .hist{display:flex;align-items:center;gap:10px;margin-top:8px}.in2-q .q .hist:empty{display:none}.in2-q .q .hist .n{min-width:0;text-align:left;font-size:12.5px}
 /* Rating-comparison hero and analysis card are Intel-specific; scoped so
    this doesn't also push spacing/size around on the shared Labor/Food
    Cost sections that reuse .lb2-hero / .lb2-ai. */
@@ -10621,12 +10621,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .in2-aiv-card .in2-gbp{grid-template-columns:1fr;margin-top:12px}
 .in2-aiv-card .in2-gbp .it .l{white-space:normal;overflow:visible}
 .in2-aiv-card .in2-q{margin-top:12px}
-.in2-qrow{display:grid;grid-template-columns:minmax(0,1fr) auto 42px;gap:16px;align-items:center;padding:11px 0;border-top:1px solid var(--hb-line2)}
-.in2-qrow:first-child{border-top:none}
-.in2-qrow .t{font-size:14.5px;color:var(--ink);line-height:1.4;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.in2-qrow .c{display:flex;gap:6px}
-.in2-qrow .n{font-size:13.5px;color:var(--ink3);text-align:right}
-.in2-qfoot{margin-top:10px;font-size:13px;color:var(--ink3)}
+.in2-qfoot{margin-top:12px;font-size:13px;color:var(--ink3)}.in2-qfoot[hidden]{display:none}
 @media (max-width:1000px){.in2-aiv-grid{grid-template-columns:1fr}}
 .in2-sec{margin-top:34px;padding-top:22px;border-top:1px solid var(--hb-line)}
 .in2-sec .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:8px}
@@ -10825,12 +10820,12 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
           <button type="button" id="aiv-gbp-viewall" class="in2-viewall" style="display:none" onclick="in2RevealMore('aiv-gbp-items',this)"></button>
         </section>
       </div>
-      <section class="in2-aiv-card in2-aiv-wide" id="in2-queries" aria-label="Every check, by question" hidden></section>
-      <section class="in2-aiv-card in2-aiv-wide" aria-label="Latest check: what AI said">
-        <div class="in2-aiv-h"><span class="k">Latest check: what AI said</span><i id="in2-q-flag"></i></div>
+      <section class="in2-aiv-card in2-aiv-wide" aria-label="What AI said, by question">
+        <div class="in2-aiv-h"><span class="k">What AI said, by question</span><i id="in2-q-flag"></i></div>
         <div class="in2-aiv-v sm"><span id="in2-q-n" class="hb-num">—</span><small>queries mentioned you</small></div>
         <div class="in2-q" id="aiv-queries"></div>
         <button type="button" id="aiv-q-viewall" class="in2-viewall" style="display:none" onclick="in2RevealMore('aiv-queries',this)"></button>
+        <div class="in2-qfoot" id="in2-qfoot" hidden>Each answer is from your latest check. The dots are every check of that question, oldest first, lit when you were named.</div>
       </section>
       <div id="aiv-disclaimer" class="in2-note" style="display:none"></div>
       <div class="in2-sec" id="aiv-action-plan">
@@ -16640,16 +16635,31 @@ var DIAG_SURFACE={'lb2-diag':'labor','guest-diag':'marketing'};
 function loadMarketingDiagnosis(){
   fetch('/api/marketing/diagnosis',{credentials:'same-origin'}).then(apiJson).then(function(d){renderDiagnosis('guest-diag',d&&d.diagnosis);}).catch(function(){});
 }
+// One card: each latest answer carries its own question's history (a dot
+// per check), so the history no longer repeats the questions in a second
+// list. Either fetch can land first; both paint through in2PaintQHist.
+var _in2QHist=null;
 function in2LoadQueries(){
-  var el=document.getElementById('in2-queries');if(!el)return;
   fetch('/api/intel/ai-visibility/queries',{credentials:'same-origin'}).then(apiJson).then(function(d){
-    if(!d||!d.ok||!(d.queries||[]).length){el.hidden=true;return;}
-    var runs=d.runs||[],h='<div class="in2-aiv-h"><span class="k">Every check, by question</span><span class="in2-aiv-n"><span class="hb-num">'+runs.length+'</span> check'+(runs.length===1?'':'s')+'</span></div><div class="in2-qgrid">';
-    for(var i=0;i<d.queries.length;i++){var q=d.queries[i],cells='';
-      for(var j=0;j<q.appeared.length;j++){var a=q.appeared[j];cells+='<i class="in2-qc'+(a===true?' on':(a===false?' off':''))+'" title="'+esc(runs[j]&&runs[j].at?mdy(String(runs[j].at).slice(0,10)):'')+'"></i>';}
-      h+='<div class="in2-qrow"><span class="t" title="'+esc(q.query)+'">'+esc(q.query)+'</span><span class="c">'+cells+'</span><span class="n hb-num">'+q.appearances+'/'+q.asked+'</span></div>';}
-    el.innerHTML=h+'</div><div class="in2-qfoot">Each dot is one check, oldest first \u2014 lit when you were named.</div>';el.hidden=false;
+    if(!d||!d.ok||!(d.queries||[]).length)return;
+    _in2QHist=d;in2PaintQHist();
   }).catch(function(){});
+}
+function in2PaintQHist(){
+  var box=document.getElementById('aiv-queries'),d=_in2QHist;if(!box||!d)return;
+  var runs=d.runs||[],byQ={},painted=0;
+  for(var i=0;i<d.queries.length;i++)byQ[d.queries[i].query]=d.queries[i];
+  var rows=box.querySelectorAll('.q[data-q]');
+  for(var r=0;r<rows.length;r++){
+    var q=byQ[rows[r].getAttribute('data-q')],slot=rows[r].querySelector('.hist');
+    if(!slot)continue;
+    if(!q||!q.asked){slot.innerHTML='';continue;}
+    var cells='';
+    for(var j=0;j<q.appeared.length;j++){var a=q.appeared[j];cells+='<i class="in2-qc'+(a===true?' on':(a===false?' off':''))+'" title="'+esc(runs[j]&&runs[j].at?mdy(String(runs[j].at).slice(0,10)):'')+'"></i>';}
+    slot.innerHTML='<span class="c">'+cells+'</span><span class="n">named in <span class="hb-num">'+q.appearances+'</span> of <span class="hb-num">'+q.asked+'</span> check'+(q.asked===1?'':'s')+'</span>';
+    painted++;
+  }
+  var ft=document.getElementById('in2-qfoot');if(ft)ft.hidden=!painted;
 }
 function lb2LoadTimeOff(){
   var el=document.getElementById('lb2-timeoff-body');if(!el)return;
@@ -22592,9 +22602,10 @@ function renderAIVisibility(d) {
       if (clean.length) clean = clean.charAt(0).toUpperCase() + clean.slice(1);
       var snippet = clean.substring(0, 200) + (clean.length > 200 ? '…' : '');
       var qhide = i >= 2 ? ' in2-extra" style="display:none' : '';
-      qhtml += '<div class="q' + (q.appeared ? ' hit' : '') + qhide + '"><div class="h"><span>&ldquo;' + esc(q.query) + '&rdquo;</span><span class="tag">' + (q.appeared ? 'Appeared' : 'Not mentioned') + '</span></div><div class="a">' + esc(snippet) + '</div></div>';
+      qhtml += '<div class="q' + (q.appeared ? ' hit' : '') + qhide + '" data-q="' + esc(q.query) + '"><div class="h"><span>&ldquo;' + esc(q.query) + '&rdquo;</span><span class="tag">' + (q.appeared ? 'Appeared' : 'Not mentioned') + '</span></div><div class="a">' + esc(snippet) + '</div><div class="hist"></div></div>';
     }
     qEl.innerHTML = qhtml;
+    in2PaintQHist();
     var qVB = document.getElementById('aiv-q-viewall');
     if (qVB) {
       if (d.queries.length > 2) {
