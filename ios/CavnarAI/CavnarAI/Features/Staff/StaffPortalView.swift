@@ -39,7 +39,15 @@ struct StaffPortalView: View {
                         switch tab {
                         case .schedule: scheduleSection
                         case .tasks:    tasksSection
-                        case .requests: StaffRequestsView()
+                        case .requests:
+                            // The web portal's "Availability & time off":
+                            // the days I can't work and what I'd like, then
+                            // time off and shift changes (9/25/26 parity).
+                            StaffAvailabilitySection()
+                            StaffPreferencesSection()
+                                .padding(.top, 8)
+                            StaffRequestsView()
+                                .padding(.top, 8)
                         case .profile:  profileSection
                         }
                     }
@@ -110,6 +118,8 @@ struct StaffPortalView: View {
             if let next = Self.nextShift(week) {
                 nextShiftCard(next.day, when: next.when)
             }
+            // Today's lineup read, as the web portal shows it (preshift.py).
+            StaffPreshiftCard()
             sectionLabel("NEXT 7 DAYS")
             ForEach(week) { day in
                 dayRow(day)
@@ -270,6 +280,8 @@ struct StaffPortalView: View {
         if let profile {
             infoRow("Name", profile.name)
             infoRow("Restaurant", profile.restaurant)
+            StaffChangePinSection()
+                .padding(.top, 10)
             Button {
                 Haptic.light()
                 staff.signOut()
