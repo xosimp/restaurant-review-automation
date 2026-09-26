@@ -1929,37 +1929,9 @@ def mobile_delete_food_cost_custom_item(current_user):
 @mobile_login_required
 def mobile_create_google_post(current_user):
     """Publish generated copy to the connected Google Business Profile.
-
-    Marketing already writes `google_promo` copy — this posts it. Logged to
-    marketing_content_log on success so it counts toward "pieces this
-    month" exactly like a published Instagram post does."""
-    import gmb as _gmb
-    from marketing_drafts import may_publish, CANNOT_PUBLISH
-    if not may_publish(current_user):
-        return jsonify(ok=False, error=CANNOT_PUBLISH), 403
-    data = request.get_json(silent=True) or {}
-    rid = current_user["restaurant_id"]
-
-    if not _gmb.is_connected(rid):
-        return jsonify(ok=False, error="Connect Google Business first — Account → Connections."), 400
-
-    summary  = (data.get("summary") or "").strip()
-    cta_type = (data.get("cta_type") or "").strip() or None
-    cta_url  = (data.get("cta_url") or "").strip() or None
-    if not summary:
-        return jsonify(ok=False, error="Post text is required"), 400
-
-    result = _gmb.create_local_post(rid, summary, cta_type=cta_type, cta_url=cta_url)
-    if not result.get("ok"):
-        return jsonify(ok=False, error=result.get("error") or "Google rejected the post")
-
-    try:
-        from marketing import log_content
-        log_content(rid, "google_promo", summary[:80], post_id=result.get("name") or None,
-                    post_platform="google")
-    except Exception:
-        pass
-    return jsonify(ok=True, name=result.get("name") or "")
+    One body with the web's /api/post-to-google: client_api._do_post_to_google."""
+    payload, status = _capi._do_post_to_google(current_user, request.get_json(silent=True))
+    return jsonify(**payload), status
 
 
 @mobile_bp.route("/food-cost/ingredient-supplier", methods=["POST"])
@@ -3316,74 +3288,78 @@ def mobile_calendar_idea_seen(current_user):
                    answerable=bool(idea.get("answerable"))), 200
 
 
-@mobile_bp.route("/marketing/calendar", methods=["POST"])
-@mobile_login_required
-def mobile_generate_calendar(current_user):
-    """The "Generate week" action the app never had — the web tab's own
-    button, which is the only place a calendar draw should be paid for."""
+CALENDAR_FAILED = "Couldn't build this week's calendar — try again in a moment."
+
+
+def _do_content_calendar(restaurant_id, user_id=None, *, force=True, phone=False):
+    """This week's content calendar — the one body behind the web's
+    GET /api/content-calendar (?force=1 is its Generate week) and the phone's
+    POST /marketing/calendar (always a fresh draw). They had drifted: only
+    the phone marked the ideas already written from (_annotate_written), so
+    the "Written" tag showed on iOS alone; only the phone fell back to the
+    week it already had when a draw failed; only the web said a budget pause
+    was a pause. Every idea is keyed and presented (present_calendar_ideas):
+    all seven for the web grid, the day the phone opens on for the phone.
+
+    -> ({ok, ideas, stale?, error?}, status)."""
     import ops
     from marketing import (get_content_calendar_ideas, get_cached_calendar,
                            RECENT_CALENDAR_SECONDS)
-    from ai_utils import ai_rate_limited
-    rid = current_user["restaurant_id"]
+    from ai_utils import ai_rate_limited, AIBudgetExceeded, insight_error
+    rid = restaurant_id
 
-    # Answer a retry before the rate limiter sees it. The limiter counts
-    # attempts, not generations, so tapping again after the client gave up
-    # waiting burned a token for work that had already been done — three
-    # impatient taps locked the button for five minutes having generated once.
-    just_made = get_cached_calendar(rid, max_age_seconds=RECENT_CALENDAR_SECONDS)
-    if just_made:
-        return jsonify(ok=True, calendar=_phone_calendar(
-            rid, _annotate_written(rid, just_made), current_user.get("id"))), 200
+    def _served(ideas, **extra):
+        ideas = _annotate_written(rid, ideas)
+        shown = (_phone_calendar(rid, ideas, user_id) if phone
+                 else _capi.present_calendar_ideas(rid, ideas, user_id))
+        return dict({"ok": True, "ideas": shown}, **extra), 200
 
-    if ai_rate_limited(f"calendar:{rid}", max_calls=4, window_secs=300):
-        return jsonify(ok=False, error="Too many calendar regenerations — try again in a few minutes."), 429
+    if force:
+        # Answer a retry before the rate limiter sees it. The limiter counts
+        # attempts, not generations, so tapping again after the client gave
+        # up waiting burned a token for work that had already been done.
+        just_made = get_cached_calendar(rid, max_age_seconds=RECENT_CALENDAR_SECONDS)
+        if just_made:
+            return _served(just_made)
+        if ai_rate_limited(f"calendar:{rid}", max_calls=4, window_secs=300):
+            return {"ok": False, "ideas": [],
+                    "error": "Too many calendar regenerations — try again in a few minutes."}, 429
+    # An empty week always comes with a reason (AI-26).
+    msg, status = CALENDAR_FAILED, 200
     try:
-        ideas = get_content_calendar_ideas(restaurant_id=rid, force=True)
+        ideas = get_content_calendar_ideas(restaurant_id=rid, force=force)
     except Exception as e:
-        ops.capture(e, job="content_calendar", context=f"restaurant_id={rid}")
+        if not isinstance(e, AIBudgetExceeded):
+            ops.capture(e, job="content_calendar", context=f"restaurant_id={rid}")
+        msg, status = insight_error(e, CALENDAR_FAILED)
         ideas = []
-    if not ideas:
-        # Falling back to whatever this restaurant already has beats handing
-        # back an error and an empty screen.
-        existing = get_cached_calendar(rid)
-        if existing:
-            return jsonify(ok=True, calendar=_phone_calendar(
-                rid, _annotate_written(rid, existing), current_user.get("id")), stale=True), 200
-        return jsonify(ok=False,
-                       error="Couldn't build a calendar right now — try again in a moment."), 200
-    return jsonify(ok=True, calendar=_phone_calendar(
-        rid, _annotate_written(rid, ideas), current_user.get("id"))), 200
+    if ideas:
+        return _served(ideas)
+    # The week they already have beats an error and an empty screen.
+    existing = get_cached_calendar(rid)
+    if existing:
+        return _served(existing, stale=True)
+    return {"ok": False, "ideas": [], "error": msg}, status
 
 
-def _do_mobile_generate_content(restaurant_id, content_type, topic, from_calendar=False):
-    from marketing import generate_content, mark_calendar_idea_used
-    from ai_utils import ai_rate_limited
-    if ai_rate_limited(f"gencontent:{restaurant_id}", max_calls=8, window_secs=60):
-        return {"ok": False, "error": "Too many requests — please wait a moment and try again."}, 429
-    content_type = content_type or "instagram_post"
-    topic = topic or ""
-    try:
-        result = generate_content(content_type, topic, restaurant_id=restaurant_id)
-    except Exception as e:
-        return {"ok": False, "error": _safe_err(e)}, 500
-    # The web route has always logged this; mobile never did, so a calendar
-    # idea generated on the phone never fed the "avoid repeating these"
-    # signal the next calendar draw reads.
-    if from_calendar:
-        try:
-            mark_calendar_idea_used(restaurant_id, content_type, topic)
-        except Exception:
-            pass
-    return {"ok": True, "content": result, "tags": _capi._post_tags_safe(restaurant_id, topic, result),
-            "validation": _rv_of(result)}, 200
+@mobile_bp.route("/marketing/calendar", methods=["POST"])
+@mobile_login_required
+def mobile_generate_calendar(current_user):
+    """The "Generate week" action — the web tab's own button, which is the
+    only place a calendar draw should be paid for. One body with the web's
+    (_do_content_calendar); the phone reads the ideas as `calendar`."""
+    payload, status = _do_content_calendar(current_user["restaurant_id"], current_user.get("id"),
+                                           force=True, phone=True)
+    payload["calendar"] = payload.pop("ideas")
+    return jsonify(**payload), status
 
 
 @mobile_bp.route("/marketing/generate-content", methods=["POST"])
 @mobile_login_required
 def mobile_generate_content(current_user):
+    """Twin of /api/generate-content — one body, client_api._do_generate_content."""
     data = request.get_json() or {}
-    payload, status = _do_mobile_generate_content(
+    payload, status = _capi._do_generate_content(
         current_user["restaurant_id"], data.get("type"), data.get("topic"),
         from_calendar=bool(data.get("from_calendar")),
     )
@@ -3567,54 +3543,11 @@ def mobile_guest_campaign_send(current_user):
 @mobile_bp.route("/marketing/performance")
 @mobile_login_required
 def mobile_marketing_performance(current_user):
-    """Mirrors client_api.py's mkt-performance — summarizes real Meta post
-    metrics already stored by refresh_post_metrics(), never calls Meta
-    itself."""
-    rid = current_user["restaurant_id"]
-    try:
-        conn = get_conn()
-
-        published = conn.execute(
-            "SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=? AND post_id IS NOT NULL",
-            (rid,)
-        ).fetchone()[0] or 0
-
-        totals = conn.execute("""
-            SELECT COALESCE(SUM(reach),0) as reach, COALESCE(SUM(impressions),0) as impressions,
-                   COALESCE(SUM(likes),0) as likes, COALESCE(SUM(comments),0) as comments,
-                   COALESCE(SUM(shares),0) as shares
-            FROM marketing_content_log WHERE restaurant_id=? AND post_id IS NOT NULL
-        """, (rid,)).fetchone()
-
-        rows = conn.execute("""
-            SELECT topic, post_platform, reach, impressions, likes, comments, shares
-            FROM marketing_content_log
-            WHERE restaurant_id=? AND post_id IS NOT NULL
-              AND (reach > 0 OR impressions > 0 OR likes > 0 OR comments > 0)
-        """, (rid,)).fetchall()
-        conn.close()
-
-        top_post = None
-        if rows:
-            best = max(rows, key=lambda r: (r["reach"] or 0) + (r["impressions"] or 0))
-            top_post = {
-                "topic": best["topic"], "platform": best["post_platform"],
-                "reach": best["reach"] or 0, "likes": best["likes"] or 0,
-                "comments": best["comments"] or 0, "shares": best["shares"] or 0,
-            }
-
-        total_engagement = (totals["likes"] or 0) + (totals["comments"] or 0) + (totals["shares"] or 0)
-        return jsonify(
-            ok=True,
-            published=published,
-            has_data=bool(rows),
-            total_reach=(totals["reach"] or 0) + (totals["impressions"] or 0),
-            total_engagement=total_engagement,
-            top_post=top_post,
-            metrics_sync=_capi._metrics_sync_line(rid),
-        )
-    except Exception as e:
-        return jsonify(ok=False, error=_safe_err(e)), 500
+    """Twin of /api/mkt-performance — one body, client_api._do_mkt_performance.
+    Summarizes post metrics already stored by refresh_post_metrics(); never
+    calls Meta itself."""
+    payload, status = _capi._do_mkt_performance(current_user["restaurant_id"])
+    return jsonify(**payload), status
 
 
 @mobile_bp.route("/marketing/recent-topics")

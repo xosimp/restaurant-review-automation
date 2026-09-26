@@ -233,3 +233,79 @@ def test_3_ios_sends_the_opened_draft_id_and_photo():
     view = _swift("Marketing", "MarketingView.swift")
     assert "compose.open(draft)" in view
     assert "compose.savedDraftID = nil" in view
+
+
+# ── 4. The web keeps an edited reply as it is typed ─────────────────────────
+
+def test_4_web_autosaves_an_edited_draft_debounced_and_only_when_changed():
+    src = _read("templates", "dashboard.html")
+    auto = src[src.index("var _revAutoT = {};"):src.index("function saveDraft(id) {")]
+    assert "setTimeout(function(){ _revAutoSave(id); }, 800)" in auto
+    assert "fetch('/api/save-draft/'+id" in auto and "JSON.stringify({draft:draft})" in auto
+    assert "draft === (tx.textContent || '').trim()" in auto, "an unchanged draft is not saved"
+    assert "_revAutoStatus(id, 'Saved')" in auto
+    assert "_revShowFlag(id, sd.needs_review" in auto, "the guard's answer updates the flag"
+    regen = src[src.index("function regenDraft(id) {"):]
+    assert "clearTimeout(_revAutoT[id])" in regen[:400], "a regenerate cancels a pending autosave"
+
+
+# ── 5. One body per route twin ──────────────────────────────────────────────
+
+def test_5a_generate_content_is_one_body(web, phone, monkeypatch):
+    import marketing
+    import ai_utils
+    monkeypatch.setattr(ai_utils, "ai_rate_limited", lambda *a, **k: False)
+    monkeypatch.setattr(marketing, "generate_content", lambda *a, **k: "Pasta night is back.")
+    for client, path in ((web, "/api/generate-content"), (phone, "/mobile/api/marketing/generate-content")):
+        body = client.post(path, json={"type": "instagram_post", "topic": "pasta"}).get_json()
+        assert body["ok"] is True and body["content"] == "Pasta night is back.", path
+    monkeypatch.setattr(ai_utils, "ai_rate_limited", lambda *a, **k: True)
+    for client, path in ((web, "/api/generate-content"), (phone, "/mobile/api/marketing/generate-content")):
+        resp = client.post(path, json={"type": "instagram_post", "topic": "pasta"})
+        assert resp.status_code == 429 and resp.get_json()["ok"] is False, path
+    assert not hasattr(mobile_api, "_do_mobile_generate_content")
+
+
+def test_5a_the_web_never_types_a_failure_into_the_post_box():
+    src = _read("templates", "dashboard.html")
+    gen = src[src.index("function genContent(fromCalendar)"):src.index("function mktSendAsNewsletter()")]
+    assert "if(!d.content){" in gen and "box.setAttribute('data-gen-error','1')" in gen
+    body = src[src.index("function _mktBody(){"):]
+    assert "if(el.getAttribute('data-gen-error')) return '';" in body[:300]
+
+
+def test_5b_the_web_calendar_marks_an_idea_already_written_from(web, phone, rid, monkeypatch):
+    import marketing
+    week = [{"day": "Monday", "platform": "Instagram", "angle": "Truffle pasta", "type": "instagram_post"},
+            {"day": "Tuesday", "platform": "Email", "angle": "Wine night", "type": "weekly_email"}]
+    monkeypatch.setattr(marketing, "get_content_calendar_ideas", lambda **k: [dict(i) for i in week])
+    monkeypatch.setattr(marketing, "get_cached_calendar", lambda *a, **k: None)
+    monkeypatch.setattr(marketing, "_week_start", lambda r: datetime(2000, 1, 3))
+    c = models.get_conn()
+    c.execute("INSERT INTO marketing_content_log (restaurant_id, content_type, topic) VALUES (?,?,?)",
+              (rid, "calendar_instagram_post", "Truffle pasta"))
+    c.commit()
+    c.close()
+    ideas = web.get("/api/content-calendar").get_json()["ideas"]
+    assert [i["written"] for i in ideas] == [True, False]
+    assert ideas[0]["answered"] is True, "the web grid renders 'Written from this idea' for it"
+    cal = phone.post("/mobile/api/marketing/calendar").get_json()
+    assert cal["ok"] is True and [i["written"] for i in cal["calendar"]] == [True, False]
+
+
+def test_5c_post_to_google_says_the_same_thing_on_both(web, phone, monkeypatch):
+    import gmb
+    monkeypatch.setattr(gmb, "is_connected", lambda rid: False)
+    for client, path in ((web, "/api/post-to-google"), (phone, "/mobile/api/marketing/google-post")):
+        resp = client.post(path, json={"summary": "Oysters tonight"})
+        assert resp.status_code == 409, path
+        assert resp.get_json()["error"] == client_api.GOOGLE_NOT_CONNECTED
+    assert "Settings → Connections" not in client_api.GOOGLE_NOT_CONNECTED
+
+
+def test_5d_marketing_performance_is_one_body(web, phone):
+    a = web.get("/api/mkt-performance").get_json()
+    b = phone.get("/mobile/api/marketing/performance").get_json()
+    assert a == b and a["ok"] is True
+    import inspect
+    assert "_capi._do_mkt_performance" in inspect.getsource(mobile_api.mobile_marketing_performance)

@@ -283,7 +283,7 @@ def test_generated_content_and_regenerated_drafts_carry_the_validation_object(db
     monkeypatch.setattr(marketing, "get_client", lambda *a, **k: object(), raising=False)
     monkeypatch.setattr(marketing, "create_with_retry", lambda client, **kw: _msg("Pizza night is back this Friday."))
     monkeypatch.setattr(marketing, "log_content", lambda *a, **k: None)
-    out, status = mobile_api._do_mobile_generate_content(rid, "instagram_post", "pizza night")
+    out, status = client_api._do_generate_content(rid, "instagram_post", "pizza night")
     assert status == 200 and out["validation"]["verdict"] == "pass"
     conn = models.get_conn()
     review_id = conn.execute("INSERT INTO reviews (restaurant_id, platform, external_id, author, rating, text, "

@@ -98,6 +98,13 @@ Friction audit (9/25/26, workstream O2) — every route below at `/api/…` and 
 ### Marketing (`/mobile/api/marketing/*`; web routes are mostly flat — `/api/mkt-stats`, `/api/mkt-performance`, `/api/mkt-insight`, `/api/content-calendar`, `/api/post-to-google`, `/api/brand-voice`, `/api/generate-content`, plus `/api/marketing/*` for drafts, schedule, links, media, attribution, diagnosis, tags)
 Drafts (create/edit/list), media upload, scheduling, attribution per post, the text-club feature (`/api/guest-contacts*`, `/api/guest-campaign/draft|send`, `/api/guest-newsletter`, `/api/guest-qr`, `/api/guest-segments`, `/api/public/guest-optin/<token>`), templates.
 
+One body per twin (parity round, 9/25/26):
+- `POST /api/generate-content` and `/mobile/api/marketing/generate-content` → `client_api._do_generate_content`: `{ok, content, tags, validation}`, or `{ok: false, content: "", error}` with 429 (rate limit, budget stop) or `ai_utils.user_facing_error`'s status. The web route used to answer a rate limit with 200 and no `ok`.
+- `GET /api/content-calendar` (`?force=1` = Generate week) and `POST /mobile/api/marketing/calendar` → `mobile_api._do_content_calendar`: both mark `written` on ideas already written from (the web grid shows "Written from this idea"), both fall back to the week already cached with `stale: true` when a draw fails, both say why when there is none (`{ok: false, error}`, the `insight_error` status for an exception). The web reads `ideas`, the phone `calendar`; the web payload adds `ok`.
+- `POST /api/post-to-google` and `/mobile/api/marketing/google-post` → `client_api._do_post_to_google`: not connected is `409 {ok: false, not_connected: true, error: "Connect Google Business first — Account → Connections."}` on both (the web said "Settings → Connections" with a 200, the phone 400); success is `{ok, post_id, name}`.
+- `GET /api/mkt-performance` and `/mobile/api/marketing/performance` → `client_api._do_mkt_performance` (a failure is 500 on both).
+- `POST /api/marketing/drafts` (and the mobile twin) takes `id` to update a saved draft; web and iOS now send it for a draft opened from the shelf or already saved, so a re-save no longer adds a copy. Opening a draft restores its content type and photo (`media_id`, `media_token` in the list).
+
 ### Intel (`/mobile/api/intel/*`, `/api/intel*`, `/api/ai-visibility*`)
 Competitor snapshots, AI-visibility run trigger + results.
 
