@@ -266,7 +266,33 @@ def test_the_focus_card_holds_one_thing_and_freshness_is_said_once():
     # The header carries no data chip (owner's call, 9/26/26): the strip
     # below speaks only when a source is behind.
     assert "hbDataChip(d)" not in _fn("renderTop")
-    assert "if(hbFreshBehind(d))h+=renderFreshness(d);" in _fn("render")
+    # No data-health strip on Home at all (owner, 9/26/26): it lives in
+    # Account -> Integrations -> Data health, one pill per source.
+    assert "renderFreshness(" not in _fn("render")
+    assert 'id="acct-dh-src"' in SRC and "var src=$('acct-dh-src')" in SRC
+
+
+def test_home_round_9_26_nothing_under_the_status_and_quiet_cards():
+    top = _fn("renderTop")
+    # Nothing under "No POS connected | Report": the since-yesterday line,
+    # quiet hours and the refresh icon are gone; the group view keeps its line.
+    assert "sub.hidden=true" in top and "since_label" not in top and "hb-refresh" not in top
+    assert '<div class="hb-sub" id="hb-sub" hidden></div>' in SRC
+    assert "sub.hidden=false" in _fn("renderGroup")
+    # No caption under the Rating, Labor and Waste charts; a watch flag is amber.
+    sig = _fn("renderSignals")
+    for gone in ("weekly average", "labor % by weekday", "$ wasted by item"):
+        assert gone not in sig, gone
+    assert "(capLeft||capRight?'<div class=\"cap\">" in _fn("tile")
+    assert "var HB_FLAG_TONE={'watch':'warn'" in SRC
+    assert ".hb-sg .k i.warn{color:var(--hb-warn)}" in SRC
+    # The focus card: money left, the actions one right-aligned group.
+    focus = _fn("renderFocus")
+    assert "+'<div class=\"acts\">';" in focus and "return h+'</div></div></section>';" in focus
+    assert ".hb-focus .ft .acts{display:flex;align-items:center;justify-content:flex-end" in SRC
+    # The receipts' check is a solid bright disc, not a pale tint.
+    rule = SRC[SRC.index(".hb-rcpt .ok{"):][:400]
+    assert "var(--hb-pop)" in rule and "var(--green-bg)" not in rule
 
 
 def test_decisions_leave_collapsed_results_for_needs_attention():

@@ -315,7 +315,8 @@ console.log(JSON.stringify([hbMoneyRange({low:1200,high:2400,label:'Biggest doll
 
 def test_freshness_strip_and_monitoring_line():
     src = _src()
-    assert "h+=renderFreshness(d);" in src
+    # The strip moved off Home to Account (owner, 9/26/26); the renderer stays.
+    assert "function renderFreshness(d){" in src and 'id="acct-dh-src"' in src
     assert "mo.count_live" in src and "oldest data" in src
     # Unknown age is never drawn as current.
     assert "unknown:'unknown'" in src

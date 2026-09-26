@@ -2284,6 +2284,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-sg:last-child{border-right:none;margin-right:0;padding-right:0}
 .hb-sg .k{font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);display:flex;justify-content:space-between}
 .hb-sg .k i{font-style:normal;color:var(--ember);font-weight:700;letter-spacing:.06em;font-size:11px}
+.hb-sg .k i.warn{color:var(--hb-warn)}.hb-sg .k i.bad{color:var(--hb-bad)}.hb-sg .k i.good{color:var(--hb-good)}
 .hb-sg .v{font-family:'Space Grotesk',sans-serif;font-size:38px;font-weight:600;letter-spacing:-.025em;line-height:1;color:var(--ink);margin:8px 0 2px;display:flex;align-items:baseline;gap:8px}
 .hb-sg .v small{font-family:'Apfel Grotezk',sans-serif;font-size:13.5px;font-weight:400;letter-spacing:0;color:var(--ink3)}
 .hb-sg .v .dl{font-size:13.5px;font-weight:600;letter-spacing:0}
@@ -2465,7 +2466,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
    and a descendant selector here turned each number into a chip inside the chip. */
 .hb-focus .ev>span{font-size:13.5px;color:var(--ink2);background:var(--hb-inner);border:1px solid var(--hb-line2);border-radius:999px;padding:5px 12px;line-height:1.4}
 .hb-focus .ev>span .hb-num{color:var(--ink);font-weight:600}
-.hb-focus .ft{display:flex;gap:12px;align-items:center;justify-content:flex-start;flex-wrap:wrap;margin-top:20px}
+.hb-focus .ft{display:flex;gap:18px 32px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-top:24px}
+.hb-focus .ft .acts{display:flex;align-items:center;justify-content:flex-end;gap:12px 14px;flex-wrap:wrap;margin-left:auto}
 .hb-focus .money{font-family:'Space Grotesk',sans-serif;font-size:34px;font-weight:600;letter-spacing:-.025em;color:var(--ink);line-height:1}
 .hb-focus .money small{font-family:'Apfel Grotezk',sans-serif;font-size:13.5px;color:var(--ink3);font-weight:400;letter-spacing:0;margin-left:7px}
 .hb-focus .ft .sp{display:none}
@@ -2575,7 +2577,11 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 /* receipt strip */
 .hb-rcpt{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-top:14px}
 .hb-rcpt .it{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;border-radius:12px;background:var(--hb-inner);border:1px solid var(--hb-line2)}
-.hb-rcpt .ok{width:26px;height:26px;border-radius:50%;background:var(--green-bg);color:var(--hb-good);display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 0 10px rgba(45,106,79,.3)}
+/* A receipt's check is good news and looks it (owner, 9/26/26): a solid
+   bright-green disc, a white tick, a soft halo - not a pale tint. */
+#panel-home,#panel-dsr,#panel-recs{--hb-pop:#1f9d5c;--hb-pop2:#3cc47c;--hb-pop-ring:rgba(31,157,92,.16);--hb-pop-glow:rgba(31,157,92,.55)}
+[data-theme="dark"] #panel-home,[data-theme="dark"] #panel-dsr,[data-theme="dark"] #panel-recs{--hb-pop:#2fbf74;--hb-pop2:#63e39f;--hb-pop-ring:rgba(63,209,132,.18);--hb-pop-glow:rgba(63,209,132,.5)}
+.hb-rcpt .ok{width:30px;height:30px;border-radius:50%;background:radial-gradient(circle at 35% 30%,var(--hb-pop2),var(--hb-pop) 72%);color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 0 0 4px var(--hb-pop-ring),0 4px 16px -2px var(--hb-pop-glow)}
 .hb-rcpt .t{font-size:15px;color:var(--ink2);line-height:1.45;min-width:0}
 .hb-rcpt .t strong{color:var(--ink);font-weight:600}
 .hb-rcpt .m{font-size:11.5px;color:var(--ink3);margin-top:4px;letter-spacing:.1em;text-transform:uppercase;font-weight:700}
@@ -2712,7 +2718,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 /* warm secondaries */
 .hb-rec .no{background:linear-gradient(135deg,var(--ember2),var(--ember) 70%);-webkit-background-clip:text;background-clip:text;color:transparent}
 .hb-rec:hover{border-color:var(--hb-copper)}
-.hb-stat.good .v{color:var(--hb-good2)}.hb-rcpt .ok,.hb-clear .ok{color:var(--hb-good2)}
+.hb-stat.good .v{color:var(--hb-good2)}.hb-clear .ok{color:var(--hb-good2)}
 /* A gap still open is a warning, amber - never the ember, which is not status (B4 L7). */
 .hb-stat.warn .v{background:linear-gradient(135deg,var(--hb-amber),var(--hb-warn));-webkit-background-clip:text;background-clip:text;color:transparent}
 .hb-focus .ev>span{transition:border-color .18s ease,transform .18s ease,background-color .18s ease}
@@ -2796,7 +2802,7 @@ svg:hover .hb-xh{opacity:1}
       <!-- The 3-second status (density fix #1): last night's verdict, score,
            net and vs budget from the report (dsr.access.summary), toned. -->
       <div class="hb-status" id="hb-status" hidden></div>
-      <div class="hb-sub" id="hb-sub">Pulling your latest numbers.</div>
+      <div class="hb-sub" id="hb-sub" hidden></div>
     </div>
     <div class="hb-pulse" id="hb-pulse"><div class="hb-skel" style="width:260px;height:34px;border-radius:999px"></div></div>
     <!-- One tap (Friction audit #13): the server's quick_actions, ranked per
@@ -3830,17 +3836,10 @@ svg:hover .hb-xh{opacity:1}
     if(k)k.textContent=longDate(d.local_now);
     var h=document.getElementById('hb-h1');
     if(h)h.innerHTML=esc(greeting(d.local_now))+(d.greeting_name?', '+esc(d.greeting_name):'')+'. <span class="hb-head '+esc(d.brief.tone)+'">'+esc(d.brief.headline)+'</span>';
-    var sub=document.getElementById('hb-sub');var parts=[];
-    var ch=(d.changes||{}).items||[];var lab=((d.changes||{}).since_label||'since yesterday').replace('since your last sign-in','since your last visit');
-    if(ch.length){var first=ch[0].text.replace(/ — .*$/,'');parts.push('<span class="chg">'+esc(lab.charAt(0).toUpperCase()+lab.slice(1))+': '+num(first)+'</span>');for(var i=1;i<Math.min(ch.length,3);i++){parts.push('<span class="chg">'+num(ch[i].text.replace(/ — .*$/,''))+'</span>');}}
-    else parts.push('<span>Nothing new '+esc(lab)+'</span>');
-    if(d.quiet_hours_active)parts.push('<span>🌙 alerts quiet until '+esc(d.alert_quiet_end||'morning')+'</span>');
-    // No data-health chip here (owner's call, 9/26/26): freshness shows in
-    // the strip below when a source is actually behind (hbFreshBehind), and
-    // Data Health stays one tap away in Account. The refresh button keeps
-    // when the brief was built on its label.
-    parts.push('<button class="hb-refresh" onclick="hbLoad(true)" aria-label="Refresh (built '+esc(ago(d.generated_at))+')" title="Built '+esc(ago(d.generated_at))+'"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg></button>');
-    if(sub)sub.innerHTML=parts.join('<span class="sep">·</span>');
+    // Nothing under the status line (owner's call, 9/26/26): the since-
+    // yesterday changes, the quiet-hours note and the refresh icon were
+    // a second paragraph under the verdict. Home reloads itself (hbSoft).
+    var sub=document.getElementById('hb-sub');if(sub){sub.innerHTML='';sub.hidden=true;}
     var p=document.getElementById('hb-pulse');if(!p)return;
     var chips='';var snaps=d.snapshot||[];
     for(var j=0;j<snaps.length;j++){var s=snaps[j];if(s.status==='coming_soon')continue;var tone=s.sample?'sample':s.state;
@@ -3923,8 +3922,12 @@ svg:hover .hb-xh{opacity:1}
     el.innerHTML=h;countUp(document.getElementById('hb-big'),Math.abs(big),big<0?'−$':'$');
   }
   // ── signals row ───────────────────────────────────────────────────────────
+  // A flag's colour is its status (owner, 9/26/26): watch reads amber, not
+  // the ember, which is never status; bad red, good green.
+  var HB_FLAG_TONE={'watch':'warn','needs action':'bad','over target':'bad','failed post':'bad','on target':'good'};
+  // No caption under a card's chart (owner, 9/26/26); a legend still draws.
   function tile(key,label,flag,valueHtml,chartHtml,capLeft,capRight,sample){
-    return '<div class="hb-sg'+(sample?' sample':'')+'" role="link" tabindex="0" onclick="hbOpen(\''+key+'\')" onkeydown="if(event.key===\'Enter\')hbOpen(\''+key+'\')"><div class="k"><span>'+esc(label)+'</span><i>'+esc(flag||'')+'</i></div><div class="v">'+valueHtml+'</div>'+chartHtml+'<div class="cap"><span>'+capLeft+'</span><span class="hb-num">'+capRight+'</span></div></div>';
+    return '<div class="hb-sg'+(sample?' sample':'')+'" role="link" tabindex="0" onclick="hbOpen(\''+key+'\')" onkeydown="if(event.key===\'Enter\')hbOpen(\''+key+'\')"><div class="k"><span>'+esc(label)+'</span><i class="'+(HB_FLAG_TONE[flag]||'')+'">'+esc(flag||'')+'</i></div><div class="v">'+valueHtml+'</div>'+chartHtml+(capLeft||capRight?'<div class="cap"><span>'+capLeft+'</span><span class="hb-num">'+capRight+'</span></div>':'')+'</div>';
   }
   // A secondary line's label as the owner reads it. The labor "Recoverable"
   // line is the gap above target (an opportunity), never money recovered,
@@ -3954,15 +3957,15 @@ svg:hover .hb-xh{opacity:1}
     if(snaps.reviews){var r=snaps.reviews,rw=ch.rating||[];
       tiles.push(tile('reviews','Rating · 30 days',r.state==='bad'?'needs action':r.state==='warn'?'watch':'','<span class="hb-num">'+esc(r.value)+'</span><small>★</small>'+(r.delta?'<span class="dl hb-num '+(r.delta.good?'good':'bad')+'">'+esc(r.delta.value)+'</span>':''),
         rw.length>1?glowLine(rw.map(function(w){return w.avg;}),320,86,EMBER2,{pad:6,floor:Math.min.apply(null,rw.map(function(w){return w.avg;}))-0.3,ceil:5,unit:'★',labels:rw.map(function(w){return 'week of '+w.label;})}):'<div class="hb-empty" style="height:86px">Trend appears after a few weeks of reviews.</div>',
-        rw.length?'weekly average · '+rw.length+' weeks':'',sec(r,2)));}
+        '',''));}
     if(snaps.labor){var l=snaps.labor;
       // A module with no data is a readiness-row item, not a full card
       // (density fix #20); only live data draws a tile.
       if(!l.sample){var ld=ch.labor_days||[];tiles.push(tile('labor','Labor · by day',hbLaborFlag(l),'<span class="hb-num">'+esc(l.value)+'</span><small>% of sales</small>'+(l.delta&&l.delta.value.indexOf('pts')>-1?'<span class="dl hb-num '+(l.delta.good?'good':'bad')+'">'+esc(l.delta.value)+'</span>':''),
-        ld.length?'<div style="color:var(--ink3)">'+bars(ld.map(function(x){return {v:x.pct,l:x.day};}),320,86,EMBER2,{target:ch.labor_target})+'</div>':'<div class="hb-empty" style="height:86px">Day-of-week view needs a fuller export.</div>','labor % by weekday',sec(l,2,'Target')));}}
+        ld.length?'<div style="color:var(--ink3)">'+bars(ld.map(function(x){return {v:x.pct,l:x.day};}),320,86,EMBER2,{target:ch.labor_target})+'</div>':'<div class="hb-empty" style="height:86px">Day-of-week view needs a fuller export.</div>','',''));}}
     if(snaps.inventory){var inv=snaps.inventory;
       if(!inv.sample){var ws=ch.waste||[];tiles.push(tile('inventory',String(inv.value||'').indexOf('%')>-1?'Food cost · waste last week':'Waste · last week',inv.state==='bad'?'needs action':inv.state==='warn'?'watch':'','<span class="hb-num">'+esc(inv.value)+'</span><small>'+esc(hbFoodUnit(inv))+'</small>',
-        ws.length?'<div style="color:var(--ink3)">'+bars(ws.map(function(x){return {v:x.cost,l:String(x.item||'').split(' ')[0],full:x.item};}),320,86,EMBER2,{labelsOutside:true})+'</div>':'<div class="hb-empty" style="height:86px">No waste flagged this week.</div>','$ wasted by item',sec(inv,2)));}}
+        ws.length?'<div style="color:var(--ink3)">'+bars(ws.map(function(x){return {v:x.cost,l:String(x.item||'').split(' ')[0],full:x.item};}),320,86,EMBER2,{labelsOutside:true})+'</div>':'<div class="hb-empty" style="height:86px">No waste flagged this week.</div>','',''));}}
     if(tiles.length<3&&snaps.reviews&&(ch.rating||[]).length>1){var rw2=ch.rating;tiles.push(tile('reviews','Reviews · per week','','<span class="hb-num">'+rw2[rw2.length-1].total+'</span><small>this week</small>','<div style="color:var(--ink3)">'+stacked(rw2.slice(-8),320,86)+'</div>','<span style="color:'+GREEN+'">■</span> positive &nbsp; <span style="color:'+RED+'">■</span> negative',''));}
     if(tiles.length<3&&snaps.marketing){var m=snaps.marketing;tiles.push(tile('marketing','Marketing',m.state==='bad'?'failed post':'','<span class="hb-num">'+esc(m.value)+'</span><small>pieces this month</small>','<div class="hb-empty" style="height:86px;display:flex;align-items:center">'+num(m.interpretation||'')+'</div>','',sec(m,2)));}
     // Three cards, staggered in, instead of three hairline columns.
@@ -4089,7 +4092,9 @@ svg:hover .hb-xh{opacity:1}
     if(confirm)basis+='<div style="margin-bottom:10px"><strong>To confirm:</strong> '+num(confirm)+'</div>';
     if(ftag&&!clear)basis+='<div style="margin-bottom:10px">'+ftag+'</div>';
     alt=basis+alt;
-    h+='<div class="ft">'+(money?'<div class="money hb-num">'+money+'</div>':'')+'<span class="sp"></span>';
+    // The money on the left, the actions as one group on the right, both
+    // centred on one line (owner, 9/26/26).
+    h+='<div class="ft">'+(money?'<div class="money hb-num">'+money+'</div>':'')+'<div class="acts">';
     var ffKey=ff&&(ff.rec_key||ff.key)||'';
     if(alt)h+='<button type="button" class="cbtn cbtn-secondary" data-explain="'+esc(alt)+'" data-explain-title="Why this is the one thing" data-explain-kicker="What it rests on"'+(ffKey?' data-explain-key="'+esc(ffKey)+'"':'')+'>Why this?</button>';
     // The one thing is a recommendation like any other (rec-ROI #26): Done /
@@ -4115,7 +4120,7 @@ svg:hover .hb-xh{opacity:1}
     else if(!clear&&!ff&&!att.length&&recs.length&&recs[0].metric){h+='<button type="button" class="cbtn cbtn-primary" data-track-key="'+esc(recs[0].key)+'" data-track-title="'+esc(recs[0].title)+'" data-track-metric="'+esc(recs[0].metric)+'">Measure it</button>';}
     h+=fAns;
     if(ask)h+='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm hb-ask" data-ask="'+esc(ask)+'">Ask about this →</button>';
-    return h+'</div></section>';
+    return h+'</div></div></section>';
   }
   // ── action lines ──────────────────────────────────────────────────────────
   // Recommendations as numbered cards. skip=1 when the focus card above
@@ -4509,9 +4514,10 @@ svg:hover .hb-xh{opacity:1}
     // Nothing is promoted into the placeholder (focusUsed(d,null) is {}), so
     // every item stays in its list until the real lead is known.
     h+=renderAttention(d,used);
-    if(hbFreshBehind(d))h+=renderFreshness(d);
-    // How you compare (Benchmarking #23): the compact strip under the
-    // freshness line, filled by its own read so the brief never waits on it.
+    // No data-health strip on Home (owner's call, 9/26/26): the score and
+    // every source's pill live in Account -> Integrations -> Data health.
+    // How you compare (Benchmarking #23): the compact strip under Needs
+    // attention, filled by its own read so the brief never waits on it.
     h+='<div class="hb-bench hb-rise" id="hb-bench" style="--i:2" hidden></div>';
     // Progressive: the day shimmers where it will land, instead of the page
     // jumping when its reads arrive.
@@ -4673,7 +4679,7 @@ svg:hover .hb-xh{opacity:1}
     // A receipt strip — one tile per thing done, a check on each. A
     // different shape from the lists above it on purpose: these are
     // finished, and finished things should not look like a to-do.
-    var ok='<span class="ok"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>';
+    var ok='<span class="ok"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>';
     var h='<div class="hb-sh"><div><div class="k dim">Done for you</div><h2>What Cavnar AI did <small>this week</small></h2></div></div><div class="hb-rcpt">';
     var n=0;
     if(hasOv){
@@ -5431,7 +5437,7 @@ svg:hover .hb-xh{opacity:1}
     var h1=document.getElementById('hb-h1');if(h1)h1.innerHTML=esc(greeting())+(g.greeting_name?', '+esc(g.greeting_name):'')+'. <span class="hb-head '+esc(g.tone)+'">'+esc(g.headline)+'</span>';
     hbStatus(null);
     var p=g.portfolio||{};
-    var sub=document.getElementById('hb-sub');if(sub)sub.innerHTML='<span>'+num(p.healthy+' of '+p.total+' locations healthy')+'</span>'+(p.urgent_reviews?'<span class="sep">·</span><span>'+num(p.urgent_reviews+' urgent reviews')+'</span>':'')+(p.awaiting?'<span class="sep">·</span><span>'+num(p.awaiting+' replies waiting')+'</span>':'');
+    var sub=document.getElementById('hb-sub');if(sub)sub.hidden=false;if(sub)sub.innerHTML='<span>'+num(p.healthy+' of '+p.total+' locations healthy')+'</span>'+(p.urgent_reviews?'<span class="sep">·</span><span>'+num(p.urgent_reviews+' urgent reviews')+'</span>':'')+(p.awaiting?'<span class="sep">·</span><span>'+num(p.awaiting+' replies waiting')+'</span>':'');
     var pu=document.getElementById('hb-pulse');if(pu){var pl=[];if(p.strongest)pl.push('<span class="hb-chip good"><span class="dot"><b></b><i></i></span><span class="v hb-num">'+p.strongest.rating+'★</span><span class="l">'+esc(p.strongest.location)+'</span></span>');if(p.weakest)pl.push('<span class="hb-chip bad"><span class="dot"><b></b><i></i></span><span class="v hb-num">'+p.weakest.rating+'★</span><span class="l">'+esc(p.weakest.location)+'</span></span>');if(p.heaviest_labor)pl.push('<span class="hb-chip warn"><span class="dot"><b></b><i></i></span><span class="v hb-num">'+p.heaviest_labor.pct.toFixed(1)+'%</span><span class="l">labor · '+esc(p.heaviest_labor.location)+'</span></span>');pu.innerHTML=pl.join('');}
     var qk=document.getElementById('hb-quick');if(qk){qk.innerHTML='';qk.hidden=true;}
     var h='<div class="hb-locs" role="list"><button class="hb-loc active" onclick="hbScope(\'group\')">All locations</button>';
@@ -11638,6 +11644,11 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ac-dh-row .bar i{display:block;height:100%;width:0;border-radius:999px;background:var(--ink3)}
 .ac-dh-row .bar i.good{background:var(--green)}.ac-dh-row .bar i.warn{background:var(--amber)}.ac-dh-row .bar i.bad{background:var(--red)}
 .ac-dh-why{font-size:13.5px;color:var(--ink3);margin-top:8px}
+/* The Home tokens the .hb-fresh pills (and the bar's track) read, scoped to the card. */
+#acct-dh-card{--hb-inner:rgba(14,12,10,.035);--hb-line2:rgba(14,12,10,.07);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red)}
+[data-theme="dark"] #acct-dh-card{--hb-inner:rgba(255,255,255,.04);--hb-line2:rgba(240,235,224,.07)}
+.ac-dh-src{margin-top:14px;font-size:13px}
+.ac-dh-src[hidden]{display:none}
 .ac-pos-other{display:contents}.ac-pos-other[hidden]{display:none}
 /* The hidden attribute wins inside Account: rows, rail links and cbtns set
    their own display, which silently beat it (a hidden row still showed). */
@@ -12438,6 +12449,9 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
           <div class="r"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dh-open="1">Details</button></div></div>
         <div class="ac-dh-row"><span class="pct" id="acct-dh-pct">&hellip;</span><span class="bar" aria-hidden="true"><i id="acct-dh-bar"></i></span></div>
         <div class="ac-dh-why" id="acct-dh-why"></div>
+        {# Every source's pill (owner, 9/26/26): the strip that sat on Home
+           under Needs attention moved here, from the same /api/data-health read. #}
+        <div class="hb-fresh ac-dh-src" id="acct-dh-src" aria-label="How current each source is" hidden></div>
       </div>
       {% if not _principal %}<div class="ac-note" style="margin:0 0 12px">Only the account owner can connect or disconnect an integration.</div>{% endif %}
       {% set _pos_any = _pos_on or _pos_err %}
@@ -28634,6 +28648,15 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var el=$('acct-dh-pct');if(el){el.className='pct hb-num '+tone;el.textContent=pct==null?'—':pct+'%';}
     var bar=$('acct-dh-bar');if(bar){bar.className=tone;bar.style.width=(pct==null?0:pct)+'%';}
     var why=$('acct-dh-why');if(why)why.textContent=(o&&(o.reason||o.label))||((d&&d.error)||'');
+    // One pill per source - what Home's strip showed before it moved here.
+    var src=$('acct-dh-src'),ss=(d&&d.ok&&d.sources)||[],CHIP={ok:'current',warn:'aging',bad:'stale',off:'disconnected'},ph='';
+    for(var i=0;i<ss.length;i++){var sv=ss[i]||{};if(!sv.label)continue;
+      var hp=sv.health_pct!=null?sv.health_pct:sv.pct,hc=hp==null?'':(hp>=80?'hi':(hp>0?'mid':'zero'));
+      // The line often opens with the label ("Deliveries: Last delivery..."); say it once.
+      var ln=String(sv.line||''),lb=String(sv.label);if(ln.toLowerCase().indexOf(lb.toLowerCase())===0)ln=ln.slice(lb.length).replace(/^[:\s]+/,'');
+      ph+='<span class="hb-fresh-it '+(CHIP[sv.tone]||'unknown')+'"><i></i><b>'+esc(sv.label)+'</b>'+(ln?' <span class="bs">'+esc(ln)+'</span>':'')
+        +(hp!=null?' <span class="pc hb-num '+hc+'">'+Math.round(+hp)+'%</span>':'')+'</span>';}
+    if(src){src.innerHTML=ph;src.hidden=!ph;}
     acctHealthRefresh();
   };
   // Billing's measured line (density audit #47): the measured figure only -
