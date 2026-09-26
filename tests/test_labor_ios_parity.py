@@ -206,3 +206,18 @@ def test_the_web_generate_route_is_the_mobile_body():
     src = inspect.getsource(client_api.generate_schedule_json)
     assert '_m("mobile_generate_schedule")' in src
     assert "ai_rate_limited" not in src
+
+
+def test_the_web_generate_press_reads_a_429_answer_for_its_sentence():
+    """The web Labor tab reads the generate answer through apiJson, which
+    keeps a non-2xx body's own `error`, and shows that sentence — so the
+    429 now shared with the phone reads "Too many schedule generations…",
+    not a generic HTTP failure."""
+    import os
+    src = open(os.path.join(os.path.dirname(__file__), "..", "templates", "dashboard.html"), encoding="utf-8").read()
+    at = src.index("fetch('/api/generate-schedule'")
+    block = src[at:at + 600]
+    assert ".then(apiJson)" in block
+    assert "startData.error" in block
+    helper = src[src.index("function apiJson(r){"):src.index("function loadFailed(")]
+    assert "if (!d.error)" in helper   # a server sentence is kept, never overwritten
