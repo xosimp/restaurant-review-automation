@@ -930,6 +930,13 @@ def ensure_columns(db_path: str = DB_PATH):
         # before; owned by init_db now, per the no-DDL-on-a-request rule.
         ("alert_log", "value", "REAL"),
         ("alert_log", "priority", "INTEGER"),
+        # What a row is about beyond a review (notify.record_notification):
+        # ref_kind 'delayed_action' (a queued send an Undo stops), 'shift' or
+        # 'time_off' (a staff request Approve / Deny answers), ref_id its row
+        # id. The push payload always carried these; the history row did
+        # not, so the web bell could only open them (web desk finding 4).
+        ("alert_log", "ref_kind", "TEXT"),
+        ("alert_log", "ref_id", "INTEGER"),
         # The figure a held daily alert fired on, so releasing it after the
         # rush still records what _waste_alert_worsened compares against.
         ("alert_holds", "value", "REAL"),

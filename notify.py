@@ -1183,7 +1183,7 @@ def _already_alerted_spike(restaurant_id: int, db_path: str = DB_PATH) -> bool:
 
 
 def _log_alert(restaurant_id: int, alert_type: str, review_id: int = None, db_path: str = DB_PATH,
-               value: float = None, priority: int = None):
+               value: float = None, priority: int = None, ref_kind: str = None, ref_id: int = None):
     """One row in the notification history, which is also what the daily cap
     and the hard ceiling count.
 
@@ -1193,6 +1193,10 @@ def _log_alert(restaurant_id: int, alert_type: str, review_id: int = None, db_pa
     tier (push.PRIORITY) — stored so both notification centers can rank and
     filter without re-deriving it, and so a later change to the map doesn't
     silently rewrite history.
+
+    `ref_kind` / `ref_id` name what the row is about when it is not a
+    review: a queued send ('delayed_action') or a staff request ('shift',
+    'time_off'), so the bell can offer Undo or Approve / Deny on it.
     """
     if priority is None:
         from push import priority_of
@@ -1200,6 +1204,11 @@ def _log_alert(restaurant_id: int, alert_type: str, review_id: int = None, db_pa
     sql = ("INSERT INTO alert_log (restaurant_id, alert_type, review_id, value, priority) "
            "VALUES (?,?,?,?,?)")
     args = (restaurant_id, alert_type, review_id, value, priority)
+    plain_sql, plain_args = sql, args
+    if ref_kind and ref_id is not None:
+        sql = ("INSERT INTO alert_log (restaurant_id, alert_type, review_id, value, priority, ref_kind, ref_id) "
+               "VALUES (?,?,?,?,?,?,?)")
+        args = args + (str(ref_kind), int(ref_id))
     conn = models.get_conn(db_path)
     try:
         try:
@@ -1207,8 +1216,9 @@ def _log_alert(restaurant_id: int, alert_type: str, review_id: int = None, db_pa
         except Exception:
             # init_db owns these columns now; this is the self-healing retry
             # for a database opened before it ran (ai_utils._ensure_usage_schema
-            # is the same pattern). No DDL on the happy path.
-            cur = conn.execute(sql, args)
+            # is the same pattern). No DDL on the happy path. The retry drops
+            # the reference rather than the notification.
+            cur = conn.execute(plain_sql, plain_args)
         conn.commit()
         # The row's id travels in the push payload, so the open can name the
         # notification it answers (#39).
@@ -1268,7 +1278,8 @@ def engagement_report(restaurant_id: int, db_path: str = DB_PATH) -> list:
 
 
 def record_notification(restaurant_id: int, alert_type: str, review_id: int = None,
-                        db_path: str = DB_PATH, value: float = None):
+                        db_path: str = DB_PATH, value: float = None,
+                        ref_kind: str = None, ref_id: int = None):
     """History row for a notification sent OUTSIDE the alert layer.
 
     The morning brief, the pre-dinner pulse, the drafted schedule, an issue
@@ -1281,7 +1292,8 @@ def record_notification(restaurant_id: int, alert_type: str, review_id: int = No
     Returns the alert_log id (for the push payload), or None.
     """
     try:
-        return _log_alert(restaurant_id, alert_type, review_id, db_path=db_path, value=value)
+        return _log_alert(restaurant_id, alert_type, review_id, db_path=db_path, value=value,
+                          ref_kind=ref_kind, ref_id=ref_id)
     except Exception as e:
         print(f"[notify] could not record {alert_type} for rid={restaurant_id}: {e}")
         return None
