@@ -40,8 +40,9 @@ extension ServerTone {
 struct ConfidenceMeter: View {
     let fraction: Double?
     let tone: ConfidenceDisplay.Tone
-    var width: CGFloat? = 34
-    var height: CGFloat = 5
+    // 38×6, the web .cf-m (DESIGN_SYSTEM §12 Confidence): one meter size.
+    var width: CGFloat? = 38
+    var height: CGFloat = 6
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var grown = false

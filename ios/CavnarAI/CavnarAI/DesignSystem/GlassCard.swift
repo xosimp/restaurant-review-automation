@@ -1,75 +1,66 @@
 import SwiftUI
 
-/// Frosted-glass hero-card treatment — ports the translucent, colored-glass
-/// "glassmorphic stat card" pattern (see the mnowakdesign reference) onto
-/// Cavnar's palette: a saturated branded-ember gradient over a dark base,
-/// rather than native `.ultraThinMaterial` — the system material reads as
-/// neutral gray over our near-black background (it has no way to know our
-/// brand color), which was drowning out the warmth and reading as flat gray
-/// instead of "frosty branded glass." The gradient alone, at real opacity,
-/// gets the reference's actual look — and stays genuinely see-through
-/// against cavnarPaper rather than opaque. Reserved for hero/stat cards (a
-/// number compared against a target) — plain grouped content keeps the
-/// lighter .cavnarCard().
+/// The hero card for a screen's one status figure (Labor's % against
+/// target): a glass panel washed by that figure's TONE — green on track,
+/// red over, the neutral ink when the figure can't be judged — at a low
+/// opacity, with a hairline of the same tone. A documented exception in
+/// DESIGN_SYSTEM §9: the wash repeats the verdict the figure already
+/// carries, so it is a status tint, never ember (ember is not a status,
+/// and a card is never tinted ember whole). It was an ember-by-default
+/// 55%→22% gradient; the tone now sits at 20%→6% over the Paper2 ground,
+/// so the figure, not the card, carries the colour. Plain grouped content
+/// keeps .cavnarCard().
 struct CavnarGlassCardStyle: ViewModifier {
-    var tint: Color = .cavnarEmber
+    var tint: Color = CavnarTone.neutral.foreground
 
     func body(content: Content) -> some View {
         content
             .padding(16)
-            // Light orange → dark orange, not light orange → black — the
-            // previous end stop (0.08) was faint enough that it read as
-            // fading to black against the near-black page rather than into
-            // a darker shade of the same tint.
             .background(
                 LinearGradient(
-                    colors: [tint.opacity(0.55), tint.opacity(0.22)],
+                    colors: [tint.opacity(0.20), tint.opacity(0.06)],
                     startPoint: .topLeading, endPoint: .bottomTrailing
                 )
             )
-            .background(Color.cavnarPaper2.opacity(0.35))
-            // Border follows the card's own tint (a lighter shade of it, via
-            // the same .opacity(0.5) treatment everywhere else in this
-            // file), not a neutral white hairline — matches
-            // CavnarGlossyCardStyle's default-ember look for untinted
-            // cards, but a card that passes e.g. .cavnarRed for a
-            // labor-overtime warning gets a red border to match, not a
-            // universally-orange one that doesn't match what the card is
-            // actually saying.
+            .background(Color.cavnarPaper2.opacity(0.6))
+            // The hairline follows the card's own tone, so a card that
+            // passes .cavnarRed for an over-target figure gets a red edge,
+            // not a universally-orange one.
             .overlay(
                 RoundedRectangle(cornerRadius: CavnarRadius.card)
-                    .strokeBorder(tint.opacity(0.5), lineWidth: 1.2)
+                    .strokeBorder(tint.opacity(0.4), lineWidth: 1)
             )
             .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
     }
 }
 
 extension View {
-    func cavnarGlassCard(tint: Color = .cavnarEmber) -> some View {
+    func cavnarGlassCard(tint: Color = CavnarTone.neutral.foreground) -> some View {
         modifier(CavnarGlassCardStyle(tint: tint))
     }
 }
 
 /// The same glass language as CavnarGlassButtonStyle/CavnarSegmentedControl
-/// — real Liquid Glass (`.glassEffect`) on iOS 26, Material+ember fallback
-/// below it — with a visibly ember-colored border rather than the neutral
-/// white hairline CavnarGlassCardStyle uses. For cards that should read as
-/// "premium chrome" matching the buttons/tab switcher, not just a tinted
-/// panel.
+/// — real Liquid Glass (`.glassEffect`) on iOS 26, Material below it — with
+/// an ember HAIRLINE. For a stat tile that should read as "premium chrome"
+/// matching the buttons/tab switcher. The glass itself is untinted: it was
+/// an ember-tinted glass (35% tint, a 22% ember fill on the fallback),
+/// which tinted a whole card ember against DESIGN_SYSTEM §9. The edge is
+/// the one ember on the card.
 struct CavnarGlossyCardStyle: ViewModifier {
     func body(content: Content) -> some View {
         let padded = content.padding(16)
         Group {
             if #available(iOS 26.0, *) {
                 padded.glassEffect(
-                    .regular.tint(Color.cavnarEmber.opacity(0.35)).interactive(),
+                    .regular.interactive(),
                     in: RoundedRectangle(cornerRadius: CavnarRadius.card)
                 )
             } else {
                 padded
                     .background {
                         RoundedRectangle(cornerRadius: CavnarRadius.card).fill(.ultraThinMaterial)
-                        RoundedRectangle(cornerRadius: CavnarRadius.card).fill(Color.cavnarEmber.opacity(0.22))
+                        RoundedRectangle(cornerRadius: CavnarRadius.card).fill(Color.cavnarPaper2.opacity(0.6))
                         RoundedRectangle(cornerRadius: CavnarRadius.card).fill(
                             LinearGradient(
                                 colors: [Color.white.opacity(0.10), Color.white.opacity(0)],
@@ -82,7 +73,7 @@ struct CavnarGlossyCardStyle: ViewModifier {
         }
         .overlay(
             RoundedRectangle(cornerRadius: CavnarRadius.card)
-                .strokeBorder(Color.cavnarEmber.opacity(0.5), lineWidth: 1.2)
+                .strokeBorder(Color.cavnarEmber.opacity(0.35), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
     }
@@ -96,7 +87,11 @@ extension View {
 
 /// Semantic color grouping for StatusPill/StatProgressBar so call sites say
 /// what the value *means* ("good", "over target") instead of picking colors
-/// by hand each time.
+/// by hand each time. `.neutral` is "no verdict" — sample data, not yet
+/// measured, a plain count — and reads in the ink on a paper chip, like
+/// web's `.hb-chip.neutral`. It used to render ember, which made "no
+/// verdict" look like the brand's "do this" (DESIGN_SYSTEM §9: ember is
+/// never a status).
 enum CavnarTone {
     case good, bad, warning, neutral
 
@@ -105,7 +100,7 @@ enum CavnarTone {
         case .good: return .cavnarGreen
         case .bad: return .cavnarRed
         case .warning: return .cavnarAmber
-        case .neutral: return .cavnarEmber
+        case .neutral: return .cavnarInk2
         }
     }
 
@@ -114,7 +109,7 @@ enum CavnarTone {
         case .good: return .cavnarGreenBg
         case .bad: return .cavnarRedBg
         case .warning: return .cavnarAmberBg
-        case .neutral: return .cavnarEmber.opacity(0.12)
+        case .neutral: return .cavnarPaper3.opacity(0.6)
         }
     }
 }

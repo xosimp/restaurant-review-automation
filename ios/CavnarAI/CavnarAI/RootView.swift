@@ -465,9 +465,11 @@ struct RootView: View {
             HomeView(viewModel: homeViewModel, path: $homePath, heroAppeared: introAppeared,
                      onHeroAppear: startIntroSequence, tabVisible: selectedTab == .home)
                 .tabItem { Label(AppTab.home.title, systemImage: AppTab.home.systemImage) }
-                // The unread count where the thumb already is — the bell's
-                // dot only showed on Home's own top-right corner (#32).
-                .badge(chrome.notificationsBadge.unreadCount)
+                // Where the thumb already is (#32): the system's red badge
+                // carries the URGENT count, the bell's red number — a red
+                // count of merely-unread rows would say "urgent" when the
+                // web bell (and ours) says only a grey dot.
+                .badge(chrome.notificationsBadge.urgentCount)
                 .tag(AppTab.home)
 
             // Seeded with the modules Home already fetched, so the tab's

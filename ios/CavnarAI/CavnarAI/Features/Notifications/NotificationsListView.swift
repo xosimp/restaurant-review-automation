@@ -188,6 +188,9 @@ final class NotificationsListViewModel {
 @MainActor
 final class NotificationsBadgeViewModel {
     var unreadCount = 0
+    /// The urgent rows nobody has handled (P0/P1, unresolved) — the red
+    /// count on the bell and the Home tab, as on the web bell.
+    var urgentCount = 0
 
     private let client: APIClient
 
@@ -198,11 +201,13 @@ final class NotificationsBadgeViewModel {
     private struct CountResponse: Decodable {
         let ok: Bool
         let count: Int
+        let urgent: Int?
     }
 
     func refresh() async {
         if let response: CountResponse = try? await client.send("/mobile/api/notifications/unread-count") {
             unreadCount = response.count
+            urgentCount = response.urgent ?? 0
         }
     }
 }

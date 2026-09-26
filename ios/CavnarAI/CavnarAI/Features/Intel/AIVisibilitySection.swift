@@ -930,7 +930,7 @@ private struct QueryResultRow: View {
         // sibling rows is decided at the outer ForEach's level, not
         // inside any one row's own subtree.
         .zIndex(isPressed ? 1 : 0)
-        .animation(.spring(response: 0.32, dampingFraction: 0.75), value: isPressed)
+        .animation(.cavnarEase(0.2), value: isPressed)
         .contentShape(Rectangle())
         // .onLongPressGesture, NOT a LongPressGesture sequenced before a
         // DragGesture(minimumDistance: 0).

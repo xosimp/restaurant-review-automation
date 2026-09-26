@@ -127,7 +127,7 @@ struct StaffPortalView: View {
         } else if loadError != nil {
             emptyCard(loadError ?? "")
         } else {
-            loadingCard("Loading your shifts…")
+            loadingCard("Loading your shifts")
         }
     }
 
@@ -269,7 +269,7 @@ struct StaffPortalView: View {
                 }
             }
         } else {
-            loadingCard("Loading your tasks…")
+            loadingCard("Loading your tasks")
         }
     }
 
@@ -291,7 +291,7 @@ struct StaffPortalView: View {
             .buttonStyle(CavnarPrimaryButtonStyle())
             .padding(.top, 14)
         } else {
-            loadingCard("Loading…")
+            loadingCard("Loading your profile")
         }
     }
 
@@ -324,8 +324,14 @@ struct StaffPortalView: View {
             .background(Color.cavnarPaper2, in: RoundedRectangle(cornerRadius: 12))
     }
 
+    /// The house loading state (DESIGN_SYSTEM §10): the sliding ember line
+    /// with a plain label under it — never a bare "Loading…".
     private func loadingCard(_ text: String) -> some View {
-        Text(text).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+        VStack(alignment: .leading, spacing: 8) {
+            CavnarSkeletonBar(height: 3).frame(width: 180)
+            Text(text).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+        }
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: - Loading

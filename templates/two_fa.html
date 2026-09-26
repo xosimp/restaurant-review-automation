@@ -18,7 +18,7 @@
 *{box-sizing:border-box;margin:0;padding:0}
 *:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:3px}
 input:focus-visible{outline:none}
-:root{--ink:#f0ebe0;--ink2:#c4bdb4;--ink3:#cdbfa9;--paper:#1a1714;--paper2:#231f1b;--paper3:#4a4038;--surface:#201d19;--ember:#e06444;--brand-dot:#D4583A;--red:#e05555;--red-bg:#2a1010;--green:#4ead7a;--bg:#141110;--r:8px}
+:root{--ink:#f0ebe0;--ink2:#c4bdb4;--ink3:#cdbfa9;--paper:#1a1714;--paper2:#231f1b;--paper3:#4a4038;--surface:#201d19;--ember:#d4583a;--brand-dot:#D4583A;--red:#e3333f;--red-bg:#2a1010;--green:#4ead7a;--bg:#141110;--r:8px}
 @keyframes cardIn{from{opacity:0;transform:translateY(20px) scale(.975)}to{opacity:1;transform:translateY(0) scale(1)}}
 body{font-family:'Apfel Grotezk',sans-serif;background:var(--bg);color:var(--ink);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;position:relative;overflow:hidden}
 .card{background:var(--surface);border-radius:14px;padding:40px 40px 36px;width:100%;max-width:400px;box-shadow:0 0 0 1px rgba(0,0,0,.35),0 0 40px rgba(0,0,0,.55),0 0 100px rgba(0,0,0,.65);position:relative;z-index:1;animation:cardIn .48s cubic-bezier(.22,.68,0,1.1) .08s both}
@@ -27,7 +27,7 @@ body{font-family:'Apfel Grotezk',sans-serif;background:var(--bg);color:var(--ink
 h1{font-family:'Clash Display',sans-serif;font-size:22px;font-weight:600;color:var(--ink);margin-bottom:8px;line-height:1.2}
 .desc{font-size:14px;color:var(--ink3);line-height:1.6;margin-bottom:22px}
 .desc strong{color:var(--ink);font-weight:700}
-.error{background:var(--red-bg);border:1px solid rgba(224,85,85,.35);border-radius:var(--r);padding:10px 14px;font-size:13px;color:var(--red);margin-bottom:16px}
+.error{background:var(--red-bg);border:1px solid rgba(227,51,63,.35);border-radius:var(--r);padding:10px 14px;font-size:13px;color:var(--red);margin-bottom:16px}
 .code-input{display:flex;gap:8px;justify-content:space-between;margin-bottom:18px}
 .code-input input{width:100%;max-width:48px;height:56px;text-align:center;font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:600;border:1px solid var(--paper3);border-radius:var(--r);color:var(--ink);background:var(--paper);outline:none;transition:border-color .15s,box-shadow .15s}
 .code-input input:focus{border-color:var(--ember);box-shadow:0 0 0 3px rgba(200,75,47,.13)}

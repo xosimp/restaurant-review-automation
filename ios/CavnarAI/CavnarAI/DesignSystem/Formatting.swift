@@ -46,12 +46,20 @@ enum CavnarDate {
 
     /// `9/21/26 · 6:45pm` for a Date, read on `timeZone`.
     static func mdyTime(_ date: Date, in timeZone: TimeZone = .current) -> String {
+        let t = time(date, in: timeZone)
+        return t.isEmpty ? mdy(date, in: timeZone) : "\(mdy(date, in: timeZone)) · \(t)"
+    }
+
+    /// `6:45pm` — the time of day alone, lowercase am/pm, no seconds, no
+    /// leading zero (DESIGN_SYSTEM → Dates and times). Not `h:mm a`
+    /// ("6:45 PM"), which is the locale's form, not ours.
+    static func time(_ date: Date, in timeZone: TimeZone = .current) -> String {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
         let c = calendar.dateComponents([.hour, .minute], from: date)
-        guard let h = c.hour, let m = c.minute else { return mdy(date, in: timeZone) }
+        guard let h = c.hour, let m = c.minute else { return "" }
         let hour12 = h % 12 == 0 ? 12 : h % 12
-        return "\(mdy(date, in: timeZone)) · \(hour12):\(String(format: "%02d", m))\(h < 12 ? "am" : "pm")"
+        return "\(hour12):\(String(format: "%02d", m))\(h < 12 ? "am" : "pm")"
     }
 
     /// `9/21/26 · 6:45pm` from `2026-09-21 18:45:00` (or `T18:45`); the

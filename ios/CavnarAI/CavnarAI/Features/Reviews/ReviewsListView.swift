@@ -285,7 +285,7 @@ struct ReviewsListView: View {
                     }
                     }
                     if viewModel.isLoadingMore {
-                        HStack { Spacer(); ProgressView(); Spacer() }
+                        HStack { Spacer(); CavnarSkeletonBar(height: 3).frame(width: 180); Spacer() }
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
                             .accessibilityLabel("Loading more reviews")
@@ -438,7 +438,7 @@ struct ReviewRow: View {
                         StatusPill(status: review.responseStatus)
                         if let date = review.formattedDate {
                             Text(date)
-                                .font(.cavnarBody(14.5))
+                                .font(.cavnarNumber(14.5))
                                 .foregroundStyle(Color.cavnarInk3)
                         }
                         if review.isUrgent {

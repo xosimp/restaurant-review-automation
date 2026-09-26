@@ -155,12 +155,6 @@ struct Review: Codable, Identifiable, Hashable {
 
     private static let isoFormatter = ThreadLocalFormatter<ISO8601DateFormatter> { ISO8601DateFormatter() }
 
-    private static let displayDateFormatter = ThreadLocalFormatter<DateFormatter> {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM d"
-        return formatter
-    }
-
     var formattedDate: String? {
         guard let reviewDate, !reviewDate.isEmpty else { return nil }
         let fallbacks = (Self.sourceDateFormatters.value as? [DateFormatter]) ?? []
@@ -168,7 +162,9 @@ struct Review: Codable, Identifiable, Hashable {
             ?? Self.isoFormatter.value.date(from: reviewDate)
             ?? fallbacks.lazy.compactMap { $0.date(from: reviewDate) }.first
         guard let date else { return nil }
-        return Self.displayDateFormatter.value.string(from: date)
+        // M/D/YY on the phone's day (DESIGN_SYSTEM → Dates and times); it
+        // was "MMM d" ("Sep 21"), the one form the rule names as wrong.
+        return CavnarDate.mdy(date)
     }
 
     var platformDisplayName: String {

@@ -537,11 +537,6 @@ enum AccountRelativeTime {
         f.locale = Locale(identifier: "en_US_POSIX")
         return f
     }()
-    private static let dayFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "MMM d"
-        return f
-    }()
 
     /// Whole days since a backend stamp; a huge number when unparseable so
     /// "stale" checks treat an unknown date as old rather than fresh.
@@ -563,7 +558,8 @@ enum AccountRelativeTime {
         let days = hours / 24
         if days == 1 { return "Yesterday" }
         if days < 14 { return "\(days) days ago" }
-        return dayFormatter.string(from: date)
+        // Past two weeks the date itself, M/D/YY — it was "MMM d".
+        return CavnarDate.mdy(date)
     }
 }
 

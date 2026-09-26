@@ -755,10 +755,10 @@ struct HomeView: View {
         guard let date = parser.date(from: end) else {
             return " — text, email, and push are all holding for now."
         }
-        let display = DateFormatter()
-        display.dateFormat = "h:mm a"
-        display.locale = Locale(identifier: "en_US")
-        return " until \(display.string(from: date)) — text, email, and push are all holding until then."
+        // "6:45pm", the house time (DESIGN_SYSTEM → Dates and times); the
+        // parser's zone is the phone's, so reading it back on the same zone
+        // gives the stored wall-clock time.
+        return " until \(CavnarDate.time(date)) — text, email, and push are all holding until then."
     }
 
     /// What Home shows while its first summary is still in flight — only
