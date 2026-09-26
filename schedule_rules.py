@@ -13,6 +13,7 @@ roster — with one legality check (`can_work`) and one violation sweep the
 backstops, the swap search, the review panel and the publish gate all share.
 """
 import json
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
@@ -1490,3 +1491,249 @@ def prompt_block(c: Constraints) -> str:
     if floors:
         block += "\n\nSTAFFING FLOORS BY ROLE AND DAYPART (never below these, whatever the hours ceiling says):\n" + "\n".join(floors)
     return block
+
+
+# ── overtime, avoided before anything else is fixed ────────────────────────
+#
+# Owners do not pay overtime they don't have to (owner, 9/26/26: "VERY
+# critical"). The model is told the weekly line, but it ranks below shift
+# requirements in its PRIORITIES, and a 55-person week came back with
+# people at 48-52h while teammates in the same role sat at 25h. This pass
+# takes a person over the line back under it, deterministically:
+#   1. hand one of their shifts to a same-role teammate with room under
+#      their own line, fewest hours first (the latest shift in the payroll
+#      week first: that is where the premium hours are);
+#   2. when nobody can take a whole shift, trim the latest shift by the
+#      excess (at most 2.5h, never below a 4h shift) where another person
+#      in the role covers the trimmed stretch;
+#   3. otherwise leave it and say so.
+# Every change is kept only when the full rule sweep shows no new hard
+# breach anywhere (a rest gap, days in a row, a keyholder until close).
+# The line is 40h (labor.OVERTIME_THRESHOLD_HOURS), or the person's own
+# weekly maximum when the owner set it higher: that is the owner saying
+# this one may work overtime.
+
+OT_TRIM_MAX_HOURS = 2.5
+OT_MIN_SHIFT_HOURS = 4.0
+OT_MAX_SWEEPS = 300
+
+
+def overtime_line(c: "Constraints", name: str, line: float = None) -> float:
+    from labor import OVERTIME_THRESHOLD_HOURS
+    ot = float(line or OVERTIME_THRESHOLD_HOURS)
+    mx = c.max_hours(name)
+    lim = c.hours_limits.get((name or "").strip().lower())
+    if lim and lim[1] and float(lim[1]) > ot:
+        return mx
+    return min(mx, ot) if mx else ot
+
+
+def _hard_keys(rows: list, c: "Constraints") -> set:
+    return {(v.get("index"), v.get("kind")) for v in violations(rows, c) if v.get("hard")}
+
+
+def rebalance_overtime(rows: list, c: "Constraints", roster_roles: dict = None, editable=None,
+                       line: float = None, max_sweeps: int = OT_MAX_SWEEPS) -> dict:
+    """Returns {rows, moves: [{index, from, to, hours, reason}], trims:
+    [{index, employee, hours, was, now, reason}], left: [{employee, hours,
+    line}]}. `editable` (a set of dates) limits which rows may change — a
+    redo of some days keeps the owner's others."""
+    rows = [dict(r) for r in rows]
+    moves, trims, left = [], [], []
+    display, by_role = {}, {}
+    for n, role in (roster_roles or {}).items():
+        if n:
+            display.setdefault(n.strip().lower(), n)
+            by_role.setdefault((role or "").strip().lower(), set()).add(n.strip().lower())
+    for r in rows:
+        n = (r.get("employee") or "").strip()
+        if n:
+            display.setdefault(n.lower(), n)
+            by_role.setdefault((r.get("role") or "").strip().lower(), set()).add(n.lower())
+
+    def hours_by(rs):
+        out = {}
+        for low, per in (c.base_hours or {}).items():
+            for b, h in (per or {}).items():
+                out[(low, b)] = out.get((low, b), 0.0) + float(h or 0)
+        for r in rs:
+            low = (r.get("employee") or "").strip().lower()
+            if low and r.get("date"):
+                k = (low, c.bucket(r["date"]))
+                out[k] = out.get(k, 0.0) + row_hours(r)
+        return out
+
+    def ok_date(r):
+        return editable is None or r.get("date") in editable
+
+    sweeps = 0
+    base = _hard_keys(rows, c)
+    hb = hours_by(rows)
+    over = sorted(((h - overtime_line(c, display.get(low, low), line), low, b) for (low, b), h in hb.items()
+                   if b and h > overtime_line(c, display.get(low, low), line) + 0.05), reverse=True)
+    for _excess, low, b in over:
+        name = display.get(low, low)
+        mine = [i for i, r in enumerate(rows) if (r.get("employee") or "").strip().lower() == low
+                and r.get("date") and c.bucket(r["date"]) == b and ok_date(r)]
+        mine.sort(key=lambda i: (rows[i].get("date") or "", parse_minutes(rows[i].get("shift_start")) or 0), reverse=True)
+        for i in mine:
+            if hb.get((low, b), 0.0) <= overtime_line(c, name, line) + 0.05 or sweeps >= max_sweeps:
+                break
+            r = rows[i]
+            h = row_hours(r)
+            role = (r.get("role") or "").strip().lower()
+            taken = {(x.get("employee") or "").strip().lower() for x in rows if x.get("date") == r.get("date")}
+            cands = sorted((n for n in by_role.get(role, ()) if n != low and n not in taken),
+                           key=lambda n: (hb.get((n, b), 0.0), n))
+            for n in cands:
+                if sweeps >= max_sweeps:
+                    break
+                who = display.get(n, n)
+                if hb.get((n, b), 0.0) + h > overtime_line(c, who, line) + 0.05:
+                    continue
+                ok, _why = c.can_work(who, r.get("date", ""), daypart_of(r.get("shift_start", "")))
+                if not ok:
+                    continue
+                trial = [dict(x) for x in rows]
+                trial[i]["employee"] = who
+                sweeps += 1
+                keys = _hard_keys(trial, c)
+                if keys - base:
+                    continue
+                note = (trial[i].get("notes") or "").strip()
+                trial[i]["notes"] = (note + f" (was {name} — kept them under {overtime_line(c, name, line):g}h)").strip()
+                rows, base = trial, keys
+                hb[(low, b)] = hb.get((low, b), 0.0) - h
+                hb[(n, b)] = hb.get((n, b), 0.0) + h
+                moves.append({"index": i, "from": name, "to": who, "hours": h, "kind": "overtime",
+                              "reason": f"{name} would have run {hb[(low, b)] + h:g}h this payroll week; "
+                                        f"{who} had room ({hb[(n, b)] - h:g}h) — no overtime."})
+                break
+        excess = hb.get((low, b), 0.0) - overtime_line(c, name, line)
+        if excess > 0.05 and mine and sweeps < max_sweeps:
+            cut = math.ceil(excess * 4) / 4.0
+            for i in mine:
+                r = rows[i]
+                if (r.get("employee") or "").strip().lower() != low:
+                    continue
+                h = row_hours(r)
+                s, e = parse_minutes(r.get("shift_start")), parse_minutes(r.get("shift_end"))
+                if cut > OT_TRIM_MAX_HOURS or h - cut < OT_MIN_SHIFT_HOURS or s is None or e is None:
+                    continue
+                if e <= s:
+                    e += 24 * 60
+                role = (r.get("role") or "").strip().lower()
+                others = []
+                for j, x in enumerate(rows):
+                    if j == i or x.get("date") != r.get("date") or (x.get("role") or "").strip().lower() != role:
+                        continue
+                    xs, xe = parse_minutes(x.get("shift_start")), parse_minutes(x.get("shift_end"))
+                    if xs is None or xe is None:
+                        continue
+                    others.append((xs, xe + (24 * 60 if xe <= xs else 0)))
+                m = int(round(cut * 60))
+                for side in ("end", "start"):
+                    lo, hi = ((e - m, e) if side == "end" else (s, s + m))
+                    if not any(os_ <= lo and oe >= hi for os_, oe in others):
+                        continue
+                    trial = [dict(x) for x in rows]
+                    if side == "end":
+                        trial[i]["shift_end"] = _fmt_minutes((e - m) % (24 * 60))
+                    else:
+                        trial[i]["shift_start"] = _fmt_minutes(s + m)
+                    trial[i]["scheduled_hours"] = str(round(h - cut, 2)).rstrip("0").rstrip(".")
+                    sweeps += 1
+                    keys = _hard_keys(trial, c)
+                    if keys - base:
+                        continue
+                    trims.append({"index": i, "employee": name, "hours": cut,
+                                  "was": f"{r.get('shift_start')}–{r.get('shift_end')}",
+                                  "now": f"{trial[i]['shift_start']}–{trial[i]['shift_end']}", "kind": "overtime",
+                                  "reason": f"Cut {name}'s {r.get('day') or r.get('date')} shift by {cut:g}h, "
+                                            f"covered by the rest of the {r.get('role') or 'role'} — no overtime."})
+                    rows, base = trial, keys
+                    hb[(low, b)] = hb.get((low, b), 0.0) - cut
+                    break
+                if hb.get((low, b), 0.0) <= overtime_line(c, name, line) + 0.05:
+                    break
+        still = hb.get((low, b), 0.0)
+        if still > overtime_line(c, name, line) + 0.05:
+            left.append({"employee": name, "hours": round(still, 2), "line": overtime_line(c, name, line),
+                         "role": next(((x.get("role") or "") for x in rows if (x.get("employee") or "").strip().lower() == low), "")})
+    return {"rows": rows, "moves": moves, "trims": trims, "left": left, "sweeps": sweeps,
+            "over_before": [{"employee": display.get(low, low), "over_by": round(x, 2)} for x, low, _b in over]}
+
+
+def close_out_gaps(rows: list, c: "Constraints", editable=None, line: float = None,
+                   max_sweeps: int = 60) -> dict:
+    """A night nobody (or no keyholder) is on until close, when a keyholder
+    already works that night: their shift runs on to close (plus their
+    role's minutes after close), if that keeps them under the overtime line
+    and the shift-length rule and the full sweep shows no new hard breach.
+    The model reads "Close: 12:00am Thu-Sat" and still ends the night at
+    11:30pm; this is the deterministic backstop, the same shape as
+    _enforce_close_time. Returns {rows, extended: [{index, employee, from,
+    to, day, reason}]}."""
+    rows = [dict(r) for r in rows]
+    extended = []
+    if not c.keyholders:
+        return {"rows": rows, "extended": extended}
+    base = _hard_keys(rows, c)
+    sweeps = 0
+    hours = {}
+    for r in rows:
+        low = (r.get("employee") or "").strip().lower()
+        if low and r.get("date"):
+            k = (low, c.bucket(r["date"]))
+            hours[k] = hours.get(k, 0.0) + row_hours(r)
+    for low, per in (c.base_hours or {}).items():
+        for b, h in (per or {}).items():
+            hours[(low, b)] = hours.get((low, b), 0.0) + float(h or 0)
+    max_shift = float(c.compliance.get("max_shift_hours") or DEFAULTS.get("max_shift_hours") or 12)
+    dates = sorted({r.get("date") for r in rows if r.get("date")})
+    for d in dates:
+        if d in (c.closed_dates or set()) or (editable is not None and d not in editable) or sweeps >= max_sweeps:
+            continue
+        try:
+            day = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
+        except (ValueError, TypeError):
+            continue
+        close_m = close_minutes(c, day)
+        if close_m is None:
+            continue
+        items = [(i, r) for i, r in enumerate(rows) if r.get("date") == d and (r.get("employee") or "").strip()]
+        ends = [(end_minutes(r), i, r) for i, r in items if end_minutes(r) is not None]
+        if not ends:
+            continue
+        kh = [(e, i, r) for e, i, r in ends if (r.get("employee") or "").strip().lower() in c.keyholders]
+        if any(e >= close_m - 15 for e, _i, _r in kh):
+            continue
+        for e, i, r in sorted(kh, key=lambda t: -t[0]):
+            if sweeps >= max_sweeps:
+                break
+            s = parse_minutes(r.get("shift_start", ""))
+            if s is None or e < close_m - 3 * 60:
+                continue          # a day shift is not stretched into the night
+            role = (r.get("role") or "").strip().lower()
+            new_end = close_m + int((c.close_mins or {}).get(role, 0) or 0)
+            add = (new_end - e) / 60.0
+            new_len = (new_end - s) / 60.0
+            name = (r.get("employee") or "").strip()
+            k = (name.lower(), c.bucket(d))
+            if new_len > max_shift + 0.01 or hours.get(k, 0.0) + add > overtime_line(c, name, line) + 0.05:
+                continue
+            trial = [dict(x) for x in rows]
+            trial[i]["shift_end"] = _fmt_minutes(new_end % (24 * 60))
+            trial[i]["scheduled_hours"] = str(round(new_len, 2)).rstrip("0").rstrip(".")
+            sweeps += 1
+            keys = _hard_keys(trial, c)
+            if keys - base:
+                continue
+            extended.append({"index": i, "employee": name, "day": day, "from": r.get("shift_end"),
+                             "to": trial[i]["shift_end"], "kind": "close",
+                             "reason": f"Kept {name} on until close ({_fmt_minutes(close_m % (24 * 60))}) on {day} — "
+                                       "nobody who can lock up was on to the end."})
+            rows, base = trial, keys
+            hours[k] = hours.get(k, 0.0) + add
+            break
+    return {"rows": rows, "extended": extended}

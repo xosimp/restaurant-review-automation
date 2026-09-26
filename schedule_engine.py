@@ -2994,23 +2994,62 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 if _trimmed:
                     hours_scheduled = _safe_hours_sum(preview_rows)
                     print(f"[schedule] trimmed {_hours_trimmed}h to the budget ({len(_trimmed)} rows)")
+            # Overtime first (schedule_rules.rebalance_overtime): a person
+            # over the 40h line hands shifts to a same-role teammate with
+            # room, or has the last shift trimmed where the role is covered,
+            # before any other fix runs. Each move is a "Fixed by Cavnar AI"
+            # line; what could not be moved is named in the review.
+            _ot_fixes = []
             try:
-                from models import get_role_rates as _grr
-                _rates = _grr(restaurant_id)
-                _priced = _econ.priced_cost(preview_rows, _rates, result.get("blended_rate") or (_rates or {}).get("_default"),
-                                            # Overtime is priced from the 40h line
-                                            # (labor.OVERTIME_THRESHOLD_HOURS), never the
-                                            # owner's hours ceiling: a 35h ceiling priced
-                                            # $50 of "premium" on a week that owes none (NS3 H5).
-                                            ceiling=_labor_ot_line(),
-                                            base_hours={n: dict(v) for n, v in (_constraints.base_hours or {}).items()},
-                                            bucket=_constraints.bucket,
-                                            daily_ot_hours=_constraints.compliance.get("daily_ot_hours"))
-                result["projected_cost"] = _priced
-                _lbd = float(result.get("labor_budget_dollars") or 0)
-                result["over_budget_dollars"] = round(_priced["total"] - _lbd, 0) if _lbd else None
-            except Exception as _px:
-                print(f"[schedule] pricing failed: {_px}")
+                _ot = _rules.rebalance_overtime(preview_rows, _constraints,
+                                                roster_roles=result.get("roster_roles") or {}, editable=_editable)
+                if _ot["moves"] or _ot["trims"]:
+                    preview_rows = _ot["rows"]
+                    hours_scheduled = _safe_hours_sum(preview_rows)
+                    for _m in _ot["moves"]:
+                        _ot_fixes.append({"index": _m["index"], "from": _m["from"], "to": _m["to"],
+                                          "kind": "overtime", "reason": _m["reason"]})
+                    for _t in _ot["trims"]:
+                        _ot_fixes.append({"index": _t["index"], "from": _t["employee"] + " " + _t["was"],
+                                          "to": _t["now"], "kind": "overtime", "reason": _t["reason"]})
+                # A night nobody who can lock up is on to close: a keyholder
+                # already on runs on to it, inside the same overtime line.
+                _co = _rules.close_out_gaps(preview_rows, _constraints, editable=_editable)
+                if _co["extended"]:
+                    preview_rows = _co["rows"]
+                    hours_scheduled = _safe_hours_sum(preview_rows)
+                    for _x in _co["extended"]:
+                        _ot_fixes.append({"index": _x["index"], "from": _x["employee"] + " " + _x["from"],
+                                          "to": _x["to"], "kind": "close", "reason": _x["reason"]})
+                result["overtime_rebalance"] = {"over_before": _ot["over_before"], "moved": len(_ot["moves"]),
+                                                "trimmed": len(_ot["trims"]), "left": _ot["left"]}
+                print(f"[schedule] overtime pass: {len(_ot['moves'])} moved, {len(_ot['trims'])} trimmed, "
+                      f"{len(_ot['left'])} still over ({_ot['sweeps']} checks)")
+            except Exception as _otx:
+                print(f"[schedule] overtime pass failed: {_otx}")
+            def _price_week(_rows):
+                try:
+                    from models import get_role_rates as _grr
+                    _rates = _grr(restaurant_id)
+                    _priced = _econ.priced_cost(_rows, _rates, result.get("blended_rate") or (_rates or {}).get("_default"),
+                                                # Overtime is priced from the 40h line
+                                                # (labor.OVERTIME_THRESHOLD_HOURS), never the
+                                                # owner's hours ceiling: a 35h ceiling priced
+                                                # $50 of "premium" on a week that owes none (NS3 H5).
+                                                ceiling=_labor_ot_line(),
+                                                base_hours={n: dict(v) for n, v in (_constraints.base_hours or {}).items()},
+                                                bucket=_constraints.bucket,
+                                                daily_ot_hours=_constraints.compliance.get("daily_ot_hours"))
+                    result["projected_cost"] = _priced
+                    _lbd = float(result.get("labor_budget_dollars") or 0)
+                    result["over_budget_dollars"] = round(_priced["total"] - _lbd, 0) if _lbd else None
+                except Exception as _px:
+                    print(f"[schedule] pricing failed: {_px}")
+            # Priced here and again on the final rows (below): the fix pass,
+            # the solver and the optimizer all change rows after this point,
+            # and a cost priced before them showed overtime the week no
+            # longer had (9/26/26).
+            _price_week(preview_rows)
 
             # Every rule the week is checked against, in one sweep
             # (schedule_rules.violations): the roster, the week, double
@@ -3021,7 +3060,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # replacement can fix are fixed and tagged; the rest are flagged
             # for the owner and never counted as coverage.
             _viols = _rules.violations(preview_rows, _constraints)
-            _fixes, _unfixed = [], []
+            _fixes, _unfixed = list(_ot_fixes), []
             _hard = [v for v in _viols if v["hard"]
                      and (_editable is None or (preview_rows[v["index"]].get("date") in _editable))]
             # A missed run of days off is fixed here too (one of the person's
@@ -3033,11 +3072,16 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     _sig, _w = _quality_signals(restaurant_id, result)
                     _profiles_for_fix = result.get("shift_profiles") or None
                     import shift_quality as _sqf
+                    # The candidate budget grows with the roster: sized for ~20
+                    # people, a 55-person week ran out before its days-off
+                    # fixes were tried (9/26/26).
                     _out = _sqf.apply_fixes(preview_rows, _hard + _days_off, profiles=_profiles_for_fix, weights=_w,
-                                            rule_constraints=_constraints, only_dates=_editable, **_sig)
+                                            rule_constraints=_constraints, only_dates=_editable,
+                                            max_evaluations=max(_sqf.MAX_CANDIDATE_EVALUATIONS,
+                                                                3 * len(result.get("roster") or [])), **_sig)
                     if _out.get("fixes"):
                         preview_rows = _out["rows"]
-                        _fixes = _out["fixes"]
+                        _fixes = _ot_fixes + _out["fixes"]
                         hours_scheduled = _safe_hours_sum(preview_rows)
                         _viols = _rules.violations(preview_rows, _constraints)
                     _unfixed = _out.get("unfixed") or []
@@ -3379,6 +3423,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # marking it. It rides in the notes column now, which is the one
             # field a human actually reads on the printed schedule.
             if preview_rows:
+                _price_week(preview_rows)
                 _lines_out = [",".join(_COLS)]
                 for _r in preview_rows:
                     if _r.get("needs_review"):

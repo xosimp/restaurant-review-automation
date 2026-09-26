@@ -54,8 +54,14 @@ SIMPLE_EJS_NAME = "Simple EJ's"
 SIMPLE_EJS_EMAIL = "cavnarwill@gmail.com"
 
 _EJS_ROSTER = [
-    # name, role, operational score, typical start, typical end, hours
-    ("Marcus R.", "Bartender", 5, "3:00pm", "11:30pm", 8.5),
+    # name, role, operational score, typical start, typical end, hours.
+    # 55 people (owner, 9/26/26: Erik's real headcount; three managers, so
+    # open to close seven days fits without overtime), the first 19 the
+    # original demo roster so ratings and history on those names carry on.
+    # A shift of 7h or more is a full-timer (five days a week at most); a
+    # shorter one is part-time (three) — the history below keeps everybody
+    # at or under 40h, the way a manager who avoids overtime writes a week.
+    ("Marcus R.", "Bartender", 5, "3:00pm", "11:00pm", 8.0),
     ("Devon K.",  "Bartender", 4, "4:00pm", "11:30pm", 7.5),
     ("Priya S.",  "Bartender", 3, "4:00pm", "10:30pm", 6.5),
     ("Cole T.",   "Bartender", 2, "5:00pm", "11:00pm", 6.0),
@@ -64,7 +70,7 @@ _EJS_ROSTER = [
     ("Hana W.",   "Server",    3, "11:00am", "5:00pm", 6.0),
     ("Trey B.",   "Server",    3, "4:30pm", "10:30pm", 6.0),
     ("Simone A.", "Server",    2, "5:00pm", "10:00pm", 5.0),
-    ("Vince L.",  "Line Cook", 5, "2:00pm", "11:00pm", 9.0),
+    ("Vince L.",  "Line Cook", 5, "2:00pm", "10:00pm", 8.0),
     ("Omar H.",   "Line Cook", 4, "3:00pm", "11:00pm", 8.0),
     ("Bea C.",    "Line Cook", 3, "3:00pm", "10:30pm", 7.5),
     ("Nico F.",   "Line Cook", 1, "4:00pm", "10:00pm", 6.0),
@@ -74,15 +80,51 @@ _EJS_ROSTER = [
     ("Milo J.",   "Host",      3, "11:00am", "4:30pm", 5.5),
     ("Kase N.",   "Busser",    3, "4:30pm", "10:30pm", 6.0),
     ("Lupe V.",   "Busser",    2, "4:30pm", "10:30pm", 6.0),
+    ("Dana S.",   "Manager",   5, "10:00am", "6:00pm", 8.0),
+    ("Luis G.",   "Manager",   5, "4:00pm", "12:00am", 8.0),
+    ("Jade F.",   "Bartender", 4, "3:00pm", "11:00pm", 8.0),
+    ("Owen P.",   "Bartender", 3, "5:00pm", "11:30pm", 6.5),
+    ("Rita M.",   "Bartender", 3, "11:00am", "5:00pm", 6.0),
+    ("Sam K.",    "Bartender", 2, "6:00pm", "12:00am", 6.0),
+    ("Carla D.",  "Server",    5, "4:00pm", "11:00pm", 7.0),
+    ("Ben Y.",    "Server",    4, "10:30am", "5:30pm", 7.0),
+    ("Mia L.",    "Server",    4, "4:00pm", "11:00pm", 7.0),
+    ("Theo R.",   "Server",    3, "11:00am", "4:30pm", 5.5),
+    ("Nadia P.",  "Server",    3, "5:00pm", "10:30pm", 5.5),
+    ("Grant W.",  "Server",    3, "4:30pm", "11:30pm", 7.0),
+    ("Ivy C.",    "Server",    2, "11:00am", "4:00pm", 5.0),
+    ("Jonah E.",  "Server",    2, "5:00pm", "10:00pm", 5.0),
+    ("Lena B.",   "Server",    4, "10:30am", "5:30pm", 7.0),
+    ("Parker S.", "Manager",   4, "4:00pm", "12:00am", 8.0),
+    ("Zoe H.",    "Server",    3, "4:00pm", "10:00pm", 6.0),
+    ("Diego M.",  "Line Cook", 4, "10:00am", "6:00pm", 8.0),
+    ("Ray T.",    "Line Cook", 4, "3:00pm", "11:00pm", 8.0),
+    ("Kofi A.",   "Line Cook", 3, "10:30am", "5:30pm", 7.0),
+    ("Hector L.", "Line Cook", 3, "4:00pm", "12:00am", 8.0),
+    ("Sean O.",   "Line Cook", 2, "5:00pm", "11:00pm", 6.0),
+    ("Andre B.",  "Line Cook", 2, "11:00am", "5:00pm", 6.0),
+    ("Maria V.",  "Prep Cook", 4, "7:00am", "3:00pm", 8.0),
+    ("Tomas R.",  "Prep Cook", 2, "9:00am", "2:00pm", 5.0),
+    ("Lily A.",   "Host",      3, "10:30am", "4:30pm", 6.0),
+    ("Noah C.",   "Host",      2, "5:00pm", "10:00pm", 5.0),
+    ("Ella G.",   "Host",      3, "4:00pm", "10:00pm", 6.0),
+    ("Chris V.",  "Host",      2, "11:00am", "4:00pm", 5.0),
+    ("Eddie F.",  "Busser",    3, "11:00am", "5:00pm", 6.0),
+    ("Rosa N.",   "Busser",    3, "5:00pm", "11:00pm", 6.0),
+    ("Kai M.",    "Busser",    2, "5:00pm", "10:30pm", 5.5),
+    ("Jalen T.",  "Busser",    2, "11:00am", "4:00pm", 5.0),
+    ("Victor S.", "Dishwasher", 3, "3:00pm", "11:00pm", 8.0),
+    ("Paulo C.",  "Dishwasher", 3, "10:00am", "4:00pm", 6.0),
+    ("Dee W.",    "Dishwasher", 2, "5:00pm", "12:00am", 7.0),
 ]
 
 # Who is trusted to lock up. Deliberately not the highest scores: being
 # trusted with keys and cash is a different thing from being good on a
 # Saturday, which is the whole reason the capability layer stores it as a
 # flag rather than a point on the rating scale.
-_EJS_CLOSERS = ("Marcus R.", "Angela M.", "Vince L.")
+_EJS_CLOSERS = ("Marcus R.", "Angela M.", "Vince L.", "Dana S.", "Luis G.", "Parker S.", "Jade F.", "Hector L.")
 
-_EJS_HOURS = (
+_EJS_HOURS_V1 = (
     "RESTAURANT HOURS: Open 11:00am Mon-Sat, 10:00am Sunday. "
     "Close: 10:00pm Sun-Wed; 12:00am Thu-Sat.\n\n"
     "STAFF ARRIVAL TIMES:\n"
@@ -108,6 +150,13 @@ _EJS_HOURS = (
     "- Servers 5-7h, bartenders 6-9h, line cooks 7-9h, prep 7-8h, "
     "hosts 5-6h, bussers 5-6h."
 )
+# The 55-person roster adds managers and dish (9/26/26).
+_EJS_HOURS = _EJS_HOURS_V1 + (
+    "\n\nMANAGERS AND DISH:\n"
+    "- Managers: one on every open hour; the night manager closes.\n"
+    "- Dishwashers: one from 10:00am, one from 3:00pm to close; two at night Thu-Sat.\n"
+    "- Nobody past 40 hours in a week: spread the hours across the role."
+)
 
 _EJS_SCHED_NOTES = (
     "Thursday through Saturday nights are the week. Sunday is a steady "
@@ -115,10 +164,11 @@ _EJS_SCHED_NOTES = (
     "pair and are where somebody new should be learning."
 )
 
-_EJS_ROLE_RATES = {
+_EJS_ROLE_RATES_V1 = {
     "Bartender": 9.00, "Server": 9.00, "Busser": 9.00, "Host": 15.00,
     "Line Cook": 21.00, "Prep Cook": 19.00,
 }
+_EJS_ROLE_RATES = dict(_EJS_ROLE_RATES_V1, **{"Manager": 24.00, "Dishwasher": 15.00})
 
 _EJS_CLOSE_TIMES = {
     "Sunday": "10:00pm", "Monday": "10:00pm", "Tuesday": "10:00pm",
@@ -189,36 +239,44 @@ def _seed_ejs_history(rid: int, db_path: str):
     PAR budget all have something real to work from."""
     from datetime import date, timedelta
     # Monday quiet through Saturday peak. Sunday is steady all-day trade.
-    BY_WEEKDAY = {0: (4100, 52), 1: (3900, 50), 2: (5200, 61), 3: (7400, 78),
-                  4: (11800, 116), 5: (13200, 128), 6: (8600, 90)}
+    # Hours are the 55-person roster's (_ejs_history_rows' weekday totals),
+    # at its blended rate.
+    BY_WEEKDAY = {0: (4100, 127), 1: (3900, 116), 2: (5200, 147), 3: (7400, 189),
+                  4: (11800, 228), 5: (13200, 226), 6: (8600, 146)}
+    RATE = 13.96
+    # The first seed's (sales, hours) pairs: a row still holding one is this
+    # seed's placeholder, never a POS day, and is brought up to the roster.
+    OLD = {(4100.0, 52.0), (3900.0, 50.0), (5200.0, 61.0), (7400.0, 78.0),
+           (11800.0, 116.0), (13200.0, 128.0), (8600.0, 90.0)}
     conn = get_conn(db_path)
     try:
         days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-        d = date(2025, 6, 2)
-        while d <= date(2025, 6, 29):
+
+        def put(d, replace):
             sales, hours = BY_WEEKDAY[d.weekday()]
-            cost = round(hours * 12.5, 2)
+            cost = round(hours * RATE, 2)
+            ds = d.strftime("%Y-%m-%d")
+            if not replace:
+                cur = conn.execute("SELECT sales, total_hours FROM labor_daily_history WHERE restaurant_id=? AND date=?",
+                                   (rid, ds)).fetchone()
+                if cur and (float(cur[0] or 0), float(cur[1] or 0)) not in OLD:
+                    return   # a real day (a POS sync) is never overwritten by a placeholder
             conn.execute("""INSERT OR REPLACE INTO labor_daily_history
                 (restaurant_id, date, day_of_week, labor_pct, labor_cost, sales,
                  total_hours, saved_at)
                 VALUES (?,?,?,?,?,?,?,datetime('now'))""",
-                (rid, d.strftime("%Y-%m-%d"), days[d.weekday()],
-                 round(cost / sales * 100, 2), cost, float(sales), float(hours)))
+                (rid, ds, days[d.weekday()], round(cost / sales * 100, 2), cost, float(sales), float(hours)))
+
+        d = date(2025, 6, 2)
+        while d <= date(2025, 6, 29):
+            put(d, True)
             d += timedelta(days=1)
         # And the trailing six weeks, anchored to today: food cost % divides
         # purchases by the sales of the same window, and a window that ends
-        # today needs sales through today. OR IGNORE — a row a POS sync
-        # wrote for a real date is never overwritten by a placeholder.
+        # today needs sales through today.
         d = date.today() - timedelta(days=41)
         while d <= date.today():
-            sales, hours = BY_WEEKDAY[d.weekday()]
-            cost = round(hours * 12.5, 2)
-            conn.execute("""INSERT OR IGNORE INTO labor_daily_history
-                (restaurant_id, date, day_of_week, labor_pct, labor_cost, sales,
-                 total_hours, saved_at)
-                VALUES (?,?,?,?,?,?,?,datetime('now'))""",
-                (rid, d.strftime("%Y-%m-%d"), days[d.weekday()],
-                 round(cost / sales * 100, 2), cost, float(sales), float(hours)))
+            put(d, False)
             d += timedelta(days=1)
         conn.commit()
     finally:
@@ -230,6 +288,18 @@ def _seed_ejs_settings(rid: int, db_path: str):
     never been configured, so an admin edit is never overwritten."""
     existing = get_restaurant(rid, db_path)
     if existing and (existing.hours_notes or "").strip():
+        # Still exactly the first seed's text (nobody edited it): bring it
+        # up to the 55-person roster — the managers and dish lines and
+        # their pay rates. An edited account is left alone.
+        if (existing.hours_notes or "").strip() == _EJS_HOURS_V1.strip():
+            upd = {"hours_notes": _EJS_HOURS}
+            try:
+                if json.loads(existing.role_rates_json or "{}") == _EJS_ROLE_RATES_V1:
+                    upd["role_rates_json"] = json.dumps(_EJS_ROLE_RATES)
+            except (TypeError, ValueError):
+                pass
+            update_restaurant(rid, upd, db_path=db_path)
+            print(f"[auto-seed] {SIMPLE_EJS_NAME} settings upgraded to the 55-person roster")
         return
     update_restaurant(rid, {
         "monthly_revenue_target": 232000.0,
@@ -254,6 +324,60 @@ def _seed_ejs_settings(rid: int, db_path: str):
     print(f"[auto-seed] {SIMPLE_EJS_NAME} settings written")
 
 
+# Sales and the share of each role on, by weekday: Monday quiet through
+# Saturday peak, Sunday a steady all-day trade.
+_EJS_BY_WEEKDAY = {0: (4100, 0.55), 1: (3900, 0.55), 2: (5200, 0.7), 3: (7400, 0.85),
+                   4: (11800, 1.0), 5: (13200, 1.0), 6: (8600, 0.8)}
+_EJS_PEAK_SHARE = 0.6          # of a role on at the Friday/Saturday peak
+_EJS_ROLE_MIN = {"Manager": 1, "Server": 2, "Line Cook": 2, "Bartender": 1, "Host": 1,
+                 "Busser": 1, "Prep Cook": 1, "Dishwasher": 1}
+_EJS_WEEK_CAP = 40.0
+
+
+def _ejs_history_rows(start, n_days):
+    """[date, day, employee, role, start, end, hours, actual, sales] rows.
+
+    Each day a role puts on its share of people for that weekday's volume,
+    choosing whoever has worked the fewest days this week (full-timers first,
+    part-timers filling the busy days), and nobody past five days (three
+    part-time) or 40 hours: the history reads like a manager who avoids
+    overtime, so the drafts it teaches do too. Deterministic."""
+    from datetime import timedelta
+    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    by_role = {}
+    for name, role, _score, st, en, hrs in _EJS_ROSTER:
+        by_role.setdefault(role, []).append((name, st, en, float(hrs)))
+    out, week_days, week_hours = [], {}, {}
+    d = start
+    for k in range(n_days):
+        if k == 0 or d.weekday() == 0:
+            week_days, week_hours = {}, {}
+        sales, share = _EJS_BY_WEEKDAY[d.weekday()]
+        for role, people in by_role.items():
+            need = max(_EJS_ROLE_MIN.get(role, 1), int(round(len(people) * share * _EJS_PEAK_SHARE)))
+            if role == "Manager" and share >= 0.85:
+                need = len(people)
+
+            def rank(p, _k=k):
+                name, _st, _en, hrs = p
+                pt = hrs < 7
+                return (week_days.get(name, 0), 1 if (pt and share < 0.85) else 0,
+                        (people.index(p) + _k) % len(people))
+            picked = 0
+            for name, st, en, hrs in sorted(people, key=rank):
+                if picked >= need:
+                    break
+                max_days = 5 if hrs >= 7 else 3
+                if week_days.get(name, 0) >= max_days or week_hours.get(name, 0.0) + hrs > _EJS_WEEK_CAP:
+                    continue
+                out.append([d.strftime("%Y-%m-%d"), days[d.weekday()], name, role, st, en, hrs, hrs, sales])
+                week_days[name] = week_days.get(name, 0) + 1
+                week_hours[name] = week_hours.get(name, 0.0) + hrs
+                picked += 1
+        d += timedelta(days=1)
+    return out
+
+
 def _seed_ejs_shifts(rid: int, db_path: str):
     """Two weeks of shifts, generated rather than hand-written so the roster,
     the day-of-week volume and the role mix stay consistent with each other."""
@@ -269,28 +393,13 @@ def _seed_ejs_shifts(rid: int, db_path: str):
     if row and row["shifts_source"] in ("upload", "toast"):
         return   # a real upload always wins
 
-    BY_WEEKDAY = {0: (4100, 0.55), 1: (3900, 0.55), 2: (5200, 0.7), 3: (7400, 0.85),
-                  4: (11800, 1.0), 5: (13200, 1.0), 6: (8600, 0.8)}
-    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-    lines = ["date,day,employee,role,shift_start,shift_end,scheduled_hours,"
-             "actual_hours,sales,notes"]
     # The fourteen days ending yesterday, re-dated on every boot, so the
     # demo's Labor tab reads as current rather than ageing into "Out of
     # date" the way a fixed 8/31-9/13 window did (9/25/26).
-    d = date.today() - timedelta(days=14)
-    for _ in range(14):
-        sales, share = BY_WEEKDAY[d.weekday()]
-        # A quieter day drops the back half of each role rather than
-        # thinning every role evenly — which is how a real rota shrinks.
-        by_role = {}
-        for name, role, _score, start, end, hours in _EJS_ROSTER:
-            by_role.setdefault(role, []).append((name, start, end, hours))
-        for role, people in by_role.items():
-            keep = max(1, int(round(len(people) * share)))
-            for name, start, end, hours in people[:keep]:
-                lines.append(f"{d.strftime('%Y-%m-%d')},{days[d.weekday()]},{name},{role},"
-                             f"{start},{end},{hours},{hours},{sales},")
-        d += timedelta(days=1)
+    lines = ["date,day,employee,role,shift_start,shift_end,scheduled_hours,"
+             "actual_hours,sales,notes"]
+    for r in _ejs_history_rows(date.today() - timedelta(days=14), 14):
+        lines.append(",".join(str(x) for x in r) + ",")
     save_client_data(rid, "shifts", "\n".join(lines), source="seed", db_path=db_path)
     print(f"[auto-seed] {SIMPLE_EJS_NAME} shift data written ({len(lines) - 1} rows)")
 
@@ -298,21 +407,37 @@ def _seed_ejs_shifts(rid: int, db_path: str):
 def _seed_ejs_capabilities(rid: int, db_path: str):
     """Operational Scores and closer flags, so the Shift Quality engine has
     something to show rather than sitting dormant behind a demo."""
-    existing = get_capabilities(rid, db_path=db_path)
-    if existing:
-        return   # already rated, by this seed or by hand
+    existing = get_capabilities(rid, db_path=db_path) or {}
+    # Per name: a person rated by hand keeps their rating; somebody the
+    # roster gained since the last seed is rated from it.
+    try:
+        rated = {str(k).strip().lower() for k in (existing.keys() if isinstance(existing, dict) else
+                                                   [e.get("employee_name") or e.get("name") for e in existing])}
+    except Exception:
+        rated = set()
+    added = 0
     for name, _role, score, _s, _e, _h in _EJS_ROSTER:
+        if name.lower() in rated:
+            continue
         try:
             set_capability(rid, name, score=score, updated_by="seed", db_path=db_path)
+            added += 1
         except Exception:
             pass
+    has_close = {str(k).strip().lower() for k, v in (existing.items() if isinstance(existing, dict) else [])
+                 if isinstance(v, dict) and "can_close" in v}   # set either way by hand: left alone
+    closers = 0
     for name in _EJS_CLOSERS:
+        if name.lower() in has_close:
+            continue
+        closers += 1
         try:
             set_capability(rid, name, attribute="can_close", flag=True,
                            updated_by="seed", db_path=db_path)
         except Exception:
             pass
-    print(f"[auto-seed] {SIMPLE_EJS_NAME} ratings written for {len(_EJS_ROSTER)} staff")
+    if added or closers:
+        print(f"[auto-seed] {SIMPLE_EJS_NAME} ratings written for {added} staff, {closers} closer(s) flagged")
 
 
 # ── Food Cost: a pantry with suppliers, a priced menu with recipes, six
