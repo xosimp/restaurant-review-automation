@@ -747,25 +747,13 @@ def test_pill_jump_flashes_the_element_it_scrolls_to():
     assert "_rvFlashJump(target)" in fn
 
 
-# ── brighter red/green/sand, scoped to the Reviews page only ─────────────
+# ── one palette: Reviews no longer brightens green/red/sand (9/26/26) ─────
 
-def test_reviews_panel_overrides_green_red_sand_to_more_vivid_values():
+def test_reviews_uses_the_site_palette():
+    """Reviews once redeclared --green/--red/--ink3 brighter for its panel
+    only, so "good" was two different greens across tabs (owner, 9/26/26)."""
     s = _src()
-    i = s.index('[data-theme="dark"] #panel-reviews{')
-    block = s[i:s.index("}", s.index("--green:", i)) + 1]
-    assert "--green:#35d67c;--red:#ff5c5c;--ink3:#e3c99a" in block
-
-
-def test_vivid_override_does_not_leak_into_other_modules():
-    """--green/--red are only redeclared brighter inside the Reviews
-    panel's own dark-theme override — every other module's #panel-* block
-    (Home, Labor, Food Cost, Intel, Account) never redeclares these
-    tokens, so they keep inheriting the original, muted site-wide dark
-    theme values instead of picking up Reviews' brighter ones."""
-    s = _src()
-    assert s.count("--green:#35d67c") == 1
-    assert s.count("--red:#ff5c5c") == 1
-    assert s.count("--ink3:#e3c99a") == 1
+    assert "--green:#35d67c" not in s and "--red:#ff5c5c" not in s and "--ink3:#e3c99a" not in s
 
 
 def test_topic_and_approval_bars_use_the_shared_good_bad_tokens_not_literal_hex():

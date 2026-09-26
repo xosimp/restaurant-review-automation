@@ -416,3 +416,22 @@ def test_a_bad_settings_value_cannot_make_a_restaurant_vanish_from_every_job(db_
     except (ValueError, TypeError):
         pass                                           # refusing the write is also correct
     assert rid in [r.id for r in models.get_all_restaurants(db_path=db_path)]
+
+
+def test_a_draft_with_an_experiment_arm_can_be_deleted(db_path):
+    """Every generation also records its A/B arm (schedule_experiments), and
+    that row's foreign key made deleting any new draft fail (owner,
+    9/26/26: "Something went wrong on our end")."""
+    import schedule_experiments as sx
+    sx.init_schedule_experiments(db_path=db_path)
+    rid = _rid(db_path)
+    hid = _history_with_version(db_path, rid)
+    sx.record(rid, hid, [{"experiment": "solver", "arm": "on", "pinned": False}], quality_score=80, db_path=db_path)
+    conn = models.get_conn(db_path)
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.close()
+    assert models.delete_schedule_history(hid, rid, db_path=db_path) is True
+    conn = models.get_conn(db_path)
+    left = conn.execute("SELECT COUNT(*) FROM schedule_experiment_weeks WHERE history_id=?", (hid,)).fetchone()[0]
+    conn.close()
+    assert left == 0

@@ -306,16 +306,13 @@ def test_print_buttons_where_an_owner_prints():
 
 # ── 5. Wide layouts ─────────────────────────────────────────────────────────
 
-def test_wide_screens_widen_only_the_dense_panels():
+def test_every_module_keeps_the_same_column_at_every_width():
+    """Labor and Food Cost widened past 1440px and their margins no longer
+    lined up with the other tabs (owner, 9/26/26)."""
     css = _block("/* ── Wide screens (web desk #5)", "/* ── end wide screens */")
-    assert "@media (min-width:1440px)" in css
-    assert "#panel-labor" in css and "#panel-inventory" in css
-    # Reviews stays one column: Trends opens below the inbox (owner, 9/26/26).
-    assert "#panel-reviews" not in css and "grid-template-columns" not in css
-    # Home's column is spec'd (DS §11b) and stays as it is.
-    assert "#panel-home" not in css and "hb-root" not in css
+    assert "@media" not in css and "max-width" not in css
 
 
 def test_design_system_documents_the_new_patterns():
-    for needle in ("data-sortable", "aria-sort", "@media print", "data-print", "1440px", "rv2-sel"):
+    for needle in ("data-sortable", "aria-sort", "@media print", "data-print", "rv2-sel"):
         assert needle in DS, needle

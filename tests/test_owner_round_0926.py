@@ -51,3 +51,16 @@ def test_the_import_picker_is_a_branded_button_with_no_native_box():
 
 def test_opened_schedule_sections_have_no_box():
     assert ".lb2-srow .lb2-avail{margin-top:0;background:none;border:none" in _src()
+
+
+def test_the_heaviest_weekday_is_a_red_spike_on_the_radar():
+    s = _src()
+    fn = s[s.index("function renderWeekRadar(){"):s.index("function renderWeekRadar(){") + 6000]
+    assert 'id="lbRadHot"' in fn and 'fill="url(#lbRadHot)"' in fn
+    assert "var over=vals[i]>target||i===worst;" in fn
+
+
+def test_ready_button_has_no_ember_glow_and_the_rule_above_every_day_is_gone():
+    s = _src()
+    assert "_schedBtn.style.boxShadow = 'none';" in s
+    assert "#lb2-money-all{border-top:none}" in s

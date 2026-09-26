@@ -246,10 +246,9 @@ Nothing renders with square corners.
 
 Module pages sit in one centred column: `.hb-wrap` / `.dr-wrap` /
 `.rh-wrap` at 1120px, Account's `.ac-page` at 1180px, the legacy `.panel`
-at 1080px. Past **1440px** the data-dense modules use the room (web desk
-#5): Labor and Food Cost widen to 1360px (1480px past 1800px). Reviews
-keeps one column at every width (owner, 9/26/26): Trends opens below the
-inbox, and Inbox | Analytics scroll to each. **Home keeps its single column at every width**:
+at 1080px, **at every width** (owner, 9/26/26): no module widens on a
+large screen, so every tab's margins line up. Reviews is one column too:
+Trends opens below the inbox, and Inbox | Analytics scroll to each. **Home keeps its single column at every width**:
 its order is §11b, and a second column would reorder it. A new wide rule
 goes in the "Wide screens" block at the end of `dashboard.html`, never on
 Home.

@@ -6667,6 +6667,15 @@ def delete_schedule_history(history_id: int, restaurant_id: int, db_path: str = 
         if not own["published_at"]:
             conn.execute("DELETE FROM schedule_versions WHERE history_id=? AND restaurant_id=?", (history_id, restaurant_id))
             conn.execute("DELETE FROM schedule_shares WHERE schedule_id=? AND restaurant_id=?", (history_id, restaurant_id))
+            # The week's experiment arm (schedule_experiments) is written by
+            # every generation too, and its foreign key made deleting any
+            # new draft fail with "Something went wrong" (owner, 9/26/26).
+            try:
+                conn.execute("DELETE FROM schedule_experiment_weeks WHERE history_id=? AND restaurant_id=?",
+                             (history_id, restaurant_id))
+            except sqlite3.OperationalError as _no_table:
+                if "no such table" not in str(_no_table):
+                    raise
         cur = conn.execute("DELETE FROM schedule_history WHERE id=? AND restaurant_id=?", (history_id, restaurant_id))
         conn.commit()
         return cur.rowcount > 0

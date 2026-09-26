@@ -557,6 +557,17 @@ html:not([data-theme="dark"]) .empty-state-sm.on-dark .es-sub{color:var(--ink3)}
 .cm-week .cm-blk{opacity:0}
 .cm-week.cm-run .cm-blk{animation:cmBlock .5s cubic-bezier(.2,.9,.3,1) forwards}
 .cm-week .cm-dash{stroke:#e8956a;stroke-width:2;stroke-dasharray:33 337;stroke-linecap:round;animation:cmDash 2.4s linear infinite}
+.cm-wk{width:100%}
+.cm-wk-track{position:relative;height:2px;border-radius:2px;background:var(--paper3);overflow:hidden;margin-bottom:16px}
+.cm-wk-dash{position:absolute;top:0;left:0;width:9%;height:2px;border-radius:2px;background:var(--ember2);animation:cmWkDash 2.4s linear infinite}
+@keyframes cmWkDash{from{transform:translateX(-100%)}to{transform:translateX(1111%)}}
+.cm-wk-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:12px 14px}
+.cm-wk-d{text-align:center;font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:600;color:var(--ink3)}
+.cm-wk .cm-blk,.cm-wk .cm-wk-gap{display:block;height:30px;border-radius:7px}
+.cm-wk .cm-blk{background:var(--paper3)}
+.cm-wk .cm-blk.e{background:var(--ember);box-shadow:0 0 14px rgba(212,88,58,.35)}
+.cm-wk-cap{margin-top:18px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember)}
+@media (prefers-reduced-motion:reduce){.cm-wk-dash{animation:none}}
 /* 07 Counting the Pantry */
 @keyframes cmBar{to{transform:scaleX(1)}}
 @keyframes cmSheen{0%{transform:translateX(-120%)}100%{transform:translateX(560%)}}
@@ -7157,15 +7168,10 @@ svg:hover .hb-xh{opacity:1}
 /* ── Reviews (rv2-*) — same language as Home: one hero chart, chart tiles,
    rows with a stripe, no boxes, no gray. Shares the hb-* rules from Home. */
 #panel-reviews{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.12);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-field:rgba(255,255,255,.55)}
-[data-theme="dark"] #panel-reviews{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(212,88,58,.09);--hb-tint2:rgba(212,88,58,.16);--hb-field:rgba(255,255,255,.05);
-  /* Reviews-only: the site-wide dark-theme green/red/sand read flat and
-     muted next to this page's flat canvas. --hb-good/--hb-bad (above) are
-     var(--green)/var(--red) resolved per-element, so overriding the three
-     tokens here — scoped to this panel's subtree only — brightens every
-     pill, ribbon, badge, hover tint and chart on this page without
-     touching Home/Labor/Food Cost/Marketing/Intel, which never redeclare
-     these tokens and keep the original muted values. */
-  --green:#35d67c;--red:#ff5c5c;--ink3:#e3c99a}
+[data-theme="dark"] #panel-reviews{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(212,88,58,.09);--hb-tint2:rgba(212,88,58,.16);--hb-field:rgba(255,255,255,.05)}
+/* Reviews uses the site's own green, red and sand (owner, 9/26/26): it
+   used to redeclare brighter ones for this page only, so the same "good"
+   read as two different greens depending on the tab. */
 #panel-reviews .hb-chip .v{display:inline-flex;align-items:baseline;gap:2px}
 /* The star used to be a bare character running straight into the rating
    number with zero gap — wrapping it in its own element lets the shared
@@ -8393,6 +8399,8 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .lb2-bn .pct.good{color:var(--hb-good)}.lb2-bn .pct.bad{color:var(--hb-bad)}
 .lb2-bn .lb2-gap{font-size:15px;font-weight:600;color:var(--hb-warn)}.lb2-bn .lb2-gap .hb-num{font-size:18px;color:var(--hb-warn)}.lb2-bn .lb2-gap.good{color:var(--hb-good)}
 #panel-labor .two-col{margin-top:34px;padding-top:22px;border-top:1px solid var(--hb-line);display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px}
+/* No rule above the Every day and person disclosure (owner, 9/26/26). */
+#lb2-money-all{border-top:none}
 /* Inside the Every day and person disclosure the summary's own rule is the
    line; the grid's second one under it doubled it (9/25/26). */
 @media (max-width:1000px){.lb2-sig{grid-template-columns:1fr}.lb2-sg{border-right:none;margin-right:0;padding:0 0 18px;border-bottom:1px solid var(--hb-line2);margin-bottom:18px}.lb2-sg:last-child{border-bottom:none;margin-bottom:0}#panel-labor .two-col{grid-template-columns:1fr}}
@@ -13289,7 +13297,12 @@ function cavnarRadarHtml(caption,size){size=size||170;var blips=[[152,77,.6],[70
 // 270px-wide canvas — it used to render at a fraction of the schedule
 // panel's actual width, looking cramped next to the rest of the card.
 // Only the x-axis is scaled; row height/spacing is unchanged.
-function cavnarWeekHtml(caption){var blocks=[[0,0],[0,1],[0,3],[0,5],[0,6],[1,1],[1,2],[1,4],[1,5],[2,0],[2,2],[2,3],[2,6],[2,4,1],[3,6,1],[3,1],[3,3,1]],h='',days=['S','M','T','W','T','F','S'],d='';for(var i=0;i<7;i++){d+='<text x="'+(55+i*59)+'" y="40" font-family="Space Grotesk,sans-serif" font-size="11" fill="var(--ink3)">'+days[i]+'</text>';}for(var j=0;j<blocks.length;j++){var bl=blocks[j];h+='<rect class="cm-blk" style="animation-delay:'+(0.2+j*0.16).toFixed(2)+'s" x="'+(48+bl[1]*59)+'" y="'+(52+bl[0]*26)+'" width="41" height="18" rx="4" fill="'+(bl[2]?'var(--ember)':'rgba(122,115,106,.45)')+'"/>';}return '<div class="cm-week cm-run" data-cycle="5.5" style="text-align:center"><svg width="500" height="170" viewBox="0 0 500 170" style="overflow:visible;max-width:100%"><line x1="44" y1="18" x2="455" y2="18" stroke="var(--paper3)" stroke-width="1.5"/><line class="cm-dash" x1="44" y1="18" x2="455" y2="18"/>'+d+h+(caption?'<text x="48" y="163" font-family="Space Grotesk,sans-serif" font-size="10.5" font-weight="600" letter-spacing="1" fill="var(--ink3)">'+caption.toUpperCase()+'</text>':'')+'</svg></div>';}
+// 06 Building the Week, as a grid that fills its card (owner, 9/26/26): the
+// old 500px SVG sat small in a wide card. Seven day columns across the full
+// width; each block keeps a fixed height and only its width follows the
+// column, so it never reads stretched. The ember dash still travels the
+// track; the caption is the page's kicker type.
+function cavnarWeekHtml(caption){var rows=[[1,1,0,1,0,1,1],[0,1,1,0,1,1,0],[1,0,1,1,2,0,1],[0,1,0,2,0,1,2],[1,0,1,0,1,0,1]],days=['S','M','T','W','T','F','S'],h='',k=0,r,c;for(c=0;c<7;c++)h+='<span class="cm-wk-d">'+days[c]+'</span>';for(r=0;r<rows.length;r++)for(c=0;c<7;c++){var v=rows[r][c];h+=v?'<i class="cm-blk'+(v===2?' e':'')+'" style="animation-delay:'+(0.2+(k++)*0.12).toFixed(2)+'s"></i>':'<i class="cm-wk-gap"></i>';}return '<div class="cm-week cm-run cm-wk" data-cycle="5.5"><div class="cm-wk-track" aria-hidden="true"><i class="cm-wk-dash"></i></div><div class="cm-wk-grid" aria-hidden="true">'+h+'</div>'+(caption?'<div class="cm-wk-cap">'+_escHtml(caption)+'</div>':'')+'</div>';}
 function cavnarPostedHtml(label){return '<div class="cm-posted" style="display:inline-block;text-align:center"><svg width="220" height="64" viewBox="0 0 220 64" style="overflow:visible"><rect x="0" y="12" width="56" height="40" rx="10" fill="var(--paper2)" stroke="var(--paper3)"/><line x1="12" y1="26" x2="42" y2="26" stroke="var(--ink3)" stroke-opacity=".5" stroke-width="2.5" stroke-linecap="round"/><line x1="12" y1="32" x2="32" y2="32" stroke="var(--ink3)" stroke-opacity=".5" stroke-width="2.5" stroke-linecap="round"/><line x1="12" y1="38" x2="38" y2="38" stroke="var(--ink3)" stroke-opacity=".5" stroke-width="2.5" stroke-linecap="round"/><line x1="56" y1="32" x2="166" y2="32" stroke="var(--paper3)" stroke-width="2"/><line class="cm-trail" pathLength="100" x1="56" y1="32" x2="166" y2="32"/><g class="cm-pdot"><circle cx="56" cy="32" r="11" fill="rgba(212,88,58,.3)"/><circle cx="56" cy="32" r="5" fill="#E8956A"/></g><circle class="cm-cring" cx="186" cy="32" r="20"/><path class="cm-check" pathLength="100" d="M176,32 l7,7 l13,-14"/></svg><div class="cm-cap cm-plabel">'+label+'</div></div>';}
 function cavnarHandshakeHtml(state,glyph,caption,id){var ok=state==='failed'?'<path d="M130.5,45.5 l9,9 M139.5,45.5 l-9,9" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/>':'<path d="M129.5,50 l4,4 l7,-8" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';return '<div class="cm-hs is-'+state+'"'+(id?' id="'+id+'"':'')+' style="text-align:center"><svg width="270" height="100" viewBox="0 0 270 100" style="overflow:visible;max-width:100%"><line class="cm-dashl" x1="76" y1="50" x2="194" y2="50"/><line class="cm-solid" x1="76" y1="50" x2="194" y2="50"/><rect class="cm-tile" x="20" y="24" width="52" height="52" rx="14"/><g transform="translate(29,33) scale(.283)"><path d="'+CM_RING+'" fill="none" stroke="var(--ink)" stroke-width="19"/><circle cx="99.5" cy="60" r="11" fill="#E8956A"/></g><rect class="cm-tile" x="198" y="24" width="52" height="52" rx="14"/><g transform="translate(212,38)">'+glyph+'</g><g class="cm-ok"><circle cx="135" cy="50" r="11" fill="var(--ember)"/>'+ok+'</g></svg>'+(caption?'<div class="cm-cap">'+caption+'</div>':'')+'</div>';}
 /* Floating bottom-right card for a "working" or "just happened" moment that
@@ -15770,7 +15783,7 @@ function renderWeekRadar(){
   var lo=Math.floor(mn-6),hi=Math.ceil(mx+4),rng=(hi-lo)||1;
   function rad(v){return R*Math.max(0,Math.min(1,(v-lo)/rng));}
   function pt(i,r){var a=-Math.PI/2+i*Math.PI*2/7;return [cx+Math.cos(a)*r,cy+Math.sin(a)*r];}
-  var s='<svg class="lb2-radar" viewBox="0 0 '+W+' '+H+'" aria-hidden="true"><defs><radialGradient id="lbRadG"><stop offset="0" stop-color="#e8956a" stop-opacity=".45"/><stop offset="1" stop-color="#e8956a" stop-opacity=".08"/></radialGradient><filter id="lbRadF" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="2.5"/></filter></defs>';
+  var s='<svg class="lb2-radar" viewBox="0 0 '+W+' '+H+'" aria-hidden="true"><defs><radialGradient id="lbRadG"><stop offset="0" stop-color="#e8956a" stop-opacity=".45"/><stop offset="1" stop-color="#e8956a" stop-opacity=".08"/></radialGradient><filter id="lbRadF" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="2.5"/></filter><radialGradient id="lbRadHot"><stop offset="0" stop-color="#e3333f" stop-opacity=".08"/><stop offset="1" stop-color="#e3333f" stop-opacity=".45"/></radialGradient></defs>';
   for(var g=1;g<=3;g++){var rr=R*g/3;var ring='';for(var i=0;i<7;i++){var p=pt(i,rr);ring+=(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)+' ';}s+='<path d="'+ring+'Z" fill="none" stroke="currentColor" stroke-opacity=".12"/>';}
   for(var i=0;i<7;i++){var e=pt(i,R);s+='<line x1="'+cx+'" y1="'+cy+'" x2="'+e[0].toFixed(1)+'" y2="'+e[1].toFixed(1)+'" stroke="currentColor" stroke-opacity=".12"/>';}
   var tr=rad(target),tring='';for(var i=0;i<7;i++){var p=pt(i,tr);tring+=(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)+' ';}
@@ -15778,7 +15791,18 @@ function renderWeekRadar(){
   var poly='';var worst=-1,worstV=-1;
   for(var i=0;i<7;i++){var v=vals[i]==null?target:vals[i];var p=pt(i,rad(v));poly+=(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)+' ';if(vals[i]!=null&&vals[i]>worstV){worstV=vals[i];worst=i;}}
   s+='<path class="hb-fill" d="'+poly+'Z" fill="url(#lbRadG)"/><path class="hb-glow" d="'+poly+'Z" fill="none" stroke="#e8956a" stroke-opacity=".6" stroke-width="5" filter="url(#lbRadF)"/><path class="hb-draw" d="'+poly+'Z" fill="none" stroke="#e8956a" stroke-width="2"/>';
-  for(var i=0;i<7;i++){if(vals[i]==null)continue;var p=pt(i,rad(vals[i]));var over=vals[i]>target;s+='<circle class="hb-dot" cx="'+p[0].toFixed(1)+'" cy="'+p[1].toFixed(1)+'" r="'+(over?6:4.5)+'" fill="'+(over?'#e3333f':'#e8956a')+'" stroke="#fff" stroke-opacity=".9" stroke-width="1.2" style="animation-delay:'+(1.2+i*0.12).toFixed(2)+'s"/>';
+  // The heaviest weekday is a red, tinted spike (owner, 9/26/26): the wedge
+  // from the centre to its vertex, between the halfway points to its
+  // neighbours, filled red and edged red, so the day that runs heaviest
+  // reads at a glance whether or not it is over target.
+  if(worst>=0){
+    var vv=function(k){var q=(k+7)%7;return pt(q,rad(vals[q]==null?target:vals[q]));};
+    var hp=vv(worst),pp=vv(worst-1),np=vv(worst+1);
+    var m1=[(pp[0]+hp[0])/2,(pp[1]+hp[1])/2],m2=[(np[0]+hp[0])/2,(np[1]+hp[1])/2];
+    s+='<path class="hb-fill" d="M'+cx+' '+cy+' L'+m1[0].toFixed(1)+' '+m1[1].toFixed(1)+' L'+hp[0].toFixed(1)+' '+hp[1].toFixed(1)+' L'+m2[0].toFixed(1)+' '+m2[1].toFixed(1)+' Z" fill="url(#lbRadHot)"/>'
+      +'<path class="hb-draw" d="M'+m1[0].toFixed(1)+' '+m1[1].toFixed(1)+' L'+hp[0].toFixed(1)+' '+hp[1].toFixed(1)+' L'+m2[0].toFixed(1)+' '+m2[1].toFixed(1)+'" fill="none" stroke="#e3333f" stroke-width="2.5" stroke-linejoin="round"/>';
+  }
+  for(var i=0;i<7;i++){if(vals[i]==null)continue;var p=pt(i,rad(vals[i]));var over=vals[i]>target||i===worst;s+='<circle class="hb-dot" cx="'+p[0].toFixed(1)+'" cy="'+p[1].toFixed(1)+'" r="'+(over?6:4.5)+'" fill="'+(over?'#e3333f':'#e8956a')+'" stroke="#fff" stroke-opacity=".9" stroke-width="1.2" style="animation-delay:'+(1.2+i*0.12).toFixed(2)+'s"/>';
     var lp=pt(i,R+24);s+='<text x="'+lp[0].toFixed(1)+'" y="'+(lp[1]+5).toFixed(1)+'" text-anchor="middle" font-size="15" font-weight="600" font-family="Space Grotesk, sans-serif" fill="'+(over?'#e3333f':'currentColor')+'" fill-opacity="'+(over?'1':'.85')+'">'+short[i]+' '+vals[i]+'%</text>';}
   el.innerHTML=s+'</svg>';el.style.color='var(--ink3)';
   var n=document.getElementById('lb2-radar-n'),cap=document.getElementById('lb2-radar-cap'),flag=document.getElementById('lb2-radar-flag');
@@ -16885,6 +16909,9 @@ function _schedHandleResult(data) {
     _schedBtn.innerHTML = 'Schedule ready ✓';
     _schedBtn.style.background = 'var(--green)';
     _schedBtn.style.color = '#fff';
+    // The primary button's ember glow stays off a green "ready" (owner,
+    // 9/26/26): a green button with an orange halo read as two states.
+    _schedBtn.style.boxShadow = 'none';
     _schedBtn.disabled = false;
   }
   // "Posted" — the week grid gives way to the ember-to-checkmark for a beat,
@@ -18308,6 +18335,7 @@ function generateSchedule(btn, opts) {
 
   btn.style.background = '';
   btn.style.color = '';
+  btn.style.boxShadow = '';
   var _schedStart = Date.now();
   var _spinner = '<canvas class="hb-orb" data-orb-state="working" width="14" height="14" style="width:14px;height:14px;vertical-align:middle"></canvas>';
   btn.innerHTML = 'Generating… ' + _spinner;
@@ -18317,11 +18345,11 @@ function generateSchedule(btn, opts) {
   // .lb2-actions row, not the button itself — as a flex sibling of the
   // button it got squeezed into the row instead of rendering full-width.
   var _oldWk = document.getElementById('sched-week'); if (_oldWk) _oldWk.remove();
-  var _wk = document.createElement('div'); _wk.id = 'sched-week'; _wk.style.cssText = 'margin-top:14px';
+  var _wk = document.createElement('div'); _wk.id = 'sched-week'; _wk.style.cssText = 'margin-top:22px';
   var _wkLabel = body.dates ? ('Redoing ' + body.dates.length + ' day' + (body.dates.length === 1 ? '' : 's') + ' of the draft')
                : (body.week_start ? 'Building the week of ' + mdy(body.week_start) : "Building next week's schedule");
   _wk.innerHTML = cavnarWeekHtml(_wkLabel)
-    + '<div id="sched-steps" style="max-width:340px;margin:10px auto 0;text-align:left"></div>';
+    + '<div id="sched-steps" style="margin:14px 0 0;text-align:left"></div>';
   (btn.closest('.lb2-actions') || btn).insertAdjacentElement('afterend', _wk);
   startScheduleSteps(_schedStart);
 
@@ -27711,15 +27739,10 @@ table[data-sortable] th.r .cbtn.csort-btn{flex-direction:row-reverse}
 #panel-reviews .rv2-selbar .why{font-size:12px;color:var(--ink3);flex:1 1 220px;min-width:0}
 /* end reviews multi-select css */
 
-/* ── Wide screens (web desk #5): past 1440px Labor and Food Cost use the
-   room. Reviews keeps one column (owner, 9/26/26): Trends opens below the
-   inbox, never as a side column. Home keeps its spec'd column (DS 11b). */
-@media (min-width:1440px){
-  #panel-labor .hb-wrap,#panel-inventory .hb-wrap{max-width:1360px}
-}
-@media (min-width:1800px){
-  #panel-labor .hb-wrap,#panel-inventory .hb-wrap{max-width:1480px}
-}
+/* ── Wide screens (web desk #5): none. Every module page keeps the same
+   centred column at every width (owner, 9/26/26): Labor and Food Cost
+   widening past 1440px put their margins out of line with every other tab.
+   A new wide rule would go here - check it against the other tabs first. */
 /* ── end wide screens */
 
 /* ── Print (web desk #3): a report on paper. Light tokens of its own, ink

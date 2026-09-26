@@ -130,10 +130,14 @@ def test_sched_history_detail_uses_the_branded_gradient():
 
 # ── the "building the week" loader is sized to its real container ──────────
 
-def test_week_loader_svg_is_wider_than_before():
+def test_week_loader_fills_its_card_without_stretching():
+    """A seven-column grid across the card (owner, 9/26/26): blocks keep a
+    fixed height, only their width follows the column."""
     body = _fn("cavnarWeekHtml")
-    assert 'width="500"' in body
-    assert 'width="270"' not in body
+    assert "cm-wk-grid" in body and 'width="500"' not in body
+    s = _src()
+    assert ".cm-wk-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr))" in s
+    assert ".cm-wk .cm-blk,.cm-wk .cm-wk-gap{display:block;height:30px" in s
 
 
 # ── generated-schedule action buttons match sizes ───────────────────────────
