@@ -968,6 +968,10 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
    payload; it never decorates. */
 .ember-thread{position:relative;z-index:2;width:2px;height:68px;margin:2px 0 -24px 22px;background:linear-gradient(180deg,var(--ember2) 0,var(--ember) 58%,var(--ember) 64%,rgba(212,88,58,.38) 66%,rgba(212,88,58,.38) 100%);border-radius:2px}
 .lb2-ai[data-thread="1"]{margin-top:0!important}
+/* The read's breathing dot sits directly under the ember thread that runs
+   into it (owner, 9/26/26): the thread's centre is 23px in, the dot's was
+   24.5px (1px border + 20px padding + half its 7px). */
+.lb2-ai[data-thread="1"] .tag:before{margin-left:-1.5px}
 .ember-thread:before{content:'';position:absolute;left:-3px;top:-2px;width:8px;height:8px;border-radius:50%;background:var(--ember);box-shadow:0 0 12px 3px rgba(200,75,47,.55);animation:emberTravel 2.4s ease-in-out infinite}
 .ember-thread.h{width:64px;height:2px;margin:0 2px;background:linear-gradient(90deg,var(--ember2),var(--ember),var(--ember2))}
 .ember-thread.h:before{top:-3px;left:-2px;animation-name:emberTravelH}
@@ -7213,6 +7217,9 @@ svg:hover .hb-xh{opacity:1}
 .rv-diag-more .rv-diag-ev{margin-top:4px}
 /* Room between the diagnosis card and How you compare under it. */
 .rv-diag+section.bm-card,#review-diagnosis+section.bm-card,#review-diagnosis+.bm-card{margin-top:18px}
+/* How you compare under a module's AI read (Labor, Food Cost) keeps a gap
+   from the read above it (owner, 9/26/26). */
+.lb2-ai~.bm-card{margin-top:18px}
 .rv-diag-bd{padding:14px 16px;display:flex;flex-direction:column;gap:13px}
 .rv-diag-row{display:flex;flex-direction:column;gap:3px}
 .rv-diag-row .k{font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
@@ -7500,7 +7507,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
   <div class="rv2-why" id="rv-why" hidden></div>
   <div id="rv-inbox-header"></div>
   <div id="rv-inbox-reviews" class="rv2-inbox" data-nav="reviews/inbox">
-    <div class="hb-sh"><div><div class="k rv2-kicks"><span>Inbox</span><span class="sep" aria-hidden="true"></span><button type="button" class="cbtn cbtn-text cbtn-inline rv2-kick-link" data-nav-go="reviews/analytics">Analytics</button></div><h2>Every review, with a reply ready<small><span class="count-lbl" style="margin-left:0">{{ reviews|length }} review{{ 's' if reviews|length != 1 }}</span></small></h2></div><div style="display:flex;gap:8px"><button class="cbtn cbtn-secondary" onclick="document.getElementById('rr-modal').style.display='flex'">+ Request a review</button><button class="cbtn cbtn-secondary" onclick="exportReviews()">Export CSV</button></div></div>
+    <div class="hb-sh"><div><div class="k rv2-kicks"><button type="button" class="cbtn cbtn-text cbtn-inline rv2-kick-link" data-nav-go="reviews/inbox">Inbox</button><span class="sep" aria-hidden="true"></span><button type="button" class="cbtn cbtn-text cbtn-inline rv2-kick-link" data-nav-go="reviews/analytics">Analytics</button></div><h2>Every review, with a reply ready<small><span class="count-lbl" style="margin-left:0">{{ reviews|length }} review{{ 's' if reviews|length != 1 }}</span></small></h2></div><div style="display:flex;gap:8px"><button class="cbtn cbtn-secondary" onclick="document.getElementById('rr-modal').style.display='flex'">+ Request a review</button><button class="cbtn cbtn-secondary" onclick="exportReviews()">Export CSV</button></div></div>
     <div class="toolbar">
       <div class="search-wrap"><svg class="search-ico" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input class="search-input" id="rsearch" aria-label="Search reviews" placeholder="Search name, keyword, rating, platform…" value="{{ rsearch }}" oninput="debouncedFilter()" onkeydown="if(event.key==='Escape'){this.value='';filterReviews();}"></div>
       <div class="filter-pills">
@@ -7803,7 +7810,10 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .lb2-cov-offer{margin-top:8px;font-size:13.5px;color:var(--ink3)}
 .lb2-cov span{display:inline-flex;align-items:center;gap:8px;font-size:13.5px;color:var(--ink2);background:var(--sf-recess);border:1px solid var(--hb-line2);border-radius:999px;padding:3px 12px 3px 3px}
 @media(max-width:820px){.lb2-ops{grid-template-columns:1fr}}
-.lb2-radar{display:block;width:100%;height:210px;margin-top:6px;overflow:visible}
+/* The weekday radar fills its card (owner, 9/26/26): one fixed, centred
+   box, so it lands in the same place on every load. .lb2-hero svg (190px,
+   crosshair) outranked the plain class, so this rule names both. */
+.lb2-radar,.lb2-hero svg.lb2-radar{display:block;width:100%;max-width:640px;height:380px;margin:8px auto 0;overflow:visible;cursor:default}
 /* Side-by-side put a 150px ring next to whatever the 3-column grid left
    over for this tile — often under 140px, not enough room for a name plus
    three numeric columns, so the legend rows overflowed their box and read
@@ -15683,8 +15693,8 @@ function renderWeekRadar(){
   var days=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'],short=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
   var target=+window.laborTargetPct||30,vals=[],present=0;
   for(var i=0;i<7;i++){var v=(window.dowData||{})[days[i]];if(v>0)present++;vals.push(v>0?v:null);}
-  if(present<3){el.innerHTML='<div class="hb-empty" style="height:210px;display:flex;align-items:center">The week radar needs a few days of shifts.</div>';return;}
-  var W=320,H=210,cx=W/2,cy=H/2+6,R=76;
+  if(present<3){el.innerHTML='<div class="hb-empty" style="height:380px;display:flex;align-items:center;justify-content:center">The week radar needs a few days of shifts.</div>';return;}
+  var W=560,H=380,cx=W/2,cy=H/2+4,R=138;
   var mx=target,mn=target;for(var i=0;i<7;i++){if(vals[i]!=null){mx=Math.max(mx,vals[i]);mn=Math.min(mn,vals[i]);}}
   var lo=Math.floor(mn-6),hi=Math.ceil(mx+4),rng=(hi-lo)||1;
   function rad(v){return R*Math.max(0,Math.min(1,(v-lo)/rng));}
@@ -15697,8 +15707,8 @@ function renderWeekRadar(){
   var poly='';var worst=-1,worstV=-1;
   for(var i=0;i<7;i++){var v=vals[i]==null?target:vals[i];var p=pt(i,rad(v));poly+=(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)+' ';if(vals[i]!=null&&vals[i]>worstV){worstV=vals[i];worst=i;}}
   s+='<path class="hb-fill" d="'+poly+'Z" fill="url(#lbRadG)"/><path class="hb-glow" d="'+poly+'Z" fill="none" stroke="#e8956a" stroke-opacity=".6" stroke-width="5" filter="url(#lbRadF)"/><path class="hb-draw" d="'+poly+'Z" fill="none" stroke="#e8956a" stroke-width="2"/>';
-  for(var i=0;i<7;i++){if(vals[i]==null)continue;var p=pt(i,rad(vals[i]));var over=vals[i]>target;s+='<circle class="hb-dot" cx="'+p[0].toFixed(1)+'" cy="'+p[1].toFixed(1)+'" r="'+(over?4.5:3.2)+'" fill="'+(over?'#e3333f':'#e8956a')+'" stroke="#fff" stroke-opacity=".9" stroke-width="1.2" style="animation-delay:'+(1.2+i*0.12).toFixed(2)+'s"/>';
-    var lp=pt(i,R+16);s+='<text x="'+lp[0].toFixed(1)+'" y="'+(lp[1]+4).toFixed(1)+'" text-anchor="middle" font-size="13" font-weight="600" font-family="Space Grotesk, sans-serif" fill="'+(over?'#e3333f':'currentColor')+'" fill-opacity="'+(over?'1':'.85')+'">'+short[i]+' '+vals[i]+'%</text>';}
+  for(var i=0;i<7;i++){if(vals[i]==null)continue;var p=pt(i,rad(vals[i]));var over=vals[i]>target;s+='<circle class="hb-dot" cx="'+p[0].toFixed(1)+'" cy="'+p[1].toFixed(1)+'" r="'+(over?6:4.5)+'" fill="'+(over?'#e3333f':'#e8956a')+'" stroke="#fff" stroke-opacity=".9" stroke-width="1.2" style="animation-delay:'+(1.2+i*0.12).toFixed(2)+'s"/>';
+    var lp=pt(i,R+24);s+='<text x="'+lp[0].toFixed(1)+'" y="'+(lp[1]+5).toFixed(1)+'" text-anchor="middle" font-size="15" font-weight="600" font-family="Space Grotesk, sans-serif" fill="'+(over?'#e3333f':'currentColor')+'" fill-opacity="'+(over?'1':'.85')+'">'+short[i]+' '+vals[i]+'%</text>';}
   el.innerHTML=s+'</svg>';el.style.color='var(--ink3)';
   var n=document.getElementById('lb2-radar-n'),cap=document.getElementById('lb2-radar-cap'),flag=document.getElementById('lb2-radar-flag');
   if(worst>=0){if(n){if(!n.dataset.animated){n.dataset.animated='1';
@@ -21911,10 +21921,16 @@ function _wireLaborHover(container,pts,vals,target,trend,min,rng){
     tip.style.left=xPct+'%';
     tip.style.top=yPct+'%';
     tip.classList.toggle('right',xy[0]>LB2_W*0.62);
-    // The hero clips at its edge, so a point in the top 45% of the chart
-    // carries its tip below the dot instead of above it.
-    tip.classList.toggle('below',xy[1]<LB2_H*0.45);
-    tip.hidden=false;
+    // The hero clips at its edge. The tip grows with its rows (sales, labor
+    // cost, hours), so which side it opens on is measured, not guessed from
+    // the point's height (owner, 9/26/26: a tall tip under a high point was
+    // cut off): above when it fits there, else whichever side has more room.
+    tip.classList.remove('below');tip.hidden=false;
+    var hero=container.closest?(container.closest('.lb2-hero')||container):container;
+    var hr=hero.getBoundingClientRect(),sr=svg.getBoundingClientRect();
+    var ptY=sr.top+xy[1]/LB2_H*sr.height,th=tip.offsetHeight+22;
+    var above=ptY-hr.top,below=hr.bottom-ptY;
+    tip.classList.toggle('below',th>above&&below>above);
   }
   function hide(){tip.hidden=true;dot.hidden=true;}
   if(_lb2HoverBound){svg.removeEventListener('mousemove',_lb2HoverBound.move);svg.removeEventListener('mouseleave',_lb2HoverBound.hide);svg.removeEventListener('touchmove',_lb2HoverBound.touch);}
@@ -27615,17 +27631,11 @@ table[data-sortable] th.r .cbtn.csort-btn{flex-direction:row-reverse}
 #panel-reviews .rv2-selbar .why{font-size:12px;color:var(--ink3);flex:1 1 220px;min-width:0}
 /* end reviews multi-select css */
 
-/* ── Wide screens (web desk #5): past 1440px the data-dense modules use the
-   room. Reviews, Labor and Food Cost widen; Reviews puts Trends beside the
-   inbox while Trends is open. Home keeps its spec'd column (DS 11b). */
+/* ── Wide screens (web desk #5): past 1440px Labor and Food Cost use the
+   room. Reviews keeps one column (owner, 9/26/26): Trends opens below the
+   inbox, never as a side column. Home keeps its spec'd column (DS 11b). */
 @media (min-width:1440px){
-  #panel-reviews .hb-wrap,#panel-labor .hb-wrap,#panel-inventory .hb-wrap{max-width:1360px}
-  #panel-reviews .hb-wrap:has(> #rv-panel-analytics[open]){max-width:1560px;display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);column-gap:40px;align-items:start}
-  #panel-reviews .hb-wrap:has(> #rv-panel-analytics[open]) > *{grid-column:1 / -1}
-  #panel-reviews .hb-wrap:has(> #rv-panel-analytics[open]) > #rv-inbox-reviews{grid-column:1}
-  #panel-reviews .hb-wrap:has(> #rv-panel-analytics[open]) > #rv-panel-analytics{grid-column:2;position:sticky;top:calc(var(--cav-chrome) + 16px);max-height:calc(100vh - var(--cav-chrome) - 32px);overflow-y:auto;margin-top:0}
-  #panel-reviews .hb-wrap:has(> #rv-panel-analytics[open]) .rv2-sig{grid-template-columns:1fr}
-  #panel-reviews .hb-wrap:has(> #rv-panel-analytics[open]) .rv2-sg{border-right:none;margin-right:0;padding:0 0 18px;border-bottom:1px solid var(--hb-line2);margin-bottom:18px}
+  #panel-labor .hb-wrap,#panel-inventory .hb-wrap{max-width:1360px}
 }
 @media (min-width:1800px){
   #panel-labor .hb-wrap,#panel-inventory .hb-wrap{max-width:1480px}

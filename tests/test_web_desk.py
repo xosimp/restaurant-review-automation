@@ -309,7 +309,9 @@ def test_print_buttons_where_an_owner_prints():
 def test_wide_screens_widen_only_the_dense_panels():
     css = _block("/* ── Wide screens (web desk #5)", "/* ── end wide screens */")
     assert "@media (min-width:1440px)" in css
-    assert "#panel-reviews" in css and "#panel-labor" in css and "#panel-inventory" in css
+    assert "#panel-labor" in css and "#panel-inventory" in css
+    # Reviews stays one column: Trends opens below the inbox (owner, 9/26/26).
+    assert "#panel-reviews" not in css and "grid-template-columns" not in css
     # Home's column is spec'd (DS §11b) and stays as it is.
     assert "#panel-home" not in css and "hb-root" not in css
 
