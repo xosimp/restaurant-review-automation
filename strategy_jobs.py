@@ -1596,6 +1596,24 @@ def _metric_permissions(metric):
     return {need} if need else None
 
 
+def _notification_ref(data) -> dict:
+    """What the history row is about, from the push payload: the queued send
+    an Undo stops (delayed_action_id) or the staff request Approve / Deny
+    answers (request_id + request_kind). The payload always carried these to
+    the phone; the alert_log row now keeps them too, so the web bell can act
+    on the row (web desk finding 4). Empty when the payload names neither."""
+    data = data or {}
+    try:
+        if data.get("delayed_action_id"):
+            return {"ref_kind": "delayed_action", "ref_id": int(data["delayed_action_id"])}
+        if data.get("request_id"):
+            kind = "time_off" if "time" in str(data.get("request_kind") or "").lower() else "shift"
+            return {"ref_kind": kind, "ref_id": int(data["request_id"])}
+    except (TypeError, ValueError):
+        pass
+    return {}
+
+
 def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
            lines=None, email_type=None, rec=None, permissions=None, deciders=False):
     """Push to the people who have the app, email the ones who don't.
@@ -1642,7 +1660,8 @@ def _reach(restaurant_id, alert_type, title, body, data, db_path, subject=None,
     import rec_delivery
     if rec and not rec_delivery.presentable(rec.get("key")):
         rec = None
-    alert_id = notify.record_notification(restaurant_id, alert_type, db_path=db_path)
+    alert_id = notify.record_notification(restaurant_id, alert_type, db_path=db_path,
+                                          **_notification_ref(data))
     pushed = {u["id"] for u in people if devices.get(u["id"])}
     if pushed:
         # The history row's id rides the payload so the open can name it

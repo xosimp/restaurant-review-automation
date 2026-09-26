@@ -213,6 +213,8 @@ html{background:var(--bg-base);min-height:100%}
 .notif-row.is-resolved .nd{background:var(--paper3)}
 .notif-act{display:flex;gap:6px;padding:0 14px 9px 29px;border-bottom:1px solid var(--paper3)}
 .notif-row.has-act{border-bottom:none}
+/* What an in-place Undo / Approve / Deny did (web desk #4) */
+.notif-done{font-size:12px;font-weight:600;color:var(--green);align-self:center}
 .notif-foot{display:flex;justify-content:flex-end;padding:6px 10px}
 /* The engagement nudge in the alerts modal */
 .al-nudge{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--paper3);border-left:3px solid var(--ember);border-radius:8px;font-size:13px;color:var(--ink2);line-height:1.5}
@@ -4522,7 +4524,7 @@ svg:hover .hb-xh{opacity:1}
     if(!mr||!mr.review)return '';
     var r=mr.review,ms=(r.metrics||[]).filter(function(m){return m.value!=null;});
     if(!ms.length&&!(r.results||[]).length)return '';
-    var h='<div class="hb-sh"><div><div class="k dim">Last month</div><h2>'+esc(r.month)+' <small>against '+esc(r.compared_with)+'</small></h2></div></div>';
+    var h='<div id="hb-month"><div class="hb-sh"><div><div class="k dim">Last month</div><h2>'+esc(r.month)+' <small>against '+esc(r.compared_with)+'</small></h2></div></div>';
     h+='<section class="hb-card hb-rise" aria-label="Last month"><div class="hb-focus"><div class="lead" style="font-size:22px">'+num(mr.headline||'')+'</div></div>';
     if(ms.length){h+='<div class="hb-stats" style="margin-top:14px">';
       for(var i=0;i<ms.length;i++){var m=ms[i];var v=m.unit==='$'?'$'+num2(m.value):(m.unit==='%'?(+m.value).toFixed(1)+'%':(m.unit==='★'?(+m.value).toFixed(2)+'★':m.value));
@@ -4535,8 +4537,8 @@ svg:hover .hb-xh{opacity:1}
     if(res.length){h+='<div class="hb-h3" style="margin-top:16px"><span>What your changes did</span></div>';for(var j=0;j<Math.min(res.length,3);j++)h+='<div class="hb-row '+hbResTone(res[j])+'"><span class="d"></span><span class="t wrap">'+num(res[j].summary||res[j].title||'')+'</span></div>';}
     var pr=r.priorities||[];
     if(pr.length){h+='<div class="hb-h3" style="margin-top:16px"><span>Worth your time next month</span></div><div class="hb-ledger">';for(var k=0;k<Math.min(pr.length,3);k++){var p=pr[k];var amt=p.is_range?('$'+num2(p.monthly_low)+'–$'+num2(p.monthly_high)+'/mo'):(p.monthly?'$'+num2(p.monthly)+'/mo':'');h+='<span>'+num(p.label+(amt?' · '+amt:''))+'</span>';}h+='</div>';}
-    h+='<div class="ft" style="margin-top:14px"><span class="sp"></span><button type="button" class="cbtn cbtn-text cbtn-inline" data-ask="'+esc(mr.ask||('Walk me through '+r.month))+'">Ask about this month →</button></div>';
-    return h+'</section>';
+    h+='<div class="ft" style="margin-top:14px"><span class="sp"></span><button type="button" class="cbtn cbtn-text cbtn-inline" data-print="hb-month" title="Print this month, or save it as a PDF from the print dialog">Print</button><button type="button" class="cbtn cbtn-text cbtn-inline" data-ask="'+esc(mr.ask||('Walk me through '+r.month))+'">Ask about this month →</button></div>';
+    return h+'</section></div>';
   }
   // ── comps, voids and refunds ──────────────────────────────────────────────
   // loss_detection has measured these against an 8-week baseline since it
@@ -5367,7 +5369,7 @@ svg:hover .hb-xh{opacity:1}
     // One row per location: last night and labor always visible, the
     // reviews folded into one cell (#19); food cost and last active are the
     // columns a narrow screen gives up.
-    h+='<div style="overflow-x:auto"><table class="hb-tbl"><thead><tr><th>Location</th><th class="r">Last night</th><th class="r">Labor</th><th class="r">Reviews · 30d</th><th class="r hide-m">Food cost</th><th class="r hide-m">Last active</th><th></th></tr></thead><tbody>';
+    h+='<div style="overflow-x:auto"><table class="hb-tbl" data-sortable="group-locations"><thead><tr><th>Location</th><th class="r">Last night</th><th class="r">Labor</th><th class="r">Reviews · 30d</th><th class="r hide-m">Food cost</th><th class="r hide-m" data-sort-type="text">Last active</th><th></th></tr></thead><tbody>';
     for(var j=0;j<g.locations.length;j++){var r=g.locations[j];var rv=r.reviews||{};
       h+='<tr class="'+esc(r.health)+(r.active?' active':'')+'" onclick="hbSwitchLoc('+(+r.id)+')" tabindex="0" onkeydown="if(event.key===\'Enter\')hbSwitchLoc('+(+r.id)+')">';
       h+='<td><div class="nm"><span class="d"></span>'+esc(r.name)+(r.active?' <span class="dim" style="font-weight:400">· viewing</span>':'')+'</div>'+(r.issues.length?'<div class="iss">'+num(r.issues[0].text)+(r.issues.length>1?' <span class="hb-num">+'+(r.issues.length-1)+'</span>':'')+'</div>':'')+'</td>';
@@ -5379,7 +5381,7 @@ svg:hover .hb-xh{opacity:1}
       if(rv.awaiting)rvb.push(rv.awaiting+' waiting');
       h+='<td class="r hb-num">'+rvb.join(' · ')+'</td>';
       h+='<td class="r hb-num hide-m">'+(r.inventory?'$'+Math.round(r.inventory.recoverable).toLocaleString()+'/mo <span class="dim">opportunity</span>'+(r.inventory.critical_low?' <span class="up">'+r.inventory.critical_low+' low</span>':''):'<span class="dim">—</span>')+'</td>';
-      h+='<td class="r hb-num hide-m dim">'+ago(r.last_active)+'</td><td class="r"><span class="cbtn cbtn-text cbtn-inline cbtn-sm">Open →</span></td></tr>';}
+      h+='<td class="r hb-num hide-m dim" data-sort-key="'+esc(r.last_active||'')+'">'+ago(r.last_active)+'</td><td class="r"><span class="cbtn cbtn-text cbtn-inline cbtn-sm">Open →</span></td></tr>';}
     h+='</tbody></table></div>';
     // Strongest / weakest are the server's (benchmark_views.rank_by_rating):
     // named only on a gap beyond noise, so a tie says so instead.
@@ -5718,6 +5720,7 @@ svg:hover .hb-xh{opacity:1}
       <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="view" data-kind="week" aria-pressed="false">Week</button>
       <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="view" data-kind="period" aria-pressed="false">Period</button>
     </div>
+    <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-print="dr-root" title="Print this report, or save it as a PDF from the print dialog">Print</button>
   </div>
   <div id="dr-body" aria-live="polite"></div>
 </div>
@@ -6565,12 +6568,12 @@ svg:hover .hb-xh{opacity:1}
       +'<a class="cbtn cbtn-secondary cbtn-sm" href="/api/dsr/week.xlsx?date='+esc(g.start)+'" download>Export to Excel</a>'
       +(owner?'<button type="button" class="cbtn cbtn-soft cbtn-sm" data-dr="bud-open">Edit budget</button>':'')+'</div></div>';
     h+=gridSummary(g,owner,'week');
-    h+='<div class="dr-gridbox fc2-table-scroll"><table class="dr-grid"><thead>'+groupRow(cols,true,true)+'<tr><th class="day l">Day</th>';
+    h+='<div class="dr-gridbox fc2-table-scroll"><table class="dr-grid" data-sortable="dsr-week"><thead>'+groupRow(cols,true,true)+'<tr><th class="day l">Day</th>';
     for(var i=0;i<cols.length;i++)h+='<th>'+esc(cols[i].h)+'</th>';
     h+='<th class="l">Weather</th><th class="l">Event</th><th class="l">Influence</th></tr></thead><tbody>';
     for(var r=0;r<days.length;r++){var d=days[r],lbl=esc(d.weekday||weekday(d.date).slice(0,3))+' '+hn(esc(md(d.date)));
       var st2=d.status?(TERMINAL[d.status]?d.status:'running'):'';
-      h+='<tr><td class="day l"><span class="dot '+st2+'"></span>'+(d.status?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dr="open" data-kind="night" data-date="'+esc(d.date)+'">'+lbl+'</button>':'<span class="dr-dim">'+lbl+'</span>')+'</td>';
+      h+='<tr><td class="day l" data-sort-key="'+esc(d.date)+'"><span class="dot '+st2+'"></span>'+(d.status?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dr="open" data-kind="night" data-date="'+esc(d.date)+'">'+lbl+'</button>':'<span class="dr-dim">'+lbl+'</span>')+'</td>';
       for(var c=0;c<cols.length;c++)h+=cell(d,cols[c]);
       h+='<td class="tx">'+(d.weather?esc(d.weather):'<span class="dr-dim">—</span>')+'</td><td class="tx">'+(d.event?esc(d.event):'<span class="dr-dim">—</span>')+'</td><td class="tx">'+(d.influence?esc(d.influence):'<span class="dr-dim">—</span>')+'</td></tr>';}
     h+='</tbody><tfoot>'+totalRow('Week',hn(t.days_measured||0)+' of '+hn(days.length)+' measured',t,cols,3);
@@ -7461,6 +7464,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
         <button class="fpill {{ 'active' if rfilter=='negative' }}" onclick="setRF('negative',this)">Negative</button>
         <button class="fpill {{ 'active' if rfilter=='positive' }}" onclick="setRF('positive',this)">Positive</button>
       </div>
+      <label class="rv2-selall" title="Select every review shown; Shift-click a box to select a run"><input type="checkbox" id="rv-sel-all" aria-label="Select every review shown"> Select shown</label>
     </div>
     {# Always rendered, even empty: a server search (rvServerSync) or a
        new review (rvPullNew) fills it without a reload. #}
@@ -7470,6 +7474,8 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
     {% include '_review_card.html' %}
     {% endfor %}
     </div>
+    {# Bulk actions on the selected cards (web desk #2), filled by rvSelUpdate. #}
+    <div class="rv2-selbar" id="rv-selbar" role="region" aria-label="Selected reviews" hidden></div>
     {# The list is one page now. It used to render every review the
        restaurant had ever received into this document — each with a draft
        box, a textarea and a template picker — which is fine at 58 reviews
@@ -8648,7 +8654,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 
       <!-- Schedule table (collapsed by default) -->
       <div id="sched-table-wrap" style="display:none;overflow-x:auto;padding:0 0 4px">
-        <table id="sched-table" style="width:100%;border-collapse:collapse;font-size:11px;min-width:580px">
+        <table id="sched-table" data-sortable="schedule" style="width:100%;border-collapse:collapse;font-size:11px;min-width:580px">
           <thead>
             <tr style="background:rgba(255,255,255,.04)">
               <th style="padding:8px 12px;text-align:left;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;white-space:nowrap">Day</th>
@@ -8666,6 +8672,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
           <span class="cap">Tap a row for why that person is on it &middot; the pencil edits it</span>
           <button type="button" class="cbtn cbtn-soft cbtn-sm" data-sched-add="1">+ Add a shift</button>
           <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-muted cbtn-sm" onclick="downloadScheduleFromPreview()">Download CSV</button>
+          <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-muted cbtn-sm" data-print="schedule-preview-panel" title="Print this week, or save it as a PDF from the print dialog">Print</button>
         </div>
       </div>
       <!-- Unsaved edits. Save re-scores and stores the week as a new
@@ -9862,13 +9869,13 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
       }
       var html = '';
       if(d.priced.length){
-        html += '<table><tbody>';
+        html += '<table data-sortable="menu-margins"><thead><tr><th>Dish</th><th class="r">Plate cost</th><th class="r">Price</th><th class="r">Food cost</th></tr></thead><tbody>';
         d.priced.forEach(function(item){
           // The server colours each dish against the owner's food-cost
           // target or the published figure for the type (cost_tone,
           // Benchmarking #35); with neither it is neutral ink.
           var band = {good:'var(--hb-good)',warn:'var(--hb-warn)',bad:'var(--hb-bad)'}[item.cost_tone] || 'var(--ink2)';
-          html += '<tr><td>'+_mmEsc(item.name)+'</td><td class="num" style="text-align:right;color:var(--ink3)">cost $'+item.plate_cost.toFixed(2)+'</td>';
+          html += '<tr><td>'+_mmEsc(item.name)+'</td><td class="num" data-sort-key="'+item.plate_cost.toFixed(2)+'" style="text-align:right;color:var(--ink3)">cost $'+item.plate_cost.toFixed(2)+'</td>';
           html += '<td style="text-align:right"><input class="price" type="number" step="0.01" value="'+item.sell_price.toFixed(2)+'" data-id="'+item.id+'" onchange="saveMenuPrice(this)"></td>';
           html += '<td class="num" style="text-align:right;color:'+band+';font-weight:700;white-space:nowrap">'+item.food_cost_pct.toFixed(0)+'% fc</td></tr>';
         });
@@ -17803,7 +17810,7 @@ function _schedRenderTable(collapse) {
       : '';
     var cls = 'sched-row' + (row.needs_review ? ' needs-review' : '') + (_schedWhyOpen === i ? ' open' : '');
     tHtml += '<tr class="' + cls + '" data-sched-row="' + i + '" style="' + bgStyle + (constraintNote ? ';background:rgba(242,153,74,.04)' : '') + '">';
-    tHtml += '<td style="' + TD + 'color:' + (isNewDay ? 'var(--ember2)' : 'transparent') + ';font-weight:700;font-size:11px;white-space:nowrap">' + _escHtml(day) + (isNewDay ? _schedHolidayMark(row.date) : '') + '</td>';
+    tHtml += '<td data-sort-key="' + _escAttr((row.date || '') + ' ' + ('0000' + i).slice(-4)) + '" style="' + TD + 'color:' + (isNewDay ? 'var(--ember2)' : 'transparent') + ';font-weight:700;font-size:11px;white-space:nowrap">' + _escHtml(day) + (isNewDay ? _schedHolidayMark(row.date) : '') + '</td>';
     // Clicking a name opens the list of people who could take that shift
     // instead; the row itself opens the engine's reason for the assignment.
     tHtml += '<td style="' + TD + 'color:rgba(255,255,255,.88);font-weight:600">'
@@ -22841,7 +22848,7 @@ function revokeOtherSessions(btn){
       if(!d||!d.ok){var sec=document.getElementById('fc2-menu');if(sec)sec.style.display='none';return;}
       var rows=d.dishes||[];
       if(!rows.length){sb.innerHTML='<div class="hb-empty">'+_fcEsc(d.reason||'Map recipes to your menu items to score them.')+'</div>';return;}
-      var h='<div class="fc2-table-scroll"><table class="fc2-mt"><thead><tr><th>Dish</th><th class="r">Price</th><th class="r">Food cost</th><th class="r">Sold</th><th class="r">Guests</th><th>Move</th></tr></thead><tbody>';
+      var h='<div class="fc2-table-scroll"><table class="fc2-mt" data-sortable="dish-scorecard"><thead><tr><th>Dish</th><th class="r">Price</th><th class="r">Food cost</th><th class="r">Sold</th><th class="r">Guests</th><th>Move</th></tr></thead><tbody>';
       var ACT={urgent:'Protect',fix:'Fix',cut:'Cut',reprice:'Reprice',promote:'Promote',review:'Review'};
       for(var i=0;i<rows.length;i++){var x=rows[i],pm=x.positive_mentions||0,nm=x.negative_mentions||0;
         // A plate cost far outside any real food cost is flagged as a
@@ -22852,7 +22859,7 @@ function revokeOtherSessions(btn){
           +'<td class="r hb-num">'+_fcMoney(x.sell_price)+'</td>'
           +'<td class="r hb-num">'+(x.food_cost_pct!=null?Number(x.food_cost_pct).toFixed(1)+'%'+(uw?' <span class="fc2-unit-q" title="Check the units">?</span>':''):'—')+'</td>'
           +'<td class="r hb-num">'+(x.units_sold!=null?x.units_sold:'—')+'</td>'
-          +'<td class="r hb-num">'+((pm||nm)?('+'+pm+' / −'+nm):'<span style="color:var(--ink3)">—</span>')+'</td>'
+          +'<td class="r hb-num"'+((pm||nm)?' data-sort-key="'+(pm-nm)+'"':'')+'>'+((pm||nm)?('+'+pm+' / −'+nm):'<span style="color:var(--ink3)">—</span>')+'</td>'
           // A plate cost that fails the unit check cannot justify cutting or
           // repricing the dish: the move waits on the check (B6 sub-audit).
           +'<td>'+(uw&&(x.action==='cut'||x.action==='reprice')?'<span class="fc2-act review" title="'+_fcEsc(uw)+'">Check units first</span>':(x.action?'<span class="fc2-act '+_fcEsc(x.action)+'">'+_fcEsc(ACT[x.action]||x.action)+'</span>':''))+'</td></tr>';}
@@ -23551,7 +23558,10 @@ document.addEventListener('click', function(e) {
       // answered) is greyed rather than dropped; the review's own words and
       // the location sit under the label (friction #23, #24).
       var act = (n.can_approve && !n.resolved && n.draft);
-      var mods = (n.unread ? ' is-unread' : '') + (n.urgent && !n.resolved ? ' is-urgent' : '') + (n.resolved ? ' is-resolved' : '') + (act ? ' has-act' : '');
+      // Undo a queued send, Approve / Deny a staff request (web desk #4):
+      // only where the server says this login may (can_undo / can_decide).
+      var act2 = _rowActs(n);
+      var mods = (n.unread ? ' is-unread' : '') + (n.urgent && !n.resolved ? ' is-urgent' : '') + (n.resolved ? ' is-resolved' : '') + (act || act2 ? ' has-act' : '');
       var sub = (n.location ? '<span class="nloc">' + esc(n.location) + '</span>' + (n.snippet ? ' · ' : '') : '')
               + (n.snippet ? '“' + esc(n.snippet) + '”' : '') + (n.resolved ? (n.snippet || n.location ? ' · ' : '') + 'handled' : '');
       html += '<div class="notif-item"><button type="button" class="cbtn cbtn-text notif-row' + mods + '" data-id="' + esc(_rowKey(n)) + '">'
@@ -23564,6 +23574,7 @@ document.addEventListener('click', function(e) {
             // posted from the row — an outward send, so the text it sends is
             // on screen before the button that sends it (DS §10).
             + (act ? '<div class="notif-act" data-act-for="' + esc(_rowKey(n)) + '"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-notif-preview="' + esc(_rowKey(n)) + '">Read the reply</button></div>' : '')
+            + (!act && act2 ? '<div class="notif-act" data-act-for="' + esc(_rowKey(n)) + '">' + act2 + '</div>' : '')
             + '</div>';
     }
     list.innerHTML = html + foot;
@@ -23594,6 +23605,62 @@ document.addEventListener('click', function(e) {
       if (typeof toast === 'function') toast(d.auto_posted ? 'Posted to Google' : 'Reply approved', 'success');
       if (window.hbDirty) hbDirty();
     }).catch(function() { done(); if (typeof toast === 'function') toast('Couldn’t confirm that went through — check the review before trying again.', 'error'); });
+  }
+  // Act from the bell (web desk #4). The phone offers Undo on a queued send
+  // and Approve / Deny on a staff request right from the notification; the
+  // bell does the same, on the same routes (strategy_routes: /actions/<id>/
+  // cancel, /labor/time-off|shift-requests/<id>/decide). The row carries
+  // what it is about (delayed_action_id, request_id + request_kind) and the
+  // server's rule for whether this login may act (can_undo, can_decide):
+  // pending, this location, the route's own permission. Each is final, so
+  // each asks first; the row then says what happened, in place.
+  function _rowActs(n) {
+    var k = esc(_rowKey(n));
+    if (n._done) return '<span class="notif-done">' + esc(n._done) + '</span>';
+    if (n.can_undo && n.delayed_action_id) {
+      return '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-notif-undo="' + k + '">Undo</button>';
+    }
+    if (n.can_decide && n.request_id) {
+      return '<button type="button" class="cbtn cbtn-primary cbtn-sm" data-notif-decide="' + k + '" data-decision="approve">Approve</button>'
+        + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-notif-decide="' + k + '" data-decision="deny">Deny</button>';
+    }
+    return '';
+  }
+  function _rowSettled(n, label) {
+    n._done = label; n.can_undo = false; n.can_decide = false;
+    markOpened(n);
+    renderList();
+    setBadge(_unreadCount(), _urgentOpen());
+    if (window.hbDirty) hbDirty();
+  }
+  function undoRow(key, btn) {
+    var n = _find(key);
+    if (!n || !n.delayed_action_id) return;
+    if (!window.confirm('Stop this before it goes out? Nothing will be sent \u2014 you can send it yourself later.')) return;
+    var done = (typeof cbtnBusy === 'function') ? cbtnBusy(btn, 'Undoing\u2026') : function() {};
+    fetch('/api/actions/' + encodeURIComponent(n.delayed_action_id) + '/cancel', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: '{}'})
+      .then(apiJson).then(function(d) {
+        done();
+        if (!d || !d.ok) { n.can_undo = false; renderList(); if (typeof toast === 'function') toast((d && d.error) || 'That already went out, or was already undone.', 'error'); return; }
+        _rowSettled(n, 'Undone \u2014 nothing went out');
+        if (typeof toast === 'function') toast('Undone \u2014 nothing went out.', 'success');
+      }).catch(function() { done(); if (typeof toast === 'function') toast('Couldn\u2019t confirm that went through \u2014 check before trying again.', 'error'); });
+  }
+  function decideRow(key, decision, btn) {
+    var n = _find(key);
+    if (!n || !n.request_id) return;
+    var yes = decision === 'approve';
+    if (!window.confirm((yes ? 'Approve' : 'Deny') + ' this request? It can\u2019t be changed afterwards.')) return;
+    var base = n.request_kind === 'time_off' ? '/api/labor/time-off/' : '/api/labor/shift-requests/';
+    var done = (typeof cbtnBusy === 'function') ? cbtnBusy(btn, yes ? 'Approving\u2026' : 'Denying\u2026') : function() {};
+    fetch(base + encodeURIComponent(n.request_id) + '/decide', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({decision: decision})})
+      .then(apiJson).then(function(d) {
+        done();
+        if (!d || !d.ok) { n.can_decide = false; renderList(); if (typeof toast === 'function') toast((d && d.error) || 'That request was already answered.', 'error'); return; }
+        _rowSettled(n, yes ? 'Approved' : 'Denied');
+        // An approval over a published week names the shifts to cover.
+        if (typeof toast === 'function') toast(d.warning ? ('Approved \u2014 ' + d.warning) : (yes ? 'Request approved' : 'Request denied'), d.warning ? 'warning' : 'success');
+      }).catch(function() { done(); if (typeof toast === 'function') toast('Couldn\u2019t confirm that went through \u2014 check Labor before trying again.', 'error'); });
   }
   // A row is read when it is opened (friction #23), on the server too, so
   // the phone agrees: the open is recorded against its alert_log id.
@@ -23740,9 +23807,11 @@ document.addEventListener('click', function(e) {
       renderList();
       return;
     }
-    var pv = e.target.closest('[data-notif-preview],[data-notif-approve],[data-notif-edit],[data-notif-readall]');
+    var pv = e.target.closest('[data-notif-preview],[data-notif-approve],[data-notif-edit],[data-notif-readall],[data-notif-undo],[data-notif-decide]');
     if (pv) {
-      if (pv.hasAttribute('data-notif-preview')) showPreview(pv.getAttribute('data-notif-preview'));
+      if (pv.hasAttribute('data-notif-undo')) undoRow(pv.getAttribute('data-notif-undo'), pv);
+      else if (pv.hasAttribute('data-notif-decide')) decideRow(pv.getAttribute('data-notif-decide'), pv.getAttribute('data-decision'), pv);
+      else if (pv.hasAttribute('data-notif-preview')) showPreview(pv.getAttribute('data-notif-preview'));
       else if (pv.hasAttribute('data-notif-approve')) approveRow(pv.getAttribute('data-notif-approve'), pv);
       else if (pv.hasAttribute('data-notif-edit')) {
         var en = _find(pv.getAttribute('data-notif-edit'));
@@ -24946,7 +25015,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       if(wi&&wi.ran&&wi.verdict){wih='<div class="sv-dvp" style="margin-top:12px"><div class="sr-k" style="margin-bottom:4px">What if</div><div class="ln">'+num(wi.verdict)+'</div>';var sws=wi.swaps||[],si;for(si=0;si<Math.min(sws.length,3);si++)if(sws[si]&&sws[si].reason)wih+='<div class="ln">&#8644; '+num(sws[si].reason)+'</div>';wih+='</div>';}
       var rvh='';
       if(d.review&&(d.review.hard||d.review.soft)){var hh=+d.review.hard||0,ss=+d.review.soft||0;rvh=' · '+(hh?hh+' hard':'')+(hh&&ss?', ':'')+(ss?ss+' soft':'')+' rule'+(hh+ss===1?'':'s')+' broken';}
-      var html='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:10px"><div><div style="font-size:15px;font-weight:600;color:var(--ink)">Week of '+esc(mdy(d.week_start||''))+' · '+rows.length+' shifts'+(d.generation_seconds?' · generated in '+Math.round(+d.generation_seconds)+'s':'')+esc(rvh)+'</div>'+pub+'</div><div style="display:flex;gap:10px"><button onclick="openScheduleDraft('+id+')" class="cbtn cbtn-primary">Open in the editor</button><button onclick="downloadHistoryCsv('+id+')" class="cbtn cbtn-secondary">Download CSV</button><button onclick="closeScheduleHistoryDetail()" class="cbtn cbtn-secondary">Close ✕</button></div></div>';
+      var html='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:10px"><div><div style="font-size:15px;font-weight:600;color:var(--ink)">Week of '+esc(mdy(d.week_start||''))+' · '+rows.length+' shifts'+(d.generation_seconds?' · generated in '+Math.round(+d.generation_seconds)+'s':'')+esc(rvh)+'</div>'+pub+'</div><div style="display:flex;gap:10px"><button onclick="openScheduleDraft('+id+')" class="cbtn cbtn-primary">Open in the editor</button><button onclick="downloadHistoryCsv('+id+')" class="cbtn cbtn-secondary">Download CSV</button><button type="button" data-print="sched-history-detail" class="cbtn cbtn-secondary" title="Print this week, or save it as a PDF from the print dialog">Print</button><button onclick="closeScheduleHistoryDetail()" class="cbtn cbtn-secondary">Close ✕</button></div></div>';
       html+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13.5px"><tr style="color:var(--ink3);text-transform:uppercase;font-size:13px;letter-spacing:.06em"><th style="text-align:left;padding:6px 8px">Day</th><th style="text-align:left;padding:6px 8px">Employee</th><th style="text-align:left;padding:6px 8px">Role</th><th style="text-align:left;padding:6px 8px">Shift</th><th style="text-align:right;padding:6px 8px">Hrs</th></tr>';
       var lastDay='';
       html+=rows.map(function(r){
@@ -27115,6 +27184,452 @@ window.cavPalette = cavPalette;
     });
   }
 })();
+</script>
+<!-- ════ Web desk capabilities (parity audit, web desk #1, #2, #3, #5) ════
+     Self-contained: sortable tables, the Reviews multi-select, print and
+     wide layouts. DESIGN_SYSTEM.md documents each. ES5 only. -->
+<style>
+/* Sortable tables (web desk #1) */
+table[data-sortable] th.csort-th{white-space:nowrap}
+table[data-sortable] th .cbtn.csort-btn{font:inherit;letter-spacing:inherit;text-transform:inherit;color:inherit;background:none;border:0;box-shadow:none;height:auto;min-height:0;padding:0;margin:0;display:inline-flex;align-items:center;gap:4px;cursor:pointer;text-align:inherit}
+table[data-sortable] th .cbtn.csort-btn:hover{color:var(--ink)}
+table[data-sortable] th .cbtn.csort-btn:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:3px}
+table[data-sortable] th .csort-ic{display:inline-block;width:8px;height:8px;opacity:.35;color:var(--ink3);transition:transform .15s ease,opacity .15s ease}
+table[data-sortable] th .csort-ic svg{display:block;width:8px;height:8px}
+table[data-sortable] th[aria-sort] .csort-ic{opacity:1;color:var(--ember)}
+table[data-sortable] th[aria-sort="descending"] .csort-ic{transform:rotate(180deg)}
+table[data-sortable] th.r .cbtn.csort-btn{flex-direction:row-reverse}
+/* Sorted away from its day order, the schedule shows each row's day. */
+#sched-table.csort-on tbody td:first-child{color:var(--ember2)!important}
+/* Menu margins gained a header row to sort by. */
+.fc2-tool table[data-sortable] th{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);text-align:left;padding:0 8px 6px 0;border-bottom:1px solid var(--hb-line2)}
+.fc2-tool table[data-sortable] th.r{text-align:right}
+@media (prefers-reduced-motion:reduce){table[data-sortable] th .csort-ic{transition:none}}
+/* end sortable tables css */
+
+/* Reviews multi-select (web desk #2) */
+#panel-reviews .rv2-sel{display:inline-flex;align-items:center;justify-content:center;width:22px;height:34px;margin-right:-4px;cursor:pointer;flex-shrink:0}
+#panel-reviews .rv2-sel input,#panel-reviews .rv2-selall input{width:16px;height:16px;accent-color:var(--ember);cursor:pointer;margin:0}
+#panel-reviews .rv2-selall{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--ink3);cursor:pointer;user-select:none}
+#panel-reviews .rv2-row.is-sel{background:var(--hb-tint)}
+#panel-reviews .rv2-selbar{position:sticky;bottom:16px;z-index:6;display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0 0;padding:12px 16px;border-radius:12px;background:var(--surface);border:1px solid var(--hb-line);box-shadow:var(--elev-float)}
+#panel-reviews .rv2-selbar[hidden]{display:none}
+#panel-reviews .rv2-selbar .n{font-weight:600;color:var(--ink);font-size:14px}
+#panel-reviews .rv2-selbar .why{font-size:12px;color:var(--ink3);flex:1 1 220px;min-width:0}
+/* end reviews multi-select css */
+
+/* ── Wide screens (web desk #5): past 1440px the data-dense modules use the
+   room. Reviews, Labor and Food Cost widen; Reviews puts Trends beside the
+   inbox while Trends is open. Home keeps its spec'd column (DS 11b). */
+@media (min-width:1440px){
+  #panel-reviews .hb-wrap,#panel-labor .hb-wrap,#panel-inventory .hb-wrap{max-width:1360px}
+  #panel-reviews .hb-wrap:has(> #rv-panel-analytics[open]){max-width:1560px;display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);column-gap:40px;align-items:start}
+  #panel-reviews .hb-wrap:has(> #rv-panel-analytics[open]) > *{grid-column:1 / -1}
+  #panel-reviews .hb-wrap:has(> #rv-panel-analytics[open]) > #rv-inbox-reviews{grid-column:1}
+  #panel-reviews .hb-wrap:has(> #rv-panel-analytics[open]) > #rv-panel-analytics{grid-column:2;position:sticky;top:calc(var(--cav-chrome) + 16px);max-height:calc(100vh - var(--cav-chrome) - 32px);overflow-y:auto;margin-top:0}
+  #panel-reviews .hb-wrap:has(> #rv-panel-analytics[open]) .rv2-sig{grid-template-columns:1fr}
+  #panel-reviews .hb-wrap:has(> #rv-panel-analytics[open]) .rv2-sg{border-right:none;margin-right:0;padding:0 0 18px;border-bottom:1px solid var(--hb-line2);margin-bottom:18px}
+}
+@media (min-width:1800px){
+  #panel-labor .hb-wrap,#panel-inventory .hb-wrap{max-width:1480px}
+}
+/* ── end wide screens */
+
+/* ── Print (web desk #3): a report on paper. Light tokens of its own, ink
+   text, no header, tabs, toasts, panels or buttons; cards don't split
+   across pages; charts print in colour. Print (data-print) prints one
+   section and hides everything around it (.cav-print-hide). */
+@media print{
+  @page{margin:14mm 12mm}
+  html,html[data-theme],html #panel-home,html #panel-dsr,html #panel-labor,html #panel-reviews,html #panel-inventory,
+  html[data-theme] #panel-home,html[data-theme] #panel-dsr,html[data-theme] #panel-labor,html[data-theme] #panel-reviews,html[data-theme] #panel-inventory{
+    --ink:#16130f;--ink2:#3a3530;--ink3:#5f584f;--paper:#ffffff;--paper2:#f4f1ec;--paper3:#d9d3c8;--surface:#ffffff;--bg-base:#ffffff;
+    --ember:#b8432a;--ember2:#b8432a;--green:#2d6a4f;--red:#b03226;--amber:#8f5f12;--blue:#1a56cc;
+    --hb-line:rgba(22,19,15,.18);--hb-line2:rgba(22,19,15,.10);--hb-tint:transparent;--hb-tint2:rgba(22,19,15,.08);--hb-field:transparent;
+    --hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--elev-card:none;--elev-hero:none;--elev-float:none;--elev-1:none;--elev-2:none;--glow-ember:none}
+  html,body{background:var(--paper)!important;color:var(--ink)!important;min-height:0!important}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact;animation:none!important;transition:none!important}
+  .hb-rise,.hb-fade,.scroll-reveal{opacity:1!important;transform:none!important}
+  .hdr,.tabs,#toast,.toast,.cpal,#notif-panel,#team-msg-wrap,#ask-cavnar-fab,.ask-fab,#ai-feed,#ai-strip,#ask-cavnar-panel,
+  #upload-loading-overlay,#tmpl-picker,[role="dialog"],.cbtn,.cav-print-hide,
+  #dr-bud,#dr-imp,.dr-imp-link,#sched-edit-bar,#publish-sched-panel,#ps-blockers,#ps-reach,#sched-toggle-bar,#sched-table-foot,#rv-selbar{display:none!important}
+  /* A button that IS the value (a day, a week, a header) prints as its text. */
+  td .cbtn,th .cbtn{display:inline!important;background:none!important;border:0!important;box-shadow:none!important;padding:0!important;margin:0!important;color:inherit!important;font:inherit!important;height:auto!important;min-height:0!important}
+  th .csort-ic,#sched-table td.rc,#sched-table th:last-child{display:none!important}
+  .panel{padding:0!important;min-height:0!important}
+  .hb-wrap,.dr-wrap{max-width:none!important;padding:0!important;margin:0!important}
+  .hb-card,.lb2-preview,#schedule-preview-panel,#sched-history-detail{background:var(--paper)!important;box-shadow:none!important;border-color:var(--hb-line)!important}
+  .hb-card,section,.hb-stat,.hb-row,tr,figure,svg,canvas{break-inside:avoid;page-break-inside:avoid}
+  h1,h2,h3,.hb-sh,.hb-kicker,.hb-h3{break-after:avoid;page-break-after:avoid}
+  thead{display:table-header-group}
+  tfoot{display:table-footer-group}
+  svg,canvas,img{max-width:100%!important}
+  .fc2-table-scroll,.dr-gridbox,#sched-table-wrap{overflow:visible!important}
+  html.cav-printing #sched-table-wrap{display:block!important}
+  #schedule-preview-panel [style*="rgba(255,255,255"],#sched-history-detail [style*="rgba(255,255,255"],#sched-table td{color:var(--ink)!important}
+  #sched-table{font-size:11pt!important;min-width:0!important}
+  #sched-table tr{background:transparent!important}
+  .cav-print-break{break-before:page;page-break-before:always}
+  body[data-print-date]::before{content:"Cavnar AI \00b7  printed " attr(data-print-date);display:block;font-size:9pt;color:var(--ink3);margin:0 0 10px}
+}
+/* ── end print */
+</style>
+<script>
+/* ── Sortable tables (web desk #1) ─────────────────────────────────────────
+   Opt in with <table data-sortable="name">. Every header in the last thead
+   row that has text becomes a real button (Enter and Space work), toggling
+   ascending / descending and setting aria-sort. Cells sort as numbers when
+   every filled cell in the column reads as one ($1,234 / 12.5% / -3 / 4.5
+   stars); a dash or an empty cell always sorts last. A cell's data-sort-key
+   overrides its text; an input's value is read; a th with data-sort-type
+   "num" or "text" forces the kind. The sort is stable (ties keep their
+   original order), a one-cell full-width row (a "why" row) stays under the
+   row above it, and the choice survives a re-render: tables are rebuilt by
+   JS all over the dashboard, so a MutationObserver re-applies it. ES5. */
+(function () {
+  var STATE = {};
+  var DASH = /^(|—|–|-|n\/a)$/i;
+  var LEAD = /^\(?[+\-−]?\s*\$?\s*[+\-−]?\s*(\d[\d,]*(?:\.\d+)?|\.\d+)(?![\d.])/;
+  var ANY = /[+\-−]?\$?\s*(\d[\d,]*(?:\.\d+)?|\.\d+)/;
+  var CHEVRON = '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M2 6.5 5 3.5 8 6.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  function keyOf(t) { return t.getAttribute('data-sortable') || t.id || ''; }
+  function headRow(t) { var h = t.tHead; return h && h.rows.length ? h.rows[h.rows.length - 1] : null; }
+  function cellAt(tr, col) {
+    var c = 0;
+    for (var i = 0; i < tr.cells.length; i++) { var span = tr.cells[i].colSpan || 1; if (col >= c && col < c + span) return tr.cells[i]; c += span; }
+    return null;
+  }
+  function text(td) {
+    if (!td) return '';
+    if (td.hasAttribute('data-sort-key')) return td.getAttribute('data-sort-key');
+    var inp = td.querySelector('input:not([type="checkbox"]),select');
+    if (inp) return String(inp.value || '');
+    return String(td.textContent || '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+  }
+  // A leading number ($1,234 / 12.5% / (40) / -3), or with type "num" the
+  // first number anywhere ("cost $4.20").
+  function toNum(s, anywhere) {
+    var m = (anywhere ? ANY : LEAD).exec(s);
+    if (!m) return null;
+    var v = parseFloat(m[1].replace(/,/g, ''));
+    if (!isFinite(v)) return null;
+    var neg = /^\(|^[\-−]|^\$\s*[\-−]/.test(anywhere ? m[0] : s);
+    return neg ? -v : v;
+  }
+  function groups(tbody) {
+    var out = [], rows = tbody.rows;
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      var companion = out.length && (r.hasAttribute('data-sort-with-prev') || (r.cells.length === 1 && (r.cells[0].colSpan || 1) > 1));
+      if (companion) out[out.length - 1].rows.push(r);
+      else out.push({lead: r, rows: [r]});
+    }
+    return out;
+  }
+  // Each row's original place, so ties keep it (stable) - a row that
+  // arrives later (a re-render, Load more) takes the next place.
+  function index(tbody) {
+    var rows = tbody.rows, max = -1, i;
+    for (i = 0; i < rows.length; i++) if (typeof rows[i]._csortIdx === 'number' && rows[i]._csortIdx > max) max = rows[i]._csortIdx;
+    for (i = 0; i < rows.length; i++) if (typeof rows[i]._csortIdx !== 'number') rows[i]._csortIdx = ++max;
+  }
+  function apply(t) {
+    var st = STATE[keyOf(t)], hr = headRow(t), tbody = t.tBodies[0], i, j;
+    if (!hr || !tbody) return;
+    var ths = hr.cells, th = null;
+    for (i = 0; i < ths.length; i++) {
+      if (st && ths[i]._csortCol === st.col) { ths[i].setAttribute('aria-sort', st.dir); th = ths[i]; }
+      else ths[i].removeAttribute('aria-sort');
+    }
+    index(tbody);
+    if (!st) return;
+    var type = th ? th.getAttribute('data-sort-type') : null;
+    var gs = groups(tbody), filled = 0, allNum = true, g, v;
+    for (i = 0; i < gs.length; i++) {
+      g = gs[i]; v = text(cellAt(g.lead, st.col));
+      g.idx = g.lead._csortIdx;
+      g.empty = DASH.test(v);
+      if (g.empty) continue;
+      g.s = v; g.n = toNum(v, type === 'num');
+      if (g.n === null) allNum = false;
+      filled++;
+    }
+    var numeric = type === 'num' || (type !== 'text' && allNum && filled > 0);
+    var sign = st.dir === 'descending' ? -1 : 1;
+    gs.sort(function (a, b) {
+      if (a.empty || b.empty) { if (a.empty && b.empty) return a.idx - b.idx; return a.empty ? 1 : -1; }
+      var c;
+      if (numeric) {
+        if (a.n === null || b.n === null) c = (a.n === null ? 1 : 0) - (b.n === null ? 1 : 0);
+        else c = sign * (a.n - b.n);
+      } else {
+        c = sign * String(a.s).localeCompare(String(b.s), undefined, {numeric: true, sensitivity: 'base'});
+      }
+      return c || (a.idx - b.idx);
+    });
+    var cur = tbody.rows, pos = 0, same = true;
+    for (i = 0; i < gs.length && same; i++) for (j = 0; j < gs[i].rows.length; j++) { if (cur[pos] !== gs[i].rows[j]) { same = false; break; } pos++; }
+    if (!same) for (i = 0; i < gs.length; i++) for (j = 0; j < gs[i].rows.length; j++) tbody.appendChild(gs[i].rows[j]);
+    t.classList.add('csort-on');
+  }
+  function enhance(t) {
+    var hr = headRow(t);
+    if (!hr || hr._csortReady) return;
+    hr._csortReady = true;
+    var col = 0;
+    for (var i = 0; i < hr.cells.length; i++) {
+      var th = hr.cells[i], label = String(th.textContent || '').replace(/^\s+|\s+$/g, '');
+      th._csortCol = col;
+      col += th.colSpan || 1;
+      if (!label || th.getAttribute('data-sort') === 'none') continue;
+      th.classList.add('csort-th');
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'cbtn cbtn-text cbtn-inline csort-btn';
+      b.title = 'Sort by ' + label.toLowerCase();
+      b.innerHTML = '<span></span><span class="csort-ic">' + CHEVRON + '</span>';
+      b.firstChild.textContent = label;
+      th.textContent = '';
+      th.appendChild(b);
+    }
+    if (t.tBodies[0]) index(t.tBodies[0]);
+  }
+  function toggle(btn) {
+    var th = btn.parentNode, t = th;
+    while (t && t.tagName !== 'TABLE') t = t.parentNode;
+    if (!t) return;
+    var k = keyOf(t), st = STATE[k];
+    STATE[k] = {col: th._csortCol, dir: (st && st.col === th._csortCol && st.dir === 'ascending') ? 'descending' : 'ascending'};
+    apply(t);
+    if (mo) mo.takeRecords();
+  }
+  var pending = false, mo = null;
+  function scan() {
+    pending = false;
+    var ts = document.querySelectorAll('table[data-sortable]');
+    for (var i = 0; i < ts.length; i++) {
+      var fresh = !(headRow(ts[i]) && headRow(ts[i])._csortReady);
+      enhance(ts[i]);
+      var tb = ts[i].tBodies[0];
+      if (tb && !fresh) for (var r = 0; r < tb.rows.length; r++) if (typeof tb.rows[r]._csortIdx !== 'number') { fresh = true; break; }
+      if (fresh && STATE[keyOf(ts[i])]) apply(ts[i]);
+    }
+    // A re-rendered inbox drops its cards: the selection bar follows.
+    var bar = document.getElementById('rv-selbar');
+    if (bar && !bar.hidden && window.rvSelUpdate) window.rvSelUpdate();
+    if (mo) mo.takeRecords();
+  }
+  function later() { if (!pending) { pending = true; setTimeout(scan, 30); } }
+  document.addEventListener('click', function (e) {
+    var b = e.target && e.target.closest ? e.target.closest('.csort-btn') : null;
+    if (b) toggle(b);
+  });
+  if (window.MutationObserver) {
+    mo = new MutationObserver(later);
+    mo.observe(document.body, {childList: true, subtree: true});
+  }
+  later();
+  window.cavSortTables = {scan: scan, state: STATE};
+})();
+/* ── end sortable tables */
+
+/* ── Reviews multi-select (web desk #2) ────────────────────────────────────
+   A box on each card still waiting on a decision, "Select shown" for every
+   card the filter shows, and Shift-click for a run. The bar acts on the
+   selection: Approve posts through the bulk route (/api/reviews/approve-
+   all, pinned to these ids), which re-checks each on the server and never
+   posts a flagged or urgent draft; the client leaves those out too, and
+   says how many stay for one-at-a-time reading. Skip is the single route
+   in turn. Each asks first, with the count. */
+var _rvSelLast = null;
+function rvSelBoxes(visibleOnly) {
+  var all = document.querySelectorAll('#rv-inbox-reviews .rv2-sel-cb'), out = [];
+  for (var i = 0; i < all.length; i++) {
+    var card = document.getElementById('rc-' + all[i].getAttribute('data-rv-sel'));
+    if (visibleOnly && (!card || card.style.display === 'none' || card.hidden)) continue;
+    out.push(all[i]);
+  }
+  return out;
+}
+function rvSelChosen() {
+  var bx = rvSelBoxes(false), out = [];
+  for (var i = 0; i < bx.length; i++) if (bx[i].checked) out.push(+bx[i].getAttribute('data-rv-sel'));
+  return out;
+}
+// A reply the bulk path may post: drafted, with a draft, not flagged by the
+// reply guard (.draft-flag) and not urgent. The server applies the same
+// rule (models.BULK_PUBLISHABLE_SQL); this keeps the count honest.
+function rvSelApprovable(id) {
+  var card = document.getElementById('rc-' + id);
+  if (!card) return false;
+  if ((card.getAttribute('data-status') || '') !== 'drafted') return false;
+  if (card.classList.contains('urgent')) return false;
+  if (card.querySelector('.draft-flag')) return false;
+  var txt = document.getElementById('draft-txt-' + id);
+  return !!(txt && String(txt.textContent || '').replace(/\s+/g, ''));
+}
+function rvSelSkippable(id) {
+  var card = document.getElementById('rc-' + id), st = card ? (card.getAttribute('data-status') || '') : '';
+  return !!card && st !== 'posted' && st !== 'approved' && st !== 'skipped';
+}
+function rvSelUpdate() {
+  var bar = document.getElementById('rv-selbar');
+  if (!bar) return;
+  var ids = rvSelChosen(), ap = 0, sk = 0, i;
+  var bx = rvSelBoxes(false);
+  for (i = 0; i < bx.length; i++) {
+    var card = document.getElementById('rc-' + bx[i].getAttribute('data-rv-sel'));
+    if (card) card.classList.toggle('is-sel', bx[i].checked);
+  }
+  var all = document.getElementById('rv-sel-all'), vis = rvSelBoxes(true), on = 0;
+  for (i = 0; i < vis.length; i++) if (vis[i].checked) on++;
+  if (all) { all.checked = vis.length > 0 && on === vis.length; all.indeterminate = on > 0 && on < vis.length; }
+  if (!ids.length) { if (!bar.hidden) { bar.hidden = true; bar.innerHTML = ''; bar.removeAttribute('data-sig'); } return; }
+  for (i = 0; i < ids.length; i++) { if (rvSelApprovable(ids[i])) ap++; if (rvSelSkippable(ids[i])) sk++; }
+  var held = ids.length - ap;
+  var sig = ids.length + '|' + ap + '|' + sk;
+  if (bar.getAttribute('data-sig') === sig && !bar.hidden) return;
+  bar.setAttribute('data-sig', sig);
+  bar.innerHTML = '<span class="n">' + ids.length + ' selected</span>'
+    + '<span class="why">' + (held ? held + (held === 1 ? ' isn’t' : ' aren’t') + ' ready to post in bulk — a flagged or urgent reply, or one already decided, is approved on its own card.' : 'Every selected reply is ready to post.') + '</span>'
+    + '<button type="button" class="cbtn cbtn-primary cbtn-sm" data-rv-bulk="approve"' + (ap ? '' : ' disabled') + '>Approve ' + ap + '</button>'
+    + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-rv-bulk="skip"' + (sk ? '' : ' disabled') + '>Skip ' + sk + '</button>'
+    + '<button type="button" class="cbtn cbtn-text cbtn-sm" data-rv-bulk="clear">Clear</button>';
+  bar.hidden = false;
+}
+window.rvSelUpdate = rvSelUpdate;
+function rvSelClear() {
+  var bx = rvSelBoxes(false);
+  for (var i = 0; i < bx.length; i++) bx[i].checked = false;
+  _rvSelLast = null;
+  rvSelUpdate();
+}
+function rvSelAfter() {
+  rvSelClear();
+  if (window.rvReloadInbox) rvReloadInbox(); else if (typeof updateReviewStats === 'function') updateReviewStats();
+  if (window.hbDirty) hbDirty();
+}
+function rvSelApprove(btn) {
+  var ids = rvSelChosen(), ok = [], i;
+  for (i = 0; i < ids.length; i++) if (rvSelApprovable(ids[i])) ok.push(ids[i]);
+  if (!ok.length) return;
+  if (!window.confirm('Approve and post ' + ok.length + (ok.length === 1 ? ' reply' : ' replies') + '? Each goes out as written.' + (ids.length > ok.length ? ' The other ' + (ids.length - ok.length) + ' stay for you to read one at a time.' : ''))) return;
+  var done = cbtnBusy(btn, 'Approving…'), tally = {approved: 0, posted: 0, failed: 0, lost: false};
+  var chunks = [];
+  for (i = 0; i < ok.length; i += 25) chunks.push(ok.slice(i, i + 25));
+  function finish() {
+    done();
+    var held = ok.length - tally.approved - tally.failed;
+    var bits = [tally.approved + ' approved' + (tally.posted ? ' (' + tally.posted + ' posted to Google)' : '')];
+    if (held > 0) bits.push(held + ' held for you to read');
+    if (tally.failed) bits.push(tally.failed + ' didn’t go through' + (tally.lost ? ' — check before trying again' : ''));
+    toast(bits.join(' · '), tally.failed ? 'error' : 'success');
+    rvSelAfter();
+  }
+  function next() {
+    if (!chunks.length) { finish(); return; }
+    var c = chunks.shift();
+    fetch('/api/reviews/approve-all', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({review_ids: c, limit: c.length})})
+      .then(apiJson).then(function (d) {
+        if (!d || !d.ok) tally.failed += c.length;
+        else { tally.approved += +d.approved || 0; tally.posted += +d.posted || 0; tally.failed += +d.failed || 0; }
+        next();
+      }).catch(function () { tally.failed += c.length; tally.lost = true; next(); });
+  }
+  next();
+}
+function rvSelSkip(btn) {
+  var ids = rvSelChosen(), ok = [], i;
+  for (i = 0; i < ids.length; i++) if (rvSelSkippable(ids[i])) ok.push(ids[i]);
+  if (!ok.length) return;
+  if (!window.confirm('Skip ' + ok.length + (ok.length === 1 ? ' review' : ' reviews') + '? Nothing is posted; each can still be approved or undone from its card.')) return;
+  var done = cbtnBusy(btn, 'Skipping…'), n = 0, bad = 0, q = ok.slice();
+  function next() {
+    if (!q.length) {
+      done();
+      toast(n + ' skipped' + (bad ? ' · ' + bad + ' didn’t go through' : ''), bad ? 'error' : 'success');
+      rvSelAfter();
+      return;
+    }
+    var id = q.shift();
+    fetch('/skip/' + id, {method: 'POST', credentials: 'same-origin'}).then(apiJson).then(function (d) {
+      if (d && d.ok) n++; else bad++;
+      next();
+    }).catch(function () { bad++; next(); });
+  }
+  next();
+}
+document.addEventListener('click', function (e) {
+  var t = e.target;
+  if (!t || !t.closest) return;
+  var cb = t.closest('.rv2-sel-cb');
+  if (cb) {
+    // Shift-click: every box shown between the last one and this one takes
+    // this one's state.
+    if (e.shiftKey && _rvSelLast && _rvSelLast !== cb) {
+      var vis = rvSelBoxes(true), a = -1, b = -1, i;
+      for (i = 0; i < vis.length; i++) { if (vis[i] === _rvSelLast) a = i; if (vis[i] === cb) b = i; }
+      if (a >= 0 && b >= 0) for (i = Math.min(a, b); i <= Math.max(a, b); i++) vis[i].checked = cb.checked;
+    }
+    _rvSelLast = cb;
+    rvSelUpdate();
+    return;
+  }
+  if (t.id === 'rv-sel-all') {
+    var bx = rvSelBoxes(true);
+    for (var k = 0; k < bx.length; k++) bx[k].checked = t.checked;
+    rvSelUpdate();
+    return;
+  }
+  var act = t.closest('[data-rv-bulk]');
+  if (!act || act.disabled) return;
+  var what = act.getAttribute('data-rv-bulk');
+  if (what === 'approve') rvSelApprove(act);
+  else if (what === 'skip') rvSelSkip(act);
+  else rvSelClear();
+});
+/* ── end reviews multi-select */
+
+/* ── Print a section (web desk #3) ─────────────────────────────────────────
+   data-print="<id>" prints that element as the page: every sibling along
+   its path to <body> is hidden for the print (.cav-print-hide) and shown
+   again after. The date at the top of the page is M/D/YY. Owners save a
+   PDF from the browser's print dialog. */
+(function () {
+  function clear() {
+    var hid = document.querySelectorAll('.cav-print-hide');
+    for (var i = 0; i < hid.length; i++) hid[i].classList.remove('cav-print-hide');
+    document.documentElement.classList.remove('cav-printing');
+  }
+  function stamp() {
+    var d = new Date();
+    document.body.setAttribute('data-print-date', (d.getMonth() + 1) + '/' + d.getDate() + '/' + String(d.getFullYear()).slice(-2));
+  }
+  window.cavPrint = function (id) {
+    var el = document.getElementById(id);
+    clear();
+    if (el) {
+      var node = el;
+      while (node && node !== document.body && node.parentNode) {
+        var sib = node.parentNode.children;
+        for (var i = 0; i < sib.length; i++) if (sib[i] !== node && sib[i].tagName !== 'SCRIPT' && sib[i].tagName !== 'STYLE') sib[i].classList.add('cav-print-hide');
+        node = node.parentNode;
+      }
+      document.documentElement.classList.add('cav-printing');
+    }
+    stamp();
+    window.print();
+  };
+  window.addEventListener('beforeprint', stamp);
+  window.addEventListener('afterprint', clear);
+  document.addEventListener('click', function (e) {
+    var b = e.target && e.target.closest ? e.target.closest('[data-print]') : null;
+    if (!b) return;
+    e.preventDefault();
+    window.cavPrint(b.getAttribute('data-print'));
+  });
+})();
+/* ── end print a section */
 </script>
 </body>
 </html>

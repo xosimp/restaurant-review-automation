@@ -290,7 +290,8 @@ def test_group_home_shows_every_item_above_the_table_and_the_night_per_location(
     g = _fn("renderGroup")
     assert "Math.min(at.length,6)" not in g
     assert "data-attn-more" in g and "hb-attn-more" in g and 'id="hb-attn-card"' in g
-    assert g.index('id="hb-attn-card"') < g.index('<table class="hb-tbl">')
+    # The table opts into sorting (web desk #1), so its tag carries data-sortable.
+    assert g.index('id="hb-attn-card"') < g.index('<table class="hb-tbl"')
     assert "hbNightCell(r.last_night)" in g and "hbGroupTotal(p)" in g and "g.summary_line" in g
     assert '<th class="r">Labor</th>' in g                       # always visible now
     assert "<h3>" not in g                                     # #41: .hb-h3 only

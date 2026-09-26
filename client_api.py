@@ -7243,6 +7243,7 @@ def _do_get_notifications(restaurant_id, viewer=None, limit=40, scope=None):
         conn = get_conn()
         rows = conn.execute(
             f"""SELECT a.id, a.restaurant_id, a.alert_type, a.review_id, a.fired_at, a.priority,
+                       a.ref_kind, a.ref_id,
                        rv.text AS review_text, rv.rating AS review_rating,
                        rv.response_status AS review_status, rv.deleted_at AS review_deleted,
                        rv.draft_response AS review_draft, rv.draft_needs_review AS review_flagged
@@ -7261,6 +7262,11 @@ def _do_get_notifications(restaurant_id, viewer=None, limit=40, scope=None):
                     (viewer["id"], *[r["id"] for r in rows])).fetchall() if o["alert_log_id"] is not None}
             except Exception:
                 opened = set()
+        # The queued sends and staff requests the rows name (alert_log
+        # ref_kind / ref_id), read once for the page: Undo and Approve / Deny
+        # are offered only while the thing is still pending, at the location
+        # the session is on, to a login allowed to do it (web desk #4).
+        refs = _notification_refs(conn, rows, int(restaurant_id))
         conn.close()
         seen = {}
         if viewer and viewer.get("id"):
@@ -7305,6 +7311,7 @@ def _do_get_notifications(restaurant_id, viewer=None, limit=40, scope=None):
                 "draft": ((r["review_draft"] or "")[:600] or None)
                          if (r["review_id"] and r["review_status"] == "drafted" and not r["review_flagged"]) else None,
                 "resolved": resolved,
+                **_notification_ref_fields(r, refs, viewer, int(restaurant_id)),
                 "opened": was_opened,
                 "restaurant_id": r["restaurant_id"],
                 "location": names.get(r["restaurant_id"]) if many else None,
@@ -7314,6 +7321,68 @@ def _do_get_notifications(restaurant_id, viewer=None, limit=40, scope=None):
     except Exception as e:
         print(f"[notifications] load failed for rid={restaurant_id}: {e}")
         return {"ok": False, "notifications": [], "error": "Couldn't load notifications right now."}, 200
+
+
+def _notification_refs(conn, rows, restaurant_id):
+    """{(ref_kind, ref_id): {"pending": bool, "kind": delayed kind}} for the
+    rows at `restaurant_id` that name a queued send or a staff request."""
+    want = {"delayed_action": set(), "shift": set(), "time_off": set()}
+    for r in rows:
+        try:
+            kind, rid_ = r["ref_kind"], r["ref_id"]
+        except (IndexError, KeyError):
+            return {}
+        if kind in want and rid_ is not None and int(r["restaurant_id"]) == restaurant_id:
+            want[kind].add(int(rid_))
+    out = {}
+    tables = (("delayed_action", "SELECT id, status, kind FROM delayed_actions"),
+              ("shift", "SELECT id, status, NULL AS kind FROM shift_change_requests"),
+              ("time_off", "SELECT id, status, NULL AS kind FROM staff_time_off"))
+    for ref_kind, select in tables:
+        ids = sorted(want[ref_kind])
+        if not ids:
+            continue
+        try:
+            for x in conn.execute(f"{select} WHERE restaurant_id=? AND id IN ({','.join('?' * len(ids))})",
+                                  (restaurant_id, *ids)).fetchall():
+                out[(ref_kind, int(x["id"]))] = {"pending": x["status"] == "pending", "kind": x["kind"]}
+        except Exception as e:
+            print(f"[notifications] could not read {ref_kind} refs for rid={restaurant_id}: {e}")
+    return out
+
+
+def _notification_ref_fields(r, refs, viewer, restaurant_id):
+    """The act-in-place fields a row about a queued send or a staff request
+    carries: `delayed_action_id` + `can_undo`, or `request_id` +
+    `request_kind` + `can_decide`. The can_* flags are the server's rule —
+    still pending, this location, and the permission the route itself checks
+    (strategy_routes._may_undo / _may_draft) — so a client never offers a
+    button whose route would refuse. Empty for any other row."""
+    try:
+        kind, ref_id = r["ref_kind"], r["ref_id"]
+    except (IndexError, KeyError):
+        return {}
+    if not kind or ref_id is None:
+        return {}
+    here = int(r["restaurant_id"]) == restaurant_id
+    state = refs.get((kind, int(ref_id))) or {}
+    live = bool(here and state.get("pending") and viewer)
+
+    if kind == "delayed_action":
+        try:
+            import strategy_routes as _sr
+            may = live and bool(_sr._may_undo(viewer, state.get("kind")))
+        except Exception:
+            may = False
+        return {"delayed_action_id": int(ref_id), "can_undo": may}
+    if kind in ("shift", "time_off"):
+        try:
+            import strategy_routes as _sr
+            may = live and bool(_sr._may_draft(viewer))
+        except Exception:
+            may = False
+        return {"request_id": int(ref_id), "request_kind": kind, "can_decide": may}
+    return {}
 
 
 def notification_visibility(viewer):

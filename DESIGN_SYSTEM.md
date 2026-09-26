@@ -199,6 +199,20 @@ Radius — iOS `CavnarRadius`, web equivalents:
 
 Nothing renders with square corners.
 
+### Page width and wide screens (web)
+
+Module pages sit in one centred column: `.hb-wrap` / `.dr-wrap` /
+`.rh-wrap` at 1120px, Account's `.ac-page` at 1180px, the legacy `.panel`
+at 1080px. Past **1440px** the data-dense modules use the room (web desk
+#5): Reviews, Labor and Food Cost widen to 1360px (Labor and Food Cost to
+1480px past 1800px), and Reviews sets Trends beside the inbox — the inbox
+left, Trends right and sticky — only while Trends is open
+(`.hb-wrap:has(> #rv-panel-analytics[open])`; its three tiles stack in
+the narrower column). **Home keeps its single column at every width**:
+its order is §11b, and a second column would reorder it. A new wide rule
+goes in the "Wide screens" block at the end of `dashboard.html`, never on
+Home.
+
 ---
 
 ## 4. Cards & rows
@@ -364,6 +378,38 @@ status dot, hover tint, and a clickable row when the row has a destination.
 
 Wrap wide tables in an overflow container (`.fc2-table-scroll`) so the page
 never scrolls sideways.
+
+**Sortable tables** (web desk #1): opt a table in with
+`<table data-sortable="name">` — the one helper (`cavSortTables`, at the
+end of `dashboard.html`) turns each header in the last `thead` row into a
+`.cbtn.csort-btn` (keyboard: Enter / Space), toggles ascending /
+descending, sets `aria-sort` on the sorted header and shows a small chevron
+(ink3 at rest, ember on the sorted column, turned for descending). Cells
+sort as numbers when every filled cell reads as one (`$1,234`, `12.5%`,
+`4.5★`), else as text (natural order); a dash or empty cell always sorts
+last, ties keep their order, and a one-cell full-width row (a "why" row)
+stays under its row. `td[data-sort-key]` overrides the text (a date, a
+raw figure), `th[data-sort-type="num"|"text"]` forces the kind and
+`th[data-sort="none"]` opts a column out; a header with no text is never
+sortable. The choice survives a re-render. In use: Group Home's
+locations, the DSR week grid, the schedule, menu margins, the dish
+scorecard. Opt in where an owner compares down a column; leave out a
+table whose order IS the meaning (a ranked list, a timeline).
+
+### Print (web)
+
+`@media print` (the "Print" block at the end of `dashboard.html`) prints a
+page as a report: its own light tokens (white paper, ink text — colours
+still only through variables), no header, tabs, toasts, Ask or buttons (a
+`.cbtn` that IS a value inside a table cell prints as its text), cards and
+table rows never split across pages, `thead` repeating, charts in colour
+(`print-color-adjust:exact`) and a "Cavnar AI · printed 9/25/26" line on
+top. A **Print** button is `.cbtn` with `data-print="<id>"`: it prints that
+element alone (every sibling on its path to `<body>` gets
+`.cav-print-hide`, removed on `afterprint`) and its title says the PDF is
+saved from the print dialog. On the daily report (`dr-root`, night / week /
+period), the monthly review on Home (`hb-month`), the draft schedule
+(`schedule-preview-panel`) and a published week (`sched-history-detail`).
 
 **iOS uses rows and cards — except the Daily Report's week**
 (`DSRWeekGrid`, `Features/DailyReport/DailyReportWeekView.swift`): the
@@ -696,6 +742,9 @@ Every block keeps its empty state; a quiet day is a short page.
 | Need | Use |
 |---|---|
 | Button | `.cbtn` + variant (`static/css/cavnar-buttons.css`) |
+| Sortable table | `table[data-sortable]` — see §8 |
+| Print a section | `.cbtn[data-print="<id>"]` — see §8 *Print* |
+| Bulk select (Reviews inbox) | `.rv2-sel` box on each card still waiting on a decision, `.rv2-selall` ("Select shown", the filter's visible cards) in the toolbar, Shift-click for a run, and the sticky `.rv2-selbar` (count, why some can't go in bulk, Approve N / Skip N / Clear). Approve goes through `/api/reviews/approve-all` with the ids pinned and never includes a flagged or urgent draft — those are approved on their own card; both actions confirm with the count and end in one toast |
 | Card | `.ac-card` + `.ac-card-h` + `.ac-row` |
 | Section label | `.hb-kicker` |
 | List row with status | `.hb-row` + `.d` dot + severity class |
