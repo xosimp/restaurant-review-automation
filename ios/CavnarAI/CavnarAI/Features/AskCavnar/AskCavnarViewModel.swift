@@ -362,13 +362,20 @@ final class AskCavnarViewModel {
         let history: [HistoryTurn]
         let conversation_id: Int?
         let new_conversation: Bool
+        let screen: AskScreen?
     }
 
     private struct StreamBody: Encodable {
         let question: String
         let conversation_id: Int?
         let new_conversation: Bool
+        let screen: AskScreen?
     }
+
+    /// Where the next question was asked from (an "Ask about this" on a
+    /// review, a recommendation, a staffing card). Consumed by the next
+    /// submit only: a question typed afterwards stands on its own.
+    var pendingScreen: AskScreen?
 
     private struct AskResponse: Decodable {
         let ok: Bool
@@ -731,6 +738,8 @@ final class AskCavnarViewModel {
     func submit() async {
         guard canSubmit else { return }
         let asked = question
+        let screen = pendingScreen
+        pendingScreen = nil
         errorBanner = nil
         // Captured from `messages` BEFORE appending the new question, so
         // this is exactly the prior back-and-forth — the backend appends
@@ -755,7 +764,7 @@ final class AskCavnarViewModel {
         defer { isLoading = false; statusLabel = nil; progressTrail = []; orbState = .connecting }
 
         do {
-            try await streamAnswer(for: asked)
+            try await streamAnswer(for: asked, screen: screen)
         } catch is CancellationError {
             // The screen went away mid-request — roll the turn back silently.
             if messages.last?.isUser == true { messages.removeLast() }
@@ -783,7 +792,8 @@ final class AskCavnarViewModel {
                 let response: AskResponse = try await client.send(
                     "/mobile/api/ask-cavnar", method: .post,
                     body: AskBody(question: asked, history: history,
-                                  conversation_id: conversationId, new_conversation: wantsNewConversation)
+                                  conversation_id: conversationId, new_conversation: wantsNewConversation,
+                                  screen: screen)
                 )
                 if response.ok { adopt(conversationId: response.conversationId) }
                 appendAnswer(from: response.ok ? (response.answer ?? "") : (response.error ?? "Something went wrong."),
@@ -812,13 +822,13 @@ final class AskCavnarViewModel {
     /// runs, "answer" appends the final message, "error" surfaces the
     /// server's own message. Mirrors the web client's fetch/ReadableStream
     /// loop — same events, same fallback-on-failure shape.
-    private func streamAnswer(for question: String) async throws {
+    private func streamAnswer(for question: String, screen: AskScreen?) async throws {
         var gotAnswer = false
         // Any progress event means the server's loop is running tools on
         // this question; from then on a failure must not trigger a re-ask.
         var sawProgress = false
         do {
-            try await consumeStream(for: question, gotAnswer: &gotAnswer, sawProgress: &sawProgress)
+            try await consumeStream(for: question, screen: screen, gotAnswer: &gotAnswer, sawProgress: &sawProgress)
         } catch is CancellationError {
             throw CancellationError()
         } catch {
@@ -838,11 +848,11 @@ final class AskCavnarViewModel {
     /// The stream failed after the server had started work on the question.
     struct StreamCutAfterProgress: Error {}
 
-    private func consumeStream(for question: String, gotAnswer: inout Bool, sawProgress: inout Bool) async throws {
+    private func consumeStream(for question: String, screen: AskScreen?, gotAnswer: inout Bool, sawProgress: inout Bool) async throws {
         for try await event in await client.stream(
             "/mobile/api/ask-cavnar/stream",
             body: StreamBody(question: question, conversation_id: conversationId,
-                             new_conversation: wantsNewConversation)) {
+                             new_conversation: wantsNewConversation, screen: screen)) {
             switch event.type {
             case "progress":
                 sawProgress = true

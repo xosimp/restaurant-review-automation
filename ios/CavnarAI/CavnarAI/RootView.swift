@@ -405,9 +405,11 @@ struct RootView: View {
             guard let prompt else { return }
             selectedTab = .ask
             askCavnarViewModel.question = prompt
+            askCavnarViewModel.pendingScreen = deepLinkRouter.pendingAskScreen
             let send = deepLinkRouter.pendingAskAutoSend
             deepLinkRouter.pendingAskPrompt = nil
             deepLinkRouter.pendingAskAutoSend = false
+            deepLinkRouter.pendingAskScreen = nil
             // An explicit "Ask about this" sends, as the web's hbAsk does
             // (friction audit #15) — never over an answer still streaming.
             if send, !askCavnarViewModel.isLoading {

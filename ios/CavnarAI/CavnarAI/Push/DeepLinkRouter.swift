@@ -27,6 +27,8 @@ final class DeepLinkRouter {
     /// sheet) was the decision, so it sends — as the web's hbAsk does
     /// (friction audit #15). A plain tap on a brief's body only fills it in.
     var pendingAskAutoSend = false
+    /// The screen an "Ask about this" came from, sent with pendingAskPrompt.
+    var pendingAskScreen: AskScreen?
     /// A past Ask chat to reopen — `ask?conversation=<id>`, a command-sheet
     /// hit for an old conversation (F3-15). RootView consumes it.
     var pendingAskConversation: Int?
