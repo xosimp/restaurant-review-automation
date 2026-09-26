@@ -759,6 +759,10 @@ def ensure_columns(db_path: str = DB_PATH):
         ("schedule_history", "review_json", "TEXT"),
         ("schedule_history", "generation_seconds", "REAL"),
         ("schedule_history", "weather_json", "TEXT"),
+        # What the draft was written against — the forecast's sales and its
+        # basis, the labor budget, each day's hour target — so a reopened
+        # week can say its labor % (the Schedule Studio summary, 9/26/26).
+        ("schedule_history", "economics_json", "TEXT"),
         # The rest of _ensure_history_columns' list, so a fresh database has
         # them at boot and concurrent first saves never race to ALTER.
         ("schedule_history", "quality_json", "TEXT"),
@@ -6465,7 +6469,7 @@ def _ensure_history_columns(conn):
                        ("review_json", "TEXT"), ("generation_seconds", "REAL"),
                        ("weather_json", "TEXT"), ("quality_score", "REAL"), ("quality_band", "TEXT"),
                        ("quality_confidence", "TEXT"), ("what_if_json", "TEXT"), ("superseded_by", "INTEGER"),
-                       ("republished_at", "TEXT"), ("publishing_at", "TEXT")):
+                       ("republished_at", "TEXT"), ("publishing_at", "TEXT"), ("economics_json", "TEXT")):
         if name not in have:
             try:
                 conn.execute(f"ALTER TABLE schedule_history ADD COLUMN {name} {decl}")

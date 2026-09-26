@@ -3456,7 +3456,12 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             )
             _annotate_history(_history_id, restaurant_id, review=result.get("review"),
                               seconds=result.get("generation_seconds"),
-                              weather=result.get("weather_forecast"))
+                              weather=result.get("weather_forecast"),
+                              economics={"projected_revenue": result.get("projected_revenue"),
+                                         "projected_revenue_source": result.get("projected_revenue_source"),
+                                         "labor_budget_dollars": result.get("labor_budget_dollars"),
+                                         "daily_target_hours": result.get("daily_target_hours") or {},
+                                         "demand_data_through": result.get("demand_data_through")})
             # A whole week built discharges "next week's schedule isn't
             # built"; a partial redo of a few days does not.
             if _history_id and not _pinned:
@@ -3684,19 +3689,22 @@ def _enforce_arrival_time(row: dict, real_day: str, open_times: dict, arrivals: 
     row["notes"] = f"{note}; moved to {row.get('role')} arrival" if note else f"moved to {row.get('role')} arrival"
 
 
-def _annotate_history(history_id, restaurant_id, review=None, seconds=None, weather=None):
+def _annotate_history(history_id, restaurant_id, review=None, seconds=None, weather=None, economics=None):
     """The columns save_schedule_history predates: the review verdict, how
-    long generation took, and the forecast it was written against."""
+    long generation took, the weather forecast it was written against, and
+    its economics (forecast sales and basis, labor budget, daily hour
+    targets) so a reopened week can state its labor %."""
     if not history_id:
         return
     from models import get_conn, _ensure_history_columns
     conn = get_conn()
     try:
         _ensure_history_columns(conn)
-        conn.execute("UPDATE schedule_history SET review_json=?, generation_seconds=?, weather_json=? "
-                     "WHERE id=? AND restaurant_id=?",
+        conn.execute("UPDATE schedule_history SET review_json=?, generation_seconds=?, weather_json=?, "
+                     "economics_json=? WHERE id=? AND restaurant_id=?",
                      (json.dumps(review) if review else None, seconds,
-                      json.dumps(weather) if weather else None, history_id, restaurant_id))
+                      json.dumps(weather) if weather else None,
+                      json.dumps(economics, default=str) if economics else None, history_id, restaurant_id))
         conn.commit()
     finally:
         conn.close()

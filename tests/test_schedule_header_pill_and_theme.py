@@ -83,7 +83,8 @@ def test_lb2_sched_no_longer_draws_its_own_divider():
 
 def test_schedule_heading_says_cavnar_ai():
     # "drafted", never "optimized" (never-say C, NS1 #11).
-    assert "Next week, drafted by Cavnar AI<small>" in _src()
+    # The Schedule Studio's Setup heading (9/26/26).
+    assert "<h1>Next week, drafted by Cavnar AI</h1>" in _src()
     assert "optimized to your" not in _src()
 
 
@@ -92,11 +93,11 @@ def test_schedule_heading_says_cavnar_ai():
 def test_schedule_actions_immediately_follow_the_h2_not_a_sibling_of_it():
     # The schedule workspace (9/26/26): the actions live in the left panel,
     # below the heading, never in the header row beside it.
+    # The Schedule Studio (9/26/26): the actions live in the settings card
+    # under Setup's heading, never beside it.
     s = _src()
-    i = s.index('<div class="k">Schedule</div>')
-    h2_end = s.index("</h2>", i) + len("</h2>")
-    assert "lb2-actions" not in s[i:h2_end + 20]
-    assert h2_end < s.index('<div class="lb2-actions">', h2_end) < s.index('class="sw-center"')
+    h1 = s.index("<h1>Next week, drafted by Cavnar AI</h1>")
+    assert h1 < s.index('id="ss-settings-setup"') < s.index('<div class="lb2-actions">', h1) < s.index('class="sw-center"')
 
 
 # ── the Generate button's loading state ──────────────────────────────────────

@@ -382,8 +382,11 @@ Sitemap: https://cavnar.ai/sitemap.xml"""
 
 
 @app.route("/")
+@app.route("/schedule/studio")
 @login_required
 def index(current_user):
+    # /schedule/studio is the same page opened on the Schedule Studio (the
+    # template reads request.path): one application, its own address.
     if current_user.get("is_admin"):
         return redirect("/admin")
     # A link from an email or a text that names a recommendation (rec=,

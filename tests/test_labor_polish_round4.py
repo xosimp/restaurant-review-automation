@@ -142,13 +142,15 @@ def test_week_loader_fills_its_card_without_stretching():
 
 # ── generated-schedule action buttons match sizes ───────────────────────────
 
-def test_close_button_is_not_undersized_next_to_its_siblings():
+def test_the_week_is_left_by_the_studios_own_way_out():
+    # The Schedule Studio (9/26/26): the week's header lost its Close button;
+    # the app bar's full-size "← Dashboard" is the way out, and the one
+    # send button is the Publish step's.
     s = _src()
     i = s.index("Generated schedule · draft")
-    j = s.index("</div>\n      </div>", i)
-    block = s[i:j]
-    assert 'cbtn cbtn-glass cbtn-sm"' not in block
-    assert 'cbtn cbtn-glass"' in block
+    block = s[i:s.index("</div>\n      </div>", i)]
+    assert "closeSchedulePreview()" not in block
+    assert 'class="cbtn cbtn-text cbtn-sm ss-back" onclick="studioClose()"' in s
 
 
 # ── the email drawer can be collapsed, and generating doesn't lose data ────

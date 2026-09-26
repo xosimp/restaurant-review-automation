@@ -88,13 +88,12 @@ def test_schedule_buttons_sit_below_the_heading_not_beside_it():
     now sit directly under the subtitle instead."""
     # The schedule workspace (9/26/26): the controls moved into its left
     # panel, under the heading, never beside it in the header row.
+    # The Schedule Studio (9/26/26): Generate and the week picker are in the
+    # settings component, which Setup shows under its heading.
     s = _src()
-    i = s.index('<div class="k">Schedule</div>')
-    h2_end = s.index('</h2>', i) + len('</h2>')
-    header = s[i:h2_end + 20]
-    assert 'lb2-actions' not in header
-    left = s[s.index('class="sw-side sw-left"'):s.index('class="sw-center"')]
-    assert h2_end < s.index('class="sw-side sw-left"')
+    h1 = s.index("<h1>Next week, drafted by Cavnar AI</h1>")
+    left = s[s.index('id="ss-settings"'):s.index('class="sw-center"')]
+    assert h1 < s.index('id="ss-settings"')
     assert '<div class="lb2-actions">' in left and 'id="gen-sched-btn"' in left
 
 

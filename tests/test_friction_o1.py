@@ -389,9 +389,11 @@ def _fn(name):
 
 def test_the_preview_has_one_send_button_that_saves_first_and_no_pos_id_in_the_drawer():
     s = _src()
-    head = s[s.index('id="schedule-preview-panel"'):s.index('id="ps-reach"')]
+    # The one send button is the Schedule Studio's Publish step (9/26/26).
+    head = s[s.index('data-stage="publish"'):s.index('id="ps-result"')]
     assert 'onclick="saveAndSendSchedule(this)" id="ps-send-btn" class="cbtn cbtn-primary"' in head
-    assert "Download CSV" not in head, "CSV is demoted out of the header (#19)"
+    assert s.count('id="ps-send-btn"') == 1
+    assert "Download CSV" not in head, "CSV is demoted out of the send step (#19)"
     assert "pos_id" not in _fn("openPublishSchedule"), "POS id moved to the person sheet (#16)"
     send = _fn("saveAndSendSchedule")
     assert "rescoreSchedule(btn, function(){ publishScheduleNow(false); })" in send

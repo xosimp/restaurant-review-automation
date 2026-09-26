@@ -3221,7 +3221,48 @@ def mobile_schedule_history_detail(history_id, current_user):
     # iOS Labor): its recommendations are shown by this response.
     from schedule_engine import present_quality
     present_quality(current_user["restaurant_id"], detail.get("quality"), user_id=current_user.get("id"))
-    return jsonify(ok=True, **detail, preview_rows=preview_rows)
+    # What the draft was written against, and its rows priced as they stand
+    # now (edits and all), so a reopened week states its labor % and
+    # overtime the way a fresh one does (Schedule Studio, 9/26/26).
+    economics, projected_cost = _schedule_economics(current_user["restaurant_id"], history_id, preview_rows,
+                                                    detail.get("week_start"))
+    return jsonify(ok=True, **detail, preview_rows=preview_rows, economics=economics,
+                   projected_cost=projected_cost)
+
+
+def _schedule_economics(rid, history_id, rows, week_start):
+    """({projected_revenue, projected_revenue_source, labor_budget_dollars,
+    daily_target_hours, demand_data_through} or {}, priced cost or None).
+    Pricing is the generation's own: role rates, overtime from the 40h line
+    per payroll week (schedule_economics.priced_cost)."""
+    import json as _json
+    econ = {}
+    try:
+        conn = get_conn()
+        try:
+            row = conn.execute("SELECT economics_json FROM schedule_history WHERE id=? AND restaurant_id=?",
+                               (history_id, rid)).fetchone()
+        finally:
+            conn.close()
+        econ = _json.loads(row["economics_json"]) if row and row["economics_json"] else {}
+    except Exception:
+        econ = {}
+    cost = None
+    try:
+        import schedule_economics as _econ
+        import schedule_rules as _rules
+        from labor import OVERTIME_THRESHOLD_HOURS
+        from models import get_role_rates, get_restaurant
+        rates = get_role_rates(rid) or {}
+        r = get_restaurant(rid)
+        cons = _rules.Constraints(restaurant_id=rid, week_dates=[], week_days=[],
+                                  week_start_day=int(getattr(r, "week_start_day", 0) or 0))
+        cost = _econ.priced_cost(rows, rates, rates.get("_default") or getattr(r, "hourly_rate", None) or 15.0,
+                                 ceiling=OVERTIME_THRESHOLD_HOURS, bucket=cons.bucket,
+                                 daily_ot_hours=(_rules.compliance(r) or {}).get("daily_ot_hours"))
+    except Exception as e:
+        print(f"[schedule history] pricing failed for {history_id}: {e}")
+    return econ, cost
 
 
 @mobile_bp.route("/labor/schedule-history/<int:history_id>", methods=["DELETE"])
