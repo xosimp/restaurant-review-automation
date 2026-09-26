@@ -122,7 +122,7 @@ def test_labor_waiting_names_close_requests_and_an_unsent_draft(db):
     w = strategy_jobs.labor_waiting(rid, db_path=db, today=today)
     text = " ".join(w["lines"])
     assert "Ana's time off from 10/2/26" in text and "Far" not in text
-    assert "week of 10/4/26 is drafted" in text and w["history_id"]
+    assert "week of 10/4/26 is built" in text and w["history_id"]
     assert not strategy_jobs.labor_waiting(rid, db_path=db, today=today, draft=False)["history_id"]
 
 

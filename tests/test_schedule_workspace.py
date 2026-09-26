@@ -212,3 +212,42 @@ def test_the_right_panel_says_one_thing_once():
     assert "rows2 && flags.length ?" in _fn("swLive")
     assert "Priced as last saved. Save to re-price your edits." in _fn("swLive")
     assert "OK TO TRAIN" in s and ">TRAINING<" not in s
+
+
+def test_a_reopened_week_is_scored_against_todays_inputs_as_it_opens():
+    # Owner, 9/26/26: "I applied the RECOMMENDED changes and it dropped 9
+    # points" - the stored 83 was measured against the history of the day it
+    # was built; the first action re-scored it against today's (the demo had
+    # been reseeded), and the gap landed on that action.
+    f = _fn("ssRescoreOnOpen")
+    assert "_sqLiveScore(_schedRows" in f and "renderShiftQuality(d.quality" in f
+    assert "when it was built" in f and "_schedDirty) return;" in f
+    assert "ssRescoreOnOpen();" in _fn("studioOnResult")
+
+
+def test_publish_reads_the_rows_on_screen_and_folds_the_saved_weeks_list():
+    s = _src()
+    pub = _fn("ssRenderPublish")
+    assert "al.hidden = _schedDirty" in pub and "Your edits are saved" not in pub
+    assert '<details class="ss-pub-alerts" id="ss-pub-alerts">' in s
+    assert ".ss-pub-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}" in s
+    assert ".ss-pub-go{display:flex;flex-wrap:wrap;gap:12px;margin-top:26px;justify-content:center}" in s
+    assert ".ss-pub-go .cbtn{height:50px;width:240px;" in s
+
+
+def test_list_edits_in_the_studio_use_the_one_editor_and_a_removal_is_said():
+    s = _src()
+    assert "if (window._ssOpen && window.swEdit) swEdit(i); else schedEditRow(i);" in s
+    assert "Removed ' + (gone.employee" in _fn("_schedRemoveRowNow")
+
+
+def test_a_read_types_itself_once_a_session_and_never_above_the_viewport():
+    tw = _fn("typewriterEffect")
+    assert "_twWasSeen(key) || above || still" in tw and "window.scrollBy(0, dh)" in tw
+
+
+def test_overstaffed_is_its_own_colour():
+    s = _src()
+    assert ".lb2-tint{--tc:var(--blue);" in s and ".sb-lane{--tc:var(--blue)}" in s
+    ios = open(os.path.join(ROOT, "ios/CavnarAI/CavnarAI/Features/Labor/StaffingBoardSection.swift"), encoding="utf-8").read()
+    assert "case .over: return .cavnarBlue" in ios

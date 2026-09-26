@@ -286,15 +286,16 @@ struct MoneyWentItem: Codable, Equatable, Identifiable {
 
 // MARK: - Tones
 
-/// The web board's lane tones (`--tc`): overstaffed ember, strong days run
-/// lean amber, overtime red. Past schedule rows in "Where the money went"
+/// The web board's lane tones (`--tc`): overstaffed blue, strong days run
+/// lean amber, overtime red (three kinds, three colours; overstaffed shared
+/// the brand's ember until 9/26/26). Past schedule rows in "Where the money went"
 /// are amber, as the web's `.lb2-tint.under`.
 enum StaffingLane: String, CaseIterable {
     case over, lean, ot
 
     var tone: Color {
         switch self {
-        case .over: return .cavnarEmber
+        case .over: return .cavnarBlue
         case .lean: return .cavnarAmber
         case .ot: return .cavnarRed
         }

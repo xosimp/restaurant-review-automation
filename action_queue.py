@@ -403,7 +403,7 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
                     {"label": "Open it", "module": "labor", "history_id": unsent["id"],
                      "nav": f"schedule/{unsent['id']}"})
             add(f"schedule_unsent:{unsent['id']}", "schedule",
-                f"The week of {mdy(unsent['week_start'])} is drafted but staff don't have it",
+                f"The week of {mdy(unsent['week_start'])} is built but staff don't have it",
                 "critical", send, detail="It starts within three days", module="labor")
 
     # ── next week's schedule ──

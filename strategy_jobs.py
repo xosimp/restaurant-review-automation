@@ -1026,7 +1026,7 @@ def labor_waiting(restaurant_id, db_path=DB_PATH, today=None, draft=True) -> dic
             (restaurant_id, today.isoformat(), soon)).fetchone()
         if draft:
             hid = draft["id"]
-            lines.append(f"The week of {mdy(draft['week_start'])} is drafted but staff don't have it yet — send it from Labor.")
+            lines.append(f"The week of {mdy(draft['week_start'])} is built but staff don't have it yet — send it from Labor.")
     finally:
         conn.close()
     return {"lines": lines, "history_id": hid}
