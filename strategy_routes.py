@@ -1663,9 +1663,12 @@ def _do_schedule_apply_fixes(u):
         c.roster_names = list(inputs["roster"])
     viols = _sr.violations(rows, c)
     signals, weights = _quality_signals(_rid(u), inputs)
+    # The candidate budget grows with the roster, as generation's does: sized
+    # for ~20 people, a 55-person week left rows "not tried" (9/26/26).
     out = _sq.apply_fixes(rows, _sr.fixable(viols), profiles=inputs.get("shift_profiles") or None,
-                          rule_constraints=c,
-                          weights=weights, **signals)
+                          rule_constraints=c, weights=weights,
+                          max_evaluations=max(_sq.MAX_CANDIDATE_EVALUATIONS, 3 * len(inputs.get("roster") or [])),
+                          **signals)
     fixed_rows = out["rows"]
     after = _sr.violations(fixed_rows, c)
     quality, what_if = _score_schedule_quality(_rid(u), fixed_rows, inputs)

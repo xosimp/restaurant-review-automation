@@ -162,6 +162,53 @@ def test_the_grid_reads_as_rows():
     assert ".swg-r:not(.swg-hr)>.swg-p,.swg-r:not(.swg-hr)>.swg-c{border-top:1px solid var(--hb-line2)}" in s
     assert ".swg-chip~.swg-add{display:none}" in s and ".swg-add{position:absolute;" in s
     assert '<div class="swg-role"><span class="pill">' in s
-    assert ".swg-d{padding:12px 6px 11px;text-align:center;position:sticky;top:0;z-index:2;background:linear-gradient(var(--hb-tint2),var(--hb-tint2)),var(--surface)}" in s
+    # A darker shade of the page's own grey (owner, 9/26/26), not an ember tint.
+    assert "background:linear-gradient(var(--ss-dayrow,var(--hb-tint2)),var(--ss-dayrow,var(--hb-tint2))),var(--surface)}" in s
+    assert '[data-theme="dark"] #studio{--ss-dayrow:rgba(0,0,0,.3);' in s
     assert ".ss-weekhead #sched-gen-meta,.ss-weekhead #sched-gen-notes,.ss-weekhead #sched-verdict{display:none!important}" in s
     assert ".ss #sched-table tbody td{font-size:14.5px!important;" in s
+
+
+def test_edit_in_the_shift_tab_opens_the_editor():
+    # The click that opened the editor bubbled to the outside-click check
+    # and closed it again, so Edit looked dead (owner, 9/26/26).
+    s = _src()
+    assert "_swJustOpened = true; setTimeout(function () { _swJustOpened = false; }, 0);" in _fn("swEdit")
+    assert "!t.closest('#swp') && !_swJustOpened) swCloseEdit(true);" in s
+
+
+def test_warnings_filter_hard_and_soft_over_every_breach():
+    s = _src()
+    f = s[s.index("  window.renderScheduleReview=function(d){"):]
+    f = f[:f.index("  window.schedMoveOvertime=")]
+    assert 'data-rv-filter="hard"' in f and 'data-rv-filter="soft"' in f
+    assert "if(!!v.hard!==(filt==='hard'))continue;" in f
+    assert "(gv.hard?'bad':'warn')" in f, "a hard breach reads red, a soft one amber"
+    assert "weren\\u2019t checked yet" in f and "ran out of time" not in s
+    import shift_quality
+    assert "ran out of time" not in open(shift_quality.__file__, encoding="utf-8").read()
+
+
+def test_a_coverage_gap_can_be_filled_not_only_ticked():
+    s = _src()
+    assert "data-rec-fill=" in s
+    fill = _fn("ssFillGap")
+    assert "_fetchReplacements(idx" in fill and "_swWeekHours(nm).hours + hrs <= _swCeil()" in fill
+    assert "action: 'accepted'" in fill and "schedAfterEdit()" in fill
+
+
+def test_the_what_if_offers_nobody_already_working_that_day_and_says_what_it_did():
+    s = _src()
+    wi = _fn("_sqWhatIfHtml")
+    assert "if (_schedRows[i].date === shift.date) on[" in wi
+    assert ". Nothing saved." not in s
+    assert "Save to keep it', 'success');" in s
+
+
+def test_the_right_panel_says_one_thing_once():
+    s = _src()
+    assert ".ss .sw-right #sched-par-banner{display:none!important}" in s
+    assert ".ss .sw-right #sq-confidence .cf-r{display:none}" in s
+    assert "rows2 && flags.length ?" in _fn("swLive")
+    assert "Priced as last saved. Save to re-price your edits." in _fn("swLive")
+    assert "OK TO TRAIN" in s and ">TRAINING<" not in s

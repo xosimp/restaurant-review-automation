@@ -519,6 +519,20 @@ def dim_operational_strength(ctx: ShiftContext) -> DimensionResult | None:
     on = ctx.by_role
     ratios, shorts, mets = [], [], []
     unrated_here = []
+    # How many of each role the shift needs (coverage's own requirement). A
+    # role short on people is judged on the people it has: the target is
+    # the full crew's, so it is pro-rated to the share staffed. Coverage
+    # owns the missing heads, as it owns an empty role. Held to the full
+    # target, one line cook of the two needed read as 33% strength and
+    # capped the shift below the empty-role version: filling half a gap
+    # scored worse than leaving it (owner, 9/26/26).
+    try:
+        _reqs = shift_role_requirements(ctx.typical_headcount, ctx.role_floors, ctx.role_minimums,
+                                        ctx.profile.critical_positions) or {}
+        _need, _trim = _capped(ctx, {r: n for r, (n, _src) in _reqs.items()})
+        need_by_role = {str(r).strip().lower(): int(n or 0) for r, n in _need.items()}
+    except Exception:
+        need_by_role = {}
     for role, target in targets.items():
         people = []
         for r, names in on.items():
@@ -527,6 +541,9 @@ def dim_operational_strength(ctx: ShiftContext) -> DimensionResult | None:
                 break
         if not people:
             continue  # coverage owns an empty role, not strength
+        need = need_by_role.get(role.strip().lower(), 0)
+        if target and need and len(people) < need:
+            target = round(float(target) * len(people) / need, 2)
         unrated_here.extend(ctx.unrated(people))
         if not ctx.rated(people):
             # Nobody in this role on this shift is rated: its strength is
@@ -558,6 +575,8 @@ def dim_operational_strength(ctx: ShiftContext) -> DimensionResult | None:
         res.weaknesses.append(
             f"{role} strength {strength:g} against a target of {target:g} — "
             f"{_names(people, ctx.scores)}.")
+    # (A pro-rated target reads as the number it is; coverage names the
+    # missing people separately.)
     for role, strength, target in mets[:2]:
         res.strengths.append(f"{role} at {strength:g}, clear of its {target:g} target.")
     if unrated_here:
@@ -3496,7 +3515,7 @@ def apply_fixes(rows: list, violations: list, profiles: list = None, weights: di
             budget_out = True
             unfixed.append({"index": i, "employee": cur, "kind": v.get("kind"), "not_tried": True,
                             "reason": f"{cur}'s {row.get('day') or row.get('date')} {row.get('role')} shift wasn't "
-                                      "tried — the automatic fix ran out of time. Apply fixes again to continue."})
+                                      "checked yet — press Apply fixes to check the rest."})
             continue
         index = _SwapIndex(rows, availability, cons, rules)
         role = (row.get("role") or "").strip().lower()
@@ -3540,7 +3559,7 @@ def apply_fixes(rows: list, violations: list, profiles: list = None, weights: di
         elif budget_out and not scored:
             unfixed.append({"index": i, "employee": cur, "kind": v.get("kind"), "not_tried": True,
                             "reason": f"{cur}'s {row.get('day') or row.get('date')} {row.get('role')} shift wasn't "
-                                      "tried — the automatic fix ran out of time. Apply fixes again to continue."})
+                                      "checked yet — press Apply fixes to check the rest."})
         else:
             unfixed.append({"index": i, "employee": cur, "kind": v.get("kind"),
                             "reason": f"Nobody on the roster can legally take {cur}'s {row.get('day') or row.get('date')} {row.get('role')} shift."})
@@ -3672,8 +3691,8 @@ def _fix_days_off(rows: list, violations: list, profiles, weights, rule_constrai
         if best is None:
             unfixed.append({"index": v.get("index"), "employee": name, "kind": "days_off",
                             "not_tried": out_of_budget or None,
-                            "reason": (f"{name}'s days off weren't fixed — the automatic fix ran out of time. "
-                                       "Apply fixes again to continue.") if out_of_budget else
+                            "reason": (f"{name}'s days off weren't checked yet — press Apply fixes to check the rest.")
+                                      if out_of_budget else
                                       (f"{name} — {v.get('detail') or v.get('label')}; nobody could legally "
                                        "take one of their shifts without breaking another rule.")})
             continue

@@ -1779,3 +1779,21 @@ def test_the_missing_shift_data_error_says_which_restaurant_and_why(db_path, mon
     models.save_client_data(rid, "shifts", "", source="seed", db_path=db_path)
     assert "no shifts CSV" in client_api._no_shift_data_message(
         rid, models.get_restaurant(rid, db_path))
+
+
+def test_half_filling_a_short_role_never_scores_below_leaving_it_empty():
+    """Owner, 9/26/26: adding one line cook to a shift that needed two cut
+    it from 67 to 33. Strength was held to the full crew's target (3 of 9),
+    and strength caps the shift, while the empty role had only cost
+    coverage. The target is now pro-rated to the share staffed; coverage
+    owns the missing heads."""
+    prof = [sq.ShiftProfile(key="std", min_strength={"Cook": 8}, critical_positions={"Cook": 2, "Server": 1},
+                            source="restaurant")]
+    base = [row(SAT, "Sam", "Server")]
+    empty = sq.score_rows(base, profiles=prof, scores={"Sam": 4, "Kofi": 3})
+    half = sq.score_rows(base + [row(SAT, "Kofi", "Cook")], profiles=prof, scores={"Sam": 4, "Kofi": 3})
+    e = [s for s in empty["shifts"] if s["date"] == SAT][0]
+    h = [s for s in half["shifts"] if s["date"] == SAT][0]
+    assert h["score"] >= e["score"], (e["score"], h["score"])
+    st = [d for d in h["dimensions"] if d["key"] == "operational_strength"][0]
+    assert st["score"] == 75, "3 against the pro-rated 4 of 8 for 1 of the 2 cooks needed"

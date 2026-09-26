@@ -7775,6 +7775,8 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 <style>
 /* ── Labor (lb2-*) — Home/Reviews language: hero ribbon, three chart tiles,
    schedule tools as rows. The three staffing tables keep their own look. */
+#studio{--ss-dayrow:rgba(14,12,10,.06);--hb-inner:rgba(14,12,10,.035)}
+[data-theme="dark"] #studio{--ss-dayrow:rgba(0,0,0,.3);--hb-inner:rgba(255,255,255,.04)}
 #panel-labor,#studio{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.12);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-field:rgba(255,255,255,.55)}
 [data-theme="dark"] #panel-labor,[data-theme="dark"] #studio{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(212,88,58,.09);--hb-tint2:rgba(212,88,58,.16);--hb-field:rgba(255,255,255,.05)}
 #panel-labor .hb-chip .v{display:inline-flex;align-items:baseline;gap:2px}
@@ -7980,7 +7982,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .swg-t{display:grid;grid-template-columns:var(--swg-name,148px) repeat(var(--swg-days,7),minmax(var(--swg-min,86px),1fr));min-width:760px}
 .swg-r{display:contents}
 .swg-r:hover>.swg-p,.swg-r:hover>.swg-c{background:var(--hb-tint)}
-.swg-d{padding:12px 6px 11px;text-align:center;position:sticky;top:0;z-index:2;background:linear-gradient(var(--hb-tint2),var(--hb-tint2)),var(--surface)}
+.swg-d{padding:12px 6px 11px;text-align:center;position:sticky;top:0;z-index:2;background:linear-gradient(var(--ss-dayrow,var(--hb-tint2)),var(--ss-dayrow,var(--hb-tint2))),var(--surface)}
 .swg-hr>.swg-d:first-child{border-radius:12px 0 0 12px}
 .swg-hr>.swg-d:last-child{border-radius:0 12px 12px 0}
 .swg-d b{display:block;font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink2)}
@@ -8045,6 +8047,10 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-back{white-space:nowrap}
 .ss-brand{display:flex;flex-direction:column;line-height:1.1;padding-left:16px;box-shadow:inset 1px 0 0 var(--hb-line)}
 .ss-mark{font-size:10.5px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--ember);margin-bottom:4px}
+/* The wordmark itself (the dashboard header's), above the app's name. */
+.ss-wordmark{display:flex;align-items:center;gap:0;font-size:15px;line-height:1;color:var(--ink);letter-spacing:0;margin-bottom:5px}
+.ss-wordmark svg{height:.8em;width:auto;display:block}
+.ss-wordmark .ai{font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;font-weight:800;font-size:.34em;letter-spacing:.16em;color:var(--ember);margin:-.5em 0 0 .14em}
 .ss-name{font-family:'Clash Display',sans-serif;font-size:17px;font-weight:500;color:var(--ink)}
 .ss-steps{justify-self:center;display:flex;align-items:center;gap:4px;padding:4px;border-radius:999px;background:var(--sf-recess);border:1px solid var(--hb-line2)}
 .ss-steps button{display:inline-flex;align-items:center;gap:7px;border:0;background:none;border-radius:999px;padding:7px 14px;font:inherit;font-size:13px;font-weight:600;color:var(--ink3);cursor:pointer;transition:background-color .15s ease,color .15s ease}
@@ -8166,6 +8172,56 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss #sched-table tbody td:nth-child(6){font-size:13.5px!important;color:var(--ink3)!important}
 .ss #sched-table .rr{font-size:12.5px}
 .ss #sched-table-foot{font-size:14px;padding:14px 16px}
+/* The right panel reads at body size and breathes (owner, 9/26/26). */
+.ss .sw-right{font-size:15px}
+.ss .sw-right .sw-k{font-size:12px;margin-bottom:12px}
+.ss .sw-right .sw-sec{padding:18px 0 12px}
+.ss .sw-right .sw-bar{font-size:14px;padding:4px 0;grid-template-columns:44px minmax(0,1fr) auto}
+.ss .sw-right .sw-bar .v{font-size:13.5px}
+.ss .sw-right .sw-bar.role{grid-template-columns:minmax(0,104px) minmax(0,1fr) auto}
+.ss .sw-right .sw-kv{font-size:15px;padding:5px 0}
+.ss .sw-right .sw-note,.ss .sw-right .sw-sub{font-size:14px}
+.ss .sw-right .sw-flag{font-size:14px}
+.ss .sw-right .sr-line{font-size:14.5px;padding:8px 0}
+.ss .sw-right .sr-note{font-size:13.5px}
+.ss .sw-right [style*="font-size:14px"]{font-size:15px!important}
+.ss .sw-right [style*="font-size:12.5px"]{font-size:13.5px!important}
+.ss .sw-right [style*="font-size:11.5px;font-weight:700"]{font-size:12px!important}
+/* The quality header: the figure and Why?, the reason behind Why?. */
+.ss .sw-right #sq-confidence .cf-r{display:none}
+.ss .sw-right #sq-confidence .cf-why,.ss .sw-right .cf .cf-why{margin-left:0;padding-left:0!important}
+.ss .sw-right #sq-dimensions [style*="Across the week"],.ss .sw-right #sq-dimensions>div[style*="margin:12px 0 7px"]{margin:26px 0 10px!important}
+/* What if: every control one height, the text at body size. */
+.ss .sw-right .sq-wi{font-size:15px;gap:8px;align-items:center}
+.ss .sw-right .sq-wi select,.ss .sw-right .sq-wi .cbtn{height:38px;box-sizing:border-box;font-size:14.5px}
+.ss .sw-right .sq-wi .res{font-size:14.5px;line-height:1.55}
+.ss .sw-right .sq-all{font-size:14px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink2);padding:6px 0!important;margin-top:8px}
+/* Warnings: the chips are the filter. */
+.sr-chip[data-rv-filter]{cursor:pointer;font:inherit;font-size:12.5px;font-weight:700}
+.sr-chip[data-rv-filter]:not(.on){opacity:.55}
+.sr-chip[data-rv-filter].on{box-shadow:0 0 0 1px currentColor}
+.sr-list{margin-top:8px}
+/* Opportunities: the sentence, then its buttons on one line under it. */
+.ss .sw-right .sr-line:has(.cbtn){flex-wrap:wrap}
+.ss .sw-right .sr-line:has(.cbtn)>span:nth-child(2){flex:1 1 calc(100% - 20px)}
+/* The buttons start under the sentence's first letter and share one centre. */
+.ss .sw-right .sr-line:has(.cbtn)>.cbtn:first-of-type{margin-left:16px}
+.ss .sw-right .sr-line:has(.cbtn)>.cbtn,.ss .sw-right .sr-line:has(.cbtn)>.rec-ans,.ss .sw-right .sr-line:has(.cbtn)>.rec-nfu{align-self:center;margin-top:4px}
+.ss .sw-right .sr-line:has(.cbtn)>.rec-ans{margin-left:6px}
+/* Apply fixes: two options, each with its line. */
+.ss .sw-right .sr-actions{gap:12px}
+.ss .sw-right .sr-opt{display:flex;flex-direction:column;gap:6px}
+.ss .sw-right .sr-opt .cbtn{height:40px}
+/* The cost cards: one size, flush with the panel. */
+.ss .sw-right #sched-econ{padding:0!important;border:0!important}
+.ss .sw-right #sched-econ .hb-stats{grid-template-columns:1fr 1fr;grid-auto-rows:1fr;gap:10px;margin:0}
+.ss .sw-right #sched-econ .hb-stat{height:100%;box-sizing:border-box;display:flex;flex-direction:column;padding:16px}
+.ss .sw-right #sched-econ .hb-stat .v{font-size:26px}
+.ss .sw-right #sched-econ .hb-stat .s{margin-top:auto;padding-top:8px}
+.ss .sw-right #sched-econ .cap{font-size:13.5px}
+/* The PAR banner priced the week as generated; Labor above is the rows on
+   screen. Two figures for one thing contradicted each other (owner, 9/26/26). */
+.ss .sw-right #sched-par-banner{display:none!important}
 /* the living calendar's objects */
 .swg-chip.sel{box-shadow:0 0 0 2px var(--ember),var(--elev-card);transform:translateY(-1px)}
 .swg-chip.dragging{opacity:.35}
@@ -9056,7 +9112,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     <header class="ss-top">
       <div class="ss-top-l">
         <button type="button" class="cbtn cbtn-text cbtn-sm ss-back" onclick="studioClose()" aria-label="Back to the dashboard">&larr; Dashboard</button>
-        <div class="ss-brand"><span class="ss-mark">Cavnar AI</span><span class="ss-name">Schedule Studio</span></div>
+        <div class="ss-brand"><span class="ss-mark ss-wordmark" role="img" aria-label="Cavnar AI"><svg viewBox="-6 -14 666 128" height="0.8em" style="vertical-align:-0.08em" fill="currentColor" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><path d="M53.43 101.49Q28.81 101.49 14.40 87.46Q0.00 73.43 0.00 50.00Q0.00 26.57 14.40 12.54Q28.81 -1.49 53.43 -1.49Q76.87 -1.49 90.67 9.48Q104.48 20.45 104.48 39.40V41.64H79.55V39.40Q79.55 29.40 73.43 24.70Q67.31 20.00 53.88 20.00Q37.31 20.00 30.52 26.72Q23.73 33.43 23.73 50.00Q23.73 66.57 30.52 73.28Q37.31 80.00 53.88 80.00Q67.31 80.00 73.43 75.30Q79.55 70.60 79.55 60.60V58.36H104.48V60.60Q104.48 79.55 90.67 90.52Q76.87 101.49 53.43 101.49Z"/><path d="M127.87 100.00H102.79L146.52 0.00H178.47L222.50 100.00H196.82L187.42 77.91H137.42ZM155.48 35.97 146.08 57.76H178.76L169.36 35.97L163.24 20.45H161.60Z"/><path d="M266.08 100.00H234.14L192.65 0.00H219.67L249.67 77.31H251.16L280.71 0.00H307.58Z"/><path d="M341.47 100.00H319.08V0.00H342.96L378.78 47.31L392.51 68.36H394.15L393.11 48.21V0.00H415.50V100.00H391.61L354.75 52.24L342.06 33.43H340.57L341.47 51.79Z"/><path d="M451.92 100.00H426.85L470.58 0.00H502.52L546.55 100.00H520.88L511.47 77.91H461.47ZM479.53 35.97 470.13 57.76H502.82L493.41 35.97L487.29 20.45H485.65Z"/><path d="M580.39 100.00H558.00V0.00H613.22Q631.73 0.00 641.80 7.84Q651.88 15.67 651.88 30.00Q651.88 55.07 623.67 57.76V58.96Q629.94 60.60 633.30 63.88Q636.65 67.16 639.79 73.13L654.27 100.00H628.30L614.56 74.03Q611.43 68.06 607.55 65.90Q603.67 63.73 595.16 63.73H580.39ZM580.39 20.15V46.87H613.07Q621.28 46.87 624.86 43.96Q628.45 41.04 628.45 33.43Q628.45 26.12 624.79 23.13Q621.13 20.15 613.07 20.15Z"/><circle cx="250.1" cy="28" r="11" fill="#D4583A"/></svg><span class="ai">AI</span></span><span class="ss-name">Schedule Studio</span></div>
       </div>
       <nav class="ss-steps" role="tablist" aria-label="Schedule Studio steps">
         <button type="button" role="tab" data-ss-go="setup"><i>1</i>Setup</button>
@@ -18254,7 +18310,7 @@ function renderQualityWarnings(quality) {
       + '<span style="flex:0 0 5px;width:5px;height:5px;border-radius:50%;background:var(--amber);margin-top:8px"></span>'
       + '<span class="tx">' + _escHtml(rec) + (recConf && window.cavConfLine ? cavConfLine(recConf, {key: recObj.rec_key || recObj.key, surface: 'schedule_review', module: 'schedule', cls: 'on-dark'}) : '') + '</span>'
       + (st ? '<span class="st">' + (st === 'accepted' ? 'done' : 'passed') + '</span>'
-            : '<span class="acts"><button type="button" class="cbtn cbtn-icon cbtn-text cbtn-success cbtn-sm" title="Did it" aria-label="Did it" data-rec-action="accepted" data-rec="' + _escAttr(rec) + '">&#10003;</button>'
+            : '<span class="acts">' + (/^Fill the gap on /.test(rec) ? '<button type="button" class="cbtn cbtn-soft cbtn-sm" data-rec-fill="' + _escAttr(rec) + '">Fill it</button>' : '') + '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-success cbtn-sm" title="Did it" aria-label="Did it" data-rec-action="accepted" data-rec="' + _escAttr(rec) + '">&#10003;</button>'
               + '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" title="Pass" aria-label="Pass" data-rec-action="dismissed" data-rec="' + _escAttr(rec) + '">&#10005;</button></span>')
       + '</div>';
   }
@@ -18351,9 +18407,17 @@ function openIntelPanel() {
 function renderQualityShifts(shifts) {
   var el = document.getElementById('sq-shifts');
   if (!el) return;
-  var html = '<div style="font-size:11.5px;font-weight:700;letter-spacing:1.3px;text-transform:uppercase;'
-           + 'color:var(--ink3);margin-bottom:8px">Every shift</div>';
-  var i;
+  var nScored = 0, i; for (i = 0; i < shifts.length; i++) if (shifts[i].scored) nScored++;
+  // In the Studio the list folds (owner, 9/26/26: the panel was jammed);
+  // one tap opens every shift's score and its what-if.
+  if (window._ssOpen) {
+    var head = '<button type="button" class="cbtn cbtn-text cbtn-inline sq-all" data-sq-all="1" aria-expanded="' + (!!window._sqAllOpen) + '">Every shift · <span class="hb-num">' + nScored + '</span> ' + (window._sqAllOpen ? '&#9652;' : '&#9662;') + '</button>';
+    if (!window._sqAllOpen) { el.innerHTML = nScored ? head : ''; return; }
+    var html = head;
+  } else {
+    var html = '<div style="font-size:11.5px;font-weight:700;letter-spacing:1.3px;text-transform:uppercase;'
+             + 'color:var(--ink3);margin-bottom:8px">Every shift</div>';
+  }
   for (i = 0; i < shifts.length; i++) {
     var sft = shifts[i];
     if (!sft.scored) continue;
@@ -18392,8 +18456,10 @@ function _qualityChips(shift) {
         + (demand === 'peak' ? 'PEAK' : 'BUSY') + '</span>';
   }
   if ((shift.profile || {}).training_allowed) {
-    out += '<span style="font-size:10.5px;font-weight:700;letter-spacing:.6px;color:#56ccf2;'
-        + 'background:rgba(86,204,242,.14);padding:2px 6px;border-radius:999px">TRAINING</span>';
+    // Not "somebody is training": this is a shift the profile lets a new
+    // person learn on (a quieter one).
+    out += '<span title="A quieter shift where somebody new can learn" style="font-size:10.5px;font-weight:700;letter-spacing:.6px;color:#56ccf2;'
+        + 'background:rgba(86,204,242,.14);padding:2px 6px;border-radius:999px">OK TO TRAIN</span>';
   }
   // Wrapped only when there is something to wrap. An empty span still
   // takes a slot in the row's flex layout and squeezed the score bar.
@@ -18472,6 +18538,8 @@ function _sqWhatIfHtml(shift) {
   var idx = _sqShiftRowIdx(shift), on = {}, i, names = [], seen = {};
   if (!idx.length) return '';
   for (i = 0; i < idx.length; i++) on[String(_schedRows[idx[i]].employee || '').toLowerCase()] = 1;
+  // Nobody already working that day either: adding them double-books them.
+  for (i = 0; i < _schedRows.length; i++) if (_schedRows[i].date === shift.date) on[String(_schedRows[i].employee || '').toLowerCase()] = 1;
   var pool = (_schedRosterNames || []).slice();
   for (i = 0; i < _teamForSwap.length; i++) pool.push(_teamForSwap[i].name);
   for (i = 0; i < pool.length; i++) {
@@ -18529,6 +18597,13 @@ document.addEventListener('click', function (ev) {
     _sqWhatIfStage = null; _sqWhatIfResult = {};
     _schedSortRows();
     schedAfterEdit();
+    // Said, and shown on the week (owner, 9/26/26): it was silent.
+    toast(st.who + ' is on ' + _schedDayOf(st.date) + ' ' + (st.shift.daypart === 'night' ? 'night' : 'day') + ' \u2014 Save to keep it', 'success');
+    var jj; for (jj = 0; jj < _schedRows.length; jj++) if (_schedRows[jj].employee === st.who && _schedRows[jj].date === st.date) {
+      _swSelRow = _schedRows[jj]; var ch = document.querySelector('[data-swg-chip="' + jj + '"]');
+      if (ch) { ch.className += ' flash'; setTimeout(function () { var c2 = document.querySelectorAll('.swg-chip.flash'), q; for (q = 0; q < c2.length; q++) c2[q].className = c2[q].className.replace(/\s*flash/g, ''); }, 1200); }
+      break;
+    }
     return;
   }
   if (!id) return;
@@ -18552,7 +18627,7 @@ document.addEventListener('click', function (ev) {
       + '<span class="hb-num">' + _sqN(shift.score) + '</span> → <span class="hb-num">' + _sqN(after) + '</span>'
       + (after !== null ? ' (<span class="hb-num">' + sgn(after - shift.score) + '</span>)' : '')
       + ', the week <span class="hb-num">' + _sqN(now) + '</span> → <span class="hb-num">' + _sqN(wk) + '</span>'
-      + (now !== null ? ' (<span class="hb-num">' + sgn(wk - now) + '</span>)' : '') + '. Nothing saved.';
+      + (now !== null ? ' (<span class="hb-num">' + sgn(wk - now) + '</span>)' : '') + '.';
     var hard = d.review ? (+d.review.hard || 0) : 0;
     if (hard) txt += ' <span style="color:var(--hb-bad)">It breaks <span class="hb-num">' + hard + '</span> hard rule' + (hard === 1 ? '' : 's') + '.</span>';
     txt += ' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-sq-wi-stage="1">Put them on</button>';
@@ -20506,7 +20581,12 @@ function _schedPatchChildren(host, html) {
   while (host.children.length > fresh.length) host.removeChild(host.lastElementChild);
 }
 // ── the grid's editor: one popover, the list editor's fields and rules ──
+var _swJustOpened = false;
 function swEdit(i, anchor) {
+  // The click that opened the editor (Edit in the Shift tab, + Add a
+  // shift) bubbles to the outside-click check below; it used to close the
+  // editor it had just opened, so Edit looked dead (owner, 9/26/26).
+  _swJustOpened = true; setTimeout(function () { _swJustOpened = false; }, 0);
   // Close any open popover; a new shift still waiting for Done is dropped,
   // unless it is the one being opened.
   swCloseEdit(_swAddedIdx !== i);
@@ -20588,7 +20668,7 @@ document.addEventListener('click', function (ev) {
   }
   // A click that opened the popover (the toolbar's + Add a shift) is not an outside click.
   if (t.closest('.sw-view')) return;
-  if (document.getElementById('swp') && !t.closest('#swp')) swCloseEdit(true);
+  if (document.getElementById('swp') && !t.closest('#swp') && !_swJustOpened) swCloseEdit(true);
 });
 document.addEventListener('dblclick', function (ev) {
   var chip = ev.target && ev.target.closest ? ev.target.closest('[data-swg-chip]') : null;
@@ -20656,10 +20736,21 @@ function swLive() {
       rows2 += _swBar(_escHtml(rk), rh[rk], rmx, cap || null, over ? 'over role' : 'role', '<span class="hb-num">' + _schedHrs(rh[rk]) + '</span>' + (cap ? '/<span class="hb-num">' + cap + 'h</span>' : 'h'));
       if (over) flags.push('<b>' + _escHtml(rk) + '</b>: <span class="hb-num">' + _schedHrs(rh[rk]) + 'h</span> scheduled, but <span class="hb-num">' + cnt[rk] + '</span> ' + (cnt[rk] === 1 ? 'person covers' : 'people cover') + ' <span class="hb-num">' + cap + 'h</span> without overtime. Add someone who can work ' + _escHtml(rk.toLowerCase()) + ', or take <span class="hb-num">' + _schedHrs(rh[rk] - cap) + 'h</span> off.');
     }
+    // By role only when a role is past what its roster covers without
+    // overtime (the flag below says which): otherwise it was a second chart
+    // saying "fine" (owner, 9/26/26: the panel was jammed).
     h = '<div class="sw-note" style="margin-bottom:6px">People on · hours scheduled / the forecast’s</div>' + h
-      + (rows2 ? '<div class="sw-sub">By role · hours / what the roster covers at <span class="hb-num">' + ceil + 'h</span> each</div>' + rows2 : '');
+      + (rows2 && flags.length ? '<div class="sw-sub">By role · hours / what the roster covers at <span class="hb-num">' + ceil + 'h</span> each</div>' + rows2 : '');
     for (i = 0; i < flags.length; i++) h += '<div class="sw-flag bad">' + flags[i] + '</div>';
     if (cov._h !== h) { cov.innerHTML = h; cov._h = h; }
+  }
+  // The cost cards price the week as last saved; say so while edits are
+  // on screen (Save re-prices them), rather than show two truths.
+  var ec = document.getElementById('sched-econ');
+  if (ec) {
+    var cn = document.getElementById('ss-cost-note');
+    if (!cn) { cn = document.createElement('div'); cn.id = 'ss-cost-note'; cn.className = 'sw-note'; cn.style.marginTop = '10px'; ec.parentNode.appendChild(cn); }
+    cn.textContent = _schedDirty ? 'Priced as last saved. Save to re-price your edits.' : '';
   }
   if (lab) {
     var bud = _swData && +_swData.hours_budget, ot = [], nm, lh = '';
@@ -21158,6 +21249,79 @@ document.addEventListener('click', function (ev) {
   var tb = t.closest('[data-ss-tab]'); if (tb) { ssTab(tb.getAttribute('data-ss-tab')); return; }
   var rt = t.closest('[data-ss-rtab]'); if (rt) { ssRightTab(rt.getAttribute('data-ss-rtab')); return; }
 });
+// Warnings' Hard | Soft filter, Show all, and the Every shift fold.
+document.addEventListener('click', function (ev) {
+  var t = ev.target; if (!t || !t.closest) return;
+  var f = t.closest('[data-rv-filter]');
+  if (f) { window._rvFilter = f.getAttribute('data-rv-filter'); window._rvAll = false; if (window.renderScheduleReview) renderScheduleReview(); return; }
+  if (t.closest('[data-rv-all]')) { window._rvAll = !window._rvAll; if (window.renderScheduleReview) renderScheduleReview(); return; }
+  if (t.closest('[data-sq-all]')) { window._sqAllOpen = !window._sqAllOpen; renderQualityShifts((_quality && _quality.shifts) || []); return; }
+  var fill = t.closest('[data-rec-fill]');
+  if (fill) ssFillGap(fill.getAttribute('data-rec-fill'), fill);
+});
+// "Fill the gap on Monday morning: Line Cook short 2 of 2" does what it
+// says (owner, 9/26/26: a tick recorded "done" and left the gap open).
+// Each missing person is a new row at the shift's usual times, given to
+// the strongest teammate the rules allow (/api/labor/schedule/replacements:
+// role, availability, time off, rest, the hours line) who is not already on
+// that day and stays under 40h. Staged like any edit; Save keeps it.
+function ssFillGap(text, btn) {
+  var m = /^Fill the gap on (\w+) (morning|night): (.*?)\.?$/.exec(String(text || ''));
+  if (!m) return;
+  var day = m[1], part = m[2], gm = /([A-Za-z][A-Za-z &\/\-]*?) short (\d+) of (\d+)/.exec(m[3]);
+  if (!gm) { toast('Could not read that gap', 'error'); return; }
+  var role = gm[1].replace(/^.*—\s*/, '').trim(), need = +gm[2], date = null, i;
+  for (i = 0; i < _schedWeekDates.length; i++) if (_schedDayOf(_schedWeekDates[i]) === day) date = _schedWeekDates[i];
+  if (!date) return;
+  // The role's usual times for that part of the day: its earliest morning
+  // start (a 2pm start is "morning" on the 3pm cutoff, but not what a
+  // morning gap needs), or its most common night start. The same day's
+  // rows first, then the week's, then any role's that day.
+  function tpl() {
+    var low = role.toLowerCase(), pools = [
+      function (r) { return r.date === date && String(r.role).toLowerCase() === low; },
+      function (r) { return String(r.role).toLowerCase() === low; },
+      function (r) { return r.date === date; }], k, q;
+    for (q = 0; q < pools.length; q++) {
+      var c = [];
+      for (k = 0; k < _schedRows.length; k++) { var r = _schedRows[k]; if (r.employee && _schedDaypart(r.shift_start) === part && pools[q](r)) c.push(r); }
+      if (!c.length) continue;
+      if (part === 'morning') { c.sort(function (a, b) { return (_schedMinutes(a.shift_start) || 0) - (_schedMinutes(b.shift_start) || 0); }); return {s: c[0].shift_start, e: c[0].shift_end}; }
+      var cnt = {}, top = c[0]; for (k = 0; k < c.length; k++) { var key = c[k].shift_start + '|' + c[k].shift_end; cnt[key] = (cnt[key] || 0) + 1; if (cnt[key] > (cnt[top.shift_start + '|' + top.shift_end] || 0)) top = c[k]; }
+      return {s: top.shift_start, e: top.shift_end};
+    }
+    return part === 'night' ? {s: '4:00pm', e: '10:00pm'} : {s: '10:30am', e: '4:30pm'};
+  }
+  var t = tpl(), hrs = +_schedHoursBetween(t.s, t.e) || 6, put = [], done = cbtnBusy(btn, 'Filling…');
+  function next() {
+    if (put.length >= need) return finish();
+    _schedRows.push({date: date, day: day, employee: '', role: role, shift_start: t.s, shift_end: t.e, scheduled_hours: String(hrs), notes: 'Filled by Cavnar AI'});
+    var idx = _schedRows.length - 1;
+    _fetchReplacements(idx, function (opts) {
+      var pick = null, k;
+      for (k = 0; opts && k < opts.length && !pick; k++) {
+        var nm = opts[k].name, on = false, j;
+        for (j = 0; j < _schedRows.length; j++) if (j !== idx && _schedRows[j].date === date && String(_schedRows[j].employee).toLowerCase() === String(nm).toLowerCase()) on = true;
+        if (!on && _swWeekHours(nm).hours + hrs <= _swCeil()) pick = nm;
+      }
+      if (!pick) { _schedRows.splice(idx, 1); return finish(); }
+      _schedRows[idx].employee = pick; _schedOverrides[idx] = true; put.push(pick);
+      next();
+    });
+  }
+  function finish() {
+    done();
+    if (!put.length) { toast('Nobody the rules allow is free for ' + day + ' ' + part + ' as ' + role, 'error'); return; }
+    _schedSortRows(); schedAfterEdit();
+    toast('Put ' + put.join(' and ') + ' on ' + day + ' ' + part + ' as ' + role + (put.length < need ? ' — nobody else is free' : '') + '. Save to keep it.', 'success');
+    // The ledger hears the owner took it, as the tick would have said.
+    fetch('/api/labor/schedule/recommendation', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({kind: _recKind(text), key: String(text).slice(0, 200), action: 'accepted'})}).catch(function () { });
+    _recState[text] = 'accepted';
+    if (_quality) renderQualityWarnings(_quality);
+  }
+  next();
+}
 function studioBoot() {
   var st = document.getElementById('studio'); if (!st) return;
   // Out of the Labor column to the page root: the Studio is its own
@@ -27139,8 +27303,13 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     function _swPut(el,html){if(el&&el._h!==html){el.innerHTML=html;el._h=html;}}
     if(!rv&&!pendNames.length){_swPut(sgEl,'');_swPut(opEl,'');_swPut(fxEl,'');box.style.display='none';box.innerHTML='';box._h='';if(typeof _schedRenderTable==='function')_schedRenderTable();return;}
     var h='<div class="sr-head"><span class="sr-k">Rules check</span>',hs='',ho='',hf='';
-    if(hard)h+='<span class="sr-chip bad"><span class="hb-num">'+hard+'</span> hard</span>';
-    if(soft)h+='<span class="sr-chip warn"><span class="hb-num">'+soft+'</span> soft</span>';
+    // Hard | Soft are filters over every breach (owner, 9/26/26): the list
+    // was the summary's first twelve, hard first, so a week with 28 hard
+    // showed no soft at all, and hard lines wore the amber of a warning.
+    var vs=_rv.violations||[],filt=window._rvFilter||(hard?'hard':'soft');
+    if(filt==='hard'&&!hard)filt='soft';if(filt==='soft'&&!soft)filt='hard';
+    if(hard)h+=(vs.length?'<button type="button" role="tab" aria-selected="'+(filt==='hard')+'" data-rv-filter="hard" class="sr-chip bad'+(filt==='hard'?' on':'')+'">':'<span class="sr-chip bad">')+'<span class="hb-num">'+hard+'</span> hard'+(vs.length?'</button>':'</span>');
+    if(soft)h+=(vs.length?'<button type="button" role="tab" aria-selected="'+(filt==='soft')+'" data-rv-filter="soft" class="sr-chip warn'+(filt==='soft'?' on':'')+'">':'<span class="sr-chip warn">')+'<span class="hb-num">'+soft+'</span> soft'+(vs.length?'</button>':'</span>');
     if(rv&&!hard&&!soft)h+='<span class="sr-chip good">&#10003; every rule kept</span>';
     var meta=[];
     if(_rv.gen!==null&&_rv.gen!==undefined&&_rv.gen!=='')meta.push('generated in <span class="hb-num">'+Math.round(+_rv.gen)+'s</span>');
@@ -27148,7 +27317,22 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     if(meta.length)h+='<span class="sr-meta">'+meta.join(' &middot; ')+'</span>';
     h+='</div>';
     var lines=(rv&&rv.lines)||[];
-    if(lines.length){
+    if(vs.length&&(hard||soft)){
+      // One line per person and kind: an over-40h week is one line with its
+      // shift count, not one per shift.
+      var grp={},order=[],gi;
+      for(gi=0;gi<vs.length;gi++){var v=vs[gi];if(!!v.hard!==(filt==='hard'))continue;
+        var gk=(v.employee||'')+'|'+v.kind+'|'+(v.kind==='over_max_hours'?(v.bucket||''):gi);
+        if(!grp[gk]){grp[gk]={v:v,n:0};order.push(gk);}grp[gk].n++;}
+      var shown=window._rvAll?order.length:Math.min(order.length,10);
+      h+='<div class="sr-list">';
+      for(gi=0;gi<shown;gi++){var g=grp[order[gi]],gv=g.v,dday=gv.day||(gv.date&&window._schedDayOf?_schedDayOf(gv.date):'');
+        var where=gv.kind==='over_max_hours'?'<span class="hb-num">'+g.n+'</span> shift'+(g.n===1?'':'s'):esc(dday+(gv.shift_start?' '+gv.shift_start:''));
+        h+='<div class="sr-line '+(gv.hard?'bad':'warn')+'"><span class="d"></span><span><b>'+esc(gv.employee||'')+'</b> · '+where+' — '+num(gv.detail||gv.label||gv.kind)+'</span></div>';}
+      if(order.length>10)h+='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rv-all="1">'+(window._rvAll?'Show fewer':'Show all <span class="hb-num">'+order.length+'</span>')+'</button>';
+      h+='</div>';
+    }
+    else if(lines.length){
       h+='<div>';
       for(i=0;i<lines.length;i++){var ln=String(lines[i]||'');var warn=ln.charAt(0)==='⚠';h+='<div class="sr-line'+(warn?' warn':'')+'"><span class="d"></span><span>'+esc(ln)+'</span></div>';}
       h+='</div>';
@@ -27195,9 +27379,14 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       hs+='</div>';
     }
     if(_rv.unfixed.length){
-      h+='<div class="sr-grp"><div class="sr-k">Needs a human</div>';
-      for(i=0;i<_rv.unfixed.length;i++){var u=_rv.unfixed[i]||{};h+='<div class="sr-line bad"><span class="d"></span><span><b>'+esc(u.employee)+'</b>, '+esc(_rvWhen(_rvRow(u.index)))+' &mdash; '+esc(u.reason||'nobody legal could take it')+'</span></div>';}
-      h+='</div>';
+      // Rows the automatic fix did not reach are one quiet line, not a red
+      // "out of time" warning per person (owner, 9/26/26): nothing is wrong with
+      // them, they were not checked yet.
+      var real=[],later=0;for(i=0;i<_rv.unfixed.length;i++){var uu=_rv.unfixed[i]||{};if(uu.not_tried)later++;else real.push(uu);}
+      if(real.length){h+='<div class="sr-grp"><div class="sr-k">Needs a human</div>';
+        for(i=0;i<real.length;i++){var u=real[i];h+='<div class="sr-line bad"><span class="d"></span><span><b>'+esc(u.employee)+'</b>, '+esc(_rvWhen(_rvRow(u.index)))+' &mdash; '+esc(u.reason||'nobody legal could take it')+'</span></div>';}
+        h+='</div>';}
+      if(later)h+='<div class="sr-note" style="margin-top:8px"><span class="hb-num">'+later+'</span> more weren\u2019t checked yet. Press Apply fixes to check them.</div>';
     }
     if(pendNames.length){
       // Answered here (Friction #18): Approve / Deny on each request, and an
@@ -27210,9 +27399,9 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     // Apply fixes clears hard rules; Improve with Cavnar runs the Shift
     // Quality repair loop over the rows on screen. Both only propose.
     if((window._schedRows||[]).length){
-      hf+='<div class="sr-actions">'+(hard?'<button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="applyScheduleFixes(this)">Apply fixes</button>':'')
-        +'<button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="improveScheduleWithCavnar(this)">Improve with Cavnar AI</button>'
-        +'<span class="sr-note">'+(hard?'Apply fixes puts somebody legal on every row that breaks a hard rule. ':'')+'Improve with Cavnar AI makes legal changes that raise the score and lists each one. You still choose to save.</span></div>';
+      hf+='<div class="sr-actions">'+(hard?'<div class="sr-opt"><button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="applyScheduleFixes(this)">Apply fixes</button><span class="sr-note">Clears the rule breaks: a legal teammate on each shift that breaks one.</span></div>':'')
+        +'<div class="sr-opt"><button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="improveScheduleWithCavnar(this)">Improve with Cavnar AI</button><span class="sr-note">Raises the score: legal swaps and adds, each one listed.</span></div>'
+        +'<span class="sr-note">Neither is kept until you save.</span></div>';
     }
     // Redrawn only when it changed, and the table below held where it was
     // on screen when it does: Safari has no scroll anchoring, so a line
