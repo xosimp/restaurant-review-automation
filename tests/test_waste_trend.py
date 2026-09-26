@@ -236,6 +236,21 @@ def test_target_prefers_this_weeks_live_purchases():
     assert dollars == round(117.6 / 0.084 * 0.045, 2)
 
 
+def test_target_uses_the_exact_purchases_not_a_rounded_rate():
+    """9/25/26 audit: $12.40 of waste on $5,000 is 0.248%, carried as 0.2%;
+    back-computing purchases from it made them $6,200 and the 4.5% target
+    $279 instead of $225."""
+    a = {"waste_rate_pct": 0.2, "total_waste_cost_week": 12.40, "total_purchased": 5000.0}
+    assert wt.implied_target_weekly(a, []) == (225.0, "live")
+
+
+def test_a_week_with_no_waste_still_takes_this_weeks_purchases():
+    weeks = _weeks([100, 110])
+    weeks[0]["purchased"] = 1000.0
+    a = {"waste_rate_pct": 0, "total_waste_cost_week": 0, "total_purchased": 5000.0}
+    assert wt.implied_target_weekly(a, weeks) == (225.0, "live")
+
+
 def test_target_falls_back_to_the_newest_week_with_purchase_data():
     weeks = _weeks([100, 110])
     weeks[0]["purchased"] = 1000.0

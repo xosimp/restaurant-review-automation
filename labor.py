@@ -621,9 +621,19 @@ def _analyse_for_restaurant(restaurant_id, client_data, window_days):
     result['is_live'] = is_live
     result['blended_rate'] = blended
     result['role_rates'] = {k: v for k, v in role_rates.items() if k != "_default"}
-    result['money_went'] = money_went(result, blended)
+    # Where the labor COST comes from (thresholds.labor_cost_basis): on the
+    # assumed wage the board and Where the money went withhold the dollars
+    # savings_breakdown withholds.
     try:
-        result['staffing_board'] = staffing_board(result, shifts, blended)
+        from models import get_restaurant as _get_r
+        import thresholds as _thr
+        basis = _thr.labor_cost_basis(_get_r(restaurant_id))
+    except Exception:
+        basis = None
+    result['cost_basis'] = basis
+    result['money_went'] = money_went(result, blended, cost_basis=basis)
+    try:
+        result['staffing_board'] = staffing_board(result, shifts, blended, cost_basis=basis)
     except Exception:
         result['staffing_board'] = None
     return result
@@ -646,7 +656,20 @@ def _money(x):
         return "$0"
 
 
-def staffing_board(analysis: dict, shifts: list, rate: float = None) -> dict:
+# What the board and "Where the money went" say instead of a dollar figure
+# priced at the assumed wage (labor_cost_basis == "default"): the same
+# withholding savings_breakdown and value_delivered apply to the gap to
+# target, in the same words.
+PAY_RATES_WITHHELD_LABEL = "set your pay rates to see dollars"
+
+
+def _pay_rates_withheld_text() -> str:
+    from thresholds import LABOR_DEFAULT_HOURLY_RATE
+    return (f"Set your pay rates to see dollars above target — until then labor cost "
+            f"rests on Cavnar AI’s assumed ${LABOR_DEFAULT_HOURLY_RATE:g}/hr, not your pay rates.")
+
+
+def staffing_board(analysis: dict, shifts: list, rate: float = None, cost_basis: str = None) -> dict:
     """The overstaffed, lean-strong and overtime lists as decision cards
     (9/25/26 redesign). Every figure is one the analysis measured or a
     direct product of it; nothing is estimated beyond hours x the blended
@@ -663,8 +686,23 @@ def staffing_board(analysis: dict, shifts: list, rate: float = None) -> dict:
                     overtime still <= 40) - only when one exists
 
     Cards are ranked by dollars (lean days by how far under target); the
-    first card in each lane is its worst."""
+    first card in each lane is its worst.
+
+    At stake (9/25/26 audit) is the straight-time labor above target on the
+    overstaffed days PLUS the whole overtime premium. A day's
+    over_target_dollars already carries its share of the premium, so adding
+    the overtime cards to the overstaffed cards counted that premium twice
+    (one person, six 10h days, $400 a day at $20/hr and a 30% target: $680
+    of real excess read $878).
+
+    On the assumed wage (`cost_basis == "default"`, thresholds.
+    labor_cost_basis) the dollars above target, the hours to trim (dollars
+    / rate) and the total are withheld with savings_breakdown's reason,
+    `dollars_withheld: "default_rate"`; the days, percentages, people and
+    hours stay so the board still says what to do. The overtime premium
+    stays, as it does on the savings tiles."""
     a = analysis or {}
+    withheld = cost_basis == "default"
     target = float(a.get("labor_target") or 0) or None
     rate = float(rate) if rate else None
 
@@ -709,7 +747,7 @@ def staffing_board(analysis: dict, shifts: list, rate: float = None) -> dict:
             iso = None
         crews = roles_by_date.get(iso or "", {})
         big = max(crews.items(), key=lambda kv: len(kv[1])) if crews else None
-        trim = round(excess / rate, 1) if rate and excess else None
+        trim = round(excess / rate, 1) if rate and excess and not withheld else None
         pts = round(float(o.get("labor_pct") or 0) - (target or 0), 1) if target else None
         cons = weekday_consistency(o.get("day"), over_dates)
         say = (f"{o.get('day')} ran {_n1(o.get('labor_pct'))}% labor on {_money(o.get('sales'))} in sales"
@@ -717,14 +755,19 @@ def staffing_board(analysis: dict, shifts: list, rate: float = None) -> dict:
         if trim:
             say += (f" About {_n1(trim)} fewer hours would have put it on target"
                     + (f" — the {big[0].lower()} crew was the biggest, with {len(big[1])} on." if big and len(big[1]) > 1 else "."))
-        over.append({"kind": "overstaffed", "title": o.get("day"), "date": o.get("date"), "dollars": excess,
-                     "dollars_text": _money(excess), "label": "above target",
+        over.append({"kind": "overstaffed", "title": o.get("day"), "date": o.get("date"),
+                     "dollars": 0.0 if withheld else excess,
+                     "dollars_text": "—" if withheld else _money(excess),
+                     "label": PAY_RATES_WITHHELD_LABEL if withheld else "above target",
+                     "withheld": withheld,
+                     "straight_over": 0.0 if withheld else float(o.get("straight_over_target_dollars", excess) or 0),
                      "pct_text": _n1(o.get("labor_pct")), "sales_text": _money(o.get("sales")),
                      "trim_text": _n1(trim) if trim else "", "pts_text": _n1(pts) if pts is not None else "",
                      "severity": "high" if pts is not None and pts >= 5 else "medium",
                      "consistency": cons, "say": say,
                      "ask": f"Why did {o.get('day')} {o.get('date')} run over my labor target, and where should I trim?"})
-    over.sort(key=lambda x: -x["dollars"])
+    # Withheld, the dollars are not known: worst by points over target.
+    over.sort(key=(lambda x: -float(x["pts_text"] or 0)) if withheld else (lambda x: -x["dollars"]))
 
     lean_dates = set()
     for u in a.get("understaffed_days") or []:
@@ -798,14 +841,23 @@ def staffing_board(analysis: dict, shifts: list, rate: float = None) -> dict:
                   "severity": "high" if extra >= 10 else "medium", "mate": mate, "say": say,
                   "ask": f"How do I keep {emp} under 40 hours without leaving the {role.lower() or 'shift'} short?"})
 
-    at_stake = sum(x["dollars"] for x in over) + sum(x["dollars"] for x in ot)
-    priced = over + ot
+    # Straight time above target + the whole premium: two parts that do not
+    # overlap, so they add up to the total the strip leads with. A day the
+    # premium alone pushed over target adds nothing at straight time — its
+    # whole cost of overtime is already in the premium.
+    over_straight = round(sum(x.pop("straight_over") for x in over), 2)
+    ot_total = round(sum(x["dollars"] for x in ot), 2)
+    at_stake = None if withheld else round(over_straight + ot_total, 2)
+    priced = ([] if withheld else over) + ot
     biggest = max(priced, key=lambda x: x["dollars"]) if priced else None
     quick = next((x for x in ot if x["mate"]), None) or (over[0] if over else None)
     return {"overstaffed": over, "lean": lean, "overtime": ot,
-            "summary": {"at_stake_text": _money(at_stake), "at_stake": at_stake,
-                        "over_text": _money(sum(x["dollars"] for x in over)),
-                        "ot_text": _money(sum(x["dollars"] for x in ot)),
+            "summary": {"at_stake_text": "—" if withheld else _money(at_stake), "at_stake": at_stake,
+                        "over": None if withheld else over_straight, "ot": ot_total,
+                        "over_text": "—" if withheld else _money(over_straight),
+                        "ot_text": _money(ot_total),
+                        "dollars_withheld": "default_rate" if withheld else None,
+                        "withheld_text": _pay_rates_withheld_text() if withheld else None,
                         "biggest": ({"title": biggest["title"], "dollars_text": biggest["dollars_text"],
                                      "label": biggest["label"]} if biggest else None),
                         "quick": ({"title": quick["title"], "kind": quick["kind"],
@@ -819,7 +871,7 @@ def staffing_board(analysis: dict, shifts: list, rate: float = None) -> dict:
 PAST_SCHEDULE_MIN_HOURS = 1.0
 
 
-def money_went(analysis: dict, rate: float = None) -> list:
+def money_went(analysis: dict, rate: float = None, cost_basis: str = None) -> list:
     """Where the money went: every labor item this analysis prices in
     dollars, ranked by dollars, most first (9/25/26 — it used to list up to
     three overstaffed days, then up to three overtime people, unranked):
@@ -831,10 +883,16 @@ def money_went(analysis: dict, rate: float = None) -> list:
 
     Every figure is an opportunity or an estimate, never money saved or
     payroll (Money labels). Items with no dollar figure are left out rather
-    than ranked as $0."""
+    than ranked as $0.
+
+    On the assumed wage (`cost_basis == "default"`) the dollars above target
+    and past schedule are hours x an assumed $26/hr, which savings_breakdown
+    withholds: they are left out here too (the board still lists the days,
+    and says to set pay rates). The overtime premium stays, as on the tiles."""
     a = analysis or {}
     out = []
-    for d in a.get("overstaffed_days") or []:
+    withheld = cost_basis == "default"
+    for d in ([] if withheld else a.get("overstaffed_days") or []):
         dollars = d.get("over_target_dollars")
         if dollars:
             out.append({"kind": "overstaffed", "dollars": float(dollars), "day": d.get("day"),
@@ -845,7 +903,7 @@ def money_went(analysis: dict, rate: float = None) -> list:
             out.append({"kind": "overtime", "dollars": float(e["premium"]), "employee": e.get("employee"),
                         "hours": e.get("hours"), "week": e.get("week"), "label": "overtime premium",
                         "hours_text": _n1(e.get("hours"))})
-    if rate and not a.get("hours_are_estimated"):
+    if rate and not withheld and not a.get("hours_are_estimated"):
         for emp, h in (a.get("employee_hours") or {}).items():
             sched, actual = float(h.get("scheduled") or 0), float(h.get("actual") or 0)
             over = round(actual - sched, 1)
@@ -972,6 +1030,10 @@ def analyse_shifts(shifts: list[dict],
     # a 30% target was "where the money is going".
     OVERSTAFF_THRESHOLD = labor_target + LABOR_OVER_TARGET_PTS
     by_day = defaultdict(lambda: {"scheduled": 0, "actual": 0, "sales": None, "shifts": [], "labor_cost": 0})
+    # The overtime premium each day carries (below): kept apart from by_day,
+    # which is archived as-is, so a day's straight-time cost can be told
+    # from its premium share (staffing_board's "at stake", 9/25/26).
+    premium_by_date: dict = defaultdict(float)
     by_employee = defaultdict(lambda: {"scheduled": 0, "actual": 0, "shifts": 0})
     overtime_flags = []
 
@@ -1103,6 +1165,7 @@ def analyse_shifts(shifts: list[dict],
             if h <= 0:
                 continue
             by_day[r.get("date") or ""]["labor_cost"] += premium * (h / wk_hours)
+            premium_by_date[r.get("date") or ""] += premium * (h / wk_hours)
 
     # A strong day by this restaurant's own sales: a multiple of its median
     # costed day, not a fixed $2,500 that meant nothing across restaurants.
@@ -1135,7 +1198,16 @@ def analyse_shifts(shifts: list[dict],
                                  "sales": d["sales"],
                                  # Labor spent above the target on that day's
                                  # own sales: what hitting target would have saved.
-                                 "over_target_dollars": round(max(0.0, labor_cost - d["sales"] * LABOR_TARGET / 100.0), 0)})
+                                 "over_target_dollars": round(max(0.0, labor_cost - d["sales"] * LABOR_TARGET / 100.0), 0),
+                                 # The share of the overtime premium that
+                                 # landed on this day, and what the day ran
+                                 # above target at straight time. The premium
+                                 # sits INSIDE over_target_dollars, so a total
+                                 # that adds overtime premiums to it counts
+                                 # that premium twice (staffing_board).
+                                 "overtime_premium": round(premium_by_date.get(date, 0.0), 2),
+                                 "straight_over_target_dollars": round(max(0.0, labor_cost - premium_by_date.get(date, 0.0)
+                                                                           - d["sales"] * LABOR_TARGET / 100.0), 2)})
         elif labor_pct < (LABOR_TARGET - LABOR_OVER_TARGET_PTS) and _strong_floor and d["sales"] >= _strong_floor:
             try:
                 fmt_date = datetime.strptime(date, "%Y-%m-%d").strftime("%-m/%-d/%y")

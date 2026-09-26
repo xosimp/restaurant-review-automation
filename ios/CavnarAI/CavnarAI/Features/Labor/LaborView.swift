@@ -119,7 +119,8 @@ struct LaborView: View {
                                 // staff are waiting on. Live shifts only.
                                 if stats.isLive, let went = stats.moneyWent, !went.isEmpty {
                                     LaborMoneyWentCard(items: went, days: stats.periodDays,
-                                                       moreCount: boardCount(stats)) {
+                                                       moreCount: boardCount(stats),
+                                                       withheldText: stats.staffingBoard?.summary?.withheldText) {
                                         viewModel.staffingBoardExpanded = true
                                         scrollToReveal(Self.boardID, proxy: proxy)
                                     }

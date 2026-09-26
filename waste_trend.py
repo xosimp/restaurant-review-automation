@@ -585,8 +585,18 @@ def implied_target_weekly(analysis=None, weeks=None, target_pct=WASTE_TARGET_PCT
     """The target line in dollars: the target % band applied to what the
     restaurant actually buys in a week. The live analysis is the best
     source (this week's real purchases); failing that, the newest week
-    whose snapshot carried purchase data. Returns (dollars, basis)."""
+    whose snapshot carried purchase data. Returns (dollars, basis).
+
+    The live purchases are the analysis's own `total_purchased`, the exact
+    denominator of its waste rate. Back-computing them as waste / rate read
+    a rate rounded to one decimal ($12.40 of waste on $5,000 is 0.248%,
+    shown 0.2%, which made the purchases $6,200), and a week with no waste
+    had no rate to divide by, so it fell back to an older week."""
     if analysis:
+        purchased = _f(analysis.get("total_purchased"))
+        if purchased > 0:
+            return round(purchased * target_pct / 100.0, 2), "live"
+        # An analysis from before total_purchased travelled: the old path.
         rate = _f(analysis.get("waste_rate_pct"))
         waste = _f(analysis.get("total_waste_cost_week"))
         if rate > 0 and waste > 0:

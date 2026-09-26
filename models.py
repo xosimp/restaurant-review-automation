@@ -8590,6 +8590,20 @@ def record_competitor_snapshot(restaurant_id: int, competitors: list, db_path: s
 _RATING_SIGMA = 1.1
 # Two standard errors — the ordinary bar for "more than noise".
 _RATING_SIGNIFICANT_Z = 2.0
+# Fewer new reviews than this never make a move significant: the normal
+# approximation behind the standard error needs volume, and on a 1-5 scale
+# piled at 5 and 1 two one-star reviews at a 4.9 place are ordinary.
+_RATING_MIN_NEW_REVIEWS = 10
+# Google shows a rating to one decimal, so each reading can sit up to half a
+# step from the real average: a displayed move is at least this much smaller.
+_RATING_DISPLAY_HALF_STEP = 0.05
+
+
+def _rating_is_rounded(v) -> bool:
+    try:
+        return abs(float(v) * 10 - round(float(v) * 10)) < 1e-6
+    except (TypeError, ValueError):
+        return False
 
 
 def _least_squares_slope(snaps: list) -> float:
@@ -8690,14 +8704,33 @@ def competitor_movement(restaurant_id: int, days: int = 60, db_path: str = DB_PA
         # sixty — measured, and the second is by far the bigger thing to
         # happen in that market.
         #
-        # Standard error of a mean rating is about sigma/sqrt(n). Restaurant
-        # ratings sit on a 1-5 scale skewed hard to 4 and 5; sigma near 1.1
-        # is the usual empirical figure and is used as a fixed, stated
-        # assumption rather than estimated from data we do not hold.
-        n_then = max(int(first["review_count"] or 0), 1)
-        n_now = max(int(last["review_count"] or 0), 1)
-        se = _RATING_SIGMA * math.sqrt(1.0 / n_then + 1.0 / n_now)
-        z = abs(change) / se if se > 0 else 0.0
+        # The average can only move through the reviews ADDED between the
+        # two readings (9/25/26 audit). With k new reviews on n_now, the new
+        # average is (n_then*then + k*mean_new)/n_now, so a move is
+        # k*(mean_new - then)/n_now and, if the new reviews were ordinary
+        # for this place, its spread is sigma*sqrt(k)/n_now. The old test
+        # treated the two readings as independent samples of n_then and
+        # n_now reviews, so a 2,400-review venue ticking 4.4 -> 4.5 on no
+        # new reviews at all read as "significant".
+        #
+        # Restaurant ratings sit on a 1-5 scale skewed hard to 4 and 5;
+        # sigma near 1.1 is the usual empirical figure and is used as a
+        # fixed, stated assumption rather than estimated from data we do not
+        # hold. And a rating shown to one decimal can be half a step off at
+        # each end, so only the part of a move past that rounding counts.
+        n_now = int(last["review_count"] or 0)
+        k = n_now - int(first["review_count"] or 0)
+        slack = (2 * _RATING_DISPLAY_HALF_STEP
+                 if _rating_is_rounded(first["rating"]) and _rating_is_rounded(last["rating"]) else 0.0)
+        beyond_rounding = max(0.0, abs(change) - slack - 1e-9)
+        if k > 0 and n_now > 0:
+            se = _RATING_SIGMA * math.sqrt(k) / n_now
+            z = beyond_rounding / se
+        else:
+            # No new reviews: the average did not move through reviews
+            # (Google recalculated, pruned or re-rounded) — no signal.
+            z = 0.0
+        significant = bool(k >= _RATING_MIN_NEW_REVIEWS and z >= _RATING_SIGNIFICANT_Z)
 
         # Google prunes reviews, so the count can fall. That is a correction
         # on their side, not a competitor losing reviews, and reporting it
@@ -8726,7 +8759,7 @@ def competitor_movement(restaurant_id: int, days: int = 60, db_path: str = DB_PA
             # How far the move is beyond what this review volume could
             # produce on its own. Below 2 is noise.
             "confidence_z": round(z, 2),
-            "significant": bool(z >= _RATING_SIGNIFICANT_Z),
+            "significant": significant,
             "first_seen": first["captured_at"],
             "last_seen": last["captured_at"],
             "snapshots": len(rated),

@@ -826,15 +826,51 @@ def _snap(db_path, rid, pid, name, rating, count, days_ago):
 def test_a_big_venue_moving_a_little_outranks_a_tiny_one_moving_a_lot(db_path):
     """Measured before the fix: a twelve-review venue moving 0.4 on two
     reviews ranked above a 2,400-review venue moving 0.1 on a hundred and
-    sixty — by far the bigger thing to happen in that market."""
+    sixty — by far the bigger thing to happen in that market.
+
+    9/25/26 audit: the big venue now moves 0.2, not 0.1. A single 0.1 tick
+    on one-decimal ratings is inside rounding (4.45 -> 4.449 shows as 4.5 ->
+    4.4), so it is never significant on its own — pinned below."""
     _snap(db_path, 1, "tiny", "New Spot", 4.9, 12, 45)
     _snap(db_path, 1, "big", "Established", 4.5, 2400, 45)
     _snap(db_path, 1, "tiny", "New Spot", 4.5, 14, 0)
-    _snap(db_path, 1, "big", "Established", 4.4, 2560, 0)
+    _snap(db_path, 1, "big", "Established", 4.3, 2560, 0)
     moves = models.competitor_movement(1, days=60, db_path=db_path)
     assert moves[0]["name"] == "Established"
     assert moves[0]["significant"] is True
     assert moves[1]["significant"] is False, "two reviews is not a signal"
+
+
+def test_a_tick_with_no_new_reviews_is_not_significant(db_path):
+    """9/25/26 audit: 2,400 reviews then and now, 4.4 -> 4.5. The old test
+    read the two readings as independent samples (z ~ 3.1, "significant");
+    with no reviews added the average did not move through reviews at all."""
+    _snap(db_path, 1, "big", "Established", 4.4, 2400, 45)
+    _snap(db_path, 1, "big", "Established", 4.5, 2400, 0)
+    m = models.competitor_movement(1, days=60, db_path=db_path)[0]
+    assert m["reviews_added"] == 0
+    assert m["significant"] is False and m["confidence_z"] == 0.0
+
+
+def test_a_single_decimal_tick_is_inside_rounding_even_on_many_new_reviews(db_path):
+    _snap(db_path, 1, "big", "Established", 4.5, 2400, 45)
+    _snap(db_path, 1, "big", "Established", 4.4, 2560, 0)
+    m = models.competitor_movement(1, days=60, db_path=db_path)[0]
+    assert m["reviews_added"] == 160
+    assert m["significant"] is False and m["confidence_z"] == 0.0
+
+
+def test_significance_rests_on_the_reviews_added(db_path):
+    """The same 0.2 move on the same venue: significant on 160 new reviews
+    (se = 1.1*sqrt(160)/2560), not on 5 (under the new-review floor)."""
+    _snap(db_path, 1, "a", "A", 4.5, 2400, 45)
+    _snap(db_path, 1, "a", "A", 4.3, 2560, 0)
+    _snap(db_path, 1, "b", "B", 4.5, 2400, 45)
+    _snap(db_path, 1, "b", "B", 4.3, 2405, 0)
+    by = {m["name"]: m for m in models.competitor_movement(1, days=60, db_path=db_path)}
+    assert by["A"]["significant"] is True
+    assert by["A"]["confidence_z"] == pytest.approx(0.1 / (1.1 * 160 ** 0.5 / 2560), rel=1e-3)
+    assert by["B"]["significant"] is False
 
 
 def test_google_pruning_reviews_is_not_a_competitor_losing_them(db_path):
