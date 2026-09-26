@@ -233,7 +233,7 @@ struct FoodCostQuickEntryView: View {
                         items: $viewModel.items,
                         onAddRow: { viewModel.addCustomRow() },
                         scrollOuterToTop: {
-                            withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+                            withAnimation(.cavnarEase(0.45)) {
                                 outerProxy.scrollTo("foodCostCarousel", anchor: .top)
                             }
                         }
@@ -265,7 +265,7 @@ struct FoodCostQuickEntryView: View {
                     Task {
                         await viewModel.submit()
                         guard viewModel.didSubmit else { return }
-                        withAnimation(.spring(response: 0.45, dampingFraction: 0.75)) {
+                        withAnimation(.cavnarEase(0.4)) {
                             showSuccessToast = true
                         }
                         try? await Task.sleep(nanoseconds: 2_800_000_000)
@@ -570,7 +570,7 @@ private struct IngredientCarousel: View {
                         // the keyboard — this window's own scrollTo only
                         // ever controlled where the card sits WITHIN itself.
                         scrollOuterToTop()
-                        withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+                        withAnimation(.cavnarEase(0.45)) {
                             proxy.scrollTo(newItem.id, anchor: .top)
                         }
                         // Same reasoning as the scroll above for why this

@@ -81,19 +81,30 @@ struct CavnarBellButton: View {
                     // 44pt tap area the glass adds around it.
                     .frame(width: 34, height: 34)
                     .overlay(alignment: .topTrailing) {
-                        if chrome.notificationsBadge.unreadCount > 0 {
-                            CavnarAlertBadge(diameter: 8)
-                                .offset(x: 2, y: -2)
+                        // Red count when something urgent is unhandled, a
+                        // grey dot when only unread, nothing otherwise —
+                        // the web bell's rule (DESIGN_SYSTEM §12).
+                        let badge = chrome.notificationsBadge
+                        if badge.urgentCount > 0 {
+                            CavnarAlertBadge(urgent: badge.urgentCount)
+                                .offset(x: 6, y: -5)
+                        } else if badge.unreadCount > 0 {
+                            CavnarAlertBadge()
+                                .offset(x: 1, y: -1)
                         }
                     }
                     .cavnarToolbarIconGlass()
             }
             .buttonStyle(.plain)
             .tint(nil)
-            .accessibilityLabel(chrome.notificationsBadge.unreadCount > 0
-                                ? "Notifications, \(chrome.notificationsBadge.unreadCount) unread"
-                                : "Notifications")
+            .accessibilityLabel(bellLabel(chrome.notificationsBadge))
         }
+    }
+
+    private func bellLabel(_ badge: NotificationsBadgeViewModel) -> String {
+        if badge.urgentCount > 0 { return "Notifications, \(badge.urgentCount) need you" }
+        if badge.unreadCount > 0 { return "Notifications, \(badge.unreadCount) unread" }
+        return "Notifications"
     }
 }
 

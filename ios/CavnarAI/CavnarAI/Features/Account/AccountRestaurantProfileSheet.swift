@@ -136,7 +136,7 @@ struct AccountRestaurantProfileSheet: View {
                         profileSection(p)
                         targetsSection
                     } else if errorText == nil {
-                        CavnarShimmerText(text: "Loading…")
+                        CavnarSkeletonLines()
                     }
 
                     if let errorText {

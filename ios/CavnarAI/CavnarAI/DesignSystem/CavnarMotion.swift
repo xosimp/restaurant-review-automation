@@ -12,6 +12,19 @@ import UIKit
 // parent transaction silently overrides a repeat-forever animation, and a
 // wall-clock phase can't be interrupted by anything.
 
+// MARK: - Easing
+
+extension Animation {
+    /// The house curve, the twin of the web's `cubic-bezier(.2,.9,.3,1)`
+    /// (DESIGN_SYSTEM §11): quick out of the gate, settling without
+    /// overshoot. Use it where a `.spring` would otherwise go — micro
+    /// feedback 0.12–0.22s, an entrance or a scroll 0.35–0.5s. Nothing
+    /// here bounces or springs.
+    static func cavnarEase(_ duration: Double = 0.4) -> Animation {
+        .timingCurve(0.2, 0.9, 0.3, 1, duration: duration)
+    }
+}
+
 // MARK: - Seal geometry
 
 /// The seal ring as a real Path — the SealRing asset is a template image,
@@ -483,9 +496,9 @@ struct CavnarWordmarkSheen: View {
     }
 }
 
-/// Six letters stamp in like a branding iron, one after another, the
-/// ember plops into the V while the last of them land, then the AI tag
-/// settles in and one pass of light sweeps the finished word. The warm
+/// The six letters, the ember and the AI tag land together as one unit
+/// (a short rise and fade), then one pass of light sweeps the finished
+/// word. The warm
 /// entrance — a re-lock in the same session, a sign-out. `width` is the
 /// wordmark's own width (the AI tag sits outside it, to the right).
 struct CavnarWordmarkStampIn: View {
@@ -502,7 +515,7 @@ struct CavnarWordmarkStampIn: View {
 
     /// From the first stamp to the tag landing — what a parent waits for
     /// before bringing up whatever sits beneath the word.
-    static let duration: Double = 1.0
+    static let duration: Double = 0.6
 
     @State private var shown: [Bool] = Array(repeating: false, count: 6)
     @State private var emberDropped = false
@@ -550,15 +563,17 @@ struct CavnarWordmarkStampIn: View {
         }
         .task {
             if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
-            for i in 0..<6 {
-                withAnimation(.easeOut(duration: 0.32)) { shown[i] = true }
-                // The V is down by now — the ember falls while the last
-                // two letters are still landing.
-                if i == 4 { emberDropped = true }
-                try? await Task.sleep(for: .seconds(0.09))
+            // One unit, like the web login's wordmark (templates/login.html
+            // .logo): the letter-by-letter stamp was retired on the web as
+            // a lot of sequenced motion that read as choppy, and the warm
+            // entrance follows it here (DESIGN_SYSTEM §11, 03). The six
+            // letters, the ember and the tag land together; the cold
+            // launch keeps its own trace (CavnarWordmarkTraceIn).
+            withAnimation(.cavnarEase(0.4)) {
+                for i in 0..<6 { shown[i] = true }
+                tagShown = true
             }
-            try? await Task.sleep(for: .seconds(0.4))
-            withAnimation(.easeOut(duration: 0.4)) { tagShown = true }
+            emberDropped = true
             try? await Task.sleep(for: .seconds(0.45))
             sheenFired = true
         }
@@ -1273,26 +1288,45 @@ struct CavnarRippleBurst: View {
     }
 }
 
-/// The unread dot on the bell — pops in with a single ripple the moment it
-/// appears, instead of just being there.
+/// The bell's badge, with the web's meaning (DESIGN_SYSTEM §12 "Bell
+/// badge"): a RED COUNT (the number face, "9+" past nine) of the urgent
+/// rows nobody has handled — it pops in with one ember ripple, no
+/// overshoot — or, when something is unread but nothing is urgent, a quiet
+/// 7pt ink3 dot that just sits there. The caller shows nothing at all when
+/// nothing is unread. It was one ember dot for anything unread, so a
+/// changelog note weighed the same as a 1-star review, and ember is never
+/// a status (§9).
 struct CavnarAlertBadge: View {
-    var diameter: CGFloat = 8
+    /// Urgent, unhandled rows (`/notifications/unread-count` → `urgent`).
+    var urgent: Int = 0
 
     @State private var shown = false
 
+    private var label: String { urgent > 9 ? "9+" : "\(urgent)" }
+
     var body: some View {
-        ZStack {
-            CavnarRippleBurst(fromDiameter: diameter, toDiameter: diameter * 4, rings: 1, duration: 0.9, delay: 0.1)
-            Circle()
-                .fill(Color.cavnarEmber)
-                .frame(width: diameter, height: diameter)
-                .scaleEffect(shown ? 1 : 0.01)
-        }
-        .frame(width: diameter, height: diameter)
-        .onAppear {
-            DispatchQueue.main.async {
-                withAnimation(.easeOut(duration: 0.35)) { shown = true }
+        if urgent > 0 {
+            ZStack {
+                CavnarRippleBurst(fromDiameter: 16, toDiameter: 16 * 4, rings: 1, duration: 0.9, delay: 0.1)
+                Text(label)
+                    .font(.cavnarNumber(10.5, weight: 700))
+                    .monospacedDigit()
+                    .foregroundStyle(Color.white)
+                    .padding(.horizontal, 4)
+                    .frame(minWidth: 16, minHeight: 16)
+                    .background(Capsule().fill(Color.cavnarRed))
+                    .scaleEffect(shown ? 1 : 0.01)
             }
+            .fixedSize()
+            .onAppear {
+                DispatchQueue.main.async {
+                    withAnimation(.easeOut(duration: 0.35)) { shown = true }
+                }
+            }
+        } else {
+            Circle()
+                .fill(Color.cavnarInk3)
+                .frame(width: 7, height: 7)
         }
     }
 }

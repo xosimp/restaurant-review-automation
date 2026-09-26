@@ -81,7 +81,7 @@ struct CavnarPremiumButtonSurface: ViewModifier {
     var shape: AnyShape = CavnarPremiumButtonSurface.defaultShape
 
     static let glowRadius: CGFloat = 20
-    static let defaultShape = AnyShape(RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous))
+    static let defaultShape = AnyShape(RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous))
 
     func body(content: Content) -> some View {
         content
@@ -158,12 +158,16 @@ struct CavnarPrimaryButtonStyle: ButtonStyle {
     }
 }
 
-/// Outlined counterpart to CavnarPrimaryButtonStyle — same ember family,
-/// unfilled, for a secondary action sitting next to (or under) a primary
-/// one, e.g. Cancel under Send. Deliberately a plain border/fill, not
-/// .glassEffect(...interactive()) — see platformCard's fix in Reviews
-/// Analytics for why an interactive-glass secondary action next to a plain
-/// gesture-driven primary one is worth avoiding here.
+/// The default, quiet button — the twin of web `.cbtn-secondary`
+/// (DESIGN_SYSTEM §5): a faint surface, a hairline, ink text. For a
+/// secondary action beside (or under) the one primary, e.g. Cancel under
+/// Send, Deny beside Approve. It used to be ember text on an ember fill
+/// with an ember gradient border, so every screen with a primary and a
+/// secondary spent the ember twice; the ember tonal look is now its own
+/// named style, `CavnarSoftButtonStyle` (web `.cbtn-soft`). Deliberately a
+/// plain border/fill, not .glassEffect(...interactive()) — see
+/// platformCard's fix in Reviews Analytics for why an interactive-glass
+/// secondary next to a plain gesture-driven primary is worth avoiding.
 struct CavnarSecondaryButtonStyle: ButtonStyle {
     var isDisabled: Bool = false
     func makeBody(configuration: Configuration) -> some View {
@@ -171,31 +175,46 @@ struct CavnarSecondaryButtonStyle: ButtonStyle {
             .font(.cavnarBody(16, weight: 600))
             .padding(.horizontal, 22)
             .padding(.vertical, 14)
-            .foregroundStyle(isDisabled ? Color.cavnarEmber.opacity(0.4) : Color.cavnarEmber)
+            .foregroundStyle(Color.cavnarInk)
             .background(
                 CavnarPremiumButtonSurface.defaultShape
-                    .fill(Color.cavnarEmber.opacity(isDisabled ? 0.03 : 0.09))
+                    .fill(Color.white.opacity(configuration.isPressed ? 0.09 : 0.05))
             )
+            // Stroked at 2 and clipped to the shape: the visible hairline
+            // is the inner 1pt (an AnyShape can't strokeBorder).
             .overlay(
-                // A flat single-tone border read thin next to the new
-                // gradient-filled primary style — a top-brighter/bottom-
-                // dimmer border gives it the same "light hitting an edge"
-                // depth cue without filling the button in. Same shape
-                // token as the primary style (moderate round, not a full
-                // pill) so the two sitting side by side don't disagree.
                 CavnarPremiumButtonSurface.defaultShape
-                    .stroke(
-                        LinearGradient(
-                            colors: [
-                                Color.cavnarEmber.opacity(isDisabled ? 0.3 : 0.95),
-                                Color.cavnarEmber.opacity(isDisabled ? 0.18 : 0.55),
-                            ],
-                            startPoint: .top, endPoint: .bottom
-                        ),
-                        lineWidth: 1.5
-                    )
+                    .stroke(Color.cavnarInk.opacity(0.16), lineWidth: 2)
             )
             .clipShape(CavnarPremiumButtonSurface.defaultShape)
+            .opacity(isDisabled ? 0.4 : 1)
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .sensoryFeedback(.impact(weight: .light), trigger: configuration.isPressed) { old, new in
+                new && !isDisabled
+            }
+    }
+}
+
+/// Tonal ember — the twin of web `.cbtn-soft`: ember text on a soft ember
+/// fill, no border. Gentle emphasis for an action that should read as the
+/// product's suggestion without competing with the screen's one primary.
+/// Use sparingly (ember is spent once per screen, §9); the default quiet
+/// action is CavnarSecondaryButtonStyle.
+struct CavnarSoftButtonStyle: ButtonStyle {
+    var isDisabled: Bool = false
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.cavnarBody(16, weight: 600))
+            .padding(.horizontal, 22)
+            .padding(.vertical, 14)
+            .foregroundStyle(Color.cavnarEmber)
+            .background(
+                CavnarPremiumButtonSurface.defaultShape
+                    .fill(Color.cavnarEmber.opacity(configuration.isPressed ? 0.24 : 0.18))
+            )
+            .clipShape(CavnarPremiumButtonSurface.defaultShape)
+            .opacity(isDisabled ? 0.4 : 1)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
             .sensoryFeedback(.impact(weight: .light), trigger: configuration.isPressed) { old, new in
@@ -221,7 +240,7 @@ struct CavnarChipButtonStyle: ButtonStyle {
             .padding(.horizontal, 13)
             .padding(.vertical, 6)
             .background(tone)
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous))
             .shadow(color: tone.opacity(configuration.isPressed ? 0.1 : 0.45), radius: configuration.isPressed ? 1 : 4, x: 0, y: configuration.isPressed ? 0 : 2)
             .scaleEffect(configuration.isPressed ? 0.94 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
