@@ -7980,18 +7980,21 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .swg-t{display:grid;grid-template-columns:var(--swg-name,148px) repeat(var(--swg-days,7),minmax(var(--swg-min,86px),1fr));min-width:760px}
 .swg-r{display:contents}
 .swg-r:hover>.swg-p,.swg-r:hover>.swg-c{background:var(--hb-tint)}
-.swg-d{padding:10px 6px 9px;text-align:center;position:sticky;top:0;background:var(--surface);z-index:2}
+.swg-d{padding:12px 6px 11px;text-align:center;position:sticky;top:0;z-index:2;background:linear-gradient(var(--hb-tint2),var(--hb-tint2)),var(--surface)}
+.swg-hr>.swg-d:first-child{border-radius:12px 0 0 12px}
+.swg-hr>.swg-d:last-child{border-radius:0 12px 12px 0}
 .swg-d b{display:block;font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink2)}
 .swg-d .dt{display:block;font-size:12.5px;color:var(--ink3);margin-top:1px}
 .swg-d .dh{display:block;font-size:11.5px;color:var(--ink3);margin-top:3px}
 .swg-d.hot b{color:var(--ember)}
-.swg-role{grid-column:1/-1;font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);padding:16px 8px 6px}
-.swg-p{padding:6px 8px;display:flex;flex-direction:column;justify-content:center;min-width:0;border-radius:10px 0 0 10px}
+.swg-role{grid-column:1/-1;padding:18px 4px 8px}
+.swg-role .pill{display:inline-flex;align-items:center;gap:7px;font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);background:var(--hb-tint2);border:1px solid var(--sf-ai-line);border-radius:999px;padding:4px 12px}
+.swg-p{padding:6px 8px;display:flex;flex-direction:column;justify-content:center;min-width:0}
+.swg-r:not(.swg-hr)>.swg-p,.swg-r:not(.swg-hr)>.swg-c{border-top:1px solid var(--hb-line2)}
 .swg-p .n{font-size:13.5px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .swg-p .h{font-size:12px;color:var(--ink3)}
 .swg-p .h.ot{color:var(--hb-bad);font-weight:600}
-.swg-c{padding:4px;min-height:46px;display:flex;flex-direction:column;gap:4px;position:relative}
-.swg-c:last-child{border-radius:0 10px 10px 0}
+.swg-c{padding:6px 4px;min-height:46px;display:flex;flex-direction:column;justify-content:center;gap:4px;position:relative}
 .swg-chip{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;min-width:0;box-sizing:border-box;padding:6px 7px;border-radius:9px;background:var(--sf-ai);border:1px solid var(--sf-ai-line);cursor:pointer;text-align:left;font:inherit;color:var(--ink);transition:transform .12s ease,box-shadow .12s ease,opacity .16s ease}
 .swg-chip:hover,.swg-chip:focus-visible{transform:translateY(-1px);box-shadow:var(--elev-card);outline:none}
 .swg-chip:focus-visible{box-shadow:0 0 0 2px var(--ember)}
@@ -8002,7 +8005,10 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .swg-chip.chg:after{content:'';position:absolute;top:7px;right:7px;width:6px;height:6px;border-radius:50%;background:var(--blue)}
 .swg-chip.sched-leaving{opacity:0;transform:scale(.94)}
 .swg-chip.editing{box-shadow:0 0 0 2px var(--ember)}
-.swg-add{opacity:0;align-self:center;margin-top:auto;transition:opacity .12s ease}
+/* The + floats in an empty cell; it adds no height, so a row's shifts sit
+   level with its name (it pushed them up, owner 9/26/26). */
+.swg-add{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);opacity:0;transition:opacity .12s ease}
+.swg-chip~.swg-add{display:none}
 .swg-c:hover .swg-add,.swg-add:focus-visible{opacity:1}
 .swg-foot{display:flex;gap:14px;flex-wrap:wrap;align-items:center;padding:12px 8px 0;font-size:12.5px;color:var(--ink3)}
 .swg-foot i{display:inline-block;width:10px;height:10px;border-radius:3px;vertical-align:-1px;margin-right:5px;background:var(--sf-ai);border:1px solid var(--sf-ai-line)}
@@ -8016,7 +8022,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .swp-g label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--ink3)}
 .swp-g select,.swp-g input{width:100%;box-sizing:border-box}
 .swp-f{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
-.swp-f .sp{flex:1}
+.swp-f .swp-sp{flex:1}
 @media (max-width:1320px){.sw-grid{grid-template-columns:256px minmax(0,1fr)}.sw-right{grid-column:1/-1;position:static;max-height:none;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:28px;padding-bottom:12px}.sw-rhint{grid-column:1/-1}.sw-fixsec{position:static}}
 @media (max-width:1168px){.sw{--sw-w:100%}}
 @media (max-width:900px){.sw-grid{grid-template-columns:1fr}.sw-side{position:static;max-height:none}.sw-right{grid-template-columns:1fr}}
@@ -8032,10 +8038,13 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss[hidden]{display:none}
 /* An explicit height and row: Safari sized the grid's row to its content
    from the flex basis alone and pinned it to the top (owner, 9/26/26). */
-.ss-top{flex:0 0 60px;height:60px;box-sizing:border-box;display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;grid-template-rows:60px;align-content:center;align-items:center;gap:18px;padding:0 20px;background:var(--surface);box-shadow:0 1px 0 var(--hb-line);position:relative;z-index:3}
+/* Three columns, the outer two equal: the step pills stay on the page's
+   centre whatever the sides hold (Publish hides on its own step). */
+.ss-top{flex:0 0 60px;height:60px;box-sizing:border-box;display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);grid-template-rows:60px;align-content:center;align-items:center;gap:18px;padding:0 20px;background:var(--surface);box-shadow:0 1px 0 var(--hb-line);position:relative;z-index:3}
+.ss-top-l{display:flex;align-items:center;gap:18px;min-width:0}
 .ss-back{white-space:nowrap}
 .ss-brand{display:flex;flex-direction:column;line-height:1.1;padding-left:16px;box-shadow:inset 1px 0 0 var(--hb-line)}
-.ss-mark{font-size:10.5px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--ember)}
+.ss-mark{font-size:10.5px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--ember);margin-bottom:4px}
 .ss-name{font-family:'Clash Display',sans-serif;font-size:17px;font-weight:500;color:var(--ink)}
 .ss-steps{justify-self:center;display:flex;align-items:center;gap:4px;padding:4px;border-radius:999px;background:var(--sf-recess);border:1px solid var(--hb-line2)}
 .ss-steps button{display:inline-flex;align-items:center;gap:7px;border:0;background:none;border-radius:999px;padding:7px 14px;font:inherit;font-size:13px;font-weight:600;color:var(--ink3);cursor:pointer;transition:background-color .15s ease,color .15s ease}
@@ -8046,7 +8055,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-steps button.done i{background:var(--hb-good);color:var(--paper)}
 .ss-steps button[disabled]{opacity:.4;cursor:default}
 .ss-steps .ss-steps-h{margin-left:6px;box-shadow:inset 1px 0 0 var(--hb-line2);border-radius:0 999px 999px 0}
-.ss-top-r{display:flex;align-items:center;gap:12px;white-space:nowrap}
+.ss-top-r{display:flex;align-items:center;justify-content:flex-end;gap:12px;white-space:nowrap;min-width:0}
 .ss-week{font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:600;color:var(--ink2)}
 .ss-saved{font-size:12.5px;color:var(--ink3)}
 .ss-saved.dirty{color:var(--hb-warn)}
@@ -8130,6 +8139,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss .lb2-preview{border-radius:18px}
 .ss-weekhead{display:flex;align-items:flex-start;gap:14px;padding:16px 20px 4px}
 .ss-weekhead>div:last-child{flex:1;min-width:0}
+.ss-weekhead #sched-gen-meta,.ss-weekhead #sched-gen-notes,.ss-weekhead #sched-verdict{display:none!important}
 .ss-weekhead #sched-week-label{font-family:'Clash Display',sans-serif;font-size:22px;font-weight:500;color:var(--ink)!important}
 .ss .swg-t{--swg-name:190px;--swg-min:108px}
 .ss .swg-c{min-height:54px}
@@ -8145,6 +8155,17 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss .sw-right[data-tab="shift"] [data-ss-of]:not([data-ss-of="shift"]){display:none!important}
 .sw-right:not([data-tab]) .ss-rtabs,.sw-sec[data-sw="shift"]{display:none}
 .ss .sw-right[data-tab="shift"] .sw-sec[data-sw="shift"]{display:block}
+/* List view at reading size (owner, 9/26/26): the table's inline 10-11px
+   was built for a narrow column. */
+.ss #sched-table{font-size:14.5px!important;min-width:760px}
+.ss #sched-table thead th{font-size:12px!important;letter-spacing:.1em!important;padding:14px 16px!important;background:var(--sf-recess)!important}
+.ss #sched-table tbody td{font-size:14.5px!important;padding:14px 16px!important;line-height:1.45;vertical-align:middle}
+.ss #sched-table tbody td:first-child{font-size:13px!important}
+.ss #sched-table tbody td:nth-child(2){font-size:15px!important}
+.ss #sched-table tbody td:nth-child(4),.ss #sched-table tbody td:nth-child(5){font-family:'Space Grotesk',sans-serif;font-variant-numeric:tabular-nums}
+.ss #sched-table tbody td:nth-child(6){font-size:13.5px!important;color:var(--ink3)!important}
+.ss #sched-table .rr{font-size:12.5px}
+.ss #sched-table-foot{font-size:14px;padding:14px 16px}
 /* the living calendar's objects */
 .swg-chip.sel{box-shadow:0 0 0 2px var(--ember),var(--elev-card);transform:translateY(-1px)}
 .swg-chip.dragging{opacity:.35}
@@ -8166,7 +8187,17 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 #ss-tip .why{margin-top:6px}
 #ss-tip .bad{color:var(--hb-bad)}
 #ss-tip .ft{margin-top:8px;font-size:11.5px;color:var(--ink3)}
-.swp{position:fixed;z-index:986}
+.swp{position:fixed;z-index:986;left:50%;top:50%;transform:translate(-50%,-50%);width:440px;max-width:calc(100vw - 32px);padding:22px 24px 20px;border-radius:18px;animation:swpIn .18s cubic-bezier(.2,.9,.3,1)}
+@keyframes swpIn{from{opacity:0;transform:translate(-50%,-48%) scale(.98)}to{opacity:1;transform:translate(-50%,-50%)}}
+.swp-scrim{position:fixed;inset:0;z-index:985;background:var(--scrim);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);animation:swpFade .18s ease}
+@keyframes swpFade{from{opacity:0}to{opacity:1}}
+/* Every field one size, in even bands (owner, 9/26/26). */
+.swp .swp-h{font-size:12px;margin-bottom:14px}
+.swp-g{gap:14px 12px}
+.swp-g label{font-size:12.5px;font-weight:600;letter-spacing:.02em;gap:6px}
+.swp-g select,.swp-g input{height:44px;box-sizing:border-box;margin:0;padding:0 12px;border-radius:10px;font-size:15px;line-height:44px}
+.swp-f{margin-top:18px}
+@media (prefers-reduced-motion:reduce){.swp,.swp-scrim{animation:none}}
 /* the shift details pane */
 .ss-sd-h{font-family:'Clash Display',sans-serif;font-size:21px;color:var(--ink);line-height:1.15}
 .ss-sd-m{font-family:'Space Grotesk',sans-serif;font-size:13.5px;color:var(--ink3);margin:4px 0 12px}
@@ -9023,8 +9054,10 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 
   <div class="ss" id="studio" hidden aria-label="Schedule Studio" data-stage="setup">
     <header class="ss-top">
-      <button type="button" class="cbtn cbtn-text cbtn-sm ss-back" onclick="studioClose()" aria-label="Back to the dashboard">&larr; Dashboard</button>
-      <div class="ss-brand"><span class="ss-mark">Cavnar AI</span><span class="ss-name">Schedule Studio</span></div>
+      <div class="ss-top-l">
+        <button type="button" class="cbtn cbtn-text cbtn-sm ss-back" onclick="studioClose()" aria-label="Back to the dashboard">&larr; Dashboard</button>
+        <div class="ss-brand"><span class="ss-mark">Cavnar AI</span><span class="ss-name">Schedule Studio</span></div>
+      </div>
       <nav class="ss-steps" role="tablist" aria-label="Schedule Studio steps">
         <button type="button" role="tab" data-ss-go="setup"><i>1</i>Setup</button>
         <button type="button" role="tab" data-ss-go="summary"><i>2</i>Summary</button>
@@ -20431,7 +20464,7 @@ function swRenderGrid() {
   if (!order.length) h += '<div class="swg-empty">No shifts on this week yet. Add one with + Add a shift.</div>';
   for (i = 0; i < gOrder.length; i++) {
     var g = groups[gOrder[i]].sort(function (a, b) { return a.name.toLowerCase() < b.name.toLowerCase() ? -1 : 1; });
-    h += '<div class="swg-role">' + _escHtml(gOrder[i]) + ' <span class="hb-num">' + g.length + '</span></div>';
+    h += '<div class="swg-role"><span class="pill">' + _escHtml(gOrder[i]) + ' <span class="hb-num">' + g.length + '</span></span></div>';
     for (j = 0; j < g.length; j++) {
       var q = g[j], ot = q.hrs > ceil;
       var sc = _swScore(q.name), dots = '';
@@ -20492,7 +20525,10 @@ function swEdit(i, anchor) {
     + '<label>End<select class="ac-select" data-sched-f="shift_end">' + _schedTimeOpts(row.shift_end) + '</select></label></div>'
     + (row.needs_review ? '<div class="sw-flag bad" style="margin-top:10px">' + _escHtml(row.review_reason || 'Breaks a rule') + '</div>' : '')
     + '<div class="swp-f">' + (_swAddedIdx === i ? '' : '<button type="button" class="cbtn cbtn-text cbtn-danger cbtn-sm" data-swp="remove">Remove</button>')
-    + '<span class="sp"></span><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-swp="cancel">Cancel</button><button type="button" class="cbtn cbtn-primary cbtn-sm" data-swp="done">Done</button></div>';
+    + '<span class="swp-sp"></span><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-swp="cancel">Cancel</button><button type="button" class="cbtn cbtn-primary cbtn-sm" data-swp="done">Done</button></div>';
+  // A centred modal over a dimmed page (owner, 9/26/26): the scrim closes it.
+  var scrim = document.createElement('div'); scrim.id = 'swp-scrim'; scrim.className = 'swp-scrim';
+  (_ssHost() || document.body).appendChild(scrim);
   (_ssHost() || document.body).appendChild(box);
   var sel = box.querySelector('[data-sched-f="employee"]');
   _schedFillEmployeeSelect(sel, row.employee || '');
@@ -20503,15 +20539,12 @@ function swEdit(i, anchor) {
   });
   var a = anchor || document.querySelector('[data-swg-chip="' + i + '"]');
   if (a) a.className += ' editing';
-  var r = a ? a.getBoundingClientRect() : {left: 40, right: 40, bottom: 120, top: 120};
-  var w = box.offsetWidth, hgt = box.offsetHeight, vw = document.documentElement.clientWidth, vh = window.innerHeight;
-  var left = Math.max(16, Math.min(r.left, vw - w - 16)), top = r.bottom + 8;
-  if (top + hgt > vh - 12 && r.top - hgt - 8 > 12) top = r.top - hgt - 8;
-  box.style.left = left + 'px'; box.style.top = top + 'px';
+  ssTipHide();
   try { sel.focus(); } catch (e) { }
 }
 function swCloseEdit(discard) {
   var box = document.getElementById('swp'); if (box) box.parentNode.removeChild(box);
+  var sc = document.getElementById('swp-scrim'); if (sc) sc.parentNode.removeChild(sc);
   var was = _swEditIdx; _swEditIdx = null;
   if (discard && _swAddedIdx !== null) { _schedRows.splice(_swAddedIdx, 1); _swAddedIdx = null; _schedRenderTable(); return; }
   if (was !== null) { var c = document.querySelector('[data-swg-chip="' + was + '"]'); if (c) c.className = c.className.replace(/\s*editing/g, ''); }
@@ -20548,7 +20581,7 @@ document.addEventListener('click', function (ev) {
       // schedFinishEdit refuses (and says why) a bad time or no person; the
       // popover stays open for that. On success the grid has redrawn.
       _swEditIdx = null;
-      if (schedFinishEdit(i, box)) { _swAddedIdx = null; if (box && box.parentNode) box.parentNode.removeChild(box); }
+      if (schedFinishEdit(i, box)) { _swAddedIdx = null; if (box && box.parentNode) box.parentNode.removeChild(box); var sc = document.getElementById('swp-scrim'); if (sc) sc.parentNode.removeChild(sc); }
       else _swEditIdx = i;
     }
     return;
@@ -20820,15 +20853,20 @@ function studioGo(stage) {
   _ssStage = stage; st.setAttribute('data-stage', stage);
   var secs = st.querySelectorAll('.ss-stage'), i;
   for (i = 0; i < secs.length; i++) secs[i].className = 'ss-stage' + (secs[i].getAttribute('data-stage') === stage ? ' on' : '');
-  var order = ['setup', 'summary', 'schedule', 'publish'], at = order.indexOf(stage === 'build' ? 'setup' : stage);
+  // A step is done by what exists, not by where the owner is looking: with
+  // a draft, Setup and Summary are done wherever they go, History included
+  // (it used to derive "done" from the stage on screen, so History and
+  // Publish emptied the circles, 9/26/26). Schedule is done once they reach
+  // Publish.
+  var done = {setup: has, summary: has, schedule: has && stage === 'publish'};
   var steps = st.querySelectorAll('.ss-steps [data-ss-go]');
   for (i = 0; i < steps.length; i++) {
-    var g = steps[i].getAttribute('data-ss-go'), gi = order.indexOf(g);
-    steps[i].className = (g === 'history' ? 'ss-steps-h' : '') + (g === stage || (stage === 'build' && g === 'setup') ? ' on' : '') + (gi >= 0 && at > gi && has ? ' done' : '');
+    var g = steps[i].getAttribute('data-ss-go'), isOn = g === stage || (stage === 'build' && g === 'setup');
+    steps[i].className = (g === 'history' ? 'ss-steps-h' : '') + (isOn ? ' on' : '') + (!isOn && done[g] ? ' done' : '');
     steps[i].disabled = (g === 'summary' || g === 'schedule' || g === 'publish') && !has;
     steps[i].setAttribute('aria-selected', g === stage ? 'true' : 'false');
   }
-  var pub = document.getElementById('ss-top-publish'); if (pub) pub.hidden = !has || stage === 'publish';
+  var pub = document.getElementById('ss-top-publish'); if (pub) { pub.hidden = !has; pub.style.visibility = stage === 'publish' ? 'hidden' : ''; }
   ssTopbar();
   if (stage === 'summary') ssRenderSummary();
   else if (stage === 'publish') ssRenderPublish();

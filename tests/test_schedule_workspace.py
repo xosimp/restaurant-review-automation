@@ -136,3 +136,32 @@ def test_the_advanced_ai_notes_and_target_save_through_the_targets_endpoint():
     s = _src()
     assert "_swSave({labor_target_pct: +t.value}" in s and "_swSave({sched_notes: t.value}" in s
     assert 'id="sw-notes"' in s and 'maxlength="2000"' in s
+
+
+def test_the_step_pills_hold_still_and_keep_their_done_circles():
+    s = _src()
+    # Equal outer columns: the pills stay on the page's centre.
+    assert "grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);grid-template-rows:60px;" in s
+    go = _fn("studioGo")
+    assert "var done = {setup: has, summary: has, schedule: has && stage === 'publish'};" in go
+    assert "at > gi" not in go, "done no longer depends on the stage on screen"
+    assert "pub.style.visibility = stage === 'publish' ? 'hidden' : ''" in go
+
+
+def test_the_shift_editor_is_a_centred_modal_with_even_fields():
+    s = _src()
+    ed = _fn("swEdit")
+    assert "scrim.id = 'swp-scrim'" in ed and "swp-sp" in ed and 'class="sp"' not in ed
+    assert ".swp{position:fixed;z-index:986;left:50%;top:50%;transform:translate(-50%,-50%);" in s
+    assert ".swp-g select,.swp-g input{height:44px;" in s
+    assert "var sc = document.getElementById('swp-scrim')" in _fn("swCloseEdit")
+
+
+def test_the_grid_reads_as_rows():
+    s = _src()
+    assert ".swg-r:not(.swg-hr)>.swg-p,.swg-r:not(.swg-hr)>.swg-c{border-top:1px solid var(--hb-line2)}" in s
+    assert ".swg-chip~.swg-add{display:none}" in s and ".swg-add{position:absolute;" in s
+    assert '<div class="swg-role"><span class="pill">' in s
+    assert ".swg-d{padding:12px 6px 11px;text-align:center;position:sticky;top:0;z-index:2;background:linear-gradient(var(--hb-tint2),var(--hb-tint2)),var(--surface)}" in s
+    assert ".ss-weekhead #sched-gen-meta,.ss-weekhead #sched-gen-notes,.ss-weekhead #sched-verdict{display:none!important}" in s
+    assert ".ss #sched-table tbody td{font-size:14.5px!important;" in s
