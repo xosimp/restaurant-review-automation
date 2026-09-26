@@ -271,7 +271,10 @@ def mobile_login():
         # the same fix in auth_routes.py.
         from auth import make_pending_token
         pending_encoded = make_pending_token(rid, user["id"], pending)
-        return jsonify(ok=True, requires_2fa=True, pending_token=pending_encoded, masked_email=masked)
+        # channel says where the code went ("sms" | "email") so the app can
+        # say "We texted" or "We emailed" as the web page does.
+        return jsonify(ok=True, requires_2fa=True, pending_token=pending_encoded, masked_email=masked,
+                       channel=dest["kind"])
 
     ua = request.headers.get("User-Agent", "Cavnar-iOS")
     token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios", device_id=device_id, restaurant_id=user["restaurant_id"])
@@ -617,6 +620,17 @@ def mobile_verify_2fa():
         device_token = create_trusted_device(rid, user["id"], describe_user_agent(ua) + " · app")
 
     return jsonify(ok=True, token=token, device_token=device_token, user=_public_user(user))
+
+
+@mobile_bp.route("/resend-2fa", methods=["POST"])
+def mobile_resend_2fa():
+    """The phone's Resend code — the web's /resend-2fa body
+    (auth_routes.resend_two_fa): same pending token, same per-address
+    throttle, same destination as the first code."""
+    from auth_routes import resend_two_fa
+    data = request.get_json(silent=True) or {}
+    payload, status = resend_two_fa(data.get("pending_token", ""))
+    return jsonify(**payload), status
 
 
 @mobile_bp.route("/me")
@@ -3147,9 +3161,11 @@ def mobile_schedule_history_delete(history_id, current_user):
 @mobile_bp.route("/labor/availability")
 @mobile_login_required
 def mobile_labor_availability(current_user):
-    """Client-scoped counterpart to admin_routes.py's /admin/staff-
-    availability/<id> — same models.py CRUD, gated by the restaurant's own
-    mobile session instead of internal admin auth. Feeds the same AI
+    """The restaurant's own staff availability, scoped to the session's
+    restaurant — web (/api/labor/availability) and phone share this body.
+    admin_routes.py's /admin/staff-availability/<id> is internal-admin only;
+    the web roster used to call it with any login, which let one tenant
+    read and write another's (security fix, Sep 2026). Feeds the same AI
     scheduler input client_api.py's _build_schedule_result() already reads
     (staff_availability=...), so entries saved here are respected by the
     next "Generate schedule" run with no extra wiring."""
@@ -3171,16 +3187,33 @@ def mobile_labor_availability(current_user):
 @mobile_bp.route("/labor/availability", methods=["POST"])
 @mobile_login_required
 def mobile_labor_availability_save(current_user):
+    """A manager's save, web (/api/labor/availability) and phone alike —
+    one body. The row goes through the same rule an employee's own save
+    does (staff_routes.availability_from_submission, CLIENT-11): the
+    available days are the complement of the blocked ones, 7 of 7 blocked
+    is refused, the note is trimmed. Both manager screens send "checked =
+    available", so a day not ticked is blocked even if a caller left it out
+    of unavailable_days; a row can then never say a day is neither."""
     from models import save_staff_availability
+    from staff_routes import availability_from_submission, _DAYS
     data = request.get_json(silent=True) or {}
     name = (data.get("employee_name") or "").strip()
     if not name:
         return jsonify(ok=False, error="Employee name is required."), 400
+    avail_in = data.get("available_days")
+    unavail_in = data.get("unavailable_days")
+    blocked_in = {str(d).strip().capitalize() for d in unavail_in} if isinstance(unavail_in, list) else set()
+    if isinstance(avail_in, list) and avail_in:
+        ticked = {str(d).strip().capitalize() for d in avail_in}
+        blocked_in |= {d for d in _DAYS if d not in ticked}
+    available, blocked, notes, err = availability_from_submission(sorted(blocked_in), data.get("notes"))
+    if err:
+        return jsonify(ok=False, error="Every day is blocked. Tick at least one day they can work."), 400
     save_staff_availability(
         current_user["restaurant_id"], name,
-        available_days=data.get("available_days") or [],
-        unavailable_days=data.get("unavailable_days") or [],
-        notes=(data.get("notes") or "").strip() or None,
+        available_days=available,
+        unavailable_days=blocked,
+        notes=notes,
     )
     return jsonify(ok=True)
 

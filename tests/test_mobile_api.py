@@ -1058,7 +1058,10 @@ def test_labor_availability_save_list_delete_roundtrip(client, db_path):
     assert len(entries) == 1
     assert entries[0]["employee_name"] == "Jake M."
     assert entries[0]["available_days"] == ["Monday", "Tuesday"]
-    assert entries[0]["unavailable_days"] == ["Saturday"]
+    # A manager's save follows the employee rule (CLIENT-11): a day not
+    # ticked available is blocked, so the row covers the week exactly —
+    # Wednesday is no longer "neither" (tests/test_staff_availability_scope.py).
+    assert entries[0]["unavailable_days"] == ["Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     assert entries[0]["notes"] == "Student, no mornings"
 
     del_resp = client.post(

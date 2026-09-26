@@ -1020,6 +1020,14 @@ def format_insight_html(text, rec_items=None, surface=None, module=None):
         return 'Analysis unavailable.'
     intro, recs, forecast, unverified = parse_insight_sections(text)
     by_index = {it["index"]: it for it in (rec_items or [])}
+    # The prose is model output, and a read can be shaped by text nobody here
+    # wrote (a guest's review, an employee name from an upload): it goes into
+    # the page as text, never as markup. Only the wrapper below is HTML.
+    from markupsafe import escape as _esc_ins
+    intro = str(_esc_ins(intro or ''))
+    forecast = str(_esc_ins(forecast)) if forecast else forecast
+    unverified = str(_esc_ins(unverified)) if unverified else unverified
+    recs = [str(_esc_ins(r)) for r in recs]
 
     forecast_html = ''
     if forecast:
@@ -9728,6 +9736,28 @@ def labor_team_remove(current_user):
 @login_required
 def labor_team_thresholds(current_user):
     return _m("mobile_set_thresholds")(current_user)
+
+
+# Staff availability — the web roster's routes, restaurant from the session
+# (the active location for an owner who switched). The web used to call
+# /admin/staff-availability/<id> with the id from the page, which any login
+# could point at another restaurant; that route is internal-admin only now.
+@client_bp.route("/api/labor/availability")
+@login_required
+def labor_availability(current_user):
+    return _m("mobile_labor_availability")(current_user)
+
+
+@client_bp.route("/api/labor/availability", methods=["POST"])
+@login_required
+def labor_availability_save(current_user):
+    return _m("mobile_labor_availability_save")(current_user)
+
+
+@client_bp.route("/api/labor/availability/delete", methods=["POST"])
+@login_required
+def labor_availability_delete(current_user):
+    return _m("mobile_labor_availability_delete")(current_user)
 
 
 @client_bp.route("/api/account/team/<int:user_id>/can-manage", methods=["POST"])

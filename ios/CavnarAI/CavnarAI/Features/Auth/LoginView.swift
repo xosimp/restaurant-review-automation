@@ -118,7 +118,8 @@ struct LoginView: View {
                         viewModel: TwoFactorViewModel(
                             sessionStore: sessionStore,
                             pendingToken: pendingToken,
-                            maskedEmail: viewModel.twoFactorMaskedEmail ?? ""
+                            maskedEmail: viewModel.twoFactorMaskedEmail ?? "",
+                            channel: viewModel.twoFactorChannel
                         )
                     )
                 }
