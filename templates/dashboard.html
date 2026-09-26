@@ -1388,7 +1388,7 @@ function submitFoodCostCount() {
         var clr = d.direction === 'up' ? (_isDark?'#ef4444':'#c0392b') : (_isDark?'#6fcf97':'#2d6a4f');
         var arrow = d.direction === 'up' ? '&#8593;' : '&#8595;';
         html += '<tr style="border-top:1px solid '+_brt+'">';
-        html += '<td style="padding:4px 6px;font-weight:600;color:'+_bit+'">' + d.name + '</td>';
+        html += '<td style="padding:4px 6px;font-weight:600;color:'+_bit+'">' + _escHtml(String(d.name||'')) + '</td>';
         html += '<td style="padding:4px 6px;color:'+_bmt+'">$' + d.prev_price.toFixed(2) + '</td>';
         html += '<td style="padding:4px 6px;color:'+_bit+';font-weight:600">$' + d.curr_price.toFixed(2) + '</td>';
         html += '<td style="padding:4px 6px;color:' + clr + ';font-weight:700">' + arrow + ' ' + Math.abs(d.pct_change) + '%</td>';
@@ -12892,20 +12892,26 @@ function regenDraft(id) {
         boxEl.style.background='';
         boxEl.innerHTML =
           '<div class="draft-lbl">Suggested response</div>' +
-          '<div class="draft-txt draft-editable" id="draft-txt-'+id+'" role="button" tabindex="0" title="Click to edit" data-edit-review="'+id+'">'+data.draft+'</div>' +
+          '<div class="draft-txt draft-editable" id="draft-txt-'+id+'" role="button" tabindex="0" title="Click to edit" data-edit-review="'+id+'"></div>' +
           '<div class="draft-actions" id="draft-actions-'+id+'">' +
             '<button class="cbtn cbtn-primary cbtn-sm" onclick="approveR('+id+')">✓ Approve</button>' +
             '<button class="cbtn cbtn-secondary cbtn-sm" onclick="openEditor('+id+')">Edit</button>' +
             '<button class="cbtn cbtn-secondary cbtn-sm" onclick="skipR('+id+')">Skip</button>' +
           '</div>' +
           '<div class="response-editor" id="editor-'+id+'" style="display:none;margin-top:10px">' +
-            '<textarea id="editor-text-'+id+'" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:\'Apfel Grotezk\',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none">'+data.draft+'</textarea>' +
+            '<textarea id="editor-text-'+id+'" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:\'Apfel Grotezk\',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none"></textarea>' +
             '<div style="display:flex;gap:6px;margin-top:6px">' +
               '<button class="cbtn cbtn-primary cbtn-sm" onclick="saveDraft('+id+')">Save & approve</button>' +
               '<button class="cbtn cbtn-secondary cbtn-sm" onclick="regenDraft('+id+')">↻ Regenerate AI draft</button>' +
               '<button class="cbtn cbtn-secondary cbtn-sm" onclick="closeEditor('+id+')">Cancel</button>' +
             '</div>' +
           '</div>';
+        /* The draft is model output shaped by the guest's own words: it goes
+           in as text, never as markup. */
+        var newTxt = document.getElementById('draft-txt-'+id);
+        var newEditor = document.getElementById('editor-text-'+id);
+        if (newTxt) newTxt.textContent = data.draft || '';
+        if (newEditor) newEditor.value = data.draft || '';
         _revShowFlag(id, data.needs_review ? (data.review_reason || 'states something Cavnar AI cannot confirm') : '');
       }
       toast('New draft generated','success');
@@ -13493,10 +13499,12 @@ function processInsightHtml(html){
     '🔍': _ic('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>')
   };
   var _emojiRe = /^([\uD83C-􏰀-\uDFFF]{1,2}[️]?|[☀-➿][️]?)\s*/;
-  var lines = html.replace(/<br\s*\/?>/gi,'\n').split('\n');
+  var lines = String(html||'').replace(/<br\s*\/?>/gi,'\n').split('\n');
   var out = '';
   for(var _i=0;_i<lines.length;_i++){
-    var ln = lines[_i].trim();
+    /* The read is model text written over guests' reviews: each line goes
+       into the page escaped. Only the icons and wrappers here are markup. */
+    var ln = _escHtml(lines[_i].trim());
     if(!ln) continue;
     if(ln.indexOf('🔮')===0){
       ln=ln.slice(2).replace(/^[️\s]+/,'');
@@ -13515,7 +13523,7 @@ function processInsightHtml(html){
       out += '<div style="margin-bottom:11px">'+ln+'</div>';
     }
   }
-  return out || html;
+  return out;
 }
 function loadReviewInsight(){
   // reviewInsightLoaded is also the shared "has this tab's lazy content
@@ -20336,7 +20344,9 @@ function genContent(fromCalendar){
       box.style.color='var(--ink)';
       window._lastPostedTopic=topic;
       var _genContent = d.content||'Generation failed — try again.';
-      typewriterEffect(box, _genContent);
+      // Generated copy is text (the box is read back with innerText), never
+      // markup: a '<' in it must not become HTML.
+      typewriterEffect(box, _genContent, true);
       var hint=document.getElementById('output-hint');if(hint)hint.style.display='block';
       var nlBtn=document.getElementById('mkt-as-newsletter-btn');
       if(nlBtn)nlBtn.style.display=(selCt==='weekly_email'&&d.content)?'inline-block':'none';
@@ -21695,15 +21705,18 @@ function loadCompetitorIntel(){
       for(var j=0;j<Math.min(revs.length,2);j++){
         var rv=revs[j];
         var rCol=rv.rating>=4?'#16a34a':'#dc2626';
-        var rTxt=rv.text.length>120?rv.text.substring(0,120)+'...':rv.text;
+        // A competitor's guest review and the listing's own name are text
+        // from Google, written by strangers: escaped, never markup.
+        var rRaw=String(rv.text||'');
+        var rTxt=_escHtml(rRaw.length>120?rRaw.substring(0,120)+'...':rRaw);
         revHtml+='<div style="font-size:11px;color:var(--ink3);padding:6px 0;border-top:1px solid var(--paper3);line-height:1.5"><span style="color:'+rCol+'">&#9733;</span> '+rTxt+'</div>';
       }
       html+='<div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px">'
         +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">'
-        +'<div style="font-weight:600;font-size:13px">'+c.name+'</div>'
+        +'<div style="font-weight:600;font-size:13px">'+_escHtml(String(c.name||''))+'</div>'
         +'<div>'+stars+' <span style="font-size:12px;color:var(--ink3)">'+(c.rating?c.rating:'unrated')+'</span></div>'
         +'</div>'
-        +'<div style="font-size:11px;color:var(--ink3);margin-bottom:8px">'+c.vicinity+' &middot; '+c.review_count+' reviews</div>'
+        +'<div style="font-size:11px;color:var(--ink3);margin-bottom:8px">'+_escHtml(String(c.vicinity||''))+' &middot; '+(+c.review_count||0)+' reviews</div>'
         +revHtml+'</div>';
     }
     cards.innerHTML=html;
@@ -22257,10 +22270,10 @@ window.addEventListener('load', function(){
   } catch(e) {}
 });
 // ── Animation Utilities ──────────────────────────────────────────────────────
-function typewriterEffect(el, html) {
+function typewriterEffect(el, html, asText) {
   var tok = ((_twTokens[el.id]||0)+1);
   _twTokens[el.id]=tok;
-  var hasHtml = html.indexOf('<') !== -1;
+  var hasHtml = !asText && html.indexOf('<') !== -1;
   if (!hasHtml) {
     var words = html.split(' ');
     var total = words.length;

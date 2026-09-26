@@ -1020,6 +1020,14 @@ def format_insight_html(text, rec_items=None, surface=None, module=None):
         return 'Analysis unavailable.'
     intro, recs, forecast, unverified = parse_insight_sections(text)
     by_index = {it["index"]: it for it in (rec_items or [])}
+    # The prose is model output, and a read can be shaped by text nobody here
+    # wrote (a guest's review, an employee name from an upload): it goes into
+    # the page as text, never as markup. Only the wrapper below is HTML.
+    from markupsafe import escape as _esc_ins
+    intro = str(_esc_ins(intro or ''))
+    forecast = str(_esc_ins(forecast)) if forecast else forecast
+    unverified = str(_esc_ins(unverified)) if unverified else unverified
+    recs = [str(_esc_ins(r)) for r in recs]
 
     forecast_html = ''
     if forecast:
