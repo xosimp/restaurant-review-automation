@@ -288,6 +288,24 @@ def test_editing_an_approved_draft_sends_it_back_for_approval(rid, db_path):
     assert marketing_drafts.list_drafts(rid, db_path=db_path)[0]["status"] == "draft"
 
 
+def test_saving_over_a_deleted_or_expired_draft_says_which_by_code(rid, db_path):
+    """The composer holds the id of the draft it opened; the code tells it to
+    let go of that id, so the next Save starts a new draft instead of every
+    later save failing against the gone one."""
+    gone = marketing_drafts.save_draft(rid, "Copy", db_path=db_path)
+    marketing_drafts.delete_draft(gone["id"], rid, db_path=db_path)
+    out = marketing_drafts.save_draft(rid, "Again", draft_id=gone["id"], db_path=db_path)
+    assert out["ok"] is False and out["code"] == "draft_gone"
+
+    old = marketing_drafts.save_draft(rid, "Come in Tuesday", db_path=db_path)
+    conn = get_conn(db_path)
+    conn.execute("UPDATE marketing_drafts SET status='expired' WHERE id=?", (old["id"],))
+    conn.commit()
+    conn.close()
+    out = marketing_drafts.save_draft(rid, "Come in Tuesday!", draft_id=old["id"], db_path=db_path)
+    assert out["ok"] is False and out["code"] == "draft_expired"
+
+
 def test_one_restaurant_cannot_read_or_approve_anothers_draft(db_path, rid):
     other = create_restaurant(Restaurant(name="Other", owner_email="o@x.com"), db_path=db_path)
     saved = marketing_drafts.save_draft(rid, "Private copy", db_path=db_path)

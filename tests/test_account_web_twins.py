@@ -150,7 +150,8 @@ def test_web_close_account_records_the_same_request_as_the_app(client, db_path, 
     first = client.post("/api/account/request-deletion", json={"restaurant_id": theirs})
     assert first.status_code == 200
     body = first.get_json()
-    assert set(body) == {"ok", "requested_at"} and body["ok"] is True
+    # requested_on is the date to show, on the restaurant's clock (M/D/YY).
+    assert set(body) == {"ok", "requested_at", "requested_on"} and body["ok"] is True
     assert get_deletion_requested_at(mine, db_path=db_path) == body["requested_at"]
     # The caller's restaurant, whatever the body names.
     assert get_deletion_requested_at(theirs, db_path=db_path) is None
@@ -190,3 +191,23 @@ def test_billing_and_close_account_are_the_owners_alone(client, monkeypatch, db_
     r = client.post("/api/account/request-deletion")
     assert r.status_code == 403 and r.get_json().get("owner_only") is True
     assert not get_deletion_requested_at(rid)
+
+
+def test_the_close_request_date_is_the_restaurants_not_utcs(client, db_path, monkeypatch):
+    """A request at 10pm in Chicago is stored as the next day in UTC; the
+    card read the stamp's date part and said "Requested" a day late."""
+    rid = _restaurant(db_path, name="Evening Co", timezone="America/Chicago")
+    conn = models.get_conn(db_path)
+    conn.execute("UPDATE restaurants SET deletion_requested_at='2026-09-25 03:00:00' WHERE id=?", (rid,))
+    conn.commit()
+    conn.close()
+    _web_as(monkeypatch, rid)
+    body = client.get("/api/account-settings").get_json()
+    assert body["deletion_requested_at"] == "2026-09-25 03:00:00"
+    assert body["deletion_requested_on"] == "9/24/26"
+    again = client.post("/api/account/request-deletion").get_json()
+    assert again["requested_at"] == "2026-09-25 03:00:00" and again["requested_on"] == "9/24/26"
+    import os
+    src = open(os.path.join(os.path.dirname(__file__), "..", "templates", "dashboard.html")).read()
+    assert "_acctShowClosed(d.deletion_requested_at, d.deletion_requested_on)" in src
+    assert "_acctShowClosed(d.requested_at,d.requested_on)" in src

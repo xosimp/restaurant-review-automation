@@ -282,7 +282,8 @@ def test_5a_the_web_never_types_a_failure_into_the_post_box():
     gen = src[src.index("function genContent(fromCalendar)"):src.index("function mktSendAsNewsletter()")]
     assert "if(!d.content){" in gen and "box.setAttribute('data-gen-error','1')" in gen
     body = src[src.index("function _mktBody(){"):]
-    assert "if(el.getAttribute('data-gen-error')) return '';" in body[:300]
+    # The refusal also covers the "Posted" confirmation (web client audit #1).
+    assert "if(el.getAttribute('data-gen-error') || el.getAttribute('data-mkt-posted')) return '';" in body[:300]
 
 
 def test_5b_the_web_calendar_marks_an_idea_already_written_from(web, phone, rid, monkeypatch):

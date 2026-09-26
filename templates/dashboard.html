@@ -18,6 +18,12 @@
 {% if restaurant.brand_color %}<style>:root{--ember:{{ restaurant.brand_color | e }};--ember2:{{ restaurant.brand_color | e }}cc}</style>{% endif %}
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+/* The hidden attribute always hides. A class that sets display (flex, grid,
+   inline-flex) otherwise beats the browser's own [hidden] rule, so a switch
+   the script hid still showed (the Labor auto-draft switch under an
+   external scheduler), a closed form stayed open and an empty line kept its
+   border. Per-class [hidden] rules below predate this and are redundant. */
+[hidden]{display:none!important}
 :root{--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;--ember:#c84b2f;--ember2:#e8956a;--green:#2d6a4f;--green-bg:#eaf4ee;--red:#c0392b;--red-bg:#fdf0ef;--amber:#b7791f;--amber-bg:#fef9ec;--blue:#1a56cc;--blue-bg:#e8f0fe;--r:8px;--surface:#ffffff;--hdr-bg:var(--ink);--qw-fill:#c84b2f;--qw-track:#cbb896}
 /* ── DARK MODE ──────────────────────────────────────────────────────────────── */
 [data-theme="dark"]{
@@ -11087,7 +11093,8 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
       <div class="t"><b>{{ label }}</b>{% if reg %}<span class="{{ 'err' if _rt == 'bad' else ('warn' if _rt == 'warn' else '') }}" title="{{ reg.error or reg.line }}">{{ reg.line }}</span>{% else %}<span>{% if last_synced %}Last synced <span class="ac-num">{{ last_synced|format_date }}</span>{% else %}Connected &mdash; first sync pending{% endif %}</span>{% endif %}</div>
       <div class="a">
         <button onclick="{{ sync_fn }}(this)" class="cbtn cbtn-success cbtn-sm">&#8635; Sync</button>
-        <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="{{ disconnect_fn }}(this)">Disconnect</button>
+        {# POS credentials are the owner's (principal_only, SEC-24). #}
+        {% if is_principal is not defined or is_principal %}<button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="{{ disconnect_fn }}(this)">Disconnect</button>{% endif %}
       </div>
     {% elif ident and sync_error %}
       {# Credentials on file but the last sync failed. A plain green check here
@@ -11095,14 +11102,14 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
          makes an owner think their numbers are live when they aren't. #}
       <div class="ic err" aria-hidden="true">!</div>
       <div class="t"><b>{{ label }} &mdash; needs attention</b><span class="err" title="{{ sync_error }}">{{ sync_error }}</span></div>
-      <div class="a">
+      {% if is_principal is not defined or is_principal %}<div class="a">
         <button onclick="{{ open_fn }}()" class="cbtn cbtn-success cbtn-sm">Reconnect</button>
         <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="{{ disconnect_fn }}(this)">Disconnect</button>
-      </div>
+      </div>{% endif %}
     {% else %}
       <div class="ic" aria-hidden="true"><img {% if _wide %}class="wide" {% endif %}src="{{ mark }}" alt=""></div>
       <div class="t"><b>{{ label }}</b><span>Not connected &mdash; powers live labor and sales data</span></div>
-      <div class="a"><button onclick="{{ open_fn }}()" class="cbtn cbtn-secondary cbtn-sm">Connect</button></div>
+      {% if is_principal is not defined or is_principal %}<div class="a"><button onclick="{{ open_fn }}()" class="cbtn cbtn-secondary cbtn-sm">Connect</button></div>{% endif %}
     {% endif %}
   </div>
 {%- endmacro %}
@@ -11113,12 +11120,17 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 {% set _profile_done = (1 if restaurant.owner_name else 0) + (1 if restaurant.owner_phone else 0) + (1 if restaurant.timezone else 0) + (1 if restaurant.voice_notes else 0) %}
 {% set _alerts_on = restaurant.alert_1star or restaurant.alert_2star or restaurant.alert_health or restaurant.alert_neg_spike or restaurant.alert_negative_trend or restaurant.alert_no_response or restaurant.alert_5star or restaurant.alert_rating_threshold or restaurant.alert_labor_over or restaurant.alert_any_review %}
 {% set _is_owner = current_user.role in ('owner', 'client') %}
+{# The account holder, by the routes' own test (permissions.is_principal):
+   billing, closing the account, alerts, the owner's email switches and the
+   integrations answer 403 owner_only to anyone else, so those controls are
+   not drawn for them (a note says who can change it instead). #}
+{% set _principal = is_principal if is_principal is defined else _is_owner %}
 
 <div class="panel" id="panel-account"
      data-profile-done="{{ _profile_done }}" data-conn="{{ _conn_count }}" data-conn-err="{{ 1 if _pos_err else 0 }}"
      data-twofa="{{ 1 if restaurant.two_fa_enabled else 0 }}" data-alerts="{{ 1 if _alerts_on else 0 }}"
      data-digest="{{ 1 if restaurant.digest_enabled else 0 }}" data-login-notify="{{ 1 if restaurant.login_notify else 0 }}"
-     data-modules="{{ active_modules|length }}" data-full="{{ 1 if is_full_tier else 0 }}">
+     data-modules="{{ active_modules|length }}" data-full="{{ 1 if is_full_tier else 0 }}" data-principal="{{ 1 if _principal else 0 }}">
 <div class="ac-page">
 
   <!-- ══════════════ OVERVIEW ══════════════ -->
@@ -11154,7 +11166,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
           <div class="ac-more-menu">
             {% if _is_owner %}<button type="button" class="cbtn cbtn-text cbtn-sm" onclick="acctGo('people','team-name')">Invite a teammate</button>{% endif %}
             <button type="button" class="cbtn cbtn-text cbtn-sm" onclick="acctGo('integrations')">Connect an integration</button>
-            <a class="cbtn cbtn-text cbtn-sm" id="ac-qa-billing" href="#" onclick="return acctBillingQuick(event)">Manage subscription</a>
+            {% if _principal %}<a class="cbtn cbtn-text cbtn-sm" id="ac-qa-billing" href="#" onclick="return acctBillingQuick(event)">Manage subscription</a>{% endif %}
             <button type="button" class="cbtn cbtn-text cbtn-sm" onclick="acctGo('data','exp-first')">Export data</button>
             <a class="cbtn cbtn-text cbtn-sm" href="mailto:will@cavnar.ai?subject=Question about {{restaurant.name}}">Contact Will</a>
           </div>
@@ -11175,7 +11187,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
           <button type="button" class="ac-hitem" data-health="integrations" onclick="acctGo('integrations')"><i class="ac-hdot"></i><div><b>Integrations</b><span>&hellip;</span></div></button>
           <button type="button" class="ac-hitem" data-health="notifications" onclick="acctGo('notifications')"><i class="ac-hdot"></i><div><b>Notifications</b><span>&hellip;</span></div></button>
           <button type="button" class="ac-hitem" data-health="security" onclick="acctGo('security')"><i class="ac-hdot"></i><div><b>Security</b><span>&hellip;</span></div></button>
-          <button type="button" class="ac-hitem" data-health="subscription" onclick="acctGo('billing')"><i class="ac-hdot"></i><div><b>Subscription</b><span>&hellip;</span></div></button>
+          {% if _principal %}<button type="button" class="ac-hitem" data-health="subscription" onclick="acctGo('billing')"><i class="ac-hdot"></i><div><b>Subscription</b><span>&hellip;</span></div></button>{% endif %}
         </div>
       </div>
     </div>
@@ -11451,6 +11463,12 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
         <div class="ac-status" id="acct-pause-status" hidden></div>
       </div>
       <div class="ac-grid">
+        {% if not _principal %}
+        <div class="ac-card">
+          <div class="ac-card-h"><div><h3>Subscription</h3></div></div>
+          <div class="ac-note">Only the account owner can see billing and change the subscription.</div>
+        </div>
+        {% else %}
         <div class="ac-card" id="billing-card">
           <div class="ac-card-h"><div><h3>Subscription</h3><p id="billing-status">&nbsp;</p></div></div>
           <div id="billing-loading" class="hb-load" style="height:64px"><canvas class="hb-orb" data-orb-state="working" width="22" height="22" style="width:22px;height:22px"></canvas><span>Loading billing&hellip;</span></div>
@@ -11476,7 +11494,9 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
             </div>
           </div>
           <div id="billing-no-sub" style="display:none" class="ac-note">No active subscription on file. <a href="mailto:will@cavnar.ai">Contact Will</a> to set one up.</div>
+          <div id="billing-owner-only" hidden class="ac-note">Only the account owner can see billing and change the subscription.</div>
         </div>
+        {% endif %}
         <div class="ac-card">
           <div class="ac-card-h"><div><h3>Feature access</h3><p>Modules on this account. Tabs you don&rsquo;t have are hidden, and their data is never fetched.</p></div></div>
           <div class="ac-rows">
@@ -11508,23 +11528,24 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
       <div class="ac-grid">
         <div class="ac-card">
           <div class="ac-card-h"><div><h3>Alerts</h3><p>Who gets texted or emailed, and for what.</p></div>
-            <div class="r"><button class="cbtn cbtn-secondary cbtn-sm" onclick="openAlertsModal()">Manage alerts</button></div></div>
+            {% if _principal %}<div class="r"><button class="cbtn cbtn-secondary cbtn-sm" onclick="openAlertsModal()">Manage alerts</button></div>{% endif %}</div>
           <div class="ac-kv" style="grid-template-columns:1fr">
             <div><dt>Contacts</dt><dd id="alerts-contacts-summary" class="muted"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></dd></div>
             <div><dt>Triggers</dt><dd id="alerts-types-summary" class="muted"></dd></div>
           </div>
-          <div class="ac-note">Quiet hours, daily caps and the weekly digest day are all inside <b>Manage alerts</b>.</div>
+          {% if _principal %}<div class="ac-note">Quiet hours, daily caps and the weekly digest day are all inside <b>Manage alerts</b>.</div>{% else %}<div class="ac-note">Only the account owner can change alerts.</div>{% endif %}
         </div>
         <div class="ac-card">
           <div class="ac-card-h"><div><h3>Email preferences</h3><p>Security email &mdash; sign-in codes, password changes, alerts &mdash; always sends regardless.</p></div></div>
           <div class="ac-rows">
             <div class="ac-row"><div class="l"><b>Email me about new sign-ins</b><span>A note whenever someone signs in to this dashboard, with a one-tap &ldquo;this wasn&rsquo;t me&rdquo;.</span></div>
-              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-login-notify" onchange="saveLoginNotify()" aria-label="Email me about new sign-ins"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
+              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-login-notify" onchange="saveLoginNotify()" aria-label="Email me about new sign-ins"{% if not _principal %} disabled{% endif %}><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
             <div class="ac-row"><div class="l"><b>Monthly business review</b><span>On the 1st: how last month&rsquo;s numbers moved against the month before, what your changes were measured to do, where your goals stand, and what&rsquo;s worth fixing next.</span></div>
-              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-monthly-review" onchange="saveMonthlyReview()" aria-label="Monthly business review"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
+              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-monthly-review" onchange="saveMonthlyReview()" aria-label="Monthly business review"{% if not _principal %} disabled{% endif %}><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
             <div class="ac-row"><div class="l"><b>Product update emails</b><span>Occasional notes about new features. Separate from your monthly review.</span></div>
-              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-marketing" onchange="saveMarketingOptOut()" aria-label="Product update emails"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
+              <div class="c"><label class="ac-switch"><input type="checkbox" id="as-marketing" onchange="saveMarketingOptOut()" aria-label="Product update emails"{% if not _principal %} disabled{% endif %}><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
           </div>
+          {% if not _principal %}<div class="ac-note">Only the account owner can change these.</div>{% endif %}
           <div class="ac-status" id="as-data-status" style="margin-top:8px"></div>
         </div>
         <div class="ac-card" id="as-ops-card" hidden>
@@ -11640,6 +11661,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
         <div class="ac-dh-row"><span class="pct" id="acct-dh-pct">&hellip;</span><span class="bar" aria-hidden="true"><i id="acct-dh-bar"></i></span></div>
         <div class="ac-dh-why" id="acct-dh-why"></div>
       </div>
+      {% if not _principal %}<div class="ac-note" style="margin:0 0 12px">Only the account owner can connect or disconnect an integration.</div>{% endif %}
       {% set _pos_any = _pos_on or _pos_err %}
       {% set _pos_idle = [] %}
       {% if not restaurant.toast_restaurant_guid %}{% set _pi = _pos_idle.append('Toast') %}{% endif %}
@@ -11649,18 +11671,18 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
       <div class="ac-grid">
         <div class="ac-conn">
           {% if restaurant.gmb_refresh_token %}{% set _gl2 = conn_lines.google if conn_lines else None %}<div class="ic {{ 'err' if (_gl2 and _gl2.tone == 'bad') else ('warn' if (_gl2 and _gl2.tone == 'warn') else 'on') }}" aria-hidden="true"><img src="/static/brand/integrations/google.svg" alt=""></div><div class="t"><b>Google Business Profile</b><span{% if _gl2 and _gl2.tone in ('bad', 'warn') %} class="warn"{% endif %}>{{ _gl2.line if _gl2 else 'Connected' }} &mdash; approved replies post to Google</span></div>
-          <div class="a"><button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="gmbDisconnect()">Disconnect</button></div>
+          {% if _principal %}<div class="a"><button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="gmbDisconnect()">Disconnect</button></div>{% endif %}
           {# Places-only reviews are a SAMPLE of the listing (admin_ops.review_source, G9): never "connected". #}
           {% elif restaurant.reviews_live and restaurant.google_place_id %}<div class="ic" aria-hidden="true"><img src="/static/brand/integrations/google.svg" alt=""></div><div class="t"><b>Google reviews (sampled &mdash; Places returns 5 at a time)</b><span>Reading your public listing, not your Business Profile &mdash; connect it to see every review and post replies</span></div>
-          <div class="a"><button onclick="gmbConnect()" class="cbtn cbtn-secondary cbtn-sm">Connect</button></div>
+          {% if _principal %}<div class="a"><button onclick="gmbConnect()" class="cbtn cbtn-secondary cbtn-sm">Connect</button></div>{% endif %}
           {% else %}<div class="ic" aria-hidden="true"><img src="/static/brand/integrations/google.svg" alt=""></div><div class="t"><b>Google Business Profile</b><span>Not connected &mdash; replies stay in your inbox</span></div>
-          <div class="a"><button onclick="gmbConnect()" class="cbtn cbtn-secondary cbtn-sm">Connect</button></div>{% endif %}
+          {% if _principal %}<div class="a"><button onclick="gmbConnect()" class="cbtn cbtn-secondary cbtn-sm">Connect</button></div>{% endif %}{% endif %}
         </div>
         <div class="ac-conn">
           {% if restaurant.ig_token %}<div class="ic on" aria-hidden="true"><img src="/static/brand/integrations/instagram.svg" alt=""></div><div class="t"><b>Instagram &amp; Facebook</b><span>Connected &mdash; posts generated content directly</span></div>
-          <div class="a"><button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="disconnectInstagram(this)">Disconnect</button></div>
+          {% if _principal %}<div class="a"><button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="disconnectInstagram(this)">Disconnect</button></div>{% endif %}
           {% else %}<div class="ic" aria-hidden="true"><img src="/static/brand/integrations/instagram.svg" alt=""></div><div class="t"><b>Instagram &amp; Facebook</b><span>Not connected</span></div>
-          <div class="a"><button onclick="igConnect()" class="cbtn cbtn-secondary cbtn-sm">Connect</button></div>{% endif %}
+          {% if _principal %}<div class="a"><button onclick="igConnect()" class="cbtn cbtn-secondary cbtn-sm">Connect</button></div>{% endif %}{% endif %}
         </div>
         {% if _pos_any and not restaurant.toast_restaurant_guid %}<div class="ac-pos-other" hidden>{% endif %}{{ pos_card('Toast POS', '/static/brand/integrations/toast.png', restaurant.toast_restaurant_guid, restaurant.toast_sync_error, restaurant.toast_last_synced, 'toastSyncNow', 'toastDisconnect', 'openToastClientModal', (conn_lines.pos if (conn_lines and conn_lines.pos and conn_lines.pos.provider == 'toast') else None)) }}{% if _pos_any and not restaurant.toast_restaurant_guid %}</div>{% endif %}
         {% if _pos_any and not restaurant.square_location_id %}<div class="ac-pos-other" hidden>{% endif %}{{ pos_card('Square POS', '/static/brand/integrations/square.svg', restaurant.square_location_id, restaurant.square_sync_error, restaurant.square_last_synced, 'squareSyncNow', 'squareDisconnect', 'openSquareModal', (conn_lines.pos if (conn_lines and conn_lines.pos and conn_lines.pos.provider == 'square') else None)) }}{% if _pos_any and not restaurant.square_location_id %}</div>{% endif %}
@@ -11671,7 +11693,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
            was missing. #}
         {% if _pos_any and _pos_idle %}<div class="ac-conn ac-pos-switch"><div class="ic" aria-hidden="true">&#8644;</div><div class="t"><b>Switch POS</b><span>{{ _pos_idle|join(', ') }}</span></div>
           <div class="a"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" aria-expanded="false" onclick="acctPosOthers(this)">Show</button></div></div>{% endif %}
-        <div class="ac-conn"><div class="ic" aria-hidden="true"><img class="wide" src="/static/brand/integrations/stripe.svg" alt=""></div><div class="t"><b>Stripe</b><span>Billing runs through Stripe &mdash; manage it under Billing</span></div><div class="a"><button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="acctGo('billing')">Billing &rarr;</button></div></div>
+        {% if _principal %}<div class="ac-conn"><div class="ic" aria-hidden="true"><img class="wide" src="/static/brand/integrations/stripe.svg" alt=""></div><div class="t"><b>Stripe</b><span>Billing runs through Stripe &mdash; manage it under Billing</span></div><div class="a"><button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="acctGo('billing')">Billing &rarr;</button></div></div>{% endif %}
       </div>
 
       <div class="ac-card" style="margin-top:14px">
@@ -11720,7 +11742,8 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
             </div>
           </div>
         </div>
-        <div class="ac-inline">
+        {% if not _principal %}<div class="ac-note">Only the account owner can change the webhook.</div>{% endif %}
+        <div class="ac-inline"{% if not _principal %} hidden{% endif %}>
           <button onclick="saveWebhook()" class="cbtn cbtn-secondary" id="wh-save-btn">Save webhook</button>
           <button onclick="testWebhook()" id="wh-test-btn" class="cbtn cbtn-secondary" style="display:none">Send test</button>
           <button class="cbtn cbtn-danger cbtn-ghost cbtn-sm" onclick="deleteWebhook()" id="wh-delete-btn" style="display:none">Remove</button>
@@ -11794,8 +11817,12 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
           <div class="ac-card-h"><div><h3>Export my data</h3><p>Emailed to you as CSV attachments, plus a JSON of your settings.</p></div></div>
           <div class="ac-checks" style="margin-bottom:14px">
             <label><input type="checkbox" class="exp-scope" id="exp-first" value="reviews" checked> Reviews</label>
-            {% if mod_labor %}<label><input type="checkbox" class="exp-scope" value="labor"> Labor</label>{% endif %}
-            {% if mod_inventory %}<label><input type="checkbox" class="exp-scope" value="food_cost"> Food cost</label>{% endif %}
+            {# The scopes the export route allows this login (mobile_api.
+               export_scopes_for: the module AND the view permission), the
+               list the phone reads as data.export_scopes. #}
+            {% set _exp = export_scopes if export_scopes is defined else ['reviews', 'settings'] %}
+            {% if 'labor' in _exp %}<label><input type="checkbox" class="exp-scope" value="labor"> Labor</label>{% endif %}
+            {% if 'food_cost' in _exp %}<label><input type="checkbox" class="exp-scope" value="food_cost"> Food cost</label>{% endif %}
             <label><input type="checkbox" class="exp-scope" value="settings"> Settings</label>
           </div>
           <button onclick="exportData(this)" class="cbtn cbtn-secondary cbtn-sm">Email me my data</button>
@@ -11810,12 +11837,14 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
         {# Close my account: a recorded request that notifies Will
            (POST /api/account/request-deletion, the app's shared body), with
            the email to Will kept underneath as the contact line. #}
+        {% if _principal %}
         <div class="ac-card span" id="acct-close-card">
           <div class="ac-card-h"><div><h3>Ownership &amp; cancellation</h3><p>This account belongs to <b>{{ restaurant.owner_name or restaurant.owner_email }}</b>. Service is under a signed agreement, so closing it goes through Will: your request is recorded and he&rsquo;s notified to wind things down. 30 days&rsquo; written notice applies; the account stays active through the end of the current billing period plus 30 days.</p></div>
             <div class="r"><button type="button" class="cbtn cbtn-danger cbtn-ghost cbtn-sm" id="acct-close-btn" onclick="acctRequestClose(this)">Request cancellation</button></div></div>
           <div class="ac-status" id="acct-close-status" role="status" hidden></div>
           <div class="ac-note">Or write to Will: <a href="mailto:will@cavnar.ai?subject=Cancel%20my%20Cavnar%20AI%20subscription&body=Hi%20Will%2C%0A%0AI%20would%20like%20to%20cancel%20my%20Cavnar%20AI%20subscription%20for%20{{restaurant.name|urlencode}}.%0A%0APer%20the%2030-day%20notice%20policy%2C%20I%20understand%20my%20account%20will%20remain%20active%20through%20the%20end%20of%20my%20current%20billing%20period%20and%20for%2030%20days%20after%20this%20notice.">will@cavnar.ai</a></div>
         </div>
+        {% endif %}
       </div>
     </section>
 
@@ -12937,6 +12966,14 @@ document.addEventListener('keydown', function(e) {
   if (rid) { e.preventDefault(); openEditor(rid); }
 });
 function closeEditor(id) {
+  // Cancel drops the edit: the pending autosave would otherwise save the
+  // cancelled text ~0.8s later (and Approve would then post it), and the
+  // box goes back to the draft that is stored (draft-txt, which an earlier
+  // autosave already updated).
+  if (_revAutoT[id]) { clearTimeout(_revAutoT[id]); delete _revAutoT[id]; }
+  var ta = document.getElementById('editor-text-'+id), tx = document.getElementById('draft-txt-'+id);
+  if (ta && tx) ta.value = tx.textContent || '';
+  _revAutoStatus(id, '');
   document.getElementById('editor-'+id).style.display='none';
   document.getElementById('draft-actions-'+id).style.display='flex';
 }
@@ -13241,7 +13278,7 @@ function toastSaveCredentials(btn){
         setTimeout(function(){ window.location.reload(); }, 1800);
       } else {
         btn.textContent = 'Test & Connect';
-        _setToastFormBanner(cavnarHandshakeHtml('failed',CM_GLYPH_TOAST,'✗ '+(d.error||'Unknown error')),'hs');
+        _setToastFormBanner(cavnarHandshakeHtml('failed',CM_GLYPH_TOAST,'✗ '+_escHtml(String(d.error||'Unknown error'))),'hs');
       }
     })
     .catch(function(){
@@ -13324,7 +13361,7 @@ function squareSaveCredentials(btn){
         setTimeout(function(){window.location.reload();},1200);
       } else {
         btn.textContent='Test & Connect';
-        _setSquareBanner('&#x2717; '+(d.error||'Unknown error'),'err');
+        _setSquareBanner('&#x2717; '+_escHtml(String(d.error||'Unknown error')),'err');
       }
     })
     .catch(function(){
@@ -13385,7 +13422,7 @@ function cloverSaveCredentials(btn){
         setTimeout(function(){window.location.reload();},1200);
       } else {
         btn.textContent='Test & Connect';
-        _setCloverBanner('&#x2717; '+(d.error||'Unknown error'),'err');
+        _setCloverBanner('&#x2717; '+_escHtml(String(d.error||'Unknown error')),'err');
       }
     })
     .catch(function(){
@@ -13448,7 +13485,7 @@ function gmbDisconnect(){
   if(!confirm('Disconnect Google Business? Responses will no longer auto-post.')) return;
   fetch('/auth/google/disconnect',{method:'POST'}).then(apiJson).then(function(d){
     if(d.ok){ toast('Google Business disconnected','success'); setTimeout(function(){sessionStorage.setItem('_gbpReload','1');location.reload();},800); }
-    else{ toast('Error disconnecting — try again','error'); }
+    else{ toast(d.error||'Error disconnecting — try again','error'); }
   }).catch(function(){ toast('Network error — try again','error'); });
 }
 
@@ -15645,9 +15682,9 @@ var laborLoaded=false,invLoaded=false,reviewInsightLoaded=false,sentimentTrendLo
 var _twTokens={};
 var _laborInsightFull=null,_invInsightFull=null;
 function postToInstagram(){
-  var el=document.getElementById('mkoutput');
-  var content=(el.innerText||el.textContent||'').trim();
-  if(!content||content==='Select a type and click Generate.')return toast('Generate content first','warning');
+  // Read through _mktBody: a failed generation's message is never a caption.
+  var content=_mktBody();
+  if(!content)return toast('Generate content first','warning');
   var btn=document.getElementById('ig-post-btn');
   // A busy button, not a full-screen overlay (friction #43): the rest of
   // the page stays usable while the platform answers.
@@ -15668,9 +15705,8 @@ function postToInstagram(){
     });
 }
 function postToFacebook(){
-  var el=document.getElementById('mkoutput');
-  var content=(el.innerText||el.textContent||'').trim();
-  if(!content||content==='Select a type and click Generate.')return toast('Generate content first','warning');
+  var content=_mktBody();
+  if(!content)return toast('Generate content first','warning');
   var btn=document.getElementById('fb-post-btn');
   // A busy button, not a full-screen overlay (friction #43): the rest of
   // the page stays usable while the platform answers.
@@ -15750,10 +15786,16 @@ function clearMktPhoto(){
   document.getElementById('mkt-photo-status').textContent = '';
 }
 
+// A failed generation hides every post button an earlier success showed:
+// the box now holds the server's reason, which is not a post.
+function _mktHidePostBtns(){
+  var ids = ['ig-post-btn','fb-post-btn','gg-post-btn','gg-cta-row','mkt-as-newsletter-btn'];
+  for(var i=0;i<ids.length;i++){ var b=document.getElementById(ids[i]); if(b) b.style.display='none'; }
+}
 function _mktBody(){
   var el = document.getElementById('mkoutput');
   // A failed generation's message is not copy to save, preview or post.
-  if(el.getAttribute('data-gen-error')) return '';
+  if(el.getAttribute('data-gen-error') || el.getAttribute('data-mkt-posted')) return '';
   var text = (el.innerText || el.textContent || '').trim();
   return (text === 'Select a type and click Generate.') ? '' : text;
 }
@@ -15819,8 +15861,22 @@ function saveMktDraft(){
     body: JSON.stringify(payload)})
     .then(apiJson).then(function(d){
       if(btn){ btn.disabled = false; btn.style.opacity = ''; }
-      if(d.ok){ if(d.id) window._mktDraftId = d.id; toast('Draft saved','success'); loadMktDrafts(); }
-      else toast(d.error || 'Could not save','error');
+      if(d.ok){ if(d.id) window._mktDraftId = d.id; toast('Draft saved','success'); loadMktDrafts(); return; }
+      // The draft the composer held is gone (deleted elsewhere) or expired:
+      // drop its id, or every later save fails against it. A deleted
+      // draft's words are saved as a new one; an expired one is not revived
+      // silently, the owner is told the next Save starts a new draft.
+      if(d.code === 'draft_gone' && payload.id){
+        window._mktDraftId = null;
+        loadMktDrafts();
+        return saveMktDraft();
+      }
+      if(d.code === 'draft_expired'){
+        window._mktDraftId = null;
+        loadMktDrafts();
+        return toast('That draft expired \u2014 its night has passed. Save again to keep this as a new draft.','warning');
+      }
+      toast(d.error || 'Could not save','error');
     }).catch(function(){ if(btn){ btn.disabled = false; btn.style.opacity = ''; } toast('Could not save','error'); });
 }
 function loadMktDrafts(){
@@ -15871,6 +15927,7 @@ function useMktDraft(id){
       var x = drafts[i];
       document.getElementById('mkoutput').textContent = x.body;
       document.getElementById('mkoutput').removeAttribute('data-gen-error');
+      document.getElementById('mkoutput').removeAttribute('data-mkt-posted');
       document.getElementById('mktopic').value = x.topic || '';
       window._mktDraftId = x.id;
       // The type and the photo come back with the words, so a save or a
@@ -16147,9 +16204,8 @@ function saveBrandVoice(){
   });
 }
 function postToGoogle(){
-  var el=document.getElementById('mkoutput');
-  var content=(el.innerText||el.textContent||'').trim();
-  if(!content||content==='Select a type and click Generate.')return toast('Generate content first','warning');
+  var content=_mktBody();
+  if(!content)return toast('Generate content first','warning');
   if(content.length>1500)return toast('Google posts cap at 1,500 characters — trim it first','error');
   var ctaType=(document.getElementById('gg-cta-type')||{}).value||'';
   var ctaUrl=((document.getElementById('gg-cta-url')||{}).value||'').trim();
@@ -16174,12 +16230,15 @@ function postToGoogle(){
 function _cmMktPosted(label){
   var el=document.getElementById('mkoutput');
   if(!el){clearMktOutput();return;}
+  // The confirmation is not copy: a second Post in the next two seconds
+  // must not publish the word "Posted".
+  el.setAttribute('data-mkt-posted','1');
   el.innerHTML='<div contenteditable="false" style="text-align:center;padding:10px 0;pointer-events:none;user-select:none">'+cavnarPostedHtml(label)+'</div>';
   setTimeout(clearMktOutput,2200);
 }
 function clearMktOutput(){
   var el=document.getElementById('mkoutput');
-  if(el){el.innerHTML='<span contenteditable="false" style="color:var(--ink3);font-style:italic;pointer-events:none;user-select:none">Select a type and click Generate.</span>';}
+  if(el){el.removeAttribute('data-mkt-posted');el.innerHTML='<span contenteditable="false" style="color:var(--ink3);font-style:italic;pointer-events:none;user-select:none">Select a type and click Generate.</span>';}
   window._lastPostedTopic='';
   var charCountEl=document.getElementById('char-count');
   var charOver=document.getElementById('char-over');
@@ -20516,6 +20575,7 @@ function genContent(fromCalendar){
   box.style.fontStyle='normal';
   box.style.color='var(--ink3)';
   box.removeAttribute('data-gen-error');
+  box.removeAttribute('data-mkt-posted');
   // The orb loader, not a line of text (DS §10, friction #43).
   box.innerHTML=window.cavnarLoading?cavnarLoading('Writing it in your voice…',22,'composing'):'<div class="dr-pulse wide"><i></i></div>';
   fetch('/api/generate-content',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:selCt,topic:topic,from_calendar:!!fromCalendar})})
@@ -20532,6 +20592,7 @@ function genContent(fromCalendar){
         box.style.fontStyle='italic';
         box.textContent=d.error||'Generation failed \u2014 try again.';
         box.setAttribute('data-gen-error','1');
+        _mktHidePostBtns();
         return;
       }
       window._lastPostedTopic=topic;
@@ -20608,6 +20669,7 @@ function genContent(fromCalendar){
       box.style.fontStyle='italic';
       box.textContent='Content generation unavailable — check back shortly.';
       box.setAttribute('data-gen-error','1');
+      _mktHidePostBtns();
       _genInFlight=false;
       if(btn){btn.disabled=false;btn.style.opacity='';}
     });
@@ -20618,7 +20680,7 @@ function genContent(fromCalendar){
 function mktSendAsNewsletter(){
   var out=document.getElementById('mkoutput'),body=document.getElementById('guest-newsletter-body');
   if(!out||!body)return;
-  var text=(out.innerText||out.textContent||'').trim();
+  var text=_mktBody();
   if(!text)return toast('Generate a Weekly email first','warning');
   body.value=text;
   var sec=document.getElementById('mkt-newsletter');
@@ -20665,7 +20727,7 @@ function loadCal(){
   var g=document.getElementById('cal-grid');
   g.innerHTML='<div style="grid-column:1/-1;padding:16px">'+(window.cavnarLoading?cavnarLoading('Planning your week…',22,'shaping'):'<div class="dr-pulse wide"><i></i></div>')+'</div>';
   fetch('/api/content-calendar?force=1').then(apiJson).then(function(d){
-    if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">'+(d.error||'Could not generate.')+'</div>';return;}
+    if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">'+_escHtml(String(d.error||'Could not generate.'))+'</div>';return;}
     renderCal(d.ideas);
   }).catch(function(){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate — try again.</div>';});
 }
@@ -20684,17 +20746,20 @@ function renderCal(ideas){
       'Google':'#4285f4','SMS':'#ef9f27'
     };
     var html = '';
+    // Every field is model output, and the calendar prompt carries a
+    // guest's review verbatim: text, never markup.
+    var _e = function(v){ return _escHtml(v == null ? '' : String(v)); };
     for(var idx=0;idx<d.ideas.length;idx++){
       var i=d.ideas[idx];
-      var dateLabel = i.date ? '<span style="font-size:10px;color:var(--ink3);font-weight:400">'+i.date+'</span>' : '';
+      var dateLabel = i.date ? '<span style="font-size:10px;color:var(--ink3);font-weight:400">'+_e(i.date)+'</span>' : '';
       var pColor = platformColors[i.platform] || 'var(--ink3)';
       // Each idea is a recommendation (rec-ROI #41): writing from it is its
       // yes; Not for us (with a reason) is its no; an answered idea keeps
       // its day in the week rail, marked, without the answer.
       html += '<div class="cal-card'+(i.answered?' answered':'')+'" style="animation-delay:'+(idx*0.08)+'s">';
-      html += '<div class="cal-day-name" style="display:flex;align-items:center;justify-content:space-between">'+i.day+dateLabel+'</div>';
-      html += '<div class="cal-platform" style="font-size:11px;font-weight:600;color:'+pColor+';margin:2px 0 8px;padding:2px 8px;background:'+pColor+'18;border-radius:10px;display:inline-block">'+( i.platform||'')+'</div>';
-      html += '<div style="font-size:13px;line-height:1.55;margin-top:2px;flex:1">'+( i.angle||'')+'</div>';
+      html += '<div class="cal-day-name" style="display:flex;align-items:center;justify-content:space-between">'+_e(i.day)+dateLabel+'</div>';
+      html += '<div class="cal-platform" style="font-size:11px;font-weight:600;color:'+pColor+';margin:2px 0 8px;padding:2px 8px;background:'+pColor+'18;border-radius:10px;display:inline-block">'+_e(i.platform)+'</div>';
+      html += '<div style="font-size:13px;line-height:1.55;margin-top:2px;flex:1">'+_e(i.angle)+'</div>';
       html += '<button data-idx="'+idx+'" onclick="generateFromCalIdx(this.dataset.idx)" class="cbtn cbtn-text cbtn-sm" style="margin-top:12px;align-self:flex-start">Write this →</button>';
       if(i.answered)html += '<div class="cal-ans"><span class="rec-ans-done">'+(i.written?'Written from this idea':'Answered')+'</span></div>';
       else if(i.answerable&&i.rec_key&&typeof recNotForUsHtml==='function')html += '<div class="cal-ans">'+recNotForUsHtml(i.rec_key,'marketing','marketing')+'</div>';
@@ -20739,7 +20804,7 @@ function loadAlertEngagement() {
     if (!d || !d.ok || !d.suggestions || !d.suggestions.length) return;
     var s = d.suggestions[0];
     box.innerHTML = '<div class="al-nudge">'
-      + '<span>' + s.delivered + ' &ldquo;' + s.label + '&rdquo; alerts in the last '
+      + '<span>' + s.delivered + ' &ldquo;' + _escHtml(String(s.label || '')) + '&rdquo; alerts in the last '
       + s.days + ' days, and you haven&rsquo;t opened one. Stop pushing them to your phone?</span>'
       + '<button type="button" class="cbtn cbtn-soft cbtn-sm" id="al-nudge-yes">Stop pushing these</button>'
       + '</div>';
@@ -20904,7 +20969,7 @@ function loadAccountSettings() {
   if (!document.getElementById('account-settings-card')) return;
   fetch('/api/account-settings').then(apiJson).then(function(d) {
     if (!d.ok) return;
-    if (d.deletion_requested_at) _acctShowClosed(d.deletion_requested_at);
+    if (d.deletion_requested_at) _acctShowClosed(d.deletion_requested_at, d.deletion_requested_on);
     var a = d.auto_approve || {};
     document.getElementById('as-auto-enabled').checked = !!a.enabled;
     document.getElementById('as-auto-cap').value = a.daily_cap || 5;
@@ -21667,23 +21732,32 @@ function _billingInvoices(list){
 }
 // Close my account: one recorded request (POST /api/account/request-deletion);
 // a second press returns the first request's date and notifies nobody again.
-function _acctShowClosed(at){
+// The second argument is the server's M/D/YY on the restaurant's clock; the UTC stamp's
+// own date is only the fallback for an older server (it reads a day late for
+// an evening request).
+function _acctShowClosed(at,on){
   var b=document.getElementById('acct-close-btn'),s=document.getElementById('acct-close-status');
   if(b)b.hidden=true;
-  if(s){s.textContent='Requested '+(window.mdy?mdy(at):at)+'. Will has it and will reach out to confirm and start winding things down.';s.hidden=false;}
+  if(s){s.textContent='Requested '+(on||(window.mdy?mdy(at):at))+'. Will has it and will reach out to confirm and start winding things down.';s.hidden=false;}
 }
 function acctRequestClose(btn){
   if(!confirm('Send Will your request to close this account? 30 days’ notice applies, and the account stays active until then.'))return;
   var done=cbtnBusy(btn,'Sending…');
   fetch('/api/account/request-deletion',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'})
     .then(apiJson).then(function(d){done();
-      if(d&&d.ok){_acctShowClosed(d.requested_at);if(typeof toast==='function')toast('Request sent to Will','success');}
+      if(d&&d.ok){_acctShowClosed(d.requested_at,d.requested_on);if(typeof toast==='function')toast('Request sent to Will','success');}
       else if(typeof toast==='function')toast((d&&d.error)||'Couldn’t send that','error');})
     .catch(function(){done();if(typeof toast==='function')toast('Network error','error');});
 }
 function loadBillingInfo() {
+  // Billing is the account holder's: another login's page has no billing
+  // card (the template draws a note instead), so there is nothing to read.
+  if(!document.getElementById('billing-loading'))return;
   fetch('/api/billing-info').then(apiJson).then(function(d){
     document.getElementById('billing-loading').style.display='none';
+    // A 403 owner_only is not "No active subscription on file": the account
+    // may well be paying. Say who can see it, and leave the health item be.
+    if(d&&d.owner_only){var oo=document.getElementById('billing-owner-only');if(oo)oo.hidden=false;return;}
     if(window.acctApplyBilling)acctApplyBilling(d);
     if(!d.ok || d.status==='inactive') {
       document.getElementById('billing-no-sub').style.display='block'; return;
@@ -22104,7 +22178,7 @@ function runAIVisibility(btn) {
     if (!d.ok) {
       if (btn) { btn.textContent = 'Retry'; btn.disabled = false; }
       document.getElementById('aiv-idle').style.display = 'block';
-      document.getElementById('aiv-idle').innerHTML = '<div style="color:var(--red);font-size:13px;text-align:center">Error: ' + (d.error || 'Unknown error') + '</div>';
+      document.getElementById('aiv-idle').innerHTML = '<div style="color:var(--red);font-size:13px;text-align:center">Error: ' + _escHtml(String(d.error || 'Unknown error')) + '</div>';
       _aivFitBody();
       toast('AI check failed: ' + (d.error || 'Unknown error'), 'error');
       return;
@@ -23511,8 +23585,8 @@ function _loadGuestContactsList() {
       var visitLabel = c.last_visit ? ('Last visit ' + _fmtVisitDate(c.last_visit)) : 'No visit recorded';
       html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 0;border-bottom:1px solid var(--paper3)">'
         + '<div style="min-width:0">'
-        + '<div style="font-size:12px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (c.name || c.phone) + '</div>'
-        + '<div style="font-size:11px;color:var(--ink3)">' + c.phone + ' · <span style="color:' + statusColor + '">' + statusLabel + '</span></div>'
+        + '<div style="font-size:12px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(String(c.name || c.phone || '')) + '</div>'
+        + '<div style="font-size:11px;color:var(--ink3)">' + _escHtml(String(c.phone || '')) + ' · <span style="color:' + statusColor + '">' + statusLabel + '</span></div>'
         + '<div style="font-size:10.5px;color:var(--ink3);margin-top:1px">' + visitLabel + '</div>'
         + '</div>'
         + '<div style="display:flex;gap:10px;flex-shrink:0;align-items:center">'
@@ -24989,7 +25063,13 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var scopes=[].slice.call(document.querySelectorAll('.exp-scope:checked')).map(function(c){return c.value;});
     if(!scopes.length){toast('Pick at least one thing to export','error');return;}
     var done=busy(btn,'Sending…');
-    jsend('/api/account/export-data',{scopes:scopes},function(d){done();if(d.ok)toast('On its way to '+(d.email||'your email'),'success');else toast(d.error||'Could not export','error');});
+    // The server exports what this login may take and names the rest in
+    // refused; the toast says so rather than implying all of it is coming.
+    var EXP_NAME={reviews:'reviews',labor:'labor',food_cost:'food cost',settings:'settings'};
+    jsend('/api/account/export-data',{scopes:scopes},function(d){done();
+      var ref=(d&&d.refused)||[],rn=[];for(var i=0;i<ref.length;i++)rn.push(EXP_NAME[ref[i]]||ref[i]);
+      if(d.ok)toast('On its way to '+(d.email||'your email')+(rn.length?(' \u2014 without '+rn.join(' and ')+', which this login can\u2019t export'):''),rn.length?'warning':'success');
+      else toast(d.error||'Could not export','error');});
   };
   window.reportBug=function(btn){
     var msg=(document.getElementById('bug-msg')||{}).value||'';
@@ -25040,11 +25120,17 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   // question new_conversation, so the server creates the chat with its first
   // question. POSTing here left an empty row in the history for every New
   // chat nobody asked anything in.
-  window.askNewChat=function(){
+  // The screen and the next question's state for a new chat: shared by New
+  // chat and by deleting the chat that is open, which otherwise left its
+  // transcript up and filed the next question under another chat.
+  function askResetToNew(){
     window._askConversationId=null;window._askNewChat=true;_askCavnarHistory=[];
     try{sessionStorage.removeItem(ASK_CONV_KEY);}catch(e){}
     if(window.askSetFocus)askSetFocus(null);
     var box=document.getElementById('ask-cavnar-messages');if(box)box.innerHTML=_askEmptyHtml();
+  }
+  window.askNewChat=function(){
+    askResetToNew();
     var h=document.getElementById('ask-cavnar-history');if(h)h.style.display='none';
     var inp=document.getElementById('ask-cavnar-input');if(inp)inp.focus();
   };
@@ -25054,7 +25140,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var b=document.querySelector('[onclick="askDeleteConversation('+id+')"]'),row=b&&b.parentNode;
     if(row)row.style.display='none';
     cavUndoable('Chat deleted',function(){
-      jsend('/api/ask-cavnar/conversations/'+id,{},function(d){if(!d.ok){if(row)row.style.display='';toast(d.error||'Could not delete','error');return;}if(window._askConversationId===id){window._askConversationId=null;_askCavnarHistory=[];}askRefreshConversations(true);},'DELETE');
+      jsend('/api/ask-cavnar/conversations/'+id,{},function(d){if(!d.ok){if(row)row.style.display='';toast(d.error||'Could not delete','error');return;}if(window._askConversationId!=null&&String(window._askConversationId)===String(id))askResetToNew();askRefreshConversations(true);},'DELETE');
     },function(){if(row)row.style.display='';});
   };
 
@@ -26448,7 +26534,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   // item gets the overview's one primary button.
   var FIX={
     integrations:['Fix your data connection',function(){acctGo('integrations');}],
-    notifications:['Set up alerts',function(){acctGo('notifications');if(window.openAlertsModal)openAlertsModal();}],
+    notifications:['Set up alerts',function(){acctGo('notifications');if(window.openAlertsModal&&flag('principal')!=='0')openAlertsModal();}],
     subscription:['Update your payment method',function(){var a=$('ac-qa-billing');if(a&&a.getAttribute('data-portal'))window.open(a.href,'_blank','noopener');else acctGo('billing');}],
     security:['Turn on two-factor',function(){acctGo('security');}],
     profile:['Finish your profile',function(){acctGo('restaurant');var pe=$('profile-edit');if(pe&&pe.style.display==='none'&&window.toggleProfileEdit)toggleProfileEdit();}],
@@ -26514,7 +26600,10 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     else setItem('security','bad','Checkup '+sec+' / 100 — start with two-factor','the security checkup is '+sec+' / 100');
 
     var b=d.billing;
-    if(b===undefined)setItem('subscription','warn','Checking…');
+    // A login that isn't the account holder has no Subscription item (billing
+    // is owner-only): it is left out of the score rather than counted as unset.
+    if(!document.querySelector('.ac-hitem[data-health="subscription"]'))max-=1;
+    else if(b===undefined)setItem('subscription','warn','Checking…');
     else if(b&&b.ok&&b.status==='active'){pts+=1;setItem('subscription','ok','Active · next charge '+(b.next_date||'—'));}
     else if(b&&b.ok&&b.status==='trialing'){pts+=1;setItem('subscription','ok','Trial — first charge on day 31');}
     else if(b&&b.ok&&b.status==='past_due')setItem('subscription','bad','Payment past due — update your card','the payment is past due');

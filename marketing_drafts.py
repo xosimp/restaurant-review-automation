@@ -58,9 +58,13 @@ def save_draft(restaurant_id, body, *, content_type=None, topic=None, media_id=N
             if not n:
                 gone = conn.execute("SELECT status FROM marketing_drafts WHERE id=? AND restaurant_id=?",
                                     (draft_id, restaurant_id)).fetchone()
+                # A code as well as the words: the composer clears the id it
+                # was holding on either, so the next Save starts a new draft
+                # instead of failing forever against this one.
                 if gone and gone["status"] == "expired":
-                    return {"ok": False, "error": "That draft expired — its night has passed. Start a new one."}
-                return {"ok": False, "error": "That draft no longer exists."}
+                    return {"ok": False, "code": "draft_expired",
+                            "error": "That draft expired — its night has passed. Start a new one."}
+                return {"ok": False, "code": "draft_gone", "error": "That draft no longer exists."}
             return {"ok": True, "id": draft_id, "status": "draft"}
 
         cur = conn.execute(
