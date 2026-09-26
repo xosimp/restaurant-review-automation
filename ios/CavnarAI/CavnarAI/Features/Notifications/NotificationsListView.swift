@@ -34,7 +34,13 @@ final class NotificationsListViewModel {
             hasLoadedOnce = true
         }
         do {
-            let response: Response = try await client.send("/mobile/api/notifications")
+            // mark=0: opening the list no longer reads every row — a row is
+            // read when it is opened (markOpened / the row's tap), as on the
+            // web (parity audit #7). scope=group: every location this login
+            // may switch between; the server answers with the one location
+            // for anyone else.
+            let response: Response = try await client.send("/mobile/api/notifications",
+                                                            query: Self.listQuery)
             // The backend always answers with HTTP 200, even on internal
             // failure (ok:false, notifications:[]) — APIClient.send() only
             // throws on actual HTTP-level errors, so `ok` has to be checked
@@ -58,6 +64,46 @@ final class NotificationsListViewModel {
             errorMessage = "Couldn't load notifications."
         }
     }
+
+    static let listQuery = ["mark": "0", "scope": "group"]
+
+    /// Where a row's open is recorded: flipped read here at once, and the
+    /// server told by the router's tap (it posts notifications/opened with
+    /// the row's alert_log id) — so the phone and the web agree.
+    func noteOpened(_ item: NotificationItem) {
+        guard let i = notifications.firstIndex(where: { $0.id == item.id }) else { return }
+        notifications[i].unread = false
+    }
+
+    private struct OpenedBody: Encodable {
+        let type: String
+        let alertId: Int?
+        enum CodingKeys: String, CodingKey {
+            case type
+            case alertId = "alert_id"
+        }
+    }
+
+    /// A row acted on in place (approved) is read too — recorded here, since
+    /// no tap went through the router.
+    func markOpened(_ item: NotificationItem) async {
+        guard item.isUnread else { return }
+        noteOpened(item)
+        let _: APIClient.OKResponse? = try? await client.send(
+            "/mobile/api/notifications/opened", method: .post,
+            body: OpenedBody(type: item.type, alertId: item.alertId), hapticOnError: false)
+    }
+
+    /// "Mark all read": the read mark moves over every location the list
+    /// reads (the list without mark=0 is the server's mark-all).
+    func markAllRead() async {
+        let r: Response? = try? await client.send("/mobile/api/notifications", query: ["scope": "group"],
+                                                   hapticOnError: false)
+        guard r?.ok == true else { return }
+        for i in notifications.indices { notifications[i].unread = false }
+    }
+
+    var unreadCount: Int { notifications.filter(\.isUnread).count }
 
     // MARK: - Acting from a row (friction audit #22)
 
@@ -160,6 +206,7 @@ final class NotificationsListViewModel {
             let r: ReviewPostOutcome = try await client.send("/mobile/api/reviews/\(reviewId)/approve", method: .post)
             if r.ok {
                 approvableReviewIds.remove(reviewId)
+                await markOpened(item)
                 if let why = r.shortfall {
                     // Approved, not live — said, never shown as "Posted".
                     answered[item.id] = "Approved"
@@ -201,7 +248,10 @@ final class NotificationsBadgeViewModel {
     }
 
     func refresh() async {
-        if let response: CountResponse = try? await client.send("/mobile/api/notifications/unread-count") {
+        // The same locations the list reads (scope=group), so the badge and
+        // the list agree for an owner with several.
+        if let response: CountResponse = try? await client.send("/mobile/api/notifications/unread-count",
+                                                                query: ["scope": "group"]) {
             unreadCount = response.count
         }
     }
@@ -238,16 +288,28 @@ struct NotificationsListView: View {
         return choice ?? true
     }
 
-    /// "3 need you · 11 for your information" — the 3-second answer to
-    /// "how many need me?". Nil for an empty list.
+    /// "3 need you: 2 replies ready to post, 1 health mention" — the
+    /// 3-second answer to "how many need me?", in the web bell's words
+    /// (parity audit #7): what still needs someone (urgent and not yet
+    /// handled), by kind; "Nothing needs you · 4 unread" otherwise. Nil for
+    /// an empty list.
     static func summaryLine(_ items: [NotificationItem]) -> String? {
         guard !items.isEmpty else { return nil }
-        let urgent = items.filter(\.isUrgent).count
-        let fyi = items.count - urgent
-        var parts: [String] = []
-        parts.append(urgent > 0 ? "\(urgent) need\(urgent == 1 ? "s" : "") you" : "Nothing needs you")
-        if fyi > 0 { parts.append("\(fyi) for your information") }
-        return parts.joined(separator: " \u{00B7} ")
+        let open = items.filter { $0.isUrgent && $0.resolved != true }
+        guard !open.isEmpty else {
+            let unread = items.filter(\.isUnread).count
+            return "Nothing needs you" + (unread > 0 ? " \u{00B7} \(unread) unread" : "")
+        }
+        var ready = 0, health = 0
+        for n in open {
+            if n.canApprove == true, !(n.draft ?? "").isEmpty { ready += 1 } else if n.type == "health" { health += 1 }
+        }
+        let other = open.count - ready - health
+        var bits: [String] = []
+        if ready > 0 { bits.append("\(ready) \(ready == 1 ? "reply" : "replies") ready to post") }
+        if health > 0 { bits.append("\(health) health mention\(health == 1 ? "" : "s")") }
+        if other > 0 { bits.append("\(other) \(bits.isEmpty ? "urgent" : "other") alert\(other == 1 ? "" : "s")") }
+        return "\(open.count) need\(open.count == 1 ? "s" : "") you: " + bits.joined(separator: ", ")
     }
 
     private var shown: [NotificationItem] {
@@ -326,6 +388,22 @@ struct NotificationsListView: View {
                                     .textCase(nil)
                             }
                         }
+                        // A row is read when it is opened; this reads the
+                        // rest at once (the web bell's "Mark all read").
+                        if viewModel.unreadCount > 0 {
+                            Button {
+                                Haptic.light()
+                                Task { await viewModel.markAllRead() }
+                            } label: {
+                                Text("Mark all read")
+                                    .font(.cavnarBody(14, weight: 700))
+                                    .foregroundStyle(Color.cavnarEmber2)
+                                    .frame(maxWidth: .infinity, minHeight: 44)
+                            }
+                            .buttonStyle(.plain)
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                        }
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
@@ -365,7 +443,11 @@ struct NotificationsListView: View {
             HStack(spacing: 10) {
                 Button {
                     Haptic.light()
+                    // Opening a row is what reads it (the router records the
+                    // open against its alert_log id), as on the web.
+                    viewModel.noteOpened(item)
                     deepLinkRouter.handleNotificationTap(alertType: item.type, reviewId: item.reviewId,
+                                                         alertId: item.alertId,
                                                          module: item.module, restaurantId: item.restaurantId,
                                                          nav: item.nav)
                     dismiss()

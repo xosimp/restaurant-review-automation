@@ -582,7 +582,13 @@ def test_ios_renders_cross_module_and_good_news():
     src = _swift("ios/CavnarAI/CavnarAI/Features/Home/HomeFollowThrough.swift")
     assert "/mobile/api/cross-module" in src
     assert "/mobile/api/good-news" in src
-    assert "private var connectionsCard" in src
+    # What connects was removed on iOS too (parity audit #5, as the web on
+    # 9/25/26): every link past the one thing's is a Needs-attention row
+    # (linkItems) whose Evidence opens HomeLinkEvidenceSheet.
+    assert "private var connectionsCard" not in src
+    assert "var linkItems: [NeedsAttentionItem]" in src
+    one = _swift("ios/CavnarAI/CavnarAI/Features/Home/HomeOneThingCard.swift")
+    assert "struct HomeLinkEvidenceSheet: View" in one
     # Density #4: what got better is drawn inside "What your changes did"
     # (one measured card, not two), so it is rows now, not its own card.
     assert "private func goodNewsRows(" in src

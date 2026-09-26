@@ -67,12 +67,15 @@ def test_the_warm_lock_asks_face_id_on_its_own():
 def test_home_leads_with_the_work():
     home = _src("Features/Home/HomeView.swift")
     body = home.split("var body: some View", 1)[1]
-    attention = body.index("attentionSection(summary)")
+    attention = body.index("attentionSection(summary, items: attentionItems(summary")
     assert attention < body.index("HomeValueBand(")
     assert attention < body.index("HomeBenchmarkStrip(")
     assert attention < body.index("HomeLastNightCard(")
-    # Every item, not the first four behind a swipe.
-    assert "items: summary.needsAttention," in home
+    # Every item, not the first four behind a swipe — less only the one the
+    # one-thing card leads with, plus the cross-module links (parity #1/#5).
+    assert "var items = summary.needsAttention" in home
+    assert "return items + followThrough.linkItems" in home
+    assert "items: items," in home
     deck = _src("Features/Home/HomeActionDeck.swift")
     assert "+\\(split.hidden) more" in deck
     assert "DragGesture" not in deck

@@ -844,12 +844,16 @@ private struct AskFeedbackRow: View {
 struct ProposalCard: View {
     let proposal: AskProposal
     var viewModel: AskCavnarViewModel?
+    /// Called once the confirmed action went through — Home's publish
+    /// card re-reads Home and closes itself on it.
+    var onDone: (() -> Void)?
 
     // Spelled out: the @State members below would make the synthesized
     // initializer private to this file.
-    init(proposal: AskProposal, viewModel: AskCavnarViewModel? = nil) {
+    init(proposal: AskProposal, viewModel: AskCavnarViewModel? = nil, onDone: (() -> Void)? = nil) {
         self.proposal = proposal
         self.viewModel = viewModel
+        self.onDone = onDone
     }
 
     // `Phase`, not `State`: a nested type named State shadows SwiftUI's
@@ -939,6 +943,7 @@ struct ProposalCard: View {
                             let ok = await viewModel?.confirm(proposal) ?? false
                             failure = ok ? nil : viewModel?.errorBanner
                             phase = ok ? .done : (viewModel?.lastConfirmMayHaveRun == true ? .uncertain : .failed)
+                            if ok { onDone?() }
                         }
                     } label: {
                         // After a timeout the action may already have run,

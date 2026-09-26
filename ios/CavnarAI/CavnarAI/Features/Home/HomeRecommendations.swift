@@ -31,6 +31,10 @@ struct HomeRecommendations: View {
     var onOpenModule: (String) -> Void
     /// Something changed server-side (an answer, a restore) — reload Home.
     var onChanged: () -> Void = {}
+    /// The newest recommendation this login hid (home_brief `dismissed`),
+    /// and the undo that brings it back — the web's "Restore hidden".
+    var restorable: HomeDismissedRec? = nil
+    var onRestore: ((HomeDismissedRec) async -> Bool)? = nil
 
     @State private var toast: String?
     /// Keys answered in this session, so the card drops out without a
@@ -51,12 +55,22 @@ struct HomeRecommendations: View {
             HomeSectionHeader(kicker: "Worth your time", title: "Cavnar AI recommends")
             VStack(spacing: 0) {
                 let shown = recommendations.filter { !answered.contains($0.key) }.prefix(3)
+                if shown.isEmpty {
+                    Text("Nothing to recommend yet \u{2014} that changes as your data grows.")
+                        .font(.cavnarBody(14))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 8)
+                }
                 ForEach(Array(shown.enumerated()), id: \.element.id) { index, rec in
                     row(rec, number: index + 1,
                         showsDivider: index < shown.count - 1)
                 }
             }
             .cavnarCard(.ai)
+            if let hidden = restorable, let onRestore {
+                restoreButton(hidden, onRestore)
+            }
             if !quieter.isEmpty {
                 quieterLine
             }
@@ -102,6 +116,28 @@ struct HomeRecommendations: View {
                 withAnimation { answered.insert(rec.key); toast = message }
             }
         }
+    }
+
+    /// "Restore hidden": the last card this login hid comes back (web
+    /// `data-undo`, parity audit #1).
+    private func restoreButton(_ hidden: HomeDismissedRec,
+                               _ restore: @escaping (HomeDismissedRec) async -> Bool) -> some View {
+        Button {
+            Haptic.light()
+            Task {
+                if await restore(hidden) { withAnimation { toast = "It will show again" } }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "arrow.uturn.backward").font(.system(size: 11, weight: .bold))
+                Text("Restore hidden").font(.cavnarBody(12.5, weight: 700))
+            }
+            .foregroundStyle(Color.cavnarEmber2)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Restore hidden: \(hidden.title)")
     }
 
     private var quieterLine: some View {

@@ -113,6 +113,9 @@ struct DSRSummary: Decodable, Hashable, Identifiable {
     var overall: Int? = nil
     var vsBudget: Double? = nil
     var firstRisk: String? = nil
+    /// Net against the night before, in percent, when the Sales block is
+    /// ready — so Home's card draws from this row alone (parity audit #9).
+    var vsYesterdayPct: Double? = nil
 
     var id: String { businessDate + "#" + String(version ?? 0) }
     var displayDate: String { label ?? CavnarDate.mdy(businessDate) }
@@ -125,6 +128,7 @@ struct DSRSummary: Decodable, Hashable, Identifiable {
         case finalizedAt = "finalized_at"
         case vsBudget = "vs_budget"
         case firstRisk = "first_risk"
+        case vsYesterdayPct = "vs_yesterday_pct"
     }
 
     init(from decoder: Decoder) throws {
@@ -147,6 +151,7 @@ struct DSRSummary: Decodable, Hashable, Identifiable {
         }
         vsBudget = try? c.decodeIfPresent(Double.self, forKey: .vsBudget)
         firstRisk = try? c.decodeIfPresent(String.self, forKey: .firstRisk)
+        vsYesterdayPct = try? c.decodeIfPresent(Double.self, forKey: .vsYesterdayPct)
     }
 }
 

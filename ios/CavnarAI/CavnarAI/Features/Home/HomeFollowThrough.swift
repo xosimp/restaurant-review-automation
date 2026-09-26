@@ -204,11 +204,39 @@ final class HomeFollowThroughViewModel {
     var tracked: Set<String> = []
     var isLoading = false
     var errorMessage: String?
+    /// True once the day's reads (the cross-module finding among them) have
+    /// landed at least once — until then Home doesn't know its one thing and
+    /// promotes nothing (the web's `renderFocusPending`).
+    private(set) var crossLoaded = false
 
     private let client: APIClient
 
     init(client: APIClient = .shared) {
         self.client = client
+    }
+
+    /// Every cross-module link past the one the one-thing card leads with,
+    /// as a Needs-attention row (density fix #5, web `hbLinkRows`): What
+    /// connects is gone from Home, and a link is a decision — Done / Not for
+    /// us — so it never hides in a collapsed section. Its Evidence opens the
+    /// same "To confirm" and "Could also be" (HomeLinkEvidenceSheet).
+    var linkItems: [NeedsAttentionItem] {
+        links.enumerated().map { i, l in
+            NeedsAttentionItem(
+                type: Self.linkType(l.recKey ?? "\(i)"), module: l.modules?.first ?? "home",
+                title: l.headline,
+                detail: (l.modules ?? []).map { RecSummaryFormat.moduleLabel($0) }.joined(separator: " + "),
+                cta: "Evidence", secondary: nil, action: "link_evidence",
+                recKey: l.recKey, dismissable: false, timesHidden: nil, count: nil,
+                evidence: l.evidence?.first, confidence: nil)
+        }
+    }
+
+    static func linkType(_ key: String) -> String { "link:" + key }
+
+    /// The link a Needs-attention row stands for (its `type`).
+    func link(for item: NeedsAttentionItem) -> CrossModule.Link? {
+        links.enumerated().first { i, l in Self.linkType(l.recKey ?? "\(i)") == item.type }?.element
     }
 
     /// Results that have landed and wait on the owner's check-in (#21) —
@@ -680,6 +708,7 @@ final class HomeFollowThroughViewModel {
         // never on the page twice (the web's renderConnections rule).
         let owned = fixFirst.flatMap { $0.linkHeadline ?? $0.what }
         links = (cross?.links ?? []).filter { $0.headline != owned }
+        crossLoaded = true
         let news = await n
         goodNews = news?.items ?? []
         goodNewsCaveat = news?.caveat
@@ -1052,7 +1081,10 @@ struct HomeFollowThrough: View {
             }
         }
 
-        connectionsCard
+        // What connects is not drawn here any more (parity audit #5, as
+        // the web removed it 9/25/26): the lead link is the one thing and
+        // every other link is a Needs-attention row (linkItems) whose
+        // Evidence opens HomeLinkEvidenceSheet.
 
         lossCard
 
@@ -1260,71 +1292,6 @@ struct HomeFollowThrough: View {
                 }
             }
             .cavnarCard()
-        }
-    }
-
-    /// Two modules agreeing is the strongest evidence this platform can
-    /// produce, and the one finding no single-module tool can reach. It is
-    /// a QUESTION, not a finding — so the evidence, what would confirm it
-    /// and what else would explain it travel with the headline rather than
-    /// hiding behind a chevron.
-    @ViewBuilder
-    private var connectionsCard: some View {
-        if !viewModel.links.isEmpty {
-            HomeSectionHeader(kicker: "Across your modules", title: "What connects",
-                              trailing: "\(viewModel.links.count)")
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(viewModel.links.enumerated()), id: \.element.id) { index, link in
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(alignment: .top, spacing: 12) {
-                            Circle().fill(Color.cavnarAmber).frame(width: 8, height: 8)
-                                .padding(.top, 6)
-                            VStack(alignment: .leading, spacing: 4) {
-                                HomeMixedText.make(link.headline, size: 14.5, weight: 700,
-                                                   color: .cavnarInk)
-                                if let modules = link.modules, !modules.isEmpty {
-                                    HStack(spacing: 8) {
-                                        EmberThread(axis: .horizontal, length: 34)
-                                        Text(modules.map { $0.capitalized }.joined(separator: " + "))
-                                            .font(.cavnarBody(11, weight: 700))
-                                            .tracking(1.0)
-                                            .foregroundStyle(Color.cavnarInk3)
-                                    }
-                                }
-                            }
-                            Spacer(minLength: 0)
-                        }
-                        if let evidence = link.evidence, !evidence.isEmpty {
-                            VStack(alignment: .leading, spacing: 4) {
-                                ForEach(evidence, id: \.self) { line in
-                                    HomeMixedText.make("· " + line, size: 12.5, weight: 500,
-                                                       color: .cavnarInk3)
-                                }
-                            }
-                            .padding(.leading, 20)
-                        }
-                        if let confirm = link.confirmBy {
-                            HomeMixedText.make("To confirm: " + confirm, size: 12.5, weight: 600,
-                                               color: .cavnarInk2)
-                                .padding(.leading, 20)
-                        }
-                        if let alt = link.notACause ?? link.alternative {
-                            CavnarCaveat(title: "A question, not a finding", detail: alt)
-                        }
-                        HomeAskLink(question: link.ask ?? "Tell me more about this: \(link.headline)")
-                            .padding(.leading, 20)
-                        if link.answerable == true, let key = link.recKey {
-                            RecAnswerRow(key: key, surface: "home", module: "home")
-                                .padding(.leading, 20)
-                        }
-                        if index < viewModel.links.count - 1 {
-                            Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
-                        }
-                    }
-                    .padding(.vertical, 11)
-                }
-            }
-            .cavnarCard(.ai)
         }
     }
 

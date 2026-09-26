@@ -40,6 +40,14 @@ struct HomeView: View {
     // (drives the confirmation dialog), then the "Published N" check.
     @State private var pendingPublish: NeedsAttentionItem?
     @State private var postedLabel: String?
+    /// The publish's confirm card — every reply that would post, in its own
+    /// words (/command/propose, parity audit #2) — while it is read, and the
+    /// Ask view model its Confirm runs through (the same route as Ask's).
+    @State private var publishProposal: AskProposal?
+    @State private var publishProposalLoading = false
+    @State private var publishAsk = AskCavnarViewModel()
+    /// A cross-module link's Evidence, opened from its Needs-attention row.
+    @State private var evidenceLink: HomeFollowThroughViewModel.CrossModule.Link?
     // A second hide on a needs-attention item asks why (#42): the item,
     // held apart from the dialog's own flag so the answer still has it
     // after the dialog has closed itself.
@@ -133,6 +141,17 @@ struct HomeView: View {
                             .padding(.top, 18)
                             .belowFold(heroAppeared, delay: 0.1)
 
+                            // The quick actions no Needs-attention row
+                            // already carries (web `hbQuickUnsaid`, §11b
+                            // step 1) — secondary, one tap to the item.
+                            let quick = HomeQuickAction.unsaid(summary.quickActions?.items ?? [],
+                                                               attention: summary.needsAttention)
+                            if !quick.isEmpty {
+                                quickRow(quick, in: summary)
+                                    .padding(.top, 14)
+                                    .belowFold(heroAppeared, delay: 0.12)
+                            }
+
                             if summary.quietHoursActive {
                                 quietHoursBanner(summary)
                                     .padding(.horizontal, 20)
@@ -151,8 +170,15 @@ struct HomeView: View {
                             // data yet. The one thing renders nothing when
                             // there is none, and Needs attention then says
                             // "Start here" itself — one "Start here" a page.
-                            if hasOneThing {
-                                HomeOneThingCard(viewModel: followThrough)
+                            // What leads, in the web's order (parity #1):
+                            // the finding, else the most urgent item, else
+                            // the top recommendation — never before the
+                            // day's reads have landed.
+                            let lead = focusLead(summary)
+                            if let lead {
+                                HomeOneThingCard(viewModel: followThrough, lead: lead,
+                                                 busy: viewModel.isPublishingReplies,
+                                                 onPrimary: { item in primaryAction(item, in: summary) })
                                     .padding(.horizontal, 20)
                                     .padding(.top, 26)
                                     .belowFold(heroAppeared, delay: 0.16)
@@ -160,18 +186,32 @@ struct HomeView: View {
 
                             // The work leads (friction audit #11): what needs
                             // the owner, every item visible, before any
-                            // result or read.
-                            attentionSection(summary)
+                            // result or read — the cross-module links too,
+                            // as rows (What connects is gone, #5).
+                            attentionSection(summary, items: attentionItems(summary, lead: lead),
+                                             hasLead: lead != nil)
                                 .padding(.horizontal, 20)
-                                .padding(.top, hasOneThing ? 30 : 26)
+                                .padding(.top, lead != nil ? 30 : 26)
                                 .belowFold(heroAppeared, delay: 0.2)
+
+                            // How you compare (Benchmarking #23, §11b step
+                            // 3): beside the freshness read, under the work
+                            // — not inside the collapsed Results (#5).
+                            HomeBenchmarkStrip(onOpenModule: { module in
+                                navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
+                            })
+                            .padding(.horizontal, 20)
+                            .padding(.top, 22)
+                            .belowFold(heroAppeared, delay: 0.24)
 
                             if summary.isFresh {
                                 freshStart(summary)
                             }
 
-                            // THE DAY. Monday: the weekly receipts lead it.
-                            // After 8pm: the close-out takes the slot.
+                            // THE DAY. Monday: the weekly receipts lead it
+                            // (the rest of the week they are proof, in
+                            // Results). After 8pm: the close-out takes the
+                            // slot.
                             if summary.localIsMonday, let receipts = summary.weeklyReceipts, !receipts.isEmpty {
                                 HomeWeeklyReceipts(receipts: receipts)
                                     .padding(.horizontal, 20)
@@ -192,20 +232,24 @@ struct HomeView: View {
                                               homeLoadedAt: viewModel.lastLoadedAt,
                                               localNow: summary.localNow)
                                 .belowFold(heroAppeared, delay: 0.32)
-                            HomeDayCard(dateLabel: dayLabel(summary))
+                            // The brief leaves out what the page already
+                            // says (web `hbShownKeys`, parity #3).
+                            HomeDayCard(dateLabel: dayLabel(summary),
+                                        shownKeys: HomeBriefFilter.shownKeys(
+                                            attention: summary.needsAttention + followThrough.linkItems,
+                                            focusKey: followThrough.fixFirst?.answerKey ?? lead?.key),
+                                        onOpenNav: { nav in open(nav: nav, module: "home", in: summary) })
                                 .padding(.horizontal, 20)
                                 .padding(.top, 30)
                                 .belowFold(heroAppeared, delay: 0.36)
-                            if !summary.localIsMonday, let receipts = summary.weeklyReceipts, !receipts.isEmpty {
-                                HomeWeeklyReceipts(receipts: receipts)
-                                    .padding(.horizontal, 20)
-                                    .padding(.top, 30)
-                                    .belowFold(heroAppeared, delay: 0.4)
-                            }
 
                             // What Cavnar recommends, each with the button
-                            // that starts measuring it.
-                            if let recs = summary.recommendations, !recs.isEmpty {
+                            // that starts measuring it — less the one the
+                            // one-thing card leads with — and the undo for
+                            // the last one hidden.
+                            let recs = recommendationsShown(summary, lead: lead)
+                            let hidden = summary.dismissed?.items.first
+                            if !recs.isEmpty || hidden != nil {
                                 HomeRecommendations(recommendations: recs,
                                                     viewModel: followThrough,
                                                     assignees: summary.assignees ?? [],
@@ -213,7 +257,9 @@ struct HomeView: View {
                                                     onOpenModule: { module in
                                     navigate(to: ModuleRoute(key: module,
                                                              label: moduleLabel(module, in: summary)))
-                                }, onChanged: { Task { await viewModel.load() } })
+                                }, onChanged: { Task { await viewModel.load() } },
+                                                    restorable: hidden,
+                                                    onRestore: { rec in await viewModel.restoreHidden(rec) })
                                 .padding(.horizontal, 20)
                                 .padding(.top, 30)
                                 .belowFold(heroAppeared, delay: 0.46)
@@ -266,13 +312,23 @@ struct HomeView: View {
                                         showingValueDetail = true
                                     }
 
-                                    // How you compare (Benchmarking #23) —
-                                    // a read, so it sits with the results.
-                                    HomeBenchmarkStrip(onOpenModule: { module in
-                                        navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
-                                    })
-                                    .padding(.horizontal, 20)
-                                    .padding(.top, 22)
+                                    // The trend behind each pulse chip (web
+                                    // `renderSignals`, parity #1).
+                                    if let charts = summary.charts, !charts.isEmpty {
+                                        HomeSignals(charts: charts) { module in
+                                            navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
+                                        }
+                                        .padding(.horizontal, 20)
+                                        .padding(.top, 22)
+                                    }
+
+                                    // The weekly receipts, outside Monday:
+                                    // proof, so they sit with the results.
+                                    if !summary.localIsMonday, let receipts = summary.weeklyReceipts, !receipts.isEmpty {
+                                        HomeWeeklyReceipts(receipts: receipts)
+                                            .padding(.horizontal, 20)
+                                            .padding(.top, 30)
+                                    }
 
                                     if HomeFollowThrough.hasResults(followThrough) {
                                         HomeFollowThrough(viewModel: followThrough, part: .results) { module in
@@ -432,6 +488,9 @@ struct HomeView: View {
             .sheet(isPresented: $showingDataHealth) {
                 DataHealthSheet(summary: viewModel.summary?.dataHealth)
             }
+            .sheet(item: $evidenceLink, onDismiss: { Task { await followThrough.load() } }) { link in
+                HomeLinkEvidenceSheet(link: link)
+            }
             .task { await viewModel.load() }
             // A tapped push about another location switched to it
             // (DeepLinkRouter), or the switcher did — Home shows that
@@ -463,6 +522,14 @@ struct HomeView: View {
             overnightLine(summary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
+
+            // "Since your last visit: …" — the web header's changes line
+            // (parity #1), the first three changes, each without its tail.
+            if let changes = summary.changes?.line {
+                HomeMixedText.make(changes, size: 13, weight: 600, color: .cavnarInk3)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .frame(maxWidth: .infinity)
         .multilineTextAlignment(.center)
@@ -612,24 +679,50 @@ struct HomeView: View {
         return "\(m)/\(d)/\(p[0].suffix(2))"
     }
 
-    /// The one thing has something to say (HomeOneThingCard draws nothing
-    /// without a `what`) — it then leads the page at position 2.
-    private var hasOneThing: Bool {
-        guard let what = followThrough.fixFirst?.what else { return false }
-        return !what.isEmpty
+    /// What the one-thing card leads with (HomeFocusLead.pick, the web's
+    /// `renderFocus` order): the finding, else the first attention item,
+    /// else the top recommendation; nil until the day's reads land.
+    private func focusLead(_ summary: HomeSummary) -> HomeFocusLead? {
+        HomeFocusLead.pick(loaded: followThrough.crossLoaded,
+                           hasFinding: !(followThrough.fixFirst?.what ?? "").isEmpty,
+                           attention: summary.needsAttention,
+                           recommendations: summary.recommendations ?? [])
     }
 
-    /// One "Start here" a page (density #3): the one thing carries it when
-    /// there is one, and Needs attention follows as "Then these".
-    private var attentionTitle: String { Self.attentionTitle(hasOneThing: hasOneThing) }
+    /// Needs attention under the lead: without the item the one-thing card
+    /// took (it is not said twice), with every cross-module link as a row.
+    private func attentionItems(_ summary: HomeSummary, lead: HomeFocusLead?) -> [NeedsAttentionItem] {
+        var items = summary.needsAttention
+        if case .attention? = lead { items = Array(items.dropFirst()) }
+        return items + followThrough.linkItems
+    }
+
+    /// The recommendations grid, less the one the one-thing card leads with.
+    private func recommendationsShown(_ summary: HomeSummary, lead: HomeFocusLead?) -> [HomeRecommendation] {
+        let recs = summary.recommendations ?? []
+        if case .recommendation? = lead { return Array(recs.dropFirst()) }
+        return recs
+    }
 
     static func attentionTitle(hasOneThing: Bool) -> String {
         hasOneThing ? "Then these" : "Start here"
     }
 
+    /// One "Start here" a page (density #3): the one thing carries it when
+    /// there is one, and Needs attention follows as "Then these".
     @ViewBuilder
-    private func attentionSection(_ summary: HomeSummary) -> some View {
-        if summary.needsAttention.isEmpty {
+    private func attentionSection(_ summary: HomeSummary, items: [NeedsAttentionItem], hasLead: Bool) -> some View {
+        let attentionTitle = Self.attentionTitle(hasOneThing: hasLead)
+        if items.isEmpty && !summary.needsAttention.isEmpty {
+            // The one-thing card took the only item (web: "Nothing else
+            // needs you") — never an "All clear" beside an item.
+            VStack(alignment: .leading, spacing: 12) {
+                HomeSectionHeader(kicker: "Needs attention", title: attentionTitle)
+                Text("Nothing else needs you \u{2014} Cavnar AI is watching.")
+                    .font(.cavnarBody(14, weight: 600))
+                    .foregroundStyle(Color.cavnarInk3)
+            }
+        } else if items.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
                 HomeSectionHeader(kicker: "Needs attention", title: attentionTitle)
                 AllClearRow(notClearReason: OwnerCopy.allClear(attentionEmpty: true,
@@ -641,7 +734,7 @@ struct HomeView: View {
             // rows) — the server logs exactly those as shown (home_brief
             // HOME_ATTENTION_SHOWN) — and "+N more" opens the rest in place.
             HomeActionDeck(
-                items: summary.needsAttention,
+                items: items,
                 title: attentionTitle,
                 busy: viewModel.isPublishingReplies,
                 onPrimary: { item in primaryAction(item, in: summary) },
@@ -792,8 +885,77 @@ struct HomeView: View {
         if item.isPublishAction {
             Haptic.light()
             pendingPublish = item
+            loadPublishProposal()
+        } else if item.action == "link_evidence" {
+            // A cross-module link's row: its Evidence, To confirm and Could
+            // also be, with Done / Not for us (the web's "Evidence" panel).
+            Haptic.light()
+            evidenceLink = followThrough.link(for: item)
         } else {
             open(nav: item.nav, module: item.module, in: summary)
+        }
+    }
+
+    /// The confirm card lists every reply that would post (parity #2):
+    /// read it while the card shows its shimmer; with no proposal (an older
+    /// server) the card falls back to the count.
+    private func loadPublishProposal() {
+        publishProposal = nil
+        publishProposalLoading = true
+        publishAsk = AskCavnarViewModel()
+        Task {
+            let p = await viewModel.proposePublish()
+            guard pendingPublish != nil else { return }
+            publishProposal = p
+            publishProposalLoading = false
+        }
+    }
+
+    /// The proposal's Confirm went through: the card closes, Home re-reads.
+    private func publishConfirmed() {
+        pendingPublish = nil
+        publishProposal = nil
+        Haptic.success()
+        postedLabel = "Replies approved"
+        Task { await viewModel.load() }
+    }
+
+    private func closePublish() {
+        pendingPublish = nil
+        publishProposal = nil
+        publishProposalLoading = false
+    }
+
+    /// The header's quick actions no Needs-attention row carries: secondary
+    /// chips, one tap to the item; a publish asks first like the deck's.
+    private func quickRow(_ actions: [HomeQuickAction], in summary: HomeSummary) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(actions) { q in
+                    Button {
+                        Haptic.light()
+                        if q.kind == "publish_replies" {
+                            pendingPublish = NeedsAttentionItem(
+                                type: "reviews_awaiting_approval", module: q.module ?? "reviews",
+                                title: q.label, detail: "", cta: q.label, secondary: nil,
+                                action: "publish_replies", recKey: nil, dismissable: false,
+                                timesHidden: nil, count: q.count, evidence: nil, confidence: nil)
+                            loadPublishProposal()
+                        } else {
+                            open(nav: q.nav, module: q.module ?? "home", in: summary)
+                        }
+                    } label: {
+                        HomeMixedText.make(q.chipLabel, size: 13.5, weight: 700, color: .cavnarEmber2,
+                                           numberWeight: 700, numberColor: .cavnarEmber2)
+                            .padding(.horizontal, 14)
+                            .frame(minHeight: 44)
+                            .background(Color.cavnarPaper2.opacity(0.85), in: Capsule())
+                            .overlay(Capsule().strokeBorder(Color.cavnarPaper3, lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 20)
         }
     }
 
@@ -848,8 +1010,54 @@ struct HomeView: View {
                 .ignoresSafeArea()
                 .onTapGesture {
                     guard !viewModel.isPublishingReplies else { return }
-                    pendingPublish = nil
+                    closePublish()
                 }
+            if publishProposalLoading || publishProposal != nil {
+                publishProposalCard
+            } else {
+                publishCountCard(item)
+            }
+        }
+    }
+
+    /// The same confirm card the web and Ask render: what would post, each
+    /// reply in its own words, and how many the check holds back; Confirm
+    /// runs the approve through Ask's route (parity #2).
+    private var publishProposalCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if let p = publishProposal {
+                ScrollView {
+                    ProposalCard(proposal: p, viewModel: publishAsk, onDone: { publishConfirmed() })
+                }
+                .frame(maxHeight: 460)
+            } else {
+                CavnarShimmerText(text: "Reading the replies\u{2026}", color: Color.cavnarInk)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 18)
+            }
+            Button {
+                Haptic.light()
+                closePublish()
+            } label: {
+                Text("Close")
+                    .font(.cavnarBody(15, weight: 600))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(20)
+        .frame(maxWidth: 380)
+        .background(Color.cavnarPaper2)
+        .overlay(RoundedRectangle(cornerRadius: CavnarRadius.card).strokeBorder(Color.cavnarPaper3, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
+        .shadow(color: .black.opacity(0.45), radius: 24, y: 12)
+        .padding(.horizontal, 20)
+    }
+
+    /// The count-only confirm — an older server without /command/propose.
+    private func publishCountCard(_ item: NeedsAttentionItem) -> some View {
+        ZStack {
             VStack(spacing: 18) {
                 Text(item.cta ?? "Publish replies")
                     .font(.cavnarHeadline(19))

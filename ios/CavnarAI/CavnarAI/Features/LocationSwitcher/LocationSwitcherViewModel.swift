@@ -30,6 +30,14 @@ final class LocationSwitcherViewModel {
         }
     }
 
+    /// Every location's status, what needs the owner there and last night's
+    /// net, plus the portfolio strip and the attention across them — the
+    /// group brief (GET /mobile/api/home/brief/group, the web's
+    /// `hbSwitcherFill` / group Home; parity audit #8). Nil for a single
+    /// location, a login that may not switch, or an older server — the rows
+    /// then read as names alone, as before.
+    var group: LocationGroupBrief?
+
     func load() async {
         isLoading = true
         errorMessage = nil
@@ -38,6 +46,13 @@ final class LocationSwitcherViewModel {
             let response: LocationsResponse = try await client.send("/mobile/api/group-locations")
             locations = response.locations
             groupName = response.groupName
+            if response.locations.count > 1 {
+                let g: LocationGroupBrief? = try? await client.send("/mobile/api/home/brief/group",
+                                                                    hapticOnError: false)
+                group = (g?.ok == true) ? g : nil
+            } else {
+                group = nil
+            }
         } catch let error as APIClient.APIError {
             errorMessage = error.message
         } catch is CancellationError {
@@ -62,6 +77,11 @@ final class LocationSwitcherViewModel {
             case restaurantId = "restaurant_id"
             case restaurantName = "restaurant_name"
         }
+    }
+
+    /// One location's row from the group brief, by id.
+    func signal(for location: LocationOption) -> LocationGroupBrief.Location? {
+        group?.locations.first { $0.id == location.id }
     }
 
     /// Returns true on success — the caller (LocationSwitcherView) reloads

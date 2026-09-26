@@ -110,7 +110,7 @@ struct HomeLastNightCard: View {
                                     .font(.cavnarNumber(30, weight: 600))
                                     .foregroundStyle(Color.cavnarInk)
                                     .cavnarSensitive()
-                                if let vs = sales?.metric("vs_yesterday_pct") {
+                                if let vs = sales?.metric("vs_yesterday_pct") ?? night.vsYesterdayPct {
                                     (Text(DSRFormat.signedPct(vs)).font(.cavnarNumber(13, weight: 700))
                                         .foregroundStyle(DSRFormat.tone(vs))
                                      + Text(" net vs yesterday").font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3))
@@ -137,6 +137,13 @@ struct HomeLastNightCard: View {
                     } else if phase == .running {
                         Text(report?.checklist?.statusLabel ?? "The report is being built.")
                             .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                    }
+                    // "Watch:" the night's first risk, as the web card has it.
+                    if phase != .running, let risk = night.firstRisk, !risk.isEmpty {
+                        (Text("Watch: ").font(.cavnarBody(13, weight: 700)).foregroundColor(.cavnarInk2)
+                         + HomeMixedText.make(risk, size: 13, color: .cavnarInk2))
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
                     }
                     if !night.missing.isEmpty {
                         HomeMixedText.make(night.missing.count == 1 ? night.missing[0]
@@ -194,13 +201,11 @@ final class HomeLastNightViewModel {
                 state = .hidden
                 return
             }
-            // peek=1: drawing Home's card is not opening the report, so the
-            // night's actions are not recorded as shown to this login
-            // (D3-8). The report is read for the comparison and the running
-            // checklist line only.
-            let report: DSRReport? = try? await client.send("/mobile/api/dsr/\(latest.businessDate)",
-                                                            query: ["peek": "1"], hapticOnError: false)
-            state = .ready(latest, report, list.tonight?.value)
+            // One call, as the web's card (parity audit #9): the list row
+            // (dsr.access.summary) carries the net, its change against the
+            // night before, the verdict and the lead — the second read of
+            // the whole report (peeked) is gone.
+            state = .ready(latest, nil, list.tonight?.value)
         } catch is CancellationError {
         } catch let error as APIClient.APIError where error.status == 403 {
             state = .hidden

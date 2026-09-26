@@ -15,7 +15,9 @@ struct NotificationItem: Codable, Identifiable {
     let priority: Int?
     /// P0/P1: only worth anything while it can still be acted on.
     let urgent: Bool?
-    let unread: Bool?
+    /// Read once opened, on either client (the row's alert_log id in
+    /// notification_opens) — flipped here the moment a row is opened.
+    var unread: Bool?
     /// Where the row opens — the server's module map (push.NOTIFICATION_
     /// MODULE), the same one the web bell uses. Optional for older servers.
     let module: String?
