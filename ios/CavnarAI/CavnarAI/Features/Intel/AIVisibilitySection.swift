@@ -161,7 +161,7 @@ struct AIVisibilitySection: View {
                 )
                 previewRow(
                     icon: "checklist", tone: Color.cavnarGreen,
-                    title: "GBP completeness score",
+                    title: "Listing strength",
                     detail: "What's missing from your Google Business Profile that AI tools pull answers from."
                 )
                 previewRow(
@@ -480,7 +480,7 @@ struct AIVisibilitySection: View {
         let doneCount = checklist.filter(\.done).count
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("GBP COMPLETENESS")
+                Text("LISTING STRENGTH")
                     .font(.cavnarBody(14, weight: 700))
                     .tracking(1.2)
                     .foregroundStyle(Color.cavnarEmber2)
@@ -642,7 +642,7 @@ struct AIVisibilitySection: View {
 
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("YOUR AI VISIBILITY ROADMAP")
+                Text("GAPS IN YOUR PUBLIC RECORD")
                     .font(.cavnarBody(14, weight: 700))
                     .tracking(1.2)
                     .foregroundStyle(Color.cavnarEmber2)

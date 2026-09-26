@@ -8,14 +8,20 @@ import SwiftUI
 /// surface `labor`); an answered one keeps its evidence and drops the
 /// controls. Renders nothing when there is no cause (labor at or under
 /// target has nothing to diagnose).
+///
+/// The same card carries Marketing's guest-text diagnosis
+/// (guest_marketing.diagnose, one shape — the web's renderDiagnosis draws
+/// both): `title`, `surface` and `module` name whose it is.
 struct LaborDiagnosisCard: View {
     let diagnosis: LaborDiagnosis
+    var title: String = "WHY LABOR RAN OVER"
+    var surface: String = "labor"
 
     var body: some View {
         if diagnosis.hasCause, let cause = diagnosis.cause {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("WHY LABOR RAN OVER")
+                    Text(title)
                         .font(.cavnarBody(11, weight: 700))
                         .tracking(1.1)
                         .foregroundStyle(Color.cavnarEmber)
@@ -29,7 +35,7 @@ struct LaborDiagnosisCard: View {
                 // How sure, as a percentage with what it rests on (K1/K6) —
                 // the shared line, not a bare band capsule.
                 if let c = diagnosis.confidence {
-                    ConfidenceLine(confidence: c, recKey: diagnosis.recKey, surface: "labor", module: "labor")
+                    ConfidenceLine(confidence: c, recKey: diagnosis.recKey, surface: surface, module: surface)
                 }
                 if let alt = diagnosis.alternativeCause {
                     row("It could also be", alt, quiet: true)
@@ -38,7 +44,7 @@ struct LaborDiagnosisCard: View {
                     VStack(alignment: .leading, spacing: 6) {
                         row("Check this", confirm)
                         if diagnosis.showsAnswers, let key = diagnosis.recKey {
-                            RecAnswerRow(key: key, surface: "labor", module: "labor")
+                            RecAnswerRow(key: key, surface: surface, module: surface)
                         }
                     }
                 }

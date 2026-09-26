@@ -25,6 +25,15 @@ struct MarketingMedia: Decodable, Identifiable, Hashable {
         width = try c.decodeIfPresent(Int.self, forKey: .width)
         height = try c.decodeIfPresent(Int.self, forKey: .height)
     }
+
+    /// A photo known by its id and token — a saved draft's, reopened.
+    init(id: Int, token: String, url: String) {
+        self.id = id
+        self.token = token
+        self.url = url
+        self.width = nil
+        self.height = nil
+    }
 }
 
 /// What the post will look like where it lands, and whether it will be
@@ -100,9 +109,11 @@ struct MarketingDraft: Decodable, Identifiable {
     let createdByName: String?
     let approvedByName: String?
     let mediaToken: String?
+    let mediaId: Int?
 
     enum CodingKeys: String, CodingKey {
         case id, topic, body, status
+        case mediaId = "media_id"
         case contentType = "content_type"
         case updatedAt = "updated_at"
         case createdByName = "created_by_name"

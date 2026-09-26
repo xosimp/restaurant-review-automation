@@ -16,7 +16,7 @@ struct TopicHeatGridChart: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            CavnarChartHeader(kicker: "Topic sentiment", title: "Topic Heat Grid",
+            CavnarChartHeader(kicker: "Topic sentiment", title: "What guests talk about",
                               detail: "Ember is praise, red is complaints — intensity is how often it came up.")
             CavnarAnimatedCanvas(duration: 2.8, height: height, replayKey: data.topics.map(\.category).joined()) { ctx, size, t, _ in
                 draw(&ctx, size: size, t: t)

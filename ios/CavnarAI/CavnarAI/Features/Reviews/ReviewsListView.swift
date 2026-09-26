@@ -411,6 +411,10 @@ struct ReviewsListView: View {
             } else if detail.didComplete, let status = detail.finalStatus {
                 viewModel.markCompleted(reviewID: review.id, status: status)
                 postedLabel = status == "posted" ? "Reply posted to \(review.platformDisplayName)" : "Reply approved"
+            } else if detail.needsFlagConfirm {
+                // Flagged since the list loaded: the server refused it
+                // unread. It is read, and confirmed, on its own screen.
+                rowError = (review.id, "Read this one first: it \(detail.flagReason ?? ReviewDetailViewModel.defaultFlagReason). Open it to post.")
             } else if let status = detail.finalStatus, detail.postFailure != nil {
                 // Approved but the post failed: the row says so, and the
                 // detail screen has the retry.

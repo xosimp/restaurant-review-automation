@@ -141,8 +141,15 @@ def invalidate_insight_cache(restaurant_id, prefixes=None):
 # status) and mobile_api.py's mobile views can call the exact same logic
 # without duplicating it.
 
-def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False):
+def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_flagged=False):
     """Approve (and post) one drafted reply.
+
+    `confirm_flagged`: the person was shown the reply guard's flag on this
+    draft ("Read this one before you post it") and said post it anyway. A
+    flagged draft is refused without it — web and iOS both ask first, and the
+    paths that cannot ask (a lock-screen action, a swipe, a notification row,
+    Ask's proposal, a queued offline replay of an unconfirmed approve) get a
+    409 naming the reason instead of posting it unread.
 
     `bulk`: part of a publish-many (approve-all). The claim is held to
     models.BULK_PUBLISHABLE_SQL, and the row is marked
@@ -166,9 +173,11 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False):
     # together (MOD-REV-4, MOD-REV-5). Nothing below — the action label, the
     # webhook, the Google post, the confirmation — happens for a loser.
     from models import claim_approval
-    if not claim_approval(rid, restaurant_id, publishable_only=bool(bulk)):
+    if not claim_approval(rid, restaurant_id, publishable_only=bool(bulk),
+                          allow_flagged=bool(confirm_flagged)):
         _gc = get_conn()
-        _cur = _gc.execute("SELECT response_status, deleted_at FROM reviews WHERE id=? AND restaurant_id=?",
+        _cur = _gc.execute("SELECT response_status, deleted_at, draft_needs_review, draft_review_reason "
+                           "FROM reviews WHERE id=? AND restaurant_id=?",
                            (rid, restaurant_id)).fetchone()
         _gc.close()
         if not _cur:
@@ -177,6 +186,10 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False):
             return {"ok": False, "error": "That review was removed."}, 409
         if _cur["response_status"] in ("approved", "posted"):
             return {"ok": False, "error": "That reply has already been approved."}, 409
+        if _cur["draft_needs_review"] and not bulk and not confirm_flagged:
+            _why = _cur["draft_review_reason"] or "states something Cavnar AI cannot confirm"
+            return {"ok": False, "needs_review": True, "review_reason": _why,
+                    "error": f"Read this reply before you post it: it {_why}. Open the review to post it anyway."}, 409
         return {"ok": False, "error": "There's no drafted reply to approve on that review."}, 409
     # Determine response action
     try:
@@ -615,7 +628,9 @@ def _do_retract(rid, restaurant_id):
 @client_bp.route("/approve/<int:rid>", methods=["POST"])
 @login_required
 def approve(rid, current_user):
-    payload, status = _do_approve(rid, current_user["restaurant_id"])
+    _body = request.get_json(silent=True) or {}
+    payload, status = _do_approve(rid, current_user["restaurant_id"],
+                                  confirm_flagged=_body.get("confirm_flagged") is True)
     return jsonify(**payload), status
 
 
@@ -2315,16 +2330,16 @@ def _metrics_sync_line(rid):
         return None
 
 
-@client_bp.route("/api/mkt-performance")
-@login_required
-def mkt_performance_api(current_user):
+def _do_mkt_performance(restaurant_id):
     """Aggregate real Meta post performance for the Marketing tab's analytics
     card: total reach/engagement across published posts and the single
     best-performing post. Reads the same reach/impressions/likes/comments/
     shares columns refresh_post_metrics() (social_routes.py) keeps updated —
-    this endpoint never calls Meta itself, it just summarizes what's already
-    in the DB, so it stays fast even if Meta is slow or down."""
-    rid = current_user["restaurant_id"]
+    it never calls Meta itself, it just summarizes what's already in the DB,
+    so it stays fast even if Meta is slow or down. The one body behind
+    /api/mkt-performance and /mobile/api/marketing/performance (the phone's
+    was a line-for-line copy, down to the error status it disagreed on)."""
+    rid = restaurant_id
     try:
         conn = get_conn()
 
@@ -2358,17 +2373,24 @@ def mkt_performance_api(current_user):
             }
 
         total_engagement = (totals["likes"] or 0) + (totals["comments"] or 0) + (totals["shares"] or 0)
-        return jsonify(
-            ok=True,
-            published=published,
-            has_data=bool(rows),
-            total_reach=(totals["reach"] or 0) + (totals["impressions"] or 0),
-            total_engagement=total_engagement,
-            top_post=top_post,
-            metrics_sync=_metrics_sync_line(rid),
-        )
+        return {
+            "ok": True,
+            "published": published,
+            "has_data": bool(rows),
+            "total_reach": (totals["reach"] or 0) + (totals["impressions"] or 0),
+            "total_engagement": total_engagement,
+            "top_post": top_post,
+            "metrics_sync": _metrics_sync_line(rid),
+        }, 200
     except Exception as e:
-        return jsonify(ok=False, error=_safe_err(e))
+        return {"ok": False, "error": _safe_err(e)}, 500
+
+
+@client_bp.route("/api/mkt-performance")
+@login_required
+def mkt_performance_api(current_user):
+    payload, status = _do_mkt_performance(current_user["restaurant_id"])
+    return jsonify(**payload), status
 
 def _parse_conversation_id(raw):
     """A conversation id from a request body: a positive int, or None when
@@ -3857,35 +3879,49 @@ def food_cost_waste_trend(current_user):
     except Exception as e:
         return jsonify(ok=False, weeks=[], error=_safe_err(e)), 500
 
-@client_bp.route("/api/generate-content", methods=["POST"])
-@login_required
-def gen_content(current_user):
-    data = request.get_json()
+def _do_generate_content(restaurant_id, content_type, topic, from_calendar=False):
+    """Write one marketing post — the one body behind /api/generate-content
+    and /mobile/api/marketing/generate-content. The two had drifted: the web
+    answered a rate limit with 200 and no `ok`, the phone a failed model call
+    with a raw 500. Now: `{ok, content, tags, validation}` or `{ok: false,
+    content: "", error}` with a real status (429 rate limit or budget stop,
+    502/503/422 from ai_utils.user_facing_error)."""
     from marketing import generate_content, mark_calendar_idea_used
     from ai_utils import ai_rate_limited
-    rid = current_user["restaurant_id"] if current_user else None
-    if rid and ai_rate_limited(f"gencontent:{rid}", max_calls=8, window_secs=60):
-        return jsonify(content="", error="Too many requests — please wait a moment and try again.")
-    content_type = data.get("type","instagram_post")
-    topic = data.get("topic","")
+    if ai_rate_limited(f"gencontent:{restaurant_id}", max_calls=8, window_secs=60):
+        return {"ok": False, "content": "",
+                "error": "Too many requests — please wait a moment and try again."}, 429
+    content_type = content_type or "instagram_post"
+    topic = topic or ""
     try:
-        result = generate_content(content_type, topic, restaurant_id=rid)
+        result = generate_content(content_type, topic, restaurant_id=restaurant_id)
     except Exception as e:
-        # There was no except here at all, so a budget stop became a bare 500
-        # with no message (AI-11). The phone twin already said "paused".
+        # A budget stop says the account is paused, never "try again" (AI-11).
         from ai_utils import AIBudgetExceeded, user_facing_error
         msg, status = user_facing_error(e, "Couldn't write that right now — try again in a moment.")
         if not isinstance(e, AIBudgetExceeded):
             import ops
-            ops.capture(e, job="generate_content", context=f"restaurant_id={rid}")
-        return jsonify(content="", error=msg), status
-    if data.get("from_calendar") and rid:
+            ops.capture(e, job="generate_content", context=f"restaurant_id={restaurant_id}")
+        return {"ok": False, "content": "", "error": msg}, status
+    # A calendar idea written on either surface feeds the next draw's
+    # "avoid repeating these" signal.
+    if from_calendar:
         try:
-            mark_calendar_idea_used(rid, content_type, topic)
+            mark_calendar_idea_used(restaurant_id, content_type, topic)
         except Exception:
             pass
     from response_validation import validation_of as _rv_gc
-    return jsonify(content=result, tags=_post_tags_safe(rid, topic, result), validation=_rv_gc(result))
+    return {"ok": True, "content": result, "tags": _post_tags_safe(restaurant_id, topic, result),
+            "validation": _rv_gc(result)}, 200
+
+
+@client_bp.route("/api/generate-content", methods=["POST"])
+@login_required
+def gen_content(current_user):
+    data = request.get_json(silent=True) or {}
+    payload, status = _do_generate_content(current_user["restaurant_id"], data.get("type"),
+                                           data.get("topic"), from_calendar=bool(data.get("from_calendar")))
+    return jsonify(**payload), status
 
 
 def _post_tags_safe(rid, topic, body):
@@ -4047,40 +4083,53 @@ def marketing_preview_api(current_user):
     return _m("mobile_marketing_preview")(current_user)
 
 
-@client_bp.route("/api/post-to-google", methods=["POST"])
-@login_required
-def post_to_google(current_user):
-    """Publish generated copy to the connected Google Business Profile.
+GOOGLE_NOT_CONNECTED = "Connect Google Business first — Account → Connections."
 
-    Marketing has always written `google_promo` copy and the dashboard has
-    always offered Instagram and Facebook buttons next to it — with no way to
-    put a Google post on Google. Mobile got this route first
-    (mobile_api.mobile_create_google_post); this is the web half."""
+
+def _do_post_to_google(current_user, data):
+    """Publish generated copy to the connected Google Business Profile — the
+    one body behind /api/post-to-google and /mobile/api/marketing/google-post.
+    The two had drifted: the web sent owners to "Settings → Connections" with
+    a 200, the phone to "Account → Connections" with a 400. The product
+    calls it Account → Connections; not connected is a 409 on both.
+    Logged to marketing_content_log on success so it counts toward "pieces
+    this month" exactly like a published Instagram post.
+    -> ({ok, post_id, name} | {ok: false, error}, status)."""
     import gmb as _gmb
     from marketing_drafts import may_publish, CANNOT_PUBLISH
     if not may_publish(current_user):
-        return jsonify(ok=False, error=CANNOT_PUBLISH), 403
+        return {"ok": False, "error": CANNOT_PUBLISH}, 403
     rid = current_user["restaurant_id"]
-    data = request.get_json() or {}
+    data = data or {}
     if not _gmb.is_connected(rid):
-        return jsonify(ok=False, error="Connect Google Business first — Settings → Connections."), 200
+        return {"ok": False, "error": GOOGLE_NOT_CONNECTED, "not_connected": True}, 409
     summary = (data.get("summary") or "").strip()
     if not summary:
-        return jsonify(ok=False, error="Post text is required"), 400
+        return {"ok": False, "error": "Post text is required"}, 400
     result = _gmb.create_local_post(
         rid, summary,
         cta_type=(data.get("cta_type") or "").strip() or None,
         cta_url=(data.get("cta_url") or "").strip() or None,
     )
     if not result.get("ok"):
-        return jsonify(ok=False, error=result.get("error") or "Google rejected the post"), 200
+        return {"ok": False, "error": result.get("error") or "Google rejected the post"}, 200
     try:
         from marketing import log_content
         log_content(rid, "google_promo", (data.get("topic") or summary)[:80],
                     post_id=result.get("name") or None, post_platform="google")
     except Exception:
         pass
-    return jsonify(ok=True, post_id=result.get("name"))
+    # `post_id` is what the web read, `name` what the phone read.
+    return {"ok": True, "post_id": result.get("name"), "name": result.get("name") or ""}, 200
+
+
+@client_bp.route("/api/post-to-google", methods=["POST"])
+@login_required
+def post_to_google(current_user):
+    """Web twin of /mobile/api/marketing/google-post — one body,
+    _do_post_to_google."""
+    payload, status = _do_post_to_google(current_user, request.get_json(silent=True))
+    return jsonify(**payload), status
 
 
 @client_bp.route("/api/content-calendar")
@@ -4089,35 +4138,14 @@ def content_calendar(current_user):
     """?force=1 is the "Generate week" button asking for a fresh draw; a plain
     read returns this week's cached calendar (see get_content_calendar_ideas).
     The web tab has always driven this from an explicit press, so it forces —
-    what changed is that the result is now kept."""
-    from marketing import (get_content_calendar_ideas, get_cached_calendar,
-                           RECENT_CALENDAR_SECONDS)
-    from ai_utils import ai_rate_limited
-    rid = current_user["restaurant_id"]
+    what changed is that the result is now kept. One body with the phone's
+    POST /mobile/api/marketing/calendar (mobile_api._do_content_calendar),
+    so the web grid marks an idea already written from, as the phone does."""
+    import mobile_api as _mob
     force = request.args.get("force") not in (None, "", "0", "false")
-    if force:
-        # A retry after a slow first attempt is answered before the limiter
-        # sees it — it counts attempts, not generations.
-        just_made = get_cached_calendar(rid, max_age_seconds=RECENT_CALENDAR_SECONDS)
-        if just_made:
-            return jsonify(ideas=present_calendar_ideas(rid, just_made, current_user.get("id")))
-        if ai_rate_limited(f"calendar:{rid}", max_calls=4, window_secs=300):
-            return jsonify(ideas=[], error="Too many calendar regenerations — try again in a few minutes."), 429
-    # An empty week always comes with a reason (AI-26): a cut-off or
-    # unreadable draw, a budget pause, an outage. The phone twin already said
-    # so; the web tab got ideas=[] and nothing else.
-    try:
-        ideas = get_content_calendar_ideas(restaurant_id=rid, force=force)
-    except Exception as e:
-        import ops
-        from ai_utils import AIBudgetExceeded, insight_error
-        if not isinstance(e, AIBudgetExceeded):
-            ops.capture(e, job="content_calendar", context=f"restaurant_id={rid}")
-        msg, status = insight_error(e, "Couldn't build this week's calendar — try Generate again.")
-        return jsonify(ideas=[], error=msg), status
-    if not ideas:
-        return jsonify(ideas=[], error="Couldn't build this week's calendar — try Generate again.")
-    return jsonify(ideas=present_calendar_ideas(rid, ideas, current_user.get("id")))
+    payload, status = _mob._do_content_calendar(current_user["restaurant_id"], current_user.get("id"),
+                                                force=force, phone=False)
+    return jsonify(**payload), status
 
 def _do_regenerate_draft(review_id, restaurant_id):
     """Regenerate AI draft for a review — delegates to drafter.draft_response()

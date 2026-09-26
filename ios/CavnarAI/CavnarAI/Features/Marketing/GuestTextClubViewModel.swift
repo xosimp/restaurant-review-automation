@@ -384,10 +384,13 @@ final class GuestTextClubViewModel {
     private struct SendBody: Encodable {
         let message: String
         let segment: String
+        /// The campaign kind, as the web sends it: the server labels the
+        /// tracked link with it (it read "campaign" for every phone send).
+        let type: String
         let linkUrl: String?
 
         enum CodingKeys: String, CodingKey {
-            case message, segment
+            case message, segment, type
             case linkUrl = "link_url"
         }
     }
@@ -414,7 +417,7 @@ final class GuestTextClubViewModel {
         do {
             let response: SendResponse = try await client.send(
                 "/mobile/api/guest-campaign/send", method: .post,
-                body: SendBody(message: draftMessage, segment: selectedSegment,
+                body: SendBody(message: draftMessage, segment: selectedSegment, type: campaignType,
                                linkUrl: linkURL.isEmpty ? nil : linkURL)
             )
             sentCount = response.sent

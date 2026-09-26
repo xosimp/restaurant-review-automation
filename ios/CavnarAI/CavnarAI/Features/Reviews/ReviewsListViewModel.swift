@@ -46,7 +46,28 @@ final class ReviewsListViewModel {
     var isLoadingMore = false
     var errorMessage: String?
     var filter: ReviewInboxFilter = .all
-    var searchText = ""
+    /// What the owner typed. The server searches the whole inbox for it
+    /// (models.get_reviews_data: author or text), the same as the web's
+    /// search box — it used to filter only the page already on the phone, so
+    /// a review past the first 50 was never found. Debounced: a pause in
+    /// typing reloads page one with it.
+    var searchText = "" {
+        didSet { if searchText != oldValue { scheduleSearch() } }
+    }
+    private var searchTask: Task<Void, Never>?
+    /// The search the rows on screen (and the next page) were loaded with.
+    private var loadedSearch = ""
+    private var trimmedSearch: String { searchText.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private func scheduleSearch() {
+        searchTask?.cancel()
+        guard inboxOpened, trimmedSearch != loadedSearch else { return }
+        searchTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled, let self else { return }
+            await self.reload()
+        }
+    }
     /// The header figures — rating, response rate, urgent, awaiting. The
     /// app modelled all of this in ReviewStats and then never called
     /// /mobile/api/review-stats from anywhere, so the phone's Reviews tab
@@ -66,7 +87,8 @@ final class ReviewsListViewModel {
 
     /// The chip is applied by the server (load() sends filter=serverKey), and
     /// again here so a row whose status changed on the detail screen leaves
-    /// "To approve" at once. Search is over the rows loaded so far.
+    /// "To approve" at once. Search is the server's too (load() sends it);
+    /// the same match here narrows the list while a debounce is pending.
     var filteredReviews: [Review] {
         var out = reviews
         // These must mean the same thing here, in models.get_reviews_data
@@ -81,12 +103,13 @@ final class ReviewsListViewModel {
         case .negative: out = out.filter { $0.sentiment == "negative" }
         case .positive: out = out.filter { $0.sentiment == "positive" }
         }
-        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let q = trimmedSearch.lowercased()
         if !q.isEmpty {
+            // The server's fields (author OR text), so the list never shows
+            // a match here the next page's server search would not.
             out = out.filter {
                 ($0.text ?? "").lowercased().contains(q)
                     || ($0.author ?? "").lowercased().contains(q)
-                    || ($0.draftResponse ?? "").lowercased().contains(q)
             }
         }
         return out
@@ -258,7 +281,8 @@ final class ReviewsListViewModel {
         // The inbox's first page per chip is kept on the device
         // (ResponseCache) and painted before the fetch; a category or
         // platform drill-down is not — it is a one-off look, not the inbox.
-        let cache = (category == nil && platform == nil) ? ResponseCache<ReviewsResponse>(
+        // A search is a one-off look too: only the plain inbox is cached.
+        let cache = (category == nil && platform == nil && trimmedSearch.isEmpty) ? ResponseCache<ReviewsResponse>(
             "reviews.inbox.\(filter.serverKey)") : nil
         if reviews.isEmpty, let hit = await cache?.load(), mine == generation {
             apply(hit.value)
@@ -271,10 +295,13 @@ final class ReviewsListViewModel {
             var query = ["filter": filter.serverKey, "limit": "\(Self.pageSize)", "offset": "0"]
             if let category { query["category"] = category }
             if let platform { query["platform"] = platform }
+            let search = trimmedSearch
+            if !search.isEmpty { query["search"] = search }
             let fetched: (value: ReviewsResponse, body: Data) = try await client.sendKeepingBody(
                 "/mobile/api/reviews", query: query)
             // A newer load (another chip, a refresh) owns the list now.
             guard mine == generation else { return }
+            loadedSearch = search
             cache?.save(fetched.body, generation: session)
             cachedAt = nil
             let response = fetched.value
@@ -316,6 +343,7 @@ final class ReviewsListViewModel {
         var query = ["filter": filter.serverKey, "limit": "\(Self.pageSize)", "offset": "\(nextOffset)"]
         if let loadCategory { query["category"] = loadCategory }
         if let loadPlatform { query["platform"] = loadPlatform }
+        if !loadedSearch.isEmpty { query["search"] = loadedSearch }
         do {
             let response: ReviewsResponse = try await client.send(
                 "/mobile/api/reviews", query: query, hapticOnError: false

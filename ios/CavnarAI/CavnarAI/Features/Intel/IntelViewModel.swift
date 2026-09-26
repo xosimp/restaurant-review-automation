@@ -252,10 +252,68 @@ struct IntelRecommendation: Decodable, Identifiable, Equatable {
 /// same job-id/poll pattern LaborViewModel.generateSchedule already uses
 /// for schedule generation (see mobile_api.py's intel/refresh-competitors
 /// + intel/refresh-status/<job_id>).
+/// GET /mobile/api/intel/movement — who joined or left the competitor set
+/// between the last two weekly checks, and the rating moves past what the
+/// review volume could produce by chance (models.competitor_movement). The
+/// snapshots were written every week and shown nowhere.
+struct IntelMovement: Decodable, Equatable {
+    struct Place: Decodable, Equatable, Identifiable {
+        let placeId: String?
+        let name: String
+        var id: String { (placeId ?? "") + name }
+        enum CodingKeys: String, CodingKey { case name; case placeId = "place_id" }
+    }
+    struct Move: Decodable, Equatable, Identifiable {
+        let placeId: String?
+        let name: String
+        let ratingThen: Double
+        let ratingNow: Double
+        let ratingChange: Double
+        let reviewsAdded: Int?
+        var id: String { (placeId ?? "") + name }
+        enum CodingKeys: String, CodingKey {
+            case name
+            case placeId = "place_id"
+            case ratingThen = "rating_then"
+            case ratingNow = "rating_now"
+            case ratingChange = "rating_change"
+            case reviewsAdded = "reviews_added"
+        }
+    }
+    let ok: Bool
+    let days: Int?
+    let significant: [Move]
+    let arrived: [Place]
+    let gone: [Place]
+    /// The earlier of the two weekly checks compared (ISO date); nil until
+    /// there are two to compare.
+    let comparedFrom: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, days, significant, arrived, gone
+        case comparedFrom = "compared_from"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try c.decode(Bool.self, forKey: .ok)
+        days = try c.decodeIfPresent(Int.self, forKey: .days)
+        significant = (try? c.decodeIfPresent([Move].self, forKey: .significant)) ?? []
+        arrived = (try? c.decodeIfPresent([Place].self, forKey: .arrived)) ?? []
+        gone = (try? c.decodeIfPresent([Place].self, forKey: .gone)) ?? []
+        comparedFrom = try c.decodeIfPresent(String.self, forKey: .comparedFrom)
+    }
+
+    var hasChanges: Bool { !arrived.isEmpty || !gone.isEmpty || !significant.isEmpty }
+}
+
 @Observable
 @MainActor
 final class IntelViewModel {
     var summary: IntelSummary?
+    /// Nil until loaded, or when the route failed — the section then stays
+    /// hidden rather than claiming nothing changed.
+    var movement: IntelMovement?
     var isLoading = false
     var errorMessage: String?
 
@@ -288,6 +346,7 @@ final class IntelViewModel {
             cachedAt = nil
             cache.save(fetched.body, generation: generation)
             lastLoadedAt = Date()
+            await loadMovement()
         } catch let error as APIClient.APIError {
             errorMessage = error.message
         } catch is CancellationError {
@@ -295,6 +354,11 @@ final class IntelViewModel {
         } catch {
             errorMessage = "Couldn't load competitor intel."
         }
+    }
+
+    func loadMovement() async {
+        let m: IntelMovement? = try? await client.send("/mobile/api/intel/movement", hapticOnError: false)
+        movement = (m?.ok == true) ? m : nil
     }
 
     private struct RefreshStartResponse: Decodable {

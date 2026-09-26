@@ -65,7 +65,7 @@ final class ReviewsListViewModelTests: XCTestCase {
     }
 
     @MainActor
-    func testSearchStillMatchesAuthorTextAndDraft() throws {
+    func testSearchMatchesAuthorAndTextLikeTheServerSearch() throws {
         let viewModel = ReviewsListViewModel()
         viewModel.reviews = [try review(1, status: "drafted")]
         viewModel.searchText = "nothing like this"

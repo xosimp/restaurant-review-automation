@@ -26,6 +26,12 @@ struct IntelView: View {
     // wait with zero feedback reads as "did my tap register?" — swaps the
     // tapped row's own xmark for a small spinner for that brief window.
     @State private var removingPlaceId: String?
+    /// A competitor the owner stopped tracking, hidden at once and removed
+    /// on the server only when the Undo window ends (DESIGN_SYSTEM §10,
+    /// tier 1 — the web's cavUndoable). Leaving the screen inside the
+    /// window keeps them, the safe side.
+    @State private var pendingRemoval: Competitor?
+    @State private var removalTask: Task<Void, Never>?
     // Drives the initial-load reveal — stats fade/rise into place first,
     // the AI insight follows a beat after (see content(_:)'s two .delay
     // values below). Tied to the data load finishing, not view-appear, so
@@ -69,6 +75,34 @@ struct IntelView: View {
             }
             .cavnarEmberRefreshable { await viewModel.load() }
         }
+        .overlay(alignment: .bottom) {
+            if let pending = pendingRemoval {
+                HStack(spacing: 12) {
+                    Text("Stopped tracking \(pending.name)")
+                        .font(.cavnarBody(14.5, weight: 600))
+                        .foregroundStyle(Color.cavnarInk)
+                        .lineLimit(1)
+                    Button {
+                        Haptic.light()
+                        undoRemoval()
+                    } label: {
+                        Text("Undo")
+                            .font(.cavnarBody(14.5, weight: 700))
+                            .foregroundStyle(Color.cavnarEmber2)
+                            .frame(minHeight: 44)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 16)
+                .background(Color.cavnarPaper2, in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.cavnarPaper3, lineWidth: 1))
+                .padding(.horizontal, 20)
+                .padding(.bottom, 18)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: pendingRemoval?.placeId)
+        .onDisappear { undoRemoval() }
         .cavnarModuleBackground()
         .sheet(isPresented: $showAddCompetitor) {
             AddCompetitorSheet(viewModel: viewModel)
@@ -560,6 +594,13 @@ struct IntelView: View {
                             }
                             if let key = rec.key {
                                 RecAnswerRow(key: key, surface: "intel")
+                                // The web's "Ask about this" on each Intel
+                                // recommendation: the same question, with the
+                                // recommendation (its rec key) as the screen.
+                                HomeAskLink(
+                                    question: "About this Intel recommendation: \(rec.text)",
+                                    screen: AskScreen(panel: "competitor", entityType: "rec", entityId: key)
+                                )
                             }
                         }
                         Spacer(minLength: 0)
@@ -662,10 +703,11 @@ struct IntelView: View {
                     .padding(.vertical, 10)
                     .transition(.opacity)
             }
+            let shown = summary.competitors.filter { $0.placeId != pendingRemoval?.placeId }
             VStack(spacing: 0) {
-                ForEach(Array(summary.competitors.enumerated()), id: \.element.id) { index, c in
+                ForEach(Array(shown.enumerated()), id: \.element.id) { index, c in
                     competitorRow(c, ownRating: summary.ownRating)
-                    if index < summary.competitors.count - 1 {
+                    if index < shown.count - 1 {
                         Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1)
                             .padding(.leading, 14)
                     }
@@ -698,9 +740,95 @@ struct IntelView: View {
             if let updatedAt = summary.updatedAt {
                 updatedLabel(updatedAt)
             }
+            if let movement = viewModel.movement {
+                movementSection(movement)
+            }
             // How current the sources behind Intel are, from data health.
             DataHealthModuleBadge(module: "intel")
         }
+    }
+
+    /// Tier 1 of the confirm-and-undo policy: gone from the list now, and
+    /// removed on the server only if nobody taps Undo in the next 7 seconds
+    /// (the web toast's window). A second removal commits the first at once.
+    private func stopTracking(_ c: Competitor) {
+        if let earlier = pendingRemoval, earlier.placeId != c.placeId {
+            removalTask?.cancel()
+            let id = earlier.placeId
+            Task { await viewModel.removeCompetitor(placeId: id) }
+        }
+        pendingRemoval = c
+        removalTask?.cancel()
+        removalTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(7))
+            guard !Task.isCancelled, pendingRemoval?.placeId == c.placeId else { return }
+            removingPlaceId = c.placeId
+            await viewModel.removeCompetitor(placeId: c.placeId)
+            removingPlaceId = nil
+            if pendingRemoval?.placeId == c.placeId { pendingRemoval = nil }
+        }
+    }
+
+    private func undoRemoval() {
+        removalTask?.cancel()
+        removalTask = nil
+        pendingRemoval = nil
+    }
+
+    // MARK: - What changed
+
+    /// Who opened or closed nearby between the last two weekly checks, and
+    /// the rating moves past normal ups and downs — the web's "What changed"
+    /// under Nearby competitors. Before two checks exist it says so, never
+    /// "nothing changed".
+    private func movementSection(_ m: IntelMovement) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("WHAT CHANGED")
+                .font(.cavnarBody(13, weight: 700))
+                .tracking(1.2)
+                .foregroundStyle(Color.cavnarEmber)
+                .padding(.top, 10)
+            if let from = m.comparedFrom {
+                HomeMixedText.make(m.hasChanges
+                                   ? "New and gone since the check on \(CavnarDate.mdy(from))"
+                                   : "No competitor opened, closed or moved past normal ups and downs since \(CavnarDate.mdy(from)).",
+                                   size: 13.5, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("Openings and closings show once there are two weekly checks to compare.")
+                    .font(.cavnarBody(13.5))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(m.arrived) { p in movementRow(p.name, tag: "New nearby", detail: nil) }
+            ForEach(m.gone) { p in movementRow(p.name, tag: "No longer nearby", detail: nil) }
+            ForEach(Array(m.significant.prefix(3))) { mv in
+                movementRow(mv.name, tag: nil,
+                            detail: String(format: "%.1f → %.1f★", mv.ratingThen, mv.ratingNow)
+                                + ((mv.reviewsAdded ?? 0) > 0 ? " · +\(mv.reviewsAdded!) reviews" : ""))
+            }
+        }
+    }
+
+    private func movementRow(_ name: String, tag: String?, detail: String?) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(name)
+                .font(.cavnarBody(15, weight: 600))
+                .foregroundStyle(Color.cavnarInk)
+            if let tag {
+                Text(tag.uppercased())
+                    .font(.cavnarBody(10.5, weight: 700))
+                    .tracking(0.6)
+                    .foregroundStyle(Color.cavnarEmber)
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(Capsule().fill(Color.cavnarEmber.opacity(0.14)))
+            }
+            Spacer(minLength: 0)
+            if let detail {
+                HomeMixedText.make(detail, size: 13.5, color: .cavnarInk2)
+            }
+        }
+        .padding(.vertical, 6)
     }
 
     private func competitorRow(_ c: Competitor, ownRating: Double?) -> some View {
@@ -763,11 +891,7 @@ struct IntelView: View {
                     if c.isCustom {
                         Button {
                             Haptic.light()
-                            Task {
-                                removingPlaceId = c.placeId
-                                await viewModel.removeCompetitor(placeId: c.placeId)
-                                removingPlaceId = nil
-                            }
+                            stopTracking(c)
                         } label: {
                             if removingPlaceId == c.placeId {
                                 CavnarShimmerLine(color: .cavnarEmber2)

@@ -93,9 +93,11 @@ def test_m1_web_review_card_renders_the_flag_and_approve_asks_first(db_path):
     assert 'id="draft-flag-%d"' % rv in html
     assert "Read this one before you post it" in html and "on us" in html
     dash = _read("templates", "dashboard.html")
-    body = dash[dash.index("function approveR(id){"):]
+    body = dash[dash.index("function approveR(id, confirmed){"):]
     body = body[:body.index("\n}\n")]
-    assert "_revFlagOk(id)" in body
+    # Asks with the card's own reason; the server holds the same line
+    # (confirm_flagged, parity round).
+    assert "_revFlagOk(id,_flag)" in body
     save = dash[dash.index("function saveDraft(id) {"):]
     save = save[:save.index("\n}\n")]
     assert "sd.needs_review" in save and "_revFlagOk" in save

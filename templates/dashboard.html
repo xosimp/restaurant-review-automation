@@ -7566,6 +7566,9 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
       <input id="rr-name"  type="text"  placeholder="Customer name" style="font-family:'Apfel Grotezk',sans-serif;font-size:13px;padding:10px 13px;border:1px solid var(--paper3);border-radius:8px;width:100%;outline:none;color:var(--ink);background:white">
       <input id="rr-email" type="email" placeholder="Email address" style="font-family:'Apfel Grotezk',sans-serif;font-size:13px;padding:10px 13px;border:1px solid var(--paper3);border-radius:8px;width:100%;outline:none;color:var(--ink);background:white">
       <input id="rr-phone" type="tel"   placeholder="Phone number for SMS (optional)" style="font-family:'Apfel Grotezk',sans-serif;font-size:13px;padding:10px 13px;border:1px solid var(--paper3);border-radius:8px;width:100%;outline:none;color:var(--ink);background:white">
+      <!-- The personal line the phone has always been able to add; the
+           server (_do_send_review_request) puts it in the email and text. -->
+      <textarea id="rr-message" maxlength="200" rows="2" placeholder="A personal note (optional)" style="font-family:'Apfel Grotezk',sans-serif;font-size:13px;padding:10px 13px;border:1px solid var(--paper3);border-radius:8px;width:100%;outline:none;color:var(--ink);background:white;resize:vertical"></textarea>
       <!-- Every other outbound SMS in this product goes only to a contact
            who consented. A review request texted whatever number was typed
            in, with nothing recording that the guest agreed to it. -->
@@ -10124,7 +10127,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
     <button class="cbtn cbtn-primary" onclick="genContent()">Generate <span style="font-size:15px;margin-left:6px">↺</span></button>
   </div>
   <div style="position:relative">
-    <div class="output-box" id="mkoutput" contenteditable="true" style="outline:none;cursor:text;padding-bottom:22px" title="Click to edit before posting" oninput="updateCharCount()"><span contenteditable="false" style="color:var(--ink3);font-style:italic;pointer-events:none;user-select:none">Select a type and click Generate.</span></div>
+    <div class="output-box" id="mkoutput" contenteditable="true" style="outline:none;cursor:text;padding-bottom:22px" title="Click to edit before posting" oninput="this.removeAttribute('data-gen-error');updateCharCount()"><span contenteditable="false" style="color:var(--ink3);font-style:italic;pointer-events:none;user-select:none">Select a type and click Generate.</span></div>
     <div id="char-counter" style="display:none;position:absolute;bottom:6px;right:10px;font-size:10px;color:var(--ink3);pointer-events:none;user-select:none;background:rgba(255,255,255,0.9);padding:1px 6px;border-radius:8px"><span id="char-count">0</span> <span id="char-limit-label"></span><span id="char-over" style="color:var(--red);display:none"> over limit</span></div>
     <div id="sms-counter" style="display:none;position:absolute;bottom:6px;right:10px;font-size:10px;color:var(--ink3);pointer-events:none;user-select:none;background:rgba(255,255,255,0.9);padding:1px 6px;border-radius:8px"><span id="sms-char-count">0</span>/160<span id="sms-over" style="color:var(--red);display:none"> over</span></div>
   </div>
@@ -10725,10 +10728,39 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
     })();
     </script>
     {% endif %}
+    {# Who opened, closed or moved (/api/intel/movement, in2LoadMoves): the
+       weekly snapshots were stored and never shown on either platform. #}
+    <div id="in2-moves" hidden></div>
     {% endif %}
     <div id="comp-refresh-result" style="margin-top:12px;font-size:12px;display:none"></div>
   </div>
   <script>function in2Jump(id){var el=document.getElementById(id);if(el)el.scrollIntoView({behavior:'smooth',block:'start'});}
+  /* What changed in the competitor set (/api/intel/movement): who arrived
+     and who left between the last two weekly checks, and the rating moves
+     past normal ups and downs (confidence_z, models.competitor_movement).
+     Before two checks exist it says so rather than showing "no change". */
+  function in2LoadMoves(){
+    var box=document.getElementById('in2-moves');if(!box)return;
+    fetch('/api/intel/movement',{credentials:'same-origin'}).then(apiJson).then(function(d){
+      if(!d||!d.ok){box.hidden=true;return;}
+      var rows='',i,a,m;
+      for(i=0;i<(d.arrived||[]).length;i++){a=d.arrived[i];
+        rows+='<div class="row"><div class="t"><div class="tt"><b>'+recEsc(a.name)+'</b><span class="cu">New nearby</span></div></div></div>';}
+      for(i=0;i<(d.gone||[]).length;i++){a=d.gone[i];
+        rows+='<div class="row"><div class="t"><div class="tt"><b>'+recEsc(a.name)+'</b><span class="cu">No longer nearby</span></div></div></div>';}
+      var sig=(d.significant||[]).slice(0,3);
+      for(i=0;i<sig.length;i++){m=sig[i];
+        rows+='<div class="row"><div class="t"><div class="tt"><b>'+recEsc(m.name)+'</b></div><div class="m">Rating '+(m.rating_change>0?'up':'down')+' over '+recEsc(d.days)+' days</div></div>'
+          +'<div class="rt"><div class="r hb-num">'+recEsc(m.rating_then)+' \u2192 '+recEsc(m.rating_now)+'<small>\u2605</small></div>'
+          +(m.reviews_added?'<div class="c"><span class="hb-num">+'+recEsc(m.reviews_added)+'</span> reviews</div>':'')+'</div></div>';}
+      var when=d.compared_from?mdy(d.compared_from):'';
+      var sub=!d.compared_from?'Openings and closings show once there are two weekly checks to compare.'
+        :(rows?'New and gone since the check on <span class="hb-num">'+when+'</span>':'No competitor opened, closed or moved past normal ups and downs since <span class="hb-num">'+when+'</span>.');
+      box.innerHTML='<div class="hb-kicker" style="margin-top:22px">What changed</div><div class="in2-upd" style="margin-top:4px">'+sub+'</div>'
+        +(rows?'<div class="in2-comp">'+rows+'</div>':'');
+      box.hidden=false;
+    }).catch(function(){box.hidden=true;});
+  }
   /* The competitor recommendations with their answer row and the competitor
      reviews each one cites (audit #21 / #31). An insight the checks could
      not verify promotes none, and "nothing worth acting on" is said plainly. */
@@ -12903,6 +12935,9 @@ function closeEditor(id) {
   document.getElementById('draft-actions-'+id).style.display='flex';
 }
 function regenDraft(id) {
+  // A new draft replaces the text being typed; its pending autosave must not
+  // land on top of it.
+  if (_revAutoT[id]) { clearTimeout(_revAutoT[id]); delete _revAutoT[id]; }
   var txtEl = document.getElementById('draft-txt-'+id);
   var editorEl = document.getElementById('editor-text-'+id);
   var boxEl = document.getElementById('draft-box-'+id);
@@ -12959,10 +12994,63 @@ function regenDraft(id) {
     toast(err.message||'Network error — try again','error');
   });
 }
+/* An edit to a drafted reply is kept as it is typed, as on the phone
+   (ReviewDetailViewModel.scheduleDraftSave, 800ms): it used to be saved only
+   by "Save & approve", so an owner who fixed a draft and closed the tab lost
+   the fix. The same /api/save-draft body; nothing is sent for text that
+   matches what is stored (the card's draft-txt), and the reply guard's
+   answer updates the card's flag. Only a card that already has a draft
+   autosaves - an undrafted card's own reply is saved by its button. */
+var _revAutoT = {};
+function _revAutoStatus(id, text){
+  var ta = document.getElementById('editor-text-'+id);
+  if (!ta) return;
+  var st = document.getElementById('editor-saved-'+id);
+  if (!st) {
+    var row = ta.nextElementSibling;
+    if (!row) return;
+    st = document.createElement('span');
+    st.id = 'editor-saved-'+id;
+    st.className = 'ac-status';
+    st.setAttribute('aria-live', 'polite');
+    row.appendChild(st);
+  }
+  st.textContent = text;
+}
+function _revAutoSave(id){
+  delete _revAutoT[id];
+  var ta = document.getElementById('editor-text-'+id), tx = document.getElementById('draft-txt-'+id);
+  if (!ta || !tx) return;
+  var draft = ta.value.trim();
+  if (!draft || draft === (tx.textContent || '').trim()) return;
+  if (_revInflight['save'+id]) return;
+  _revAutoStatus(id, 'Saving\u2026');
+  fetch('/api/save-draft/'+id, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({draft:draft})
+  }).then(apiJson).then(function(sd){
+    if (!sd.ok) { _revAutoStatus(id, ''); toast(sd.error||'Couldn\u2019t save your edit','error'); return; }
+    var t = document.getElementById('draft-txt-'+id);
+    if (t) t.textContent = draft;
+    _revShowFlag(id, sd.needs_review ? (sd.review_reason || 'states something Cavnar AI cannot confirm') : '');
+    _revAutoStatus(id, 'Saved');
+  }).catch(function(){ _revAutoStatus(id, 'Not saved \u2014 check your connection'); });
+}
+document.addEventListener('input', function(e){
+  var ta = e.target;
+  if (!ta || !ta.id || ta.id.indexOf('editor-text-') !== 0) return;
+  var id = ta.id.slice(12);
+  if (!document.getElementById('draft-txt-'+id)) return;
+  if (_revAutoT[id]) clearTimeout(_revAutoT[id]);
+  _revAutoStatus(id, '');
+  _revAutoT[id] = setTimeout(function(){ _revAutoSave(id); }, 800);
+});
 function saveDraft(id) {
   var editorEl = document.getElementById('editor-text-'+id);
   var draft = editorEl ? editorEl.value.trim() : '';
   if (!draft) { toast('Response cannot be empty','warning'); return; }
+  // Save & approve saves the text itself; a pending autosave is not needed.
+  if (_revAutoT[id]) { clearTimeout(_revAutoT[id]); delete _revAutoT[id]; }
   if (_revInflight['save'+id]) return;
   _revInflight['save'+id] = 1;
   var done = cbtnBusy(_revBtn('saveDraft', id), 'Saving\u2026');
@@ -12980,7 +13068,8 @@ function saveDraft(id) {
     if (sd.needs_review && !_revFlagOk(id, sd.review_reason || 'states something Cavnar AI cannot confirm')) {
       settle(); toast('Saved as a draft — not posted','success'); return;
     }
-    fetch('/approve/'+id, {method:'POST'}).then(apiJson).then(function(ad){
+    fetch('/approve/'+id, {method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({confirm_flagged:!!sd.needs_review})}).then(apiJson).then(function(ad){
       settle();
       if (ad.ok) {
         var txtEl = document.getElementById('draft-txt-'+id);
@@ -14376,7 +14465,7 @@ function switchTab(n,btn){
   if(n==='reviews'){var _rvA=document.getElementById('rv-panel-analytics');if(!_rvA||_rvA.open)_rvLoadAnalytics();}
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
   if(n==='inventory'){switchFcTab('analytics');}
-  if(n==='competitor'){switchIntelTab('competitors');if(typeof in2LoadRecs==='function'&&cavStale('intel-recs'))in2LoadRecs();}
+  if(n==='competitor'){switchIntelTab('competitors');if(typeof in2LoadRecs==='function'&&cavStale('intel-recs'))in2LoadRecs();if(typeof in2LoadMoves==='function'&&cavStale('intel-moves'))in2LoadMoves();}
   if(n==='labor'){renderBars();if(_perfTab==='trend')loadLaborTrend(false);else renderLaborHero();if(typeof renderRoleDonut==='function'&&!window._donutDone){window._donutDone=true;renderRoleDonut();}if(window.loadScheduleHistory&&!window._schedHistDone){window._schedHistDone=true;loadScheduleHistory();}}
   if(n==='account'&&window.acctOnOpen){acctOnOpen();}
   // Recent topics load from the metrics poller's first tick (refreshMetrics);
@@ -15081,7 +15170,8 @@ function sendReviewRequest(btn){
   fetch('/api/send-review-request', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({name: name, email: email, phone: phone, sms_consent: consent})
+    body: JSON.stringify({name: name, email: email, phone: phone, sms_consent: consent,
+                          message: (document.getElementById('rr-message') || {value: ''}).value.trim()})
   }).then(apiJson).then(function(d){
     btn.disabled = false;
     btn.innerHTML = orig;
@@ -15093,6 +15183,7 @@ function sendReviewRequest(btn){
       emailEl.value = '';
       if(phoneEl) phoneEl.value = '';
       nameEl.value  = '';
+      var msgEl = document.getElementById('rr-message'); if(msgEl) msgEl.value = '';
       loadReviewRequestStats();
       setTimeout(function(){ document.getElementById('rr-modal').style.display='none'; }, 800);
     } else {
@@ -15175,11 +15266,14 @@ function _revBtn(fn, id){ return document.querySelector('[onclick="' + fn + '(' 
 // A flagged draft (the reply guard found an action, a comp or a staff
 // conversation nobody told Cavnar about) is read before it posts: the
 // reason is on the card, and Approve asks once more (M-1).
+// The server holds the same line: a flagged draft posts only with
+// confirm_flagged, which is sent only after this confirm was shown.
+function _revFlagReason(id){
+  var f=document.getElementById('draft-flag-'+id);
+  return f?(f.getAttribute('data-flag-reason')||''):'';
+}
 function _revFlagOk(id, reason){
-  if(!reason){
-    var f=document.getElementById('draft-flag-'+id);
-    reason=f?f.getAttribute('data-flag-reason'):'';
-  }
+  if(!reason)reason=_revFlagReason(id);
   if(!reason)return true;
   return window.confirm('This reply '+reason+'. Cavnar AI can’t confirm that. Post it anyway?');
 }
@@ -15201,15 +15295,24 @@ function _revShowFlag(id, reason){
   d.appendChild(ic);d.appendChild(body);
   txt.parentNode.insertBefore(d,txt.nextSibling);
 }
-function approveR(id){
+function approveR(id, confirmed){
   if(_revInflight['approve'+id])return;
-  if(!_revFlagOk(id))return;
+  var _flag=confirmed?'':_revFlagReason(id);
+  if(_flag&&!_revFlagOk(id,_flag))return;
+  var _conf=!!confirmed||!!_flag;
   _revInflight['approve'+id]=1;
   var _appBtn=_revBtn('approveR',id)||document.querySelector('#rc-'+id+' .cbtn-primary');
   var done=cbtnBusy(_appBtn,'Approving\u2026');
   function settle(){delete _revInflight['approve'+id];done();}
-  fetch('/approve/'+id,{method:'POST'}).then(apiJson).then(function(d){
+  fetch('/approve/'+id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm_flagged:_conf})}).then(apiJson).then(function(d){
   settle();
+  // Flagged since this card was drawn (an edit on the phone, the
+  // auto-approve hold): show why, ask, and only then post.
+  if(!d.ok&&d.needs_review&&!_conf){
+    _revShowFlag(id,d.review_reason||'states something Cavnar AI cannot confirm');
+    if(_revFlagOk(id,d.review_reason||'states something Cavnar AI cannot confirm'))approveR(id,true);
+    return;
+  }
   if(d.ok){
     var card = document.getElementById('rc-'+id);
     card.classList.remove('urgent','skipped');
@@ -15643,6 +15746,8 @@ function clearMktPhoto(){
 
 function _mktBody(){
   var el = document.getElementById('mkoutput');
+  // A failed generation's message is not copy to save, preview or post.
+  if(el.getAttribute('data-gen-error')) return '';
   var text = (el.innerText || el.textContent || '').trim();
   return (text === 'Select a type and click Generate.') ? '' : text;
 }
@@ -15692,17 +15797,23 @@ function openMktPreview(){
 function closeMktPreview(){ document.getElementById('mkt-preview-modal').style.display = 'none'; }
 
 // ── Drafts ──────────────────────────────────────────────────────────────────
+// The draft the composer holds, once opened or saved: a second save updates
+// it (the server's save_draft takes the id) instead of adding a copy. A new
+// generation starts a new draft (genContent clears it).
+window._mktDraftId = null;
 function saveMktDraft(){
   var body = _mktBody();
   if(!body) return toast('Generate content first','warning');
   var btn = document.getElementById('mkt-save-draft-btn');
   if(btn){ btn.disabled = true; btn.style.opacity = '0.6'; }
+  var payload = {body: body, topic: document.getElementById('mktopic').value.trim(),
+                 content_type: selCt, media_id: window._mktPhotoId};
+  if(window._mktDraftId) payload.id = window._mktDraftId;
   fetch('/api/marketing/drafts', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({body: body, topic: document.getElementById('mktopic').value.trim(),
-                          content_type: selCt, media_id: window._mktPhotoId})})
+    body: JSON.stringify(payload)})
     .then(apiJson).then(function(d){
       if(btn){ btn.disabled = false; btn.style.opacity = ''; }
-      if(d.ok){ toast('Draft saved','success'); loadMktDrafts(); }
+      if(d.ok){ if(d.id) window._mktDraftId = d.id; toast('Draft saved','success'); loadMktDrafts(); }
       else toast(d.error || 'Could not save','error');
     }).catch(function(){ if(btn){ btn.disabled = false; btn.style.opacity = ''; } toast('Could not save','error'); });
 }
@@ -15727,6 +15838,7 @@ function loadMktDrafts(){
         + '<span style="font-size:11px;font-weight:700;color:' + (expired ? 'var(--ink3)' : (approved ? '#2d6a4f' : 'var(--ember2)')) + '">' + (expired ? 'Expired' : (approved ? 'Approved' : 'Draft')) + '</span>'
         + '</div>'
         + '<div style="font-size:12px;color:var(--ink3);line-height:1.5;margin-top:3px;max-height:38px;overflow:hidden">' + _escHtml(x.body) + '</div>'
+        + _mktDraftByline(x)
         + (expired ? '<div style="font-size:11.5px;color:var(--ink3);margin-top:3px">Its night has passed, so it can\u2019t be approved or sent.</div>' : '')
         + '<div style="display:flex;gap:14px;margin-top:6px">'
         + (expired ? '' : '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="useMktDraft(' + x.id + ')">Open</button>')
@@ -15738,12 +15850,39 @@ function loadMktDrafts(){
     window._mktDrafts = d.drafts;
   }).catch(function(){});
 }
+// Who wrote it and who released it, as the phone shows them.
+function _mktDraftByline(x){
+  var parts = [];
+  if(x.created_by_name) parts.push('Written by ' + _escHtml(x.created_by_name));
+  if(x.status === 'approved' && x.approved_by_name) parts.push('approved by ' + _escHtml(x.approved_by_name));
+  if(!parts.length) return '';
+  return '<div style="font-size:11.5px;color:var(--ink3);margin-top:3px">' + parts.join(' \u00b7 ') + '</div>';
+}
 function useMktDraft(id){
   var drafts = window._mktDrafts || [];
   for(var i=0;i<drafts.length;i++){
     if(drafts[i].id === id){
-      document.getElementById('mkoutput').textContent = drafts[i].body;
-      document.getElementById('mktopic').value = drafts[i].topic || '';
+      var x = drafts[i];
+      document.getElementById('mkoutput').textContent = x.body;
+      document.getElementById('mkoutput').removeAttribute('data-gen-error');
+      document.getElementById('mktopic').value = x.topic || '';
+      window._mktDraftId = x.id;
+      // The type and the photo come back with the words, so a save or a
+      // post from here is the draft that was saved, not a photo-less copy.
+      var ctBtn = x.content_type ? document.querySelector('.ct-btn[data-type="' + x.content_type + '"]') : null;
+      if(ctBtn) selectCt(x.content_type, ctBtn);
+      if(x.media_id && x.media_token){
+        window._mktPhotoId = x.media_id;
+        window._mktPhotoUrl = '/m/' + x.media_token + '.jpg';
+        var thumb = document.getElementById('mkt-photo-thumb');
+        if(thumb){ thumb.src = window._mktPhotoUrl; thumb.style.display = 'block'; }
+        var clr = document.getElementById('mkt-photo-clear'); if(clr) clr.style.display = 'inline-block';
+        var pbtn = document.getElementById('mkt-photo-btn'); if(pbtn) pbtn.textContent = 'Change photo';
+        var prow = document.getElementById('mkt-photo-row');
+        if(prow && _igConnected && x.content_type !== 'google_promo') prow.style.display = 'flex';
+      } else if(window._mktPhotoId){
+        clearMktPhoto();
+      }
       updateCharCount();
       document.getElementById('mkoutput').scrollIntoView({behavior:'smooth', block:'center'});
       return;
@@ -15758,6 +15897,7 @@ function approveMktDraft(id){
     }).catch(function(){});
 }
 function deleteMktDraft(id){
+  if(window._mktDraftId === id) window._mktDraftId = null;
   fetch('/api/marketing/drafts/' + id, {method:'DELETE'})
     .then(function(){ loadMktDrafts(); }).catch(function(){});
 }
@@ -20369,6 +20509,7 @@ function genContent(fromCalendar){
   if(btn){btn.disabled=true;btn.style.opacity='0.6';}
   box.style.fontStyle='normal';
   box.style.color='var(--ink3)';
+  box.removeAttribute('data-gen-error');
   // The orb loader, not a line of text (DS §10, friction #43).
   box.innerHTML=window.cavnarLoading?cavnarLoading('Writing it in your voice…',22,'composing'):'<div class="dr-pulse wide"><i></i></div>';
   fetch('/api/generate-content',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:selCt,topic:topic,from_calendar:!!fromCalendar})})
@@ -20378,8 +20519,19 @@ function genContent(fromCalendar){
       if(btn){btn.disabled=false;btn.style.opacity='';}
       box.style.fontStyle='normal';
       box.style.color='var(--ink)';
+      if(!d.content){
+        // The server's reason (rate limit, AI paused), never typed into the
+        // box as if it were the post a Save would keep.
+        box.style.color='var(--red)';
+        box.style.fontStyle='italic';
+        box.textContent=d.error||'Generation failed \u2014 try again.';
+        box.setAttribute('data-gen-error','1');
+        return;
+      }
       window._lastPostedTopic=topic;
-      var _genContent = d.content||'Generation failed — try again.';
+      // New words are a new draft, not an edit of the one last opened.
+      window._mktDraftId=null;
+      var _genContent = d.content||'';
       // Generated copy is text (the box is read back with innerText), never
       // markup: a '<' in it must not become HTML.
       typewriterEffect(box, _genContent, true);
@@ -20449,6 +20601,7 @@ function genContent(fromCalendar){
       box.style.color='var(--red)';
       box.style.fontStyle='italic';
       box.textContent='Content generation unavailable — check back shortly.';
+      box.setAttribute('data-gen-error','1');
       _genInFlight=false;
       if(btn){btn.disabled=false;btn.style.opacity='';}
     });
@@ -21843,7 +21996,7 @@ function refreshCompetitorIntel(btn){
       fetch('/api/competitor-intel-status/'+jobId).then(apiJson).then(function(s){
         if(s.status === 'pending'){setTimeout(poll, 2000);return;}
         _resetBtn();
-        if(s.ok){toast('Competitor data updated','success');cavRefreshFromServer(['panel-competitor'],function(){if(typeof switchIntelTab==='function')switchIntelTab('competitors');if(typeof in2LoadRecs==='function')in2LoadRecs();});}
+        if(s.ok){toast('Competitor data updated','success');cavRefreshFromServer(['panel-competitor'],function(){if(typeof switchIntelTab==='function')switchIntelTab('competitors');if(typeof in2LoadRecs==='function')in2LoadRecs();if(typeof in2LoadMoves==='function')in2LoadMoves();});}
         else{toast('Error: '+(s.error||'failed'),'error');}
       }).catch(function(){setTimeout(poll, 2000);});
     };
@@ -21932,7 +22085,7 @@ function runAIVisibility(btn) {
   // fetch, here for the ~10s of live AI queries.
   var _aivRadar = document.getElementById('aiv-radar');
   if (_aivRadar) _aivRadar.innerHTML = cavnarRadarHtml('', 150);
-  var msgs = ['Querying AI assistants...', 'Running local search queries...', 'Scoring GBP completeness...', 'Building your checklist...'];
+  var msgs = ['Querying AI assistants...', 'Running local search queries...', 'Scoring your listing strength...', 'Building your checklist...'];
   var mi = 0;
   var ticker = setInterval(function() {
     mi = (mi + 1) % msgs.length;
@@ -24921,7 +25074,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       var tries=0;(function poll(){tries++;if(tries>40){toast('Still working — check back in a minute','error');return;}
         fetch('/api/competitor-intel-status/'+d.job_id).then(apiJson).then(function(s){
           if(s.status==='pending'){setTimeout(poll,2000);return;}
-          if(s.ok){toast('Competitors updated','success');cavRefreshFromServer(['panel-competitor'],function(){if(typeof switchIntelTab==='function')switchIntelTab('competitors');if(typeof in2LoadRecs==='function')in2LoadRecs();});}
+          if(s.ok){toast('Competitors updated','success');cavRefreshFromServer(['panel-competitor'],function(){if(typeof switchIntelTab==='function')switchIntelTab('competitors');if(typeof in2LoadRecs==='function')in2LoadRecs();if(typeof in2LoadMoves==='function')in2LoadMoves();});}
           else toast(s.error||'Refresh failed','error');
         }).catch(function(){setTimeout(poll,2000);});})();
     });

@@ -77,6 +77,15 @@ final class MarketingAnalyticsViewModel {
     var performance: MarketingPerformance?
     var recentTopics: [MarketingRecentTopic] = []
     var insight: AIInsight?
+    /// GET /mobile/api/marketing/diagnosis (strategy_routes, both prefixes):
+    /// why one guest text did better than another — the web shows it under
+    /// the brief as its most likely cause; the phone never read it.
+    var diagnosis: LaborDiagnosis?
+
+    private struct DiagnosisResponse: Decodable {
+        let ok: Bool
+        let diagnosis: LaborDiagnosis?
+    }
     var isLoadingInsight = false
     var isLoading = false
     var isRefreshingMetrics = false
@@ -143,6 +152,8 @@ final class MarketingAnalyticsViewModel {
             "/mobile/api/marketing/performance-window", query: ["days": String(days)])
         async let attributionResult: (value: MarketingAttribution, body: Data)? = try? client.sendKeepingBody(
             "/mobile/api/marketing/attribution")
+        async let diagnosisResult: DiagnosisResponse? = try? client.send(
+            "/mobile/api/marketing/diagnosis", hapticOnError: false)
 
         let (p, i, t, w, a) = await (performanceResult, insightResult, topicsResult, windowResult, attributionResult)
         // A part that failed keeps what is on screen (cached or earlier)
@@ -152,6 +163,7 @@ final class MarketingAnalyticsViewModel {
         if let t { recentTopics = t.value.topics }
         window = w?.value ?? window
         attribution = a?.value ?? attribution
+        diagnosis = await diagnosisResult?.diagnosis ?? diagnosis
         isLoadingInsight = false
         guard let p else { return }
         cachedAt = nil

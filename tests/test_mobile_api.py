@@ -3452,8 +3452,11 @@ def test_google_post_requires_a_connected_listing(client, db_path):
     token = _login(client, db_path, rid)
     resp = client.post("/mobile/api/marketing/google-post",
                        json={"summary": "Fresh menu today"}, headers=_auth_headers(token))
-    assert resp.status_code == 400
+    # One body with the web's /api/post-to-google (parity round): a 409,
+    # and the product's own name for where to connect it.
+    assert resp.status_code == 409
     assert "connect google business" in resp.get_json()["error"].lower()
+    assert "Account → Connections" in resp.get_json()["error"]
 
 
 def test_google_post_publishes_and_logs_the_piece(client, db_path, monkeypatch):
