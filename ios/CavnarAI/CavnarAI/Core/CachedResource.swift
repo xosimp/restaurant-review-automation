@@ -53,3 +53,87 @@ struct CachedResource<T: Codable> {
         return decoder
     }
 }
+
+/// A screen's last good answer, kept as the server's own bytes.
+///
+/// CachedResource needs its payload Codable, and Reviews, Intel, Marketing,
+/// Food Cost and the Daily Report decode into Decodable-only models (custom
+/// init(from:), lenient fields) that would each need a hand-written encode
+/// to round-trip. So these keep the raw body `APIClient.sendKeepingBody`
+/// hands back, and decode it again with the very decoder the live answer
+/// went through — a warm start can never read differently from the fetch
+/// that stored it.
+///
+/// Same rules as Home's cache: in SecureCache (complete file protection,
+/// purged on sign-out and on a location switch), keyed by user and
+/// restaurant (SessionScope.key), and never written by a fetch that
+/// finished after the session it started in had ended.
+@MainActor
+struct ResponseCache<T: Decodable> {
+    let base: String
+
+    init(_ base: String) { self.base = base }
+
+    struct Hit {
+        let value: T
+        /// When the copy was stored — what "Showing data from 2h ago" counts.
+        let savedAt: Date
+    }
+
+    /// The stored copy for the current session, read off the main thread.
+    func load() async -> Hit? {
+        let key = SessionScope.key(base)
+        let read = await Task.detached(priority: .userInitiated) { () -> (Data, Date?)? in
+            guard let data = SecureCache.read(key: key) else { return nil }
+            return (data, SecureCache.modifiedAt(key: key))
+        }.value
+        guard let read, let value = try? JSONDecoder.cavnar.decode(T.self, from: read.0) else {
+            return nil
+        }
+        return Hit(value: value, savedAt: read.1 ?? .distantPast)
+    }
+
+    /// Stores a live answer's body — unless the session moved on (sign-out,
+    /// a location switch) while it was in flight: the purge has already run,
+    /// and writing now would put the old account's data back (CLIENT-26).
+    func save(_ body: Data, generation: Int) {
+        guard generation == SessionScope.generation else { return }
+        SecureCache.write(body, key: SessionScope.key(base))
+    }
+}
+
+/// Several answers kept as one ResponseCache entry: each server body under
+/// its own name, `{"n":30,"a":<body>,"b":<body>}`. Built from bytes the
+/// server already sent as JSON, so the envelope is JSON too; a part that
+/// did not answer is left out and decodes as nil.
+enum CacheEnvelope {
+    static func make(_ parts: [(String, Data?)], numbers: [(String, Int)] = []) -> Data {
+        var fields: [Data] = numbers.map { Data("\"\($0.0)\":\($0.1)".utf8) }
+        for (name, body) in parts {
+            guard let body, !body.isEmpty else { continue }
+            fields.append(Data("\"\(name)\":".utf8) + body)
+        }
+        var out = Data("{".utf8)
+        for (i, field) in fields.enumerated() {
+            if i > 0 { out.append(Data(",".utf8)) }
+            out.append(field)
+        }
+        out.append(Data("}".utf8))
+        return out
+    }
+}
+
+/// The line a screen shows while its figures came from the device cache —
+/// Home's wording (HomeViewModel.stalenessNotice), for every cached screen.
+enum CacheFreshness {
+    /// "Showing data from 12m ago" / "… 3h ago"; nil when nothing on screen
+    /// came from the cache, or it is under five minutes old (not worth a
+    /// line).
+    static func notice(savedAt: Date?, now: Date = Date()) -> String? {
+        guard let savedAt else { return nil }
+        let minutes = Int(now.timeIntervalSince(savedAt) / 60)
+        if minutes < 5 { return nil }
+        if minutes < 60 { return "Showing data from \(minutes)m ago" }
+        return "Showing data from \(minutes / 60)h ago"
+    }
+}

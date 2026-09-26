@@ -27,6 +27,7 @@ struct MarketingAnalyticsSection: View {
                     .padding(.vertical, 24)
                     .frame(maxWidth: .infinity)
             } else {
+                CachedDataNotice(text: viewModel.stalenessNotice)
                 periodSwitcher
                 // "Metrics synced 9/21/26" — amber when the nightly pull is
                 // stale or failing (DH4-8), so a flat week reads as what it is.

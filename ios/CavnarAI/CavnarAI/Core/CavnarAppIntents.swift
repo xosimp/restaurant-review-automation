@@ -3,7 +3,8 @@ import Foundation
 
 /// App Shortcuts: Siri, Spotlight, the Action button and the Shortcuts app
 /// reach the same places the Home Screen quick actions do (Friction audit
-/// #31, U3-12 b). Every intent but Undo only OPENS the app somewhere — it
+/// #31, U3-12 b). Every intent but Undo and "How was last night?" (which
+/// only reads the widget snapshot aloud) only OPENS the app somewhere — it
 /// never sends, posts or approves on its own; anything outward still meets
 /// the confirm card inside the app. The lock screen still stands between
 /// Siri and the data: the destination waits in SystemEntry until the scene
@@ -102,6 +103,39 @@ struct UndoSoonestPendingSendIntent: AppIntent {
     }
 }
 
+/// "How was last night?" — answered aloud from the widget snapshot, without
+/// opening the app: the net, the change against the same weekday last week,
+/// the net against budget (a login allowed it) and the night's verdict.
+/// Reads only what the app last wrote (WidgetSnapshot), never the API: an
+/// intent that could sign in would be a second session to secure. Needs an
+/// unlocked device — these are the restaurant's sales, spoken out loud.
+struct LastNightSummaryIntent: AppIntent {
+    static let title: LocalizedStringResource = "How was last night?"
+    static let description = IntentDescription("Tells you last night's net sales, against last week and budget.")
+    static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
+    static let openAppWhenRun: Bool = false
+
+    init() {}
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        .result(dialog: "\(Self.answer(WidgetSnapshot.load(), restaurantId: SessionScope.activeRestaurantId))")
+    }
+
+    /// The sentence, or why there isn't one. A snapshot from another
+    /// location than the one this phone is on answers nothing.
+    static func answer(_ snapshot: WidgetSnapshot?, restaurantId: Int, now: Date = Date()) -> String {
+        guard let snapshot, restaurantId > 0 else {
+            return "Sign in to Cavnar AI to hear last night's numbers."
+        }
+        if let stamped = snapshot.restaurantId, stamped != restaurantId {
+            return "Open Cavnar AI to refresh last night's numbers."
+        }
+        return snapshot.lastNightSentence(now: now)
+            ?? "There's no report for last night yet. Open Cavnar AI to check on it."
+    }
+}
+
 struct CavnarShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(intent: OpenAskCavnarIntent(),
@@ -111,9 +145,14 @@ struct CavnarShortcuts: AppShortcutsProvider {
                     phrases: ["How did last night go in \(.applicationName)",
                               "Last night's sales in \(.applicationName)"],
                     shortTitle: "Last night", systemImageName: "chart.bar.doc.horizontal")
+        AppShortcut(intent: LastNightSummaryIntent(),
+                    phrases: ["How was last night in \(.applicationName)",
+                              "Last night's numbers from \(.applicationName)"],
+                    shortTitle: "How was last night?", systemImageName: "dollarsign.circle")
         AppShortcut(intent: OpenReplyQueueIntent(),
                     phrases: ["Approve replies in \(.applicationName)",
-                              "Approve drafted replies in \(.applicationName)"],
+                              "Approve drafted replies in \(.applicationName)",
+                              "Open replies waiting in \(.applicationName)"],
                     shortTitle: "Approve replies", systemImageName: "checkmark.bubble")
         AppShortcut(intent: ScanInvoiceIntent(),
                     phrases: ["Scan an invoice in \(.applicationName)"],

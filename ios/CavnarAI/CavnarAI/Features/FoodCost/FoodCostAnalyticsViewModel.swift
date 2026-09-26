@@ -82,6 +82,16 @@ final class FoodCostAnalyticsViewModel {
         await load()
     }
 
+    /// The last good analytics + trend, as one envelope (CacheEnvelope).
+    private struct CachedAnalytics: Decodable {
+        let analytics: FoodCostAnalytics
+        let trend: FoodCostTrend?
+    }
+    @ObservationIgnored private let cache = ResponseCache<CachedAnalytics>("foodcost.analytics")
+    /// When the cached copy on screen was stored; nil once a live load lands.
+    private(set) var cachedAt: Date?
+    var stalenessNotice: String? { CacheFreshness.notice(savedAt: cachedAt) }
+
     func load() async {
         isLoading = analytics == nil
         errorMessage = nil
@@ -94,13 +104,31 @@ final class FoodCostAnalyticsViewModel {
         // Analytics is NOT best-effort: its failure is the difference between
         // a tab and a blank page, so it keeps whatever was already on screen
         // and reports why rather than assigning nil over it.
-        async let trendResult: FoodCostTrend? = try? client.send("/mobile/api/food-cost/trend")
+        //
+        // The analytics and the trend are painted from the device cache
+        // first (ResponseCache) — the CFO read and the reprice suggestions
+        // are not: each is a recommendation the owner may act on, and an
+        // old one is not something to act on.
+        let generation = SessionScope.generation
+        if analytics == nil, let hit = await cache.load() {
+            analytics = hit.value.analytics
+            trend = hit.value.trend?.weeks ?? []
+            trendTarget = hit.value.trend?.target
+            cachedAt = hit.savedAt
+            isLoading = false
+        }
+        async let trendResult: (value: FoodCostTrend, body: Data)? = try? client.sendKeepingBody(
+            "/mobile/api/food-cost/trend")
         async let cfoResult: FoodCostCFO? = try? client.send("/mobile/api/food-cost/cfo")
         async let repriceResult: RepriceSuggestions? = try? client.send(
             "/mobile/api/food-cost/reprice", hapticOnError: false)
+        var freshBody: Data?
         do {
-            let fresh: FoodCostAnalytics = try await client.send("/mobile/api/food-cost/analytics")
-            analytics = fresh
+            let fresh: (value: FoodCostAnalytics, body: Data) = try await client.sendKeepingBody(
+                "/mobile/api/food-cost/analytics")
+            analytics = fresh.value
+            freshBody = fresh.body
+            cachedAt = nil
             lastLoadedAt = Date()
         } catch is CancellationError {
             // View went away mid-fetch; not a failure.
@@ -112,8 +140,16 @@ final class FoodCostAnalyticsViewModel {
             if analytics == nil { errorMessage = "Couldn't load food cost right now." }
         }
         let trendPayload = await trendResult
-        trend = trendPayload?.weeks ?? []
-        trendTarget = trendPayload?.target
+        // A cached trend stays beside cached figures; beside live ones a
+        // failed trend is the chart's own "not enough data", as before.
+        if trendPayload != nil || cachedAt == nil {
+            trend = trendPayload?.value.weeks ?? []
+            trendTarget = trendPayload?.value.target
+        }
+        if let freshBody {
+            cache.save(CacheEnvelope.make([("analytics", freshBody), ("trend", trendPayload?.body)]),
+                       generation: generation)
+        }
         let cfoPayload = await cfoResult
         cfo = (cfoPayload?.ok == true) ? cfoPayload : nil
         let repricePayload = await repriceResult

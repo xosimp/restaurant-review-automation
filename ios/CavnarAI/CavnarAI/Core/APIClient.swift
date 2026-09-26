@@ -202,6 +202,23 @@ actor APIClient {
         // repeated on a guess, so those opt in explicitly.
         retryTransient: Bool? = nil
     ) async throws -> Response {
+        try await sendKeepingBody(path, method: method, body: body, query: query, hapticOnError: hapticOnError,
+                                  timeout: timeout, retryTransient: retryTransient).value
+    }
+
+    /// `send`, also handing back the body the answer was decoded from — so a
+    /// screen can keep that exact payload for its next warm start
+    /// (ResponseCache) without every Decodable model it holds having to be
+    /// Encodable too. Same auth, retries, status handling and haptics.
+    func sendKeepingBody<Response: Decodable>(
+        _ path: String,
+        method: HTTPMethod = .get,
+        body: (any Encodable)? = nil,
+        query: [String: String] = [:],
+        hapticOnError: Bool = true,
+        timeout: TimeInterval? = nil,
+        retryTransient: Bool? = nil
+    ) async throws -> (value: Response, body: Data) {
         var request = try buildRequest(path: path, method: method.rawValue, body: body, query: query)
         if let timeout { request.timeoutInterval = timeout }
         let mayRetry = retryTransient ?? (method == .get)
@@ -238,7 +255,9 @@ actor APIClient {
             throw classified
         }
 
-        return try await finish(data: data, response: response, sentToken: sentToken, hapticOnError: hapticOnError)
+        let value: Response = try await finish(data: data, response: response, sentToken: sentToken,
+                                               hapticOnError: hapticOnError)
+        return (value, data)
     }
 
     /// True only when this task was actually cancelled — its view went away.
@@ -376,11 +395,16 @@ actor APIClient {
                 expireIfCurrent(sentToken)
                 throw SessionExpiredError()
             }
-            throw APIError(message: "Session expired")
+            throw APIError(message: "Session expired", status: 401)
         }
         if http.statusCode >= 400 {
+            // The status rides along so the queue can tell "try again later"
+            // (a 5xx, a restarting server) from the server's own "no" (a 4xx)
+            // — see PendingWriteQueue.isRefusal.
             let envelope = try? JSONDecoder.cavnar.decode(ErrorEnvelope.self, from: data)
-            throw APIError(message: envelope?.error ?? "Something went wrong (\(http.statusCode)).")
+            throw APIError(kind: envelope?.kind ?? .server,
+                           message: envelope?.error ?? "Something went wrong (\(http.statusCode)).",
+                           status: http.statusCode, body: data)
         }
     }
 

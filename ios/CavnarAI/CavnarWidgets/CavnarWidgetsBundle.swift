@@ -10,6 +10,7 @@ import WidgetKit
 struct CavnarWidgetsBundle: WidgetBundle {
     var body: some Widget {
         CavnarWaitingWidget()
+        CavnarLastNightWidget()
         PendingSendLiveActivity()
     }
 }

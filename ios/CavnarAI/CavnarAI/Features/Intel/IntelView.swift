@@ -44,6 +44,7 @@ struct IntelView: View {
                 VStack(alignment: .leading, spacing: 32) {
                     if subTab == .competitors {
                         if let summary = viewModel.summary {
+                            CachedDataNotice(text: viewModel.stalenessNotice)
                             if !summary.hasData {
                                 emptyState
                             } else {

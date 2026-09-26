@@ -376,13 +376,29 @@ final class DailyReportListViewModel {
 
     init(client: APIClient = .shared) { self.client = client }
 
+    /// The last good list, painted before the fetch (ResponseCache).
+    @ObservationIgnored private let cache = ResponseCache<DSRListResponse>("dsr.list")
+    /// When the cached list on screen was stored; nil once a live load lands.
+    private(set) var cachedAt: Date?
+    var stalenessNotice: String? { CacheFreshness.notice(savedAt: cachedAt) }
+
     func load() async {
+        let generation = SessionScope.generation
+        if reports.isEmpty, let hit = await cache.load() {
+            reports = hit.value.reports
+            view = hit.value.view
+            reachedEnd = hit.value.reports.count < Self.pageSize
+            cachedAt = hit.savedAt
+        }
         isLoading = reports.isEmpty
         errorMessage = nil
         defer { isLoading = false }
         do {
-            let r: DSRListResponse = try await client.send("/mobile/api/dsr", query: ["limit": String(Self.pageSize)],
-                                                           hapticOnError: false)
+            let fetched: (value: DSRListResponse, body: Data) = try await client.sendKeepingBody(
+                "/mobile/api/dsr", query: ["limit": String(Self.pageSize)], hapticOnError: false)
+            let r = fetched.value
+            cache.save(fetched.body, generation: generation)
+            cachedAt = nil
             reports = r.reports
             view = r.view
             reachedEnd = r.reports.count < Self.pageSize

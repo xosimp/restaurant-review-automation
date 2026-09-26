@@ -201,6 +201,9 @@ struct ReviewsListView: View {
                             .listRowSeparator(.hidden)
                             .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 6, trailing: 16))
                     }
+                    if let notice = viewModel.stalenessNotice {
+                        CachedDataNotice(text: notice).listRowBackground(Color.clear).listRowSeparator(.hidden)
+                    }
                     // A refresh or chip change that failed over rows already
                     // on screen: say so above them, with the way to retry.
                     if let error = viewModel.errorMessage {

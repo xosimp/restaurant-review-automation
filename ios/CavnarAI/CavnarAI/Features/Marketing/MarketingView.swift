@@ -55,6 +55,7 @@ struct MarketingView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     if subTab == .content {
                         if viewModel.stats != nil {
+                            CachedDataNotice(text: viewModel.stalenessNotice)
                             outcomeRow
                             // How current the post metrics are (DH4-8),
                             // amber when the nightly pull is stale or failing.

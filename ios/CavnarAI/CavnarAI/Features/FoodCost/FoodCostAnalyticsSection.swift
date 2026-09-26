@@ -27,6 +27,7 @@ struct FoodCostAnalyticsSection: View {
             // labels carry the separation at 34 just as well.
             VStack(alignment: .leading, spacing: 34) {
                 if let analytics = viewModel.analytics {
+                    CachedDataNotice(text: viewModel.stalenessNotice)
                     // Sits above everything else in the module: the numbers
                     // in the cards below are the example pantry's, not this
                     // restaurant's, and they read identically otherwise.
