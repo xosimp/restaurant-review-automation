@@ -169,8 +169,11 @@ struct ShiftEditSheet: View {
         }
         switch mode {
         case .edit(let row):
-            await viewModel.editShiftTimes(rowId: row.id, start: s, end: e)
-            dismiss()
+            if let refusal = await viewModel.editShiftTimes(rowId: row.id, start: s, end: e) {
+                error = refusal
+            } else {
+                dismiss()
+            }
         case .add:
             guard !date.isEmpty else { error = "Pick a day."; return }
             if let refusal = await viewModel.addShift(date: date, employee: employee, role: roleOf(employee),

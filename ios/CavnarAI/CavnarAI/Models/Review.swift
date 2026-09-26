@@ -20,7 +20,9 @@ struct Review: Codable, Identifiable, Hashable {
     // Set when the draft generated cleanly but states something this system
     // cannot stand behind — a specific action the restaurant may never have
     // taken. Advisory: the owner can still post it, having been shown why.
-    let draftNeedsReview: Bool?
+    // Lenient: models.get_reviews_data sent this column raw as 0/1, and a
+    // number where a Bool was declared failed the entire review list.
+    @LenientBool var draftNeedsReview: Bool?
     let draftReviewReason: String?
     // When the guest edited their own review after leaving it, and what they
     // first rated. A one-star raised to five used to stay a one-star here
@@ -28,11 +30,11 @@ struct Review: Codable, Identifiable, Hashable {
     let editedAt: String?
     let originalRating: Int?
     /// Server-computed: posted AND google AND a real review_name.
-    let canRetractFlag: Bool?
+    @LenientBool var canRetractFlag: Bool?
     /// False while the review is still waiting on Claude's analysis — its
     /// sentiment, categories and urgency are all absent, and showing it as
     /// "neutral" claimed a reading nobody made.
-    let processed: Bool?
+    @LenientBool var processed: Bool?
     /// Cavnar's own one-line read of this review. The analyser has written
     /// one on every review since the product existed and NOTHING rendered it
     /// on either platform — the only per-review AI reasoning the system

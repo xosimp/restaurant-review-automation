@@ -228,6 +228,9 @@ struct AccountSecurityDetailView: View {
             AccountNavRow(label: "Recovery email", value: live.recoveryEmail ?? "Not set") { showingRecoveryEmail = true }
             AccountSwitchRow(
                 label: "Sign-in notifications",
+                // The account owner's to change (403 owner_only otherwise).
+                detail: sessionStore.currentUser?.isOwner == true ? nil
+                    : "Only the account owner can change this.",
                 isOn: Binding(
                     get: { live.loginNotify },
                     set: { on in
@@ -243,6 +246,10 @@ struct AccountSecurityDetailView: View {
                 busy: viewModel.isTogglingLoginNotify,
                 showsDivider: false
             )
+            .disabled(sessionStore.currentUser?.isOwner != true)
+            if let error = viewModel.accountToggleError {
+                Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+            }
         }
     }
 

@@ -64,7 +64,8 @@ struct AccountView: View {
             .onChange(of: viewModel.summary != nil) { _, _ in openLinkedSection() }
             .task {
                 await viewModel.load()
-                await viewModel.loadBilling()
+                // Billing is the account owner's (403 owner_only otherwise).
+                if isOwner { await viewModel.loadBilling() }
                 // Resume an in-progress 2FA setup that a Face ID relock
                 // (e.g. backgrounding to read the emailed code) tore down —
                 // see SessionStore.pendingTwoFactorSetupEmail. Gated on
@@ -99,13 +100,16 @@ struct AccountView: View {
     }
 
     /// Opens the sheet `account/<section>` names, once Account has loaded.
+    /// The account owner's login (User.isOwner — permissions.TEAM_INVITE).
+    private var isOwner: Bool { sessionStore.currentUser?.isOwner == true }
+
     private func openLinkedSection() {
         guard viewModel.summary != nil, deepLinkRouter.pendingAccountSection != nil,
               let section = deepLinkRouter.consumePendingAccountSection() else { return }
         switch AccountLinkSection(section) {
         case .profile: showingProfile = true
         case .team: showingTeam = true
-        case .billing: showingBilling = true
+        case .billing: showingBilling = isOwner
         case .alerts: showingAlerts = true
         case .automation: showingAutomation = true
         case .connections: showingConnections = true
@@ -306,15 +310,19 @@ struct AccountView: View {
                 AccountConnectionsDetailView(viewModel: viewModel, connections: summary.connections)
             }
 
-            group("Billing") {
-                settingsRow {
-                    row("Plan & payment", systemImage: "creditcard", trailing: viewModel.billing?.amount)
-                } action: {
-                    showingBilling = true
+            // The account owner's alone, as the server holds it (billing
+            // and closing the account answer 403 owner_only to a teammate).
+            if isOwner {
+                group("Billing") {
+                    settingsRow {
+                        row("Plan & payment", systemImage: "creditcard", trailing: viewModel.billing?.amount)
+                    } action: {
+                        showingBilling = true
+                    }
                 }
-            }
-            .sheet(isPresented: $showingBilling) {
-                AccountBillingDetailView(viewModel: viewModel, billing: viewModel.billing)
+                .sheet(isPresented: $showingBilling) {
+                    AccountBillingDetailView(viewModel: viewModel, billing: viewModel.billing)
+                }
             }
 
             // Only the account's owner login can invite/remove other logins
@@ -377,11 +385,13 @@ struct AccountView: View {
                 } action: {
                     showingExportData = true
                 }
-                Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
-                settingsRow {
-                    row("Close my account", systemImage: "xmark.circle")
-                } action: {
-                    showingCloseAccount = true
+                if isOwner {
+                    Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
+                    settingsRow {
+                        row("Close my account", systemImage: "xmark.circle")
+                    } action: {
+                        showingCloseAccount = true
+                    }
                 }
             }
             .task { await changelogBadge.refresh() }

@@ -141,7 +141,8 @@ def invalidate_insight_cache(restaurant_id, prefixes=None):
 # status) and mobile_api.py's mobile views can call the exact same logic
 # without duplicating it.
 
-def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_flagged=False):
+def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_flagged=False,
+                expected_draft=None):
     """Approve (and post) one drafted reply.
 
     `confirm_flagged`: the person was shown the reply guard's flag on this
@@ -161,7 +162,11 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_
     an owner approval in auto_approve_trust or as a style example (audit
     #15: the rule's own output fed the trust that let it publish more). When
     the caller does not say, a call outside any request — the scheduler —
-    is taken as automatic: every person approves through a request."""
+    is taken as automatic: every person approves through a request.
+
+    `expected_draft`: the reply text the person approved (the phone sends
+    it). When the stored reply is different, nothing is posted and the 409
+    says so (`draft_changed`) — see models.claim_approval."""
     if auto is None:
         try:
             from flask import has_request_context
@@ -173,10 +178,13 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_
     # together (MOD-REV-4, MOD-REV-5). Nothing below — the action label, the
     # webhook, the Google post, the confirmation — happens for a loser.
     from models import claim_approval
+    if not isinstance(expected_draft, str):
+        expected_draft = None
     if not claim_approval(rid, restaurant_id, publishable_only=bool(bulk),
-                          allow_flagged=bool(confirm_flagged)):
+                          allow_flagged=bool(confirm_flagged), expected_draft=expected_draft):
         _gc = get_conn()
-        _cur = _gc.execute("SELECT response_status, deleted_at, draft_needs_review, draft_review_reason "
+        _cur = _gc.execute("SELECT response_status, deleted_at, draft_needs_review, draft_review_reason, "
+                           "draft_response "
                            "FROM reviews WHERE id=? AND restaurant_id=?",
                            (rid, restaurant_id)).fetchone()
         _gc.close()
@@ -186,6 +194,10 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_
             return {"ok": False, "error": "That review was removed."}, 409
         if _cur["response_status"] in ("approved", "posted"):
             return {"ok": False, "error": "That reply has already been approved."}, 409
+        if expected_draft is not None and (_cur["draft_response"] or "") not in (expected_draft, expected_draft.strip()):
+            return {"ok": False, "draft_changed": True,
+                    "error": "This reply changed after you approved it, so it wasn't posted. "
+                             "Open the review to read the current reply."}, 409
         if _cur["draft_needs_review"] and not bulk and not confirm_flagged:
             from drafter import owner_reason
             _why = owner_reason(_cur["draft_review_reason"])

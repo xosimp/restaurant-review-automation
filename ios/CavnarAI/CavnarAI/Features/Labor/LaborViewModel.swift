@@ -2956,10 +2956,21 @@ final class LaborViewModel {
     }
 
     /// New times on one shift, then the same re-score and save as a swap.
-    func editShiftTimes(rowId: String, start: String, end: String) async {
+    /// Refused (with the reason) when the new start is one that person
+    /// already has that day: a row's id is date-employee-start, so the two
+    /// rows would share an id — the list draws one twice and the next edit
+    /// or removal lands on whichever row it finds first. addShift already
+    /// refused the same collision. Nil when the edit was made.
+    @discardableResult
+    func editShiftTimes(rowId: String, start: String, end: String) async -> String? {
         guard var result = scheduleResult, var rows = result.previewRows,
-              let index = rows.firstIndex(where: { $0.id == rowId }),
-              let hours = Self.shiftHours(start, end) else { return }
+              let index = rows.firstIndex(where: { $0.id == rowId }) else { return "That shift is no longer on the week." }
+        guard let hours = Self.shiftHours(start, end) else { return "Times read like 4:00pm." }
+        var moved = rows[index]
+        moved.shiftStart = start
+        if moved.id != rowId, rows.contains(where: { $0.id == moved.id }) {
+            return "\(moved.employee ?? "That person") already has a shift starting at \(start) that day."
+        }
         rows[index].shiftStart = start
         rows[index].shiftEnd = end
         rows[index].scheduledHours = hours
@@ -2972,6 +2983,7 @@ final class LaborViewModel {
         Haptic.light()
         await rescoreQuality()
         await refreshEditCost()
+        return nil
     }
 
     /// Take one shift off the week.

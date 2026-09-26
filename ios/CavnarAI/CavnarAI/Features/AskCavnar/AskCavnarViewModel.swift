@@ -503,8 +503,10 @@ final class AskCavnarViewModel {
     func loadOpening(force: Bool = false) async {
         if !force, let loaded = openingLoadedAt,
            Date().timeIntervalSince(loaded) < Self.openingTTL { return }
+        let generation = SessionScope.generation
         if let response: AskOpening = try? await client.send(
-            "/mobile/api/ask-cavnar/opening", hapticOnError: false), response.ok {
+            "/mobile/api/ask-cavnar/opening", hapticOnError: false), response.ok,
+           generation == SessionScope.generation {
             opening = response
             openingLoadedAt = Date()
         }
@@ -512,14 +514,17 @@ final class AskCavnarViewModel {
 
     var opening: AskOpening?
     private var openingLoadedAt: Date?
+    /// The SessionScope generation the question in flight was asked under.
+    @ObservationIgnored private var answerGeneration = 0
     private static let openingTTL: TimeInterval = 5 * 60
 
     func refreshConversations() async {
         isLoadingConversations = true
         defer { isLoadingConversations = false }
+        let generation = SessionScope.generation
         if let response: ConversationsResponse = try? await client.send(
             "/mobile/api/ask-cavnar/conversations", hapticOnError: false),
-           response.ok {
+           response.ok, generation == SessionScope.generation {
             conversations = response.conversations ?? []
         }
     }
@@ -538,10 +543,11 @@ final class AskCavnarViewModel {
         guard !isLoading else { return }
         isOpeningConversation = true
         defer { isOpeningConversation = false }
+        let generation = SessionScope.generation
         do {
             let response: ConversationResponse = try await client.send(
                 "/mobile/api/ask-cavnar/conversations/\(conversationId)", hapticOnError: false)
-            guard response.ok else { return }
+            guard response.ok, generation == SessionScope.generation else { return }
             let stored = response.messages ?? []
             messages = stored.map { m in
                 // A reopened answer can still be rated ("Was this useful?");
@@ -577,10 +583,29 @@ final class AskCavnarViewModel {
     /// on whatever conversation and scroll position were left over, and
     /// `hasLoadedInitial` being permanently true meant even the old
     /// resume-latest-chat behavior never got a chance to run again either.
+    ///
+    /// Also called on sign-out and on every location switch (RootView), and
+    /// scoped by SessionScope.generation: the opening briefing (held for a
+    /// 5-minute TTL), the chat, the history list and a half-typed question
+    /// all belong to one user at one location. The opening used to survive,
+    /// so the next account saw the last one's briefing; a switch kept the
+    /// old location's chat, and its next question 404'd. Anything still in
+    /// flight from before — an answer streaming, a history fetch — is
+    /// dropped when it lands (`answerGeneration`, the guards above).
     func reset() {
         hasLoadedInitial = false
         conversations = []
-        startNewChat()
+        opening = nil
+        openingLoadedAt = nil
+        // Not startNewChat(): it waits out an answer in flight, and this
+        // must clear whatever the previous scope left on screen now.
+        messages = []
+        conversationId = nil
+        wantsNewConversation = true
+        errorBanner = nil
+        statusLabel = nil
+        question = ""
+        pendingScreen = nil
     }
 
     /// Permanent. If it was the chat on screen, the screen becomes a new
@@ -779,6 +804,7 @@ final class AskCavnarViewModel {
                                content: String($0.text.prefix(Self.maxHistoryTurnLength))) }
         messages.append(ChatMessage(text: asked, isUser: true))
         question = ""
+        answerGeneration = SessionScope.generation
         isLoading = true
         statusLabel = nil
         orbState = .connecting
@@ -786,6 +812,9 @@ final class AskCavnarViewModel {
 
         do {
             try await streamAnswer(for: asked, screen: screen)
+        } catch where answerGeneration != SessionScope.generation {
+            // Signed out or switched location mid-answer: this turn belongs
+            // to a chat that is no longer on screen. Nothing to roll back.
         } catch is CancellationError {
             // The screen went away mid-request — roll the turn back silently.
             if messages.last?.isUser == true { messages.removeLast() }
@@ -822,6 +851,8 @@ final class AskCavnarViewModel {
                             evidence: response.ok ? response.evidence : nil,
                             messageId: response.ok ? response.messageId : nil,
                             suggestions: response.ok ? (response.suggestions ?? []) : [])
+            } catch where answerGeneration != SessionScope.generation {
+                // The scope moved on while the fallback ran; see above.
             } catch is CancellationError {
                 if messages.last?.isUser == true { messages.removeLast() }
                 question = asked
@@ -874,6 +905,9 @@ final class AskCavnarViewModel {
             "/mobile/api/ask-cavnar/stream",
             body: StreamBody(question: question, conversation_id: conversationId,
                              new_conversation: wantsNewConversation, screen: screen)) {
+            // A stream from before a sign-out or a location switch: its
+            // events belong to a chat no longer on screen.
+            guard answerGeneration == SessionScope.generation else { continue }
             switch event.type {
             case "progress":
                 sawProgress = true
@@ -900,6 +934,7 @@ final class AskCavnarViewModel {
     /// An answered question settles which chat we're in: a New chat now
     /// has an id, and the history list needs the new/updated row.
     private func adopt(conversationId id: Int?) {
+        guard answerGeneration == SessionScope.generation else { return }
         if let id { conversationId = id }
         wantsNewConversation = false
         Task { await refreshConversations() }
@@ -908,6 +943,7 @@ final class AskCavnarViewModel {
     private func appendAnswer(from raw: String, truncated: Bool, proposals: [AskProposal],
                               evidence: AskEvidence?, messageId: Int? = nil,
                               suggestions: [AskSuggestion] = []) {
+        guard answerGeneration == SessionScope.generation else { return }
         let cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let display = cleaned.isEmpty
             ? "I didn't get an answer back that time — mind asking again?"

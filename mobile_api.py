@@ -639,8 +639,19 @@ def mobile_me(current_user):
     """Resolves a bearer token to its User — used after Google Sign-In,
     where the token arrives via a cavnarai:// deep link rather than the
     /login response body, so the app has no `user` object yet to complete
-    the session with."""
-    return jsonify(ok=True, user=_public_user(current_user))
+    the session with.
+
+    `timezone`: the active restaurant's IANA zone. The phone reads its
+    restaurant clock from here after every sign-in, switch and launch; only
+    Account and the composer used to carry it, so an offline count sheet
+    could not date itself."""
+    tz = None
+    try:
+        r = get_restaurant(current_user["restaurant_id"]) if current_user.get("restaurant_id") else None
+        tz = (getattr(r, "timezone", None) or "America/Chicago") if r else None
+    except Exception:
+        tz = None
+    return jsonify(ok=True, user=_public_user(current_user), timezone=tz)
 
 
 @mobile_bp.route("/logout", methods=["POST"])
@@ -1576,7 +1587,8 @@ def mobile_reviews_why_line(current_user):
 def mobile_approve_review(review_id, current_user):
     _body = request.get_json(silent=True) or {}
     payload, status = _capi._do_approve(review_id, current_user["restaurant_id"],
-                                        confirm_flagged=_body.get("confirm_flagged") is True)
+                                        confirm_flagged=_body.get("confirm_flagged") is True,
+                                        expected_draft=_body.get("expected_draft"))
     return jsonify(**payload), status
 
 

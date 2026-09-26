@@ -64,9 +64,18 @@ final class ReviewDetailViewModel {
             ? (response.reviewReason ?? Self.defaultFlagReason) : nil
     }
 
-    private struct ApproveBody: Encodable {
+    /// `expectedDraft`: the reply on screen when Approve was tapped. The
+    /// server posts only if that is still the stored reply (409
+    /// `draft_changed` otherwise), so an approve that lands late — from the
+    /// offline queue — can never publish an older draft than the one the
+    /// owner read, even when the edit saved ahead of it was refused.
+    struct ApproveBody: Encodable {
         let confirmFlagged: Bool
-        enum CodingKeys: String, CodingKey { case confirmFlagged = "confirm_flagged" }
+        var expectedDraft: String? = nil
+        enum CodingKeys: String, CodingKey {
+            case confirmFlagged = "confirm_flagged"
+            case expectedDraft = "expected_draft"
+        }
     }
 
     /// A 409 from approve for a draft flagged since this screen last knew.
@@ -209,7 +218,7 @@ final class ReviewDetailViewModel {
         do {
             let response: ApproveResponse = try await client.send(
                 "/mobile/api/reviews/\(review.id)/approve", method: .post,
-                body: ApproveBody(confirmFlagged: confirmFlagged)
+                body: ApproveBody(confirmFlagged: confirmFlagged, expectedDraft: editedDraft)
             )
             Haptic.success()
             let status = response.posted ? "posted" : "approved"
@@ -247,7 +256,8 @@ final class ReviewDetailViewModel {
         await PendingWriteQueue.shared.enqueue(
             path: "/mobile/api/reviews/\(review.id)/approve",
             method: "POST",
-            bodyJSON: try? JSONEncoder().encode(ApproveBody(confirmFlagged: confirmFlagged)),
+            bodyJSON: try? JSONEncoder().encode(ApproveBody(confirmFlagged: confirmFlagged,
+                                                            expectedDraft: editedDraft)),
             label: "Approve response for \(review.author ?? "review")"
         )
         hasQueuedWrite = true
