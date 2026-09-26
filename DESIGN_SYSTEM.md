@@ -13,8 +13,21 @@ Two clients, one product:
 | | Web | iOS |
 |---|---|---|
 | Tokens | CSS variables on `:root` / `[data-theme="dark"]` (`templates/dashboard.html`) | Named colour sets in `Assets.xcassets/Colors`, reached through `Color+Cavnar.swift` |
-| Themes | light + dark | dark only, by design (a dim dining room) |
+| Themes | **dark only** — `dashboard.html` sets `data-theme="dark"` before first paint; the light palette on `:root` is still in the CSS but no screen shows it (kept, not deleted) | dark only, by design (a dim dining room) — `RootView` `.preferredColorScheme(.dark)` |
 | Enforced by | `scripts/check_colors.py`, `tests/test_button_system.py`, `tests/test_frontend_rules.py` | code review + `CavnarRadius` / style structs |
+
+**Platform roles.** iOS is where the owner *decides and acts* — the bell,
+the lock-screen actions, approve / undo / deny in one tap, the widget.
+The web is where they *plan, configure and analyse* — the schedule
+builder, settings, exports, the long reads. Both show the same numbers
+in the same words; a platform may add a capability the other can't have
+(below), never a different meaning for the same component.
+
+**Platform-native capabilities** (one side only, by nature — not drift):
+
+| iOS | Web |
+|---|---|
+| Push with lock-screen action categories (`PushManager`, §12 *Lock-screen actions*) · the Home-screen / Lock Screen widget (`CavnarWaitingWidget`) · the queued-send Live Activity (`PendingSendLiveActivity`) · App Intents / Shortcuts (`Core/CavnarAppIntents.swift`) · Home-screen quick actions (`Core/SystemEntry.swift`) · haptics (`Haptic`) · document scan (`InvoiceScanSheet`, VisionKit) · the offline write queue (`PendingWriteQueue`) · Face ID and app passcode (`LockedView`, `CavnarPasscodePad`) · the privacy shield over the app switcher | The ⌘K / Ctrl+K / "/" command palette (`cavPalette`) · URL routing — every panel and deep link is a real URL (`history.pushState`) · CSV exports and templates · the wide multi-column plan and settings screens |
 
 ---
 
@@ -35,12 +48,31 @@ dark value that differs.
 | `--paper2` / `.cavnarPaper2` | `#edeae3` | `#231f1b` | Paper2 (`#121212` dark) | Card ground (iOS at 60%) |
 | `--paper3` / `.cavnarPaper3` | `#e0dbd0` | `#4a4038` | Paper3 (`#262626` dark) | Hairlines, dividers |
 | `--surface` | `#ffffff` | `#201d19` | Surface (`#121212` dark) | Raised card surface (web) |
-| `--ember` / `.cavnarEmber` | **`#c84b2f`** | `#e06444` | Ember (`#D4583A` dark) | The brand accent — see §9 |
+| `--ember` / `.cavnarEmber` | **`#c84b2f`** | `#d4583a` | Ember (`#D4583A` dark — the same) | The brand accent — see §9 |
 | `--ember2` / `.cavnarEmber2` | `#e8956a` | `#e8956a` | Ember2 | Chart lines, kickers, soft accent |
 | `--green` / `.cavnarGreen` | `#2d6a4f` | `#4ead7a` | Green | Good / improved / on target |
-| `--red` / `.cavnarRed` | `#c0392b` | `#e05555` | Red (`#e3333f` dark) | Bad / critical / destructive |
+| `--red` / `.cavnarRed` | `#c0392b` | `#e3333f` | Red (`#E3333F` dark — the same) | Bad / critical / destructive |
 | `--amber` / `.cavnarAmber` | `#b7791f` | `#d4a030` | Amber | Warning, "watch", partial data |
 | `--blue` / `.cavnarBlue` | `#1a56cc` | `#6aabff` | Blue | Informational only (rare) |
+| `--bg-base` (web only) | — | `#141110` | Paper (`#0c0c0c`) plays this role | The web canvas behind every panel — darker than `--paper` so cards step up from it (below) |
+
+**The accent and the status colours are one value on both platforms**
+(parity pass, 9/25/26): dark ember `#D4583A` and dark red `#E3333F` —
+the web's old `#e06444` / `#e05555` (and every `rgba(224,100,68,…)` /
+`rgba(224,85,85,…)` tint built from them) put two embers and two reds on
+one screen next to the dark buttons, which already used the iOS values.
+The red is deliberately further from the ember than `#e05555` was, so a
+red status never reads as the brand. Pinned by `tests/test_design_parity.py`.
+
+**The ink2 and paper tiers differ on purpose.** iOS draws on a true-black
+chrome (`#0c0c0c` / `#121212` / `#262626`) because an OLED phone in a dim
+dining room reads black as "off", and its Ink2 is lifted to `#e0d6c6` to
+hold contrast against that deeper ground. The web keeps warm browns
+(`--paper` `#1a1714`, `--surface` `#201d19`) over the `#141110` canvas
+because a desktop monitor is backlit — pure black there reads as a hole,
+and the three-step luminance staircase below needs room between tiers.
+Everything a reader compares — the accent, the status colours, ink and
+ink3 — is identical.
 
 Each status colour has a `-bg` pair for tinted chips (`--green-bg`,
 `--red-bg`, `--amber-bg`, `--blue-bg`; `.cavnarGreenBg` etc.).
@@ -50,7 +82,12 @@ component may reach for and must not redefine: the surface layer
 (`--sf-ai`, `--sf-ai-line`, `--sf-recess`, `--surface-glass`), elevation
 (`--elev-card`, `--elev-float`, `--elev-hero`, `--glow-ember`) and the Home
 semantics (`--hb-good`, `--hb-warn`, `--hb-bad`, `--hb-amber`, `--hb-tint`,
-`--hb-line`, `--hb-glow`, …). Buttons have their own namespace in
+`--hb-line`, `--hb-glow`, …). `--hb-amber` **is** `--amber` — there is no
+second amber (it was `#e6a862`, with no iOS twin); Home's hero kicker and
+the recommendation numerals that used it read `--ember2`. `--hb-copper` is
+the one web-only warm secondary: a hover edge on Home's cards, never a
+fill and never a status. The stat glows (`.stat-glow-green/-red/-amber`)
+are `--green` / `--red` / `--amber`, no raw hex. Buttons have their own namespace in
 `static/css/cavnar-buttons.css` (`--cb-accent`, `--cb-ink`, `--cb-surface`,
 `--cb-tint`, `--cb-radius*`, `--cb-shadow*`, 26 in all). A restaurant's
 `brand_color` rewrites `--ember`/`--ember2` at the top of the page
@@ -80,9 +117,15 @@ Three faces, one job each. Clash Display and Apfel Grotezk are self-hosted on
 web (`static/fonts/cavnar-fonts.css`; Apfel ships only 400 and 700, and iOS
 snaps weights ≥550 to Fett); Space Grotesk is loaded from Google Fonts
 (`dashboard.html` `<link>`), together with **Bricolage Grotesque**, a fourth
-face used only for the tab badges and the `.stat-n` figures — a legacy of
-the pre-rebuild stat cards that the "every number is Space Grotesk" rule
-has not yet reached. iOS bundles all three (`Font+Cavnar.swift`).
+face used only for the tab badges (`.tab .badge`) and the `.stat-n` figures
+— a legacy of the pre-rebuild stat cards that the "every number is Space
+Grotesk" rule has not yet reached (a `.stat-n` inside `.hb-num` is already
+Space Grotesk). Nothing else: it used to be forced onto every inline
+`font-weight:800` (the wordmark's "AI" tag among them) and every `strong`
+in Labor; those now keep their own face — inline 800s snap to 700, the
+heaviest weight Apfel and Space Grotesk ship — and Labor's PAR figures
+carry `.hb-num`. Pinned by `tests/test_design_parity.py`. iOS bundles all
+three (`Font+Cavnar.swift`).
 
 | Role | Face | Web | iOS |
 |---|---|---|---|
@@ -111,10 +154,10 @@ An ISO date in owner-facing text is a bug, not a style choice.
 |---|---|
 | Python — API text, emails, briefs, activity, alerts | `time_utils.mdy(value)` (date, datetime or ISO string); `time_utils.mdy_range(a, b)` |
 | Jinja | `{{ value\|format_date }}` |
-| Web JS | `mdy(x)` — global, exported from the Home closure |
-| iOS | `CavnarDate.mdy` / `mdyRange` / `mdyTime` (`DesignSystem/Formatting.swift`) — one `M/d/yy` formatter, shared |
+| Web JS | `mdy(x)` — global, exported from the Home closure (`window.mdy`); `cavClock(d)` for the time ("6:45pm", "6pm" on the hour). Never `toLocaleDateString` / `toLocaleTimeString` or a `toLocaleString` with a date part — they print "Sep 21" or "9/21/2026, 6:45 PM" |
+| iOS | `CavnarDate.mdy` / `mdyRange` / `mdyTime` / `time` ("6:45pm") (`DesignSystem/Formatting.swift`). Never a `DateFormatter` with `MMM` or `h:mm a` for anything an owner reads |
 
-`tests/test_date_format.py` pins the helper and the feed text.
+`tests/test_date_format.py` pins the helper and the feed text, and ratchets the clients: no locale date formatting in the owner-facing templates, no `MMM` / `h:mm a` display formatter in the iOS app.
 
 ### Scale (the sizes actually in use)
 
@@ -280,9 +323,31 @@ Sizes `cbtn-sm` 30px · default 36px · `cbtn-lg` 42px. Modifiers: `cbtn-icon`,
 `cbtn-done`. Group with `.cbtn-row` (10px gap). Busy state: `cbtnBusy(btn,
 label)` swaps in the orb, disables the button and returns a restore function.
 
-**iOS**: `CavnarPrimaryButtonStyle(isDisabled:)` (ember fill + glow),
-`CavnarSecondaryButtonStyle()`, `.buttonStyle(.plain)` for a row that is
-really a link. Destructive uses `Button(role: .destructive)` inside a
+**The web table is canonical; iOS maps onto it** (`DesignSystem/ViewModifiers.swift`):
+
+| iOS style | Web twin | Look |
+|---|---|---|
+| `CavnarPrimaryButtonStyle(isDisabled:)` | `cbtn-primary` | Ember fill, ember + ember2 edges, soft ember glow |
+| `CavnarSecondaryButtonStyle(isDisabled:)` | `cbtn-secondary` | **Quiet**: white 5% surface, 1pt ink hairline at 16%, ink text. It was ember text on an ember fill with an ember gradient border — two embers per screen wherever a primary sat beside it; neutral since the parity pass (9/25/26) |
+| `CavnarSoftButtonStyle(isDisabled:)` | `cbtn-soft` | Ember text on an 18% ember fill, no border — gentle emphasis, sparingly |
+| `.buttonStyle(.plain)` + ember2 text | `cbtn-text` | A row or an inline action that is really a link |
+
+Both primary and secondary sit on `CavnarRadius.control` (12), like every
+control; they were on `card` (16). iOS-only styles, each with a job the
+web does another way:
+
+- `CavnarGlassButtonStyle(isProminent:isDisabled:)` — Liquid Glass (iOS 26,
+  Material below) matching `CavnarSegmentedControl`; prominent = ember-tinted
+  glass, else plain glass. For paired actions on a glass surface (Skip /
+  Approve). Web: `cbtn-glass` on a dark hero.
+- `CavnarChipButtonStyle(tone:)` — a small solid chip in a status tone with
+  a receding shadow on press, `CavnarRadius.control`. For an inline action
+  inside a card (AI Visibility's suggestions). Web: `cbtn-sm` + variant.
+- `CavnarSplitButton` — "do the usual thing ▾ or pick another": icon + label
+  on the premium ember surface, a hairline, a chevron that opens a `Menu`.
+  Web has no split button; it shows the alternatives in place.
+
+Destructive uses `Button(role: .destructive)` inside a
 `.confirmationDialog` for anything irreversible.
 
 **Hierarchy rule:** exactly one primary per screen or sheet. Everything else
@@ -396,21 +461,40 @@ do"**. Spend it in one place per screen.
 - Fill more than one large surface per view, or tint a whole card.
 - Use it as a background behind body text (contrast).
 
-Dark mode uses `#e06444` (web) / `#D4583A` (iOS) so the ember doesn't glare;
-`--ember2` `#e8956a` is the soft form for lines and kickers. The web's dark
-primary button is the iOS value, `#d4583a` (`--cb-accent`, pinned by
-`tests/test_button_system.py`), not `--ember`.
+Dark mode uses `#D4583A` on both platforms so the ember doesn't glare
+(the web's `--ember` was `#e06444` until the parity pass; its dark primary
+button, `--cb-accent`, already used `#d4583a`, pinned by
+`tests/test_button_system.py`); `--ember2` `#e8956a` is the soft form for
+lines and kickers.
+
+**"No verdict" is neutral, not ember.** A chip, pill, badge or bar that
+carries no good/bad/warning — sample data, not yet measured, a plain count
+— reads in the ink: web `.hb-chip.neutral` (no dot), iOS `CavnarTone.neutral`
+(Ink2 on a Paper3 chip; it rendered ember until 9/25/26, which made "no
+verdict" look like the brand's "do this").
+
+**Cards (iOS).** `.cavnarCard()` is the default and carries no colour.
+Two tinted cards exist, each once:
+- `cavnarGlassCard(tint:)` — **a documented exception**: the hero card for
+  a screen's one status figure (Labor's % against target), washed by that
+  figure's *tone* (green on track, red over, neutral ink when it can't be
+  judged) at 20% → 6% over Paper2, with a same-tone hairline. The wash
+  repeats the verdict the figure already carries; it is never ember (it was
+  an ember-by-default 55% → 22% gradient).
+- `cavnarGlossyCard()` — untinted Liquid Glass with an ember **hairline**
+  (35%), the stat tile on Marketing Analytics. The glass used to be tinted
+  ember; the edge is now the card's only ember.
 
 ---
 
 ## 10. Empty, loading and error states
 
 **Loading is the sliding ember pulse — never a spinner and never "…".**
-- Web: `.dr-pulse` (a 3px track with an ember light sliding across, `pulseBarSlide`) for a quick page load or a running job, `.hb-skel` skeleton bars (`hbSkel` sweep), `.hb-load` + the orb canvas
-  (`data-orb-state`: `working` / `searching` / `shaping` / `composing` /
-  `solving` exists on iOS only), `cbtnBusy()` inside a button.
-- iOS: `CavnarSkeletonBar`, `CavnarSkeletonLines(widths:)`,
-  `CavnarShimmerText(text:)`, `CavnarLoadingOrb` / `CavnarOrb`.
+- Web: `.dr-pulse` (a 3px track with an ember light sliding across, `pulseBarSlide`) for a quick page load or a running job — markup `<div class="dr-pulse" role="status" aria-label="Loading …"><i></i></div>` (the `<i>` is the light; a pulse without it is a dead grey line; a `<span class="dr-pulse">` works inline, the class is `display:block`) — `.hb-skel` skeleton bars (`hbSkel` sweep), `.hb-load` + the orb canvas, `cbtnBusy()` inside a button (never a hand-rolled CSS spinner).
+- The orb has **the same nine states on both platforms** (`static/cavnar-orb.js`, `CavnarOrbState`): `connecting`, `solving`, `searching`, `working`, `shaping`, `composing`, `breathing` (idle), `listening` (reserved, voice), `weaving` (several reads in one round).
+- iOS: `CavnarSkeletonBar` (a 3pt one is the `.dr-pulse` twin), `CavnarSkeletonLines(widths:)`,
+  `CavnarShimmerText(text:)`, `CavnarWorkingLine`, `CavnarLoadingOrb` / `CavnarOrb` / `CavnarWorkingOrb`. Never a system `ProgressView()`.
+- A placeholder is never the word "Loading…": the pulse, with a plain label beside it when one helps ("Loading your shifts").
 
 **Empty** says what would fill it, in one sentence: `.hb-empty` ("Trend
 appears after a few weeks of reviews"), `.hb-clear` for the good kind
@@ -585,13 +669,34 @@ figures. Recipe lines carry a % or nothing, never a confidence word.
 ## 11. Animation
 
 Web `cm-*` classes and keyframes in `dashboard.html`; iOS
-`CavnarMotion.swift` plus `CavnarInteractions.swift`. The approved set covers
-the seal draw-in and breathe, the wordmark stamp, the orb states, the compose
-caret, the radar ripple, the week blocks, bar grow-in, skeleton sweep, row
-fade-in and the posted overlay.
+`CavnarMotion.swift` (the numbered set, `// MARK: - NN ·`) plus
+`CavnarInteractions.swift` (working line, posted overlay, tile flash, row
+entrances, code entry). The fifteen approved motions:
+
+| # | Motion | Web | iOS |
+|---|---|---|---|
+| 01 | Banked Ember — the seal's slow breathe | `.cm-seal` (`cmBreathe*`) | `CavnarSealMark` |
+| 02 | Seal draw-in | — (no web screen draws it) | `CavnarSealDrawIn` — defined, no screen draws it today (the login and lock screens show the wordmark alone) |
+| 03 | Wordmark entrance | `login.html` `.logo` — one fade-rise, as a unit | Warm (re-lock, sign-out): `CavnarWordmarkStampIn`, now the same single-unit rise (the letter-by-letter stamp was retired on the web as choppy, and follows it here, 9/25/26). Cold launch: `CavnarWordmarkTraceIn`, the traced letters — iOS only, the one brand moment a fresh process gets |
+| 04 | Composing | `.cm-compose` (driven by `_cmComposeFrame`) | `CavnarComposingLines` |
+| 05 | Reading the Room (radar) | `cavnarRadarHtml` | `CavnarRadarSweep` |
+| 06 | Building the Week | `cavnarWeekHtml` | `CavnarWeekBuilder` |
+| 07 | Counting the Pantry | `.cm-ledger` | `CavnarLedgerFill` |
+| 08 | Sparkline trace | — (web charts use `glowLine`, drawn whole) | `SparklineCanvas` (Home value chart), `DSRSparkline` |
+| 09 | Count-up stat | `countUp` / `animateStatNums` | `CavnarAnimatableNumber` |
+| 10 | Donut sweep | — (no web donut) | `RoleDonutChart`, `FoodCostDonutChart` |
+| 11 | Posted | `cavnarPostedHtml`, `cmPostedThen` | `CavnarPostedCheck`, `.cavnarPostedOverlay` |
+| 12 | Handshake | `cavnarHandshakeHtml`, `cmFloat` | `CavnarHandshake` |
+| 13 | Alert fired — the badge pops (0 → 1, no overshoot) with one ember ring | `#notif-badge.cm-pop` | `CavnarAlertBadge` + `CavnarRippleBurst` |
+| 14 | Cold Hearth — the empty state | `cavnarHearthSvg` | `CavnarEmptyHearth` |
+| 15 | Pull-to-refresh ember | — (no pull on web) | `cavnarEmberRefreshable` |
 
 Rules:
-- Ember is the only accent that moves. No bounce, no spring overshoot.
+- Ember is the only accent that moves. No bounce, no spring overshoot —
+  no `.spring` on iOS (use `Animation.cavnarEase(_:)`, the
+  `cubic-bezier(.2,.9,.3,1)` twin), no keyframe past its resting scale on
+  the web (the badge pop, the toast and the tab indicator all overshot
+  until 9/25/26). Pinned by `tests/test_design_parity.py`.
 - Motion tells you something is happening or something changed; it never
   decorates a static page.
 - Durations: micro-feedback 120–220ms, entrance 350–500ms, ambient loops
@@ -730,7 +835,7 @@ Every block keeps its empty state; a quiet day is a short page.
 | Recommendation answer row | `.rec-ans` via `recControlsHtml(key, surface, module)` (JS) or `client_api.rec_controls_html` (server-rendered insight HTML) — Done / Not for us / Track as `cbtn-text cbtn-inline cbtn-sm` with `data-rec-key`; one delegated listener posts `/api/recs/event` and swaps the row for a muted `.rec-ans-done` sentence. Home's `.hb-rec-ans` answer row, inline under a module's recommendation line (`.rec-line` under a read, `.rec-cites` for the reviews an Intel recommendation cites). An answered line is not rendered again anywhere. What the answer did is the server's: a tracker that started reads "Measuring labor % until 10/21/26" (`recTrackerLine`), a refused one its `tracker_refused.reason`; Home's toasts say the same. `recNotForUsHtml(key, surface, module)` is the lone "Not for us" for a line whose own button is its yes (an overtime move, a content idea, a roadmap card) |
 | Why not? (reason picker) | `.rsn` via `recReasonPicker(after, {onPick(code, note, picker), onCancel, skipLabel})` — ONE component behind every "Not for us": module lines (the `[data-rec-key]` listener), Home's cards (`hbAskWhy`), the second ✕ on Needs attention ("Just hide it" as its skip), content ideas, roadmap cards, overtime moves, Ask's "Not now", the brief's lines, the win-back text's "Not for us" and the schedule review's ✕ (both send `reason_code` + `reason` with their own routes). A recessed strip under the line it answers: `.rsn-k` "Why not?" kicker (ember2) + one-line hint, `.rsn-opts` the six `rec_ledger.REASON_CODES` as `cbtn-secondary cbtn-sm` in the owner's words (Already doing this · Doesn't fit us · Too costly · Bad timing · Don't trust the numbers · Other), `.rsn-ft` an optional note `.ac-input` (Enter with a note = Other) + Skip + Cancel. One tap on a reason answers; the caller posts `reason_code` (+ `reason`) |
 | Check-in card | `.rck` via `recCheckinHtml(c, surface)` over `recCheckinCandidates(outcomes, timelineItems)` — a result that landed (`status` evaluated, a clear verdict) with no `owner_checkin`, joined to its recommendation by the timeline's `tracker_id`. Ember left rail on `--hb-tint`, "Check in · result landed 8/12/26", the title, the `result_line` in the number face, "Did you make this change?" Yes / Partly / No (one tap posts `POST /api/recs/checkin`), then — after Yes or Partly — "Did anything else change these weeks?" No / Yes, something else changed (Yes re-posts with `conditions_changed`), then the result's new `attribution_label`. "Not now" hides it in this browser. Home shows one, inside "What your changes did"; the Recommendations page shows up to five |
-| Confidence | `cavConfLine(confidence, {key, surface, module, cls})` (`<script id="cav-conf">`, global, `window.cavConf`) — ONE line: a 38×6 meter (`.cf-m`, the tone colour with a sheen and a soft glow, `cmBar` grow-in; hatched `.none` when the overall is not measurable; no meter at all for a band from an older server), "**72% confidence**" (digits in the number face), "— the weakest dimension's basis" in ink3, and a **Why?** `cbtn cbtn-text cbtn-inline cbtn-sm` that opens the explanation modal (`data-explain`, logging `evidence_viewed` for `key` on its own `data-explain-surface` / `-module`). The modal body (`.cf-p`, the modal's own dark tokens) **leads with what the figure means** — `.cf-p-mean`, the payload's `meaning`, "How well supported this is — not the chance it works." (the owner's support-score decision, 9/24/26: never present the % as a probability) — then the overall figure large with a wide meter and the reason (the cap that set it, when one did), the caution (amber), then **What it rests on**: Evidence strength NN% with "Sample: 12" (of the full sample when the server sends `n_full`) · Historical accuracy NN% — the **lift against doing nothing**: its basis is the lift sentence ("improved 4 of 6 times vs 1 of 6 when not acted on" / "vs about 5% by chance") and its detail "93% likely to beat doing nothing · improved-rate range 12–76%" (`beats_label`) — or "—" with "Not enough history yet (2 measured, needs 5)" · Data freshness NN% ("as of 9/23/26", never ISO) — each with its meter and basis — and the footer ("the weakest pulls it down most"; without a track record "it stays at 70% or below"; a record that doesn't yet beat doing nothing "it stays at 70% or below"; one that leans against it "holds it at 49% or below"; on stale data "Data under 50% fresh holds it at 49% or below"; undated data "holds it at 49% or below" — every ceiling from the payload's `caps` / `caps_applied` when sent). A FACT (reviews or drafts waiting, a failing sync, a count) carries no confidence line at all. The **caution rides on the line** (`.cf-c`, amber) as on iOS, not only behind Why? (`noCaution:1` for a place that shows it elsewhere). Only a measured object draws (`cavConf.k1(detail, legacy)`): a bare band or a model's own word draws nothing, never "Low confidence". Sample or demo data (evidence 0 with nothing counted) reads **"Confidence not yet measurable"**, never "0%". Tone everywhere: **the payload's `band` — high `.good` green, medium `.mid` ink2, low or not measurable `.warn` amber — never red, never ember**; a dimension row reads the payload's `thresholds` {high, medium} when sent, else `cavConf.AT` (held to `confidence_engine.HIGH_AT` / `MEDIUM_AT` by a test). Percentages stay (the owner's call); every one is the server's (contract K1), a missing one is a dash. On: Home cards, Needs attention rows, the focus card, the review / food / labor / marketing diagnoses, food drivers, Ask answers, daily-report actions |
+| Confidence | `cavConfLine(confidence, {key, surface, module, cls})` (`<script id="cav-conf">`, global, `window.cavConf`) — ONE line: a 38×6 meter (`.cf-m`; iOS `ConfidenceMeter` is the same 38×6 — the web was 46 wide and iOS 34×5 until 9/25/26 — the tone colour with a sheen and a soft glow, `cmBar` grow-in; hatched `.none` when the overall is not measurable; no meter at all for a band from an older server), "**72% confidence**" (digits in the number face), "— the weakest dimension's basis" in ink3, and a **Why?** `cbtn cbtn-text cbtn-inline cbtn-sm` that opens the explanation modal (`data-explain`, logging `evidence_viewed` for `key` on its own `data-explain-surface` / `-module`). The modal body (`.cf-p`, the modal's own dark tokens) **leads with what the figure means** — `.cf-p-mean`, the payload's `meaning`, "How well supported this is — not the chance it works." (the owner's support-score decision, 9/24/26: never present the % as a probability) — then the overall figure large with a wide meter and the reason (the cap that set it, when one did), the caution (amber), then **What it rests on**: Evidence strength NN% with "Sample: 12" (of the full sample when the server sends `n_full`) · Historical accuracy NN% — the **lift against doing nothing**: its basis is the lift sentence ("improved 4 of 6 times vs 1 of 6 when not acted on" / "vs about 5% by chance") and its detail "93% likely to beat doing nothing · improved-rate range 12–76%" (`beats_label`) — or "—" with "Not enough history yet (2 measured, needs 5)" · Data freshness NN% ("as of 9/23/26", never ISO) — each with its meter and basis — and the footer ("the weakest pulls it down most"; without a track record "it stays at 70% or below"; a record that doesn't yet beat doing nothing "it stays at 70% or below"; one that leans against it "holds it at 49% or below"; on stale data "Data under 50% fresh holds it at 49% or below"; undated data "holds it at 49% or below" — every ceiling from the payload's `caps` / `caps_applied` when sent). A FACT (reviews or drafts waiting, a failing sync, a count) carries no confidence line at all. The **caution rides on the line** (`.cf-c`, amber) as on iOS, not only behind Why? (`noCaution:1` for a place that shows it elsewhere). Only a measured object draws (`cavConf.k1(detail, legacy)`): a bare band or a model's own word draws nothing, never "Low confidence". Sample or demo data (evidence 0 with nothing counted) reads **"Confidence not yet measurable"**, never "0%". Tone everywhere: **the payload's `band` — high `.good` green, medium `.mid` ink2, low or not measurable `.warn` amber — never red, never ember**; a dimension row reads the payload's `thresholds` {high, medium} when sent, else `cavConf.AT` (held to `confidence_engine.HIGH_AT` / `MEDIUM_AT` by a test). Percentages stay (the owner's call); every one is the server's (contract K1), a missing one is a dash. On: Home cards, Needs attention rows, the focus card, the review / food / labor / marketing diagnoses, food drivers, Ask answers, daily-report actions |
 | Claim tag | `cavConf.claimTag(kind, modelWritten)` → `.ck-tag` — tiny uppercase ink3 on the recess: "AI-written" (beats the kind), "Measured", "Computed", "Forecast", "Inferred", "Estimate"; also "checked" / "unchecked" / "few reviews" as the same quiet shape. `cavConf.claimStrip(claim_kinds, names, modelWritten)` → `.ck-strip` groups a payload's `claim_kinds` by kind under a read ("AI-written read by Cavnar AI · Measured this week, severity · Inferred what to watch · Forecast next week"). Never a status colour |
 | All clear | `.hb-clear` "All clear — Cavnar AI is watching." with the green check only when every source under Home is current and `monitoring.all_clear` is not false (`hbAllClear(d)`); with a stale or undated source it is `.hb-clear.warn` (amber, no check) "Nothing flagged — but N sources are out of date or undated, so this is not a clean bill", and with no live source at all it says there is nothing live to watch. The focus card's last fallback obeys the same rule (kicker "Watching", `hbNotClearWhy`). iOS: `AllClearRow(notClearReason:)` over `OwnerCopy.allClear` |
 | Older read | `aiCaveat('Older read', stale_note)` above an AI read the server served from cache because a new one failed (Labor, Marketing) — kept through the five-minute session cache. iOS: `CavnarCaveat.olderRead` under the strip / above the read |
@@ -857,7 +962,7 @@ Every block keeps its empty state; a quiet day is a short page.
 | Score movement | `ScoreDeltaChip(delta:)` — "+3" green / "−2" red capsule in the number face (`ShiftQualityPanel.swift`) |
 | Decide-in-place row | `TimeOffSection` row: name + dates, Deny (secondary) / Approve (primary) side by side, status text once answered |
 | Needs attention (iOS) | `HomeActionDeck` — the lead `ActionDeckCard` (primary CTA, secondary link, ⋯ Not today / Hide) and every other item as an `ActionDeckRow` under it in one Paper2 card: title and detail on one line each, the CTA as an ember2 text button with a chevron, long-press for Not today / Hide. The lead plus three rows show (`shownByDefault = 4`, the server's `HOME_ATTENTION_SHOWN`); "+N more" (number face, 44pt) opens the rest in place. No swipe deck, no dots. Directly under the header strip (§11b). A card's tap follows its `nav` (the filter, section or item), never just the module |
-| Bell and location (iOS) | `CavnarBellButton` (`Core/AppChrome.swift`) — the one bell, on Home and every module screen's trailing toolbar, the unread dot on the disc's corner; the sheet opens at once on its skeleton. The Home tab carries the unread count as `.badge`. `CavnarScreenTitle` (drawn by `cavnarTitleToolbar`) adds the location's name under a module screen's title — ember2, 11.5, a chevron-down — for an owner with more than one location; tapping it opens `LocationSwitcherView`. A switch resets the Modules stack and never replays the landing intro |
+| Bell and location (iOS) | `CavnarBellButton` (`Core/AppChrome.swift`) — the one bell, on Home and every module screen's trailing toolbar, with **the web's badge rule** (`CavnarAlertBadge`): a red count pill in the number face ("9+" past nine) of the urgent rows nobody has handled (`/mobile/api/notifications/unread-count` → `urgent`), a 7pt Ink3 dot when something is unread but nothing is urgent, nothing otherwise — it was one ember dot for anything unread. The sheet opens at once on its skeleton. The Home tab's system `.badge` carries the **urgent** count (a system badge is red, so an unread-only count there would say "urgent" when the bell says a grey dot). `CavnarScreenTitle` (drawn by `cavnarTitleToolbar`) adds the location's name under a module screen's title — ember2, 11.5, a chevron-down — for an owner with more than one location; tapping it opens `LocationSwitcherView`. A switch resets the Modules stack and never replays the landing intro |
 | Queued send (iOS) | `PendingActionSheet` — medium detent, Account-kit chrome "Queued send": "GOING OUT ON ITS OWN" kicker, the action's label (Clash 20), "Goes out at 11:00am" on the restaurant's clock (M/D/YY when not today), Review (secondary → the schedule or order it sends) and Undo (primary, acts at once — it only changes a row nothing has run yet). Opened by an `action/<id>` nav path: the "goes out at" push, its notification row, a card |
 | Review queue (iOS) | `ReviewDetailView` pins Skip / Approve to the bottom (`.safeAreaInset`, Paper at 94% over a hairline). With another drafted reply after this one in the list's order the primary reads "Approve & next": a 0.45s check capsule (green check + "Posted to Google"), then the next reply in place; the full `CavnarPostedCheck` plays only on the last. The inbox opens on "To approve" when replies are waiting; a trailing swipe "Approve" (green) exists only for a reply that may go out unread (drafted, not flagged, not urgent — the bulk-publish bar) |
 | Notification row actions (iOS) | `NotificationsListView` rows: the tap opens the row's `nav`; an actionable row carries its one action as an ember2/red text button at the right (44pt) and the same as a trailing swipe — Undo on a "going out" row when exactly one such send is pending, Approve on a reply that may go out unread — then says what happened ("Undone", "Posted") in green. Errors are one red line under the row |
@@ -871,7 +976,7 @@ Every block keeps its empty state; a quiet day is a short page.
 | Command sheet | `CommandSheet` (`Features/Command/`), a `.large` sheet with `accountSheetChrome("Find or ask")` and the field pinned at the bottom (`safeAreaInset`, Paper2, ember hairline when focused). Empty: "One tap" capsule chips (44pt), "Waiting on you" rows (severity dot, mixed-text title, detail; pending sends carry "Goes out in …" + Undo; requests carry Deny / Approve, both secondary), "Locations" chips with a ✓ on the current one. Typing: "Go to or do" rows (arrow for a place, bolt for an action — an action opens Ask's `ProposalCard` in place), "Found" rows with the store named when it isn't this one, and always last "Ask Cavnar AI: “…”" in ember2. Return opens or asks, never confirms. Reached from Modules' toolbar magnifier, `cavnarai://command`, the widget and the "Find in Cavnar AI" shortcut |
 | Person sheet | `PersonSheet(target:)` (`Features/People/`) — the Account identity-card kit: name in Clash, role + Active chips, `AccountSection`s "Scheduling" (hours, availability, rating, certifications — "Not set" / "Not rated", never 0), "Login" (PIN set), "Contact and pay" (role, phone, email, POS id, pay rate fields; one primary Save that posts only what changed). Opened from a roster person, Account → Staff accounts (menu "Person record"), a name in Waiting on you and a person in the command sheet |
 | Post to all connected | Marketing's social publish: one Toggle per connected channel (ember tint; Instagram disabled with "Needs a photo" until there is one; "Posted" in green once up), then ONE primary "Post to Instagram and Facebook" behind a `.confirmationDialog` naming the channels — it goes outside the restaurant |
-| Widget | `CavnarWaitingWidget` (`CavnarWidgets/`) — systemSmall: "CAVNAR AI" ember2 kicker, the waiting line in Clash 17, then "LAST NIGHT · M/D/YY", the net in the number face and its change (green/red) with its basis ("vs last Friday", else "vs yesterday"; none shown when unmeasured). Lock Screen rectangular / inline / circular carry the same two facts. Money is `.privacySensitive()`; a snapshot older than 36h says "Open Cavnar AI to refresh" |
+| Widget | `CavnarWaitingWidget` (`CavnarWidgets/`) — families `systemSmall`, `systemMedium`, `accessoryRectangular`, `accessoryInline`, `accessoryCircular`. Small: "CAVNAR AI" ember2 kicker, the waiting line in Clash 17, then "LAST NIGHT · M/D/YY", the net in the number face and its change (green/red) with its basis ("vs last Friday", else "vs yesterday"; none shown when unmeasured). Medium puts the restaurant's name as the kicker and the waiting line (Clash 18) beside last night. Lock Screen rectangular / inline / circular carry the same two facts. Money is `.privacySensitive()`; a snapshot older than 36h says "Open Cavnar AI to refresh" |
 | Countdown with Undo | `PendingSendLiveActivity` — Lock Screen: ember2 kicker ("SCHEDULE GOES OUT" / "SUPPLIER ORDER GOES OUT"), the title, "in 12:04" as the system timer in the number face, an "Undo" capsule with an ember hairline; after Undo "Stopped. Nothing went out." in green, a refusal in amber. Dynamic Island: calendar / box icon + the timer compact, the Undo button expanded |
 | Mixed text with numbers | `HomeMixedText.make(...)` |
 | Loading | `CavnarShimmerText`, `CavnarSkeletonLines`, `CavnarLoadingOrb` |
@@ -886,6 +991,20 @@ Every block keeps its empty state; a quiet day is a short page.
 | Stage checklist | `DSRProgressChecklist` — a run's stages on a thin rail: green tick + local time when done, the breathing ember on the one running now, a hollow ring for what is to come; then each block's state with its reason. Lines are the server's own stages in its order, never a scripted sequence (same rule as the Ask trail) |
 | Bars | `DSRHourlyBars` (vertical, ember gradient, peak hour glowing, bar grow-in; a missing hour is a hairline gap) and `DSRCategoryBars` (horizontal against the largest) |
 | Weekly grid | `DSRWeekGrid` — see §8 |
+| Haptics | `Haptic` (`DesignSystem/Haptics.swift`) — intent-named (`light` / `medium` / `heavy`, `selection`, `success` / `warning` / `error`), retained generators; a button style uses `.sensoryFeedback` instead. Web has none |
+| Passcode entry | `CavnarPasscodePad` — six ember dots over a glass keypad; each digit lands with one thin ripple, a wrong code turns the row red and shakes it once. Used by `LockedView` (unlock) and `AppPasscodeSheet` (set / change / remove) |
+| Split button | `CavnarSplitButton` — see §5 |
+| Tone pill and bar | `TonePill(text:tone:)` — a capsule in a `CavnarTone` (good / bad / warning / neutral = ink, never ember); `StatProgressBar(progress:tone:)` — a 6pt value-against-target bar in the same tone. Web: `.hb-chip` + tone, `.hb-goal .bar` |
+| Hero cards | `cavnarGlassCard(tint:)`, `cavnarGlossyCard()` — see §9 *Cards (iOS)* |
+| Forecast ribbon | `cavnarHeroForecastRibbon` + `CavnarForecastPanel` (`HeroForecastRibbon.swift`) — a "FORECAST" pill straddling a hero card's bottom edge that opens the upcoming-events panel in place; tone follows the hero's |
+| Keyboard bar | `KeyboardNavToolbar` — ↑ ↓ between fields and a checkmark for Done on every keyboard, the system AutoFill bar's shape |
+| Word-by-word reveal | `TypewriterText` — the web's `typewriterEffect()`: ~1.4s spread over the words (16–55ms a word), cancelled by new text; for an AI insight arriving, never for a figure |
+| Ask's formatting | `CavnarMarkdown` / `CavnarRichText` — the iOS twin of web `_askMd`: headings, numbered and bulleted lists, bold, every number in the number face |
+| Quiet hours mark | `CavnarQuietMark` — the do-not-disturb moon in ink, never ember (quiet is the opposite of "needs attention") |
+| Seal | `CavnarSealMark(ringColor:emberWarmth:)` — the ring plus its ember, animatable warmth (motion 01) |
+| Working orb | `CavnarWorkingOrb(state:label:)` — an inline orb in one of the nine states with its line of text, for a model genuinely working; `CavnarLoadingOrb` is the full-screen form |
+| AI consultant strip | `AIConsultantView` / `AIConsultantEmbeddedStrip` — sparkle + the insight's first line + chevron, breathing while the first insight loads; opens the full read |
+| Motion | The numbered `CavnarMotion.swift` structs — see §11 — plus `Animation.cavnarEase(_:)`, the one easing |
 
 ---
 
