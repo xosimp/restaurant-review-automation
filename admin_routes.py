@@ -532,14 +532,18 @@ def resync_depletion_route(restaurant_id, current_user):
         return jsonify(ok=False, error=_safe_err(e))
 
 
+# Internal admin only. These were @login_required with the restaurant taken
+# from the URL, so any client login could read, overwrite or delete another
+# restaurant's staff availability. The owner's roster (web and phone) uses
+# the session-scoped /api/labor/availability and /mobile/api/labor/availability.
 @admin_bp.route("/admin/staff-availability/<int:restaurant_id>", methods=["GET"])
-@login_required
+@admin_required
 def get_staff_availability_route(restaurant_id, current_user):
     from models import get_staff_availability
     return jsonify(ok=True, availability=get_staff_availability(restaurant_id))
 
 @admin_bp.route("/admin/staff-availability/<int:restaurant_id>", methods=["POST"])
-@login_required
+@admin_required
 def save_staff_availability_route(restaurant_id, current_user):
     from models import save_staff_availability
     data = request.get_json() or {}
@@ -555,7 +559,7 @@ def save_staff_availability_route(restaurant_id, current_user):
     return jsonify(ok=True)
 
 @admin_bp.route("/admin/staff-availability/<int:restaurant_id>/delete", methods=["POST"])
-@login_required
+@admin_required
 def delete_staff_availability_route(restaurant_id, current_user):
     from models import delete_staff_availability
     data = request.get_json() or {}

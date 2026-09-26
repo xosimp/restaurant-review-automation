@@ -9688,6 +9688,28 @@ def labor_team_thresholds(current_user):
     return _m("mobile_set_thresholds")(current_user)
 
 
+# Staff availability — the web roster's routes, restaurant from the session
+# (the active location for an owner who switched). The web used to call
+# /admin/staff-availability/<id> with the id from the page, which any login
+# could point at another restaurant; that route is internal-admin only now.
+@client_bp.route("/api/labor/availability")
+@login_required
+def labor_availability(current_user):
+    return _m("mobile_labor_availability")(current_user)
+
+
+@client_bp.route("/api/labor/availability", methods=["POST"])
+@login_required
+def labor_availability_save(current_user):
+    return _m("mobile_labor_availability_save")(current_user)
+
+
+@client_bp.route("/api/labor/availability/delete", methods=["POST"])
+@login_required
+def labor_availability_delete(current_user):
+    return _m("mobile_labor_availability_delete")(current_user)
+
+
 @client_bp.route("/api/account/team/<int:user_id>/can-manage", methods=["POST"])
 @login_required
 def account_team_can_manage(current_user, user_id):

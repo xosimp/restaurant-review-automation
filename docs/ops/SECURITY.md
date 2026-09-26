@@ -39,7 +39,7 @@ variables it depends on. Written after the enterprise security audit
 
 ## Tenant isolation
 
-Identity comes from the session row, never the request. Owners switch locations only inside their group. Row access is `WHERE id=? AND restaurant_id=?`. Public pages use hashed or signed tokens (`/s/<token>`, issue links, `/join/<token>`).
+Identity comes from the session row, never the request. Owners switch locations only inside their group. Row access is `WHERE id=? AND restaurant_id=?`. Public pages use hashed or signed tokens (`/s/<token>`, issue links, `/join/<token>`). A route that takes `<int:restaurant_id>` from the URL is `@admin_required` — never `@login_required` alone, which is any client login (`tests/test_staff_availability_scope.py` sweeps `admin_routes.py` for it; the web staff-availability roster was the one that slipped, fixed 9/25/26 with the session-scoped `/api/labor/availability`).
 
 ## Data at rest
 

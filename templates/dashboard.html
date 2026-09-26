@@ -18657,27 +18657,35 @@ function toggleAvailPanel() {
   if (btn) btn.textContent = _availOpen ? 'Close ↑' : 'Manage ↓';
   if (_availOpen) loadAvailability();
 }
-var _restaurantId = '{{current_user.restaurant_id if current_user else ""}}';
+// The roster reads and writes /api/labor/availability, scoped to the
+// session's restaurant on the server; the restaurant is never taken from
+// this page (the old admin-console route, called with the id from here,
+// allowed any login to name another restaurant). Days arrive as lists. Names
+// and notes are typed by managers and staff, so they are escaped, and a
+// row's delete button carries its index, never the name.
+var _availRows = [];
 function loadAvailability() {
   var list = document.getElementById('avail-list');
   if (!list) return;
-  fetch('/admin/staff-availability/' + _restaurantId).then(apiJson).then(function(d){
-    if (!d.ok || !d.availability || !d.availability.length) {
+  fetch('/api/labor/availability').then(apiJson).then(function(d){
+    if (!d.ok) { loadFailed(list, d); return; }
+    _availRows = d.availability || [];
+    if (!_availRows.length) {
       list.innerHTML = '<div style="font-size:13.5px;color:var(--ink3);font-style:italic">No availability set yet — add employees above.</div>';
       return;
     }
     var html = '';
-    for (var i = 0; i < d.availability.length; i++) {
-      var av = d.availability[i];
-      var avDays = JSON.parse(av.available_days || '[]');
-      var unDays = JSON.parse(av.unavailable_days || '[]');
+    for (var i = 0; i < _availRows.length; i++) {
+      var av = _availRows[i];
+      var avDays = av.available_days || [];
+      var unDays = av.unavailable_days || [];
       html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--paper);border:1px solid var(--paper3);border-radius:6px;gap:12px;flex-wrap:wrap">';
-      html += '<div style="flex:1;min-width:0"><div style="font-size:15px;font-weight:600;color:var(--ink)">' + av.employee_name + '</div>';
-      if (avDays.length) html += '<div style="font-size:12.5px;color:#2d6a4f;margin-top:2px">✓ Available: ' + avDays.join(', ') + '</div>';
-      if (unDays.length) html += '<div style="font-size:12.5px;color:#c0392b;margin-top:1px">✗ Not available: ' + unDays.join(', ') + '</div>';
-      if (av.notes) html += '<div style="font-size:12.5px;color:var(--ink3);margin-top:1px">' + av.notes + '</div>';
+      html += '<div style="flex:1;min-width:0"><div style="font-size:15px;font-weight:600;color:var(--ink)">' + _escHtml(av.employee_name || '') + '</div>';
+      if (avDays.length) html += '<div style="font-size:12.5px;color:var(--green);margin-top:2px">✓ Available: ' + _escHtml(avDays.join(', ')) + '</div>';
+      if (unDays.length) html += '<div style="font-size:12.5px;color:var(--red);margin-top:1px">✗ Not available: ' + _escHtml(unDays.join(', ')) + '</div>';
+      if (av.notes) html += '<div style="font-size:12.5px;color:var(--ink3);margin-top:1px">' + _escHtml(String(av.notes)) + '</div>';
       html += '</div>';
-      html += '<button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" aria-label="Close" onclick="deleteAvailability(\'' + av.employee_name.replace(/'/g,'\\\'') + '\')" title="Remove">&#x2715;</button>';
+      html += '<button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" aria-label="Remove" onclick="deleteAvailabilityAt(' + i + ')" title="Remove">&#x2715;</button>';
       html += '</div>';
     }
     list.innerHTML = html;
@@ -18696,7 +18704,7 @@ function saveAvailability() {
     else unDays.push(dayMap[checks[i].value] || checks[i].value);
   }
   var notes = (document.getElementById('av-notes').value || '').trim();
-  fetch('/admin/staff-availability/' + _restaurantId, {
+  fetch('/api/labor/availability', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify({employee_name: name, available_days: avDays, unavailable_days: unDays, notes: notes || null})
@@ -18706,15 +18714,24 @@ function saveAvailability() {
       document.getElementById('av-notes').value = '';
       for (var i = 0; i < checks.length; i++) checks[i].checked = false;
       loadAvailability();
+    } else {
+      toast(d.error || 'Could not save availability.', 'warning');
     }
-  });
+  }).catch(function(){ toast('Could not save availability.', 'warning'); });
+}
+function deleteAvailabilityAt(i) {
+  var row = _availRows[i];
+  if (row) deleteAvailability(row.employee_name);
 }
 function deleteAvailability(name) {
-  fetch('/admin/staff-availability/' + _restaurantId + '/delete', {
+  fetch('/api/labor/availability/delete', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify({employee_name: name})
-  }).then(apiJson).then(function(d){if(d.ok) loadAvailability();});
+  }).then(apiJson).then(function(d){
+    if (d.ok) loadAvailability();
+    else toast(d.error || 'Could not remove that entry.', 'warning');
+  });
 }
 
 // ── Operational Score ───────────────────────────────────────────────────────
