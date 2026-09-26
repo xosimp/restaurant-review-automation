@@ -579,6 +579,12 @@ def summary(report, user, restaurant=None):
     vs_budget = metrics.get("vs_budget_net") if ready else None
     if not isinstance(vs_budget, (int, float)) or isinstance(vs_budget, bool):
         vs_budget = None
+    # Net against the night before, as the report's Sales block has it — so
+    # the phone's Home card draws from this row alone instead of peeking at
+    # the whole report as a second call (parity audit #9).
+    vs_yesterday = metrics.get("vs_yesterday_pct") if ready else None
+    if not isinstance(vs_yesterday, (int, float)) or isinstance(vs_yesterday, bool):
+        vs_yesterday = None
     # The same lead the report view opens with (D2-4): narrative_for, so a
     # manager's list row and Home card lead with the operations summary
     # exactly as their report does.
@@ -612,6 +618,7 @@ def summary(report, user, restaurant=None):
             "lead_missing": None if lead_text else lead_missing(report.get("narrative"), note),
             "verdict": verdict, "tone": tone if tone in ("good", "warn", "bad") else None,
             "overall": overall, "vs_budget": round(float(vs_budget), 2) if vs_budget is not None else None,
+            "vs_yesterday_pct": round(float(vs_yesterday), 1) if vs_yesterday is not None else None,
             "first_risk": first_risk}
 
 

@@ -228,7 +228,24 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False):
         fire_response_approved_alert(restaurant_id, rid, posted=auto_posted)
     except Exception:
         pass
+    # Home's cached brief still counts this reply as waiting. Here, in the
+    # shared body, so every approve path drops it — the web route, its
+    # mobile twin, Ask's confirmed proposal and the scheduler's rule — not
+    # only the one route that remembered to (parity audit #2). A bulk run
+    # drops it once, at its end (_do_approve_all).
+    if not bulk:
+        _invalidate_home(restaurant_id)
     return _post_payload(rid, restaurant_id, auto_posted, post_error), 200
+
+
+def _invalidate_home(restaurant_id):
+    """Drop the restaurant's cached Home briefs (and every group rollup that
+    includes it) after a write that changes what Home says. Never raises."""
+    try:
+        import home_brief
+        home_brief.invalidate(int(restaurant_id))
+    except Exception as e:
+        print(f"[home] cache invalidation failed for {restaurant_id}: {e}")
 
 
 def _post_payload(rid, restaurant_id, auto_posted, post_error) -> dict:
@@ -498,6 +515,10 @@ def _do_approve_all(restaurant_id, limit=25, review_ids=None):
             log_event(restaurant_id, "reviews_bulk_approved", {"count": approved, "posted": posted})
         except Exception:
             pass
+        # After the writes, never before them: invalidating first (as the
+        # web route did) let a Home read during the run re-cache the old
+        # count, and the mobile twin never invalidated at all.
+        _invalidate_home(restaurant_id)
     # `held`: urgent or flagged drafts a bulk publish never posts — they
     # wait for someone to read them one at a time.
     # `held_for_review`: replies this run held because their words failed
@@ -518,10 +539,8 @@ def _emails_mod():
 @client_bp.route("/api/reviews/approve-all", methods=["POST"])
 @login_required
 def approve_all_reviews_api(current_user):
-    try:
-        import home_brief; home_brief.invalidate(current_user["restaurant_id"])
-    except Exception:
-        pass
+    # Home's cache is dropped inside _do_approve_all, after the writes, so
+    # this route, its mobile twin and Ask's confirm all do it.
     data = request.get_json(silent=True) or {}
     payload, status = _do_approve_all(current_user["restaurant_id"], data.get("limit", 25),
                                       review_ids=data.get("review_ids"))
@@ -7360,20 +7379,45 @@ def get_notifications(current_user):
     web bell marks a row read when it is opened, not when the bell is
     (friction #23). Without it, reading the list marks everything read, as
     the phone expects."""
-    payload, status = _do_get_notifications(current_user["restaurant_id"], viewer=current_user,
-                                            scope=request.args.get("scope"))
-    if payload.get("ok") and request.args.get("mark") != "0":
+    payload, status = _do_read_notifications(current_user, request.args.get("scope"),
+                                             mark=request.args.get("mark") != "0")
+    return jsonify(**payload), status
+
+
+def _do_read_notifications(current_user, scope=None, mark=True):
+    """The bell's list, web and phone (one body, parity audit #7). `scope`
+    "group" reads every location the login may switch between; `mark`
+    False reads without moving the read mark — a row is then read when it is
+    opened (POST notifications/opened), on either client. `mark` True (an
+    older phone, "Mark all read") moves the mark over every location read."""
+    payload, status = _do_get_notifications(current_user["restaurant_id"], viewer=current_user, scope=scope)
+    if payload.get("ok") and mark:
         # Every location the list read (scope=group): "Mark all read" on the
         # group bell marked only the one the session is on, and the other
         # locations' count came back on the next load (re-audit F1-11).
         from models import mark_notifications_seen
-        for loc_id, _name in _notification_locations(current_user["restaurant_id"], current_user,
-                                                     request.args.get("scope")):
+        for loc_id, _name in _notification_locations(current_user["restaurant_id"], current_user, scope):
             try:
                 mark_notifications_seen(current_user["id"], loc_id)
             except Exception:
                 pass
-    return jsonify(**payload), status
+    return payload, status
+
+
+def _do_notifications_unread(current_user, scope=None):
+    """{ok, count, urgent} for the bell's badge over every location the list
+    reads (`scope`), web and phone: `count` is unread (after the read mark
+    and not opened), `urgent` the rows still needing someone."""
+    from models import unread_notification_count
+    locs = _notification_locations(current_user["restaurant_id"], current_user, scope)
+    count = sum(unread_notification_count(current_user["id"], rid, visible=notification_visibility(current_user))
+                for rid, _ in locs)
+    try:
+        body, _ = _do_get_notifications(current_user["restaurant_id"], current_user, scope=scope)
+        urgent = sum(1 for n in body.get("notifications") or [] if n.get("urgent") and not n.get("resolved"))
+    except Exception:
+        urgent = 0
+    return {"ok": True, "count": count, "urgent": urgent}, 200
 
 
 @client_bp.route("/api/account/send-test-push", methods=["POST"])
@@ -7410,21 +7454,12 @@ def get_notifications_unread_count(current_user):
     partner's badge — and it reads through models.unread_notification_count,
     which compares timestamps in one format. The web bell kept its own
     localStorage mark, so the two clients never agreed either."""
-    from models import unread_notification_count
     # `scope=group`: the badge over every location the list shows (#24).
-    locs = _notification_locations(current_user["restaurant_id"], current_user, request.args.get("scope"))
-    count = sum(unread_notification_count(current_user["id"], rid, visible=notification_visibility(current_user))
-                for rid, _ in locs)
     # `urgent`: the rows that still need someone (P0/P1, not yet handled) —
     # the web bell's red count (density audit #39). The same rows and the
     # same rule the list itself shows under "Needs you".
-    try:
-        body, _ = _do_get_notifications(current_user["restaurant_id"], current_user,
-                                        scope=request.args.get("scope"))
-        urgent = sum(1 for n in body.get("notifications") or [] if n.get("urgent") and not n.get("resolved"))
-    except Exception:
-        urgent = 0
-    return jsonify(ok=True, count=count, urgent=urgent)
+    payload, status = _do_notifications_unread(current_user, request.args.get("scope"))
+    return jsonify(**payload), status
 
 
 # ── Startup ───────────────────────────────────────────────────────────────────
