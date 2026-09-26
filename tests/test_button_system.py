@@ -26,7 +26,7 @@ STANDALONE = ["login.html", "two_fa.html", "forgot_password.html", "reset_passwo
 LEGACY = re.compile(r"(^|[^c-])btn-(primary|secondary|approve|skip|approved|blue|link-)|(^|[^-])hb-btn\b|(^|[^-])hb-link\b")
 
 # Interactive elements that are intentionally not system buttons.
-EXEMPT_CLASSES = {"tab", "rm", "hb-refresh", "hb-chip", "hb-x", "hb-loc", "hm-days-btn", "fpill", "rv2-x",
+EXEMPT_CLASSES = {"tab", "swg-chip", "rm", "hb-refresh", "hb-chip", "hb-x", "hb-loc", "hm-days-btn", "fpill", "rv2-x",
                   "ask-chip", "ask-send", "faq-q", "rv2-topic", "more", "on", "rv-tab-active", "mtab",
                   "ac-hitem",  # Account health items: list-row selectors that jump to a section
                   "in2-viewall", "in2-gbp-link"}  # AI visibility: text-style "view all" / checklist nav links

@@ -7907,6 +7907,120 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 /* schedule tools */
 .lb2-sched{margin-top:34px}
 .lb2-preview{border-radius:12px;background:var(--hb-tint);overflow:hidden;margin-top:14px}
+/* ── Schedule workspace (owner, 9/26/26; DESIGN_SYSTEM.md -> Schedule
+   workspace): settings | the week | how it scores. The one block on Labor
+   wider than the shared 1120px column. Sections are separated by space,
+   never rules. ── */
+.sw{--sw-w:min(1480px,calc(100vw - 48px));width:var(--sw-w);margin-left:calc((100% - var(--sw-w)) / 2);margin-top:34px}
+.sw>.hb-sh{padding-top:0}
+/* The workspace is three panels, not one card: the old section card is off. */
+.lb2-sched.sw{padding:0;background:none;border:0;border-radius:0;box-shadow:none}
+.sw-grid{display:grid;grid-template-columns:272px minmax(0,1fr) 344px;gap:18px;align-items:start;margin-top:18px}
+.sw-side{position:sticky;top:76px;max-height:calc(100vh - 92px);overflow:auto;background:var(--surface);border:1px solid var(--hb-line);border-radius:16px;padding:6px 18px 0;box-shadow:var(--elev-card);scrollbar-width:thin}
+.sw-sec{padding:14px 0 8px}
+.sw-sec[hidden]{display:none}
+.sw-k{font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-bottom:10px}
+.sw-note{font-size:13px;line-height:1.5;color:var(--ink3)}
+.sw-sub{font-size:12.5px;font-weight:600;color:var(--ink2);margin:14px 0 4px}
+.sw-body{font-size:13.5px;color:var(--ink2);line-height:1.5}
+.sw-body+.cbtn-text{margin-top:8px!important}
+.sw-left .lb2-actions{display:flex;flex-direction:column;align-items:stretch;gap:8px;margin:0}
+.sw-left .lb2-weekpick,.sw-left .lb2-weekpick select,.sw-left .lb2-weekpick input{width:100%;box-sizing:border-box}
+.sw-left .lb2-weekpick{display:flex;flex-direction:column;gap:8px}
+.sw-left .lb2-actions>.cbtn{justify-content:center}
+.sw-left .lb2-events{margin:0;padding:0}
+.sw-left .rul-sw{font-size:13.5px;color:var(--ink2);align-items:center}
+.sw-tgt{display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--ink2);margin-bottom:8px}
+.sw-tgt input{width:84px}
+.sw-lbl{display:block;font-size:12.5px;font-weight:600;color:var(--ink2);margin:14px 0 6px}
+.sw-notes{width:100%;box-sizing:border-box;resize:vertical;min-height:72px;font-size:13.5px;line-height:1.45}
+.sw-gen{position:sticky;bottom:0;padding:12px 0 16px;margin-top:4px;background:var(--surface)}
+.sw-gen .cbtn{width:100%;justify-content:center}
+.sw-gen #sched-week{display:none}
+.sw-bar{display:grid;grid-template-columns:40px minmax(0,1fr) auto;gap:8px;align-items:center;font-size:12.5px;color:var(--ink2);padding:3px 0}
+.sw-bar .tr{height:7px;border-radius:99px;background:var(--sf-recess);position:relative}
+.sw-bar .tr i{position:absolute;left:0;top:0;bottom:0;border-radius:99px;background:linear-gradient(90deg,var(--ember),var(--ember2));transition:width .3s ease}
+.sw-bar .tr b{position:absolute;top:-3px;bottom:-3px;width:2px;border-radius:1px;background:var(--ink3)}
+.sw-bar.over .tr i{background:var(--hb-bad)}
+.sw-bar .v{font-family:'Space Grotesk',sans-serif;font-variant-numeric:tabular-nums;font-size:12px;color:var(--ink3);white-space:nowrap}
+.sw-bar.over .v{color:var(--hb-bad)}
+.sw-bar.role{grid-template-columns:minmax(0,92px) minmax(0,1fr) auto}
+.sw-bar.role .l{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sw-kv{display:flex;justify-content:space-between;gap:10px;font-size:13.5px;color:var(--ink2);padding:3px 0}
+.sw-kv b{font-family:'Space Grotesk',sans-serif;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums}
+.sw-kv b.bad{color:var(--hb-bad)}.sw-kv b.good{color:var(--hb-good)}
+.sw-flag{margin-top:8px;padding:9px 11px;border-radius:10px;background:var(--sf-recess);font-size:13px;line-height:1.5;color:var(--ink2)}
+.sw-flag.bad{box-shadow:inset 2px 0 0 var(--hb-bad)}
+.sw-center{min-width:0}
+.sw-idle{border:1px dashed var(--hb-line);border-radius:16px;padding:34px 28px;text-align:center}
+.sw-idle-t{font-family:'Clash Display',sans-serif;font-size:21px;font-weight:500;color:var(--ink);margin-bottom:6px}
+.sw-idle .lb2-ro{text-align:left;margin:18px 0 0}
+.sw-idle[hidden]{display:none}
+.sw #sched-week{margin-top:0!important}
+.sw .lb2-preview{margin-top:0;background:var(--surface);border:1px solid var(--hb-line);border-radius:16px;box-shadow:var(--elev-card);overflow:visible}
+.sw-view{display:flex;align-items:center;gap:12px;padding:14px 20px 10px}
+.sw-view-n{font-size:12.5px;color:var(--ink3);margin-left:auto}
+.sw[data-view="week"] #sched-table-wrap{display:none!important}
+.sw[data-view="list"] #swg{display:none}
+.sw #sched-toggle-bar{display:none!important}
+.sw-rhint{font-size:13.5px;line-height:1.5;color:var(--ink3);padding:16px 0}
+.sw-right #sched-quality{padding:0!important;border:0!important}
+.sw-right #sq-dimensions{flex-basis:100%!important;min-width:0!important}
+.sw-right #sched-quality>div:first-child{gap:14px!important}
+.sw-right .hb-stats{grid-template-columns:1fr 1fr;gap:8px}
+.sw-right #sched-review,.sw-right #ps-blockers{padding:0!important;margin:0;border:0;background:none}
+.sw-right #sched-summary,.sw-right #sched-par-banner{padding:10px 0 0!important;border:0!important;background:none!important}
+.sw-right .sr-actions{display:flex;flex-direction:column;align-items:stretch;gap:8px}
+.sw-right .sr-actions .cbtn{justify-content:center}
+.sw-fixsec{position:sticky;bottom:0;background:var(--surface);padding-bottom:16px}
+/* The week: one row per person under their role, a column per day, each
+   shift a block like the building animation's. */
+.swg{padding:0 14px 16px;overflow-x:auto}
+.swg-t{display:grid;grid-template-columns:148px repeat(7,minmax(86px,1fr));min-width:760px}
+.swg-r{display:contents}
+.swg-r:hover>.swg-p,.swg-r:hover>.swg-c{background:var(--hb-tint)}
+.swg-d{padding:10px 6px 9px;text-align:center;position:sticky;top:0;background:var(--surface);z-index:2}
+.swg-d b{display:block;font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink2)}
+.swg-d .dt{display:block;font-size:12.5px;color:var(--ink3);margin-top:1px}
+.swg-d .dh{display:block;font-size:11.5px;color:var(--ink3);margin-top:3px}
+.swg-d.hot b{color:var(--ember)}
+.swg-role{grid-column:1/-1;font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);padding:16px 8px 6px}
+.swg-p{padding:6px 8px;display:flex;flex-direction:column;justify-content:center;min-width:0;border-radius:10px 0 0 10px}
+.swg-p .n{font-size:13.5px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.swg-p .h{font-size:12px;color:var(--ink3)}
+.swg-p .h.ot{color:var(--hb-bad);font-weight:600}
+.swg-c{padding:4px;min-height:46px;display:flex;flex-direction:column;gap:4px;position:relative}
+.swg-c:last-child{border-radius:0 10px 10px 0}
+.swg-chip{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:1px;width:100%;min-width:0;box-sizing:border-box;padding:6px 7px;border-radius:9px;background:var(--sf-ai);border:1px solid var(--sf-ai-line);cursor:pointer;text-align:left;font:inherit;color:var(--ink);transition:transform .12s ease,box-shadow .12s ease,opacity .16s ease}
+.swg-chip:hover,.swg-chip:focus-visible{transform:translateY(-1px);box-shadow:var(--elev-card);outline:none}
+.swg-chip:focus-visible{box-shadow:0 0 0 2px var(--ember)}
+.swg-chip .t{font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.swg-chip .s{font-size:11px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.swg-chip.bad{border-color:var(--hb-bad);box-shadow:inset 3px 0 0 var(--hb-bad)}
+.swg-chip.bad .s{color:var(--hb-bad)}
+.swg-chip.chg:after{content:'';position:absolute;top:7px;right:7px;width:6px;height:6px;border-radius:50%;background:var(--blue)}
+.swg-chip.sched-leaving{opacity:0;transform:scale(.94)}
+.swg-chip.editing{box-shadow:0 0 0 2px var(--ember)}
+.swg-add{opacity:0;align-self:center;margin-top:auto;transition:opacity .12s ease}
+.swg-c:hover .swg-add,.swg-add:focus-visible{opacity:1}
+.swg-foot{display:flex;gap:14px;flex-wrap:wrap;align-items:center;padding:12px 8px 0;font-size:12.5px;color:var(--ink3)}
+.swg-foot i{display:inline-block;width:10px;height:10px;border-radius:3px;vertical-align:-1px;margin-right:5px;background:var(--sf-ai);border:1px solid var(--sf-ai-line)}
+.swg-foot i.bad{border-color:var(--hb-bad);box-shadow:inset 2px 0 0 var(--hb-bad)}
+.swg-foot i.chg{background:var(--blue);border-radius:50%;width:7px;height:7px;border:0}
+.swg-empty{grid-column:1/-1;padding:18px 8px;font-size:13.5px;color:var(--ink3)}
+.swp{position:absolute;z-index:60;width:320px;max-width:calc(100vw - 32px);padding:16px;border-radius:14px;background:var(--surface);border:1px solid var(--hb-line);box-shadow:var(--elev-float)}
+.swp-h{font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-bottom:10px}
+.swp-g{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.swp-g .full{grid-column:1/-1}
+.swp-g label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--ink3)}
+.swp-g select,.swp-g input{width:100%;box-sizing:border-box}
+.swp-f{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+.swp-f .sp{flex:1}
+@media (max-width:1320px){.sw-grid{grid-template-columns:256px minmax(0,1fr)}.sw-right{grid-column:1/-1;position:static;max-height:none;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:28px;padding-bottom:12px}.sw-rhint{grid-column:1/-1}.sw-fixsec{position:static}}
+@media (max-width:1168px){.sw{--sw-w:100%}}
+@media (max-width:900px){.sw-grid{grid-template-columns:1fr}.sw-side{position:static;max-height:none}.sw-right{grid-template-columns:1fr}}
+@media (prefers-reduced-motion:reduce){.swg-chip,.sw-bar .tr i{transition:none}}
+
 .lb2-preview [style*="rgba(255,255,255,.88)"]{color:var(--ink)!important}
 .lb2-preview [style*="color:#c0b8b0"],.lb2-preview [style*="rgba(255,255,255,.75)"],.lb2-preview [style*="rgba(255,255,255,.4)"]{color:var(--ink2)!important}
 .lb2-preview [style*="border-bottom:1px solid rgba(255,255,255,.08)"]{border-bottom-color:var(--hb-line2)!important}
@@ -8698,22 +8812,81 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
   {# Whether last year's same days are an input to the next draft (read
      tolerantly: an older server never sends last_year_available). #}
   <script>window._SCHED_HAS_LAST_YEAR={{ 'true' if labor.last_year_available else 'false' }};</script>
-  <div class="lb2-sched" data-nav="labor/schedule">
-    <div class="hb-sh" style="margin-top:0"><div><div class="k">Schedule</div><h2>Next week, drafted by Cavnar AI<small>generated against your {{ _lt|int }}% target and the staff rules you set — check it before it goes out</small></h2><div class="lb2-actions">
-      {% if labor.is_live %}<button onclick="generateSchedule(this)" id="gen-sched-btn" class="cbtn cbtn-primary">Generate a draft schedule</button>
-      <!-- Which week: next week by default, the week after, or any date
-           inside the wanted week. Sent as week_start. -->
-      <span class="lb2-weekpick"><select class="ac-select" id="sched-week-pick" aria-label="Which week" onchange="document.getElementById('sched-week-date').style.display=this.value==='date'?'':'none'"><option value="next">Next week</option><option value="after">The week after</option><option value="date">A date…</option></select><input type="date" class="ac-input" id="sched-week-date" aria-label="A date in the week you want" style="display:none"></span>{% endif %}
+  {# The schedule workspace (owner, 9/26/26): settings on the left, the
+     week in the middle, how it scores on the right. It is the one part of
+     Labor wider than the shared column (.sw breaks out to 1480px); the
+     panels stack under 1320px and 900px. DESIGN_SYSTEM.md -> Schedule
+     workspace. Every id the scheduling code reads is kept. #}
+  <div class="lb2-sched sw" id="sched-ws" data-nav="labor/schedule" data-view="week">
+    <div class="hb-sh" style="margin-top:0"><div><div class="k">Schedule</div><h2>Next week, drafted by Cavnar AI<small>generated against your {{ _lt|int }}% target and the staff rules you set — check it before it goes out</small></h2></div></div>
+    <div class="sw-grid">
+    <aside class="sw-side sw-left" aria-label="How the next draft is built">
+      <section class="sw-sec">
+        <div class="sw-k">Generation settings</div>
+        <div class="lb2-actions">
+          {% if labor.is_live %}<!-- Which week: next week by default, the week after, or any date
+               inside the wanted week. Sent as week_start. -->
+          <span class="lb2-weekpick"><select class="ac-select" id="sched-week-pick" aria-label="Which week" onchange="document.getElementById('sched-week-date').style.display=this.value==='date'?'':'none'"><option value="next">Next week</option><option value="after">The week after</option><option value="date">A date…</option></select><input type="date" class="ac-input" id="sched-week-date" aria-label="A date in the week you want" style="display:none"></span>{% endif %}
       {% if not restaurant.toast_restaurant_guid %}
       <label class="cbtn cbtn-secondary">{% if labor.is_live %}Update shifts CSV{% else %}Upload shifts CSV{% endif %}<input type="file" accept=".csv" style="display:none" id="shifts-inline-input" onchange="clientUpload('shifts', this)"></label>
       {% endif %}
-      {# The weekly automation where the work is (Friction #27): the same
-         switch as Account -> Automation & AI, both on /api/labor/auto-draft. #}
-      <span class="rul-sw" id="lb2-autodraft-sw" style="border-top:0;padding:0;gap:8px" hidden><label class="ac-switch"><input type="checkbox" id="lb2-autodraft" onchange="lb2SaveAutoDraft(this)" aria-label="Cavnar AI drafts every Thursday"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><span>Cavnar AI drafts every Thursday</span><span class="ac-status" id="lb2-autodraft-status"></span></span>
-    </div>
-    {# A drafted week staff don't have yet, one tap back into the editor (#4). #}
-    <div class="lb2-ro" id="sched-reopen" hidden></div>
-    </div></div>
+        </div>
+      </section>
+      <section class="sw-sec">
+        <div class="sw-k">Forecast</div>
+        <div id="sw-forecast" class="sw-body"><div class="sw-note">Built from your sales by weekday when the draft runs. Each day's bar is the hours its forecast calls for.</div></div>
+        {% if labor_upcoming %}
+        {# A calendar of holidays, not a forecast: nothing in this restaurant's
+           own data backs "expect elevated covers" or "your busiest Sundays
+           follow this pattern" (CA1 L30, CA4 F5 / I5). It says what it is, and
+           where the answer lives. demand.upcoming_holidays sends date_str
+           already M/D/YY and a `label` that states only this restaurant's own
+           last-year figure (claim_kind "measured"), else the generic line. #}
+        <div class="sw-sub">Holidays ahead</div>
+    <ul class="lb2-events">
+      {% for event in labor_upcoming %}
+      <li><span class="d"></span><span><b>{{ event.name }}</b> — <span class="hb-num">{{ event.date|format_date if (event.date and not event.date_str) else event.date_str }}</span> {% if event.days_away == 0 %}(today){% elif event.days_away == 1 %}(tomorrow){% else %}(<span class="hb-num">{{ event.days_away }}</span> days away){% endif %}<br>{% if event.label %}{{ event.label }}{% if event.claim_kind == 'measured' %} <span class="ck-tag" data-claim="measured">Measured</span>{% endif %}{% else %}Holiday — check how this day ran for you last year before you build the schedule.{% endif %}</span></li>
+      {% endfor %}
+    </ul>
+        {% endif %}
+      </section>
+      <section class="sw-sec">
+        <div class="sw-k">Labor target</div>
+        <div class="sw-tgt"><input class="ac-input ac-num" type="number" id="sw-target" min="5" max="60" step="0.5" value="{{ _lt }}" aria-label="Labor target %"><span>% of sales</span><span class="ac-status" id="sw-target-status"></span></div>
+        <div id="sw-par" class="sw-note">The draft keeps labor at or under this. It is a ceiling, not a quota.</div>
+      </section>
+      <section class="sw-sec">
+        <div class="sw-k">Employees</div>
+        <div id="sw-emp" class="sw-body"><div class="sw-note">Loading the roster…</div></div>
+        <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="swOpenTeam('roster')">Manage roster →</button>
+      </section>
+      <section class="sw-sec">
+        <div class="sw-k">Constraints</div>
+        <div id="sw-rules" class="sw-body"><div class="sw-note">Loading your rules…</div></div>
+        <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="swOpenTeam('rules')">Edit rules →</button>
+      </section>
+      <section class="sw-sec">
+        <div class="sw-k">Advanced AI</div>
+        {# The weekly automation where the work is (Friction #27): the same
+           switch as Account -> Automation & AI, both on /api/labor/auto-draft. #}
+        <span class="rul-sw" id="lb2-autodraft-sw" style="border-top:0;padding:0;gap:8px" hidden><label class="ac-switch"><input type="checkbox" id="lb2-autodraft" onchange="lb2SaveAutoDraft(this)" aria-label="Cavnar AI drafts every Thursday"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><span>Cavnar AI drafts every Thursday</span><span class="ac-status" id="lb2-autodraft-status"></span></span>
+        <label class="sw-lbl" for="sw-notes">Notes Cavnar AI follows on every draft</label>
+        <textarea class="ac-input sw-notes" id="sw-notes" rows="3" maxlength="2000" placeholder="e.g. Marcus only closes on weekends. Keep two cooks on Friday lunch."></textarea>
+        <span class="ac-status" id="sw-notes-status"></span>
+        <!-- Redo some days: one checkbox per date, regenerated against the
+             same draft (POST /api/generate-schedule {dates, history_id}). -->
+        <div id="sched-redo" class="sched-redo" style="display:none"></div>
+      </section>
+      {% if labor.is_live %}<div class="sw-gen"><button onclick="generateSchedule(this)" id="gen-sched-btn" class="cbtn cbtn-primary">Generate a draft schedule</button></div>{% endif %}
+    </aside>
+
+    <div class="sw-center" id="sw-center">
+      <div class="sw-idle" id="sw-idle">
+        <div class="sw-idle-t">No week open</div>
+        <div class="sw-note">Generate a draft from the left, or open one Cavnar AI already drafted.</div>
+        {# A drafted week staff don't have yet, one tap back into the editor (#4). #}
+        <div class="lb2-ro" id="sched-reopen" hidden></div>
+      </div>
   <!-- Schedule download tooltip -->
   <div id="schedule-tooltip" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:999;background:rgba(14,12,10,0.6);align-items:center;justify-content:center">
     <div style="background:var(--ink);border-radius:12px;padding:28px 32px;max-width:420px;width:90%;position:relative;border:1px solid #3d3530">
@@ -8734,7 +8907,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
   </div>
 
   <!-- Schedule preview panel — shown after generate is clicked -->
-  <div id="schedule-preview-panel" style="display:none;margin-bottom:14px">
+  <div id="schedule-preview-panel" style="display:none">
     <div class="lb2-preview">
       <div style="padding:16px 20px;border-bottom:1px solid rgba(255,255,255,.08);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
         <div>
@@ -8755,12 +8928,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
         </div>
       </div>
       <div id="ps-reach" class="sr-note" style="padding:8px 20px 0"></div>
-      <!-- The publish gate: a 409 needs_ack (or the pre-send check) lists
-           what the sender must read before the week goes out; the send
-           button then names them. Rendered by _psRenderBlockers. -->
-      <div id="ps-blockers" style="padding:0 20px"></div>
       <div style="padding:6px 20px 0"><span id="ps-result" style="font-size:13.5px"></span></div>
-
       <!-- Who the week reaches, fixed in place: missing emails and numbers.
            Opened from "fix contacts" under the send button. -->
       <div id="publish-sched-panel" style="display:none;padding:14px 20px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(200,75,47,.05)">
@@ -8776,6 +8944,17 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
         </div>
       </div>
 
+      <!-- Week | List: the week as a grid of shift blocks (the default), or
+           the row list with its sorting and inline editor. -->
+      <div class="sw-view">
+        <div class="lb2-range sw-seg" role="tablist" aria-label="View">
+          <button type="button" class="on" data-sw-view="week" role="tab" aria-selected="true">Week</button>
+          <button type="button" data-sw-view="list" role="tab" aria-selected="false">List</button>
+        </div>
+        <span class="sw-view-n" id="sw-view-n"></span>
+        <button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="swAddShift()">+ Add a shift</button>
+      </div>
+      <div class="swg" id="swg" aria-label="The week, by person and day"></div>
       <!-- Schedule table toggle bar -->
       <div id="sched-toggle-bar" style="display:none;padding:12px 20px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(111,207,151,.04);cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between" onclick="toggleSchedTable()">
         <button style="background:none;border:none;cursor:pointer;font-size:12px;font-weight:700;color:#6fcf97;padding:0;letter-spacing:.02em;display:flex;align-items:center;gap:6px" id="sched-toggle-label">View full schedule<span id="sched-toggle-arrow" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:rgba(111,207,151,.12);border:1px solid rgba(111,207,151,.25);color:#6fcf97;transition:transform .25s;flex-shrink:0"><svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M5 6l3 3 3-3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></button>
@@ -8821,21 +9000,44 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
            and a Reload. Nothing is overwritten. -->
       <div id="sched-conflict" class="sched-conflict" style="display:none"></div>
 
-      <!-- Rules check — every hard and soft rule the finished week breaks,
-           what the engine fixed on its own, what still needs a human, and
-           time off nobody has answered yet. Re-rendered after every edit
-           from POST /api/labor/schedule/violations so the verdict is never
-           stale. -->
-      <div id="sched-review" class="sr-panel" style="display:none"></div>
+    </div>
+  </div>
+    </div>
 
-      <!-- Redo some days: one checkbox per date, regenerated against the
-           same draft (POST /api/generate-schedule {dates, history_id}). -->
-      <div id="sched-redo" class="sched-redo" style="display:none"></div>
-      <!-- Everything that grades the week, folded under Details
-           (Friction #19): what changed, PAR, the economics and Shift
-           Quality. The verdict line above says the headline. -->
-      <details class="co-more" id="sched-details" style="padding:0 20px 14px">
-        <summary>Details <small id="sched-details-sub">what changed, PAR hours, cost and Shift Quality</small></summary>
+    <aside class="sw-side sw-right" id="sw-right" aria-label="How the week scores">
+      <div class="sw-rhint" id="sw-rhint">Open or generate a week to see its score, warnings, coverage and cost here.</div>
+      <section class="sw-sec" data-sw="quality">
+        <div class="sw-k">Shift quality</div>
+        <!-- Shift Quality — the schedule graded the way an operator reads one.
+             Every sentence here is computed from the finished schedule, so
+             none of them can name a person or a shift that is not in the week. -->
+      <div id="sched-quality" style="display:none;padding:18px 20px;border-bottom:1px solid rgba(255,255,255,.08)">
+        <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:center">
+          <div id="sq-dial"></div>
+          <div style="flex:1;min-width:220px">
+            <div style="margin:3px 0 8px"><span id="sq-band" style="font-family:'Clash Display',sans-serif;font-size:24px;font-weight:600;color:rgba(255,255,255,.92)"></span><span id="sq-prov"></span><span id="sq-delta"></span></div>
+            <div id="sq-confidence"></div>
+          </div>
+          <div id="sq-dimensions" style="flex:2;min-width:260px"></div>
+        </div>
+        <div id="sq-save-state" style="margin-top:10px;font-size:13.5px;min-height:18px"></div>
+        <!-- Most of the week unrated: rate the people carrying it, here. -->
+        <div id="sq-rate"></div>
+        <div id="sq-warnings" style="margin-top:10px"></div>
+        <div id="sq-shifts" style="margin-top:16px"></div>
+        <div style="margin-top:12px">
+          <button class="cbtn cbtn-text cbtn-inline cbtn-lg" type="button" onclick="toggleQualityReasoning()" id="sq-why-btn">Why this schedule? &#9662;</button>
+          <div id="sq-reasoning" style="display:none;margin-top:10px"></div>
+        </div>
+      </div>
+
+      </section>
+      <section class="sw-sec" data-sw="sugg">
+        <div class="sw-k">AI suggestions</div>
+        <!-- What Cavnar changed to raise the score (schedule_optimizer), and
+             what no legal change could fix — the owner's to decide. -->
+        <div id="sq-optimizer"></div>
+        <div id="sw-sugg"></div>
       <!-- AI summary bullets -->
       <div id="sched-summary" style="padding:14px 20px;border-bottom:1px solid rgba(255,255,255,.08);display:none">
         <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#6fcf97;margin-bottom:8px">What changed vs last published week</div>
@@ -8843,6 +9045,26 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
         <div id="sched-narrative" class="sr-narr" style="display:none"></div>
       </div>
 
+      </section>
+      <section class="sw-sec" data-sw="warn">
+        <div class="sw-k">Warnings</div>
+        <!-- The publish gate: a 409 needs_ack (or the pre-send check) lists
+             what the sender must read before the week goes out; the send
+             button then names them. Rendered by _psRenderBlockers. -->
+      <div id="ps-blockers" style="padding:0 20px"></div>
+        <!-- Rules check — every hard and soft rule the finished week breaks,
+             what still needs a human, and time off nobody has answered yet.
+             Re-rendered after every edit from POST /api/labor/schedule/violations
+             so the verdict is never stale. -->
+        <div id="sched-review" class="sr-panel" style="display:none"></div>
+      </section>
+      <section class="sw-sec" data-sw="cov">
+        <div class="sw-k">Coverage</div>
+        <div id="sw-coverage"></div>
+      </section>
+      <section class="sw-sec" data-sw="labor">
+        <div class="sw-k">Labor</div>
+        <div id="sw-labor"></div>
       <!-- PAR hours banner -->
       <div id="sched-par-banner" style="display:none;padding:14px 20px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(111,207,151,.06)">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
@@ -8854,65 +9076,26 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
         </div>
       </div>
 
-      <!-- What the week costs and what the forecast saw. Three kinds of
-           number (total, overtime hours, premium) as stat tiles, the
-           revenue basis as a caption, then the trimmed and staggered
-           shifts and the honest notices. Rendered by _schedRenderEconomics. -->
-      <div id="sched-econ" class="sched-econ" style="display:none"></div>
-
-      <!-- The Shift Strength banner is gone. It ran a second leadership
-           check with different semantics from the quality engine — silently
-           dropping any rule without a minimum score, which the engine
-           enforces — and both rendered, so an owner read "every target met"
-           a few centimetres above "needs 2 bartenders, found 1". -->
-      <!-- Shift Quality — the schedule graded the way an operator reads one.
-           Placed above the shift table deliberately: the score and its
-           reasons are what a manager decides on; the rows are what they
-           check afterwards. Every sentence here is computed from the
-           finished schedule, so none of them can name a person or a shift
-           that is not in the week. -->
-      <div id="sched-quality" style="display:none;padding:18px 20px;border-bottom:1px solid rgba(255,255,255,.08)">
-        <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:center">
-          <div id="sq-dial"></div>
-          <div style="flex:1;min-width:220px">
-            <div style="font-size:11.5px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)">Shift Quality</div>
-            <div style="margin:3px 0 8px"><span id="sq-band" style="font-family:'Clash Display',sans-serif;font-size:24px;font-weight:600;color:rgba(255,255,255,.92)"></span><span id="sq-prov"></span><span id="sq-delta"></span></div>
-            <div id="sq-confidence"></div>
-          </div>
-          <div id="sq-dimensions" style="flex:2;min-width:260px"></div>
-        </div>
-        <div id="sq-save-state" style="margin-top:10px;font-size:13.5px;min-height:18px"></div>
-        <!-- What Cavnar changed to raise the score (schedule_optimizer), and
-             what no legal change could fix — the owner's to decide. -->
-        <div id="sq-optimizer"></div>
-        <!-- Most of the week unrated: rate the people carrying it, here. -->
-        <div id="sq-rate"></div>
-        <div id="sq-warnings" style="margin-top:10px"></div>
-        <div id="sq-shifts" style="margin-top:16px"></div>
-        <div style="margin-top:12px">
-          <button class="cbtn cbtn-text cbtn-inline cbtn-lg" type="button" onclick="toggleQualityReasoning()" id="sq-why-btn">Why this schedule? &#9662;</button>
-          <div id="sq-reasoning" style="display:none;margin-top:10px"></div>
-        </div>
-      </div>
-
-      </details>
+      </section>
+      <section class="sw-sec" data-sw="cost">
+        <div class="sw-k">Cost</div>
+        <!-- What the week costs and what the forecast saw (_schedRenderEconomics). -->
+        <div id="sched-econ" class="sched-econ" style="display:none"></div>
+      </section>
+      <section class="sw-sec" data-sw="opps">
+        <div class="sw-k">Opportunities</div>
+        <div id="sw-opps"></div>
+      </section>
+      <section class="sw-sec sw-fixsec" data-sw="fix">
+        <div class="sw-k">Apply fixes</div>
+        <div id="sw-fix"></div>
+      </section>
+    </aside>
     </div>
   </div>
-
-    {% if labor_upcoming %}
-    {# A calendar of holidays, not a forecast: nothing in this restaurant's
-       own data backs "expect elevated covers" or "your busiest Sundays
-       follow this pattern" (CA1 L30, CA4 F5 / I5). It says what it is, and
-       where the answer lives. demand.upcoming_holidays sends date_str
-       already M/D/YY and a `label` that states only this restaurant's own
-       last-year figure (claim_kind "measured"), else the generic line. #}
-    <div class="hb-kicker" style="margin-top:18px">Holidays ahead</div>
-    <ul class="lb2-events">
-      {% for event in labor_upcoming %}
-      <li><span class="d"></span><span><b>{{ event.name }}</b> — <span class="hb-num">{{ event.date|format_date if (event.date and not event.date_str) else event.date_str }}</span> {% if event.days_away == 0 %}(today){% elif event.days_away == 1 %}(tomorrow){% else %}(<span class="hb-num">{{ event.days_away }}</span> days away){% endif %}<br>{% if event.label %}{{ event.label }}{% if event.claim_kind == 'measured' %} <span class="ck-tag" data-claim="measured">Measured</span>{% endif %}{% else %}Holiday — check how this day ran for you last year before you build the schedule.{% endif %}</span></li>
-      {% endfor %}
-    </ul>
-    {% endif %}
+  {# Team & rules and History sat inside the old schedule card; they keep a
+     wrapper of their own at the column width, closed where that card was. #}
+  <div class="lb2-sched-rest">
   {# Team & rules (density round #28): the eight setup rows were the
      loudest thing on the page, each in a deeper ember. They are one quiet
      disclosure now, a plain list inside it; Availability lives in Roster.
@@ -16968,6 +17151,7 @@ function _schedReset(btnEl) {
   if (btnEl) btnEl.disabled = false;
   if (_schedPollInterval) { clearInterval(_schedPollInterval); _schedPollInterval = null; }
   var _wk = document.getElementById('sched-week'); if (_wk) _wk.remove();
+  if (window.swActive) swActive();
 }
 
 function _schedHandleResult(data) {
@@ -17127,6 +17311,7 @@ function _schedHandleResult(data) {
   }
 
   if (panel) panel.style.display = 'block';
+  if (window.swFill) swFill(data);
   // A draft reopened on its own when Labor loads (openScheduleDraft quiet)
   // does not pull the page down to it.
   if (panel && !window._schedQuietOpen) panel.scrollIntoView({behavior: 'smooth', block: 'nearest'});
@@ -18318,6 +18503,7 @@ function _schedRenderTable(collapse) {
     var wrap = document.getElementById('sched-table-wrap');
     if (wrap) wrap.style.display = 'none';
   }
+  if (window.swRenderGrid) swRenderGrid();
   var label = document.getElementById('sched-toggle-label');
   if (collapse && label) label.innerHTML = 'View full schedule<span id="sched-toggle-arrow" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:rgba(111,207,151,.12);border:1px solid rgba(111,207,151,.25);color:#6fcf97;transition:transform .25s;flex-shrink:0"><svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M5 6l3 3 3-3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>';
 }
@@ -18437,7 +18623,11 @@ function generateSchedule(btn, opts) {
                : (body.week_start ? 'Building the week of ' + mdy(body.week_start) : "Building next week's schedule");
   _wk.innerHTML = cavnarWeekHtml(_wkLabel)
     + '<div id="sched-steps" style="margin:14px 0 0;text-align:left"></div>';
-  (btn.closest('.lb2-actions') || btn).insertAdjacentElement('afterend', _wk);
+  // In the schedule workspace it takes the week's own column (the centre
+  // panel), where the draft will appear; elsewhere it follows the actions row.
+  var _swCtr = document.getElementById('sw-center');
+  if (_swCtr) { _swCtr.insertBefore(_wk, _swCtr.firstChild); if (window.swActive) swActive('building'); }
+  else (btn.closest('.lb2-actions') || btn).insertAdjacentElement('afterend', _wk);
   startScheduleSteps(_schedStart);
 
   // Update elapsed time every 5s so owner knows it's working
@@ -19005,15 +19195,16 @@ function schedEditRow(i) {
   });
 }
 
-function schedFinishEdit(i) {
-  var box = document.querySelector('[data-sched-editrow="' + i + '"]');
+function schedFinishEdit(i, box) {
+  // The list's inline row, or the week grid's popover (swEdit) when given.
+  box = box || document.querySelector('#sched-tbody [data-sched-editrow="' + i + '"]');
   var row = _schedRows[i];
-  if (!box || !row) return;
+  if (!box || !row) return false;
   function val(f) { var el = box.querySelector('[data-sched-f="' + f + '"]'); return el ? String(el.value || '').trim() : null; }
   var start = val('shift_start'), end = val('shift_end');
-  if (_schedMinutes(start) === null || _schedMinutes(end) === null) { toast('Times read like 4:00pm or 16:00', 'error'); return; }
+  if (_schedMinutes(start) === null || _schedMinutes(end) === null) { toast('Times read like 4:00pm or 16:00', 'error'); return false; }
   var emp = val('employee');
-  if (!emp) { toast('Pick who works it', 'error'); return; }
+  if (!emp) { toast('Pick who works it', 'error'); return false; }
   var date = val('date');
   if (date) { row.date = date; row.day = _schedDayOf(date) || row.day; }
   row.employee = emp; row.role = val('role') || ''; row.shift_start = start; row.shift_end = end;
@@ -19023,6 +19214,7 @@ function schedFinishEdit(i) {
   _schedEditIdx = null; _schedEditOpts = []; _schedAddedIdx = null;
   _schedSortRows();
   schedAfterEdit();
+  return true;
 }
 
 function schedCancelEdit(i) {
@@ -19035,7 +19227,8 @@ function schedRemoveRow(i) {
   if (!_schedRows[i] || _schedRemoving) return;
   // The row fades out where it is, then the rows below close up; nothing
   // else on the table is redrawn (9/26/26).
-  var tr = document.querySelector('#sched-tbody tr[data-sched-row="' + i + '"]');
+  var tr = (window._swView === 'week' ? document.querySelector('[data-swg-chip="' + i + '"]') : null)
+        || document.querySelector('#sched-tbody tr[data-sched-row="' + i + '"]');
   if (tr && !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)) {
     _schedRemoving = true;
     tr.className += ' sched-leaving';
@@ -19837,6 +20030,379 @@ function renderTeamWarnings(warnings) {
   wrap.innerHTML = html;
 }
 // ────────────────────────────────────────────────────────────────────────────
+
+// ── The schedule workspace (owner, 9/26/26) ─────────────────────────────
+// Left: what the next draft is built from (the week, the forecast, the
+// labor target, the roster, the rules, notes for Cavnar AI). Centre: the
+// week as a grid of shift blocks, one row per person under their role
+// (List keeps the sortable table). Right: how the week scores, redrawn
+// from the rows on screen after every edit. DESIGN_SYSTEM.md -> Schedule
+// workspace.
+var _swView = 'week';
+var _swData = null;          // the draft as generated or reopened (swFill)
+var _swRoster = null;        // /api/labor/roster
+var _swRules = null;         // /api/labor/rules .rules
+var _swEditIdx = null;       // the shift the popover edits
+var _swAddedIdx = null;      // a shift added from the grid, not yet Done
+function _swCeil() { var c = _swRules && +_swRules.weekly_hours_ceiling; return c > 0 ? c : 40; }
+function _swRowHrs(r) { var h = parseFloat(r && r.scheduled_hours); return isFinite(h) ? h : (+_schedHoursBetween(r.shift_start, r.shift_end) || 0); }
+function _swShort(t) {
+  var m = _schedMinutes(t); if (m === null) return String(t || '');
+  var h = Math.floor(m / 60) % 24, mm = m % 60, ap = h >= 12 ? 'p' : 'a', h12 = h % 12 || 12;
+  return h12 + (mm ? ':' + (mm < 10 ? '0' : '') + mm : '') + ap;
+}
+function _swDays() {
+  if (_schedWeekDates && _schedWeekDates.length) return _schedWeekDates.slice(0, 7);
+  var seen = {}, out = [], i;
+  for (i = 0; i < _schedRows.length; i++) { var d = _schedRows[i].date; if (d && !seen[d]) { seen[d] = 1; out.push(d); } }
+  return out.sort().slice(0, 7);
+}
+function swSetView(v) {
+  _swView = v === 'list' ? 'list' : 'week';
+  var ws = document.getElementById('sched-ws'); if (ws) ws.setAttribute('data-view', _swView);
+  var bs = document.querySelectorAll('[data-sw-view]'), i;
+  for (i = 0; i < bs.length; i++) { var on = bs[i].getAttribute('data-sw-view') === _swView; bs[i].className = on ? 'on' : ''; bs[i].setAttribute('aria-selected', on ? 'true' : 'false'); }
+  if (_swView === 'list' && !_schedTableOpen) toggleSchedTable();
+  try { localStorage.setItem('cav_sw_view', _swView); } catch (e) { }
+  swCloseEdit(true);
+}
+// Idle, building or open: the centre shows one of the three, and the right
+// panel's sections only once a week is on screen.
+function swActive() {
+  var panel = document.getElementById('schedule-preview-panel'), idle = document.getElementById('sw-idle');
+  var open = !!(panel && panel.style.display === 'block'), building = !!document.getElementById('sched-week');
+  if (idle) idle.hidden = open || building;
+  var hint = document.getElementById('sw-rhint'); if (hint) hint.hidden = open;
+  var secs = document.querySelectorAll('#sw-right [data-sw]'), i;
+  for (i = 0; i < secs.length; i++) secs[i].hidden = !open || !_swHasContent(secs[i]);
+}
+function _swHasContent(sec) {
+  var k = sec.getAttribute('data-sw');
+  function shown(id) { var el = document.getElementById(id); return !!(el && el.style.display !== 'none' && el.innerHTML.replace(/\s+/g, '') !== ''); }
+  function full(id) { var el = document.getElementById(id); return !!(el && el.innerHTML.replace(/\s+/g, '') !== ''); }
+  if (k === 'quality') return shown('sched-quality');
+  if (k === 'sugg') return full('sq-optimizer') || full('sw-sugg') || shown('sched-summary');
+  if (k === 'warn') return shown('sched-review') || shown('ps-blockers');
+  if (k === 'cost') return shown('sched-econ');
+  if (k === 'opps') return full('sw-opps');
+  if (k === 'fix') return full('sw-fix');
+  return true;
+}
+function swRenderGrid() {
+  var host = document.getElementById('swg'); if (!host) return;
+  var days = _swDays(), ceil = _swCeil(), i, j;
+  var byPerson = {}, order = [], dayHrs = {}, dayPpl = {};
+  function person(n) {
+    var key = String(n || '').toLowerCase();
+    if (!byPerson[key]) { byPerson[key] = {name: n, roles: {}, hrs: 0, cells: {}}; order.push(key); }
+    return byPerson[key];
+  }
+  for (i = 0; i < _schedRows.length; i++) {
+    var r = _schedRows[i]; if (!r.employee) continue;
+    var pp = person(r.employee), h = _swRowHrs(r);
+    pp.hrs += h; pp.roles[r.role || ''] = (pp.roles[r.role || ''] || 0) + 1;
+    (pp.cells[r.date] = pp.cells[r.date] || []).push(i);
+    dayHrs[r.date] = (dayHrs[r.date] || 0) + h;
+    (dayPpl[r.date] = dayPpl[r.date] || {})[String(r.employee).toLowerCase()] = 1;
+  }
+  // Everyone on the roster gets a row, so a shift can go to somebody the
+  // draft left off (the easy way to take hours off a person in overtime).
+  for (i = 0; i < (_schedRosterNames || []).length; i++) person(_schedRosterNames[i]);
+  var groups = {}, gOrder = [];
+  for (i = 0; i < order.length; i++) {
+    var p = byPerson[order[i]], best = '', bn = -1, rk;
+    for (rk in p.roles) if (p.roles.hasOwnProperty(rk) && p.roles[rk] > bn) { best = rk; bn = p.roles[rk]; }
+    p.role = best || _schedRoleOf(p.name) || 'Other';
+    if (!groups[p.role]) { groups[p.role] = []; gOrder.push(p.role); }
+    groups[p.role].push(p);
+  }
+  var hot = null; for (j = 0; j < days.length; j++) if (hot === null || (dayHrs[days[j]] || 0) > (dayHrs[hot] || 0)) hot = days[j];
+  var h = '<div class="swg-r swg-hr"><div class="swg-d" style="text-align:left"><b>Person</b><span class="dt">hours this week</span></div>';
+  for (j = 0; j < days.length; j++) {
+    var d = days[j], np = 0, k; for (k in (dayPpl[d] || {})) if (dayPpl[d].hasOwnProperty(k)) np++;
+    h += '<div class="swg-d' + (d === hot && dayHrs[d] ? ' hot' : '') + '"><b>' + _escHtml(_schedDayOf(d).slice(0, 3)) + '</b><span class="dt hb-num">' + _escHtml(mdy(d)) + '</span>'
+       + '<span class="dh"><span class="hb-num">' + np + '</span> on · <span class="hb-num">' + _schedHrs(dayHrs[d] || 0) + 'h</span></span>' + _schedHolidayMark(d) + '</div>';
+  }
+  h += '</div>';
+  if (!order.length) h += '<div class="swg-empty">No shifts on this week yet. Add one with + Add a shift.</div>';
+  for (i = 0; i < gOrder.length; i++) {
+    var g = groups[gOrder[i]].sort(function (a, b) { return a.name.toLowerCase() < b.name.toLowerCase() ? -1 : 1; });
+    h += '<div class="swg-role">' + _escHtml(gOrder[i]) + ' <span class="hb-num">' + g.length + '</span></div>';
+    for (j = 0; j < g.length; j++) {
+      var q = g[j], ot = q.hrs > ceil;
+      h += '<div class="swg-r"><div class="swg-p"><span class="n" title="' + _escAttr(q.name) + '">' + _escHtml(q.name) + '</span><span class="h' + (ot ? ' ot' : '') + '"><span class="hb-num">' + _schedHrs(q.hrs) + 'h</span>' + (ot ? ' · over ' + ceil + 'h' : '') + '</span></div>';
+      for (k = 0; k < days.length; k++) {
+        var list = (q.cells[days[k]] || []).slice().sort(function (a, b) { return (_schedMinutes(_schedRows[a].shift_start) || 0) - (_schedMinutes(_schedRows[b].shift_start) || 0); });
+        h += '<div class="swg-c">';
+        for (var c = 0; c < list.length; c++) {
+          var ri = list[c], rw = _schedRows[ri], why = rw.needs_review ? (rw.review_reason || 'needs review') : (rw.notes || '');
+          var sub = '<span class="hb-num">' + _schedHrs(_swRowHrs(rw)) + 'h</span>' + (rw.role && rw.role !== q.role ? ' · ' + _escHtml(rw.role) : '') + (rw.needs_review ? ' · ' + _escHtml(String(why).slice(0, 40)) : '');
+          h += '<button type="button" class="swg-chip' + (rw.needs_review ? ' bad' : '') + (_schedOverrides[ri] ? ' chg' : '') + (_swEditIdx === ri ? ' editing' : '') + '" data-swg-chip="' + ri + '"'
+             + ' title="' + _escAttr(why ? why : 'Edit this shift') + '" aria-label="' + _escAttr(q.name + ', ' + _schedDayOf(days[k]) + ' ' + (rw.shift_start || '') + ' to ' + (rw.shift_end || '') + (rw.needs_review ? ', needs review' : '')) + '">'
+             + '<span class="t">' + _escHtml(_swShort(rw.shift_start)) + '–' + _escHtml(_swShort(rw.shift_end)) + '</span><span class="s">' + sub + '</span></button>';
+        }
+        h += '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm swg-add" data-swg-add="' + _escAttr(q.name) + '|' + _escAttr(days[k]) + '" aria-label="' + _escAttr('Add a shift for ' + q.name + ' on ' + _schedDayOf(days[k])) + '" title="Add a shift">+</button></div>';
+      }
+      h += '</div>';
+    }
+  }
+  var t = host.querySelector('.swg-t');
+  if (!t) { host.innerHTML = '<div class="swg-t"></div><div class="swg-foot"><span><i class="bad"></i>breaks a rule</span><span><i class="chg"></i>changed by you</span><span>Click a shift to edit it · + adds one</span></div>'; t = host.querySelector('.swg-t'); }
+  t.style.gridTemplateColumns = '148px repeat(' + Math.max(days.length, 1) + ',minmax(86px,1fr))';
+  _schedPatchChildren(t, h);
+  var n = document.getElementById('sw-view-n'); if (n) n.innerHTML = '<span class="hb-num">' + _schedRows.length + '</span> shifts · <span class="hb-num">' + order.length + '</span> people';
+  swLive();
+}
+// Children-only patch: an unchanged row keeps its node (see _schedPatchTbody).
+function _schedPatchChildren(host, html) {
+  var tmp = document.createElement('div'), fresh = [], k;
+  tmp.innerHTML = html;
+  for (k = 0; k < tmp.children.length; k++) fresh.push(tmp.children[k]);
+  for (k = 0; k < fresh.length; k++) {
+    var old = host.children[k];
+    if (!old) host.appendChild(fresh[k]);
+    else if (old.outerHTML !== fresh[k].outerHTML) host.replaceChild(fresh[k], old);
+  }
+  while (host.children.length > fresh.length) host.removeChild(host.lastElementChild);
+}
+// ── the grid's editor: one popover, the list editor's fields and rules ──
+function swEdit(i, anchor) {
+  // Close any open popover; a new shift still waiting for Done is dropped,
+  // unless it is the one being opened.
+  swCloseEdit(_swAddedIdx !== i);
+  var row = _schedRows[i]; if (!row) return;
+  _swEditIdx = i; _schedEditOpts = [];
+  var dates = '', k, days = _swDays();
+  for (k = 0; k < days.length; k++) dates += '<option value="' + _escAttr(days[k]) + '"' + (days[k] === row.date ? ' selected' : '') + '>' + _escHtml(_schedDayOf(days[k]).slice(0, 3) + ' ' + mdy(days[k])) + '</option>';
+  var box = document.createElement('div');
+  box.className = 'swp'; box.id = 'swp'; box.setAttribute('role', 'dialog'); box.setAttribute('aria-label', _swAddedIdx === i ? 'New shift' : 'Edit shift');
+  box.setAttribute('data-sched-editrow', String(i));
+  box.innerHTML = '<div class="swp-h">' + (_swAddedIdx === i ? 'New shift' : 'Edit shift') + '</div><div class="swp-g">'
+    + '<label class="full">Who<select class="ac-select" data-sched-f="employee"></select></label>'
+    + '<label>Day<select class="ac-select" data-sched-f="date">' + dates + '</select></label>'
+    + '<label>Role<input class="ac-input" data-sched-f="role" value="' + _escAttr(row.role || '') + '" placeholder="Role"></label>'
+    + '<label>Start<select class="ac-select" data-sched-f="shift_start">' + _schedTimeOpts(row.shift_start) + '</select></label>'
+    + '<label>End<select class="ac-select" data-sched-f="shift_end">' + _schedTimeOpts(row.shift_end) + '</select></label></div>'
+    + (row.needs_review ? '<div class="sw-flag bad" style="margin-top:10px">' + _escHtml(row.review_reason || 'Breaks a rule') + '</div>' : '')
+    + '<div class="swp-f">' + (_swAddedIdx === i ? '' : '<button type="button" class="cbtn cbtn-text cbtn-danger cbtn-sm" data-swp="remove">Remove</button>')
+    + '<span class="sp"></span><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-swp="cancel">Cancel</button><button type="button" class="cbtn cbtn-primary cbtn-sm" data-swp="done">Done</button></div>';
+  document.body.appendChild(box);
+  var sel = box.querySelector('[data-sched-f="employee"]');
+  _schedFillEmployeeSelect(sel, row.employee || '');
+  _fetchReplacements(i, function (options) {
+    if (_swEditIdx !== i || !options) return;
+    _schedEditOpts = []; for (var o = 0; o < options.length; o++) _schedEditOpts.push(options[o].name);
+    _schedFillEmployeeSelect(sel, sel.value);
+  });
+  var a = anchor || document.querySelector('[data-swg-chip="' + i + '"]');
+  if (a) a.className += ' editing';
+  var r = a ? a.getBoundingClientRect() : {left: 40, right: 40, bottom: 120, top: 120};
+  var w = box.offsetWidth, hgt = box.offsetHeight, vw = document.documentElement.clientWidth, vh = window.innerHeight;
+  var left = Math.max(16, Math.min(r.left, vw - w - 16)), top = r.bottom + 8;
+  if (top + hgt > vh - 12 && r.top - hgt - 8 > 12) top = r.top - hgt - 8;
+  box.style.left = (left + window.pageXOffset) + 'px'; box.style.top = (top + window.pageYOffset) + 'px';
+  try { sel.focus(); } catch (e) { }
+}
+function swCloseEdit(discard) {
+  var box = document.getElementById('swp'); if (box) box.parentNode.removeChild(box);
+  var was = _swEditIdx; _swEditIdx = null;
+  if (discard && _swAddedIdx !== null) { _schedRows.splice(_swAddedIdx, 1); _swAddedIdx = null; _schedRenderTable(); return; }
+  if (was !== null) { var c = document.querySelector('[data-swg-chip="' + was + '"]'); if (c) c.className = c.className.replace(/\s*editing/g, ''); }
+}
+function swAddShift(name, date) {
+  if (_swView === 'list') { schedAddRow(); return; }
+  if (_swAddedIdx !== null) return;
+  var days = _swDays(), d0 = date || days[0] || '', emp = name || (_schedRosterNames || [])[0] || '';
+  // The person's own usual times first, then their role's, then 4-10pm.
+  var tpl = null, i;
+  for (i = 0; i < _schedRows.length && !tpl; i++) if (String(_schedRows[i].employee).toLowerCase() === String(emp).toLowerCase()) tpl = _schedRows[i];
+  var role = (tpl && tpl.role) || _schedRoleOf(emp) || '';
+  for (i = 0; i < _schedRows.length && !tpl; i++) if (role && _schedRows[i].role === role) tpl = _schedRows[i];
+  var st = (tpl && tpl.shift_start) || '4:00pm', en = (tpl && tpl.shift_end) || '10:00pm';
+  _schedRows.push({date: d0, day: _schedDayOf(d0) || '', employee: emp, role: role, shift_start: st, shift_end: en, scheduled_hours: _schedHoursBetween(st, en) || '6', notes: ''});
+  _swAddedIdx = _schedRows.length - 1;
+  _schedRenderTable();
+  swEdit(_swAddedIdx);
+}
+document.addEventListener('click', function (ev) {
+  var t = ev.target; if (!t || !t.closest) return;
+  var v = t.closest('[data-sw-view]'); if (v) { swSetView(v.getAttribute('data-sw-view')); return; }
+  var chip = t.closest('[data-swg-chip]'); if (chip) { var ci = +chip.getAttribute('data-swg-chip'); if (_swEditIdx === ci) swCloseEdit(true); else swEdit(ci, chip); return; }
+  var add = t.closest('[data-swg-add]'); if (add) { var pr = add.getAttribute('data-swg-add').split('|'); swAddShift(pr[0], pr[1]); return; }
+  var act = t.closest('[data-swp]');
+  if (act) {
+    var box = document.getElementById('swp'), i = _swEditIdx, what = act.getAttribute('data-swp');
+    if (i === null) return;
+    if (what === 'cancel') swCloseEdit(true);
+    else if (what === 'remove') { swCloseEdit(false); schedRemoveRow(i); }
+    else if (what === 'done') {
+      // schedFinishEdit refuses (and says why) a bad time or no person; the
+      // popover stays open for that. On success the grid has redrawn.
+      _swEditIdx = null;
+      if (schedFinishEdit(i, box)) { _swAddedIdx = null; if (box && box.parentNode) box.parentNode.removeChild(box); }
+      else _swEditIdx = i;
+    }
+    return;
+  }
+  // A click that opened the popover (the toolbar's + Add a shift) is not an outside click.
+  if (t.closest('.sw-view')) return;
+  if (document.getElementById('swp') && !t.closest('#swp')) swCloseEdit(true);
+});
+document.addEventListener('keydown', function (ev) { if ((ev.key === 'Escape' || ev.keyCode === 27) && document.getElementById('swp')) swCloseEdit(true); });
+// ── the side panels ─────────────────────────────────────────────────────
+function _swBar(label, val, max, target, cls, right) {
+  var pct = max > 0 ? Math.min(100, Math.round(val / max * 100)) : 0, tk = (target && max > 0) ? Math.min(100, Math.round(target / max * 100)) : null;
+  return '<div class="sw-bar' + (cls ? ' ' + cls : '') + '"><span class="l">' + label + '</span><span class="tr"><i style="width:' + pct + '%"></i>' + (tk !== null ? '<b style="left:calc(' + tk + '% - 1px)"></b>' : '') + '</span><span class="v">' + right + '</span></div>';
+}
+function swFill(data) {
+  _swData = data || null;
+  var fc = document.getElementById('sw-forecast');
+  if (fc && data) {
+    var tg = data.daily_target_hours || {}, days = _swDays(), mx = 0, j, h = '';
+    for (j = 0; j < days.length; j++) mx = Math.max(mx, +tg[days[j]] || 0);
+    for (j = 0; j < days.length; j++) if (tg[days[j]] != null) h += _swBar(_escHtml(_schedDayOf(days[j]).slice(0, 3)), +tg[days[j]] || 0, mx, null, '', '<span class="hb-num">' + _schedHrs(tg[days[j]]) + 'h</span>');
+    if (data.projected_revenue) h += '<div class="sw-kv" style="margin-top:8px"><span>Forecast sales</span><b class="hb-num">' + _schedMoney(data.projected_revenue) + '</b></div>';
+    if (data.projected_revenue_source) h += '<div class="sw-note">' + _escHtml(data.projected_revenue_source) + '.</div>';
+    var ddt = data.demand_data_through; if (ddt && ddt.blind) h += '<div class="sw-flag bad">No sales newer than <span class="hb-num">' + _escHtml(mdy(ddt.date)) + '</span>: the forecast cannot see recent weeks.</div>';
+    if (h) fc.innerHTML = '<div class="sw-note" style="margin-bottom:6px">Hours each day’s forecast calls for</div>' + h;
+  }
+  var par = document.getElementById('sw-par');
+  if (par && data && data.hours_budget) par.innerHTML = 'This week’s PAR: <span class="hb-num">' + _schedHrs(data.hours_budget) + 'h</span>' + (data.labor_budget_dollars ? ' · <span class="hb-num">' + _schedMoney(data.labor_budget_dollars) + '</span> at <span class="hb-num">' + _escHtml(String(data.labor_target || '')) + '%</span>' : '') + '. A ceiling, not a quota.';
+  swLive();
+  swActive();
+}
+// Coverage and Labor from the rows on screen, so an edit moves them at once.
+function swLive() {
+  var cov = document.getElementById('sw-coverage'), lab = document.getElementById('sw-labor');
+  if (!cov && !lab) return;
+  var days = _swDays(), tg = (_swData && _swData.daily_target_hours) || _schedTargets || {}, dh = {}, dp = {}, rh = {}, ph = {}, tot = 0, i, j;
+  for (i = 0; i < _schedRows.length; i++) {
+    var r = _schedRows[i], hh = _swRowHrs(r); tot += hh;
+    dh[r.date] = (dh[r.date] || 0) + hh;
+    (dp[r.date] = dp[r.date] || {})[String(r.employee || '').toLowerCase()] = 1;
+    var rl = r.role || 'Other'; rh[rl] = (rh[rl] || 0) + hh;
+    ph[r.employee || ''] = (ph[r.employee || ''] || 0) + hh;
+  }
+  if (cov) {
+    var mx = 0, h = '';
+    for (j = 0; j < days.length; j++) mx = Math.max(mx, dh[days[j]] || 0, +tg[days[j]] || 0);
+    for (j = 0; j < days.length; j++) {
+      var d = days[j], got = dh[d] || 0, want = +tg[d] || 0, n = 0, k; for (k in (dp[d] || {})) if (dp[d].hasOwnProperty(k)) n++;
+      h += _swBar(_escHtml(_schedDayOf(d).slice(0, 3)), got, mx, want || null, (want && got > want * 1.1) ? 'over' : '', '<span class="hb-num">' + n + '</span> · <span class="hb-num">' + _schedHrs(got) + '</span>' + (want ? '/<span class="hb-num">' + _schedHrs(want) + 'h</span>' : 'h'));
+    }
+    // A role can only cover so many hours without overtime: its active
+    // people times the weekly ceiling. Past that, the overtime is the
+    // roster's size, not any one shift (owner, 9/26/26: "13 hard rules").
+    var ceil = _swCeil(), cnt = {}, ro = (_swRoster && _swRoster.roster) || [], flags = [];
+    for (i = 0; i < ro.length; i++) if (ro[i].active !== false) { var rr = ro[i].role || 'Other'; cnt[rr] = (cnt[rr] || 0) + 1; }
+    var rows2 = '', rk, rmx = 0; for (rk in rh) if (rh.hasOwnProperty(rk)) rmx = Math.max(rmx, rh[rk], (cnt[rk] || 0) * ceil);
+    for (rk in rh) if (rh.hasOwnProperty(rk)) {
+      var cap = (cnt[rk] || 0) * ceil, over = cap && rh[rk] > cap;
+      rows2 += _swBar(_escHtml(rk), rh[rk], rmx, cap || null, over ? 'over role' : 'role', '<span class="hb-num">' + _schedHrs(rh[rk]) + '</span>' + (cap ? '/<span class="hb-num">' + cap + 'h</span>' : 'h'));
+      if (over) flags.push('<b>' + _escHtml(rk) + '</b>: <span class="hb-num">' + _schedHrs(rh[rk]) + 'h</span> scheduled, but <span class="hb-num">' + cnt[rk] + '</span> ' + (cnt[rk] === 1 ? 'person covers' : 'people cover') + ' <span class="hb-num">' + cap + 'h</span> without overtime. Add someone who can work ' + _escHtml(rk.toLowerCase()) + ', or take <span class="hb-num">' + _schedHrs(rh[rk] - cap) + 'h</span> off.');
+    }
+    h = '<div class="sw-note" style="margin-bottom:6px">People on · hours scheduled / the forecast’s</div>' + h
+      + (rows2 ? '<div class="sw-sub">By role · hours / what the roster covers at <span class="hb-num">' + ceil + 'h</span> each</div>' + rows2 : '');
+    for (i = 0; i < flags.length; i++) h += '<div class="sw-flag bad">' + flags[i] + '</div>';
+    if (cov._h !== h) { cov.innerHTML = h; cov._h = h; }
+  }
+  if (lab) {
+    var bud = _swData && +_swData.hours_budget, ot = [], nm, lh = '';
+    for (nm in ph) if (ph.hasOwnProperty(nm) && nm && ph[nm] > _swCeil()) ot.push({n: nm, h: ph[nm]});
+    ot.sort(function (a, b) { return b.h - a.h; });
+    lh += '<div class="sw-kv"><span>Scheduled</span><b class="hb-num' + (bud && tot > bud ? ' bad' : '') + '">' + _schedHrs(tot) + 'h</b></div>';
+    if (bud) lh += '<div class="sw-kv"><span>PAR (the ceiling)</span><b class="hb-num">' + _schedHrs(bud) + 'h</b></div>'
+               + '<div class="sw-kv"><span>' + (tot > bud ? 'Over PAR' : 'Under PAR') + '</span><b class="hb-num ' + (tot > bud ? 'bad' : 'good') + '">' + _schedHrs(Math.abs(bud - tot)) + 'h</b></div>';
+    var pc = _swData && _swData.projected_cost, rev = _swData && +_swData.projected_revenue;
+    if (pc && pc.total && rev) lh += '<div class="sw-kv"><span>Labor % as drafted</span><b class="hb-num">' + (Math.round(pc.total / rev * 1000) / 10) + '%</b></div>';
+    if (ot.length) {
+      var names = []; for (i = 0; i < Math.min(ot.length, 5); i++) names.push(_escHtml(ot[i].n) + ' <span class="hb-num">' + _schedHrs(ot[i].h) + 'h</span>');
+      lh += '<div class="sw-flag bad"><b><span class="hb-num">' + ot.length + '</span> ' + (ot.length === 1 ? 'person' : 'people') + ' over <span class="hb-num">' + _swCeil() + 'h</span></b>: ' + names.join(', ') + (ot.length > 5 ? ' and <span class="hb-num">' + (ot.length - 5) + '</span> more' : '') + '.</div>';
+    }
+    if (lab._h !== lh) { lab.innerHTML = lh; lab._h = lh; }
+  }
+}
+// The left panel: the roster, the rules, the target and the notes, read
+// once when the workspace first scrolls into view.
+function swLoadLeft() {
+  var emp = document.getElementById('sw-emp'), rul = document.getElementById('sw-rules');
+  fetch('/api/labor/roster', {credentials: 'same-origin'}).then(apiJson).then(function (d) {
+    if (!d || !d.ok) { if (emp) emp.innerHTML = '<div class="sw-note">The roster could not load.</div>'; return; }
+    _swRoster = d;
+    var ro = d.roster || [], act = 0, close = 0, roles = {}, order = [], i;
+    for (i = 0; i < ro.length; i++) { if (ro[i].active === false) continue; act++; if (ro[i].can_close) close++; var rl = ro[i].role || 'Other'; if (!roles[rl]) { roles[rl] = 0; order.push(rl); } roles[rl]++; }
+    var h = '<div class="sw-kv"><span>On the roster</span><b class="hb-num">' + act + '</b></div><div class="sw-kv"><span>Can close</span><b class="hb-num">' + close + '</b></div>';
+    order.sort(function (a, b) { return roles[b] - roles[a]; });
+    var bits = []; for (i = 0; i < order.length; i++) bits.push(_escHtml(order[i]) + ' <span class="hb-num">' + roles[order[i]] + '</span>');
+    if (bits.length) h += '<div class="sw-note" style="margin-top:6px">' + bits.join(' · ') + '</div>';
+    if (emp) emp.innerHTML = h;
+    swLive();
+  }).catch(function () { });
+  fetch('/api/labor/rules', {credentials: 'same-origin'}).then(apiJson).then(function (d) {
+    if (!d || !d.ok) { if (rul) rul.innerHTML = '<div class="sw-note">Your rules could not load.</div>'; return; }
+    _swRules = d.rules || {};
+    var r = _swRules, lines = [], cl = d.closures || {}, fl = d.role_floors || {}, k, nf = 0;
+    lines.push('Up to <span class="hb-num">' + (r.weekly_hours_ceiling || 40) + 'h</span> a week');
+    if (r.max_shift_hours) lines.push('Shifts up to <span class="hb-num">' + r.max_shift_hours + 'h</span>');
+    if (r.min_rest_hours) lines.push('<span class="hb-num">' + r.min_rest_hours + 'h</span> between shifts');
+    if (r.max_consecutive_days) lines.push('At most <span class="hb-num">' + r.max_consecutive_days + '</span> days in a row');
+    if (r.keyholder_until_close !== false) lines.push('A keyholder until close');
+    if (r.manager_on_duty) lines.push('A manager on every shift');
+    if ((cl.closed_weekdays || []).length) lines.push('Closed ' + _escHtml((cl.closed_weekdays || []).join(', ')));
+    for (k in fl) if (fl.hasOwnProperty(k)) nf++;
+    if (nf) lines.push('Minimums set for <span class="hb-num">' + nf + '</span> role' + (nf === 1 ? '' : 's'));
+    if (rul) rul.innerHTML = '<div class="sw-note">' + lines.join('<br>') + '</div>';
+    swRenderGrid();
+  }).catch(function () { });
+  fetch('/api/account/targets', {credentials: 'same-origin'}).then(apiJson).then(function (d) {
+    if (!d || !d.ok) return;
+    var t = d.targets || {}, tg = document.getElementById('sw-target'), nt = document.getElementById('sw-notes');
+    if (tg && t.labor_target_pct != null) tg.value = t.labor_target_pct;
+    if (nt) nt.value = t.sched_notes || '';
+    if (!d.can_edit) { if (tg) tg.disabled = true; if (nt) nt.disabled = true; }
+  }).catch(function () { });
+}
+function _swSave(body, statusId, okText) {
+  var st = document.getElementById(statusId); if (st) { st.textContent = 'Saving…'; st.className = 'ac-status'; }
+  fetch('/api/account/targets', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
+    .then(apiJson).then(function (d) {
+      if (!st) return;
+      if (d && d.ok) { st.textContent = okText; st.className = 'ac-status ok'; }
+      else { st.textContent = (d && d.error) || 'Could not save'; st.className = 'ac-status err'; }
+    }).catch(function () { if (st) { st.textContent = 'Could not save'; st.className = 'ac-status err'; } });
+}
+document.addEventListener('change', function (ev) {
+  var t = ev.target; if (!t || !t.id) return;
+  if (t.id === 'sw-target') { if (t.value === '') return; _swSave({labor_target_pct: +t.value}, 'sw-target-status', 'Saved · the next draft uses it'); }
+  else if (t.id === 'sw-notes') _swSave({sched_notes: t.value}, 'sw-notes-status', 'Saved · every draft reads these');
+});
+function swOpenTeam(which) {
+  var det = document.getElementById('lb2-team'); if (det && !det.open) det.open = true;
+  var p = document.getElementById(which + '-panel');
+  if (p && p.style.display === 'none') { if (which === 'roster' && window.toggleRosterPanel) toggleRosterPanel(); else if (which === 'rules' && window.toggleRulesPanel) toggleRulesPanel(); }
+  var row = p ? p.parentNode : det; if (row && row.scrollIntoView) row.scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+(function () {
+  if (typeof document === 'undefined') return;
+  function boot() {
+    var ws = document.getElementById('sched-ws'); if (!ws) return;
+    try { var v = localStorage.getItem('cav_sw_view'); if (v === 'list' || v === 'week') { _swView = v; ws.setAttribute('data-view', v); var bs = ws.querySelectorAll('[data-sw-view]'), i; for (i = 0; i < bs.length; i++) { var on = bs[i].getAttribute('data-sw-view') === v; bs[i].className = on ? 'on' : ''; bs[i].setAttribute('aria-selected', on ? 'true' : 'false'); } } } catch (e) { }
+    // Idle / building / open, and which right-hand sections have anything
+    // to say, follow the DOM the existing scheduling code already writes.
+    if (window.MutationObserver) {
+      var pend = null, mo = new MutationObserver(function () { if (pend) return; pend = setTimeout(function () { pend = null; swActive(); }, 30); });
+      mo.observe(document.getElementById('sw-center'), {childList: true, subtree: false});
+      var pnl = document.getElementById('schedule-preview-panel'); if (pnl) mo.observe(pnl, {attributes: true, attributeFilter: ['style']});
+      mo.observe(document.getElementById('sw-right'), {childList: true, subtree: true, attributes: true, attributeFilter: ['style']});
+    }
+    swActive();
+    var loaded = false;
+    function go() { if (loaded) return; loaded = true; swLoadLeft(); }
+    if (window.IntersectionObserver) { var io = new IntersectionObserver(function (en) { if (en[0] && en[0].isIntersecting) { io.disconnect(); go(); } }); io.observe(ws); }
+    else go();
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
 
 function toggleSchedTable() {
   var wrap = document.getElementById('sched-table-wrap');
@@ -25786,8 +26352,13 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     _rvMarkRows(!(d&&d.initial));
     var rv=_rv.review,pend=_rv.pending||{},hard=rv?(+rv.hard||0):0,soft=rv?(+rv.soft||0):0,i;
     var pendNames=[],k;for(k in pend)if(pend.hasOwnProperty(k)&&pend[k]&&pend[k].length)pendNames.push(k);
-    if(!rv&&!pendNames.length){box.style.display='none';box.innerHTML='';box._h='';if(typeof _schedRenderTable==='function')_schedRenderTable();return;}
-    var h='<div class="sr-head"><span class="sr-k">Rules check</span>';
+    // In the schedule workspace the check is four sections (Warnings here;
+    // AI suggestions, Opportunities and Apply fixes in their own panels);
+    // anywhere without them it stays one box.
+    var sgEl=document.getElementById('sw-sugg'),opEl=document.getElementById('sw-opps'),fxEl=document.getElementById('sw-fix');
+    function _swPut(el,html){if(el&&el._h!==html){el.innerHTML=html;el._h=html;}}
+    if(!rv&&!pendNames.length){_swPut(sgEl,'');_swPut(opEl,'');_swPut(fxEl,'');box.style.display='none';box.innerHTML='';box._h='';if(typeof _schedRenderTable==='function')_schedRenderTable();return;}
+    var h='<div class="sr-head"><span class="sr-k">Rules check</span>',hs='',ho='',hf='';
     if(hard)h+='<span class="sr-chip bad"><span class="hb-num">'+hard+'</span> hard</span>';
     if(soft)h+='<span class="sr-chip warn"><span class="hb-num">'+soft+'</span> soft</span>';
     if(rv&&!hard&&!soft)h+='<span class="sr-chip good">&#10003; every rule kept</span>';
@@ -25803,45 +26374,45 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       h+='</div>';
     }
     if(_rv.fixes.length){
-      h+='<div class="sr-grp"><div class="sr-k">Fixed by Cavnar AI</div>';
-      for(i=0;i<_rv.fixes.length;i++){var f=_rv.fixes[i]||{};h+='<div class="sr-line fix"><span class="d"></span><span><b>'+esc(f.from)+'</b> <span class="arrow">&rarr;</span> <b>'+esc(f.to)+'</b>, '+esc(_rvWhen(_rvRow(f.index)))+' &mdash; '+esc(f.reason||f.kind||'')+'</span></div>';}
-      h+='</div>';
+      hs+='<div class="sr-grp"><div class="sr-k">Fixed by Cavnar AI</div>';
+      for(i=0;i<_rv.fixes.length;i++){var f=_rv.fixes[i]||{};hs+='<div class="sr-line fix"><span class="d"></span><span><b>'+esc(f.from)+'</b> <span class="arrow">&rarr;</span> <b>'+esc(f.to)+'</b>, '+esc(_rvWhen(_rvRow(f.index)))+' &mdash; '+esc(f.reason||f.kind||'')+'</span></div>';}
+      hs+='</div>';
     }
     if(_rv.moves.length){
       /* Overtime the rows on screen create, with a same-role person who has
          room. One tap stages the move like any edit; Save keeps it. */
-      h+='<div class="sr-grp"><div class="sr-k">Over hours you can move</div>';
+      ho+='<div class="sr-grp"><div class="sr-k">Over hours you can move</div>';
       for(i=0;i<_rv.moves.length;i++){var mv=_rv.moves[i]||{},cd=mv.candidate||{};
-        h+='<div class="sr-line warn"><span class="d"></span><span><b>'+esc(mv.employee)+'</b> <span class="hb-num">'+_schedHrs(+mv.hours||0)+'h</span>, <span class="hb-num">'+_schedHrs(+mv.over||0)+'h</span> over &mdash; '
+        ho+='<div class="sr-line warn"><span class="d"></span><span><b>'+esc(mv.employee)+'</b> <span class="hb-num">'+_schedHrs(+mv.hours||0)+'h</span>, <span class="hb-num">'+_schedHrs(+mv.over||0)+'h</span> over &mdash; '
           +esc(cd.employee)+' has room for the '+esc(mdy(cd.date))+' '+esc(cd.shift_start||'')+' shift'
           +(cd.saves?', about <span class="hb-num">$'+Math.round(+cd.saves).toLocaleString()+'</span> less overtime pay if you keep it':'')+'.</span>'
           +'<button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="schedMoveOvertime('+i+',this)">Move to '+esc(cd.employee)+'</button>'
           // Move is its yes; a keyed move can also be turned down, with a
           // reason, through the same ledger door (rec-ROI #41, #22).
           +(mv.rec_key&&mv.answerable!==false&&typeof recNotForUsHtml==='function'?recNotForUsHtml(mv.rec_key,'schedule_review','schedule'):'')+'</div>';}
-      h+='</div>';
+      ho+='</div>';
     }
-    h+=_rvDemandLine(_rv.demand);
+    ho+=_rvDemandLine(_rv.demand);
     var sbAsk=[];for(i=0;i<_rv.standby.length;i++)if(_rv.standby[i]&&_rv.standby[i].standby&&_rv.standby[i].standby.employee)sbAsk.push(i);
     if(sbAsk.length){
-      h+='<div class="sr-grp"><div class="sr-k">Standby</div><div class="sr-note" style="margin:0 0 4px">'+(_rv.standbyNote?num(_rv.standbyNote):esc('An estimate from each person’s own attendance record, assuming one no-show doesn’t make another likelier.'))
+      ho+='<div class="sr-grp"><div class="sr-k">Standby</div><div class="sr-note" style="margin:0 0 4px">'+(_rv.standbyNote?num(_rv.standbyNote):esc('An estimate from each person’s own attendance record, assuming one no-show doesn’t make another likelier.'))
         +(_rv.standbyBase!=null?' Overall no-show rate here: <span class="hb-num">'+Math.round(_rv.standbyBase*1000)/10+'%</span>.':'')+'</div>';
       for(i=0;i<sbAsk.length;i++){var sd=_rv.standby[sbAsk[i]],sp=sd.standby;
-        h+='<div class="sr-line"><span class="d"></span><span>'+esc(sd.day)+' '+esc(mdy(sd.date))+': about <span class="hb-num">'+Math.round((+sd.chance_of_a_no_show||0)*100)+'%</span> chance somebody doesn&rsquo;t show. <b>'+esc(sp.employee)+'</b> is off and could be on call.</span>'
+        ho+='<div class="sr-line"><span class="d"></span><span>'+esc(sd.day)+' '+esc(mdy(sd.date))+': about <span class="hb-num">'+Math.round((+sd.chance_of_a_no_show||0)*100)+'%</span> chance somebody doesn&rsquo;t show. <b>'+esc(sp.employee)+'</b> is off and could be on call.</span>'
           +'<button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="schedAskStandby('+sbAsk[i]+',this)">Ask '+esc(sp.employee)+'</button></div>';}
-      h+='</div>';
+      ho+='</div>';
     }
     /* Rows the manager's own past edits say they will probably change
        (schedule_learning.predict_row_edits), likeliest first. Matches to an
        edit they keep making are already lines above. */
     var lk=[];for(i=0;i<_rv.likely.length;i++)if(_rv.likely[i]&&_rv.likely[i].kind==='predicted')lk.push(_rv.likely[i]);
     if(lk.length){
-      h+='<div class="sr-grp"><div class="sr-k">Likely edits</div><div class="sr-note" style="margin:0 0 4px">From your own past edits &mdash; rows you&rsquo;ll probably change. Check these first.'+(_rv.likelyNote?' '+num(_rv.likelyNote.charAt(0).toUpperCase()+_rv.likelyNote.slice(1))+'.':'')
+      hs+='<div class="sr-grp"><div class="sr-k">Likely edits</div><div class="sr-note" style="margin:0 0 4px">From your own past edits &mdash; rows you&rsquo;ll probably change. Check these first.'+(_rv.likelyNote?' '+num(_rv.likelyNote.charAt(0).toUpperCase()+_rv.likelyNote.slice(1))+'.':'')
         +(_rv.likelyBase!=null?' Across all rows, <span class="hb-num">'+Math.round(_rv.likelyBase*100)+'%</span> get changed.':'')+'</div>';
       for(i=0;i<lk.length;i++){var le=lk[i],rs=String(le.reason||'');
-        h+='<div class="sr-line"><span class="d"></span><span><span class="hb-num">'+Math.round((+le.likelihood||0)*100)+'%</span> <b>'+esc(le.employee)+'</b>, '+esc(mdy(le.date))+' '+esc(le.shift_start||'')+' '+esc(le.role||'')
+        hs+='<div class="sr-line"><span class="d"></span><span><span class="hb-num">'+Math.round((+le.likelihood||0)*100)+'%</span> <b>'+esc(le.employee)+'</b>, '+esc(mdy(le.date))+' '+esc(le.shift_start||'')+' '+esc(le.role||'')
           +(rs?' &mdash; '+esc(rs.charAt(0).toUpperCase()+rs.slice(1))+'.':'')+'</span></div>';}
-      h+='</div>';
+      hs+='</div>';
     }
     if(_rv.unfixed.length){
       h+='<div class="sr-grp"><div class="sr-k">Needs a human</div>';
@@ -25859,13 +26430,15 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     // Apply fixes clears hard rules; Improve with Cavnar runs the Shift
     // Quality repair loop over the rows on screen. Both only propose.
     if((window._schedRows||[]).length){
-      h+='<div class="sr-actions">'+(hard?'<button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="applyScheduleFixes(this)">Apply fixes</button>':'')
+      hf+='<div class="sr-actions">'+(hard?'<button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="applyScheduleFixes(this)">Apply fixes</button>':'')
         +'<button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="improveScheduleWithCavnar(this)">Improve with Cavnar AI</button>'
         +'<span class="sr-note">'+(hard?'Apply fixes puts somebody legal on every row that breaks a hard rule. ':'')+'Improve with Cavnar AI makes legal changes that raise the score and lists each one. You still choose to save.</span></div>';
     }
     // Redrawn only when it changed, and the table below held where it was
     // on screen when it does: Safari has no scroll anchoring, so a line
     // added or dropped here slid the rows under the cursor (9/26/26).
+    if(!sgEl)h+=hs;if(!opEl)h+=ho;if(!fxEl)h+=hf;
+    _swPut(sgEl,hs);_swPut(opEl,ho);_swPut(fxEl,hf);
     if(box._h!==h||box.style.display!=='block'){
       var tw=document.getElementById('sched-table-wrap'),t0=tw?tw.getBoundingClientRect().top:null;
       box.innerHTML=h;box._h=h;box.style.display='block';

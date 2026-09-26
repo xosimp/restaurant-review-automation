@@ -86,12 +86,16 @@ def test_schedule_buttons_sit_below_the_heading_not_beside_it():
     as the header row's second flex child, but that squeezed the "Building
     the Week" animation into the same flex row once Generate fired. They
     now sit directly under the subtitle instead."""
+    # The schedule workspace (9/26/26): the controls moved into its left
+    # panel, under the heading, never beside it in the header row.
     s = _src()
     i = s.index('<div class="k">Schedule</div>')
     h2_end = s.index('</h2>', i) + len('</h2>')
-    after = s[h2_end:h2_end + 40]
-    assert after.startswith('<div class="lb2-actions">'), \
-        "Generate/Update should sit right under the heading text, not beside it in the header row"
+    header = s[i:h2_end + 20]
+    assert 'lb2-actions' not in header
+    left = s[s.index('class="sw-side sw-left"'):s.index('class="sw-center"')]
+    assert h2_end < s.index('class="sw-side sw-left"')
+    assert '<div class="lb2-actions">' in left and 'id="gen-sched-btn"' in left
 
 
 def test_optimized_is_spelled_the_american_way_everywhere_its_shown():

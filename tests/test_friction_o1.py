@@ -323,6 +323,22 @@ def test_the_owner_sets_targets_and_per_role_rates(db, web, monkeypatch):
     assert c.post("/mobile/api/account/targets", json={}).status_code in (400, 401)
 
 
+def test_the_owner_sets_the_notes_every_schedule_draft_reads(db, web, monkeypatch):
+    # The schedule workspace's Advanced AI panel writes restaurants.sched_notes
+    # (labor.py's ADDITIONAL SCHEDULING NOTES) through the targets endpoint.
+    rid = _restaurant(db)
+    _as(monkeypatch, rid, "client")
+    c = web.test_client()
+    r = c.post("/api/account/targets", json={"sched_notes": "  Two cooks on Friday lunch.\x07\nMarcus closes weekends.  "})
+    assert r.status_code == 200, r.get_json()
+    assert models.get_restaurant(rid, db_path=db).sched_notes == "Two cooks on Friday lunch.\nMarcus closes weekends."
+    assert c.get("/api/account/targets").get_json()["targets"]["sched_notes"].startswith("Two cooks")
+    c.post("/api/account/targets", json={"sched_notes": "x" * 5000})
+    assert len(models.get_restaurant(rid, db_path=db).sched_notes) == 2000
+    c.post("/api/account/targets", json={"sched_notes": ""})
+    assert not models.get_restaurant(rid, db_path=db).sched_notes
+
+
 def test_a_manager_reads_targets_but_cannot_change_them(db, web, monkeypatch):
     rid = _restaurant(db)
     _as(monkeypatch, rid, "manager")
@@ -383,14 +399,17 @@ def test_the_preview_has_one_send_button_that_saves_first_and_no_pos_id_in_the_d
     assert "after()" in _fn("rescoreSchedule")
 
 
-def test_the_week_opens_with_its_grid_and_the_grades_fold_under_details():
+def test_the_week_opens_with_its_grid_and_the_grades_sit_in_the_right_panel():
+    # The schedule workspace (9/26/26): what grades the week moved from a
+    # Details fold under the table into the right-hand panel beside it.
     body = _fn("_schedHandleResult")
     assert "_schedRenderTable(true)" not in body and "toggleSchedTable()" in body
     s = _src()
-    det = s[s.index('id="sched-details"'):s.index("</details>", s.index('id="sched-details"'))]
-    for part in ('id="sched-summary"', 'id="sched-par-banner"', 'id="sched-econ"', 'id="sched-quality"'):
-        assert part in det
-    assert s.index('id="sched-table-wrap"') < s.index('id="sched-review"') < s.index('id="sched-details"')
+    assert 'id="sched-details"' not in s
+    right = s[s.index('id="sw-right"'):s.index("</aside>", s.index('id="sw-right"'))]
+    for part in ('id="sched-summary"', 'id="sched-par-banner"', 'id="sched-econ"', 'id="sched-quality"', 'id="sched-review"'):
+        assert part in right
+    assert s.index('id="sched-table-wrap"') < s.index('id="sw-right"')
 
 
 def test_a_draft_reopens_from_history_home_and_the_labor_tab():

@@ -3891,6 +3891,10 @@ def _targets_payload(rid):
             "waste_target_pct": r.waste_target_pct, "monthly_revenue_target": r.monthly_revenue_target,
             "hourly_rate": r.hourly_rate, "week_start_day": int(getattr(r, "week_start_day", 0) or 0),
             "role_rates": rates, "roles": sorted(roles, key=str.lower),
+            # The standing notes every schedule draft's prompt carries
+            # (labor.py ADDITIONAL SCHEDULING NOTES), set from the schedule
+            # workspace's Advanced AI panel as well as admin.
+            "sched_notes": getattr(r, "sched_notes", None) or "",
             "sources": {"labor_target_pct": getattr(r, "labor_target_source", None),
                         "food_cost_target": getattr(r, "food_cost_target_source", None),
                         "hourly_rate": getattr(r, "hourly_rate_source", None)}}
@@ -3956,6 +3960,12 @@ def _do_targets_set(u):
                 return {"ok": False, "error": f"The rate for {role} must be between $2 and $250 an hour."}, 400
             rates[role] = round(rate, 2)
         upd["role_rates_json"] = _json.dumps(rates) if rates else None
+    if "sched_notes" in b:
+        # The owner's own words to the schedule drafter: plain text, control
+        # characters dropped, the same 2,000-character cap admin applies.
+        raw = str(b.get("sched_notes") or "")
+        notes = "".join(ch for ch in raw if ch in "\n\t" or ord(ch) >= 32).strip()[:2000]
+        upd["sched_notes"] = notes or None
     if not upd:
         return {"ok": False, "error": "Nothing to change."}, 400
     # This card is where the owner states a target, one field per save: a

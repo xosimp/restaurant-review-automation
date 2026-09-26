@@ -90,12 +90,13 @@ def test_schedule_heading_says_cavnar_ai():
 # ── buttons moved under the heading ──────────────────────────────────────────
 
 def test_schedule_actions_immediately_follow_the_h2_not_a_sibling_of_it():
+    # The schedule workspace (9/26/26): the actions live in the left panel,
+    # below the heading, never in the header row beside it.
     s = _src()
     i = s.index('<div class="k">Schedule</div>')
     h2_end = s.index("</h2>", i) + len("</h2>")
-    after = s[h2_end:h2_end + 40]
-    assert after.startswith('<div class="lb2-actions">'), \
-        "Generate/Update should sit right under the heading text now, not beside it"
+    assert "lb2-actions" not in s[i:h2_end + 20]
+    assert h2_end < s.index('<div class="lb2-actions">', h2_end) < s.index('class="sw-center"')
 
 
 # ── the Generate button's loading state ──────────────────────────────────────
