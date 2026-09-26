@@ -321,6 +321,39 @@ def test_the_mobile_twin_answers_with_a_bearer_token(client, db_path):
     assert client.get("/mobile/api/issues").status_code == 401
 
 
+def test_the_phones_account_settings_use_the_web_bodies(client, db_path):
+    """iOS Account reads and writes the briefing level, issue routing and
+    the AI memory through the /mobile/api twins of the web's routes — the
+    same bodies, so the same shapes and the same scoping."""
+    auth.init_auth(db_path=db_path)
+    rid = _rid(db_path)
+    uid = auth.create_user(rid, "own", "own@x.com", "pw", db_path=db_path)
+    h = {"Authorization": f"Bearer {auth.create_session(uid, db_path=db_path)}"}
+    # Briefing level: sent with the rest of the brief settings, read back.
+    assert client.post("/mobile/api/morning-brief/settings", headers=h,
+                       json={"enabled": True, "hour": 7, "hold_alerts": True,
+                             "preshift_nudge_hour": 0, "briefing_level": "calm"}).status_code == 200
+    brief = client.get("/mobile/api/morning-brief", headers=h).get_json()
+    assert brief["settings"]["briefing_level"] == "calm" and brief["can_edit"] is True
+    # Issue routing: {routing, contacts}, and an omitted contact_id clears.
+    got = client.get("/mobile/api/issues/routing", headers=h).get_json()
+    assert got["ok"] and got["routing"] == {} and isinstance(got["contacts"], list)
+    cleared = client.post("/mobile/api/issues/routing", headers=h, json={"role": "manager"}).get_json()
+    assert cleared == {"ok": True, "routing": {}}
+    # Memory: listed, then forgotten; this restaurant's facts only.
+    other = _rid(db_path, name="Other Co")
+    models.remember_ask_fact(rid, "We close Mondays", kind="context", source="Ask")
+    models.remember_ask_fact(other, "Theirs", kind="context", source="Ask")
+    facts = client.get("/mobile/api/account/memory", headers=h).get_json()["facts"]
+    assert [f["fact"] for f in facts] == ["We close Mondays"]
+    assert set(facts[0]) >= {"fact", "kind", "source", "created_at"}
+    assert client.post("/mobile/api/account/memory/forget", headers=h, json={"fact": "Theirs"}).status_code == 404
+    assert client.post("/mobile/api/account/memory/forget", headers=h,
+                       json={"fact": "We close Mondays"}).get_json() == {"ok": True}
+    assert client.get("/mobile/api/account/memory", headers=h).get_json()["facts"] == []
+    assert [f["fact"] for f in models.get_ask_memory(other)] == ["Theirs"]
+
+
 def test_morning_brief_hour_is_bounded(client, db_path, monkeypatch):
     rid = _rid(db_path)
     _as(monkeypatch, rid)

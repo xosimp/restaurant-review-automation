@@ -29,6 +29,8 @@ struct AskCavnarView: View {
     @FocusState private var inputFocused: Bool
     @State private var showingHistory = false
     @State private var scrollThrottle = ScrollThrottle()
+    /// Voice Ask: the composer's mic (AskVoiceInput.swift).
+    @State private var voice = AskVoiceInput()
 
     private let suggestedQuestions = [
         "How are my reviews doing?",
@@ -152,6 +154,9 @@ struct AskCavnarView: View {
             .navigationDestination(isPresented: $showingHistory) {
                 AskCavnarHistoryView(viewModel: viewModel)
             }
+            // The mic never stays live behind another tab or screen.
+            .onChange(of: motionPaused) { _, paused in if paused { voice.stop() } }
+            .onDisappear { voice.stop() }
             .task {
                 await viewModel.loadInitialIfNeeded()
                 // Runs on every appear; the view model's own TTL decides
@@ -164,8 +169,9 @@ struct AskCavnarView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            // Idle orb — a slow breathing ring while nothing is in flight.
-            CavnarOrb(state: .breathing, size: 40, paused: motionPaused)
+            // Idle orb — a slow breathing ring while nothing is in flight;
+            // its reserved `listening` wave while the mic is live.
+            CavnarOrb(state: voice.isListening ? .listening : .breathing, size: 40, paused: motionPaused)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Ask Cavnar AI")
                     .font(.cavnarHeadline(20.5))
@@ -392,6 +398,8 @@ struct AskCavnarView: View {
                     .foregroundStyle(Color.cavnarRed)
                     .padding(.horizontal, 4)
             }
+            AskVoiceStatus(voice: voice)
+                .animation(.easeOut(duration: 0.2), value: voice.isListening)
             // Only surfaced as the cap approaches — the server truncates at
             // 2000 characters silently, so the limit has to be visible before
             // it bites (audit 5.2).
@@ -423,8 +431,20 @@ struct AskCavnarView: View {
                 )
                 .animation(.easeOut(duration: 0.15), value: inputFocused)
 
+            // Voice types into the field; the owner still sends it.
+            AskMicButton(voice: voice, disabled: viewModel.isLoading || viewModel.isOpeningConversation) {
+                inputFocused = false
+                Task {
+                    await voice.toggle(read: { viewModel.question },
+                                       write: { viewModel.question = $0 })
+                }
+            }
+
             Button {
                 Haptic.light()
+                // Sending ends a take in progress; what it heard is already
+                // in the field being sent.
+                voice.stop()
                 Task { await viewModel.submit() }
             } label: {
                 sendGlyph
@@ -796,14 +816,73 @@ private struct AskSuggestionsBlock: View {
 }
 
 /// "Was this useful?" Yes / No under an answer — POST /ask-cavnar/feedback
-/// with its message_id. Once rated, a quiet line says so; rating again
-/// isn't offered on the phone (the server would replace it).
+/// with its message_id. A No then offers one optional line of what was
+/// missing, sent as the same rating with `note` (as on web); Send with the
+/// field empty just closes it. Once settled, a quiet line says so.
 private struct AskFeedbackRow: View {
     let message: ChatMessage
     var viewModel: AskCavnarViewModel?
     @State private var busy = false
+    @State private var note = ""
+    @FocusState private var noteFocused: Bool
 
     var body: some View {
+        if message.rating == false && !message.noteSettled {
+            noteRow
+        } else {
+            ratingRow
+        }
+    }
+
+    /// "What was missing?" — one optional line, then Send.
+    private var noteRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("What was missing?")
+                .font(.cavnarBody(12.5, weight: 600))
+                .foregroundStyle(Color.cavnarInk3)
+            HStack(spacing: 8) {
+                TextField("Optional", text: $note)
+                    .font(.cavnarBody(14))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(Color.cavnarPaper2, in: RoundedRectangle(cornerRadius: CavnarRadius.control))
+                    .foregroundStyle(Color.cavnarInk)
+                    .focused($noteFocused)
+                    .submitLabel(.send)
+                    .onSubmit(send)
+                    .onChange(of: note) { _, v in
+                        if v.count > AskCavnarViewModel.feedbackNoteMax {
+                            note = String(v.prefix(AskCavnarViewModel.feedbackNoteMax))
+                        }
+                    }
+                    .accessibilityLabel("What was missing")
+                Button("Send", action: send)
+                    .buttonStyle(RecAnswerPillStyle())
+                    .disabled(busy)
+            }
+        }
+        .opacity(busy ? 0.6 : 1)
+        .onAppear { noteFocused = true }
+    }
+
+    private func send() {
+        guard !busy else { return }
+        let text = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        noteFocused = false
+        guard !text.isEmpty else {
+            Haptic.light()
+            viewModel?.skipFeedbackNote(message)
+            return
+        }
+        Haptic.light()
+        busy = true
+        Task {
+            _ = await viewModel?.rate(message, helpful: false, note: text)
+            busy = false
+        }
+    }
+
+    private var ratingRow: some View {
         HStack(spacing: 8) {
             if let rating = message.rating {
                 Image(systemName: "checkmark").font(.system(size: 10, weight: .bold))

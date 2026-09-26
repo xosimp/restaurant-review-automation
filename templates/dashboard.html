@@ -1097,6 +1097,7 @@ details[open]>summary~*{animation:askIn .3s ease both}
 .ask-fb{align-self:flex-start;display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;font-size:12.5px;color:var(--ink3)}
 .ask-fb .q{font-weight:600}
 .ask-fb .rec-ans-done{font-size:12.5px}
+.ask-trunc{align-self:flex-start;max-width:92%;margin-top:-6px;font-size:12.5px;font-weight:600;color:var(--amber);border-left:2px solid var(--amber);padding:2px 0 2px 8px}
 .ask-fb .ac-input{flex:1 1 160px;min-width:0;width:auto;padding:5px 9px;font-size:12.5px;border:1px solid var(--paper3)}
 .ask-fb.note{align-self:stretch;max-width:92%;flex-wrap:nowrap}
 .ask-fb.note .q,.ask-fb.note .cbtn{flex:0 0 auto;white-space:nowrap}
@@ -11426,9 +11427,15 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
                got worse) - never the opportunity, surfaced or avoided figure
                (CLAUDE.md value rule). #}
             <div class="ac-note" id="billing-value" aria-live="polite"></div>
+            {# The last six invoices from the shared billing body
+               (_do_billing_info) - the list the app has always shown. #}
+            <div id="billing-invoices" hidden style="margin-top:14px">
+              <div class="hb-kicker" style="margin-bottom:4px">Recent invoices</div>
+              <div class="ac-rows" id="billing-invoice-rows"></div>
+            </div>
             <div class="ac-inline" style="margin-top:16px">
               <a id="billing-portal-link" href="#" target="_blank" rel="noopener" class="cbtn cbtn-secondary cbtn-sm">Manage payment method</a>
-              <a id="billing-invoice-link" href="#" target="_blank" rel="noopener" class="cbtn cbtn-secondary cbtn-sm">Invoice history</a>
+              <a id="billing-invoice-link" href="#" target="_blank" rel="noopener" class="cbtn cbtn-secondary cbtn-sm">All invoices</a>
             </div>
           </div>
           <div id="billing-no-sub" style="display:none" class="ac-note">No active subscription on file. <a href="mailto:will@cavnar.ai">Contact Will</a> to set one up.</div>
@@ -11763,9 +11770,14 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
               <option value="0">Keep everything</option><option value="6">6 months</option><option value="12">12 months</option><option value="24">24 months</option><option value="36">36 months</option></select></div></div>
           <div class="ac-note">Privacy: <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a> &middot; <a href="/terms" target="_blank" rel="noopener">Terms of Service</a></div>
         </div>
-        <div class="ac-card span">
-          <div class="ac-card-h"><div><h3>Ownership &amp; cancellation</h3><p>This account belongs to <b>{{ restaurant.owner_name or restaurant.owner_email }}</b>. Service is under a signed agreement, so closing it isn&rsquo;t a button &mdash; it&rsquo;s a note to Will with 30 days&rsquo; written notice; the account stays active through the end of the current billing period plus 30 days.</p></div>
-            <div class="r"><a class="cbtn cbtn-danger cbtn-ghost cbtn-sm" href="mailto:will@cavnar.ai?subject=Cancel%20my%20Cavnar%20AI%20subscription&body=Hi%20Will%2C%0A%0AI%20would%20like%20to%20cancel%20my%20Cavnar%20AI%20subscription%20for%20{{restaurant.name}}.%0A%0APer%20the%2030-day%20notice%20policy%2C%20I%20understand%20my%20account%20will%20remain%20active%20through%20the%20end%20of%20my%20current%20billing%20period%20and%20for%2030%20days%20after%20this%20notice.">Request cancellation</a></div></div>
+        {# Close my account: a recorded request that notifies Will
+           (POST /api/account/request-deletion, the app's shared body), with
+           the email to Will kept underneath as the contact line. #}
+        <div class="ac-card span" id="acct-close-card">
+          <div class="ac-card-h"><div><h3>Ownership &amp; cancellation</h3><p>This account belongs to <b>{{ restaurant.owner_name or restaurant.owner_email }}</b>. Service is under a signed agreement, so closing it goes through Will: your request is recorded and he&rsquo;s notified to wind things down. 30 days&rsquo; written notice applies; the account stays active through the end of the current billing period plus 30 days.</p></div>
+            <div class="r"><button type="button" class="cbtn cbtn-danger cbtn-ghost cbtn-sm" id="acct-close-btn" onclick="acctRequestClose(this)">Request cancellation</button></div></div>
+          <div class="ac-status" id="acct-close-status" role="status" hidden></div>
+          <div class="ac-note">Or write to Will: <a href="mailto:will@cavnar.ai?subject=Cancel%20my%20Cavnar%20AI%20subscription&body=Hi%20Will%2C%0A%0AI%20would%20like%20to%20cancel%20my%20Cavnar%20AI%20subscription%20for%20{{restaurant.name|urlencode}}.%0A%0APer%20the%2030-day%20notice%20policy%2C%20I%20understand%20my%20account%20will%20remain%20active%20through%20the%20end%20of%20my%20current%20billing%20period%20and%20for%2030%20days%20after%20this%20notice.">will@cavnar.ai</a></div>
         </div>
       </div>
     </section>
@@ -11835,11 +11847,9 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 
 <!-- Ask Cavnar — AI copilot over the restaurant's own live data -->
 <script>
-// The backend has no memory of its own between calls (each is a stateless
-// Claude request) — this array IS the conversation's memory, sent back as
-// "history" on every subsequent question so a short follow-up like "yes"
-// resolves against what was actually being discussed. Same fix as the iOS
-// app's AskCavnarViewModel.messages, for identical behavior on both.
+// The open chat's turns as this page holds them. The server replays the
+// chat's own stored turns into each question (stream and plain JSON alike),
+// so this is never sent; it tracks what is on screen.
 var _askCavnarHistory = [];
 var _askCavnarHeaderOrb = null;
 var _askCavnarLoadingOrb = null;
@@ -11987,6 +11997,7 @@ window.askRememberConversation = function(id) {
 function _askRestore(id) {
   fetch('/api/ask-cavnar/conversations/' + id, {credentials: 'same-origin'}).then(apiJson).then(function(d) {
     if (!d || !d.ok) { try { sessionStorage.removeItem(ASK_CONV_KEY); } catch (e) {} return; }
+    if (window._askNewChat) return;
     if (!window._askConversationId) window._askConversationId = id;
     var box = document.getElementById('ask-cavnar-messages');
     var msgs = d.messages || [];
@@ -12525,6 +12536,19 @@ function _appendAskCavnarSuggestions(list) {
   _askScroll(messages);
 }
 
+// An answer the model cut off at its length limit ("truncated" on the
+// answer): one amber line under the bubble, the same words as iOS.
+function _appendAskCavnarTruncated() {
+  var messages = document.getElementById('ask-cavnar-messages');
+  if (!messages) return;
+  var n = document.createElement('div');
+  n.className = 'ask-trunc';
+  n.setAttribute('role', 'note');
+  n.textContent = 'Answer was cut short \u2014 ask a follow-up for the rest.';
+  messages.appendChild(n);
+  _askScroll(messages);
+}
+
 // "Was this useful?" — one tap rates the answer (POST
 // /api/ask-cavnar/feedback, message_id); a No then offers one optional line
 // of what was missing, sent as the same rating with a note (the rating is
@@ -12709,10 +12733,6 @@ window.sendAskCavnar = function() {
   var question = input.value.trim();
   if (!question) return;
   var btn = document.getElementById('ask-cavnar-send-btn');
-  // Captured BEFORE this question is added to history below, so it's
-  // exactly the prior back-and-forth — the backend appends "question"
-  // itself as the final turn (see ask_cavnar.py's "history" contract).
-  var historyToSend = _askCavnarHistory.slice();
   _appendAskCavnarMessage(question, true);
   input.value = '';
   input.disabled = true;
@@ -12735,7 +12755,11 @@ window.sendAskCavnar = function() {
     loadingBubble.remove();
     var answer = d.ok ? d.answer : (d.error || 'Something went wrong — try again.');
     _appendAskCavnarMessage(answer, false);
-    if (d.ok && d.conversation_id) askRememberConversation(d.conversation_id);
+    // The model stopped at its length limit, so the answer ends mid-thought.
+    // Said under the bubble, as iOS does, so half an answer never reads as
+    // the whole of it.
+    if (d.ok && d.truncated) _appendAskCavnarTruncated();
+    if (d.ok && d.conversation_id) { askRememberConversation(d.conversation_id); window._askNewChat = false; }
     if (d.ok) {
       _askCavnarHistory.push({role: 'user', content: question});
       _askCavnarHistory.push({role: 'assistant', content: answer});
@@ -12758,10 +12782,17 @@ window.sendAskCavnar = function() {
   // Streamed, because the tool loop can take several round trips and a
   // silent spinner for that long reads as broken. Falls back to the plain
   // JSON endpoint if the stream fails for any reason.
+  // One body for both doors, so the fallback answers in the same chat the
+  // stream would have: the open chat's id, or new_conversation after New
+  // chat (the chat is created by the first question, never by the button),
+  // and the screen. No client history either way - the server replays the
+  // chat's own stored turns, as the stream does.
+  var askBody = JSON.stringify({question: question, conversation_id: window._askNewChat ? null : (window._askConversationId || null),
+                                new_conversation: !!window._askNewChat, screen: askScreen()});
   fetch('/api/ask-cavnar/stream', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({question: question, conversation_id: window._askConversationId || null, screen: askScreen()})
+    body: askBody
   }).then(function(resp) {
     if (!resp.ok || !resp.body) throw new Error('stream unavailable');
     _askStarted = true;
@@ -12815,7 +12846,7 @@ window.sendAskCavnar = function() {
     fetch('/api/ask-cavnar', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({question: question, history: historyToSend, screen: askScreen()})
+      body: askBody
     }).then(apiJson).then(_finish).catch(function() {
       _finish({ok: false, error: 'Network error — try again.'});
     });
@@ -20715,6 +20746,7 @@ function loadAccountSettings() {
   if (!document.getElementById('account-settings-card')) return;
   fetch('/api/account-settings').then(apiJson).then(function(d) {
     if (!d.ok) return;
+    if (d.deletion_requested_at) _acctShowClosed(d.deletion_requested_at);
     var a = d.auto_approve || {};
     document.getElementById('as-auto-enabled').checked = !!a.enabled;
     document.getElementById('as-auto-cap').value = a.daily_cap || 5;
@@ -21461,6 +21493,36 @@ function loadAlertsSummary() {
 }
 // ── End Alert Settings ─────────────────────────────────────────
 
+// Recent invoices (the shared billing body's invoices, as the app lists
+// them): date, amount, status, and the PDF when Stripe has one.
+var _INV_STATUS={paid:'Paid',open:'Due',draft:'Draft',void:'Void',uncollectible:'Unpaid'};
+function _billingInvoices(list){
+  var box=document.getElementById('billing-invoices'),rows=document.getElementById('billing-invoice-rows');
+  if(!box||!rows)return;
+  if(!list.length){box.hidden=true;rows.innerHTML='';return;}
+  var h='';
+  for(var i=0;i<list.length;i++){var v=list[i]||{},st=String(v.status||'');
+    h+='<div class="ac-row"><div class="l"><b class="ac-num">'+esc(v.date||'')+'</b><span>'+esc(_INV_STATUS[st]||st)+'</span></div>'
+      +'<div class="c" style="display:flex;gap:10px;align-items:center"><span class="ac-num">'+esc(v.amount||'')+'</span>'
+      +(v.pdf_url?'<a class="cbtn cbtn-text cbtn-inline cbtn-sm" href="'+esc(v.pdf_url)+'" target="_blank" rel="noopener">PDF</a>':'')+'</div></div>';}
+  rows.innerHTML=h;box.hidden=false;
+}
+// Close my account: one recorded request (POST /api/account/request-deletion);
+// a second press returns the first request's date and notifies nobody again.
+function _acctShowClosed(at){
+  var b=document.getElementById('acct-close-btn'),s=document.getElementById('acct-close-status');
+  if(b)b.hidden=true;
+  if(s){s.textContent='Requested '+(window.mdy?mdy(at):at)+'. Will has it and will reach out to confirm and start winding things down.';s.hidden=false;}
+}
+function acctRequestClose(btn){
+  if(!confirm('Send Will your request to close this account? 30 days’ notice applies, and the account stays active until then.'))return;
+  var done=cbtnBusy(btn,'Sending…');
+  fetch('/api/account/request-deletion',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'})
+    .then(apiJson).then(function(d){done();
+      if(d&&d.ok){_acctShowClosed(d.requested_at);if(typeof toast==='function')toast('Request sent to Will','success');}
+      else if(typeof toast==='function')toast((d&&d.error)||'Couldn’t send that','error');})
+    .catch(function(){done();if(typeof toast==='function')toast('Network error','error');});
+}
 function loadBillingInfo() {
   fetch('/api/billing-info').then(apiJson).then(function(d){
     document.getElementById('billing-loading').style.display='none';
@@ -21476,6 +21538,7 @@ function loadBillingInfo() {
     document.getElementById('billing-next-prominent').textContent=nextDate;
     document.getElementById('billing-amount-prominent').textContent=d.amount||'—';
     document.getElementById('billing-pm').textContent=d.payment_method||'—';
+    _billingInvoices(d.invoices||[]);
     if(d.portal_url){
       document.getElementById('billing-portal-link').href=d.portal_url;
       document.getElementById('billing-invoice-link').href=d.portal_url;
@@ -24807,6 +24870,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     jget('/api/ask-cavnar/conversations/'+id,function(d){
       if(!d.ok){toast(d.error||'Could not open that chat','error');return;}
       if(window.askRememberConversation)askRememberConversation(id);else window._askConversationId=id;
+      window._askNewChat=false;
       var msgs=d.messages||[];
       _askCavnarHistory=msgs.filter(function(m){return m.role==='user'||m.role==='assistant';}).map(function(m){return {role:m.role,content:m.content};});
       var box=document.getElementById('ask-cavnar-messages');
@@ -24814,15 +24878,17 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       var h=document.getElementById('ask-cavnar-history');if(h)h.style.display='none';
     });
   };
+  // Lazy, as on iOS: New chat only clears the screen and marks the next
+  // question new_conversation, so the server creates the chat with its first
+  // question. POSTing here left an empty row in the history for every New
+  // chat nobody asked anything in.
   window.askNewChat=function(){
-    jsend('/api/ask-cavnar/conversations',{},function(d){
-      if(!d.ok){toast(d.error||'Could not start a chat','error');return;}
-      if(window.askRememberConversation)askRememberConversation(d.conversation_id);else window._askConversationId=d.conversation_id;_askCavnarHistory=[];
-      if(window.askSetFocus)askSetFocus(null);
-      var box=document.getElementById('ask-cavnar-messages');if(box)box.innerHTML=_askEmptyHtml();
-      var h=document.getElementById('ask-cavnar-history');if(h)h.style.display='none';
-      var inp=document.getElementById('ask-cavnar-input');if(inp)inp.focus();
-    });
+    window._askConversationId=null;window._askNewChat=true;_askCavnarHistory=[];
+    try{sessionStorage.removeItem(ASK_CONV_KEY);}catch(e){}
+    if(window.askSetFocus)askSetFocus(null);
+    var box=document.getElementById('ask-cavnar-messages');if(box)box.innerHTML=_askEmptyHtml();
+    var h=document.getElementById('ask-cavnar-history');if(h)h.style.display='none';
+    var inp=document.getElementById('ask-cavnar-input');if(inp)inp.focus();
   };
   // Reversible, so no dialog: the chat leaves the list at once and the
   // delete waits out the Undo window (cavUndoable, DESIGN_SYSTEM.md §10).

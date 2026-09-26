@@ -63,6 +63,9 @@ struct AccountInfo: Decodable {
     let twoFAContactMasked: String?
     var loginNotify: Bool
     var marketingEmailsOptOut: Bool
+    /// The monthly business review email's switch; nil from an older
+    /// server (read as on, the server's default).
+    var monthlyReviewEnabled: Bool?
     // users.last_login, "YYYY-MM-DD HH:MM:SS" UTC or nil.
     let lastLogin: String?
     // "weak"/"good"/"strong", scored once at set-time (auth.py can't score
@@ -82,6 +85,7 @@ struct AccountInfo: Decodable {
         case twoFAContactMasked = "two_fa_contact_masked"
         case loginNotify = "login_notify"
         case marketingEmailsOptOut = "marketing_emails_opt_out"
+        case monthlyReviewEnabled = "monthly_review_enabled"
         case lastLogin = "last_login"
         case passwordStrength = "password_strength"
         case passwordChangedAt = "password_changed_at"

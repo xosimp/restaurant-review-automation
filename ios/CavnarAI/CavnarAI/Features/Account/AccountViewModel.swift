@@ -47,6 +47,7 @@ final class AccountViewModel {
 
     // Marketing opt-out
     var isTogglingMarketingOptOut = false
+    var isTogglingMonthlyReview = false
 
     // 2FA backup codes
     var backupCodesRemaining: Int?
@@ -300,6 +301,26 @@ final class AccountViewModel {
                 "/mobile/api/account/marketing-opt-out", method: .post, body: MarketingOptOutBody(optedOut: optedOut)
             ) as APIClient.EmptyResponse
             summary?.account.marketingEmailsOptOut = optedOut
+            return true
+        } catch {
+            await load()
+            return false
+        }
+    }
+
+    private struct EnabledBody: Encodable { let enabled: Bool }
+
+    /// The monthly business review on or off — POST /account/monthly-review,
+    /// the web switch's shared body (client_api._do_monthly_review_pref).
+    @discardableResult
+    func toggleMonthlyReview(_ enabled: Bool) async -> Bool {
+        isTogglingMonthlyReview = true
+        defer { isTogglingMonthlyReview = false }
+        do {
+            _ = try await client.send(
+                "/mobile/api/account/monthly-review", method: .post, body: EnabledBody(enabled: enabled)
+            ) as APIClient.EmptyResponse
+            summary?.account.monthlyReviewEnabled = enabled
             return true
         } catch {
             await load()

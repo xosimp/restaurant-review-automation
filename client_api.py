@@ -4437,51 +4437,82 @@ def download_schedule(current_user):
         import traceback; traceback.print_exc()
         return jsonify(ok=False, error=_safe_err(e)), 500
 
-@client_bp.route("/api/billing-info")
-@login_required
-def billing_info(current_user):
-    """Fetch billing status from Stripe for the current client."""
-    import stripe as _stripe
-    restaurant = get_restaurant(current_user["restaurant_id"])
-    if not restaurant or not restaurant.stripe_customer_id:
-        return jsonify(ok=False, reason="no_customer")
+def _billing_preview(restaurant_id):
+    """Sample billing for a restaurant listed in BILLING_PREVIEW_IDS.
 
-    stripe_key = os.getenv("STRIPE_SECRET_KEY","")
+    Billing is read live from Stripe, so a restaurant with no
+    stripe_customer_id has nothing to show and the Billing screen sits
+    empty — which makes that whole screen impossible to look at before a
+    client is actually paying. This env-gated hook fills it with obviously
+    labelled sample figures so the layout can be reviewed.
+
+    Opt-in and off by default: unset the variable (as it is on Railway)
+    and this never runs, so a real client can never be shown invented
+    billing. The label says "Sample" for the same reason.
+    """
+    raw = os.getenv("BILLING_PREVIEW_IDS", "")
+    ids = {p.strip() for p in raw.split(",") if p.strip()}
+    if not ids or str(restaurant_id) not in ids:
+        return None
+    from datetime import timedelta as _td
+    from time_utils import mdy as _mdy
+    now = datetime.now()
+    return {
+        "ok": True,
+        "status": "active",
+        "next_date": _mdy(now + _td(days=18)),
+        "amount": "$1,200/mo",
+        "payment_method": "Visa ending 4242",
+        "portal_url": None,
+        "message": "Sample billing — preview only, not a real subscription",
+        "invoices": [
+            {"date": _mdy(now - _td(days=12)), "amount": "$1,200", "status": "paid", "pdf_url": None},
+            {"date": _mdy(now - _td(days=42)), "amount": "$1,200", "status": "paid", "pdf_url": None},
+            {"date": _mdy(now - _td(days=72)), "amount": "$2,000", "status": "paid", "pdf_url": None},
+        ],
+    }
+
+
+def _do_billing_info(restaurant_id):
+    """Billing for one restaurant, read live from Stripe — the one body the
+    web (GET /api/billing-info) and the app (GET /mobile/api/account/billing)
+    both answer with, so the web has the invoice history the app always had
+    and neither can drift. Scoped by the caller's restaurant id only; the
+    Stripe customer is the restaurant's own stored id, never a parameter.
+
+    {ok, status, next_date, amount, interval, payment_method, portal_url,
+    trial_end, invoices: [{date, amount, status, pdf_url}]}; ok False with a
+    `reason` (no_customer | no_key | stripe_error) when there is nothing to
+    read. Dates read M/D/YY."""
+    from time_utils import mdy as _mdy
+    preview = _billing_preview(restaurant_id)
+    if preview:
+        return preview, 200
+    restaurant = get_restaurant(restaurant_id)
+    if not restaurant or not getattr(restaurant, "stripe_customer_id", None):
+        return {"ok": False, "reason": "no_customer"}, 200
+
+    stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
     if not stripe_key:
-        return jsonify(ok=False, reason="no_key")
+        return {"ok": False, "reason": "no_key"}, 200
 
     try:
         _stripe = config.stripe_api(stripe_key)
-        # Get active subscriptions for this customer
-        subs = _stripe.Subscription.list(
-            customer=restaurant.stripe_customer_id,
-            status="active",
-            limit=5
-        )
+        subs = _stripe.Subscription.list(customer=restaurant.stripe_customer_id, status="active", limit=5)
         if not subs.data:
-            # Check for trialing
-            subs = _stripe.Subscription.list(
-                customer=restaurant.stripe_customer_id,
-                status="trialing",
-                limit=5
-            )
-
+            subs = _stripe.Subscription.list(customer=restaurant.stripe_customer_id, status="trialing", limit=5)
         if not subs.data:
-            return jsonify(ok=True, status="inactive", message="No active subscription found")
+            return {"ok": True, "status": "inactive", "message": "No active subscription found"}, 200
 
         sub = subs.data[0]
-        from datetime import datetime
         import pricing as _pricing_billing
-        next_date = datetime.fromtimestamp(sub.current_period_end).strftime("%-m/%-d/%Y")
-        amount    = sum(i.price.unit_amount for i in sub["items"].data) / 100
-        status    = sub.status  # active, trialing, past_due, canceled
+        amount = sum(i.price.unit_amount for i in sub["items"].data) / 100
 
-        # Get payment method
         pm_desc = "Card on file"
         try:
             customer = _stripe.Customer.retrieve(
                 restaurant.stripe_customer_id,
-                expand=["invoice_settings.default_payment_method"]
+                expand=["invoice_settings.default_payment_method"],
             )
             pm = customer.invoice_settings.default_payment_method
             if pm and pm.card:
@@ -4489,31 +4520,92 @@ def billing_info(current_user):
         except Exception:
             pass
 
-        # Customer portal link
         try:
             portal = _stripe.billing_portal.Session.create(
                 customer=restaurant.stripe_customer_id,
-                return_url="https://dashboard.cavnar.ai"
+                return_url="https://dashboard.cavnar.ai",
             )
             portal_url = portal.url
         except Exception:
             portal_url = None
 
-        return jsonify(
-            ok=True,
-            status=status,
-            next_date=next_date,
+        # Recent invoices — the same customer and key, a second Stripe call.
+        # Failing independently of the subscription/portal lookups above, so
+        # a Stripe hiccup here doesn't take down next-charge and payment
+        # method too; an empty list just means no history is shown.
+        invoices = []
+        try:
+            for inv in _stripe.Invoice.list(customer=restaurant.stripe_customer_id, limit=6).data:
+                invoices.append({
+                    "date": _mdy(datetime.fromtimestamp(inv.created)),
+                    "amount": f"${(inv.amount_paid or inv.amount_due) / 100:,.0f}",
+                    "status": inv.status,
+                    "pdf_url": inv.invoice_pdf,
+                })
+        except Exception:
+            pass
+
+        return {
+            "ok": True,
+            "status": sub.status,  # active, trialing, past_due, canceled
+            "next_date": _mdy(datetime.fromtimestamp(sub.current_period_end)),
             # The suffix from the subscription's own billing interval: an
             # annual plan read "$11,990/mo" (NS3 H7).
-            amount=_pricing_billing.billing_amount_label(amount, *_pricing_billing.subscription_interval(sub)),
-            interval=_pricing_billing.subscription_interval(sub)[0],
-            payment_method=pm_desc,
-            portal_url=portal_url,
-            trial_end=datetime.fromtimestamp(sub.trial_end).strftime("%-m/%-d/%Y") if sub.trial_end else None,
-        )
+            "amount": _pricing_billing.billing_amount_label(amount, *_pricing_billing.subscription_interval(sub)),
+            "interval": _pricing_billing.subscription_interval(sub)[0],
+            "payment_method": pm_desc,
+            "portal_url": portal_url,
+            "trial_end": _mdy(datetime.fromtimestamp(sub.trial_end)) if sub.trial_end else None,
+            "invoices": invoices,
+        }, 200
     except Exception as e:
         print(f"Stripe billing info error: {e}")
-        return jsonify(ok=False, reason="stripe_error", error=_safe_err(e))
+        return {"ok": False, "reason": "stripe_error", "error": _safe_err(e)}, 200
+
+
+def _do_request_account_deletion(rid, current_user=None):
+    """Account -> Close my account, on both clients: records the request
+    and notifies Will to start the 30-day wind-down (the service is under a
+    signed agreement, so nothing is deleted here). Apple Guideline
+    5.1.1(v) is why it is a real recorded request rather than only a mailto.
+    Idempotent: a second request returns the first timestamp and sends no
+    second notice. Scoped to the caller's own restaurant.
+    Returns ({ok, requested_at}, status)."""
+    from models import request_account_deletion, get_deletion_requested_at
+    restaurant = get_restaurant(rid)
+    if not restaurant:
+        return {"ok": False, "error": "Restaurant not found"}, 404
+    already_requested = bool(get_deletion_requested_at(rid))
+    requested_at = request_account_deletion(rid)
+    if not already_requested:
+        try:
+            from emails import send_account_deletion_request_email
+            send_account_deletion_request_email(restaurant.name, restaurant.owner_name,
+                                                (current_user or {}).get("email"), requested_at)
+        except Exception as e:
+            print(f"Account deletion notice email failed: {e}")
+        try:
+            log_account_event(rid, "deletion_requested", current_user)
+        except Exception:
+            pass
+    return {"ok": True, "requested_at": requested_at}, 200
+
+
+@client_bp.route("/api/account/request-deletion", methods=["POST"])
+@login_required
+def request_account_deletion_route(current_user):
+    """The web's Close my account: the same recorded request as the app's
+    /mobile/api/account/request-deletion (_do_request_account_deletion)."""
+    payload, status = _do_request_account_deletion(current_user["restaurant_id"], current_user)
+    return jsonify(**payload), status
+
+
+@client_bp.route("/api/billing-info")
+@login_required
+def billing_info(current_user):
+    """Billing and invoice history for the current client (_do_billing_info)."""
+    payload, status = _do_billing_info(current_user["restaurant_id"])
+    return jsonify(**payload), status
 
 def _normalize_phone_lenient(raw):
     import re
@@ -7937,6 +8029,9 @@ def _account_settings_payload(rid):
         "marketing_emails_opt_out": bool(getattr(r, "marketing_emails_opt_out", 0)),
         "monthly_review_enabled": bool(getattr(r, "monthly_review_enabled", 1)),
         "login_notify": bool(getattr(r, "login_notify", 0)),
+        # A close-account request already on file (UTC stamp) — the web's
+        # Ownership & cancellation card says so instead of offering it again.
+        "deletion_requested_at": __import__("models").get_deletion_requested_at(rid),
     }, 200
 
 
