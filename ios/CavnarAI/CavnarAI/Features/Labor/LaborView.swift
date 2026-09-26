@@ -42,6 +42,10 @@ struct LaborView: View {
     @State private var showingScheduleHistory = false
     /// A drafted week opened from Waiting on you — its own send sheet.
     @State private var draftToSend: DraftToSend?
+    /// A shift whose times are being changed, or a new one being added.
+    @State private var editingShift: ShiftEditSheet.Mode?
+    /// A shift the owner asked to take off the week, awaiting the confirm.
+    @State private var removingRow: ScheduleRow?
 
     struct DraftToSend: Identifiable {
         let id: Int
@@ -356,6 +360,20 @@ struct LaborView: View {
         }
         .sheet(item: $draftToSend, onDismiss: { Task { await viewModel.loadDraftCheck() } }) { draft in
             PublishScheduleSheet(scheduleId: draft.id)
+        }
+        .sheet(item: $editingShift) { mode in
+            ShiftEditSheet(mode: mode, viewModel: viewModel)
+        }
+        .confirmationDialog(removingRow.map { "Take \($0.employee ?? "this person")\u{2019}s \($0.day ?? "") \($0.shiftStart ?? "") shift off the week?" } ?? "",
+                            isPresented: Binding(get: { removingRow != nil }, set: { if !$0 { removingRow = nil } }),
+                            titleVisibility: .visible) {
+            Button("Remove shift", role: .destructive) {
+                if let row = removingRow { Task { await viewModel.removeShift(rowId: row.id) } }
+                removingRow = nil
+            }
+            Button("Cancel", role: .cancel) { removingRow = nil }
+        } message: {
+            Text("The week is re-scored and saved without it. Staff who already have the week hear about it when you press Send.")
         }
         .sheet(item: $explainingRow) { row in
             AssignmentExplanationSheet(row: row, explanation: viewModel.scheduleResult?.explanation(for: row))
@@ -1188,6 +1206,21 @@ struct LaborView: View {
                 // Moved here from the summary card above — sitting next to
                 // the table it actually exports reads far more directly
                 // than floating next to an unrelated "hours scheduled" line.
+                // The web editor's "+ Add a shift" (web parity, 9/25/26).
+                Button {
+                    Haptic.light()
+                    editingShift = .add
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "plus").font(.system(size: 11, weight: .bold))
+                        Text("Add a shift").font(.cavnarBody(13, weight: 700))
+                    }
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 8)
                 if let csv {
                     ShareLink(item: csv, preview: SharePreview("Schedule.csv", image: Image("LaunchSeal"))) {
                         Image(systemName: "square.and.arrow.up")
@@ -1206,7 +1239,7 @@ struct LaborView: View {
     }
 
     /// One shift: tap for why this person, long-press to put somebody else
-    /// on it.
+    /// on it, change its times or take it off the week.
     ///
     /// A `Menu` with a primary action gives both without a visible edit
     /// control: the table's job is to be read, and a pencil on every one of
@@ -1242,6 +1275,15 @@ struct LaborView: View {
                 Haptic.light()
                 explainingRow = row
             } label: { Label("Why this person?", systemImage: "questionmark.circle") }
+            // The web editor's pencil and ✕ (web parity, 9/25/26): saved
+            // like a swap — re-scored and stored at once.
+            Button {
+                Haptic.light()
+                editingShift = .edit(row)
+            } label: { Label("Change the times", systemImage: "pencil") }
+            Button(role: .destructive) {
+                removingRow = row
+            } label: { Label("Remove this shift", systemImage: "trash") }
         } label: {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 1) {
