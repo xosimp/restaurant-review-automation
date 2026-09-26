@@ -85,3 +85,29 @@ def test_the_visibility_ring_is_larger_and_centred():
     s = _src()
     assert "var H=200,cy=100,R=68;" in s
     assert ".in2-aiv-card .in2-orbit{height:auto;margin-top:28px;display:flex;justify-content:center}" in s
+
+
+def test_numbers_inside_a_row_line_stay_in_the_sentence():
+    """ "The week of 9/28/26 is drafted" put each figure on its own line:
+    the row's block rule caught the number spans inside it."""
+    assert ".ac-row .l b span,.ac-row .l span span{display:inline;margin-top:0" in _src()
+
+
+def test_sections_are_separated_by_space_not_hairlines():
+    s = _src()
+    assert ".hb-sh{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-top:34px;padding-top:22px}" in s
+    assert ".rv2-analytics,.hb-results{margin-top:30px}" in s
+
+
+def test_home_status_link_and_dates_read_as_one():
+    s = _src()
+    assert ".hb-status .cbtn-text{font-size:inherit}" in s
+    assert "var NUM_RE=/(\\d{1,2}\\/\\d{1,2}\\/\\d{2,4}|" in s
+    assert "The week’s grid" not in s
+
+
+def test_insight_answers_say_measure_it_and_sit_under_the_confidence():
+    import client_api
+    src = open(os.path.join(ROOT, "client_api.py"), encoding="utf-8").read()
+    assert ">Track</button>" not in src and ">Measure it</button>" in src
+    assert "('' if _conf_html else '<br>')" in src

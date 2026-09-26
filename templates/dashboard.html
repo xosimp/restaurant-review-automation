@@ -2163,7 +2163,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
    glued directly onto the h2 text before it with no gap and whatever size
    a bare <small> happens to inherit, rather than the kicker+title+subtitle
    hierarchy every other section on the page actually uses. */
-.hb-sh{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-top:34px;padding-top:22px;border-top:1px solid var(--hb-line)}
+.hb-sh{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-top:34px;padding-top:22px}
 .hb-sh .k{font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember)}
 .hb-sh h2{font-family:'Clash Display',sans-serif;font-size:23.5px;font-weight:500;color:var(--ink);margin-top:5px;display:flex;align-items:baseline;flex-wrap:wrap;gap:10px}
 .hb-sh h2 small{font-family:'Apfel Grotezk',sans-serif;font-size:15.5px;font-weight:400;color:var(--ink3)}
@@ -2190,6 +2190,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 .hb-status .fig{font-weight:600;color:var(--ink)}
 .hb-status .fig.up{color:var(--hb-good)}.hb-status .fig.down{color:var(--hb-bad)}
 .hb-status .miss{color:var(--ink3)}
+.hb-status .cbtn-text{font-size:inherit}
 .hb-status .sep{color:var(--ink3);opacity:.5}
 .hb-refresh{background:none;border:none;color:var(--ink3);font-family:inherit;font-size:12px;cursor:pointer;padding:0;display:inline-flex;gap:5px;align-items:center}
 .hb-refresh:hover{color:var(--ember)}
@@ -3235,7 +3236,7 @@ svg:hover .hb-xh{opacity:1}
   var PULSE={reviews:'rating',labor:'labor',inventory:'food cost',marketing:'posts this month',intel:'intel recs'};
   var EMBER2='#e8956a',RED='#e3333f',GREEN='#2d6a4f';
   function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
-  var NUM_RE=/(\$?[\d][\d,]*(?:\.\d+)?%?★?|[+\-−]\d[\d,.]*(?:\s?pts)?%?)/g;
+  var NUM_RE=/(\d{1,2}\/\d{1,2}\/\d{2,4}|\$?[\d][\d,]*(?:\.\d+)?%?★?|[+\-−]\d[\d,.]*(?:\s?pts)?%?)/g;
   function num(v){var parts=esc(v).split(/(&#?[a-z0-9]+;)/i),out='';for(var i=0;i<parts.length;i++){out+=(i%2)?parts[i]:parts[i].replace(NUM_RE,'<span class="hb-num">$1</span>');}return out;}
   function parseTs(s){if(!s)return null;var t=String(s);if(t.indexOf('T')<0){t=t.replace(' ','T')+'Z';}var d=new Date(t);return isNaN(d)?null:d;}
   function ago(s){var d=parseTs(s);if(!d)return '—';var m=Math.round((Date.now()-d)/60000);if(m<1)return 'just now';if(m<60)return m+'m ago';var h=Math.round(m/60);if(h<48)return h+'h ago';return Math.round(h/24)+'d ago';}
@@ -5192,7 +5193,7 @@ svg:hover .hb-xh{opacity:1}
     return '<section class="hb-card hb-rise dr-home" style="margin-bottom:16px" aria-label="'+esc(when)+'"><div class="hb-h3"><span>'+esc(when)+' · <span class="hb-num">'+esc(mdy(r.business_date))+'</span></span>'+pill+'</div>'
       +'<div class="dr-home-b">'+lead+'</div>'+risk
       +'<div class="ft"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="night" data-date="'+esc(r.business_date)+'">'+(running?'Follow it':'Open report')+'</button>'
-      +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dr="open" data-kind="week" data-date="'+esc(r.business_date)+'">The week’s grid</button></div></section>';
+      +'</div></section>';
   }
   // The 60 seconds at the end of the night the numbers can't see: the POS
   // syncs at 3am, so the closer's own words are the only account of tonight
@@ -7452,7 +7453,8 @@ svg:hover .hb-xh{opacity:1}
 .mkt-sched-inline{margin-top:12px;max-width:440px;padding:16px 18px;border:1px solid var(--paper3);border-radius:12px;background:var(--surface)}
 /* Collapsed section under the work (friction #11, #20; DS §12 "Collapsed
    results"): one hairline summary row, a chevron that turns when open. */
-.rv2-analytics,.hb-results{margin-top:30px;border-top:1px solid var(--paper3)}
+/* No hairline between sections (owner, 9/26/26): spacing separates them. */
+.rv2-analytics,.hb-results{margin-top:30px}
 .rv2-analytics>summary,.hb-results>summary{list-style:none;cursor:pointer;display:flex;align-items:baseline;gap:10px;padding:14px 0;font-size:13px;color:var(--ink2)}
 .rv2-analytics>summary::-webkit-details-marker,.hb-results>summary::-webkit-details-marker{display:none}
 .rv2-analytics>summary:after,.hb-results>summary:after{content:'';margin-left:auto;flex:0 0 auto;align-self:center;display:block;width:30px;height:30px;border-radius:50%;background:var(--hb-tint,rgba(200,75,47,.08)) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M4.5 2.5 8 6l-3.5 3.5' fill='none' stroke='%23c84b2f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/12px 12px no-repeat;transition:transform .2s ease,background-color .15s ease}
@@ -8162,7 +8164,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .lb2-form .ac-input,.lb2-form .ac-select{padding:8px 10px;font-size:14px}
 .lb2-sub{font-family:'Clash Display',sans-serif;font-size:16px;font-weight:500;color:var(--ink);margin:18px 0 6px;padding-top:14px;border-top:1px solid var(--hb-line2)}
 .lb2-sub small{font-family:'Apfel Grotezk',sans-serif;font-size:13.5px;color:var(--ink3);margin-left:8px;font-weight:400}
-.lb2-ro{font-size:13px;color:var(--ink3);margin-bottom:10px}
+.lb2-ro{font-size:13px;color:var(--ink3);margin:14px 0 10px}
 /* Rules */
 .rul-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px 14px}
 .rul-grid .ac-field label small{display:block;font-weight:400;color:var(--ink3);font-size:12.5px;margin-top:1px}
@@ -11073,6 +11075,10 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .ac-row .l{min-width:0}
 .ac-row .l b{display:block;font-size:15px;font-weight:600;color:var(--ink)}
 .ac-row .l span{display:block;font-size:13.5px;color:var(--ink3);margin-top:2px;line-height:1.5}
+/* A number or tag inside a row's title or line stays in the sentence: the
+   block rule above put each figure of "The week of 9/28/26 is drafted" on
+   its own line (owner, 9/26/26). */
+.ac-row .l b span,.ac-row .l span span{display:inline;margin-top:0;font-size:inherit;color:inherit;line-height:inherit}
 /* Density audit #37: a row explanation over eight words sits behind an "i"
    (acctQuietHelp), so the page reads like settings, not documentation. */
 .cbtn.ac-info{width:18px;height:18px;min-height:0;padding:0;margin-left:6px;border-radius:50%;border:1px solid var(--paper3);font-family:'Space Grotesk',sans-serif;font-size:11px;font-weight:700;line-height:1;color:var(--ink3);vertical-align:1px}

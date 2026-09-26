@@ -1080,7 +1080,8 @@ def rec_controls_html(key, surface, module):
     # Track only where it starts a real tracker (strategy_routes.
     # REC_TRACK_METRICS) — the web twin is recControlsHtml (M-8).
     from strategy_routes import REC_TRACK_METRICS
-    track = (b + 'data-rec-event="accepted">Track</button>') if (module or surface) in REC_TRACK_METRICS else ''
+    # "Measure it", as recControlsHtml and every other answer row say it.
+    track = (b + 'data-rec-event="accepted" title="Cavnar AI checks this number before and after you act, and tells you whether it moved">Measure it</button>') if (module or surface) in REC_TRACK_METRICS else ''
     return ('<span class="rec-ans">'
             + b + 'data-rec-event="completed">Done</button>'
             + b + 'data-rec-event="dismissed" data-rec-kind="not_for_us">Pass</button>'
@@ -1156,7 +1157,9 @@ def format_insight_html(text, rec_items=None, surface=None, module=None):
             '<span style="flex-shrink:0;width:20px;height:20px;border-radius:50%;background:#c84b2f;color:white;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center">'
             + str(num) +
             '</span><span style="line-height:1.6;color:#b7791f;font-weight:500">' + clean
-            + _conf_html + (('<br>' + _ctl) if _ctl else '') + '</span></div>')
+            # The confidence line is already a block; a <br> after it left a
+            # blank line before Done | Pass (owner, 9/26/26).
+            + _conf_html + ((('' if _conf_html else '<br>') + _ctl) if _ctl else '') + '</span></div>')
         num += 1
     return html + forecast_html + unverified_html
 
