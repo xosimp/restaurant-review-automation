@@ -206,10 +206,11 @@ def test_chips_on_constants_are_neutral():
 def test_every_module_has_a_today_line():
     s = _src()
     # Labor's was removed at the owner's request (9/25/26): its content was
-    # the overtime pill beside it, said twice.
-    for tid in ("fc2-today", "rv-today", "mkt-today", "in2-today", "fc2-stock-status"):
+    # the overtime pill beside it, said twice. Intel's too (9/26/26): the
+    # ways to improve are the list under the analysis.
+    for tid in ("fc2-today", "rv-today", "mkt-today", "fc2-stock-status"):
         assert 'class="mod-today" id="%s"' % tid in s, tid
-    assert 'id="lb2-today"' not in s
+    assert 'id="lb2-today"' not in s and 'id="in2-today"' not in s
 
 
 def test_how_you_compare_rows_are_slim_with_one_why_drawer():

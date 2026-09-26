@@ -669,21 +669,37 @@ def get_competitor_reviews(place_id: str, max_reviews: int = 5) -> list:
         return []
     try:
         url = "https://maps.googleapis.com/maps/api/place/details/json"
+        # Newest first (owner, 9/26/26): Google's default is its "most
+        # relevant" five, which cited a months-old review as what a
+        # neighbour is doing now. The review's own date travels with it
+        # (`date`, ISO) so it is shown as M/D/YY, not "3 months ago".
         r = requests.get(url, params={
             "place_id": place_id,
             "fields": "name,rating,reviews",
+            "reviews_sort": "newest",
             "key": PLACES_API_KEY,
         }, timeout=8)
         data = r.json()
         if data.get("status") != "OK":
             return []
         reviews = data["result"].get("reviews", [])[:max_reviews]  # Google Places API returns max 5
-        return [{
-            "author": rev.get("author_name", "Guest"),
-            "rating": rev.get("rating", 3),
-            "text": rev.get("text", ""),
-            "time": rev.get("relative_time_description", ""),
-        } for rev in reviews]
+        out = []
+        for rev in reviews:
+            day = None
+            try:
+                if rev.get("time"):
+                    from datetime import datetime as _dt, timezone as _tz
+                    day = _dt.fromtimestamp(int(rev["time"]), tz=_tz.utc).date().isoformat()
+            except (TypeError, ValueError, OverflowError):
+                day = None
+            out.append({
+                "author": rev.get("author_name", "Guest"),
+                "rating": rev.get("rating", 3),
+                "text": rev.get("text", ""),
+                "time": rev.get("relative_time_description", ""),
+                "date": day,
+            })
+        return out
     except Exception as e:
         print(f"[Competitor] get_competitor_reviews error: {e}")
         return []

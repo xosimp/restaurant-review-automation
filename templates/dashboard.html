@@ -618,7 +618,7 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none;box
 .anim-bar{transition:width .75s cubic-bezier(.4,0,.2,1);}
 .scroll-reveal{opacity:0;transform:translateY(32px);transition:none}
 .scroll-reveal.revealed{animation:fadeSlideUp .55s cubic-bezier(.25,.46,.45,.94) forwards}
-#aiv-body{overflow:hidden;transition:max-height .32s cubic-bezier(.4,0,.2,1),opacity .22s ease}
+#aiv-body{transition:opacity .22s ease}
 
 
 
@@ -2211,7 +2211,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-chip.good .dot i{background:var(--hb-good);box-shadow:0 0 6px var(--hb-good)}.hb-chip.good .dot b{background:var(--hb-good)}
 .hb-chip.warn .dot i{background:var(--hb-warn);box-shadow:0 0 6px var(--hb-warn)}.hb-chip.warn .dot b{background:var(--hb-warn)}
 .hb-chip.bad .dot i{background:var(--hb-bad);box-shadow:0 0 6px var(--hb-bad)}.hb-chip.bad .dot b{background:var(--hb-bad)}
-.hb-chip.sample{opacity:.55;box-shadow:none}.hb-chip.sample .dot b{animation:none;opacity:0}.hb-chip.sample .dot i{background:var(--ink3);box-shadow:none}
+.hb-chip.sample{opacity:.55}.hb-chip.sample .dot b{animation:none;opacity:0}.hb-chip.sample .dot i{background:var(--ink3);box-shadow:none}
 @keyframes hbBreath{0%,100%{transform:scale(.6);opacity:.45}50%{transform:scale(1.5);opacity:0}}
 /* hero chart */
 .hb-hero{margin-top:30px;position:relative}
@@ -2222,6 +2222,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
    faint outer ring undithered, which on this wide section read as rings.
    The generic .lit:after stays off here. */
 .hb-hero.lit:after{display:none}
+/* Intel's rating comparison has no hover spotlight (owner, 9/26/26). */
+.in2-rating-hero.lit:after{display:none}
 .hb-lit-layer{position:absolute;inset:-28px -28px;overflow:hidden;border-radius:28px;pointer-events:none;opacity:0;transition:opacity .45s cubic-bezier(.22,.61,.36,1)}
 .hb-hero:hover .hb-lit-layer{opacity:1}
 .hb-lit-layer i{position:absolute;left:0;top:0;width:520px;height:520px;border-radius:50%;will-change:transform;transform:translate3d(calc(var(--mx,50%) - 232px),calc(var(--my,50%) - 232px),0);background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='w'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch' seed='3'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 5 0 0 0 -2.5'/%3E%3C/filter%3E%3Cfilter id='b'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch' seed='3'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -5 0 0 0 2.5'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23w)' opacity='.11'/%3E%3Crect width='100%25' height='100%25' filter='url(%23b)' opacity='.012'/%3E%3C/svg%3E"),radial-gradient(closest-side,rgba(200,75,47,0.1) 0%,rgba(200,75,47,0.093) 8%,rgba(200,75,47,0.08) 16%,rgba(200,75,47,0.064) 24%,rgba(200,75,47,0.048) 32%,rgba(200,75,47,0.034) 40%,rgba(200,75,47,0.022) 48%,rgba(200,75,47,0.0135) 56%,rgba(200,75,47,0.0075) 64%,rgba(200,75,47,0.0038) 72%,rgba(200,75,47,0.0016) 80%,rgba(200,75,47,0.0005) 90%,rgba(200,75,47,0.0) 100%);background-size:180px 180px,100% 100%;-webkit-mask-image:radial-gradient(closest-side,#000 78%,rgba(0,0,0,.6) 90%,transparent 100%);mask-image:radial-gradient(closest-side,#000 78%,rgba(0,0,0,.6) 90%,transparent 100%)}
@@ -2530,7 +2532,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .rec-line.inrow{display:block;margin-top:4px;padding-top:0;border-top:none}
 .rec-line .k{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3)}
 .rec-cites{margin-top:6px;display:flex;flex-direction:column;gap:4px}
-.rec-cites .c{font-size:12.5px;color:var(--ink3);line-height:1.5}
+.rec-cites .c{font-size:14px;color:var(--ink2);line-height:1.55}
 .rec-cites .c b{color:var(--ink2);font-weight:600}
 /* receipt strip */
 .hb-rcpt{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-top:14px}
@@ -2786,7 +2788,7 @@ svg:hover .hb-xh{opacity:1}
    Marketing, Ask, the daily report) draws the same component.
    tests/test_confidence_web.py runs this block under node. */
 (function(){
-  var NUMRX=/(\$?[\d][\d,]*(?:\.\d+)?%?★?|[+\-−]\d[\d,.]*(?:\s?pts)?%?)/g;
+  var NUMRX=/(\d{1,2}\/\d{1,2}\/\d{2,4}|\$?[\d][\d,]*(?:\.\d+)?%?★?|[+\-−]\d[\d,.]*(?:\s?pts)?%?)/g;
   var MIN_MEASURED=5;
   var MEANING='How well supported this is — not the chance it works';
   function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
@@ -3034,7 +3036,7 @@ svg:hover .hb-xh{opacity:1}
    Group Home: cavBench.locations(lc). */
 (function(){
   function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
-  var NUMRX=/(\$?[\d][\d,]*(?:\.\d+)?%?★?)/g;
+  var NUMRX=/(\d{1,2}\/\d{1,2}\/\d{2,4}|\$?[\d][\d,]*(?:\.\d+)?%?★?)/g;
   function num(v){var parts=esc(v).split(/(&#?[a-z0-9]+;)/i),out='';for(var i=0;i<parts.length;i++){out+=(i%2)?parts[i]:parts[i].replace(NUMRX,'<span class="hb-num">$1</span>');}return out;}
   function isNum(v){return typeof v==='number'&&isFinite(v);}
   function tone(p){return (window.cavConf&&window.cavConf.tone)?window.cavConf.tone(p):(p==null?'warn':(p>=75?'good':(p>=50?'mid':'warn')));}
@@ -7765,7 +7767,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .diag-cause{font-size:16px;line-height:1.55;color:var(--ink);margin-top:6px}
 .diag-alt{font-size:14px;line-height:1.55;color:var(--ink2);margin-top:6px}.diag-alt b{color:var(--ink3);font-weight:600}
 .diag-evs{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.diag-ev{font-size:12px;color:var(--ink3);padding:4px 9px;border-radius:999px;border:1px solid var(--paper3)}.diag-ev b{color:var(--ink)}
-.in2-queries{margin-top:14px}.in2-qgrid{display:grid;gap:6px}.in2-q{display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center;font-size:13px;color:var(--ink2)}
+.in2-qgrid{display:flex;flex-direction:column;margin-top:10px}
 .in2-q .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.in2-q .c{display:flex;gap:4px}.in2-q .n{color:var(--ink3);font-size:12px;min-width:34px;text-align:right}
 .in2-qc{width:9px;height:9px;border-radius:50%;background:var(--paper3);display:inline-block}.in2-qc.on{background:var(--ember);box-shadow:0 0 6px var(--ember)}.in2-qc.off{background:var(--paper3);opacity:.5}
 .lb2-sig{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;margin-top:34px;padding-top:24px;border-top:1px solid var(--hb-line)}
@@ -10514,8 +10516,18 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .in2-read .b{display:flex;gap:9px;align-items:flex-start;margin-bottom:7px;font-size:15px;line-height:1.6;color:var(--ink2)}
 .in2-read .b i{font-style:normal;font-weight:700;flex-shrink:0;font-size:14px}
 .in2-read .b i.good{color:var(--hb-good)}.in2-read .b i.bad{color:var(--hb-bad)}.in2-read .b i.neutral{color:var(--ink3)}
+/* A recommendation's evidence and its answer row (owner, 9/26/26): the
+   evidence summary reads at a normal size, and Done | Pass | Ask sits just
+   under it, one set with a thin rule before Ask. */
+.in2-read .rec>span{min-width:0;flex:1}
+.in2-cites{margin-top:4px}
+.in2-cites>summary{cursor:pointer;font-size:13.5px;color:var(--ink3)}
+.in2-cites .rec-cites{margin:8px 0 4px;gap:8px}
+.in2-rec-acts{display:flex;align-items:center;flex-wrap:wrap;margin-top:6px}
+.in2-rec-acts .rec-ans{margin-top:0}
+.in2-rec-acts .sep{display:block;flex:0 0 1px;width:1px;height:14px;background:var(--hb-line);margin:0 12px}
 .in2-read .rec{display:flex;gap:11px;align-items:flex-start;margin-bottom:9px;font-size:15px;line-height:1.6;color:var(--ink)}
-.in2-read .rec b{flex-shrink:0;width:22px;height:22px;border-radius:50%;background:var(--ember);color:#fff;font-family:'Space Grotesk',sans-serif;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:2px}
+.in2-read .rec>b{flex-shrink:0;width:22px;height:22px;border-radius:50%;background:var(--ember);color:#fff;font-family:'Space Grotesk',sans-serif;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:2px}
 .in2-pre{margin-top:34px;padding:22px 24px;border-radius:14px;background:var(--hb-tint);display:flex;gap:26px;align-items:center;flex-wrap:wrap}
 .in2-pre .t{flex:1;min-width:260px}
 .in2-pre h2{font-family:'Clash Display',sans-serif;font-weight:500;font-size:24px;letter-spacing:-.01em;color:var(--ink);margin:0 0 8px;text-wrap:balance}
@@ -10553,17 +10565,37 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .in2-rating-hero .big{margin-top:12px}
 #panel-competitor .lb2-ai .tag{margin-bottom:14px}
 #panel-competitor .lb2-ai{font-size:16px}
-#in2-aiv .lb2-sg .k{font-size:14px;flex-wrap:nowrap}
-#in2-aiv .lb2-sg .k span{white-space:nowrap}
-#in2-aiv .lb2-sg .k i{font-size:13.5px;white-space:nowrap;flex-shrink:0}
-#in2-aiv .lb2-sg .v small{font-size:15px}
-#in2-aiv .lb2-sg .v #aiv-score-num{white-space:nowrap}
-#in2-aiv .lb2-sg .cap{font-size:14.5px;justify-content:flex-start;flex-wrap:wrap}
-#in2-aiv .lb2-sg .cap .sep{color:var(--ink3);opacity:.5;margin:0 1px}
-/* A bare red text label next to this page's own orange kickers read as
-   the same color at a glance — give a genuinely bad reading its own pill
-   instead of relying on a text-color difference alone. */
-#in2-aiv .lb2-sg .k i.bad{background:rgba(227,51,63,.16);padding:2px 8px;border-radius:999px}
+/* AI search presence results (rebuilt 9/26/26). Each block is a recessed
+   card; the header's flag wraps under its label rather than running into
+   the next card, and every row of By question is one line: the question,
+   its checks as dots, and the count. */
+.in2-aiv-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-top:22px}
+.in2-aiv-card{min-width:0;padding:20px 22px 18px;border-radius:14px;background:var(--hb-inner,var(--sf-recess));border:1px solid var(--hb-line2)}
+.in2-aiv-card[hidden]{display:none}
+.in2-aiv-wide{margin-top:18px}
+.in2-aiv-h{display:flex;align-items:center;justify-content:space-between;gap:8px 12px;flex-wrap:wrap}
+.in2-aiv-h .k{font-size:12.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
+.in2-aiv-h i{font-style:normal;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:3px 9px;border-radius:999px;background:var(--hb-line2);color:var(--ink3);white-space:nowrap}
+.in2-aiv-h i:empty{display:none}
+.in2-aiv-h i.good{background:rgba(78,173,122,.16);color:var(--hb-good)}
+.in2-aiv-h i.warn{background:rgba(212,160,48,.16);color:var(--hb-warn)}
+.in2-aiv-h i.bad{background:rgba(227,51,63,.16);color:var(--hb-bad)}
+.in2-aiv-n{font-size:13px;color:var(--ink3)}
+.in2-aiv-v{display:flex;align-items:baseline;gap:8px;margin-top:12px;font-family:'Space Grotesk',sans-serif;font-size:34px;font-weight:600;letter-spacing:-.025em;line-height:1;color:var(--ink);white-space:nowrap}
+.in2-aiv-v.sm{font-size:26px}
+.in2-aiv-v small{font-family:'Apfel Grotezk',sans-serif;font-size:14.5px;font-weight:500;letter-spacing:0;color:var(--ink3);white-space:normal}
+.in2-aiv-cap{margin-top:6px;font-size:14px;line-height:1.5;color:var(--ink3)}
+.in2-aiv-card .in2-orbit{margin-top:12px}
+.in2-aiv-card .in2-gbp{grid-template-columns:1fr;margin-top:12px}
+.in2-aiv-card .in2-gbp .it .l{white-space:normal;overflow:visible}
+.in2-aiv-card .in2-q{margin-top:12px}
+.in2-qrow{display:grid;grid-template-columns:minmax(0,1fr) auto 42px;gap:16px;align-items:center;padding:11px 0;border-top:1px solid var(--hb-line2)}
+.in2-qrow:first-child{border-top:none}
+.in2-qrow .t{font-size:14.5px;color:var(--ink);line-height:1.4;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.in2-qrow .c{display:flex;gap:6px}
+.in2-qrow .n{font-size:13.5px;color:var(--ink3);text-align:right}
+.in2-qfoot{margin-top:10px;font-size:13px;color:var(--ink3)}
+@media (max-width:1000px){.in2-aiv-grid{grid-template-columns:1fr}}
 .in2-sec{margin-top:34px;padding-top:22px;border-top:1px solid var(--hb-line)}
 .in2-sec .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:8px}
 .in2-sec .hd h2{font-family:'Clash Display',sans-serif;font-weight:500;font-size:22px;letter-spacing:-.01em;color:var(--ink);margin:4px 0 0}
@@ -10602,7 +10634,9 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .in2-comp .row::before{content:'';position:absolute;left:0;top:16px;bottom:16px;width:2.5px;border-radius:2px;background:var(--hb-line)}
 .in2-comp .row.ahead::before{background:var(--hb-good)}.in2-comp .row.behind::before{background:var(--hb-bad)}
 .in2-comp .row .t{flex:1;min-width:0}
-.in2-comp .row .t .tt{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.in2-comp .row .t .tt{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.in2-comp .row .t .cu{line-height:1.3}
+.in2-comp .row .rt .df svg,.in2-rating-hero .delta svg{width:10px;height:10px;vertical-align:0;margin-right:3px}
 .in2-comp .row .t b{font-size:16px;font-weight:600;color:var(--ink)}
 .in2-comp .row .t .cu{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ember);background:var(--hb-tint2);padding:2px 7px;border-radius:999px}
 .in2-comp .row .t .rm{background:none;border:none;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;font-size:12.5px;color:var(--ink3);padding:0;text-decoration:underline;text-underline-offset:2px}
@@ -10664,9 +10698,8 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
     <div style="min-width:0;flex:1">
       <h1 class="hb-h1">Intel. <span class="hb-head {{ _tone }}">{{ _head }}</span></h1>
       {% if not _cd %}<div class="hb-sub"><span>Ratings, review volume and reputation for the restaurants around you, plus whether AI search knows you exist.</span></div>{% endif %}
-      {# Today (density round #48): how many ways to improve are open, from
-         /api/intel/recs (in2LoadRecs). No model call on load. #}
-      {% if _cd %}<div class="mod-today" id="in2-today" hidden><span class="k">Today</span><span id="in2-today-t"></span></div>{% endif %}
+      {# No Today row on Intel (owner, 9/26/26): the count of ways to
+         improve is said by the list under the analysis. #}
       <div class="dh-badge" data-dh-module="intel" hidden></div>
     </div>
     <div class="hb-pulse">
@@ -10684,7 +10717,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
     <div class="hd">
       <div><div class="hb-kicker">Rating comparison · you vs. nearby</div>
         {% if own is not none %}<div class="big"><span class="hb-num">{{ own }}</span><small>★ {{ _own_word }} · market avg {{ avg_comp_rating if avg_comp_rating else '—' }}{% if avg_comp_rating %}★{% endif %}</small></div>
-        {% if own_vs_avg is not none %}<div class="delta {{ 'good' if _st == 'ahead' else ('bad' if _st == 'behind' else '') }}">{% if _st == 'level' %}About level with the block ({{ '+' if own_vs_avg > 0 }}{{ own_vs_avg }}★){% elif own_vs_avg > 0 %}▲ {{ own_vs_avg }} above the block{% else %}▼ {{ own_vs_avg|abs }} below the block{% endif %} <span>· {{ comp_count }} restaurants nearby{% if intel_market and intel_market.market_rating_n %} · average of {{ intel_market.market_rating_n }} rated, weighted by reviews{% endif %}</span></div>
+        {% if own_vs_avg is not none %}<div class="delta {{ 'good' if _st == 'ahead' else ('bad' if _st == 'behind' else '') }}">{% if _st == 'level' %}About level with the block ({{ '+' if own_vs_avg > 0 }}{{ own_vs_avg }}★){% elif own_vs_avg > 0 %}<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 7.5 6 4.5 9 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ own_vs_avg }} above the block{% else %}<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ own_vs_avg|abs }} below the block{% endif %} <span>· {{ comp_count }} restaurants nearby{% if intel_market and intel_market.market_rating_n %} · average of {{ intel_market.market_rating_n }} rated, weighted by reviews{% endif %}</span></div>
         {% if intel_market.standing_basis %}<div class="fc2-h1-basis">{{ intel_market.standing_basis }}</div>{% endif %}{% elif intel_market and intel_market.standing_why_not %}<div class="fc2-h1-basis">No standing yet — {{ intel_market.standing_why_not }}</div>{% endif %}
         {% else %}<div class="big"><span class="hb-num">{{ avg_comp_rating }}</span><small>★ market average · connect Reviews to see yours alongside</small></div>{% endif %}
       </div>
@@ -10732,19 +10765,33 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
     </div>
     <div id="aiv-results" style="display:none">
       <div class="in2-upd" id="aiv-measured" hidden><span>Measured <span class="hb-num" id="aiv-measured-d"></span></span><span id="aiv-measured-old"></span></div>
-      <div class="lb2-sig">
-        <div class="lb2-sg"><div class="k"><span>How often AI names you</span><i id="aiv-score-label"></i></div><div class="v"><span id="aiv-score-num" class="hb-num">—</span><small id="in2-orbit-cap">of AI searches mention you</small></div>
-          <div class="in2-orbit" id="in2-orbit"></div></div>
-          <div class="in2-queries" id="in2-queries" hidden></div>
-        <div class="lb2-sg"><div class="k"><span>Listing strength</span><i id="aiv-gbp-label"></i></div><div class="v"><span id="aiv-gbp-num" class="hb-num">—</span><small id="in2-gbp-cap">of your Google Business Profile fields filled in</small></div>
+      {# Rebuilt 9/26/26 (owner): two cards side by side - how often AI
+         names you, and listing strength - then By question and what AI
+         said, each across the full width. The old version put four blocks
+         in a three-column grid, so rows wrapped into the wrong column and
+         the flags ran into their neighbours. #}
+      <div class="in2-aiv-grid">
+        <section class="in2-aiv-card" aria-label="How often AI names you">
+          <div class="in2-aiv-h"><span class="k">How often AI names you</span><i id="aiv-score-label"></i></div>
+          <div class="in2-aiv-v"><span id="aiv-score-num" class="hb-num">—</span></div>
+          <div class="in2-aiv-cap" id="in2-orbit-cap">of AI searches mention you</div>
+          <div class="in2-orbit" id="in2-orbit"></div>
+        </section>
+        <section class="in2-aiv-card" aria-label="Listing strength">
+          <div class="in2-aiv-h"><span class="k">Listing strength</span><i id="aiv-gbp-label"></i></div>
+          <div class="in2-aiv-v"><span id="aiv-gbp-num" class="hb-num">—</span></div>
+          <div class="in2-aiv-cap" id="in2-gbp-cap">of your Google Business Profile fields filled in</div>
           <div class="in2-gbp" id="aiv-gbp-items"></div>
           <button type="button" id="aiv-gbp-viewall" class="in2-viewall" style="display:none" onclick="in2RevealMore('aiv-gbp-items',this)"></button>
-        </div>
-        <div class="lb2-sg"><div class="k"><span>AI query results</span><i id="in2-q-flag"></i></div><div class="v"><span id="in2-q-n" class="hb-num">—</span><small>queries mentioned you</small></div>
-          <div class="in2-q" id="aiv-queries"></div>
-          <button type="button" id="aiv-q-viewall" class="in2-viewall" style="display:none" onclick="in2RevealMore('aiv-queries',this)"></button>
-        </div>
+        </section>
       </div>
+      <section class="in2-aiv-card in2-aiv-wide" id="in2-queries" aria-label="By question" hidden></section>
+      <section class="in2-aiv-card in2-aiv-wide" aria-label="AI query results">
+        <div class="in2-aiv-h"><span class="k">AI query results</span><i id="in2-q-flag"></i></div>
+        <div class="in2-aiv-v sm"><span id="in2-q-n" class="hb-num">—</span><small>queries mentioned you</small></div>
+        <div class="in2-q" id="aiv-queries"></div>
+        <button type="button" id="aiv-q-viewall" class="in2-viewall" style="display:none" onclick="in2RevealMore('aiv-queries',this)"></button>
+      </section>
       <div id="aiv-disclaimer" class="in2-note" style="display:none"></div>
       <div class="in2-sec" id="aiv-action-plan">
         <div class="hd"><div><div class="hb-kicker" id="aiv-roadmap-pts"></div><h2>Gaps in your public record</h2><div class="sub">Your reviews, replies and Google listing — the gaps you still have come first.</div></div></div>
@@ -10774,7 +10821,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
           {% for r in c.reviews[:1] %}<div class="rv"><i class="{{ 'g' if r.rating >= 4 else 'b' }}">★</i>{{ r.text[:160] }}{{ '…' if r.text|length > 160 else '' }}</div>{% endfor %}
           {% if c.reviews|length > 1 %}<div id="extra-reviews-{{ loop.index }}" style="display:none">{% for r in c.reviews[1:] %}<div class="rv"><i class="{{ 'g' if r.rating >= 4 else 'b' }}">★</i>{{ r.text[:160] }}{{ '…' if r.text|length > 160 else '' }}</div>{% endfor %}</div>
           <button class="more" onclick="toggleExtraReviews({{ loop.index }}, this)">Show {{ c.reviews|length - 1 }} more review{{ 's' if c.reviews|length - 1 > 1 else '' }}</button>{% endif %}</div>
-        <div class="rt"><div class="r hb-num">{% if c.rating %}{{ c.rating }}<small>★</small>{% else %}<small>unrated</small>{% endif %}</div><div class="c"><span class="hb-num">{{ c.review_count }}</span> reviews{% if c.rating_is_provisional %} <span class="ck-tag" title="Fewer than 15 reviews: a handful of opinions, not a settled rating">few reviews</span>{% endif %}</div>{% if diff is not none and not c.rating_is_provisional %}<span class="df">{% if diff > 0 %}▲ {{ diff }} ahead{% elif diff < 0 %}▼ {{ diff|abs }} behind{% else %}tied{% endif %}</span>{% endif %}</div>
+        <div class="rt"><div class="r hb-num">{% if c.rating %}{{ c.rating }}<small>★</small>{% else %}<small>unrated</small>{% endif %}</div><div class="c"><span class="hb-num">{{ c.review_count }}</span> reviews{% if c.rating_is_provisional %} <span class="ck-tag" title="Fewer than 15 reviews: a handful of opinions, not a settled rating">few reviews</span>{% endif %}</div>{% if diff is not none and not c.rating_is_provisional %}<span class="df">{% if diff > 0 %}<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 7.5 6 4.5 9 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ diff }} ahead{% elif diff < 0 %}<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ diff|abs }} behind{% else %}tied{% endif %}</span>{% endif %}</div>
       </div>
       {% endfor %}
     </div>
@@ -10817,7 +10864,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
           +(m.reviews_added?'<div class="c"><span class="hb-num">+'+recEsc(m.reviews_added)+'</span> reviews</div>':'')+'</div></div>';}
       var when=d.compared_from?mdy(d.compared_from):'';
       var sub=!d.compared_from?'Openings and closings show once there are two weekly checks to compare.'
-        :(rows?'New and gone since the check on <span class="hb-num">'+when+'</span>':'No competitor opened, closed or moved past normal ups and downs since <span class="hb-num">'+when+'</span>.');
+        :(rows?'New and gone since the check on <span class="hb-num">'+when+'</span>':'No competitor opened, closed or moved past normal ups and downs since <span class="hb-num">'+when+'</span>');
       box.innerHTML='<div class="hb-kicker" style="margin-top:22px">What changed</div><div class="in2-upd" style="margin-top:4px">'+sub+'</div>'
         +(rows?'<div class="in2-comp">'+rows+'</div>':'');
       box.hidden=false;
@@ -10830,21 +10877,21 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
     var box=document.getElementById('in2-recs');if(!box)return;
     fetch('/api/intel/recs',{credentials:'same-origin'}).then(apiJson).then(function(d){
       if(!d||!d.ok){box.innerHTML='';return;}
-      /* Today (density round #48): how many ways to improve are open. */
-      var tw=document.getElementById('in2-today'),tt=document.getElementById('in2-today-t'),nr=(d.recs||[]).length;
-      if(tw&&tt){tt.innerHTML=nr?('<b class="hb-num">'+nr+'</b> way'+(nr===1?'':'s')+' to improve, under the analysis'):(d.withheld_recommendations?'this week\u2019s recommendations are held back until they can be checked':'nothing worth acting on this week');tw.hidden=false;}
       var h='';
       if((d.recs||[]).length){
         h='<div class="sec"><div class="st ember">How to improve</div>';
         for(var i=0;i<d.recs.length;i++){var r=d.recs[i],c='';
           for(var j=0;j<(r.cites||[]).length;j++){var q=r.cites[j];
-            c+='<div class="c"><b>'+recEsc(q.competitor||'')+'</b> \u00b7 '+recEsc(q.rating)+'\u2605'+(q.time?' \u00b7 '+recEsc(q.time):'')+' \u2014 \u201c'+recEsc(q.text)+'\u201d</div>';}
+            // The review's own date (M/D/YY) when Google gave one; older
+            // stored reads only carry Google's "3 months ago".
+            c+='<div class="c"><b>'+recEsc(q.competitor||'')+'</b> \u00b7 '+recEsc(q.rating)+'\u2605'+(q.date?' \u00b7 '+recEsc(mdy(q.date)):(q.time?' \u00b7 '+recEsc(q.time):''))+' \u2014 \u201c'+recEsc(q.text)+'\u201d</div>';}
           h+='<div class="rec"><b>'+(i+1)+'</b><span>'+recEsc(r.text)
-            +(c?'<details style="margin-top:4px" data-evidence-key="'+recEsc(r.key)+'" data-evidence-surface="intel" data-evidence-module="intel"><summary style="cursor:pointer;font-size:12.5px;color:var(--ink3)">Reviews this rests on ('+r.cites.length+')</summary><div class="rec-cites">'+c+'</div></details>':'')
-            +'<br>'+recControlsHtml(r.key,'intel','intel')
-            // Ask about this one, with the recommendation as Ask's screen
-            // context (friction #15).
-            +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask-rec="'+recEsc(r.key)+'" data-ask-q="'+recEsc('About this Intel recommendation: '+r.text)+'">Ask about this →</button>'
+            +(c?'<details class="in2-cites" data-evidence-key="'+recEsc(r.key)+'" data-evidence-surface="intel" data-evidence-module="intel"><summary>Reviews this rests on ('+r.cites.length+')</summary><div class="rec-cites">'+c+'</div></details>':'')
+            // Done | Pass | Ask about this, one row with a thin rule before
+            // Ask, tucked under the line (owner, 9/26/26). Ask carries the
+            // recommendation as its screen context (friction #15).
+            +'<span class="in2-rec-acts">'+recControlsHtml(r.key,'intel','intel')+'<span class="sep" aria-hidden="true"></span>'
+            +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask-rec="'+recEsc(r.key)+'" data-ask-q="'+recEsc('About this Intel recommendation: '+r.text)+'">Ask about this →</button></span>'
             +'</span></div>';}
         h+='</div>';
       }else if(d.withheld_recommendations){
@@ -13623,7 +13670,7 @@ window.switchIntelTab = function(tab) {
   // while this panel is genuinely visible, so re-measuring here every time
   // is the one place that's guaranteed correct.
   var _ab0 = document.getElementById('aiv-body');
-  if (_ab0) { _ab0.style.maxHeight = _ab0.scrollHeight + 'px'; _ab0.style.opacity = '1'; }
+  if (_ab0) { _ab0.style.maxHeight = ''; _ab0.style.opacity = '1'; }
   var bars=document.querySelectorAll('#comp-cards-static .tr:not(.on)');
   if(bars.length){requestAnimationFrame(function(){requestAnimationFrame(function(){for(var i=0;i<bars.length;i++)bars[i].classList.add('on');});});}
   animateStatNums('panel-competitor');
@@ -16524,11 +16571,11 @@ function in2LoadQueries(){
   var el=document.getElementById('in2-queries');if(!el)return;
   fetch('/api/intel/ai-visibility/queries',{credentials:'same-origin'}).then(apiJson).then(function(d){
     if(!d||!d.ok||!(d.queries||[]).length){el.hidden=true;return;}
-    var runs=d.runs||[],h='<div class="hb-h3"><span>By question</span><span class="cnt"><span class="hb-num">'+runs.length+'</span> check'+(runs.length===1?'':'s')+'</span></div><div class="in2-qgrid">';
+    var runs=d.runs||[],h='<div class="in2-aiv-h"><span class="k">By question</span><span class="in2-aiv-n"><span class="hb-num">'+runs.length+'</span> check'+(runs.length===1?'':'s')+'</span></div><div class="in2-qgrid">';
     for(var i=0;i<d.queries.length;i++){var q=d.queries[i],cells='';
       for(var j=0;j<q.appeared.length;j++){var a=q.appeared[j];cells+='<i class="in2-qc'+(a===true?' on':(a===false?' off':''))+'" title="'+esc(runs[j]&&runs[j].at?mdy(String(runs[j].at).slice(0,10)):'')+'"></i>';}
-      h+='<div class="in2-q"><span class="t">'+esc(q.query)+'</span><span class="c">'+cells+'</span><span class="n hb-num">'+q.appearances+'/'+q.asked+'</span></div>';}
-    el.innerHTML=h+'</div><div class="hb-empty" style="font-size:13px;margin-top:6px">Each dot is one check, oldest first \u2014 lit when you were named.</div>';el.hidden=false;
+      h+='<div class="in2-qrow"><span class="t" title="'+esc(q.query)+'">'+esc(q.query)+'</span><span class="c">'+cells+'</span><span class="n hb-num">'+q.appearances+'/'+q.asked+'</span></div>';}
+    el.innerHTML=h+'</div><div class="in2-qfoot">Each dot is one check, oldest first \u2014 lit when you were named.</div>';el.hidden=false;
   }).catch(function(){});
 }
 function lb2LoadTimeOff(){
@@ -22161,7 +22208,9 @@ var _aivData = null;
 // with no way to scroll to the rest of it.
 function _aivFitBody() {
   var b = document.getElementById('aiv-body');
-  if (b && b.style.maxHeight && b.style.maxHeight !== '0px') { b.style.maxHeight = b.scrollHeight + 'px'; }
+  // No height cap: the loading radar and the results grow after this runs,
+  // and a measured cap clipped them (owner, 9/26/26).
+  if (b) b.style.maxHeight = '';
 }
 // "View all" for the GBP checklist / query results columns — toggles the
 // items past the initial cap in place (in2-extra rows stay in the DOM the

@@ -195,7 +195,8 @@ def test_panel_never_prints_an_iso_date_and_numbers_are_in_the_number_face():
     html = _eval("C.panel(C.norm(c))", c=NO_TRACK)
     assert not re.search(r"\d{4}-\d{2}-\d{2}", html)
     assert "as of 9/14/26" in re.sub(r"<[^>]+>", "", html)
-    assert '<span class="hb-num">14</span>' in html
+    # A date is one number token (9/26/26: a flex row spaced "9 / 14 / 26").
+    assert '<span class="hb-num">9/14/26</span>' in html
     assert "Evidence strength" in html and "Historical accuracy" in html and "Data freshness" in html
 
 

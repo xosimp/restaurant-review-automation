@@ -10449,6 +10449,7 @@ def intel_recs_payload(rid, user_id=None, surface="intel"):
             if isinstance(rv, dict) and rv.get("ref"):
                 refs[str(rv["ref"]).upper()] = {"ref": rv["ref"], "competitor": c.get("name"),
                                                 "rating": rv.get("rating"), "time": rv.get("time"),
+                                                "date": rv.get("date"),
                                                 "text": (rv.get("text") or "")[:300]}
     items = [{"key": insight_store.line_key("insight_intel", it["text"]), "text": it["text"],
               "cites": [refs[cid] for cid in it.get("cites") or [] if cid in refs], "model_written": True}
