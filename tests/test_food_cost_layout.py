@@ -92,12 +92,18 @@ def test_the_price_monitor_reads_the_pantry_for_a_ledger_account():
     U2-14 changed it on purpose: for a ledger account the rows always come
     from the ingredient list (invoices keep prices current, usage comes from
     sales), read-only until Edit, and the typed tracker is only an override."""
-    src = open(os.path.join(ROOT, "hosted_dashboard.py"), encoding="utf-8").read()
+    # The rows are built once, in client_api.food_cost_tracker_data, for the
+    # web tracker (hosted_dashboard) and the phone's GET /food-cost/tracker.
+    dash = open(os.path.join(ROOT, "hosted_dashboard.py"), encoding="utf-8").read()
+    assert "food_cost_tracker_data" in dash and "if _can_see_food_cost:" in dash
+    import inspect
+    import client_api
+    src = inspect.getsource(client_api.food_cost_tracker_data)
     block = src[src.index('"from_pantry": True'):]
     guard = src[src.index("# With a live pantry"):src.index('"from_pantry": True')]
     assert "list_ingredients(rid)" in guard
     assert '"price": (round(float(r["unit_cost"]), 2)' in block
-    assert 'not (_food_cost_data and (_food_cost_data.get("current") or {}).get("items"))' not in guard
+    assert 'not (data and (data.get("current") or {}).get("items"))' not in guard
     assert "Candidate for future cleanup after additional verification".lower() in guard.lower().replace("\n    # ", " ")
     s = _src()
     tracker = s[s.index('id="fc2-tracker"') - 400:s.index('<span id="fc-tab-tracker">')]

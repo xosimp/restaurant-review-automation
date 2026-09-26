@@ -677,43 +677,17 @@ def index(current_user):
     except Exception:
         _labor_upcoming = []
 
-    # Food cost: load saved quick-count data for price drift display
+    # Food cost: the price monitor's rows — saved quick-count data for price
+    # drift display, or the live pantry for a ledger account (U2-14). One
+    # function for the web tracker and the phone's (client_api
+    # .food_cost_tracker_data), so the two start from the same rows.
     _food_cost_data = None
-    try:
-        if _can_see_food_cost:
-            from models import get_client_data as _gcd_fc
-            import json as _json_fc
-            _fc_raw = _gcd_fc(rid)
-            if _fc_raw and _fc_raw.get("food_cost_json"):
-                _food_cost_data = _json_fc.loads(_fc_raw["food_cost_json"])
-    except Exception:
-        pass
-    # With a live pantry, the price monitor reads the pantry itself — name,
-    # unit, unit cost, a week's usage — instead of seven sample rows at 0.00
-    # beside the real ingredient list. For a ledger account this is ALWAYS
-    # the case now (friction audit U2-14): invoices keep unit_cost current and
-    # usage is computed from POS x recipes, so the 14 typed fields a week
-    # duplicated them. The rows render read-only with an Edit affordance.
-    # The typed tracker itself (/api/food-cost-quickcount, food_cost_json) is
-    # a candidate for future cleanup after additional verification: its
-    # food_cost_data consumers were not traced end to end.
-    try:
-        if _can_see_food_cost:
-            import inventory_ledger as _il_fc
-            _pantry = [r for r in (_il_fc.list_ingredients(rid) or []) if r.get("name")]
-            if _pantry:
-                _food_cost_data = dict(_food_cost_data or {})
-                _typed_at = ((_food_cost_data.get("current") or {}).get("submitted_at")
-                             if not (_food_cost_data.get("current") or {}).get("from_pantry") else None)
-                _food_cost_data["current"] = {
-                    "from_pantry": True,
-                    "typed_at": _typed_at,
-                    "items": [{"name": r["name"], "unit": r.get("unit") or "",
-                               "price": (round(float(r["unit_cost"]), 2) if r.get("unit_cost") else ""),
-                               "usage": (round(float(r["avg_daily_usage"]) * 7, 1) if r.get("avg_daily_usage") else "")}
-                              for r in _pantry]}
-    except Exception:
-        pass
+    if _can_see_food_cost:
+        try:
+            from client_api import food_cost_tracker_data as _fctd
+            _food_cost_data = _fctd(rid)
+        except Exception:
+            _food_cost_data = None
 
     # Multi-location: load group locations for owner switcher
     _group_locations = []

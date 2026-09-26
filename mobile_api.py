@@ -912,16 +912,48 @@ def _setup_checklist(restaurant, rstats, labor, active_keys):
     return [] if all(st["done"] for st in steps) else steps
 
 
-def _home_module_tiles(rid, restaurant):
+def _module_tile_mode(key, user):
+    """How this login may open module `key`: "full", "counts" (Food Cost's
+    stock work without a dollar figure — permissions.FOOD_COST_ENTER without
+    FOOD_COST_VIEW, the web's counts-only tab), or None (not at all).
+
+    The tiles came straight from get_active_modules with no permission
+    filter, so a counts-only manager opened the full Food Cost screen and
+    every analytics and order call answered 403 module_forbidden. user=None
+    (no identity to check) keeps the old unfiltered behaviour."""
+    if user is None:
+        return "full"
+    from permissions import MODULE_VIEW_PERMISSIONS, FOOD_COST_ENTER, has_permission
+    perm = MODULE_VIEW_PERMISSIONS.get(key)
+    if perm is None or has_permission(user, perm):
+        return "full"
+    if key == "inventory" and has_permission(user, FOOD_COST_ENTER):
+        return "counts"
+    return None
+
+
+def _home_module_tiles(rid, restaurant, user=None):
     """The Modules grid: one tile per module this restaurant has, with its
     headline figure and pulse. Reads only — no Home brief is built and
     nothing is presented (re-audit C5: the phone's Modules tab fetched the
     whole of /mobile/api/home for this list, and every open recorded Home's
     cards as shown on a screen that renders none of them). Returns the
-    tiles and the reads _do_mobile_home reuses."""
+    tiles and the reads _do_mobile_home reuses.
+
+    Each tile carries `mode` (_module_tile_mode): a module this login may
+    not read is left out, and a counts-only Food Cost tile carries no dollar
+    figure and leaves "inventory" out of active_keys, so nothing on Home
+    reads the margins for it either."""
     from models import get_review_stats, get_active_modules
-    active_modules = get_active_modules(restaurant)
-    active_keys = {m["key"] for m in active_modules}
+    active_modules = []
+    modes = {}
+    for m in get_active_modules(restaurant):
+        mode = _module_tile_mode(m["key"], user)
+        if mode is None:
+            continue
+        modes[m["key"]] = mode
+        active_modules.append(m)
+    active_keys = {m["key"] for m in active_modules if modes.get(m["key"]) == "full"}
 
     rstats = get_review_stats(rid) if "reviews" in active_keys else {}
     labor = None
@@ -938,6 +970,14 @@ def _home_module_tiles(rid, restaurant):
     for m in active_modules:
         key = m["key"]
         kpi = None
+        if modes.get(key) == "counts":
+            # Stock work only: no analysis is run, so no dollar figure can
+            # reach this tile or its pulse.
+            modules_out.append({"key": key, "label": m["label"], "icon": key, "status": m["status"],
+                                "mode": "counts",
+                                "kpi": {"value": "Counts", "sublabel": "stock, deliveries, waste"},
+                                "pulse": None})
+            continue
         if key == "reviews":
             kpi = {
                 "value": f"{rstats.get('responded', 0)}/{rstats.get('total', 0)}",
@@ -990,6 +1030,7 @@ def _home_module_tiles(rid, restaurant):
             kpi = _intel_home_kpi(restaurant)
 
         modules_out.append({"key": key, "label": m["label"], "icon": key, "status": m["status"], "kpi": kpi,
+                            "mode": "full",
                             "pulse": _home_pulse(key, kpi, rstats, labor, restaurant, inv, inv_live=inv_live)})
     return {"modules": modules_out, "active_keys": active_keys, "rstats": rstats, "labor": labor,
             "inv": inv, "inv_live": inv_live}
@@ -1060,7 +1101,8 @@ def mobile_home_modules(current_user):
     restaurant = get_restaurant(current_user["restaurant_id"])
     if not restaurant:
         return jsonify(ok=False, error="Restaurant not found"), 404
-    return jsonify(ok=True, modules=_home_module_tiles(current_user["restaurant_id"], restaurant)["modules"]), 200
+    return jsonify(ok=True, modules=_home_module_tiles(current_user["restaurant_id"], restaurant,
+                                                       user=current_user)["modules"]), 200
 
 
 def _do_mobile_home(current_user):
@@ -1068,7 +1110,7 @@ def _do_mobile_home(current_user):
     restaurant = get_restaurant(rid)
     if not restaurant:
         return {"ok": False, "error": "Restaurant not found"}, 404
-    _tiles = _home_module_tiles(rid, restaurant)
+    _tiles = _home_module_tiles(rid, restaurant, user=current_user)
     modules_out, active_keys = _tiles["modules"], _tiles["active_keys"]
     rstats, labor, inv, inv_live = _tiles["rstats"], _tiles["labor"], _tiles["inv"], _tiles["inv_live"]
 
@@ -1907,6 +1949,14 @@ def mobile_food_cost_quickcount(current_user):
     return jsonify(**payload), status
 
 
+@mobile_bp.route("/food-cost/tracker")
+@mobile_login_required
+def mobile_food_cost_tracker(current_user):
+    """See client_api._do_food_cost_tracker — the rows the Tracker opens on."""
+    payload, status = _capi._do_food_cost_tracker(current_user["restaurant_id"])
+    return jsonify(**payload), status
+
+
 @mobile_bp.route("/food-cost/custom-item", methods=["POST"])
 @mobile_login_required
 def mobile_save_food_cost_custom_item(current_user):
@@ -2386,16 +2436,35 @@ def mobile_food_cost_analytics(current_user):
             price_watch = []
         # One read for web and phone (audit #22): the same cache key and
         # stored read the web route uses.
-        insight = _capi.food_insight_text(rid, restaurant, items, is_live, analysis)
-        import data_freshness as _df_mfood
-        _recs = (_capi.insight_rec_items(rid, insight, "insight_food", "food", "food",
-                                         user_id=current_user.get("id"),
-                                         promote="UNVERIFIED:" not in insight,
-                                         evidence=_capi.food_read_evidence(rid, is_live),
-                                         sources=_df_mfood.sources_for(["food"])) if is_live else [])
+        #
+        # The AI read has its own try. It used to share one with every
+        # figure below, so a model failure (a budget stop, an outage)
+        # returned ok=False with every list empty and the phone showed no
+        # food cost at all — while the web, whose insight is a separate
+        # request, still drew every figure. The figures never depended on
+        # the model; a failed read now says why in the insight's place and
+        # the rest of the payload is unchanged.
+        insight_error = None
+        _recs = []
+        try:
+            insight = _capi.food_insight_text(rid, restaurant, items, is_live, analysis)
+            import data_freshness as _df_mfood
+            _recs = (_capi.insight_rec_items(rid, insight, "insight_food", "food", "food",
+                                             user_id=current_user.get("id"),
+                                             promote="UNVERIFIED:" not in insight,
+                                             evidence=_capi.food_read_evidence(rid, is_live),
+                                             sources=_df_mfood.sources_for(["food"])) if is_live else [])
+        except Exception as _ins_e:
+            from ai_utils import insight_error as _insight_err_fc1
+            insight, _ = _insight_err_fc1(_ins_e)
+            insight_error = insight
+            _recs = []
         return jsonify(
             ok=True,
             insight=insight,
+            # Set only when the AI read failed: the message shown in the
+            # insight's place. Every figure below is still real.
+            insight_error=insight_error,
             # Example data must never read as the owner's own numbers.
             is_live=bool(is_live),
             # The Response Validation verdict the read carries (workstream
@@ -2488,7 +2557,12 @@ def mobile_food_cost_trend(current_user):
         # places presented as one chart. The web card has always taken its
         # target from here; now both do.
         target_pct = get_waste_target_pct(rid)
-        target_weekly, basis = implied_target_weekly(None, weeks, target_pct)
+        # The live analysis, exactly as the web card takes it
+        # (client_api.waste_trend_analysis): passing None here drew the
+        # target from history on the phone and from this week's purchases
+        # on the web, so one chart showed two different target dollars.
+        _live_analysis, _ = _capi.waste_trend_analysis(rid)
+        target_weekly, basis = implied_target_weekly(_live_analysis, weeks, target_pct)
         # Whose target the line is (Benchmarking #10): NULL waste_target_pct
         # is Cavnar's starting 4.5%, never "your target".
         try:
@@ -4880,7 +4954,10 @@ def _do_mobile_account(current_user):
         "auto_approve_paused": bool(getattr(restaurant, "auto_approve_paused", 0)),
         "auto_approved_today": count_auto_approved_today(rid),
     }
-    data_block = {"data_retention_months": int(getattr(restaurant, "data_retention_months", 0) or 0)}
+    data_block = {"data_retention_months": int(getattr(restaurant, "data_retention_months", 0) or 0),
+                  # Which Export my data scopes this login may pick — the
+                  # phone listed all four whatever the modules (export_scopes_for).
+                  "export_scopes": export_scopes_for(restaurant, current_user)}
 
     return {
         "ok": True,
@@ -5938,6 +6015,24 @@ def mobile_email_history(current_user):
     return jsonify(ok=True, emails=get_email_log_for_client(current_user["restaurant_id"], limit=limit))
 
 
+def export_scopes_for(restaurant, user):
+    """The export scopes this identity may take for this restaurant, in the
+    order the export pickers list them: reviews and settings always, labor
+    only with the Labor module and LABOR_VIEW, food cost only with the Food
+    Cost module and FOOD_COST_VIEW. The web picker hid Labor and Food cost
+    when those modules were off and the phone listed all four; both now
+    read this list (the phone through /account's data.export_scopes), and
+    the export route refuses anything outside it."""
+    from permissions import FOOD_COST_VIEW, LABOR_VIEW, has_permission
+    out = ["reviews"]
+    if restaurant is not None and getattr(restaurant, "module_labor", 0) and has_permission(user, LABOR_VIEW):
+        out.append("labor")
+    if restaurant is not None and getattr(restaurant, "module_inventory", 0) and has_permission(user, FOOD_COST_VIEW):
+        out.append("food_cost")
+    out.append("settings")
+    return out
+
+
 @mobile_bp.route("/account/export-data", methods=["POST"])
 @mobile_login_required
 def mobile_export_data(current_user):
@@ -5959,17 +6054,20 @@ def mobile_export_data(current_user):
     if not scopes:
         return jsonify(ok=False, error="Pick at least one thing to export."), 400
     # This route matches no entry in auth._MODULE_PREFIXES, so the module and
-    # permission gates that cover every /food-cost route did not apply here:
-    # a manager session — the role that exists precisely to withhold margins —
-    # could mail itself every ingredient, unit cost and waste figure. Scopes
-    # are gated individually rather than the whole request refused, so an
-    # export of the other three still works.
-    if "food_cost" in scopes:
-        from permissions import FOOD_COST_VIEW as _FC_VIEW, has_permission as _hp_fc
-        if not (restaurant.module_inventory and _hp_fc(current_user, _FC_VIEW)):
-            scopes = [s for s in scopes if s != "food_cost"]
-            if not scopes:
-                return jsonify(ok=False, error="You don't have access to food cost data."), 403
+    # permission gates that cover every /food-cost and /labor route did not
+    # apply here: a manager session — the role that exists precisely to
+    # withhold margins — could mail itself every ingredient, unit cost and
+    # waste figure, and a restaurant without Labor could export labor
+    # history. Scopes are gated individually rather than the whole request
+    # refused, so an export of the rest still works; what was refused is
+    # named in the response.
+    allowed = export_scopes_for(restaurant, current_user)
+    refused = [s for s in scopes if s not in allowed]
+    scopes = [s for s in scopes if s in allowed]
+    if not scopes:
+        if refused == ["food_cost"]:
+            return jsonify(ok=False, error="You don't have access to food cost data.", refused=refused), 403
+        return jsonify(ok=False, error="That data isn't part of your account.", refused=refused), 403
     safe_name = "".join(c for c in (restaurant.name or "cavnar") if c.isalnum() or c in " -_").strip() or "cavnar"
     attachments, labels = [], []
     builders = {
@@ -5996,7 +6094,7 @@ def mobile_export_data(current_user):
         if not result.ok:
             return jsonify(ok=False, error=_email_refusal(result)), 502
         _log_account_event(rid, "data_exported", current_user, detail=", ".join(scopes))
-        return jsonify(ok=True, email=to_email, scopes=scopes)
+        return jsonify(ok=True, email=to_email, scopes=scopes, refused=refused)
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e)), 500
 

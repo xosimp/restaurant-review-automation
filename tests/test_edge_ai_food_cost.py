@@ -334,6 +334,29 @@ def test_the_mobile_food_cost_insight_says_paused_when_the_ai_budget_has_stopped
     assert "check back shortly" not in body["insight"]
 
 
+def test_a_failed_mobile_food_cost_insight_still_returns_every_figure(http, budget_stopped):
+    """The AI read shared one try with every figure, so a model failure came
+    back ok=False with every list empty — the phone lost the whole screen
+    while the web (whose insight is its own request) kept its figures."""
+    r = http.get("/mobile/api/food-cost/analytics", headers=_BEARER)
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["ok"] is True, body
+    assert body["total_items"] == 3, "the figures come from the analysis, not the model"
+    assert "paused" in body["insight_error"]
+    assert body["insight_recommendations"] == []
+
+
+def test_a_successful_mobile_food_cost_insight_carries_no_error(http, monkeypatch):
+    monkeypatch.setattr(inventory, "analysis_for", lambda rid: ([], True, {"total_items": 3}))
+    import client_api
+    monkeypatch.setattr(client_api, "food_insight_text", lambda *a, **k: "Waste is steady.")
+    monkeypatch.setattr(client_api, "insight_rec_items", lambda *a, **k: [])
+    body = http.get("/mobile/api/food-cost/analytics", headers=_BEARER).get_json()
+    assert body["ok"] is True and body["insight_error"] is None
+    assert body["insight"] == "Waste is steady."
+
+
 def test_the_web_labor_insight_says_paused_when_the_ai_budget_has_stopped(http, budget_stopped):
     r = http.get("/api/labor-insight")
     body = r.get_json()
