@@ -209,9 +209,11 @@ def create_issue(restaurant_id, kind, title, detail=None, severity="normal", sou
     # SMS only ever reaches the routed manager. (`notify` is a bool
     # parameter here, hence the aliased import.)
     import notify as _notify_mod
+    # The row names the issue (ref_kind / ref_id), so the bell reads it as
+    # handled once the issue is resolved instead of urgent forever.
     _notify_mod.record_notification(restaurant_id,
                                     "coverage" if kind == "coverage" else "issue",
-                                    db_path=db_path)
+                                    db_path=db_path, ref_kind="issue", ref_id=issue_id)
     # No assignee, no link: a link is a credential for one person, and an
     # unassigned issue has nobody to hold it. Assigning it later mints one.
     token = _mint_link(issue_id, assignee_contact_id, db_path=db_path) \
@@ -634,7 +636,8 @@ def tick(db_path=DB_PATH, now=None):
                f"after {mins} min — {s['title']}. {_base_url()}/i/{token}")
         if send_sms(s["esc_phone"], msg[:320], use_case="alert"):
             import notify as _notify_mod
-            _notify_mod.record_notification(s["restaurant_id"], "issue_escalated", db_path=db_path)
+            _notify_mod.record_notification(s["restaurant_id"], "issue_escalated", db_path=db_path,
+                                            ref_kind="issue", ref_id=s["id"])
             conn = get_conn(db_path)
             try:
                 conn.execute("UPDATE ops_issues SET escalated_at=?, escalation_contact_id=? WHERE id=?",

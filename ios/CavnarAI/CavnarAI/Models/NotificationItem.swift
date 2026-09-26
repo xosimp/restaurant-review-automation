@@ -40,6 +40,14 @@ struct NotificationItem: Codable, Identifiable {
     /// The queued send a "going out" row is about (delayed_actions.id), when
     /// the server names it — Undo then stops exactly that send.
     var delayedActionId: Int? = nil
+    /// The server's rule for Undo on this row: still pending, at the
+    /// location the session is on, and a login the cancel route allows.
+    /// `false` hides Undo whatever the pending list says; nil (an older
+    /// server) falls back to the client's own match.
+    var canUndo: Bool? = nil
+    /// An urgent row whose subject the server cannot read: opening it is
+    /// handling it, so `resolved` follows the open (as the server counts).
+    var resolvesOnOpen: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
         case type, label, priority, urgent, unread, module, nav, draft, snippet, resolved
@@ -49,6 +57,8 @@ struct NotificationItem: Codable, Identifiable {
         case alertId = "id"
         case canApprove = "can_approve"
         case delayedActionId = "delayed_action_id"
+        case canUndo = "can_undo"
+        case resolvesOnOpen = "resolves_on_open"
     }
 
     /// The delayed.py kind a "going out" row is about — the row that can
@@ -62,6 +72,9 @@ struct NotificationItem: Codable, Identifiable {
     }
 
     var isUrgent: Bool { urgent ?? ((priority ?? 3) <= 1) }
+    /// Urgent and not yet handled — what "Needs you", the ember dot and the
+    /// bell's red count mean (the web bell's `urgent && !resolved`).
+    var needsYou: Bool { isUrgent && resolved != true }
     var isUnread: Bool { unread ?? false }
 
     var id: String { alertId.map { "alert-\($0)" } ?? "\(type)-\(firedAt)" }

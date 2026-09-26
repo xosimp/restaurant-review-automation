@@ -258,14 +258,71 @@ final class IOSFixRoundTests: XCTestCase {
             """)
         let pending = [PendingAction(id: 77, kind: "order_send", label: nil,
                                      executeAt: "2026-09-25T15:00:00Z", status: "pending")]
-        XCTAssertEqual(NotificationsListViewModel.undoTarget(for: r[0], among: r, pending: pending, answered: false)?.id, 77)
-        XCTAssertNil(NotificationsListViewModel.undoTarget(for: r[1], among: r, pending: pending, answered: false),
+        XCTAssertEqual(NotificationsListViewModel.undoTarget(for: r[0], among: r, pending: pending, answered: false,
+                                                             activeRestaurantId: 1)?.id, 77)
+        XCTAssertNil(NotificationsListViewModel.undoTarget(for: r[1], among: r, pending: pending, answered: false,
+                                                           activeRestaurantId: 1),
                      "yesterday's row must not stop today's order")
         let named = try rows("""
             [{"id": 4, "type": "order_send_pending", "label": "Order", "fired_at": "2026-09-24 09:00:00",
               "delayed_action_id": 12}]
             """)
-        XCTAssertNil(NotificationsListViewModel.undoTarget(for: named[0], among: named, pending: pending, answered: false))
+        XCTAssertNil(NotificationsListViewModel.undoTarget(for: named[0], among: named, pending: pending, answered: false,
+                                                           activeRestaurantId: 1))
+    }
+
+    /// The group list holds every location's rows; the pending list is the
+    /// active location's only. A row at another location must never reach
+    /// the fallback match — it would cancel THIS location's send.
+    func testUndoFallbackStaysAtTheActiveLocation() throws {
+        let r = try rows("""
+            [{"id": 9, "type": "order_send_pending", "label": "Order", "fired_at": "2026-09-25 09:00:00",
+              "restaurant_id": 2},
+             {"id": 8, "type": "order_send_pending", "label": "Order", "fired_at": "2026-09-25 08:00:00",
+              "restaurant_id": 1}]
+            """)
+        let pending = [PendingAction(id: 77, kind: "order_send", label: nil,
+                                     executeAt: "2026-09-25T15:00:00Z", status: "pending")]
+        XCTAssertNil(NotificationsListViewModel.undoTarget(for: r[0], among: r, pending: pending, answered: false,
+                                                           activeRestaurantId: 1),
+                     "location 2's row must not cancel location 1's send")
+        XCTAssertEqual(NotificationsListViewModel.undoTarget(for: r[1], among: r, pending: pending, answered: false,
+                                                             activeRestaurantId: 1)?.id, 77,
+                       "the newest row AT this location still matches")
+        XCTAssertNil(NotificationsListViewModel.undoTarget(for: r[1], among: r, pending: pending, answered: false,
+                                                           activeRestaurantId: 0),
+                     "no known location, no fallback")
+    }
+
+    /// `can_undo` is the server's rule (pending, this location, permitted).
+    func testUndoHonoursTheServersCanUndo() throws {
+        let pending = [PendingAction(id: 12, kind: "order_send", label: nil,
+                                     executeAt: "2026-09-25T15:00:00Z", status: "pending")]
+        let refused = try rows("""
+            [{"id": 4, "type": "order_send_pending", "label": "Order", "fired_at": "2026-09-25 09:00:00",
+              "delayed_action_id": 12, "can_undo": false}]
+            """)
+        XCTAssertNil(NotificationsListViewModel.undoTarget(for: refused[0], among: refused, pending: pending,
+                                                           answered: false, activeRestaurantId: 1))
+        let allowed = try rows("""
+            [{"id": 4, "type": "order_send_pending", "label": "Order", "fired_at": "2026-09-25 09:00:00",
+              "delayed_action_id": 30, "can_undo": true}]
+            """)
+        XCTAssertEqual(NotificationsListViewModel.undoTarget(for: allowed[0], among: allowed, pending: [],
+                                                             answered: false, activeRestaurantId: 1)?.id, 30,
+                       "the server's yes stands even when the pending read came back empty")
+    }
+
+    func testAnOpenedRowWithNoSubjectStopsNeedingYou() throws {
+        let r = try rows("""
+            [{"id": 5, "type": "critical_low", "label": "Low", "fired_at": "2026-09-25 09:00:00",
+              "urgent": true, "resolved": false, "resolves_on_open": true}]
+            """)
+        XCTAssertTrue(r[0].needsYou)
+        var opened = r[0]
+        opened.resolved = true
+        XCTAssertFalse(opened.needsYou)
+        XCTAssertEqual(NotificationsListView.summaryLine([opened]), "Nothing needs you")
     }
 
     func testARowCarriesTheDraftItWouldPublish() throws {

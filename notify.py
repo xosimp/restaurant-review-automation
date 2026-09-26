@@ -5,6 +5,7 @@ by urgent_via_sms and urgent_via_email per restaurant.
 """
 import os
 import re
+import sqlite3
 import config
 import html as _html
 import requests
@@ -1213,11 +1214,16 @@ def _log_alert(restaurant_id: int, alert_type: str, review_id: int = None, db_pa
     try:
         try:
             cur = conn.execute(sql, args)
-        except Exception:
+        except sqlite3.OperationalError as e:
             # init_db owns these columns now; this is the self-healing retry
             # for a database opened before it ran (ai_utils._ensure_usage_schema
             # is the same pattern). No DDL on the happy path. The retry drops
-            # the reference rather than the notification.
+            # the reference rather than the notification — and ONLY for a
+            # missing column: any other failure (a lock, a constraint) used to
+            # drop the ref too and write a row whose Undo / Approve / resolved
+            # state could never be read back.
+            if sql == plain_sql or "no column named" not in str(e).lower():
+                raise
             cur = conn.execute(plain_sql, plain_args)
         conn.commit()
         # The row's id travels in the push payload, so the open can name the

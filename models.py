@@ -932,7 +932,8 @@ def ensure_columns(db_path: str = DB_PATH):
         ("alert_log", "priority", "INTEGER"),
         # What a row is about beyond a review (notify.record_notification):
         # ref_kind 'delayed_action' (a queued send an Undo stops), 'shift' or
-        # 'time_off' (a staff request Approve / Deny answers), ref_id its row
+        # 'time_off' (a staff request Approve / Deny answers) or 'issue' (the
+        # ops_issues row, so the bell sees it resolved), ref_id its row
         # id. The push payload always carried these; the history row did
         # not, so the web bell could only open them (web desk finding 4).
         ("alert_log", "ref_kind", "TEXT"),
@@ -8198,34 +8199,58 @@ def notifications_seen_at(user_id: int, restaurant_id: int, db_path: str = DB_PA
     return value.replace("T", " ")[:19] if value else None
 
 
-def unread_notification_count(user_id: int, restaurant_id: int, db_path: str = DB_PATH,
-                              visible=None) -> int:
-    """This login's unread badge.
+# The bell lists the newest NOTIFICATION_WINDOW rows (client_api.
+# _do_get_notifications), and the badge counts unread among the SAME rows.
+# The badge used to count every unread row ever fired while the list showed
+# 40: opening all 40 left the list with nothing unread and no "Mark all
+# read", and the badge (and the phone's app icon) still showing the rest.
+NOTIFICATION_WINDOW = 40
 
-    Counts only what the list would show this login: `visible(alert_type)`
-    is the caller's role filter (client_api.notification_visibility), and
-    nothing from before the login existed — a co-owner invited today was
-    badged with the restaurant's entire history, and a manager was badged
-    for food-cost rows their list never shows (MOD-NOT-10)."""
+
+def notification_unread_rule(user_id: int, restaurant_id: int, db_path: str = DB_PATH):
+    """fired_at -> whether a row fired then is past this login's read mark.
+
+    The ONE definition of "unread" for the list's rows and the badge (a row
+    this login opened is read too; the callers check that). Nothing from
+    before the login existed counts: a co-owner invited today was badged
+    with the restaurant's entire history (MOD-NOT-10) and, until this rule
+    reached the list, shown it all as unread there too."""
     since = notifications_seen_at(user_id, restaurant_id, db_path)
     conn = get_conn(db_path)
     try:
         born = conn.execute("SELECT created_at FROM users WHERE id=?", (int(user_id or 0),)).fetchone()
-        born = (born["created_at"] or "").replace("T", " ")[:19] if born else ""
-        if since and since >= born:
-            where, arg = "fired_at > ?", since
-        else:
-            where, arg = "fired_at >= ?", born
-        # A row this login opened is read, on either client (friction #23:
-        # the web bell marks a row read when it is opened, not when the list
-        # is), so it leaves the badge too.
-        rows = conn.execute(
-            f"SELECT alert_type, COUNT(*) AS c FROM alert_log WHERE restaurant_id=? AND {where} "
-            "AND NOT EXISTS (SELECT 1 FROM notification_opens o WHERE o.alert_log_id=alert_log.id "
-            "AND o.user_id=?) GROUP BY alert_type", (restaurant_id, arg, int(user_id or 0))).fetchall()
+    except sqlite3.OperationalError:
+        # A database without auth's tables (auth.init_auth owns `users`):
+        # the read mark alone, never a list that fails to load.
+        born = None
     finally:
         conn.close()
-    return sum(r["c"] for r in rows if visible is None or visible(r["alert_type"]))
+    born = (born["created_at"] or "").replace("T", " ")[:19] if born else ""
+    if since and since >= born:
+        return lambda fired_at: (fired_at or "") > since
+    return lambda fired_at: (fired_at or "") >= born
+
+
+def unread_notification_count(user_id: int, restaurant_id: int, db_path: str = DB_PATH,
+                              visible=None, limit: int = NOTIFICATION_WINDOW) -> int:
+    """This login's unread badge at one location (push._badge_for, the app
+    icon): the rows the list would show it there — the newest `limit`, then
+    `visible(alert_type)`, the caller's role filter (client_api.
+    notification_visibility), exactly as the list filters — that are past
+    the read mark (notification_unread_rule) and not opened on either client
+    (friction #23)."""
+    after = notification_unread_rule(user_id, restaurant_id, db_path)
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT a.alert_type, a.fired_at, EXISTS (SELECT 1 FROM notification_opens o "
+            "WHERE o.alert_log_id=a.id AND o.user_id=?) AS opened "
+            "FROM alert_log a WHERE a.restaurant_id=? ORDER BY a.fired_at DESC, a.id DESC LIMIT ?",
+            (int(user_id or 0), restaurant_id, int(limit))).fetchall()
+    finally:
+        conn.close()
+    return sum(1 for r in rows
+               if (visible is None or visible(r["alert_type"])) and not r["opened"] and after(r["fired_at"]))
 
 
 def record_notification_open(restaurant_id: int, alert_type: str, user_id: int = None,

@@ -23813,7 +23813,7 @@ document.addEventListener('click', function(e) {
       var act2 = _rowActs(n);
       var mods = (n.unread ? ' is-unread' : '') + (n.urgent && !n.resolved ? ' is-urgent' : '') + (n.resolved ? ' is-resolved' : '') + (act || act2 ? ' has-act' : '');
       var sub = (n.location ? '<span class="nloc">' + esc(n.location) + '</span>' + (n.snippet ? ' · ' : '') : '')
-              + (n.snippet ? '“' + esc(n.snippet) + '”' : '') + (n.resolved ? (n.snippet || n.location ? ' · ' : '') + 'handled' : '');
+              + (n.snippet ? '“' + esc(n.snippet) + '”' : '') + (n.resolved ? (n.snippet || n.location ? ' · ' : '') + (n.resolves_on_open ? 'seen' : 'handled') : '');
       html += '<div class="notif-item"><button type="button" class="cbtn cbtn-text notif-row' + mods + '" data-id="' + esc(_rowKey(n)) + '">'
             + '<i class="nd"></i>'
             + '<span class="nl">' + esc(n.label) + '</span>'
@@ -23913,10 +23913,16 @@ document.addEventListener('click', function(e) {
       }).catch(function() { done(); if (typeof toast === 'function') toast('Couldn\u2019t confirm that went through \u2014 check Labor before trying again.', 'error'); });
   }
   // A row is read when it is opened (friction #23), on the server too, so
-  // the phone agrees: the open is recorded against its alert_log id.
+  // the phone agrees: the open is recorded against its alert_log id. An
+  // urgent row whose subject the server cannot read (resolves_on_open) is
+  // handled once opened - the server's rule for the red count too.
+  function _noteOpened(n) {
+    n.opened = true; n.unread = false;
+    if (n.resolves_on_open) n.resolved = true;
+  }
   function markOpened(n) {
     if (!n || n.opened) return;
-    n.opened = true; n.unread = false;
+    _noteOpened(n);
     fetch('/api/notifications/opened', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({type: n.type, alert_id: n.id || null})
@@ -23942,7 +23948,7 @@ document.addEventListener('click', function(e) {
         sessionStorage.setItem('cavnar_pending_nav', path);
         sessionStorage.setItem('cavnar_pending_open', JSON.stringify({type: n.type, alert_id: n.id || null, rid: +n.restaurant_id}));
       } catch (e) {}
-      n.opened = true; n.unread = false; setBadge(_unreadCount(), _urgentOpen());
+      _noteOpened(n); setBadge(_unreadCount(), _urgentOpen());
       switchLocation(+n.restaurant_id);
       return;
     }

@@ -7457,7 +7457,7 @@ def _notification_locations(restaurant_id, viewer=None, scope=None):
         return one
 
 
-def _do_get_notifications(restaurant_id, viewer=None, limit=40, scope=None):
+def _do_get_notifications(restaurant_id, viewer=None, limit=None, scope=None):
     """The notification history, newest first, scoped to what this login may
     see and carrying the priority both clients rank by.
 
@@ -7466,10 +7466,19 @@ def _do_get_notifications(restaurant_id, viewer=None, limit=40, scope=None):
     it fired at, whether it is `resolved` (a review alert whose review has
     been answered — the rule home_brief's alert items use) and whether this
     login `opened` it. `unread` is "after the read mark AND not opened", so a
-    row opened on either client reads as read on both."""
+    row opened on either client reads as read on both — the rule and the
+    window (the newest models.NOTIFICATION_WINDOW) the badge counts too.
+
+    `resolved` is whether the thing the row is about is settled, wherever
+    that is knowable (_notification_resolution). An urgent row with no
+    knowable subject carries `resolves_on_open`: opening it is the owner
+    handling it, and `resolved` follows `opened`. Without that, a
+    critical_low or an issue row stayed "needs you" forever."""
     try:
         import push as _push
         import nav as _nav
+        from models import NOTIFICATION_WINDOW
+        limit = int(limit or NOTIFICATION_WINDOW)
         locs = _notification_locations(restaurant_id, viewer, scope)
         names = {i: n for i, n in locs}
         ids = [i for i, _ in locs]
@@ -7502,11 +7511,13 @@ def _do_get_notifications(restaurant_id, viewer=None, limit=40, scope=None):
         # the session is on, to a login allowed to do it (web desk #4).
         refs = _notification_refs(conn, rows, int(restaurant_id))
         conn.close()
-        seen = {}
+        # One unread rule per location, the badge's own (born + read mark).
+        after = {}
         if viewer and viewer.get("id"):
-            from models import notifications_seen_at
+            from models import notification_unread_rule
             for i in ids:
-                seen[i] = notifications_seen_at(viewer["id"], i)
+                after[i] = notification_unread_rule(viewer["id"], i)
+        superseded = _superseded_rows(rows)
         many = len(ids) > 1
         items = []
         for r in rows:
@@ -7516,11 +7527,16 @@ def _do_get_notifications(restaurant_id, viewer=None, limit=40, scope=None):
             priority = r["priority"]
             if priority is None:
                 priority = _push.priority_of(r["alert_type"])
-            seen_at = seen.get(r["restaurant_id"])
+            unread_after = after.get(r["restaurant_id"])
             text = " ".join(str(r["review_text"] or "").split())
             snippet = (text[:117] + "…") if len(text) > 120 else text
-            resolved = bool(r["review_id"] and (r["review_deleted"] or r["review_status"] in ("posted", "approved", "skipped")))
             was_opened = int(r["id"]) in opened
+            urgent = priority <= _push.P1_ACT_NOW
+            settled = _notification_resolution(r, refs, superseded)
+            # Nothing to read the subject from: opening an urgent row is the
+            # owner handling it, for the bell's red count and the Home tab's.
+            on_open = bool(urgent and settled is None)
+            resolved = bool(settled) or (on_open and was_opened)
             items.append({
                 "id": r["id"],
                 "type": r["alert_type"],
@@ -7533,7 +7549,7 @@ def _do_get_notifications(restaurant_id, viewer=None, limit=40, scope=None):
                 # schedule, Ask on the brief's question — not the module top.
                 "nav": _nav.for_notification(r["alert_type"], review_id=r["review_id"]),
                 "priority": priority,
-                "urgent": priority <= _push.P1_ACT_NOW,
+                "urgent": urgent,
                 "snippet": snippet or None,
                 "rating": r["review_rating"],
                 # A drafted reply the row can approve in place, shown in
@@ -7545,11 +7561,12 @@ def _do_get_notifications(restaurant_id, viewer=None, limit=40, scope=None):
                 "draft": ((r["review_draft"] or "")[:600] or None)
                          if (r["review_id"] and r["review_status"] == "drafted" and not r["review_flagged"]) else None,
                 "resolved": resolved,
+                "resolves_on_open": on_open,
                 **_notification_ref_fields(r, refs, viewer, int(restaurant_id)),
                 "opened": was_opened,
                 "restaurant_id": r["restaurant_id"],
                 "location": names.get(r["restaurant_id"]) if many else None,
-                "unread": bool((seen_at is None or (r["fired_at"] or "") > seen_at) and not was_opened),
+                "unread": bool((unread_after is None or unread_after(r["fired_at"])) and not was_opened),
             })
         return {"ok": True, "notifications": items, "scope": "group" if many else "location"}, 200
     except Exception as e:
@@ -7558,31 +7575,84 @@ def _do_get_notifications(restaurant_id, viewer=None, limit=40, scope=None):
 
 
 def _notification_refs(conn, rows, restaurant_id):
-    """{(ref_kind, ref_id): {"pending": bool, "kind": delayed kind}} for the
-    rows at `restaurant_id` that name a queued send or a staff request."""
-    want = {"delayed_action": set(), "shift": set(), "time_off": set()}
+    """{(ref_kind, ref_id): {"pending": bool, "kind": delayed kind,
+    "restaurant_id": int}} for the rows that name a queued send, a staff
+    request or an issue — at every location the list read, since whether the
+    thing is settled matters wherever it is (`resolved`); what may be DONE
+    about it stays with the location the session is on
+    (_notification_ref_fields)."""
+    want = {"delayed_action": set(), "shift": set(), "time_off": set(), "issue": set()}
     for r in rows:
         try:
             kind, rid_ = r["ref_kind"], r["ref_id"]
         except (IndexError, KeyError):
             return {}
-        if kind in want and rid_ is not None and int(r["restaurant_id"]) == restaurant_id:
-            want[kind].add(int(rid_))
+        if kind in want and rid_ is not None:
+            want[kind].add((int(r["restaurant_id"]), int(rid_)))
     out = {}
-    tables = (("delayed_action", "SELECT id, status, kind FROM delayed_actions"),
-              ("shift", "SELECT id, status, NULL AS kind FROM shift_change_requests"),
-              ("time_off", "SELECT id, status, NULL AS kind FROM staff_time_off"))
+    # An issue is live until resolved: acknowledged still needs someone.
+    tables = (("delayed_action", "SELECT id, restaurant_id, status = 'pending' AS live, kind FROM delayed_actions"),
+              ("shift", "SELECT id, restaurant_id, status = 'pending' AS live, NULL AS kind FROM shift_change_requests"),
+              ("time_off", "SELECT id, restaurant_id, status = 'pending' AS live, NULL AS kind FROM staff_time_off"),
+              ("issue", "SELECT id, restaurant_id, status != 'resolved' AS live, kind FROM ops_issues"))
     for ref_kind, select in tables:
-        ids = sorted(want[ref_kind])
-        if not ids:
+        pairs = want[ref_kind]
+        if not pairs:
             continue
+        ids = sorted({i for _, i in pairs})
         try:
-            for x in conn.execute(f"{select} WHERE restaurant_id=? AND id IN ({','.join('?' * len(ids))})",
-                                  (restaurant_id, *ids)).fetchall():
-                out[(ref_kind, int(x["id"]))] = {"pending": x["status"] == "pending", "kind": x["kind"]}
+            for x in conn.execute(f"{select} WHERE id IN ({','.join('?' * len(ids))})", ids).fetchall():
+                if (int(x["restaurant_id"]), int(x["id"])) in pairs:
+                    out[(ref_kind, int(x["id"]))] = {"pending": bool(x["live"]), "kind": x["kind"],
+                                                     "restaurant_id": int(x["restaurant_id"])}
         except Exception as e:
             print(f"[notifications] could not read {ref_kind} refs for rid={restaurant_id}: {e}")
     return out
+
+
+# Types where a newer row at the same location replaces the older: each
+# critical_low names every item still running out at that moment, so the
+# one before it is either the same shortage or one that has cleared.
+_SUPERSEDED_BY_NEWER = {"critical_low"}
+
+
+def _superseded_rows(rows):
+    """alert_log ids of rows a newer row of the same type at the same
+    location replaces (_SUPERSEDED_BY_NEWER). `rows` is newest first."""
+    newest, out = set(), set()
+    for r in rows:
+        if r["alert_type"] not in _SUPERSEDED_BY_NEWER:
+            continue
+        key = (r["alert_type"], int(r["restaurant_id"]))
+        if key in newest:
+            out.add(int(r["id"]))
+        newest.add(key)
+    return out
+
+
+def _notification_resolution(r, refs, superseded):
+    """Whether the thing a row is about is settled: True / False where it
+    is knowable, None where it is not.
+
+    A review alert: the review answered, skipped or gone. A queued send, a
+    staff request or an issue the row names (ref_kind / ref_id): no longer
+    pending / no longer open. A critical_low: a newer one at the same
+    location. `resolved` used to be `review_id and ...`, so an issue, a
+    coverage gap or a stock-out stayed urgent forever — the bell's red count
+    and the Home tab badge could never clear."""
+    if r["review_id"]:
+        return bool(r["review_deleted"] or r["review_status"] in ("posted", "approved", "skipped"))
+    if int(r["id"]) in superseded:
+        return True
+    try:
+        kind, ref_id = r["ref_kind"], r["ref_id"]
+    except (IndexError, KeyError):
+        kind, ref_id = None, None
+    if kind and ref_id is not None:
+        state = refs.get((kind, int(ref_id)))
+        # The referenced row unreadable or gone: not knowable.
+        return None if state is None else not state.get("pending")
+    return None
 
 
 def _notification_ref_fields(r, refs, viewer, restaurant_id):
@@ -7600,7 +7670,8 @@ def _notification_ref_fields(r, refs, viewer, restaurant_id):
         return {}
     here = int(r["restaurant_id"]) == restaurant_id
     state = refs.get((kind, int(ref_id))) or {}
-    live = bool(here and state.get("pending") and viewer)
+    live = bool(here and state.get("pending") and viewer
+                and state.get("restaurant_id") == restaurant_id)
 
     if kind == "delayed_action":
         try:
@@ -7691,16 +7762,18 @@ def _do_read_notifications(current_user, scope=None, mark=True):
 def _do_notifications_unread(current_user, scope=None):
     """{ok, count, urgent} for the bell's badge over every location the list
     reads (`scope`), web and phone: `count` is unread (after the read mark
-    and not opened), `urgent` the rows still needing someone."""
-    from models import unread_notification_count
-    locs = _notification_locations(current_user["restaurant_id"], current_user, scope)
-    count = sum(unread_notification_count(current_user["id"], rid, visible=notification_visibility(current_user))
-                for rid, _ in locs)
-    try:
-        body, _ = _do_get_notifications(current_user["restaurant_id"], current_user, scope=scope)
-        urgent = sum(1 for n in body.get("notifications") or [] if n.get("urgent") and not n.get("resolved"))
-    except Exception:
-        urgent = 0
+    and not opened), `urgent` the rows still needing someone.
+
+    Both are counted from the list itself — the same rows, the same unread
+    rule, the same `resolved` — so opening every row, or "Mark all read",
+    always clears what the badge counts. The count used to be every unread
+    row ever fired (the list shows the newest 40) without the list's rule:
+    46 rows, all 40 listed opened, and the badge still read 6 with no "Mark
+    all read" anywhere to clear them."""
+    body, _ = _do_get_notifications(current_user["restaurant_id"], current_user, scope=scope)
+    rows = body.get("notifications") or [] if body.get("ok") else []
+    count = sum(1 for n in rows if n.get("unread"))
+    urgent = sum(1 for n in rows if n.get("urgent") and not n.get("resolved"))
     return {"ok": True, "count": count, "urgent": urgent}, 200
 
 

@@ -73,6 +73,9 @@ final class NotificationsListViewModel {
     func noteOpened(_ item: NotificationItem) {
         guard let i = notifications.firstIndex(where: { $0.id == item.id }) else { return }
         notifications[i].unread = false
+        // An urgent row the server can't read a subject for is handled once
+        // opened — the server's own rule for the bell's red count.
+        if notifications[i].resolvesOnOpen == true { notifications[i].resolved = true }
     }
 
     private struct OpenedBody: Encodable {
@@ -136,23 +139,37 @@ final class NotificationsListViewModel {
     }
 
     /// The queued send a "going out" row can undo in place (F3-10). The row's
-    /// own `delayed_action_id` when the server sends it. Without it, only
-    /// the NEWEST row of its kind, only when a single pending send of that
-    /// kind exists, and only when that send goes out after the row fired —
-    /// yesterday's "order going out" row (long sent) matched by kind used to
-    /// stop TODAY's order.
+    /// own `delayed_action_id` when the server sends it, and never when the
+    /// server says `can_undo: false`. Without an id, only a row at the
+    /// location the session is on (the pending list is that location's
+    /// only — the list is every location's, so location B's old row used to
+    /// cancel location A's send), only the NEWEST row of its kind there,
+    /// only when a single pending send of that kind exists, and only when
+    /// that send goes out after the row fired — yesterday's "order going
+    /// out" row (long sent) matched by kind used to stop TODAY's order.
     func undoable(_ item: NotificationItem) -> PendingAction? {
         Self.undoTarget(for: item, among: notifications, pending: pendingActions,
-                        answered: answered[item.id] != nil)
+                        answered: answered[item.id] != nil,
+                        activeRestaurantId: SessionScope.activeRestaurantId)
     }
 
     nonisolated static func undoTarget(for item: NotificationItem, among rows: [NotificationItem],
-                                       pending: [PendingAction], answered: Bool) -> PendingAction? {
-        guard !answered, let kind = item.undoableKind else { return nil }
+                                       pending: [PendingAction], answered: Bool,
+                                       activeRestaurantId: Int) -> PendingAction? {
+        guard !answered, item.canUndo != false, let kind = item.undoableKind else { return nil }
         if let id = item.delayedActionId {
-            return pending.first { $0.id == id && ($0.status ?? "pending") == "pending" }
+            if let match = pending.first(where: { $0.id == id && ($0.status ?? "pending") == "pending" }) {
+                return match
+            }
+            // The server's rule already checked pending, this location and
+            // the permission; the pending read may simply have failed.
+            return item.canUndo == true
+                ? PendingAction(id: id, kind: kind, label: nil, executeAt: nil, status: "pending") : nil
         }
-        let newest = rows.filter { $0.type == item.type }
+        // A row with no restaurant is from a server that lists one location.
+        let here = { (row: NotificationItem) in (row.restaurantId ?? activeRestaurantId) == activeRestaurantId }
+        guard activeRestaurantId > 0, here(item) else { return nil }
+        let newest = rows.filter { $0.type == item.type && here($0) }
             .max { ($0.firedAtDate ?? .distantPast) < ($1.firedAtDate ?? .distantPast) }
         guard newest?.id == item.id, let fired = item.firedAtDate else { return nil }
         let matches = pending.filter { $0.kind == kind }
@@ -285,7 +302,9 @@ struct NotificationsListView: View {
     /// on the chronological feed with the urgent items mixed into the FYIs.
     @State private var urgentChoice: Bool?
 
-    private var hasUrgent: Bool { viewModel.notifications.contains(where: \.isUrgent) }
+    /// Urgent AND not yet handled, as on the web bell — an answered review
+    /// or a resolved issue no longer opens the list on "Needs you".
+    private var hasUrgent: Bool { viewModel.notifications.contains(where: \.needsYou) }
     private var urgentOnly: Bool { Self.defaultsToUrgent(choice: urgentChoice, hasUrgent: hasUrgent) }
 
     static func defaultsToUrgent(choice: Bool?, hasUrgent: Bool) -> Bool {
@@ -300,7 +319,7 @@ struct NotificationsListView: View {
     /// an empty list.
     static func summaryLine(_ items: [NotificationItem]) -> String? {
         guard !items.isEmpty else { return nil }
-        let open = items.filter { $0.isUrgent && $0.resolved != true }
+        let open = items.filter(\.needsYou)
         guard !open.isEmpty else {
             let unread = items.filter(\.isUnread).count
             return "Nothing needs you" + (unread > 0 ? " \u{00B7} \(unread) unread" : "")
@@ -318,7 +337,7 @@ struct NotificationsListView: View {
     }
 
     private var shown: [NotificationItem] {
-        urgentOnly ? viewModel.notifications.filter(\.isUrgent) : viewModel.notifications
+        urgentOnly ? viewModel.notifications.filter(\.needsYou) : viewModel.notifications
     }
 
     /// Day headings, newest first, preserving the server's ordering within
@@ -462,7 +481,7 @@ struct NotificationsListView: View {
                         // stop being worth anything once the shift they were
                         // about is over.
                         Circle()
-                            .fill(item.isUrgent ? Color.cavnarEmber : Color.cavnarInk3.opacity(0.25))
+                            .fill(item.needsYou ? Color.cavnarEmber : Color.cavnarInk3.opacity(0.25))
                             .frame(width: 6, height: 6)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(item.label)
