@@ -4767,6 +4767,9 @@ def _do_mobile_account(current_user):
         "two_fa_contact_masked": _masked,
         "login_notify": bool(getattr(restaurant, "login_notify", 0)),
         "marketing_emails_opt_out": bool(getattr(restaurant, "marketing_emails_opt_out", 0)),
+        # The monthly business review's switch (POST /account/monthly-review),
+        # read the way the web's /api/account-settings reads it: on unless off.
+        "monthly_review_enabled": bool(getattr(restaurant, "monthly_review_enabled", 1)),
         "recovery_email": current_user.get("recovery_email"),
         "recovery_email_pending": current_user.get("recovery_email_pending"),
         "last_login": current_user.get("last_login"),

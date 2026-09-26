@@ -2358,6 +2358,21 @@ def test_marketing_opt_out_toggle(client, db_path):
     assert row["marketing_emails_opt_out"] == 1
 
 
+def test_monthly_review_switch_reads_and_writes_on_mobile(client, db_path):
+    """The phone's Alerts sheet shows the monthly review switch from the
+    account summary and flips it through the same body the web uses."""
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    acct = client.get("/mobile/api/account", headers=_auth_headers(token)).get_json()
+    assert acct["account"]["monthly_review_enabled"] is True
+    resp = client.post("/mobile/api/account/monthly-review", json={"enabled": False},
+                       headers=_auth_headers(token))
+    assert resp.get_json()["ok"] is True
+    assert models.get_restaurant(rid, db_path=db_path).monthly_review_enabled == 0
+    acct = client.get("/mobile/api/account", headers=_auth_headers(token)).get_json()
+    assert acct["account"]["monthly_review_enabled"] is False
+
+
 # ── /mobile/api/account/login-history ───────────────────────────────────────
 
 def test_login_history_route_requires_auth(client):

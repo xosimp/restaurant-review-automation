@@ -24,6 +24,8 @@ struct AccountAlertsDetailView: View {
     @State private var pushUndetermined = false
     @State private var brief = BriefSettings()
     @State private var briefLoaded = false
+    @State private var routing: IssueRouting?
+    @State private var routingError: String?
     @State private var nudge: EngagementSuggestion?
     @State private var testPushLabel: String?
     @State private var sendingTestPush = false
@@ -56,6 +58,30 @@ struct AccountAlertsDetailView: View {
             VStack(alignment: .leading, spacing: 22) {
                 hero
                 statusStrip
+
+                // The one dial for "too much" or "too little" (the web's
+                // How much to hear from Cavnar AI, density audit #38) —
+                // briefing_level on the same /morning-brief/settings twin.
+                if briefLoaded && brief.canEdit {
+                    AccountSection(kicker: "How much to hear from Cavnar AI") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            CavnarSegmentedControl(
+                                selection: Binding(get: { brief.briefingLevel },
+                                                   set: { level in
+                                                       guard level != brief.briefingLevel else { return }
+                                                       brief.briefingLevel = level
+                                                       saveBrief()
+                                                   }),
+                                options: Self.levels
+                            ) { Self.levelLabel($0) }
+                            Text(Self.levelNote(brief.briefingLevel))
+                                .font(.cavnarBody(14))
+                                .foregroundStyle(Color.cavnarInk3.opacity(0.8))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.vertical, 9)
+                    }
+                }
 
                 AccountSection(kicker: "What triggers an alert") {
                     AccountSwitchRow(label: "1-star reviews", isOn: $draft.alert1star)
@@ -195,13 +221,16 @@ struct AccountAlertsDetailView: View {
                             isOn: Binding(get: { brief.holdAlerts },
                                           set: { brief.holdAlerts = $0; saveBrief() })
                         )
-                        AccountKVRow(label: "Lineup notes to the manager", showsDivider: false) {
+                        AccountKVRow(label: "Lineup notes to the manager", showsDivider: routing != nil) {
                             Picker("", selection: Binding(get: { brief.preshiftNudgeHour },
                                                           set: { brief.preshiftNudgeHour = $0; saveBrief() })) {
                                 Text("Off").tag(0)
                                 ForEach(12..<21, id: \.self) { Text(Self.hourLabel($0)).tag($0) }
                             }
                             .labelsHidden().tint(Color.cavnarEmber)
+                        }
+                        if let routing {
+                            issueRoutingRows(routing)
                         }
                     }
                 }
@@ -259,6 +288,17 @@ struct AccountAlertsDetailView: View {
                 }
 
                 AccountSection(kicker: "Email preferences") {
+                    // The web's Monthly business review switch, on the
+                    // same shared body (/account/monthly-review).
+                    AccountSwitchRow(
+                        label: "Monthly business review",
+                        detail: "On the 1st: how last month's numbers moved, what your changes were measured to do, and what's worth fixing next.",
+                        isOn: Binding(
+                            get: { viewModel.summary?.account.monthlyReviewEnabled ?? true },
+                            set: { on in Task { await viewModel.toggleMonthlyReview(on) } }
+                        ),
+                        busy: viewModel.isTogglingMonthlyReview
+                    )
                     AccountSwitchRow(
                         label: "Product updates & tips",
                         detail: "Never affects security emails — sign-in alerts, 2FA codes, and password changes always go out",
@@ -379,6 +419,7 @@ struct AccountAlertsDetailView: View {
             pushDenied = PushManager.shared.authorizationDenied
             pushUndetermined = PushManager.shared.authorizationUndetermined
             await loadBrief()
+            await loadRouting()
             await loadNudge()
         }
         }
@@ -467,6 +508,8 @@ struct AccountAlertsDetailView: View {
         var hour = 7
         var holdAlerts = true
         var preshiftNudgeHour = 0
+        /// calm | normal | all — how much reaches the owner besides the brief.
+        var briefingLevel = "normal"
         var canEdit = false
 
         private enum Outer: String, CodingKey { case settings, canEdit = "can_edit" }
@@ -474,6 +517,7 @@ struct AccountAlertsDetailView: View {
             case enabled, hour
             case holdAlerts = "hold_alerts"
             case preshiftNudgeHour = "preshift_nudge_hour"
+            case briefingLevel = "briefing_level"
         }
 
         init() {}
@@ -486,6 +530,8 @@ struct AccountAlertsDetailView: View {
             hour = (try? inner.decode(Int.self, forKey: .hour)) ?? 7
             holdAlerts = (try? inner.decode(Bool.self, forKey: .holdAlerts)) ?? true
             preshiftNudgeHour = (try? inner.decode(Int.self, forKey: .preshiftNudgeHour)) ?? 0
+            let level = (try? inner.decode(String.self, forKey: .briefingLevel)) ?? "normal"
+            briefingLevel = AccountAlertsDetailView.levels.contains(level) ? level : "normal"
         }
     }
 
@@ -494,6 +540,138 @@ struct AccountAlertsDetailView: View {
         let hour: Int
         let hold_alerts: Bool
         let preshift_nudge_hour: Int
+        let briefing_level: String
+    }
+
+    static let levels = ["calm", "normal", "all"]
+
+    static func levelLabel(_ level: String) -> String {
+        switch level {
+        case "calm": return "Calm"
+        case "all": return "Everything"
+        default: return "Normal"
+        }
+    }
+
+    /// The web dial's notes (dashboard.html _LEVEL_NOTES), word for word.
+    static func levelNote(_ level: String) -> String {
+        switch level {
+        case "calm": return "The brief, results and the close. Nothing else."
+        case "all": return "Everything Cavnar AI has to say, as it happens."
+        default: return "Adds the pre-dinner pulse, coverage and opportunities, up to four a day."
+        }
+    }
+
+    // MARK: - Issue routing
+
+    /// GET /issues/routing — who an issue is texted to, and who it goes to
+    /// when nobody responds, over this restaurant's alert contacts. Only a
+    /// principal gets it (403 otherwise, and the rows stay hidden).
+    struct IssueRouting: Decodable {
+        struct Route: Decodable {
+            let contactId: Int
+            let name: String?
+            let escalateAfterMinutes: Int?
+            enum CodingKeys: String, CodingKey {
+                case name
+                case contactId = "contact_id"
+                case escalateAfterMinutes = "escalate_after_minutes"
+            }
+        }
+        struct Contact: Decodable, Hashable {
+            let id: Int
+            let name: String
+            let smsConsent: Bool
+            enum CodingKeys: String, CodingKey { case id, name; case smsConsent = "sms_consent" }
+        }
+        var routing: [String: Route]
+        var contacts: [Contact]
+
+        private enum CodingKeys: String, CodingKey { case routing, contacts }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            routing = (try? c.decode([String: Route].self, forKey: .routing)) ?? [:]
+            contacts = (try? c.decode([Contact].self, forKey: .contacts)) ?? []
+        }
+    }
+
+    private struct RoutingSetResponse: Decodable {
+        let ok: Bool
+        let routing: [String: IssueRouting.Route]?
+    }
+
+    private struct RoutingBody: Encodable {
+        let role: String
+        /// Omitted (nil) clears the role, as the web's empty choice does.
+        let contact_id: Int?
+    }
+
+    @ViewBuilder
+    private func issueRoutingRows(_ r: IssueRouting) -> some View {
+        let consented = r.contacts.filter { $0.smsConsent }
+        routingPicker(r, role: "manager", label: "Issues go to", contacts: consented, showsDivider: true)
+        routingPicker(r, role: "escalation", label: "If nobody responds", contacts: consented, showsDivider: false)
+        Text(escalationNote(r))
+            .font(.cavnarBody(14))
+            .foregroundStyle(Color.cavnarInk3.opacity(0.8))
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.bottom, 6)
+        if consented.isEmpty {
+            Text("Only alert contacts who agreed to texts can be picked. Add one under Alert contacts below.")
+                .font(.cavnarBody(14))
+                .foregroundStyle(Color.cavnarInk3.opacity(0.8))
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.bottom, 6)
+        }
+        if let routingError {
+            Text(routingError).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.bottom, 6)
+        }
+    }
+
+    private func routingPicker(_ r: IssueRouting, role: String, label: String,
+                               contacts: [IssueRouting.Contact], showsDivider: Bool) -> some View {
+        AccountKVRow(label: label, showsDivider: showsDivider) {
+            Picker("", selection: Binding(get: { r.routing[role]?.contactId ?? 0 },
+                                          set: { id in Task { await saveRouting(role: role, contactId: id == 0 ? nil : id) } })) {
+                Text("Nobody").tag(0)
+                ForEach(contacts, id: \.id) { c in Text(c.name).tag(c.id) }
+            }
+            .labelsHidden().tint(Color.cavnarEmber)
+            .disabled(contacts.isEmpty)
+        }
+    }
+
+    /// What routing does, with the escalation delay the server stores.
+    private func escalationNote(_ r: IssueRouting) -> String {
+        let mins = r.routing["escalation"]?.escalateAfterMinutes ?? r.routing["manager"]?.escalateAfterMinutes ?? 120
+        let after: String
+        if mins % 60 == 0 {
+            let h = mins / 60
+            after = h == 1 ? "an hour" : (h == 2 ? "two hours" : "\(h) hours")
+        } else {
+            after = "\(mins) minutes"
+        }
+        return "Texted a link when a bad review lands or an issue opens. After \(after) unacknowledged it goes to the second contact."
+    }
+
+    private func loadRouting() async {
+        routing = try? await APIClient.shared.send("/mobile/api/issues/routing", hapticOnError: false)
+    }
+
+    private func saveRouting(role: String, contactId: Int?) async {
+        routingError = nil
+        do {
+            let response: RoutingSetResponse = try await APIClient.shared.send(
+                "/mobile/api/issues/routing", method: .post, body: RoutingBody(role: role, contact_id: contactId))
+            if let updated = response.routing { routing?.routing = updated }
+            Haptic.selection()
+        } catch let error as APIClient.APIError {
+            routingError = error.message
+        } catch {
+            routingError = "Couldn't save who issues go to."
+        }
     }
 
     private static func hourLabel(_ hour: Int) -> String {
@@ -515,7 +693,8 @@ struct AccountAlertsDetailView: View {
     private func saveBrief() {
         let payload = BriefPayload(enabled: brief.enabled, hour: brief.hour,
                                    hold_alerts: brief.holdAlerts,
-                                   preshift_nudge_hour: brief.preshiftNudgeHour)
+                                   preshift_nudge_hour: brief.preshiftNudgeHour,
+                                   briefing_level: brief.briefingLevel)
         Task {
             let _: APIClient.EmptyResponse? = try? await APIClient.shared.send(
                 "/mobile/api/morning-brief/settings", method: .post, body: payload)
