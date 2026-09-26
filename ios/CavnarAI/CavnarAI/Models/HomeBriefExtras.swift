@@ -82,7 +82,9 @@ struct HomeQuickAction: Codable, Hashable, Identifiable {
     static func unsaid(_ actions: [HomeQuickAction], attention: [NeedsAttentionItem]) -> [HomeQuickAction] {
         var kinds = Set<String>(), navs = Set<String>()
         for a in attention {
-            if let k = a.action { kinds.insert(k) }
+            // "open_module" is generic: it only repeats a quick action
+            // that opens the same place, which the nav match catches.
+            if let k = a.action, k != "open_module" { kinds.insert(k) }
             if let n = a.nav { navs.insert(n) }
         }
         return actions.filter { q in

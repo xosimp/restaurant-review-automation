@@ -278,3 +278,13 @@ def test_web_and_phone_value_ranges_are_one_set():
     swift = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ios", "CavnarAI",
                               "CavnarAI", "Features", "Home", "ValueChartCard.swift"), encoding="utf-8").read()
     assert 'case oneMonth = "1M", threeMonths = "3M", sixMonths = "6M", oneYear = "1Y"\n' in swift
+
+
+def test_a_generic_open_module_item_does_not_hide_every_module_shortcut():
+    """hbQuickUnsaid drops a quick action a Needs-attention item already
+    carries. "open_module" is generic, so it matches by nav only — an
+    attention row opening the order draft must not hide "Build next week"."""
+    import os
+    src = open(os.path.join(os.path.dirname(__file__), "..", "templates", "dashboard.html"), encoding="utf-8").read()
+    body = src[src.index("function hbQuickUnsaid"):src.index("function renderQuick")]
+    assert "a.kind!=='open_module'" in body

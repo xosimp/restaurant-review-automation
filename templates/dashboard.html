@@ -3815,7 +3815,9 @@ svg:hover .hb-xh{opacity:1}
   // says each action once.
   function hbQuickUnsaid(qs,d){
     var said={},att=(d&&d.attention)||[];
-    for(var i=0;i<att.length;i++){var a=att[i].action;if(a){if(a.kind)said['k:'+a.kind]=1;if(a.nav)said['n:'+a.nav]=1;}}
+    /* "open_module" is generic: two items that both open a module say the
+       same thing only when they open the same place, so it matches by nav. */
+    for(var i=0;i<att.length;i++){var a=att[i].action;if(a){if(a.kind&&a.kind!=='open_module')said['k:'+a.kind]=1;if(a.nav)said['n:'+a.nav]=1;}}
     return qs.filter(function(q){return q&&!said['k:'+q.kind]&&!(q.nav&&said['n:'+q.nav]);});
   }
   // The server has ranked these for this restaurant since the Home brief was
