@@ -25,7 +25,12 @@ def _kickers(block):
 def test_three_panels_in_order_with_the_asked_for_sections():
     s = _src()
     ws = s[s.index('id="sched-ws"'):s.index('data-stage="publish"')]
-    left = ws[ws.index('id="ss-settings"'):ws.index('class="sw-center"')]
+    # The settings live only in Setup (owner, 9/26/26): the week gets the
+    # width, and nothing is shown twice.
+    setup = s[s.index('data-stage="setup"'):s.index('data-stage="build"')]
+    left = setup[setup.index('id="ss-settings"'):]
+    assert 'id="ss-settings"' not in ws and "studioRail" not in s
+    assert ".ss .sw-grid{grid-template-columns:minmax(0,1fr) 400px;" in s
     right = ws[ws.index('id="sw-right"'):]
     # Settings as tabs, not every setting at once (owner, 9/26/26).
     assert re.findall(r'data-ss-tab="(\w+)"', left) == ["basic", "forecast", "employees", "rules", "ai", "advanced"]

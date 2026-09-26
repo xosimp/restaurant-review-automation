@@ -2245,11 +2245,10 @@ def _hoist_common_lines(scored: list) -> dict:
                                  key=lambda kv: (-kv[1]["shifts"], kv[1]["order"])):
             # The wording that came up most often speaks for the group.
             text = max(entry["lines"].items(), key=lambda kv: (kv[1], -len(kv[0])))[0]
-            varied = len(entry["lines"]) > 1
-            if entry["shifts"] == len(scored) and not varied:
+            # On every shift, the line stands alone (owner, 9/26/26): "Similar
+            # on every shift this week." added words, not a finding.
+            if entry["shifts"] == len(scored):
                 lines.append(text)
-            elif entry["shifts"] == len(scored):
-                lines.append(f"{text} Similar on every shift this week.")
             else:
                 lines.append(f"{text} — {entry['shifts']} of {len(scored)} shifts")
         out[field_name] = lines

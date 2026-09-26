@@ -8030,7 +8030,9 @@ body.ss-open{overflow:hidden}
 body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss{position:fixed;inset:0;z-index:950;display:flex;flex-direction:column;color:var(--ink);background-color:var(--paper);background-image:radial-gradient(1100px 380px at 50% -140px,var(--ambient),transparent 72%)}
 .ss[hidden]{display:none}
-.ss-top{flex:0 0 60px;display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;align-items:center;gap:18px;padding:0 20px;background:var(--surface);box-shadow:0 1px 0 var(--hb-line);position:relative;z-index:3}
+/* An explicit height and row: Safari sized the grid's row to its content
+   from the flex basis alone and pinned it to the top (owner, 9/26/26). */
+.ss-top{flex:0 0 60px;height:60px;box-sizing:border-box;display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;grid-template-rows:60px;align-content:center;align-items:center;gap:18px;padding:0 20px;background:var(--surface);box-shadow:0 1px 0 var(--hb-line);position:relative;z-index:3}
 .ss-back{white-space:nowrap}
 .ss-brand{display:flex;flex-direction:column;line-height:1.1;padding-left:16px;box-shadow:inset 1px 0 0 var(--hb-line)}
 .ss-mark{font-size:10.5px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--ember)}
@@ -8065,6 +8067,23 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 #ss-settings-setup .lb2-weekpick select,#ss-settings-setup .lb2-weekpick input{width:auto;min-width:200px}
 #ss-settings-setup .sw-gen{padding:18px 0 26px}
 #ss-settings-setup .sw-gen .cbtn{height:52px;font-size:16px;border-radius:14px}
+/* The settings card reads at body size (owner, 9/26/26). */
+#ss-settings .ss-tabs button{font-size:15px;padding:7px 14px}
+#ss-settings .sw-k{font-size:12.5px}
+#ss-settings .sw-note,#ss-settings .sw-body,#ss-settings .sw-kv,#ss-settings .sw-tgt,#ss-settings .rul-sw,#ss-settings .lb2-events{font-size:15.5px;line-height:1.55}
+#ss-settings .sw-lbl{font-size:14.5px}
+#ss-settings .sw-notes{font-size:15.5px}
+#ss-settings .sw-bar{font-size:14px}#ss-settings .sw-bar .v{font-size:13.5px}
+#ss-settings .sw-sub{font-size:14.5px}
+#ss-settings .lb2-weekpick select,#ss-settings .lb2-weekpick input,#ss-settings .sw-tgt input{font-size:15.5px}
+#ss-settings .cbtn-text.cbtn-inline{font-size:15px}
+/* Redo some days: four columns, flush with the card's left edge, so the
+   button sits directly under Thursday's pill. */
+#ss-settings .sched-redo{display:grid!important;grid-template-columns:repeat(4,minmax(0,176px));gap:10px;align-items:center;padding:0;border:0;margin-top:4px}
+#ss-settings .sched-redo .sr-k{grid-column:1/-1;margin:0 0 2px}
+#ss-settings .sched-redo .sp{display:none}
+#ss-settings .sched-redo label{justify-content:center;font-size:14.5px;padding:7px 10px}
+#ss-settings .sched-redo .cbtn{width:100%;height:38px;justify-content:center}
 .ss-tabs{display:flex;flex-wrap:wrap;gap:4px;padding:12px 0 4px;position:sticky;top:0;background:var(--surface);z-index:2}
 .ss-tabs button{border:0;background:none;border-radius:999px;padding:6px 12px;font:inherit;font-size:13px;font-weight:600;color:var(--ink3);cursor:pointer}
 .ss-tabs button:hover{color:var(--ink)}
@@ -8105,17 +8124,13 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-sum-note{text-align:center;font-size:13px;color:var(--ink3);margin-top:16px}
 /* Schedule: settings rail, the living calendar, insights */
 .ss .sw{--sw-w:auto;width:auto;margin:0;padding:16px 20px 28px}
-.ss .sw-grid{grid-template-columns:minmax(0,1fr) 360px;margin-top:0;gap:16px}
-.ss .sw[data-rail="open"] .sw-grid{grid-template-columns:300px minmax(0,1fr) 360px}
-.ss .sw:not([data-rail="open"]) .sw-left{display:none}
+.ss .sw-grid{grid-template-columns:minmax(0,1fr) 400px;margin-top:0;gap:18px}
 .ss .sw-side{top:16px;max-height:calc(100vh - 60px - 32px)}
 .ss .sw-idle{margin-top:24px}
 .ss .lb2-preview{border-radius:18px}
 .ss-weekhead{display:flex;align-items:flex-start;gap:14px;padding:16px 20px 4px}
 .ss-weekhead>div:last-child{flex:1;min-width:0}
 .ss-weekhead #sched-week-label{font-family:'Clash Display',sans-serif;font-size:22px;font-weight:500;color:var(--ink)!important}
-.ss-railbtn{flex:0 0 auto;margin-top:3px}
-.ss-railbtn.on{background:var(--hb-tint2);color:var(--ember)}
 .ss .swg-t{--swg-name:190px;--swg-min:108px}
 .ss .swg-c{min-height:54px}
 .ss .swg-chip{padding:8px 9px}
@@ -8178,6 +8193,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-hrow .w{font-family:'Clash Display',sans-serif;font-size:18px;color:var(--ink)}
 .ss-hrow .l{font-size:13.5px;color:var(--ink3);margin-top:2px}
 .ss-hrow .q{font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:600;color:var(--ink)}
+.ss-hrow .q.good{color:var(--hb-good)}
 .ss-hrow .q small{display:block;font-family:'Apfel Grotezk',sans-serif;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
 .ss-pill{font-size:11.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;border-radius:999px;padding:3px 10px;background:var(--sf-recess);color:var(--ink3)}
 .ss-pill.sent{color:var(--hb-good)}.ss-pill.draft{color:var(--hb-warn)}
@@ -8186,7 +8202,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-launch h2{font-family:'Clash Display',sans-serif;font-size:28px;font-weight:500;color:var(--ink);margin:6px 0 4px}
 .ss-launch-s{font-size:15px;color:var(--ink2);max-width:60ch}
 .ss-launch-r{display:flex;gap:10px;flex-wrap:wrap}
-@media (max-width:1320px){.ss .sw-grid,.ss .sw[data-rail="open"] .sw-grid{grid-template-columns:minmax(0,1fr)}.ss .sw[data-rail="open"] .sw-left{position:static;max-height:none}.ss .sw-right{position:static;max-height:none;display:block}.ss-steps button{padding:7px 10px}}
+@media (max-width:1320px){.ss .sw-grid{grid-template-columns:minmax(0,1fr)}.ss .sw-right{position:static;max-height:none;display:block}.ss-steps button{padding:7px 10px}}
 @media (max-width:980px){.ss-top{grid-template-columns:auto minmax(0,1fr) auto;gap:10px}.ss-brand{display:none}.ss-steps{justify-self:start;overflow-x:auto;max-width:100%}.ss-week,.ss-saved{display:none}.ss-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.ss-pub-grid{grid-template-columns:1fr}.ss-hrow{grid-template-columns:minmax(0,1fr) auto}}
 @media (max-width:600px){.ss-tiles{grid-template-columns:1fr}.ss-steps button i{display:none}.ss-sum-hd{flex-direction:column;align-items:flex-start}}
 @media (prefers-reduced-motion:reduce){.ss-stage.on{animation:none}.ss-tile .ring .fg{transition:none}}
@@ -9031,7 +9047,77 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
           <h1>Next week, drafted by Cavnar AI</h1>
           <p>Pick the week and press Generate. Everything else is already set; open a tab only to change it.</p>
         </div>
-        <div id="ss-settings-setup"></div>
+        <div id="ss-settings-setup">
+        <aside class="sw-side sw-left" id="ss-settings" aria-label="How the next draft is built">
+          <div class="ss-tabs" role="tablist" aria-label="Settings">
+            <button type="button" role="tab" class="on" data-ss-tab="basic" aria-selected="true">Basic</button>
+            <button type="button" role="tab" data-ss-tab="forecast" aria-selected="false">Forecast</button>
+            <button type="button" role="tab" data-ss-tab="employees" aria-selected="false">Employees</button>
+            <button type="button" role="tab" data-ss-tab="rules" aria-selected="false">Business rules</button>
+            <button type="button" role="tab" data-ss-tab="ai" aria-selected="false">AI</button>
+            <button type="button" role="tab" data-ss-tab="advanced" aria-selected="false">Advanced</button>
+          </div>
+          <section class="sw-sec" data-ss-panel="basic">
+            <div class="sw-k">Week</div>
+            <div class="lb2-actions">
+              {% if labor.is_live %}<!-- Which week: next week by default, the week after, or any date
+                   inside the wanted week. Sent as week_start. -->
+              <span class="lb2-weekpick"><select class="ac-select" id="sched-week-pick" aria-label="Which week" onchange="document.getElementById('sched-week-date').style.display=this.value==='date'?'':'none'"><option value="next">Next week</option><option value="after">The week after</option><option value="date">A date…</option></select><input type="date" class="ac-input" id="sched-week-date" aria-label="A date in the week you want" style="display:none"></span>{% endif %}
+          {% if not restaurant.toast_restaurant_guid %}
+          <label class="cbtn cbtn-secondary">{% if labor.is_live %}Update shifts CSV{% else %}Upload shifts CSV{% endif %}<input type="file" accept=".csv" style="display:none" id="shifts-inline-input" onchange="clientUpload('shifts', this)"></label>
+          {% endif %}
+            </div>
+            <div class="sw-k" style="margin-top:18px">Labor target</div>
+            <div class="sw-tgt"><input class="ac-input ac-num" type="number" id="sw-target" min="5" max="60" step="0.5" value="{{ _lt }}" aria-label="Labor target %"><span>% of sales</span><span class="ac-status" id="sw-target-status"></span></div>
+            <div id="sw-par" class="sw-note">The draft keeps labor at or under this. It is a ceiling, not a quota.</div>
+          </section>
+          <section class="sw-sec" data-ss-panel="forecast" hidden>
+            <div class="sw-k">Forecast</div>
+            <div id="sw-forecast" class="sw-body"><div class="sw-note">Built from your sales by weekday when the draft runs. Each day's bar is the hours its forecast calls for.</div></div>
+            {% if labor_upcoming %}
+            {# A calendar of holidays, not a forecast: nothing in this restaurant's
+               own data backs "expect elevated covers" or "your busiest Sundays
+               follow this pattern" (CA1 L30, CA4 F5 / I5). It says what it is, and
+               where the answer lives. demand.upcoming_holidays sends date_str
+               already M/D/YY and a `label` that states only this restaurant's own
+               last-year figure (claim_kind "measured"), else the generic line. #}
+            <div class="sw-sub">Holidays ahead</div>
+        <ul class="lb2-events">
+          {% for event in labor_upcoming %}
+          <li><span class="d"></span><span><b>{{ event.name }}</b> — <span class="hb-num">{{ event.date|format_date if (event.date and not event.date_str) else event.date_str }}</span> {% if event.days_away == 0 %}(today){% elif event.days_away == 1 %}(tomorrow){% else %}(<span class="hb-num">{{ event.days_away }}</span> days away){% endif %}<br>{% if event.label %}{{ event.label }}{% if event.claim_kind == 'measured' %} <span class="ck-tag" data-claim="measured">Measured</span>{% endif %}{% else %}Holiday — check how this day ran for you last year before you build the schedule.{% endif %}</span></li>
+          {% endfor %}
+        </ul>
+            {% endif %}
+          </section>
+          <section class="sw-sec" data-ss-panel="employees" hidden>
+            <div class="sw-k">Employees</div>
+            <div id="sw-emp" class="sw-body"><div class="sw-note">Loading the roster…</div></div>
+            <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="swOpenTeam('roster')">Manage the roster in Labor →</button>
+          </section>
+          <section class="sw-sec" data-ss-panel="rules" hidden>
+            <div class="sw-k">Business rules</div>
+            <div id="sw-rules" class="sw-body"><div class="sw-note">Loading your rules…</div></div>
+            <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="swOpenTeam('rules')">Edit the rules in Labor →</button>
+          </section>
+          <section class="sw-sec" data-ss-panel="ai" hidden>
+            <div class="sw-k">AI</div>
+            {# The weekly automation where the work is (Friction #27): the same
+               switch as Account -> Automation & AI, both on /api/labor/auto-draft. #}
+            <span class="rul-sw" id="lb2-autodraft-sw" style="border-top:0;padding:0;gap:8px" hidden><label class="ac-switch"><input type="checkbox" id="lb2-autodraft" onchange="lb2SaveAutoDraft(this)" aria-label="Cavnar AI drafts every Thursday"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><span>Cavnar AI drafts every Thursday</span><span class="ac-status" id="lb2-autodraft-status"></span></span>
+            <label class="sw-lbl" for="sw-notes">Notes Cavnar AI follows on every draft</label>
+            <textarea class="ac-input sw-notes" id="sw-notes" rows="3" maxlength="2000" placeholder="e.g. Marcus only closes on weekends. Keep two cooks on Friday lunch."></textarea>
+            <span class="ac-status" id="sw-notes-status"></span>
+          </section>
+          <section class="sw-sec" data-ss-panel="advanced" hidden>
+            <div class="sw-k">Advanced</div>
+            <div class="sw-note" id="ss-adv-empty">Redo some days appears here once a week is open: tick the days and Cavnar AI rewrites only those.</div>
+            <!-- Redo some days: one checkbox per date, regenerated against the
+                 same draft (POST /api/generate-schedule {dates, history_id}). -->
+            <div id="sched-redo" class="sched-redo" style="display:none"></div>
+          </section>
+          {% if labor.is_live %}<div class="sw-gen"><button onclick="generateSchedule(this)" id="gen-sched-btn" class="cbtn cbtn-primary">Generate a draft schedule</button></div>{% endif %}
+        </aside>
+        </div>
       </div>
     </section>
 
@@ -9046,75 +9132,6 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     <section class="ss-stage" data-stage="schedule" aria-label="The week">
   <div class="lb2-sched sw" id="sched-ws" data-view="week">
     <div class="sw-grid">
-    <aside class="sw-side sw-left" id="ss-settings" aria-label="How the next draft is built">
-      <div class="ss-tabs" role="tablist" aria-label="Settings">
-        <button type="button" role="tab" class="on" data-ss-tab="basic" aria-selected="true">Basic</button>
-        <button type="button" role="tab" data-ss-tab="forecast" aria-selected="false">Forecast</button>
-        <button type="button" role="tab" data-ss-tab="employees" aria-selected="false">Employees</button>
-        <button type="button" role="tab" data-ss-tab="rules" aria-selected="false">Business rules</button>
-        <button type="button" role="tab" data-ss-tab="ai" aria-selected="false">AI</button>
-        <button type="button" role="tab" data-ss-tab="advanced" aria-selected="false">Advanced</button>
-      </div>
-      <section class="sw-sec" data-ss-panel="basic">
-        <div class="sw-k">Week</div>
-        <div class="lb2-actions">
-          {% if labor.is_live %}<!-- Which week: next week by default, the week after, or any date
-               inside the wanted week. Sent as week_start. -->
-          <span class="lb2-weekpick"><select class="ac-select" id="sched-week-pick" aria-label="Which week" onchange="document.getElementById('sched-week-date').style.display=this.value==='date'?'':'none'"><option value="next">Next week</option><option value="after">The week after</option><option value="date">A date…</option></select><input type="date" class="ac-input" id="sched-week-date" aria-label="A date in the week you want" style="display:none"></span>{% endif %}
-      {% if not restaurant.toast_restaurant_guid %}
-      <label class="cbtn cbtn-secondary">{% if labor.is_live %}Update shifts CSV{% else %}Upload shifts CSV{% endif %}<input type="file" accept=".csv" style="display:none" id="shifts-inline-input" onchange="clientUpload('shifts', this)"></label>
-      {% endif %}
-        </div>
-        <div class="sw-k" style="margin-top:18px">Labor target</div>
-        <div class="sw-tgt"><input class="ac-input ac-num" type="number" id="sw-target" min="5" max="60" step="0.5" value="{{ _lt }}" aria-label="Labor target %"><span>% of sales</span><span class="ac-status" id="sw-target-status"></span></div>
-        <div id="sw-par" class="sw-note">The draft keeps labor at or under this. It is a ceiling, not a quota.</div>
-      </section>
-      <section class="sw-sec" data-ss-panel="forecast" hidden>
-        <div class="sw-k">Forecast</div>
-        <div id="sw-forecast" class="sw-body"><div class="sw-note">Built from your sales by weekday when the draft runs. Each day's bar is the hours its forecast calls for.</div></div>
-        {% if labor_upcoming %}
-        {# A calendar of holidays, not a forecast: nothing in this restaurant's
-           own data backs "expect elevated covers" or "your busiest Sundays
-           follow this pattern" (CA1 L30, CA4 F5 / I5). It says what it is, and
-           where the answer lives. demand.upcoming_holidays sends date_str
-           already M/D/YY and a `label` that states only this restaurant's own
-           last-year figure (claim_kind "measured"), else the generic line. #}
-        <div class="sw-sub">Holidays ahead</div>
-    <ul class="lb2-events">
-      {% for event in labor_upcoming %}
-      <li><span class="d"></span><span><b>{{ event.name }}</b> — <span class="hb-num">{{ event.date|format_date if (event.date and not event.date_str) else event.date_str }}</span> {% if event.days_away == 0 %}(today){% elif event.days_away == 1 %}(tomorrow){% else %}(<span class="hb-num">{{ event.days_away }}</span> days away){% endif %}<br>{% if event.label %}{{ event.label }}{% if event.claim_kind == 'measured' %} <span class="ck-tag" data-claim="measured">Measured</span>{% endif %}{% else %}Holiday — check how this day ran for you last year before you build the schedule.{% endif %}</span></li>
-      {% endfor %}
-    </ul>
-        {% endif %}
-      </section>
-      <section class="sw-sec" data-ss-panel="employees" hidden>
-        <div class="sw-k">Employees</div>
-        <div id="sw-emp" class="sw-body"><div class="sw-note">Loading the roster…</div></div>
-        <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="swOpenTeam('roster')">Manage the roster in Labor →</button>
-      </section>
-      <section class="sw-sec" data-ss-panel="rules" hidden>
-        <div class="sw-k">Business rules</div>
-        <div id="sw-rules" class="sw-body"><div class="sw-note">Loading your rules…</div></div>
-        <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="swOpenTeam('rules')">Edit the rules in Labor →</button>
-      </section>
-      <section class="sw-sec" data-ss-panel="ai" hidden>
-        <div class="sw-k">AI</div>
-        {# The weekly automation where the work is (Friction #27): the same
-           switch as Account -> Automation & AI, both on /api/labor/auto-draft. #}
-        <span class="rul-sw" id="lb2-autodraft-sw" style="border-top:0;padding:0;gap:8px" hidden><label class="ac-switch"><input type="checkbox" id="lb2-autodraft" onchange="lb2SaveAutoDraft(this)" aria-label="Cavnar AI drafts every Thursday"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><span>Cavnar AI drafts every Thursday</span><span class="ac-status" id="lb2-autodraft-status"></span></span>
-        <label class="sw-lbl" for="sw-notes">Notes Cavnar AI follows on every draft</label>
-        <textarea class="ac-input sw-notes" id="sw-notes" rows="3" maxlength="2000" placeholder="e.g. Marcus only closes on weekends. Keep two cooks on Friday lunch."></textarea>
-        <span class="ac-status" id="sw-notes-status"></span>
-      </section>
-      <section class="sw-sec" data-ss-panel="advanced" hidden>
-        <div class="sw-k">Advanced</div>
-        <div class="sw-note" id="ss-adv-empty">Redo some days appears here once a week is open: tick the days and Cavnar AI rewrites only those.</div>
-        <!-- Redo some days: one checkbox per date, regenerated against the
-             same draft (POST /api/generate-schedule {dates, history_id}). -->
-        <div id="sched-redo" class="sched-redo" style="display:none"></div>
-      </section>
-      {% if labor.is_live %}<div class="sw-gen"><button onclick="generateSchedule(this)" id="gen-sched-btn" class="cbtn cbtn-primary">Generate a draft schedule</button></div>{% endif %}
-    </aside>
 
     <div class="sw-center" id="sw-center">
       <div class="sw-idle" id="sw-idle">
@@ -9146,7 +9163,6 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
   <div id="schedule-preview-panel" style="display:none">
     <div class="lb2-preview">
       <div class="ss-weekhead">
-        <button type="button" class="cbtn cbtn-secondary cbtn-sm ss-railbtn" onclick="studioRail()" aria-label="Show or hide the settings" id="ss-railbtn">Settings</button>
         <div>
           <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:4px">Generated schedule · draft</div>
           <div id="sched-week-label" style="font-size:14px;font-weight:700;color:rgba(255,255,255,.88)">Week of —</div>
@@ -20812,13 +20828,6 @@ function studioGo(stage) {
     steps[i].disabled = (g === 'summary' || g === 'schedule' || g === 'publish') && !has;
     steps[i].setAttribute('aria-selected', g === stage ? 'true' : 'false');
   }
-  // The settings are one component: a card of tabs in Setup, a rail the
-  // owner opens beside the week in Schedule.
-  var set = document.getElementById('ss-settings'), home = document.getElementById('ss-settings-setup'), grid = document.querySelector('#sched-ws .sw-grid');
-  if (set && home && grid) {
-    if (stage === 'setup') { if (set.parentNode !== home) home.appendChild(set); }
-    else if (set.parentNode !== grid) grid.insertBefore(set, grid.firstChild);
-  }
   var pub = document.getElementById('ss-top-publish'); if (pub) pub.hidden = !has || stage === 'publish';
   ssTopbar();
   if (stage === 'summary') ssRenderSummary();
@@ -20832,12 +20841,6 @@ function ssTopbar() {
   var ds = (_schedWeekDates && _schedWeekDates.length) ? _schedWeekDates : [];
   if (wk) wk.innerHTML = (ds.length && _ssHasDraft()) ? 'Week of <span class="hb-num">' + _escHtml(mdy(ds[0])) + '</span> – <span class="hb-num">' + _escHtml(mdy(ds[ds.length - 1])) + '</span>' : '';
   if (sv) { sv.textContent = !_ssHasDraft() ? '' : (_schedDirty ? 'Unsaved edits' : 'Saved'); sv.className = 'ss-saved' + (_schedDirty ? ' dirty' : ''); }
-}
-function studioRail(open) {
-  var ws = document.getElementById('sched-ws'), b = document.getElementById('ss-railbtn'); if (!ws) return;
-  var on = open === undefined ? ws.getAttribute('data-rail') !== 'open' : !!open;
-  if (on) ws.setAttribute('data-rail', 'open'); else ws.removeAttribute('data-rail');
-  if (b) b.className = 'cbtn cbtn-secondary cbtn-sm ss-railbtn' + (on ? ' on' : '');
 }
 function ssTab(tab) {
   var bs = document.querySelectorAll('[data-ss-tab]'), ps = document.querySelectorAll('[data-ss-panel]'), i;
@@ -20964,7 +20967,7 @@ function ssLoadHistory() {
       h += '<div class="ss-hrow"><div><div class="w">Week of <span class="hb-num">' + _escHtml(mdy(r.week_start)) + '</span> – <span class="hb-num">' + _escHtml(mdy(r.week_end)) + '</span></div>'
          + '<div class="l">' + (r.summary_line ? num(r.summary_line) : 'Built <span class="hb-num">' + _escHtml(mdy(String(r.generated_at || '').slice(0, 10))) + '</span>')
          + (r.hours_budget ? ' · <span class="hb-num">' + _schedHrs(r.hours_scheduled || 0) + 'h</span> of <span class="hb-num">' + _schedHrs(r.hours_budget) + 'h</span> PAR' : '') + '</div></div>'
-         + '<div class="q">' + (r.quality_score != null ? '<span class="hb-num">' + Math.round(r.quality_score) + '</span>' : '—') + '<small>quality</small></div>'
+         + '<div class="q' + (r.quality_band === 'excellent' ? ' good' : '') + '">' + (r.quality_score != null ? '<span class="hb-num">' + Math.round(r.quality_score) + '</span>' : '—') + '<small>quality</small></div>'
          + '<span class="ss-pill ' + (sent ? 'sent' : (gone ? '' : 'draft')) + '">' + (sent ? 'Sent ' + _escHtml(mdy(String(r.published_at).slice(0, 10))) : (gone ? 'Replaced' : 'Draft')) + '</span>'
          + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="ssOpenWeek(' + (+r.id) + ')">Open</button></div>';
     }

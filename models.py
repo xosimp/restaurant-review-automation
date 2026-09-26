@@ -6556,6 +6556,9 @@ def _history_summary_line(quality: dict, hours_scheduled, hours_budget, edited_a
         tone = "warn"
     elif strengths:
         detail = strengths[0]
+    # Weeks scored before 9/26/26 stored the engine's old suffix.
+    if detail:
+        detail = detail.replace(" Similar on every shift this week.", "").strip()
     line = lead + (" · " + detail if detail else "")
     # The row used to hard-wrap to one line (CSS text-overflow:ellipsis),
     # so anything past ~110 chars got clipped twice over — once here, then

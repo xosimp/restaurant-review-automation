@@ -112,7 +112,8 @@ def test_a_realistic_long_finding_is_not_clipped():
          "weaknesses": ["Only 0 of 6 have worked 20+ shifts here; this shift usually "
                         "wants about 30%. Similar on every shift this week."]},
         300, 300, None)
-    assert line.endswith("this week.")
+    assert line.endswith("wants about 30%.")
+    assert "Similar on every shift" not in line, "the old suffix is dropped (owner, 9/26/26)"
     assert "…" not in line
 
 
