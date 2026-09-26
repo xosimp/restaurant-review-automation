@@ -494,3 +494,16 @@ def test_12_a_replayed_done_after_pass_starts_no_tracker(monkeypatch):
     out, st = _route(strategy_routes._do_rec_event, _owner(rid),
                      {"key": "trim_day:Monday", "event": "completed", "surface": "labor"})
     assert st == 200 and started == ["trim_day:Monday"] and "already_answered" not in out
+
+
+def test_the_web_calendar_generates_by_post_and_reads_by_get():
+    """Generation is POST-only (a GET never spends a model call), so the
+    dashboard's Generate week POSTs force:true and the first visit of the
+    week POSTs force:false when the read says none_yet."""
+    import os
+    src = open(os.path.join(os.path.dirname(__file__), "..", "templates", "dashboard.html"), encoding="utf-8").read()
+    assert "/api/content-calendar?force=1" not in src
+    cached = src[src.index("function loadCalCached()"):src.index("function loadCal()")]
+    assert "d.none_yet" in cached and "JSON.stringify({force:false})" in cached
+    gen = src[src.index("function loadCal()"):src.index("function renderCal(")]
+    assert "method:'POST'" in gen and "JSON.stringify({force:true})" in gen

@@ -20722,13 +20722,22 @@ function loadCalCached(){
   if(g&&!window._calIdeas)g.innerHTML='<div style="grid-column:1/-1;padding:16px">'+(window.cavnarLoading?cavnarLoading('Planning your week…',22,'shaping'):'<div class="dr-pulse wide"><i></i></div>')+'</div>';
   fetch('/api/content-calendar').then(apiJson).then(function(d){
     if(d.ideas&&d.ideas.length){renderCal(d.ideas);return;}
+    /* A GET only reads; the first visit of the week asks the server to
+       build this week's plan once (POST, force:false — not a new draw). */
+    if(d.none_yet){
+      fetch('/api/content-calendar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({force:false})}).then(apiJson).then(function(b){
+        if(b.ideas&&b.ideas.length){renderCal(b.ideas);return;}
+        if(g&&!window._calIdeas)g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">'+_escHtml(b.error||'No plan for this week yet — Generate week builds one.')+'</div>';
+      }).catch(function(){if(g&&!window._calIdeas)g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">Couldn’t load this week’s plan — Generate week tries again.</div>';});
+      return;
+    }
     if(g&&!window._calIdeas)g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">'+_escHtml(d.error||'No plan for this week yet — Generate week builds one.')+'</div>';
   }).catch(function(){if(g&&!window._calIdeas)g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">Couldn’t load this week’s plan — Generate week tries again.</div>';});
 }
 function loadCal(){
   var g=document.getElementById('cal-grid');
   g.innerHTML='<div style="grid-column:1/-1;padding:16px">'+(window.cavnarLoading?cavnarLoading('Planning your week…',22,'shaping'):'<div class="dr-pulse wide"><i></i></div>')+'</div>';
-  fetch('/api/content-calendar?force=1').then(apiJson).then(function(d){
+  fetch('/api/content-calendar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({force:true})}).then(apiJson).then(function(d){
     if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">'+_escHtml(String(d.error||'Could not generate.'))+'</div>';return;}
     renderCal(d.ideas);
   }).catch(function(){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate — try again.</div>';});
