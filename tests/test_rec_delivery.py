@@ -525,12 +525,13 @@ def test_content_calendar_ideas_are_presented_and_writing_one_accepts_it(http, d
     ideas = [{"day": "Tuesday", "angle": "Tuesday pasta night", "type": "instagram_post"},
              {"day": "Friday", "angle": "Wine flight", "type": "instagram_post"}]
     monkeypatch.setattr(marketing, "get_content_calendar_ideas", lambda **k: [dict(i) for i in ideas])
-    body = http.get("/api/content-calendar").get_json()
+    # The self-loading week (POST {force: false}); a GET only reads a cached week.
+    body = http.post("/api/content-calendar", json={"force": False}).get_json()
     keys = [i["rec_key"] for i in body["ideas"]]
     assert all(k.startswith("content_idea:") for k in keys) and all(i["answerable"] for i in body["ideas"])
     assert sorted(k for k, _ in _shown(db_path, http.rid, "marketing")) == sorted(keys)
     marketing.mark_calendar_idea_used(http.rid, "instagram_post", "Tuesday pasta night")
-    again = http.get("/api/content-calendar").get_json()["ideas"]
+    again = http.post("/api/content-calendar", json={"force": False}).get_json()["ideas"]
     assert [i["answered"] for i in again] == [True, False]
     assert [e["key"] for e in _events(db_path, http.rid, "accepted")] == [keys[0]]
 

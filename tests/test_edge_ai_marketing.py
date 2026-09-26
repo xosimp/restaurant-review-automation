@@ -357,7 +357,7 @@ def _calendar_model(monkeypatch, text, stop_reason="end_turn"):
 def test_a_well_formed_calendar_array_comes_back_as_a_dated_week(app, monkeypatch):
     import json
     _calendar_model(monkeypatch, json.dumps(WEEK))
-    body = app.test_client().get("/api/content-calendar?force=1").get_json()
+    body = app.test_client().post("/api/content-calendar", json={}).get_json()
     days = [i["day"] for i in body["ideas"] if i.get("source") != "menu_margins"]
     assert len(days) == 7
     assert all(i.get("iso_date") for i in body["ideas"])
@@ -366,7 +366,7 @@ def test_a_well_formed_calendar_array_comes_back_as_a_dated_week(app, monkeypatc
 def test_a_calendar_the_model_wrapped_in_an_object_is_not_shown_as_an_empty_week(app, monkeypatch):
     import json
     _calendar_model(monkeypatch, json.dumps({"ideas": WEEK}))
-    body = app.test_client().get("/api/content-calendar?force=1").get_json()
+    body = app.test_client().post("/api/content-calendar", json={}).get_json()
     assert body["ideas"] or body.get("error"), "an empty week with no reason given"
 
 
@@ -374,7 +374,7 @@ def test_a_truncated_calendar_tells_the_owner_why_instead_of_an_empty_week(app, 
     import json
     cut = json.dumps(WEEK)[:300]
     _calendar_model(monkeypatch, cut, stop_reason="max_tokens")
-    body = app.test_client().get("/api/content-calendar?force=1").get_json()
+    body = app.test_client().post("/api/content-calendar", json={}).get_json()
     assert body["ideas"] or body.get("error"), "an empty week with no reason given"
 
 

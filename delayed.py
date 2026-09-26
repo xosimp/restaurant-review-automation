@@ -64,15 +64,40 @@ def schedule(restaurant_id, kind, payload, delay_minutes, label=None, actor=None
         conn.close()
 
 
-def pending(restaurant_id, db_path=DB_PATH):
+def pending(restaurant_id, db_path=DB_PATH, sees_food=True):
+    """The queued actions, soonest first. `sees_food=False` (a login
+    without FOOD_COST_VIEW) reads a supplier order's label without its
+    dollar total — the order's cost is food-cost money (for_viewer)."""
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
             "SELECT * FROM delayed_actions WHERE restaurant_id=? AND status='pending' ORDER BY execute_at ASC",
             (restaurant_id,)).fetchall()
-        return [_row(r) for r in rows]
+        return [for_viewer(_row(r), sees_food) for r in rows]
     finally:
         conn.close()
+
+
+import re as _re
+
+# "Sending the Sysco order ($1,234, 5 items)" — the dollar part of the label
+# client_api.send_supplier_orders writes for a queued order.
+_ORDER_DOLLARS_RE = _re.compile(r"\(\s*-?\$[\d,]+(?:\.\d+)?\s*,\s*")
+_ANY_DOLLARS_RE = _re.compile(r"\s*\(?\s*-?\$[\d,]+(?:\.\d+)?\s*\)?")
+
+
+def for_viewer(action, sees_food=True):
+    """`action` as a login may read it. A supplier order's total is what
+    the restaurant pays for food — a manager without food cost reads "the
+    Sysco order (5 items)", never the dollars (the margins rule)."""
+    if sees_food or not action or action.get("kind") != "order_send":
+        return action
+    out = dict(action)
+    label = out.get("label") or ""
+    if label:
+        label = _ORDER_DOLLARS_RE.sub("(", label)
+        out["label"] = _ANY_DOLLARS_RE.sub("", label).strip()
+    return out
 
 
 def cancel(restaurant_id, action_id, actor=None, db_path=DB_PATH):

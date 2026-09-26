@@ -146,7 +146,10 @@ def test_auto_approve_holds_an_award_claim(db, monkeypatch):
     calls = _auto(db, monkeypatch, rid)
     assert good in calls and bad not in calls
     row = _flag(db, bad)
-    assert row["draft_needs_review"] == 1 and row["draft_review_reason"].startswith("held from auto-approve: ")
+    # The plain reason, read after "This reply …" on every surface — not
+    # "held from auto-approve: …" (drafter.owner_reason; the log names the path).
+    assert row["draft_needs_review"] == 1 and row["draft_review_reason"]
+    assert not row["draft_review_reason"].startswith("held from")
 
 
 def test_auto_approve_holds_a_reply_naming_another_tenant(db, monkeypatch):

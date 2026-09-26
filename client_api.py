@@ -187,7 +187,8 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_
         if _cur["response_status"] in ("approved", "posted"):
             return {"ok": False, "error": "That reply has already been approved."}, 409
         if _cur["draft_needs_review"] and not bulk and not confirm_flagged:
-            _why = _cur["draft_review_reason"] or "states something Cavnar AI cannot confirm"
+            from drafter import owner_reason
+            _why = owner_reason(_cur["draft_review_reason"])
             return {"ok": False, "needs_review": True, "review_reason": _why,
                     "error": f"Read this reply before you post it: it {_why}. Open the review to post it anyway."}, 409
         return {"ok": False, "error": "There's no drafted reply to approve on that review."}, 409
@@ -487,13 +488,17 @@ def _do_approve_all(restaurant_id, limit=25, review_ids=None):
                                                review_text=row["text"] or "", author=row["author"] or "",
                                                action="bulk_approve")
         if not refusal and " ".join(str(_checked_reply).split()) != " ".join(draft_text.split()):
-            refusal = "Cavnar AI would reword part of this reply before it goes out"
+            from drafter import REWORD_REVIEW_REASON
+            refusal = REWORD_REVIEW_REASON
         if refusal:
             held_now += 1
+            print(f"[approve-all] held review {row['id']} from bulk publish: {refusal}")
             conn = get_conn()
             try:
+                # The plain reason — every surface reads it after "This reply …"
+                # (drafter.owner_reason); `held_for_review` says this run held it.
                 conn.execute("UPDATE reviews SET draft_needs_review=1, draft_review_reason=? "
-                             "WHERE id=? AND restaurant_id=?", (f"held from bulk publish: {refusal}", row["id"], restaurant_id))
+                             "WHERE id=? AND restaurant_id=?", (refusal, row["id"], restaurant_id))
                 conn.commit()
             finally:
                 conn.close()
@@ -528,9 +533,12 @@ def _do_approve_all(restaurant_id, limit=25, review_ids=None):
             log_event(restaurant_id, "reviews_bulk_approved", {"count": approved, "posted": posted})
         except Exception:
             pass
+    if approved or held_now:
         # After the writes, never before them: invalidating first (as the
         # web route did) let a Home read during the run re-cache the old
-        # count, and the mobile twin never invalidated at all.
+        # count, and the mobile twin never invalidated at all. A run that
+        # only HELD drafts changed Home too: those are flagged now, so Home
+        # must stop offering "Publish N replies" for them.
         _invalidate_home(restaurant_id)
     # `held`: urgent or flagged drafts a bulk publish never posts — they
     # wait for someone to read them one at a time.
@@ -561,13 +569,34 @@ def approve_all_reviews_api(current_user):
 
 
 def _do_skip(rid, restaurant_id):
+    """Turn a draft down. Never a reply that is approved or posted: a
+    bulk skip (or a stale card, or a queued replay) used to mark a live
+    Google reply 'skipped', so it read as never answered while it stood in
+    public. That is a 409 naming what to do instead (/undo for an approved
+    one that hasn't posted, retract for a posted one). Compare-and-set, so a
+    skip racing an approve cannot land on the approved row."""
     conn = get_conn()
-    # skipped_at dates the owner turning a draft down; auto_approve_trust
-    # counts a skipped draft against its band (audit #15).
-    conn.execute("UPDATE reviews SET response_status='skipped', skipped_at=datetime('now') "
-                 "WHERE id=? AND restaurant_id=?", (rid, restaurant_id))
-    conn.commit(); conn.close()
-    return {"ok": True}, 200
+    try:
+        # skipped_at dates the owner turning a draft down; auto_approve_trust
+        # counts a skipped draft against its band (audit #15).
+        cur = conn.execute("UPDATE reviews SET response_status='skipped', skipped_at=datetime('now') "
+                           "WHERE id=? AND restaurant_id=? "
+                           "AND COALESCE(response_status, '') NOT IN ('approved', 'posted')",
+                           (rid, restaurant_id))
+        conn.commit()
+        if cur.rowcount:
+            return {"ok": True}, 200
+        row = conn.execute("SELECT response_status FROM reviews WHERE id=? AND restaurant_id=?",
+                           (rid, restaurant_id)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return {"ok": False, "error": "Review not found"}, 404
+    if row["response_status"] == "posted":
+        return {"ok": False, "response_status": "posted",
+                "error": "That reply is already posted, so it can't be skipped. Retract it to take it down."}, 409
+    return {"ok": False, "response_status": row["response_status"],
+            "error": "That reply is already approved, so it can't be skipped. Undo the approval first."}, 409
 
 
 def _do_undo(rid, restaurant_id):
@@ -4151,17 +4180,30 @@ def post_to_google(current_user):
     return jsonify(**payload), status
 
 
-@client_bp.route("/api/content-calendar")
+@client_bp.route("/api/content-calendar", methods=["GET", "POST"])
 @login_required
 def content_calendar(current_user):
-    """?force=1 is the "Generate week" button asking for a fresh draw; a plain
-    read returns this week's cached calendar (see get_content_calendar_ideas).
-    The web tab has always driven this from an explicit press, so it forces —
-    what changed is that the result is now kept. One body with the phone's
-    POST /mobile/api/marketing/calendar (mobile_api._do_content_calendar),
-    so the web grid marks an idea already written from, as the phone does."""
+    """GET reads this week's cached calendar and never generates: a GET is
+    not guarded by CSRF or by view-as-read-only, so `?force=1` on a GET let
+    a cross-site link or a read-only admin view spend a paid draw. That GET
+    is refused now (405), naming the POST.
+
+    POST is the "Generate week" button: `{force: true}` (the default) a
+    fresh draw, `{force: false}` this week's calendar built once when there
+    is none yet (friction #41's self-loading week). One body with the
+    phone's POST /mobile/api/marketing/calendar
+    (mobile_api._do_content_calendar), so the web grid marks an idea already
+    written from, as the phone does."""
     import mobile_api as _mob
-    force = request.args.get("force") not in (None, "", "0", "false")
+    if request.method == "GET":
+        if request.args.get("force") not in (None, "", "0", "false"):
+            return jsonify(ok=False, ideas=[],
+                           error="Reload the page, then press Generate week again."), 405
+        payload, status = _mob._do_content_calendar(current_user["restaurant_id"], current_user.get("id"),
+                                                    force=False, phone=False, generate=False)
+        return jsonify(**payload), status
+    body = request.get_json(silent=True) or {}
+    force = body.get("force", True) not in (False, 0, "0", "false", "")
     payload, status = _mob._do_content_calendar(current_user["restaurant_id"], current_user.get("id"),
                                                 force=force, phone=False)
     return jsonify(**payload), status
@@ -4423,7 +4465,7 @@ from schedule_engine import (  # noqa: E402,F401
 )
 
 
-@client_bp.route("/api/generate-schedule", methods=["GET", "POST"])
+@client_bp.route("/api/generate-schedule", methods=["POST"])
 @login_required
 def generate_schedule_json(current_user):
     """Start async schedule generation. Returns job_id for polling.
@@ -4431,9 +4473,10 @@ def generate_schedule_json(current_user):
     Web twin — the one body is mobile_api.mobile_generate_schedule, so the
     permission check, the one-job-per-restaurant join, the rate limit (429
     on both; the web copy used to answer 200) and the week checks cannot
-    drift apart. GET is kept because the dashboard's Labor tab has always
-    been allowed to call it that way (week_start may come as a query arg);
-    POST is what the Labor tab and Ask Cavnar's confirm card send.
+    drift apart. POST only: a GET is not guarded by CSRF or by
+    view-as-read-only, and this starts a paid model job. The Labor tab and
+    Ask Cavnar's confirm card both POST; week_start may still come as a
+    query arg.
     """
     return _m("mobile_generate_schedule")(current_user)
 
@@ -4795,6 +4838,15 @@ def get_alert_settings(current_user):
 def save_alert_settings(current_user):
     from notify import sync_alert_contacts, consent_on_record
     from models import update_restaurant, StaleWrite, expected_version_from, restaurant_version
+    from permissions import principal_only
+    # Every field here is a restaurant column: who gets the alerts (contacts,
+    # SMS), which alerts exist at all, quiet hours and the digest. There is
+    # no per-login delivery setting to leave a manager, so the save is the
+    # owner's — a manager could otherwise switch the owner's alerts off.
+    # Twin: mobile_api.mobile_save_alert_settings.
+    denied = principal_only(current_user, "alert settings")
+    if denied:
+        return denied
     data = request.get_json() or {}
     rid = current_user["restaurant_id"]
     expected = expected_version_from(data)
@@ -4869,8 +4921,14 @@ def save_alert_settings(current_user):
 @client_bp.route("/api/update-digest-day", methods=["POST"])
 @login_required
 def update_digest_day(current_user):
-    """Let client update their own weekly digest day."""
-    data = request.get_json()
+    """Let client update their own weekly digest day. A restaurant-wide
+    setting (the digest goes to the owner's inbox), so owner-only like the
+    alert-settings save it is part of."""
+    from permissions import principal_only
+    denied = principal_only(current_user, "the weekly digest")
+    if denied:
+        return denied
+    data = request.get_json() or {}
     day  = data.get("day","monday").lower()
     valid = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"]
     if day not in valid:
@@ -8114,6 +8172,9 @@ def _do_marketing_opt_out(rid, data, current_user=None):
     audit this also silenced the monthly review, so an owner declining
     promotional mail lost the one email that reports what their changes were
     measured to do."""
+    refused = _owner_only_setting(current_user, "marketing email")
+    if refused:
+        return refused
     opted_out = bool((data or {}).get("opted_out"))
     update_restaurant(rid, {"marketing_emails_opt_out": int(opted_out)})
     log_account_event(rid, "marketing_emails_changed", current_user,
@@ -8123,7 +8184,11 @@ def _do_marketing_opt_out(rid, data, current_user=None):
 
 def _do_monthly_review_pref(rid, data, current_user=None):
     """The monthly business review on or off. Separate from marketing mail:
-    this is a service report on a paid account."""
+    this is a service report on a paid account. Owner-only: it is the
+    owner's report, sent to the owner's address."""
+    refused = _owner_only_setting(current_user, "the monthly review email")
+    if refused:
+        return refused
     on = bool((data or {}).get("enabled"))
     update_restaurant(rid, {"monthly_review_enabled": int(on)})
     log_account_event(rid, "monthly_review_changed", current_user,
@@ -8162,7 +8227,25 @@ def _do_brand_voice(rid, data, current_user=None):
     return {"ok": True}, 200
 
 
+def _owner_only_setting(current_user, what):
+    """The (payload, 403) a shared _do_* body returns when `current_user`
+    is not an account holder; None when it is, or when there is no login
+    (an internal caller). The owner's own email and sign-in alerts were
+    changeable by any console role through these bodies, while
+    /api/toggle-login-notify already refused a non-owner."""
+    from permissions import is_principal
+    if current_user is not None and not is_principal(current_user):
+        return {"ok": False, "owner_only": True,
+                "error": f"Only the account owner can change {what}."}, 403
+    return None
+
+
 def _do_login_notify(rid, data, current_user=None):
+    """Sign-in alerts to the owner — owner-only, like
+    auth_routes.toggle_login_notify and the mobile twin."""
+    refused = _owner_only_setting(current_user, "sign-in alerts")
+    if refused:
+        return refused
     enabled = bool((data or {}).get("enabled"))
     update_restaurant(rid, {"login_notify": int(enabled)})
     log_account_event(rid, "login_notify_changed", current_user,

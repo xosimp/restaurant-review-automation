@@ -297,7 +297,7 @@ def test_5b_the_web_calendar_marks_an_idea_already_written_from(web, phone, rid,
               (rid, "calendar_instagram_post", "Truffle pasta"))
     c.commit()
     c.close()
-    ideas = web.get("/api/content-calendar").get_json()["ideas"]
+    ideas = web.post("/api/content-calendar", json={"force": False}).get_json()["ideas"]
     assert [i["written"] for i in ideas] == [True, False]
     assert ideas[0]["answered"] is True, "the web grid renders 'Written from this idea' for it"
     cal = phone.post("/mobile/api/marketing/calendar").get_json()

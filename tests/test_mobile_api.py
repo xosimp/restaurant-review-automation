@@ -2846,20 +2846,24 @@ def test_trusted_devices_list_revoke_and_login_honours_table(client, db_path):
     from auth import create_trusted_device, trusted_device_ok, get_trusted_devices
     rid = _restaurant(db_path)
     token = _login(client, db_path, rid)
-    tok_a = create_trusted_device(rid, None, "iPhone · app", db_path=db_path)
-    tok_b = create_trusted_device(rid, None, "Mac · web", db_path=db_path)
-    assert trusted_device_ok(rid, tok_a, db_path=db_path) and trusted_device_ok(rid, tok_b, db_path=db_path)
-    assert not trusted_device_ok(rid, "nope", db_path=db_path)
+    # A remembered device is the login's that remembered it (user 7 here).
+    tok_a = create_trusted_device(rid, 7, "iPhone · app", db_path=db_path)
+    tok_b = create_trusted_device(rid, 7, "Mac · web", db_path=db_path)
+    assert trusted_device_ok(rid, tok_a, 7, db_path=db_path) and trusted_device_ok(rid, tok_b, 7, db_path=db_path)
+    assert not trusted_device_ok(rid, "nope", 7, db_path=db_path)
     devices = client.get("/mobile/api/account/2fa/trusted-devices", headers=_auth_headers(token)).get_json()["devices"]
     assert [d["label"] for d in devices] == ["Mac · web", "iPhone · app"]
     assert client.post(f"/mobile/api/account/2fa/trusted-devices/{devices[1]['id']}/revoke", headers=_auth_headers(token)).get_json()["ok"] is True
-    assert not trusted_device_ok(rid, tok_a, db_path=db_path) and trusted_device_ok(rid, tok_b, db_path=db_path)
-    # Legacy single-slot token still honoured until revoke-all clears it.
+    assert not trusted_device_ok(rid, tok_a, 7, db_path=db_path) and trusted_device_ok(rid, tok_b, 7, db_path=db_path)
+    # Legacy single-slot token still honoured — for an account holder only,
+    # since it names no login — until revoke-all clears it.
     update_restaurant(rid, {"two_fa_device_token": "legacy-token"}, db_path=db_path)
-    assert trusted_device_ok(rid, "legacy-token", db_path=db_path)
+    assert trusted_device_ok(rid, "legacy-token", 7, db_path=db_path, principal=True)
+    assert not trusted_device_ok(rid, "legacy-token", 7, db_path=db_path)
     assert client.post("/mobile/api/account/2fa/trusted-devices/revoke-all", headers=_auth_headers(token)).get_json()["ok"] is True
     assert get_trusted_devices(rid, db_path=db_path) == []
-    assert not trusted_device_ok(rid, tok_b, db_path=db_path) and not trusted_device_ok(rid, "legacy-token", db_path=db_path)
+    assert not trusted_device_ok(rid, tok_b, 7, db_path=db_path)
+    assert not trusted_device_ok(rid, "legacy-token", 7, db_path=db_path, principal=True)
 
 
 def test_login_report_revokes_everything_and_blocks_login(client, db_path):

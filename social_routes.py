@@ -30,7 +30,13 @@ _json_object_guard(social_bp)
 @social_bp.route("/instagram/connect")
 @login_required
 def instagram_connect(current_user):
-    """Open Meta OAuth in a popup — state carries restaurant_id."""
+    """Open Meta OAuth in a popup — state carries restaurant_id. Owner-only,
+    like every other connection: the callback (no session) trusts the signed
+    state this mints, so this is where the owner check has to be."""
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Instagram and Facebook connection")
+    if denied:
+        return denied
     import urllib.parse
     from flask import redirect as flask_redirect
     app_id       = os.getenv("META_APP_ID","")
@@ -370,7 +376,11 @@ def instagram_status(current_user):
 @social_bp.route("/api/instagram-disconnect", methods=["POST"])
 @login_required
 def instagram_disconnect(current_user):
-    """Disconnect Instagram from this restaurant."""
+    """Disconnect Instagram from this restaurant. Owner-only."""
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Instagram and Facebook connection")
+    if denied:
+        return denied
     from models import update_restaurant
     update_restaurant(current_user["restaurant_id"], {"ig_token": "", "ig_user_id": "", "fb_page_token": "", "fb_page_id": ""})
     return jsonify(ok=True)

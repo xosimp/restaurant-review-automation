@@ -3573,26 +3573,51 @@ def create_trusted_device(restaurant_id: int, user_id: int | None, label: str,
     return token
 
 
-def trusted_device_ok(restaurant_id: int, token: str, db_path: str = DB_PATH) -> bool:
-    """True when `token` is a live remembered device for this restaurant.
-    Also honours the legacy single-slot restaurants.two_fa_device_token so
-    nobody gets re-prompted just because this table appeared."""
-    if not token:
+def trusted_device_ok(restaurant_id: int, token: str, user_id: int | None,
+                      db_path: str = DB_PATH, *, principal: bool = False) -> bool:
+    """True when `token` is a live device that `user_id` remembered at this
+    restaurant. A remembered device belongs to the login that ticked
+    "remember" (create_trusted_device stores it): a manager's remembered
+    phone must not skip the owner's second factor when the owner's password
+    is typed on it. No user_id is refused.
+
+    A token with no login on it — a row from before user_id was stored, or
+    the legacy single-slot restaurants.two_fa_device_token — can't say whose
+    it is, so only an account holder (`principal`, permissions.is_principal)
+    may still use it; anyone else is asked for a code once."""
+    if not token or user_id is None:
         return False
     conn = get_conn(db_path)
     try:
         row = conn.execute("""
             SELECT id FROM trusted_devices
             WHERE restaurant_id=? AND token_hash=? AND expires_at > datetime('now')
-        """, (restaurant_id, _hash_device_token(token))).fetchone()
+              AND (user_id=? OR (user_id IS NULL AND ?=1))
+        """, (restaurant_id, _hash_device_token(token), user_id, 1 if principal else 0)).fetchone()
         if row:
             conn.execute("UPDATE trusted_devices SET last_used_at=datetime('now') WHERE id=?", (row["id"],))
             conn.commit()
             return True
+        if not principal:
+            return False
         legacy = conn.execute("SELECT two_fa_device_token FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
         return bool(legacy and legacy["two_fa_device_token"] and legacy["two_fa_device_token"] == token)
     finally:
         conn.close()
+
+
+def remembered_device_ok(user: dict, token: str, db_path: str = DB_PATH) -> bool:
+    """trusted_device_ok for the login being authenticated (every sign-in
+    path: password on web and mobile, Google SSO, Sign in with Apple)."""
+    if not user or not token:
+        return False
+    try:
+        from permissions import is_principal
+        principal = is_principal(user)
+    except Exception:
+        principal = False
+    return trusted_device_ok(user.get("restaurant_id"), token, user.get("id"),
+                             db_path=db_path, principal=principal)
 
 
 def get_trusted_devices(restaurant_id: int, db_path: str = DB_PATH) -> list[dict]:

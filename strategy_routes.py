@@ -174,8 +174,20 @@ def _do_issue_create(u):
     return {"ok": True, "issue": issue}, 200
 
 
+def _issue_hidden(u, issue_id) -> bool:
+    """A loss issue names the manager who approved the comps: a login
+    without LOSS_VIEW may not read it, so it may not resolve, reassign or
+    act on it by id either — a 404, the same answer as a missing issue, so
+    the id does not confirm one exists (the list's rule, re-audit A-8)."""
+    import issues
+    row = issues.get_issue(_rid(u), issue_id)
+    return bool(row) and row.get("kind") == "loss" and not issues.viewer_sees_loss(u)
+
+
 def _do_issue_resolve(u, issue_id):
     import issues
+    if _issue_hidden(u, issue_id):
+        return {"ok": False, "error": "Issue not found."}, 404
     out = issues.resolve(_rid(u), issue_id, note=(_body().get("note") or "").strip() or None)
     if not out:
         return {"ok": False, "error": "Issue not found."}, 404
@@ -184,6 +196,8 @@ def _do_issue_resolve(u, issue_id):
 
 def _do_issue_reassign(u, issue_id):
     import issues
+    if _issue_hidden(u, issue_id):
+        return {"ok": False, "error": "Issue not found or already resolved."}, 404
     if _limited(u, "issue_text", 20, 3600):
         return _SLOW_DOWN
     try:
@@ -203,6 +217,8 @@ def _do_issue_ask_cover(u, issue_id):
     from permissions import has_permission, LABOR_VIEW
     if not has_permission(u, LABOR_VIEW):
         return _forbidden("Only someone who can see Labor can ask a teammate to cover.")
+    if _issue_hidden(u, issue_id):
+        return {"ok": False, "error": "That coverage issue wasn't found."}, 404
     name = (_body().get("name") or "").strip()
     if not name:
         return {"ok": False, "error": "Who should be asked?"}, 400
@@ -263,7 +279,19 @@ def _do_goal_set(u):
 
 
 def _do_goal_end(u, goal_id):
+    """End a goal — one this login may see. A food-cost (or comp/void) goal
+    is not listed for a login without that view (_do_goals_list), so ending
+    it by id is refused the same way: a 404, as for a goal that isn't there."""
     import goals
+    from models import get_conn
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT metric FROM owner_goals WHERE id=? AND restaurant_id=?",
+                           (goal_id, _rid(u))).fetchone()
+    finally:
+        conn.close()
+    if row is not None and not _metric_visible(u, row["metric"]):
+        return {"ok": False, "error": "Goal not found."}, 404
     goals.end_goal(_rid(u), goal_id)
     return {"ok": True}, 200
 
@@ -1896,13 +1924,20 @@ def _do_rec_event(u):
     # key nobody was shown started a food-cost tracker from a login that
     # cannot see food cost. Not found confirms nothing.
     import rec_learning as _rlearn
-    if _rlearn.answerable_episode(u, _rid(u), key.strip()) is None:
+    episode = _rlearn.answerable_episode(u, _rid(u), key.strip())
+    if episode is None:
         return {"ok": False, "error": "No such recommendation."}, 404
+    # An episode the owner already answered (Done, Track, Not for us) starts
+    # nothing more: an offline Done replayed after the owner said Pass on
+    # another device started a tracker on a recommendation they declined.
+    # The answer is still recorded (the trail keeps it); only the side
+    # effect waits for an episode that is still open.
+    still_open = (episode.get("status") or "open") in ("open", "expired", "superseded")
     module = meta.get("module") or (surface if surface in REC_TRACK_METRICS else None)
     message = None
     tracking = None
     started = None
-    if event in ("completed", "accepted"):
+    if event in ("completed", "accepted") and still_open:
         # Accept/Done on a recommendation that carries a metric starts its
         # tracker (rec-ROI #18, #39), under the family gate. `body_metric`
         # lets a client name the metric a line was shown with.
@@ -1933,12 +1968,16 @@ def _do_rec_event(u):
                        f"{window} days with the {window} before")
         elif refused and refused.get("code") == "in_flight":
             message = (f"Noted \u2014 hidden for {_rl.ACCEPTED_QUIET_DAYS} days. {refused['reason']}")
+        elif not still_open:
+            message = "Noted \u2014 this one was already answered"
         else:
             message = (f"Noted \u2014 hidden for {_rl.ACCEPTED_QUIET_DAYS} days. There is nothing "
                        "here Cavnar AI can measure it against yet")
     ok = _rl.record(_rid(u), key.strip(), event, surface=surface, user_id=u.get("id"), role=u.get("role"),
                     meta=meta or None, silence_days=silence, snooze_until=until, require_existing=True)
     out = {"ok": True, "recorded": ok}
+    if not still_open:
+        out["already_answered"] = True
     if message:
         out["message"] = message
     if tracking:
@@ -2546,7 +2585,9 @@ def _do_memory_forget(u):
 
 def _do_delayed_pending(u):
     import delayed
-    return {"ok": True, "actions": delayed.pending(_rid(u))}, 200
+    # A queued supplier order's label carries its dollar total; a login
+    # without food cost reads it without (delayed.for_viewer).
+    return {"ok": True, "actions": delayed.pending(_rid(u), sees_food=_sees_food(u))}, 200
 
 
 def _may_undo(u, kind) -> bool:

@@ -238,8 +238,8 @@ def login():
             rest = get_restaurant(_rid) if _rid and not user.get("is_admin") else None
             _device_cookie = request.cookies.get("device_token_" + str(_rid), "")
             _2fa_on = rest and rest.two_fa_enabled and not user.get("is_admin")
-            from auth import trusted_device_ok as _tdo
-            _device_ok = bool(_device_cookie) and _tdo(_rid, _device_cookie)
+            from auth import remembered_device_ok as _tdo
+            _device_ok = bool(_device_cookie) and _tdo(user, _device_cookie)
         except Exception as _e_2fa:
             _2fa_on = False
             _device_ok = False
@@ -465,10 +465,17 @@ def resend_two_fa(pending_token):
     _dest_r = _tfd_r(_gubi_r(_pending_uid_r), rest)
     if not _dest_r:
         return expired
+    # "Sent" only when it went: this answered ok when the send raised or the
+    # provider refused, so the person waited for a code that never came.
     try:
-        _stfc_r(_dest_r, rest, code)
+        _sent_r = bool(_stfc_r(_dest_r, rest, code))
     except Exception as _e_r:
         print(f"[2fa] resend failed for user {_pending_uid_r}: {_e_r}")
+        _sent_r = False
+    if not _sent_r:
+        where = "text" if _dest_r["kind"] == "sms" else "email"
+        return {"ok": False, "channel": _dest_r["kind"],
+                "error": f"We couldn't {where} a new code just now. Wait a minute and try again."}, 502
     return {"ok": True, "channel": _dest_r["kind"], "masked": _dest_r["masked"]}, 200
 
 
@@ -780,7 +787,13 @@ def toggle_staff_signin_notify(current_user):
 @auth_bp.route("/auth/google/connect")
 @login_required
 def gmb_connect(current_user):
-    """Start Google OAuth flow for the logged-in client."""
+    """Start Google OAuth flow for the logged-in client. Owner-only, like
+    every other connection (Toast, Square, Clover, RPower, webhooks): the
+    token it stores publishes replies under the restaurant's name."""
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Google Business connection")
+    if denied:
+        return denied
     from gmb import get_auth_url
     if not os.getenv("GOOGLE_CLIENT_ID"):
         return jsonify(ok=False, error="Google OAuth not configured"), 500
@@ -828,6 +841,17 @@ def gmb_callback(current_user):
             "window.close();"
             "</script><p>Connection failed. Close this window.</p></body></html>"
         )
+
+    from permissions import is_principal as _is_principal_gmb
+    if not _is_principal_gmb(current_user):
+        # Owner-only at the start (gmb_connect) and here, so a flow begun by
+        # an owner cannot be finished into a manager's session either.
+        return (
+            "<html><body><script>"
+            "window.opener&&window.opener.postMessage({gmb:'error',msg:'Only the account owner can connect Google Business.'},'*');"
+            "window.close();"
+            "</script><p>Only the account owner can connect Google Business. Close this window.</p></body></html>"
+        ), 403
 
     state_nonce, _, state_rid = state.partition(":")
     cookie_nonce = request.cookies.get("gmb_oauth_state", "")
@@ -1134,9 +1158,9 @@ def google_sso_callback():
         rest_sso = _gr_sso(user.get("restaurant_id")) if not user.get("is_admin") else None
         device_ok = False
         if rest_sso and rest_sso.two_fa_enabled:
-            from auth import trusted_device_ok as _tdo_sso
+            from auth import remembered_device_ok as _tdo_sso
             cookie = request.cookies.get("device_token_" + str(user.get("restaurant_id")), "")
-            device_ok = bool(cookie) and _tdo_sso(user["restaurant_id"], cookie)
+            device_ok = bool(cookie) and _tdo_sso(user, cookie)
         sso_needs_2fa = bool(rest_sso and rest_sso.two_fa_enabled and not device_ok)
     except Exception:
         # Fail CLOSED: if we cannot determine whether 2FA applies, do not
@@ -1161,7 +1185,11 @@ def google_sso_callback():
 @csrf_required
 @login_required
 def gmb_disconnect(current_user):
-    """Disconnect Google Business from this restaurant."""
+    """Disconnect Google Business from this restaurant. Owner-only."""
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Google Business connection")
+    if denied:
+        return denied
     from models import update_restaurant
     update_restaurant(current_user["restaurant_id"], {
         "gmb_access_token":  "",

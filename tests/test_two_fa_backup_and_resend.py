@@ -56,7 +56,7 @@ def sent(monkeypatch):
     import notify
     box = {"email": [], "sms": []}
     monkeypatch.setattr(emails, "send_2fa_code",
-                        lambda to, name, code, owner=None: box["email"].append((to, code)))
+                        lambda to, name, code, owner=None: box["email"].append((to, code)) or True)
     monkeypatch.setattr(notify, "send_2fa_sms", lambda to, name, code: box["sms"].append((to, code)) or True)
     return box
 
