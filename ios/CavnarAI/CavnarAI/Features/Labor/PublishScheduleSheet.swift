@@ -5,13 +5,136 @@ struct StaffContact: Decodable, Identifiable, Hashable {
     let employeeName: String
     let email: String
     let phone: String
+    /// How Send reaches them — "app", "text" or "email" (people.reach);
+    /// nil when nothing does. Absent from an older server, which then
+    /// counts an email address alone, as before.
+    var channel: String? = nil
+    /// True when the server sent `channel` at all (null included).
+    var channelKnown = false
 
     var id: String { employeeName }
-    var isReachable: Bool { !email.isEmpty }
+    /// Reached by the app, a text they asked for, or email — not only an
+    /// email address (the sheet counted email alone and said "Add an email
+    /// address first" to a week whose staff all had the app).
+    var isReachable: Bool { channelKnown ? channel != nil : !email.isEmpty }
+
+    /// The line under the name: how this person gets the week.
+    var reachLine: String {
+        switch channel {
+        case "app": return "In the app"
+        case "text": return "By text"
+        case "email": return email.isEmpty ? "By email" : email
+        default:
+            if !channelKnown, !email.isEmpty { return email }
+            return "No app, texts or email \u{2014} tap to add an email"
+        }
+    }
 
     enum CodingKeys: String, CodingKey {
         case employeeName = "employee_name"
-        case email, phone
+        case email, phone, channel
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        employeeName = try c.decode(String.self, forKey: .employeeName)
+        email = (try? c.decodeIfPresent(String.self, forKey: .email)) ?? ""
+        phone = (try? c.decodeIfPresent(String.self, forKey: .phone)) ?? ""
+        channelKnown = c.contains(.channel)
+        channel = try? c.decodeIfPresent(String.self, forKey: .channel)
+    }
+}
+
+/// `people.reach_summary`: how many of the week's people each channel
+/// reaches — the app first, then a text they opted into, then email.
+struct PublishReach: Decodable, Equatable {
+    var total = 0
+    var reachable = 0
+    var byApp = 0
+    var byText = 0
+    var byEmail = 0
+    var unreachable: [String] = []
+
+    enum CodingKeys: String, CodingKey {
+        case total, reachable, unreachable
+        case byApp = "by_app"
+        case byText = "by_text"
+        case byEmail = "by_email"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        total = (try? c.decodeIfPresent(Int.self, forKey: .total)) ?? 0
+        reachable = (try? c.decodeIfPresent(Int.self, forKey: .reachable)) ?? 0
+        byApp = (try? c.decodeIfPresent(Int.self, forKey: .byApp)) ?? 0
+        byText = (try? c.decodeIfPresent(Int.self, forKey: .byText)) ?? 0
+        byEmail = (try? c.decodeIfPresent(Int.self, forKey: .byEmail)) ?? 0
+        unreachable = (try? c.decodeIfPresent([String].self, forKey: .unreachable)) ?? []
+    }
+
+    /// "Reaches 12 of 14 · 9 in the app, 1 by text, 2 by email · 2 only in
+    /// the staff portal" — the web's psReach line.
+    var line: String {
+        var bits: [String] = []
+        if byApp > 0 { bits.append("\(byApp) in the app") }
+        if byText > 0 { bits.append("\(byText) by text") }
+        if byEmail > 0 { bits.append("\(byEmail) by email") }
+        var out = "Reaches \(reachable) of \(total)"
+        if !bits.isEmpty { out += " · " + bits.joined(separator: ", ") }
+        if !unreachable.isEmpty { out += " · \(unreachable.count) only in the staff portal" }
+        return out
+    }
+}
+
+/// `GET /mobile/api/labor/publish-check` — what pressing Send would do,
+/// before it is pressed: the week, the gate's blockers (with the keys an
+/// acknowledgement names) and who each channel reaches. With no
+/// `schedule_id` it answers for the OPEN draft, or `schedule_id: null`.
+struct PublishCheck: Decodable, Equatable {
+    struct Item: Decodable, Equatable { let key: String; let text: String }
+    var ok = false
+    var scheduleId: Int? = nil
+    var weekStart: String? = nil
+    var weekEnd: String? = nil
+    var publishedAt: String? = nil
+    var blockers: [String] = []
+    var blockerKeys: [String] = []
+    var blockerItems: [Item] = []
+    var reach: PublishReach? = nil
+    var unsentChanges: [String]? = nil
+    var canPublish = false
+
+    enum CodingKeys: String, CodingKey {
+        case ok, blockers, reach
+        case scheduleId = "schedule_id"
+        case weekStart = "week_start"
+        case weekEnd = "week_end"
+        case publishedAt = "published_at"
+        case blockerKeys = "blocker_keys"
+        case blockerItems = "blocker_items"
+        case unsentChanges = "unsent_changes"
+        case canPublish = "can_publish"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        ok = (try? c.decodeIfPresent(Bool.self, forKey: .ok)) ?? false
+        scheduleId = try? c.decodeIfPresent(Int.self, forKey: .scheduleId)
+        weekStart = try? c.decodeIfPresent(String.self, forKey: .weekStart)
+        weekEnd = try? c.decodeIfPresent(String.self, forKey: .weekEnd)
+        publishedAt = try? c.decodeIfPresent(String.self, forKey: .publishedAt)
+        blockers = (try? c.decodeIfPresent([String].self, forKey: .blockers)) ?? []
+        blockerKeys = (try? c.decodeIfPresent([String].self, forKey: .blockerKeys)) ?? []
+        blockerItems = (try? c.decodeIfPresent([Item].self, forKey: .blockerItems)) ?? []
+        reach = try? c.decodeIfPresent(PublishReach.self, forKey: .reach)
+        unsentChanges = try? c.decodeIfPresent([String].self, forKey: .unsentChanges)
+        canPublish = (try? c.decodeIfPresent(Bool.self, forKey: .canPublish)) ?? false
+    }
+
+    /// The lines to show and the keys they carry, items first.
+    var shown: (lines: [String], keys: [String]) {
+        if !blockerItems.isEmpty { return (blockerItems.map(\.text), blockerItems.map(\.key)) }
+        return (blockers, blockerKeys)
     }
 }
 
@@ -158,13 +281,25 @@ final class PublishScheduleViewModel {
         let reachable: Int
         let weekStart: String?
         let weekEnd: String?
+        let reach: PublishReach?
 
         enum CodingKeys: String, CodingKey {
-            case ok, contacts, reachable
+            case ok, contacts, reachable, reach
             case weekStart = "week_start"
             case weekEnd = "week_end"
         }
     }
+
+    /// The server's own pre-send read (publish-check): the blockers on
+    /// screen BEFORE Send — they used to appear only after a 409. Nil until
+    /// loaded, or from an older server.
+    var check: PublishCheck?
+    /// How the week reaches its people, by channel — from the contacts read
+    /// of the week being sent.
+    var reach: PublishReach?
+    /// False when this login can draft but not send (publish-check's
+    /// can_publish); true until known.
+    var canPublish = true
 
     private struct StatusResponse: Decodable { let ok: Bool; let status: [ScheduleShareStatus] }
     private typealias OKErrorResponse = APIClient.OKResponse
@@ -176,8 +311,12 @@ final class PublishScheduleViewModel {
         errorMessage = nil
         defer { isLoading = false }
         do {
-            let r: ContactsResponse = try await client.send("/mobile/api/labor/staff-contacts")
+            // The people on the week being SENT — the route used to answer
+            // with the newest week's, whichever week this sheet was sending.
+            let query = scheduleId.map { ["schedule_id": String($0)] } ?? [:]
+            let r: ContactsResponse = try await client.send("/mobile/api/labor/staff-contacts", query: query)
             contacts = r.contacts
+            reach = r.reach
             if let start = r.weekStart {
                 // M/D/YY, not the ISO dates the route sends (CLIENT-45).
                 weekLabel = r.weekEnd.map { CavnarDate.mdyRange(start, $0) } ?? CavnarDate.mdy(start)
@@ -185,12 +324,37 @@ final class PublishScheduleViewModel {
             let s: StatusResponse? = try? await client.send(
                 "/mobile/api/labor/schedule-share-status", hapticOnError: false)
             status = s?.status ?? []
+            await loadCheck()
         } catch let error as APIClient.APIError {
             if contacts.isEmpty { errorMessage = error.message }
         } catch is CancellationError {
             // View went away mid-fetch; not a failure.
         } catch {
             if contacts.isEmpty { errorMessage = "Couldn't load your staff list." }
+        }
+    }
+
+    /// Blockers before Send, as the web's psRefresh reads them. A week staff
+    /// already have names only who a saved change moved; the gate's
+    /// warnings are for a week staff don't have yet.
+    func loadCheck() async {
+        guard let scheduleId else { return }
+        guard let c: PublishCheck = try? await client.send(
+            "/mobile/api/labor/publish-check", query: ["schedule_id": String(scheduleId)],
+            hapticOnError: false), c.ok else { return }
+        check = c
+        canPublish = c.canPublish
+        if c.publishedAt == nil {
+            let shown = c.shown
+            // Replace what is on screen only when the list changed, so a
+            // switch the owner already flipped stays flipped.
+            if shown.keys != blockerKeys || shown.lines != blockers {
+                blockers = shown.lines
+                blockerKeys = shown.keys
+                acknowledgeBlockers = false
+            }
+        } else if unsentChanges.isEmpty, let un = c.unsentChanges {
+            unsentChanges = un
         }
     }
 
@@ -414,6 +578,12 @@ struct PublishScheduleSheet: View {
             if let week = viewModel.weekLabel {
                 Text(week).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
             }
+            // By channel, as the web's reach line: the app, a text they
+            // asked for, email — and who only has the portal.
+            if let reach = viewModel.reach, reach.total > 0 {
+                HomeMixedText.make(reach.line, size: 13.5, weight: 600, color: .cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             VStack(spacing: 0) {
                 ForEach(Array(viewModel.contacts.enumerated()), id: \.element.id) { index, contact in
                     Button {
@@ -428,7 +598,7 @@ struct PublishScheduleSheet: View {
                                 Text(contact.employeeName)
                                     .font(.cavnarBody(15, weight: 600))
                                     .foregroundStyle(Color.cavnarInk)
-                                Text(contact.isReachable ? contact.email : "No email yet — tap to add")
+                                Text(contact.reachLine)
                                     .font(.cavnarBody(13))
                                     .foregroundStyle(contact.isReachable ? Color.cavnarInk3 : Color.cavnarAmber)
                             }
@@ -446,7 +616,7 @@ struct PublishScheduleSheet: View {
                     }
                 }
             }
-            Text("Everyone gets a private link to their own shifts only — no logins, nothing else on the roster.")
+            Text("Each person gets only their own shifts \u{2014} a notification in the app, a text if they asked for one in the staff portal, or an email with a private link. Anyone can also sign in to the staff portal with their PIN.")
                 .font(.cavnarBody(13))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -457,7 +627,7 @@ struct PublishScheduleSheet: View {
     /// Disabled while blockers stand unacknowledged: the gate said read
     /// these first, and the toggle in blockersCard is the reading.
     private var sendBlocked: Bool {
-        viewModel.reachableCount == 0 || viewModel.isPublishing
+        viewModel.contacts.isEmpty || viewModel.isPublishing || !viewModel.canPublish
             || (!viewModel.blockers.isEmpty && !viewModel.acknowledgeBlockers)
     }
 
@@ -521,10 +691,15 @@ struct PublishScheduleSheet: View {
                 } else if !viewModel.blockers.isEmpty {
                     Text(viewModel.acknowledgeBlockers ? "Send anyway to \(viewModel.reachableCount) staff"
                                                        : "Read the notes above first")
+                } else if !viewModel.canPublish {
+                    Text("Your login can draft but not send")
                 } else {
+                    // Nobody reachable still publishes: the week goes up in
+                    // the staff portal and nobody is notified (the web's
+                    // "Publish to the staff portal").
                     Text(viewModel.reachableCount > 0
                          ? "Send to \(viewModel.reachableCount) staff"
-                         : "Add an email address first")
+                         : "Publish to the staff portal")
                 }
             }
             .frame(maxWidth: .infinity)

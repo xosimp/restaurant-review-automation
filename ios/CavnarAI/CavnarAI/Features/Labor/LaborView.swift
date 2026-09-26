@@ -40,6 +40,12 @@ struct LaborView: View {
     // What was sent, reachable from Labor itself — it lived only under
     // Account → More (friction audit #50).
     @State private var showingScheduleHistory = false
+    /// A drafted week opened from Waiting on you — its own send sheet.
+    @State private var draftToSend: DraftToSend?
+
+    struct DraftToSend: Identifiable {
+        let id: Int
+    }
 
     init(focusSection: String? = nil, focusItem: String? = nil) {
         self.focusSection = focusSection
@@ -76,10 +82,12 @@ struct LaborView: View {
                                 laborGroupHeader("Needs you")
                                 // What staff are waiting on, answered in
                                 // place, before any chart (Friction #18).
-                                LaborWaitingOnYou(viewModel: viewModel, setupViewModel: setupViewModel) {
-                                    setupViewModel.requestsExpanded = true
-                                    scrollToReveal(Self.requestsID, proxy: proxy)
-                                }
+                                LaborWaitingOnYou(viewModel: viewModel, setupViewModel: setupViewModel,
+                                                  onOpenRequests: {
+                                                      setupViewModel.requestsExpanded = true
+                                                      scrollToReveal(Self.requestsID, proxy: proxy)
+                                                  },
+                                                  onOpenDraft: { draftToSend = DraftToSend(id: $0) })
                                 .id(Self.waitingID)
                                 if let result = viewModel.scheduleResult, result.ok {
                                     scheduleResultSection(result)
@@ -188,6 +196,7 @@ struct LaborView: View {
                 }
                 .cavnarEmberRefreshable {
                     await viewModel.load()
+                    await viewModel.loadDraftCheck()
                     await viewModel.loadAvailability()
                     await viewModel.loadTimeOff()
                     await viewModel.loadTeam()
@@ -326,6 +335,8 @@ struct LaborView: View {
         .task {
             await viewModel.loadAvailability()
             await viewModel.loadTimeOff()
+            // The drafted week staff don't have yet, for Waiting on you.
+            await viewModel.loadDraftCheck()
         }
         // Loaded up front rather than on expand so both collapsed headers
         // read their real counts ("3 of 8 rated") instead of a placeholder
@@ -338,10 +349,13 @@ struct LaborView: View {
             await setupViewModel.loadRoster()
             await setupViewModel.loadSignals()
         }
-        .sheet(isPresented: $showingPublishSchedule) {
+        .sheet(isPresented: $showingPublishSchedule, onDismiss: { Task { await viewModel.loadDraftCheck() } }) {
             PublishScheduleSheet(scheduleId: viewModel.scheduleResult?.historyId,
                                  unsentChanges: viewModel.unsentChanges,
                                  onSent: { viewModel.unsentChanges = [] })
+        }
+        .sheet(item: $draftToSend, onDismiss: { Task { await viewModel.loadDraftCheck() } }) { draft in
+            PublishScheduleSheet(scheduleId: draft.id)
         }
         .sheet(item: $explainingRow) { row in
             AssignmentExplanationSheet(row: row, explanation: viewModel.scheduleResult?.explanation(for: row))
@@ -741,7 +755,8 @@ struct LaborView: View {
         case .waiting:
             viewModel.timeOffExpanded = true
             setupViewModel.requestsExpanded = true
-            let pending = LaborWaitingOnYou.count(timeOff: viewModel.timeOff, shifts: setupViewModel.shiftRequests)
+            let pending = LaborWaitingOnYou.count(timeOff: viewModel.timeOff, shifts: setupViewModel.shiftRequests,
+                                                  draft: viewModel.draftCheck != nil, redo: viewModel.redoOffer != nil)
             scrollToReveal(pending > 0 ? Self.waitingID : Self.requestsID, proxy: proxy)
         case .requests:
             setupViewModel.requestsExpanded = true

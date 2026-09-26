@@ -1936,6 +1936,9 @@ final class LaborViewModel {
             if r.ok, let updated = r.request {
                 if let i = timeOff.firstIndex(where: { $0.id == id }) { timeOff[i] = updated }
                 timeOffWarning = r.warning
+                // An approval over days the open draft puts that person on
+                // offers to redo just those days (the web's lb2AfterTimeOff).
+                if approve, let offer = Self.redoOffer(for: updated, in: scheduleResult) { redoOffer = offer }
                 await Haptic.success()
             } else {
                 timeOffError = r.error ?? "Couldn't decide that."
@@ -2363,6 +2366,112 @@ final class LaborViewModel {
         } catch {
             return
         }
+    }
+
+    // MARK: - Waiting on you: the drafted week, and a redo after time off
+
+    /// Approved time off that lands on the draft on screen: who, and the
+    /// ISO dates the draft has them on.
+    struct RedoOffer: Equatable {
+        let name: String
+        let dates: [String]
+    }
+    var redoOffer: RedoOffer?
+
+    /// The days of `schedule` that put the person on `request` on shift
+    /// inside its range — nil unless it was approved and there are some.
+    static func redoOffer(for request: TimeOffRequest, in schedule: GeneratedSchedule?) -> RedoOffer? {
+        guard request.status == "approved", let schedule, schedule.historyId != nil,
+              let rows = schedule.previewRows else { return nil }
+        let who = request.employeeName.trimmingCharacters(in: .whitespaces).lowercased()
+        let start = String(request.startDate.prefix(10)), end = String(request.endDate.prefix(10))
+        var dates: [String] = []
+        for row in rows {
+            guard (row.employee ?? "").trimmingCharacters(in: .whitespaces).lowercased() == who,
+                  let d = row.date.map({ String($0.prefix(10)) }), d >= start, d <= end,
+                  !dates.contains(d) else { continue }
+            dates.append(d)
+        }
+        return dates.isEmpty ? nil : RedoOffer(name: request.employeeName, dates: dates.sorted())
+    }
+
+    /// "Redo these days": regenerate only the offered days of the draft.
+    func redoOfferedDays() async {
+        guard let offer = redoOffer else { return }
+        redoOffer = nil
+        selectedRedoDates = Set(offer.dates)
+        await redoSelectedDays()
+    }
+
+    /// The open draft — the newest week staff don't have — as publish-check
+    /// answers it with no schedule_id: blockers, reach, whether this login
+    /// can send. Nil when there is none.
+    var draftCheck: PublishCheck?
+    var isSendingDraft = false
+    var draftSendNote: String?
+    var draftSendError: String?
+
+    func loadDraftCheck() async {
+        do {
+            let c: PublishCheck = try await client.send("/mobile/api/labor/publish-check", hapticOnError: false)
+            draftCheck = (c.ok && c.scheduleId != nil && c.publishedAt == nil) ? c : nil
+        } catch {
+            // Silent: a secondary read; Waiting on you just omits the row.
+        }
+    }
+
+    private struct DraftSendResponse: Decodable {
+        let ok: Bool
+        let error: String?
+        let queued: Bool?
+        let undoMinutes: Int?
+        let alreadyPublished: Bool?
+        let portalOnly: Bool?
+        let note: String?
+        enum CodingKeys: String, CodingKey {
+            case ok, error, queued, note
+            case undoMinutes = "undo_minutes"
+            case alreadyPublished = "already_published"
+            case portalOnly = "portal_only"
+        }
+    }
+
+    /// One tap from Waiting on you — only offered when publish-check found
+    /// nothing to read first. Returns true when the gate answered with
+    /// blockers after all (something changed since the check): the caller
+    /// opens the send sheet, where they are read and acknowledged.
+    func sendDraft(_ scheduleId: Int) async -> Bool {
+        guard !isSendingDraft else { return false }
+        isSendingDraft = true
+        draftSendError = nil
+        draftSendNote = nil
+        defer { isSendingDraft = false }
+        do {
+            let r: DraftSendResponse = try await client.send(
+                "/mobile/api/labor/publish-schedule", method: .post,
+                body: PublishScheduleViewModel.PublishBody(scheduleId: scheduleId, acknowledge: false))
+            if r.ok {
+                Haptic.success()
+                // What actually happened, in the web's words (F2-17).
+                draftSendNote = r.queued == true
+                    ? "Goes to staff in \(r.undoMinutes ?? 0) min \u{2014} undo from the Cavnar AI strip"
+                    : r.alreadyPublished == true ? "Already sent \u{2014} nothing went out twice"
+                    : r.portalOnly == true ? (r.note ?? "Published to the staff portal \u{2014} nobody was notified")
+                    : "Schedule sent"
+                await loadDraftCheck()
+                return false
+            }
+            draftSendError = r.error ?? "Nothing sent."
+        } catch let error as APIClient.APIError {
+            if error.status == 409, let gate = error.decodeBody(PublishScheduleViewModel.GateResponse.self),
+               gate.needsAck == true {
+                return true
+            }
+            draftSendError = error.message
+        } catch {
+            draftSendError = "Nothing sent."
+        }
+        return false
     }
 
     // MARK: - Redo selected days

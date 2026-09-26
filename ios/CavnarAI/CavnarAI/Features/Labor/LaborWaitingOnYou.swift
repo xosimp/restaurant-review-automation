@@ -6,23 +6,33 @@ import SwiftUI
 /// below; this block only brings the pending ones to the top so a manager
 /// on the floor never scrolls past charts to say yes. Hidden when nothing
 /// is waiting.
+///
+/// As on the web (9/25/26 parity): a drafted week staff don't have yet is a
+/// row here too — its reach and rule warnings from publish-check, and one
+/// tap to send when there is nothing to read first — and approving time off
+/// over days the draft puts that person on offers "Redo these days".
 struct LaborWaitingOnYou: View {
     @Bindable var viewModel: LaborViewModel
     @Bindable var setupViewModel: ScheduleSetupViewModel
     /// Opens the full Shift requests section (to name who covers a drop).
     var onOpenRequests: () -> Void
+    /// Opens the send sheet on a drafted week (its blockers and contacts).
+    var onOpenDraft: (Int) -> Void = { _ in }
     @State private var person: PersonSheetTarget?
 
     private var pendingTimeOff: [TimeOffRequest] { viewModel.timeOff.filter { $0.status == "pending" } }
     private var pendingShifts: [ShiftRequest] { setupViewModel.pendingRequests }
 
-    static func count(timeOff: [TimeOffRequest], shifts: [ShiftRequest]) -> Int {
+    static func count(timeOff: [TimeOffRequest], shifts: [ShiftRequest],
+                      draft: Bool = false, redo: Bool = false) -> Int {
         timeOff.filter { $0.status == "pending" }.count + shifts.filter { $0.status == "pending" }.count
+            + (draft ? 1 : 0) + (redo ? 1 : 0)
     }
 
     var body: some View {
-        let total = pendingTimeOff.count + pendingShifts.count
-        if total > 0 {
+        let total = Self.count(timeOff: viewModel.timeOff, shifts: setupViewModel.pendingRequests,
+                               draft: viewModel.draftCheck != nil, redo: viewModel.redoOffer != nil)
+        if total > 0 || viewModel.draftSendNote != nil {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .firstTextBaseline) {
                     Text("WAITING ON YOU")
@@ -34,8 +44,23 @@ struct LaborWaitingOnYou: View {
                         .font(.cavnarNumber(14, weight: 700))
                         .foregroundStyle(Color.cavnarEmber2)
                 }
+                if let offer = viewModel.redoOffer { redoRow(offer) }
+                if let draft = viewModel.draftCheck, let id = draft.scheduleId { draftRow(draft, id: id) }
+                if let note = viewModel.draftSendNote {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(Color.cavnarGreen)
+                        HomeMixedText.make(note, size: 14, weight: 600, color: .cavnarInk2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
                 ForEach(pendingTimeOff) { req in timeOffRow(req) }
                 ForEach(pendingShifts) { req in shiftRow(req) }
+                if let error = viewModel.draftSendError {
+                    Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if let error = viewModel.timeOffError ?? setupViewModel.requestError {
                     Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
                         .fixedSize(horizontal: false, vertical: true)
@@ -63,6 +88,98 @@ struct LaborWaitingOnYou: View {
         }
         .buttonStyle(.plain)
         .accessibilityHint("Opens \(name)'s record")
+    }
+
+    /// "Sofia is off — the open draft has them on" · Mon 9/28/26, Tue …
+    private func redoRow(_ offer: LaborViewModel.RedoOffer) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text("\(offer.name) is off \u{2014} the open draft has them on")
+                    .font(.cavnarBody(15, weight: 700))
+                    .foregroundStyle(Color.cavnarInk)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HomeMixedText.make(offer.dates.map(Self.dayLabel).joined(separator: ", "),
+                               size: 13.5, weight: 500, color: .cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
+            Button {
+                Haptic.light()
+                Task { await viewModel.redoOfferedDays() }
+            } label: {
+                Group {
+                    if viewModel.isGeneratingSchedule { CavnarShimmerText(text: "Redoing\u{2026}") } else { Text("Redo these days") }
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(CavnarSecondaryButtonStyle())
+            .disabled(viewModel.isGeneratingSchedule)
+        }
+        .padding(12)
+        .background(Color.white.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    /// The drafted week: staff don't have it yet, who it reaches, what to
+    /// read first; Review it opens the send sheet, and Send goes in one tap
+    /// when there is nothing to read (named by who it REACHES, F2-17).
+    private func draftRow(_ draft: PublishCheck, id: Int) -> some View {
+        let reach = draft.reach
+        let warnings = draft.shown.lines.count
+        var detail = "Staff don\u{2019}t have it yet"
+        if let reach, reach.total > 0 { detail += " · reaches \(reach.reachable) of \(reach.total)" }
+        if warnings > 0 { detail += " · \(warnings) rule warning\(warnings == 1 ? "" : "s") to read first" }
+        let oneTap = draft.canPublish && warnings == 0 && (reach?.total ?? 0) > 0
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                HomeMixedText.make("The week of \(CavnarDate.mdy(draft.weekStart ?? "")) is drafted",
+                                   size: 15, weight: 700, color: .cavnarInk)
+                tag("Schedule")
+            }
+            HomeMixedText.make(detail, size: 13.5, weight: 500, color: .cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 10) {
+                Button {
+                    Haptic.light()
+                    onOpenDraft(id)
+                } label: { Text(oneTap ? "Review it" : "Review and send").frame(maxWidth: .infinity) }
+                .buttonStyle(CavnarSecondaryButtonStyle())
+                if oneTap {
+                    Button {
+                        Haptic.light()
+                        Task {
+                            if await viewModel.sendDraft(id) { onOpenDraft(id) }
+                        }
+                    } label: {
+                        Group {
+                            if viewModel.isSendingDraft {
+                                CavnarShimmerText(text: "Sending\u{2026}")
+                            } else {
+                                Text((reach?.reachable ?? 0) > 0 ? "Send to \(reach?.reachable ?? 0) staff"
+                                                                 : "Publish to the staff portal")
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarSecondaryButtonStyle())
+                    .disabled(viewModel.isSendingDraft)
+                }
+            }
+        }
+        .padding(12)
+        .background(Color.white.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    /// "Mon 9/28/26" from an ISO date.
+    static func dayLabel(_ iso: String) -> String {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.dateFormat = "yyyy-MM-dd"
+        guard let d = f.date(from: String(iso.prefix(10))) else { return CavnarDate.mdy(iso) }
+        f.dateFormat = "EEE"
+        return f.string(from: d) + " " + CavnarDate.mdy(iso)
     }
 
     private func timeOffRow(_ req: TimeOffRequest) -> some View {
