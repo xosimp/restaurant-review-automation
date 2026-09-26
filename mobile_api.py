@@ -6298,7 +6298,7 @@ def mobile_update_digest_day(current_user):
 @mobile_login_required
 def mobile_billing(current_user):
     """See client_api._do_billing_info — the web's /api/billing-info body."""
-    payload, status = _capi._do_billing_info(current_user["restaurant_id"])
+    payload, status = _capi._do_billing_info(current_user["restaurant_id"], current_user)
     return jsonify(**payload), status
 
 

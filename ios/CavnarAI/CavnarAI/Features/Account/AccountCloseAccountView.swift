@@ -54,7 +54,7 @@ struct AccountCloseAccountView: View {
                         AccountSection(kicker: "Status") {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("Deletion requested").font(.cavnarBody(16, weight: 700)).foregroundStyle(Color.cavnarInk)
-                                Text("Will was notified on \(requestedAt). He'll reach out to confirm and start winding things down.")
+                                Text("Will was notified on \(CavnarDate.mdy(requestedAt)). He'll reach out to confirm and start winding things down.")
                                     .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
                             }
                             .padding(.vertical, 9)

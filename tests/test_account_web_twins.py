@@ -176,3 +176,17 @@ def test_the_web_close_card_posts_the_request_and_keeps_the_email_line():
     inv = src[src.index("function _billingInvoices(list)"):]
     inv = inv[:inv.index("\n}\n")]
     assert "pdf_url" in inv and 'id="billing-invoice-rows"' in src
+
+
+def test_billing_and_close_account_are_the_owners_alone(client, monkeypatch, db_path):
+    """A manager login may not read the invoices or ask to end the service:
+    both are the account holder's (permissions.is_principal)."""
+    rid = _restaurant(db_path, name="Owner Only Co")
+    monkeypatch.setattr(auth, "get_current_user",
+                        lambda: {"id": 9, "restaurant_id": rid, "is_admin": 0, "role": "manager",
+                                 "username": "gm", "email": "gm@x.test"})
+    r = client.get("/api/billing-info")
+    assert r.status_code == 403 and r.get_json().get("owner_only") is True
+    r = client.post("/api/account/request-deletion")
+    assert r.status_code == 403 and r.get_json().get("owner_only") is True
+    assert not get_deletion_requested_at(rid)

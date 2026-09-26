@@ -4483,7 +4483,7 @@ def _billing_preview(restaurant_id):
     }
 
 
-def _do_billing_info(restaurant_id):
+def _do_billing_info(restaurant_id, current_user=None):
     """Billing for one restaurant, read live from Stripe — the one body the
     web (GET /api/billing-info) and the app (GET /mobile/api/account/billing)
     both answer with, so the web has the invoice history the app always had
@@ -4494,6 +4494,12 @@ def _do_billing_info(restaurant_id):
     trial_end, invoices: [{date, amount, status, pdf_url}]}; ok False with a
     `reason` (no_customer | no_key | stripe_error) when there is nothing to
     read. Dates read M/D/YY."""
+    # Owner-only: the invoices, the card on file and the Stripe portal are
+    # the account holder's, not every console login's.
+    from permissions import is_principal
+    if current_user is not None and not is_principal(current_user):
+        return {"ok": False, "owner_only": True,
+                "error": "Only the account owner can see billing."}, 403
     from time_utils import mdy as _mdy
     preview = _billing_preview(restaurant_id)
     if preview:
@@ -4581,6 +4587,11 @@ def _do_request_account_deletion(rid, current_user=None):
     Idempotent: a second request returns the first timestamp and sends no
     second notice. Scoped to the caller's own restaurant.
     Returns ({ok, requested_at}, status)."""
+    # Owner-only: ending the service is the account holder's decision.
+    from permissions import is_principal
+    if current_user is not None and not is_principal(current_user):
+        return {"ok": False, "owner_only": True,
+                "error": "Only the account owner can ask to close the account."}, 403
     from models import request_account_deletion, get_deletion_requested_at
     restaurant = get_restaurant(rid)
     if not restaurant:
@@ -4614,7 +4625,7 @@ def request_account_deletion_route(current_user):
 @login_required
 def billing_info(current_user):
     """Billing and invoice history for the current client (_do_billing_info)."""
-    payload, status = _do_billing_info(current_user["restaurant_id"])
+    payload, status = _do_billing_info(current_user["restaurant_id"], current_user)
     return jsonify(**payload), status
 
 def _normalize_phone_lenient(raw):

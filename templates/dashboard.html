@@ -263,7 +263,6 @@ html{background:var(--bg-base);min-height:100%}
 [data-theme="dark"] .tbl tr:hover td{background:#3a3228!important}
 /* Orange tabs — the active tab sits a shade under --ember in dark mode */
 .rv-tab-active{background:var(--ember)!important;color:#fff!important}
-[data-theme="dark"] .rv-tab-active{background:#923020!important}
 #rv-tab-inbox:not(.rv-tab-active),#rv-tab-analytics:not(.rv-tab-active){background:transparent!important;color:var(--ink3)!important}
 #lb-tab-schedule:not(.rv-tab-active),#lb-tab-analytics:not(.rv-tab-active){background:transparent!important;color:var(--ink3)!important}
 #fc-tab-tracker:not(.rv-tab-active),#fc-tab-analytics:not(.rv-tab-active){background:transparent!important;color:var(--ink3)!important}
@@ -21134,7 +21133,7 @@ function loadMemory() {
     if (!facts.length) { el.textContent = 'Nothing remembered yet. Tell Ask Cavnar AI \u201cremember that\u2026\u201d and it appears here.'; return; }
     var h = '';
     for (var i = 0; i < facts.length; i++) { var f = facts[i];
-      h += '<div class="ac-row"><div class="l"><b>' + esc(f.fact || '') + '</b><span>' + esc((f.kind || 'context') + (f.source ? ' \u00b7 from ' + f.source : '') + (f.created_at ? ' \u00b7 ' + String(f.created_at).slice(0, 10) : '')) + '</span></div><div class="c"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-forget-fact="' + esc(f.fact || '') + '">Forget</button></div></div>';
+      h += '<div class="ac-row"><div class="l"><b>' + esc(f.fact || '') + '</b><span>' + esc((f.kind || 'context') + (f.source ? ' \u00b7 from ' + f.source : '') + (f.created_at ? ' \u00b7 ' + mdy(String(f.created_at).slice(0, 10)) : '')) + '</span></div><div class="c"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-forget-fact="' + esc(f.fact || '') + '">Forget</button></div></div>';
     }
     el.innerHTML = h;
   }).catch(function() { el.textContent = 'Could not load.'; });
