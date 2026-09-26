@@ -4367,7 +4367,7 @@ def reply_queue_counts(restaurant_id: int, db_path: str = DB_PATH) -> dict:
 
 
 def claim_approval(review_id: int, restaurant_id: int, db_path: str = DB_PATH,
-                   publishable_only: bool = False) -> bool:
+                   publishable_only: bool = False, allow_flagged: bool = True) -> bool:
     """Approve a drafted reply as a compare-and-set. True only for the one
     caller that moved THIS restaurant's live, drafted, non-empty reply to
     'approved'; everyone else gets False and nothing changes.
@@ -4380,7 +4380,12 @@ def claim_approval(review_id: int, restaurant_id: int, db_path: str = DB_PATH,
 
     `publishable_only`: a bulk publish's claim, held to BULK_PUBLISHABLE_SQL
     at the moment of the write, so a draft regenerated into a flagged one
-    between the batch's SELECT and its approve is not posted (M-2)."""
+    between the batch's SELECT and its approve is not posted (M-2).
+
+    `allow_flagged=False`: a single approve the owner has not confirmed past
+    the reply guard's flag. The flag is held in the same WHERE clause, so a
+    draft that turned flagged after the screen opened (an edit on another
+    device, the auto-approve hold) is not posted on a stale "yes"."""
     conn = get_conn(db_path)
     try:
         if publishable_only:
@@ -4396,7 +4401,8 @@ def claim_approval(review_id: int, restaurant_id: int, db_path: str = DB_PATH,
             WHERE id=? AND restaurant_id=? AND response_status IN ('drafted','pending')
               AND deleted_at IS NULL
               AND draft_response IS NOT NULL AND TRIM(draft_response) != ''
-        """, (review_id, restaurant_id))
+        """ + ("" if allow_flagged else " AND COALESCE(draft_needs_review, 0) = 0"),
+            (review_id, restaurant_id))
         conn.commit()
         return cur.rowcount == 1
     finally:

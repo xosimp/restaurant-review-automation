@@ -1477,7 +1477,9 @@ def mobile_reviews_why_line(current_user):
 @mobile_bp.route("/reviews/<int:review_id>/approve", methods=["POST"])
 @mobile_login_required
 def mobile_approve_review(review_id, current_user):
-    payload, status = _capi._do_approve(review_id, current_user["restaurant_id"])
+    _body = request.get_json(silent=True) or {}
+    payload, status = _capi._do_approve(review_id, current_user["restaurant_id"],
+                                        confirm_flagged=_body.get("confirm_flagged") is True)
     return jsonify(**payload), status
 
 

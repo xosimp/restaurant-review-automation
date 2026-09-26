@@ -12941,7 +12941,8 @@ function saveDraft(id) {
     if (sd.needs_review && !_revFlagOk(id, sd.review_reason || 'states something Cavnar AI cannot confirm')) {
       settle(); toast('Saved as a draft — not posted','success'); return;
     }
-    fetch('/approve/'+id, {method:'POST'}).then(apiJson).then(function(ad){
+    fetch('/approve/'+id, {method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({confirm_flagged:!!sd.needs_review})}).then(apiJson).then(function(ad){
       settle();
       if (ad.ok) {
         var txtEl = document.getElementById('draft-txt-'+id);
@@ -15134,11 +15135,14 @@ function _revBtn(fn, id){ return document.querySelector('[onclick="' + fn + '(' 
 // A flagged draft (the reply guard found an action, a comp or a staff
 // conversation nobody told Cavnar about) is read before it posts: the
 // reason is on the card, and Approve asks once more (M-1).
+// The server holds the same line: a flagged draft posts only with
+// confirm_flagged, which is sent only after this confirm was shown.
+function _revFlagReason(id){
+  var f=document.getElementById('draft-flag-'+id);
+  return f?(f.getAttribute('data-flag-reason')||''):'';
+}
 function _revFlagOk(id, reason){
-  if(!reason){
-    var f=document.getElementById('draft-flag-'+id);
-    reason=f?f.getAttribute('data-flag-reason'):'';
-  }
+  if(!reason)reason=_revFlagReason(id);
   if(!reason)return true;
   return window.confirm('This reply '+reason+'. Cavnar AI can’t confirm that. Post it anyway?');
 }
@@ -15160,15 +15164,24 @@ function _revShowFlag(id, reason){
   d.appendChild(ic);d.appendChild(body);
   txt.parentNode.insertBefore(d,txt.nextSibling);
 }
-function approveR(id){
+function approveR(id, confirmed){
   if(_revInflight['approve'+id])return;
-  if(!_revFlagOk(id))return;
+  var _flag=confirmed?'':_revFlagReason(id);
+  if(_flag&&!_revFlagOk(id,_flag))return;
+  var _conf=!!confirmed||!!_flag;
   _revInflight['approve'+id]=1;
   var _appBtn=_revBtn('approveR',id)||document.querySelector('#rc-'+id+' .cbtn-primary');
   var done=cbtnBusy(_appBtn,'Approving\u2026');
   function settle(){delete _revInflight['approve'+id];done();}
-  fetch('/approve/'+id,{method:'POST'}).then(apiJson).then(function(d){
+  fetch('/approve/'+id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm_flagged:_conf})}).then(apiJson).then(function(d){
   settle();
+  // Flagged since this card was drawn (an edit on the phone, the
+  // auto-approve hold): show why, ask, and only then post.
+  if(!d.ok&&d.needs_review&&!_conf){
+    _revShowFlag(id,d.review_reason||'states something Cavnar AI cannot confirm');
+    if(_revFlagOk(id,d.review_reason||'states something Cavnar AI cannot confirm'))approveR(id,true);
+    return;
+  }
   if(d.ok){
     var card = document.getElementById('rc-'+id);
     card.classList.remove('urgent','skipped');
@@ -15651,17 +15664,23 @@ function openMktPreview(){
 function closeMktPreview(){ document.getElementById('mkt-preview-modal').style.display = 'none'; }
 
 // ── Drafts ──────────────────────────────────────────────────────────────────
+// The draft the composer holds, once opened or saved: a second save updates
+// it (the server's save_draft takes the id) instead of adding a copy. A new
+// generation starts a new draft (genContent clears it).
+window._mktDraftId = null;
 function saveMktDraft(){
   var body = _mktBody();
   if(!body) return toast('Generate content first','warning');
   var btn = document.getElementById('mkt-save-draft-btn');
   if(btn){ btn.disabled = true; btn.style.opacity = '0.6'; }
+  var payload = {body: body, topic: document.getElementById('mktopic').value.trim(),
+                 content_type: selCt, media_id: window._mktPhotoId};
+  if(window._mktDraftId) payload.id = window._mktDraftId;
   fetch('/api/marketing/drafts', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({body: body, topic: document.getElementById('mktopic').value.trim(),
-                          content_type: selCt, media_id: window._mktPhotoId})})
+    body: JSON.stringify(payload)})
     .then(apiJson).then(function(d){
       if(btn){ btn.disabled = false; btn.style.opacity = ''; }
-      if(d.ok){ toast('Draft saved','success'); loadMktDrafts(); }
+      if(d.ok){ if(d.id) window._mktDraftId = d.id; toast('Draft saved','success'); loadMktDrafts(); }
       else toast(d.error || 'Could not save','error');
     }).catch(function(){ if(btn){ btn.disabled = false; btn.style.opacity = ''; } toast('Could not save','error'); });
 }
@@ -15686,6 +15705,7 @@ function loadMktDrafts(){
         + '<span style="font-size:11px;font-weight:700;color:' + (expired ? 'var(--ink3)' : (approved ? '#2d6a4f' : 'var(--ember2)')) + '">' + (expired ? 'Expired' : (approved ? 'Approved' : 'Draft')) + '</span>'
         + '</div>'
         + '<div style="font-size:12px;color:var(--ink3);line-height:1.5;margin-top:3px;max-height:38px;overflow:hidden">' + _escHtml(x.body) + '</div>'
+        + _mktDraftByline(x)
         + (expired ? '<div style="font-size:11.5px;color:var(--ink3);margin-top:3px">Its night has passed, so it can\u2019t be approved or sent.</div>' : '')
         + '<div style="display:flex;gap:14px;margin-top:6px">'
         + (expired ? '' : '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="useMktDraft(' + x.id + ')">Open</button>')
@@ -15697,12 +15717,38 @@ function loadMktDrafts(){
     window._mktDrafts = d.drafts;
   }).catch(function(){});
 }
+// Who wrote it and who released it, as the phone shows them.
+function _mktDraftByline(x){
+  var parts = [];
+  if(x.created_by_name) parts.push('Written by ' + _escHtml(x.created_by_name));
+  if(x.status === 'approved' && x.approved_by_name) parts.push('approved by ' + _escHtml(x.approved_by_name));
+  if(!parts.length) return '';
+  return '<div style="font-size:11.5px;color:var(--ink3);margin-top:3px">' + parts.join(' \u00b7 ') + '</div>';
+}
 function useMktDraft(id){
   var drafts = window._mktDrafts || [];
   for(var i=0;i<drafts.length;i++){
     if(drafts[i].id === id){
-      document.getElementById('mkoutput').textContent = drafts[i].body;
-      document.getElementById('mktopic').value = drafts[i].topic || '';
+      var x = drafts[i];
+      document.getElementById('mkoutput').textContent = x.body;
+      document.getElementById('mktopic').value = x.topic || '';
+      window._mktDraftId = x.id;
+      // The type and the photo come back with the words, so a save or a
+      // post from here is the draft that was saved, not a photo-less copy.
+      var ctBtn = x.content_type ? document.querySelector('.ct-btn[data-type="' + x.content_type + '"]') : null;
+      if(ctBtn) selectCt(x.content_type, ctBtn);
+      if(x.media_id && x.media_token){
+        window._mktPhotoId = x.media_id;
+        window._mktPhotoUrl = '/m/' + x.media_token + '.jpg';
+        var thumb = document.getElementById('mkt-photo-thumb');
+        if(thumb){ thumb.src = window._mktPhotoUrl; thumb.style.display = 'block'; }
+        var clr = document.getElementById('mkt-photo-clear'); if(clr) clr.style.display = 'inline-block';
+        var pbtn = document.getElementById('mkt-photo-btn'); if(pbtn) pbtn.textContent = 'Change photo';
+        var prow = document.getElementById('mkt-photo-row');
+        if(prow && _igConnected && x.content_type !== 'google_promo') prow.style.display = 'flex';
+      } else if(window._mktPhotoId){
+        clearMktPhoto();
+      }
       updateCharCount();
       document.getElementById('mkoutput').scrollIntoView({behavior:'smooth', block:'center'});
       return;
@@ -15717,6 +15763,7 @@ function approveMktDraft(id){
     }).catch(function(){});
 }
 function deleteMktDraft(id){
+  if(window._mktDraftId === id) window._mktDraftId = null;
   fetch('/api/marketing/drafts/' + id, {method:'DELETE'})
     .then(function(){ loadMktDrafts(); }).catch(function(){});
 }
@@ -20318,6 +20365,8 @@ function genContent(fromCalendar){
       box.style.fontStyle='normal';
       box.style.color='var(--ink)';
       window._lastPostedTopic=topic;
+      // New words are a new draft, not an edit of the one last opened.
+      window._mktDraftId=null;
       var _genContent = d.content||'Generation failed — try again.';
       typewriterEffect(box, _genContent);
       var hint=document.getElementById('output-hint');if(hint)hint.style.display='block';

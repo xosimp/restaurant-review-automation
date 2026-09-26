@@ -32,6 +32,10 @@ final class MarketingComposeViewModel {
     var drafts: [MarketingDraft] = []
     var isSavingDraft = false
     var draftError: String?
+    /// The saved draft the composer holds — set when one is opened from the
+    /// shelf or first saved, cleared when new copy is generated. A save
+    /// sends it as `id`, so re-saving an opened draft updates that draft
+    /// instead of adding a copy (the server's save_draft always took it).
     var savedDraftID: Int?
 
     private let client: APIClient
@@ -256,14 +260,14 @@ final class MarketingComposeViewModel {
         let drafts: [MarketingDraft]
     }
 
-    func saveDraft(body: String, topic: String, contentType: String?, id: Int? = nil) async {
+    func saveDraft(body: String, topic: String, contentType: String?) async {
         isSavingDraft = true
         draftError = nil
         defer { isSavingDraft = false }
         do {
             let response: OKResponse = try await client.send(
                 "/mobile/api/marketing/drafts", method: .post,
-                body: DraftBody(id: id, body: body, topic: topic.isEmpty ? nil : topic,
+                body: DraftBody(id: savedDraftID, body: body, topic: topic.isEmpty ? nil : topic,
                                 contentType: contentType, mediaId: media?.id)
             )
             if response.ok {
@@ -309,7 +313,21 @@ final class MarketingComposeViewModel {
         }
     }
 
+    /// A draft opened from the shelf: its photo comes back with it, from the
+    /// library when it is loaded, else from the draft's own token.
+    func open(_ draft: MarketingDraft) {
+        savedDraftID = draft.id
+        if let mediaId = draft.mediaId, let token = draft.mediaToken {
+            media = recentMedia.first { $0.id == mediaId }
+                ?? MarketingMedia(id: mediaId, token: token,
+                                  url: AppEnvironment.baseURL.appendingPathComponent("m/\(token).jpg").absoluteString)
+        } else {
+            media = nil
+        }
+    }
+
     func deleteDraft(_ draft: MarketingDraft) async {
+        if savedDraftID == draft.id { savedDraftID = nil }
         _ = try? await client.send("/mobile/api/marketing/drafts/\(draft.id)",
                                    method: .delete) as OKResponse
         drafts.removeAll { $0.id == draft.id }

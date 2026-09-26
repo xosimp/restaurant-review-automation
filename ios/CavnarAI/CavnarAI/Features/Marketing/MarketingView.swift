@@ -122,6 +122,9 @@ struct MarketingView: View {
                     viewModel.hasDraft = true
                     if let type = draft.contentType { viewModel.selectedType = type }
                     viewModel.topic = draft.topic ?? ""
+                    // Its id and photo too: Save updates this draft, and
+                    // Post / Schedule carry the photo it was saved with.
+                    compose.open(draft)
                     shelfDestination = nil
                 }
             }
@@ -133,6 +136,10 @@ struct MarketingView: View {
         .cavnarTabSwipeNavigation($subTab, primaryTab: .content, secondaryTab: .analytics)
         .keyboardNavToolbar($focusedField)
         .task { await viewModel.load() }
+        // New copy is a new draft, not an edit of the one last opened.
+        .onChange(of: viewModel.isGenerating) { _, generating in
+            if generating { compose.savedDraftID = nil }
+        }
         // The content tab's one outcome figure reads the 30-day window —
         // the window alone, not the whole Analytics load (which records the
         // brief's lines as shown).

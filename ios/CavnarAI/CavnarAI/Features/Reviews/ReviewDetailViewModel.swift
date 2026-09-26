@@ -36,6 +36,16 @@ final class ReviewDetailViewModel {
 
     var templates: [ResponseTemplate] = []
 
+    /// Why the reply guard wants this draft read before it posts, or nil.
+    /// Starts from the review as it opened and follows every regenerate and
+    /// save (their answers carry `needs_review` / `review_reason`), and a
+    /// server refusal, so the banner and the confirm are about the text on
+    /// screen, not the text the screen opened with.
+    var flagReason: String?
+    /// True while the "Post it anyway?" confirm for a flagged draft is up.
+    var needsFlagConfirm = false
+    static let defaultFlagReason = "states something Cavnar AI cannot confirm"
+
     private let client: APIClient
     private var saveDraftTask: Task<Void, Never>?
 
@@ -44,6 +54,29 @@ final class ReviewDetailViewModel {
         self.currentStatus = review.responseStatus
         self.editedDraft = review.draftResponse ?? ""
         self.client = client
+        self.flagReason = review.draftIsFlagged
+            ? (review.draftReviewReason ?? Self.defaultFlagReason) : nil
+    }
+
+    /// The flag as a draft answer states it.
+    private func applyFlag(_ response: DraftResponse) {
+        flagReason = response.needsReview == true
+            ? (response.reviewReason ?? Self.defaultFlagReason) : nil
+    }
+
+    private struct ApproveBody: Encodable {
+        let confirmFlagged: Bool
+        enum CodingKeys: String, CodingKey { case confirmFlagged = "confirm_flagged" }
+    }
+
+    /// A 409 from approve for a draft flagged since this screen last knew.
+    private struct FlagRefusal: Decodable {
+        let needsReview: Bool?
+        let reviewReason: String?
+        enum CodingKeys: String, CodingKey {
+            case needsReview = "needs_review"
+            case reviewReason = "review_reason"
+        }
     }
 
     private struct TemplatesResponse: Decodable {
@@ -99,7 +132,10 @@ final class ReviewDetailViewModel {
     /// True while retryPost() is running.
     var isRetryingPost = false
 
-    func approve() async {
+    /// `confirmFlagged`: the owner saw the flag's reason and chose to post
+    /// anyway. A flagged draft without it stops at the confirm (the view's
+    /// dialog calls back with true); the server refuses it too (M-1).
+    func approve(confirmFlagged: Bool = false) async {
         // Flush any pending debounced edit first so what gets posted matches
         // what's on screen, rather than racing the 800ms save timer.
         //
@@ -117,10 +153,17 @@ final class ReviewDetailViewModel {
             case .queued:
                 // The edit is waiting in the offline queue. The approve
                 // goes in behind it — the queue drains in order and stops at
-                // the first failure — never out live ahead of it.
-                await queueApprove()
+                // the first failure — never out live ahead of it. Unconfirmed
+                // it carries no confirm, so the server refuses a draft that
+                // turns out flagged rather than posting it unread.
+                await queueApprove(confirmFlagged: confirmFlagged)
                 return
             }
+        }
+        // Read first: the save above may have just flagged the edit.
+        if flagReason != nil && !confirmFlagged {
+            needsFlagConfirm = true
+            return
         }
         isSubmitting = true
         isApproving = true
@@ -131,7 +174,8 @@ final class ReviewDetailViewModel {
         }
         do {
             let response: ApproveResponse = try await client.send(
-                "/mobile/api/reviews/\(review.id)/approve", method: .post
+                "/mobile/api/reviews/\(review.id)/approve", method: .post,
+                body: ApproveBody(confirmFlagged: confirmFlagged)
             )
             Haptic.success()
             let status = response.posted ? "posted" : "approved"
@@ -143,7 +187,7 @@ final class ReviewDetailViewModel {
             didComplete = (response.shortfall == nil)
         } catch let error as APIClient.APIError where error.isRetryable && !error.mayHaveReachedServer {
             // Never left the phone, so replaying it later is safe.
-            await queueApprove()
+            await queueApprove(confirmFlagged: confirmFlagged)
         } catch let error as APIClient.APIError where error.isRetryable {
             // Timed out or dropped mid-request. The Google post runs inside
             // this request, so it may well have gone out; queueing it would
@@ -152,17 +196,24 @@ final class ReviewDetailViewModel {
             errorMessage = "We lost the connection before Google answered, so this reply may already be posted. "
                          + "Go back and reopen the review to see its status before approving again."
         } catch let error as APIClient.APIError {
+            if !confirmFlagged, error.status == 409,
+               let refusal = error.decodeBody(FlagRefusal.self), refusal.needsReview == true {
+                // Flagged since this screen opened: show why, then ask.
+                flagReason = refusal.reviewReason ?? Self.defaultFlagReason
+                needsFlagConfirm = true
+                return
+            }
             errorMessage = error.message
         } catch {
             errorMessage = "Couldn't approve — try again."
         }
     }
 
-    private func queueApprove() async {
+    private func queueApprove(confirmFlagged: Bool) async {
         await PendingWriteQueue.shared.enqueue(
             path: "/mobile/api/reviews/\(review.id)/approve",
             method: "POST",
-            bodyJSON: nil,
+            bodyJSON: try? JSONEncoder().encode(ApproveBody(confirmFlagged: confirmFlagged)),
             label: "Approve response for \(review.author ?? "review")"
         )
         hasQueuedWrite = true
@@ -199,6 +250,14 @@ final class ReviewDetailViewModel {
         let ok: Bool
         let draft: String?
         let error: String?
+        /// The reply guard's verdict on the text just written or saved.
+        let needsReview: Bool?
+        let reviewReason: String?
+        enum CodingKeys: String, CodingKey {
+            case ok, draft, error
+            case needsReview = "needs_review"
+            case reviewReason = "review_reason"
+        }
     }
 
     /// Whether this review is waiting on a draft that nobody has asked for
@@ -232,6 +291,7 @@ final class ReviewDetailViewModel {
             )
             if response.ok, let draft = response.draft {
                 editedDraft = draft
+                applyFlag(response)
                 announceDraft(draft)
             } else {
                 errorMessage = response.error ?? "Couldn't regenerate the draft."
@@ -273,6 +333,7 @@ final class ReviewDetailViewModel {
                 errorMessage = response.error ?? "Couldn't save your edit."
                 return .failed
             }
+            applyFlag(response)
             announceDraft(draft)
             return .saved
         } catch let error as APIClient.APIError where error.isRetryable {

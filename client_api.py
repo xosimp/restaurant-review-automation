@@ -141,8 +141,15 @@ def invalidate_insight_cache(restaurant_id, prefixes=None):
 # status) and mobile_api.py's mobile views can call the exact same logic
 # without duplicating it.
 
-def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False):
+def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_flagged=False):
     """Approve (and post) one drafted reply.
+
+    `confirm_flagged`: the person was shown the reply guard's flag on this
+    draft ("Read this one before you post it") and said post it anyway. A
+    flagged draft is refused without it — web and iOS both ask first, and the
+    paths that cannot ask (a lock-screen action, a swipe, a notification row,
+    Ask's proposal, a queued offline replay of an unconfirmed approve) get a
+    409 naming the reason instead of posting it unread.
 
     `bulk`: part of a publish-many (approve-all). The claim is held to
     models.BULK_PUBLISHABLE_SQL, and the row is marked
@@ -166,9 +173,11 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False):
     # together (MOD-REV-4, MOD-REV-5). Nothing below — the action label, the
     # webhook, the Google post, the confirmation — happens for a loser.
     from models import claim_approval
-    if not claim_approval(rid, restaurant_id, publishable_only=bool(bulk)):
+    if not claim_approval(rid, restaurant_id, publishable_only=bool(bulk),
+                          allow_flagged=bool(confirm_flagged)):
         _gc = get_conn()
-        _cur = _gc.execute("SELECT response_status, deleted_at FROM reviews WHERE id=? AND restaurant_id=?",
+        _cur = _gc.execute("SELECT response_status, deleted_at, draft_needs_review, draft_review_reason "
+                           "FROM reviews WHERE id=? AND restaurant_id=?",
                            (rid, restaurant_id)).fetchone()
         _gc.close()
         if not _cur:
@@ -177,6 +186,10 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False):
             return {"ok": False, "error": "That review was removed."}, 409
         if _cur["response_status"] in ("approved", "posted"):
             return {"ok": False, "error": "That reply has already been approved."}, 409
+        if _cur["draft_needs_review"] and not bulk and not confirm_flagged:
+            _why = _cur["draft_review_reason"] or "states something Cavnar AI cannot confirm"
+            return {"ok": False, "needs_review": True, "review_reason": _why,
+                    "error": f"Read this reply before you post it: it {_why}. Open the review to post it anyway."}, 409
         return {"ok": False, "error": "There's no drafted reply to approve on that review."}, 409
     # Determine response action
     try:
@@ -615,7 +628,9 @@ def _do_retract(rid, restaurant_id):
 @client_bp.route("/approve/<int:rid>", methods=["POST"])
 @login_required
 def approve(rid, current_user):
-    payload, status = _do_approve(rid, current_user["restaurant_id"])
+    _body = request.get_json(silent=True) or {}
+    payload, status = _do_approve(rid, current_user["restaurant_id"],
+                                  confirm_flagged=_body.get("confirm_flagged") is True)
     return jsonify(**payload), status
 
 

@@ -183,6 +183,18 @@ struct ReviewDetailView: View {
             }
         }
         .confirmationDialog(
+            "Post this reply anyway?",
+            isPresented: $viewModel.needsFlagConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Post it anyway") {
+                Task { await viewModel.approve(confirmFlagged: true) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This reply \(viewModel.flagReason ?? ReviewDetailViewModel.defaultFlagReason). Cavnar AI can\u{2019}t confirm that.")
+        }
+        .confirmationDialog(
             "Retract this reply from Google?",
             isPresented: $showingRetractConfirm,
             titleVisibility: .visible
@@ -234,6 +246,12 @@ struct ReviewDetailView: View {
                 .foregroundStyle(Color.cavnarInk2)
                 .lineSpacing(6)
             cavnarRead
+            // The web's "Ask about this" on each review card, with the same
+            // question and the review as the screen's subject.
+            HomeAskLink(
+                question: "About this review: what is the guest really saying, and is my reply right?",
+                screen: AskScreen(panel: "reviews", entityType: "review", entityId: "\(viewModel.review.id)")
+            )
         }
     }
 
@@ -342,7 +360,9 @@ struct ReviewDetailView: View {
             // model to "explain what will be done differently", so an
             // invented remediation — staff retrained, supplier changed —
             // used to go out as a statement of fact under the owner's name.
-            if let reason = viewModel.review.draftReviewReason, viewModel.review.draftIsFlagged {
+            // It follows the text on screen: a regenerate or a save that
+            // clears or raises the flag updates it here, as on the web.
+            if let reason = viewModel.flagReason, !isFinal {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 12, weight: .semibold))
