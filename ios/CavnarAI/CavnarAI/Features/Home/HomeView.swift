@@ -265,9 +265,9 @@ struct HomeView: View {
                                 .belowFold(heroAppeared, delay: 0.46)
                             }
 
-                            if !summary.isFresh {
-                                freshStart(summary)
-                            }
+                            // No readiness row after the recommendations
+                            // (owner's call, 9/26/26, web and iOS alike):
+                            // it leads the page only for a fresh account.
 
                             // The follow-through's work half — still open,
                             // check-ins, what connects, comps/voids and
@@ -652,9 +652,8 @@ struct HomeView: View {
 
     // MARK: - Sections
 
-    /// The first look and readiness — above the day for an account with
-    /// nothing connected, after the recommendations otherwise. Readiness
-    /// hides itself once complete.
+    /// The first look and readiness — above the day, for an account with
+    /// nothing connected only. Readiness hides itself once complete.
     @ViewBuilder
     private func freshStart(_ summary: HomeSummary) -> some View {
         if let look = summary.firstLook, !look.isEmpty {

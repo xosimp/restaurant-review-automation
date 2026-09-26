@@ -262,7 +262,9 @@ def test_home_has_one_primary_button_the_focus_cards():
 def test_the_focus_card_holds_one_thing_and_freshness_is_said_once():
     focus = _fn("renderFocus")
     assert "hbLive(" not in focus and "hbLive(" not in _fn("renderRecs")
-    assert "hbLive(d)" in _fn("hbDataChip") and 'data-dh-open="1"' in _fn("hbDataChip")
+    # The header carries no data chip (owner's call, 9/26/26): the strip
+    # below speaks only when a source is behind.
+    assert "hbDataChip(d)" not in _fn("renderTop")
     assert "if(hbFreshBehind(d))h+=renderFreshness(d);" in _fn("render")
 
 
@@ -302,4 +304,6 @@ def test_group_home_shows_every_item_above_the_table_and_the_night_per_location(
 def test_home_section_heads_are_two_levels():
     for name in ("renderFocus", "hbMilestone", "renderWelcome", "renderGroup", "renderHero"):
         assert 'class="hb-kicker"' not in _fn(name), name
-    assert '<span class="hb-h3">Results</span>' in _fn("render")
+    # Results is an orange kicker with nothing beside it (owner, 9/26/26),
+    # like Reviews' Trends.
+    assert '<summary><span class="hb-kicker">Results</span></summary>' in _fn("render")

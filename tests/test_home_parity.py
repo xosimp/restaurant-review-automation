@@ -1,3 +1,4 @@
+import os
 """Web / iOS parity round (9/25/26): Home, the brief, notifications and
 locations. Each test names the audit finding it pins.
 
@@ -262,13 +263,16 @@ def _dash():
         return f.read()
 
 
-def test_web_readiness_follows_the_recommendations_whenever_setup_is_incomplete():
+def test_readiness_leads_only_a_fresh_account_and_never_follows_the_recommendations():
+    """Owner's call, 9/26/26: no readiness pills under Cavnar AI recommends,
+    on web or iOS; a brand-new account still leads with it."""
     src = _dash()
     body = src[src.index("  function render(d){"):]
     body = body[:body.index("hbFollow();")]
-    assert "if(fresh)h+=renderReadiness(d);" in body, "a brand-new account still leads with it"
-    assert "if(!fresh)h+=renderReadiness(d);" in body
-    assert body.index("if(!fresh)h+=renderReadiness(d);") > body.index("h+=renderRecs(d,")
+    assert "if(fresh)h+=renderReadiness(d);" in body
+    assert "if(!fresh)h+=renderReadiness(d);" not in body
+    ios = open(os.path.join(os.path.dirname(__file__), "..", "ios", "CavnarAI", "CavnarAI", "Features", "Home", "HomeView.swift"), encoding="utf-8").read()
+    assert "if !summary.isFresh {\n                                freshStart(summary)" not in ios
 
 
 def test_web_and_phone_value_ranges_are_one_set():

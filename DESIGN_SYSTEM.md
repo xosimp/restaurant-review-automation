@@ -816,9 +816,9 @@ the 300-second drill-down.
 5. What Cavnar AI recommends — three cards of title, why, $, confidence pill
    and one action with Done / Not for us; what it rests on, "Risk if left
    alone", "Could also be…", Assign and Track under the card's Details —
-   then readiness (leads the page instead when nothing is connected yet,
-   hides once complete; a module with no data is a readiness item, never a
-   placeholder tile).
+   and no readiness row under them (owner's call, 9/26/26): readiness leads
+   the page only when nothing is connected yet, and hides once complete; a
+   module with no data is a readiness item, never a placeholder tile.
 6. Still open (web) and the close-out: before 6pm local one row, "Close-out
    for 9/25/26 · not filed · Write it →", that opens the form in place; 6pm
    to 8pm the full form.
