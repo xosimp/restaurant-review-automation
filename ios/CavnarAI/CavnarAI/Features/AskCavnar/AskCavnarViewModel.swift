@@ -25,6 +25,10 @@ struct ChatMessage: Identifiable {
     var suggestions: [AskSuggestion] = []
     /// The owner's rating of this answer, once given (true = useful).
     var rating: Bool? = nil
+    /// After a No: true once the optional "What was missing?" line was sent
+    /// or skipped, so the field closes. Web asks the same (dashboard.html
+    /// _appendAskCavnarFeedback).
+    var noteSettled: Bool = false
     /// Set once this message's typewriter reveal has actually played. The
     /// view model (not the view) owns this because the view's own @State is
     /// torn down every time the screen goes away — without a model-level
@@ -704,25 +708,42 @@ final class AskCavnarViewModel {
     struct FeedbackBody: Encodable, Equatable {
         let message_id: Int
         let helpful: Bool
+        /// Omitted when nil (synthesized encodeIfPresent), as on web.
+        var note: String? = nil
     }
 
-    /// "Was this useful?" — POST /ask-cavnar/feedback {message_id, helpful}.
-    /// Rating the same answer again replaces the rating server-side. The
-    /// rating is shown once the server has it; a failure leaves the
-    /// question up to be asked again.
+    /// "Was this useful?" — POST /ask-cavnar/feedback {message_id, helpful,
+    /// note?}. Rating the same answer again replaces the rating server-side,
+    /// so a No and then its note are one rating, never two. The rating is
+    /// shown once the server has it; a failure leaves the question up to be
+    /// asked again.
     @discardableResult
-    func rate(_ message: ChatMessage, helpful: Bool) async -> Bool {
+    func rate(_ message: ChatMessage, helpful: Bool, note: String? = nil) async -> Bool {
         guard let messageId = message.messageId else { return false }
+        let clean = (note ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let sentNote: String? = clean.isEmpty ? nil : String(clean.prefix(Self.feedbackNoteMax))
         let r: PlainOK? = try? await client.send(
             "/mobile/api/ask-cavnar/feedback", method: .post,
-            body: FeedbackBody(message_id: messageId, helpful: helpful),
+            body: FeedbackBody(message_id: messageId, helpful: helpful, note: sentNote),
             hapticOnError: false, retryTransient: false)
         guard r?.ok == true else { return false }
         if let idx = messages.firstIndex(where: { $0.id == message.id }) {
             messages[idx].rating = helpful
+            if sentNote != nil { messages[idx].noteSettled = true }
         }
         Haptic.success()
         return true
+    }
+
+    /// The web field's maxlength for the "What was missing?" line.
+    static let feedbackNoteMax = 500
+
+    /// The owner closed the "What was missing?" field without writing
+    /// anything: the No already stands, so nothing more is sent.
+    func skipFeedbackNote(_ message: ChatMessage) {
+        if let idx = messages.firstIndex(where: { $0.id == message.id }) {
+            messages[idx].noteSettled = true
+        }
     }
 
     /// Marks an answer as having already played its typewriter reveal, so

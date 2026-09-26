@@ -69,6 +69,10 @@ targets:
         NSFaceIDUsageDescription: "Cavnar AI uses Face ID to keep your restaurant's data secure when you return to the app."
         # Scan invoice opens the VisionKit document camera (Friction #28).
         NSCameraUsageDescription: "Cavnar AI uses the camera to scan supplier invoices so their prices can update your food costs."
+        # Voice Ask (AskVoiceInput.swift): the mic button in Ask's composer
+        # types what you say into the question field; you read it and send.
+        NSMicrophoneUsageDescription: "Cavnar AI uses the microphone when you tap the mic in Ask, so you can say your question instead of typing it."
+        NSSpeechRecognitionUsageDescription: "Cavnar AI turns what you say in Ask into text in the question field. It is recognized on your iPhone when possible, and nothing is sent until you tap send."
         # The auto-publish / supplier-order countdown with Undo (Friction #47).
         NSSupportsLiveActivities: true
         # Home Screen quick actions (Friction #31). Static so they exist before

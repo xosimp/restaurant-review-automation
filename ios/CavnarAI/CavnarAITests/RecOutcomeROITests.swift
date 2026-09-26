@@ -774,6 +774,15 @@ final class RecOutcomeROITests: XCTestCase {
         XCTAssertEqual(captured.value?["message_id"] as? Int, 88)
         XCTAssertEqual(captured.value?["helpful"] as? Bool, false)
         XCTAssertEqual(vm.messages.first?.rating, false)
+        // A bare No carries no note, and leaves the "What was missing?" field open.
+        XCTAssertNil(captured.value?["note"])
+        XCTAssertEqual(vm.messages.first?.noteSettled, false)
+        // The note goes as the same rating with `note` (the web field's shape), trimmed.
+        let noted = await vm.rate(message, helpful: false, note: "  the Tuesday numbers  ")
+        XCTAssertTrue(noted)
+        XCTAssertEqual(captured.value?["note"] as? String, "the Tuesday numbers")
+        XCTAssertEqual(captured.value?["helpful"] as? Bool, false)
+        XCTAssertEqual(vm.messages.first?.noteSettled, true)
         // No id, no request.
         let none = await vm.rate(ChatMessage(text: "x", isUser: false), helpful: true)
         XCTAssertFalse(none)
