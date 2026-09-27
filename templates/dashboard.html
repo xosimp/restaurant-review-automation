@@ -8949,6 +8949,12 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .rul-row .ac-input,.rul-row .ac-select{width:auto;padding:5px 8px;font-size:13.5px}
 .rul-row .ac-input.n{width:64px;text-align:center}
 .rul-sw{display:flex;gap:12px;align-items:center;padding:10px 0;border-top:1px solid var(--hb-line2)}
+/* Someone new to text, under the issue routing rows (9/27/26). */
+.ac-route-add{display:grid;gap:10px;padding:14px 16px;margin:4px 0 10px;border-radius:12px;background:var(--hb-tint)}
+.ac-route-add .k{font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember)}
+.ac-route-add .ac-input{flex:1;min-width:160px}
+.ac-route-consent{display:flex;gap:9px;align-items:flex-start;font-size:13.5px;line-height:1.5;color:var(--ink2);cursor:pointer}
+.ac-route-consent input{accent-color:var(--ember);margin-top:3px;flex:none}
 /* A day inside a switch's sentence ("Cavnar AI drafts every [Thursday]",
    owner 9/27/26): the sentence stays one line, the day is its only control. */
 .rul-sw .sw-day{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap}
@@ -12073,6 +12079,11 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ac-disc{border-top:1px solid var(--ac-line);padding:10px 0 0;margin-top:6px}
 .ac-disc-body{display:none;padding:8px 0 4px}
 .ac-disc-body.open{display:block}
+.ac-log-modal{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07)}
+[data-theme="dark"] .ac-log-modal{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07)}
+.ac-log-card{width:620px;max-height:min(80vh,720px);display:flex;flex-direction:column}
+.ac-log-bd{overflow:auto;margin-top:10px;font-size:14.5px;line-height:1.5;color:var(--ink2);min-height:0}
+.ac-log-bd .ac-disc-body{padding:0}
 
 /* Join code */
 .ac-code{font-family:'Space Grotesk',sans-serif;font-variant-numeric:tabular-nums;font-size:34px;font-weight:600;letter-spacing:.18em;color:var(--ember);line-height:1}
@@ -12289,7 +12300,6 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
           <div class="ac-field"><label for="pe-signoff">Sign-off name</label><input class="ac-input" id="pe-signoff" value="{{restaurant.sign_off_name or ''}}" placeholder="e.g. Maria &amp; the team"></div>
           <div class="ac-field wide"><label for="pe-voice">How you sound</label><textarea class="ac-textarea" id="pe-voice" rows="2" placeholder="e.g. genuine and warm, a little witty, never corporate">{{restaurant.voice_notes or ''}}</textarea></div>
           <div class="ac-field"><label for="pe-never">Words to never use</label><input class="ac-input" id="pe-never" value="{{restaurant.never_say or ''}}" placeholder="e.g. culinary journey, indulge"></div>
-          <div class="ac-field" style="grid-column:span 2"><label for="pe-menu">Menu &amp; current specials</label><textarea class="ac-textarea" id="pe-menu" rows="2" placeholder="Signature dishes and what's running now">{{restaurant.menu_notes or ''}}</textarea></div>
         </div>
         <div class="ac-inline" style="margin-top:14px">
           <button class="cbtn cbtn-primary" id="pe-save" onclick="saveProfile()">Save changes</button>
@@ -12368,7 +12378,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
             <div class="c"><input class="ac-input ac-num" type="text" id="as-rp-opened" inputmode="numeric" maxlength="4" placeholder="2019" aria-label="Year you opened" style="width:110px"{% if not _is_owner %} disabled{% endif %}></div></div>
           <div class="ac-row"><div class="l"><b>Your targets</b><span id="as-rp-targets"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></span></div><div class="c"></div></div>
         </div>
-        <div class="ac-inline" style="margin-top:12px">{% if _is_owner %}<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="saveRestaurantProfile()">Confirm profile</button>{% endif %}<span class="ac-note" id="as-rp-confirmed" style="margin-top:0"></span></div>
+        <div class="ac-inline" style="margin-top:12px">{% if _is_owner %}<button type="button" class="cbtn cbtn-secondary cbtn-sm" id="as-rp-confirm" onclick="saveRestaurantProfile()">Confirm profile</button>{% endif %}<span class="ac-note" id="as-rp-confirmed" style="margin-top:0"></span></div>
         {% if not _is_owner %}<div class="ac-note">Only the account owner can change the restaurant profile.</div>{% endif %}
       </div>
 
@@ -12615,13 +12625,25 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-mb-enabled" onchange="saveMorningBrief()" aria-label="Morning brief"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
             <div class="ac-row"><div class="l"><b>Send it at</b><span>Your restaurant&rsquo;s local time.</span></div>
               <div class="c"><select class="ac-select" id="as-mb-hour" onchange="saveMorningBrief()" aria-label="Morning brief hour"></select></div></div>
-            <div class="ac-row"><div class="l"><b>Issues go to</b><span>Texted a link when a bad review lands or you open an issue. Only contacts who consented to texts can be picked.</span></div>
+            <div class="ac-row"><div class="l"><b>Issues go to</b><span>Texted a link when a bad review lands or you open an issue. Pick someone who agreed to texts, or add them here.</span></div>
               <div class="c"><select class="ac-select" id="as-route-manager" onchange="saveIssueRouting('manager')" aria-label="Issues go to"></select></div></div>
             <div class="ac-row"><div class="l"><b>If nobody responds, escalate to</b><span id="as-route-esc-note">After two hours unacknowledged.</span></div>
               <div class="c"><select class="ac-select" id="as-route-escalation" onchange="saveIssueRouting('escalation')" aria-label="Escalate to"></select></div></div>
-            <div class="ac-row"><div class="l"><b>Hold alerts through service</b><span>A two-star review at 12:15 can\u2019t be acted on until the rush is over. Held alerts arrive when it ends; health alerts never wait.</span></div>
+            {# Someone new to text, added from the row itself (owner, 9/27/26):
+               with no alert contact on file both lists held only Nobody. The
+               person joins the alert contacts (at most two people). #}
+            <div class="ac-route-add" id="as-route-add" hidden>
+              <div class="k" id="as-route-add-k">Add someone to text</div>
+              <div class="ac-inline">
+                <input class="ac-input" id="as-route-add-name" autocomplete="name" placeholder="Their name" aria-label="Their name" maxlength="60">
+                <input class="ac-input" id="as-route-add-phone" type="tel" autocomplete="tel" placeholder="Mobile number" aria-label="Mobile number">
+              </div>
+              <label class="ac-route-consent"><input type="checkbox" id="as-route-add-consent"> They agreed to receive operational texts from Cavnar AI. Message &amp; data rates may apply; reply STOP to cancel, HELP for help.</label>
+              <div class="ac-inline"><button type="button" class="cbtn cbtn-secondary cbtn-sm" id="as-route-add-go" onclick="routeAddSave(this)">Add and send issues to them</button><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="routeAddCancel()">Cancel</button><span class="ac-status" id="as-route-add-status"></span></div>
+            </div>
+            <div class="ac-row"><div class="l"><b>Hold alerts through service</b><span>A two-star review at 12:15 can&rsquo;t be acted on until the rush is over. Held alerts arrive when it ends; health alerts never wait.</span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-hold-alerts" onchange="saveMorningBrief()" aria-label="Hold alerts through service"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
-            <div class="ac-row"><div class="l"><b>Text the manager tonight\u2019s lineup notes</b><span>The staff briefing, sent to whoever issues are routed to, with a link to read it with the team.</span></div>
+            <div class="ac-row"><div class="l"><b>Text the manager tonight&rsquo;s lineup notes</b><span>The staff briefing, sent to whoever issues are routed to, with a link to read it with the team.</span></div>
               <div class="c"><select class="ac-select" id="as-preshift-hour" onchange="saveMorningBrief()" aria-label="Lineup notes hour"></select></div></div>
           </div>
           <div class="ac-status" id="as-ops-status" style="margin-top:8px"></div>
@@ -12667,7 +12689,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
         </div>
         <div class="ac-card">
           <div class="ac-card-h"><div><h3>Auto-approve 5-star replies</h3><p>Drafted replies to 5-star reviews are approved automatically &mdash; and posted, when Google Business is connected. Capped per day, with a pause switch.</p></div>
-            <div class="r"><span class="ac-status" id="as-auto-status"></span><button class="cbtn cbtn-secondary cbtn-sm" onclick="saveAutoApprove()">Save rule</button></div></div>
+            <div class="r"><span class="ac-status" id="as-auto-status"></span><button class="cbtn cbtn-secondary cbtn-sm" id="as-auto-save" onclick="saveAutoApprove()">Save rule</button></div></div>
           <div class="ac-rows">
             <div class="ac-row"><div class="l"><b>Turn on auto-approve</b><span>Only 5-star reviews. Everything else still waits for you.</span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-auto-enabled" onchange="acctCapMeter()" aria-label="Turn on auto-approve"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
@@ -12689,7 +12711,6 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
             <div><dt>Brand voice</dt><dd class="{{ '' if restaurant.voice_notes else 'muted' }}">{{ restaurant.voice_notes or 'Not set — the AI falls back to a neutral, warm tone.' }}</dd></div>
             <div><dt>Language &middot; Sign-off</dt><dd>{{ ({'':'English','es':'Spanish','fr':'French','it':'Italian','pt':'Portuguese','de':'German'})[restaurant.response_language or ''] }} &middot; {{ restaurant.sign_off_name or 'No sign-off' }}</dd></div>
             {% if restaurant.never_say %}<div><dt>Never says</dt><dd>{{ restaurant.never_say }}</dd></div>{% endif %}
-            {% if restaurant.menu_notes %}<div><dt>Menu highlights</dt><dd>{{ restaurant.menu_notes }}</dd></div>{% endif %}
           </dl>
         </div>
       </div>
@@ -12703,11 +12724,9 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
           <button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="acctRemember(this)">Remember</button>
         </div>
       </div>
-      <div class="ac-card" id="acct-decisions-card">
-        <div class="ac-card-h"><div><h3>What you&rsquo;ve decided</h3><p>Every recommendation, issue and proposal, what you did with it, and what was measured afterwards. Ask Cavnar AI reads this before it recommends anything.</p></div></div>
-        <div id="acct-decisions-list" class="ac-status"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></div>
-        <div class="ac-note" style="margin-top:10px">What you followed by area, what worked, results to check in on and every recommendation shown: <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rh="open">Your recommendations &rarr;</button></div>
-      </div>
+      {# "What you've decided" left settings (owner, 9/27/26): Home's Your
+         recommendations already shows every recommendation and what came of
+         it. /api/decisions stays - Ask and the phone read it. #}
       <div class="ac-card" id="acct-trust-card">
         <div class="ac-card-h"><div><h3>Why Cavnar AI stopped asking</h3><p>Nothing runs on its own until your own record earns it. This is that record.</p></div></div>
         <div id="acct-trust-list" class="ac-status"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></div>
@@ -12834,7 +12853,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
           <div class="ac-card-h"><div><h3>Sign-in protection</h3></div></div>
           <div class="ac-rows">
             <div class="ac-row"><div class="l"><b>Two-factor authentication</b><span>{% if restaurant.two_fa_enabled %}A code by {{ 'text' if restaurant.two_fa_method == 'sms' else 'email' }} on new-device sign-ins.{% else %}Adds a one-time code on new-device sign-ins.{% endif %}</span></div>
-              <div class="c">{% if restaurant.two_fa_enabled %}<span class="ac-chip sm good"><i></i>On</span><button onclick="toggle2FA(false)" class="cbtn cbtn-secondary cbtn-sm">Disable</button>{% else %}<button onclick="document.getElementById('twofa-modal').style.display='flex'" class="cbtn cbtn-secondary cbtn-sm">Enable</button>{% endif %}</div></div>
+              <div class="c">{% if restaurant.two_fa_enabled %}<span class="ac-chip sm good"><i></i>On</span><button onclick="toggle2FA(false)" class="cbtn cbtn-secondary cbtn-sm">Disable</button>{% else %}<button onclick="document.getElementById('twofa-modal').style.display='flex'" class="cbtn cbtn-secondary cbtn-sm" data-twofa-enable>Enable</button>{% endif %}</div></div>
             <div class="ac-row"><div class="l"><b>Password</b><span>Change it any time; every other device is signed out.</span></div>
               <div class="c"><button class="cbtn cbtn-secondary cbtn-sm" onclick="document.getElementById('pw-modal').style.display='flex'">Change</button></div></div>
             <div class="ac-row"><div class="l"><b>Recovery email</b><span id="rec-status"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></span></div></div>
@@ -12866,11 +12885,11 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
         <div class="ac-card">
           <div class="ac-card-h"><div><h3>Activity</h3><p>Sign-ins and account changes, newest first.</p></div></div>
           <div class="ac-disc" style="border-top:none;padding-top:0;margin-top:0">
-            <button class="cbtn cbtn-text cbtn-inline cbtn-sm" type="button" aria-expanded="false" aria-controls="login-history" onclick="acctDisclose(this,'login-history')">Sign-in history &#9662;</button>
+            <button class="cbtn cbtn-text cbtn-inline cbtn-sm" type="button" aria-haspopup="dialog" onclick="acctLogOpen('login-history','Sign-in history')">Sign-in history &rarr;</button>
             <div id="login-history" class="ac-disc-body"></div>
           </div>
           <div class="ac-disc">
-            <button class="cbtn cbtn-text cbtn-inline cbtn-sm" type="button" aria-expanded="false" aria-controls="activity-log" onclick="acctDisclose(this,'activity-log')">Account activity &#9662;</button>
+            <button class="cbtn cbtn-text cbtn-inline cbtn-sm" type="button" aria-haspopup="dialog" onclick="acctLogOpen('activity-log','Account activity')">Account activity &rarr;</button>
             <div id="activity-log" class="ac-disc-body"></div>
           </div>
         </div>
@@ -13468,6 +13487,13 @@ function _setAskCavnarLoadingState(bubble, label, state) {
     if (open) { markSeen(); render(); }
   };
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && open) aiFeedToggle(); });
+  // A click anywhere outside the panel and its pill closes it (owner,
+  // 9/27/26: only the pill itself did).
+  document.addEventListener('click', function (e) {
+    if (!open || !e.target || !e.target.closest) return;
+    if (e.target.closest('#ai-feed') || e.target.closest('#ai-strip')) return;
+    aiFeedToggle();
+  });
   document.addEventListener('visibilitychange', function () { if (!document.hidden) load(); });
   load();
   pollTimer = setInterval(load, 60000);
@@ -23107,7 +23133,6 @@ function openAlertsModal() {
     if (digestDayEl) digestDayEl.value = s.digest_day || 'monday';
     document.getElementById('al-quiet-start').value = s.alert_quiet_start || '';
     document.getElementById('al-quiet-end').value   = s.alert_quiet_end || '';
-    document.getElementById('al-max-per-day').value = s.alert_max_per_day || 0;
     updateSmsConsentVisibility();
   });
 }
@@ -23209,6 +23234,7 @@ function loadAccountSettings() {
     document.getElementById('as-auto-paused').checked = !!a.paused;
     var a4 = document.getElementById('as-auto-4star'); if (a4) a4.checked = !!a.include_4star;
     var ae = document.getElementById('as-auto-earned'); if (ae) ae.checked = !!a.earned;
+    AA_SAVED = aaSnap(); if (window.aaSync) aaSync();
     var at = document.getElementById('as-auto-trust');
     if (at) {
       // The owner's own record per band, from the server — never a guess.
@@ -23269,20 +23295,7 @@ function loadOpsSettings() {
     if (lc) lc.hidden = false;
     acctShowLevel(d.settings.briefing_level || 'normal');
   }).catch(function() {});
-  fetch('/api/issues/routing', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
-    if (!d || !d.ok) return;
-    var roles = ['manager', 'escalation'];
-    for (var j = 0; j < roles.length; j++) {
-      var role = roles[j], cur = (d.routing[role] || {}).contact_id;
-      var h = '<option value="">' + (role === 'manager' ? 'Nobody — don’t open issues' : 'Nobody') + '</option>';
-      for (var k = 0; k < d.contacts.length; k++) {
-        var c = d.contacts[k];
-        h += '<option value="' + c.id + '"' + (c.id === cur ? ' selected' : '') + (c.sms_consent ? '' : ' disabled') + '>'
-           + _ehEsc(c.name || ('Contact ' + c.id)) + (c.sms_consent ? '' : ' (no text consent)') + '</option>';
-      }
-      document.getElementById('as-route-' + role).innerHTML = h;
-    }
-  }).catch(function() {});
+  loadIssueRouting();
   fetch('/api/labor/auto-draft', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
     if (!d || !d.ok) return;
     var row = document.getElementById('as-autodraft-row');
@@ -23516,10 +23529,65 @@ function saveMorningBrief(statusId) {
   }, (typeof statusId === 'string' && statusId) || 'as-ops-status', 'Saved');
 }
 
+// Issues go to / escalate to: everyone Cavnar AI can text, and a last
+// option to add someone (owner, 9/27/26 - with no alert contact on file the
+// lists held only Nobody).
+function paintIssueRouting(d) {
+  var roles = ['manager', 'escalation'];
+  for (var j = 0; j < roles.length; j++) {
+    var role = roles[j], cur = (d.routing[role] || {}).contact_id, sel = document.getElementById('as-route-' + role);
+    if (!sel) continue;
+    var h = '<option value="">' + (role === 'manager' ? 'Nobody \u2014 don\u2019t open issues' : 'Nobody') + '</option>';
+    for (var k = 0; k < d.contacts.length; k++) {
+      var c = d.contacts[k];
+      h += '<option value="' + c.id + '"' + (c.id === cur ? ' selected' : '') + (c.sms_consent ? '' : ' disabled') + '>'
+         + _ehEsc(c.name || ('Contact ' + c.id)) + (c.sms_consent ? '' : ' (no text consent)') + '</option>';
+    }
+    h += '<option value="__add">+ Add someone to text\u2026</option>';
+    sel.innerHTML = h;
+    sel.setAttribute('data-cur', cur ? String(cur) : '');
+  }
+}
+function loadIssueRouting() {
+  fetch('/api/issues/routing', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
+    if (d && d.ok) paintIssueRouting(d);
+  }).catch(function() {});
+}
+var _routeAddRole = null;
 function saveIssueRouting(role) {
-  var v = document.getElementById('as-route-' + role).value;
+  var sel = document.getElementById('as-route-' + role), v = sel.value;
+  if (v === '__add') {
+    sel.value = sel.getAttribute('data-cur') || '';
+    _routeAddRole = role;
+    var box = document.getElementById('as-route-add');
+    document.getElementById('as-route-add-k').textContent = role === 'manager' ? 'Add someone to send issues to' : 'Add someone to escalate to';
+    box.hidden = false;
+    document.getElementById('as-route-add-name').focus();
+    return;
+  }
   asPost('/api/issues/routing', {role: role, contact_id: v ? parseInt(v, 10) : null},
-         'as-ops-status', 'Issue routing saved');
+         'as-ops-status', 'Issue routing saved').then(function(d) { if (d && d.ok) sel.setAttribute('data-cur', v); });
+}
+function routeAddCancel() {
+  var box = document.getElementById('as-route-add'); if (box) box.hidden = true;
+  _routeAddRole = null;
+}
+function routeAddSave(btn) {
+  if (!_routeAddRole || btn.disabled) return;
+  var name = document.getElementById('as-route-add-name').value.trim(), phone = document.getElementById('as-route-add-phone').value.trim();
+  var ok = document.getElementById('as-route-add-consent').checked;
+  if (!name || !phone) { asFlash('as-route-add-status', 'Add their name and mobile number.'); return; }
+  if (!ok) { asFlash('as-route-add-status', 'Tick the box once they have agreed to texts.'); return; }
+  var done = cbtnBusy(btn, 'Adding\u2026');
+  asPost('/api/issues/routing/contact', {role: _routeAddRole, name: name, phone: phone, consent: true}, 'as-route-add-status', '').then(function(d) {
+    done();
+    if (!d || !d.ok) return;
+    paintIssueRouting(d);
+    toast((_routeAddRole === 'manager' ? 'Issues now go to ' : 'Issues now escalate to ') + name, 'success');
+    document.getElementById('as-route-add-name').value = ''; document.getElementById('as-route-add-phone').value = '';
+    document.getElementById('as-route-add-consent').checked = false;
+    routeAddCancel();
+  });
 }
 
 function saveAutoDraft() {
@@ -23647,25 +23715,6 @@ function acctRemember(btn) {
     .then(apiJson).then(function (d) { done(); if (d && d.ok) { inp.value = ''; } if (typeof toast === 'function') toast(d && d.ok ? 'Remembered' : ((d && d.error) || 'Could not save'), d && d.ok ? 'success' : 'error'); loadMemory(); })
     .catch(function () { done(); });
 }
-function loadDecisions() {
-  var el = document.getElementById('acct-decisions-list'); if (!el) return;
-  fetch('/api/decisions', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
-    if (!d || !d.ok) return;
-    var rows = d.decisions || [];
-    if (!rows.length) { el.innerHTML = '<div class="pe"><b>Nothing decided yet.</b><span>When you answer a recommendation on Home, resolve an issue or confirm a proposal in Ask, it is kept here with what it measured.</span></div>'; return; }
-    var h = '';
-    for (var i = 0; i < rows.length && i < 30; i++) { var r = rows[i], sub = [];
-      var ans = r.answer || 'open';
-      if (r.times_hidden > 1) ans += ' (hidden ' + r.times_hidden + 'x)';
-      if (r.reason) sub.push('because: ' + r.reason);
-      if (r.outcome) { sub.push(r.outcome.status === 'evaluated' ? ('measured: ' + (r.outcome.verdict || 'unknown') + (r.outcome.dollars_monthly ? ' \u00b7 about $' + Math.round(Math.abs(r.outcome.dollars_monthly)).toLocaleString() + '/mo' : '')) : ('measuring until ' + mdy(String(r.outcome.evaluate_on || '').slice(0, 10)))); }
-      if (r.issue && r.issue.note) sub.push('resolved: ' + r.issue.note);
-      var when = r.answered_on || r.asked_on; if (when) sub.push(mdy(when));
-      h += '<div class="ac-row"><div class="l"><b>' + esc(r.title || '') + '</b><span>' + esc(sub.join(' \u00b7 ')) + '</span></div><div class="c"><span class="ac-chip sm' + (ans === 'done' || ans === 'confirmed' || ans === 'resolved' ? ' good' : '') + '">' + esc(ans) + '</span></div></div>';
-    }
-    el.innerHTML = h;
-  }).catch(function() { el.textContent = 'Could not load.'; });
-}
 function loadTrust() {
   var el = document.getElementById('acct-trust-list'); if (!el) return;
   fetch('/api/account/trust', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
@@ -23687,7 +23736,7 @@ function loadTrust() {
   }).catch(function() { el.textContent = 'Could not load.'; });
 }
 function loadPause() {
-  loadMemory(); loadDecisions(); loadTrust(); loadRestaurantProfile();
+  loadMemory(); loadTrust(); loadRestaurantProfile();
   fetch('/api/account/pause', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
     if (!d || !d.ok || !d.can_pause) return;
     var card = document.getElementById('acct-pause-card'); if (card) card.hidden = false;
@@ -23706,14 +23755,33 @@ function acctResume(btn) {
   var done = cbtnBusy(btn, 'Resuming…');
   asPost('/api/account/resume', {}, 'acct-pause-status', 'Resumed').then(function() { done(); loadPause(); if (typeof loadAccountSettings === 'function') loadAccountSettings(); });
 }
+var AA_SAVED = null;
+function aaSnap() {
+  var c = function(id) { var el = document.getElementById(id); return !!(el && el.checked); };
+  return JSON.stringify([c('as-auto-enabled'), (document.getElementById('as-auto-cap') || {}).value, c('as-auto-paused'), c('as-auto-4star'), c('as-auto-earned')]);
+}
+// Saved and on: a green "Saved" (owner, 9/27/26). Saved and off: nothing
+// to save, so the button rests; any change brings "Save rule" back.
+window.aaSync = function() {
+  var btn = document.getElementById('as-auto-save'), same = AA_SAVED !== null && aaSnap() === AA_SAVED;
+  var on = !!(document.getElementById('as-auto-enabled') || {}).checked;
+  acSavedState(btn, same && on, 'Saved', 'Save rule');
+  if (btn && same && !on) btn.disabled = true;
+};
 function saveAutoApprove() {
+  var btn = document.getElementById('as-auto-save');
+  if (btn) { if (btn.disabled) return; btn.disabled = true; btn.textContent = 'Saving\u2026'; }
   asPost('/api/account-settings/auto-approve', {
     enabled: document.getElementById('as-auto-enabled').checked,
     daily_cap: parseInt(document.getElementById('as-auto-cap').value, 10) || 5,
     paused: document.getElementById('as-auto-paused').checked,
     include_4star: !!(document.getElementById('as-auto-4star') || {}).checked,
     earned: !!(document.getElementById('as-auto-earned') || {}).checked
-  }, 'as-auto-status', 'Saved').then(function() { loadAccountSettings(); });
+  }, 'as-auto-status', '').then(function(d) {
+    if (d && d.ok) { AA_SAVED = aaSnap(); aaSync(); if (!(document.getElementById('as-auto-enabled') || {}).checked) asFlash('as-auto-status', 'Saved \u2014 auto-approve is off'); }
+    else if (btn) { btn.disabled = false; btn.textContent = 'Save rule'; }
+    loadAccountSettings();
+  });
 }
 
 function saveAccountHours() {
@@ -23814,6 +23882,8 @@ function loadRestaurantProfile() {
       document.getElementById('as-rp-suggest-why').textContent = 'From your own figures. Who you are compared with does not change until you confirm.';
     } else { box.hidden = true; }
     document.getElementById('as-rp-confirmed').textContent = p.confirmed ? ('Confirmed' + (p.confirmed_at && window.mdy ? ' ' + window.mdy(rpLocalDay(p.confirmed_at)) : '') + '.') : 'Not confirmed yet.';
+    // A confirmed profile, unchanged, has nothing left to confirm.
+    RP_SAVED = p.confirmed ? rpSnap() : null; rpSync();
     var t = d.targets || {}, parts = [];
     if (t.labor) parts.push('Labor ' + (t.labor.pct != null ? t.labor.pct + '%' : '\u2014') + ' (' + t.labor.label + ')');
     if (t.food) parts.push('food cost ' + (t.food.pct != null ? t.food.pct + '%' : '\u2014') + ' (' + t.food.label + ')');
@@ -23839,17 +23909,41 @@ function rpAcceptSuggestion() {
   if (!document.getElementById('as-rp-sm').value) { rpFocus(); asFlash('as-rp-status', 'Pick how you serve, then confirm.'); return; }
   saveRestaurantProfile();
 }
+// A save that has landed stays said (owner, 9/27/26): the button turns into
+// a green, disabled "Saved" / "Confirmed" until something on its card
+// changes, so it can't be pressed again for nothing.
+function acSavedState(btn, saved, doneLabel, label) {
+  if (!btn) return;
+  btn.disabled = !!saved;
+  btn.classList.toggle('cbtn-success', !!saved); btn.classList.toggle('cbtn-ghost', !!saved); btn.classList.toggle('cbtn-done', !!saved);
+  btn.classList.toggle('cbtn-secondary', !saved);
+  btn.textContent = saved ? '\u2713 ' + doneLabel : label;
+}
+var RP_SAVED = null;
+function rpSnap() {
+  var v = function(id) { var el = document.getElementById(id); return el ? (el.type === 'checkbox' ? !!el.checked : el.value) : null; };
+  return JSON.stringify([v('as-rp-sm'), v('as-rp-concept'), v('as-rp-bar'), v('as-rp-own'), v('as-rp-opened')]);
+}
+function rpSync() { acSavedState(document.getElementById('as-rp-confirm'), RP_SAVED !== null && rpSnap() === RP_SAVED, 'Confirmed', 'Confirm profile'); }
 function saveRestaurantProfile() {
-  var sm = document.getElementById('as-rp-sm').value;
+  var sm = document.getElementById('as-rp-sm').value, btn = document.getElementById('as-rp-confirm');
   if (!sm) { asFlash('as-rp-status', 'Pick how you serve first.'); rpFocus(); return; }
+  if (btn) { if (btn.disabled) return; btn.disabled = true; btn.textContent = 'Confirming\u2026'; }
   asPost('/api/account-settings/restaurant-profile', {
     service_model: sm,
     concept: document.getElementById('as-rp-concept').value,
     bar_led: document.getElementById('as-rp-bar').checked,
     ownership: document.getElementById('as-rp-own').value,
     opened_year: document.getElementById('as-rp-opened').value
-  }, 'as-rp-status', 'Confirmed').then(function(d) { if (d && d.ok) loadRestaurantProfile(); });
+  }, 'as-rp-status', '').then(function(d) {
+    if (d && d.ok) { toast('Profile confirmed', 'success'); RP_SAVED = rpSnap(); rpSync(); loadRestaurantProfile(); }
+    else if (btn) { btn.disabled = false; btn.textContent = 'Confirm profile'; }
+  });
 }
+document.addEventListener('DOMContentLoaded', function() {
+  var card = document.getElementById('as-rp-card');
+  if (card) { card.addEventListener('change', rpSync); card.addEventListener('input', rpSync); }
+});
 
 function saveDataRetention() {
   asPost('/api/account-settings/data-retention',
@@ -23912,8 +24006,7 @@ function saveAlertSettings() {
     digest_enabled:        digestEnabledEl ? (digestEnabledEl.checked ? 1 : 0) : 1,
     digest_day:            digestDayEl2 ? digestDayEl2.value : 'monday',
     alert_quiet_start:     document.getElementById('al-quiet-start').value || null,
-    alert_quiet_end:       document.getElementById('al-quiet-end').value || null,
-    alert_max_per_day:     parseInt(document.getElementById('al-max-per-day').value) || 0
+    alert_quiet_end:       document.getElementById('al-quiet-end').value || null
   };
   var pushSave = {'al-push-1star':'al_1star_push','al-push-2star':'al_2star_push',
                   'al-push-5star':'al_5star_push','al-push-health':'al_health_push',
@@ -27003,10 +27096,13 @@ document.addEventListener('click', function(e) {
       </div>
     </div>
 
-    <!-- DND / frequency -->
+    <!-- Do-not-disturb. How often Cavnar AI speaks up is the one dial above
+         these settings, "How much to hear from Cavnar AI" (owner, 9/27/26):
+         the Max alerts/day select here said the same thing twice. A stored
+         alert_max_per_day is kept (the save no longer sends it). -->
     <div style="border-top:1px solid var(--paper3);padding-top:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Do-not-disturb &amp; frequency</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;align-items:end">
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Do-not-disturb</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:end">
         <div>
           <div style="font-size:14px;color:var(--ink3);margin-bottom:4px">Quiet start</div>
           <input id="al-quiet-start" type="time" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:15px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
@@ -27014,15 +27110,6 @@ document.addEventListener('click', function(e) {
         <div>
           <div style="font-size:14px;color:var(--ink3);margin-bottom:4px">Quiet end</div>
           <input id="al-quiet-end" type="time" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:15px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
-        </div>
-        <div>
-          <div style="font-size:14px;color:var(--ink3);margin-bottom:4px">Max alerts/day</div>
-          <select id="al-max-per-day" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:15px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
-            <option value="0">Unlimited</option>
-            {% for n in [1,2,3,5,10] %}
-            <option value="{{n}}">{{n}} per day</option>
-            {% endfor %}
-          </select>
         </div>
       </div>
       <div style="font-size:12px;color:var(--ink3);margin-top:8px">Times use Chicago timezone. Leave start/end blank to disable quiet hours.</div>
@@ -27100,7 +27187,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   window.saveProfile=function(){
     var done=busy(document.getElementById('pe-save'),'Saving…');
     var v=function(id){var el=document.getElementById(id);return el?el.value:'';};
-    jsend('/api/account/profile',{owner_name:v('pe-owner-name'),owner_phone:v('pe-phone'),timezone:v('pe-tz'),response_language:v('pe-lang'),sign_off_name:v('pe-signoff'),voice_notes:v('pe-voice'),never_say:v('pe-never'),menu_notes:v('pe-menu')},function(d){
+    jsend('/api/account/profile',{owner_name:v('pe-owner-name'),owner_phone:v('pe-phone'),timezone:v('pe-tz'),response_language:v('pe-lang'),sign_off_name:v('pe-signoff'),voice_notes:v('pe-voice'),never_say:v('pe-never')},function(d){
       done();
       if(d.ok){toast('Profile saved','success');cavRefreshFromServer(['acct-restaurant'],function(){if(window.acctHealthRefresh)acctHealthRefresh();});}
       else toast(d.error||'Could not save','error');
@@ -28820,9 +28907,32 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
   // so a reload, a link in an email or Back lands on the section. The
   // address is replaced, not pushed - scrolling the rail is not a step Back
   // should walk through. true when the section exists.
+  document.addEventListener('click',function(e){
+    var open=document.querySelectorAll('details.ac-more[open]');if(!open.length||!e.target||!e.target.closest)return;
+    var inside=e.target.closest('details.ac-more');
+    for(var i=0;i<open.length;i++){
+      // Outside it closes; a pick in its menu closes it too (its summary toggles as always).
+      if(open[i]!==inside||(e.target.closest('.ac-more-menu')&&e.target.closest('a,button')))open[i].open=false;
+    }
+  });
+  document.addEventListener('keydown',function(e){
+    if(e.key!=='Escape')return;
+    var open=document.querySelectorAll('details.ac-more[open]');for(var i=0;i<open.length;i++)open[i].open=false;
+  });
   window.acctGo=function(section,focusId){
     var el=$('acct-'+section);if(!el)return false;
     el.scrollIntoView({behavior:'smooth',block:'start'});
+    // The sections above fill in as their loaders answer, and a scroll aimed
+    // before they grew stopped short - "Turn on two-factor" landed on
+    // Integrations (owner, 9/27/26). Re-aim twice as the page settles,
+    // unless the owner has started scrolling themselves.
+    var moved=false;function mine(){moved=true;}
+    window.addEventListener('wheel',mine,{passive:true});window.addEventListener('touchmove',mine,{passive:true});
+    [700,1500].forEach(function(ms,k){setTimeout(function(){
+      if(!moved){var off=el.getBoundingClientRect().top-(parseFloat(getComputedStyle(el).scrollMarginTop)||0);
+        if(Math.abs(off)>24)el.scrollIntoView({behavior:'smooth',block:'start'});}
+      if(k===1){window.removeEventListener('wheel',mine);window.removeEventListener('touchmove',mine);}
+    },ms);});
     setCurrent(section);
     if(window.cavHistory&&$('panel-account')&&$('panel-account').classList.contains('active'))cavHistory('#account/'+section,true);
     if(focusId){setTimeout(function(){var f=$(focusId);if(f&&f.focus)f.focus({preventScroll:true});},450);}
@@ -28858,6 +28968,31 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     btn.setAttribute('aria-expanded',open?'true':'false');
     var l=btn.querySelector('.lbl');if(l)l.textContent=open?'Hide':'Show';
   };
+  // Sign-in history and Account activity open in a centred modal over a
+  // dimmed page (owner, 9/27/26), not inline. The list itself moves into
+  // the modal while it is open and back when it closes, so its loader keeps
+  // writing to the same element.
+  function acctLogHome(){
+    var m=$('acct-log-modal');if(!m||!m._home)return;
+    var h=m._home;h.el.classList.remove('open');
+    if(h.next&&h.next.parentNode===h.parent)h.parent.insertBefore(h.el,h.next);else h.parent.appendChild(h.el);
+    m._home=null;
+  }
+  window.acctLogOpen=function(id,title){
+    var body=$(id);if(!body)return;
+    var m=$('acct-log-modal');
+    if(!m){m=document.createElement('div');m.id='acct-log-modal';m.className='cmodal so-modal ac-log-modal';m.style.display='none';
+      m.setAttribute('role','dialog');m.setAttribute('aria-modal','true');m.setAttribute('aria-labelledby','acct-log-t');
+      m.innerHTML='<div class="so-card ac-log-card"><div class="hb-kicker">Security</div><h3 id="acct-log-t"></h3><div class="ac-log-bd"></div><div class="so-f"><button type="button" class="cbtn cbtn-secondary" data-log-close="1">Close</button></div></div>';
+      m.addEventListener('click',function(e){if(e.target===m||(e.target.closest&&e.target.closest('[data-log-close]'))){if(window.cModal)cModal.close('acct-log-modal');else acctLogClose();}});
+      document.body.appendChild(m);}
+    acctLogHome();
+    $('acct-log-t').textContent=title;
+    m._home={el:body,parent:body.parentNode,next:body.nextSibling};
+    body.classList.add('open');m.querySelector('.ac-log-bd').appendChild(body);
+    if(window.cModal)cModal.open('acct-log-modal',{close:'acctLogClose'});else m.style.display='flex';
+  };
+  window.acctLogClose=function(){var m=$('acct-log-modal');if(!m)return;acctLogHome();m.style.display='none';};
   window.acctDisclose=function(btn,id){
     var body=$(id);if(!body)return;
     var open=!body.classList.contains('open');
@@ -28867,6 +29002,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
 
   // Auto-approve cap as a picture of the ceiling, not just a number field.
   window.acctCapMeter=function(){
+    if(window.aaSync)aaSync();
     var cap=$('as-auto-cap'),bar=$('ac-cap-meter'),val=$('ac-cap-val'),lbl=$('ac-cap-label');
     if(!cap||!bar)return;
     var n=Math.max(1,Math.min(50,parseInt(cap.value,10)||5));
@@ -28906,7 +29042,9 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     integrations:['Fix your data connection',function(){acctGo('integrations');}],
     notifications:['Set up alerts',function(){acctGo('notifications');if(window.openAlertsModal&&flag('principal')!=='0')openAlertsModal();}],
     subscription:['Update your payment method',function(){var a=$('ac-qa-billing');if(a&&a.getAttribute('data-portal'))window.open(a.href,'_blank','noopener');else acctGo('billing');}],
-    security:['Turn on two-factor',function(){acctGo('security');}],
+    // Straight to the setup itself (owner, 9/27/26), on the Security section.
+    security:['Turn on two-factor',function(){acctGo('security');var en=document.querySelector('#acct-security [data-twofa-enable]');
+      if(en){if(window.cModal)cModal.open('twofa-modal');else $('twofa-modal').style.display='flex';}}],
     profile:['Finish your profile',function(){acctGo('restaurant');var pe=$('profile-edit');if(pe&&pe.style.display==='none'&&window.toggleProfileEdit)toggleProfileEdit();}],
     people:['Invite a teammate',function(){acctGo('people','team-name');}]
   };
@@ -29035,13 +29173,18 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     var bar=$('acct-dh-bar');if(bar){bar.className=tone;bar.style.width=(pct==null?0:pct)+'%';}
     var why=$('acct-dh-why');if(why)why.textContent=(o&&(o.reason||o.label))||((d&&d.error)||'');
     // One pill per source - what Home's strip showed before it moved here.
-    var src=$('acct-dh-src'),ss=(d&&d.ok&&d.sources)||[],CHIP={ok:'current',warn:'aging',bad:'stale',off:'disconnected'},ph='';
+    var src=$('acct-dh-src'),ss=(d&&d.ok&&d.sources)||[],CHIP={ok:'current',warn:'aging',bad:'stale',off:'disconnected'},ph='',pills=[];
     for(var i=0;i<ss.length;i++){var sv=ss[i]||{};if(!sv.label)continue;
-      var hp=sv.health_pct!=null?sv.health_pct:sv.pct,hc=hp==null?'':(hp>=80?'hi':(hp>0?'mid':'zero'));
+      var hp=sv.health_pct!=null?sv.health_pct:sv.pct,hc=hp==null?'':(hp>=80?'hi':(hp>0?'mid':'zero')),chip=CHIP[sv.tone]||'unknown';
       // The line often opens with the label ("Deliveries: Last delivery..."); say it once.
       var ln=String(sv.line||''),lb=String(sv.label);if(ln.toLowerCase().indexOf(lb.toLowerCase())===0)ln=ln.slice(lb.length).replace(/^[:\s]+/,'');
-      ph+='<span class="hb-fresh-it '+(CHIP[sv.tone]||'unknown')+'"><i></i><b>'+esc(sv.label)+'</b>'+(ln?' <span class="bs">'+esc(ln)+'</span>':'')
-        +(hp!=null?' <span class="pc hb-num '+hc+'">'+Math.round(+hp)+'%</span>':'')+'</span>';}
+      // Grouped by the colour the pill shows (owner, 9/27/26): green, then
+      // yellow, then red - a 0% reads red, an amber dot or a middling % yellow.
+      var rank=hc==='zero'?2:((chip==='aging'||chip==='stale'||chip==='disconnected'||hc==='mid')?1:(chip==='current'?0:3));
+      pills.push({r:rank,i:i,h:'<span class="hb-fresh-it '+chip+'"><i></i><b>'+esc(sv.label)+'</b>'+(ln?' <span class="bs">'+esc(ln)+'</span>':'')
+        +(hp!=null?' <span class="pc hb-num '+hc+'">'+Math.round(+hp)+'%</span>':'')+'</span>'});}
+    pills.sort(function(a,b){return a.r-b.r||a.i-b.i;});
+    for(var q=0;q<pills.length;q++)ph+=pills[q].h;
     if(src){src.innerHTML=ph;src.hidden=!ph;}
     acctHealthRefresh();
   };

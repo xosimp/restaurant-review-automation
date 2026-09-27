@@ -224,8 +224,10 @@ def test_helper_text_is_quieter_and_long_row_explanations_sit_behind_an_i():
 def test_account_filing():
     p = _panel()
     auto, sec = _section("automation"), _section("security")
-    for card in ('id="acct-memory-card"', 'id="acct-decisions-card"', 'id="acct-trust-card"'):
+    for card in ('id="acct-memory-card"', 'id="acct-trust-card"'):
         assert card in auto and card not in sec, card
+    # What you've decided left settings (owner, 9/27/26): Home's Your recommendations shows it.
+    assert 'id="acct-decisions-card"' not in p
     assert "Automation, AI &amp; memory" in auto
     # The daily report config: its own owner-only rail item and section.
     rep = _section("report")

@@ -257,6 +257,47 @@ def _do_routing_set(u):
     return {"ok": True, "routing": issues.get_routing(_rid(u))}, 200
 
 
+def _do_routing_contact(u):
+    """Add someone Cavnar AI can text and route issues to them, in one step
+    (owner, 9/27/26: with no alert contact on file, "Issues go to" listed
+    only Nobody and nothing on it could change that). The person joins the
+    account's alert contacts - the one list of people Cavnar AI texts, at
+    most notify.MAX_ALERT_CONTACTS, which the Alerts form saves whole - with
+    the consent the owner records, as the Alerts form records it."""
+    if not _principal(u):
+        return _forbidden()
+    import issues
+    import notify
+    from client_api import _normalize_phone_lenient
+    b = _body()
+    role = b.get("role")
+    if role not in issues.ROLES:
+        return {"ok": False, "error": "role must be manager or escalation"}, 400
+    name = str(b.get("name") or "").strip()[:60]
+    phone = _normalize_phone_lenient(str(b.get("phone") or ""))
+    if not name:
+        return {"ok": False, "error": "Add their name."}, 400
+    if not phone:
+        return {"ok": False, "error": "That doesn't look like a mobile number."}, 400
+    if not _flag(b.get("consent")):
+        return {"ok": False, "error": "Cavnar AI only texts someone who agreed to it - tick the box once they have."}, 400
+    rid = _rid(u)
+    contacts = notify.get_alert_contacts(rid) or []
+    same = next((c for c in contacts if c.get("phone") == phone), None)
+    if same:
+        cid = same["id"]
+        notify.grant_sms_consent(rid, cid)
+    elif len(contacts) >= notify.MAX_ALERT_CONTACTS:
+        return {"ok": False, "error": "Cavnar AI texts at most two people. Swap one out under Alerts first."}, 400
+    else:
+        cid = notify.add_alert_contact(rid, name, phone, sms_consent=True)
+    try:
+        issues.set_routing(rid, role, cid)
+    except (ValueError, TypeError) as e:
+        return {"ok": False, "error": str(e)}, 400
+    return _do_routing_get(u)
+
+
 # ── goals & outcomes ──────────────────────────────────────────────────────────
 
 def _do_goals_list(u):
@@ -4070,6 +4111,7 @@ _ROUTES = [
     ("/issues/<int:issue_id>/ask-cover", ["POST"], _do_issue_ask_cover, "issue_ask_cover"),
     ("/issues/routing", ["GET"], _do_routing_get, "issue_routing_get"),
     ("/issues/routing", ["POST"], _do_routing_set, "issue_routing_set"),
+    ("/issues/routing/contact", ["POST"], _do_routing_contact, "issue_routing_contact"),
     ("/goals", ["GET"], _do_goals_list, "goals_list"),
     ("/goals", ["POST"], _do_goal_set, "goal_set"),
     ("/goals/<int:goal_id>/end", ["POST"], _do_goal_end, "goal_end"),

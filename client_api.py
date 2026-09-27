@@ -4891,10 +4891,11 @@ def save_alert_settings(current_user):
     # extras — the client already hides its own "+ Add" past 2, but a
     # direct API call or a stale build should hear why it failed.
     raw_contacts = data.get("contacts") or []
-    if len(raw_contacts) > 2:
+    from notify import MAX_ALERT_CONTACTS
+    if len(raw_contacts) > MAX_ALERT_CONTACTS:
         return jsonify(ok=False, error="Alert contacts are limited to 2."), 400
     new_contacts = [((nc.get("name") or "").strip(), _normalize_phone_lenient(nc.get("phone") or ""))
-                    for nc in raw_contacts[:2]]
+                    for nc in raw_contacts[:MAX_ALERT_CONTACTS]]
 
     # SMS requires real, server-verified consent — the modal's checkbox is a
     # UX nicety, not enforcement, since anyone can call this API directly.

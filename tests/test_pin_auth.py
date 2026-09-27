@@ -5,6 +5,8 @@ the per-membership lockout is what protects a tablet on a pass. Both are
 tested here, along with the tenant scoping that keeps a guessed membership_id
 from reaching another restaurant.
 """
+import re
+
 import pytest
 
 import auth
@@ -67,9 +69,17 @@ def test_the_pin_is_never_stored_in_plain_text(db_path):
     conn = get_conn(db_path)
     row = conn.execute("SELECT pin_hash FROM memberships WHERE id=?", (mid,)).fetchone()
     conn.close()
-    assert row["pin_hash"]
-    assert "8317" not in row["pin_hash"]
-    assert len(row["pin_hash"]) > 40
+    stored = row["pin_hash"]
+    assert stored and len(stored) > 40
+    # A structural check, not a substring search: the random salt and the
+    # hex digest contain "8317" by chance about once in 600 runs, which
+    # failed this test with the PIN never stored (9/27/26). The value is
+    # pep<version>$<kdf>$<salt>$<digest> - no part of it is the PIN, and
+    # the digest is a KDF output.
+    parts = stored.split("$")
+    assert parts[0].startswith("pepv") and len(parts) == 4, stored
+    assert "8317" not in parts[0] + "$" + parts[1] and "8317" not in parts
+    assert re.fullmatch(r"[0-9a-f]{64,}", parts[3]), stored
 
 
 def test_two_employees_may_share_a_pin(db_path):

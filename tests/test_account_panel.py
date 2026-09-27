@@ -36,7 +36,7 @@ def _scripts():
 # rename it in the JS in the same commit and update this list.
 CONTRACT = """
 panel-account acct-status-dot profile-edit-btn profile-email-display profile-edit
-pe-owner-name pe-phone pe-tz pe-lang pe-signoff pe-voice pe-never pe-menu pe-save
+pe-owner-name pe-phone pe-tz pe-lang pe-signoff pe-voice pe-never pe-save
 acct-email-display
 revoke-sessions-btn sessions-list sec-score sec-bar sec-items bc-remaining bc-codes trusted-list
 rec-status rec-email rec-verify rec-code login-history activity-log

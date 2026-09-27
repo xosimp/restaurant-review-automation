@@ -750,6 +750,26 @@ def get_alert_contacts(restaurant_id: int, sms_consent_only: bool = False, db_pa
              "sms_consent": bool(r["sms_consent"])} for r in rows]
 
 
+# Cavnar AI texts at most this many people per location: the alert contacts
+# (the Alerts form, web and phone) and the people issues are routed to are
+# one list (issues.py routes to alert contacts).
+MAX_ALERT_CONTACTS = 2
+
+
+def grant_sms_consent(restaurant_id: int, contact_id: int, db_path: str = DB_PATH) -> None:
+    """Record consent for a contact that lacks it, stamped now; a contact
+    that already consented keeps its original stamp (the A2P/TCPA record)."""
+    from time_utils import restaurant_now_by_id
+    at = restaurant_now_by_id(restaurant_id, naive=True).isoformat()
+    conn = models.get_conn(db_path)
+    try:
+        conn.execute("UPDATE alert_contacts SET sms_consent=1, sms_consent_at=? WHERE id=? AND restaurant_id=? "
+                     "AND COALESCE(sms_consent,0)=0", (at, contact_id, restaurant_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def add_alert_contact(restaurant_id: int, name: str, phone: str,
                       sms_consent: bool = False, db_path: str = DB_PATH) -> int:
     """sms_consent must only be True when the number's own owner affirmatively
