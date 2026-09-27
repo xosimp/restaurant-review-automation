@@ -280,7 +280,11 @@ def test_the_async_populated_numbers_dont_depend_on_animation_frames_firing():
     number above, a paused requestAnimationFrame (a backgrounded tab is
     the standard case) would leave them wrong forever without this."""
     s = _src()
-    assert s.count("if(!done)totalEl.textContent=_fmtK(total);") == 1
+    # The donut total counts through the one engine, whose safety net lands
+    # any count whose frames never came (9/26/26).
+    assert "cavCount(totalEl,total,{fmt:_fmtK})" in s
+    eng = s[s.index("function cavCount(el, target, o) {"):s.index("window.cavCount = cavCount;")]
+    assert "(document.hidden || t < dur * 0.25)) { el.textContent = final;" in eng
     assert "setTimeout(function(){if(n.textContent.indexOf(String(worstV))<0)" in s
 
 

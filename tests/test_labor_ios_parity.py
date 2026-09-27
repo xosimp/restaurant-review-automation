@@ -203,7 +203,8 @@ def test_both_clients_say_the_total_adds_up_and_draw_the_withheld_state():
                               "StaffingBoardSection.swift"), encoding="utf-8").read()
     assert "above target at straight time + " in html and "above target at straight time + " in swift
     assert "above target · <span" not in html
-    assert "_sb.summary.dollars_withheld" in html and "staffing_board.summary.dollars_withheld" in html
+    # (Where the money went, which also said it, was removed 9/26/26; the board says it.)
+    assert "_sb.summary.dollars_withheld" in html
     assert "dollarsWithheld" in swift and "withheldText" in swift and "card.withheld" in swift
 
 

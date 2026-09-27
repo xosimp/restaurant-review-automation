@@ -132,6 +132,8 @@ One body per twin (parity round, 9/25/26):
 ### Intel (`/mobile/api/intel/*`, `/api/intel*`, `/api/ai-visibility*`)
 Competitor snapshots, AI-visibility run trigger + results.
 
+`/api/ai-visibility` and `/mobile/api/intel/ai-visibility` take **GET** (the recorded run: the six-hour process cache, else the last stored `ai_visibility_runs` row, `cached: true` + `measured_at`) and **POST** (9/26/26: the owner pressing Check / Re-run - every query runs live, `force=True`; the 3-per-minute limit and the budget ceiling still apply). Before this the buttons sent GET, so a check returned the stored run instantly. Ask's `read_ai_visibility` tool reads the GET path.
+
 `GET /api/intel/movement` and `/mobile/api/intel/movement` (one body, `mobile_api.mobile_intel_movement`): `?days` (default 90, max 365) → `{ok, days, movement[], significant[], arrived: [{place_id, name}], gone: [...], compared_from, compared_to, claim_kinds}` — `arrived`/`gone` compare the last two weekly snapshot dates (`compared_from`/`compared_to` are ISO dates, `null` until two exist); `significant` is the rating moves past the review-volume noise floor (`confidence_z` ≥ 2). Both Intel screens render it as "What changed" under Nearby competitors (parity round, 9/25/26); before two checks it says it needs two to compare, never "no change".
 
 ### Ask Cavnar (`/mobile/api/ask-cavnar/*`, `/api/ask-cavnar*`)

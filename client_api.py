@@ -5953,20 +5953,26 @@ def gbp_listing_update(current_user):
 
 # ── AI Visibility ─────────────────────────────────────────────────────────────
 
-@client_bp.route("/api/ai-visibility")
+@client_bp.route("/api/ai-visibility", methods=["GET", "POST"])
 @login_required
 def ai_visibility(current_user):
-    payload, status = _do_ai_visibility(current_user["restaurant_id"])
+    # POST is the owner pressing Check / Re-run: a live run of every query.
+    # GET serves the recorded run (six-hour cache, then the last stored run)
+    # - which is all the button ever did, so a "check" came back instantly
+    # with the old answers, verdicts and all (owner, 9/26/26).
+    payload, status = _do_ai_visibility(current_user["restaurant_id"], force=request.method == "POST")
     # The roadmap is built and presented here, where a person sees it — not
     # in _do_ai_visibility, which Ask's read_ai_visibility tool calls too.
     payload = present_ai_visibility_roadmap(current_user["restaurant_id"], payload, current_user.get("id"))
     return jsonify(**payload), status
 
 
-def _do_ai_visibility(rid):
-    """Shared by the web route above and mobile_api.py's own ai-visibility."""
+def _do_ai_visibility(rid, force=False):
+    """Shared by the web route above and mobile_api.py's own ai-visibility.
+    force=True runs the queries live (the owner asked); the rate limit and
+    the budget ceiling still apply."""
     try:
-        payload, status = _do_ai_visibility_inner(rid)
+        payload, status = _do_ai_visibility_inner(rid, force=force)
     except Exception as e:
         return {"ok": False, "error": _safe_err(e)}, 200
     # Applied on the way out as well as at build time, so a payload served

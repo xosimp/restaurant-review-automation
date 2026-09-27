@@ -324,7 +324,11 @@ final class AIVisibilityViewModel {
         isChecking = true
         defer { isChecking = false }
         do {
-            result = try await client.send("/mobile/api/intel/ai-visibility")
+            // POST runs every query live (a GET served the recorded run, so
+            // Re-run came back instantly with the old answers). The run
+            // takes tens of seconds; never retried on a guess - it is billed.
+            result = try await client.send("/mobile/api/intel/ai-visibility", method: .post,
+                                           timeout: 110, retryTransient: false)
             await loadHistory()
         } catch {
             result = nil

@@ -1788,6 +1788,28 @@ def test_ai_visibility_reports_not_found_for_missing_restaurant(client, db_path,
     assert resp.get_json()["ok"] is False
 
 
+def test_ai_visibility_post_runs_live_and_get_serves_the_recorded_run(client, db_path, monkeypatch):
+    """Re-run came back instantly with the old answers: every call was a GET
+    and the GET serves the stored run (owner, 9/26/26). A POST is the owner
+    asking - every query live."""
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    seen = []
+
+    def fake(r, force=False):
+        seen.append(force)
+        return {"ok": True, "queries": []}, 200
+    monkeypatch.setattr("client_api._do_ai_visibility_inner", fake)
+    client.get("/mobile/api/intel/ai-visibility", headers=_auth_headers(token))
+    client.post("/mobile/api/intel/ai-visibility", headers=_auth_headers(token), json={})
+    assert seen == [False, True]
+    src = open("templates/dashboard.html", encoding="utf-8").read()
+    run = src[src.index("function runAIVisibility(btn) {"):src.index("function aivRangeReading(")]
+    assert "fetch('/api/ai-visibility', {method: 'POST'" in run
+    swift = open("ios/CavnarAI/CavnarAI/Features/Intel/AIVisibilityViewModel.swift", encoding="utf-8").read()
+    assert 'client.send("/mobile/api/intel/ai-visibility", method: .post' in swift
+
+
 def test_ai_visibility_rate_limited(client, db_path, monkeypatch):
     rid = _restaurant(db_path)
     token = _login(client, db_path, rid)

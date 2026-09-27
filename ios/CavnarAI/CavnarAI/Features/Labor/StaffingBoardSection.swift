@@ -286,16 +286,15 @@ struct MoneyWentItem: Codable, Equatable, Identifiable {
 
 // MARK: - Tones
 
-/// The web board's lane tones (`--tc`): overstaffed blue, strong days run
-/// lean amber, overtime red (three kinds, three colours; overstaffed shared
-/// the brand's ember until 9/26/26). Past schedule rows in "Where the money went"
-/// are amber, as the web's `.lb2-tint.under`.
+/// The web board's lane tones (`--tc`): overstaffed ember, strong days run
+/// lean amber, overtime red (owner, 9/26/26: blue for a day tried, back to
+/// the ember the same evening).
 enum StaffingLane: String, CaseIterable {
     case over, lean, ot
 
     var tone: Color {
         switch self {
-        case .over: return .cavnarBlue
+        case .over: return .cavnarEmber
         case .lean: return .cavnarAmber
         case .ot: return .cavnarRed
         }
@@ -331,91 +330,6 @@ enum StaffingLane: String, CaseIterable {
         case .lean: return "chart.line.downtrend.xyaxis"
         case .ot: return "clock"
         }
-    }
-}
-
-// MARK: - Where the money went
-
-/// The three costliest items of any kind, most first, each in its lane's
-/// tone and the costliest a shade darker — directly under Waiting on you,
-/// as on the web. "Show all" opens the board below.
-struct LaborMoneyWentCard: View {
-    let items: [MoneyWentItem]
-    let days: Int?
-    /// Everything behind "Show all" — the board's day and person count.
-    let moreCount: Int
-    /// Why the dollars above target are left out (the board's
-    /// `withheld_text`), when labor cost rests on the assumed wage.
-    var withheldText: String? = nil
-    var onShowAll: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HomeMixedText.make("WHERE THE MONEY WENT" + (days.map { " · \($0)-DAY WINDOW" } ?? ""),
-                               size: 13, weight: 700, color: .cavnarEmber2)
-                .tracking(1.2)
-            let top = Array(items.prefix(3))
-            ForEach(Array(top.enumerated()), id: \.element.id) { index, item in
-                row(item, worst: index == 0 && items.count > 1)
-            }
-            if let note = withheldText, !note.isEmpty {
-                Text(note)
-                    .font(.cavnarBody(13.5))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if moreCount > top.count {
-                Button {
-                    Haptic.light()
-                    onShowAll()
-                } label: {
-                    HomeMixedText.make("Show all \(moreCount) \u{2192}", size: 13.5, weight: 700, color: .cavnarEmber2)
-                        .frame(minHeight: 44, alignment: .leading)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .cavnarCard()
-    }
-
-    private func tone(_ kind: String) -> Color {
-        switch kind {
-        case "overstaffed": return StaffingLane.over.tone
-        case "overtime": return StaffingLane.ot.tone
-        default: return .cavnarAmber
-        }
-    }
-
-    private func row(_ item: MoneyWentItem, worst: Bool) -> some View {
-        let tc = tone(item.kind)
-        return HStack(alignment: .top, spacing: 10) {
-            Circle().fill(tc).frame(width: 7, height: 7)
-                .shadow(color: tc.opacity(0.7), radius: 4)
-                .padding(.top, 6)
-            HomeMixedText.make(item.line, size: 14, weight: 500, color: .cavnarInk2)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            VStack(alignment: .trailing, spacing: 1) {
-                Text(MoneyWentItem.money(item.dollars))
-                    .font(.cavnarNumber(15, weight: 700))
-                    .foregroundStyle(tc)
-                Text(item.label)
-                    .font(.cavnarBody(12, weight: 600))
-                    .foregroundStyle(tc.opacity(0.85))
-                    .multilineTextAlignment(.trailing)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(tc.opacity(worst ? 0.2 : 0.09)))
-        .overlay(alignment: .leading) {
-            if worst {
-                UnevenRoundedRectangle(topLeadingRadius: 10, bottomLeadingRadius: 10, style: .continuous)
-                    .fill(tc).frame(width: 3)
-            }
-        }
-        .accessibilityElement(children: .combine)
     }
 }
 

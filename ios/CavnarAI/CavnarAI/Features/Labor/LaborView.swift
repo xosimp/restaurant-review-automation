@@ -113,18 +113,9 @@ struct LaborView: View {
                                     scrollToReveal(Self.requestsID, proxy: proxy)
                                 }
                                 .id(Self.requestsID)
-                                // Where the money went (the web's, from
-                                // labor.money_went): the three costliest
-                                // items of any kind, right under what
-                                // staff are waiting on. Live shifts only.
-                                if stats.isLive, let went = stats.moneyWent, !went.isEmpty {
-                                    LaborMoneyWentCard(items: went, days: stats.periodDays,
-                                                       moreCount: boardCount(stats),
-                                                       withheldText: stats.staffingBoard?.summary?.withheldText) {
-                                        viewModel.staffingBoardExpanded = true
-                                        scrollToReveal(Self.boardID, proxy: proxy)
-                                    }
-                                }
+                                // "Where the money went" was removed (owner,
+                                // 9/26/26), as on the web: the Staffing board
+                                // below carries the same days.
 
                                 laborGroupHeader("Why")
                                     .padding(.top, 14)
@@ -860,13 +851,6 @@ struct LaborView: View {
     }
 
     private static let boardID = "labor-staffing-board"
-
-    /// Everything the board holds — what "Show all" under Where the money
-    /// went opens.
-    private func boardCount(_ stats: LaborStats) -> Int {
-        guard let b = stats.staffingBoard else { return 0 }
-        return b.overstaffed.count + b.lean.count + b.overtime.count
-    }
 
     @ViewBuilder
     private func roleSection(_ roles: [LaborRoleSummary], dateRange: LaborDateRange?) -> some View {

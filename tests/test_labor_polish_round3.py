@@ -87,26 +87,51 @@ def test_avail_panel_uses_a_gradient_and_border_not_a_flat_tint():
 
 # ── scroll-reveal animations no longer snap forward after a paused tab ─────
 
-def test_shared_count_up_folds_rAF_gaps_instead_of_snapping():
+def test_every_count_up_is_the_one_engine():
+    """Five tweens each had their own curve and stall handling; the Intel
+    percentage lagged, then raced (owner, 9/26/26). One engine now."""
     s = _src()
     i = s.index("function countUp(el, target, duration, prefix, suffix, decimals)")
-    body = s[i:s.index("\n}\n", i)]
-    assert "if (gap > 100) startTime += gap;" in body
-    body_money = _fn("countUpMoney")
-    assert "if (gap > 100) startTime += gap;" in body_money
-
-
-def test_donut_total_tween_folds_rAF_gaps_too():
-    body = _fn("renderRoleDonut")
-    assert "if(gap>100)start+=gap;" in body.replace(" ", "")
-
-
-def test_home_hero_value_delivered_count_up_folds_rAF_gaps_too():
-    s = _src()
+    assert "cavCount(el, target," in s[i:s.index("\n}\n", i)]
+    assert "cavCount(el, target, {duration: duration, prefix: '$'})" in _fn("countUpMoney")
+    assert "cavCount(totalEl,total,{fmt:_fmtK})" in _fn("renderRoleDonut")
     i = s.index("function countUp(el,target,prefix){")
-    j = s.index("\n  }\n", i)
-    body = s[i:j]
-    assert "if(gap>100)start+=gap;" in body.replace(" ", "")
+    assert "cavCount(el,Math.round(target),{prefix:prefix})" in s[i:s.index("\n  }\n", i)]
+    # No private tween left: no other gap-fold, no cubic ease on a number.
+    assert "gap>100" not in s.replace(" ", "") and "Math.pow(1-p,3)" not in s.replace(" ", "")
+
+
+def test_the_engine_pauses_through_a_stall_and_never_jumps():
+    import json, shutil, subprocess
+    import pytest
+    if not shutil.which("node"):
+        pytest.skip("node is not installed")
+    s = _src()
+    i = s.index("function cavCount(el, target, o) {")
+    eng = s[i:s.index("\nwindow.cavCount = cavCount;", i)]
+    js = """
+var q=[], now=0, seen=[];
+var window={matchMedia:function(){return {matches:false};}};
+var document={hidden:false};
+function requestAnimationFrame(f){q.push(f);}
+function setTimeout(){}
+function getComputedStyle(){return {display:'inline'};}
+var el={style:{},getBoundingClientRect:function(){return {width:40};},
+  set textContent(v){seen.push(v);this._t=v;}, get textContent(){return this._t;}};
+""" + eng + """
+cavCount(el, 100, {suffix:'%'});
+var frames=0;
+while(q.length && frames<2000){var f=q.shift(); now += (frames===30 ? 600 : 16); frames++; f(now);}
+console.log(JSON.stringify({seen:seen, frames:frames}));
+"""
+    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=20)
+    assert out.returncode == 0, out.stderr
+    got = json.loads(out.stdout.strip())
+    vals = [int(v.rstrip("%")) for v in got["seen"][2:]]      # after the width reservation
+    assert vals[-1] == 100 and got["seen"][-1] == "100%"
+    assert all(b >= a for a, b in zip(vals, vals[1:]))         # never backwards
+    assert max(b - a for a, b in zip(vals, vals[1:])) <= 4       # a 600ms stall is not a jump
+    assert got["frames"] >= 80                                   # long enough to be seen (~1.5s+)
 
 
 # ── the worst-day callout no longer crowds the header number above it ──────

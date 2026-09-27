@@ -228,9 +228,13 @@ def test_labor_says_its_percent_once_and_the_money_sits_under_waiting_on_you():
     s = _src()
     panel = _panel(s, "panel-labor", "<!-- /panel-labor -->")
     wait = panel.index('id="lb2-wait"')
-    assert wait < panel.index('id="lb2-went"') < panel.index('aria-label="Labor % by day"')
+    assert wait < panel.index('aria-label="Labor % by day"')
     assert 'id="gap-current-pct"' not in panel and 'id="lb2-hero-n"' not in panel
-    assert panel.index('id="lb2-money-all"') > panel.index('id="sched-history-list"')
+    # Where the money went and Labor's own schedule history are gone (owner,
+    # 9/26/26): the full lists stay in Every day and person; history lives
+    # in the Studio.
+    assert 'id="lb2-went"' not in panel and 'id="sched-history-list"' not in panel
+    assert 'id="lb2-money-all"' in panel
     # one place answers a request
     to = s[s.index("function lb2LoadTimeOff(){"):s.index("function lb2LoadCovers(){")]
     assert "data-timeoff=" not in to

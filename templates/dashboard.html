@@ -605,7 +605,7 @@ html:not([data-theme="dark"]) .empty-state-sm.on-dark .es-sub{color:var(--ink3)}
 .cm-seal .cm-ring{animation:cmBreatheRing 1.8s ease-in-out infinite}
 .cm-seal .cm-glow{transform-box:fill-box;transform-origin:center;animation:cmBreatheGlow 1.8s ease-in-out infinite}
 .cm-seal .cm-dot{transform-box:fill-box;transform-origin:center;animation:cmBreatheDot 1.8s ease-in-out infinite}
-.cm-cap{font-family:'Space Grotesk',sans-serif;font-size:10px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:var(--ink3);margin-top:10px}
+.cm-cap{font-family:'Apfel Grotezk',sans-serif;font-size:10.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ink3);margin-top:10px}
 /* 04 Composing — line widths + caret are driven per-frame by _cmComposeFrame() */
 .cm-compose{position:relative;width:100%}
 .cm-compose .cm-l{width:2px;border-radius:99px;background:rgba(200,75,47,.28)}
@@ -1578,6 +1578,59 @@ document.documentElement.classList.add('pjs-loading');
    the whole page. A sticky notice offers Sign in again, and every later
    same-origin call answers session_expired at once instead of reaching the
    server, so no poller keeps firing into 401s. */
+/* cavCount - the one count-up for the whole product (owner, 9/26/26: the
+   Intel percentage "lagged in parts and others way too quick"; five
+   separate tweens each had their own curve, speed and stall handling).
+   - Starts two frames after it is asked, past the render burst that asked.
+   - Reserves the final width and uses tabular figures, so the row never
+     reflows while the digits change.
+   - A gentle ease-out (a sine), not a cubic: no racing start, a soft
+     landing; long enough to be seen (1.5-2.4s, longer for bigger numbers).
+   - Time advances at most two frames per frame: a stalled main thread
+     pauses the count and it picks up where it was - it never jumps.
+   - A newer call on the same element cancels the older one; a hidden tab
+     or reduced motion writes the final value at once.
+   o: prefix, suffix, decimals, duration (a floor), fmt(v) for a custom
+   label ("$19k"). ES5 only. */
+function cavCount(el, target, o) {
+  if (!el) return;
+  o = o || {};
+  target = +target || 0;
+  var dec = o.decimals || 0;
+  var fmt = o.fmt || function (v) {
+    var neg = v < 0, a = Math.abs(v), s = dec ? a.toFixed(dec) : String(Math.round(a)), parts = s.split('.');
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return (o.prefix || '') + (neg ? '-' : '') + parts.join('.') + (o.suffix || '');
+  };
+  var token = (el._cavCount = (el._cavCount || 0) + 1);
+  var final = fmt(target);
+  var rm = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (rm || !target || document.hidden) { el.textContent = final; return; }
+  var mag = Math.abs(target), dur = Math.max(o.duration || 0, Math.min(2400, Math.max(1500, 1300 + 280 * Math.log(mag + 1) / Math.LN10)));
+  el.textContent = final;
+  var w = el.getBoundingClientRect().width;
+  if (w) {
+    if (window.getComputedStyle && getComputedStyle(el).display === 'inline') el.style.display = 'inline-block';
+    el.style.minWidth = Math.ceil(w) + 'px';
+  }
+  el.style.fontVariantNumeric = 'tabular-nums';
+  el.textContent = fmt(0);
+  var t = 0, last = null, shown = null;
+  function step(ts) {
+    if (el._cavCount !== token) return;
+    if (last === null) last = ts;
+    t += Math.min(ts - last, 34);
+    last = ts;
+    var p = Math.min(t / dur, 1), v = target * Math.sin(p * Math.PI / 2), txt = p < 1 ? fmt(v) : final;
+    if (txt !== shown) { el.textContent = txt; shown = txt; }
+    if (p < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(function () { requestAnimationFrame(step); });
+  // Frames that never come (a hidden or occluded tab) must not leave a
+  // number at 0: land on the value. A count that is merely slow keeps going.
+  setTimeout(function () { if (el._cavCount === token && shown !== final && (document.hidden || t < dur * 0.25)) { el.textContent = final; shown = final; } }, dur + 1500);
+}
+window.cavCount = cavCount;
 function apiJson(r){
   return r.text().then(function(t){
     var d, parsed = true;
@@ -2643,9 +2696,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-rcpt .it{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;border-radius:12px;background:var(--hb-inner);border:1px solid var(--hb-line2)}
 /* A receipt's check is good news and looks it (owner, 9/26/26): a solid
    bright-green disc, a white tick, a soft halo - not a pale tint. */
-#panel-home,#panel-dsr,#panel-recs{--hb-pop:#1f9d5c;--hb-pop2:#3cc47c;--hb-pop-ring:rgba(31,157,92,.16);--hb-pop-glow:rgba(31,157,92,.55)}
-[data-theme="dark"] #panel-home,[data-theme="dark"] #panel-dsr,[data-theme="dark"] #panel-recs{--hb-pop:#2fbf74;--hb-pop2:#63e39f;--hb-pop-ring:rgba(63,209,132,.18);--hb-pop-glow:rgba(63,209,132,.5)}
-.hb-rcpt .ok{width:30px;height:30px;border-radius:50%;background:radial-gradient(circle at 35% 30%,var(--hb-pop2),var(--hb-pop) 72%);color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 0 0 4px var(--hb-pop-ring),0 4px 16px -2px var(--hb-pop-glow)}
+#panel-home,#panel-dsr,#panel-recs{--hb-pop:#4aae78;--hb-pop2:#6fc596;--hb-pop-ink:#0f3a24;--hb-pop-ring:rgba(74,174,120,.15);--hb-pop-glow:rgba(74,174,120,.32)}
+[data-theme="dark"] #panel-home,[data-theme="dark"] #panel-dsr,[data-theme="dark"] #panel-recs{--hb-pop:#3a9f68;--hb-pop2:#5cbf8a;--hb-pop-ink:#0a2616;--hb-pop-ring:rgba(58,159,104,.16);--hb-pop-glow:rgba(58,159,104,.32)}
+.hb-rcpt .ok{width:30px;height:30px;border-radius:50%;background:radial-gradient(circle at 35% 30%,var(--hb-pop2),var(--hb-pop) 72%);color:var(--hb-pop-ink);display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 0 0 4px var(--hb-pop-ring),0 4px 16px -2px var(--hb-pop-glow)}
 .hb-rcpt .t{font-size:15px;color:var(--ink2);line-height:1.45;min-width:0}
 .hb-rcpt .t strong{color:var(--ink);font-weight:600}
 .hb-rcpt .m{font-size:11.5px;color:var(--ink3);margin-top:4px;letter-spacing:.1em;text-transform:uppercase;font-weight:700}
@@ -2782,7 +2835,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 /* warm secondaries */
 .hb-rec .no{background:linear-gradient(135deg,var(--ember2),var(--ember) 70%);-webkit-background-clip:text;background-clip:text;color:transparent}
 .hb-rec:hover{border-color:var(--hb-copper)}
-.hb-stat.good .v{color:var(--hb-good2)}.hb-clear .ok{color:var(--hb-good2)}
+.hb-stat.good .v{color:var(--hb-good2)}
+/* Every check on Home is one disc (owner, 9/26/26): a softer green with a dark-green tick. */
+.hb-clear .ok{background:radial-gradient(circle at 35% 30%,var(--hb-pop2),var(--hb-pop) 72%);color:var(--hb-pop-ink);box-shadow:0 0 0 4px var(--hb-pop-ring),0 4px 14px -3px var(--hb-pop-glow)}
 /* A gap still open is a warning, amber - never the ember, which is not status (B4 L7). */
 .hb-stat.warn .v{background:linear-gradient(135deg,var(--hb-amber),var(--hb-warn));-webkit-background-clip:text;background-clip:text;color:transparent}
 .hb-focus .ev>span{transition:border-color .18s ease,transform .18s ease,background-color .18s ease}
@@ -3543,24 +3598,8 @@ svg:hover .hb-xh{opacity:1}
     return '<div class="hb-stk">'+s+'</svg>'+ax+'</div></div>';
   }
   function countUp(el,target,prefix){
-    if(!el)return;
-    var final=prefix+Math.round(target).toLocaleString();
-    if(reduced()){el.textContent=final;return;}
-    // Reserve the final width first so the digits never reflow the row
-    // mid-count (that reflow was the visible stutter), then ease over 2.2s
-    // with a quartic curve so the last hundred dollars settle gently.
-    el.textContent=final;el.style.display='inline-block';el.style.minWidth=el.getBoundingClientRect().width+'px';el.style.textAlign='left';
-    var node=document.createTextNode(prefix+'0');el.textContent='';el.appendChild(node);
-    // Updating the text node's value is a characterData change — no
-    // childList mutation, so neither MutationObserver on the page wakes up
-    // 60 times a second while this runs. Start after fonts and first paint
-    // so the numeral face never swaps mid-count.
-    var start=null,dur=2200,last=-1,lastTs=null;
-    // Gap-fold: an OS-occluded tab stops delivering rAF and resumes later —
-    // without this, wall-clock elapsed on the next tick jumps the count
-    // straight toward its end value instead of finishing the tween.
-    function step(ts){if(!start){start=ts;lastTs=ts;}var gap=ts-lastTs;if(gap>100)start+=gap;lastTs=ts;var p=Math.min((ts-start)/dur,1),e=1-Math.pow(1-p,4),v=Math.round(target*e);if(v!==last){last=v;node.nodeValue=prefix+v.toLocaleString();}if(p<1)requestAnimationFrame(step);else{node.nodeValue=final;}}
-    var go=function(){requestAnimationFrame(function(){requestAnimationFrame(step);});};
+    // The one engine (cavCount), after fonts so the numeral face never swaps mid-count.
+    if(!el)return;var go=function(){cavCount(el,Math.round(target),{prefix:prefix});};
     if(document.fonts&&document.fonts.ready)document.fonts.ready.then(go,go);else go();
   }
   // Loading state = the Cavnar orb (same component the iOS app uses).
@@ -4362,7 +4401,7 @@ svg:hover .hb-xh{opacity:1}
     var mo=d&&d.monitoring,stale=hbStaleSources(d),none=mo&&typeof mo==='object'&&mo.count_live!=null&&(+mo.count_live)===0&&(+mo.sources||0)>0;
     if(!stale&&!none&&!hbAllClear(d))return '<div class="hb-clear warn" id="hb-attn-clear"><span>Nothing flagged — '+esc(hbNotClearWhy(d).charAt(0).toLowerCase()+hbNotClearWhy(d).slice(1))+'</span></div>';
     if(stale||none)return '<div class="hb-clear warn" id="hb-attn-clear"><span>'+(none?'Nothing flagged — but no source under this is current, so there is nothing live to watch.':'Nothing flagged — but <span class="hb-num">'+stale+'</span> source'+(stale===1?' is':'s are')+' out of date or undated, so this is not a clean bill.')+'</span></div>';
-    return '<div class="hb-clear" id="hb-attn-clear"><span class="ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span><span>'+(used&&used.att?'Nothing else needs you — Cavnar AI is watching.':'All clear — Cavnar AI is watching.')+'</span></div>';}
+    return '<div class="hb-clear" id="hb-attn-clear"><span class="ok"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span><span>'+(used&&used.att?'Nothing else needs you — Cavnar AI is watching.':'All clear — Cavnar AI is watching.')+'</span></div>';}
   // The decisions that arrive with the follow-through reads - each comps /
   // voids / refunds flag and every cross-module link past the one the focus
   // card leads with - are Needs-attention rows (density fix #5): they carry
@@ -5575,6 +5614,9 @@ svg:hover .hb-xh{opacity:1}
   // "Loading…" forever - the empty branches never touched a helper, so
   // the bug only showed once a restaurant had data.
   window.esc=esc;window.num=num;window.mdy=mdy;
+  // A server timestamp (UTC: SQLite's datetime('now')) as the viewer's own
+  // day. The date part alone read 7:35pm on 9/26 in St. Louis as 9/27.
+  window.mdyAt=function(ts){var s=String(ts||'');if(!/\d:\d/.test(s))return mdy(s);s=s.replace(' ','T');if(!/(Z|[+\-]\d\d:?\d\d)$/.test(s))s+='Z';var d=new Date(s);return isNaN(d)?mdy(ts):mdy(d);};
   // A load asked for while one is in flight runs once it lands, instead of
   // being dropped: a confirm's re-read arriving mid-load left Home showing
   // "5 replies waiting" after the publish (re-audit F1-15).
@@ -8367,6 +8409,9 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-pub-alerts #ps-blockers{margin-top:6px}
 .ss-pub #ps-result{font-size:15px}
 .ss-done{text-align:center;padding:40px 0 10px}
+/* Sent is a resting state, not a greyed-out button: green, full strength. */
+#ps-send-btn.ps-sent,#ps-send-btn.ps-sent:disabled{opacity:1;cursor:default;color:var(--green);background:rgba(78,173,122,.10);border-color:rgba(78,173,122,.35);box-shadow:none;transform:none}
+.ss-done .cm-plabel{font-size:11.5px;color:var(--ember)}   /* a kicker: orange, the chrome face */
 .ss-done h2{font-family:'Clash Display',sans-serif;font-size:34px;font-weight:500;color:var(--ink);margin:18px 0 6px}
 .ss-done p{color:var(--ink3);font-size:15.5px;margin:0 0 22px}
 .ss-done .go{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
@@ -8379,6 +8424,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-hrow .l{font-size:13.5px;color:var(--ink3);margin-top:2px}
 .ss-hrow .q{font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:600;color:var(--ink)}
 .ss-hrow .q.good{color:var(--hb-good)}
+.ss-hact{display:flex;align-items:center;gap:4px}
 .ss-hrow .q small{display:block;font-family:'Apfel Grotezk',sans-serif;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
 .ss-pill{font-size:11.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;border-radius:999px;padding:3px 10px;background:var(--sf-recess);color:var(--ink3)}
 .ss-pill.sent{color:var(--hb-good)}.ss-pill.draft{color:var(--hb-warn)}
@@ -8438,18 +8484,12 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .lb2-intro{font-size:14px;color:var(--ink3);margin-bottom:12px;line-height:1.5}
 .lb2-av-hd{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
 .lb2-avail-in{margin-top:6px}
-/* Where the money went (density round #9) */
-.lb2-went .hb-row .m{white-space:normal;text-align:right}
-.lb2-went .lb2-went-n{font-size:16px;font-weight:700;color:var(--tc,var(--hb-warn))}
-.lb2-went-rows{margin-top:16px}
-/* Show all sits clear of the rows (9/26/26). */
-.lb2-went>.cbtn-text{margin-top:16px!important}
 .lb2-money-all .hb-row .m{white-space:normal;text-align:right}
 .lb2-money-all .lb2-ma-h{font-size:15px;font-weight:700;color:var(--ink);margin:16px 0 2px}
 /* Tinted rows (9/25/26): each list in its own colour, a dot and a wash per
    row, the worst row a shade darker. Overstaffed = ember, under target on a
    strong day = amber, overtime = red. */
-.lb2-tint{--tc:var(--blue);border-top:none!important;border-radius:10px;padding-left:14px!important;padding-right:14px!important;margin:6px 0;background:color-mix(in srgb,var(--tc) 9%,transparent)}
+.lb2-tint{--tc:var(--ember);border-top:none!important;border-radius:10px;padding-left:14px!important;padding-right:14px!important;margin:6px 0;background:color-mix(in srgb,var(--tc) 9%,transparent)}
 .lb2-tint.worst{background:color-mix(in srgb,var(--tc) 20%,transparent);box-shadow:inset 3px 0 0 var(--tc)}
 .lb2-tint .d{background:var(--tc)!important;box-shadow:0 0 8px var(--tc)!important}
 .lb2-tint.under{--tc:var(--hb-warn)}
@@ -8471,9 +8511,9 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .sb-tile .s{font-size:13.5px;color:var(--ink3);margin-top:4px}
 .sb-tile.hero{border-color:color-mix(in srgb,var(--ember) 30%,transparent);background:radial-gradient(120% 140% at 0% 0%,color-mix(in srgb,var(--ember) 16%,transparent),transparent 60%),var(--surface)}
 .sb-tile.hero .v{color:var(--ember)}
-/* Overstaffed blue, strong days run lean yellow, overtime red: three
-   kinds, three colours (owner, 9/26/26; it shared the brand's ember). */
-.sb-lane{--tc:var(--blue)}
+/* Overstaffed ember, strong days run lean yellow, overtime red (owner,
+   9/26/26: blue for a day tried, back to the ember the same evening). */
+.sb-lane{--tc:var(--ember)}
 .sb-lane[data-tone="lean"]{--tc:var(--hb-warn)}
 .sb-lane[data-tone="ot"]{--tc:var(--hb-bad)}
 .sb-lh{display:flex;align-items:center;gap:12px;margin-bottom:12px}
@@ -9013,35 +9053,9 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     <div id="lb2-wait-body" class="ac-rows"></div>
   </section>
 
-  {# Where the money went (density round #9): the three costliest
-     overstaffed days by their dollars above target, then who is in
-     overtime with the premium - directly under Waiting on you, not the
-     last block on the page. Every dollar here is a gap against the target
-     or an overtime premium: an opportunity, never "saved" (Money labels).
-     The full lists stay below, behind "Show all". #}
-  {% set _money_more = (labor.overstaffed_days|length if labor.overstaffed_days else 0) + (labor.understaffed_days|length if labor.understaffed_days else 0) + (labor.overtime_risk|length if labor.overtime_risk else 0) %}
-  {% set _went = labor.money_went or [] %}
-  {% if labor.is_live and _went %}
-  <section class="hb-card lb2-went" id="lb2-went" aria-label="Where the money went" style="margin-top:22px">
-    <div class="hb-kicker">Where the money went · <span class="hb-num">{{ _days }}</span>-day window</div>
-    {# The three costliest items of ANY kind, most first (labor.money_went):
-       overstaffed days, overtime premiums, hours past schedule - each in
-       its own colour, the costliest a shade darker (9/25/26). #}
-    <div class="lb2-went-rows">
-    {% for w in _went[:3] %}
-    {% set _tk = {'overstaffed': 'over', 'overtime': 'ot', 'past_schedule': 'under'}[w.kind] %}
-    <div class="hb-row lb2-tint {{ _tk }}{{ ' worst' if loop.first and _went|length > 1 }}"><span class="d"></span><span class="t wrap">
-      {% if w.kind == 'overstaffed' %}<b>{{ w.day }}</b> <span class="vm hb-num">{{ w.date|format_date }}</span> · overstaffed · <span class="hb-num">{{ w.pct_text or w.labor_pct }}%</span> labor on <span class="hb-num">${{ w.sales|int|format_num }}</span> sales
-      {% elif w.kind == 'overtime' %}<b>{{ w.employee }}</b> · overtime · <span class="hb-num">{{ w.hours_text or w.hours }}h</span> week of <span class="hb-num">{{ w.week }}</span>
-      {% else %}<b>{{ w.employee }}</b> · past schedule · <span class="hb-num">{{ w.hours_over_text or w.hours_over }}h</span> over (<span class="hb-num">{{ w.actual_text or w.actual }}h</span> worked, <span class="hb-num">{{ w.scheduled_text or w.scheduled }}h</span> scheduled){% endif %}
-    </span><span class="m"><span class="hb-num lb2-went-n">${{ w.dollars|int|format_num }}</span> {{ w.label }}</span></div>
-    {% endfor %}
-    </div>
-    {# On the assumed wage the dollars above target and past schedule are left out (labor.money_went) - say why. #}
-    {% if labor.staffing_board and labor.staffing_board.summary and labor.staffing_board.summary.dollars_withheld %}<div class="hb-sub" style="margin-top:10px">{{ labor.staffing_board.summary.withheld_text }}</div>{% endif %}
-    {% if _money_more > (_went[:3]|length) %}<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="lb2ShowMoney()">Show all <span class="hb-num">{{ _money_more }}</span> →</button>{% endif %}
-  </section>
-  {% endif %}
+  {# "Where the money went" was removed (owner, 9/26/26): the full lists sit
+     below in Every day and person (#lb2-money-all), and the Staffing board
+     carries the same days. #}
 
   <div id="lb-panel-schedule">
   {# The chart is named by its question, and it keeps only the change - the
@@ -9143,27 +9157,9 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
       requestAnimationFrame(function(){requestAnimationFrame(function(){var segs=svgEl.querySelectorAll('.cm-seg');for(var s=0;s<segs.length;s++){segs[s].style.strokeDasharray=segs[s].getAttribute('data-da');}});});
     });
     if(totalEl){
-      // countUp/countUpMoney assume plain-number or "$1,234" formatting —
-      // this label is deliberately abbreviated ("$19k"), so it gets its
-      // own tiny tween that keeps calling _fmtK() as the value ramps up
-      // rather than count up through unformatted numbers then snap to k.
-      (function(){
-        var dur=900,start=null,last=null,done=false;
-        // Same gap-fold as countUp() in the shared script below — a tab the
-        // OS occludes mid-scroll stops delivering rAF, and the wall-clock
-        // elapsed on the next tick would otherwise snap this straight to
-        // its near-final value instead of finishing the tween smoothly.
-        function tick(ts){if(!start){start=ts;last=ts;}var gap=ts-last;if(gap>100)start+=gap;last=ts;var p=Math.min((ts-start)/dur,1),e=1-Math.pow(1-p,3);totalEl.textContent=_fmtK(total*e);if(p<1)requestAnimationFrame(tick);else{done=true;totalEl.textContent=_fmtK(total);}}
-        var _rm=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-        if(_rm){totalEl.textContent=_fmtK(total);return;}
-        cavnarWhenVisible(svgEl,function(){
-          requestAnimationFrame(tick);
-          // Same rAF-can-be-paused-in-a-background-tab concern as the radar
-          // number above — this label starts blank, not at the real total,
-          // so force it in if the tween never got a chance to finish.
-          setTimeout(function(){if(!done)totalEl.textContent=_fmtK(total);},1100);
-        });
-      })();
+      // The abbreviated label ("$19k") keeps its format while it counts:
+      // the one engine (cavCount) with _fmtK as the formatter.
+      cavnarWhenVisible(svgEl,function(){cavCount(totalEl,total,{fmt:_fmtK});});
     }
     var lhtml='';
     for(var i=0;i<_roleData.length;i++){
@@ -9224,7 +9220,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
       <div class="ss-top-r">
         <span class="ss-week" id="ss-week"></span>
         <span class="ss-saved" id="ss-saved"></span>
-        <button type="button" class="cbtn cbtn-primary cbtn-sm" id="ss-top-publish" data-ss-go="publish" hidden>Publish</button>
+        <button type="button" class="cbtn cbtn-primary cbtn-sm" id="ss-top-publish" onclick="ssTopPublish(this)" hidden>Publish</button>
       </div>
     </header>
     <div class="ss-main" id="ss-main">
@@ -9859,9 +9855,9 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 
   </details>
 
-    <div class="hb-sh"><div><div class="k">History</div><h2>Schedules you've built<small><span id="sched-history-count"></span></small></h2></div></div>
-    <div id="sched-history-list" class="lb2-hist"><div class="rskel"><div><div class="hb-skel" style="width:150px;height:14px;margin-bottom:8px"></div><div class="hb-skel" style="width:220px;height:11px"></div></div><div class="hb-skel" style="width:56px;height:22px;border-radius:999px"></div></div><div class="rskel"><div><div class="hb-skel" style="width:150px;height:14px;margin-bottom:8px"></div><div class="hb-skel" style="width:200px;height:11px"></div></div><div class="hb-skel" style="width:56px;height:22px;border-radius:999px"></div></div></div>
-    <div id="sched-history-detail" style="display:none"></div>
+    {# Schedules you've built moved into the Studio's History (owner, 9/26/26):
+       one list, with Open, the CSV and Delete. loadScheduleHistory and its
+       row helpers find no list here and do nothing. #}
   </div>
 
   <!-- Two col: overstaffed table + overtime alerts -->
@@ -9944,8 +9940,6 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     var w=document.getElementById('lb2-today-wait');if(!w)return;
     w.innerHTML=n?('<b class="hb-num">'+n+'</b> waiting on you · '):'';
   }
-  /* "Show all" on Where the money went opens the full lists in place. */
-  function lb2ShowMoney(){var d=document.getElementById('lb2-money-all');if(!d)return;d.open=true;if(d.scrollIntoView)d.scrollIntoView({behavior:'smooth',block:'start'});}
   </script>
 
   </div><!-- /lb-panel-schedule -->
@@ -19320,17 +19314,23 @@ function publishScheduleNow(ack){
           result.textContent = 'Sent to ' + sent.length + ' of ' + total + ' staff' + (parts.length ? ' (' + parts.join(', ') + ')' : '') + ((d.failed || []).length ? ' · ' + d.failed.length + ' email' + (d.failed.length === 1 ? '' : 's') + ' failed' : '') + (d.acknowledged ? ' · warnings acknowledged' : '');
           toast('Schedule sent','success');
         }
+        // The button keeps its sent state from here (psLabel), not the
+        // label cbtnBusy restored.
+        window._psSent = {hid: _schedHistoryId, queued: !!d.queued};
+        if (window.psLabel) psLabel();
         if (typeof loadScheduleHistory === 'function') loadScheduleHistory();
         if (window.lb2LoadWaiting) lb2LoadWaiting();
         if (window.psRefresh) psRefresh();
-        if (window.studioPublished) studioPublished(d, result.textContent);
+        // The Studio's done block says the sentence; the green line under the
+        // button said it a second time (owner, 9/26/26).
+        if (window.studioPublished) { studioPublished(d, result.textContent); result.textContent = ''; }
         return;
       }
       // The publish gate: nothing goes out until the person sending has
       // read what the rules check found. The list goes on screen and the
       // button becomes the acknowledgement.
       if (d.needs_ack) {
-        _psRenderBlockers(d.blockers || [], true, d.blocker_keys);
+        _psRenderBlockers(d.blockers || [], true, d.blocker_keys, true);
         result.textContent = '';
         return;
       }
@@ -19354,7 +19354,7 @@ function cavBlockers(list, keys) {
   if (!ks.length && keys && keys.length === texts.length) for (i = 0; i < keys.length; i++) ks.push(String(keys[i]));
   return {texts: texts, keys: ks.length === texts.length && ks.length ? ks : null};
 }
-function _psRenderBlockers(list, arm, keys) {
+function _psRenderBlockers(list, arm, keys, open) {
   var bl = document.getElementById('ps-blockers');
   if (!bl) return;
   var cb = cavBlockers(list, keys);
@@ -19368,7 +19368,8 @@ function _psRenderBlockers(list, arm, keys) {
   bl.innerHTML = h;
   bl.style.display = 'block';
   var al = document.getElementById('ss-pub-alerts'), an = document.getElementById('ss-pub-alerts-n');
-  if (al) { al.hidden = !!window._schedDirty; if (arm) al.open = true; }
+  // Folded on arrival (owner, 9/26/26); it opens when a send asked for it.
+  if (al) { al.hidden = !!window._schedDirty; al.open = !!open; }
   if (an) an.innerHTML = 'Read before this goes out · <span class="hb-num">' + list.length + '</span>';
   if (arm && window.psArm) psArm(list.length);
 }
@@ -21077,7 +21078,7 @@ function studioGo(stage) {
     steps[i].disabled = (g === 'summary' || g === 'schedule' || g === 'publish') && !has;
     steps[i].setAttribute('aria-selected', g === stage ? 'true' : 'false');
   }
-  var pub = document.getElementById('ss-top-publish'); if (pub) { pub.hidden = !has; pub.style.visibility = stage === 'publish' ? 'hidden' : ''; }
+  var pub = document.getElementById('ss-top-publish'); if (pub) { pub.hidden = !has || !!(window.psIsSent && psIsSent()); pub.style.visibility = stage === 'publish' ? 'hidden' : ''; }
   ssTopbar();
   if (stage === 'summary') ssRenderSummary();
   else if (stage === 'publish') ssRenderPublish();
@@ -21202,6 +21203,16 @@ function ssOptimize(btn) {
   improveScheduleWithCavnar(b);
 }
 // ── Publish ────────────────────────────────────────────────────────────
+// The top bar's Publish publishes (owner, 9/26/26: it only opened this step,
+// so a press that said Publish sent nothing). It is the Send button: unsaved
+// edits are saved first, and a week with rule warnings stops on this page
+// with the list open and the button naming them.
+function ssTopPublish(btn) {
+  studioGo('publish');
+  var b = document.getElementById('ps-send-btn');
+  if (!b || b.disabled || (window.psIsSent && psIsSent())) return;
+  saveAndSendSchedule(b);
+}
 function ssRenderPublish() {
   var ds = _schedWeekDates || [], t = document.getElementById('ss-pub-title'), c = document.getElementById('ss-pub-check');
   if (t) t.innerHTML = ds.length ? 'Send the week of <span class="hb-num">' + _escHtml(mdy(ds[0])) + '</span>' : 'Send the week to staff';
@@ -21246,11 +21257,35 @@ function ssLoadHistory() {
          + '<div class="l">' + (r.summary_line ? num(r.summary_line) : 'Built <span class="hb-num">' + _escHtml(mdy(String(r.generated_at || '').slice(0, 10))) + '</span>')
          + (r.hours_budget ? ' · <span class="hb-num">' + _schedHrs(r.hours_scheduled || 0) + 'h</span> of <span class="hb-num">' + _schedHrs(r.hours_budget) + 'h</span> PAR' : '') + '</div></div>'
          + '<div class="q' + (r.quality_band === 'excellent' ? ' good' : '') + '">' + (r.quality_score != null ? '<span class="hb-num">' + Math.round(r.quality_score) + '</span>' : '—') + '<small>quality</small></div>'
-         + '<span class="ss-pill ' + (sent ? 'sent' : (gone ? '' : 'draft')) + '">' + (sent ? 'Sent ' + _escHtml(mdy(String(r.published_at).slice(0, 10))) : (gone ? 'Replaced' : 'Draft')) + '</span>'
-         + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="ssOpenWeek(' + (+r.id) + ')">Open</button></div>';
+         + '<span class="ss-pill ' + (sent ? 'sent' : (gone ? '' : 'draft')) + '">' + (sent ? 'Sent ' + _escHtml(mdyAt(r.published_at)) : (gone ? 'Replaced' : 'Draft')) + '</span>'
+         + '<span class="ss-hact"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="ssOpenWeek(' + (+r.id) + ')">Open</button>'
+         + '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" title="Download CSV" aria-label="Download CSV" onclick="ssHistCsv(' + (+r.id) + ',this)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><polyline points="7 10.5 12 15.5 17 10.5"/><path d="M5 19.5h14"/></svg></button>'
+         + '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-danger cbtn-sm" title="Delete" aria-label="Delete" onclick="ssHistDelete(' + (+r.id) + ',this)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 7 20 7"/><path d="M9.5 7V4.5h5V7"/><path d="M6.5 7l1 12.5h9l1-12.5"/></svg></button></span></div>';
     }
     el.innerHTML = h;
   }).catch(function () { el.innerHTML = '<div class="sw-note">History could not load.</div>'; });
+}
+// The week as a CSV (the stored schedule_csv) and Delete - what Labor's
+// "Schedules you've built" offered before the Studio's History replaced it.
+function ssHistCsv(id, btn) {
+  var done = cbtnBusy(btn, '');
+  fetch('/api/labor/schedule-history/' + id, {credentials: 'same-origin'}).then(apiJson).then(function (d) {
+    done();
+    if (!d || !d.ok || !d.schedule_csv) { toast((d && d.error) || 'No CSV stored for this week', 'error'); return; }
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([d.schedule_csv], {type: 'text/csv'}));
+    a.download = 'schedule-' + (d.week_start || id) + '.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  }).catch(function () { done(); toast('Couldn\u2019t download that week', 'error'); });
+}
+function ssHistDelete(id, btn) {
+  if (!confirm('Delete this week from history?')) return;
+  var done = cbtnBusy(btn, '');
+  fetch('/api/labor/schedule-history/' + id, {method: 'DELETE', credentials: 'same-origin'}).then(apiJson).then(function (d) {
+    done();
+    if (!d || !d.ok) { toast((d && d.error) || 'Could not delete', 'error'); return; }
+    toast('Deleted', 'success'); ssLoadHistory(); ssLaunchRefresh();
+  }).catch(function () { done(); toast('Could not delete', 'error'); });
 }
 function ssOpenWeek(id) {
   if (_schedHistoryId === id && _ssHasDraft()) { studioGo('schedule'); return; }
@@ -21262,7 +21297,7 @@ function ssLaunchRefresh() {
   fetch('/api/labor/schedule-history', {credentials: 'same-origin'}).then(apiJson).then(function (d) {
     var r = ((d && d.ok && d.history) || [])[0]; if (!r) return;
     var wk = 'the week of <span class="hb-num">' + _escHtml(mdy(r.week_start)) + '</span>';
-    el.innerHTML = r.published_at ? 'You sent ' + wk + ' on <span class="hb-num">' + _escHtml(mdy(String(r.published_at).slice(0, 10))) + '</span>. Build the next one when you are ready.'
+    el.innerHTML = r.published_at ? 'You sent ' + wk + ' on <span class="hb-num">' + _escHtml(mdyAt(r.published_at)) + '</span>. Build the next one when you are ready.'
       : 'Cavnar AI built ' + wk + (r.quality_score != null ? ', quality <span class="hb-num">' + Math.round(r.quality_score) + '</span>' : '') + '. Staff don’t have it yet.';
   }).catch(function () { });
 }
@@ -24099,7 +24134,9 @@ function runAIVisibility(btn) {
     var el = document.getElementById('aiv-loading-text');
     if (el) el.textContent = msgs[mi];
   }, 2500);
-  fetch('/api/ai-visibility').then(apiJson).then(function(d) {
+  // A press runs every query live (POST). GET only ever served the
+  // recorded run, so the check "finished" instantly with old answers.
+  fetch('/api/ai-visibility', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: '{}'}).then(apiJson).then(function(d) {
     clearInterval(ticker);
     document.getElementById('aiv-loading').style.display = 'none';
     if (!d.ok) {
@@ -24612,75 +24649,11 @@ function cbtnBusy(btn, label) {
   };
 }
 function countUp(el, target, duration, prefix, suffix, decimals) {
-  if (!el) return;
-  prefix = prefix || '';
-  suffix = suffix || '';
-  decimals = decimals || 0;
-  var startTime = null, lastTick = null;
-  function tick(now) {
-    if (!startTime) { startTime = now; lastTick = now; }
-    // A tab the OS marks occluded mid-scroll (confirmed via document.hidden
-    // flipping true here, not assumed) stops delivering rAF entirely, then
-    // resumes — the next tick's timestamp lands however long that lasted
-    // after the previous one. Read as wall-clock elapsed, that snaps the
-    // count straight to wherever "real" elapsed time says it should be,
-    // which is the stuck-then-jumps look. Folding any gap bigger than a
-    // couple of frames back into startTime keeps the animation running
-    // for about as long as the duration argument says, regardless of how
-    // long the tab sat hidden.
-    var gap = now - lastTick;
-    if (gap > 100) startTime += gap;
-    lastTick = now;
-    var elapsed = now - startTime;
-    var progress = Math.min(elapsed / duration, 1);
-    var ease = 1 - Math.pow(1 - progress, 3);
-    var val = target * ease;
-    el.textContent = prefix + (decimals > 0 ? val.toFixed(decimals) : Math.floor(val)) + suffix;
-    if (progress < 1) requestAnimationFrame(tick);
-    else el.textContent = prefix + (decimals > 0 ? target.toFixed(decimals) : target) + suffix;
-  }
-  requestAnimationFrame(tick);
+  // The one engine (cavCount); a short duration here is only a floor.
+  cavCount(el, target, {duration: duration, prefix: prefix || '', suffix: suffix || '', decimals: decimals || 0});
 }
 function countUpMoney(el, target, duration) {
-  if (!el) return;
-  duration = duration || 1400;
-  // A tab switch to Food Cost kicks off a burst of synchronous work in
-  // this exact tick — the waste-trend chart, gauge and both donuts all
-  // rebuild their SVG right here. Starting the wall-clock timer before
-  // that burst clears meant the elapsed-time gap-fold below (needed for
-  // a genuinely backgrounded tab catching up) also fired for ordinary
-  // main-thread jank on an active tab: the first visible frame could
-  // already be a big chunk of the target, then jump unevenly as later
-  // async work (the insight fetch, its typewriter effect) stalled the
-  // main thread again. Two rAFs push the actual start past that burst.
-  var token = (el._cuToken = (el._cuToken || 0) + 1);
-  requestAnimationFrame(function () {
-    requestAnimationFrame(function () {
-      if (el._cuToken !== token) return;  // superseded by a newer call
-      var startTime = null, lastTick = null, lastProgress = 0;
-      function tick(now) {
-        if (el._cuToken !== token) return;
-        if (!startTime) { startTime = now; lastTick = now; }
-        var gap = now - lastTick;  // see countUp() above for why this exists
-        if (gap > 100) startTime += gap;
-        lastTick = now;
-        var elapsed = now - startTime;
-        var rawProgress = Math.min(elapsed / duration, 1);
-        // However far the raw timer thinks we should be, cap one rendered
-        // frame's jump to 4% of the way there — a stall just takes a
-        // couple of extra (still-fast) frames to settle
-        // instead of visibly teleporting the number forward.
-        var progress = Math.min(rawProgress, lastProgress + 0.04, 1);
-        lastProgress = progress;
-        var ease = 1 - Math.pow(1 - progress, 3);
-        var val = Math.floor(target * ease);
-        el.textContent = '$' + val.toLocaleString();
-        if (progress < 1) requestAnimationFrame(tick);
-        else el.textContent = '$' + target.toLocaleString();
-      }
-      requestAnimationFrame(tick);
-    });
-  });
+  cavCount(el, target, {duration: duration, prefix: '$'});
 }
 function animateStatNums(panelId) {
   if (_gbpReload) return;
@@ -29085,6 +29058,18 @@ window.cavPalette = cavPalette;
     var b = $id('ps-send-btn'); if (!b || b.getAttribute('aria-busy') === 'true') return;
     var c = window._psCheck, n = c && c.reach ? (c.reach.reachable || 0) : 0;
     var armed = window._psArmed && window._psArmed.hid === _schedHistoryId;
+    /* Sent stays sent (owner, 9/26/26): once the week on screen is the one
+       staff have and nothing saved since is waiting to go, the button says
+       so and rests - the server's published_at, or this page's own send. */
+    var sent = window.psIsSent();
+    var tp = $id('ss-top-publish'); if (tp && sent) tp.hidden = true;
+    if (sent) {
+      var q = window._psSent && window._psSent.hid === _schedHistoryId && window._psSent.queued && !(c && c.published_at);
+      b.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>' + (q ? 'Queued' : 'Sent');
+      b.className = 'cbtn cbtn-secondary ps-sent'; b.disabled = true;
+      b.title = c && c.published_at ? 'Sent to staff ' + (window.mdyAt ? mdyAt(c.published_at) : md(c.published_at)) : '';
+      return;
+    }
     if (armed) b.textContent = 'Send with ' + window._psArmed.n + ' rule warning' + (window._psArmed.n === 1 ? '' : 's') + '…';
     else b.textContent = (_schedDirty ? 'Save & send' : 'Send') + (n ? ' to ' + n + ' staff' : ' to staff');
     b.className = 'cbtn ' + (armed ? 'cbtn-danger' : 'cbtn-primary');
@@ -29095,7 +29080,7 @@ window.cavPalette = cavPalette;
   function psReach() {
     var el = $id('ps-reach'), c = window._psCheck; if (!el) return;
     if (!c || !c.reach) { el.innerHTML = ''; return; }
-    if (c.published_at) { var un = c.unsent_changes || []; el.innerHTML = 'Sent to staff <span class="hb-num">' + e(md(c.published_at)) + '</span> · ' + (un.length ? ('<span class="hb-num">' + un.length + '</span> ' + (un.length === 1 ? 'person hasn’t' : 'people haven’t') + ' been told about saved changes — Send tells them.') : 'a change you save is sent when you press Send, to whoever it moves.'); return; }
+    if (c.published_at) { var un = c.unsent_changes || []; el.innerHTML = 'Sent to staff <span class="hb-num">' + e(window.mdyAt ? mdyAt(c.published_at) : md(c.published_at)) + '</span> · ' + (un.length ? ('<span class="hb-num">' + un.length + '</span> ' + (un.length === 1 ? 'person hasn’t' : 'people haven’t') + ' been told about saved changes — Send tells them.') : 'a change you save is sent when you press Send, to whoever it moves.'); return; }
     var r = c.reach, bits = [];
     if (r.by_app) bits.push('<span class="hb-num">' + r.by_app + '</span> in the app');
     if (r.by_text) bits.push('<span class="hb-num">' + r.by_text + '</span> by text');
@@ -29106,6 +29091,14 @@ window.cavPalette = cavPalette;
       + (lost ? ' · <span class="hb-num">' + lost + '</span> only in the staff portal' : '')
       + ' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="togglePublishSchedule()">' + (lost ? 'Fix contacts' : 'Contacts') + '</button>';
   }
+  window.psIsSent = function () {
+    if (!_schedHistoryId || _schedDirty) return false;
+    var c = window._psCheck, mine = c && c.schedule_id != null ? +c.schedule_id === +_schedHistoryId : true;
+    var waiting = c && mine && (c.unsent_changes || []).length;
+    if (waiting) return false;
+    if (c && mine && c.published_at) return true;
+    return !!(window._psSent && window._psSent.hid === _schedHistoryId);
+  };
   window.psRefresh = function () {
     if (!_schedHistoryId) return;
     var hid = _schedHistoryId;
@@ -29115,7 +29108,7 @@ window.cavPalette = cavPalette;
       psReach();
       /* Warnings already on file for the saved week go on screen now, and
          the button names them: that press is the acknowledgement. */
-      if ((d.blockers || []).length && !_schedDirty && !d.published_at) _psRenderBlockers(d.blockers, true, d.blocker_keys);
+      if ((d.blockers || []).length && !_schedDirty && !d.published_at) _psRenderBlockers(d.blockers, true, d.blocker_keys, false);
       else if (!(d.blockers || []).length) { _psRenderBlockers([], false); window._psArmed = null; }
       psLabel();
     });

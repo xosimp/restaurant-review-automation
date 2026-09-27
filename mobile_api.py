@@ -4857,7 +4857,7 @@ def mobile_remove_competitor(current_user):
     return jsonify(ok=True)
 
 
-@mobile_bp.route("/intel/ai-visibility")
+@mobile_bp.route("/intel/ai-visibility", methods=["GET", "POST"])
 @mobile_login_required
 def mobile_ai_visibility(current_user):
     """Mirrors the web Intel tab's AI Visibility sub-tab: how often the
@@ -4865,7 +4865,8 @@ def mobile_ai_visibility(current_user):
     style queries, plus a 10-item GBP/profile completeness checklist. Shares
     the same 3-call/60s rate limit as the web route since each call fires
     real, billable Perplexity queries."""
-    payload, status = _capi._do_ai_visibility(current_user["restaurant_id"])
+    # POST (Check / Re-run) runs live, as on the web; GET serves the recorded run.
+    payload, status = _capi._do_ai_visibility(current_user["restaurant_id"], force=request.method == "POST")
     payload = _capi.present_ai_visibility_roadmap(current_user["restaurant_id"], payload, current_user.get("id"))
     return jsonify(**payload), status
 

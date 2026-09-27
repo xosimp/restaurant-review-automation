@@ -246,8 +246,9 @@ def test_a_read_types_itself_once_a_session_and_never_above_the_viewport():
     assert "_twWasSeen(key) || above || still" in tw and "window.scrollBy(0, dh)" in tw
 
 
-def test_overstaffed_is_its_own_colour():
+def test_overstaffed_is_the_ember_again():
+    # Blue for a day, back to the ember (owner, 9/26/26).
     s = _src()
-    assert ".lb2-tint{--tc:var(--blue);" in s and ".sb-lane{--tc:var(--blue)}" in s
+    assert ".lb2-tint{--tc:var(--ember);" in s and ".sb-lane{--tc:var(--ember)}" in s
     ios = open(os.path.join(ROOT, "ios/CavnarAI/CavnarAI/Features/Labor/StaffingBoardSection.swift"), encoding="utf-8").read()
-    assert "case .over: return .cavnarBlue" in ios
+    assert "case .over: return .cavnarEmber" in ios
