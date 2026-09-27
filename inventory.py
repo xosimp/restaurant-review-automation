@@ -1606,8 +1606,14 @@ def food_insight_validation_facts(analysis: dict, drivers=(), forecasts=(), cfo_
                            entity=x.get("item")))
     for x in a.get("order_reduction") or []:
         if isinstance(x, dict):
-            facts.append(F("food.item.savings_vs_last", x.get("savings_vs_last"), "$", "estimate",
-                           entity=x.get("item")))
+            # A positive difference is the order costing LESS: its direction
+            # is down. Untyped, the checker read the "_vs" key's positive
+            # value as a rise and flagged every "$95 less per order" as a
+            # contradiction (owner, 9/26/26).
+            sv = x.get("savings_vs_last")
+            sd = ("down" if sv > 0 else "up" if sv < 0 else None) if isinstance(sv, (int, float)) else None
+            facts.append(F("food.item.savings_vs_last", sv, "$", "estimate",
+                           entity=x.get("item"), direction=sd))
     for key, value, period in forecasts or ():
         facts.append(F(key, value, "$", "projection", period))
     facts += list(cfo_facts or ())

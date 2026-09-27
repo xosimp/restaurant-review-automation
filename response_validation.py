@@ -709,7 +709,7 @@ _PERIOD_AFTER_RE = re.compile(
     r"today|period)\b", re.I)
 _PERIOD_NEAR_AFTER_RE = re.compile(
     r"^((?:\s+[\w'’-]+){0,3}?)\s+(tonight|today|this\s+(?:week|month|year|period)|last\s+(?:week|month|year|night)|"
-    r"(?:a|per|every|each)\s+(?:week|month|year|night|day))\b", re.I)
+    r"(?:a|per|every|each)\s+(?:week|month|year|night|day)|for\s+(?:the|a)\s+(?:week|month|year))\b", re.I)
 # "$909 ahead of last week": the period there is the comparator, not the
 # figure's own.
 _COMPARATOR_WORDS = {"of", "than", "vs", "versus", "from", "behind", "ahead", "over", "compared", "against", "below",
@@ -742,6 +742,12 @@ def _period_of(sentence: str, claim) -> tuple:
         p = _PERIOD_NORM.get(words[-1], words[-1])
         return p, words[0] in ("a", "per", "every", "each")
     before = sentence[max(0, claim["start"] - 40):claim["start"]]
+    # A figure inside parentheses takes no period from outside them:
+    # "$47.90 for the week ($207.56 projected for the month)" gave the
+    # month's figure the week (owner, 9/26/26).
+    lp = before.rfind("(")
+    if lp != -1 and ")" not in before[lp:]:
+        before = before[lp + 1:]
     m = _PERIOD_BEFORE_RE.search(before)
     if m:
         return _PERIOD_NORM.get(m.group(1).lower(), m.group(1).lower()), True
@@ -2876,6 +2882,10 @@ class _Run:
             for f in facts:
                 if f.direction:
                     dirs.add(f.direction)
+                elif re.search(r"sav(?:ing|ed)", f.key.lower()):
+                    # A saving is a decrease stated as a positive amount.
+                    if f.value:
+                        dirs.add(-1 if f.value > 0 else 1)
                 elif f.value < 0 and re.search(r"(?:^|[._])(?:vs|delta|change|diff)", f.key.lower()):
                     dirs.add(-1)
                 elif f.value > 0 and re.search(r"(?:^|[._])(?:vs|delta|change|diff)", f.key.lower()):

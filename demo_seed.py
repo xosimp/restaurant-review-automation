@@ -230,6 +230,7 @@ def _seed_simple_ejs(db_path: str = DB_PATH):
     _seed_ejs_shifts(rid, db_path)
     _seed_ejs_capabilities(rid, db_path)
     _seed_ejs_food_cost(rid, db_path)
+    _seed_ejs_food_showcase(rid, db_path)
     _ensure_ejs_login(rid, db_path)
     return rid
 
@@ -580,6 +581,126 @@ def _seed_ejs_food_cost(rid: int, db_path: str):
     finally:
         conn.close()
     print(f"[auto-seed] {SIMPLE_EJS_NAME} food cost seeded: {len(_EJS_PANTRY)} ingredients, {len(_EJS_MENU)} dishes")
+
+
+_SHOWCASE_NOTE = "demo showcase"
+
+
+def _seed_ejs_food_showcase(rid: int, db_path: str):
+    """Food Cost's three lists have something to show on the demo (owner,
+    9/26/26): Biggest waste items, the urgent rows of What to order this
+    week, and Cash sitting over par. Works on whatever ingredients the demo
+    carries (production's list is not _EJS_PANTRY) and fills only what is
+    missing, through the ledger's own events: logged waste inside the
+    trailing week, a count under two days of use, a count well over par.
+    At most once a week (the "demo showcase" count marks a pass), so a
+    count the owner makes is not undone on the next boot. Demo rows only -
+    _seed_simple_ejs never hands this a live restaurant."""
+    from datetime import date, timedelta
+    import inventory_ledger as _il
+    conn = get_conn(db_path)
+    try:
+        today = date.today()
+        week_ago = (today - timedelta(days=6)).isoformat()
+        if conn.execute("SELECT 1 FROM ingredient_stock_events WHERE restaurant_id=? AND note=? AND event_date>=? LIMIT 1",
+                        (rid, _SHOWCASE_NOTE, week_ago)).fetchone():
+            return
+        rows = [dict(r) for r in conn.execute(
+            "SELECT id, name, par_level, unit_cost, current_stock, avg_daily_usage, last_order_qty "
+            "FROM ingredients WHERE restaurant_id=? AND COALESCE(is_active,1)=1 AND COALESCE(unit_cost,0)>0 "
+            "AND COALESCE(par_level,0)>0", (rid,)).fetchall()]
+        if len(rows) < 9:
+            return
+        # The dearest weekly spend first: the lists should show items that matter.
+        rows.sort(key=lambda r: -(float(r["unit_cost"]) * float(r["last_order_qty"] or r["par_level"])))
+        taken, wrote = set(), 0
+
+        def pick(n, ok):
+            out = []
+            for r in rows:
+                if len(out) == n:
+                    break
+                if r["id"] not in taken and ok(r):
+                    out.append(r)
+                    taken.add(r["id"])
+            return out
+
+        wasted = {x["ingredient_id"] for x in conn.execute(
+            "SELECT DISTINCT ingredient_id FROM ingredient_stock_events WHERE restaurant_id=? "
+            "AND event_type='waste' AND event_date>=?", (rid, week_ago)).fetchall()}
+        taken |= wasted
+        # Biggest waste items: 30% of a week's order is past every category's
+        # tolerance band (15-28%), so each item lands in the list. The four
+        # cheapest items worth listing (a $20+ week), not the dearest: the
+        # list fills without tipping the week's waste over target. The waste is logged the day before a count at
+        # the stock on hand, so the ledger's on-hand is what the shelf holds.
+        if len(wasted) < 3:
+            by_spend = sorted(rows, key=lambda r: float(r["unit_cost"]) * float(r["last_order_qty"] or r["par_level"]))
+            mid = [r for r in by_spend if r["id"] not in taken
+                   and float(r["unit_cost"]) * float(r["last_order_qty"] or r["par_level"]) >= 20][:4]
+            for k, r in enumerate(mid):
+                taken.add(r["id"])
+                base = float(r["last_order_qty"] or r["par_level"])
+                qty = round(base * 0.30, 1)
+                if qty <= 0:
+                    continue
+                conn.execute(
+                    "INSERT INTO ingredient_stock_events (restaurant_id, ingredient_id, event_type, qty, event_date, "
+                    " source, note) VALUES (?,?,?,?,?,?,?)",
+                    (rid, r["id"], "waste", qty, (today - timedelta(days=1 + k)).isoformat(), "logged",
+                     ("spoiled", "over-prepped", "expired", "dropped")[k % 4]))
+                conn.execute(
+                    "INSERT INTO ingredient_stock_events (restaurant_id, ingredient_id, event_type, qty, event_date, "
+                    " source, note) VALUES (?,?,?,?,?,?,?)",
+                    (rid, r["id"], "recount", float(r["current_stock"] or 0), today.isoformat(), "seed", _SHOWCASE_NOTE))
+                _il.recompute_rollups(rid, r["id"], conn=conn)
+                wrote += 1
+
+        def days_left(r):
+            use = float(r["avg_daily_usage"] or 0)
+            st = float(r["current_stock"] or 0)
+            return 99.0 if use <= 0 else st / use
+        # Urgent: under par with two days or less of use left (inventory.
+        # analyze's critical_low); an item with no usage figure is counted empty.
+        if not any(float(r["current_stock"] or 0) < float(r["par_level"]) and
+                   (float(r["current_stock"] or 0) <= 0 or days_left(r) <= 2) for r in rows):
+            for r in pick(3, lambda r: True):
+                use = float(r["avg_daily_usage"] or 0)
+                qty = round(use * 1.2, 1) if use > 0 else 0.0
+                qty = min(qty, round(float(r["par_level"]) * 0.2, 1))
+                conn.execute(
+                    "INSERT INTO ingredient_stock_events (restaurant_id, ingredient_id, event_type, qty, event_date, "
+                    " source, note) VALUES (?,?,?,?,?,?,?)",
+                    (rid, r["id"], "recount", qty, today.isoformat(), "seed", _SHOWCASE_NOTE))
+                _il.recompute_rollups(rid, r["id"], conn=conn)
+                wrote += 1
+        # Cash sitting over par: past every category's overstock band (x1.3).
+        if not any(float(r["current_stock"] or 0) > float(r["par_level"]) * 1.3 for r in rows):
+            # Never an item that is low: it belongs on the order, not over par.
+            for r in pick(2, lambda r: float(r["current_stock"] or 0) >= float(r["par_level"]) * 0.6):
+                conn.execute(
+                    "INSERT INTO ingredient_stock_events (restaurant_id, ingredient_id, event_type, qty, event_date, "
+                    " source, note) VALUES (?,?,?,?,?,?,?)",
+                    (rid, r["id"], "recount", round(float(r["par_level"]) * 1.7, 1), today.isoformat(), "seed",
+                     _SHOWCASE_NOTE))
+                _il.recompute_rollups(rid, r["id"], conn=conn)
+                wrote += 1
+        if wrote:
+            # The pass is marked even when only waste was missing.
+            if not conn.execute("SELECT 1 FROM ingredient_stock_events WHERE restaurant_id=? AND note=? "
+                                "AND event_date>=? LIMIT 1", (rid, _SHOWCASE_NOTE, week_ago)).fetchone():
+                r = rows[0]
+                conn.execute(
+                    "INSERT INTO ingredient_stock_events (restaurant_id, ingredient_id, event_type, qty, event_date, "
+                    " source, note) VALUES (?,?,?,?,?,?,?)",
+                    (rid, r["id"], "recount", float(conn.execute("SELECT current_stock FROM ingredients WHERE id=?",
+                                                                 (r["id"],)).fetchone()["current_stock"] or 0),
+                     today.isoformat(), "seed", _SHOWCASE_NOTE))
+                _il.recompute_rollups(rid, r["id"], conn=conn)
+            conn.commit()
+            print(f"[auto-seed] {SIMPLE_EJS_NAME} food cost showcase: {wrote} ledger events")
+    finally:
+        conn.close()
 
 
 # "erikdemo", not "erik" (9/25/26): Erik may want "erik" for his LIVE

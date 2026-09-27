@@ -2747,11 +2747,25 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .fc2-count-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--paper2)}
 .fc2-count-row .n{font-size:14px;color:var(--ink2)}
 .fc2-count-row .n small{color:var(--ink3);font-size:12px}
-.fc2-count-row input{width:96px;text-align:right}
+.fc2-count-row input{width:104px;text-align:right}
 .fc2-count-ft{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:12px}
 /* One-line waste log under the count sheet (U2-32): the count footer's row. */
-.fc2-waste-log{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid var(--hb-line2)}
-.fc2-waste-log .k{font-size:12.5px;font-weight:600;color:var(--ink3);margin-right:4px}
+.fc2-waste-log{margin-top:30px}
+.fc2-waste-log .k{display:block;font-size:12.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ember)}
+.fc2-waste-row{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-top:12px}
+/* One control for Food Cost's rows (owner, 9/26/26): selects, the quantity
+   box and the button beside them are one height, sized to what they hold,
+   never stretched across the card; the select draws the brand chevron. */
+.fc2-block .fc2-ctl,#panel-inventory .fc2-ctl{width:220px;height:42px;box-sizing:border-box;margin:0;padding:0 14px;border-radius:10px;font-size:14.5px;line-height:40px;color:var(--ink);border:1px solid var(--hb-line);background-color:var(--sf-recess)}
+.fc2-block select.fc2-ctl,#panel-inventory select.fc2-ctl{-webkit-appearance:none;appearance:none;padding-right:38px;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23d4583a' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 14px center;background-size:12px 8px}
+.fc2-block .fc2-ctl.fc2-qty,#panel-inventory .fc2-ctl.fc2-qty{width:120px;text-align:right;padding-right:10px}
+.fc2-block .fc2-ctl:focus,#panel-inventory .fc2-ctl:focus{border-color:var(--ember);box-shadow:0 0 0 3px var(--hb-tint2);outline:none}
+.fc2-block .fc2-ctl-btn{height:42px;min-width:120px;padding:0 22px}
+#panel-inventory .fc2-sup-row select.fc2-ctl{width:190px;max-width:none}
+.fc2-sup-grid{grid-template-columns:repeat(auto-fill,minmax(340px,1fr))}
+/* A count box's figure sits clear of its arrows. */
+.fc2-block input[type="number"]{padding-right:10px}
+.fc2-block input[type="number"]::-webkit-inner-spin-button{margin-left:10px}
 .hb-ledger{display:flex;flex-wrap:wrap;gap:8px}
 .hb-ledger span{display:inline-flex;align-items:center;gap:9px;font-size:13.5px;color:var(--ink2);background:var(--hb-inner);border:1px solid var(--hb-line2);border-radius:999px;padding:6px 12px}
 .hb-ledger span .hb-num{color:var(--ink);font-weight:700}
@@ -9977,6 +9991,13 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .fc2-num-lbl{font-size:10.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ember2);margin-top:6px}
 /* ── Waste trend card ─────────────────────────────────────────────────── */
 .fc2-wt{margin-top:22px;padding:22px 24px 20px;border-radius:14px;background:var(--surface-glass);border:1px solid var(--line-hi);box-shadow:var(--elev-1)}
+/* The shell sits a step darker than the card inside it (owner, 9/26/26):
+   no ember wash or ambient glow on it; the card carries the surface. */
+.lb2-hero.fc2-wt-shell,[data-theme="dark"] .lb2-hero.fc2-wt-shell{background:var(--paper2)}
+[data-theme="dark"] .lb2-hero.fc2-wt-shell{background:#171411}
+.lb2-hero.fc2-wt-shell:before,.lb2-hero.fc2-wt-shell.lit:after{display:none}
+.lb2-hero.fc2-wt-shell .fc2-wt{margin-top:0;background:var(--surface)}
+[data-theme="dark"] .lb2-hero.fc2-wt-shell .fc2-wt{background:var(--surface-glass),var(--surface)}
 .fc2-wt-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}
 .fc2-wt-title{min-width:0;flex:1 1 360px}
 .fc2-wt-verdict{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:7px;font-family:'Clash Display',sans-serif;font-weight:500;font-size:26.5px;letter-spacing:-.01em;color:var(--ink);line-height:1.15}
@@ -10285,7 +10306,34 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .fc2-hero-fcp{margin:0;padding:0 40px 0 0;background:none;border:0;border-right:1px solid var(--hb-line2);border-radius:0;box-shadow:none;max-width:none;overflow:visible}
 .fc2-hero-fcp:before{display:none}
 .fc2-hero-fcp:hover{box-shadow:none;transform:none}
-.fc2-hero-fcp .k{font-size:10.5px;letter-spacing:.16em;color:var(--ember2)}
+.fc2-hero-fcp .k{font-size:12.5px;letter-spacing:.16em;color:var(--ember2)}
+/* The dark .fc2-pos surface outranked the hero's background:none - the
+   grey block around the food cost figures (owner, 9/26/26). */
+.fc2-hero-fcp.fc2-pos,[data-theme="dark"] .fc2-hero-fcp.fc2-pos{background:none;border:0;box-shadow:none;padding-top:0;padding-bottom:0}
+/* Its lines wrap inside a measure; unbounded, the larger text pushed the
+   headline column down to a word per line. */
+.fc2-hero-fcp.fc2-pos{max-width:460px;min-width:0}
+.fc2-top-right{min-width:0;max-width:62%}
+.fc2-hero-fcp .d{font-size:16.5px;color:var(--ink2);margin-top:8px}
+.fc2-hero-fcp .b{font-size:14px}
+/* The week's waste lines up row for row with the food cost block beside
+   it (owner, 9/26/26): one grid, both blocks on its rows (subgrid) - the
+   figure beside the food cost figure, WASTE THIS WEEK beside the first
+   missing line (or the basis), the verdict beside the second, whatever
+   wraps. The list's items are rows of that grid (display:contents). */
+.fc2-hero-nums{display:grid;grid-template-columns:minmax(0,460px) auto;grid-template-rows:repeat(6,auto);column-gap:0;row-gap:0;align-items:start}
+.fc2-hero-nums>#fc2-fcp{grid-column:1;grid-row:1/-1;display:grid;grid-template-rows:subgrid;align-content:start}
+.fc2-hero-nums>#fc2-fcp[hidden]{display:none}
+.fc2-hero-nums>.fc2-waste-n{grid-column:2;grid-row:1/-1;display:grid;grid-template-rows:subgrid;padding-left:40px}
+.fc2-hero-nums>#fc2-fcp[hidden]+.fc2-waste-n{grid-column:1/-1;padding-left:0}
+.fc2-waste-n .big{grid-row:2;align-self:start}
+.fc2-waste-n .fc2-num-lbl{grid-row:4;margin-top:14px;font-size:12.5px;line-height:1.45}
+.fc2-waste-n .delta{grid-row:5;margin-top:12px;font-size:16px;line-height:1.45;color:var(--ink2)}
+.fc2-hero-fcp .miss{display:contents}
+.fc2-hero-fcp .miss li{margin:12px 0 0 20px;font-size:15px;line-height:1.45;color:var(--ink3)}
+.fc2-hero-fcp .miss li:first-child{margin-top:14px}
+.fc2-hero-fcp .b{margin-top:14px}
+@media(max-width:640px){.fc2-hero-nums{grid-template-columns:1fr}.fc2-hero-nums>#fc2-fcp,.fc2-hero-nums>.fc2-waste-n{grid-column:1;grid-row:auto;display:block;padding-left:0}.fc2-hero-fcp .miss{display:block;padding-left:20px;margin:14px 0 0}.fc2-hero-fcp .miss li{margin-left:0}.fc2-waste-n{margin-top:22px}}
 .fc2-hero-fcp .v{font-size:clamp(34px,4vw,50px)}
 .fc2-sub-h{font-family:'Clash Display',sans-serif;font-size:17px;font-weight:500;color:var(--ink);margin:22px 0 6px}
 .fc2-sub-h small{font-family:'Apfel Grotezk',sans-serif;font-size:13.5px;color:var(--ink3);margin-left:8px;font-weight:400}
@@ -10353,10 +10401,8 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
       {% if inv.is_live and _if and _if.as_of %}<div class="fc2-h1-basis"{% if _inv_stale %} style="color:var(--amber)"{% endif %}>From your count of <span class="hb-num">{{ _if.as_of }}</span>{% if inv.benchmark_detail and inv.benchmark_label != '—' and not _inv_stale %} · {{ inv.benchmark_detail }}{% endif %}</div>
       {% elif inv.is_live and inv.benchmark_detail and inv.benchmark_label != '—' %}<div class="fc2-h1-basis">This week · {{ inv.benchmark_detail }}</div>{% endif %}
       <div class="dh-badge" data-dh-module="food_cost" hidden></div>
-      {# Today (density round #48): one deterministic sentence - the top
-         CFO driver when the ranking has one (filled by fc2LoadCfo), then
-         what to order now. No model call. Live data only. #}
-      {% if inv.is_live %}<div class="mod-today" id="fc2-today"><span class="k">Today</span><span id="fc2-today-drv"></span><span id="fc2-today-rest">{% if inv.critical_low %}order <b class="hb-num">{{ inv.critical_low|length }}</b> item{{ 's' if inv.critical_low|length != 1 }} running out{% else %}nothing is running out this week{% endif %}</span></div>{% endif %}
+      {# The Today line under the h1 was removed (owner, 9/26/26): the order
+         list says what is running out, and the CFO read names the driver. #}
       {# Actual food cost % — COGS over net sales, against this restaurant's own
          food_cost_target. Filled by /api/food-cost/cogs; hidden until it
          answers, and when a component is missing it says which rather than
@@ -10388,7 +10434,9 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
       <div class="fc2-hero-nums">
         <div id="fc2-fcp" class="fc2-fcp fc2-pos fc2-hero-fcp" hidden></div>
         {# The week's waste, measured from the count; its band verdict in words under it. #}
-        <div class="n{{ ' sample' if not inv.is_live }}"><div class="big{{ ' bad' if _tone == 'bad' }}"><span id="inv-week-waste" class="hb-num">${{ inv.total_waste_cost_week|int|format_num }}</span></div><div class="fc2-num-lbl">Waste this week</div><div class="delta"><span>{{ _head }}</span></div></div>
+        {# Green at or near the target, red over it (owner, 9/26/26). #}
+        {% set _wtone = 'good' if (inv.is_live and not _inv_stale and _wl in ['Under target','Near target']) else ('bad' if (inv.is_live and not _inv_stale and _wl in ['Over target','Well over target']) else '') %}
+        <div class="n fc2-waste-n{{ ' sample' if not inv.is_live }}"><div class="big{{ ' ' ~ _wtone if _wtone }}"><span id="inv-week-waste" class="hb-num">${{ inv.total_waste_cost_week|int|format_num }}</span></div><div class="fc2-num-lbl">Waste this week</div><div class="delta"><span>{{ _head }}</span></div></div>
       </div>
     </div>
   </div>
@@ -10402,7 +10450,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
      Filled by /api/food-cost/cfo; renders nothing when no driver clears
      the dollar floor. #}
   <div id="fc2-cfo" hidden></div>
-  <section class="lb2-hero" aria-label="Waste trend">
+  <section class="lb2-hero fc2-wt-shell" aria-label="Waste trend">
     {# The waste-trend card. Drawn entirely from /api/food-cost/waste-trend
        (waste_trend.py) — the series, every derived figure and the
        observations come from there; the JS below only lays them out. #}
@@ -10428,16 +10476,6 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
   <div class="lb2-ai"><div class="tag">Cavnar AI's read on your food cost · week of {{ inv.week_start }} – {{ inv.week_end }}</div><div class="insight-text insight-loading" id="inv-insight"><div class="hb-load"><canvas class="hb-orb" data-orb-state="composing" width="28" height="28"></canvas><span>Counting the pantry…</span></div></div></div>
   <section class="hb-card bm-card" data-bm-module="food_cost" hidden aria-label="How you compare"></section>
 
-  {# The recoverable gauge is gone (density round #25): it restated the
-     recoverable dollars a third time on a third basis. #}
-  <div class="lb2-sig lb2-sig-2">
-    <div class="lb2-sg"><div class="k"><span>Biggest waste items</span></div><div class="v"><span class="hb-num">${{ inv.total_waste_cost_week|int|format_num }}</span><small>this week</small></div>
-      <div class="fc2-ledger" id="fc2-ledger-waste"></div>
-      <div class="cap"><span>sorted by cost, largest first</span></div></div>
-    <div class="lb2-sg"><div class="k"><span>Cash sitting over par</span></div><div class="v"><span class="hb-num">${{ _ostock_total|int|format_num }}</span><small>sitting over par</small></div>
-      <div class="fc2-ledger" id="fc2-ledger-stock"></div>
-      <div class="cap"><span>current stock vs. par level</span></div></div>
-  </div>
 
   {# This week's work (density round #8): the count sheet, the suppliers
      and the recipes are one-line rows after the why, each opening in
@@ -10496,6 +10534,17 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
       <div class="bd" id="so-body"><div class="hb-load" style="height:60px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div>
       <div id="po-history" class="fc2-po"></div>
     </div>
+  </div>
+
+  {# Biggest waste items and Cash sitting over par sit under the order
+     (owner, 9/26/26): what to buy first, then what the shelves hold. #}
+  <div class="lb2-sig lb2-sig-2">
+    <div class="lb2-sg"><div class="k"><span>Biggest waste items</span></div><div class="v"><span class="hb-num">${{ inv.total_waste_cost_week|int|format_num }}</span><small>this week</small></div>
+      <div class="fc2-ledger" id="fc2-ledger-waste"></div>
+      <div class="cap"><span>sorted by cost, largest first</span></div></div>
+    <div class="lb2-sg"><div class="k"><span>Cash sitting over par</span></div><div class="v"><span class="hb-num">${{ _ostock_total|int|format_num }}</span><small>sitting over par</small></div>
+      <div class="fc2-ledger" id="fc2-ledger-stock"></div>
+      <div class="cap"><span>current stock vs. par level</span></div></div>
   </div>
 
   <div class="fc2-sec" id="fc2-menu" data-nav="inventory/menu">
@@ -10788,6 +10837,9 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
   document.addEventListener('DOMContentLoaded',function(){
     function whenSeen(id,fn){var el=document.getElementById(id);if(!el)return;if(typeof cavnarWhenVisible==='function')cavnarWhenVisible(el,fn);else fn();}
     whenSeen('fc2-order-send',loadOrderDraft);
+    // A supplier set in the Suppliers block regroups the order at once
+    // (owner, 9/26/26: "Suppliers needed" stayed until a page reload).
+    window.fc2ReloadOrderDraft=function(){if(document.getElementById('so-body'))loadOrderDraft();};
     whenSeen('mm-body',loadMenuMargins);
   });
   // Nav paths (nav.py): "order/<supplier email>" opens the order card on
@@ -21995,10 +22047,10 @@ function fc2LoadSuppliers(){
     h+='</div>';
     var opts='<option value="">\u2014 none \u2014</option>';
     for(i=0;i<keys.length;i++)opts+='<option value="'+esc(keys[i])+'">'+esc(sups[keys[i]].name)+'</option>';
-    if(un&&keys.length)h+='<div class="fc2-sup-bulk"><span>Put every ingredient without a supplier on</span><select class="ac-select" id="fc2-sup-bulk">'+opts.replace('<option value="">\u2014 none \u2014</option>','')+'</select><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="fc2AssignAllUnassigned(this)">Assign '+un+'</button></div>';
+    if(un&&keys.length)h+='<div class="fc2-sup-bulk"><span>Put every ingredient without a supplier on</span><select class="ac-select fc2-ctl" id="fc2-sup-bulk">'+opts.replace('<option value="">\u2014 none \u2014</option>','')+'</select><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="fc2AssignAllUnassigned(this)">Assign '+un+'</button></div>';
     h+='<div class="fc2-sup-grid">';
     for(i=0;i<items.length;i++){var it=items[i],cur=String(it.supplier_email||'').toLowerCase();
-      h+='<div class="fc2-sup-row"><span class="n">'+esc(it.name)+(it.unit?' <small>'+esc(it.unit)+'</small>':'')+'</span><select class="ac-select" data-sup-ing="'+esc(it.name)+'" onchange="fc2SupplierPick(this)" aria-label="Supplier for '+esc(it.name)+'">'+opts.replace('value="'+esc(cur)+'"','value="'+esc(cur)+'" selected')+'<option value="__new">New supplier\u2026</option></select></div>';}
+      h+='<div class="fc2-sup-row"><span class="n">'+esc(it.name)+(it.unit?' <small>'+esc(it.unit)+'</small>':'')+'</span><select class="ac-select fc2-ctl" data-sup-ing="'+esc(it.name)+'" onchange="fc2SupplierPick(this)" aria-label="Supplier for '+esc(it.name)+'">'+opts.replace('value="'+esc(cur)+'"','value="'+esc(cur)+'" selected')+'<option value="__new">New supplier\u2026</option></select></div>';}
     h+='</div><div class="fc2-sup-new" id="fc2-sup-new" hidden><b id="fc2-sup-new-for">New supplier</b><input class="ac-input" id="fc2-sup-new-name" placeholder="Supplier name" aria-label="Supplier name"><input class="ac-input" id="fc2-sup-new-email" type="email" placeholder="orders@supplier.com" aria-label="Supplier email"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="fc2SupplierSaveNew(this)">Save supplier</button><span class="ac-status" id="fc2-sup-status"></span></div>';
     el.innerHTML=h;el.hidden=false;
     el._sups=sups;
@@ -22016,7 +22068,7 @@ function fc2SupplierPick(sel){
   fc2SupplierPost(ing,sup?sup.name:'',sup?sup.email:'',function(ok,err){
     sel.disabled=false;
     if(typeof toast==='function')toast(ok?(sup?ing+' \u2192 '+sup.name:ing+' has no supplier now'):(err||'Could not save'),ok?'success':'error');
-    if(ok)fc2LoadSuppliers();
+    if(ok){fc2LoadSuppliers();if(window.fc2ReloadOrderDraft)fc2ReloadOrderDraft();}
   });
 }
 function fc2SupplierSaveNew(btn){
@@ -22027,7 +22079,7 @@ function fc2SupplierSaveNew(btn){
   fc2SupplierPost(_fc2SupNewFor,name,email,function(ok,err){
     done();if(st)st.textContent=ok?'':(err||'Could not save.');
     if(typeof toast==='function')toast(ok?_fc2SupNewFor+' \u2192 '+name:(err||'Could not save'),ok?'success':'error');
-    if(ok){_fc2SupNewFor=null;fc2LoadSuppliers();}
+    if(ok){_fc2SupNewFor=null;fc2LoadSuppliers();if(window.fc2ReloadOrderDraft)fc2ReloadOrderDraft();}
   });
 }
 function fc2AssignAllUnassigned(btn){
@@ -22037,7 +22089,7 @@ function fc2AssignAllUnassigned(btn){
   if(!todo.length)return;
   var done=cbtnBusy(btn,'Assigning\u2026'),n=0;
   (function next(){
-    if(!todo.length){done();if(typeof toast==='function')toast(n+' ingredient'+(n===1?'':'s')+' \u2192 '+sup.name,'success');fc2LoadSuppliers();return;}
+    if(!todo.length){done();if(typeof toast==='function')toast(n+' ingredient'+(n===1?'':'s')+' \u2192 '+sup.name,'success');fc2LoadSuppliers();if(window.fc2ReloadOrderDraft)fc2ReloadOrderDraft();return;}
     fc2SupplierPost(todo.shift(),sup.name,sup.email,function(ok){if(ok)n++;next();});
   })();
 }
@@ -22055,10 +22107,10 @@ function fc2LoadCountSheet(){
     // One line of waste (U2-32): what was thrown out, logged as counted
     // waste instead of surfacing later as an unexplained recount gap.
     var wo='';for(var w=0;w<d.items.length;w++)wo+='<option value="'+esc(d.items[w].ingredient_id)+'">'+esc(d.items[w].name)+(d.items[w].unit?' ('+esc(d.items[w].unit)+')':'')+'</option>';
-    h+='<div class="fc2-waste-log" data-nav="inventory/waste"><span class="k">Log waste</span><select class="ac-select" id="fc2-waste-ing" aria-label="What was thrown out">'+wo+'</select>'
-      +'<input type="number" min="0" step="any" class="ac-input ac-num" id="fc2-waste-qty" placeholder="qty" aria-label="How much" style="max-width:90px">'
-      +'<select class="ac-select" id="fc2-waste-why" aria-label="Why"><option value="spoiled">spoiled</option><option value="expired">expired</option><option value="overprepped">over-prepped</option><option value="dropped">dropped</option><option value="returned">sent back</option><option value="other">other</option></select>'
-      +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="fc2LogWaste(this)">Log it</button></div>';
+    h+='<div class="fc2-waste-log" data-nav="inventory/waste"><span class="k">Log waste</span><div class="fc2-waste-row"><select class="ac-select fc2-ctl" id="fc2-waste-ing" aria-label="What was thrown out">'+wo+'</select>'
+      +'<input type="number" min="0" step="any" class="ac-input ac-num fc2-ctl fc2-qty" id="fc2-waste-qty" placeholder="Qty" aria-label="How much">'
+      +'<select class="ac-select fc2-ctl" id="fc2-waste-why" aria-label="Why"><option value="spoiled">spoiled</option><option value="expired">expired</option><option value="overprepped">over-prepped</option><option value="dropped">dropped</option><option value="returned">sent back</option><option value="other">other</option></select>'
+      +'<button type="button" class="cbtn cbtn-secondary fc2-ctl-btn" onclick="fc2LogWaste(this)">Log it</button></div></div>';
     el.innerHTML=h;el.hidden=false;
     // The newest recount on the sheet is the "last counted" date (M/D/YY).
     var last='';for(var lc=0;lc<d.items.length;lc++){var la=String(d.items[lc].last_recount_at||'').slice(0,10);if(la>last)last=la;}
