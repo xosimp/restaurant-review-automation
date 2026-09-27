@@ -769,12 +769,19 @@ def home_freshness(ctx, active_keys, labor_live, inv_live, google_connected=Fals
     return out
 
 
-def _data_health_compact(rid, restaurant=None):
+def _data_health_compact(rid, restaurant=None, ctx=None):
     """data_health.compact(snapshot) for Home, or None — never raises, and
-    a Home build never fails because the score could not be read."""
+    a Home build never fails because the score could not be read.
+
+    `ctx` is the build's rec_trust.Context: the snapshot reads the same
+    source states as Home's freshness list (labor dated by the analysis the
+    build already ran) instead of its own. Without it, a snapshot not in the
+    per-restaurant cache re-read the whole shifts blob to date labor - the
+    second read MOD-HOME-2 removed, back whenever the cache was cold (a test
+    run alone failed; after a test that warmed the cache it passed)."""
     try:
         import data_health
-        return data_health.compact(data_health.snapshot(rid, restaurant=restaurant))
+        return data_health.compact(data_health.snapshot(rid, restaurant=restaurant, ctx=ctx))
     except Exception as e:
         print(f"[home] data health unavailable for {rid}: {e}")
         return None
@@ -2334,7 +2341,7 @@ def _build(current_user, present=True):
         # (which older iOS builds still read): {overall, worst_line}. The
         # full payload — every source line, what is not connected, each
         # module's confidence impact — is GET /api/data-health (#21-23).
-        "data_health": _data_health_compact(rid, restaurant),
+        "data_health": _data_health_compact(rid, restaurant, ctx=trust_ctx),
         # What "Monitoring N signals" may honestly say: only sources that are
         # current count, beside the stalest date (E7).
         # `stale` counts the sources reading stale or unknown; `all_clear`

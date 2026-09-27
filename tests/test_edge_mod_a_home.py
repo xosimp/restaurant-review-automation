@@ -168,6 +168,12 @@ def test_a_cold_home_build_on_a_year_of_shifts_stays_inside_a_generous_budget(db
 def test_a_cold_home_build_reads_the_shifts_blob_once(db_path, monkeypatch):
     rid = _seed(db_path)
     _year_of_shifts(rid, db_path, staff=5)
+    # Cold for real: a Data Health snapshot another test cached for this
+    # restaurant id hid the second read (the snapshot dated labor from the
+    # shifts blob itself); the test failed run alone and passed after a test
+    # that warmed the cache (9/26/26).
+    import data_health
+    data_health.invalidate()
     calls = []
     real = models.get_client_data
 
@@ -180,6 +186,8 @@ def test_a_cold_home_build_reads_the_shifts_blob_once(db_path, monkeypatch):
         monkeypatch.setattr(labor, "get_client_data", counting)
     home_brief.build_home_brief(_user(rid), fresh=True)
     assert len(calls) == 1
+    # And the source of it: Home's Data Health reads the build's own context.
+    assert "_data_health_compact(rid, restaurant, ctx=trust_ctx)" in open("home_brief.py", encoding="utf-8").read()
 
 
 # ── A9 #18, #19 / MOD-HOME-3: the payload cache ──────────────────────────────
