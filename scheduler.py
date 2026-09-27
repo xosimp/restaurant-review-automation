@@ -1130,6 +1130,7 @@ def run_toast_sync():
         if results:
             ok = sum(1 for r in results if r.get("ok"))
             log.info(f"POS nightly sync: {ok}/{len(results)} restaurants OK")
+        run_inventory_sync()
         # The counts reach job_runs (ops.run_outcome): a night on which every
         # POS failed is a failed run, some failing a partial one (DH2-1).
         return stats
@@ -1137,6 +1138,27 @@ def run_toast_sync():
         log.error(f"run_toast_sync error: {e}")
         _ops.capture(e, job="pos_sync", context="outer")
         raise
+
+
+def run_inventory_sync():
+    """Nightly, after the POS: every restaurant with an inventory system
+    connected (inventory_sync.py; Back Office first) has its items, prices
+    and counts pulled into Food Cost's tables, bounded and resumable like
+    run_daily_fetch. Nothing connected is a no-op. Never raises into the
+    POS job - its own failures are captured under inventory_sync."""
+    try:
+        import inventory_sync
+        ids = inventory_sync.connected_ids()
+        if not ids:
+            return 0
+        done, hit = resumable_sweep(inventory_sync.SYNC_CURSOR_KEY, ids, inventory_sync.sync_restaurant,
+                                    inventory_sync.SYNC_MAX_SECONDS, job="inventory_sync")
+        log.info(f"Inventory sync: {done}/{len(ids)} restaurants{' (hit the time bound)' if hit else ''}")
+        return done
+    except Exception as e:
+        log.error(f"run_inventory_sync error: {e}")
+        _ops.capture(e, job="inventory_sync", context="outer")
+        return 0
 
 
 # The automatic-recovery pass (DH5-7): restaurants whose POS sync failed and

@@ -418,6 +418,10 @@ class Restaurant:
     # between "a token was pasted in" and "the token works and we know which
     # store it points at".
     rpower_verified_at: Optional[str]    = None
+    # Back Office (Buyers Edge) — the inventory system inventory_sync reads
+    # (backoffice.py). Entered by Cavnar, never by the owner.
+    backoffice_api_key: Optional[str]    = None
+    backoffice_account_id: Optional[str] = None
     pos_system: Optional[str]       = None
     owner_name: Optional[str]       = None
     owner_phone: Optional[str]      = None
@@ -837,6 +841,14 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "gbp_rating", "REAL"),
         ("restaurants", "gbp_review_count", "INTEGER"),
         ("client_data", "food_cost_json", "TEXT"),
+        # An inventory system (inventory_sync.py; Back Office first): its
+        # credentials, when its data last landed and why it last failed,
+        # and each ingredient's id in that system (owner, 9/26/26).
+        ("restaurants", "backoffice_api_key", "TEXT"),
+        ("restaurants", "backoffice_account_id", "TEXT"),
+        ("client_data", "inventory_synced_at", "TEXT"),
+        ("client_data", "inventory_sync_error", "TEXT"),
+        ("ingredients", "external_ref", "TEXT"),
         ("labor_daily_history", "total_hours", "REAL"),
         ("users", "role", "TEXT DEFAULT 'client'"),
         ("users", "google_id", "TEXT"),
@@ -3278,6 +3290,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "toast_client_id","toast_client_secret","toast_restaurant_guid",
         "rpower_token","rpower_cg","rpower_store_mid","rpower_store_name",
         "rpower_last_synced","rpower_sync_error","rpower_verified_at",
+        "backoffice_api_key","backoffice_account_id",
         "toast_access_token","toast_token_expires","toast_last_synced","toast_sync_error",
         "square_access_token","square_location_id","square_last_synced","square_sync_error",
         "clover_merchant_id","clover_api_token","clover_last_synced","clover_sync_error",
@@ -3772,6 +3785,8 @@ def _restaurant_from_row(row) -> Restaurant:
         toast_client_id=row["toast_client_id"] if "toast_client_id" in row.keys() else None,
         toast_client_secret=row["toast_client_secret"] if "toast_client_secret" in row.keys() else None,
         rpower_token=row["rpower_token"] if "rpower_token" in row.keys() else None,
+        backoffice_api_key=row["backoffice_api_key"] if "backoffice_api_key" in row.keys() else None,
+        backoffice_account_id=row["backoffice_account_id"] if "backoffice_account_id" in row.keys() else None,
         rpower_cg=row["rpower_cg"] if "rpower_cg" in row.keys() else None,
         rpower_store_mid=row["rpower_store_mid"] if "rpower_store_mid" in row.keys() else None,
         rpower_store_name=row["rpower_store_name"] if "rpower_store_name" in row.keys() else None,

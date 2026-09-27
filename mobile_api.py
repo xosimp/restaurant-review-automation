@@ -4230,12 +4230,13 @@ def _do_mobile_intel(restaurant_id):
         # own_rating_basis says which it is so no surface can present the
         # two as the same kind of number.
         from competitor_intel_format import own_rating as _own_rating, market_standing as _standing
-        _sample = {}
-        if not getattr(restaurant, "gbp_rating", None) and restaurant.module_reviews:
-            from models import get_review_stats
-            _sample = get_review_stats(restaurant_id) or {}
-        _own = _own_rating(getattr(restaurant, "gbp_rating", None), getattr(restaurant, "gbp_review_count", None),
-                           _sample.get("avg_rating"), _sample.get("total"))
+        # Google's public rating or none (owner, 9/26/26) - never the
+        # imported reviews' average; fetched once, off the request, when
+        # Cavnar has none yet.
+        if not getattr(restaurant, "gbp_rating", None) and getattr(restaurant, "google_place_id", None):
+            import competitor as _comp_r
+            _comp_r.refresh_own_rating(restaurant_id)
+        _own = _own_rating(getattr(restaurant, "gbp_rating", None), getattr(restaurant, "gbp_review_count", None))
         own_rating = _own["own_rating"]
         own_rating_basis = _own["own_rating_basis"]
         own_rating_count = _own["own_rating_count"]

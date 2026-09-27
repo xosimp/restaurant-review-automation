@@ -173,6 +173,24 @@ def format_date_filter(d):
     except Exception:
         return str(d)[:10]
 
+def _inv_sync_status(rid):
+    try:
+        import inventory_sync
+        return inventory_sync.status(rid)
+    except Exception as e:
+        print(f"[inventory_sync] status unavailable for {rid}: {e}")
+        return {"synced": False}
+
+
+@app.template_filter('local_iso')
+def local_iso_filter(value, tz=None):
+    """A stored instant as the restaurant's own day, YYYY-MM-DD (then
+    |format_date for the owner). A UTC stamp's first ten characters are
+    UTC's date: 8:21pm on 9/26 in St. Louis read "Last updated 9/27/26"
+    (owner, 9/26/26). An offset-less space stamp is UTC (parse_stamp)."""
+    from time_utils import local_iso
+    return local_iso(value, tz)
+
 # Response compression and cache headers live in http_layer.py so they can be
 # tested without booting this module (importing it initialises the database,
 # seeds demo data and starts the scheduler thread).
@@ -521,11 +539,15 @@ def index(current_user):
     if competitor_data:
         try:
             import competitor_intel_format as _cif
-            from models import get_review_stats as _grs_m
-            _sample_m = {} if getattr(restaurant, "gbp_rating", None) else (_grs_m(rid) or {})
+            # The owner's rating is Google's public one or none (owner,
+            # 9/26/26): the imported reviews' average is a window of
+            # whatever was imported, not the rating guests see. When Cavnar
+            # has none yet, it is fetched once, off the request.
+            if not getattr(restaurant, "gbp_rating", None) and getattr(restaurant, "google_place_id", None):
+                import competitor as _comp_r
+                _comp_r.refresh_own_rating(rid)
             _own_m = _cif.own_rating(getattr(restaurant, "gbp_rating", None),
-                                     getattr(restaurant, "gbp_review_count", None),
-                                     _sample_m.get("avg_rating"), _sample_m.get("total"))
+                                     getattr(restaurant, "gbp_review_count", None))
             _mk_m = _cif.market_rating(competitor_data.get("competitors") or [])
             intel_market = {**_own_m, **_mk_m, **_cif.market_standing(_own_m, _mk_m)}
         except Exception as _mx:
@@ -785,6 +807,9 @@ def index(current_user):
         competitor_updated_at=restaurant.competitor_updated_at if restaurant else None,
         labor_upcoming=_labor_upcoming,
         food_cost_data=_food_cost_data,
+        # The inventory system's state (inventory_sync.status): once a sync
+        # has landed, the hand-entry surfaces say where the data comes from.
+        inv_sync=_inv_sync_status(rid),
         source_fresh=_source_fresh, conn_lines=_conn_lines)
 
 def _json_api_path():

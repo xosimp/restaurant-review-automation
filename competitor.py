@@ -440,7 +440,7 @@ def search_places_near(query: str, lat: float = None, lng: float = None, max_res
         return []
 
 
-def _remember_own_listing(google_place_id, types, price_level):
+def _remember_own_listing(google_place_id, types, price_level, rating=None, rating_count=None):
     """Keep the restaurant's OWN Google types and price level (Benchmarking
     audit #8, BM2-2): they were fetched on every competitor refresh and
     thrown away. They cross-check the service model Cavnar guesses for the
@@ -459,6 +459,16 @@ def _remember_own_listing(google_place_id, types, price_level):
                 conn.execute("UPDATE restaurants SET google_types=?, google_price_level=? WHERE google_place_id=?",
                              (json.dumps([str(t) for t in (types or [])][:20]),
                               int(price_level) if isinstance(price_level, (int, float)) else None, google_place_id))
+                # The listing's public Google rating, the one every guest sees
+                # (owner, 9/26/26): only the Business Profile connection wrote
+                # it, so a Places-only restaurant was shown its imported
+                # reviews' average instead. The same details call carries it.
+                if isinstance(rating, (int, float)) and rating > 0:
+                    from datetime import datetime as _dt_r, timezone as _tz_r
+                    conn.execute("UPDATE restaurants SET gbp_rating=?, gbp_review_count=COALESCE(?, gbp_review_count), "
+                                 "gbp_rating_updated_at=? WHERE google_place_id=?",
+                                 (round(float(rating), 1), int(rating_count) if isinstance(rating_count, (int, float)) else None,
+                                  _dt_r.now(_tz_r.utc).isoformat(timespec="seconds"), google_place_id))
                 conn.commit()
         finally:
             conn.close()
@@ -466,6 +476,44 @@ def _remember_own_listing(google_place_id, types, price_level):
             _m._invalidate_request_cache(rid)
     except Exception as e:
         print(f"[competitor] own listing not kept for {google_place_id}: {e}")
+
+
+_own_rating_asked = set()
+
+
+def refresh_own_rating(restaurant_id: int, background: bool = True) -> None:
+    """Fetch this restaurant's public Google rating once when Cavnar has none
+    (a Places-only restaurant before its next competitor refresh). One
+    metered details call; at most once per process per restaurant; in a
+    daemon thread by default so no page waits on Google. Never raises."""
+    if restaurant_id in _own_rating_asked or not PLACES_API_KEY:
+        return
+    _own_rating_asked.add(restaurant_id)
+
+    def _go():
+        try:
+            from models import get_restaurant as _gr
+            r = _gr(restaurant_id)
+            pid = getattr(r, "google_place_id", None) if r else None
+            if not pid or getattr(r, "gbp_rating", None):
+                return
+            resp = requests.get("https://maps.googleapis.com/maps/api/place/details/json", params={
+                "place_id": pid, "fields": "rating,user_ratings_total,types,price_level", "key": PLACES_API_KEY,
+            }, timeout=8)
+            _meter_places(restaurant_id, "own_rating", "details")
+            data = resp.json()
+            if data.get("status") != "OK":
+                return
+            res = data.get("result") or {}
+            _remember_own_listing(pid, res.get("types"), res.get("price_level"),
+                                  res.get("rating"), res.get("user_ratings_total"))
+        except Exception as e:
+            print(f"[competitor] own rating not fetched for {restaurant_id}: {e}")
+    if background:
+        import threading
+        threading.Thread(target=_go, daemon=True).start()
+    else:
+        _go()
 
 
 def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_results: int = 5,
@@ -488,7 +536,7 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
         details_url = "https://maps.googleapis.com/maps/api/place/details/json"
         r = requests.get(details_url, params={
             "place_id": google_place_id,
-            "fields": "geometry,name,vicinity,types,price_level",
+            "fields": "geometry,name,vicinity,types,price_level,rating,user_ratings_total",
             "key": PLACES_API_KEY,
         }, timeout=8)
         _billed("details")
@@ -507,7 +555,8 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
         own_name = result_data.get("name", "")
         own_types = result_data.get("types", [])
         own_price = result_data.get("price_level")
-        _remember_own_listing(google_place_id, own_types, own_price)
+        _remember_own_listing(google_place_id, own_types, own_price,
+                              result_data.get("rating"), result_data.get("user_ratings_total"))
 
         # Build a keyword from the restaurant's type to filter similar competitors
         # Exclude generic types that apply to everything

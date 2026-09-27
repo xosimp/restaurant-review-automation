@@ -17,7 +17,8 @@ gap is logged rather than hidden.
 import os
 
 FIELDS = ("gmb_access_token", "gmb_refresh_token", "ig_token", "fb_page_token",
-          "toast_client_secret", "toast_access_token", "toast_refresh_token")
+          "toast_client_secret", "toast_access_token", "toast_refresh_token",
+          "backoffice_api_key")
 PREFIX = "enc:v1:"
 _warned = False
 _fernet_cache = {}

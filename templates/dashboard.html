@@ -1415,7 +1415,7 @@ function fcEditPrices(btn) {
   if (btn && btn.parentNode) btn.parentNode.removeChild(btn);
   if (ins.length && ins[0].focus) ins[0].focus();
 }
-function submitFoodCostCount() {
+function submitFoodCostCount(_retried) {
   var rows = document.querySelectorAll('#fc-rows tr');
   var items = [];
   for (var i = 0; i < rows.length; i++) {
@@ -1451,7 +1451,17 @@ function submitFoodCostCount() {
     .then(function(data) {
       var _isDark=document.documentElement.getAttribute('data-theme')==='dark';
       if (!data.ok) {
-        if(_fcL1){_fcL1.textContent='Error — try again';_fcL1.style.color='#c84b2f';}
+        // A 502-504 is the server restarting for an update (a deploy swaps
+        // the one instance), not a refusal: the 9/26/26 "Error - try again"
+        // was a deploy window. Saving the same day's prices twice replaces
+        // the first, so one quiet retry is safe. Anything else says why.
+        var _st=+data.http_status||0;
+        if(!_retried&&_st>=502&&_st<=504){
+          if(_fcL1){_fcL1.textContent='Cavnar AI is updating - trying again…';_fcL1.style.color='var(--ink3)';}
+          setTimeout(function(){submitFoodCostCount(true);},4000);
+          return;
+        }
+        if(_fcL1){_fcL1.textContent=_st>=502&&_st<=504?'Cavnar AI was updating - press Submit again':(data.error||'Couldn’t save - try again');_fcL1.style.color='var(--hb-bad)';}
         if(_fcL2){_fcL2.textContent='';}
         return;
       }
@@ -1504,7 +1514,10 @@ function submitFoodCostCount() {
       if (savedEl) savedEl.style.display = 'none';
     })
     .catch(function() {
-      if (msg) { msg.textContent = 'Network error'; msg.style.color = '#c84b2f'; }
+      // msg was never declared here: a dropped connection threw instead of
+      // saying anything. It gets the same one quiet retry as a restart.
+      if (!_retried) { if(_fcL1){_fcL1.textContent='Reconnecting - trying again…';_fcL1.style.color='var(--ink3)';} setTimeout(function(){submitFoodCostCount(true);},4000); return; }
+      if(_fcL1){_fcL1.textContent='Couldn’t reach Cavnar AI - press Submit again';_fcL1.style.color='var(--hb-bad)';}
     });
 }
 
@@ -10137,6 +10150,17 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .fc2-inv-in{width:92px;background:transparent;border:1px solid var(--hb-line);border-radius:6px;padding:5px 7px;color:var(--ink);font-family:'Space Grotesk',sans-serif;font-size:14px;text-align:right}
 .fc2-inv-sel{max-width:180px;background:transparent;border:1px solid var(--hb-line);border-radius:6px;padding:5px 7px;color:var(--ink);font-size:13px}
 .fc2-sec .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:8px}
+/* A section's action sits level with its title (owner, 9/26/26: Upload
+   invoice rode the bottom line of the heading block): fixed line heights,
+   the action's box centred on the title's line. */
+#panel-inventory .fc2-sec .hd{align-items:flex-start}
+#panel-inventory .fc2-sec .hd .hb-kicker{line-height:16px}
+#panel-inventory .fc2-sec .hd h2{line-height:30px}
+#panel-inventory .fc2-sec .hd>div+div{margin-top:calc(16px + 4px + 15px - 15px)}
+#panel-inventory .fc2-sec .hd>div+div>.cbtn:not(.cbtn-sm){margin-top:-3px}
+/* The price monitor sits inside All ingredient prices: its own section gap
+   stacked on the disclosure's (56px of air between the two headings). */
+.fc2-allprices>.fc2-sec{margin-top:10px;padding-top:0}
 .fc2-sec .hd h2{font-family:'Clash Display',sans-serif;font-weight:500;font-size:23.5px;letter-spacing:-.01em;color:var(--ink);margin:4px 0 0}
 .fc2-sec .hd .sub{font-size:14px;color:var(--ink3);margin-top:3px}
 .fc2-orders{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:26px;margin-top:10px}
@@ -10211,7 +10235,22 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .fc2-send .g b{font-size:14px;font-weight:600;color:var(--ink)}
 .fc2-send .g span{font-size:12.5px;color:var(--ink3);display:block;margin-top:2px}
 .fc2-sup-order{margin-bottom:14px}
-.fc2-sup-order .fc2-inv-in{max-width:84px}
+.fc2-sup-order .fc2-inv-in{width:96px;max-width:96px}
+/* Fixed columns: a long quantity or line total never reflows the row. */
+.fc2-so-t{table-layout:fixed}
+.fc2-so-t col.q{width:190px}.fc2-so-t col.l{width:130px}
+.fc2-so-t td.r,.fc2-so-t th.r{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+.fc2-so-t td:first-child{overflow-wrap:anywhere}
+/* The supplier and its email sit on the table without a rule between. */
+.fc2-send .fc2-sup-order .g{border-bottom:none;padding-bottom:4px}
+.so-modal{position:fixed;inset:0;align-items:center;justify-content:center;padding:16px;background:var(--scrim);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
+.so-card{width:440px;max-width:100%;padding:24px 26px 22px;border-radius:18px;background:var(--surface);border:1px solid var(--hb-line);box-shadow:var(--elev-float);animation:soIn .2s cubic-bezier(.2,.8,.2,1)}
+@keyframes soIn{from{opacity:0;transform:translateY(6px) scale(.98)}to{opacity:1;transform:none}}
+.so-card h3{font-family:'Clash Display',sans-serif;font-size:21px;font-weight:500;letter-spacing:-.01em;color:var(--ink);margin:8px 0 6px}
+.so-card p{margin:0;font-size:15px;line-height:1.5;color:var(--ink2)}
+.so-card p b{color:var(--ink);font-weight:600}
+.so-f{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}
+@media (prefers-reduced-motion:reduce){.so-card{animation:none}}
 /* A tool with nothing to show says what is missing and where it is fixed. */
 .fc2-tool-empty{margin-top:4px;padding:14px 16px;border-radius:12px;background:var(--sf-recess);border:1px dashed var(--hb-line);font-size:14.5px;line-height:1.5}
 .fc2-tool-empty b{display:block;color:var(--ink);font-weight:600;margin-bottom:3px}
@@ -10534,6 +10573,14 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
       <div class="bd" id="so-body"><div class="hb-load" style="height:60px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div>
       <div id="po-history" class="fc2-po"></div>
     </div>
+    <div id="so-confirm-modal" class="cmodal so-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="so-confirm-t" onclick="if(event.target===this&&window.cModal)cModal.close('so-confirm-modal')">
+      <div class="so-card">
+        <div class="hb-kicker">Send to supplier</div>
+        <h3 id="so-confirm-t">Email this order?</h3>
+        <p id="so-confirm-line"></p>
+        <div class="so-f"><button type="button" class="cbtn cbtn-secondary" id="so-confirm-no">Not yet</button><button type="button" class="cbtn cbtn-primary" id="so-confirm-go">Send it</button></div>
+      </div>
+    </div>
   </div>
 
   {# Biggest waste items and Cash sitting over par sit under the order
@@ -10582,16 +10629,19 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
   {# U2-14: for a ledger account the rows come from the ingredient list
      (hosted_dashboard, from_pantry) - invoices keep the prices current and
      usage is computed from sales - so they are read-only until Edit. #}
+  {# Synced from an inventory system (inventory_sync; owner, 9/26/26): the
+     prices are its prices, and the typing surfaces step aside. #}
+  {% set _fc_synced = inv_sync and inv_sync.synced %}
   {% set _fc_ledger = food_cost_data and food_cost_data.current and food_cost_data.current.from_pantry %}
   <details class="hb-results fc2-allprices"><summary><span class="hb-kicker">All ingredient prices</span><span>This week’s prices, and where you type one in</span></summary>
   <div class="fc2-sec{{ ' fc2-ledger-rows' if _fc_ledger }}" id="fc2-tracker">
-    <div class="hd"><div><div class="hb-kicker">Price monitor</div><h2>This week's prices</h2><div class="sub">{% if _fc_ledger %}Kept current by scanned invoices; edit only to override.{% else %}Type a price when an invoice arrives; drift is flagged.{% endif %}</div></div>
-      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
+    <div class="hd"><div><div class="hb-kicker">Price monitor</div><h2>This week's prices</h2><div class="sub">{% if _fc_synced %}Synced from {{ inv_sync.label }} · <span class="hb-num">{{ inv_sync.synced_at|local_iso(restaurant.timezone if restaurant else None)|format_date }}</span>{% elif _fc_ledger %}Kept current by scanned invoices; edit only to override.{% else %}Type a price when an invoice arrives; drift is flagged.{% endif %}</div></div>
+      {% if not _fc_synced %}<div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
         {% if _fc_ledger %}<button type="button" class="cbtn cbtn-secondary cbtn-sm" id="fc-edit-prices" onclick="fcEditPrices(this)">Edit prices</button>{% if food_cost_data.current.typed_at %}{% set _ta=food_cost_data.current.typed_at %}<div class="sub">Last typed <span class="hb-num">{{ _ta[5:7]|int }}/{{ _ta[8:10]|int }}/{{ _ta[2:4] }}</span></div>{% endif %}{% endif %}
         {% if food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at %}{% set _sa2=food_cost_data.current.submitted_at %}<div class="sub">Last submitted <span class="hb-num">{{ _sa2[5:7]|int }}/{{ _sa2[8:10]|int }}/{{ _sa2[2:4] }}</span></div>{% endif %}
         <label class="cbtn cbtn-secondary">{% if inv.is_live %}Update inventory CSV{% else %}Upload inventory CSV{% endif %}<input type="file" accept=".csv" style="display:none" id="inventory-inline-input" onchange="clientUpload('inventory', this)"></label>
         <span id="inventory-inline-result" style="font-size:12px;color:var(--hb-good);display:none"></span>
-      </div>
+      </div>{% endif %}
     </div>
     <div class="fc2-track">
       {% if food_cost_data and food_cost_data.current and food_cost_data.previous and food_cost_data.previous['items'] and not _fc_ledger %}
@@ -10633,7 +10683,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
         </tbody>
       </table>
       </div>
-      <div class="fc2-submit">
+      <div class="fc2-submit"{% if _fc_synced %} hidden{% endif %}>
         <div class="l">
           <button onclick="submitFoodCostCount()" class="cbtn cbtn-primary">Submit this week's prices</button>
           <div id="fc-submit-pill" style="display:{% if food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at %}inline-flex{% else %}none{% endif %}">
@@ -10740,6 +10790,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
   // outward action, so it asks once, inline, naming the supplier, the
   // count and the total - never a browser confirm(). ES5 only.
   var _soGroups = {};
+  var SO_MAX_QTY = 9999;
   function _soMoney(n){return '$'+Math.round(+n||0).toLocaleString();}
   function _soTotals(email){
     var box=document.querySelector('[data-sup="'+email+'"]');if(!box)return null;
@@ -10770,10 +10821,10 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
       groups.forEach(function(g){
         _soGroups[g.supplier_email]=g;
         html += '<div class="fc2-sup-order" data-sup="'+_mmEsc(g.supplier_email)+'"><div class="g"><div><b>'+_mmEsc(g.supplier_name||g.supplier_email)+'</b><span>'+g.items.length+' item'+(g.items.length!==1?'s':'')+' · '+_mmEsc(g.supplier_email)+'</span></div><span class="hb-num" data-sup-total>'+_soMoney(g.total_cost)+'</span></div>';
-        html += '<div class="fc2-table-scroll"><table class="fc2-mt"><thead><tr><th>Item</th><th class="r">Quantity</th><th class="r">Line</th></tr></thead><tbody>';
+        html += '<div class="fc2-table-scroll"><table class="fc2-mt fc2-so-t"><colgroup><col><col class="q"><col class="l"></colgroup><thead><tr><th>Item</th><th class="r">Quantity</th><th class="r">Line</th></tr></thead><tbody>';
         g.items.forEach(function(it){var key=it.ingredient_id?String(it.ingredient_id):('name:'+String(it.item||'').toLowerCase());
           html+='<tr><td><b>'+_mmEsc(it.item)+'</b>'+(it.trimmed_for_waste?'<div class="why">trimmed for last week’s waste</div>':'')+'</td>'
-            +'<td class="r"><input class="fc2-inv-in" type="number" min="0" step="0.5" inputmode="decimal" aria-label="'+_mmEsc(it.item)+' quantity" data-so-qty="'+_mmEsc(key)+'" data-drafted="'+(+it.qty||0)+'" data-cost="'+(+it.unit_cost||0)+'" data-sup-of="'+_mmEsc(g.supplier_email)+'" value="'+(+it.qty||0)+'"> '+_mmEsc(it.unit||'')+'</td>'
+            +'<td class="r"><input class="fc2-inv-in" type="number" min="0" max="'+SO_MAX_QTY+'" step="0.5" inputmode="decimal" aria-label="'+_mmEsc(it.item)+' quantity" data-so-qty="'+_mmEsc(key)+'" data-drafted="'+(+it.qty||0)+'" data-cost="'+(+it.unit_cost||0)+'" data-sup-of="'+_mmEsc(g.supplier_email)+'" value="'+(+it.qty||0)+'"> '+_mmEsc(it.unit||'')+'</td>'
             +'<td class="r hb-num" data-so-line="'+_mmEsc(key)+'">'+_soMoney(it.line_cost)+'</td></tr>';});
         html += '</tbody></table></div><div class="fc2-count-ft"><span class="ac-status" data-sup-status></span><button type="button" class="cbtn cbtn-primary cbtn-sm" data-so-send="'+_mmEsc(g.supplier_email)+'">Send to '+_mmEsc(g.supplier_name||g.supplier_email)+' · '+_soMoney(g.total_cost)+'</button></div>';
         html += '<div class="fc2-inv-note" data-sup-confirm hidden></div></div>';
@@ -10790,17 +10841,34 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     }).catch(function(){ el.innerHTML='<span style="color:var(--hb-bad)">Couldn\'t build the order</span>'; });
   }
   var _soDraftHash = null;
-  document.addEventListener('input',function(e){var t=e.target;if(t&&t.getAttribute&&t.getAttribute('data-so-qty')!==null)_soTotals(t.getAttribute('data-sup-of'));});
+  // A quantity has a ceiling: six digits typed into one box read as a
+  // $3M order and pushed the row apart (owner, 9/26/26).
+  document.addEventListener('input',function(e){var t=e.target;if(t&&t.getAttribute&&t.getAttribute('data-so-qty')!==null){
+    var q=parseFloat(t.value);if(q>SO_MAX_QTY){t.value=SO_MAX_QTY;}
+    _soTotals(t.getAttribute('data-sup-of'));}});
   document.addEventListener('click',function(e){
     var t=e.target&&e.target.closest?e.target.closest('[data-so-send],[data-so-go],[data-so-cancel]'):null;if(!t||t.disabled)return;
     var email=t.getAttribute('data-so-send')||t.getAttribute('data-so-go')||t.getAttribute('data-so-cancel'),box=document.querySelector('[data-sup="'+email+'"]');if(!box)return;
     var cf=box.querySelector('[data-sup-confirm]');
-    if(t.getAttribute('data-so-cancel')!==null){if(cf)cf.hidden=true;return;}
+    if(t.getAttribute('data-so-cancel')!==null){if(cf)cf.hidden=true;if(window.cModal)cModal.close('so-confirm-modal');return;}
     if(t.getAttribute('data-so-go')!==null){sendSupplierOrder(email,t,t.getAttribute('data-resend')==='1');return;}
     var tt=_soTotals(email)||{n:0,total:0};
     if(!tt.n){if(typeof toast==='function')toast('Every line is at 0 — nothing to send','error');return;}
-    if(cf){cf.innerHTML='Email <b>'+_mmEsc(email)+'</b> an order for <span class="hb-num">'+tt.n+'</span> item'+(tt.n===1?'':'s')+', <span class="hb-num">'+_soMoney(tt.total)+'</span>? <button type="button" class="cbtn cbtn-primary cbtn-sm" data-so-go="'+_mmEsc(email)+'">Send it</button> <button type="button" class="cbtn cbtn-text cbtn-sm" data-so-cancel="'+_mmEsc(email)+'">Not yet</button>';cf.hidden=false;}
+    // The one outward send asks once, in a centred modal over a dimmed page
+    // (owner, 9/26/26), naming the supplier, the count and the total.
+    soConfirm(email,'Email '+_mmEsc(g0name(email))+' this order?','<span class="hb-num">'+tt.n+'</span> item'+(tt.n===1?'':'s')+' · <span class="hb-num">'+_soMoney(tt.total)+'</span> to <b>'+_mmEsc(email)+'</b>',false);
   });
+  function g0name(email){var g=_soGroups[email]||{};return g.supplier_name||email;}
+  function soConfirm(email,title,line,resend){
+    var m=document.getElementById('so-confirm-modal');if(!m)return;
+    document.getElementById('so-confirm-t').textContent=title;
+    document.getElementById('so-confirm-line').innerHTML=line;
+    var go=document.getElementById('so-confirm-go'),no=document.getElementById('so-confirm-no');
+    go.setAttribute('data-so-go',email);go.textContent=resend?'Send it again':'Send it';
+    if(resend)go.setAttribute('data-resend','1');else go.removeAttribute('data-resend');
+    no.setAttribute('data-so-cancel',email);no.textContent=resend?'Leave it':'Not yet';
+    if(window.cModal)cModal.open('so-confirm-modal');else m.style.display='flex';
+  }
   function sendSupplierOrder(email, btn, resend){
     var box=document.querySelector('[data-sup="'+email+'"]'),g=_soGroups[email]||{},lines=[],ins=box?box.querySelectorAll('input[data-so-qty]'):[],i;
     for(i=0;i<ins.length;i++){var q=parseFloat(ins[i].value);if(!(q>=0)){if(typeof toast==='function')toast('Quantities are numbers, 0 or more','error');return;}
@@ -10817,13 +10885,13 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     }).then(apiJson).then(function(d){
       done();
       var cf=box&&box.querySelector('[data-sup-confirm]'),st=box&&box.querySelector('[data-sup-status]'),main=box&&box.querySelector('[data-so-send]');
+      if(window.cModal)cModal.close('so-confirm-modal');
       if(d.ok){
         if(cf)cf.hidden=true;
         if(main){main.disabled=true;main.textContent=d.queued&&d.queued.length?'Queued ✓':'Sent ✓';}
         toast(d.queued&&d.queued.length?('Order goes out in '+d.undo_minutes+' min — undo from the Cavnar AI strip'):'Order sent','success'); loadPurchaseOrders(); return; }
-      if(d.already_sent && !resend && cf){
-        cf.innerHTML=_mmEsc(d.error||'This order already went. Send it again?')+' <button type="button" class="cbtn cbtn-primary cbtn-sm" data-so-go="'+_mmEsc(email)+'" data-resend="1">Send it again</button> <button type="button" class="cbtn cbtn-text cbtn-sm" data-so-cancel="'+_mmEsc(email)+'">Leave it</button>';
-        cf.hidden=false;return;
+      if(d.already_sent && !resend){
+        soConfirm(email,'This order already went',_mmEsc(d.error||'Send it again?'),true);return;
       }
       if(st)st.textContent=d.error||'Couldn\'t send order';
       toast(d.error||'Couldn\'t send order','error');
@@ -11475,8 +11543,10 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
   {% elif intel_market and intel_market.standing_label %}{% set _head = intel_market.standing_label %}{% set _tone = intel_market.standing_tone or 'neutral' %}
   {% else %}{% set _head = comp_count ~ ' neighbors tracked' %}{% set _tone = 'neutral' %}{% endif %}
   {% set _st = intel_market.standing if intel_market else None %}
-  {% set _own_word = 'your Google rating (all time)' if own_basis == 'google_all_time' else "your imported reviews' average (not compared with Google's all-time ratings)" %}
-  {% set _upd = competitor_updated_at[:10] if competitor_updated_at else None %}
+  {# Only Google's public rating is "yours" (owner, 9/26/26); the server no
+     longer sends the imported reviews' average in its place. #}
+  {% set _own_word = 'your Google rating (all time)' %}
+  {% set _upd = (competitor_updated_at|local_iso(restaurant.timezone if restaurant else None)) if competitor_updated_at else None %}
   <div class="hb-top">
     <div style="min-width:0;flex:1">
       <h1 class="hb-h1">Intel. <span class="hb-head {{ _tone }}">{{ _head }}</span></h1>
@@ -11502,7 +11572,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
         {% if own is not none %}<div class="big"><span class="hb-num">{{ own }}</span><small>★ {{ _own_word }} · market avg {{ avg_comp_rating if avg_comp_rating else '—' }}{% if avg_comp_rating %}★{% endif %}</small></div>
         {% if own_vs_avg is not none %}<div class="delta {{ 'good' if _st == 'ahead' else ('bad' if _st == 'behind' else '') }}">{% if _st == 'level' %}About level with the block ({{ '+' if own_vs_avg > 0 }}{{ own_vs_avg }}★){% elif own_vs_avg > 0 %}<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 7.5 6 4.5 9 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ own_vs_avg }} above the block{% else %}<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ own_vs_avg|abs }} below the block{% endif %} <span>· {{ comp_count }} restaurants nearby{% if intel_market and intel_market.market_rating_n %} · average of {{ intel_market.market_rating_n }} rated, weighted by reviews{% endif %}</span></div>
         {% if intel_market.standing_basis %}<div class="fc2-h1-basis">{{ intel_market.standing_basis }}</div>{% endif %}{% elif intel_market and intel_market.standing_why_not %}<div class="fc2-h1-basis">No standing yet — {{ intel_market.standing_why_not }}</div>{% endif %}
-        {% else %}<div class="big"><span class="hb-num">{{ avg_comp_rating }}</span><small>★ market average · connect Reviews to see yours alongside</small></div>{% endif %}
+        {% else %}<div class="big"><span class="hb-num">{{ avg_comp_rating }}</span><small>★ market average · your Google rating appears with the next check</small></div>{% endif %}
       </div>
     </div>
     {% if _parts and _parts.intro %}<div class="in2-lede">{{ _parts.intro }}</div>{% endif %}
@@ -11590,7 +11660,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
   <!-- ── Nearby competitors ── -->
   <div class="in2-sec" id="in2-neighbors">
     <div class="hd"><div><div class="hb-kicker">Nearby competitors</div><h2>Who you're up against</h2><div class="sub">Google ratings, a bar each{% if _upd %} · updated <span class="hb-num">{{ _upd|format_date }}</span>{% endif %}</div></div>
-      {% if _cd %}<div class="r"><button onclick="refreshCompetitorIntel(this)" class="cbtn cbtn-secondary">Refresh</button></div>{% endif %}</div>
+      <div class="r">{% if _cd %}<button onclick="refreshCompetitorIntel(this)" class="cbtn cbtn-secondary">Refresh</button>{% endif %}<button type="button" onclick="aivRerunFromTop()" class="cbtn cbtn-secondary">Re-run AI visibility</button></div></div>
     <div class="in2-search"><input id="intel-search" placeholder="Track a competitor — search by name, e.g. the wine bar on Main" oninput="intelSearchInput()" autocomplete="off"><div id="intel-search-results" class="res"></div></div>
     {% if _cd %}
     <div class="in2-comp" id="comp-cards-static">
@@ -11648,7 +11718,9 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
       var when=d.compared_from?mdy(d.compared_from):'';
       var sub=!d.compared_from?'Openings and closings show once there are two weekly checks to compare.'
         :(rows?'Since your check on <span class="hb-num">'+when+'</span>: places that started or stopped showing up in Google\u2019s list of restaurants near you, and ratings that really moved':'Nothing new showing up near you, nothing gone, and no rating moved past normal ups and downs since <span class="hb-num">'+when+'</span>');
-      box.innerHTML='<div class="hb-kicker" style="margin-top:22px">What changed</div><div class="in2-upd" style="margin-top:4px">'+sub+'</div>'
+      // One flex item: the line's 8px gap put space around the date as if
+      // it were a chip (owner, 9/26/26).
+      box.innerHTML='<div class="hb-kicker" style="margin-top:22px">What changed</div><div class="in2-upd" style="margin-top:4px"><span>'+sub+'</span></div>'
         +(rows?'<div class="in2-comp">'+rows+'</div>':'');
       box.hidden=false;
     }).catch(function(){box.hidden=true;});
@@ -22037,20 +22109,21 @@ function fc2LoadSuppliers(){
   var el=document.getElementById('fc2-suppliers');if(!el)return;
   fetch('/api/food-cost/count-sheet',{credentials:'same-origin'}).then(apiJson).then(function(d){
     if(!d||!d.ok||!(d.items||[]).length){el.hidden=true;fc2WorkRow('suppliers',null);return;}
+    var synced=!!(d.source&&d.source.synced);
     var items=d.items,sups={},keys=[],un=0,i;
     for(i=0;i<items.length;i++){var e=String(items[i].supplier_email||'').toLowerCase();
       if(e){if(!sups[e]){sups[e]={name:items[i].supplier_name||items[i].supplier_email,email:items[i].supplier_email,n:0};keys.push(e);}sups[e].n++;}else un++;}
-    var h=fc2BlockHead(FC2_ICON.truck,'Suppliers','Who you order from',keys.length,'The weekly order groups itself by these; each needs an order email.');
+    var h=fc2BlockHead(FC2_ICON.truck,'Suppliers','Who you order from',keys.length,synced?('From '+((d.source||{}).label||'your inventory system')+'; the weekly order groups itself by these.'):'The weekly order groups itself by these; each needs an order email.');
     h+='<div class="fc2-sup-chips">';
     for(i=0;i<keys.length;i++)h+='<span class="ac-chip"><b>'+esc(sups[keys[i]].name)+'</b>\u00a0'+sups[keys[i]].n+' item'+(sups[keys[i]].n===1?'':'s')+'</span>';
     if(un)h+='<span class="ac-chip warn">'+un+' without a supplier</span>';
     h+='</div>';
     var opts='<option value="">\u2014 none \u2014</option>';
     for(i=0;i<keys.length;i++)opts+='<option value="'+esc(keys[i])+'">'+esc(sups[keys[i]].name)+'</option>';
-    if(un&&keys.length)h+='<div class="fc2-sup-bulk"><span>Put every ingredient without a supplier on</span><select class="ac-select fc2-ctl" id="fc2-sup-bulk">'+opts.replace('<option value="">\u2014 none \u2014</option>','')+'</select><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="fc2AssignAllUnassigned(this)">Assign '+un+'</button></div>';
+    if(un&&keys.length&&!synced)h+='<div class="fc2-sup-bulk"><span>Put every ingredient without a supplier on</span><select class="ac-select fc2-ctl" id="fc2-sup-bulk">'+opts.replace('<option value="">\u2014 none \u2014</option>','')+'</select><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="fc2AssignAllUnassigned(this)">Assign '+un+'</button></div>';
     h+='<div class="fc2-sup-grid">';
     for(i=0;i<items.length;i++){var it=items[i],cur=String(it.supplier_email||'').toLowerCase();
-      h+='<div class="fc2-sup-row"><span class="n">'+esc(it.name)+(it.unit?' <small>'+esc(it.unit)+'</small>':'')+'</span><select class="ac-select fc2-ctl" data-sup-ing="'+esc(it.name)+'" onchange="fc2SupplierPick(this)" aria-label="Supplier for '+esc(it.name)+'">'+opts.replace('value="'+esc(cur)+'"','value="'+esc(cur)+'" selected')+'<option value="__new">New supplier\u2026</option></select></div>';}
+      h+='<div class="fc2-sup-row"><span class="n">'+esc(it.name)+(it.unit?' <small>'+esc(it.unit)+'</small>':'')+'</span><select class="ac-select fc2-ctl" data-sup-ing="'+esc(it.name)+'"'+(synced?' disabled':'')+' onchange="fc2SupplierPick(this)" aria-label="Supplier for '+esc(it.name)+'">'+opts.replace('value="'+esc(cur)+'"','value="'+esc(cur)+'" selected')+'<option value="__new">New supplier\u2026</option></select></div>';}
     h+='</div><div class="fc2-sup-new" id="fc2-sup-new" hidden><b id="fc2-sup-new-for">New supplier</b><input class="ac-input" id="fc2-sup-new-name" placeholder="Supplier name" aria-label="Supplier name"><input class="ac-input" id="fc2-sup-new-email" type="email" placeholder="orders@supplier.com" aria-label="Supplier email"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="fc2SupplierSaveNew(this)">Save supplier</button><span class="ac-status" id="fc2-sup-status"></span></div>';
     el.innerHTML=h;el.hidden=false;
     el._sups=sups;
@@ -22100,10 +22173,12 @@ function fc2LoadCountSheet(){
     // Where the ledger stood when this sheet opened: a delivery received
     // after it is asked about on save, never guessed (re-audit F2-7).
     window._fc2LedgerMark=(typeof d.ledger_mark==='number')?d.ledger_mark:null;
-    var h=fc2BlockHead(FC2_ICON.count,'Inventory','Count sheet',d.items.length,'Pre-filled with what should be on hand. Change only what differs.')+'<div class="fc2-count-grid">';
+    // Synced from an inventory system: its counts, read-only (owner, 9/26/26).
+    var src=d.source||{},synced=!!src.synced,syncedOn=synced&&window.mdyAt?mdyAt(src.synced_at):'';
+    var h=fc2BlockHead(FC2_ICON.count,'Inventory','Count sheet',d.items.length,synced?('Counts from '+(src.label||'your inventory system')+(syncedOn?' · synced '+syncedOn:'')+'. Count there; this sheet follows.'):'Pre-filled with what should be on hand. Change only what differs.')+'<div class="fc2-count-grid'+(synced?' synced':'')+'">';
     for(var i=0;i<d.items.length;i++){var it=d.items[i];var exp=(it.expected==null)?'':(Math.round(it.expected*100)/100);
-      h+='<label class="fc2-count-row"><span class="n">'+esc(it.name)+(it.unit?' <small>'+esc(it.unit)+'</small>':'')+'</span><input type="number" step="any" min="0" class="ac-input ac-num" data-ing="'+esc(it.ingredient_id)+'" data-expected="'+esc(exp)+'" value="'+esc(exp)+'" aria-label="Count for '+esc(it.name)+'"></label>';}
-    h+='</div><div class="fc2-count-ft"><span class="ac-status" id="fc2-count-status"></span><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="fc2SaveCount(this)">Save count</button></div>';
+      h+='<label class="fc2-count-row"><span class="n">'+esc(it.name)+(it.unit?' <small>'+esc(it.unit)+'</small>':'')+'</span><input type="number" step="any" min="0" class="ac-input ac-num" data-ing="'+esc(it.ingredient_id)+'" data-expected="'+esc(exp)+'" value="'+esc(exp)+'"'+(synced?' readonly':'')+' aria-label="Count for '+esc(it.name)+'"></label>';}
+    h+='</div>'+(synced?'':'<div class="fc2-count-ft"><span class="ac-status" id="fc2-count-status"></span><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="fc2SaveCount(this)">Save count</button></div>');
     // One line of waste (U2-32): what was thrown out, logged as counted
     // waste instead of surfacing later as an unexplained recount gap.
     var wo='';for(var w=0;w<d.items.length;w++)wo+='<option value="'+esc(d.items[w].ingredient_id)+'">'+esc(d.items[w].name)+(d.items[w].unit?' ('+esc(d.items[w].unit)+')':'')+'</option>';
@@ -24160,6 +24235,16 @@ function in2GbpActionMeta(action) {
   var short = action.split(/\s+(?:→|—)\s+/)[0];
   if (short.length > 46) short = short.slice(0, 43) + '…';
   return { short: short, nav: null };
+}
+// Re-run from the top of Intel (owner, 9/26/26): the page moves to the AI
+// visibility section first, so the loading state is what the owner watches.
+function aivRerunFromTop() {
+  var sec = document.getElementById('in2-aiv'), btn = document.getElementById('aiv-run-btn');
+  if (!sec || !btn || btn.disabled) return;
+  var y = sec.getBoundingClientRect().top + window.pageYOffset - 120;
+  var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  try { window.scrollTo({top: Math.max(0, y), behavior: reduced ? 'auto' : 'smooth'}); } catch (e) { window.scrollTo(0, Math.max(0, y)); }
+  runAIVisibility(btn);
 }
 function runAIVisibility(btn) {
   var _aivB = document.getElementById('aiv-body');

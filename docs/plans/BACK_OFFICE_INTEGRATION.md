@@ -57,6 +57,15 @@ item-level *cost*. Together they are the whole food-cost picture.
    digitised invoice; forwarding those to a Cavnar inbox would feed
    `invoices.scan` unchanged. Useful only if (1) is refused.
 
+## Built on Cavnar AI's side (9/26/26)
+
+The seam is in place; only the HTTP calls are missing.
+- `inventory_sync.py` — the provider contract (`is_connected`, `connected_ids`, `label`, `fetch_inventory` → items + counts), the engine that writes a provider's rows into `ingredients` (upsert by `external_ref`, then name) and the stock ledger (a `recount` per ingredient and day, `source` = provider), `status()` for the pages, and a failure stamped on `client_data.inventory_sync_error` with nothing written.
+- `backoffice.py` — the Back Office provider. `is_connected` needs `BACKOFFICE_API_BASE` and `restaurants.backoffice_api_key`, so it is off everywhere today; `fetch_inventory` raises `BackOfficeNotReady` with the mapping notes.
+- Nightly: `scheduler.run_inventory_sync`, after the 3am POS sync, bounded and resumable (`job_cursors` key `inventory_sync_cursor`).
+- The page: once a sync lands, the count sheet is read-only ("Counts from Back Office · synced M/D/YY", no Save count), supplier picks are locked, and the price monitor says "Synced from Back Office" with its typing controls gone. Before that, hand entry stays as it is.
+- Still to write with the docs: the calls in `fetch_inventory`, an admin save + verify route for the key (the `rpower_routes.py` shape), and recipes / invoice lines in the contract.
+
 ## What we need from Erik to start (1)
 
 - One export each of: item list, a recent inventory count, one recipe, and

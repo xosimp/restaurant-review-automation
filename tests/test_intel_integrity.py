@@ -768,7 +768,10 @@ def test_the_owners_rating_comes_from_google_not_our_sample(db_path, monkeypatch
     assert payload["own_rating_count"] == 1400
 
 
-def test_without_a_google_rating_the_sample_says_it_is_a_sample(db_path, monkeypatch):
+def test_without_a_google_rating_there_is_no_own_rating(db_path, monkeypatch):
+    """The imported reviews' average is never presented as the owner's
+    rating (owner, 9/26/26): it was the sample's fallback, labelled, until
+    the owner asked for Google's public rating or nothing."""
     import mobile_api
     real = models.get_conn
     monkeypatch.setattr(models, "get_conn", lambda *a, **k: real(db_path), raising=False)
@@ -782,9 +785,8 @@ def test_without_a_google_rating_the_sample_says_it_is_a_sample(db_path, monkeyp
     conn.commit()
     conn.close()
     payload, _ = mobile_api._do_mobile_intel(1)
-    assert payload["own_rating"] == 3.9
-    assert payload["own_rating_basis"] == "imported_sample"
-    assert payload["own_rating_count"] == 22
+    assert payload["own_rating"] is None and payload["own_rating_basis"] is None
+    assert payload["own_rating_count"] is None
 
 
 def test_the_market_rating_is_weighted_by_review_volume():

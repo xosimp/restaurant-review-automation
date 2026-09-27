@@ -197,6 +197,22 @@ def utc_stamp(dt=None) -> str:
     return (dt or datetime.now(timezone.utc)).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def local_iso(value, tz=None) -> str:
+    """A stored instant as the restaurant's own day, YYYY-MM-DD. A UTC
+    stamp's first ten characters are UTC's date: 8:21pm on 9/26 in St. Louis
+    read "Last updated 9/27/26" (owner, 9/26/26). An offset-less space stamp
+    is UTC (parse_stamp); anything unparseable keeps its first ten characters."""
+    if not value:
+        return ""
+    try:
+        dt = parse_stamp(value, naive_tz="UTC")
+        if dt is None:
+            return str(value)[:10]
+        return dt.astimezone(restaurant_tz(tz)).date().isoformat()
+    except Exception:
+        return str(value)[:10]
+
+
 def mdy(value) -> str:
     """M/D/YY with no leading zeros — `9/21/26` — the one date format an
     owner reads (DESIGN_SYSTEM.md → Dates and times). Takes a date, a

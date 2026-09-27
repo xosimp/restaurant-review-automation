@@ -892,7 +892,14 @@ def _do_count_sheet_get(u):
                             (_rid(u),)).fetchone()["m"]
     finally:
         conn.close()
-    return {"ok": True, "items": out, "count": len(out), "ledger_mark": int(mark or 0)}, 200
+    # Where the counts come from: once an inventory system has synced
+    # (inventory_sync), the sheet shows its counts and steps aside.
+    try:
+        import inventory_sync
+        source = inventory_sync.status(_rid(u))
+    except Exception:
+        source = {"synced": False}
+    return {"ok": True, "items": out, "count": len(out), "ledger_mark": int(mark or 0), "source": source}, 200
 
 
 def _deliveries_since(rid, mark, ids, day):
