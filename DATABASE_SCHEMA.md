@@ -206,6 +206,7 @@ One identity and one event trail for every recommendation on every surface (`rec
 - `permission_grants` (auth schema) — PK (user_id, restaurant_id, permission); owner-granted extras beyond a role, `permissions.GRANTABLE` only (foodcost.view, loss.view).
 - `login_prefs` (auth schema) — PK (user_id, restaurant_id); `morning_brief` NULL = role default (owners and managers on, teammates off).
 - `restaurants` columns: `morning_brief_enabled`, `morning_brief_hour`, `auto_draft_schedule`, `external_scheduling_tool` (all four touch points).
+- `restaurants.auto_draft_weekday` (INTEGER DEFAULT 3, Thursday) and `restaurants.auto_order_weekday` (INTEGER DEFAULT 0, Monday) — the owner's days, 0 = Monday as `datetime.weekday()`, in the restaurant's own calendar (9/27/26; `ensure_columns`, all four touch points). Read through `models.auto_draft_weekday` / `auto_publish_weekday` (the draft day + 1) / `auto_order_weekday`, which fall back to the default for a value out of range: the draft may be Monday–Saturday (it drafts the week starting the next Monday, and the auto-publish needs a day before that week), orders any day.
 
 ## Intel
 

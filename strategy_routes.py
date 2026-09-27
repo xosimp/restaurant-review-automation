@@ -752,10 +752,24 @@ def _do_demand(u):
 
 
 def _do_auto_draft_get(u):
-    from models import get_restaurant
+    from models import get_restaurant, auto_draft_weekday, auto_publish_weekday, WEEKDAY_NAMES
     r = get_restaurant(_rid(u))
+    wd = auto_draft_weekday(r)
     return {"ok": True, "enabled": bool(getattr(r, "auto_draft_schedule", 0)),
+            "weekday": wd, "day": WEEKDAY_NAMES[wd], "publish_day": WEEKDAY_NAMES[auto_publish_weekday(r)],
             "external_tool": getattr(r, "external_scheduling_tool", None) or ""}, 200
+
+
+def _weekday_arg(v, allowed):
+    """An owner's day as datetime.weekday(), or None when it is not one of
+    `allowed` (a bool is not a day: True would read as Tuesday)."""
+    if isinstance(v, bool):
+        return None
+    try:
+        v = int(v)
+    except (TypeError, ValueError):
+        return None
+    return v if v in allowed else None
 
 
 def _do_auto_draft_set(u):
@@ -770,20 +784,33 @@ def _do_auto_draft_set(u):
         fields["auto_draft_schedule"] = 1 if _flag(b["enabled"]) else 0
     if "external_tool" in b:
         fields["external_scheduling_tool"] = (str(b["external_tool"] or "").strip()[:60]) or None
+    if "weekday" in b:
+        from models import AUTO_DRAFT_WEEKDAYS
+        wd = _weekday_arg(b["weekday"], AUTO_DRAFT_WEEKDAYS)
+        if wd is None:
+            return {"ok": False, "error": "Pick Monday to Saturday — the draft is for the week that starts the next "
+                                          "Monday, and the auto-publish goes out the day after."}, 400
+        fields["auto_draft_weekday"] = wd
     if not fields:
         return {"ok": False, "error": "Nothing to change."}, 400
     update_restaurant(_rid(u), fields)
     if "auto_draft_schedule" in fields:
         log_account_event(_rid(u), "auto_draft_changed", current_user=u,
                           detail="on" if fields["auto_draft_schedule"] else "off")
+    if "auto_draft_weekday" in fields:
+        from models import WEEKDAY_NAMES
+        log_account_event(_rid(u), "auto_draft_day_changed", current_user=u,
+                          detail=WEEKDAY_NAMES[fields["auto_draft_weekday"]])
     return _do_auto_draft_get(u)
 
 
 def _do_auto_publish_get(u):
-    from models import get_restaurant, schedule_publish_trust, SCHEDULE_PUBLISH_TRUST_MIN
+    from models import (get_restaurant, schedule_publish_trust, SCHEDULE_PUBLISH_TRUST_MIN,
+                        auto_draft_weekday, auto_publish_weekday, WEEKDAY_NAMES)
     r = get_restaurant(_rid(u))
     trust = schedule_publish_trust(_rid(u))
     return {"ok": True, "enabled": bool(getattr(r, "auto_publish_schedule", 0)),
+            "day": WEEKDAY_NAMES[auto_publish_weekday(r)], "draft_day": WEEKDAY_NAMES[auto_draft_weekday(r)],
             "trust": trust, "needed": SCHEDULE_PUBLISH_TRUST_MIN,
             "armed": bool(getattr(r, "auto_publish_schedule", 0)) and trust >= SCHEDULE_PUBLISH_TRUST_MIN}, 200
 
@@ -818,7 +845,7 @@ def _do_auto_publish_set(u):
 
 
 def _do_auto_order_get(u):
-    from models import get_restaurant
+    from models import get_restaurant, auto_order_weekday, WEEKDAY_NAMES
     import ordering
     r = get_restaurant(_rid(u))
     # The record per supplier, so the switch says what it would do.
@@ -844,7 +871,9 @@ def _do_auto_order_get(u):
         fresh = ordering.count_freshness(_rid(u))
     except Exception:
         fresh = None
+    wd = auto_order_weekday(r)
     return {"ok": True, "enabled": bool(getattr(r, "auto_order_trusted", 0)), "suppliers": suppliers,
+            "weekday": wd, "day": WEEKDAY_NAMES[wd],
             "undo_minutes": ordering.ORDER_UNDO_MINUTES, "count_freshness": fresh,
             "count_fresh_days": ordering.COUNT_FRESH_DAYS}, 200
 
@@ -858,11 +887,25 @@ def _do_auto_order_set(u):
     from models import update_restaurant
     from client_api import log_account_event
     b = _body()
-    if "enabled" not in b:
+    fields = {}
+    if "enabled" in b:
+        fields["auto_order_trusted"] = 1 if _flag(b["enabled"]) else 0
+    if "weekday" in b:
+        from models import AUTO_ORDER_WEEKDAYS
+        wd = _weekday_arg(b["weekday"], AUTO_ORDER_WEEKDAYS)
+        if wd is None:
+            return {"ok": False, "error": "Pick a day of the week for the orders."}, 400
+        fields["auto_order_weekday"] = wd
+    if not fields:
         return {"ok": False, "error": "Nothing to change."}, 400
-    on = _flag(b["enabled"])
-    update_restaurant(_rid(u), {"auto_order_trusted": 1 if on else 0})
-    log_account_event(_rid(u), "auto_order_changed", current_user=u, detail="on" if on else "off")
+    update_restaurant(_rid(u), fields)
+    if "auto_order_trusted" in fields:
+        log_account_event(_rid(u), "auto_order_changed", current_user=u,
+                          detail="on" if fields["auto_order_trusted"] else "off")
+    if "auto_order_weekday" in fields:
+        from models import WEEKDAY_NAMES
+        log_account_event(_rid(u), "auto_order_day_changed", current_user=u,
+                          detail=WEEKDAY_NAMES[fields["auto_order_weekday"]])
     return _do_auto_order_get(u)
 
 

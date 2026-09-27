@@ -434,8 +434,8 @@ def test_home_queue_items_render_their_alt_and_answer_a_needs_ack_in_place():
 
 def test_account_carries_targets_and_the_automation_switches_moved():
     s = _src()
-    auto = s[s.index('id="acct-automation"'):s.index('id="account-settings-card"') + 4000]
-    for rid in ("as-autodraft-row", "as-autoorder-row", "as-autopublish-row"):
+    auto = s[s.index('id="acct-automation"'):s.index('id="as-autopublish-row"') + 2000]
+    for rid in ("as-autodraft-row", "as-autodraft-day-row", "as-autoorder-row", "as-autoorder-day-row", "as-autopublish-row"):
         assert rid in auto
     assert 'id="as-tg-card"' in s and 'data-tg="labor_target_pct"' in s
     assert "'as-auto-ops-status'" in _fn("saveAutoDraft")

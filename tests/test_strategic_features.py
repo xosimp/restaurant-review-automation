@@ -7,6 +7,7 @@ not be written, a login that must not see a number, a link preview that must
 not acknowledge an issue.
 """
 import json
+from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
@@ -418,6 +419,11 @@ def test_a_bad_token_or_action_is_refused(client, db_path, monkeypatch):
 
 # ── scheduled jobs ─────────────────────────────────────────────────────────
 
+# The draft runs on each restaurant's own day (Thursday unless the owner
+# picked another), read from the scheduler tick's clock.
+_THURSDAY_9AM = datetime(2026, 9, 24, 9, 0)
+
+
 def test_auto_draft_skips_opt_outs_external_tools_and_recent_schedules(db_path, monkeypatch):
     import strategy_jobs, ops
     ran = []
@@ -437,7 +443,7 @@ def test_auto_draft_skips_opt_outs_external_tools_and_recent_schedules(db_path, 
     conn.execute("INSERT INTO schedule_history (restaurant_id, generated_at) VALUES (?, datetime('now','-1 day'))",
                  (recent,))
     conn.commit(); conn.close()
-    out = strategy_jobs.run_auto_draft_schedules(db_path=db_path)
+    out = strategy_jobs.run_auto_draft_schedules(db_path=db_path, now=_THURSDAY_9AM)
     assert ran == [on] and out["drafted"] == 1
 
 
@@ -450,7 +456,7 @@ def test_auto_draft_does_not_announce_a_draft_that_failed(db_path, monkeypatch):
     monkeypatch.setattr("push.fire_push", lambda *a, **k: pushed.append(a))
     rid = _rid(db_path, module_labor=1)
     models.update_restaurant(rid, {"auto_draft_schedule": 1}, db_path=db_path)
-    assert strategy_jobs.run_auto_draft_schedules(db_path=db_path)["drafted"] == 0 and not pushed
+    assert strategy_jobs.run_auto_draft_schedules(db_path=db_path, now=_THURSDAY_9AM)["drafted"] == 0 and not pushed
 
 
 def test_loss_sync_treats_an_unsupported_pos_as_normal(db_path, monkeypatch):

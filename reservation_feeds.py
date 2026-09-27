@@ -3,7 +3,8 @@ reservation_feeds.py — reservation counts from the book, into demand_signals.
 
 demand_signals takes what the owner types or pastes. This is the frame for
 the feed doing it instead: one provider per restaurant, one sync a week
-ahead of the Thursday draft, writing rows with source=<provider> so the
+the day before the restaurant's draft (Thursday unless the owner picked
+another day), writing rows with source=<provider> so the
 schedule reads them exactly like a pasted CSV.
 
 No provider is live. Each one below says what it needs (an API key or an
@@ -85,16 +86,24 @@ def sync(restaurant_id, days: int = 21, db_path=DB_PATH) -> dict:
     return {"written": out["written"], "skipped": out["skipped"], "error": None}
 
 
-def run_reservation_sync(db_path=DB_PATH) -> dict:
-    """Weekly job: every restaurant with a provider set. Unconfigured ones
-    cost one dict each and are counted, not retried."""
+def run_reservation_sync(db_path=DB_PATH, weekday=None) -> dict:
+    """Every restaurant with a provider set - with `weekday` (today, 0 =
+    Monday), only those whose schedule is drafted tomorrow, so each feed
+    lands the day before its own draft (models.auto_draft_weekday; the
+    scheduler runs this daily). Unconfigured ones cost one dict each and
+    are counted, not retried."""
+    from models import AUTO_DRAFT_WEEKDAY_DEFAULT
     conn = get_conn(db_path)
     try:
-        ids = [r["id"] for r in conn.execute("SELECT id FROM restaurants WHERE reservation_provider IS NOT NULL AND reservation_provider<>'' AND module_labor=1").fetchall()]
+        rows = conn.execute("SELECT id, auto_draft_weekday FROM restaurants WHERE reservation_provider IS NOT NULL "
+                            "AND reservation_provider<>'' AND module_labor=1").fetchall()
     except Exception:
-        ids = []
+        rows = []
     finally:
         conn.close()
+    ids = [r["id"] for r in rows
+           if weekday is None or (r["auto_draft_weekday"] if r["auto_draft_weekday"] is not None
+                                  else AUTO_DRAFT_WEEKDAY_DEFAULT) == (weekday + 1) % 7]
     synced = skipped = 0
     for rid in ids:
         res = sync(rid, db_path=db_path)

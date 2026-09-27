@@ -2885,14 +2885,16 @@ AUTO_PUBLISH_UNDO_MINUTES = 120
 
 
 def run_auto_publish_schedules():
-    """Friday, 9am local: queue the Thursday draft to go to staff
+    """9am local the day after the restaurant's draft day (Friday for the
+    default Thursday draft; models.auto_publish_weekday): queue the draft to go to staff
     AUTO_PUBLISH_UNDO_MINUTES later, with those two hours as the undo window — for owners who turned it on AND
     whose last SCHEDULE_PUBLISH_TRUST_MIN published schedules went out
     unedited. The draft must be this coming week's, untouched, and not yet
     shared. Nothing is sent here; delayed.run_due sends it, and the owner
     is told now so "undo" is a real choice."""
     import delayed
-    from models import get_all_restaurants, get_conn, schedule_publish_trust, SCHEDULE_PUBLISH_TRUST_MIN, DB_PATH
+    from models import (get_all_restaurants, get_conn, schedule_publish_trust, SCHEDULE_PUBLISH_TRUST_MIN, DB_PATH,
+                        auto_publish_weekday)
     from time_utils import restaurant_now
     queued = skipped = 0
     for r in get_all_restaurants():
@@ -2901,7 +2903,7 @@ def run_auto_publish_schedules():
         if (getattr(r, "billing_status", "") or "trial") not in ("trial", "active"):
             continue
         local = restaurant_now(r, naive=True)
-        if local.weekday() != 4 or not local_due(r, 9, claim_key="auto_publish_schedule"):
+        if local.weekday() != auto_publish_weekday(r) or not local_due(r, 9, claim_key="auto_publish_schedule"):
             skipped += 1
             continue
         if schedule_publish_trust(r.id) < SCHEDULE_PUBLISH_TRUST_MIN:
@@ -3375,22 +3377,24 @@ def scheduler_loop():
                 from strategy_jobs import run_schedule_outcomes
                 _ops.run_job("schedule_outcomes", run_schedule_outcomes)
 
-            # Wednesday 5am — reservation feeds into demand_signals, a day
-            # ahead of the Thursday draft (reservation_feeds; no provider is
-            # live yet, unconfigured restaurants are counted and skipped).
-            if _due(now, 5) and now.weekday() == 2 and _ops.claim_period("reservation_sync", str(today)):
+            # 5am daily — reservation feeds into demand_signals for each
+            # restaurant whose draft is tomorrow (its auto_draft_weekday; the
+            # Wednesday run served only the Thursday draft). No provider is
+            # live yet; unconfigured restaurants are not read.
+            if _due(now, 5) and _ops.claim_period("reservation_sync", str(today)):
                 from reservation_feeds import run_reservation_sync
-                _ops.run_job("reservation_sync", run_reservation_sync)
+                _ops.run_job("reservation_sync", run_reservation_sync, weekday=now.weekday())
 
-            # Thursday 6am+ — draft next week's schedule for owners who opted
-            # in. A draft in Schedule History; nothing reaches staff. A pass
-            # an hour: each is time-bounded and starts at the cursor, and a
-            # restaurant is attempted once a day, so a pass that ran out of
-            # time is finished later the same Thursday, not next week
-            # (SCHED-11).
-            if _due(now, 6) and now.weekday() == 3 and _ops.claim_period("auto_draft_schedule", f"{today}-{now.hour}"):
+            # Hourly — draft next week's schedule for owners who opted in,
+            # each on ITS day from 6am in its own zone (Thursday unless the
+            # owner picked another; run_auto_draft_schedules selects them).
+            # A draft in Schedule History; nothing reaches staff. Each pass
+            # is time-bounded and starts at the cursor, and a restaurant is
+            # attempted once a day, so a pass that ran out of time is
+            # finished later the same day, not next week (SCHED-11).
+            if _ops.claim_period("auto_draft_schedule", f"{today}-{now.hour}"):
                 from strategy_jobs import run_auto_draft_schedules
-                _ops.run_job("auto_draft_schedule", run_auto_draft_schedules)
+                _ops.run_job("auto_draft_schedule", run_auto_draft_schedules, now=now)
 
             # Monday 7am local — the agent files the week's three actions.
             if now.weekday() == 0 and _ops.claim_period("weekly_plan", f"{today}-{now.hour}"):
@@ -3402,15 +3406,17 @@ def scheduler_loop():
                 from strategy_jobs import run_recipe_drafts
                 _ops.run_job("recipe_drafts", run_recipe_drafts)
 
-            # Monday 8am local, per restaurant — queue trusted supplier orders
-            # with an hour to undo (strategy_jobs.run_trusted_orders).
-            if now.weekday() == 0 and _ops.claim_period("trusted_orders", f"{today}-{now.hour}"):
+            # Hourly: 8am local on each restaurant's order day (Monday unless
+            # the owner picked another) — queue trusted supplier orders with
+            # an hour to undo (strategy_jobs.run_trusted_orders).
+            if _ops.claim_period("trusted_orders", f"{today}-{now.hour}"):
                 from strategy_jobs import run_trusted_orders
                 _ops.run_job("trusted_orders", run_trusted_orders)
 
-            # Friday 9am local, per restaurant — queue the unedited draft
-            # to publish at 11am with an undo window (run_auto_publish_schedules).
-            if now.weekday() == 4 and _ops.claim_period("auto_publish_schedule", f"{today}-{now.hour}"):
+            # Hourly: 9am local the day after each restaurant's draft day
+            # (Friday for a Thursday draft) — queue the unedited draft to
+            # publish at 11am with an undo window (run_auto_publish_schedules).
+            if _ops.claim_period("auto_publish_schedule", f"{today}-{now.hour}"):
                 _ops.run_job("auto_publish_schedule", run_auto_publish_schedules)
 
             if _due(now, 4) and _ops.claim_period("marketing_metrics_sync", str(today)):

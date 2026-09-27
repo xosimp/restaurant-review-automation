@@ -857,17 +857,20 @@ def run_quality_calibration(db_path=DB_PATH):
     return {"restaurants_changed": changed["n"]}
 
 
-def run_auto_draft_schedules(db_path=DB_PATH):
+def run_auto_draft_schedules(db_path=DB_PATH, now=None):
     """Draft next week's schedule for every opted-in restaurant that hasn't
     already made one. The draft lands in Schedule History exactly as a
     hand-generated one does; nothing reaches staff until the owner publishes.
 
     Skipped where an external scheduling tool is named (the owner schedules
     in 7shifts/HotSchedules/etc. and a Cavnar draft would be a second,
-    conflicting source of truth), and where Labor isn't on the plan."""
+    conflicting source of truth), and where Labor isn't on the plan.
+
+    `now` is the scheduler tick's instant (naive Chicago, scheduler._chi_now):
+    whose draft day it is is read from it, so the pass and the loop agree on
+    the clock. Without it, each restaurant's own wall clock now."""
     import ops
     import threading
-    from datetime import date as _date
     import scheduler as _sched
     import schedule_engine as _se
     counts = {"drafted": 0, "skipped": 0}
@@ -876,14 +879,27 @@ def run_auto_draft_schedules(db_path=DB_PATH):
     # wall-clock bound and a cursor. It used to be one serial 40-minute pass
     # claimed once per Thursday, so the restaurants past the bound waited a
     # whole week (SCHED-11 / DATA-8); the scheduler now runs a pass every
-    # hour on Thursday, each starting at the cursor, and a restaurant is
-    # attempted at most once a day (claimed before the paid generation).
-    rows = [r for r in _restaurants(db_path)
-            if getattr(r, "auto_draft_schedule", 0) and getattr(r, "module_labor", 0)]
-    order = sorted(rows, key=lambda r: r.id)
+    # hour, each starting at the cursor, and a restaurant is attempted at
+    # most once a day (claimed before the paid generation).
+    #
+    # Each restaurant on ITS day (auto_draft_weekday, Thursday unless the
+    # owner picked another) from AUTO_DRAFT_HOUR in its own zone; the loop
+    # used to gate every restaurant on Chicago's Thursday 6am.
+    from models import auto_draft_weekday
+    from time_utils import restaurant_now, restaurant_tz, OPERATOR_TZ
+    from zoneinfo import ZoneInfo
+    at = None if now is None else (now if now.tzinfo else now.replace(tzinfo=ZoneInfo(OPERATOR_TZ)))
+    local = {}
+    for r in _restaurants(db_path):
+        if not (getattr(r, "auto_draft_schedule", 0) and getattr(r, "module_labor", 0)):
+            continue
+        now_l = (restaurant_now(r, naive=True) if at is None
+                 else at.astimezone(restaurant_tz(r)).replace(tzinfo=None))
+        if now_l.weekday() == auto_draft_weekday(r) and now_l.hour >= AUTO_DRAFT_HOUR:
+            local[r.id] = (r, now_l.date().isoformat())
+    order = sorted((v[0] for v in local.values()), key=lambda r: r.id)
     cursor = _read_cursor(AUTO_DRAFT_CURSOR_KEY, db_path)
     order = [r for r in order if r.id > cursor] + [r for r in order if r.id <= cursor]
-    day = _date.today().isoformat()
 
     def _bump(key):
         with lock:
@@ -900,7 +916,9 @@ def run_auto_draft_schedules(db_path=DB_PATH):
                 return
         finally:
             conn.close()
-        if not ops.claim_period(f"auto_draft:{r.id}", day):
+        # The restaurant's own date: the server's is UTC, which turned over
+        # at 7pm in Chicago and allowed a second paid try the same evening.
+        if not ops.claim_period(f"auto_draft:{r.id}", local[r.id][1]):
             _bump("skipped")               # attempted earlier today — never a second paid try
             return
         _draft_one(r, db_path, _se, _bump)
@@ -955,6 +973,7 @@ def _draft_one(r, db_path, _se, _bump):
 
 
 AUTO_DRAFT_CURSOR_KEY = "auto_draft_schedule_cursor"
+AUTO_DRAFT_HOUR = 6                 # local; the day is the owner's (models.auto_draft_weekday)
 AUTO_DRAFT_MAX_SECONDS = 40 * 60
 AUTO_DRAFT_WORKERS = 3              # each draft is minutes of model wait; three share the pass
 
@@ -2151,11 +2170,13 @@ def _draft_quiet_night_fill(r, out, db_path):
 
 
 def run_trusted_orders(db_path=DB_PATH):
-    """Monday 8am local: queue the supplier orders that can go on their own
+    """8am local on the owner's order day (auto_order_weekday, Monday unless
+    they picked another): queue the supplier orders that can go on their own
     (ordering.py — a supplier with a record, a total in the usual band, no
     order this week), with an hour to undo, and tell the owner. Off unless
     auto_order_trusted is on for the restaurant."""
     import ops, ordering
+    from models import auto_order_weekday
     from time_utils import restaurant_now
     import scheduler
     queued = 0
@@ -2163,7 +2184,7 @@ def run_trusted_orders(db_path=DB_PATH):
         if not getattr(r, "module_inventory", 0) or not getattr(r, "auto_order_trusted", 0):
             continue
         local = restaurant_now(r, naive=True)
-        if local.weekday() != 0 or not scheduler.local_due(r, 8, claim_key="trusted_orders"):
+        if local.weekday() != auto_order_weekday(r) or not scheduler.local_due(r, 8, claim_key="trusted_orders"):
             continue
         try:
             held = []

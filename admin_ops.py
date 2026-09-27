@@ -1229,7 +1229,7 @@ RUNNABLE_JOBS = {
     # forward from each tracker's accrued_through, so a second pass adds
     # nothing. Sends nothing.
     "outcome_rechecks":        {"cadence": "6am CT daily", "what": "Re-check measured results at 90 days and accrue measured savings day by day", "target": ("strategy_jobs", "run_outcome_rechecks")},
-    "reservation_sync":        {"cadence": "Wednesday 5am CT", "what": "Reservation feeds into events & reservations (no provider live yet)", "target": ("reservation_feeds", "run_reservation_sync")},
+    "reservation_sync":        {"cadence": "Daily 5am CT, the day before each draft", "what": "Reservation feeds into events & reservations (no provider live yet)", "target": ("reservation_feeds", "run_reservation_sync")},
     "weekly_digests":          {"cadence": "9am on each client's digest day", "what": "Email weekly digests", "target": ("scheduler", "run_weekly_digests"), "sends": True},
     "pos_sync":                {"cadence": "3am nightly", "what": "Pull yesterday's Toast sales and labor", "target": ("scheduler", "run_toast_sync")},
     "inventory_depletion":     {"cadence": "5am nightly", "what": "Deplete inventory from POS sales", "target": ("scheduler", "run_daily_depletion_sync")},
@@ -1250,8 +1250,8 @@ RUNNABLE_JOBS = {
     "backup_db":               {"cadence": "2am nightly", "what": "Back the SQLite database up", "target": ("scheduler", "backup_db")},
     "weekly_plan":             {"cadence": "Mon 7am local", "what": "The agent files the week's three actions as issues", "target": ("strategy_jobs", "run_weekly_plan")},
     "recipe_drafts":           {"cadence": "Tue 5am local", "what": "Draft recipes for POS dishes that have none", "target": ("strategy_jobs", "run_recipe_drafts")},
-    "trusted_orders":          {"cadence": "Mon 8am local", "what": "Queue supplier orders that have earned it, with an hour to undo", "target": ("strategy_jobs", "run_trusted_orders"), "sends": True},
-    "auto_publish_schedule":   {"cadence": "Fri 9am local", "what": "Queue the unedited Thursday draft to publish at 11am", "target": ("scheduler", "run_auto_publish_schedules"), "sends": True},
+    "trusted_orders":          {"cadence": "8am local, the owner's order day (Mon by default)", "what": "Queue supplier orders that have earned it, with an hour to undo", "target": ("strategy_jobs", "run_trusted_orders"), "sends": True},
+    "auto_publish_schedule":   {"cadence": "9am local, the day after the draft (Fri by default)", "what": "Queue the unedited draft to publish at 11am", "target": ("scheduler", "run_auto_publish_schedules"), "sends": True},
     "restore_drill":           {"cadence": "2nd of Jan / Apr / Jul / Oct, after the 2am backup", "what": "Restore the newest snapshot to scratch and prove it opens, migrates and kept its tokens", "target": ("scheduler", "run_restore_drill")},
     # Safe to run on demand: every night claims (restaurant, date, version)
     # and a finished version is never re-run, so a second pass does nothing.

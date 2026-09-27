@@ -368,6 +368,9 @@ class Restaurant:
     # product can say "paused until" rather than "lapsed".
     paused_until: str                    = None
     auto_draft_schedule: int             = 0
+    # The weekday (0 = Monday) the draft is made, restaurant-local; the
+    # auto-publish goes the day after (auto_draft_weekday / auto_publish_weekday).
+    auto_draft_weekday: int              = 3
     external_scheduling_tool: Optional[str] = None   # "Fourth", "7shifts" — a scheduler they already pay for
     email_theme: Optional[str]           = "dark"  # 'dark' or 'light' — drives weekly digest email theme
     inventory_updated_at: Optional[str]  = None
@@ -488,12 +491,15 @@ class Restaurant:
     # Graduated trust: extend the rule to 3-star and 4-star once the owner's
     # own edit rate on that band has earned it (auto_approve_trust).
     auto_approve_earned: int         = 0
-    # Publish the Thursday draft to staff on Friday, with a two-hour undo,
-    # once the last few drafts went out unedited (schedule_publish_trust).
+    # Publish the draft to staff the day after it is made (Friday for the
+    # default Thursday draft), with a two-hour undo, once the last few drafts
+    # went out unedited (schedule_publish_trust).
     auto_publish_schedule: int       = 0
     # Queue orders to suppliers with a record, inside the usual band, with an
     # hour to undo (ordering.py).
     auto_order_trusted: int          = 0
+    # The weekday (0 = Monday) trusted orders are queued, restaurant-local.
+    auto_order_weekday: int          = 0
     # Monday: the agent reads the week and files three owned actions as
     # issues (strategy_jobs.run_weekly_plan). Off by default.
     weekly_plan_enabled: int         = 0
@@ -835,6 +841,10 @@ def ensure_columns(db_path: str = DB_PATH):
         # writes a draft, and a restaurant already on Fourth or 7shifts does
         # not want one.
         ("restaurants", "auto_draft_schedule", "INTEGER DEFAULT 0"),
+        # The owner's day for it, and for trusted supplier orders (9/27/26):
+        # Thursday and Monday were fixed in the scheduler loop.
+        ("restaurants", "auto_draft_weekday", "INTEGER DEFAULT 3"),
+        ("restaurants", "auto_order_weekday", "INTEGER DEFAULT 0"),
         ("restaurants", "external_scheduling_tool", "TEXT"),
         ("restaurants", "email_theme", "TEXT DEFAULT 'dark'"),
         ("restaurants", "inventory_updated_at", "TEXT"),
@@ -3317,7 +3327,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "geocode_failed_at",
         "alert_hold_during_service", "preshift_nudge_hour",
         "morning_brief_enabled", "morning_brief_hour", "briefing_level", "paused_until",
-        "auto_draft_schedule", "external_scheduling_tool",
+        "auto_draft_schedule", "external_scheduling_tool", "auto_draft_weekday", "auto_order_weekday",
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
@@ -3719,6 +3729,8 @@ def _restaurant_from_row(row) -> Restaurant:
                                and row["auto_publish_schedule"] is not None else 0),
         auto_order_trusted=(row["auto_order_trusted"] if "auto_order_trusted" in row.keys()
                             and row["auto_order_trusted"] is not None else 0),
+        auto_order_weekday=(row["auto_order_weekday"] if "auto_order_weekday" in row.keys()
+                            and row["auto_order_weekday"] is not None else AUTO_ORDER_WEEKDAY_DEFAULT),
         weekly_plan_enabled=(row["weekly_plan_enabled"] if "weekly_plan_enabled" in row.keys()
                              and row["weekly_plan_enabled"] is not None else 0),
         send_delay_minutes=(row["send_delay_minutes"] if "send_delay_minutes" in row.keys()
@@ -3868,6 +3880,8 @@ def _restaurant_from_row(row) -> Restaurant:
         paused_until=(row["paused_until"] if "paused_until" in row.keys() else None),
         auto_draft_schedule=(row["auto_draft_schedule"] if "auto_draft_schedule" in row.keys()
                              and row["auto_draft_schedule"] is not None else 0),
+        auto_draft_weekday=(row["auto_draft_weekday"] if "auto_draft_weekday" in row.keys()
+                            and row["auto_draft_weekday"] is not None else AUTO_DRAFT_WEEKDAY_DEFAULT),
         external_scheduling_tool=row["external_scheduling_tool"] if "external_scheduling_tool" in row.keys() else None,
     )
 
@@ -8505,6 +8519,7 @@ ACCOUNT_EVENT_TYPES = (
     "login_locked", "account_frozen", "memory_forgotten", "memory_added", "staff_pin_reset",
     "time_off_decided", "covers_imported",
     "auto_publish_changed", "auto_order_changed", "weekly_plan_changed", "send_delay_changed",
+    "auto_draft_changed", "auto_draft_day_changed", "auto_order_day_changed",
     "login", "password_changed", "email_changed", "recovery_email_set", "recovery_email_removed",
     "two_fa_enabled", "two_fa_disabled", "backup_codes_regenerated",
     "team_member_invited", "team_member_revoked",
@@ -8554,6 +8569,10 @@ ACCOUNT_EVENT_LABELS = {
     "inventory_counted": "Inventory counted",
     "auto_publish_changed": "Automatic schedule publishing changed",
     "auto_order_changed": "Trusted supplier orders changed",
+    "auto_draft_changed": "Automatic schedule drafting changed",
+    # `detail` carries the new day ("Tuesday").
+    "auto_draft_day_changed": "Schedule draft day changed",
+    "auto_order_day_changed": "Supplier order day changed",
     "weekly_plan_changed": "Monday plan changed",
     "send_delay_changed": "Send delay changed",
     "pos_sync_failing": "POS sync failing",
@@ -9226,6 +9245,41 @@ def auto_approve_trust(restaurant_id: int, db_path: str = DB_PATH, days: int = 3
     return out
 
 
+# The owner's days for the work Cavnar AI does on its own (owner 9/27/26).
+# 0 = Monday, as datetime.weekday(), in the restaurant's own calendar. The
+# draft is always of the week that starts the NEXT Monday (schedule_engine.
+# _week_monday), so it may be made Monday to Saturday: a Sunday draft would
+# leave no day to read it and none for the auto-publish, which goes the day
+# after the draft. Orders may go any day.
+WEEKDAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+AUTO_DRAFT_WEEKDAY_DEFAULT = 3      # Thursday
+AUTO_DRAFT_WEEKDAYS = (0, 1, 2, 3, 4, 5)
+AUTO_ORDER_WEEKDAY_DEFAULT = 0      # Monday
+AUTO_ORDER_WEEKDAYS = (0, 1, 2, 3, 4, 5, 6)
+
+
+def _weekday_of(restaurant, attr, default, allowed) -> int:
+    try:
+        v = int(getattr(restaurant, attr, default))
+    except (TypeError, ValueError):
+        return default
+    return v if v in allowed else default
+
+
+def auto_draft_weekday(restaurant) -> int:
+    return _weekday_of(restaurant, "auto_draft_weekday", AUTO_DRAFT_WEEKDAY_DEFAULT, AUTO_DRAFT_WEEKDAYS)
+
+
+def auto_publish_weekday(restaurant) -> int:
+    """The day after the draft: Friday for a Thursday draft, Sunday at the
+    latest - always before the week it publishes starts."""
+    return auto_draft_weekday(restaurant) + 1
+
+
+def auto_order_weekday(restaurant) -> int:
+    return _weekday_of(restaurant, "auto_order_weekday", AUTO_ORDER_WEEKDAY_DEFAULT, AUTO_ORDER_WEEKDAYS)
+
+
 SCHEDULE_PUBLISH_TRUST_MIN = 3
 
 
@@ -9390,6 +9444,7 @@ def build_settings_export_json(restaurant_id: int, db_path: str = DB_PATH) -> st
         "alert_health_bypass_quiet", "alert_extra_emails", "push_sound", "urgent_via_email", "urgent_via_sms",
         "alert_quiet_start", "alert_quiet_end", "auto_approve_5star", "auto_approve_4star", "auto_approve_earned",
         "auto_publish_schedule", "auto_order_trusted", "weekly_plan_enabled", "send_delay_minutes", "auto_approve_daily_cap",
+        "auto_draft_schedule", "auto_draft_weekday", "auto_order_weekday",
         "auto_approve_paused", "data_retention_months", "two_fa_enabled", "two_fa_method",
     ]
     return _json.dumps({k: getattr(r, k, None) for k in keep}, indent=2, default=str)

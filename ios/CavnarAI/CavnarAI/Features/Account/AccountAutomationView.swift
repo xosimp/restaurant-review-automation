@@ -2,8 +2,8 @@ import SwiftUI
 import Observation
 
 /// Automation & trust — the phone half of the web Account cards the
-/// automation audit added (auto-publish, trusted orders, the Monday plan,
-/// the send delay) and the moat audit's "why Cavnar AI stopped asking"
+/// automation audit added (the schedule draft and its day, auto-publish,
+/// trusted orders and their day, the Monday plan, the send delay) and the moat audit's "why Cavnar AI stopped asking"
 /// record behind each one. Every switch defaults off on the server and
 /// only does anything once the owner's own record has earned it; this
 /// screen shows that record next to the switch so the two are never read
@@ -49,8 +49,28 @@ struct AccountAutomationView: View {
 
     private var switches: some View {
         AccountSection(kicker: "What runs on its own") {
+            // The draft and its day (owner 9/27/26: Thursday was fixed).
+            // Hidden where a scheduling tool is named, as on the web — the
+            // draft never runs there.
+            if let draft = viewModel.autoDraft, draft.externalTool.isEmpty {
+                AccountSwitchRow(
+                    label: "Draft next week's schedule",
+                    detail: "Every \(draft.day), if you haven't built one. A draft only — nothing goes to staff until you publish.",
+                    isOn: Binding(get: { draft.enabled }, set: { on in Task { await viewModel.setAutoDraft(on) } }),
+                    busy: viewModel.saving == "auto_draft",
+                    showsDivider: true
+                )
+                AccountKVRow(label: "Draft day") {
+                    Picker("", selection: Binding(get: { draft.weekday },
+                                                  set: { d in Task { await viewModel.setAutoDraftDay(d) } })) {
+                        ForEach(0..<6, id: \.self) { d in Text(AccountAutomationViewModel.dayNames[d]).tag(d) }
+                    }
+                    .tint(Color.cavnarEmber)
+                    .disabled(viewModel.saving == "auto_draft_day")
+                }
+            }
             AccountSwitchRow(
-                label: "Publish the schedule Friday",
+                label: "Publish the schedule \(viewModel.autoPublish?.day ?? "Friday")",
                 detail: viewModel.autoPublish.map { p in
                     p.armed ? "Armed — \(p.trust) schedules went out unedited in a row. You're told at 9, and can undo from Home until 11."
                             : "Your record: \(p.trust) of \(p.needed) unedited schedules in a row. It arms itself when you get there."
@@ -64,12 +84,20 @@ struct AccountAutomationView: View {
                 AccountSwitchRow(
                     label: "Send trusted supplier orders",
                     detail: order.suppliersTrusted == 0
-                        ? "No supplier trusted yet — three sent orders earns one. A draft inside your usual total then goes Monday with an hour to undo."
-                        : "\(order.suppliersTrusted) supplier\(order.suppliersTrusted == 1 ? "" : "s") trusted. A draft inside your usual total goes Monday 8am with an hour to undo.",
+                        ? "No supplier trusted yet — three sent orders earns one. A draft inside your usual total then goes \(order.dayName) with an hour to undo."
+                        : "\(order.suppliersTrusted) supplier\(order.suppliersTrusted == 1 ? "" : "s") trusted. A draft inside your usual total goes \(order.dayName) 8am with an hour to undo.",
                     isOn: Binding(get: { order.enabled }, set: { on in Task { await viewModel.setAutoOrder(on) } }),
                     busy: viewModel.saving == "auto_order",
                     showsDivider: true
                 )
+                AccountKVRow(label: "Order day") {
+                    Picker("", selection: Binding(get: { order.weekday ?? 0 },
+                                                  set: { d in Task { await viewModel.setAutoOrderDay(d) } })) {
+                        ForEach(0..<7, id: \.self) { d in Text(AccountAutomationViewModel.dayNames[d]).tag(d) }
+                    }
+                    .tint(Color.cavnarEmber)
+                    .disabled(viewModel.saving == "auto_order_day")
+                }
             }
             AccountSwitchRow(
                 label: "Monday plan",
@@ -178,13 +206,31 @@ extension AccountAutomationView {
 @Observable
 @MainActor
 final class AccountAutomationViewModel {
-    struct AutoPublish: Decodable { let ok: Bool; let enabled: Bool; let trust: Int; let needed: Int; let armed: Bool }
+    /// 0 = Monday, as the server's weekday numbers.
+    static let dayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+    struct AutoDraft: Decodable {
+        let ok: Bool
+        let enabled: Bool
+        let weekday: Int
+        let day: String
+        let externalTool: String
+        enum CodingKeys: String, CodingKey { case ok, enabled, weekday, day; case externalTool = "external_tool" }
+    }
+    struct AutoPublish: Decodable {
+        let ok: Bool; let enabled: Bool; let trust: Int; let needed: Int; let armed: Bool
+        /// The day it goes: the day after the draft day.
+        let day: String?
+    }
     struct AutoOrderSupplier: Decodable { let name: String?; let trusted: Bool?; let orders: Int? }
     struct AutoOrder: Decodable {
         let ok: Bool
         let enabled: Bool
         let suppliers: [AutoOrderSupplier]?
+        let weekday: Int?
+        let day: String?
         var suppliersTrusted: Int { (suppliers ?? []).filter { $0.trusted ?? false }.count }
+        var dayName: String { day ?? "Monday" }
     }
     struct WeeklyPlan: Decodable { let ok: Bool; let enabled: Bool }
     struct SendDelay: Decodable { let ok: Bool; let minutes: Int; let choices: [Int] }
@@ -211,6 +257,7 @@ final class AccountAutomationViewModel {
         }
     }
     private struct EnabledBody: Encodable { let enabled: Bool }
+    private struct WeekdayBody: Encodable { let weekday: Int }
     private struct MinutesBody: Encodable { let minutes: Int }
 
     /// One remembered fact, as GET /account/memory lists it.
@@ -233,6 +280,7 @@ final class AccountAutomationViewModel {
     private struct MemoryResponse: Decodable { let ok: Bool; let facts: [MemoryFact] }
     private struct FactBody: Encodable { let fact: String }
 
+    var autoDraft: AutoDraft?
     var autoPublish: AutoPublish?
     var autoOrder: AutoOrder?
     var weeklyPlan: Bool?
@@ -267,6 +315,7 @@ final class AccountAutomationViewModel {
         defer { isLoading = false; loaded = true }
         // Each is its own read and its own failure: a login without Food
         // Cost gets a 403 on auto-order, which simply hides that row.
+        autoDraft = try? await client.send("/mobile/api/labor/auto-draft", hapticOnError: false)
         autoPublish = try? await client.send("/mobile/api/labor/auto-publish", hapticOnError: false)
         autoOrder = try? await client.send("/mobile/api/food-cost/auto-order", hapticOnError: false)
         if let wp: WeeklyPlan = try? await client.send("/mobile/api/labor/weekly-plan", hapticOnError: false) {
@@ -279,6 +328,26 @@ final class AccountAutomationViewModel {
         }
         if autoPublish == nil && sendDelay == nil {
             errorMessage = "Couldn't load these settings."
+        }
+    }
+
+    func setAutoDraft(_ on: Bool) async {
+        await save("auto_draft") {
+            self.autoDraft = try await self.client.send("/mobile/api/labor/auto-draft", method: .post, body: EnabledBody(enabled: on))
+        }
+    }
+
+    /// The publish day follows the draft day, so it is read again.
+    func setAutoDraftDay(_ weekday: Int) async {
+        await save("auto_draft_day") {
+            self.autoDraft = try await self.client.send("/mobile/api/labor/auto-draft", method: .post, body: WeekdayBody(weekday: weekday))
+            self.autoPublish = try? await self.client.send("/mobile/api/labor/auto-publish", hapticOnError: false)
+        }
+    }
+
+    func setAutoOrderDay(_ weekday: Int) async {
+        await save("auto_order_day") {
+            self.autoOrder = try await self.client.send("/mobile/api/food-cost/auto-order", method: .post, body: WeekdayBody(weekday: weekday))
         }
     }
 

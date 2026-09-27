@@ -8928,6 +8928,10 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .rul-row .ac-input,.rul-row .ac-select{width:auto;padding:5px 8px;font-size:13.5px}
 .rul-row .ac-input.n{width:64px;text-align:center}
 .rul-sw{display:flex;gap:12px;align-items:center;padding:10px 0;border-top:1px solid var(--hb-line2)}
+/* A day inside a switch's sentence ("Cavnar AI drafts every [Thursday]",
+   owner 9/27/26): the sentence stays one line, the day is its only control. */
+.rul-sw .sw-day{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap}
+.rul-sw .ac-select.day-pick{width:auto;height:34px;box-sizing:border-box;margin:0;padding:0 30px 0 11px;font-size:inherit;line-height:32px;border-radius:9px;-webkit-appearance:none;appearance:none;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23d4583a' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 11px center;background-size:11px 7px}
 .rul-sw .t{flex:1;font-size:14.5px;color:var(--ink)}
 .rul-sw .t small{display:block;font-size:12.5px;color:var(--ink3);margin-top:1px}
 .rul-sw .t .ac-input.n{display:inline-block;width:64px;padding:5px 8px;margin:0 6px;font-size:13.5px;text-align:center}
@@ -9330,7 +9334,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
             <div class="sw-k">AI</div>
             {# The weekly automation where the work is (Friction #27): the same
                switch as Account -> Automation & AI, both on /api/labor/auto-draft. #}
-            <span class="rul-sw" id="lb2-autodraft-sw" style="border-top:0;padding:0;gap:8px" hidden><label class="ac-switch"><input type="checkbox" id="lb2-autodraft" onchange="lb2SaveAutoDraft(this)" aria-label="Cavnar AI drafts every Thursday"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><span>Cavnar AI drafts every Thursday</span><span class="ac-status" id="lb2-autodraft-status"></span></span>
+            <span class="rul-sw" id="lb2-autodraft-sw" style="border-top:0;padding:0;gap:8px" hidden><label class="ac-switch"><input type="checkbox" id="lb2-autodraft" onchange="lb2SaveAutoDraft(this)" aria-label="Cavnar AI drafts next week's schedule"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><span class="sw-day">Cavnar AI drafts every <select id="lb2-autodraft-day" class="ac-select day-pick" onchange="lb2SaveAutoDraftDay(this)" aria-label="Day Cavnar AI drafts the schedule"><option value="0">Monday</option><option value="1">Tuesday</option><option value="2">Wednesday</option><option value="3">Thursday</option><option value="4">Friday</option><option value="5">Saturday</option></select></span><span class="ac-status" id="lb2-autodraft-status"></span></span>
             <label class="sw-lbl" for="sw-notes">Notes Cavnar AI follows on every draft</label>
             <textarea class="ac-input sw-notes" id="sw-notes" rows="3" maxlength="2000" placeholder="e.g. Marcus only closes on weekends. Keep two cooks on Friday lunch."></textarea>
             <span class="ac-status" id="sw-notes-status"></span>
@@ -10575,7 +10579,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     <div class="hd"><div><div class="hb-kicker">Order list · recommended quantities</div><h2>What to order this week</h2><div class="sub">From days remaining, par levels and your last order.</div>
       {# Auto-order where the order is (Friction #27): the same switch as
          Account -> Automation & AI, on /api/food-cost/auto-order. #}
-      <span class="rul-sw" id="fc2-autoorder-sw" style="border-top:0;padding:8px 0 0;gap:8px" hidden><label class="ac-switch"><input type="checkbox" id="fc2-autoorder" onchange="fc2SaveAutoOrder(this)" aria-label="Send orders to suppliers you've used before"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><span>Send Monday orders to suppliers you&rsquo;ve used before</span><span class="ac-status" id="fc2-autoorder-status"></span></span></div></div>
+      <span class="rul-sw" id="fc2-autoorder-sw" style="border-top:0;padding:8px 0 0;gap:8px" hidden><label class="ac-switch"><input type="checkbox" id="fc2-autoorder" onchange="fc2SaveAutoOrder(this)" aria-label="Send orders to suppliers you've used before"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><span class="sw-day">Send <select id="fc2-autoorder-day" class="ac-select day-pick" onchange="fc2SaveAutoOrderDay(this)" aria-label="Day trusted supplier orders go out"><option value="0">Monday</option><option value="1">Tuesday</option><option value="2">Wednesday</option><option value="3">Thursday</option><option value="4">Friday</option><option value="5">Saturday</option><option value="6">Sunday</option></select> orders to suppliers you&rsquo;ve used before</span><span class="ac-status" id="fc2-autoorder-status"></span></span></div></div>
     {% if inv.critical_low or inv.reorder_soon or inv.order_reduction %}
     <div class="fc2-orders">
       {% for _grp, _label, _items in [('urgent','Urgent — order now', inv.critical_low), ('soon','Order soon', inv.reorder_soon), ('reduce','Reduce order', inv.order_reduction)] %}
@@ -12604,15 +12608,22 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
           <div class="ac-card-h"><div><h3>Work Cavnar AI does for you</h3><p>Drafting the schedule, sending it, ordering from suppliers you trust &mdash; each one off until you turn it on, and each one undoable.</p></div>
             <div class="r"><span class="ac-status" id="as-auto-ops-status"></span></div></div>
           <div class="ac-rows">
-            <div class="ac-row" id="as-autodraft-row" hidden><div class="l"><b>Draft next week&rsquo;s schedule for me</b><span>Every Thursday, if you haven&rsquo;t built one. A draft only &mdash; nothing goes to staff until you publish.</span></div>
+            <div class="ac-row" id="as-autodraft-row" hidden><div class="l"><b>Draft next week&rsquo;s schedule for me</b><span>Every <span class="as-draftday-name">Thursday</span>, if you haven&rsquo;t built one. A draft only &mdash; nothing goes to staff until you publish.</span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-autodraft" onchange="saveAutoDraft()" aria-label="Draft next week's schedule"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
+            {# The owner's day for the draft and for trusted orders (9/27/26):
+               Thursday and Monday were fixed. Mirrored by the day in the
+               Studio's AI tab and on What to order this week. #}
+            <div class="ac-row" id="as-autodraft-day-row" hidden><div class="l"><b>Draft day</b><span>It drafts the week that starts the next Monday, from 6am that day &mdash; so Monday to Saturday. Publish it for me goes the day after.</span></div>
+              <div class="c"><select id="as-autodraft-day" class="ac-select" onchange="saveAutoDraftDay(this)" aria-label="Day Cavnar AI drafts the schedule"><option value="0">Monday</option><option value="1">Tuesday</option><option value="2">Wednesday</option><option value="3">Thursday</option><option value="4">Friday</option><option value="5">Saturday</option></select></div></div>
             <div class="ac-row" id="as-weeklyplan-row"><div class="l"><b>Plan my week for me</b><span>Monday mornings Cavnar AI reads the week &mdash; brief, issues, goals, results, what connects &mdash; and files up to three owned actions under Still open. Nobody is texted.</span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-weeklyplan" onchange="saveWeeklyPlan()" aria-label="Plan my week automatically"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
             <div class="ac-row" id="as-senddelay-row"><div class="l"><b>Give me a moment before anything goes out</b><span>A supplier order or a published schedule waits this long with an Undo in the Cavnar AI strip before it leaves the building.</span></div>
               <div class="c"><select id="as-senddelay" class="ac-select" onchange="saveSendDelay()" aria-label="Delay before sends"><option value="0">Send now</option><option value="5">5 minutes</option><option value="15">15 minutes</option></select></div></div>
-            <div class="ac-row" id="as-autoorder-row" hidden><div class="l"><b>Send orders to suppliers you&rsquo;ve used before</b><span>Monday mornings, an order to a supplier with 3+ past orders, for about what you usually spend, goes out an hour later &mdash; you&rsquo;re told, and can undo from Home. New suppliers always wait for you. <span id="as-autoorder-trust"></span></span></div>
+            <div class="ac-row" id="as-autoorder-row" hidden><div class="l"><b>Send orders to suppliers you&rsquo;ve used before</b><span><span class="as-orderday-name">Monday</span> mornings, an order to a supplier with 3+ past orders, for about what you usually spend, goes out an hour later &mdash; you&rsquo;re told, and can undo from Home. New suppliers always wait for you. <span id="as-autoorder-trust"></span></span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-autoorder" onchange="saveAutoOrder()" aria-label="Send trusted supplier orders automatically"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
-            <div class="ac-row" id="as-autopublish-row" hidden><div class="l"><b>Publish it for me on Friday</b><span>Once your last 3 published schedules went out unedited, the Thursday draft goes to staff at 11am Friday &mdash; you&rsquo;re told at 9, and can undo from Home until then. <span id="as-autopublish-trust"></span></span></div>
+            <div class="ac-row" id="as-autoorder-day-row" hidden><div class="l"><b>Order day</b><span>Trusted orders are queued at 8am that day, with an hour to undo.</span></div>
+              <div class="c"><select id="as-autoorder-day" class="ac-select" onchange="saveAutoOrderDay(this)" aria-label="Day trusted supplier orders go out"><option value="0">Monday</option><option value="1">Tuesday</option><option value="2">Wednesday</option><option value="3">Thursday</option><option value="4">Friday</option><option value="5">Saturday</option><option value="6">Sunday</option></select></div></div>
+            <div class="ac-row" id="as-autopublish-row" hidden><div class="l"><b>Publish it for me on <span class="as-publishday-name">Friday</span></b><span>Once your last 3 published schedules went out unedited, the <span class="as-draftday-name">Thursday</span> draft goes to staff at 11am <span class="as-publishday-name">Friday</span> &mdash; you&rsquo;re told at 9, and can undo from Home until then. <span id="as-autopublish-trust"></span></span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-autopublish" onchange="saveAutoPublish()" aria-label="Publish the schedule automatically"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
           </div>
         </div>
@@ -21245,6 +21256,9 @@ function studioOpen(opts) {
       history.pushState({ss: 1}, '', '/schedule/studio'); _ssFromDash = true;
     }
     swLoadLeft();
+    // The AI tab's auto-draft switch and its day: loaded with Labor, and
+    // never on a direct /schedule/studio load, where Labor is not opened.
+    if (window.lb2LoadAutoDraftSwitch) lb2LoadAutoDraftSwitch();
   }
   studioGo(opts.stage || (_ssGenerating ? 'build' : (_ssHasDraft() ? 'schedule' : 'setup')));
   // A plain open with nothing on screen brings up the latest week staff
@@ -23234,7 +23248,7 @@ function loadOpsSettings() {
     var row = document.getElementById('as-autodraft-row');
     if (row && !d.external_tool) row.hidden = false;
     document.getElementById('as-autodraft').checked = !!d.enabled;
-    if (!d.external_tool) loadAutoPublish();
+    if (!d.external_tool) { asDraftDay(d); loadAutoPublish(); }
     loadAutoOrder();
     loadWeeklyPlanAndDelay();
   }).catch(function() {});
@@ -23472,6 +23486,40 @@ function saveAutoDraft() {
   asPost('/api/labor/auto-draft', {enabled: document.getElementById('as-autodraft').checked},
          'as-auto-ops-status', 'Saved');
 }
+// The owner's draft and order days (9/27/26), wherever the page names them:
+// the selects here, their mirrors in the Studio and on Food Cost, and the
+// day inside each sentence ("the Thursday draft goes to staff at 11am Friday").
+function asDayNames(cls, name) {
+  var els = document.querySelectorAll('.' + cls);
+  for (var i = 0; i < els.length; i++) els[i].textContent = name;
+}
+function asDraftDay(d) {
+  if (!d || d.weekday === undefined) return;
+  var row = document.getElementById('as-autodraft-day-row'); if (row) row.hidden = false;
+  var ids = ['as-autodraft-day', 'lb2-autodraft-day'];
+  for (var i = 0; i < ids.length; i++) { var el = document.getElementById(ids[i]); if (el) el.value = String(d.weekday); }
+  asDayNames('as-draftday-name', d.day);
+  asDayNames('as-publishday-name', d.publish_day);
+}
+function asOrderDay(d) {
+  if (!d || d.weekday === undefined) return;
+  var row = document.getElementById('as-autoorder-day-row'); if (row) row.hidden = false;
+  var ids = ['as-autoorder-day', 'fc2-autoorder-day'];
+  for (var i = 0; i < ids.length; i++) { var el = document.getElementById(ids[i]); if (el) el.value = String(d.weekday); }
+  asDayNames('as-orderday-name', d.day);
+}
+function saveAutoDraftDay(el) {
+  asPost('/api/labor/auto-draft', {weekday: parseInt(el.value, 10)}, 'as-auto-ops-status', 'Saved').then(function(d) {
+    if (d && d.ok) { asDraftDay(d); return; }
+    fetch('/api/labor/auto-draft', {credentials: 'same-origin'}).then(apiJson).then(asDraftDay).catch(function() {});
+  });
+}
+function saveAutoOrderDay(el) {
+  asPost('/api/food-cost/auto-order', {weekday: parseInt(el.value, 10)}, 'as-auto-ops-status', 'Saved').then(function(d) {
+    if (d && d.ok) { asOrderDay(d); return; }
+    loadAutoOrder();
+  });
+}
 function saveAutoPublish() {
   asPost('/api/labor/auto-publish', {enabled: document.getElementById('as-autopublish').checked},
          'as-auto-ops-status', 'Saved').then(function() { loadAutoPublish(); });
@@ -23499,6 +23547,7 @@ function loadAutoOrder() {
     if (!d || !d.ok) return;
     var row = document.getElementById('as-autoorder-row'); if (row) row.hidden = false;
     document.getElementById('as-autoorder').checked = !!d.enabled;
+    asOrderDay(d);
     var t = document.getElementById('as-autoorder-trust'), parts = [];
     for (var i = 0; i < (d.suppliers || []).length; i++) { var sp = d.suppliers[i]; parts.push(sp.name + ': ' + (sp.trusted ? 'earned' : (sp.needed + ' more order' + (sp.needed === 1 ? '' : 's')))); }
     if (t) t.textContent = parts.length ? ('Your suppliers \u2014 ' + parts.join(' \u00b7 ') + '.') : 'No suppliers with an email on file yet.';
@@ -23509,6 +23558,8 @@ function loadAutoPublish() {
     if (!d || !d.ok) return;
     var row = document.getElementById('as-autopublish-row'); if (row) row.hidden = false;
     document.getElementById('as-autopublish').checked = !!d.enabled;
+    if (d.day) asDayNames('as-publishday-name', d.day);
+    if (d.draft_day) asDayNames('as-draftday-name', d.draft_day);
     var t = document.getElementById('as-autopublish-trust');
     if (t) t.textContent = d.armed ? 'Armed \u2014 ' + d.trust + ' unedited in a row.' : ('Your record: ' + d.trust + ' of ' + d.needed + ' unedited in a row.');
   }).catch(function() {});
@@ -29720,11 +29771,19 @@ window.cavPalette = cavPalette;
       var mirror = $id('as-autodraft'); if (d.ok && mirror) mirror.checked = !!el.checked;
     });
   };
+  window.lb2SaveAutoDraftDay = function (el) {
+    postJ('/api/labor/auto-draft', {weekday: parseInt(el.value, 10)}, function (d) {
+      status('lb2-autodraft-status', d.ok ? 'Saved' : (d.error || 'Could not save'), !d.ok);
+      if (d.ok) asDraftDay(d); else loadAutoDraftSwitch();
+    });
+  };
+  window.lb2LoadAutoDraftSwitch = loadAutoDraftSwitch;
   function loadAutoDraftSwitch() {
     getJ('/api/labor/auto-draft', function (d) {
-      var sw = $id('lb2-autodraft-sw'), el = $id('lb2-autodraft');
+      var sw = $id('lb2-autodraft-sw'), el = $id('lb2-autodraft'), day = $id('lb2-autodraft-day');
       if (!d.ok || !sw || !el || d.external_tool) return;
       el.checked = !!d.enabled; sw.hidden = false;
+      if (day && d.weekday !== undefined) day.value = String(d.weekday);
     });
   }
   window.fc2SaveAutoOrder = function (el) {
@@ -29733,11 +29792,18 @@ window.cavPalette = cavPalette;
       var mirror = $id('as-autoorder'); if (d.ok && mirror) mirror.checked = !!el.checked;
     });
   };
+  window.fc2SaveAutoOrderDay = function (el) {
+    postJ('/api/food-cost/auto-order', {weekday: parseInt(el.value, 10)}, function (d) {
+      status('fc2-autoorder-status', d.ok ? 'Saved' : (d.error || 'Could not save'), !d.ok);
+      if (d.ok) asOrderDay(d); else loadAutoOrderSwitch();
+    });
+  };
   function loadAutoOrderSwitch() {
     getJ('/api/food-cost/auto-order', function (d) {
-      var sw = $id('fc2-autoorder-sw'), el = $id('fc2-autoorder');
+      var sw = $id('fc2-autoorder-sw'), el = $id('fc2-autoorder'), day = $id('fc2-autoorder-day');
       if (!d.ok || !sw || !el) return;
       el.checked = !!d.enabled; sw.hidden = false;
+      if (day && d.weekday !== undefined) day.value = String(d.weekday);
     });
   }
 
