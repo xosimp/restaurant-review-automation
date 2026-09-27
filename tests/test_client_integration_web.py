@@ -210,7 +210,7 @@ r = c.get("/")
 assert r.status_code == 200, r.get_data(as_text=True)[-800:]
 html = r.get_data(as_text=True)
 print(json.dumps({"lead": "You lead the block" in html, "all_time": "your Google rating (all time)" in html,
-                  "weighted": "weighted by reviews" in html, "industry": "industry benchmark" in html,
+                  "weighted": "Weighted by review volume" in html, "industry": "industry benchmark" in html,
                   "claw": "claw back" in html, "vs32": "Vs 32% avg" in html}))
 '''
 
@@ -223,6 +223,8 @@ def test_intel_and_labor_render_from_the_servers_definitions():
     assert out.returncode == 0, out.stdout[-1500:] + "\n" + out.stderr[-2500:]
     got = json.loads(out.stdout.strip().splitlines()[-1])
     # 4.8 all-time against a review-weighted 4.3 (the 3-review 5.0 is left
-    # out): the server's standing, worded by the server.
+    # out): the server's standing, worded by the server. The weighting is
+    # said on the market average's chip; the hero keeps only the standing
+    # (owner, 9/27/26).
     assert got["lead"] and got["all_time"] and got["weighted"], got
     assert got["industry"] and not got["vs32"] and not got["claw"], got

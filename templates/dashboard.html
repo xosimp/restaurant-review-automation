@@ -216,7 +216,7 @@ html{background:var(--bg-base);min-height:100%}
 .hp-list{max-height:min(520px,calc(100vh - 150px));overflow-y:auto;overscroll-behavior:contain;padding:4px 10px 12px;scrollbar-width:thin;scrollbar-color:var(--hp-ring) transparent}
 .hp-load{padding:18px 12px 24px}
 .hp-calm{display:flex;flex-direction:column;align-items:center;gap:12px;padding:30px 20px 40px;font-size:14px;color:var(--ink3);text-align:center}
-.hp-calm-ic{display:flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:50%;background:var(--hp-tile);color:var(--green)}
+.hp-calm-ic{display:flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:50%;background:radial-gradient(circle at 35% 30%,var(--hb-pop2),var(--hb-pop) 72%);color:var(--hb-pop-ink);box-shadow:0 0 0 5px var(--hb-pop-ring),0 6px 18px -4px var(--hb-pop-glow)}
 /* A notification row: tile icon | title and one line | time (+ red dot). */
 .hdr-pop .notif-item{position:relative;margin:0 0 2px;border-radius:16px}
 .hdr-pop .notif-row{display:grid;grid-template-columns:40px minmax(0,1fr) auto;align-items:center;column-gap:14px;width:100%;height:auto;min-height:64px;padding:12px;border:none;border-radius:16px;background:transparent;box-shadow:none;text-align:left;white-space:normal;font-weight:400;line-height:1.3;color:var(--ink);transition:background-color .2s ease,box-shadow .2s ease,transform .22s cubic-bezier(.2,.8,.2,1)}
@@ -1465,7 +1465,7 @@ function submitFoodCostCount(_retried) {
         if(_fcL2){_fcL2.textContent='';}
         return;
       }
-      if(_fcL1){_fcL1.textContent='✓ Saved '+_fmtFcDate(data.submitted_at);_fcL1.style.color='';}
+      if(_fcL1){_fcL1.innerHTML='<i class="cv-ok" aria-hidden="true"></i> Saved '+_escHtml(_fmtFcDate(data.submitted_at));_fcL1.style.color='';}
       if(_fcL2){
         // Rows the server refused are named, not dropped in silence.
         var _rej=data.rejected||[];
@@ -1486,7 +1486,7 @@ function submitFoodCostCount(_retried) {
       var _brt=_isDark?'rgba(239,159,39,.2)':'#e0c870',_bit=_isDark?'rgba(255,255,255,.8)':'#0e0c0a',_bmt=_isDark?'rgba(255,255,255,.38)':'#7a736a';
       if (!data.drift || data.drift.length === 0) {
         driftEl.style.display = 'block';
-        driftEl.innerHTML='<div style="background:'+_cb+';border:1px solid '+_cbr+';border-radius:6px;padding:8px 14px;font-size:12px;color:'+_ct+'">&#10003; No significant price changes vs last week — your costs are holding steady.</div>';
+        driftEl.innerHTML='<div style="background:'+_cb+';border:1px solid '+_cbr+';border-radius:6px;padding:8px 14px;font-size:12px;color:'+_ct+'"><i class="cv-ok" aria-hidden="true"></i> No significant price changes vs last week — your costs are holding steady.</div>';
         return;
       }
       var html = '<div style="background:'+_bb+';border:1px solid '+_bbr+';border-radius:6px;padding:12px 14px;font-size:12px">';
@@ -1947,7 +1947,7 @@ function cavNavSection(p) {
   if (!sec) return false;
   if (sec.tagName === 'DETAILS') sec.open = true;
   var d = sec.parentNode && sec.parentNode.closest ? sec.parentNode.closest('details') : null;
-  if (d) d.open = true;
+  while (d) { d.open = true; d = d.parentNode && d.parentNode.closest ? d.parentNode.closest('details') : null; }
   /* A section its module fills and un-hides after a fetch (the count
      sheet) is waited for, about 3s, instead of scrolled to while hidden
      (re-audit F1-14). */
@@ -2707,10 +2707,27 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 /* receipt strip */
 .hb-rcpt{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-top:14px}
 .hb-rcpt .it{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;border-radius:12px;background:var(--hb-inner);border:1px solid var(--hb-line2)}
-/* A receipt's check is good news and looks it (owner, 9/26/26): a solid
-   bright-green disc, a white tick, a soft halo - not a pale tint. */
-#panel-home,#panel-dsr,#panel-recs{--hb-pop:#4aae78;--hb-pop2:#6fc596;--hb-pop-ink:#0f3a24;--hb-pop-ring:rgba(74,174,120,.15);--hb-pop-glow:rgba(74,174,120,.32)}
-[data-theme="dark"] #panel-home,[data-theme="dark"] #panel-dsr,[data-theme="dark"] #panel-recs{--hb-pop:#3a9f68;--hb-pop2:#5cbf8a;--hb-pop-ink:#0a2616;--hb-pop-ring:rgba(58,159,104,.16);--hb-pop-glow:rgba(58,159,104,.32)}
+/* A receipt's check is good news and looks it (owner, 9/26/26): a softer
+   green disc, a dark-green tick, a soft halo - not a pale tint. Every check
+   in the product is that disc (9/27/26), and a warning is the same disc in
+   amber with a dark "!" (a miss, in red with a dark cross). The tokens sit
+   on the root so a disc reads the same on every page; .cv-ok / .cv-warn /
+   .cv-bad are the inline marks for rows, lists and chips. */
+:root{--hb-pop:#4aae78;--hb-pop2:#6fc596;--hb-pop-ink:#0f3a24;--hb-pop-ring:rgba(74,174,120,.15);--hb-pop-glow:rgba(74,174,120,.32);
+  --hb-wpop:#e0a638;--hb-wpop2:#f2c766;--hb-wpop-ink:#3a2503;--hb-wpop-ring:rgba(224,166,56,.16);--hb-wpop-glow:rgba(224,166,56,.3);
+  --hb-bpop:#d9544f;--hb-bpop2:#ec7d77;--hb-bpop-ink:#3d0b09;--hb-bpop-ring:rgba(217,84,79,.15);--hb-bpop-glow:rgba(217,84,79,.3)}
+[data-theme="dark"]{--hb-pop:#3a9f68;--hb-pop2:#5cbf8a;--hb-pop-ink:#0a2616;--hb-pop-ring:rgba(58,159,104,.16);--hb-pop-glow:rgba(58,159,104,.32);
+  --hb-wpop:#d29a2c;--hb-wpop2:#e8b954;--hb-wpop-ink:#2b1a02;--hb-wpop-ring:rgba(210,154,44,.16);--hb-wpop-glow:rgba(210,154,44,.3);
+  --hb-bpop:#c9443f;--hb-bpop2:#e06a64;--hb-bpop-ink:#2e0705;--hb-bpop-ring:rgba(201,68,63,.16);--hb-bpop-glow:rgba(201,68,63,.3)}
+.cv-ok,.cv-warn,.cv-bad{display:inline-flex;align-items:center;justify-content:center;flex:none;width:18px;height:18px;border-radius:50%;vertical-align:-4px;font-style:normal;font-family:'Apfel Grotezk',sans-serif;font-size:12px;font-weight:800;line-height:1}
+.cv-ok{background:radial-gradient(circle at 35% 30%,var(--hb-pop2),var(--hb-pop) 72%);color:var(--hb-pop-ink);box-shadow:0 0 0 3px var(--hb-pop-ring),0 3px 10px -3px var(--hb-pop-glow)}
+.cv-ok::before{content:'';width:4px;height:8px;margin-top:-2px;border:solid currentColor;border-width:0 2px 2px 0;transform:rotate(45deg)}
+.cv-warn{background:radial-gradient(circle at 35% 30%,var(--hb-wpop2),var(--hb-wpop) 72%);color:var(--hb-wpop-ink);box-shadow:0 0 0 3px var(--hb-wpop-ring),0 3px 10px -3px var(--hb-wpop-glow)}
+.cv-warn::before{content:'!'}
+.cv-bad{background:radial-gradient(circle at 35% 30%,var(--hb-bpop2),var(--hb-bpop) 72%);color:var(--hb-bpop-ink);box-shadow:0 0 0 3px var(--hb-bpop-ring),0 3px 10px -3px var(--hb-bpop-glow)}
+.cv-bad::before{content:'\00d7';font-size:15px;margin-top:-1px}
+/* A 20px disc in a step row, a 24px one leading a sentence. */
+.cv-md{width:20px;height:20px}.cv-md.cv-ok::before{width:4.5px;height:9px;border-width:0 2.2px 2.2px 0}
 .hb-rcpt .ok{width:30px;height:30px;border-radius:50%;background:radial-gradient(circle at 35% 30%,var(--hb-pop2),var(--hb-pop) 72%);color:var(--hb-pop-ink);display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 0 0 4px var(--hb-pop-ring),0 4px 16px -2px var(--hb-pop-glow)}
 .hb-rcpt .t{font-size:15px;color:var(--ink2);line-height:1.45;min-width:0}
 .hb-rcpt .t strong{color:var(--ink);font-weight:600}
@@ -3736,7 +3753,12 @@ svg:hover .hb-xh{opacity:1}
       // Opening a keyed recommendation's evidence is part of its record (#38).
       // A confidence Why? outside Home names its own surface and module.
       if(t.getAttribute('data-explain-key')&&typeof recEvidenceViewed==='function')recEvidenceViewed(t.getAttribute('data-explain-key'),t.getAttribute('data-explain-surface')||'home',t.getAttribute('data-explain-module')||'home');
-      hbExplain(t.getAttribute('data-explain-title'),t.getAttribute('data-explain'),t.getAttribute('data-explain-kicker'));
+      // A Why? inside a modal (the most likely cause) replaces it: the
+      // explanation opened behind the card it explained (owner, 9/27/26).
+      var ex=[t.getAttribute('data-explain-title'),t.getAttribute('data-explain'),t.getAttribute('data-explain-kicker')];
+      var inModal=t.closest('.cmodal');
+      if(inModal&&inModal.id&&window.cModal)cModal.close(inModal.id);
+      hbExplain(ex[0],ex[1],ex[2]);
     }
     else hbAsk(t.getAttribute('data-ask'));
   });
@@ -5584,7 +5606,7 @@ svg:hover .hb-xh{opacity:1}
     var at=g.attention||[];
     h+='<div class="hb-card hb-rise" id="hb-attn-card" style="margin-top:22px"><div class="hb-h3"><span>Needs attention · all locations</span>'+(at.length>3?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-attn-more="'+(at.length-3)+'" aria-expanded="false">+'+(at.length-3)+' more</button>':(at.length?'<span class="cnt n">'+at.length+'</span>':''))+'</div>';
     if(g.summary_line)h+='<div class="hb-attn-line">'+num(g.summary_line)+'</div>';
-    if(!at.length)h+='<div class="hb-clear"><span class="ok">✓</span><span>Nothing needs you at any location.</span></div>';
+    if(!at.length)h+='<div class="hb-clear"><span class="ok"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span><span>Nothing needs you at any location.</span></div>';
     for(var a=0;a<at.length;a++){var x=at[a];h+='<div class="hb-row '+esc(x.severity)+(a>=3?' hb-attn-more':'')+'"'+(a>=3?' hidden':'')+'><span class="d"></span><span class="t">'+num(x.text)+'</span><span class="m">'+esc(x.location)+'</span><button class="cbtn cbtn-secondary cbtn-sm" data-group-open="'+(+x.restaurant_id)+'" data-group-nav="'+esc(x.nav||'')+'">'+esc(x.action_label||'Open')+'</button></div>';}
     h+='</div>';
     // One row per location: last night and labor always visible, the
@@ -5595,7 +5617,7 @@ svg:hover .hb-xh{opacity:1}
       h+='<tr class="'+esc(r.health)+(r.active?' active':'')+'" onclick="hbSwitchLoc('+(+r.id)+')" tabindex="0" onkeydown="if(event.key===\'Enter\')hbSwitchLoc('+(+r.id)+')">';
       h+='<td><div class="nm"><span class="d"></span>'+esc(r.name)+(r.active?' <span class="dim" style="font-weight:400">· viewing</span>':'')+'</div>'+(r.issues.length?'<div class="iss">'+num(r.issues[0].text)+(r.issues.length>1?' <span class="hb-num">+'+(r.issues.length-1)+'</span>':'')+'</div>':'')+'</td>';
       h+='<td class="r hb-num">'+hbNightCell(r.last_night)+'</td>';
-      h+='<td class="r hb-num">'+(r.labor?r.labor.pct.toFixed(1)+'%'+(r.labor.over>3?' <span class="up">+'+r.labor.over.toFixed(1)+'</span>':(r.labor.over<=0&&r.labor.pct>0&&!r.labor.stale&&!r.labor.partial)?' <span class="ok">✓</span>':''):'<span class="dim">—</span>')+'</td>';
+      h+='<td class="r hb-num">'+(r.labor?r.labor.pct.toFixed(1)+'%'+(r.labor.over>3?' <span class="up">+'+r.labor.over.toFixed(1)+'</span>':(r.labor.over<=0&&r.labor.pct>0&&!r.labor.stale&&!r.labor.partial)?' <i class="cv-ok" aria-hidden="true"></i>':''):'<span class="dim">—</span>')+'</td>';
       var rvb=[];
       rvb.push(rv.rating_30d?rv.rating_30d+'★'+(rv.rating_prev&&(rv.rating_30d-rv.rating_prev)<=-0.3?' <span class="up">↓</span>':(rv.rating_prev&&(rv.rating_30d-rv.rating_prev)>=0.2?' <span class="ok">↑</span>':'')):'<span class="dim">—</span>');
       if(rv.urgent)rvb.push('<span class="up">'+rv.urgent+' urgent</span>');
@@ -5744,7 +5766,7 @@ svg:hover .hb-xh{opacity:1}
 .dr-shift-rows .c.good .v{color:var(--hb-good)}.dr-shift-rows .c.warn .v{color:var(--hb-warn)}.dr-shift-rows .c.bad .v{color:var(--hb-bad)}
 .dr-shift-rows .k{font-size:12px;color:var(--ink3);margin-top:6px}
 .dr-tmr .hb-row .d,.dr-yest .hb-row .d{display:none}
-.dr-tmr .hb-row .g,.dr-yest .hb-row .g{flex:none;width:18px;font-weight:700;text-align:center;color:var(--ink3)}
+.dr-tmr .hb-row .g,.dr-yest .hb-row .g{flex:none;width:18px;font-weight:700;text-align:center;color:var(--ink3);display:flex;justify-content:center;padding-top:2px}
 .dr-tmr .risk .g{color:var(--hb-warn)}.dr-yest .win .g{color:var(--hb-good)}.dr-yest .miss .g{color:var(--hb-bad)}
 .dr-yest .hb-row small{display:block;font-size:12.5px;color:var(--ink3);margin-top:2px}
 .dr-rec{margin-top:14px;padding:12px 14px;border-radius:12px;background:var(--hb-inner);border:1px solid var(--hb-line2)}
@@ -5804,7 +5826,7 @@ svg:hover .hb-xh{opacity:1}
 .dr-score .stars{letter-spacing:2px;color:var(--ember)}
 .dr-score .basis{font-size:12.5px;color:var(--ink3);margin-top:12px}
 .dr-wr .hb-row .d{display:none}
-.dr-wr .hb-row .g{flex:none;width:18px;font-weight:700;text-align:center}
+.dr-wr .hb-row .g{flex:none;width:18px;font-weight:700;text-align:center;display:flex;justify-content:center;padding-top:2px}
 .dr-wr .win .g{color:var(--hb-good)}.dr-wr .risk .g{color:var(--hb-warn)}
 @media (max-width:760px){.dr-score .comps{grid-template-columns:repeat(2,minmax(0,1fr))}.dr-score .overall{margin-left:0;text-align:left}}
 .dr-read{margin-top:24px}
@@ -5885,10 +5907,9 @@ svg:hover .hb-xh{opacity:1}
 .dr-step{display:flex;align-items:center;gap:12px;padding:9px 0;border-top:1px solid var(--hb-line2);font-size:15px;color:var(--ink2)}
 .dr-step:first-of-type{border-top:none}
 .dr-step .ic{width:20px;height:20px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;border:1.5px solid var(--hb-line);color:var(--ink3);font-size:12px;font-weight:700}
-.dr-step.done .ic{background:var(--green-bg);border-color:transparent;color:var(--hb-good)}
+.dr-step.done .ic,.dr-step.gap .ic{border-color:transparent}
 .dr-step.now .ic{border-color:var(--ember)}
 .dr-step.now .ic:after{content:'';width:8px;height:8px;border-radius:50%;background:var(--ember);animation:drBreath 1.8s ease-in-out infinite}
-.dr-step.gap .ic{background:var(--amber-bg);border-color:transparent;color:var(--hb-warn)}
 .dr-step.todo{color:var(--ink3)}
 .dr-step .t{flex:1;min-width:0}
 .dr-step .t small{display:block;font-size:13px;color:var(--ink3);margin-top:2px}
@@ -6165,12 +6186,12 @@ svg:hover .hb-xh{opacity:1}
       if(g.key==='awaiting_close'&&!g.at&&!g.current)continue;
       var cls=g.current&&!TERMINAL[g.key]?'now':(g.done||g.at?'done':'todo');
       if(g.current)seenNow=true;else if(seenNow)cls='todo';
-      h+='<div class="dr-step '+cls+'"><span class="ic">'+(cls==='done'?'✓':'')+'</span><span class="t">'+esc(g.label)+'</span><span class="at">'+esc(clock(g.at_local))+'</span></div>';}
+      h+='<div class="dr-step '+cls+'"><span class="ic">'+(cls==='done'?'<i class="cv-ok cv-md" aria-hidden="true"></i>':'')+'</span><span class="t">'+esc(g.label)+'</span><span class="at">'+esc(clock(g.at_local))+'</span></div>';}
     var bl=s.blocks||[];
     if(bl.length){h+='<div class="hb-h3" style="margin-top:18px"><span>Blocks</span></div>';
       for(var j=0;j<bl.length;j++){var x=bl[j];
         var c=x.status==='ready'?'done':(x.status?'gap':'todo');
-        h+='<div class="dr-step '+c+'"><span class="ic">'+(c==='done'?'✓':(c==='gap'?'!':''))+'</span><span class="t">'+esc(x.label)
+        h+='<div class="dr-step '+c+'"><span class="ic">'+(c==='done'?'<i class="cv-ok cv-md" aria-hidden="true"></i>':(c==='gap'?'<i class="cv-warn cv-md" aria-hidden="true"></i>':''))+'</span><span class="t">'+esc(x.label)
           +(x.status&&x.status!=='ready'?'<small>'+esc(x.reason||BSTATUS[x.status]||x.status)+'</small>':(x.status?'':'<small>Not collected yet</small>'))
           +'</span><span class="at">'+esc(clock(x.at_local))+'</span></div>';}}
     if(s.narrative&&s.narrative.reason)h+=note(esc(s.narrative.reason));
@@ -6237,9 +6258,9 @@ svg:hover .hb-xh{opacity:1}
   // sat mid-page, between the actions and the blocks).
   function builtHtml(ck,n){
     var rows='',sg=ck.stages||[],bl=ck.blocks||[],i;
-    for(i=0;i<sg.length;i++)if(sg[i].at_local)rows+='<div class="dr-step done"><span class="ic">\u2713</span><span class="t">'+esc(sg[i].label)+'</span><span class="at">'+esc(stamp(sg[i].at_local))+'</span></div>';
+    for(i=0;i<sg.length;i++)if(sg[i].at_local)rows+='<div class="dr-step done"><span class="ic"><i class="cv-ok cv-md" aria-hidden="true"></i></span><span class="t">'+esc(sg[i].label)+'</span><span class="at">'+esc(stamp(sg[i].at_local))+'</span></div>';
     for(i=0;i<bl.length;i++){var x=bl[i];if(!x.status)continue;var ok=x.status==='ready';
-      rows+='<div class="dr-step '+(ok?'done':'gap')+'"><span class="ic">'+(ok?'\u2713':'!')+'</span><span class="t">'+esc(x.label)+(ok?'':'<small>'+esc(x.reason||BSTATUS[x.status]||x.status)+'</small>')+'</span><span class="at">'+esc(stamp(x.at_local))+'</span></div>';}
+      rows+='<div class="dr-step '+(ok?'done':'gap')+'"><span class="ic">'+(ok?'<i class="cv-ok cv-md" aria-hidden="true"></i>':'<i class="cv-warn cv-md" aria-hidden="true"></i>')+'</span><span class="t">'+esc(x.label)+(ok?'':'<small>'+esc(x.reason||BSTATUS[x.status]||x.status)+'</small>')+'</span><span class="at">'+esc(stamp(x.at_local))+'</span></div>';}
     var vf=verifyHtml(n&&n.verification);
     if(!rows&&!vf)return '';
     return '<details class="dr-sec" id="dr-built"><summary><span class="ttl">How the night was built</span><span class="src">'+esc(CLOSED[ck.closed_by]||'')+'</span><span class="sp"></span><span class="sum">each step at the time it finished</span></summary><div class="dr-sec-b">'
@@ -6304,9 +6325,9 @@ svg:hover .hb-xh{opacity:1}
   function winsRisksHtml(c){
     var w=c.wins||[],r=c.risks||[];
     return '<div class="dr-two dr-wr"><div class="hb-card"><div class="hb-h3"><span>Today\u2019s wins</span></div>'
-      +(w.length?wrItems(w,'win','\u2713'):'<div class="hb-empty">Nothing stood out tonight.</div>')+'</div>'
+      +(w.length?wrItems(w,'win','<i class="cv-ok"></i>'):'<div class="hb-empty">Nothing stood out tonight.</div>')+'</div>'
       +'<div class="hb-card"><div class="hb-h3"><span>Today\u2019s risks</span></div>'
-      +(r.length?wrItems(r,'risk','!'):'<div class="hb-empty">Nothing to watch tonight.</div>')+'</div></div>';
+      +(r.length?wrItems(r,'risk','<i class="cv-warn"></i>'):'<div class="hb-empty">Nothing to watch tonight.</div>')+'</div></div>';
   }
   // The night's report, top to bottom (SCORE FIRST, 9/25/26 owner decision;
   // DESIGN_SYSTEM.md "The nightly report's order"). Owner: Today's score as
@@ -6447,7 +6468,7 @@ svg:hover .hb-xh{opacity:1}
     var it=t.items||[],fc=t.forecast,cf=t.confidence;
     var h='<div class="hb-sh"><div><div class="k">Tomorrow</div><h2>'+esc(t.weekday||'Tomorrow')+(t.date?' <small>'+esc(md(t.date))+'</small>':'')+'</h2></div></div><div class="dr-two dr-tmr">';
     h+='<div class="hb-card"><div class="hb-h3"><span>Get ready for</span></div>';
-    if(it.length){for(var i=0;i<it.length;i++)h+='<div class="hb-row '+(it[i].tone==='warn'?'risk':'watch')+'"><span class="g" aria-hidden="true">'+(it[i].tone==='warn'?'!':'\u2022')+'</span><span class="t wrap">'+prose(it[i].text)+'</span></div>';}
+    if(it.length){for(var i=0;i<it.length;i++)h+='<div class="hb-row '+(it[i].tone==='warn'?'risk':'watch')+'"><span class="g" aria-hidden="true">'+(it[i].tone==='warn'?'<i class="cv-warn"></i>':'\u2022')+'</span><span class="t wrap">'+prose(it[i].text)+'</span></div>';}
     else h+='<div class="hb-empty">Nothing on the books to prep for.</div>';
     if(isNum(t.scheduled))h+='<div class="dr-note">'+hn(t.scheduled)+' on the published schedule.</div>';
     // Tomorrow's staffing action is a priority above: point to it rather
@@ -6468,7 +6489,7 @@ svg:hover .hb-xh{opacity:1}
     if(!y||!(y.items||[]).length)return '';
     var ac=y.accuracy||{},h='<div class="hb-sh"><div><div class="k">Cavnar AI grading itself</div><h2>How did yesterday turn out?</h2></div></div><section class="hb-card dr-yest">';
     for(var i=0;i<y.items.length;i++){var x=y.items[i],o=x.outcome;
-      h+='<div class="hb-row '+(o==='correct'?'win':(o==='incorrect'?'miss':'watch'))+'"><span class="g" aria-hidden="true">'+(o==='correct'?'\u2713':(o==='incorrect'?'\u2717':'\u2022'))+'</span><span class="t wrap">'+prose(x.text)
+      h+='<div class="hb-row '+(o==='correct'?'win':(o==='incorrect'?'miss':'watch'))+'"><span class="g" aria-hidden="true">'+(o==='correct'?'<i class="cv-ok"></i>':(o==='incorrect'?'<i class="cv-bad"></i>':'\u2022'))+'</span><span class="t wrap">'+prose(x.text)
         +(x.actual_text?'<small>'+prose(x.actual_text)+'</small>':'')+'</span><span class="m">'+(o==='correct'?'Correct':(o==='incorrect'?'Incorrect':'Not graded'))+'</span></div>';}
     h+='<div class="dr-acc"><span class="k">Prediction accuracy</span>'
       +(isNum(ac.pct)?'<span class="v">'+hn(ac.pct)+'<small>%</small></span><span class="sub">'+hn(ac.correct)+' of '+hn(ac.graded)+' right, last '+hn(ac.window_days)+' days</span>'
@@ -8602,8 +8623,8 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .sb-acts{display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;margin-top:auto;padding-top:10px;border-top:1px solid var(--hb-line2)}
 .sb-more{margin-top:10px}
 .sb-empty{display:flex;align-items:center;gap:10px;padding:16px 18px;border-radius:14px;border:1px dashed var(--hb-line);color:var(--ink3);font-size:14.5px}
-.sb-ok{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;color:var(--hb-good);background:color-mix(in srgb,var(--hb-good) 14%,transparent)}
-.sb-ok svg{width:14px;height:14px}
+.sb-ok{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;color:var(--hb-pop-ink);background:radial-gradient(circle at 35% 30%,var(--hb-pop2),var(--hb-pop) 72%);box-shadow:0 0 0 4px var(--hb-pop-ring),0 4px 14px -3px var(--hb-pop-glow)}
+.sb-ok svg{width:14px;height:14px;stroke-width:3}
 @media (max-width:900px){.sb-sum{grid-template-columns:1fr 1fr}.sb-tile.hero{grid-column:1/-1}}
 @media (max-width:560px){.sb-sum{grid-template-columns:1fr}.sb-grid{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){.sb-card{animation:none;opacity:1;transform:none}.sb-ring .fg{animation:none}.sb-card:hover{transform:none}}
@@ -8677,7 +8698,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .sr-chip .hb-num{font-size:13.5px}
 .sr-chip.bad{background:var(--red-bg);color:var(--hb-bad);border-color:transparent}
 .sr-chip.warn{background:var(--amber-bg);color:var(--hb-warn);border-color:transparent}
-.sr-chip.good{background:var(--green-bg);color:var(--hb-good);border-color:transparent}
+.sr-chip.good{background:var(--green-bg);color:var(--hb-good);border-color:transparent}.sr-chip .cv-ok{margin-right:3px;vertical-align:-4px}
 .sr-meta{margin-left:auto;font-size:12.5px;color:var(--ink3)}
 .sr-line{display:flex;gap:9px;align-items:flex-start;padding:6px 0;font-size:14px;line-height:1.5;color:var(--ink2);border-top:1px solid var(--hb-line2)}
 .sr-line:first-child{border-top:none}
@@ -10076,8 +10097,8 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .fc2-wt-hit{cursor:pointer}
 .fc2-wt-bar{transition:opacity .15s ease,filter .18s ease}
 .fc2-wt-chart.hov .fc2-wt-bar:not(.on){opacity:.45}
-/* .on drives both hover (wtHover toggles it on mouseover) and the
-   click-selected bar. A CSS "transform" here would fight the entrance
+/* .on is the hover only (wtHover toggles it on mouseover); the
+   click-selected bar is .sel, an outline. A CSS "transform" here would fight the entrance
    animation's own scaleY transform (its forwards-filled end state wins
    the cascade, so a translateY would just silently do nothing once
    settled) — filter is a separate property untouched by that animation,
@@ -10085,6 +10106,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
    folding the drop-shadow into the same filter (rather than layering a
    second one) keeps the shadow from doubling up with the SVG one. */
 .fc2-wt-bar.on{filter:brightness(1.12) drop-shadow(0 3px 6px rgba(0,0,0,.32))}
+.fc2-wt-bar.sel{stroke:var(--ember2);stroke-width:2px;stroke-opacity:1}
 .fc2-wt-leg{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--ink3);margin-top:12px;align-items:center}
 .fc2-wt-leg i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
 .fc2-wt-leg i.ln{width:14px;height:0;border-top:2px solid var(--ember2);border-radius:0;vertical-align:3px}
@@ -10202,6 +10224,8 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .fc2-col.reduce .row .q .p{background:rgba(78,173,122,.35);color:#eafaf0}
 .fc2-col.soon .row .q .p{background:rgba(212,160,48,.35);color:#fff8e6}
 .fc2-col.reduce .row .q .p{color:var(--hb-good)}
+/* Order now reads as the reduce column does, in red (owner, 9/27/26). */
+.fc2-col.urgent .row .q .p{background:color-mix(in srgb,var(--hb-bad) 26%,transparent);color:var(--hb-bad)}
 .fc2-col .row .q .s{font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:700;margin-top:3px}
 .fc2-col .row .q .s.good{color:var(--hb-good)}.fc2-col .row .q .s.bad{color:var(--hb-bad)}.fc2-col .row .q .s.dim{color:var(--ink3);font-weight:400}
 .fc2-col .none{font-size:13px;color:var(--ink3);padding:16px 0 6px 12px}
@@ -10219,7 +10243,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .fc2-pw .row.trend .pct{color:var(--hb-bad)}
 .fc2-pw .row .pct small{display:block;font-family:'Apfel Grotezk',sans-serif;font-size:11px;font-weight:400;color:var(--ink3);margin-top:1px}
 .fc2-track{margin-top:12px;border-radius:12px;background:var(--hb-tint);padding:16px 18px}
-.fc2-drift{margin-bottom:12px;font-size:14px;font-weight:600;border-radius:8px;padding:9px 12px}
+.fc2-drift{margin-bottom:12px;font-size:14px;font-weight:600;border-radius:8px;padding:9px 12px;display:flex;align-items:center;gap:9px}
 .fc2-drift.warn{background:rgba(212,160,48,.12);color:var(--hb-warn)}.fc2-drift.good{background:rgba(78,173,122,.12);color:var(--hb-good)}
 .fc2-table{width:100%;border-collapse:collapse;font-size:14px}
 .fc2-table th{text-align:left;padding:6px 8px;color:var(--ink3);font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;border-bottom:1px solid var(--hb-line)}
@@ -10384,6 +10408,10 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
    headline column down to a word per line. */
 .fc2-hero-fcp.fc2-pos{max-width:460px;min-width:0}
 .fc2-top-right{min-width:0;max-width:62%}
+/* The figures sit centred between the chips and the waste trend (owner,
+   9/27/26): 52px above them, as below (the empty position row's 22px and
+   the trend shell's 30px). */
+@media(min-width:641px){ #panel-inventory .fc2-top-right>.fc2-hero-nums{margin-top:32px}}
 .fc2-hero-fcp .d{font-size:16.5px;color:var(--ink2);margin-top:8px}
 .fc2-hero-fcp .b{font-size:14px}
 /* The week's waste lines up row for row with the food cost block beside
@@ -10475,9 +10503,10 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
          sit six inches above "Waste is climbing" with nothing explaining how
          both were true. Each now says which question it answers. #}
       <h1 class="hb-h1">Food cost. <span class="hb-head {{ _tone }}" id="fc2-head">{{ _head }}</span></h1>
-      {% if inv.is_live and _if and _if.as_of %}<div class="fc2-h1-basis"{% if _inv_stale %} style="color:var(--amber)"{% endif %}>From your count of <span class="hb-num">{{ _if.as_of }}</span>{% if inv.benchmark_detail and inv.benchmark_label != '—' and not _inv_stale %} · {{ inv.benchmark_detail }}{% endif %}</div>
-      {% elif inv.is_live and inv.benchmark_detail and inv.benchmark_label != '—' %}<div class="fc2-h1-basis">This week · {{ inv.benchmark_detail }}</div>{% endif %}
-      <div class="dh-badge" data-dh-module="food_cost" hidden></div>
+      {# Nothing under the heading (owner, 9/27/26): the count date and the
+         benchmark basis line, and the data-health chip, are gone - the food
+         cost figure says what it is missing, and Data health lives in
+         Account. #}
       {# The Today line under the h1 was removed (owner, 9/26/26): the order
          list says what is running out, and the CFO read names the driver. #}
       {# Actual food cost % — COGS over net sales, against this restaurant's own
@@ -10568,6 +10597,22 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     <details class="hb-results fc2-work" id="fc2-work-suppliers" hidden>
       <summary><span class="hb-kicker">Suppliers</span><span id="fc2-work-suppliers-line"></span></summary>
     <section id="fc2-suppliers" class="fc2-block" aria-label="Suppliers" hidden></section>
+    {# One Order card (friction audit U2-15/16): the lines to send, grouped
+       by supplier with editable quantities, loaded when the card is first
+       on screen - the "Load" button and the sight-unseen send are gone.
+       Deliveries are received below it, into stock (U2-12). #}
+    {# Send to suppliers folds (owner, 9/26/26): one line - suppliers,
+       items and the total - until opened; the draft loads when the line is
+       on screen, so the line is true before anyone opens it. It lives inside
+       Suppliers, under This week's work (owner, 9/27/26): who you order
+       from, then what goes to each of them. #}
+    <details class="hb-results fc2-work fc2-send-d" id="fc2-order-send-d">
+      <summary><span class="hb-kicker">Send to suppliers</span><span id="so-sum-line">Building this week’s order…</span></summary>
+    <div class="fc2-send" id="fc2-order-send" data-nav="inventory/order">
+      <div class="bd" id="so-body"><div class="hb-load" style="height:60px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div>
+      <div id="po-history" class="fc2-po"></div>
+    </div>
+    </details>
     </details>
     <details class="hb-results fc2-work" id="fc2-work-recipes" hidden>
       <summary><span class="hb-kicker">Recipes</span><span id="fc2-work-recipes-line"></span></summary>
@@ -10602,20 +10647,6 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     {% else %}
     <div class="fc2-ok"><i></i>Your ordering looks well-calibrated this week — no adjustments needed.</div>
     {% endif %}
-    {# One Order card (friction audit U2-15/16): the lines to send, grouped
-       by supplier with editable quantities, loaded when the card is first
-       on screen - the "Load" button and the sight-unseen send are gone.
-       Deliveries are received below it, into stock (U2-12). #}
-    {# Send to suppliers folds (owner, 9/26/26): one line - suppliers,
-       items and the total - until opened; the draft loads when the line is
-       on screen, so the line is true before anyone opens it. #}
-    <details class="hb-results fc2-work fc2-send-d" id="fc2-order-send-d">
-      <summary><span class="hb-kicker">Send to suppliers</span><span id="so-sum-line">Building this week’s order…</span></summary>
-    <div class="fc2-send" id="fc2-order-send" data-nav="inventory/order">
-      <div class="bd" id="so-body"><div class="hb-load" style="height:60px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div>
-      <div id="po-history" class="fc2-po"></div>
-    </div>
-    </details>
     <div id="so-confirm-modal" class="cmodal so-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="so-confirm-t" onclick="if(event.target===this&&window.cModal)cModal.close('so-confirm-modal')">
       <div class="so-card">
         <div class="hb-kicker">Send to supplier</div>
@@ -10700,9 +10731,9 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
           {% endif %}
         {% endfor %}
         {% if drift_found.count > 0 %}
-        <div class="fc2-drift warn">⚠ {{ drift_found.count }} ingredient price change{{ '' if drift_found.count == 1 else 's' }} vs last week — update below to refresh.</div>
+        <div class="fc2-drift warn"><i class="cv-warn" aria-hidden="true"></i> {{ drift_found.count }} ingredient price change{{ '' if drift_found.count == 1 else 's' }} vs last week — update below to refresh.</div>
         {% else %}
-        {% set _pa2=food_cost_data.previous.submitted_at %}<div class="fc2-drift good">✓ Prices stable vs last week (<span class="hb-num">{{ _pa2[5:7]|int }}/{{ _pa2[8:10]|int }}/{{ _pa2[2:4] }}</span>)</div>
+        {% set _pa2=food_cost_data.previous.submitted_at %}<div class="fc2-drift good"><i class="cv-ok" aria-hidden="true"></i> Prices stable vs last week (<span class="hb-num">{{ _pa2[5:7]|int }}/{{ _pa2[8:10]|int }}/{{ _pa2[2:4] }}</span>)</div>
         {% endif %}
       </div>
       {% endif %}
@@ -10730,7 +10761,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
         <div class="l">
           <button onclick="submitFoodCostCount()" class="cbtn cbtn-primary">Submit this week's prices</button>
           <div id="fc-submit-pill" style="display:{% if food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at %}inline-flex{% else %}none{% endif %}">
-            <div id="fc-pill-line1">&#10003; Saved {% if food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at %}{% set _sa=food_cost_data.current.submitted_at %}{{ _sa[5:7]|int }}/{{ _sa[8:10]|int }}/{{ _sa[2:4] }}{% endif %}</div>
+            <div id="fc-pill-line1"><i class="cv-ok" aria-hidden="true"></i> Saved {% if food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at %}{% set _sa=food_cost_data.current.submitted_at %}{{ _sa[5:7]|int }}/{{ _sa[8:10]|int }}/{{ _sa[2:4] }}{% endif %}</div>
             <div id="fc-pill-line2">{% if food_cost_data and food_cost_data.previous and food_cost_data.previous.submitted_at %}{% set _pa=food_cost_data.previous.submitted_at %}Last saved: {{ _pa[5:7]|int }}/{{ _pa[8:10]|int }}/{{ _pa[2:4] }}{% elif food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at %}First submission{% endif %}</div>
           </div>
           <script>var _fcPrevSaved='{{food_cost_data.current.submitted_at if food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at else ""}}';</script>
@@ -10964,6 +10995,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     cavNavOpenModule('inventory');
     var who=String(p.rest[0]||'').toLowerCase(),card=document.getElementById('fc2-order-send');
     var fold=document.getElementById('fc2-order-send-d');if(fold)fold.open=true;
+    var sup=document.getElementById('fc2-work-suppliers');if(sup)sup.open=true;
     function go(){var el=(who&&document.querySelector('[data-sup="'+who.replace(/"/g,'')+'"]'))||card;if(el&&el.scrollIntoView)el.scrollIntoView({behavior:'smooth',block:'start'});}
     if(!document.querySelector('[data-sup]'))loadOrderDraft();
     setTimeout(go,400);
@@ -11409,7 +11441,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .in2-read .st{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;margin-bottom:9px}
 .in2-read .st.good{color:var(--hb-good)}.in2-read .st.bad{color:var(--hb-bad)}.in2-read .st.ember{color:var(--ember)}.in2-read .st.neutral{color:var(--ink3)}
 .in2-read .b{display:flex;gap:9px;align-items:flex-start;margin-bottom:7px;font-size:15px;line-height:1.6;color:var(--ink2)}
-.in2-read .b i{font-style:normal;font-weight:700;flex-shrink:0;font-size:14px}
+.in2-read .b i{font-style:normal;font-weight:700;flex-shrink:0;font-size:14px}.in2-read .b .cv-ok,.in2-read .b .cv-bad{margin-top:4px}
 .in2-read .b i.good{color:var(--hb-good)}.in2-read .b i.bad{color:var(--hb-bad)}.in2-read .b i.neutral{color:var(--ink3)}
 /* A recommendation's evidence and its answer row (owner, 9/26/26): the
    evidence summary reads at a normal size, and Done | Pass | Ask sits just
@@ -11428,13 +11460,17 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .in2-pre h2{font-family:'Clash Display',sans-serif;font-weight:500;font-size:24px;letter-spacing:-.01em;color:var(--ink);margin:0 0 8px;text-wrap:balance}
 .in2-pre p{font-size:14.5px;line-height:1.6;color:var(--ink2);margin:0;max-width:64ch}
 .in2-pre .meta{font-size:13px;color:var(--ink3);margin-top:8px}
+/* The check's loading state is the orb on the page, not a card (owner, 9/27/26). */
+.in2-pre#aiv-loading{background:none;padding:6px 0 10px}
+#aiv-radar .aiv-orb{display:block;width:260px;height:260px;margin:0 auto 6px}
 .in2-orbit{position:relative;height:150px;margin-top:6px}
 .in2-orbit svg{display:block;width:100%;height:150px;overflow:visible}
 .in2-orbit text{font-family:'Space Grotesk',sans-serif}
 .in2-gbp{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:0 14px;margin-top:8px}
 .in2-gbp .it{display:flex;gap:8px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--hb-line2);min-width:0}
 .in2-gbp .it .ic{width:16px;height:16px;border-radius:50%;flex-shrink:0;margin-top:2px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;background:var(--hb-line2);color:var(--ink3)}
-.in2-gbp .it.done .ic{background:rgba(78,173,122,.18);color:var(--hb-good)}
+.in2-gbp .it.done .ic{background:radial-gradient(circle at 35% 30%,var(--hb-pop2),var(--hb-pop) 72%);color:var(--hb-pop-ink);box-shadow:0 0 0 3px var(--hb-pop-ring)}
+.in2-gbp .it.done .ic::before{content:'';width:3.5px;height:7px;margin-top:-2px;border:solid currentColor;border-width:0 1.8px 1.8px 0;transform:rotate(45deg)}
 .in2-gbp .it .l{font-size:14.5px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .in2-gbp .it .l small{font-family:'Space Grotesk',sans-serif;font-weight:700;color:var(--ink3);margin-left:5px;font-size:12px}
 .in2-gbp .it .a{font-size:13.5px;color:var(--ember);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -11619,8 +11655,10 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     <div class="hd">
       <div><div class="hb-kicker">Rating comparison · you vs. nearby</div>
         {% if own is not none %}<div class="big"><span class="hb-num">{{ own }}</span><small>★ {{ _own_word }} · market avg {{ avg_comp_rating if avg_comp_rating else '—' }}{% if avg_comp_rating %}★{% endif %}</small></div>
-        {% if own_vs_avg is not none %}<div class="delta {{ 'good' if _st == 'ahead' else ('bad' if _st == 'behind' else '') }}">{% if _st == 'level' %}About level with the block ({{ '+' if own_vs_avg > 0 }}{{ own_vs_avg }}★){% elif own_vs_avg > 0 %}<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 7.5 6 4.5 9 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ own_vs_avg }} above the block{% else %}<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ own_vs_avg|abs }} below the block{% endif %} <span>· {{ comp_count }} restaurants nearby{% if intel_market and intel_market.market_rating_n %} · average of {{ intel_market.market_rating_n }} rated, weighted by reviews{% endif %}</span></div>
-        {% if intel_market.standing_basis %}<div class="fc2-h1-basis">{{ intel_market.standing_basis }}</div>{% endif %}{% elif intel_market and intel_market.standing_why_not %}<div class="fc2-h1-basis">No standing yet — {{ intel_market.standing_why_not }}</div>{% endif %}
+        {% if own_vs_avg is not none %}<div class="delta {{ 'good' if _st == 'ahead' else ('bad' if _st == 'behind' else '') }}">{% if _st == 'level' %}About level with the block ({{ '+' if own_vs_avg > 0 }}{{ own_vs_avg }}★){% elif own_vs_avg > 0 %}<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 7.5 6 4.5 9 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ own_vs_avg }} above the block{% else %}<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ own_vs_avg|abs }} below the block{% endif %}</div>{% endif %}
+        {# Only the standing under the figure (owner, 9/27/26): how many
+           places, how the average is weighted and the matching basis are
+           gone from the hero; the market average stays in its chip. #}
         {% else %}<div class="big"><span class="hb-num">{{ avg_comp_rating }}</span><small>★ market average · your Google rating appears with the next check</small></div>{% endif %}
       </div>
     </div>
@@ -11632,7 +11670,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     <div class="in2-read" id="intel-insight-card">
       {% if _parts %}{% for name, bullets in _parts.sections %}{% if bullets %}
       {% set _tone = 'good' if 'WELL' in name|upper else ('bad' if 'POORLY' in name|upper else 'neutral') %}
-      <div class="sec"><div class="st {{ _tone }}">{{ name }}</div>{% for b in bullets %}<div class="b"><i class="{{ _tone }}">{{ '✓' if _tone == 'good' else ('✗' if _tone == 'bad' else '·') }}</i><span>{{ b }}</span></div>{% endfor %}</div>
+      <div class="sec"><div class="st {{ _tone }}">{{ name }}</div>{% for b in bullets %}<div class="b">{% if _tone == 'good' %}<i class="cv-ok" aria-hidden="true"></i>{% elif _tone == 'bad' %}<i class="cv-bad" aria-hidden="true"></i>{% else %}<i class="{{ _tone }}">·</i>{% endif %}<span>{{ b }}</span></div>{% endfor %}</div>
       {% endif %}{% endfor %}{% endif %}
       {# The recommendations come from /api/intel/recs (in2LoadRecs) and only
          from there: it records them as shown and leaves out the ones already
@@ -11660,7 +11698,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
         <div class="meta">Three local queries · about ten seconds · Perplexity live search<span id="in2-last-run"></span></div></div>
       <button onclick="runAIVisibility(this)" id="aiv-run-btn" class="cbtn cbtn-primary cbtn-lg" style="white-space:nowrap">Check AI visibility</button>
     </div>
-    <div class="in2-pre" id="aiv-loading" style="display:none;justify-content:center;text-align:center;flex-direction:column;gap:6px">
+    <div class="in2-pre" id="aiv-loading" style="display:none;justify-content:center;align-items:center;text-align:center;flex-direction:column;gap:6px">
       <div id="aiv-radar"></div>
       <div id="aiv-loading-text" style="font-size:16px;font-weight:600;color:var(--ember)">Querying AI assistants…</div>
       <div style="font-size:13.5px;color:var(--ink3)">Running three local search queries</div>
@@ -17836,7 +17874,7 @@ function renderScheduleSteps(startedAt) {
   for (i = lower; i <= upper; i++) {
     var done = i < current, live = i === current;
     var mark = done
-      ? '<span style="color:#6fcf97;font-size:10px;font-weight:800">&#10003;</span>'
+      ? '<i class="cv-ok" style="width:14px;height:14px" aria-hidden="true"></i>'
       : (live ? '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ember)"></span>'
               : '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;border:1px solid var(--paper3)"></span>');
     var colour = live ? 'var(--ink)' : 'var(--ink3)';
@@ -20132,8 +20170,8 @@ function loadAvailability() {
       var unDays = av.unavailable_days || [];
       html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--paper);border:1px solid var(--paper3);border-radius:6px;gap:12px;flex-wrap:wrap">';
       html += '<div style="flex:1;min-width:0"><div style="font-size:15px;font-weight:600;color:var(--ink)">' + _escHtml(av.employee_name || '') + '</div>';
-      if (avDays.length) html += '<div style="font-size:12.5px;color:var(--green);margin-top:2px">✓ Available: ' + _escHtml(avDays.join(', ')) + '</div>';
-      if (unDays.length) html += '<div style="font-size:12.5px;color:var(--red);margin-top:1px">✗ Not available: ' + _escHtml(unDays.join(', ')) + '</div>';
+      if (avDays.length) html += '<div style="font-size:12.5px;color:var(--ink2);margin-top:4px;display:flex;align-items:center;gap:7px"><i class="cv-ok" aria-hidden="true"></i>Available: ' + _escHtml(avDays.join(', ')) + '</div>';
+      if (unDays.length) html += '<div style="font-size:12.5px;color:var(--ink2);margin-top:5px;display:flex;align-items:center;gap:7px"><i class="cv-bad" aria-hidden="true"></i>Not available: ' + _escHtml(unDays.join(', ')) + '</div>';
       if (av.notes) html += '<div style="font-size:12.5px;color:var(--ink3);margin-top:1px">' + _escHtml(String(av.notes)) + '</div>';
       html += '</div>';
       html += '<button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" aria-label="Remove" onclick="deleteAvailabilityAt(' + i + ')" title="Remove">&#x2715;</button>';
@@ -22562,7 +22600,7 @@ function wtDrawChart(){
       var fill=targetVal?(over?'url(#fc2wtBarBad)':'url(#fc2wtBarGood)'):'url(#fc2wtBarNeutral)',op=isLast?1:(over?.92:.78);
       var stroke=f.anomaly==='spike'?' stroke="#e3333f" stroke-width="2"':(isLast?' stroke="#e8956a" stroke-width="1.5" stroke-opacity=".9"':' stroke="rgba(255,255,255,.14)" stroke-width="1"');
       var delay=animate?' style="animation-delay:'+(i*(dense?18:140))+'ms"':'';
-      bars+='<rect class="fc2-wt-bar'+(animate?' hb-bar':'')+(on?' on':'')+'" data-i="'+i+'" x="'+x.toFixed(1)+'" y="'+by.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+bh.toFixed(1)+'" rx="'+(dense?3:6)+'" fill="'+fill+'" fill-opacity="'+op+'" filter="url(#fc2wtLift)"'+stroke+delay+'/>';
+      bars+='<rect class="fc2-wt-bar'+(animate?' hb-bar':'')+(on?' sel':'')+'" data-i="'+i+'" x="'+x.toFixed(1)+'" y="'+by.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+bh.toFixed(1)+'" rx="'+(dense?3:6)+'" fill="'+fill+'" fill-opacity="'+op+'" filter="url(#fc2wtLift)"'+stroke+delay+'/>';
       if(!dense){
         labels+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-6).toFixed(1)+'" text-anchor="middle" font-size="13" font-weight="'+(isLast?'700':'600')+'" fill="currentColor" fill-opacity="'+(isLast?'1':'.8')+'">'+wtMoney(val)+'</text>';
         if(f.anomaly==='spike')labels+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-21).toFixed(1)+'" text-anchor="middle" font-size="11.5" font-weight="700" letter-spacing=".3" fill="#e3333f">SPIKE</text>';
@@ -22643,7 +22681,9 @@ function wtHover(i,e){
   var tip=document.getElementById('fc2-wt-tip');
   if(!tip){tip=document.createElement('div');tip.id='fc2-wt-tip';tip.className='fc2-wt-tip';document.body.appendChild(tip);}
   var bars=host.querySelectorAll('.fc2-wt-bar');
-  for(var b=0;b<bars.length;b++){var bi=parseInt(bars[b].getAttribute('data-i'),10);bars[b].classList.toggle('on',bi===i||bi===_wt.sel);}
+  // Only the bar under the pointer lights; the week whose details are open
+  // keeps its outline (.sel), so it never reads as a second hover (owner, 9/27/26).
+  for(var b=0;b<bars.length;b++){var bi=parseInt(bars[b].getAttribute('data-i'),10);bars[b].classList.toggle('on',bi===i);}
   if(i==null||!d.weeks[i]){host.classList.remove('hov');tip.style.display='none';return;}
   host.classList.add('hov');
   var w=d.weeks[i],s=d.stats,f=w.flags||{},val=wtSeriesValue(w),prev=i>0?wtSeriesValue(d.weeks[i-1]):null;
@@ -24387,13 +24427,34 @@ function in2GbpActionMeta(action) {
 }
 // Re-run from the top of Intel (owner, 9/26/26): the page moves to the AI
 // visibility section first, so the loading state is what the owner watches.
+// The run starts first, so the results have already folded into the
+// loading state when the page moves: the scroll used to be aimed before the
+// fold, and the page shrinking under it left the owner where they were
+// (owner, 9/27/26). scrollIntoView moves whichever element scrolls.
 function aivRerunFromTop() {
   var sec = document.getElementById('in2-aiv'), btn = document.getElementById('aiv-run-btn');
   if (!sec || !btn || btn.disabled) return;
-  var y = sec.getBoundingClientRect().top + window.pageYOffset - 120;
-  var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  try { window.scrollTo({top: Math.max(0, y), behavior: reduced ? 'auto' : 'smooth'}); } catch (e) { window.scrollTo(0, Math.max(0, y)); }
   runAIVisibility(btn);
+  var target = document.getElementById('aiv-loading') || sec;
+  var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  requestAnimationFrame(function() {
+    try { target.scrollIntoView({behavior: reduced ? 'auto' : 'smooth', block: 'center'}); } catch (e) { target.scrollIntoView(); }
+  });
+}
+// The check's loading state (owner, 9/27/26): no card behind it, and the
+// Cavnar AI orb at full size in the space the results will fill.
+var AIV_ORB_SIZE = 260;
+function aivLoadingShow() {
+  var l = document.getElementById('aiv-loading'); if (!l) return;
+  l.style.display = 'flex';
+  var host = document.getElementById('aiv-radar');
+  if (host && !host.querySelector('canvas')) host.innerHTML = '<canvas class="hb-orb aiv-orb" data-orb-state="searching" width="' + AIV_ORB_SIZE + '" height="' + AIV_ORB_SIZE + '" aria-hidden="true"></canvas>';
+}
+function aivLoadingHide() {
+  var l = document.getElementById('aiv-loading'); if (l) l.style.display = 'none';
+  var host = document.getElementById('aiv-radar'), c = host && host.querySelector('canvas');
+  if (c && c._orb && window.CavnarOrb) { try { CavnarOrb.destroy(c._orb); } catch (e) {} }
+  if (host) host.innerHTML = '';
 }
 function runAIVisibility(btn) {
   var _aivB = document.getElementById('aiv-body');
@@ -24406,13 +24467,9 @@ function runAIVisibility(btn) {
   _aivData = null;
   if (btn) { btn.textContent = 'Checking...'; btn.disabled = true; }
   document.getElementById('aiv-idle').style.display = 'none';
-  document.getElementById('aiv-loading').style.display = 'block';
   document.getElementById('aiv-results').style.display = 'none';
+  aivLoadingShow();
   _aivFitBody();
-  // "Reading the Room" — the same radar the Competitors tab uses for its
-  // fetch, here for the ~10s of live AI queries.
-  var _aivRadar = document.getElementById('aiv-radar');
-  if (_aivRadar) _aivRadar.innerHTML = cavnarRadarHtml('', 150);
   var msgs = ['Querying AI assistants...', 'Running local search queries...', 'Scoring your listing strength...', 'Building your checklist...'];
   var mi = 0;
   var ticker = setInterval(function() {
@@ -24424,7 +24481,7 @@ function runAIVisibility(btn) {
   // recorded run, so the check "finished" instantly with old answers.
   fetch('/api/ai-visibility', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: '{}'}).then(apiJson).then(function(d) {
     clearInterval(ticker);
-    document.getElementById('aiv-loading').style.display = 'none';
+    aivLoadingHide();
     if (!d.ok) {
       if (btn) { btn.textContent = 'Retry'; btn.disabled = false; }
       document.getElementById('aiv-idle').style.display = 'block';
@@ -24439,7 +24496,7 @@ function runAIVisibility(btn) {
   }).catch(function() {
     clearInterval(ticker);
     if (btn) { btn.textContent = 'Retry'; btn.disabled = false; }
-    document.getElementById('aiv-loading').style.display = 'none';
+    aivLoadingHide();
     document.getElementById('aiv-idle').style.display = 'block';
     _aivFitBody();
     toast('Request failed — try again','error');
@@ -24473,7 +24530,7 @@ function aivMeasured(d) {
 }
 function renderAIVisibility(d) {
   aivMeasured(d);
-  document.getElementById('aiv-loading').style.display = 'none';
+  aivLoadingHide();
   document.getElementById('aiv-idle').style.display = 'none';
   document.getElementById('aiv-results').style.display = 'block';
   var btn = document.getElementById('aiv-run-btn');
@@ -24588,7 +24645,7 @@ function renderAIVisibility(d) {
     var chtml = '', doneN = 0, GBP_VISIBLE = 5;
     for (var ci = 0; ci < d.checklist.length; ci++) {
       var item = d.checklist[ci]; if (item.done) doneN++;
-      var ic = item.done ? '&#10003;' : (item.needs_gmb ? '&#128274;' : '&#9675;');
+      var ic = item.done ? '' : (item.needs_gmb ? '&#128274;' : '&#9675;');
       // Not read, not missing: left out of the score (M-14).
       if (item.measured === false) { item.action = item.unmeasured_reason || item.action; }
       var hide = ci >= GBP_VISIBLE ? ' in2-extra" style="display:none' : '';
@@ -24704,7 +24761,7 @@ function renderAIVisibility(d) {
     var answer = c.answered ? '<span class="rec-ans-done">Answered</span>'
       : ((c.answerable && c.rec_key && typeof recNotForUsHtml === 'function') ? recNotForUsHtml(c.rec_key, 'intel', 'intel') : '');
     html += '<div class="row' + (c.done ? ' done' : '') + '" style="--rc:' + look.color + '"><div class="ic">' + look.svg + '</div><div class="t"><div class="tt"><b>' + esc(c.title) + '</b>'
-      + (c.done ? '<span class="im done">&#10003; done</span>' : '<span class="im">' + esc(c.impact_basis ? c.impact : 'open') + '</span>') + '</div><div class="d">' + esc(c.detail) + '</div><div class="why" id="aiv-why-' + k + '">' + esc(c.why) + '</div><div class="ac">'
+      + (c.done ? '<span class="im done"><i class="cv-ok" aria-hidden="true"></i> done</span>' : '<span class="im">' + esc(c.impact_basis ? c.impact : 'open') + '</span>') + '</div><div class="d">' + esc(c.detail) + '</div><div class="why" id="aiv-why-' + k + '">' + esc(c.why) + '</div><div class="ac">'
       + (c.done || !known ? '' : '<button type="button" class="cbtn cbtn-primary cbtn-sm" data-aiv-go="' + esc(c.key) + '">' + esc(c.action) + '</button>')
       + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-evidence-key="' + esc(c.rec_key || '') + '" onclick="toggleAivWhy(' + k + ',this)">Why this matters</button>' + answer + '</div></div></div>';
   }
@@ -25549,13 +25606,13 @@ function revokeOtherSessions(btn){
     for(var k=0;k<(v.ingredients||[]).length;k++){var ing=v.ingredients[k];opts+='<option value="'+ing.id+'">'+_fcEsc(ing.name)+(ing.unit?' ('+_fcEsc(ing.unit)+')':'')+'</option>';}
     var h='<div class="hb-kicker" style="margin-bottom:6px">'+_fcEsc(v.supplier||'Supplier not read')+(v.invoice_date?' · '+_fcEsc(window.mdy?window.mdy(v.invoice_date):v.invoice_date):'')+(v.duplicate?' · already scanned':'')+'</div>';
     if(v.total_check&&!v.total_check.plausible)h+='<div class="fc2-inv-note">Lines add up to '+_fcMoney(v.total_check.lines_sum)+' against an invoice total of '+_fcMoney(v.total_check.invoice_total)+' — some lines may be misread. Check them against the paper.</div>';
-    if(v.applied_at&&!v.awaiting_owner){h+='<div class="hb-clear"><span class="ok">✓</span><span>Applied '+_fcEsc(window.mdy?window.mdy(v.applied_at):v.applied_at)+'.</span></div>';body.innerHTML=h;return;}
+    if(v.applied_at&&!v.awaiting_owner){h+='<div class="hb-clear"><span class="ok"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span><span>Applied '+_fcEsc(window.mdy?window.mdy(v.applied_at):v.applied_at)+'.</span></div>';body.innerHTML=h;return;}
     // The trusted-supplier rule applied the lines it could check; the rest
     // still wait for the owner, so the table stays for them (M-4).
     if(v.awaiting_owner)h+='<div class="fc2-inv-note">Cavnar AI applied '+(+v.auto_applied_count||0)+' checked line'+((+v.auto_applied_count||0)===1?'':'s')+' from this trusted supplier. The lines below still need you.</div>';
     h+='<div class="fc2-table-scroll"><table class="fc2-mt"><thead><tr><th></th><th>Invoice line</th><th>Ingredient</th><th class="r">Now</th><th class="r">New cost</th></tr></thead><tbody>';
     for(var i=0;i<v.lines.length;i++){var l=v.lines[i];
-      if(l.applied){h+='<tr><td><span class="ok">✓</span></td><td><b>'+_fcEsc(l.description)+'</b><div class="why">Applied automatically</div></td><td>'+_fcEsc(l.ingredient_name||'')+'</td><td class="r hb-num">'+_fcMoney(l.current_cost,4)+'</td><td class="r hb-num">'+_fcMoney(l.proposed_cost,4)+'</td></tr>';continue;}
+      if(l.applied){h+='<tr><td><i class="cv-ok" aria-hidden="true"></i></td><td><b>'+_fcEsc(l.description)+'</b><div class="why">Applied automatically</div></td><td>'+_fcEsc(l.ingredient_name||'')+'</td><td class="r hb-num">'+_fcMoney(l.current_cost,4)+'</td><td class="r hb-num">'+_fcMoney(l.proposed_cost,4)+'</td></tr>';continue;}
       h+='<tr><td><input type="checkbox" data-inv-line="'+i+'"'+(l.selected?' checked':'')+'></td>'
         // Whether the reading passed both checks (invoices.py "verified":
         // its arithmetic agreed and there was a cost to compare against) -
@@ -27061,13 +27118,13 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       ['No stale devices',(d.trusted_devices||0)<=3,15,(d.trusted_devices||0)+' trusted, '+(d.active_sessions||1)+' signed in']
     ];
     var score=0,html='';
-    items.forEach(function(it){if(it[1])score+=it[2];html+='<div style="display:flex;gap:6px;align-items:baseline"><span style="color:'+(it[1]?'var(--green)':'var(--ember)')+';font-weight:700">'+(it[1]?'✓':'•')+'</span><span style="color:var(--ink)">'+esc(it[0])+'</span><span>· '+esc(it[3])+'</span></div>';});
+    items.forEach(function(it){if(it[1])score+=it[2];html+='<div style="display:flex;gap:6px;align-items:baseline"><span style="color:var(--ember);font-weight:700;align-self:center;display:flex;width:18px;justify-content:center">'+(it[1]?'<i class="cv-ok" aria-hidden="true"></i>':'•')+'</span><span style="color:var(--ink)">'+esc(it[0])+'</span><span>· '+esc(it[3])+'</span></div>';});
     window._acctData=window._acctData||{};window._acctData.securityScore=score;if(window.acctHealthRefresh)acctHealthRefresh();
     var sc=document.getElementById('sec-score');if(sc)sc.textContent=score;
     var bar=document.getElementById('sec-bar');if(bar)bar.style.width=score+'%';
     var el=document.getElementById('sec-items');if(el)el.innerHTML=html;
     var rs=document.getElementById('rec-status');
-    if(rs){rs.innerHTML=d.recovery_email?('<span style="color:var(--green)">✓</span> '+esc(d.recovery_email)+' <button class="cbtn cbtn-text cbtn-inline cbtn-muted cbtn-link cbtn-sm" onclick="recRemove(this)">Remove</button>'):'Not set — a second address that can always get you back in.';}
+    if(rs){rs.innerHTML=d.recovery_email?('<i class="cv-ok" aria-hidden="true"></i> '+esc(d.recovery_email)+' <button class="cbtn cbtn-text cbtn-inline cbtn-muted cbtn-link cbtn-sm" onclick="recRemove(this)">Remove</button>'):'Not set — a second address that can always get you back in.';}
   }
   window.loadSecurityExtras=function(){
     if(!has('sec-items'))return;
@@ -27751,7 +27808,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     if(filt==='hard'&&!hard)filt='soft';if(filt==='soft'&&!soft)filt='hard';
     if(hard)h+=(vs.length?'<button type="button" role="tab" aria-selected="'+(filt==='hard')+'" data-rv-filter="hard" class="sr-chip bad'+(filt==='hard'?' on':'')+'">':'<span class="sr-chip bad">')+'<span class="hb-num">'+hard+'</span> hard'+(vs.length?'</button>':'</span>');
     if(soft)h+=(vs.length?'<button type="button" role="tab" aria-selected="'+(filt==='soft')+'" data-rv-filter="soft" class="sr-chip warn'+(filt==='soft'?' on':'')+'">':'<span class="sr-chip warn">')+'<span class="hb-num">'+soft+'</span> soft'+(vs.length?'</button>':'</span>');
-    if(rv&&!hard&&!soft)h+='<span class="sr-chip good">&#10003; every rule kept</span>';
+    if(rv&&!hard&&!soft)h+='<span class="sr-chip good"><i class="cv-ok" aria-hidden="true"></i> every rule kept</span>';
     var meta=[];
     if(_rv.gen!==null&&_rv.gen!==undefined&&_rv.gen!=='')meta.push('generated in <span class="hb-num">'+Math.round(+_rv.gen)+'s</span>');
     if(_rv.chunked)meta.push('generated in parts \u2014 the roster was too large for one pass');

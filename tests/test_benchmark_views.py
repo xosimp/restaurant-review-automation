@@ -348,7 +348,9 @@ def test_a_tie_is_neutral_and_symmetric_inside_the_standard_error():
 def test_the_web_intel_header_no_longer_derives_its_own_standing():
     dash = _read("templates", "dashboard.html")
     assert "Neck and neck" not in dash and "{% elif own_vs_avg >= 0.3 %}" not in dash
-    assert "intel_market.standing_basis" in dash
+    # The standing is the market's; its basis line left the hero (owner, 9/27/26).
+    assert "{% set _st = intel_market.standing if intel_market else None %}" in dash
+    assert "intel_market.standing_basis" not in dash
 
 
 def test_the_reviews_competitor_benchmark_uses_the_intel_market(db_path, monkeypatch):

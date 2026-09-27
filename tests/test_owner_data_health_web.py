@@ -145,8 +145,10 @@ def test_home_kicker_is_the_score_and_every_module_header_has_a_badge():
     s = _src()
     rf = s[s.index("function renderFreshness(d){"):][:2200]
     assert "Data health <span class=\"hb-num\">" in rf and 'data-dh-open="1"' in rf and "cbtn" in rf
-    for m in ("reviews", "labor", "food_cost", "marketing", "intel"):
+    # Food Cost's header carries nothing under the heading (owner, 9/27/26).
+    for m in ("reviews", "labor", "marketing", "intel"):
         assert f'data-dh-module="{m}"' in s, m
+    assert 'data-dh-module="food_cost"' not in s
     # "live" is reserved for a source inside its cadence (#27).
     assert "</span> live '+" not in s and "</span> current '+" in s
 

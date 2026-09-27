@@ -151,7 +151,9 @@ def test_what_changed_is_one_line_and_ai_visibility_reruns_from_the_top():
     assert "<div class=\"in2-upd\" style=\"margin-top:4px\"><span>'+sub+'</span></div>'" in SRC
     assert 'onclick="aivRerunFromTop()" class="cbtn cbtn-secondary">Re-run AI visibility</button>' in SRC
     fn = _between("function aivRerunFromTop() {", "\n}\n")
-    assert "window.scrollTo(" in fn and "runAIVisibility(btn)" in fn
+    # The run folds the results first; then the loading state scrolls into
+    # view in whatever element scrolls (owner, 9/27/26).
+    assert fn.index("runAIVisibility(btn)") < fn.index("scrollIntoView(") and "window.scrollTo(" not in fn
 
 
 # ── Food Cost ───────────────────────────────────────────────────────────────
