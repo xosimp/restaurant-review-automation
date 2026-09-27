@@ -180,7 +180,7 @@ def test_the_bell_calls_the_same_routes_the_phone_does():
 
 
 def test_the_bell_delegates_the_new_actions():
-    handler = _block("  document.addEventListener('click', function(e) {\n    if (!e.target || !e.target.closest) return;\n    var filter",
+    handler = _block("  document.addEventListener('click', function(e) {\n    if (!e.target || !e.target.closest) return;\n    var pv",
                      "  window._openHdrPanel")
     assert "data-notif-undo" in handler and "data-notif-decide" in handler
 

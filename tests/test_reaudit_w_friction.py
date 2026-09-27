@@ -413,7 +413,9 @@ def test_f1_15_client_details_are_fixed_at_the_source():
     assert "window.hbLoad(true);\n        acts = null;" not in src
     assert "if(_hbLoading){_hbAgain=" in src, "a load asked for mid-load runs after it"
     # the bell: M/D/YY days, a badge that refreshes
-    day = re.search(r"function dayGroup\(iso\) \{.*?\n  \}", src, re.S).group(0)
+    # (the day headings went with the 9/26/26 redesign; the one time format,
+    # hpAgo, falls back to M/D/YY past a week)
+    day = re.search(r"window\.hpAgo = function\(iso\) \{.*?\n  \};", src, re.S).group(0)
     assert "'Jan','Feb'" not in day and "(d.getMonth() + 1) + '/' + d.getDate()" in day
     assert "setInterval(function() { if (!document.hidden) refreshBadge(); }" in src
     # issues past four are reachable

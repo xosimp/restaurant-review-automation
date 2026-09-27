@@ -179,23 +179,112 @@ html{background:var(--bg-base);min-height:100%}
 [data-theme="dark"] input[type="number"]{color-scheme:dark}
 /* Reduce order pill — light green bg unreadable in dark mode */
 [data-theme="dark"] .pill[style*="background:#e8f4f0"]{background:#0c2318!important;color:#4ead7a!important}
-/* Notification bell rows — a row is a button now, so its presentation lives
-   here rather than inline (tests/test_button_system.py). The ember dot marks
-   P0/P1: the alerts that are only worth anything while they can still be
-   acted on. */
-.notif-row{width:100%;text-align:left;padding:9px 14px;border:none;border-bottom:1px solid var(--paper3);display:flex;align-items:center;gap:9px;background:transparent;cursor:pointer}
-.notif-row:hover{background:var(--paper2)}
-.notif-row.is-unread{background:var(--paper2)}
-.notif-row .nd{flex-shrink:0;width:6px;height:6px;border-radius:50%;background:var(--paper3);display:block}
-.notif-row.is-urgent .nd{background:var(--red)}
-/* The bell's one-line read (density audit #39): counted from the rows. */
-.notif-sum{padding:9px 14px;border-bottom:1px solid var(--paper3);font-size:13px;line-height:1.45;color:var(--ink2)}
-.notif-sum b{font-weight:700;color:var(--red)}
-.notif-sum.calm b{color:var(--ink)}
+/* Header popovers - Notifications and Messages (owner, 9/26/26). One shell,
+   calm by subtraction: a frosted card with a soft shadow, no rules and no
+   outline boxes; rows are spacing, a tile icon or an avatar, one title,
+   one short line, the time. Unread is weight and an ember tile; a red dot
+   only for what still needs someone; a handled row is dimmed. The row's one
+   action shows on hover or focus (always on touch). Motion: the card drops
+   in, the rows rise in once, a hovered row lifts - no bounce. */
+.hdr-pop-wrap{position:relative}
+@media (min-width:481px){ #notif-wrap,#team-msg-wrap{margin:0 -6px}}   /* the space: "{" then "#" opens a Jinja comment */
+.hdr-ico{--hdr-ink:#f0ebe0;position:relative;display:flex;align-items:center;justify-content:center;width:36px;height:36px;padding:0;border:none;border-radius:50%;background:transparent;color:var(--ink3);cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background-color .18s ease,color .18s ease,transform .12s ease}
+.hdr-ico:hover,.hdr-ico[aria-expanded="true"]{background:rgba(255,255,255,.08);color:var(--hdr-ink)}
+.hdr-ico:active{transform:scale(.94)}
+.hdr-ico:focus{outline:none}.hdr-ico:focus-visible{box-shadow:0 0 0 2px var(--ember)}
+.hdr-ico svg{display:block}
 /* The bell's badge: a red count for urgent-unresolved only; a small grey dot
    when there is something unread but nothing urgent. */
-#notif-badge{position:absolute;top:-2px;right:-4px;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--red);color:var(--paper);font-family:'Space Grotesk',sans-serif;font-size:10.5px;font-weight:700;line-height:16px;text-align:center;box-sizing:border-box}
-#notif-badge.dot{top:2px;right:2px;min-width:0;width:7px;height:7px;padding:0;background:var(--ink3)}
+#notif-badge{position:absolute;top:2px;right:0;min-width:17px;height:17px;padding:0 5px;border-radius:999px;background:var(--red);color:var(--paper);font-family:'Space Grotesk',sans-serif;font-size:10.5px;font-weight:700;line-height:17px;text-align:center;box-shadow:0 0 0 2px var(--hdr-bg)}
+#notif-badge.dot{top:8px;right:8px;min-width:0;width:8px;height:8px;padding:0;background:var(--ink3)}
+.hdr-dot{position:absolute;top:8px;right:8px;width:8px;height:8px;border-radius:50%;background:var(--ember);box-shadow:0 0 0 2px var(--hdr-bg),0 0 8px var(--ember)}
+.hdr-pop{--hp-bg:rgba(255,255,255,.96);--hp-ring:rgba(14,12,10,.06);--hp-hover:rgba(14,12,10,.035);--hp-act-bg:#f7f6f5;--hp-tile:rgba(14,12,10,.045);--hp-tile-on:rgba(200,75,47,.10);--hp-field:rgba(14,12,10,.045);--hp-bubble:rgba(14,12,10,.055);--hp-av:linear-gradient(160deg,#ece7df,#d9d2c6);
+  --hp-shadow:0 1px 2px rgba(14,12,10,.04),0 14px 34px -14px rgba(14,12,10,.20),0 36px 70px -34px rgba(14,12,10,.26);--hp-lift:0 1px 2px rgba(14,12,10,.04),0 8px 20px -14px rgba(14,12,10,.28);
+  position:absolute;right:-2px;top:calc(100% + 12px);width:min(400px,calc(100vw - 24px));z-index:999;border-radius:22px;background:var(--hp-bg);-webkit-backdrop-filter:blur(24px) saturate(1.5);backdrop-filter:blur(24px) saturate(1.5);box-shadow:0 0 0 1px var(--hp-ring),var(--hp-shadow);overflow:hidden;color:var(--ink);font-family:'Apfel Grotezk',sans-serif}
+[data-theme="dark"] .hdr-pop{--hp-bg:rgba(30,27,23,.96);--hp-ring:rgba(255,255,255,.07);--hp-hover:rgba(255,255,255,.045);--hp-act-bg:#282521;--hp-tile:rgba(255,255,255,.055);--hp-tile-on:rgba(212,88,58,.16);--hp-field:rgba(255,255,255,.06);--hp-bubble:rgba(255,255,255,.075);--hp-av:linear-gradient(160deg,#3d362f,#2a2520);
+  --hp-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 18px 44px -14px rgba(0,0,0,.62),0 44px 90px -36px rgba(0,0,0,.62);--hp-lift:inset 0 1px 0 rgba(255,255,255,.04),0 10px 24px -14px rgba(0,0,0,.62)}
+.hdr-pop.hp-msg{width:min(380px,calc(100vw - 24px))}
+@keyframes hdrPanelDrop{from{opacity:0;transform:translateY(-6px) scale(.98)}to{opacity:1;transform:none}}
+.hdr-panel-in{transform-origin:top right;animation:hdrPanelDrop .24s cubic-bezier(.2,.8,.2,1) both}
+@keyframes hpRowIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.hp-enter>*{animation:hpRowIn .34s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--i,0) * 26ms + 40ms)}
+.hp-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:20px 22px 10px}
+.hp-title{margin:0;font-family:'Clash Display',sans-serif;font-size:19px;font-weight:500;letter-spacing:-.01em;line-height:1.2;color:var(--ink)}
+.hp-tools{display:flex;align-items:center;min-height:30px}
+.hdr-pop .hp-tool{color:var(--ink3);border-radius:50%}
+.hdr-pop .hp-tool:hover{color:var(--ink)}
+.hp-list{max-height:min(520px,calc(100vh - 150px));overflow-y:auto;overscroll-behavior:contain;padding:4px 10px 12px;scrollbar-width:thin;scrollbar-color:var(--hp-ring) transparent}
+.hp-load{padding:18px 12px 24px}
+.hp-calm{display:flex;flex-direction:column;align-items:center;gap:12px;padding:30px 20px 40px;font-size:14px;color:var(--ink3);text-align:center}
+.hp-calm-ic{display:flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:50%;background:var(--hp-tile);color:var(--green)}
+/* A notification row: tile icon | title and one line | time (+ red dot). */
+.hdr-pop .notif-item{position:relative;margin:0 0 2px;border-radius:16px}
+.hdr-pop .notif-row{display:grid;grid-template-columns:40px minmax(0,1fr) auto;align-items:center;column-gap:14px;width:100%;height:auto;min-height:64px;padding:12px;border:none;border-radius:16px;background:transparent;box-shadow:none;text-align:left;white-space:normal;font-weight:400;line-height:1.3;color:var(--ink);transition:background-color .2s ease,box-shadow .2s ease,transform .22s cubic-bezier(.2,.8,.2,1)}
+.hdr-pop .notif-row:hover,.hdr-pop .notif-item:focus-within .notif-row{background:var(--hp-hover);box-shadow:var(--hp-lift);transform:translateY(-1px)}
+.hdr-pop .notif-row:active{transform:scale(.99);transition-duration:.06s}
+.hdr-pop .notif-row:focus-visible{box-shadow:0 0 0 2px var(--ember)}
+.nb-ic{display:flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:13px;background:var(--hp-tile);color:var(--ink3);transition:background-color .2s ease,color .2s ease}
+.notif-row.is-unread .nb-ic{background:var(--hp-tile-on);color:var(--ember)}
+.nb-tx{display:flex;flex-direction:column;gap:3px;min-width:0}
+.notif-row .nl{font-size:14.5px;font-weight:500;letter-spacing:-.005em;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.notif-row.is-unread .nl{font-weight:600;color:var(--ink)}
+.notif-row .nx{font-size:13px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.notif-row .nx.done{color:var(--green)}
+.nb-meta{display:flex;flex-direction:column;align-items:flex-end;gap:8px;align-self:start;padding-top:3px;transition:opacity .16s ease}
+.notif-row .nt{font-family:'Space Grotesk',sans-serif;font-size:12px;font-variant-numeric:tabular-nums;color:var(--ink3);white-space:nowrap}
+.notif-row .nd{display:block;width:7px;height:7px;border-radius:50%;background:var(--ink3)}
+.notif-row.is-urgent .nd{background:var(--red)}
+.notif-row.is-urgent .nd{box-shadow:0 0 0 3px var(--red-bg)}
+.notif-row.is-resolved .nb-ic,.notif-row.is-resolved .nb-tx{opacity:.5}
+/* The one action, over the time while the row is hovered or focused. */
+.notif-act{position:absolute;right:10px;top:50%;display:flex;align-items:center;gap:6px;padding-left:28px;background:linear-gradient(90deg,transparent,var(--hp-act-bg) 26px);opacity:0;pointer-events:none;transform:translateY(-50%);transition:opacity .16s ease}
+.notif-item.has-act:hover .notif-act,.notif-item.has-act:focus-within .notif-act{opacity:1;pointer-events:auto}
+.notif-item.has-act:hover .nb-meta,.notif-item.has-act:focus-within .nb-meta{opacity:0}
+.notif-item.has-act.is-open .notif-act,.notif-item.has-act.is-open:hover .notif-act{position:static;flex-direction:column;align-items:stretch;gap:12px;padding:4px 14px 14px 66px;background:none;opacity:1;pointer-events:auto;transform:none}
+.notif-item.has-act.is-open .nb-meta,.notif-item.has-act.is-open:hover .nb-meta{opacity:1}
+.nb-draft{max-height:180px;overflow:auto;padding:12px 14px;border-radius:12px;background:var(--hp-field);font-size:13.5px;line-height:1.55;color:var(--ink2);white-space:pre-wrap}
+.nb-draft-go{display:flex;align-items:center;gap:8px}
+@media (hover:none){
+  .notif-act{position:static;opacity:1;pointer-events:auto;transform:none;background:none;padding:0 12px 12px 66px}
+  .notif-item.has-act .nb-meta{opacity:1}
+}
+/* A conversation row: avatar | name and time / last message and count. */
+.hdr-pop .tm-row{display:grid;grid-template-columns:44px minmax(0,1fr);align-items:center;column-gap:14px;width:100%;height:auto;min-height:68px;margin:0 0 2px;padding:12px;border:none;border-radius:16px;background:transparent;box-shadow:none;text-align:left;white-space:normal;font-weight:400;line-height:1.3;color:var(--ink);transition:background-color .2s ease,box-shadow .2s ease,transform .22s cubic-bezier(.2,.8,.2,1)}
+.hdr-pop .tm-row:hover{background:var(--hp-hover);box-shadow:var(--hp-lift);transform:translateY(-1px)}
+.hdr-pop .tm-row:active{transform:scale(.99);transition-duration:.06s}
+.hdr-pop .tm-row:focus-visible{box-shadow:0 0 0 2px var(--ember)}
+.hp-av{display:flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:50%;background:var(--hp-av);color:var(--ink2);font-size:15px;font-weight:600;letter-spacing:.02em;flex-shrink:0}
+.hp-av.lg{width:64px;height:64px;font-size:21px}
+.tm-tx{display:flex;flex-direction:column;gap:4px;min-width:0}
+.tm-top,.tm-bot{display:flex;align-items:center;gap:10px;min-width:0}
+.tm-name{flex:1;min-width:0;font-size:14.5px;font-weight:500;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tm-row.is-unread .tm-name{font-weight:600;color:var(--ink)}
+.tm-time{flex-shrink:0;font-family:'Space Grotesk',sans-serif;font-size:12px;font-variant-numeric:tabular-nums;color:var(--ink3)}
+.tm-row.is-unread .tm-time{color:var(--ember)}
+.tm-last{flex:1;min-width:0;font-size:13px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tm-row.is-unread .tm-last{color:var(--ink2)}
+.tm-count{flex-shrink:0;min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:var(--ember);color:#fff;font-family:'Space Grotesk',sans-serif;font-size:11px;font-weight:700;line-height:20px;text-align:center}
+/* The thread: bubbles in runs, one time per run, one field. */
+.hp-thead{justify-content:flex-start;gap:6px;padding:14px 18px 8px 10px}
+.hp-tname{min-width:0;font-family:'Clash Display',sans-serif;font-size:17px;font-weight:500;letter-spacing:-.01em;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hp-thread{display:flex;flex-direction:column;gap:3px;height:min(360px,calc(100vh - 230px));overflow-y:auto;overscroll-behavior:contain;padding:8px 18px 6px;scrollbar-width:thin;scrollbar-color:var(--hp-ring) transparent}
+.hp-thread>:first-child{margin-top:auto}
+.tm-empty{display:flex;justify-content:center;padding:24px 0 36px}
+.tm-msg{display:flex;flex-direction:column;align-items:flex-start;max-width:78%;animation:hpRowIn .26s cubic-bezier(.2,.8,.2,1) both}
+.tm-msg.mine{align-self:flex-end;align-items:flex-end}
+.tm-msg.end{margin-bottom:12px}
+.tm-bub{padding:9px 14px;border-radius:18px;background:var(--hp-bubble);color:var(--ink);font-size:14px;line-height:1.42;white-space:pre-wrap;overflow-wrap:anywhere}
+.tm-msg.mine .tm-bub{background:var(--ember);color:#fff}
+.tm-msg.end .tm-bub{border-bottom-left-radius:6px}
+.tm-msg.mine.end .tm-bub{border-bottom-left-radius:18px;border-bottom-right-radius:6px}
+.tm-msg.sending{opacity:.55}
+.tm-at{margin-top:5px;padding:0 4px;font-family:'Space Grotesk',sans-serif;font-size:11px;color:var(--ink3)}
+.hp-compose{display:flex;align-items:center;gap:8px;padding:10px 14px 14px}
+#tm-compose-input{flex:1;min-width:0;height:42px;padding:0 16px;border:none;border-radius:999px;background:var(--hp-field);color:var(--ink);font-family:inherit;font-size:14px;outline:none;box-shadow:inset 0 0 0 1px transparent;transition:box-shadow .15s ease}
+#tm-compose-input:focus{box-shadow:inset 0 0 0 1px var(--ember)}
+#tm-compose-input::placeholder{color:var(--ink3)}
+.hdr-pop .hp-send{width:42px;height:42px;padding:0;border-radius:50%;flex-shrink:0}
+@media (prefers-reduced-motion:reduce){.hdr-panel-in,.hp-enter>*,.tm-msg{animation:none}.hdr-pop .notif-row,.hdr-pop .tm-row,.hdr-ico{transition:none}.hdr-pop .notif-row:hover,.hdr-pop .tm-row:hover{transform:none}}
 /* The user menu (density audit #39): What's new and Sign out, behind the name. */
 .hdr-user-btn{display:flex;align-items:center;gap:6px;position:relative;color:var(--ink3)}
 .hdr-user-btn .chev{opacity:.7}
@@ -205,31 +294,9 @@ html{background:var(--bg-base);min-height:100%}
 .user-menu .cbtn{width:100%;justify-content:flex-start}
 .user-menu .logout-form{display:block;width:100%}
 .user-menu .um-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ember);margin-left:6px;vertical-align:middle}
-.notif-row .nl{flex:1;min-width:0;font-size:12px;color:var(--ink);font-weight:500}
-.notif-row.is-unread .nl{font-weight:600}
-.notif-row .nt{font-size:11px;color:var(--ink3);white-space:nowrap;flex-shrink:0}
-/* The bell as an inbox (friction #23): the row wraps to a second line with
-   the review's words and the location; a handled row is greyed, not hidden;
-   one inline action sits under the row it acts on. */
-.notif-row{flex-wrap:wrap}
-.notif-row .nx{flex-basis:100%;padding-left:15px;font-size:11.5px;color:var(--ink2);line-height:1.45;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
-.notif-row .nloc{color:var(--ink3);font-weight:600}
-.notif-row.is-resolved{background:transparent}
-.notif-row.is-resolved .nl,.notif-row.is-resolved .nx{color:var(--ink3);font-weight:500}
-.notif-row.is-resolved .nd{background:var(--paper3)}
-.notif-act{display:flex;gap:6px;padding:0 14px 9px 29px;border-bottom:1px solid var(--paper3)}
-.notif-row.has-act{border-bottom:none}
-/* What an in-place Undo / Approve / Deny did (web desk #4) */
-.notif-done{font-size:12px;font-weight:600;color:var(--green);align-self:center}
-.notif-foot{display:flex;justify-content:flex-end;padding:6px 10px}
 /* The engagement nudge in the alerts modal */
 .al-nudge{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--paper3);border-left:3px solid var(--ember);border-radius:8px;font-size:13px;color:var(--ink2);line-height:1.5}
 .al-nudge span{flex:1;min-width:200px}
-/* Bell: day headings and the needs-you filter */
-.notif-day{padding:8px 14px 4px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)}
-.notif-filter{display:flex;gap:4px;padding:8px 10px;border-bottom:1px solid var(--paper3)}
-.notif-filter-btn{flex:1;padding:5px 8px;border:1px solid var(--paper3);border-radius:6px;font-size:11px;font-weight:600;color:var(--ink3);background:transparent;cursor:pointer}
-.notif-filter-btn.is-on{color:var(--ember);border-color:var(--ember)}
 /* Toast notifications */
 [data-theme="dark"] .toast{background:#2a2520!important;color:var(--ink)!important;box-shadow:0 8px 28px rgba(0,0,0,.5)!important}
 [data-theme="dark"] .toast.toast-success{background:#0c2318!important;color:#6fcf97!important;border-left-color:#2d6a4f!important}
@@ -278,9 +345,7 @@ html{background:var(--bg-base);min-height:100%}
 [data-theme="dark"] label[style*="background:#c84b2f"]{background:#923020!important}
 [data-theme="dark"] .hm-days-btn[style*="background:var(--ember)"]{background:#923020!important;border-color:#923020!important}
 /* Popovers — all built with inline background:white */
-[data-theme="dark"] #notif-panel,
 [data-theme="dark"] #changelog-panel,
-[data-theme="dark"] #team-msg-panel,
 [data-theme="dark"] #tmpl-picker,
 [data-theme="dark"] #loc-switcher-panel{background:var(--surface)!important;border-color:var(--paper3)!important}
 /* Location switcher rows (density fix #19): a status dot, then the name,
@@ -291,7 +356,6 @@ html{background:var(--bg-base);min-height:100%}
 #loc-switcher-panel .ls-d.important{background:var(--amber)}#loc-switcher-panel .ls-d.critical{background:var(--red)}
 #loc-switcher-panel .ls-m{display:block;margin:2px 0 0 15px;font-size:11.5px;font-weight:400;color:var(--ink3)}
 #loc-switcher-panel .ls-m:empty{display:none}
-[data-theme="dark"] #notif-panel *[style*="background:white"],
 [data-theme="dark"] #changelog-panel *[style*="background:white"]{background:var(--surface)!important}
 /* Review card components */
 [data-theme="dark"] .cat{background:var(--paper3)!important;color:var(--ink3)!important}
@@ -603,10 +667,8 @@ html:not([data-theme="dark"]) .empty-state-sm.on-dark .es-sub{color:var(--ink3)}
 @keyframes cmBadgeRing{0%{transform:scale(1);opacity:.85}100%{transform:scale(4.5);opacity:0}}
 #notif-badge.cm-pop{animation:cmBadgePop .35s cubic-bezier(.2,.9,.3,1)}
 #notif-badge.cm-pop::after{content:'';position:absolute;inset:-1.5px;border-radius:50%;border:1px solid var(--ember);animation:cmBadgeRing .9s ease-out .1s forwards}
-/* Header popovers (alerts, team messages, what's new) — drop in from the
-   button that opened them instead of just appearing */
-@keyframes hdrPanelDrop{from{opacity:0;transform:translateY(-10px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
-.hdr-panel-in{transform-origin:top right;animation:hdrPanelDrop .2s cubic-bezier(.2,.9,.3,1) forwards}
+/* Header popovers drop in from the icon that opened them: .hdr-panel-in,
+   with the Notifications / Messages shell (.hdr-pop) near the top. */
 /* 14 Cold Hearth — gray seal, cold coal; the CTA is what lights it */
 svg.cm-hearth{width:56px;height:56px;overflow:visible}
 .cm-hearth .cm-hring{stroke:var(--ink3);stroke-opacity:.35;fill:none}
@@ -1635,47 +1697,49 @@ function loadFailed(el, d){
     </div>
     <a href="https://status.cavnar.ai" target="_blank" id="status-indicator" style="display:none"></a>
     <button type="button" class="cbtn cbtn-text cbtn-sm hdr-cmdk" id="hdr-cmdk" onclick="cavPalette.open()" title="Go to, find or do anything" aria-label="Go to, find or do anything (Command K)">⌘K</button>
-    <!-- Notification bell -->
-    <div style="position:relative" id="notif-wrap">
-      <button id="notif-btn" onclick="toggleNotifPanel()" title="Alerts" style="background:none;border:none;cursor:pointer;padding:4px;display:flex;align-items:center;position:relative;color:var(--ink3)">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Notifications and Messages (owner, 9/26/26): two quiet popovers in
+         one shell (.hdr-pop). A row is what decides the click - an icon, a
+         title, one short line, the time - and nothing else; its one action
+         shows on hover. Spacing, not rules; no close button (Escape, a click
+         outside or the icon again). DESIGN_SYSTEM.md -> Header popovers. -->
+    <div class="hdr-pop-wrap" id="notif-wrap">
+      <button type="button" id="notif-btn" class="hdr-ico" onclick="toggleNotifPanel()" title="Notifications" aria-label="Notifications" aria-haspopup="dialog" aria-controls="notif-panel" aria-expanded="false">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
           <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
         </svg>
         <span id="notif-badge" style="display:none" aria-live="polite"></span>
       </button>
-      <div id="notif-panel" style="display:none;position:absolute;right:0;top:calc(100% + 8px);width:280px;background:white;border:1px solid var(--paper3);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:999;overflow:hidden">
-        <div style="padding:10px 14px;border-bottom:1px solid var(--paper3);display:flex;align-items:center;justify-content:space-between"><span style="font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)">Recent alerts</span><button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" aria-label="Close" onclick="document.getElementById('notif-panel').style.display='none'">✕</button></div>
-        <div id="notif-list" style="max-height:360px;overflow-y:auto;padding:4px 0">
-          <div style="padding:14px"><div class="dr-pulse wide" role="status" aria-label="Loading alerts"><i></i></div></div>
+      <div id="notif-panel" class="hdr-pop" role="dialog" aria-label="Notifications" style="display:none">
+        <div class="hp-head"><h2 class="hp-title">Notifications</h2><span class="hp-tools" id="notif-tools"></span></div>
+        <div id="notif-list" class="hp-list">
+          <div class="hp-load"><div class="dr-pulse wide" role="status" aria-label="Loading notifications"><i></i></div></div>
         </div>
       </div>
     </div>
-    <!-- Team messages -->
-    <div style="position:relative" id="team-msg-wrap">
-      <button id="team-msg-btn" onclick="toggleTeamMsgPanel()" title="Team messages" style="background:none;border:none;cursor:pointer;padding:4px;display:flex;align-items:center;position:relative;color:var(--ink3)">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <div class="hdr-pop-wrap" id="team-msg-wrap">
+      <button type="button" id="team-msg-btn" class="hdr-ico" onclick="toggleTeamMsgPanel()" title="Messages" aria-label="Messages" aria-haspopup="dialog" aria-controls="team-msg-panel" aria-expanded="false">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
         </svg>
-        <span id="team-msg-badge" style="display:none;position:absolute;top:2px;right:2px;width:7px;height:7px;border-radius:50%;background:#c84b2f;border:1.5px solid #e8956a"></span>
+        <span id="team-msg-badge" class="hdr-dot" style="display:none"></span>
       </button>
-      <div id="team-msg-panel" style="display:none;position:absolute;right:0;top:calc(100% + 8px);width:320px;background:white;border:1px solid var(--paper3);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:999;overflow:hidden">
+      <div id="team-msg-panel" class="hdr-pop hp-msg" role="dialog" aria-label="Messages" style="display:none">
         <div id="tm-inbox-view">
-          <div style="padding:10px 14px;border-bottom:1px solid var(--paper3);display:flex;align-items:center;justify-content:space-between"><span style="font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)">Team messages</span><button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" aria-label="Close" onclick="document.getElementById('team-msg-panel').style.display='none'">✕</button></div>
-          <div id="tm-inbox-list" style="max-height:320px;overflow-y:auto;padding:4px 0">
-            <div style="padding:14px"><div class="dr-pulse wide" role="status" aria-label="Loading messages"><i></i></div></div>
+          <div class="hp-head"><h2 class="hp-title">Messages</h2></div>
+          <div id="tm-inbox-list" class="hp-list">
+            <div class="hp-load"><div class="dr-pulse wide" role="status" aria-label="Loading messages"><i></i></div></div>
           </div>
         </div>
         <div id="tm-thread-view" style="display:none">
-          <div style="padding:10px 14px;border-bottom:1px solid var(--paper3);display:flex;align-items:center;gap:8px">
-            <button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" aria-label="Back" onclick="tmBackToInbox()">←</button>
-            <span id="tm-thread-name" style="font-size:13px;font-weight:700;color:var(--ink);flex:1"></span>
-            <button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" aria-label="Close" onclick="document.getElementById('team-msg-panel').style.display='none'">✕</button>
+          <div class="hp-head hp-thead">
+            <button type="button" class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm hp-back" aria-label="Back to messages" onclick="tmBackToInbox()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg></button>
+            <span id="tm-thread-name" class="hp-tname"></span>
           </div>
-          <div id="tm-thread-body" style="max-height:280px;overflow-y:auto;padding:10px 14px;display:flex;flex-direction:column;gap:8px"></div>
-          <div style="display:flex;gap:6px;padding:10px 12px;border-top:1px solid var(--paper3)">
-            <input id="tm-compose-input" type="text" placeholder="Message…" style="flex:1;font-size:13px;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;background:var(--surface);color:var(--ink);font-family:inherit" onkeydown="if(event.key==='Enter')tmSendMessage()">
-            <button class="cbtn cbtn-primary cbtn-sm" onclick="tmSendMessage()">Send</button>
+          <div id="tm-thread-body" class="hp-thread"></div>
+          <div class="hp-compose">
+            <input id="tm-compose-input" type="text" placeholder="Message" autocomplete="off" aria-label="Message" onkeydown="if(event.key==='Enter')tmSendMessage()">
+            <button type="button" class="cbtn cbtn-primary cbtn-icon hp-send" aria-label="Send" onclick="tmSendMessage()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></button>
           </div>
         </div>
       </div>
@@ -2087,7 +2151,7 @@ document.addEventListener('keydown', function (e) {
   if (ask && ask.style.display === 'flex' && typeof toggleAskCavnar === 'function') { toggleAskCavnar(); e.preventDefault(); return; }
   for (var i = 0; i < CAV_POPOVERS.length; i++) {
     var pop = document.getElementById(CAV_POPOVERS[i]);
-    if (pop && pop.style.display && pop.style.display !== 'none') { pop.style.display = 'none'; e.preventDefault(); return; }
+    if (pop && pop.style.display && pop.style.display !== 'none') { pop.style.display = 'none'; if (window._hdrPopExpanded) window._hdrPopExpanded(pop.id, false); e.preventDefault(); return; }
   }
 });
 
@@ -25731,23 +25795,29 @@ document.addEventListener('click', function(e) {
 (function(){
   var _items      = [];
   var _busy       = false;
-  // Opens on "Needs you" whenever something unresolved is urgent (friction
-  // #23); the owner's own pick holds for the rest of the page's life.
-  var _urgentOnly = false, _filterPicked = false;
+  // The rows animate in once per open, never on a re-render after an action.
+  var _animate    = false;
   // A multi-location login's bell covers every location (friction #24).
   var _scope      = '{{ 'group' if group_locations and group_locations|length > 1 else '' }}';
   var _here       = {{ restaurant.id|int }};
 
-  function timeAgo(iso) {
+  // "now", "5m", "2h", "3d", then M/D/YY - one quiet time for both
+  // popovers. A bare "YYYY-MM-DD HH:MM:SS" is UTC (SQLite datetime('now')):
+  // read as local, a team message said "just now" for five hours.
+  window.hpAgo = function(iso) {
     if (!iso) return '';
-    var t = Date.parse(String(iso).replace(' ', 'T') + 'Z');
-    if (isNaN(t)) return iso;
+    var s = String(iso).replace(' ', 'T');
+    if (!/(Z|[+\-]\d\d:?\d\d)$/.test(s)) s += 'Z';
+    var t = Date.parse(s);
+    if (isNaN(t)) return '';
     var diff = Math.floor((Date.now() - t) / 1000);
-    if (diff < 60)   return 'just now';
-    if (diff < 3600) return Math.floor(diff/60) + 'm ago';
-    if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
-    return Math.floor(diff/86400) + 'd ago';
-  }
+    if (diff < 60) return 'now';
+    if (diff < 3600) return Math.floor(diff / 60) + 'm';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h';
+    if (diff < 604800) return Math.floor(diff / 86400) + 'd';
+    var d = new Date(t);
+    return (d.getMonth() + 1) + '/' + d.getDate() + '/' + String(d.getFullYear()).slice(-2);
+  };
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){
@@ -25755,83 +25825,87 @@ document.addEventListener('click', function(e) {
     });
   }
 
-  // "Today" / "Yesterday" / "Tuesday" / "12 Sep" — the heading a row groups
-  // under. Twenty rows in one flat list reads as an audit log; the same rows
-  // under a day heading read as what happened when.
-  function dayGroup(iso) {
-    var t = Date.parse(String(iso).replace(' ', 'T') + 'Z');
-    if (isNaN(t)) return 'Earlier';
-    var d = new Date(t), now = new Date();
-    var startOf = function(x){ return new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime(); };
-    var days = Math.round((startOf(now) - startOf(d)) / 86400000);
-    if (days <= 0) return 'Today';
-    if (days === 1) return 'Yesterday';
-    if (days < 7) return ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][d.getDay()];
-    // M/D/YY, the product's one date format (re-audit F1-15; "12 Sep" before).
-    return (d.getMonth() + 1) + '/' + d.getDate() + '/' + String(d.getFullYear()).slice(-2);
+  // One line icon per kind of alert, in the row's tile.
+  var NB_ICON = {
+    review: '<path d="M12 3.6l2.55 5.2 5.75.85-4.15 4.05.98 5.7L12 16.7l-5.13 2.7.98-5.7L3.7 9.65l5.75-.85z"/>',
+    labor: '<circle cx="12" cy="12" r="8.5"/><polyline points="12 7.5 12 12 15 13.8"/>',
+    inventory: '<path d="M20.5 7.6 12 3.2 3.5 7.6v8.8L12 20.8l8.5-4.4z"/><polyline points="3.5 7.6 12 12 20.5 7.6"/><line x1="12" y1="12" x2="12" y2="20.8"/>',
+    marketing: '<path d="M4 10v4a1 1 0 0 0 1 1h2l5 4V5L7 9H5a1 1 0 0 0-1 1z"/><path d="M16 8.6a5 5 0 0 1 0 6.8"/>',
+    intel: '<circle cx="12" cy="12" r="8.5"/><polygon points="15.4 8.6 13.4 13.4 8.6 15.4 10.6 10.6"/>',
+    ai: '<path d="M11 3.5l1.9 5.1 5.1 1.9-5.1 1.9L11 17.5l-1.9-5.1L4 10.5l5.1-1.9z"/><path d="M18.5 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/>',
+    lock: '<rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/>',
+    data: '<ellipse cx="12" cy="6" rx="7" ry="2.7"/><path d="M5 6v12c0 1.5 3.1 2.7 7 2.7s7-1.2 7-2.7V6"/><path d="M5 12c0 1.5 3.1 2.7 7 2.7s7-1.2 7-2.7"/>',
+    flag: '<path d="M5.5 21V4"/><path d="M5.5 4.5h11l-2 4 2 4h-11"/>',
+    bell: '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>'
+  };
+  var NB_TYPE_ICON = {login:'lock', staff_signin:'lock', connection_lost:'data', data_source_down:'data', data_source_restored:'data',
+    issue:'flag', issue_escalated:'flag', morning_brief:'ai', daily_briefing:'ai', intraday_pulse:'ai', closing_summary:'ai', dsr:'ai',
+    weekly_review:'ai', monthly_review:'ai', while_away:'ai', outcome_achieved:'ai', milestone:'ai', demand_opportunity:'ai'};
+  var NB_MOD_ICON = {reviews:'review', labor:'labor', inventory:'inventory', marketing:'marketing', intel:'intel', competitor:'intel', ask:'ai'};
+  var NB_CHECKS = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="2 12.5 6.5 17 15 8"/><polyline points="10.5 16.2 11.3 17 19.8 8"/></svg>';
+  function _icon(n) {
+    var k = NB_TYPE_ICON[n.type] || NB_MOD_ICON[n.module] || 'bell';
+    return '<span class="nb-ic" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">' + NB_ICON[k] + '</svg></span>';
+  }
+  // The one short line under the title: what an action just did, else the
+  // review's own words, else the location on a group bell - twelve words at
+  // most. A row with none of them is its title alone.
+  function _line(n) {
+    if (n._done) return n._done;
+    var t = String(n.snippet || n.location || '').replace(/^\s+|\s+$/g, '');
+    var w = t ? t.split(/\s+/) : [];
+    return w.length > 12 ? w.slice(0, 12).join(' ') + '…' : t;
+  }
+  // A calm state: one short phrase, a check only when it is good news.
+  function _calm(text, ok) {
+    return '<div class="hp-calm">' + (ok ? '<span class="hp-calm-ic">' + NB_CHECKS + '</span>' : '') + '<span>' + esc(text) + '</span></div>';
+  }
+  function _enter(list) {
+    if (!_animate) return;
+    _animate = false;
+    list.classList.remove('hp-enter'); void list.offsetWidth; list.classList.add('hp-enter');
+    setTimeout(function() { list.classList.remove('hp-enter'); }, 900);
   }
 
+  // A row is an icon, a title, one short line and the time (owner, 9/26/26);
+  // a red dot when it still needs someone. What needs someone leads, the
+  // rest follow newest first - no filter, no summary, no day headings. A
+  // handled row is dimmed, not hidden. The row's one action (the drafted
+  // reply, Undo, Approve / Deny) shows on hover or focus.
   function renderList() {
-    var list = document.getElementById('notif-list');
+    var list = document.getElementById('notif-list'), tools = document.getElementById('notif-tools');
     if (!list) return;
-    if (!_items.length) {
-      list.innerHTML = '<div style="padding:12px 14px;font-size:12px;color:var(--ink3)">No alerts yet.</div>';
-      return;
-    }
-    var shown = [], i;
-    for (i = 0; i < _items.length; i++) {
-      if (!_urgentOnly || (_items[i].urgent && !_items[i].resolved)) shown.push(_items[i]);
-    }
-    var filterBar = '';
-    var anyUrgent = false;
-    for (i = 0; i < _items.length; i++) { if (_items[i].urgent) { anyUrgent = true; break; } }
-    if (anyUrgent) {
-      // A busy week is mostly things already dealt with; the two or three
-      // that still need someone are what the bell was opened for.
-      filterBar = '<div class="notif-filter">'
-        + '<button type="button" class="cbtn cbtn-text notif-filter-btn' + (_urgentOnly ? '' : ' is-on') + '" data-filter="all">Everything</button>'
-        + '<button type="button" class="cbtn cbtn-text notif-filter-btn' + (_urgentOnly ? ' is-on' : '') + '" data-filter="urgent">Needs you</button>'
-        + '</div>';
-    }
-    filterBar = summaryLine() + filterBar;
-    var foot = _unreadCount() ? '<div class="notif-foot"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-notif-readall="1">Mark all read</button></div>' : '';
-    if (!shown.length) {
-      list.innerHTML = filterBar + '<div style="padding:12px 14px;font-size:12px;color:var(--ink3)">Nothing needs you right now.</div>' + foot;
-      return;
-    }
-    var html = filterBar, lastDay = null;
-    for (i = 0; i < shown.length; i++) {
-      var n = shown[i];
-      var day = dayGroup(n.fired_at);
-      if (day !== lastDay) {
-        html += '<div class="notif-day">' + esc(day) + '</div>';
-        lastDay = day;
-      }
-      // An ember dot marks P0/P1 — the things that are only worth anything
-      // while they can still be acted on. A row already handled (its review
-      // answered) is greyed rather than dropped; the review's own words and
-      // the location sit under the label (friction #23, #24).
+    if (tools) tools.innerHTML = _unreadCount() ? '<button type="button" class="cbtn cbtn-text cbtn-icon cbtn-sm hp-tool" data-notif-readall="1" aria-label="Mark all read" title="Mark all read">' + NB_CHECKS + '</button>' : '';
+    if (!_items.length) { list.innerHTML = _calm('All caught up', true); return; }
+    var rows = [], rest = [], i;
+    for (i = 0; i < _items.length; i++) (_items[i].urgent && !_items[i].resolved ? rows : rest).push(_items[i]);
+    rows = rows.concat(rest);
+    var html = '';
+    for (i = 0; i < rows.length; i++) {
+      var n = rows[i], k = esc(_rowKey(n));
+      // One inline action: a drafted reply is read here in full and
+      // posted from the row - an outward send, so the text it sends is
+      // on screen before the button that sends it (DS §10).
       var act = (n.can_approve && !n.resolved && n.draft);
       // Undo a queued send, Approve / Deny a staff request (web desk #4):
       // only where the server says this login may (can_undo / can_decide).
       var act2 = _rowActs(n);
-      var mods = (n.unread ? ' is-unread' : '') + (n.urgent && !n.resolved ? ' is-urgent' : '') + (n.resolved ? ' is-resolved' : '') + (act || act2 ? ' has-act' : '');
-      var sub = (n.location ? '<span class="nloc">' + esc(n.location) + '</span>' + (n.snippet ? ' · ' : '') : '')
-              + (n.snippet ? '“' + esc(n.snippet) + '”' : '') + (n.resolved ? (n.snippet || n.location ? ' · ' : '') + (n.resolves_on_open ? 'seen' : 'handled') : '');
-      html += '<div class="notif-item"><button type="button" class="cbtn cbtn-text notif-row' + mods + '" data-id="' + esc(_rowKey(n)) + '">'
-            + '<i class="nd"></i>'
-            + '<span class="nl">' + esc(n.label) + '</span>'
-            + '<span class="nt">' + esc(timeAgo(n.fired_at)) + '</span>'
-            + (sub ? '<span class="nx">' + sub + '</span>' : '')
+      var open = n.urgent && !n.resolved;
+      var mods = (n.unread ? ' is-unread' : '') + (open ? ' is-urgent' : '') + (n.resolved ? ' is-resolved' : '') + (act || act2 ? ' has-act' : '');
+      var line = _line(n);
+      html += '<div class="notif-item' + (act || act2 ? ' has-act' : '') + '" style="--i:' + Math.min(i, 10) + '">'
+            + '<button type="button" class="cbtn cbtn-text notif-row' + mods + '" data-id="' + k + '">'
+            + _icon(n)
+            + '<span class="nb-tx"><span class="nl">' + esc(n.label) + '</span>'
+            + (line ? '<span class="nx' + (n._done ? ' done' : '') + '">' + esc(line) + '</span>' : '') + '</span>'
+            + '<span class="nb-meta"><span class="nt">' + esc(hpAgo(n.fired_at)) + '</span>' + (open ? '<i class="nd"></i>' : '') + '</span>'
             + '</button>'
-            // One inline action: a drafted reply is read here in full and
-            // posted from the row — an outward send, so the text it sends is
-            // on screen before the button that sends it (DS §10).
-            + (act ? '<div class="notif-act" data-act-for="' + esc(_rowKey(n)) + '"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-notif-preview="' + esc(_rowKey(n)) + '">Read the reply</button></div>' : '')
-            + (!act && act2 ? '<div class="notif-act" data-act-for="' + esc(_rowKey(n)) + '">' + act2 + '</div>' : '')
+            + (act ? '<div class="notif-act" data-act-for="' + k + '"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-notif-preview="' + k + '">Read the reply</button></div>' : '')
+            + (!act && act2 ? '<div class="notif-act" data-act-for="' + k + '">' + act2 + '</div>' : '')
             + '</div>';
     }
-    list.innerHTML = html + foot;
+    list.innerHTML = html;
+    _enter(list);
   }
   function _rowKey(n) { return n.id != null ? 'a' + n.id : (n.type + '|' + n.fired_at); }
   function _find(key) { for (var i = 0; i < _items.length; i++) { if (_rowKey(_items[i]) === key) return _items[i]; } return null; }
@@ -25840,9 +25914,9 @@ document.addEventListener('click', function(e) {
   function showPreview(key) {
     var n = _find(key), box = document.querySelector('[data-act-for="' + key + '"]');
     if (!n || !box) return;
-    box.style.flexDirection = 'column';
-    box.innerHTML = '<div style="font-size:12px;color:var(--ink);line-height:1.5;white-space:pre-wrap">' + esc(n.draft) + '</div>'
-      + '<div style="display:flex;gap:6px"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-notif-approve="' + esc(key) + '">Post this reply</button>'
+    if (box.parentNode) box.parentNode.className += ' is-open';
+    box.innerHTML = '<div class="nb-draft">' + esc(n.draft) + '</div>'
+      + '<div class="nb-draft-go"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-notif-approve="' + esc(key) + '">Post this reply</button>'
       + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-notif-edit="' + esc(key) + '">Edit it first</button></div>';
   }
   function approveRow(key, btn) {
@@ -25870,7 +25944,7 @@ document.addEventListener('click', function(e) {
   // each asks first; the row then says what happened, in place.
   function _rowActs(n) {
     var k = esc(_rowKey(n));
-    if (n._done) return '<span class="notif-done">' + esc(n._done) + '</span>';
+    if (n._done) return '';   // what it did is the row's line now
     if (n.can_undo && n.delayed_action_id) {
       return '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-notif-undo="' + k + '">Undo</button>';
     }
@@ -26003,7 +26077,7 @@ document.addEventListener('click', function(e) {
       el.className = '';
       el.textContent = '';
       el.style.display = 'none';
-      if (btn) btn.title = 'Alerts';
+      if (btn) btn.title = 'Notifications';
     }
   }
 
@@ -26011,27 +26085,6 @@ document.addEventListener('click', function(e) {
     fetch('/api/notifications/unread-count' + (_scope ? '?scope=' + _scope : '')).then(apiJson).then(function(d){
       setBadge((d && d.count) || 0, (d && d.urgent != null) ? +d.urgent : null);
     }).catch(function(){});
-  }
-
-  // One deterministic line over the list (density audit #39): "3 need you:
-  // 2 replies ready, 1 health mention", counted from the rows themselves -
-  // never a model sentence.
-  function summaryLine() {
-    var open = [], i, ready = 0, health = 0;
-    for (i = 0; i < _items.length; i++) if (_items[i].urgent && !_items[i].resolved) open.push(_items[i]);
-    if (!open.length) {
-      var un = _unreadCount();
-      return '<div class="notif-sum calm"><b>Nothing needs you</b>' + (un ? ' \u00b7 ' + un + ' unread' : '') + '</div>';
-    }
-    for (i = 0; i < open.length; i++) {
-      if (open[i].can_approve && open[i].draft) ready++;
-      else if (open[i].type === 'health') health++;
-    }
-    var other = open.length - ready - health, bits = [];
-    if (ready) bits.push(ready + (ready === 1 ? ' reply' : ' replies') + ' ready to post');
-    if (health) bits.push(health + ' health mention' + (health === 1 ? '' : 's'));
-    if (other) bits.push(other + (bits.length ? ' other alert' : ' urgent alert') + (other === 1 ? '' : 's'));
-    return '<div class="notif-sum"><b>' + open.length + ' need' + (open.length === 1 ? 's' : '') + ' you</b>: ' + esc(bits.join(', ')) + '</div>';
   }
 
   // No _loaded latch: the list used to be fetched once per page load and then
@@ -26045,28 +26098,17 @@ document.addEventListener('click', function(e) {
     fetch('/api/notifications?mark=0' + (_scope ? '&scope=' + _scope : '')).then(apiJson).then(function(d){
       _busy = false;
       _items = (d && d.notifications) || [];
-      if (!_filterPicked) {
-        _urgentOnly = false;
-        for (var i = 0; i < _items.length; i++) { if (_items[i].urgent && !_items[i].resolved) { _urgentOnly = true; break; } }
-      }
       renderList();
       setBadge(_unreadCount(), _urgentOpen());
     }).catch(function(){
       _busy = false;
       var list = document.getElementById('notif-list');
-      if (list) list.innerHTML = '<div style="padding:12px 14px;font-size:12px;color:var(--ink3)">Could not load alerts.</div>';
+      if (list && !_items.length) list.innerHTML = _calm('Couldn\u2019t load notifications');
     });
   }
 
   document.addEventListener('click', function(e) {
     if (!e.target || !e.target.closest) return;
-    var filter = e.target.closest('.notif-filter-btn');
-    if (filter) {
-      _urgentOnly = filter.getAttribute('data-filter') === 'urgent';
-      _filterPicked = true;
-      renderList();
-      return;
-    }
     var pv = e.target.closest('[data-notif-preview],[data-notif-approve],[data-notif-edit],[data-notif-readall],[data-notif-undo],[data-notif-decide]');
     if (pv) {
       if (pv.hasAttribute('data-notif-undo')) undoRow(pv.getAttribute('data-notif-undo'), pv);
@@ -26095,22 +26137,33 @@ document.addEventListener('click', function(e) {
     var wrap = document.getElementById('notif-wrap');
     if (wrap && !wrap.contains(e.target)) {
       var panel = document.getElementById('notif-panel');
-      if (panel) panel.style.display = 'none';
+      if (panel && panel.style.display !== 'none') { panel.style.display = 'none'; window._hdrPopExpanded('notif-panel', false); }
     }
   });
 
+  // The icon that opens a popover says whether it is open (aria-expanded,
+  // and the icon's lit state reads it).
+  window._hdrPopExpanded = function(id, on) {
+    var b = document.querySelector('[aria-controls="' + id + '"]');
+    if (b) b.setAttribute('aria-expanded', on ? 'true' : 'false');
+  };
   window._openHdrPanel = function(panel) {
     panel.style.display = 'block';
     panel.classList.remove('hdr-panel-in');
     void panel.offsetWidth;
     panel.classList.add('hdr-panel-in');
+    window._hdrPopExpanded(panel.id, true);
   };
 
   window.toggleNotifPanel = function() {
     var panel = document.getElementById('notif-panel');
     var open  = panel.style.display !== 'none';
-    if (open) { panel.style.display = 'none'; return; }
+    if (open) { panel.style.display = 'none'; window._hdrPopExpanded('notif-panel', false); return; }
     window._openHdrPanel(panel);
+    // What this page already read draws at once; the fresh read replaces it
+    // in place, so the rows animate in once, not twice.
+    _animate = true;
+    if (_items.length) renderList();
     loadNotifications();
   };
 
@@ -26135,20 +26188,21 @@ document.addEventListener('click', function(e) {
 })();
 
 // ── Team messages (manager DMs) ─────────────────────────────────────────────
+// A conversation is an avatar, a name, the last message, its time and the
+// unread count - nothing more (owner, 9/26/26). The thread is bubbles, a
+// time under each run and one field; a send lands in place, never behind a
+// reload of the whole thread.
 (function() {
   var _tmLoaded = false;
   var _tmOpenWith = null;   // {id, username} of the thread currently shown
+  var _tmAnimate = false;
 
-  function _tmAgo(iso) {
-    if (!iso) return '';
-    var t = Date.parse(String(iso).replace(' ', 'T'));
-    if (isNaN(t)) return iso;
-    var m = Math.round((Date.now() - t) / 60000);
-    if (m < 1) return 'just now';
-    if (m < 60) return m + 'm ago';
-    var h = Math.round(m / 60);
-    if (h < 24) return h + 'h ago';
-    return Math.round(h / 24) + 'd ago';
+  function _tmAgo(iso) { return window.hpAgo ? window.hpAgo(iso) : ''; }
+  // Up to two initials; the avatar is a quiet disc, the same for everyone.
+  function _tmInitials(name) {
+    var w = String(name || '').replace(/[^A-Za-z0-9 ]+/g, ' ').replace(/^\s+|\s+$/g, '').split(/\s+/);
+    var t = (w[0] || '?').charAt(0) + (w.length > 1 ? w[w.length - 1].charAt(0) : '');
+    return t.toUpperCase();
   }
 
   function tmSetBadge(n) {
@@ -26156,42 +26210,46 @@ document.addEventListener('click', function(e) {
     if (b) b.style.display = n > 0 ? 'block' : 'none';
   }
 
+  function _tmCalm(text) { return '<div class="hp-calm"><span>' + _escHtml(text) + '</span></div>'; }
+
   function tmRenderInbox(teammates) {
     var list = document.getElementById('tm-inbox-list');
     if (!teammates.length) {
-      list.innerHTML = '<div style="padding:12px 14px;font-size:12px;color:var(--ink3)">No other logins on this team yet — invite one from Account.</div>';
+      list.innerHTML = '<div class="hp-calm"><span>No teammates yet</span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="document.getElementById(\'team-msg-panel\').style.display=\'none\';window._hdrPopExpanded(\'team-msg-panel\',false);if(window.cavNav)cavNav(\'account/people\')">Invite one</button></div>';
       return;
     }
     var html = '';
     for (var i = 0; i < teammates.length; i++) {
-      var t = teammates[i];
-      var preview = t.last_message ? (t.last_from_me ? 'You: ' : '') + t.last_message : 'Say hello';
-      if (preview.length > 46) preview = preview.slice(0, 46) + '…';
-      html += '<div data-tm-open="' + t.user_id + '" data-tm-name="' + _escAttr(t.username) + '" '
-           + 'style="display:flex;align-items:center;gap:10px;padding:9px 14px;cursor:pointer" '
-           + 'onmouseover="this.style.background=\'var(--paper2)\'" onmouseout="this.style.background=\'\'">'
-           + '<div style="flex:1;min-width:0">'
-           + '<div style="font-size:13px;font-weight:600;color:var(--ink)">' + _escHtml(t.username) + '</div>'
-           + '<div style="font-size:12px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(preview) + '</div>'
-           + '</div>'
-           + (t.unread ? '<span style="flex-shrink:0;min-width:16px;height:16px;border-radius:8px;background:#c84b2f;color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 4px">' + t.unread + '</span>' : '')
-           + '</div>';
+      var t = teammates[i], un = +t.unread || 0;
+      var last = t.last_message ? (t.last_from_me ? 'You: ' : '') + t.last_message : '';
+      html += '<button type="button" class="cbtn cbtn-text tm-row' + (un ? ' is-unread' : '') + (last ? '' : ' is-new') + '" style="--i:' + Math.min(i, 10) + '" data-tm-open="' + t.user_id + '" data-tm-name="' + _escAttr(t.username) + '">'
+           + '<span class="hp-av" aria-hidden="true">' + _escHtml(_tmInitials(t.username)) + '</span>'
+           + '<span class="tm-tx"><span class="tm-top"><span class="tm-name">' + _escHtml(t.username) + '</span>'
+           + (t.last_at ? '<span class="tm-time">' + _escHtml(_tmAgo(t.last_at)) + '</span>' : '') + '</span>'
+           + (last ? '<span class="tm-bot"><span class="tm-last">' + _escHtml(last) + '</span>'
+             + (un ? '<span class="tm-count" aria-label="' + un + ' unread">' + (un > 9 ? '9+' : un) + '</span>' : '') + '</span>' : '')
+           + '</span></button>';
     }
     list.innerHTML = html;
+    if (_tmAnimate) {
+      _tmAnimate = false;
+      list.classList.remove('hp-enter'); void list.offsetWidth; list.classList.add('hp-enter');
+      setTimeout(function() { list.classList.remove('hp-enter'); }, 900);
+    }
   }
 
   function tmLoadInbox() {
     fetch('/api/team/inbox').then(apiJson).then(function(d) {
       _tmLoaded = true;
       if (!d.ok) {
-        document.getElementById('tm-inbox-list').innerHTML = '<div style="padding:12px 14px;font-size:12px;color:var(--ink3)">Could not load messages.</div>';
+        document.getElementById('tm-inbox-list').innerHTML = _tmCalm('Couldn’t load messages');
         return;
       }
       tmRenderInbox(d.teammates || []);
       tmSetBadge(d.unread_total || 0);
     }).catch(function() {
       _tmLoaded = true;
-      document.getElementById('tm-inbox-list').innerHTML = '<div style="padding:12px 14px;font-size:12px;color:var(--ink3)">Could not load messages.</div>';
+      document.getElementById('tm-inbox-list').innerHTML = _tmCalm('Couldn’t load messages');
     });
   }
 
@@ -26201,39 +26259,43 @@ document.addEventListener('click', function(e) {
     tmOpenThread(parseInt(row.getAttribute('data-tm-open'), 10), row.getAttribute('data-tm-name'));
   });
 
+  // Bubbles in runs: one sender's messages sit close, the corner nearest the
+  // next speaker tucks in, and the time shows once, under the run's last one
+  // (every bubble keeps its own time on hover).
   function tmRenderThread(messages, myId) {
     var body = document.getElementById('tm-thread-body');
-    if (!messages.length) {
-      body.innerHTML = '<div style="font-size:12px;color:var(--ink3);text-align:center;padding:20px 0">No messages yet — say hello.</div>';
-      return;
-    }
+    // Nothing said yet: their avatar, large, over the field - no sentence.
+    if (!messages.length) { body.innerHTML = '<div class="tm-empty"><span class="hp-av lg" aria-hidden="true">' + _escHtml(_tmInitials(_tmOpenWith && _tmOpenWith.username)) + '</span></div>'; return; }
     var html = '';
     for (var i = 0; i < messages.length; i++) {
-      var m = messages[i];
-      var mine = m.sender_id === myId;
-      html += '<div style="align-self:' + (mine ? 'flex-end' : 'flex-start') + ';max-width:80%">'
-           + '<div style="padding:7px 11px;border-radius:12px;font-size:13px;line-height:1.4;'
-           + (mine ? 'background:#c84b2f;color:#fff;border-bottom-right-radius:3px' : 'background:var(--paper2);color:var(--ink);border-bottom-left-radius:3px')
-           + '">' + _escHtml(m.body) + '</div>'
-           + '<div style="font-size:10.5px;color:var(--ink3);margin-top:2px;text-align:' + (mine ? 'right' : 'left') + '">' + _tmAgo(m.created_at) + '</div>'
+      var m = messages[i], mine = m.sender_id === myId;
+      var next = messages[i + 1], end = !next || (next.sender_id === myId) !== mine;
+      html += '<div class="tm-msg' + (mine ? ' mine' : '') + (end ? ' end' : '') + (m._sending ? ' sending' : '') + '">'
+           + '<div class="tm-bub" title="' + _escAttr(_tmAgo(m.created_at)) + '">' + _escHtml(m.body) + '</div>'
+           + (end && !m._sending ? '<div class="tm-at">' + _escHtml(_tmAgo(m.created_at)) + '</div>' : '')
            + '</div>';
     }
     body.innerHTML = html;
     body.scrollTop = body.scrollHeight;
   }
 
-  window.tmOpenThread = function(userId, username) {
+  var _tmThread = [], _tmMe = null;
+  window.tmOpenThread = function(userId, username, quiet) {
     _tmOpenWith = {id: userId, username: username};
     document.getElementById('tm-inbox-view').style.display = 'none';
     document.getElementById('tm-thread-view').style.display = 'block';
     document.getElementById('tm-thread-name').textContent = username;
-    document.getElementById('tm-thread-body').innerHTML = '<div style="padding:20px 0"><div class="dr-pulse wide" style="margin:0" role="status" aria-label="Loading the conversation"><i></i></div></div>';
+    var input = document.getElementById('tm-compose-input');
+    if (input) input.placeholder = 'Message ' + String(username || '').split(' ')[0];
+    if (!quiet) document.getElementById('tm-thread-body').innerHTML = '<div class="hp-load"><div class="dr-pulse wide" role="status" aria-label="Loading the conversation"><i></i></div></div>';
     fetch('/api/team/messages/' + userId).then(apiJson).then(function(d) {
-      if (!d.ok) { document.getElementById('tm-thread-body').innerHTML = '<div style="font-size:12px;color:var(--ink3)">Could not load this conversation.</div>'; return; }
-      tmRenderThread(d.messages || [], d.my_id);
+      if (!d.ok) { if (!quiet) document.getElementById('tm-thread-body').innerHTML = _tmCalm('Couldn’t load this conversation'); return; }
+      _tmThread = d.messages || []; _tmMe = d.my_id;
+      tmRenderThread(_tmThread, _tmMe);
       tmSetBadge(0);   // opening a thread marks it read server-side too
+      if (!quiet && input) { try { input.focus(); } catch (e) {} }
     }).catch(function() {
-      document.getElementById('tm-thread-body').innerHTML = '<div style="font-size:12px;color:var(--ink3)">Could not load this conversation.</div>';
+      if (!quiet) document.getElementById('tm-thread-body').innerHTML = _tmCalm('Couldn’t load this conversation');
     });
   };
 
@@ -26244,34 +26306,41 @@ document.addEventListener('click', function(e) {
     tmLoadInbox();
   };
 
+  // The message shows at once, faded until the server has it; the thread
+  // then refreshes in place. A failed send comes back to the field.
   window.tmSendMessage = function() {
     var input = document.getElementById('tm-compose-input');
     var body = (input.value || '').replace(/^\s+|\s+$/g, '');
     if (!body || !_tmOpenWith) return;
     input.value = '';
+    var withId = _tmOpenWith.id, withName = _tmOpenWith.username;
+    var pending = {body: body, sender_id: _tmMe, created_at: new Date().toISOString(), _sending: true};
+    tmRenderThread(_tmThread.concat([pending]), _tmMe);
     fetch('/api/team/messages', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({recipient_id: _tmOpenWith.id, body: body})
+      body: JSON.stringify({recipient_id: withId, body: body})
     }).then(apiJson).then(function(d) {
-      if (d.ok) tmOpenThread(_tmOpenWith.id, _tmOpenWith.username);
-      else { toast(d.error || 'Could not send that message', 'error'); input.value = body; }
-    }).catch(function() { toast('Could not send that message', 'error'); input.value = body; });
+      if (d.ok) { if (_tmOpenWith && _tmOpenWith.id === withId) tmOpenThread(withId, withName, true); }
+      else { tmRenderThread(_tmThread, _tmMe); toast(d.error || 'Could not send that message', 'error'); input.value = body; }
+    }).catch(function() { tmRenderThread(_tmThread, _tmMe); toast('Could not send that message', 'error'); input.value = body; });
   };
 
   window.toggleTeamMsgPanel = function() {
     var panel = document.getElementById('team-msg-panel');
     var open = panel.style.display !== 'none';
-    if (open) { panel.style.display = 'none'; } else { window._openHdrPanel(panel); }
-    if (!open) {
-      tmBackToInbox();
-    }
+    if (open) { panel.style.display = 'none'; window._hdrPopExpanded('team-msg-panel', false); return; }
+    window._openHdrPanel(panel);
+    _tmAnimate = true;
+    tmBackToInbox();
   };
 
   document.addEventListener('click', function(e) {
     var wrap = document.getElementById('team-msg-wrap');
-    if (wrap && !wrap.contains(e.target)) {
-      document.getElementById('team-msg-panel').style.display = 'none';
+    var panel = document.getElementById('team-msg-panel');
+    if (wrap && panel && !wrap.contains(e.target) && panel.style.display !== 'none') {
+      panel.style.display = 'none';
+      window._hdrPopExpanded('team-msg-panel', false);
     }
   });
 

@@ -268,4 +268,5 @@ def test_the_web_bell_flips_resolved_on_open_and_offers_mark_all_on_the_same_cou
     assert bell.count("_noteOpened(n)") >= 2, "both open paths (here, and another location) go through it"
     # "Mark all read" rides the list's unread count, which the server's badge
     # count now equals (the same rows, the same rule).
-    assert "var foot = _unreadCount() ?" in bell
+    # (Since 9/26/26 an icon beside the title, drawn only while something is unread.)
+    assert "tools.innerHTML = _unreadCount() ?" in bell and 'data-notif-readall="1"' in bell

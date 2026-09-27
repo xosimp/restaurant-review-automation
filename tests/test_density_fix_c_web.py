@@ -93,12 +93,18 @@ def test_ask_expands_to_a_720px_side_sheet():
 
 # ── #39 header and bell ──────────────────────────────────────────────────────
 
-def test_the_bell_counts_urgent_in_red_and_says_what_needs_you():
+def test_the_bell_counts_urgent_in_red_and_each_row_is_four_things():
     assert ".notif-row.is-urgent .nd{background:var(--red)}" in SRC
     assert re.search(r"#notif-badge\{[^}]*background:var\(--red\)", SRC)
-    bell = SRC[SRC.index("function summaryLine()"):SRC.index("function loadNotifications()")]
-    assert "' need' + (open.length === 1 ? 's' : '') + ' you</b>: '" in bell
-    assert "filterBar = summaryLine() + filterBar;" in SRC
+    # The redesign (owner, 9/26/26): no summary line, no filter, no day
+    # headings - a row is an icon, a title, one short line and the time.
+    bell = SRC[SRC.index("// ── In-app notifications"):SRC.index("// ── Team messages")]
+    for gone in ("function summaryLine()", "notif-filter", "notif-day", "dayGroup(", "notif-sum"):
+        assert gone not in bell, gone
+    row = bell[bell.index("function renderList()"):bell.index("function _rowKey(n)")]
+    assert "_icon(n)" in row and "esc(n.label)" in row and "esc(line)" in row and "hpAgo(n.fired_at)" in row
+    line = bell[bell.index("function _line(n)"):bell.index("function _calm(")]
+    assert "w.length > 12" in line                                   # twelve words at most
 
 
 def test_whats_new_and_sign_out_live_in_the_user_menu():

@@ -396,11 +396,13 @@ def test_the_group_bell_covers_every_location_with_its_name(client_for, db_path,
     assert len(client_for.get("/api/notifications?mark=0&scope=group").get_json()["notifications"]) == 1
 
 
-def test_the_bell_opens_on_needs_you_marks_rows_read_on_open_and_shows_state():
+def test_the_bell_leads_with_what_needs_you_marks_rows_read_on_open_and_shows_state():
     bell = SRC[SRC.index("// ── In-app notifications"):SRC.index("// ── Team messages")]
     assert "/api/notifications?mark=0" in bell
     assert "setBadge(0);          // GET /api/notifications marks them read" not in bell
-    assert "_urgentOnly = true" in bell and "_filterPicked" in bell
+    # No filter since 9/26/26: what still needs someone leads the list.
+    assert "(_items[i].urgent && !_items[i].resolved ? rows : rest).push(_items[i]);" in bell
+    assert "rows = rows.concat(rest);" in bell and "_urgentOnly" not in bell
     assert "alert_id: n.id" in bell and "is-resolved" in bell and "n.snippet" in bell
     # The inline action shows the reply before the button that posts it.
     assert "Read the reply" in bell and "Post this reply" in bell
