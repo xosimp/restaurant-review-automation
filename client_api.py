@@ -9020,6 +9020,24 @@ def _do_log_waste(current_user, data):
     if not out.get("ok"):
         return out, 400
     log_account_event(rid, "waste_logged", current_user, detail=f"{out['name']}: {qty:g} ({reason})")
+    # The week's waste as it stands now, so the page updates in place - the
+    # figure, its verdict, the Biggest waste items list (owner, 9/26/26: a
+    # logged line only showed as a toast until a reload).
+    try:
+        import inventory as _inv_w
+        _it_w, _live_w, _a_w = _inv_w.analysis_for(rid)
+
+        def _qty(x):
+            q = float(x.get("waste_last_week") or 0)
+            return (f"{int(q)}" if q.is_integer() else f"{round(q, 1)}") + (f" {x.get('unit')}" if x.get("unit") else "")
+        out["waste"] = {
+            "week": round(float(_a_w.get("total_waste_cost_week") or 0), 2),
+            "label": _a_w.get("benchmark_label"),
+            "items": [{"name": x.get("item"), "cost": round(float(x.get("waste_cost") or 0), 2),
+                       "pct": x.get("waste_pct"), "qty": _qty(x)} for x in (_a_w.get("waste_items") or [])],
+        }
+    except Exception as e:
+        print(f"[food-cost] waste summary after logging unavailable for {rid}: {e}")
     return out, 200
 
 

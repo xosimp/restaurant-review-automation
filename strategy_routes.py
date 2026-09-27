@@ -902,6 +902,28 @@ def _do_count_sheet_get(u):
     return {"ok": True, "items": out, "count": len(out), "ledger_mark": int(mark or 0), "source": source}, 200
 
 
+def _do_recipes_list(u):
+    """Every dish and its ingredients, with where they come from (owner,
+    9/26/26): recipes are loaded from the inventory system once it is
+    connected, never typed in the Food Cost page. `source` is
+    inventory_sync.status; before a sync the list is what the tables hold."""
+    if not _enters_food(u):
+        return _forbidden("Only someone who can count stock can see recipes.")
+    import inventory_ledger
+    try:
+        import inventory_sync
+        source = inventory_sync.status(_rid(u))
+    except Exception:
+        source = {"synced": False}
+    out = []
+    for m in inventory_ledger.list_menu_items_with_recipes(_rid(u)) or []:
+        lines = [{"name": r.get("ingredient_name"), "qty": r.get("qty_per_unit"), "unit": r.get("unit") or ""}
+                 for r in (m.get("recipe") or [])]
+        if lines:
+            out.append({"id": m.get("id"), "name": m.get("name"), "sell_price": m.get("sell_price"), "lines": lines})
+    return {"ok": True, "recipes": out, "count": len(out), "source": source}, 200
+
+
 def _deliveries_since(rid, mark, ids, day):
     """{ingredient_id: {"qty", "name", "unit"}} — receiving posted after the
     sheet opened (event id > `mark`) for these ingredients, dated on or
@@ -4048,6 +4070,7 @@ _ROUTES = [
     ("/account/send-delay", ["GET"], _do_send_delay_get, "send_delay_get"),
     ("/account/send-delay", ["POST"], _do_send_delay_set, "send_delay_set"),
     ("/food-cost/count-sheet", ["GET"], _do_count_sheet_get, "count_sheet_get"),
+    ("/food-cost/recipes", ["GET"], _do_recipes_list, "recipes_list"),
     ("/food-cost/count-sheet", ["POST"], _do_count_sheet_save, "count_sheet_save"),
     ("/food-cost/auto-order", ["GET"], _do_auto_order_get, "auto_order_get"),
     ("/food-cost/auto-order", ["POST"], _do_auto_order_set, "auto_order_set"),

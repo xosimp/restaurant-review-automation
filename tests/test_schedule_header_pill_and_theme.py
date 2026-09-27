@@ -649,7 +649,8 @@ def test_approval_method_heading_renamed():
     assert "How replies got approved" not in s
     # Density round #44: charts are named by the question they answer.
     assert '<span>Approval Method</span>' not in s
-    assert '<span>How your replies were approved</span>' in s
+    # Renamed again 9/26/26 (owner): "Approvals".
+    assert '<span>Approvals</span>' in s and 'How your replies were approved' not in s
 
 
 def test_rating_number_carries_no_status_color_only_the_dot_does():

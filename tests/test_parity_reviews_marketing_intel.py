@@ -420,7 +420,7 @@ def test_8f_one_name_per_concept_on_both_platforms():
     for old in ('"Response Rings"', '"Topic Heat Grid"', '"Sentiment River"', "GBP completeness",
                 "GBP COMPLETENESS", "YOUR AI VISIBILITY ROADMAP"):
         assert old not in ios, old
-    for name in ("How your replies were approved", "What guests talk about", "Reviews · per week",
+    for name in ("Approvals", "What guests talk about", "Reviews · per week",
                  "LISTING STRENGTH", "GAPS IN YOUR PUBLIC RECORD"):
         assert name in ios, name
     assert "GBP completeness" not in _read("templates", "dashboard.html")

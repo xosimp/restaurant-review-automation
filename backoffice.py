@@ -56,6 +56,9 @@ def fetch_inventory(restaurant_id: int) -> dict:
                supplier_name/email (vendor), ref (their item id)
       counts — each item's on-hand from their latest inventory count, with
                the count's business date as counted_on
+      recipes — each menu item (dish, ref, sell_price) with its lines
+               (ingredient ref, qty per plate in the item's count unit);
+               Food Cost's Recipes block lists these once synced
     Page through every list (a truncated page must fail the sync, never
     store part of a count as the whole), name a timeout on every call
     (scripts/check_timeouts.py), and archive the raw response locally the

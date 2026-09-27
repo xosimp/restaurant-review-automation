@@ -2761,6 +2761,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .fc2-count-row .n{font-size:14px;color:var(--ink2)}
 .fc2-count-row .n small{color:var(--ink3);font-size:12px}
 .fc2-count-row input{width:104px;text-align:right}
+.fc2-count-grid>.fc2-count-ft{margin:0;display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;gap:8px}
+.fc2-count-grid>.fc2-count-ft .cbtn{width:100%;height:42px}
+.fc2-count-grid>.fc2-count-ft .ac-status:empty{display:none}
 .fc2-count-ft{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:12px}
 /* One-line waste log under the count sheet (U2-32): the count footer's row. */
 .fc2-waste-log{margin-top:30px}
@@ -7407,6 +7410,18 @@ svg:hover .hb-xh{opacity:1}
    different KIND of claim from a snapshot, and giving it the same treatment
    would say the two carry the same weight. Tokens only, both themes. */
 .rv-diag{margin-top:14px;border:1px solid var(--hb-line);border-radius:12px;overflow:hidden;background:var(--surface)}
+/* The cause cards never show in place: they open from their AI read. */
+#review-diagnosis,#lb2-diag,#guest-diag{display:none!important}
+.ai-cause-go{display:flex;justify-content:center;margin-top:20px}
+.ai-cause-go[hidden]{display:none}
+.cause-modal{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.12);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red)}
+[data-theme="dark"] .cause-modal{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(212,88,58,.09);--hb-tint2:rgba(212,88,58,.16)}
+.cause-card{width:600px;max-height:82vh;overflow:auto}
+.cause-bd .rv-diag{margin:0;border:0;background:none;overflow:visible}
+.cause-bd .rv-diag-hd{padding:0 0 12px;border:0}
+.cause-bd .rv-diag-bd{padding:0}
+.cause-bd .rv-diag-hd .t,.cause-bd .diag-h{font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember)}
+.cause-bd .rv-diag-cause,.cause-bd .diag-cause{font-size:17px;line-height:1.55;color:var(--ink);margin-top:8px}
 .rv-diag-hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--hb-line2)}
 .rv-diag-hd .t{font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember)}
 .rv-diag-hd .m{font-size:12px;color:var(--ink3)}
@@ -7788,7 +7803,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
     <section class="hb-card bm-card" data-bm-module="reviews" hidden aria-label="How you compare"></section>
     <div class="rv2-sig">
       <div class="rv2-sg"><div class="k"><span>Reviews · per week</span></div><div class="v"><span id="rv-sent-n" class="hb-num">—</span><small>this week</small></div><div id="sentiment-trend-bars" style="color:var(--ink3)"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span><span style="color:var(--hb-good)">■</span> pos &nbsp; <span style="color:var(--hb-bad)">■</span> neg &nbsp; <span style="color:var(--ink3)">■</span> neu</span><span id="sentiment-trend-labels"></span></div></div>
-      <div class="rv2-sg" id="perf-card"><div class="k"><span>How your replies were approved</span><span class="rv2-days" id="perf-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadResponsePerf(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadResponsePerf(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadResponsePerf(180)">6mo</button></span></div><div class="v"><span id="rv-perf-n" class="hb-num">—</span><small>approved</small></div><div id="perf-body"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span id="rv-perf-cap">as-is · edited · regenerated</span></div></div>
+      <div class="rv2-sg" id="perf-card"><div class="k"><span>Approvals</span><span class="rv2-days" id="perf-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadResponsePerf(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadResponsePerf(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadResponsePerf(180)">6mo</button></span></div><div class="v"><span id="rv-perf-n" class="hb-num">—</span><small>approved</small></div><div id="perf-body"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span id="rv-perf-cap">as-is · edited · regenerated</span></div></div>
       <div class="rv2-sg" id="topic-heatmap-card"><div class="k"><span>What guests talk about</span><span class="rv2-days" id="topic-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadTopicHeatmap(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadTopicHeatmap(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadTopicHeatmap(180)">6mo</button></span></div><div id="heatmap-grid" class="rv2-topics"><div class="hb-load" style="height:110px"><canvas class="hb-orb" data-orb-state="searching" width="28" height="28"></canvas></div></div><div class="cap"><span>click a topic to filter the inbox</span><span><span style="color:var(--hb-good)">■</span> pos &nbsp; <span style="color:var(--hb-bad)">■</span> neg &nbsp; <span style="color:var(--ink3)">■</span> neu</span></div></div>
     </div>
   </details>
@@ -10164,6 +10179,8 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .fc2-sec .hd h2{font-family:'Clash Display',sans-serif;font-weight:500;font-size:23.5px;letter-spacing:-.01em;color:var(--ink);margin:4px 0 0}
 .fc2-sec .hd .sub{font-size:14px;color:var(--ink3);margin-top:3px}
 .fc2-orders{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:26px;margin-top:10px}
+/* Air between the auto-order switch and the columns (owner, 9/26/26). */
+#fc2-orders .hd+.fc2-orders,#fc2-orders .hd+.fc2-ok{margin-top:28px}
 .fc2-col .ch{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);padding-bottom:8px;border-bottom:1px solid var(--hb-line2)}
 .fc2-col .ch .d{width:8px;height:8px;border-radius:50%;flex-shrink:0}
 .fc2-col .ch .n{margin-left:auto;font-family:'Space Grotesk',sans-serif;font-size:14px;color:var(--ink3)}
@@ -10220,6 +10237,16 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 #fc-pill-line1{font-size:12.5px;font-weight:700;color:var(--hb-good);line-height:1.3;white-space:nowrap}
 #fc-pill-line2{font-size:10px;color:var(--ink3);letter-spacing:.02em;line-height:1.3;white-space:nowrap}
 .fc2-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:26px;margin-top:10px}
+/* A null is a dash in the number face, with air under it (owner, 9/26/26). */
+.fc2-null{font-family:'Space Grotesk',sans-serif;font-size:44px;font-weight:600;line-height:1;color:var(--ink3);margin:10px 0 36px}
+.fc2-send-d{margin-top:24px}
+.fc2-rcp{display:flex;flex-direction:column;gap:12px}
+.fc2-rcp-row{padding:12px 14px;border-radius:12px;background:var(--sf-recess)}
+.fc2-rcp-row .h{display:flex;justify-content:space-between;gap:12px;font-size:15px;font-weight:600;color:var(--ink)}
+.fc2-rcp-row .h .p{font-family:'Space Grotesk',sans-serif;font-weight:500;color:var(--ink3)}
+.fc2-rcp-row .ls{display:flex;flex-wrap:wrap;gap:6px 8px;margin-top:8px}
+.fc2-rcp-row .ln{font-size:13px;color:var(--ink2);padding:4px 10px;border-radius:999px;background:var(--hb-inner,rgba(255,255,255,.04));border:1px solid var(--hb-line2)}
+.fc2-rcp-row .ln b{font-family:'Space Grotesk',sans-serif;font-weight:600;color:var(--ink)}
 .fc2-tool .ch{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);padding-bottom:8px;border-bottom:1px solid var(--hb-line2)}
 .fc2-tool .bd{font-size:14px;color:var(--ink3);padding-top:10px;line-height:1.5}
 .fc2-tool table{width:100%;border-collapse:collapse;font-size:13.5px}
@@ -10345,7 +10372,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .fc2-hero-fcp{margin:0;padding:0 40px 0 0;background:none;border:0;border-right:1px solid var(--hb-line2);border-radius:0;box-shadow:none;max-width:none;overflow:visible}
 .fc2-hero-fcp:before{display:none}
 .fc2-hero-fcp:hover{box-shadow:none;transform:none}
-.fc2-hero-fcp .k{font-size:12.5px;letter-spacing:.16em;color:var(--ember2)}
+.fc2-hero-fcp .k{font-size:12.5px;letter-spacing:.16em;color:var(--ember)}
 /* The dark .fc2-pos surface outranked the hero's background:none - the
    grey block around the food cost figures (owner, 9/26/26). */
 .fc2-hero-fcp.fc2-pos,[data-theme="dark"] .fc2-hero-fcp.fc2-pos{background:none;border:0;box-shadow:none;padding-top:0;padding-bottom:0}
@@ -10365,9 +10392,16 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .fc2-hero-nums>#fc2-fcp[hidden]{display:none}
 .fc2-hero-nums>.fc2-waste-n{grid-column:2;grid-row:1/-1;display:grid;grid-template-rows:subgrid;padding-left:40px}
 .fc2-hero-nums>#fc2-fcp[hidden]+.fc2-waste-n{grid-column:1/-1;padding-left:0}
-.fc2-waste-n .big{grid-row:2;align-self:start}
-.fc2-waste-n .fc2-num-lbl{grid-row:4;margin-top:14px;font-size:12.5px;line-height:1.45}
-.fc2-waste-n .delta{grid-row:5;margin-top:12px;font-size:16px;line-height:1.45;color:var(--ink2)}
+.fc2-waste-n .big{grid-row:1;align-self:start}
+.fc2-waste-n .fc2-num-lbl{grid-row:2;margin-top:10px;font-size:12.5px;line-height:1.45;color:var(--ember)}
+.fc2-waste-n .delta{grid-row:3;margin-top:6px;font-size:16px;line-height:1.45;color:var(--ink2)}
+/* The two figures share one line box (owner, 9/26/26): same size, line
+   height 1, no margin, so the food cost figure and the week's waste sit
+   exactly level; each heading sits under its figure in the headings'
+   orange. */
+.fc2-hero-fcp .v,.fc2-hero-nums .fc2-waste-n .big{font-size:clamp(34px,4vw,50px);line-height:1;margin:0}
+.fc2-hero-fcp .k{margin-top:10px;color:var(--ember);line-height:1.45}
+.fc2-hero-fcp .d{margin-top:6px}
 .fc2-hero-fcp .miss{display:contents}
 .fc2-hero-fcp .miss li{margin:12px 0 0 20px;font-size:15px;line-height:1.45;color:var(--ink3)}
 .fc2-hero-fcp .miss li:first-child{margin-top:14px}
@@ -10465,7 +10499,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
        CFO's ranked monthly at-stake, with its basis beside it. #}
     <div class="fc2-top-right">
       <div class="hb-pulse">
-        <span class="hb-chip {{ 'sample' if not inv.is_live else ('bad' if _tone == 'bad' else ('warn' if inv.total_waste_cost_week > 0 else 'good')) }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">${{ inv.total_waste_cost_week|int|format_num }}</span></span><span class="l">waste / wk</span></span>
+        <span class="hb-chip {{ 'sample' if not inv.is_live else ('bad' if _tone == 'bad' else ('warn' if inv.total_waste_cost_week > 0 else 'good')) }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num" id="fc2-chip-waste">${{ inv.total_waste_cost_week|int|format_num }}</span></span><span class="l">waste / wk</span></span>
         <span class="hb-chip {{ 'sample' if not inv.is_live else ('good' if inv.critical_low|length == 0 else 'bad') }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">{{ inv.critical_low|length }}</span></span><span class="l">critical low</span></span>
         {# A balance is not a verdict: a neutral chip (#31). #}
         <span class="hb-chip {{ 'sample' if not inv.is_live else 'neutral' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">${{ inv.total_stock_value|int|format_num }}</span></span><span class="l">inventory value</span></span>
@@ -10568,11 +10602,16 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
        by supplier with editable quantities, loaded when the card is first
        on screen - the "Load" button and the sight-unseen send are gone.
        Deliveries are received below it, into stock (U2-12). #}
+    {# Send to suppliers folds (owner, 9/26/26): one line - suppliers,
+       items and the total - until opened; the draft loads when the line is
+       on screen, so the line is true before anyone opens it. #}
+    <details class="hb-results fc2-work fc2-send-d" id="fc2-order-send-d">
+      <summary><span class="hb-kicker">Send to suppliers</span><span id="so-sum-line">Building this week’s order…</span></summary>
     <div class="fc2-send" id="fc2-order-send" data-nav="inventory/order">
-      <div class="hb-kicker" style="margin:18px 0 8px">Send to suppliers</div>
       <div class="bd" id="so-body"><div class="hb-load" style="height:60px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div>
       <div id="po-history" class="fc2-po"></div>
     </div>
+    </details>
     <div id="so-confirm-modal" class="cmodal so-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="so-confirm-t" onclick="if(event.target===this&&window.cModal)cModal.close('so-confirm-modal')">
       <div class="so-card">
         <div class="hb-kicker">Send to supplier</div>
@@ -10586,7 +10625,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
   {# Biggest waste items and Cash sitting over par sit under the order
      (owner, 9/26/26): what to buy first, then what the shelves hold. #}
   <div class="lb2-sig lb2-sig-2">
-    <div class="lb2-sg"><div class="k"><span>Biggest waste items</span></div><div class="v"><span class="hb-num">${{ inv.total_waste_cost_week|int|format_num }}</span><small>this week</small></div>
+    <div class="lb2-sg"><div class="k"><span>Biggest waste items</span></div><div class="v"><span class="hb-num" id="fc2-waste-items-total">${{ inv.total_waste_cost_week|int|format_num }}</span><small>this week</small></div>
       <div class="fc2-ledger" id="fc2-ledger-waste"></div>
       <div class="cap"><span>sorted by cost, largest first</span></div></div>
     <div class="lb2-sg"><div class="k"><span>Cash sitting over par</span></div><div class="v"><span class="hb-num">${{ _ostock_total|int|format_num }}</span><small>sitting over par</small></div>
@@ -10808,6 +10847,11 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     fetch('/api/food-cost/order-draft').then(apiJson).then(function(d){
       if(!d.ok){ el.innerHTML='<span style="color:var(--hb-bad)">'+_mmEsc(d.error||'Couldn\'t build the order')+'</span>'; return; }
       var groups = d.groups || [];
+      var sl=document.getElementById('so-sum-line');
+      if(sl){var gi=0,gt=0;for(var gk=0;gk<groups.length;gk++){gi+=(groups[gk].items||[]).length;gt+=+groups[gk].total_cost||0;}
+        var una=(d.unassigned||[]).length;
+        sl.innerHTML=groups.length?('<b class="hb-num">'+groups.length+'</b> supplier'+(groups.length===1?'':'s')+' · <b class="hb-num">'+gi+'</b> item'+(gi===1?'':'s')+' · <span class="hb-num">'+_soMoney(gt)+'</span>'+(una?' · <b class="hb-num">'+una+'</b> without a supplier':''))
+          :(d.is_live===false?'Nothing to order yet':(una?'<b class="hb-num">'+una+'</b> item'+(una===1?'':'s')+' due, no supplier set':'Nothing to order this week'));}
       if(!groups.length){
         var un=(d.unassigned||[]).length,title,why;
         if(d.is_live===false){title='Nothing to order yet';why=d.notice||'Food Cost is showing example data.';}
@@ -10904,7 +10948,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
   // document.
   document.addEventListener('DOMContentLoaded',function(){
     function whenSeen(id,fn){var el=document.getElementById(id);if(!el)return;if(typeof cavnarWhenVisible==='function')cavnarWhenVisible(el,fn);else fn();}
-    whenSeen('fc2-order-send',loadOrderDraft);
+    whenSeen('fc2-order-send-d',loadOrderDraft);
     // A supplier set in the Suppliers block regroups the order at once
     // (owner, 9/26/26: "Suppliers needed" stayed until a page reload).
     window.fc2ReloadOrderDraft=function(){if(document.getElementById('so-body'))loadOrderDraft();};
@@ -10915,6 +10959,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
   if(typeof cavNavRegister==='function')cavNavRegister('order',function(p){
     cavNavOpenModule('inventory');
     var who=String(p.rest[0]||'').toLowerCase(),card=document.getElementById('fc2-order-send');
+    var fold=document.getElementById('fc2-order-send-d');if(fold)fold.open=true;
     function go(){var el=(who&&document.querySelector('[data-sup="'+who.replace(/"/g,'')+'"]'))||card;if(el&&el.scrollIntoView)el.scrollIntoView({behavior:'smooth',block:'start'});}
     if(!document.querySelector('[data-sup]'))loadOrderDraft();
     setTimeout(go,400);
@@ -17460,6 +17505,61 @@ function renderDiagnosis(id,dg){
   el.hidden=false;
 }
 var DIAG_SURFACE={'lb2-diag':'labor','guest-diag':'marketing'};
+// ── The most likely cause opens from its AI read (owner, 9/26/26) ──────
+// The cause card under each read (Reviews, Labor, Marketing) was one more
+// container. It is now one orange button, centred at the foot of the read,
+// that opens the whole card - cause, how sure, what else fits, the answers -
+// in a centred modal over a dimmed page. The hosts stay where they are
+// (every renderer writes into them) and are never shown; their content moves
+// into the modal while it is open and back when it closes.
+var CAUSE_HOSTS=['review-diagnosis','lb2-diag','guest-diag'];
+function _causeAi(host){
+  var p=host.previousElementSibling;if(p&&p.classList&&p.classList.contains('lb2-ai'))return p;
+  var q=host.parentNode;if(q&&q.classList&&q.classList.contains('mkt-brief'))return q;
+  return null;
+}
+function causeSync(id){
+  var host=document.getElementById(id);if(!host||window._causeOpen===id)return;
+  var ai=_causeAi(host);if(!ai)return;
+  var go=ai.querySelector('.ai-cause-go[data-for="'+id+'"]');
+  if(!go){go=document.createElement('div');go.className='ai-cause-go';go.setAttribute('data-for',id);
+    go.innerHTML='<button type="button" class="cbtn cbtn-primary" data-cause-open="'+id+'">What\u2019s the most likely cause?</button>';
+    if(host.parentNode===ai)ai.insertBefore(go,host);else ai.appendChild(go);}
+  go.hidden=!!host.hidden||!host.firstChild;
+}
+function causeOpen(id){
+  var host=document.getElementById(id);if(!host||!host.firstChild)return;
+  var m=document.getElementById('cause-modal');
+  if(!m){m=document.createElement('div');m.id='cause-modal';m.className='cmodal so-modal cause-modal';m.style.display='none';
+    m.setAttribute('role','dialog');m.setAttribute('aria-modal','true');m.setAttribute('aria-label','The most likely cause');
+    m.innerHTML='<div class="so-card cause-card"><div class="cause-bd"></div><div class="so-f"><button type="button" class="cbtn cbtn-secondary" data-cause-close="1">Close</button></div></div>';
+    m.addEventListener('click',function(e){if(e.target===m&&window.cModal)cModal.close('cause-modal');});
+    document.body.appendChild(m);}
+  var bd=m.querySelector('.cause-bd');bd.innerHTML='';
+  window._causeOpen=id;
+  while(host.firstChild)bd.appendChild(host.firstChild);
+  if(window.cModal)cModal.open('cause-modal',{close:'causeClose'});else m.style.display='flex';
+}
+window.causeClose=function(){
+  var m=document.getElementById('cause-modal'),id=window._causeOpen;window._causeOpen=null;
+  if(m){var bd=m.querySelector('.cause-bd'),host=id&&document.getElementById(id);
+    // A renderer that wrote while the modal was open wins; else the content goes home.
+    if(host&&bd){if(!host.firstChild){while(bd.firstChild)host.appendChild(bd.firstChild);}else bd.innerHTML='';}
+    m.style.display='none';}
+  if(id)causeSync(id);
+};
+document.addEventListener('click',function(e){
+  var t=e.target&&e.target.closest?e.target.closest('[data-cause-open],[data-cause-close]'):null;if(!t)return;
+  if(t.hasAttribute('data-cause-open'))causeOpen(t.getAttribute('data-cause-open'));
+  else if(window.cModal)cModal.close('cause-modal');
+});
+document.addEventListener('DOMContentLoaded',function(){
+  for(var i=0;i<CAUSE_HOSTS.length;i++)(function(id){
+    var host=document.getElementById(id);if(!host)return;
+    causeSync(id);
+    if(window.MutationObserver)new MutationObserver(function(){causeSync(id);}).observe(host,{attributes:true,attributeFilter:['hidden'],childList:true});
+  })(CAUSE_HOSTS[i]);
+});
 function loadMarketingDiagnosis(){
   fetch('/api/marketing/diagnosis',{credentials:'same-origin'}).then(apiJson).then(function(d){renderDiagnosis('guest-diag',d&&d.diagnosis);}).catch(function(){});
 }
@@ -21921,8 +22021,8 @@ function fc2LoadFoodCostPct(){
           vs=' · <b class="'+(own?(d.variance_pts>0?'bad':'good'):'')+'">'
             +(d.variance_pts>0?'+':'')+d.variance_pts+' pts</b> vs '+tgt;
         } else { vs=' · '+tgt; }
-        host.innerHTML='<div class="k">Food cost</div>'
-          +'<div class="v '+tone+'"><span class="hb-num">'+d.pct+'%</span></div>'
+        host.innerHTML='<div class="v '+tone+'"><span class="hb-num">'+d.pct+'%</span></div>'
+          +'<div class="k">Food cost</div>'
           +'<div class="d">'+wtEsc(d.label||'')+vs+'</div>'
           +'<div class="b">'+wtEsc(d.basis||'')+'</div>';
         host.hidden=false;
@@ -21946,8 +22046,8 @@ function fc2LoadFoodCostPct(){
       for(var i=0;i<miss.length&&i<3;i++){
         li+='<li><b>'+wtEsc(miss[i].component||'')+'</b> — '+wtEsc(miss[i].why||'')+'</li>';
       }
-      host.innerHTML='<div class="k">Food cost</div>'
-        +'<div class="v neutral"><span class="hb-num">—</span></div>'
+      host.innerHTML='<div class="v neutral"><span class="hb-num">—</span></div>'
+        +'<div class="k">Food cost</div>'
         +'<div class="d">Not enough recorded to work it out yet</div>'
         +'<ul class="miss">'+li+'</ul>';
       host.hidden=false;
@@ -21962,66 +22062,33 @@ function fc2LoadFoodCostPct(){
 // Dishes the POS created that have no recipe, drafted from your own
 // ingredient list (recipes.py). Accept writes the recipe; nothing is
 // written until you do. Plus a CSV import for a whole menu at once.
-function fc2LoadRecipeDrafts(note){
-  // The note survives the re-render: the status line lives inside this
-  // block, so a result written before the reload was wiped by it.
+// Recipes come from the inventory system (owner, 9/26/26: nobody types a
+// menu's worth of recipes). Once it has synced, every dish and its
+// ingredients list here, read-only; before that the block says where they
+// will come from. The drafting tools that lived here (menu paste, recipe
+// cards, one-by-one accept) are off the web; the phone's Recipe drafts
+// sheet and the /food-cost/recipe-drafts routes are unchanged.
+function fc2LoadRecipeDrafts(){
   var el=document.getElementById('fc2-recipes');if(!el)return;
-  fetch('/api/food-cost/recipe-drafts',{credentials:'same-origin'}).then(apiJson).then(function(d){
+  fetch('/api/food-cost/recipes',{credentials:'same-origin'}).then(apiJson).then(function(d){
     if(!d||!d.ok)return;
-    var ds=d.drafts||[];
-    var h=fc2BlockHead(FC2_ICON.recipe,'Recipes','Recipes to confirm',ds.length,'Every plate cost rests on these. Nothing is saved until you accept it.');
-    if(!ds.length)h+='<div class="hb-empty" style="font-size:14px;padding-top:2px">Nothing waiting. Paste your menu below and Cavnar AI drafts a recipe for each dish; anything your POS adds later is drafted on Tuesday mornings.</div>';
-    // Accept every confident draft at once (U2-24): only drafts whose every
-    // line carries a measured support of FC2_SURE_PCT% or more, with units
-    // that converted and no batch yield to fill. The rest stay one by one.
-    var sure=fc2ConfidentDrafts(ds);
-    if(sure.length>1)h+='<div class="fc2-count-ft" style="justify-content:flex-start;margin:0 0 10px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-recipe-accept-all="'+esc(sure.join(','))+'">Accept '+sure.length+' confident recipes</button><span class="ac-status">every line at '+FC2_SURE_PCT+'% support or more · the rest wait for you</span></div>';
-    for(var i=0;i<ds.length;i++){var dr=ds[i];
-      // What kind of draft this is (recipes._draft_flags, H6): a model's
-      // estimate from the ingredient list, or a transcribed recipe card.
-      // "From your card" only when a line says it was transcribed: a draft
-      // written before lines carried a source has is_estimate false too, and
-      // read as a transcription it never was (B6 sub-audit).
-      var dtrans=false;for(var dj=0;dj<(dr.lines||[]).length;dj++){if(dr.lines[dj]&&dr.lines[dj].source==='transcribed'){dtrans=true;break;}}
-      var dtag=dr.is_estimate===true?(window.cavConf?cavConf.claimTag('estimate'):''):(dtrans?'<span class="ck-tag" data-claim="transcribed">From your card</span>':'');
-      h+='<div class="fc2-recipe"><div class="fc2-recipe-h"><b>'+esc(dr.menu_item_name||('Dish #'+dr.menu_item_id))+'</b>'+(dtag?' '+dtag:'')+(dr.note?'<span class="fc2-recipe-note">'+esc(dr.note)+'</span>':'')+'</div><div class="fc2-recipe-lines">';
-      for(var j=0;j<(dr.lines||[]).length;j++){var ln=dr.lines[j];var lc=String(ln.confidence||'').toLowerCase();if(lc==='moderate')lc='medium';
-        // A unit Python could not convert (unit_ok false) is never written on
-        // an unedited accept; it reads as a line to check, whatever its
-        // confidence. The card's own quantity and unit ride in the title.
-        var bad=ln.unit_ok===false,tip=[];
-        if(bad)tip.push(ln.unit_note||'Unit could not be converted — this line is skipped unless you fix it');
-        // Confidence is a % or nothing, never a band word (NS1 #20): a
-        // measured % when the line carries one, else what to do about it.
-        var lpct=(typeof ln.confidence_pct==='number'&&isFinite(ln.confidence_pct))?Math.round(ln.confidence_pct)+'% support':'';
-        tip.push(lpct||(lc==='low'?'Check this line':(lc==='medium'?'Worth a glance':'')));
-        if(ln.card_qty!=null&&(ln.card_unit||'')!==''&&(String(ln.card_qty)!==String(ln.qty)||ln.card_unit!==ln.unit))tip.push('the card said '+ln.card_qty+' '+ln.card_unit);
-        if(ln.per==='batch')tip.push('per batch, not per plate');
-        if(ln.source==='estimate')tip.push('estimated');else if(ln.source==='transcribed')tip.push('from the card');
-        h+='<span class="fc2-recipe-ln'+((bad||lc==='low')?' low':(lc==='medium'?' med':''))+'" title="'+esc(tip.filter(function(x){return x;}).join(' · '))+'">'+esc(ln.name)+' <b class="hb-num">'+esc(ln.qty)+'</b> '+esc(ln.unit||'')+(ln.per==='batch'?' <small>/batch</small>':'')+((bad||lc==='low')?' <i>?</i>':(lc==='medium'?' <i class="m" aria-label="medium confidence">·</i>':''))+'</span>';}
+    var src=d.source||{},synced=!!src.synced,label=src.label||'your inventory system',rs=d.recipes||[],i,j;
+    var on=synced&&window.mdyAt?mdyAt(src.synced_at):'';
+    var h=fc2BlockHead(FC2_ICON.recipe,'Recipes',synced?'Your recipes':'Recipes',synced?rs.length:0,
+      synced?('From '+label+(on?' · synced '+on:'')+'. Every plate cost and depletion reads these.')
+            :'Every dish and its ingredients load here from your inventory system once it’s connected.');
+    if(synced&&rs.length){
+      h+='<div class="fc2-rcp">';
+      for(i=0;i<rs.length;i++){var r=rs[i],ls='';
+        for(j=0;j<(r.lines||[]).length;j++){var ln=r.lines[j];ls+='<span class="ln">'+esc(ln.name||'')+' <b>'+esc(ln.qty)+'</b>'+(ln.unit?' '+esc(ln.unit):'')+'</span>';}
+        h+='<div class="fc2-rcp-row"><div class="h"><span>'+esc(r.name||'')+'</span>'+(r.sell_price!=null?'<span class="p">$'+(+r.sell_price).toFixed(2)+'</span>':'')+'</div><div class="ls">'+ls+'</div></div>';}
       h+='</div>';
-      var uw=dr.unit_warnings||[];
-      if(uw.length){var uwl=[];for(var k=0;k<uw.length&&k<4;k++)uwl.push(esc(uw[k].name||'')+(uw[k].note?' ('+esc(uw[k].note)+')':''));
-        h+='<div class="fc2-recipe-note" style="margin-top:6px">Units to check: '+uwl.join(', ')+(uw.length>4?' and '+(uw.length-4)+' more':'')+' — skipped on accept unless you fix them.</div>';}
-      var lv=dr.confidence_levels||[];
-      if(lv.length>1)h+='<div class="fc2-recipe-note" style="margin-top:4px">Lines are '+esc(lv.join(', '))+' confidence — <i>?</i> marks low, <i class="m">·</i> medium.</div>';
-      // A batch card needs its yield before its quantities can be read per
-      // plate (needs_yield); accept sends it as yield.
-      var yl=dr.needs_yield?'<label class="fc2-recipe-yield">Plates this batch makes <input type="number" min="1" step="1" class="ac-input" data-recipe-yield="'+esc(dr.id)+'" style="width:84px" aria-label="Plates this batch makes"></label>':'';
-      h+='<div class="fc2-recipe-ft">'+yl+'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-recipe-reject="'+esc(dr.id)+'">Not right</button><button type="button" class="cbtn cbtn-primary cbtn-sm" data-recipe-accept="'+esc(dr.id)+'">Accept recipe</button></div></div>';}
-    // The menu, pasted. Nobody photographs a recipe card, and a
-    // restaurant without a POS has no dishes for the Tuesday job to draft
-    // against — but every owner has the menu. One paste does the rest.
-    var canDraft=(d.ingredients||0)>=3;
-    h+='<div class="fc2-menu-draft"><div class="t"><b>Draft recipes from your menu</b><span>Paste the menu, one dish a line, a price after a comma if you like. Cavnar AI drafts each recipe from your ingredient list and you confirm it above \u2014 nothing is saved until you accept.</span></div>';
-    if(d.missing>0)h+='<div class="fc2-count-ft" style="margin:0 0 10px;justify-content:flex-start"><span class="ac-status">'+d.missing+' dish'+(d.missing===1?' on file has':'es on file have')+' no recipe yet.</span><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="fc2DraftRecipes(this,true)"'+(canDraft?'':' disabled')+'>Draft '+(d.missing===1?'it':'them')+' now</button></div>';
-    h+='<textarea id="fc2-menu-text" rows="5" class="ac-input" style="width:100%;font-size:14px" placeholder="Classic Burger, 14&#10;Caesar Salad, 11&#10;Grilled Salmon, 24"></textarea><div class="fc2-count-ft"><span class="ac-status" id="fc2-menu-status">'+(canDraft?'':'Add at least three ingredients first \u2014 a recipe can only use what is on your list.')+'</span><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="fc2DraftRecipes(this,false)"'+(canDraft?'':' disabled')+'>Draft recipes</button></div></div>';
-    h+='<details class="fc2-import"><summary>Import recipes from a CSV</summary><div class="hb-empty" style="font-size:12.5px;margin:6px 0">Columns: menu_item, ingredient, qty \u2014 ingredient names must match your list; a new dish is created, an unknown ingredient is skipped and named.</div><textarea id="fc2-import-csv" rows="5" class="ac-input" style="width:100%;font-family:monospace;font-size:12px" placeholder="menu_item,ingredient,qty&#10;Margherita,Mozzarella,0.25"></textarea><div class="fc2-count-ft"><span class="ac-status" id="fc2-import-status"></span><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="fc2ImportRecipes(this)">Import</button></div></details>';
+    }
     el.innerHTML=h;el.hidden=false;
-    fc2WorkRow('recipes',ds.length?('<b class="hb-num">'+ds.length+'</b> draft'+(ds.length===1?'':'s')+' to confirm'):((d.missing>0)?('<b class="hb-num">'+d.missing+'</b> dish'+(d.missing===1?'':'es')+' with no recipe'):'nothing waiting'));
-    if(note){var stn=document.getElementById('fc2-menu-status');if(stn)stn.textContent=note;}
+    fc2WorkRow('recipes',synced?('<b class="hb-num">'+rs.length+'</b> recipe'+(rs.length===1?'':'s')+' from '+esc(label)):'load once your inventory system is connected');
   }).catch(function(){});
 }
+// A draft line at or above this measured support accepts in one tap (U2-24).
 var FC2_SURE_PCT=80;
 function fc2ConfidentDrafts(ds){
   var out=[],i,j;
@@ -22187,11 +22254,41 @@ function fc2LoadCountSheet(){
       +'<select class="ac-select fc2-ctl" id="fc2-waste-why" aria-label="Why"><option value="spoiled">spoiled</option><option value="expired">expired</option><option value="overprepped">over-prepped</option><option value="dropped">dropped</option><option value="returned">sent back</option><option value="other">other</option></select>'
       +'<button type="button" class="cbtn cbtn-secondary fc2-ctl-btn" onclick="fc2LogWaste(this)">Log it</button></div></div>';
     el.innerHTML=h;el.hidden=false;
+    fc2PlaceCountFt();
     // The newest recount on the sheet is the "last counted" date (M/D/YY).
     var last='';for(var lc=0;lc<d.items.length;lc++){var la=String(d.items[lc].last_recount_at||'').slice(0,10);if(la>last)last=la;}
     fc2WorkRow('count','<b class="hb-num">'+d.items.length+'</b> item'+(d.items.length===1?'':'s')+(last?' · last counted <span class="hb-num">'+esc(mdy(last))+'</span>':' · not counted yet'));
     if(window.fc2StockStatus)fc2StockStatus({last:last});
   }).catch(function(){});
+}
+// Save count sits in the grid, in the column of the last ingredient, on the
+// row under it (owner, 9/26/26) - re-placed when the columns change.
+function fc2PlaceCountFt(){
+  var el=document.getElementById('fc2-count');if(!el)return;
+  var grid=el.querySelector('.fc2-count-grid'),ft=el.querySelector('.fc2-count-ft');if(!grid||!ft)return;
+  if(ft.parentNode!==grid)grid.appendChild(ft);
+  var cols=(window.getComputedStyle(grid).gridTemplateColumns||'').split(' ').filter(function(x){return x;}).length||1;
+  var n=grid.querySelectorAll('.fc2-count-row').length;
+  ft.style.gridColumn=n?String(((n-1)%cols)+1):'';
+}
+window.addEventListener('resize',function(){clearTimeout(window._fc2FtT);window._fc2FtT=setTimeout(fc2PlaceCountFt,120);});
+// A logged line lands on the page at once (owner, 9/26/26): the week's
+// waste, its colour and verdict, the chip, Biggest waste items, the trend
+// and the drivers - from the figures the save returns.
+function fc2ApplyWaste(w){
+  if(!w)return;
+  var wk=Math.round(+w.week||0),lbl=String(w.label||'');
+  var big=document.getElementById('inv-week-waste');
+  if(big){if(window.cavCount)cavCount(big,wk,{prefix:'$'});else big.textContent='$'+wk;
+    var bx=big.parentNode;if(bx&&bx.classList){bx.classList.remove('good','bad');
+      if(lbl==='Under target'||lbl==='Near target')bx.classList.add('good');else if(lbl==='Over target'||lbl==='Well over target')bx.classList.add('bad');}}
+  var chip=document.getElementById('fc2-chip-waste');if(chip)chip.textContent='$'+wk.toLocaleString();
+  var tot=document.getElementById('fc2-waste-items-total');if(tot)tot.textContent='$'+wk.toLocaleString();
+  var dl=document.querySelector('.fc2-waste-n .delta span');
+  if(dl&&/target$/.test(lbl))dl.textContent='Waste is '+lbl.toLowerCase();
+  if(w.items){window._wasteDonutData=w.items;if(typeof _wasteDonutData!=='undefined')_wasteDonutData=w.items;if(window.fc2InvalidateStaticCards)fc2InvalidateStaticCards();}
+  if(typeof loadWasteTrend==='function')loadWasteTrend(true);
+  if(typeof fc2LoadCfo==='function')fc2LoadCfo();
 }
 function fc2LogWaste(btn){
   var ing=(document.getElementById('fc2-waste-ing')||{}).value,q=parseFloat((document.getElementById('fc2-waste-qty')||{}).value),why=(document.getElementById('fc2-waste-why')||{}).value;
@@ -22200,7 +22297,8 @@ function fc2LogWaste(btn){
   fetch('/api/food-cost/waste',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({ingredient_id:parseInt(ing,10),qty:q,reason:why})}).then(apiJson).then(function(d){
     done();
     if(!d||!d.ok){if(typeof toast==='function')toast((d&&d.error)||'Couldn’t log that','error');return;}
-    if(typeof toast==='function')toast('Logged '+q+(d.unit?' '+d.unit:'')+' of '+d.name+' as waste','success');
+    if(typeof toast==='function')toast('Logged '+q+(d.unit?' '+d.unit:'')+' of '+d.name+' as waste'+(d.waste?' \u2014 this week\u2019s waste is now $'+Math.round(+d.waste.week||0).toLocaleString():''),'success');
+    fc2ApplyWaste(d.waste);
     fc2LoadCountSheet();
   }).catch(function(){done();});
 }
@@ -25275,7 +25373,8 @@ function revokeOtherSessions(btn){
     fetch('/api/food-cost/dish-scorecard',{credentials:'same-origin'}).then(apiJson).then(function(d){
       if(!d||!d.ok){var sec=document.getElementById('fc2-menu');if(sec)sec.style.display='none';return;}
       var rows=d.dishes||[];
-      if(!rows.length){sb.innerHTML='<div class="hb-empty">'+_fcEsc(d.reason||'Map recipes to your menu items to score them.')+'</div>';return;}
+      // Nothing to score is a null, not a sentence (owner, 9/26/26).
+      if(!rows.length){sb.innerHTML='<div class="fc2-null hb-num" aria-label="'+_fcEsc(d.reason||'No dishes to score yet')+'" title="'+_fcEsc(d.reason||'')+'">\u2014</div>';return;}
       var h='<div class="fc2-table-scroll"><table class="fc2-mt" data-sortable="dish-scorecard"><thead><tr><th>Dish</th><th class="r">Price</th><th class="r">Food cost</th><th class="r">Sold</th><th class="r">Guests</th><th>Move</th></tr></thead><tbody>';
       var ACT={urgent:'Protect',fix:'Fix',cut:'Cut',reprice:'Reprice',promote:'Promote',review:'Review'};
       for(var i=0;i<rows.length;i++){var x=rows[i],pm=x.positive_mentions||0,nm=x.negative_mentions||0;

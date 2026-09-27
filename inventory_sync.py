@@ -18,15 +18,19 @@ A provider is a module named in PROVIDERS exposing:
     connected_ids() -> [restaurant_id, ...]     every restaurant it can sync
     label -> str                                 "Back Office"
     fetch_inventory(restaurant_id) -> {
-        "items":  [{"name", "unit", "category", "unit_cost", "par_level",
-                    "case_size", "supplier_name", "supplier_email", "ref"}],
-        "counts": [{"ref" or "name", "qty", "counted_on": "YYYY-MM-DD"}],
+        "items":   [{"name", "unit", "category", "unit_cost", "par_level",
+                     "case_size", "supplier_name", "supplier_email", "ref"}],
+        "counts":  [{"ref" or "name", "qty", "counted_on": "YYYY-MM-DD"}],
+        "recipes": [{"dish", "ref", "sell_price",
+                     "lines": [{"ref" or "name", "qty"}]}],   # qty per plate, in the item's unit
     }
 
 A field a provider leaves out (None) keeps what the owner set; a count is a
 recount event (the ledger's anchor) tagged with the provider's name, written
-once per ingredient and day. Recipes and invoice lines are the next
-contract fields; they are not read yet.
+once per ingredient and day. A synced dish's recipe is the provider's: its
+lines are replaced on every sync (menu_items + recipe_ingredients), which is
+what plate cost, margins and depletion read. Invoice lines are the next
+contract field; they are not read yet.
 
 PROVIDERS is resolved by module name at call time (importlib) — a dynamic
 reference: grep for "PROVIDERS" before renaming a provider module.
@@ -143,7 +147,7 @@ def apply_inventory(restaurant_id, provider, payload, db_path=None) -> dict:
     import inventory_ledger as _il
     payload = payload or {}
     conn = get_conn(db_path) if db_path else get_conn()
-    touched, created, counted = set(), 0, 0
+    touched, created, counted, dishes = set(), 0, 0, 0
     try:
         rows = conn.execute("SELECT id, name, external_ref FROM ingredients WHERE restaurant_id=? "
                             "AND COALESCE(is_active,1)=1", (restaurant_id,)).fetchall()
@@ -212,13 +216,54 @@ def apply_inventory(restaurant_id, provider, payload, db_path=None) -> dict:
             touched.add(iid)
             counted += 1
 
+        # Recipes: every dish the provider sends, its lines replaced by the
+        # provider's (a line naming an ingredient the sync doesn't know is
+        # left out, never guessed).
+        mrows = conn.execute("SELECT id, name, external_ref FROM menu_items WHERE restaurant_id=? "
+                             "AND COALESCE(is_active,1)=1", (restaurant_id,)).fetchall()
+        m_ref = {str(r["external_ref"]): r["id"] for r in mrows if r["external_ref"]}
+        m_name = {" ".join(str(r["name"]).lower().split()): r["id"] for r in mrows}
+        for rc in payload.get("recipes") or []:
+            if not isinstance(rc, dict):
+                continue
+            dish = " ".join(str(rc.get("dish") or rc.get("name") or "").split())[:120]
+            if not dish:
+                continue
+            ref = str(rc.get("ref")).strip()[:80] if rc.get("ref") not in (None, "") else None
+            price = _num(rc.get("sell_price"))
+            mid = (m_ref.get(ref) if ref else None) or m_name.get(dish.lower())
+            if mid:
+                conn.execute("UPDATE menu_items SET sell_price=COALESCE(?, sell_price), external_ref=COALESCE(?, external_ref) "
+                             "WHERE id=? AND restaurant_id=?", (price, ref, mid, restaurant_id))
+            else:
+                mid = conn.execute("INSERT INTO menu_items (restaurant_id, toast_guid, name, sell_price, external_ref) "
+                                   "VALUES (?,NULL,?,?,?)", (restaurant_id, dish, price, ref)).lastrowid
+                m_name[dish.lower()] = mid
+                if ref:
+                    m_ref[ref] = mid
+            lines = []
+            for ln in rc.get("lines") or []:
+                if not isinstance(ln, dict):
+                    continue
+                iid, q = _find(ln.get("ref"), ln.get("name")), _num(ln.get("qty"))
+                if iid and q:
+                    lines.append((iid, q))
+            if not lines:
+                continue
+            conn.execute("DELETE FROM recipe_ingredients WHERE menu_item_id=?", (mid,))
+            for iid, q in lines:
+                conn.execute("INSERT INTO recipe_ingredients (menu_item_id, ingredient_id, qty_per_unit) VALUES (?,?,?) "
+                             "ON CONFLICT(menu_item_id, ingredient_id) DO UPDATE SET qty_per_unit=excluded.qty_per_unit",
+                             (mid, iid, q))
+            dishes += 1
+
         for iid in touched:
             _il.recompute_rollups(restaurant_id, iid, conn=conn)
         _stamp(conn, restaurant_id, provider)
         conn.commit()
     finally:
         conn.close()
-    return {"ok": True, "items": len(touched), "created": created, "counts": counted}
+    return {"ok": True, "items": len(touched), "created": created, "counts": counted, "recipes": dishes}
 
 
 def sync_restaurant(restaurant_id) -> dict:

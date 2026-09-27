@@ -50,7 +50,8 @@ def test_the_hero_says_less_and_colours_the_weeks_waste_by_its_target():
     assert '.fc2-hero-fcp.fc2-pos,[data-theme="dark"] .fc2-hero-fcp.fc2-pos{background:none;' in SRC
     # Row for row: one grid, both blocks on its rows.
     assert ".fc2-hero-nums>#fc2-fcp{grid-column:1;grid-row:1/-1;display:grid;grid-template-rows:subgrid" in SRC
-    assert ".fc2-waste-n .fc2-num-lbl{grid-row:4" in SRC and ".fc2-waste-n .delta{grid-row:5" in SRC
+    # (Reworked later the same night: each heading sits under its figure.)
+    assert ".fc2-waste-n .fc2-num-lbl{grid-row:2" in SRC and ".fc2-waste-n .delta{grid-row:3" in SRC
 
 
 def test_the_waste_trend_shell_is_darker_than_its_card():

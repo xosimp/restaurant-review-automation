@@ -72,12 +72,11 @@ CONTRACT = [
     ("unsupported_causes", "client_api.py", "dashboard"),
     ("stale_note", "client_api.py", "dashboard"),
     ("needs_yield", "recipes.py", "dashboard"),
-    ("unit_warnings", "recipes.py", "dashboard"),
-    ("confidence_levels", "recipes.py", "dashboard"),
+    # unit_warnings, confidence_levels, card_qty and is_estimate left the web
+    # contract 9/26/26: the web no longer renders recipe drafts (recipes
+    # load from the inventory system); the phone's Recipe drafts sheet reads them.
     ("unit_skipped", "recipes.py", "dashboard"),
     ("unit_ok", "recipes.py", "dashboard"),
-    ("card_qty", "recipes.py", "dashboard"),
-    ("is_estimate", "recipes.py", "dashboard"),
     ("strength_pct", os.path.join("intelligence", "patterns.py"), "admin"),
     ("pos_state", "admin_ops.py", "admin"),
     ("sync_state", "admin_ops.py", "admin"),

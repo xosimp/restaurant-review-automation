@@ -92,11 +92,10 @@ def test_draft_missing_takes_an_explicit_item_list():
 def test_the_web_drafts_from_the_menu_and_no_longer_asks_for_a_photo():
     src = open(os.path.join(ROOT, "templates", "dashboard.html"), encoding="utf-8").read()
     assert "fc2ScanRecipe" not in src and "fc2-photo-file" not in src and "Photograph a recipe" not in src
-    assert "function fc2DraftRecipes(btn,missingOnly)" in src
-    assert "/api/food-cost/recipes/draft" in src
-    assert 'id="fc2-menu-text"' in src
-    for rule in (".fc2-menu-draft{", ".fc2-tool-empty{"):
-        assert rule in src
+    # And, since 9/26/26 (owner), no menu paste either: recipes load from the
+    # inventory system; the draft routes stay for the phone.
+    assert 'id="fc2-menu-text"' not in src
+    assert ".fc2-tool-empty{" in src
 
 
 def test_the_tools_render_a_state_block_not_a_bare_sentence():

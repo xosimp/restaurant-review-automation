@@ -849,6 +849,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("client_data", "inventory_synced_at", "TEXT"),
         ("client_data", "inventory_sync_error", "TEXT"),
         ("ingredients", "external_ref", "TEXT"),
+        ("menu_items", "external_ref", "TEXT"),
         ("labor_daily_history", "total_hours", "REAL"),
         ("users", "role", "TEXT DEFAULT 'client'"),
         ("users", "google_id", "TEXT"),

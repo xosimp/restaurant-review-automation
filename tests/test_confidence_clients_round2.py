@@ -291,8 +291,9 @@ def test_recheck_date_is_the_local_day():
 
 
 def test_old_recipe_drafts_are_not_called_transcribed():
+    # The web no longer renders drafts (9/26/26: recipes load from the
+    # inventory system); the stale tag rule must still never come back.
     src = _src()
-    assert "dtrans?'<span class=\"ck-tag\" data-claim=\"transcribed\">From your card</span>'" in src
     assert "(dr.is_estimate===false?'<span class=\"ck-tag\" data-claim=\"transcribed\">" not in src
 
 

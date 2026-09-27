@@ -341,7 +341,8 @@ def test_alert_contact_one_starts_as_the_owner(db_path, monkeypatch):
 def test_the_order_card_loads_itself_and_edits_quantities():
     s = _src()
     assert 'onclick="loadOrderDraft()"' not in s, "the Load button is gone (U2-16)"
-    assert "whenSeen('fc2-order-send',loadOrderDraft);" in s and "whenSeen('mm-body',loadMenuMargins);" in s
+    # (Since 9/26/26 the card folds; the draft loads when its line is on screen.)
+    assert "whenSeen('fc2-order-send-d',loadOrderDraft);" in s and "whenSeen('mm-body',loadMenuMargins);" in s
     assert 'data-so-qty="' in s and "if(lines.length)body.lines=lines;" in s
     assert "window.confirm(d.error" not in s, "resend is an inline confirm, not confirm()"
     assert "cavNavRegister('order'," in s and 'data-nav="inventory/order"' in s
@@ -374,7 +375,10 @@ def test_confident_recipes_accept_in_one_tap():
     assert "var FC2_SURE_PCT=80;" in s and "function fc2ConfidentDrafts(ds){" in s
     fn = s[s.index("function fc2ConfidentDrafts(ds){"):s.index("document.addEventListener('click',function(e){\n  var t=e.target&&e.target.closest?e.target.closest('[data-recipe-accept-all]')")]
     assert "ln.unit_ok===false" in fn and "dr.needs_yield" in fn and "ln.confidence_pct<FC2_SURE_PCT" in fn
-    assert "data-recipe-accept-all=" in s
+    # The web's Recipes block no longer drafts (owner, 9/26/26): recipes load
+    # from the inventory system. The phone's Recipe drafts sheet still does.
+    blk = s[s.index("function fc2LoadRecipeDrafts(){"):s.index("function fc2ConfidentDrafts(ds){")]
+    assert "data-recipe-accept-all=" not in blk and "'/api/food-cost/recipes'" in blk
 
 
 def test_waste_can_be_logged_in_one_line_and_invoice_lines_become_ingredients():

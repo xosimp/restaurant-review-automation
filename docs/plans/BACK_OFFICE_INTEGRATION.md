@@ -64,7 +64,8 @@ The seam is in place; only the HTTP calls are missing.
 - `backoffice.py` — the Back Office provider. `is_connected` needs `BACKOFFICE_API_BASE` and `restaurants.backoffice_api_key`, so it is off everywhere today; `fetch_inventory` raises `BackOfficeNotReady` with the mapping notes.
 - Nightly: `scheduler.run_inventory_sync`, after the 3am POS sync, bounded and resumable (`job_cursors` key `inventory_sync_cursor`).
 - The page: once a sync lands, the count sheet is read-only ("Counts from Back Office · synced M/D/YY", no Save count), supplier picks are locked, and the price monitor says "Synced from Back Office" with its typing controls gone. Before that, hand entry stays as it is.
-- Still to write with the docs: the calls in `fetch_inventory`, an admin save + verify route for the key (the `rpower_routes.py` shape), and recipes / invoice lines in the contract.
+- Recipes are in the contract too (9/26/26): `recipes: [{dish, ref, sell_price, lines: [{ref|name, qty}]}]` - each dish upserted into `menu_items` (by `external_ref`, then name) and its `recipe_ingredients` replaced; the web's Recipes block lists them once synced (the menu-paste and recipe-card drafting are off the web).
+- Still to write with the docs: the calls in `fetch_inventory`, an admin save + verify route for the key (the `rpower_routes.py` shape), and invoice lines in the contract.
 
 ## What we need from Erik to start (1)
 
