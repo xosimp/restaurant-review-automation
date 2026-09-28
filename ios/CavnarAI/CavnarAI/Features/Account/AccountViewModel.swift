@@ -1406,16 +1406,23 @@ final class AccountViewModel {
         return false
     }
 
-    private struct HoursBody: Encodable { let open: [String: String]; let close: [String: String]; let closures: [String] }
+    /// `closures_base` is the list the sheet opened with: the server applies
+    /// only this sheet's own adds and removes, so a date added on the web
+    /// since the sheet opened is never written over (owner, 9/28/26).
+    private struct HoursBody: Encodable {
+        let open: [String: String]; let close: [String: String]; let closures: [String]; let closuresBase: [String]
+        enum CodingKeys: String, CodingKey { case open, close, closures, closuresBase = "closures_base" }
+    }
     var isSavingHours = false
     var saveHoursError: String?
 
-    func saveHours(open: [String: String], close: [String: String], closures: [String]) async -> Bool {
+    func saveHours(open: [String: String], close: [String: String], closures: [String], closuresBase: [String]) async -> Bool {
         isSavingHours = true; saveHoursError = nil
         defer { isSavingHours = false }
         do {
             let response: OKErrorResponse = try await client.send("/mobile/api/account/hours", method: .post,
-                                                                   body: HoursBody(open: open, close: close, closures: closures))
+                                                                   body: HoursBody(open: open, close: close, closures: closures,
+                                                                                  closuresBase: closuresBase))
             if response.ok { await load(); return true }
             saveHoursError = response.error ?? "Couldn't save your hours."
         } catch let error as APIClient.APIError {

@@ -8207,6 +8207,14 @@ def _do_account_hours(rid, data, current_user=None):
     # with it empty wiped that marketing setting (friction audit U2-3). Only
     # touched when the client sent the list; an entry that is not a date is
     # named back, never guessed.
+    #
+    # The web page no longer sends closures here at all - each date saves on
+    # its own through _do_account_closures - because a whole list sent with
+    # Save hours overwrote dates added anywhere since the page loaded, and a
+    # date picked but not yet saved was lost (owner, 9/28/26). A client that
+    # still sends its list (the iPhone sheet) sends `closures_base`, the list
+    # it opened with, and only its own adds and removes are applied; a list
+    # with no base is taken whole, as before.
     if isinstance((data or {}).get("closures"), list):
         dates, ignored = [], []
         for c in data["closures"][:120]:
@@ -8216,11 +8224,47 @@ def _do_account_hours(rid, data, current_user=None):
             elif str(c or "").strip():
                 ignored.append(str(c).strip()[:40])
         import schedule_rules as _sr_h
-        out["closures"] = _sr_h.save_closures(rid, closed_dates=dates)["closed_dates"]
+        base = data.get("closures_base")
+        if isinstance(base, list):
+            base_set = {b for b in (_closure_iso(x) for x in base[:120]) if b}
+            out["closures"] = _sr_h.change_closed_dates(rid, add=sorted(set(dates) - base_set),
+                                                        remove=sorted(base_set - set(dates)))["closed_dates"]
+        else:
+            out["closures"] = _sr_h.save_closures(rid, closed_dates=dates)["closed_dates"]
         if ignored:
             out["ignored"] = ignored
     log_account_event(rid, "hours_changed", current_user)
     return out, 200
+
+
+def _do_account_closures(rid, data, current_user=None):
+    """Account and Labor's closed dates, one change at a time: {"add": date}
+    or {"remove": date} (a date or a list of them; ISO or M/D/YY). Saved the
+    moment the owner adds or removes a chip, against what is stored - never
+    a whole list a page loaded earlier. Owner-only, as hours are (F2-3)."""
+    from permissions import is_principal
+    if current_user is not None and not is_principal(current_user):
+        return {"ok": False, "error": "Only the account owner can change closed dates."}, 403
+
+    def _dates(v):
+        vals = v if isinstance(v, list) else ([v] if v not in (None, "") else [])
+        good, bad = [], []
+        for x in vals[:60]:
+            iso = _closure_iso(x)
+            (good if iso else bad).append(iso or str(x).strip()[:40])
+        return good, bad
+
+    add, bad_add = _dates((data or {}).get("add"))
+    remove, bad_rm = _dates((data or {}).get("remove"))
+    if bad_add or bad_rm:
+        return {"ok": False, "error": f"That isn't a date: {', '.join(bad_add + bad_rm)}"}, 400
+    if not add and not remove:
+        return {"ok": False, "error": "Pick a date to add or remove."}, 400
+    import schedule_rules as _sr_c
+    dates = _sr_c.change_closed_dates(rid, add=add, remove=remove)["closed_dates"]
+    log_account_event(rid, "closures_changed", current_user,
+                      detail={"added": add, "removed": remove})
+    return {"ok": True, "closures": dates, "added": add, "removed": remove}, 200
 
 
 def _closure_iso(value):
@@ -8511,6 +8555,15 @@ def _do_account_hours_google(rid):
     if not hours.get("open"):
         return {"ok": False, "connected": True, "error": "Your Google listing has no opening hours on it."}, 200
     return {"ok": True, "connected": True, "open": hours["open"], "close": hours.get("close") or {}}, 200
+
+
+@client_bp.route("/api/account-settings/closures", methods=["POST"])
+@login_required
+def save_account_closures(current_user):
+    """Twin: /mobile/api/account/closures."""
+    payload, status = _do_account_closures(current_user["restaurant_id"],
+                                           request.get_json(silent=True) or {}, current_user)
+    return jsonify(**payload), status
 
 
 @client_bp.route("/api/account-settings/hours/google")

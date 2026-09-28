@@ -338,6 +338,22 @@ def save_closures(restaurant_id, closed_weekdays=None, closed_dates=None, db_pat
     return closures(get_restaurant(restaurant_id, db_path))
 
 
+def change_closed_dates(restaurant_id, add=(), remove=(), db_path=DB_PATH) -> dict:
+    """Add and remove single closed dates against what is STORED now.
+
+    The Account and Labor pages used to send their whole chip list with Save
+    hours / Save rules, so a date added on one and not yet on the other - or
+    a date picked but never "Add"-ed, or a chip added without saving - was
+    lost or overwritten by the next save (owner, 9/28/26: Erik's two closed
+    dates vanished). A change now names the dates it adds or removes and
+    nothing else, so no page can write back a list it loaded earlier."""
+    from models import get_restaurant
+    current = set(closures(get_restaurant(restaurant_id, db_path))["closed_dates"])
+    current |= {str(d).strip()[:10] for d in add or () if _iso(str(d).strip()[:10])}
+    current -= {str(d).strip()[:10] for d in remove or ()}
+    return save_closures(restaurant_id, closed_dates=sorted(current), db_path=db_path)
+
+
 def closed_in(restaurant, week_dates) -> set:
     cl = closures(restaurant)
     out = set()

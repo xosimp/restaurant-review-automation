@@ -422,6 +422,10 @@ suggested figure (`.lb2-cov-offer`); the status line then says where the
 figures came from and "Not saved yet". A field the source has nothing for
 stays blank — never 0. Dates the owner enters are a `type=date` input plus
 removable chips (`.rul-ov`, M/D/YY), never a comma-separated text box.
+Each chip **saves the moment it is added or removed** (a change, not the whole list), and a
+date picked but not added is added by the section's Save rather than dropped. A time of day is an
+`.ac-select` of 15-minute steps (`cavTimeOptions`, unset reads "—"), never `<input type=time>`:
+Safari draws an empty one as a grey "12:30 PM" that reads as a value (owner, 9/28/26).
 
 **Editable lines before an outward send.** A list that will be emailed
 (the supplier order) shows each line with a numeric `.fc2-inv-in` input and

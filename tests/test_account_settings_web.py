@@ -183,3 +183,77 @@ def test_settings_are_scoped_to_the_signed_in_restaurant(client, db_path, monkey
     client.post("/api/account-settings/auto-approve", json={"enabled": True, "daily_cap": 20})
     assert get_restaurant(theirs, db_path=db_path).auto_approve_5star in (0, None)
     assert get_restaurant(mine, db_path=db_path).auto_approve_5star == 1
+
+
+# ── closed dates save one at a time (owner, 9/28/26) ────────────────────────
+# Erik added two closed dates and they were gone after a reload: a chip only
+# lived in the page until Save hours, a date picked but not "Add"-ed never
+# became one, and every Save hours / Save rules wrote back the whole list the
+# page had loaded - over dates added anywhere since.
+
+def test_a_closed_date_saves_the_moment_it_is_added_and_removed(client, db_path, monkeypatch):
+    import schedule_rules
+    rid = _restaurant(db_path)
+    _login_as(monkeypatch, rid)
+    d = client.post("/api/account-settings/closures", json={"add": "2026-11-26"}).get_json()
+    assert d["ok"] and d["closures"] == ["2026-11-26"] and d["added"] == ["2026-11-26"]
+    d = client.post("/api/account-settings/closures", json={"add": "12/25/26"}).get_json()
+    assert d["closures"] == ["2026-11-26", "2026-12-25"]
+    # Stored, not just echoed: a fresh read shows both.
+    assert client.get("/api/account-settings").get_json()["hours"]["closures"] == ["2026-11-26", "2026-12-25"]
+    d = client.post("/api/account-settings/closures", json={"remove": "2026-11-26"}).get_json()
+    assert d["closures"] == ["2026-12-25"]
+    assert schedule_rules.closures(get_restaurant(rid, db_path=db_path))["closed_dates"] == ["2026-12-25"]
+    bad = client.post("/api/account-settings/closures", json={"add": "someday"})
+    assert bad.status_code == 400 and "someday" in bad.get_json()["error"]
+    assert client.post("/api/account-settings/closures", json={}).status_code == 400
+
+
+def test_closed_dates_are_the_owners(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    monkeypatch.setattr("permissions.is_principal", lambda u: False)
+    out, status = client_api._do_account_closures(rid, {"add": "2026-11-26"}, {"id": 2, "restaurant_id": rid})
+    assert status == 403 and not out["ok"]
+
+
+def test_a_sheet_that_sends_its_list_only_applies_its_own_changes(client, db_path, monkeypatch):
+    """The iPhone Hours sheet sends the list it opened with as closures_base:
+    a date added on the web since it opened is kept, the sheet's own add and
+    remove are applied."""
+    import schedule_rules
+    rid = _restaurant(db_path)
+    _login_as(monkeypatch, rid)
+    schedule_rules.save_closures(rid, closed_dates=["2026-11-26", "2026-12-24"], db_path=db_path)  # sheet opens here
+    client.post("/api/account-settings/closures", json={"add": "2026-12-31"})                         # web adds one
+    client.post("/api/account-settings/hours", json={
+        "open": {}, "close": {},
+        "closures": ["2026-11-26", "2027-01-01"],             # sheet removed 12/24, added 1/1
+        "closures_base": ["2026-11-26", "2026-12-24"]})
+    assert schedule_rules.closures(get_restaurant(rid, db_path=db_path))["closed_dates"] == \
+        ["2026-11-26", "2026-12-31", "2027-01-01"]
+
+
+def test_the_web_never_sends_a_whole_closed_dates_list_again():
+    import os
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "templates", "dashboard.html"), encoding="utf-8").read()
+    save = src[src.index("function saveAccountHours()"):src.index("function asClosureChip(")]
+    assert "closures:" not in save and "asAddClosure()" in save   # a picked date is added, not dropped
+    add = src[src.index("function asAddClosure()"):src.index("// Hours prefill (U2-19)")]
+    assert "cavClosedDateChange({ add: v }" in add
+    change = src[src.index("function cavClosedDateChange("):src.index("function asAddClosure()")]
+    assert "/api/account-settings/closures" in change
+    rules_save = src[src.index("body.closed_weekdays="):src.index("jsend('/api/labor/rules'")]
+    assert "closed_dates" not in rules_save
+    listener = src[src.index("t.getAttribute('data-cdate-x')===null"):][:400]
+    assert "cavClosedDateChange({remove:iso}" in listener
+
+
+def test_the_iphone_sheet_sends_the_list_it_opened_with():
+    import os
+    root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "ios", "CavnarAI", "CavnarAI", "Features", "Account")
+    vm = open(os.path.join(root, "AccountViewModel.swift"), encoding="utf-8").read()
+    sheet = open(os.path.join(root, "AccountHoursSheet.swift"), encoding="utf-8").read()
+    assert 'closuresBase = "closures_base"' in vm
+    assert "closuresBase: closuresBase" in sheet

@@ -12766,8 +12766,9 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
         <div id="as-hours-grid" style="display:grid;grid-template-columns:auto 1fr 1fr;gap:8px 12px;align-items:center;max-width:520px"></div>
         <div id="as-hours-err" role="alert" hidden style="color:var(--red);font-size:13px;margin-top:8px;max-width:520px"></div>
         {# One closures list (U2-3): the scheduler's closed dates, the same
-           ones Labor -> Scheduling rules shows. The draft leaves them empty. #}
-        <div class="ac-field" style="margin-top:12px;max-width:520px"><label for="as-closure-new">Closed on these dates <small>the schedule leaves them empty &middot; the same list as Labor &rarr; Scheduling rules</small></label>
+           ones Labor -> Scheduling rules shows. The draft leaves them empty.
+           Each add/remove saves on its own (owner, 9/28/26). #}
+        <div class="ac-field" style="margin-top:12px;max-width:520px"><label for="as-closure-new">Closed on these dates <small>saved as soon as you add or remove one &middot; the schedule leaves them empty &middot; the same list as Labor &rarr; Scheduling rules</small></label>
           <div id="as-closures" style="margin:6px 0"></div>
           <div class="ac-inline" style="gap:8px"><input class="ac-input" type="date" id="as-closure-new" aria-label="A date you are closed" style="max-width:180px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="asAddClosure()">Add date</button></div></div>
       </div>
@@ -24300,15 +24301,20 @@ function saveAccountHours() {
     return;
   }
   if (err) err.hidden = true;
-  var chips = document.querySelectorAll('#as-closures [data-cdate]');
-  var closures = [];
-  for (var j = 0; j < chips.length; j++) closures.push(chips[j].getAttribute('data-cdate'));
-  asPost('/api/account-settings/hours', { open: open, close: close, closures: closures },
-         'as-hours-status', 'Saved').then(function() { loadAccountSettings(); });
+  // Closed dates are not part of this save: each one saved when it was
+  // added or removed, so a list this page loaded earlier can never write
+  // over them. A date picked but not yet added is added now, not dropped.
+  var pending = document.getElementById('as-closure-new');
+  var first = (pending && /^\d{4}-\d{2}-\d{2}$/.test(pending.value || '')) ? asAddClosure() : Promise.resolve();
+  first.then(function() {
+    return asPost('/api/account-settings/hours', { open: open, close: close }, 'as-hours-status', 'Saved');
+  }).then(function() { loadAccountSettings(); });
 }
-// Closed dates as chips (U2-3), the same control Labor's rules use. The
-// remove button is the shared [data-cdate-x] listener; Save hours sends
-// whatever chips are left.
+// Closed dates as chips (U2-3), the same control Labor's rules use. Each
+// add and each remove saves on its own, against what is stored (owner,
+// 9/28/26: two dates Erik added were lost - a chip only lived in the page
+// until Save hours, and a date picked but not "Add"-ed never became one).
+// The remove button is the shared [data-cdate-x] listener below.
 function asClosureChip(iso) {
   return '<span class="rul-ov" data-cdate="' + _ehEsc(iso) + '">' + _ehEsc(typeof mdy === 'function' ? mdy(iso) : iso)
     + '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" data-cdate-x="1" title="Remove" aria-label="Remove this date">✕</button></span>';
@@ -24319,15 +24325,29 @@ function asRenderClosures(list) {
   for (var i = 0; i < list.length; i++) h += asClosureChip(list[i]);
   box.innerHTML = h || '<span class="ac-note" style="margin:0">No closed dates.</span>';
 }
+function cavClosedDatesPaint(list) {
+  asRenderClosures(list || []);
+  var lab = document.getElementById('rul-closed-dates');
+  if (lab) { var h = ''; for (var i = 0; i < (list || []).length; i++) h += asClosureChip(list[i]); lab.innerHTML = h; }
+}
+function cavClosedDateChange(body, statusId) {
+  return fetch('/api/account-settings/closures', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+  }).then(apiJson).then(function(d) {
+    if (!d || !d.ok) { toast((d && d.error) || 'Couldn\u2019t save that date', 'error'); return d; }
+    cavClosedDatesPaint(d.closures);
+    var what = (d.added && d.added.length) ? 'Closed ' + mdy(d.added[0]) + ' saved' : 'Date removed';
+    if (statusId) asFlash(statusId, what); else toast(what, 'success');
+    return d;
+  }).catch(function() { toast('Couldn\u2019t reach the server \u2014 that date isn\u2019t saved', 'error'); });
+}
 function asAddClosure() {
-  var inp = document.getElementById('as-closure-new'), box = document.getElementById('as-closures');
-  if (!inp || !box) return;
+  var inp = document.getElementById('as-closure-new');
+  if (!inp) return Promise.resolve();
   var v = (inp.value || '').replace(/^\s+|\s+$/g, '');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) { toast('Pick a date', 'error'); return; }
-  if (box.querySelector('[data-cdate="' + v + '"]')) return;
-  var empty = box.querySelector('.ac-note'); if (empty) box.innerHTML = '';
-  box.insertAdjacentHTML('beforeend', asClosureChip(v)); inp.value = '';
-  var st = document.getElementById('as-hours-status'); if (st) st.textContent = 'Not saved yet';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) { toast('Pick a date', 'error'); return Promise.resolve(); }
+  return cavClosedDateChange({ add: v }, 'as-hours-status').then(function(d) { if (d && d.ok) inp.value = ''; });
 }
 // Hours prefill (U2-19): Google's listed hours fill the grid; nothing is
 // saved until Save hours.
@@ -29425,14 +29445,15 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       +(ro?'':'<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" data-cdate-x="1" title="Remove" aria-label="Remove this date">✕</button>')+'</span>';
   }
   window.addClosedDate=function(){
-    var inp=document.getElementById('rul-cdate-new'),box=document.getElementById('rul-closed-dates');if(!inp||!box)return;
+    var inp=document.getElementById('rul-cdate-new');if(!inp)return;
     var v=(inp.value||'').trim();if(!/^\d{4}-\d{2}-\d{2}$/.test(v)){toast('Pick a date','error');return;}
-    if(box.querySelector('[data-cdate="'+v+'"]'))return;
-    box.insertAdjacentHTML('beforeend',_rulClosedChip(v,false));inp.value='';
+    cavClosedDateChange({add:v},null).then(function(d){if(d&&d.ok)inp.value='';});
   };
   document.addEventListener('click',function(ev){
     var t=ev.target;if(!t||!t.getAttribute||t.getAttribute('data-cdate-x')===null)return;
-    var chipEl=t.parentNode;if(chipEl&&chipEl.parentNode)chipEl.parentNode.removeChild(chipEl);
+    var chipEl=t.parentNode,iso=chipEl&&chipEl.getAttribute('data-cdate');if(!iso)return;
+    t.disabled=true;
+    cavClosedDateChange({remove:iso},chipEl.parentNode&&chipEl.parentNode.id==='as-closures'?'as-hours-status':null).then(function(){t.disabled=false;});
   });
   window.renderRules=function(){
     var d=_rules,el=document.getElementById('rules-body');if(!d||!el)return;
@@ -29587,8 +29608,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     body.foh_roles=_chipVals(document.getElementById('rul-foh'),'data-foh');
     body.patio_roles=_chipVals(document.getElementById('rul-patio'),'data-patio');
     body.closed_weekdays=_chipVals(document.getElementById('rul-closed'),'data-closed');
-    var cds=document.querySelectorAll('#rul-closed-dates [data-cdate]'),cdl=[];for(i=0;i<cds.length;i++)cdl.push(cds[i].getAttribute('data-cdate'));
-    body.closed_dates=cdl;
+    // Closed dates are not sent: each saved when it was added or removed.
     var prov=document.getElementById('rul-res-prov'),key=document.getElementById('rul-res-key');
     if(prov){body.reservation_provider=prov.value||null;if(key&&key.value.trim())body.reservation_api_key=key.value.trim();}
     var done=busy(btn,'Saving…'),st=document.getElementById('rules-status');

@@ -13,6 +13,8 @@ struct AccountHoursSheet: View {
 
     @State private var hours: [String: HoursDayDraft]
     @State private var closures: [String]
+    /// What the sheet opened with, sent as closures_base on save.
+    private let closuresBase: [String]
     @State private var newClosure = Date()
     @State private var postedLabel: String?
 
@@ -45,7 +47,9 @@ struct AccountHoursSheet: View {
                                                           closes: decode(profile.closeTimesJson)))
         // The scheduler's closed dates (Friction #6: these used to land in
         // the marketing holiday list and never reached the scheduler).
-        _closures = State(initialValue: (profile.closures ?? []).filter { !$0.isEmpty }.sorted())
+        let opened = (profile.closures ?? []).filter { !$0.isEmpty }.sorted()
+        _closures = State(initialValue: opened)
+        closuresBase = opened
     }
 
     /// Read only for a login the server won't take hours from.
@@ -110,7 +114,7 @@ struct AccountHoursSheet: View {
                             // untouched day goes back exactly as it was stored
                             // (F3-17).
                             let (open, close) = HoursDayDraft.payload(days: Self.days, drafts: hours)
-                            if await viewModel.saveHours(open: open, close: close, closures: closures) {
+                            if await viewModel.saveHours(open: open, close: close, closures: closures, closuresBase: closuresBase) {
                                 Haptic.success()
                                 postedLabel = "Hours saved"
                             }

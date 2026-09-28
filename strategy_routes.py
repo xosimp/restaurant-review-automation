@@ -1591,6 +1591,9 @@ def _do_compliance_set(u):
         out["role_floors"] = _sr.save_role_floors(_rid(u), floors)
     if "closed_weekdays" in b or "closed_dates" in b:
         cw = b.get("closed_weekdays") if isinstance(b.get("closed_weekdays"), list) else None
+        # The web rules page no longer sends closed_dates (each date saves on
+        # its own, /api/account-settings/closures): a whole list sent with Save
+        # rules overwrote dates added on Account since the page loaded.
         cd = b.get("closed_dates") if isinstance(b.get("closed_dates"), list) else None
         try:
             out["closures"] = _sr.save_closures(_rid(u), closed_weekdays=cw, closed_dates=cd)

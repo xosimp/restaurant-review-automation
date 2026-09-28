@@ -182,7 +182,9 @@ def test_receive_purchase_order_is_a_proposal_for_the_oldest_open_order(db_path)
 def test_account_closures_are_date_chips_not_free_text():
     s = _src()
     assert 'id="as-closure-new"' in s and "function asAddClosure()" in s
-    assert "querySelectorAll('#as-closures [data-cdate]')" in s
+    # Chips come from the server's list; each add/remove saves on its own
+    # (owner, 9/28/26) rather than being gathered up by Save hours.
+    assert "function cavClosedDatesPaint(list)" in s and "asRenderClosures(list || [])" in s
     assert 'placeholder="12/25/2026, 1/1/2027"' not in s
 
 

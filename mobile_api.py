@@ -6577,6 +6577,15 @@ def mobile_hours(current_user):
     return jsonify(**payload), status
 
 
+@mobile_bp.route("/account/closures", methods=["POST"])
+@mobile_login_required
+def mobile_account_closures(current_user):
+    """See client_api._do_account_closures."""
+    payload, status = _capi._do_account_closures(current_user["restaurant_id"],
+                                                 request.get_json(silent=True) or {}, current_user)
+    return jsonify(**payload), status
+
+
 @mobile_bp.route("/account/hours/google")
 @mobile_login_required
 def mobile_hours_google(current_user):
