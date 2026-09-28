@@ -23942,7 +23942,7 @@ function _dsrRenderCats(d) {
   var un = d.unmapped || [], mp = d.category_map || [], h = '';
   for (var i = 0; i < un.length; i++) {
     var u = un[i];
-    h += '<div class="ac-row"><div class="l"><b>' + _ehEsc(u.department) + '</b><span>Unmapped' + (typeof u.net === 'number' ? ' &middot; <i class="dr-n">$' + Math.round(u.net).toLocaleString('en-US') + '</i>' : '') + ' on ' + _ehEsc(d.unmapped_as_of || 'the latest night') + '</span></div>'
+    h += '<div class="ac-row"><div class="l"><b>' + _ehEsc(u.department) + '</b><span>Unmapped' + (typeof u.net === 'number' ? ' &middot; <i class="dr-n">' + (u.net < 0 ? '\u2212$' : '$') + Math.abs(Math.round(u.net)).toLocaleString('en-US') + '</i>' : '') + ' on ' + _ehEsc(d.unmapped_as_of || 'the latest night') + '</span></div>'
        + '<div class="c"><select class="ac-select" data-dsr-dept="' + _ehEsc(u.department) + '" aria-label="Category for ' + _ehEsc(u.department) + '">' + _dsrOptions('') + '</select></div></div>';
   }
   for (var j = 0; j < mp.length; j++) {
@@ -23982,6 +23982,10 @@ function saveDsrSetting(field) {
 }
 function _dsrSaveCategory(dept, cat) {
   asPost('/api/dsr/category', {pos_name: dept, category: cat}, 'as-dsr-status', 'Saved — counts from the next report on').then(function(d) {
+    /* The status line sits at the top of the section, off screen from a
+       department far down the list; the pick says where it went. */
+    if (d && d.ok) toast(d.pos_name + ' counts as ' + d.category + ' from the next report on', 'success');
+    else toast((d && d.error) || 'Couldn\u2019t save that category', 'error');
     loadDsrSettings();
   });
 }

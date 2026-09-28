@@ -677,6 +677,19 @@ def category_map(restaurant_id, db_path=DB_PATH):
     return {r["pos_name"].strip().lower(): r["category"] for r in rows}
 
 
+def category_rows(restaurant_id, db_path=DB_PATH):
+    """[{"pos_name", "category"}] as the owner saved them - the POS's own
+    spelling ("Beer"), where category_map() keys are lower-cased for
+    matching. What the settings screen lists."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT pos_name, category FROM dsr_category_map WHERE restaurant_id=? "
+                            "ORDER BY lower(pos_name)", (restaurant_id,)).fetchall()
+    finally:
+        conn.close()
+    return [{"pos_name": r["pos_name"], "category": r["category"]} for r in rows]
+
+
 def category_for(pos_name, mapping):
     """The DSR category a POS department/category name maps to — only what
     the owner mapped; anything else is UNMAPPED, never guessed."""

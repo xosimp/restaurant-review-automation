@@ -405,8 +405,16 @@ def test_the_owner_reads_the_settings_and_the_latest_unmapped(client, db, monkey
     assert body["settings"]["fiscal_period_scheme"] == "4x13" and body["settings"]["dsr_deadline_hour"] == 4
     assert body["settings"]["dsr_enabled"] is True and body["settings"]["calendar_label"].startswith("Period ")
     assert body["categories"] == list(dsr.DEFAULT_CATEGORIES)
-    assert body["category_map"] == [{"pos_name": "food", "category": "Food"}]
+    assert body["category_map"] == [{"pos_name": "FOOD", "category": "Food"}]      # the spelling as saved
     assert body["unmapped"] == [{"department": "KIOSK", "net": 1000.0}] and body["unmapped_as_of"] == "9/16/26"
+    # Mapping it leaves the list straight away, though last night's report is
+    # never re-run (owner, 9/28/26: each pick "went back to default" - the
+    # save had worked, the stale report still listed it). Matched as the
+    # report matches, case-insensitively.
+    assert client.post("/api/dsr/category", json={"pos_name": "kiosk", "category": "Retail"}).get_json()["ok"]
+    body = client.get("/api/dsr/settings").get_json()
+    assert body["unmapped"] == []
+    assert {"pos_name": "kiosk", "category": "Retail"} in body["category_map"]
     for role in ("manager", "employee"):
         _as(monkeypatch, r.id, role)
         assert client.get("/api/dsr/settings").status_code == 403

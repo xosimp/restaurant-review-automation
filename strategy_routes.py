@@ -3684,8 +3684,14 @@ def _dsr_unmapped(rid):
         return [], None
     sales = ((latest[0].get("facts") or {}).get("blocks") or {}).get("sales") or {}
     rows = (sales.get("detail") or {}).get("unmapped") or []
+    # The report is last night's and never re-run, so a department the owner
+    # has mapped since still sits in its "unmapped" list. Left in, the screen
+    # showed it as Unmapped with "Pick a category" straight after each pick -
+    # the save had worked, the list hadn't moved (owner, 9/28/26).
+    mapped = store.category_map(rid)
     return ([{"department": x.get("department"), "net": x.get("net")} for x in rows
-             if isinstance(x, dict) and x.get("department")], latest[0]["business_date"])
+             if isinstance(x, dict) and x.get("department")
+             and str(x.get("department")).strip().lower() not in mapped], latest[0]["business_date"])
 
 
 def _dsr_settings_payload(r):
@@ -3721,10 +3727,9 @@ def _do_dsr_settings_get(u):
         return refused
     r = get_restaurant(_rid(u))
     unmapped, as_of = _dsr_unmapped(_rid(u))
-    mapping = store.category_map(_rid(u))
     return {"ok": True, "can_edit": True, "settings": _dsr_settings_payload(r),
             "categories": list(_dsr.DEFAULT_CATEGORIES),
-            "category_map": [{"pos_name": k, "category": v} for k, v in sorted(mapping.items())],
+            "category_map": store.category_rows(_rid(u)),
             "unmapped": unmapped, "unmapped_as_of": mdy(as_of) if as_of else None}, 200
 
 
