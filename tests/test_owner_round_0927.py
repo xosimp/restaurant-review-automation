@@ -79,7 +79,8 @@ def test_send_to_suppliers_sits_inside_suppliers():
 def test_the_food_cost_hero_says_nothing_under_its_heading():
     hero = _between('<h1 class="hb-h1">Food cost.', '<div class="fc2-top-right">')
     assert "fc2-h1-basis" not in hero and "dh-badge" not in hero
-    assert "@media(min-width:641px){ #panel-inventory .fc2-top-right>.fc2-hero-nums{margin-top:32px}}" in SRC
+    # Tightened 9/28/26: 32px under the chips (the column's 20px gap and 12px), 30px above the trend.
+    assert "@media(min-width:641px){ #panel-inventory .fc2-top-right>.fc2-hero-nums{margin-top:12px}}" in SRC
 
 
 def test_the_selected_week_is_an_outline_not_a_second_hover():

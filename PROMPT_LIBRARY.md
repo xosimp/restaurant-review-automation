@@ -278,6 +278,7 @@ Every call site validates after parsing and before it stores, caches, files, sen
 | Guest SMS `guest_marketing.draft_campaign_message` | guest_sms | never-say (was missing), topic + menu notes as `offer_source` | `invented_offers`, the length limit | "campaign copy rejected: …" |
 | Social post `marketing.generate_content` | social_post | owner profile + topic as `offer_source`, guest / performance signals untrusted | — | "marketing copy rejected: …" |
 | Content calendar `marketing.get_content_calendar_ideas` | calendar_idea | each idea's text fields, owner profile as `offer_source` (had no guard at all) | — | that idea dropped; the rest of the week stands |
+| Content calendar, the open days `marketing._fill_missing_days` (9/28/26) | calendar_idea | the same prompt plus "Only these days are still open: …", once per generation and only when a day is missing (skipped by the model or refused above); the reply goes through the same validation, and only the open days are taken (first idea each). Readiness NOT_APPLICABLE, as the calendar | — | a day still empty stays empty - the page draws "Nothing planned" rather than invent one |
 
 ## Guardrails that apply to every call site
 

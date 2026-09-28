@@ -24,6 +24,7 @@ NOT_APPLICABLE_SITES = {
     ("drafter.py", "draft_response"): "a reply to one review, written from that review",
     ("marketing.py", "generate_content"): "a social post drafted from the owner's topic",
     ("marketing.py", "get_content_calendar_ideas"): "calendar ideas from the profile and holidays",
+    ("marketing.py", "_fill_missing_days"): "the same calendar prompt, for the days a week came back without",
     ("emails.py", "generate_email_personalization"): "onboarding email copy from typed counts",
     ("analyser.py", "analyse_review"): "classifies one review's own text",
     ("recipes.py", "draft_missing"): "recipe drafts the owner confirms line by line",

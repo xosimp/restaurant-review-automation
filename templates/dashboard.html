@@ -895,7 +895,20 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .acct-card:hover{box-shadow:0 6px 18px rgba(14,12,10,.09);transform:translateY(-1px)}
 [data-theme="dark"] .acct-card{background:var(--surface-glass),var(--surface)!important;border-color:var(--line-hi)!important;box-shadow:var(--elev-1)!important}
 [data-theme="dark"] .acct-card:hover{box-shadow:var(--elev-2)!important}
-.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:10px;margin-top:10px}
+/* Four across (owner, 9/28/26: seven columns made each card a sliver) -
+   the week is Sunday-Wednesday over Thursday-Saturday. */
+.cal-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin-top:14px}
+@media (max-width:1100px){.cal-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.cal-hd{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.cal-hd .cal-day-name{font-family:'Clash Display',sans-serif;font-size:20px;font-weight:500;color:var(--ink);letter-spacing:-.01em}
+.cal-hd .cal-date{font-family:'Space Grotesk',sans-serif;font-size:14px;color:var(--ink3)}
+.cal-card .cal-platform{align-self:flex-start;margin:12px 0 12px;padding:4px 11px;border-radius:999px;font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
+.cal-angle{flex:1;font-size:16px;line-height:1.6;color:var(--ink2)}
+.cal-acts{display:flex;align-items:center;flex-wrap:wrap;margin-top:16px;padding-top:14px;border-top:1px solid rgba(200,75,47,.16)}
+.cal-acts .rec-ans{margin-top:0}
+.cal-acts>.cbtn+.rec-ans>.cbtn:first-child,.cal-acts>.cbtn+.rec-ans-done{margin-left:12px;padding-left:12px;border-left:1px solid var(--hb-line);border-radius:0}
+.cal-card.cal-empty,[data-theme="dark"] .cal-card.cal-empty{background:none!important;border-style:dashed!important}
+.cal-empty .cal-angle{color:var(--ink3)}
 /* The calendar stacks on a phone (density round #42): seven columns were
    ~40px wide at 375px. */
 @media (max-width:760px){.cal-grid{grid-template-columns:1fr}.cal-card{min-height:0}}
@@ -903,13 +916,15 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
    body text at the design-system sizes, left-aligned section heads. */
 #panel-marketing .ct-label{font-size:14.5px}
 #panel-marketing .ct-desc{font-size:13px}
-#panel-marketing .topic-input{font-size:14.5px}
+#panel-marketing .topic-input,#brand-voice-modal .topic-input{font-size:14.5px}
 #panel-marketing .output-box{font-size:15px;line-height:1.65}
-#panel-marketing .slabel{font-size:11.5px;letter-spacing:.14em}
-#panel-marketing .cal-card{font-size:14px}
-#panel-marketing .cal-platform{font-size:11px}
-.mkt-brief .insight-text{font-size:15.5px;line-height:1.6;margin-top:8px;color:var(--ink2)}
-.mkt-brief-ft{margin-top:12px;padding-top:10px;border-top:1px solid var(--hb-line2);font-size:13.5px;color:var(--ink3)}
+#panel-marketing .slabel,#brand-voice-modal .slabel{font-size:11.5px;letter-spacing:.14em}
+#panel-marketing .cal-card{font-size:15px}
+.lb2-ai.mkt-brief{margin-top:0}
+/* Marketing's panel carries none of the modules' --hb-* tokens; the brief
+   box and the calendar get the ones Food Cost's read box is drawn with. */
+#panel-marketing .lb2-ai,#panel-marketing .cal-card{--hb-tint:rgba(200,75,47,.06);--hb-line:rgba(14,12,10,.12)}
+[data-theme="dark"] #panel-marketing .lb2-ai,[data-theme="dark"] #panel-marketing .cal-card{--hb-tint:rgba(212,88,58,.09);--hb-line:rgba(240,235,224,.14)}
 .mkt-card{margin-top:10px}
 .mkt-help{font-size:14px;color:var(--ink3);line-height:1.5;margin:0 0 14px}
 .mkt-attr-line{margin-top:4px}
@@ -921,7 +936,7 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
    plain "empty" state below, not part of the sameness problem above. */
 @keyframes calCardIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
 @media (prefers-reduced-motion: reduce){.cal-card{animation:none!important;opacity:1!important}}
-.cal-card{background:linear-gradient(160deg,rgba(200,75,47,.10) 0%,rgba(200,75,47,.03) 100%);border:1px solid rgba(200,75,47,.2);border-radius:14px;padding:18px 16px;font-size:13px;display:flex;flex-direction:column;min-height:190px;transition:transform .15s,box-shadow .15s;color:var(--ink2);opacity:0;animation:calCardIn .45s ease forwards}
+.cal-card{background:linear-gradient(160deg,rgba(200,75,47,.10) 0%,rgba(200,75,47,.03) 100%);border:1px solid rgba(200,75,47,.2);border-radius:16px;padding:22px 22px 18px;font-size:15px;display:flex;flex-direction:column;min-height:250px;transition:transform .15s,box-shadow .15s;color:var(--ink2);opacity:0;animation:calCardIn .45s ease forwards}
 .cal-card:hover{transform:translateY(-3px);box-shadow:0 8px 22px rgba(200,75,47,.16)}
 /* a content idea's answer (rec-ROI #41): Not for us under Generate; an
    answered idea is kept in the rail, quieter, with what happened to it */
@@ -952,15 +967,18 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
    the feed. */
 .cbtn.ai-strip{position:fixed;left:20px;bottom:22px;z-index:997;display:flex;align-items:center;justify-content:flex-start;gap:9px;height:auto;max-width:min(420px,calc(100vw - 120px));padding:9px 14px 9px 12px;border-radius:999px;background:var(--paper);border:1px solid var(--paper3);box-shadow:0 8px 24px rgba(0,0,0,.14),0 0 0 1px rgba(0,0,0,.03);color:var(--ink2);font-family:'Apfel Grotezk',sans-serif;font-size:13px;font-weight:600;cursor:pointer;transition:transform .18s,box-shadow .18s,opacity .3s;opacity:0}
 .cbtn.ai-strip.on{opacity:1}
-/* The orbit: an ember light travelling the pill's edge while Cavnar AI is
-   working. A dash drawn ON the pill's own outline (an SVG rect sized to the
-   pill by aiOrbitSize), so it moves at one speed the whole way round. It
-   used to be a conic gradient spun about the centre, which on a pill ~8x
-   wider than tall raced round the ends and crawled along the long edges -
-   it read as the light stalling and refilling one side (9/25/26). */
-.ai-strip .orbit{position:absolute;left:-1px;top:-1px;pointer-events:none;overflow:visible;filter:drop-shadow(0 0 3px var(--ember))}
-.ai-strip .orbit rect{fill:none;stroke:var(--ember);stroke-width:1.5;stroke-linecap:round;stroke-dasharray:14 86;animation:aiOrbit 3.6s linear infinite}
-@keyframes aiOrbit{from{stroke-dashoffset:0}to{stroke-dashoffset:-100}}
+/* The pill's outline: an SVG rect sized to the pill by aiOrbitSize (a conic
+   gradient spun about the centre, before 9/25/26, raced round the ends of
+   a pill ~8x wider than tall). */
+/* 9/28/26 (owner): no light lapping the edge at all - Safari drew the dash
+   twice (its pathLength) and a lap round the rim read as a loading ring.
+   The outline breathes instead, slowly, and a soft light crosses the pill
+   now and then. */
+.ai-strip .orbit{position:absolute;left:-1px;top:-1px;pointer-events:none;overflow:visible;filter:drop-shadow(0 0 4px var(--ember))}
+.ai-strip .orbit rect{fill:none;stroke:var(--ember);stroke-width:1.5;stroke-opacity:.15;animation:aiRing 6s ease-in-out infinite}
+@keyframes aiRing{0%,100%{stroke-opacity:.12}50%{stroke-opacity:.7}}
+.cbtn.ai-strip::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:linear-gradient(105deg,transparent 35%,rgba(232,149,106,.16) 50%,transparent 65%) no-repeat;background-size:260% 100%;background-position:130% 0;animation:aiSweep 9s ease-in-out infinite}
+@keyframes aiSweep{0%,62%{background-position:130% 0}100%{background-position:-30% 0}}
 .cbtn.ai-strip:hover{transform:translateY(-1px);box-shadow:0 12px 30px rgba(0,0,0,.18),0 0 0 1px rgba(200,75,47,.12)}
 .ai-strip .dot{position:relative;width:8px;height:8px;border-radius:50%;background:var(--ember);box-shadow:0 0 8px var(--ember);flex-shrink:0}
 .ai-strip .dot:after{content:'';position:absolute;inset:-4px;border-radius:50%;background:var(--ember);opacity:.35;animation:aiBreath 2.4s ease-in-out infinite}
@@ -1002,7 +1020,7 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
    watched screen is never perfectly still. */
 .hb-card svg[data-pts] path[stroke]{animation:hbChartBreath 7s ease-in-out infinite}
 @keyframes hbChartBreath{0%,100%{opacity:1}50%{opacity:.78}}
-@media (prefers-reduced-motion:reduce){.ai-strip .orbit rect,.ai-strip .dot:after,.ai-feed .it.now .d:after,.ai-feed .it.in,.ai-feed.on,.ask-steps .st,.ask-in,.hb-card svg[data-pts] path[stroke]{animation:none!important;opacity:1}.ai-strip .txt{transition:none}}
+@media (prefers-reduced-motion:reduce){.cbtn.ai-strip::after{animation:none;display:none}.ai-strip .orbit rect,.ai-strip .dot:after,.ai-feed .it.now .d:after,.ai-feed .it.in,.ai-feed.on,.ask-steps .st,.ask-in,.hb-card svg[data-pts] path[stroke]{animation:none!important;opacity:1}.ai-strip .txt{transition:none}}
 @media(max-width:640px){.ai-strip{left:12px;bottom:14px;max-width:calc(100vw - 110px);font-size:12px}.ai-feed{left:12px;bottom:60px}}
 /* ── Brand layer ─────────────────────────────────────────────────────────
    One surface hierarchy for every module, lit the way Home is lit.
@@ -10414,10 +10432,12 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
    headline column down to a word per line. */
 .fc2-hero-fcp.fc2-pos{max-width:460px;min-width:0}
 .fc2-top-right{min-width:0;max-width:62%}
-/* The figures sit centred between the chips and the waste trend (owner,
-   9/27/26): 52px above them, as below (the empty position row's 22px and
-   the trend shell's 30px). */
-@media(min-width:641px){ #panel-inventory .fc2-top-right>.fc2-hero-nums{margin-top:32px}}
+/* The figures sit between the chips and the waste trend (owner, 9/27/26),
+   tightened 9/28/26 to 32px above and 30px below. */
+@media(min-width:641px){ #panel-inventory .fc2-top-right>.fc2-hero-nums{margin-top:12px}}
+/* Closer (owner, 9/28/26): the figures 32px under the chips and the waste
+   trend 30px under them - an empty position row adds nothing. */
+#panel-inventory .fc2-position:not(:has(>:not([hidden]))){display:none}
 .fc2-hero-fcp .d{font-size:16.5px;color:var(--ink2);margin-top:8px}
 .fc2-hero-fcp .b{font-size:14px}
 /* The week's waste lines up row for row with the food cost block beside
@@ -11071,7 +11091,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
   <div class="hb-top">
     <div style="min-width:0;flex:1 1 460px">
       <h1 class="hb-h1">Marketing. <span class="hb-head neutral" id="mkt-head">Reading your posts…</span></h1>
-      <div class="mod-today" id="mkt-today" hidden><span class="k">Today</span><span id="mkt-today-t"></span></div>
+      {# No Today line on Marketing (owner, 9/28/26): the next-scheduled chip says it. #}
       <div class="hb-sub mkt-attr-line" id="mkt-attr-line" hidden></div>
       <div class="dh-badge" data-dh-module="marketing" hidden></div>
     </div>
@@ -11094,12 +11114,12 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
   <div id="mkt-tab-content">
 
   <!-- AI marketing brief, on the shared card (density round #42) -->
-  <section class="hb-card mkt-brief" aria-label="Cavnar AI marketing brief">
-    <div class="hb-kicker">Cavnar AI's marketing brief</div>
+  {# The same AI read box as Food Cost and Labor (owner, 9/28/26): .lb2-ai
+     with its breathing tag. .mkt-brief stays - the most likely cause finds
+     its host's read by it. #}
+  <section class="lb2-ai mkt-brief" aria-label="Cavnar AI marketing brief">
+    <div class="tag">Cavnar AI&rsquo;s marketing brief</div>
     <div class="insight-text insight-loading" id="mkt-insight"><div class="cm-compose" data-w=".9,.75,.55"><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px"></div><div class="cm-caret" style="height:16px"></div></div></div>
-    {# The "3-7x more direction requests" figure had no source the product
-       could show (CA1 M9, CA4 F5); the line says only what is true. #}
-    <div class="mkt-brief-ft">A weekly Google Business update keeps your listing current — the content calendar below keeps it steady.</div>
     {# The diagnosis sits under the brief as its "most likely cause"
        (density round #42), not inside the Guest text club after a send. #}
     <div class="diag" id="guest-diag" hidden style="margin-top:14px"></div>
@@ -11161,7 +11181,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     <button class="cbtn cbtn-primary cbtn-instagram" id="ig-post-btn" onclick="postToInstagram()" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>Post to Instagram</button>
     <button class="cbtn cbtn-google" id="gg-post-btn" onclick="postToGoogle()" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3a3 3 0 110 6 3 3 0 010-6zm0 14.2a7.2 7.2 0 01-6-3.22c.03-1.99 4-3.08 6-3.08s5.97 1.09 6 3.08a7.2 7.2 0 01-6 3.22z"/></svg>Post to Google</button>
     <button class="cbtn cbtn-primary cbtn-facebook" id="fb-post-btn" onclick="postToFacebook()" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>Post to Facebook</button>
-    <span id="output-hint" style="display:none;font-size:10px;color:var(--ink3);margin-left:4px">✏ Edit above before posting</span>
+    <span id="output-hint" style="display:none;font-size:14px;color:var(--ink2);margin-left:6px">Edit the post above before it goes out</span>
     <span id="output-tags" class="hb-chip" style="display:none;margin-left:6px" title="What this post is about — its result will be read against the dish and occasion"></span>
   </div>
   <!-- Schedule: an owner does admin at 11pm for a post that belongs on
@@ -11189,9 +11209,9 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 
   <section class="mkt-sec" aria-label="Content calendar">
     <div class="hb-sh"><div><div class="k">Plan</div><h2>This week's content calendar</h2></div>
-      <div style="display:flex;gap:6px">
-        <button class="cbtn cbtn-secondary cbtn-sm" onclick="loadCal()">Generate week <span style="font-size:15px;margin-left:6px">↺</span></button>
-        <button class="cbtn cbtn-secondary cbtn-sm" id="cal-download-btn" onclick="downloadCal()" style="display:none">Download CSV<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="cbtn cbtn-secondary" onclick="loadCal()">Generate week <span style="font-size:15px;margin-left:6px">↺</span></button>
+        <button class="cbtn cbtn-secondary" id="cal-download-btn" onclick="downloadCal()" title="Download this week as a CSV" style="display:none">Download<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       </div>
     </div>
     <div style="margin:8px 0 4px"><span id="cal-week-range" style="font-size:13.5px;color:var(--ink3);font-weight:500"></span></div>
@@ -12079,6 +12099,11 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ac-disc{border-top:1px solid var(--ac-line);padding:10px 0 0;margin-top:6px}
 .ac-disc-body{display:none;padding:8px 0 4px}
 .ac-disc-body.open{display:block}
+/* Guest contacts at reading size (owner, 9/28/26: it was 11-12px). */
+.gc-title{font-family:'Clash Display',sans-serif;font-size:22px;font-weight:500;color:var(--ink);letter-spacing:-.01em}
+.gc-help{font-size:14.5px;color:var(--ink2);line-height:1.6;margin:0 0 18px}
+.gc-in{flex:1;min-width:150px;height:44px;box-sizing:border-box;font-size:15px}
+.gc-card .cbtn-primary{min-height:44px;padding-left:22px;padding-right:22px}
 .ac-log-modal{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07)}
 [data-theme="dark"] .ac-log-modal{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07)}
 .ac-log-card{width:620px;max-height:min(80vh,720px);display:flex;flex-direction:column}
@@ -16956,6 +16981,16 @@ function openMktPreview(){
     }).catch(function(){ out.innerHTML = '<div style="font-size:12px;color:var(--red)">Could not build a preview.</div>'; });
 }
 function closeMktPreview(){ document.getElementById('mkt-preview-modal').style.display = 'none'; }
+// Marketing's fixed overlays live on <body> (owner, 9/28/26): inside the
+// panel, whose entrance animation leaves a transform, "fixed" was measured
+// from the panel, so Preview opened far down the page instead of where the
+// owner was reading.
+document.addEventListener('DOMContentLoaded', function() {
+  ['mkt-preview-modal', 'brand-voice-modal', 'posting-overlay'].forEach(function(id) {
+    var m = document.getElementById(id);
+    if (m && m.parentNode !== document.body) document.body.appendChild(m);
+  });
+});
 
 // ── Drafts ──────────────────────────────────────────────────────────────────
 // The draft the composer holds, once opened or saved: a second save updates
@@ -17138,13 +17173,6 @@ function mktLoadHeader(){
     var rcEl=document.getElementById('mkt-chip-reach');if(rcEl)rcEl.title=rc==null?(d.change_note||'Not enough posts to compare periods'):'Reach, the last '+d.days+' days against the '+d.days+' before';
     var nx=d.next_scheduled;
     chip('mkt-chip-next',nx?(esc(nx.date)+(nx.time?' · '+esc(nx.time):'')):'none','neutral');
-    // Today: what is next, or how long it has been quiet.
-    var t=[];
-    if(nx)t.push('<b>'+esc(nx.platform||'A post')+'</b> goes out <span class="hb-num">'+esc(nx.date)+'</span>'+(nx.time?' at <span class="hb-num">'+esc(nx.time)+'</span>':''));
-    else if(d.days_since_post!=null&&d.days_since_post>=7)t.push('nothing scheduled, and <span class="hb-num">'+d.days_since_post+'</span> days since the last post · write one below');
-    else t.push('nothing scheduled yet · Generate week fills the calendar');
-    var tt=document.getElementById('mkt-today-t'),tw=document.getElementById('mkt-today');
-    if(tt&&tw){tt.innerHTML=t.join(' · ');tw.hidden=false;}
   }).catch(function(){});
   fetch('/api/marketing/attribution',{credentials:'same-origin'}).then(apiJson).then(function(d){
     var el=document.getElementById('mkt-attr-line');if(!el)return;
@@ -22116,18 +22144,16 @@ function fc2LoadFoodCostPct(){
         }
         return;
       }
-      // No percentage. Say exactly what is missing — an owner can act on
-      // "no closing count" in a way they cannot act on a blank card.
+      // No percentage: the dash, the heading and one sentence (owner,
+      // 9/28/26 - the list of missing inputs under it is gone; what is
+      // missing stays on the sentence's hover, and the count sheet asks for it).
       var miss=(d.missing||[]);
       if(!miss.length){host.hidden=true;return;}
-      var li='';
-      for(var i=0;i<miss.length&&i<3;i++){
-        li+='<li><b>'+wtEsc(miss[i].component||'')+'</b> — '+wtEsc(miss[i].why||'')+'</li>';
-      }
+      var why=[];
+      for(var i=0;i<miss.length&&i<3;i++)why.push((miss[i].component||'')+' \u2014 '+(miss[i].why||''));
       host.innerHTML='<div class="v neutral"><span class="hb-num">—</span></div>'
         +'<div class="k">Food cost</div>'
-        +'<div class="d">Not enough recorded to work it out yet</div>'
-        +'<ul class="miss">'+li+'</ul>';
+        +'<div class="d" title="'+wtEsc(why.join('; '))+'">Not enough recorded to work it out yet</div>';
       host.hidden=false;
     })
     .catch(function(){ host.hidden=true; });
@@ -22995,7 +23021,7 @@ function renderCal(ideas){
   var d={ideas:ideas};
   {
     var calDownBtn=document.getElementById('cal-download-btn');
-    if(calDownBtn) calDownBtn.style.display='inline-block';
+    if(calDownBtn) calDownBtn.style.display='';
     var weekRange = d.ideas[0] && d.ideas[0].week_range;
     var rangeEl = document.getElementById('cal-week-range');
     if(rangeEl && weekRange) rangeEl.textContent = 'Week of ' + weekRange;
@@ -23008,21 +23034,42 @@ function renderCal(ideas){
     // Every field is model output, and the calendar prompt carries a
     // guest's review verbatim: text, never markup.
     var _e = function(v){ return _escHtml(v == null ? '' : String(v)); };
-    for(var idx=0;idx<d.ideas.length;idx++){
-      var i=d.ideas[idx];
-      var dateLabel = i.date ? '<span style="font-size:10px;color:var(--ink3);font-weight:400">'+_e(i.date)+'</span>' : '';
-      var pColor = platformColors[i.platform] || 'var(--ink3)';
-      // Each idea is a recommendation (rec-ROI #41): writing from it is its
-      // yes; Not for us (with a reason) is its no; an answered idea keeps
-      // its day in the week rail, marked, without the answer.
-      html += '<div class="cal-card'+(i.answered?' answered':'')+'" style="animation-delay:'+(idx*0.08)+'s">';
-      html += '<div class="cal-day-name" style="display:flex;align-items:center;justify-content:space-between">'+_e(i.day)+dateLabel+'</div>';
-      html += '<div class="cal-platform" style="font-size:11px;font-weight:600;color:'+pColor+';margin:2px 0 8px;padding:2px 8px;background:'+pColor+'18;border-radius:10px;display:inline-block">'+_e(i.platform)+'</div>';
-      html += '<div style="font-size:13px;line-height:1.55;margin-top:2px;flex:1">'+_e(i.angle)+'</div>';
-      html += '<button data-idx="'+idx+'" onclick="generateFromCalIdx(this.dataset.idx)" class="cbtn cbtn-text cbtn-sm" style="margin-top:12px;align-self:flex-start">Write this →</button>';
-      if(i.answered)html += '<div class="cal-ans"><span class="rec-ans-done">'+(i.written?'Written from this idea':'Answered')+'</span></div>';
-      else if(i.answerable&&i.rec_key&&typeof recNotForUsHtml==='function')html += '<div class="cal-ans">'+recNotForUsHtml(i.rec_key,'marketing','marketing')+'</div>';
-      html += '</div>';
+    // Every day of the week has its card (owner, 9/28/26: Monday was
+    // missing - an idea the validation refused is dropped on its own, and
+    // nothing filled its day). The week is Sunday to Saturday; a day with
+    // no idea says so and offers the composer.
+    var DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'], start = null, k;
+    for(k=0;k<d.ideas.length&&!start;k++){
+      var di = DAYS.indexOf(d.ideas[k].day), iso = d.ideas[k].iso_date;
+      if(di>-1&&/^\d{4}-\d{2}-\d{2}$/.test(iso||'')){var p=iso.split('-');start=new Date(+p[0],+p[1]-1,+p[2]-di);}
+    }
+    for(var dn=0;dn<7;dn++){
+      var dayName = DAYS[dn], dayDate = '';
+      if(start){var dd=new Date(start.getFullYear(),start.getMonth(),start.getDate()+dn);dayDate=(dd.getMonth()+1)+'/'+dd.getDate();}
+      var found = false;
+      for(var idx=0;idx<d.ideas.length;idx++){
+        var i=d.ideas[idx];
+        if(i.day!==dayName)continue;
+        found = true;
+        var pColor = platformColors[i.platform] || 'var(--ink3)';
+        // Each idea is a recommendation (rec-ROI #41): writing from it is its
+        // yes; Pass (with a reason) is its no; an answered idea keeps its
+        // day in the week, marked, without the answer.
+        html += '<div class="cal-card'+(i.answered?' answered':'')+'" style="animation-delay:'+(dn*0.06)+'s">';
+        html += '<div class="cal-hd"><span class="cal-day-name">'+_e(i.day)+'</span><span class="cal-date">'+_e(i.date||dayDate)+'</span></div>';
+        html += '<span class="cal-platform" style="color:'+pColor+';background:'+(pColor.charAt(0)==='#'?pColor+'1f':'var(--hb-tint)')+'">'+_e(i.platform)+'</span>';
+        html += '<div class="cal-angle">'+_e(i.angle)+'</div>';
+        html += '<div class="cal-acts"><button type="button" data-idx="'+idx+'" onclick="generateFromCalIdx(this.dataset.idx)" class="cbtn cbtn-text cbtn-inline cbtn-sm">Write this →</button>';
+        if(i.answered)html += '<span class="rec-ans-done">'+(i.written?'Written from this idea':'Answered')+'</span>';
+        else if(i.answerable&&i.rec_key&&typeof recNotForUsHtml==='function')html += recNotForUsHtml(i.rec_key,'marketing','marketing');
+        html += '</div></div>';
+      }
+      if(!found){
+        html += '<div class="cal-card cal-empty" style="animation-delay:'+(dn*0.06)+'s">'
+          + '<div class="cal-hd"><span class="cal-day-name">'+dayName+'</span><span class="cal-date">'+dayDate+'</span></div>'
+          + '<div class="cal-angle">Nothing planned for '+dayName+'.</div>'
+          + '<div class="cal-acts"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="calWriteForDay(\''+dayName+'\')">Write a post →</button></div></div>';
+      }
     }
     g.innerHTML=html;
   }
@@ -23040,6 +23087,10 @@ function generateFromCalIdx(idx) {
   var btns=document.querySelectorAll('.cal-card button[data-idx]');
   for(var b=0;b<btns.length;b++){if(btns[b].dataset.idx==idx){var card=btns[b].closest('.cal-card');if(card)card.style.outline='2px solid var(--ember)';break;}}
   generateFromCal(i.type || 'instagram_post', i.angle || '');
+}
+function calWriteForDay(day) {
+  var t = document.getElementById('mktopic');
+  if (t) { t.value = ''; t.placeholder = 'What should ' + day + '\u2019s post be about?'; t.scrollIntoView({behavior: 'smooth', block: 'center'}); setTimeout(function(){ try { t.focus({preventScroll: true}); } catch (e) {} }, 350); }
 }
 function generateFromCal(type, topic) {
   document.querySelectorAll('.ct-btn').forEach(function(b){
@@ -25978,20 +26029,20 @@ function _loadGuestContactsList() {
   list.innerHTML = '<div class="dr-pulse wide" role="status" aria-label="Loading guests" style="margin:8px 0"><i></i></div>';
   fetch('/api/guest-contacts').then(apiJson).then(function(d){
     if (!d.ok || !d.contacts.length) {
-      list.innerHTML = '<div style="padding:12px 0;font-size:12px;color:var(--ink3)">No contacts yet.</div>';
+      list.innerHTML = '<div style="padding:12px 0;font-size:15px;color:var(--ink3)">No contacts yet.</div>';
       return;
     }
     var html = '';
     for (var i = 0; i < d.contacts.length; i++) {
       var c = d.contacts[i];
       var statusLabel = c.unsubscribed ? 'Unsubscribed' : (c.consent ? 'Text-eligible' : 'No consent yet');
-      var statusColor = c.unsubscribed ? 'var(--ink3)' : (c.consent ? '#2d6a4f' : '#b7791f');
+      var statusColor = c.unsubscribed ? 'var(--ink3)' : (c.consent ? 'var(--green)' : 'var(--amber)');
       var visitLabel = c.last_visit ? ('Last visit ' + _fmtVisitDate(c.last_visit)) : 'No visit recorded';
-      html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 0;border-bottom:1px solid var(--paper3)">'
+      html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--paper3)">'
         + '<div style="min-width:0">'
-        + '<div style="font-size:12px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(String(c.name || c.phone || '')) + '</div>'
-        + '<div style="font-size:11px;color:var(--ink3)">' + _escHtml(String(c.phone || '')) + ' · <span style="color:' + statusColor + '">' + statusLabel + '</span></div>'
-        + '<div style="font-size:10.5px;color:var(--ink3);margin-top:1px">' + visitLabel + '</div>'
+        + '<div style="font-size:15.5px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(String(c.name || c.phone || '')) + '</div>'
+        + '<div style="font-size:14px;color:var(--ink3);margin-top:2px">' + _escHtml(String(c.phone || '')) + ' · <span style="color:' + statusColor + '">' + statusLabel + '</span></div>'
+        + '<div style="font-size:13.5px;color:var(--ink3);margin-top:2px">' + visitLabel + '</div>'
         + '</div>'
         + '<div style="display:flex;gap:10px;flex-shrink:0;align-items:center">'
         + '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="markGuestVisit(' + c.id + ',this)">Mark visit</button>'
@@ -26001,7 +26052,7 @@ function _loadGuestContactsList() {
     }
     list.innerHTML = html;
   }).catch(function(){
-    list.innerHTML = '<div style="padding:12px 0;font-size:12px;color:var(--red)">Could not load contacts.</div>';
+    list.innerHTML = '<div style="padding:12px 0;font-size:15px;color:var(--red)">Could not load contacts.</div>';
   });
 }
 
@@ -27123,15 +27174,15 @@ document.addEventListener('click', function(e) {
 </div>
 
 <div id="guest-contacts-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,0.72);align-items:center;justify-content:center" onclick="if(event.target===this)closeGuestContactsModal()">
-  <div style="background:var(--paper);border-radius:14px;padding:28px;max-width:480px;width:94%;position:relative;border:1.5px solid var(--ember);box-shadow:0 8px 16px rgba(14,12,10,.6),0 24px 64px rgba(14,12,10,.55);max-height:85vh;overflow-y:auto">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-      <div style="font-size:16px;font-weight:700;color:var(--ink)">Guest contacts</div>
+  <div class="gc-card" style="background:var(--paper);border-radius:16px;padding:30px 32px;max-width:600px;width:94%;position:relative;border:1.5px solid var(--ember);box-shadow:0 8px 16px rgba(14,12,10,.6),0 24px 64px rgba(14,12,10,.55);max-height:85vh;overflow-y:auto">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div class="gc-title">Guest contacts</div>
       <button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" aria-label="Close" onclick="closeGuestContactsModal()">&times;</button>
     </div>
-    <p style="font-size:11px;color:var(--ink3);line-height:1.6;margin:0 0 14px">Add a number here for your own reference — it will show in this list, but can't receive texts until that guest opts in themselves at your join link. Tap "Mark visit" after serving a consented guest and they'll automatically get a review-request text a few hours later — joining via your link already does this for you.</p>
-    <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
-      <input type="text" id="guest-add-name" placeholder="Name" style="flex:1;min-width:120px;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
-      <input type="tel" id="guest-add-phone" placeholder="Phone number" style="flex:1;min-width:140px;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+    <p class="gc-help">Add a number here for your own reference — it will show in this list, but can't receive texts until that guest opts in themselves at your join link. Tap "Mark visit" after serving a consented guest and they'll automatically get a review-request text a few hours later — joining via your link already does this for you.</p>
+    <div style="display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap">
+      <input type="text" id="guest-add-name" class="ac-input gc-in" placeholder="Name" aria-label="Guest name">
+      <input type="tel" id="guest-add-phone" class="ac-input gc-in" placeholder="Phone number" aria-label="Guest phone number">
       <button onclick="addGuestContact()" class="cbtn cbtn-primary">Add</button>
     </div>
     <div id="guest-contacts-list" style="display:flex;flex-direction:column;gap:2px"><div class="dr-pulse wide" role="status" aria-label="Loading guests" style="margin:8px 0"><i></i></div></div>

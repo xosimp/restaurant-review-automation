@@ -37,8 +37,19 @@ def _fake_generation(monkeypatch, ideas, calls):
     monkeypatch.setattr(marketing, "extract_text", lambda m: json.dumps(m))
 
 
+# A whole week, as the prompt asks for: a week with a day missing is asked
+# about once more (_fill_missing_days), which these cache tests don't count.
 IDEAS = [{"day": "Monday", "platform": "Instagram & FB",
-          "angle": "Truffle pasta close-up", "type": "instagram_post"}]
+          "angle": "Truffle pasta close-up", "type": "instagram_post"}] + [
+    {"day": d, "platform": "Google", "angle": f"{d} update", "type": "google_promo"}
+    for d in ("Sunday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")]
+
+
+def _week(sunday_angle):
+    """A whole other week; Sunday leads it, so it is the first idea read."""
+    return [{"day": d, "platform": "Email", "angle": sunday_angle if d == "Sunday" else f"{d} note",
+             "type": "weekly_email"}
+            for d in ("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")]
 
 
 def test_a_calendar_is_generated_once_and_read_after_that(rid, monkeypatch):
@@ -73,7 +84,7 @@ def test_force_is_the_owner_asking_for_a_different_week(rid, monkeypatch):
     # test_a_forced_redraw_moments_later_returns_what_was_just_built).
     _age_calendar(rid, marketing.RECENT_CALENDAR_SECONDS + 60)
 
-    other = [{"day": "Friday", "platform": "Email", "angle": "Wine dinner", "type": "weekly_email"}]
+    other = _week("Wine dinner")
     _fake_generation(monkeypatch, other, calls)
     fresh = marketing.get_content_calendar_ideas(restaurant_id=rid, force=True)
 
@@ -131,7 +142,7 @@ def test_a_forced_redraw_later_on_really_does_redraw(rid, monkeypatch):
     marketing.get_content_calendar_ideas(restaurant_id=rid, force=True)
     _age_calendar(rid, marketing.RECENT_CALENDAR_SECONDS + 60)
 
-    other = [{"day": "Friday", "platform": "Email", "angle": "Wine dinner", "type": "weekly_email"}]
+    other = _week("Wine dinner")
     _fake_generation(monkeypatch, other, calls)
     fresh = marketing.get_content_calendar_ideas(restaurant_id=rid, force=True)
 

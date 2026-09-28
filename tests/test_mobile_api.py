@@ -3989,7 +3989,8 @@ def test_tapping_generate_again_does_not_burn_a_rate_limit_token(client, db_path
     rid = _restaurant(db_path, module_marketing=1)
     token = _login(client, db_path, rid)
     calls = []
-    ideas = [{"day": "Monday", "platform": "Instagram & FB", "angle": "Truffle", "type": "instagram_post"}]
+    ideas = [{"day": d, "platform": "Instagram & FB", "angle": "Truffle", "type": "instagram_post"}
+             for d in ("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")]
     monkeypatch.setattr("marketing.create_with_retry", lambda *a, **kw: calls.append(1) or ideas)
     monkeypatch.setattr("marketing.extract_text", lambda m: _json.dumps(m))
 

@@ -734,9 +734,81 @@ def _with_margin_idea(restaurant_id, ideas, days_map, iso_map):
                 "platform": "Instagram & FB", "type": "instagram_post",
                 "angle": f"Feature {best['name']} — your best-margin plate ({best['food_cost_pct']:.0f}% food cost)",
                 "source": "menu_margins"}
-        return [i for i in ideas if i.get("source") != "menu_margins"] + [idea]
+        # It takes its day (one idea a day): appended, it made two Thursdays.
+        return [i for i in ideas if i.get("source") != "menu_margins" and i.get("day") != day] + [idea]
     except Exception:
         return ideas
+
+
+CALENDAR_DAYS = ("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
+
+
+def _day_name(raw) -> str:
+    """The weekday a model wrote, without a date it may have added
+    ("Thursday, June 5" -> "Thursday"); "" when there is none."""
+    raw = str(raw or "")
+    name = raw.split(",")[0].split(" ")[0].strip()
+    if name in CALENDAR_DAYS:
+        return name
+    return next((d for d in CALENDAR_DAYS if d in raw), "")
+
+
+def _one_per_day(ideas):
+    """One idea a day, Sunday to Saturday; a deterministic idea (menu
+    margins) keeps its day over a model's."""
+    seen, out = set(), []
+    for idea in sorted(ideas, key=lambda x: 0 if x.get("source") == "menu_margins" else 1):
+        day = idea.get("day")
+        if day in seen:
+            continue
+        seen.add(day)
+        out.append(idea)
+    out.sort(key=lambda x: CALENDAR_DAYS.index(x["day"]) if x.get("day") in CALENDAR_DAYS else 7)
+    return out
+
+
+def _fill_missing_days(restaurant_id, prompt, ideas, days_map, iso_map, profile, untrusted=()):
+    """Ask once more for the days the week is missing (owner, 9/28/26:
+    Monday had no card). A day goes missing when the model skips it or the
+    validation refuses its idea - dropped alone, and nothing refilled it. One
+    short call for just those days, through the same validation; a day that
+    is still empty stays empty (the page says so) rather than be invented."""
+    missing = [d for d in CALENDAR_DAYS if d not in {i.get("day") for i in ideas}]
+    if not missing:
+        return ideas
+    import data_health
+    try:
+        msg = create_with_retry(
+            get_client(),
+            model=model_for("marketing"),
+            max_tokens=600,
+            messages=[{"role": "user", "content": prompt + "\n\nThe rest of the week is planned. Only these days are "
+                       f"still open: {', '.join(missing)}. Return ONLY a JSON array with one object for each of "
+                       "them, in the same shape."}],
+            restaurant_id=restaurant_id,
+            action="content_calendar",
+            readiness=data_health.NOT_APPLICABLE,
+        )
+        if getattr(msg, "stop_reason", None) == "max_tokens":
+            return ideas
+        extra = _calendar_ideas(extract_text(msg)) or []
+    except Exception as e:
+        try:
+            import ops
+            ops.capture(e, job="content_calendar_fill", context=f"restaurant_id={restaurant_id}")
+        except Exception:
+            pass
+        return ideas
+    fill, taken = [], set()
+    for idea in extra:
+        if not isinstance(idea, dict):
+            continue
+        day = _day_name(idea.get("day"))
+        if day in missing and day not in taken:
+            taken.add(day)
+            idea["day"], idea["date"], idea["iso_date"] = day, days_map.get(day, ""), iso_map.get(day, "")
+            fill.append(idea)
+    return ideas + _validated_ideas(restaurant_id, fill, profile, untrusted=untrusted)
 
 
 # The fields of a calendar idea that are structure, not words an owner reads
@@ -927,31 +999,24 @@ Rules:
         raise ValueError("the content calendar was cut off before the week was finished")
     try:
         ideas = _calendar_ideas(extract_text(msg))
-        # Inject real dates into each idea based on day name
-        # Strip any date contamination from AI (e.g. "Thursday, June 5" -> "Thursday")
-        valid_days = {"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"}
+        # Inject real dates into each idea based on day name, without any
+        # date the model added to it ("Thursday, June 5" -> "Thursday").
         for idea in ideas:
-            raw_day = idea.get("day", "")
-            # Extract just the day name if AI added extra text
-            day_name = raw_day.split(",")[0].split(" ")[0].strip()
-            if day_name not in valid_days:
-                # Try to find a valid day name anywhere in the string
-                for vd in valid_days:
-                    if vd in raw_day:
-                        day_name = vd
-                        break
+            day_name = _day_name(idea.get("day", ""))
             idea["day"] = day_name
             idea["date"] = days_map.get(day_name, "")
             idea["iso_date"] = iso_map.get(day_name, "")
         # Each idea's owner-visible text through the Response Validation
         # Layer (calendar_idea): this had no guard at all (NS6 A2). A
         # refused idea is dropped on its own; the rest of the week stands.
-        ideas = _validated_ideas(restaurant_id, ideas, p, untrusted=[signal_block] if signal_block else ())
-        # Sort by date so calendar always shows Mon→Sun order
-        day_order = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"]
-        ideas.sort(key=lambda x: day_order.index(x.get("day","Sunday")) if x.get("day","") in day_order else 7)
-        # Attach week_range to first idea for the UI to read
+        untrusted = [signal_block] if signal_block else ()
+        ideas = _validated_ideas(restaurant_id, ideas, p, untrusted=untrusted)
         ideas = _with_margin_idea(restaurant_id, ideas, days_map, iso_map)
+        # Every day of the week has an idea: the missing ones are asked for
+        # once, then one a day, Sunday to Saturday.
+        ideas = _one_per_day(_fill_missing_days(restaurant_id, prompt, _one_per_day(ideas), days_map, iso_map, p,
+                                                untrusted=untrusted))
+        # Attach week_range to first idea for the UI to read
         if ideas:
             ideas[0]["week_range"] = week_range
         _cache_calendar(restaurant_id, ideas)

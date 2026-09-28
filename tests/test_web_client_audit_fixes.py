@@ -52,7 +52,7 @@ def test_a_failed_generation_hides_the_post_buttons_an_earlier_one_showed():
 
 def test_the_content_calendar_escapes_every_model_field():
     cal = _fn("renderCal")
-    for field in ("i.day", "i.platform", "i.angle", "i.date"):
+    for field in ("i.day", "i.platform", "i.angle", "i.date||dayDate"):
         assert "_e(" + field + ")" in cal, field
     assert "'+i.day+" not in cal and "( i.angle||'')" not in cal
     assert "_escHtml(String(d.error" in _fn("loadCal")
