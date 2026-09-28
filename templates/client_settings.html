@@ -562,7 +562,7 @@ textarea{resize:vertical;min-height:60px}
           <span id="fc-priority-list"></span>
         </div>
         <div class="fc-inline">
-          <button type="button" class="btn-data" style="padding:6px 14px;font-size:12px" onclick="fcDiscoverMenuItems()">Refresh menu items from Toast</button>
+          <button type="button" class="btn-data" style="padding:6px 14px;font-size:12px" onclick="fcDiscoverMenuItems()">Refresh menu items from the POS</button>
           <input id="fc-new-menu-item" placeholder="Or add a dish by name" style="width:180px">
           <button type="button" class="btn-data" style="padding:6px 14px;font-size:12px" onclick="fcCreateMenuItem()">+ Add dish</button>
           <span id="fc-discover-result" class="hint" style="display:inline"></span>
@@ -1154,12 +1154,13 @@ async function fcCreateMenuItem() {
 
 async function fcDiscoverMenuItems() {
   const el = document.getElementById('fc-discover-result');
-  el.textContent = 'Scanning recent Toast orders…';
+  el.textContent = 'Scanning recent POS sales…';
   const res = await fetch('/admin/inventory/discover-menu-items/{{ restaurant.id }}', {method:'POST'});
   const data = await res.json();
   el.textContent = data.ok
     ? `✓ ${data.discovered} new, ${data.updated} updated, ${data.total_seen} menu items seen`
-    : (data.error || 'Discovery failed — is Toast connected?');
+        + (data.hidden ? ` · ${data.hidden} modifiers, add-ons and money lines kept off this list` : '')
+    : (data.error || 'Discovery failed — is the POS connected?');
   if (data.ok) fcLoadRecipes();
 }
 
@@ -1181,12 +1182,21 @@ async function fcLoadRecipes() {
 
   const list = document.getElementById('fc-recipes-list');
   if (!data.menu_items.length) {
-    list.innerHTML = '<div class="hint">No menu items discovered yet — connect Toast and sync, or click "Refresh menu items" above.</div>';
+    list.innerHTML = '<div class="hint">No menu items discovered yet — connect the POS and sync, or click "Refresh menu items" above.</div>';
     return;
   }
-  list.innerHTML = data.menu_items.map(mi => `
+  // Grouped under the POS's own categories ("01. Shareables" reads
+  // "Shareables"); names escaped - they come from the POS.
+  const fcEsc = v => String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  let lastCat = null;
+  list.innerHTML = data.menu_items.map(mi => {
+    const cat = (mi.pos_category || '').replace(/^\d+\.\s*/, '');
+    const head = (mi.pos_category || null) !== lastCat && cat
+      ? `<div class="hint" style="margin:14px 0 6px;font-weight:700;text-transform:uppercase;letter-spacing:.06em">${fcEsc(cat)}</div>` : '';
+    lastCat = mi.pos_category || null;
+    return head + `
     <div class="fc-recipe-card">
-      <div class="fc-recipe-title">${mi.name}</div>
+      <div class="fc-recipe-title">${fcEsc(mi.name)}</div>
       ${mi.recipe.map(r => `
         <div class="fc-recipe-row">
           <span style="flex:1">${r.ingredient_name}</span>
@@ -1200,7 +1210,8 @@ async function fcLoadRecipes() {
         <button type="button" class="btn-data" style="padding:6px 12px;font-size:12px" onclick="fcAddRecipeRow(${mi.id})">Add</button>
       </div>
     </div>
-  `).join('');
+  `;
+  }).join('');
 }
 
 async function fcAddRecipeRow(menuItemId) {

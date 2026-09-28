@@ -40,6 +40,7 @@ response code other than 200. Both are handled defensively here and both are
 open questions with RPOWER.
 """
 import logging
+import re
 import time
 from datetime import date, datetime, timedelta
 from typing import Optional
@@ -584,6 +585,57 @@ def fetch_menu_items(restaurant_id: int) -> list:
         "last_cost": r.get("last_cost"),
         "plu": r.get("plu") or None,
     } for r in rows if r.get("mid")]
+
+
+# ── menu names: what a sale's menuitem_mid is called ────────────────────────
+#
+# A ticketsales line names its item only by `menuitem_mid`, so discovery
+# stored Simple EJ's 373 items as 19-digit ids ("2256405207682086913") and the
+# recipe editor was an endless list of numbers (owner, 9/28/26). The menu
+# (menuitem/getbycg) carries the name and the sales category; RPOWER's
+# `is_mod` flag was 0 on every modifier at EJ's, so what a line IS comes from
+# the store's own sales category: a category in parentheses — "(Modifiers)",
+# "(Food Add-Ons)", "(Liquor Add-Ons)" — groups modifiers and add-ons, and a
+# discount, gratuity, gift card, open-price or retail category is money, not
+# a menu item. Checked against EJ's live menu: all 373 sold ids resolved.
+MENU_CACHE_SECONDS = 600
+_menu_cache = {}
+_NOT_ITEM_CATEGORY_RE = re.compile(r"discount|gratuit|gift\s*card|\bopen\b|\bretail\b", re.I)
+
+
+def clean_item_name(raw) -> str:
+    """A POS button name as a person reads it: EJ's names end in a stray
+    backtick ("Espresso Shot`")."""
+    return re.sub(r"[`\s]+$", "", str(raw or "")).strip()
+
+
+def menu_item_kind(category, is_mod=False) -> str:
+    """'modifier', 'not_item' or 'dish' (a drink is a menu item too) from the
+    store's sales category — see the note above."""
+    c = str(category or "").strip()
+    if is_mod or (c.startswith("(") and c.endswith(")")):
+        return "modifier"
+    if _NOT_ITEM_CATEGORY_RE.search(c):
+        return "not_item"
+    return "dish"
+
+
+def menu_lookup(restaurant_id: int) -> dict:
+    """{menuitem_mid: {"name", "category", "kind"}} for this store's menu,
+    read once per MENU_CACHE_SECONDS (a discovery pass scans a week of days)."""
+    hit = _menu_cache.get(restaurant_id)
+    if hit and time.monotonic() - hit[0] < MENU_CACHE_SECONDS:
+        return hit[1]
+    token, base = _ctx(restaurant_id)
+    cats = {str(r.get("mid")): r.get("name") or ""
+            for r in _paged(token, "salescategory/getbycg", {"cg": base["cg"], "sortorder": "name"})}
+    out = {}
+    for m in fetch_menu_items(restaurant_id):
+        category = clean_item_name(cats.get(str(m.get("sales_category_mid")), ""))
+        out[str(m["guid"])] = {"name": clean_item_name(m.get("name")), "category": category or None,
+                               "kind": menu_item_kind(category, m.get("is_modifier"))}
+    _menu_cache[restaurant_id] = (time.monotonic(), out)
+    return out
 
 
 # ── the nightly DSR: one day's sales, and whether the store closed it ───────

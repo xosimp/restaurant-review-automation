@@ -897,6 +897,12 @@ def ensure_columns(db_path: str = DB_PATH):
         # Who each ingredient is ordered from, so a suggested order can
         # actually be sent somewhere (see build_purchase_orders below).
         ("menu_items", "sell_price", "REAL"),
+        # The POS's own grouping ("01. Shareables", "(Modifiers)") and what
+        # the line is: dish | modifier | not_item (a discount, gratuity, gift
+        # card, open-price or retail line). RPOWER names none of this on a
+        # sale, so discovery reads it from the menu (owner, 9/28/26).
+        ("menu_items", "pos_category", "TEXT"),
+        ("menu_items", "kind", "TEXT"),
         ("ingredients", "supplier_name", "TEXT"),
         ("ingredients", "supplier_email", "TEXT"),
         # The ledger's own sum when it went below zero (NULL otherwise).

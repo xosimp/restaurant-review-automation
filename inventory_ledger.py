@@ -886,26 +886,65 @@ def discover_menu_items(restaurant_id: int, days: int = 7) -> dict:
                 continue
             seen[guid] = sel.get("displayName") or seen.get(guid) or guid
 
-    discovered, updated = 0, 0
+    # A POS whose sales name items only by id (RPOWER) names them from its
+    # menu, with the store's own category and what each line is. Without it
+    # every item was stored under its 19-digit id (owner, 9/28/26). A failed
+    # menu read changes nothing rather than writing ids over names.
+    info = {}
+    if seen and _mod is not None and hasattr(_mod, "menu_lookup"):
+        info = _mod.menu_lookup(restaurant_id) or {}
+        for guid in list(seen):
+            m = info.get(str(guid))
+            if m and m.get("name"):
+                seen[guid] = m["name"]
+
+    discovered, updated, hidden = 0, 0, 0
     with db_conn() as conn:
+        if info:
+            # Items stored earlier but not sold in this window are named and
+            # classed from the menu too: the first RPOWER sync stored 60 days
+            # of ids, and a week's scan would leave the slow sellers numbered.
+            for r in conn.execute("SELECT toast_guid FROM menu_items WHERE restaurant_id=? AND toast_guid IS NOT NULL",
+                                  (restaurant_id,)).fetchall():
+                g = r["toast_guid"]
+                if g not in seen and (info.get(str(g)) or {}).get("name"):
+                    seen[g] = info[str(g)]["name"]
         for guid, name in seen.items():
+            m = info.get(str(guid)) or {}
+            kind, category = m.get("kind"), m.get("category")
+            if info and not m:
+                continue          # not on the menu we read: never stored under its id
             existing = conn.execute(
-                "SELECT id, name FROM menu_items WHERE restaurant_id=? AND toast_guid=?",
+                "SELECT id, name, is_active, kind FROM menu_items WHERE restaurant_id=? AND toast_guid=?",
                 (restaurant_id, guid)
             ).fetchone()
             if existing:
                 if existing["name"] != name:
                     conn.execute("UPDATE menu_items SET name=? WHERE id=?", (name, existing["id"]))
                     updated += 1
+                if kind:
+                    conn.execute("UPDATE menu_items SET kind=?, pos_category=? WHERE id=?",
+                                 (kind, category, existing["id"]))
+                    # A modifier, add-on or money line is not a dish: off
+                    # the recipe list, the scorecard and dish tagging — unless
+                    # someone already gave it a recipe.
+                    if kind != "dish" and existing["is_active"] and not conn.execute(
+                            "SELECT 1 FROM recipe_ingredients WHERE menu_item_id=? LIMIT 1",
+                            (existing["id"],)).fetchone():
+                        conn.execute("UPDATE menu_items SET is_active=0 WHERE id=?", (existing["id"],))
+                        hidden += 1
                 continue
             conn.execute(
-                "INSERT INTO menu_items (restaurant_id, toast_guid, name) VALUES (?,?,?)",
-                (restaurant_id, guid, name)
+                "INSERT INTO menu_items (restaurant_id, toast_guid, name, kind, pos_category, is_active) "
+                "VALUES (?,?,?,?,?,?)",
+                (restaurant_id, guid, name, kind, category, 0 if kind and kind != "dish" else 1)
             )
             discovered += 1
+            if kind and kind != "dish":
+                hidden += 1
         conn.commit()
 
-    return {"discovered": discovered, "updated": updated, "total_seen": len(seen)}
+    return {"discovered": discovered, "updated": updated, "hidden": hidden, "total_seen": len(seen)}
 
 
 def import_csv_to_ingredients(restaurant_id: int) -> dict:
@@ -1094,7 +1133,12 @@ def list_menu_items_with_recipes(restaurant_id: int) -> list:
     conn = get_conn()
     try:
         menu_items = conn.execute(
-            "SELECT * FROM menu_items WHERE restaurant_id=? AND is_active=1 ORDER BY name",
+            # Grouped as the POS groups them ("01. Shareables" before
+            # "04. Hand Helds"), then by name; an add-on kept for its recipe
+            # after the dishes.
+            "SELECT * FROM menu_items WHERE restaurant_id=? AND is_active=1 "
+            "ORDER BY CASE WHEN COALESCE(kind, 'dish') = 'dish' THEN 0 ELSE 1 END, "
+            "COALESCE(pos_category, '~'), name COLLATE NOCASE",
             (restaurant_id,)
         ).fetchall()
         # Two queries, not one per dish. This ran a recipe lookup for every

@@ -706,3 +706,74 @@ def test_the_owner_card_syncs_and_disconnects_but_never_takes_a_token():
     assert '"/api/rpower/disconnect", methods=["POST"]' in src
     assert 'principal_only(current_user, "the RPower connection")' in src
     assert "/api/rpower/save" not in src and "/admin/rpower/save/" in src
+
+
+# ── menu names and what a line is (owner, 9/28/26) ───────────────────────────
+# A sale names its item only by menuitem_mid, so discovery stored all 373 of
+# Simple EJ's items as 19-digit ids; the recipe editor was a wall of numbers,
+# modifiers ("No Lettuce`") and discounts among them.
+
+def test_a_menu_line_is_classed_by_the_stores_own_category():
+    assert rpower.menu_item_kind("(Modifiers)") == "modifier"
+    assert rpower.menu_item_kind("(Food Add-Ons)") == "modifier"
+    assert rpower.menu_item_kind("01. Shareables", is_mod=True) == "modifier"
+    for money in ("Discount All", "CC Cash DIscount", "Gratuity", "Gift Card Sold", "09. Open Food", "Retail"):
+        assert rpower.menu_item_kind(money) == "not_item", money
+    for real in ("01. Shareables", "04. Hand Helds", "50. Beer", "38. Cocktails", "22. Zero Proof"):
+        assert rpower.menu_item_kind(real) == "dish", real
+    assert rpower.clean_item_name("Espresso Shot`") == "Espresso Shot"
+    assert rpower.clean_item_name("Sd Mac & Cheese` ") == "Sd Mac & Cheese"
+
+
+def test_discovery_names_items_from_the_menu_and_keeps_non_dishes_off_the_list(db_path, monkeypatch):
+    import inventory_ledger
+    from models import get_conn
+    rid = _connected(db_path)
+    rpower._menu_cache.clear()
+    _stub_api(monkeypatch, {
+        "menuitem/getbycg": [
+            {"mid": "2256405207682086913", "name": "Pretzel`", "slscat_mid": "c1", "is_mod": 0},
+            {"mid": "2256405207682089323", "name": "No Lettuce`", "slscat_mid": "c2", "is_mod": 0},
+            {"mid": "2256405207682157021", "name": "Discount 20%`", "slscat_mid": "c3", "is_mod": 0},
+            {"mid": "2256405207682360598", "name": "Add Chicken`", "slscat_mid": "c4", "is_mod": 0},
+            {"mid": "2256405207682999999", "name": "Smash Burger`", "slscat_mid": "c5", "is_mod": 0}],
+        "salescategory/getbycg": [{"mid": "c1", "name": "01. Shareables"}, {"mid": "c2", "name": "(Modifiers)"},
+                                  {"mid": "c5", "name": "04. Hand Helds"},
+                                  {"mid": "c3", "name": "Discount All"}, {"mid": "c4", "name": "(Food Add-Ons)"}],
+    })
+    monkeypatch.setattr(rpower, "fetch_business_days", lambda r, s, e: {"2026-09-27": 1000.0})
+    sold = ["2256405207682086913", "2256405207682089323", "2256405207682157021", "2256405207682360598", "999"]
+    monkeypatch.setattr(rpower, "fetch_order_selections",
+                        lambda r, d: [{"item": {"guid": g}, "quantity": 1.0} for g in sold])
+    for other in ("toast", "square", "clover"):
+        monkeypatch.setattr(f"{other}.is_connected", lambda r: False)
+    # What the first live sync stored: every item under its id, one already
+    # given a recipe (it stays on the list whatever it turns out to be).
+    c = get_conn(db_path)
+    c.execute("INSERT INTO menu_items (restaurant_id, toast_guid, name) VALUES (?,?,?)",
+              (rid, "2256405207682360598", "2256405207682360598"))
+    mid = c.execute("SELECT id FROM menu_items WHERE toast_guid='2256405207682360598'").fetchone()[0]
+    c.execute("INSERT INTO ingredients (restaurant_id, name, unit) VALUES (?,?,?)", (rid, "chicken", "oz"))
+    ing = c.execute("SELECT id FROM ingredients WHERE restaurant_id=? AND name='chicken'", (rid,)).fetchone()[0]
+    c.execute("INSERT INTO recipe_ingredients (menu_item_id, ingredient_id, qty_per_unit) VALUES (?,?,?)", (mid, ing, 5))
+    # Stored by the first sync, not sold in this window: still named.
+    c.execute("INSERT INTO menu_items (restaurant_id, toast_guid, name) VALUES (?,?,?)",
+              (rid, "2256405207682999999", "2256405207682999999"))
+    c.commit()
+    c.close()
+
+    out = inventory_ledger.discover_menu_items(rid, days=1)
+    c = get_conn(db_path)
+    rows = {r["toast_guid"]: dict(r) for r in c.execute(
+        "SELECT toast_guid, name, is_active, kind, pos_category FROM menu_items WHERE restaurant_id=?", (rid,))}
+    c.close()
+    assert rows["2256405207682086913"] == {"toast_guid": "2256405207682086913", "name": "Pretzel", "is_active": 1,
+                                           "kind": "dish", "pos_category": "01. Shareables"}
+    assert rows["2256405207682089323"]["name"] == "No Lettuce" and rows["2256405207682089323"]["is_active"] == 0
+    assert rows["2256405207682157021"]["kind"] == "not_item" and rows["2256405207682157021"]["is_active"] == 0
+    assert rows["2256405207682360598"]["name"] == "Add Chicken" and rows["2256405207682360598"]["is_active"] == 1
+    assert "999" not in rows, "an id the menu doesn't know is never stored under its number"
+    assert out["hidden"] == 2
+    listed = [m["name"] for m in inventory_ledger.list_menu_items_with_recipes(rid)]
+    assert rows["2256405207682999999"]["name"] == "Smash Burger"   # not sold this week, still named
+    assert listed == ["Pretzel", "Smash Burger", "Add Chicken"]   # POS categories in order; no ids, no discounts
