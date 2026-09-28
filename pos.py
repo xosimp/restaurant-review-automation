@@ -434,6 +434,13 @@ def save_synced_shifts(restaurant_id, csv_str, source):
     w.writerows(merged)
     save_client_data(restaurant_id, "shifts", buf.getvalue(), source=source)
     try:
+        # Inside the synced window the POS is the record: a remembered name
+        # it no longer carries was a code or a station login (schedule_intel).
+        import schedule_intel as _si
+        _si.forget_stale_names(restaurant_id, new_rows)
+    except Exception:
+        pass
+    try:
         from labor import analyse_shifts_for_restaurant
         from models import save_labor_daily_history, save_labor_snapshot
         # The per-day archive takes the whole synced file; the period

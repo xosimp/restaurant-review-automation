@@ -2840,6 +2840,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-bar{transform-box:fill-box;transform-origin:bottom;transform:scaleY(0);animation:hbBar 1.1s cubic-bezier(.3,0,.15,1) forwards}
 @keyframes hbBar{to{transform:scaleY(1)}}
 .hb-skel{position:relative;overflow:hidden;background:var(--hb-line2);border-radius:6px;min-height:14px}
+/* Skeleton lines in a stack: one gap between them, never touching - the
+   "day" card's three bars had none and read as one ragged block (9/28/26). */
+.hb-skel-stack{display:flex;flex-direction:column;gap:12px}
 .hb-skel:after{content:'';position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,var(--hb-tint2),transparent);animation:hbSkel 1.4s ease-in-out infinite}
 @keyframes hbSkel{to{transform:translateX(100%)}}
 .hb-fade{animation:hbIn .32s ease both}
@@ -4996,7 +4999,7 @@ svg:hover .hb-xh{opacity:1}
     h+='<div class="hb-bench hb-rise" id="hb-bench" style="--i:2" hidden></div>';
     // Progressive: the day shimmers where it will land, instead of the page
     // jumping when its reads arrive.
-    h+='<section id="hb-day" aria-label="The day"><div class="hb-card quiet" style="margin-top:34px" aria-hidden="true"><div class="hb-skel" style="width:38%"></div><div class="hb-skel" style="width:82%"></div><div class="hb-skel" style="width:64%"></div></div></section>';
+    h+='<section id="hb-day" aria-label="The day"><div class="hb-card quiet hb-skel-stack" style="margin-top:34px" aria-hidden="true"><div class="hb-skel" style="width:38%;height:11px;min-height:11px"></div><div class="hb-skel" style="width:82%"></div><div class="hb-skel" style="width:64%"></div></div></section>';
     h+=renderRecs(d,used&&used.rec?1:0);
     // No readiness pills under the recommendations (owner's call, 9/26/26):
     // readiness leads the page only for an account with nothing connected.

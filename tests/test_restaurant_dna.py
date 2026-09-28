@@ -867,3 +867,22 @@ def test_the_weekly_pass_is_bounded_per_pair_and_loads_the_dna_once(db_path, mon
     conn.close()
     assert kinds == {"cut_waste", "trim_day", "reprice"}
     assert predict.run_weekly(db_path=db_path)["complete"] is True
+
+
+def test_a_pos_sync_forgets_codes_and_station_logins_but_keeps_people_who_left(db_path):
+    """Simple EJ's first RPOWER sync remembered payroll codes ("0GXXW3") and
+    station logins ("Day Bar") as staff; after the names were fixed they
+    still counted toward tenure and turnover (9/28/26)."""
+    import schedule_intel
+    rid = _rid(db_path, "Sync Tap")
+    schedule_intel.remember_tenure(rid, [{"employee": "0GXXW3", "date": "2026-09-27"},
+                                         {"employee": "Day Bar", "date": "2026-09-20"},
+                                         {"employee": "Old Timer", "date": "2026-07-01"},
+                                         {"employee": "Dana Reyes", "date": "2026-09-27"}], db_path=db_path)
+    window = [{"employee": "Dana Reyes", "date": "2026-09-01"}, {"employee": "Dana Reyes", "date": "2026-09-27"}]
+    assert schedule_intel.forget_stale_names(rid, window, db_path=db_path) == 2
+    conn = get_conn(db_path)
+    left = sorted(r[0] for r in conn.execute("SELECT employee_name FROM staff_first_seen WHERE restaurant_id=?", (rid,)))
+    conn.close()
+    assert left == ["Dana Reyes", "Old Timer"]
+    assert schedule_intel.forget_stale_names(rid, [], db_path=db_path) == 0          # an empty pull proves nothing

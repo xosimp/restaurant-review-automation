@@ -1116,6 +1116,37 @@ def remember_tenure(restaurant_id, shifts: list, db_path=DB_PATH) -> None:
         conn.close()
 
 
+def forget_stale_names(restaurant_id, window_rows: list, db_path=DB_PATH) -> int:
+    """Drop remembered names a POS sync proves were never people, or were
+    another spelling of one: last seen INSIDE the synced window, yet absent
+    from it - inside its window the POS is the whole record, so anyone who
+    worked then is in it. Simple EJ's first RPOWER sync stored payroll codes
+    ("0GXXW3") and station logins ("Day Bar"), and tenure / Restaurant DNA
+    kept counting them as staff after the names were fixed (9/28/26). A
+    person last seen before the window keeps their history. Returns rows
+    removed."""
+    names = {(r.get("employee") or "").strip() for r in window_rows or [] if (r.get("employee") or "").strip()}
+    dates = sorted({(r.get("date") or "")[:10] for r in window_rows or [] if len((r.get("date") or "")[:10]) == 10})
+    if not names or not dates:
+        return 0
+    lo, hi = dates[0], dates[-1]
+    conn = get_conn(db_path)
+    try:
+        stale = [r["employee_name"] for r in conn.execute(
+            "SELECT employee_name FROM staff_first_seen WHERE restaurant_id=? AND last_seen BETWEEN ? AND ?",
+            (restaurant_id, lo, hi)).fetchall() if r["employee_name"] not in names]
+        for n in stale:
+            conn.execute("DELETE FROM staff_first_seen WHERE restaurant_id=? AND employee_name=?", (restaurant_id, n))
+        conn.commit()
+        return len(stale)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="forget_stale_names", context=f"restaurant_id={restaurant_id}")
+        return 0
+    finally:
+        conn.close()
+
+
 def tenure(restaurant_id, from_csv: dict, db_path=DB_PATH) -> dict:
     """{name: shifts} — the larger of what the current upload shows and what
     has been remembered; a person seen since March keeps their tenure when
