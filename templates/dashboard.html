@@ -13829,7 +13829,10 @@ function _setAskCavnarLoadingState(bubble, label, state) {
   window.addEventListener('resize', aiOrbitSize);
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { aiOrbitSize(); });
   function esc(x) { return String(x == null ? '' : x).replace(/[&<>"']/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; }); }
-  function nums(x) { return esc(x).replace(/(\$?\d[\d,.]*%?)/g, '<span class="n">$1</span>'); }
+  // Figures in the number face, skipping entities: esc() writes an
+  // apostrophe as &#39;, and wrapping its 39 broke the entity - the pill read
+  // "Review checks haven&#39;t run yet" (owner, 9/28/26).
+  function nums(x) { var parts = esc(x).split(/(&#?[a-z0-9]+;)/i), out = ''; for (var i = 0; i < parts.length; i++) out += (i % 2) ? parts[i] : parts[i].replace(/(\$?\d[\d,.]*%?)/g, '<span class="n">$1</span>'); return out; }
   function ago(iso) {
     if (!iso) return '';
     var t = Date.parse(iso); if (isNaN(t)) return '';
@@ -22490,7 +22493,7 @@ function fc2AccLine(fa,what){
   var e=function(x){return (typeof wtEsc==='function')?wtEsc(x):String(x==null?'':x);};
   var hn=function(x){return '<span class="hb-num">'+x+'</span>';};
   if(fa.withheld)return 'the next forecast is held back: '+e(fa.reason||('past '+what+' here have been too far off to show'));
-  if(fa.available===false||!fa.reading)return fa.reason?'how accurate '+e(what)+' are here: '+e(fa.reason).replace(/(\d+)/g,'<span class="hb-num">$1</span>'):'';
+  if(fa.available===false||!fa.reading)return fa.reason?'how accurate '+e(what)+' are here: '+e(fa.reason).split(/(&#?[a-z0-9]+;)/i).map(function(s,i){return i%2?s:s.replace(/(\d+)/g,'<span class="hb-num">$1</span>');}).join(''):'';
   var n=fa.n_weeks!=null?fa.n_weeks:(fa.n_months!=null?fa.n_months:fa.scored),unit=fa.n_months!=null?'month':'week';
   var out='past '+e(what)+' here have been '+e(fa.reading);
   if(fa.mean_error_pct!=null)out+=' ('+hn(fa.mean_error_pct+'%')+' mean error'+(n!=null?' over '+hn(n)+' '+unit+(n===1?'':'s'):'')+')';

@@ -384,3 +384,13 @@ def test_draft_it_opens_the_studio_with_the_goal_and_channels():
 def test_an_empty_feed_says_what_was_checked():
     assert "Nothing stands out right now. Cavnar AI checked " in SRC
     assert "dish margins and sales" in open("marketing_opportunities.py", encoding="utf-8").read()
+
+
+def test_number_wrapping_never_splits_an_escaped_apostrophe():
+    """The AI monitor read "Review checks haven&#39;t run yet" on Erik's live
+    account (owner, 9/28/26): nums() wrapped the 39 inside &#39;. Both
+    escape-then-wrap helpers now skip entities, as the shared num() does."""
+    i = SRC.index("function nums(x) {")
+    assert "split(/(&#?[a-z0-9]+;)/i)" in SRC[i:i + 300]
+    j = SRC.index("'how accurate '+e(what)+' are here: '")
+    assert "split(/(&#?[a-z0-9]+;)/i)" in SRC[j:j + 200]

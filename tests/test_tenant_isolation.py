@@ -510,3 +510,28 @@ def test_incrementing_a_template_requires_its_restaurant(db_path):
     conn = models.get_conn(db_path)
     assert conn.execute("SELECT use_count FROM response_templates WHERE id=?", (tid,)).fetchone()[0] == 1
     conn.close()
+
+
+def test_a_demo_sharing_a_live_listing_still_saves_without_sending_the_flag(db_path, monkeypatch):
+    """Renaming the demo Simple EJ's was refused (owner, 9/28/26): Erik's
+    live account holds the same listing and the settings form doesn't send
+    is_demo, so the stored flag has to count. A live row is still refused."""
+    from admin_routes import admin_bp, save_client_settings
+    monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 999, "is_admin": 1})
+    _loc(db_path, "Simple EJ's", google_place_id="PLACE_EJ")
+    demo = _loc(db_path, "Simple EJ's", google_place_id="PLACE_EJ", is_demo=1)
+    live_copy = _loc(db_path, "Another Live", google_place_id="")
+    app = Flask(__name__)
+    app.register_blueprint(admin_bp)
+
+    def save(rid, name):
+        with app.test_request_context(f"/admin/client-settings/{rid}", method="POST",
+                                      json={"name": name, "owner_email": "owner@x.test",
+                                            "google_place_id": "PLACE_EJ"}):
+            resp = save_client_settings(rid)
+        return resp.get_json() if hasattr(resp, "get_json") else resp[0].get_json()
+
+    assert save(demo, "Simple EJ's (Demo)")["ok"] is True
+    assert models.get_restaurant(demo, db_path=db_path).name == "Simple EJ's (Demo)"
+    refused = save(live_copy, "Another Live")
+    assert refused["ok"] is False and "Simple EJ's" in refused["error"]

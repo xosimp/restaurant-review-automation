@@ -746,7 +746,12 @@ def save_client_settings(restaurant_id, current_user):
         # owner would silently merge two clients into one tenant.
         place_clash = place_id_conflict((data.get("google_place_id") or "").strip(),
                                         exclude_id=restaurant_id) if "google_place_id" in data else None
-        if place_clash and not int(data.get("is_demo") or 0):
+        # A demo row deliberately mirrors a real listing (place_id_conflict
+        # exempts demos): the stored flag counts when the form doesn't send
+        # one - renaming the demo Simple EJ's was refused because Erik's live
+        # account holds the same listing (owner, 9/28/26).
+        _is_demo = data.get("is_demo") if "is_demo" in data else getattr(current, "is_demo", 0)
+        if place_clash and not int(_is_demo or 0):
             return jsonify(ok=False, error=(
                 f"That Google listing is already connected to {place_clash}. Two live "
                 f"restaurants on one listing both pull the same reviews and only one of "
