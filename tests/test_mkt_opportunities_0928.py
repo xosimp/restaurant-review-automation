@@ -30,6 +30,10 @@ from models import Restaurant, create_restaurant, get_conn, get_restaurant, upda
 
 SRC = open("templates/dashboard.html", encoding="utf-8").read()
 TODAY = date.today()
+# The slow night is always two days ahead of the day the suite runs. Pinned
+# to "Tuesday" it failed every Tuesday: the 56-day window then drops the
+# oldest Tuesday and "8 of the last 8" reads "7 of the last 7" (re-audit OPP-20).
+SLOW = (TODAY + timedelta(days=2)).strftime("%A")
 NOW = datetime.combine(TODAY, datetime.min.time()).replace(hour=12)
 
 
@@ -51,7 +55,7 @@ def _rid(db, **kw):
                              db_path=db)
 
 
-def _labor(db, rid, slow_day="Tuesday", slow=3000.0, usual=7000.0, weeks=8):
+def _labor(db, rid, slow_day=SLOW, slow=3000.0, usual=7000.0, weeks=8):
     c = get_conn(db)
     for i in range(1, weeks * 7 + 1):
         d = TODAY - timedelta(days=i)
@@ -70,14 +74,14 @@ def test_a_reliably_slow_weekday_is_a_card_with_its_measured_gap(db):
     cards = mo.slow_nights(rid, TODAY, db)
     assert len(cards) == 1
     c = cards[0]
-    assert c["key"] == rec_ledger.rec_key("slow_day", "Tuesday") == "slow_day:Tuesday"
-    assert c["title"].startswith("Fill Tuesday, ") and "8 of the last 8 did" in c["why"]
+    assert c["key"] == rec_ledger.rec_key("slow_day", SLOW) == f"slow_day:{SLOW}"
+    assert c["title"].startswith(f"Fill {SLOW}, ") and "8 of the last 8 did" in c["why"]
     typical = demand.slow_days(rid, db_path=db)["typical_day"]
     assert f"${typical:,.0f} a typical day" in c["facts"]
-    assert c["stake"]["label"] == "a Tuesday night under a typical day" and c["stake"]["amount"] > 3000
-    assert c["action"] == {"prompt": "Fill Tuesday dinner", "channels": ["text", "email", "social"]}
-    assert gm.plan_campaign(c["action"]["prompt"])["target_day"] == "Tuesday"   # the send closes the card
-    assert c["evidence"]["kind"] == "nights" and 1 <= c["days_away"] <= 7
+    assert c["stake"]["label"] == f"a {SLOW} night under a typical day" and c["stake"]["amount"] > 3000
+    assert c["action"] == {"prompt": f"Fill {SLOW} dinner", "channels": ["text", "email", "social"]}
+    assert gm.plan_campaign(c["action"]["prompt"])["target_day"] == SLOW   # the send closes the card
+    assert c["evidence"]["kind"] == "nights" and c["days_away"] == 2
 
 
 def test_every_slow_card_quotes_one_typical_day_and_there_are_at_most_two(db):
@@ -264,13 +268,13 @@ def test_the_feed_ranks_drops_answered_cards_and_gives_facts_no_confidence(db, m
     _contacts(db, rid, 12, email=12)
     items = mo.feed(rid, db_path=db)["items"]
     keys = [i["key"] for i in items]
-    assert keys[0] == "slow_day:Tuesday" and "list_idle:email" in keys
+    assert keys[0] == f"slow_day:{SLOW}" and "list_idle:email" in keys
     by = {i["key"]: i for i in items}
-    assert isinstance(by["slow_day:Tuesday"]["confidence"], dict)
+    assert isinstance(by[f"slow_day:{SLOW}"]["confidence"], dict)
     assert by["list_idle:email"]["confidence"] is None
-    rec_ledger.record(rid, "slow_day:Tuesday", "dismissed", surface="marketing", meta={"kind": "not_for_us"},
+    rec_ledger.record(rid, f"slow_day:{SLOW}", "dismissed", surface="marketing", meta={"kind": "not_for_us"},
                       db_path=db)
-    assert "slow_day:Tuesday" not in [i["key"] for i in mo.feed(rid, db_path=db)["items"]]
+    assert f"slow_day:{SLOW}" not in [i["key"] for i in mo.feed(rid, db_path=db)["items"]]
 
 
 def test_the_feed_is_stored_and_rebuilt_only_when_its_inputs_move(db, monkeypatch):
@@ -290,7 +294,7 @@ def test_one_failing_source_never_empties_the_feed(db, monkeypatch):
     rid = _rid(db)
     _labor(db, rid)
     monkeypatch.setattr(mo, "category_dips", lambda *a, **k: 1 / 0)
-    assert [c["key"] for c in mo.build(rid, db_path=db, now=NOW)] == ["slow_day:Tuesday"]
+    assert [c["key"] for c in mo.build(rid, db_path=db, now=NOW)] == [f"slow_day:{SLOW}"]
 
 
 def test_no_model_call_on_build():
@@ -324,7 +328,7 @@ def test_the_route_serves_the_feed_behind_the_module(client, db):
     rid, h = _login(client, db)
     _labor(db, rid)
     d = client.get("/mobile/api/marketing/opportunities", headers=h).get_json()
-    assert d["ok"] and d["items"][0]["key"] == "slow_day:Tuesday" and d["checked"]
+    assert d["ok"] and d["items"][0]["key"] == f"slow_day:{SLOW}" and d["checked"]
     src = open("client_api.py", encoding="utf-8").read()
     i = src.index('@client_bp.route("/api/marketing/opportunities")')
     assert '_m("mobile_marketing_opportunities")' in src[i:i + 300]

@@ -2592,8 +2592,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 /* ── Home (hb-*) — one hero chart, a row of signals, three lines of action.
    Same visual language as the iOS Home: glow strokes, ember gradients,
    breathing pulse chips, a hot endpoint dot. Little copy. */
-#panel-home,#panel-dsr,#panel-recs{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.12);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-field:rgba(255,255,255,.55)}
-[data-theme="dark"] #panel-home,[data-theme="dark"] #panel-dsr,[data-theme="dark"] #panel-recs{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(212,88,58,.09);--hb-tint2:rgba(212,88,58,.16);--hb-field:rgba(255,255,255,.05)}
+#panel-home,#panel-dsr,#panel-recs,#panel-marketing{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-tint:rgba(200,75,47,.06);--hb-tint2:rgba(200,75,47,.12);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red);--hb-field:rgba(255,255,255,.55)}
+[data-theme="dark"] #panel-home,[data-theme="dark"] #panel-dsr,[data-theme="dark"] #panel-recs,[data-theme="dark"] #panel-marketing{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07);--hb-tint:rgba(212,88,58,.09);--hb-tint2:rgba(212,88,58,.16);--hb-field:rgba(255,255,255,.05)}
 .hb-wrap{max-width:1120px;margin:0 auto;padding:30px 32px 56px;position:relative;z-index:1}
 .hb-num,.hb-num *{font-family:'Space Grotesk',sans-serif!important;font-variant-numeric:tabular-nums}
 .hb-kicker{font-size:11.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ember)}
@@ -2848,8 +2848,8 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
    row (.hb-row) stays for what is genuinely a list. DESIGN_SYSTEM.md §4:
    a page of identical cards flattens the hierarchy — so .hero is spent
    twice per page (today's focus, what connects) and nowhere else. */
-#panel-home,#panel-dsr,#panel-recs{--hb-inner:rgba(14,12,10,.035)}
-[data-theme="dark"] #panel-home,[data-theme="dark"] #panel-dsr,[data-theme="dark"] #panel-recs{--hb-inner:rgba(255,255,255,.04)}
+#panel-home,#panel-dsr,#panel-recs,#panel-marketing{--hb-inner:rgba(14,12,10,.035)}
+[data-theme="dark"] #panel-home,[data-theme="dark"] #panel-dsr,[data-theme="dark"] #panel-recs,[data-theme="dark"] #panel-marketing{--hb-inner:rgba(255,255,255,.04)}
 .hb-card{position:relative;background:var(--surface);border:1px solid var(--hb-line);border-radius:16px;padding:22px 24px;box-shadow:0 1px 2px rgba(14,12,10,.04),0 14px 30px -20px rgba(14,12,10,.16);transition:box-shadow .18s ease,transform .18s ease,border-color .18s ease}
 [data-theme="dark"] .hb-card{background:var(--surface-glass),var(--surface);border-color:var(--line-hi);box-shadow:var(--elev-1)}
 .hb-card.lift{cursor:pointer}
