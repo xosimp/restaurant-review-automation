@@ -524,7 +524,9 @@ def test_no_checklist_item_borrows_another_items_reason():
     import inspect
     import re
     src = inspect.getsource(client_api._do_ai_visibility_inner)
-    reasons = re.findall(r'"label": "([^"]+)"[^}]*?"why_it_matters": "([^"]+)"', src)
+    # the checklist itself is built in _aivis_listing (9/28/26)
+    reasons = re.findall(r'"label": "([^"]+)"[^}]*?"why_it_matters": "([^"]+)"',
+                         inspect.getsource(client_api._aivis_listing))
     assert reasons
     for label, why in reasons:
         if "Google Posts" in why:

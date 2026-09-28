@@ -571,7 +571,9 @@ def test_every_checklist_BRANCH_states_its_effort():
     the source so every branch is covered."""
     import inspect
     import client_api
-    src = inspect.getsource(client_api._do_ai_visibility_inner)
+    # The checklist is built in _aivis_listing (9/28/26: rebuilt live on a
+    # stored run's read, so its record-backed items never go stale).
+    src = inspect.getsource(client_api._aivis_listing)
     appends = src.count("checklist.append({")
     tagged = src.count('"effort":')
     assert appends > 0
@@ -1066,3 +1068,52 @@ def test_a_branded_answer_that_describes_the_place_is_a_mention(db_path, monkeyp
     p = _payload(monkeypatch, db_path, answers=[miss] * 7 + [long_desc])
     assert p["branded_score"] == 100
     assert p["ai_score"] == 0
+
+
+# ── A stored run's listing checklist is read live (owner, 9/28/26) ─────────
+
+def test_a_profile_filled_in_after_the_measurement_reads_done_on_the_next_load(db_path, monkeypatch):
+    """Simple EJ's filled in neighborhood / vibe / known for after the week's
+    measurement; Intel kept saying "Complete restaurant profile (...
+    missing)" because the checklist was saved with the run and replayed."""
+    import ai_utils
+    import client_api
+    monkeypatch.setattr(ai_utils, "ai_rate_limited", lambda *a, **k: False)   # four reads in a row
+    first = _payload(monkeypatch, db_path, answers=["x"] * 12)
+    c = models.get_conn(db_path)
+    c.execute("UPDATE restaurants SET neighborhood=NULL, vibe=NULL, known_for=NULL WHERE id=1")
+    c.commit()
+    c.close()
+    client_api._aivis_cache.clear()
+    run = client_api._do_ai_visibility_inner(1, force=True)[0]
+    assert any(i["label"].startswith("Complete restaurant profile") for i in run["checklist"])
+    models.update_restaurant(1, {"neighborhood": "St. Charles", "vibe": "neighborhood bar",
+                                 "known_for": "smash burgers", "yelp_business_id": "simple-ejs"},
+                             db_path=db_path)
+    for source in ("process cache", "stored run"):
+        if source == "stored run":
+            client_api._aivis_cache.clear()
+            monkeypatch.setattr(models, "latest_ai_visibility_payload",
+                                lambda rid, **k: (dict(run), "2026-09-28"))
+        again = client_api._do_ai_visibility_inner(1)[0]
+        labels = [i["label"] for i in again["checklist"]]
+        assert "Restaurant profile fully filled in" in labels, source
+        assert "Yelp profile linked" in labels, source
+        assert again["setup_done"] == run["setup_done"] + 2, source
+        # the measurement itself is untouched
+        assert again["ai_score"] == run["ai_score"] and again["cached"] is True
+    assert first["listing_read"] == {"read": False, "description_len": 0, "phone": False,
+                                     "website": False, "has_hours": False}
+
+
+def test_a_run_stored_before_the_listing_read_was_kept_is_read_back_from_its_checklist():
+    import client_api
+    old = {"checklist": [
+        {"label": "Business description written (212 chars)", "done": True, "kind": "presence"},
+        {"label": "Phone number in GBP", "done": True, "kind": "presence"},
+        {"label": "Add website URL to GBP", "done": False, "kind": "presence"},
+        {"label": "Hours listed in GBP", "done": True, "kind": "presence"}]}
+    assert client_api._stored_listing_read(old) == {"read": True, "description_len": 212, "phone": True,
+                                                    "website": False, "has_hours": True}
+    old["checklist"][2]["measured"] = False
+    assert client_api._stored_listing_read(old)["read"] is False
