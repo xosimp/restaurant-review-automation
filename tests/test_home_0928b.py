@@ -47,3 +47,11 @@ def test_kpi_cards_span_their_row_and_sparklines_stay_inside():
     assert ".dr-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr))" in SRC
     assert ".dr-kpis{display:grid;grid-template-columns:repeat(auto-fill" not in SRC
     assert ".dr-spark{color:var(--ink3);flex:0 1 84px;min-width:36px;height:auto}" in SRC
+
+
+def test_more_reveals_rows_above_itself_not_below():
+    fn = SRC[SRC.index("  function wrItems(list,cls,glyph){"):SRC.index("  function winsRisksHtml(c){")]
+    assert "<details" not in fn and "' dr-extra\" hidden'" in fn and "drMoreBtn(n-SHOWN,'')" in fn
+    assert '<details class="dr-more' not in SRC
+    assert "b.innerHTML=open?'Show less':" in SRC
+    assert ".hb-card>.dr-extra[hidden],.hb-recs>.dr-extra[hidden]{display:none}" in SRC

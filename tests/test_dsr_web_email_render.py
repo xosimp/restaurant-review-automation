@@ -353,8 +353,10 @@ def test_the_owner_report_says_each_thing_once():
     assert "Net sales" in allk and "Labor %" in allk and "Beverage mix" in allk
     # Three wins and three risks up front, then "N more"; three priorities.
     plain = _plain(html)
-    assert "2 more</summary>" in plain and "1 more</summary>" in plain
-    assert "2 more priorities</summary>" in plain
+    # "N more" is a toggle at the list's end that reveals the rest above
+    # itself (9/28/26), no longer a <details> that opened them below it.
+    assert 'data-dr-more="2"' in plain and 'data-dr-more="1"' in plain
+    assert 'data-dr-more="2" data-dr-noun="priorities"' in plain
     # Tomorrow points to the staffing priority instead of repeating it.
     assert html.count("Add a server to the Sunday schedule.") == 1
     assert "see priority #5 above" in plain and "AI recommendation" not in html

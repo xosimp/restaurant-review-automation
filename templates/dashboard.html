@@ -6165,6 +6165,9 @@ svg:hover .hb-xh{opacity:1}
 .dr-more>summary:hover{color:var(--ember)}
 .dr-more>summary:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:4px}
 .dr-more-recs{margin-top:10px}
+.dr-more-btn{margin-top:6px;padding-left:0!important;color:var(--ink3)}
+.dr-more-btn:hover{color:var(--ember)}
+.hb-card>.dr-extra[hidden],.hb-recs>.dr-extra[hidden]{display:none}
 .dr-shift-v{font-size:17px;font-weight:600;color:var(--ink);margin-top:8px}
 .dr-shift-v.good{color:var(--hb-good)}.dr-shift-v.warn{color:var(--hb-warn)}.dr-shift-v.bad{color:var(--hb-bad)}
 /* The week and period summary layer (ID1-22): tiles, the nightly bars, one sentence */
@@ -6699,11 +6702,25 @@ svg:hover .hb-xh{opacity:1}
   // Three wins and three risks up front (dsr.scorecard.SHOWN_ITEMS); the
   // rest behind "N more" in the same card.
   var SHOWN=3;
-  function wrItems(list,cls,glyph){var h='',more='',n=0;for(var i=0;i<list.length;i++){var t=list[i]&&list[i].text;if(!t)continue;
-    var r='<div class="hb-row '+cls+'"><span class="g" aria-hidden="true">'+glyph+'</span><span class="t wrap">'+prose(t)+'</span></div>';
-    if(n<SHOWN)h+=r;else more+=r;n++;}
-    if(more)h+='<details class="dr-more"><summary>'+hn(n-SHOWN)+' more</summary>'+more+'</details>';
+  /* The rest wait hidden IN the list, and "N more" sits at its end: it
+     reveals them above itself and becomes "Show less". A <details> opened
+     them below its summary, so the toggle split the list in two (owner,
+     9/28/26). */
+  function drMoreBtn(n,noun){return '<button type="button" class="cbtn cbtn-text cbtn-sm dr-more-btn" data-dr-more="'+n+'" data-dr-noun="'+esc(noun||'')+'" aria-expanded="false">'+hn(n)+' more'+(noun?' '+esc(noun):'')+'</button>';}
+  function wrItems(list,cls,glyph){var h='',n=0;for(var i=0;i<list.length;i++){var t=list[i]&&list[i].text;if(!t)continue;
+    h+='<div class="hb-row '+cls+(n>=SHOWN?' dr-extra" hidden':'"')+'><span class="g" aria-hidden="true">'+glyph+'</span><span class="t wrap">'+prose(t)+'</span></div>';n++;}
+    if(n>SHOWN)h+=drMoreBtn(n-SHOWN,'');
     return h;}
+  document.addEventListener('click',function(e){
+    var b=e.target&&e.target.closest?e.target.closest('[data-dr-more]'):null;if(!b)return;
+    /* A list's own rows sit beside its button; the priorities' cards are in
+       the grid just above the button's row. */
+    var box=b.parentNode;if(box.classList.contains('dr-more-recs')&&box.previousElementSibling)box=box.previousElementSibling;
+    var open=b.getAttribute('aria-expanded')!=='true',xs=box.querySelectorAll('.dr-extra'),i,n=+b.getAttribute('data-dr-more')||0,noun=b.getAttribute('data-dr-noun')||'';
+    for(i=0;i<xs.length;i++)xs[i].hidden=!open;
+    b.setAttribute('aria-expanded',open?'true':'false');
+    b.innerHTML=open?'Show less':hn(n)+' more'+(noun?' '+esc(noun):'');
+  });
   function winsRisksHtml(c){
     var w=c.wins||[],r=c.risks||[];
     return '<div class="dr-two dr-wr"><div class="hb-card"><div class="hb-h3"><span>Today\u2019s wins</span></div>'
@@ -6741,8 +6758,8 @@ svg:hover .hb-xh{opacity:1}
     if(acts.length){
       h+='<div class="hb-sh"><div><div class="k">AI recommended actions</div><h2>Tomorrow\u2019s priorities <small>ranked by urgency, dollars and effort</small></h2></div></div><div class="hb-recs">';
       for(var a=0;a<acts.length;a++){var x=acts[a],rk=x.rec_key||x.key||'',blk=String(rk).split(':')[2]||'';blk=blk.split('/')[0];
-        // The first three show; the rest wait behind "N more" (ID1-15).
-        if(a===SHOWN)h+='</div><details class="dr-more dr-more-recs"><summary>'+hn(acts.length-SHOWN)+' more '+(acts.length-SHOWN===1?'priority':'priorities')+'</summary><div class="hb-recs">';
+        // The first three show; the rest wait hidden in the same grid, and
+        // "N more" under it reveals them above itself (ID1-15, 9/28/26).
         // The calibrated figure when this restaurant's measured results
         // of the kind correct it (rec_learning.attach_dollar_calibration).
         var meta='';if(isNum(x.dollars_monthly)){var xa=isNum(x.dollars_adjusted)?x.dollars_adjusted:null;
@@ -6759,11 +6776,11 @@ svg:hover .hb-xh{opacity:1}
         // Each action's confidence is built from the facts it cites (K1,
         // E16) - urgency and effort stay the model's labels, said as such.
         var acf=window.cavConf&&cavConf.k1(x.confidence_detail,x.confidence)?cavConfLine(cavConf.k1(x.confidence_detail,x.confidence),{key:rk,surface:'dsr',module:MODULE[blk]||'ops'}):'';
-        h+='<div class="hb-card hb-rec"><div class="top"><span class="no">'+(a+1)+'</span></div><div class="t">'+prose(x.text)+'</div>'
+        h+='<div class="hb-card hb-rec'+(a>=SHOWN?' dr-extra" hidden':'"')+'><div class="top"><span class="no">'+(a+1)+'</span></div><div class="t">'+prose(x.text)+'</div>'
           +(x.why?'<div class="why">'+prose(x.why)+'</div>':'')+(meta?'<div class="meta">'+meta+'</div>':'')
           +(uadj?'<div class="dr-note">Cavnar AI marked this '+esc(URGENCY[uadj.from]||'Today')+'; moved to '+esc(URGENCY[uadj.to]||'This week')+' because '+prose(uadj.why||'the figures it cites don\u2019t show that urgency')+'.</div>':'')
           +acf+ans+'</div>';}
-      h+='</div>'+(acts.length>SHOWN?'</details>':'');}
+      h+='</div>'+(acts.length>SHOWN?'<div class="dr-more-recs">'+drMoreBtn(acts.length-SHOWN,acts.length-SHOWN===1?'priority':'priorities')+'</div>':'');}
     h+=tomorrowHtml(p&&p.tomorrow,n);
     if(!mgr)h+=kpisHtml(p&&p.kpis,p);
     h+=insightsHtml(p&&p.insights);
