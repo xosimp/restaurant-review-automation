@@ -86,9 +86,10 @@ def digest_has_data(restaurant, report) -> bool:
             from models import get_conn as _gc_dh
             c = _gc_dh()
             try:
+                from marketing_signals import MEASURED_SQL as _MSQL_h
                 n = c.execute("SELECT COUNT(*) AS n FROM marketing_content_log WHERE restaurant_id=? "
-                              "AND post_id IS NOT NULL AND (reach > 0 OR impressions > 0 OR likes > 0) "
-                              "AND created_at >= datetime('now','-14 days')", (rid,)).fetchone()
+                              f"AND post_id IS NOT NULL AND {_MSQL_h} "
+                              "AND COALESCE(posted_at, created_at) >= datetime('now','-14 days')", (rid,)).fetchone()
             finally:
                 c.close()
             if n and int(n["n"] or 0) > 0:
@@ -592,12 +593,14 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
         try:
             from models import get_conn as _gc_mkt
             _conn_mkt = _gc_mkt()
+            from marketing_signals import MEASURED_SQL as _MSQL_d, ENGAGEMENTS_SQL as _ESQL_d
+            # Measured posts only (an unmeasured one is NULL, not 0), newest
+            # by when they went out (MB-6/MB-8, AUX-13).
             _mkt_rows = _conn_mkt.execute(
-                """SELECT topic, reach, impressions, likes
+                f"""SELECT topic, reach, impressions, likes, {_ESQL_d} AS engagements
                    FROM marketing_content_log
-                   WHERE restaurant_id=? AND post_id IS NOT NULL
-                     AND (reach > 0 OR impressions > 0 OR likes > 0)
-                   ORDER BY created_at DESC LIMIT 5""",
+                   WHERE restaurant_id=? AND post_id IS NOT NULL AND {_MSQL_d}
+                   ORDER BY COALESCE(posted_at, created_at) DESC LIMIT 5""",
                 (report.restaurant_id,)
             ).fetchall()
             _conn_mkt.close()
@@ -610,11 +613,14 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
             # read's BEST rule): named only over MKT_BEST_MIN_POSTS measured
             # posts, with the count said.
             if len(_mkt_rows) >= DIGEST_MKT_BEST_MIN_POSTS:
-                _best = max(_mkt_rows, key=lambda r: (r["reach"] or 0) + (r["impressions"] or 0))
-                _br = (_best["reach"] or 0) + (_best["impressions"] or 0)
+                # The one ranking (marketing_signals.best_posts): engagements,
+                # then reach — and reach is reach alone, never reach +
+                # impressions, which counted the same people twice (MB-6).
+                _best = max(_mkt_rows, key=lambda r: (r["engagements"] or 0, r["reach"] or 0))
+                _br = int(_best["reach"] or 0)
                 if _br > 0:
                     marketing_context = (f"Marketing: of the last {len(_mkt_rows)} measured posts, the best was "
-                                         f"'{_best['topic']}' ({_br} reach+impr).")
+                                         f"'{_best['topic']}' ({_br} reach).")
                     _facts["marketing"] = {"best_topic": _best["topic"], "best_reach": int(_br),
                                            "measured_posts": len(_mkt_rows)}
         except Exception:

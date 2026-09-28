@@ -3046,7 +3046,7 @@ MKT_TREND_MIN_POSTS = 2
 MKT_TREND_MIN_CHANGE_PCT = 20
 # BEST / WEAK name the top three and bottom three measured posts; under six
 # they overlap, so the same post was both (NS4 L6).
-MKT_BEST_WEAK_MIN_POSTS = 6
+MKT_BEST_WEAK_MIN_POSTS = 6   # = marketing_signals.BEST_POST_MIN_POSTS, the one floor for "best" (AUX-13)
 
 
 def _mkt_checks(stored):
@@ -3161,24 +3161,29 @@ def _do_mkt_insight(rid, raw=False):
         _mkt_perf_seen, _mkt_weekly_seen = [], []
         try:
             from models import get_conn as _gc
+            from marketing_signals import MEASURED_SQL as _MSQL, ENGAGEMENTS_SQL as _ESQL
             _conn = _gc()
+            # Measured posts only, newest by when they WENT OUT, and ranked
+            # the way every "best post" is (marketing_signals.best_posts:
+            # engagements, then reach) — never reach + impressions (MB-6,
+            # AUX-13). An unmeasured post's metrics are NULL, not 0.
             _perf_rows = _conn.execute(
-                """SELECT topic, post_platform, reach, impressions, engaged, likes, comments
+                f"""SELECT topic, post_platform, reach, impressions, engaged, likes, comments,
+                           {_ESQL} AS engagements
                    FROM marketing_content_log
-                   WHERE restaurant_id=? AND post_id IS NOT NULL
-                     AND (reach > 0 OR impressions > 0 OR likes > 0)
-                   ORDER BY created_at DESC LIMIT 20""",
+                   WHERE restaurant_id=? AND post_id IS NOT NULL AND {_MSQL}
+                   ORDER BY COALESCE(posted_at, created_at) DESC LIMIT 20""",
                 (rid,)
             ).fetchall()
             _weekly = _conn.execute(
-                """SELECT strftime('%Y-W%W', created_at) as week,
-                          ROUND(AVG(CASE WHEN reach > 0 THEN reach END), 0) as avg_reach,
-                          ROUND(AVG(CASE WHEN impressions > 0 THEN impressions END), 0) as avg_imp,
+                f"""SELECT strftime('%Y-W%W', COALESCE(posted_at, created_at)) as week,
+                          ROUND(AVG(CASE WHEN {_MSQL} AND reach > 0 THEN reach END), 0) as avg_reach,
+                          ROUND(AVG(CASE WHEN {_MSQL} AND impressions > 0 THEN impressions END), 0) as avg_imp,
                           COUNT(*) as posts,
-                          SUM(CASE WHEN reach > 0 THEN 1 ELSE 0 END) as reach_posts
+                          SUM(CASE WHEN {_MSQL} AND reach > 0 THEN 1 ELSE 0 END) as reach_posts
                    FROM marketing_content_log
                    WHERE restaurant_id=? AND post_id IS NOT NULL
-                     AND created_at >= datetime('now', '-56 days')
+                     AND COALESCE(posted_at, created_at) >= datetime('now', '-56 days')
                    GROUP BY week ORDER BY week""",
                 (rid,)
             ).fetchall()
@@ -3203,7 +3208,7 @@ def _do_mkt_insight(rid, raw=False):
                     _perf_lines.append("Only " + str(len(_perf_rows)) + " measured post" + ("" if len(_perf_rows) == 1 else "s")
                                        + " — too few to call any best or weak: " + "; ".join(_few))
             elif _perf_rows:
-                _sorted = sorted(_perf_rows, key=lambda r: (r["reach"] or 0) + (r["impressions"] or 0), reverse=True)
+                _sorted = sorted(_perf_rows, key=lambda r: (r["engagements"] or 0, r["reach"] or 0), reverse=True)
                 for _r in _sorted[:3]:
                     _parts = []
                     if _r["reach"]:       _parts.append(str(int(_r["reach"])) + " reach")

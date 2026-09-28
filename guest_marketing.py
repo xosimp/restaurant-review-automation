@@ -1369,7 +1369,13 @@ def handle_inbound_sms(from_phone, body, db_path=DB_PATH, message_sid=None):
 
 CAMPAIGN_PROMPTS = {
     "win_back": "a friendly win-back text to a guest who hasn't visited in a while, inviting them back",
-    "event": "a text announcing an upcoming event, special, or promotion",
+    # A fill-a-night text too (slow_day / quiet_night alias here): it
+    # invites guests in for that night and names an event, special or
+    # promotion only when the owner's own words did - "announcing an
+    # upcoming event, special or promotion" asked the model to invent one,
+    # which the public-copy guard then refused (Marketing audit AUX-1).
+    "event": ("a text inviting guests in for a particular night; mention an event, special or promotion "
+              "only if the owner's own words name it"),
     "loyalty": "a short thank-you/loyalty text rewarding a regular guest",
     "general": "a short promotional text on the topic given",
 }

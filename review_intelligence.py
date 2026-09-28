@@ -640,21 +640,25 @@ def operational_context(restaurant_id: int, db_path: str = DB_PATH) -> dict:
 
     try:
         conn = get_conn(db_path)
-        rows = _rows_raw(conn, """
-            SELECT topic, reach, impressions, created_at
+        # Measured posts that went out in the last 30 days, ranked the one
+        # way every "best post" is (marketing_signals.best_posts: engagements,
+        # then reach; named only over BEST_POST_MIN_POSTS). This summed reach
+        # + impressions, counting the same people twice (MB-6), and its count
+        # came from a LIMIT 3 - "3 measured posts" however many there were.
+        from marketing_signals import MEASURED_SQL, ENGAGEMENTS_SQL, BEST_POST_MIN_POSTS
+        rows = _rows_raw(conn, f"""
+            SELECT topic, reach, {ENGAGEMENTS_SQL} AS engagements
             FROM marketing_content_log
-            WHERE restaurant_id=? AND post_id IS NOT NULL
-              AND (reach > 0 OR impressions > 0)
-              AND created_at >= datetime('now','-30 days')
-            ORDER BY (COALESCE(reach,0) + COALESCE(impressions,0)) DESC LIMIT 3
+            WHERE restaurant_id=? AND post_id IS NOT NULL AND {MEASURED_SQL}
+              AND COALESCE(posted_at, created_at) >= datetime('now','-30 days')
         """, (restaurant_id,))
         conn.close()
         if rows:
-            ctx["marketing"] = {
-                "posts_30d": len(rows),
-                "best_topic": rows[0]["topic"],
-                "best_reach": (rows[0]["reach"] or 0) + (rows[0]["impressions"] or 0),
-            }
+            ctx["marketing"] = {"posts_30d": len(rows)}
+            if len(rows) >= BEST_POST_MIN_POSTS:
+                best = max(rows, key=lambda r: (r["engagements"] or 0, r["reach"] or 0))
+                if best["topic"] and best["reach"]:
+                    ctx["marketing"].update(best_topic=best["topic"], best_reach=int(best["reach"]))
     except Exception:
         pass
 
@@ -1266,14 +1270,15 @@ def _operational_lines(ctx) -> dict:
              "weeks": op_field("weeks in the trend", wt["weeks"], "count", evidence=False)})
     mk = ctx.get("marketing")
     if mk:
-        lines["marketing"] = OperationalLine(
-            f"- Marketing: {mk['posts_30d']} measured posts in 30 days, "
-            f"best was '{mk['best_topic']}' at {mk['best_reach']} reach+impressions",
-            {"posts_30d": op_field("measured posts in 30 days", mk["posts_30d"], "count",
-                                   display=f"{mk['posts_30d']} posts"),
-             "best_reach": op_field("best post's reach+impressions", mk["best_reach"], "count",
-                                    display=f"{mk['best_reach']}"),
-             "window": op_field("days in the window", 30, "count", evidence=False)})
+        fields = {"posts_30d": op_field("measured posts in 30 days", mk["posts_30d"], "count",
+                                        display=f"{mk['posts_30d']} posts"),
+                  "window": op_field("days in the window", 30, "count", evidence=False)}
+        text = f"- Marketing: {mk['posts_30d']} measured posts in 30 days"
+        if mk.get("best_topic"):
+            text += f", best was '{mk['best_topic']}' at {mk['best_reach']} reach"
+            fields["best_reach"] = op_field("best post's reach", mk["best_reach"], "count",
+                                            display=f"{mk['best_reach']}")
+        lines["marketing"] = OperationalLine(text, fields)
     return lines
 
 
