@@ -39,6 +39,13 @@ def _between(a, b):
     ("Fill Thursday dinner", "event", "all", "Thursday"),
     ("Promote this week's special", "event", "all", None),
     ("Say hello", "general", "all", None),
+    # Whole words, and the weekday as written (CS-9, audit #52).
+    ("Thanksgiving dinner specials", "event", "all", None),              # "thank" is not Thanksgiving
+    ("Say thank you to our guests", "loyalty", "regulars", None),
+    ("Slow-roasted brisket Friday", "event", "all", None),               # not a slow night
+    ("Fill Saturday, plus Tuesday trivia", "event", "all", "Saturday"),  # the first weekday written
+    ("Our Tuesdays are slow", "event", "all", "Tuesday"),
+    ("Six-pack Friday", "event", "all", None),
 ])
 def test_a_prompt_plans_the_tone_audience_and_day(prompt, ctype, segment, day):
     plan = gm.plan_campaign(prompt)
@@ -56,7 +63,13 @@ def rid(db_path, monkeypatch):
     return create_restaurant(Restaurant(name="Camp Co", owner_email="c@x.test", module_marketing=1), db_path=db_path)
 
 
-def _campaign(db_path, rid, sent, *, clicks=None, back=None, failed=0, when="2026-09-20 18:00:00"):
+def _campaign(db_path, rid, sent, *, clicks=None, back=None, failed=0, when="2026-09-20 18:00:00", through="closed",
+              segment="all"):
+    """`through`: how far attribution has read - "closed" (its whole 14 days,
+    the default), None (not yet), or a date."""
+    from datetime import date as _d, timedelta as _td
+    if through == "closed":
+        through = (_d.fromisoformat(when[:10]) + _td(days=gm.ATTRIBUTION_WINDOW_DAYS)).isoformat() if back is not None else None
     c = get_conn(db_path)
     tok = None
     if clicks is not None:
@@ -64,8 +77,8 @@ def _campaign(db_path, rid, sent, *, clicks=None, back=None, failed=0, when="202
         c.execute("INSERT INTO marketing_links (restaurant_id, token, target_url, clicks) VALUES (?,?,?,?)",
                   (rid, tok, "https://x.test", clicks))
     c.execute("INSERT INTO guest_campaigns (restaurant_id, message, sent_count, failed_count, created_at, segment, "
-              "segment_label, link_token, visits_matched) VALUES (?,?,?,?,?,?,?,?,?)",
-              (rid, "Hi", sent, failed, when, "all", "Everyone consented", tok, back))
+              "segment_label, link_token, visits_matched, attribution_through) VALUES (?,?,?,?,?,?,?,?,?,?)",
+              (rid, "Hi", sent, failed, when, segment, gm.SEGMENTS[segment]["label"], tok, back, through))
     c.commit()
     c.close()
 
@@ -75,7 +88,8 @@ def test_an_empty_restaurant_has_counts_and_no_rates(rid, db_path):
     assert ov["subscribers"] == 0 and ov["today"] == 0 and ov["last_30"] == 0
     assert len(ov["weekly"]) == 12 and all(w["joined"] == 0 for w in ov["weekly"])
     assert ov["last_campaign"] is None and ov["tap_rate"] is None and ov["back_rate"] is None
-    assert ov["delivered"] is None and ov["rate_min"] == gm.CAMPAIGN_RATE_MIN
+    # "accepted", not "delivered": Twilio's 201 is not a delivery receipt (CS-13).
+    assert ov["accepted"] is None and "delivered" not in ov and ov["rate_min"] == gm.CAMPAIGN_RATE_MIN
     assert "open_rate" not in ov and "revenue" not in ov          # SMS reports no opens; nothing is money
 
 
@@ -99,6 +113,39 @@ def test_a_rate_waits_for_enough_campaigns_of_enough_texts(rid, db_path):
     ov = gm.campaign_overview(rid, db_path=db_path)
     assert ov["tap_rate"] == {"pct": 16.0, "campaigns": 2}                         # (4+12)/(40+60)
     assert ov["back_rate"] == {"pct": 5.0, "campaigns": 2}                         # (2+3)/(40+60)
+    # Per audience too, for a forecast to one audience (CS-8).
+    assert ov["back_by_segment"] == {"all": {"pct": 5.0, "campaigns": 2}}
+
+
+def test_came_back_waits_for_the_whole_14_day_window(rid, db_path):
+    """visits_matched is written after attribution reads the FIRST day, so a
+    rate over open windows mixed two days of one campaign with fourteen of
+    another under "within 14 days" (CS-8)."""
+    _campaign(db_path, rid, 40, back=2, when="2026-09-01 18:00:00")                           # closed
+    _campaign(db_path, rid, 60, back=3, when="2026-09-20 18:00:00", through="2026-09-23")     # 3 days read
+    ov = gm.campaign_overview(rid, db_path=db_path)
+    assert ov["back_rate"] is None                         # one closed campaign is not a rate
+    hist = {c["created_at"][:10]: c for c in gm.campaign_history(rid, db_path=db_path)}
+    assert hist["2026-09-01"]["window_closed"] is True and hist["2026-09-20"]["window_closed"] is False
+    _campaign(db_path, rid, 60, back=6, when="2026-09-05 18:00:00")
+    assert gm.campaign_overview(rid, db_path=db_path)["back_rate"] == {"pct": 8.0, "campaigns": 2}   # (2+6)/(40+60)
+
+
+def test_no_audience_is_crowned_and_came_back_never_reads_as_caused(rid, db_path):
+    """campaign_insights compared raw segment rates and named the winner -
+    regulars, by construction (CS-8, M-22). Now one pooled figure, worded
+    "came back within 14 days", with what it is not."""
+    _campaign(db_path, rid, 40, back=12, when="2026-09-01 18:00:00", segment="regulars")
+    _campaign(db_path, rid, 40, back=10, when="2026-09-03 18:00:00", segment="regulars")
+    _campaign(db_path, rid, 50, back=1, when="2026-09-02 18:00:00", segment="lapsed_30")
+    _campaign(db_path, rid, 50, back=2, when="2026-09-04 18:00:00", segment="lapsed_30")
+    ins = [i for i in gm.campaign_insights(rid, db_path=db_path) if i["kind"] == "back"]
+    assert len(ins) == 1
+    text = (ins[0]["text"] + " " + ins[0]["basis"]).lower()
+    assert "came back within 14 days" in text and "regular" not in text and "because" not in text
+    assert ins[0]["tone"] != "good" and ins[0]["figure"] == "13.9%"                  # 25 of 180
+    ov = gm.campaign_overview(rid, db_path=db_path)
+    assert set(ov["back_by_segment"]) == {"regulars", "lapsed_30"}                   # each its own record
 
 
 def test_a_campaign_without_a_link_is_not_a_zero_tap_rate(rid, db_path):
@@ -195,9 +242,11 @@ def test_an_offer_in_the_owners_goal_is_theirs(rid, db_path, monkeypatch):
 
 
 def test_the_win_back_copy_fits_one_plain_text():
-    msg = gm._winback_message("Simple EJ's")
+    msg = gm._winback_message("Simple EJ’s")
     assert "—" not in msg and "’" not in msg
     assert len(msg + "\n\nReply STOP to unsubscribe.") <= 160
+    # It opens with the name (CS-12), so the send doesn't put it there twice.
+    assert msg.startswith("Simple EJ's: ") and gm.campaign_text("Simple EJ’s", msg) == msg
 
 
 # ── the page ────────────────────────────────────────────────────────────────
@@ -246,15 +295,27 @@ def test_the_copy_link_is_the_signed_one():
 def test_a_forecast_is_measured_or_nothing():
     # Campaign Studio (9/28/26): the text card's footer carries a forecast
     # only when a measured rate exists; the KPI tiles say what they wait for.
+    # The audience's OWN rate or nothing (CS-8): the blended all-audience
+    # rate was applied to whichever audience was picked.
     paint = _between("window.cpPaint = function", "function cpPaintAi")
-    assert "if (ov.back_rate && n) bits.push(" in paint and "if (link && ov.tap_rate && n)" in paint
+    assert "segBack = (ov.back_by_segment || {})[_cp.seg]" in paint and "segTap = (ov.tap_by_segment || {})[_cp.seg]" in paint
+    assert "if (segBack && n) bits.push(" in paint and "if (link && segTap && n)" in paint
+    assert "ov.back_rate" not in paint and "ov.tap_rate" not in paint
+    assert "may come back within 14 days" in paint and "likely back" not in paint
     assert "'after ' + rateMin + ' campaigns with a link'" in SRC
 
 
 def test_the_counter_knows_a_unicode_text_is_shorter():
     paint = _between("window.cpPaint = function", "function cpPaintAi")
     assert "var one = uni ? 70 : 160, per = uni ? 67 : 153, parts = full <= one ? 1 : Math.ceil(full / per);" in paint
-    assert "+ (link ? 26 : 0) + 29" in paint                            # the link and the STOP line count
+    # The name in front, the real tracked link and the STOP line all count,
+    # at the lengths the server reports (CS-12, CS-14): the link was taken
+    # as 26 characters and is ~41.
+    assert "var counted = head.length + msg.length + (link ? linkN : 0), full = counted + stopN" in paint
+    assert "linkN = sms.link_chars || 41" in paint and "+ (link ? 26 : 0)" not in paint
+    assert gm.link_chars() == len("\n" + gm._short_link("x" * 10))
+    assert len("\n" + gm._short_link("x" * 10, base_url="https://dashboard.cavnar.ai")) == 41
+    assert gm.STOP_LINE == "\n\nReply STOP to unsubscribe." and len(gm.STOP_LINE) == 28
 
 
 def test_nav_to_the_section_opens_its_sub_tab():

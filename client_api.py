@@ -7154,39 +7154,13 @@ _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
 
 def _track_campaign_outcome(rid, data, result, user_id):
     """A campaign aimed at a slow weekday starts an outcome tracker on that
-    weekday's sales — only once it has actually SENT. Recording on the Ask
-    confirmation instead would track a campaign that quiet hours or an empty
-    segment then refused. Best-effort: tracking never fails the send."""
-    day = (data.get("target_day") or "").strip().capitalize()
-    if day not in _WEEKDAYS or not (result or {}).get("ok"):
-        return None
-    # The texts went out: "text your list before a slow <day>" was
-    # implemented (ROI #27) — recorded only if it was ever shown.
-    if (result or {}).get("sent"):
-        try:
-            import rec_ledger
-            from datetime import date as _d2
-            rec_ledger.implemented(rid, rec_ledger.rec_key("slow_day", day), "marketing", user_id=user_id,
-                                   source_ref=f"campaign:{day}:{_d2.today().isoformat()}",
-                                   meta={"module": "marketing", "sent": result.get("sent")})
-        except Exception as e:
-            import ops
-            ops.capture(e, job="campaign_implemented", context=f"restaurant_id={rid}")
-    try:
-        import outcomes
-        # Credited to Marketing (the campaign is marketing's recommendation,
-        # rec-ROI #5), and refused while that weekday is already measured
-        # (#3) — a second campaign on the same Tuesdays would read the same
-        # lift twice. A refusal is an answer, not a failure.
-        # The restaurant's own date in the key, not the server's UTC one
-        # (re-audit A8).
-        return outcomes.start(rid, "slow_day_campaign", f"campaign:{day}:{outcomes.local_today(rid).isoformat()}",
-                              f"Guest text to lift {day}s", f"weekday_sales:{day}", user_id=user_id,
-                              module="marketing", gate="metric")
-    except Exception as e:
-        import ops
-        ops.capture(e, job="campaign_outcome", context=f"restaurant_id={rid}")
-        return None
+    weekday's sales — only once texts actually went out (result ok AND
+    sent > 0; ok with sent 0 used to start one, MB-11). The one body is
+    guest_marketing.track_campaign_outcome, which the finished campaign
+    calls itself (_on_campaign_done) — durable, where the send thread's
+    callback died with a deploy. Best-effort: tracking never fails a send."""
+    import guest_marketing
+    return guest_marketing.track_campaign_outcome(rid, (data or {}).get("target_day"), result, user_id)
 
 
 @client_bp.route("/api/guest-winback")
@@ -7215,6 +7189,13 @@ def guest_winback_dismiss(current_user, draft_id):
 def guest_campaign_send(current_user):
     """Web twin — the one body is mobile_api.mobile_guest_campaign_send."""
     return _m("mobile_guest_campaign_send")(current_user)
+
+
+@client_bp.route("/api/guest-campaign/<int:campaign_id>/cancel", methods=["POST"])
+@login_required
+def guest_campaign_cancel(current_user, campaign_id):
+    """Web twin — the one body is mobile_api.mobile_guest_campaign_cancel."""
+    return _m("mobile_guest_campaign_cancel")(current_user, campaign_id)
 
 
 @client_bp.route("/api/guest-qr")

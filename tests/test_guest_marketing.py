@@ -226,11 +226,17 @@ def test_send_campaign_logs_to_guest_campaigns_table(db_path):
     assert row["sent_count"] == 0
 
 
-def test_send_campaign_with_no_consented_contacts_sends_nothing(db_path):
+def test_send_campaign_with_no_consented_contacts_sends_nothing(db_path, monkeypatch):
+    # Nobody eligible is a refusal, not a zero-text campaign on the record
+    # (MB-11): no row, so nothing downstream can credit it.
+    monkeypatch.setattr(guest_marketing, "guest_sms_allowed_now", lambda rid: True)
     r = _restaurant(db_path)
     result = send_campaign(r.id, "Hello", db_path=db_path)
-    assert result["ok"] is True
+    assert result["ok"] is False and result["blocked"] == "no_audience"
     assert (result["sent"], result["failed"], result["total"]) == (0, 0, 0)
+    conn = get_conn(db_path)
+    assert conn.execute("SELECT COUNT(*) FROM guest_campaigns WHERE restaurant_id=?", (r.id,)).fetchone()[0] == 0
+    conn.close()
 
 
 def test_send_campaign_appends_stop_instructions(db_path, monkeypatch):
@@ -238,7 +244,7 @@ def test_send_campaign_appends_stop_instructions(db_path, monkeypatch):
     add_guest_contact_public_optin(r.id, "555-222-2222", db_path=db_path)
     captured = {}
 
-    def fake_send_sms(phone, message, use_case=None):
+    def fake_send_sms(phone, message, use_case=None, validity_seconds=None):
         captured["message"] = message
         return True
 

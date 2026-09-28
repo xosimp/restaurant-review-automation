@@ -175,6 +175,38 @@ def init_guest_marketing(db_path=DB_PATH):
             done_at       TEXT NOT NULL DEFAULT (datetime('now')),
             PRIMARY KEY (restaurant_id, business_date)
         )""",
+        # The durable text-campaign queue (audit #10, MB-10). A campaign was
+        # one daemon thread texting a list held in memory: a deploy killed it
+        # silently, a 9pm cutoff dropped the rest, and nothing recorded how
+        # many were meant to go. Now every recipient is a row, claimed before
+        # its text; the campaign carries its status and counts; the scheduler
+        # resumes whatever is left (run_campaign_sends). Rows written before
+        # this existed are finished campaigns: status defaults to 'done'.
+        "ALTER TABLE guest_campaigns ADD COLUMN status TEXT DEFAULT 'done'",
+        "ALTER TABLE guest_campaigns ADD COLUMN total INTEGER",
+        "ALTER TABLE guest_campaigns ADD COLUMN deferred_count INTEGER DEFAULT 0",
+        "ALTER TABLE guest_campaigns ADD COLUMN skipped_count INTEGER DEFAULT 0",
+        "ALTER TABLE guest_campaigns ADD COLUMN body TEXT",
+        "ALTER TABLE guest_campaigns ADD COLUMN content_hash TEXT",
+        "ALTER TABLE guest_campaigns ADD COLUMN target_day TEXT",
+        "ALTER TABLE guest_campaigns ADD COLUMN created_by INTEGER",
+        "ALTER TABLE guest_campaigns ADD COLUMN winback_draft_id INTEGER",
+        "ALTER TABLE guest_campaigns ADD COLUMN completed_at TEXT",
+        """CREATE TABLE IF NOT EXISTS guest_campaign_queue (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            campaign_id   INTEGER NOT NULL,
+            restaurant_id INTEGER NOT NULL,
+            contact_id    INTEGER NOT NULL,
+            phone         TEXT    NOT NULL,
+            status        TEXT    NOT NULL DEFAULT 'pending',
+            claimed_at    TEXT,
+            sent_at       TEXT,
+            error         TEXT,
+            UNIQUE(campaign_id, contact_id)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_gcq_campaign ON guest_campaign_queue(campaign_id, status)",
+        "CREATE INDEX IF NOT EXISTS idx_gcq_restaurant ON guest_campaign_queue(restaurant_id, status)",
+        "CREATE INDEX IF NOT EXISTS idx_guest_campaigns_status ON guest_campaigns(status, restaurant_id)",
     ):
         try:
             conn.execute(col_sql)
@@ -227,10 +259,35 @@ def guest_sms_allowed_now(restaurant_id) -> bool:
 def guest_sms_window_label() -> str:
     """"8:00 AM and 9:00 PM" — for the message an owner sees when a campaign
     is held back, so the refusal reads as a rule and not a failure."""
-    def _fmt(h):
-        suffix = "AM" if h < 12 else "PM"
-        return f"{h % 12 or 12}:00 {suffix}"
-    return f"{_fmt(GUEST_SMS_EARLIEST_HOUR)} and {_fmt(GUEST_SMS_LATEST_HOUR)}"
+    return f"{_hour_label(GUEST_SMS_EARLIEST_HOUR)} and {_hour_label(GUEST_SMS_LATEST_HOUR)}"
+
+
+def _hour_label(h) -> str:
+    return f"{h % 12 or 12}:00 {'AM' if h < 12 else 'PM'}"
+
+
+# The window was checked when a text was SUBMITTED, and Twilio queues what it
+# cannot send at once for up to its default ValidityPeriod (hours): a big list
+# pressed at 8:40pm could reach phones after 9 (MB-13, audit #60). Every
+# campaign text now tells Twilio to drop it rather than deliver it after the
+# window closes, never longer than four hours.
+GUEST_SMS_MAX_VALIDITY_SECONDS = 4 * 3600
+
+
+def guest_sms_validity_seconds(restaurant_id) -> int:
+    """Seconds until 9:00 PM on the restaurant's clock, capped at
+    GUEST_SMS_MAX_VALIDITY_SECONDS: the Twilio ValidityPeriod a guest text is
+    sent with. 0 outside the window (or when the clock can't be read), which
+    means: don't send."""
+    try:
+        now = _sms_local_now(restaurant_id)
+    except Exception:
+        return 0
+    if not (GUEST_SMS_EARLIEST_HOUR <= now.hour < GUEST_SMS_LATEST_HOUR):
+        return 0
+    close = now.replace(hour=GUEST_SMS_LATEST_HOUR, minute=0, second=0, microsecond=0)
+    left = int((close - now).total_seconds())
+    return max(1, min(left, GUEST_SMS_MAX_VALIDITY_SECONDS)) if left > 0 else 0
 
 
 def get_guest_contacts(restaurant_id, consent_only=False, db_path=DB_PATH):
@@ -429,6 +486,48 @@ STOP_KEYWORDS  = {"stop", "stopall", "unsubscribe", "cancel", "end", "quit", "re
 START_KEYWORDS = {"start", "unstop", "yes", "y"}
 HELP_KEYWORDS  = {"help", "info"}
 
+# The replies, apart from the keyword logic that picks them (MB-15, audit
+# #65). A STOP is recorded against the number for every restaurant on this
+# shared number, and the owner-alert sender honours it too
+# (notify.get_alert_contacts) — so the reply says exactly that, and no more:
+# it used to promise "no more texts from us" while alerts kept coming.
+STOP_REPLY = ("You're unsubscribed from every restaurant that texts you from this number. "
+              "Reply START to opt back in.")
+START_REPLY = "You're opted back in to texts from this number. Reply STOP anytime."
+
+
+def _clear_platform_stop(phone, db_path=DB_PATH) -> bool:
+    """A START from a number that is on no restaurant's guest list: lift its
+    platform-level STOP (restaurant 0), which is all that holds back its
+    owner-alert texts (notify.sms_stopped_phones). True when there was one."""
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute("DELETE FROM guest_sms_optouts WHERE restaurant_id=0 AND phone=?",
+                         (_normalize_phone(phone),)).rowcount
+        conn.commit()
+        return bool(n)
+    finally:
+        conn.close()
+
+
+def _support_contact() -> str:
+    """Where a guest who replies HELP can reach a person: the address the
+    platform already signs its texts with (config), never an invented one."""
+    try:
+        import config
+        return os.getenv("SUPPORT_EMAIL") or config.will_email()
+    except Exception:
+        return os.getenv("SUPPORT_EMAIL") or ""
+
+
+def help_reply(names) -> str:
+    """The carrier's HELP answer: whose program this is, who sends it, how
+    often, what it costs, a contact and how to stop (CTIA)."""
+    names = " and ".join(n for n in (names or []) if n) or "a restaurant you joined"
+    contact = _support_contact()
+    return (f"{names}: guest texts sent by Cavnar AI. Msg frequency varies. Msg & data rates may apply. "
+            + (f"Help: {contact}. " if contact else "") + "Reply STOP to unsubscribe.")
+
 
 def resubscribe_guest(restaurant_id, phone, db_path=DB_PATH):
     """The guest's own START (handle_inbound_sms) — the one thing that undoes
@@ -598,17 +697,19 @@ def handle_inbound_sms(from_phone, body, db_path=DB_PATH):
         conn.commit()
         conn.close()
         _mark_invite_response(phone, "stop", db_path=db_path)
-        return "You're unsubscribed and won't get any more texts from us. Reply START to opt back in."
+        return STOP_REPLY
 
     candidates = _inbound_candidates(phone, db_path=db_path)
     if not candidates:
+        # Not a guest anywhere — but maybe an owner-alert contact whose STOP
+        # the alert sender now honours (MB-15): their own START lifts it.
+        if word in ("start", "unstop") and _clear_platform_stop(phone, db_path=db_path):
+            return START_REPLY
         return None          # nothing of ours — stay silent rather than guess
 
     if word in HELP_KEYWORDS:
-        # The carrier requirement for HELP: name the program, say how to stop.
-        names = " and ".join(n for _, n in candidates[:3] if n) or "a restaurant you joined"
-        return (f"Guest texts from {names}, sent by Cavnar AI. Msg & data rates may apply. "
-                "Reply STOP to unsubscribe.")
+        # The carrier requirement for HELP: name the program, a contact, how to stop.
+        return help_reply([n for _, n in candidates[:3]])
 
     if word in START_KEYWORDS or _match_named_restaurant(body, candidates):
         # One candidate is unambiguous. Several means two restaurants texted
@@ -700,7 +801,10 @@ def filter_segment(restaurant_id, contacts, segment="all"):
     contacts = list(contacts)
     segment = (segment or "all").strip().lower()
     if segment not in SEGMENTS:
-        segment = "all"
+        # A misspelt or retired audience reached EVERYONE consented (CS-17):
+        # an unknown segment narrows to nobody. The send routes refuse it
+        # outright (known_segment) before anything is queued.
+        return []
     if segment == "all":
         return contacts
 
@@ -738,10 +842,31 @@ def filter_segment(restaurant_id, contacts, segment="all"):
     return out
 
 
+def known_segment(segment):
+    """The SEGMENTS key `segment` names (blank is "all"), or None when it
+    names none — which a send refuses rather than widening to everyone."""
+    key = (segment or "all").strip().lower() if isinstance(segment, str) or segment is None else ""
+    return key if key in SEGMENTS else None
+
+
 def segment_counts(restaurant_id, db_path=DB_PATH) -> dict:
     """How many guests each segment would reach right now, so the owner picks
     an audience seeing its size rather than after sending to it."""
     return {key: len(segment_contacts(restaurant_id, key, db_path=db_path)) for key in SEGMENTS}
+
+
+def eligible_counts(restaurant_id, db_path=DB_PATH) -> dict:
+    """How many guests each segment's TEXT would actually go to now: the
+    segment, less anyone texted inside GUEST_SMS_MIN_DAYS_BETWEEN and anyone
+    already waiting on a campaign that is still sending. The Studio's
+    "Text N" button read segment_counts, which ignored the spacing, so it
+    promised guests the send then skipped (CS-5, MB-11)."""
+    from time_utils import restaurant_now_by_id
+    now = restaurant_now_by_id(restaurant_id, naive=True)
+    queued = _queued_contact_ids(restaurant_id, db_path=db_path)
+    textable = [c for c in segment_contacts(restaurant_id, "all", db_path=db_path)
+                if not _too_soon(c, now) and c["id"] not in queued]
+    return {key: len(filter_segment(restaurant_id, textable, key)) for key in SEGMENTS}
 
 
 # ── Send frequency ─────────────────────────────────────────────────────────
@@ -830,6 +955,10 @@ def draft_campaign_message(restaurant, campaign_type="general", topic="", goal="
 
     p = get_profile_for_restaurant(restaurant.id)
     intent = CAMPAIGN_PROMPTS.get(campaign_type, CAMPAIGN_PROMPTS["general"])
+    # The owner's words share CAMPAIGN_MAX_CHARS with the "{Name}: " the send
+    # puts in front and a tracked link the owner may add (CS-12, MB-10): a
+    # draft of the whole 300 was refused at the send it was drafted for.
+    budget = message_budget(getattr(restaurant, "name", None), with_link=True)
     never_clause = f" Never use these words or phrases: {p['never_say']}." if p.get("never_say") else ""
     # Same profile dict marketing.py's own generator uses menu_notes from —
     # this generator was silently dropping it, so a guest text campaign
@@ -842,7 +971,7 @@ def draft_campaign_message(restaurant, campaign_type="general", topic="", goal="
     prompt = (
         f"Write {intent} for {p['name']}, a {p['vibe']} in {p['neighborhood']}. "
         f"Brand voice: {p['voice']}.{never_clause}{menu_clause}{topic_clause}{goal_clause}\n\n"
-        "Rules: under 300 characters total (this is a real text message, not an email). "
+        f"Rules: under {budget} characters total (this is a real text message, not an email). "
         # A guest text is refused on any stated cause ("because of you",
         # "thanks to our new chef"): the guard can't tell warmth from a claim.
         "Give no reason or cause for anything: no 'because', 'due to', 'thanks to' or 'since'. "
@@ -901,199 +1030,675 @@ def draft_campaign_message(restaurant, campaign_type="general", topic="", goal="
     text = _validate_sms(text, restaurant, offer_source, p.get("never_say") or "")
     # check_public_reply allows a 1,200-character review reply; a text
     # message has its own, much smaller budget.
-    if len(text) > CAMPAIGN_MAX_CHARS:
+    if len(text) > budget:
         raise ValueError(f"campaign copy rejected: {len(text)} characters, over the "
-                         f"{CAMPAIGN_MAX_CHARS} a text message can carry")
+                         f"{budget} a text message leaves after your name and a link")
     return text
 
 
-MAX_CAMPAIGN_CHARS = 1600
+MAX_CAMPAIGN_CHARS = 1600       # Twilio's hard ceiling; CAMPAIGN_MAX_CHARS is the one that binds
+
+
+# ── What a guest reads (CS-12, MB-15, audit #7) ────────────────────────────
+# Every restaurant shares one platform number, so a guest's phone shows a
+# number, never the restaurant — and the text itself did not say whose it
+# was. Each campaign and win-back text now opens with the restaurant's name,
+# and that name and a tracked link count against CAMPAIGN_MAX_CHARS like the
+# owner's own words: the 300 used to be checked on the words alone, then the
+# name, link and STOP line were added after.
+STOP_LINE = "\n\nReply STOP to unsubscribe."
+SMS_NAME_MAX = 40
+# marketing_links.create_link mints secrets.token_urlsafe(7): 10 characters.
+_LINK_TOKEN_CHARS = 10
+_PLAIN = str.maketrans({"’": "'", "‘": "'", "“": '"', "”": '"', "–": "-", "—": "-"})
+
+
+def sms_prefix(restaurant_name) -> str:
+    """"Simple EJ's: " — the restaurant's name as the text's first words, in
+    plain keyboard punctuation (a curly apostrophe in the name sent every
+    text as Unicode, 70 characters a part)."""
+    name = " ".join(str(restaurant_name or "").split()).translate(_PLAIN)[:SMS_NAME_MAX].strip()
+    return f"{name}: " if name else ""
+
+
+def link_chars() -> int:
+    """What a tracked link adds: a newline and the short /g/ address."""
+    return 1 + len(_short_link("x" * _LINK_TOKEN_CHARS))
+
+
+def campaign_text(restaurant_name, message, link_token=None) -> str:
+    """The text above the STOP line: "{Name}: " + the owner's words + the
+    tracked link. A message that already opens with the name keeps it once."""
+    msg = (message or "").strip()
+    prefix = sms_prefix(restaurant_name)
+    if prefix and msg.translate(_PLAIN).lower().startswith(prefix[:-2].lower()):
+        prefix = ""
+    body = prefix + msg
+    if link_token:
+        body += "\n" + _short_link(link_token)
+    return body
+
+
+def message_budget(restaurant_name, with_link=False) -> int:
+    """Characters left for the owner's own words."""
+    return CAMPAIGN_MAX_CHARS - len(sms_prefix(restaurant_name)) - (link_chars() if with_link else 0)
+
+
+def _restaurant_name(restaurant_id, db_path=DB_PATH) -> str:
+    try:
+        from models import get_restaurant
+        r = get_restaurant(restaurant_id, db_path)
+        return (getattr(r, "name", "") or "") if r else ""
+    except Exception:
+        return ""
+
+
+def check_campaign_text(restaurant_id, message, with_link=False, restaurant_name=None, db_path=DB_PATH):
+    """None when the text fits CAMPAIGN_MAX_CHARS with the name and link
+    counted; otherwise the refusal. Every send path asks this BEFORE anything
+    is queued or a link is minted: start_campaign only checked 1,600 and
+    answered "queued", then the send thread refused the same text at 300 and
+    nobody was told (MB-10, audit #11)."""
+    msg = (message or "").strip()
+    if not msg:
+        return {"ok": False, "blocked": "empty", "sent": 0, "failed": 0, "total": 0,
+                "error": "The message is empty."}
+    name = restaurant_name if restaurant_name is not None else _restaurant_name(restaurant_id, db_path)
+    text = campaign_text(name, msg, ("x" * _LINK_TOKEN_CHARS) if with_link else None)
+    if len(text) <= CAMPAIGN_MAX_CHARS:
+        return None
+    what = "your restaurant's name" + (" and the link" if with_link else "")
+    return {"ok": False, "blocked": "too_long", "sent": 0, "failed": 0, "total": 0,
+            "error": (f"That text is {len(text)} characters with {what}; a guest text can carry "
+                      f"{CAMPAIGN_MAX_CHARS}. Shorten it by {len(text) - CAMPAIGN_MAX_CHARS} and send again.")}
 
 
 def audience_size(restaurant_id, segment="all", db_path=DB_PATH) -> int:
-    """How many guests a campaign to this segment would text right now."""
+    """How many guests a campaign to this segment would text right now: the
+    frequency cap applied, and nobody already waiting on a sending campaign."""
     from time_utils import restaurant_now_by_id
     now = restaurant_now_by_id(restaurant_id, naive=True)
-    return sum(1 for c in segment_contacts(restaurant_id, segment, db_path=db_path) if not _too_soon(c, now))
+    queued = _queued_contact_ids(restaurant_id, db_path=db_path)
+    return sum(1 for c in segment_contacts(restaurant_id, segment, db_path=db_path)
+               if not _too_soon(c, now) and c["id"] not in queued)
 
 
-def start_campaign(restaurant_id, message, segment="all", link_token=None, on_done=None, db_path=DB_PATH) -> dict:
-    """Validate now, text in the background. The fan-out used to run inside
-    the HTTP request: one synchronous Twilio call per guest on one of the
-    four request threads, so a 5,000-guest list held a quarter of the
-    platform for an hour and the phone gave up long before (MOD-MKT-7).
-    Returns what the owner is told immediately; campaign history shows the
-    sends as they land."""
-    if not guest_sms_allowed_now(restaurant_id):
-        return {"ok": False, "blocked": "quiet_hours", "sent": 0, "failed": 0, "total": 0,
-                "error": ("Guest texts only go out between "
-                          f"{guest_sms_window_label()} in your local time. "
-                          "Your message is ready — send it in the morning.")}
-    full = message.strip() + ("\n" + _short_link(link_token) if link_token else "") + "\n\nReply STOP to unsubscribe."
-    if len(full) > MAX_CAMPAIGN_CHARS:
-        return {"ok": False, "sent": 0, "failed": 0, "total": 0,
-                "error": f"That text is {len(full):,} characters with the opt-out line; "
-                         f"the most one text can carry is {MAX_CAMPAIGN_CHARS:,}. Shorten it and send again."}
-    total = audience_size(restaurant_id, segment, db_path=db_path)
-    import threading
+# ── The campaign queue (MB-10, audit #10) ──────────────────────────────────
+# A campaign is a guest_campaigns row with a status and one guest_campaign_
+# queue row per recipient, written before anything is texted. Each recipient
+# is claimed (pending -> sending) and then claimed on the contact too (the
+# three-day stamp, conditional, with consent re-read) before their text goes
+# out, so two drains of one campaign — the owner's thread and the scheduler,
+# a double press, a retry after a deploy — never text anyone twice. The
+# guest_newsletter_recipients pattern, for texts.
+#
+#   status  sending   texts are going out
+#           waiting   the 8am-9pm window is closed: pending texts wait for
+#                     8:00 AM and then go (run_campaign_sends)
+#           done      nothing pending; the outcome tracker runs once, and
+#                     only if something was sent (MB-11)
+#           cancelled the owner stopped it; pending rows never go
+#
+# A pending text older than GUEST_CAMPAIGN_MAX_WAIT_HOURS expires rather
+# than reaching a guest a day late. No row at all is written when nobody is
+# eligible: a zero-text campaign used to be recorded, and credited.
+GUEST_CAMPAIGN_TICK_SECONDS = 120
+GUEST_CAMPAIGN_THREAD_SECONDS = 15 * 60
+GUEST_CAMPAIGN_MAX_WAIT_HOURS = 24
+# The same words to the same audience pressed again while the first is still
+# going resumes it (a retry after a lost answer, a double press).
+GUEST_CAMPAIGN_RESUME_HOURS = 24
+# Submissions per second to Twilio while a campaign drains. A 5,000-text list
+# handed over at once sat in Twilio's queue behind — and ahead of — every
+# other restaurant's review requests on the shared number (MB-13).
+GUEST_SMS_PER_SECOND_DEFAULT = 2.0
+_OPEN = ("sending", "waiting")
+_WEEKDAY_TITLES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
-    def _run():
-        try:
-            result = send_campaign(restaurant_id, message, db_path=db_path, segment=segment, link_token=link_token)
-            if on_done:
-                on_done(result)
-        except Exception as e:
-            import ops
-            ops.capture(e, job="guest_campaign_send", context=f"restaurant_id={restaurant_id}")
-    threading.Thread(target=_run, name=f"guest-campaign-{restaurant_id}", daemon=True).start()
-    return {"ok": True, "queued": True, "total": total, "segment": segment,
-            "segment_label": SEGMENTS.get(segment, SEGMENTS["all"])["label"]}
 
-
-def send_campaign(restaurant_id, message, db_path=DB_PATH, segment="all", link_token=None):
-    """Send `message` to one SEGMENT of consented, non-unsubscribed guests.
-
-    Returns {"ok": True, "sent", "failed", "total", "skipped_recent", ...}, or
-    {"ok": False, "error"} when the quiet-hours window is closed.
-    Never raises — one bad number must not stop the rest of the list.
-
-    Three gates, in order, and all of them server-side so every caller (web,
-    mobile, Ask Cavnar, a future scheduled campaign) inherits them:
-      1. quiet hours   — nothing goes out between 9pm and 8am local
-      2. consent       — only guests who opted in themselves
-      3. frequency     — nobody gets two campaigns inside three days
-    """
-    if len((message or "").strip()) > CAMPAIGN_MAX_CHARS:
-        n = len((message or "").strip())
-        return {"ok": False, "blocked": "too_long", "sent": 0, "failed": 0, "total": 0,
-                "error": (f"That message is {n} characters. A guest text can carry "
-                          f"{CAMPAIGN_MAX_CHARS} — shorten it and send again.")}
-    if not guest_sms_allowed_now(restaurant_id):
-        return {"ok": False, "blocked": "quiet_hours", "sent": 0, "failed": 0, "total": 0,
-                "error": ("Guest texts only go out between "
-                          f"{guest_sms_window_label()} in your local time. "
-                          "Your message is ready — send it in the morning.")}
-
-    from time_utils import restaurant_now_by_id
-    now = restaurant_now_by_id(restaurant_id, naive=True)
-
-    audience = segment_contacts(restaurant_id, segment, db_path=db_path)
-    eligible = [c for c in audience if not _too_soon(c, now)]
-    skipped_recent = len(audience) - len(eligible)
-
-    body = message.strip()
-    if link_token:
-        body = f"{body}\n{_short_link(link_token)}"
-    full_message = body + "\n\nReply STOP to unsubscribe."
-    if len(full_message) > MAX_CAMPAIGN_CHARS:
-        # Twilio's hard ceiling; every 160 characters is a billed segment.
-        # Refused before anyone is texted, not discovered per guest.
-        return {"ok": False, "sent": 0, "failed": 0, "total": 0,
-                "error": f"That text is {len(full_message):,} characters with the opt-out line; "
-                         f"the most one text can carry is {MAX_CAMPAIGN_CHARS:,}. Shorten it and send again."}
-
-    # Exactly once per guest, even with two sends in flight (a double tap, a
-    # phone that gave up at 20 s and was pressed again) or a send killed
-    # halfway by a deploy. The old loop texted the whole list and only then
-    # wrote the campaign row, the recipients and the frequency stamps in one
-    # commit, so an overlapping send saw nobody stamped and texted everyone
-    # again, and a crash left no record of who had been texted.
-    #
-    # Now: the campaign row goes in first; each guest is CLAIMED by stamping
-    # last_campaign_at conditionally (only if nobody stamped them inside the
-    # frequency window) and committed before their text goes out; each
-    # delivered text is recorded as it happens. A claim whose send fails is
-    # released, so a failure never locks a guest out of the next campaign.
-    stamp = now.strftime("%Y-%m-%dT%H:%M:%S")
-    cutoff = (now - timedelta(days=GUEST_SMS_MIN_DAYS_BETWEEN)).strftime("%Y-%m-%dT%H:%M:%S")
-    label = SEGMENTS.get(segment, SEGMENTS["all"])["label"]
+def _queued_contact_ids(restaurant_id, db_path=DB_PATH) -> set:
+    """Contacts waiting on (or being texted by) a campaign still sending."""
     conn = get_conn(db_path)
     try:
-        cur = conn.execute(
-            "INSERT INTO guest_campaigns "
-            "(restaurant_id, message, sent_count, failed_count, segment, segment_label, link_token) "
-            "VALUES (?,?,?,?,?,?,?)",
-            (restaurant_id, message.strip(), 0, 0, segment, label, link_token))
-        campaign_id = cur.lastrowid
+        return {r[0] for r in conn.execute(
+            "SELECT contact_id FROM guest_campaign_queue WHERE restaurant_id=? AND status IN ('pending','sending')",
+            (restaurant_id,)).fetchall()}
+    except Exception:
+        return set()
+    finally:
+        conn.close()
+
+
+def _submit_interval() -> float:
+    """Seconds between two submissions to Twilio: GUEST_SMS_PER_SECOND (env)
+    or the default. Nothing to pace when no text reaches a carrier (Twilio
+    unconfigured: local runs and tests)."""
+    import notify as _n
+    if not (_n.TWILIO_SID and _n.TWILIO_TOKEN):
+        return 0.0
+    try:
+        rate = float(os.getenv("GUEST_SMS_PER_SECOND") or GUEST_SMS_PER_SECOND_DEFAULT)
+    except ValueError:
+        rate = GUEST_SMS_PER_SECOND_DEFAULT
+    return 1.0 / rate if rate > 0 else 0.0
+
+
+def _content_hash(segment, message) -> str:
+    import hashlib
+    return hashlib.sha256(f"{segment}\n{(message or '').strip()}".encode("utf-8")).hexdigest()
+
+
+def _enqueue(restaurant_id, message, segment, link_token, *, target_day=None, user_id=None, draft_id=None,
+             db_path=DB_PATH):
+    """-> (campaign_id or None, info). One writer at a time from the read of
+    who is already queued to the commit, so two presses find one campaign."""
+    from time_utils import restaurant_now_by_id
+    now = restaurant_now_by_id(restaurant_id, naive=True)
+    msg = message.strip()
+    body = campaign_text(_restaurant_name(restaurant_id, db_path), msg, link_token) + STOP_LINE
+    digest = _content_hash(segment, msg)
+    day = str(target_day or "").strip().capitalize()
+    day = day if day in _WEEKDAY_TITLES else None
+    audience = segment_contacts(restaurant_id, segment, db_path=db_path)
+    conn = get_conn(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        same = conn.execute(
+            "SELECT id FROM guest_campaigns WHERE restaurant_id=? AND content_hash=? AND status IN ('sending','waiting') "
+            "AND created_at >= datetime('now', ?) ORDER BY id DESC LIMIT 1",
+            (restaurant_id, digest, f"-{GUEST_CAMPAIGN_RESUME_HOURS} hours")).fetchone()
+        if same:
+            conn.commit()
+            return same["id"], {"resumed": True}
+        queued = {r[0] for r in conn.execute(
+            "SELECT contact_id FROM guest_campaign_queue WHERE restaurant_id=? AND status IN ('pending','sending')",
+            (restaurant_id,)).fetchall()}
+        recent = [c for c in audience if _too_soon(c, now)]
+        eligible = [c for c in audience if not _too_soon(c, now) and c["id"] not in queued]
+        info = {"resumed": False, "audience": len(audience), "skipped_recent": len(recent),
+                "already_queued": len(audience) - len(recent) - len(eligible)}
+        if not eligible:
+            conn.rollback()
+            return None, info
+        status = "sending" if guest_sms_allowed_now(restaurant_id) else "waiting"
+        cid = conn.execute(
+            "INSERT INTO guest_campaigns (restaurant_id, message, sent_count, failed_count, segment, segment_label, "
+            "link_token, status, total, deferred_count, skipped_count, body, content_hash, target_day, created_by, "
+            "winback_draft_id) VALUES (?,?,0,0,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (restaurant_id, msg, segment, SEGMENTS[segment]["label"], link_token, status, len(eligible),
+             len(eligible) if status == "waiting" else 0, len(audience) - len(eligible), body, digest, day,
+             user_id, draft_id)).lastrowid
+        conn.executemany(
+            "INSERT OR IGNORE INTO guest_campaign_queue (campaign_id, restaurant_id, contact_id, phone) VALUES (?,?,?,?)",
+            [(cid, restaurant_id, c["id"], _normalize_phone(c.get("phone") or "")) for c in eligible])
+        conn.commit()
+        return cid, info
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
+
+
+def _campaign_row(campaign_id, db_path=DB_PATH):
+    conn = get_conn(db_path)
+    try:
+        return conn.execute("SELECT * FROM guest_campaigns WHERE id=?", (campaign_id,)).fetchone()
+    finally:
+        conn.close()
+
+
+def _queue_counts(conn, campaign_id) -> dict:
+    return {r["status"]: r["n"] for r in conn.execute(
+        "SELECT status, COUNT(*) AS n FROM guest_campaign_queue WHERE campaign_id=? GROUP BY status",
+        (campaign_id,)).fetchall()}
+
+
+def _set_waiting(campaign_id, db_path=DB_PATH):
+    """The window closed: what is pending waits for 8:00 AM."""
+    conn = get_conn(db_path)
+    try:
+        pending = _queue_counts(conn, campaign_id).get("pending", 0)
+        conn.execute("UPDATE guest_campaigns SET status='waiting', deferred_count=? WHERE id=? AND status IN "
+                     "('sending','waiting')", (pending, campaign_id))
         conn.commit()
     finally:
         conn.close()
 
-    def _claim(contact_id, prior):
-        c2 = get_conn(db_path)
-        try:
-            got = c2.execute(
-                "UPDATE guest_contacts SET last_campaign_at=? WHERE id=? AND restaurant_id=? "
-                "AND (last_campaign_at IS NULL OR last_campaign_at < ? OR last_campaign_at IS ?)",
-                (stamp, contact_id, restaurant_id, cutoff, prior)).rowcount
-            c2.commit()
-            return bool(got)
-        finally:
-            c2.close()
 
-    def _release(contact_id, prior):
-        c2 = get_conn(db_path)
-        try:
-            c2.execute("UPDATE guest_contacts SET last_campaign_at=? WHERE id=? AND last_campaign_at=?",
-                       (prior, contact_id, stamp))
-            c2.commit()
-        finally:
-            c2.close()
+def _finish_row(queue_id, campaign_id, status, error=None, db_path=DB_PATH, contact=None, restaurant_id=None):
+    """One recipient's outcome, and the campaign's count with it."""
+    col = {"sent": "sent_count", "failed": "failed_count", "skipped": "skipped_count"}.get(status)
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE guest_campaign_queue SET status=?, error=?, "
+                     "sent_at=CASE WHEN ?='sent' THEN datetime('now') ELSE sent_at END WHERE id=?",
+                     (status, error, status, queue_id))
+        if col:
+            conn.execute(f"UPDATE guest_campaigns SET {col}=COALESCE({col},0)+1 WHERE id=?", (campaign_id,))
+        if status == "sent" and contact:
+            try:
+                # Who the campaign reached, for Toast attribution (moat #21).
+                conn.execute("INSERT INTO guest_campaign_recipients (campaign_id, restaurant_id, contact_id, phone) "
+                             "VALUES (?,?,?,?)", (campaign_id, restaurant_id, contact[0], contact[1]))
+            except Exception as e:
+                import ops
+                ops.capture(e, job="campaign_recipients", context=f"restaurant_id={restaurant_id}")
+        conn.commit()
+    finally:
+        conn.close()
 
-    def _record(contact, ok):
-        c2 = get_conn(db_path)
-        try:
-            if ok:
-                c2.execute("UPDATE guest_campaigns SET sent_count=sent_count+1 WHERE id=?", (campaign_id,))
-                try:
-                    c2.execute("INSERT INTO guest_campaign_recipients (campaign_id, restaurant_id, contact_id, phone) "
-                               "VALUES (?,?,?,?)", (campaign_id, restaurant_id, contact["id"],
-                                                    _normalize_phone(contact.get("phone") or "")))
-                except Exception as e:
-                    # The text already went; the count stands even if the
-                    # recipients table is missing. Recorded, never swallowed.
-                    import ops
-                    ops.capture(e, job="campaign_recipients", context=f"restaurant_id={restaurant_id}")
-            else:
-                c2.execute("UPDATE guest_campaigns SET failed_count=failed_count+1 WHERE id=?", (campaign_id,))
-            c2.commit()
-        finally:
-            c2.close()
 
-    sent, failed, raced, deferred = 0, 0, 0, 0
-    for i, c in enumerate(eligible):
-        # The 8am-9pm window is checked before EVERY text: a send that
-        # starts at 8:57pm used to keep texting past 9 (MOD-MKT-7). The rest
-        # wait for the next campaign rather than going out at night.
-        if not guest_sms_allowed_now(restaurant_id):
-            deferred = len(eligible) - i
+def _claim_guest(restaurant_id, contact_id, db_path=DB_PATH):
+    """The per-guest claim: stamp last_campaign_at only if the guest is still
+    textable (consent re-read, not unsubscribed, no STOP on record — a STOP
+    that arrives mid-campaign stops that campaign, SMS-19) and was not texted
+    inside the frequency window. -> (claimed, prior stamp, phone, reason)."""
+    from time_utils import restaurant_now_by_id
+    now = restaurant_now_by_id(restaurant_id, naive=True)
+    stamp = now.strftime("%Y-%m-%dT%H:%M:%S")
+    cutoff = (now - timedelta(days=GUEST_SMS_MIN_DAYS_BETWEEN)).strftime("%Y-%m-%dT%H:%M:%S")
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT phone, consent, unsubscribed, last_campaign_at FROM guest_contacts "
+                           "WHERE id=? AND restaurant_id=?", (contact_id, restaurant_id)).fetchone()
+        if not row:
+            return False, None, None, "no longer on the list"
+        if not row["consent"] or row["unsubscribed"] or _opted_out_here(conn, restaurant_id, row["phone"]):
+            return False, None, row["phone"], "unsubscribed"
+        got = conn.execute(
+            "UPDATE guest_contacts SET last_campaign_at=? WHERE id=? AND restaurant_id=? AND consent=1 "
+            "AND unsubscribed=0 AND (last_campaign_at IS NULL OR last_campaign_at < ?)",
+            (stamp, contact_id, restaurant_id, cutoff)).rowcount
+        conn.commit()
+        if not got:
+            return False, None, row["phone"], "texted in the last few days"
+        return True, (row["last_campaign_at"], stamp), row["phone"], None
+    finally:
+        conn.close()
+
+
+def _release_guest(contact_id, prior, db_path=DB_PATH):
+    before, stamp = prior
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE guest_contacts SET last_campaign_at=? WHERE id=? AND last_campaign_at=?",
+                     (before, contact_id, stamp))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _drain(campaign_id, max_seconds=None, limit=None, db_path=DB_PATH) -> dict:
+    """Send what is pending on one campaign until it is done, the window
+    closes, the owner cancels, or the bound is reached. Never raises for one
+    bad number; a kill mid-text gives that guest back and propagates."""
+    import time as _time
+    camp = _campaign_row(campaign_id, db_path)
+    if not camp or camp["status"] not in _OPEN:
+        return {"sent": 0, "failed": 0}
+    rid, body = camp["restaurant_id"], camp["body"] or (camp["message"] + STOP_LINE)
+    started, last_submit = _time.monotonic(), 0.0
+    interval = _submit_interval()
+    sent = failed = done = 0
+    while limit is None or done < limit:
+        if max_seconds is not None and _time.monotonic() - started > max_seconds:
             break
-        prior = c.get("last_campaign_at")
-        if not _claim(c["id"], prior):
-            raced += 1          # another send in flight already has this guest
-            continue
+        # The 8am-9pm window is checked before EVERY text, and what is left
+        # when it closes now waits for 8:00 AM instead of being dropped.
+        if not guest_sms_allowed_now(rid):
+            _set_waiting(campaign_id, db_path)
+            break
+        # Twilio drops the text rather than deliver it after 9:00 PM. A
+        # minute when the two clock reads straddle the close.
+        validity = guest_sms_validity_seconds(rid) or 60
+        conn = get_conn(db_path)
         try:
-            ok = bool(send_sms(c["phone"], full_message, use_case="guest"))
-        except Exception:
-            ok = False
+            st = conn.execute("SELECT status FROM guest_campaigns WHERE id=?", (campaign_id,)).fetchone()
+            if not st or st["status"] not in _OPEN:
+                break                                   # cancelled, or finished by another drain
+            row = conn.execute("SELECT id, contact_id FROM guest_campaign_queue WHERE campaign_id=? "
+                               "AND status='pending' ORDER BY id LIMIT 1", (campaign_id,)).fetchone()
+            if row is None:
+                break
+            claimed = conn.execute("UPDATE guest_campaign_queue SET status='sending', claimed_at=datetime('now') "
+                                   "WHERE id=? AND status='pending'", (row["id"],)).rowcount == 1
+            if claimed and st["status"] == "waiting":
+                conn.execute("UPDATE guest_campaigns SET status='sending', deferred_count=0 "
+                             "WHERE id=? AND status='waiting'", (campaign_id,))
+            conn.commit()
+        finally:
+            conn.close()
+        if not claimed:
+            continue
+        done += 1
+        ok_claim, prior, phone, reason = _claim_guest(rid, row["contact_id"], db_path)
+        if not ok_claim:
+            _finish_row(row["id"], campaign_id, "skipped", reason, db_path)
+            continue
+        if interval:
+            wait = interval - (_time.monotonic() - last_submit)
+            if wait > 0:
+                _time.sleep(wait)
+        last_submit = _time.monotonic()
+        err = None
+        try:
+            ok = bool(send_sms(phone, body, use_case="guest", validity_seconds=validity))
+        except Exception as e:
+            ok, err = False, str(e)[:300]
         except BaseException:
-            # Killed before this text is known to have gone: give the guest
-            # back so a retry reaches them, then let the kill propagate.
-            _release(c["id"], prior)
+            # Killed before this text is known to have gone: the guest goes
+            # back to pending, so a resume reaches them; the kill propagates.
+            _release_guest(row["contact_id"], prior, db_path)
+            conn = get_conn(db_path)
+            try:
+                conn.execute("UPDATE guest_campaign_queue SET status='pending', claimed_at=NULL "
+                             "WHERE id=? AND status='sending'", (row["id"],))
+                conn.commit()
+            finally:
+                conn.close()
             raise
-        if not ok:
-            _release(c["id"], prior)
-        _record(c, ok)
         if ok:
             sent += 1
+            _finish_row(row["id"], campaign_id, "sent", None, db_path, contact=(row["contact_id"], _normalize_phone(phone)),
+                        restaurant_id=rid)
         else:
+            # A failure never locks the guest out of the next campaign.
             failed += 1
-    skipped_recent += raced
+            _release_guest(row["contact_id"], prior, db_path)
+            _finish_row(row["id"], campaign_id, "failed", err or "not accepted by the carrier", db_path)
+    _maybe_finish(campaign_id, db_path)
+    return {"sent": sent, "failed": failed}
 
-    return {"ok": True, "sent": sent, "failed": failed, "total": len(eligible) - raced,
-            "campaign_id": campaign_id, "deferred_quiet_hours": deferred,
-            "skipped_recent": skipped_recent, "segment": segment,
-            "segment_label": SEGMENTS.get(segment, SEGMENTS["all"])["label"]}
+
+def _maybe_finish(campaign_id, db_path=DB_PATH) -> bool:
+    """Close a campaign with nothing left pending or in flight, once; the
+    close runs its follow-ups (_on_campaign_done)."""
+    conn = get_conn(db_path)
+    try:
+        counts = _queue_counts(conn, campaign_id)
+        if counts.get("pending", 0) or counts.get("sending", 0):
+            return False
+        closed = conn.execute("UPDATE guest_campaigns SET status='done', completed_at=datetime('now'), "
+                              "deferred_count=0 WHERE id=? AND status IN ('sending','waiting')",
+                              (campaign_id,)).rowcount == 1
+        conn.commit()
+    finally:
+        conn.close()
+    if closed:
+        _on_campaign_done(campaign_id, db_path)
+    return closed
+
+
+def _on_campaign_done(campaign_id, db_path=DB_PATH):
+    """What a finished campaign starts — only when a text actually went
+    (MB-11, audit #61): the slow-day tracker for a fill-a-night campaign,
+    and a win-back recommendation marked implemented. Durable: it runs from
+    whichever drain finishes the campaign, the owner's thread or the
+    scheduler after a deploy. Never raises."""
+    camp = _campaign_row(campaign_id, db_path)
+    if not camp or not int(camp["sent_count"] or 0):
+        return
+    rid, sent = camp["restaurant_id"], int(camp["sent_count"])
+    if camp["target_day"]:
+        track_campaign_outcome(rid, camp["target_day"], {"ok": True, "sent": sent}, camp["created_by"])
+    if camp["winback_draft_id"]:
+        try:
+            conn = get_conn(db_path)
+            try:
+                d = conn.execute("SELECT rec_key FROM guest_campaign_drafts WHERE id=? AND restaurant_id=?",
+                                 (camp["winback_draft_id"], rid)).fetchone()
+            finally:
+                conn.close()
+            if d and d["rec_key"]:
+                import rec_ledger
+                # The texts went out: the win-back was implemented (ROI #27).
+                rec_ledger.implemented(rid, d["rec_key"], "marketing", user_id=camp["created_by"],
+                                       source_ref=f"winback:{camp['winback_draft_id']}",
+                                       meta={"module": "marketing", "sent": sent}, db_path=db_path)
+        except Exception as e:
+            print(f"[winback] implementation not recorded for {rid}: {e}")
+
+
+def track_campaign_outcome(restaurant_id, target_day, result, user_id=None):
+    """A campaign aimed at a slow weekday starts an outcome tracker on that
+    weekday's sales — only once texts actually went out: `result` must be ok
+    AND carry sent > 0. Recording on the confirmation instead would track a
+    campaign that quiet hours, an empty segment or a failed list refused;
+    ok with sent 0 used to start one, crediting a lift to texts nobody got
+    (MB-11). Best-effort: tracking never fails the send. The one body behind
+    client_api._track_campaign_outcome."""
+    day = str(target_day or "").strip().capitalize()
+    res = result or {}
+    if day not in _WEEKDAY_TITLES or not res.get("ok") or not int(res.get("sent") or 0):
+        return None
+    # The texts went out: "text your list before a slow <day>" was
+    # implemented (ROI #27) — recorded only if it was ever shown.
+    try:
+        import rec_ledger
+        from datetime import date as _d2
+        rec_ledger.implemented(restaurant_id, rec_ledger.rec_key("slow_day", day), "marketing", user_id=user_id,
+                               source_ref=f"campaign:{day}:{_d2.today().isoformat()}",
+                               meta={"module": "marketing", "sent": res.get("sent")})
+    except Exception as e:
+        import ops
+        ops.capture(e, job="campaign_implemented", context=f"restaurant_id={restaurant_id}")
+    try:
+        import outcomes
+        # Credited to Marketing (the campaign is marketing's recommendation,
+        # rec-ROI #5), and refused while that weekday is already measured
+        # (#3) — a second campaign on the same Tuesdays would read the same
+        # lift twice. A refusal is an answer, not a failure. The
+        # restaurant's own date in the key, not the server's (re-audit A8).
+        return outcomes.start(restaurant_id, "slow_day_campaign",
+                              f"campaign:{day}:{outcomes.local_today(restaurant_id).isoformat()}",
+                              f"Guest text to lift {day}s", f"weekday_sales:{day}", user_id=user_id,
+                              module="marketing", gate="metric")
+    except Exception as e:
+        import ops
+        ops.capture(e, job="campaign_outcome", context=f"restaurant_id={restaurant_id}")
+        return None
+
+
+def _refusal(blocked, error, **extra):
+    return dict({"ok": False, "blocked": blocked, "sent": 0, "failed": 0, "total": 0, "error": error}, **extra)
+
+
+def _quiet_refusal():
+    return _refusal("quiet_hours", "Guest texts only go out between "
+                                   f"{guest_sms_window_label()} in your local time. "
+                                   "Your message is ready — send it in the morning.")
+
+
+def _nobody(segment, info):
+    """No eligible guest: no campaign row, nothing tracked (MB-11)."""
+    recent, queued = info.get("skipped_recent", 0), info.get("already_queued", 0)
+    if not info.get("audience"):
+        why = "Nobody in that audience has joined by text yet."
+    else:
+        bits = []
+        if recent:
+            bits.append(f"{recent} texted in the last {GUEST_SMS_MIN_DAYS_BETWEEN} days")
+        if queued:
+            bits.append(f"{queued} already waiting on a campaign that is still sending")
+        why = "Nobody in that audience can be texted right now" + (f" ({' and '.join(bits)})." if bits else ".")
+    return _refusal("no_audience", why, skipped_recent=recent + queued, segment=segment,
+                    segment_label=SEGMENTS[segment]["label"])
+
+
+def prepare_campaign(restaurant_id, message, segment, with_link=False, db_path=DB_PATH):
+    """The checks every send path runs before anything is queued: a known
+    audience (CS-17: an unknown one is refused, never "all") and the length
+    with the name and link counted (MB-10)."""
+    seg = known_segment(segment)
+    if seg is None:
+        return None, _refusal("unknown_segment", "That audience isn't one Cavnar AI knows. Pick one of the audiences shown.")
+    too = check_campaign_text(restaurant_id, message, with_link=with_link, db_path=db_path)
+    return seg, too
+
+
+def campaign_status(campaign_id, db_path=DB_PATH) -> dict:
+    """A campaign's own counts, from its rows."""
+    camp = _campaign_row(campaign_id, db_path)
+    if not camp:
+        return {}
+    conn = get_conn(db_path)
+    try:
+        q = _queue_counts(conn, campaign_id)
+    finally:
+        conn.close()
+    pending = q.get("pending", 0) + q.get("sending", 0)
+    return {"campaign_id": campaign_id, "status": camp["status"], "total": int(camp["total"] or 0),
+            "sent": int(camp["sent_count"] or 0), "failed": int(camp["failed_count"] or 0),
+            "skipped_recent": int(camp["skipped_count"] or 0), "pending": pending,
+            "deferred_quiet_hours": pending if camp["status"] == "waiting" else 0,
+            "segment": camp["segment"], "segment_label": camp["segment_label"]}
+
+
+def start_campaign(restaurant_id, message, segment="all", link_token=None, *, target_day=None, user_id=None,
+                   draft_id=None, hold=False, db_path=DB_PATH) -> dict:
+    """Validate, queue every recipient, answer at once; the texts go from a
+    background drain and — whatever is left after a deploy, or waiting on
+    the 8am window — from the scheduler (run_campaign_sends). The fan-out
+    used to run inside the HTTP request, then on a daemon thread holding the
+    list in memory (MOD-MKT-7, MB-10).
+
+    Outside 8am-9pm the send is refused, unless `hold` — the owner saw
+    "Texts wait until 8:00 AM" and sent anyway: then it is queued as
+    `waiting` and genuinely goes at 8:00 AM (CS-6). `target_day` (a
+    fill-a-night goal) and `draft_id` (a win-back draft) are what the
+    finished campaign starts, once texts went (_on_campaign_done)."""
+    seg, refused = prepare_campaign(restaurant_id, message, segment, bool(link_token), db_path)
+    if refused:
+        return refused
+    in_window = guest_sms_allowed_now(restaurant_id)
+    if not in_window and not hold:
+        return _quiet_refusal()
+    cid, info = _enqueue(restaurant_id, message, seg, link_token, target_day=target_day, user_id=user_id,
+                         draft_id=draft_id, db_path=db_path)
+    if cid is None:
+        return _nobody(seg, info)
+    st = campaign_status(cid, db_path)
+    if in_window:
+        import threading
+
+        def _run():
+            try:
+                _drain(cid, max_seconds=GUEST_CAMPAIGN_THREAD_SECONDS, db_path=db_path)
+            except Exception as e:
+                import ops
+                ops.capture(e, job="guest_campaign_send", context=f"restaurant_id={restaurant_id}")
+        threading.Thread(target=_run, name=f"guest-campaign-{cid}", daemon=True).start()
+    waiting = st.get("status") == "waiting"
+    return {"ok": True, "queued": True, "campaign_id": cid, "total": st.get("total", 0),
+            "resumed": bool(info.get("resumed")), "skipped_recent": st.get("skipped_recent", 0),
+            "waiting": waiting, "waiting_until": _hour_label(GUEST_SMS_EARLIEST_HOUR) if waiting else None,
+            "segment": seg, "segment_label": SEGMENTS[seg]["label"]}
+
+
+def send_campaign(restaurant_id, message, db_path=DB_PATH, segment="all", link_token=None):
+    """Queue and send `message` to one SEGMENT now, on this thread — the
+    synchronous form of start_campaign, for jobs and tests. Refused outside
+    8am-9pm; texts left when the window closes mid-send wait for 8:00 AM.
+
+    Returns {"ok": True, "sent", "failed", "total", "skipped_recent",
+    "deferred_quiet_hours", "campaign_id", ...}, or {"ok": False, "blocked",
+    "error"}: too long, an unknown audience, quiet hours, or nobody eligible
+    (no campaign row is written then). Never raises for one bad number.
+
+    Every gate is server-side so every caller inherits it:
+      1. length        — the name, words and link within CAMPAIGN_MAX_CHARS
+      2. quiet hours   — nothing goes out between 9pm and 8am local
+      3. consent       — only guests who opted in themselves, re-read per text
+      4. frequency     — nobody gets two campaigns inside three days
+    """
+    seg, refused = prepare_campaign(restaurant_id, message, segment, bool(link_token), db_path)
+    if refused:
+        return refused
+    if not guest_sms_allowed_now(restaurant_id):
+        return _quiet_refusal()
+    cid, info = _enqueue(restaurant_id, message, seg, link_token, db_path=db_path)
+    if cid is None:
+        return _nobody(seg, info)
+    _drain(cid, db_path=db_path)
+    return dict(campaign_status(cid, db_path), ok=True, resumed=bool(info.get("resumed")))
+
+
+def cancel_campaign(restaurant_id, campaign_id, db_path=DB_PATH) -> dict:
+    """Stop a campaign that is still sending or waiting for 8:00 AM: its
+    pending texts never go. A text already handed to Twilio is not recalled."""
+    conn = get_conn(db_path)
+    try:
+        camp = conn.execute("SELECT status FROM guest_campaigns WHERE id=? AND restaurant_id=?",
+                            (campaign_id, restaurant_id)).fetchone()
+        if not camp:
+            return {"ok": False, "error": "That campaign is gone."}
+        if camp["status"] not in _OPEN:
+            return {"ok": False, "error": "That campaign already finished."}
+        n = conn.execute("UPDATE guest_campaign_queue SET status='cancelled' WHERE campaign_id=? AND status='pending'",
+                         (campaign_id,)).rowcount
+        conn.execute("UPDATE guest_campaigns SET status='cancelled', completed_at=datetime('now'), deferred_count=0 "
+                     "WHERE id=? AND restaurant_id=?", (campaign_id, restaurant_id))
+        conn.commit()
+    finally:
+        conn.close()
+    return dict(campaign_status(campaign_id, db_path), ok=True, cancelled=n)
+
+
+def run_campaign_sends(db_path=DB_PATH, max_seconds=None) -> dict:
+    """Scheduler tick: resume every campaign still sending or waiting for
+    8:00 AM, bounded in wall-clock time; the queue rows are the cursor.
+
+    A recipient left 'sending' for 30 minutes belonged to a process that died
+    mid-text: it may have gone, so it is marked failed rather than texted
+    twice. A text pending longer than GUEST_CAMPAIGN_MAX_WAIT_HOURS expires.
+    A restaurant that is no longer in service texts nobody."""
+    import time as _time
+    from models import in_service_sql
+    if max_seconds is None:
+        max_seconds = GUEST_CAMPAIGN_TICK_SECONDS
+    conn = get_conn(db_path)
+    try:
+        stale = conn.execute("SELECT campaign_id, COUNT(*) AS n FROM guest_campaign_queue WHERE status='sending' "
+                             "AND claimed_at < datetime('now','-30 minutes') GROUP BY campaign_id").fetchall()
+        conn.execute("UPDATE guest_campaign_queue SET status='failed', error='interrupted while sending' "
+                     "WHERE status='sending' AND claimed_at < datetime('now','-30 minutes')")
+        for r in stale:
+            conn.execute("UPDATE guest_campaigns SET failed_count=COALESCE(failed_count,0)+? WHERE id=?",
+                         (r["n"], r["campaign_id"]))
+        conn.execute("UPDATE guest_campaign_queue SET status='expired', error='waited too long to send' "
+                     "WHERE status='pending' AND campaign_id IN (SELECT id FROM guest_campaigns WHERE status IN "
+                     "('sending','waiting') AND created_at < datetime('now', ?))",
+                     (f"-{GUEST_CAMPAIGN_MAX_WAIT_HOURS} hours",))
+        conn.commit()
+        open_rows = conn.execute(
+            "SELECT c.id, c.restaurant_id, (CASE WHEN " + in_service_sql("r.billing_status")
+            + " THEN 1 ELSE 0 END) AS live FROM guest_campaigns c JOIN restaurants r ON r.id = c.restaurant_id "
+            "WHERE c.status IN ('sending','waiting') ORDER BY c.id").fetchall()
+    finally:
+        conn.close()
+    started = _time.monotonic()
+    totals = {"campaigns": 0, "sent": 0, "failed": 0}
+    for row in open_rows:
+        # Closed first: everything sent, failed, skipped or expired. An
+        # account no longer in service texts nobody; its pending rows wait
+        # out GUEST_CAMPAIGN_MAX_WAIT_HOURS and expire.
+        if _maybe_finish(row["id"], db_path) or not row["live"]:
+            continue
+        left = max_seconds - (_time.monotonic() - started)
+        if left <= 0:
+            break
+        if not guest_sms_allowed_now(row["restaurant_id"]):
+            _set_waiting(row["id"], db_path)
+            continue
+        out = _drain(row["id"], max_seconds=left, db_path=db_path)
+        totals["campaigns"] += 1
+        totals["sent"] += out["sent"]
+        totals["failed"] += out["failed"]
+    return totals
 
 
 def _short_link(token, base_url=None):
@@ -1113,7 +1718,10 @@ def campaign_history(restaurant_id, limit=20, db_path=DB_PATH) -> list:
         rows = conn.execute(
             "SELECT c.id, c.message, c.sent_count, c.failed_count, c.segment, "
             "       c.segment_label, c.link_token, c.created_at, c.visits_matched, c.attribution_through, "
-            "       COALESCE(l.clicks, 0) AS clicks "
+            "       COALESCE(l.clicks, 0) AS clicks, COALESCE(c.status, 'done') AS status, c.total, "
+            "       COALESCE(c.skipped_count, 0) AS skipped_count, c.completed_at, c.target_day, "
+            "       (SELECT COUNT(*) FROM guest_campaign_queue q WHERE q.campaign_id = c.id "
+            "          AND q.status IN ('pending','sending')) AS pending "
             "FROM guest_campaigns c "
             "LEFT JOIN marketing_links l ON l.token = c.link_token "
             "WHERE c.restaurant_id=? ORDER BY c.id DESC LIMIT ?",
@@ -1121,7 +1729,32 @@ def campaign_history(restaurant_id, limit=20, db_path=DB_PATH) -> list:
         ).fetchall()
     finally:
         conn.close()
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        item = dict(r)
+        # Whether "came back within 14 days" can be read off this campaign
+        # yet (CS-8): only once attribution has read its whole window.
+        item["window_closed"] = _window_closed(item)
+        item["waiting_until"] = _hour_label(GUEST_SMS_EARLIEST_HOUR) if item["status"] == "waiting" else None
+        out.append(item)
+    return out
+
+
+def _window_closed(c) -> bool:
+    """True once Toast attribution has read a campaign's whole 14-day window
+    (attribution_through on or past the send day + ATTRIBUTION_WINDOW_DAYS,
+    the send day as run_campaign_attribution reads it). visits_matched is
+    written after the FIRST day is read, so a rate over open windows counted
+    two days of a campaign against fourteen of another and was labelled
+    "within 14 days" (CS-8, audit #63)."""
+    if c.get("visits_matched") is None or not c.get("attribution_through"):
+        return False
+    try:
+        from datetime import date as _date
+        sent_on = _date.fromisoformat(str(c.get("created_at") or "")[:10])
+        return _date.fromisoformat(str(c["attribution_through"])[:10]) >= sent_on + timedelta(days=ATTRIBUTION_WINDOW_DAYS)
+    except (TypeError, ValueError):
+        return False
 
 
 def diagnose(restaurant_id, db_path=DB_PATH) -> dict:
@@ -1133,7 +1766,8 @@ def diagnose(restaurant_id, db_path=DB_PATH) -> dict:
     sent = [c for c in hist if (c.get("sent_count") or 0) >= 10]
     if len(sent) < 2:
         return {"available": False, "reason": "fewer than two campaigns of ten or more texts — nothing to compare yet"}
-    measured = [c for c in sent if c.get("visits_matched") is not None]
+    # "Came back" only off campaigns whose whole window has been read (CS-8).
+    measured = [c for c in sent if _window_closed(c)]
     basis = "came back" if len(measured) >= 2 else "taps"
     # Taps are only measurable on a campaign that carried a link: one with
     # no link scored 0 and was named "weakest" for a number it could never
@@ -1257,8 +1891,10 @@ def _winback_message(restaurant_name):
     asks for an AI rewrite with the composer's own win-back draft. No offer,
     no discount: nobody has agreed to one. Plain punctuation: an em dash
     sent it as Unicode, three texts a guest where this is one."""
-    name = (restaurant_name or "us").strip()
-    msg = (f"Hi from {name}! It's been a little while and we'd love to have you back. "
+    # It opens with the name the send would put in front anyway (CS-12), so
+    # the owner reads exactly what guests get and the name is there once.
+    prefix = sms_prefix(restaurant_name) or "Hi! "
+    msg = (f"{prefix}It's been a little while and we'd love to have you back. "
            f"Come see us this week. Your table's waiting.")
     return msg[:CAMPAIGN_MAX_CHARS]
 
@@ -1270,12 +1906,15 @@ def winback_return(restaurant_id, db_path=DB_PATH) -> dict:
     from time_utils import mdy as _mdy
     past = [c for c in campaign_history(restaurant_id, limit=50, db_path=db_path)
             if (c.get("segment") or "") in WINBACK_SEGMENTS and (c.get("sent_count") or 0) > 0]
-    measured = [c for c in past if c.get("visits_matched") is not None]
+    # Only campaigns whose 14-day window has closed: an open one's count is
+    # the first few days of fourteen (CS-8).
+    measured = [c for c in past if _window_closed(c)]
     if not measured:
         return {"measured": False, "campaigns": len(past),
                 "text": ("No past win-back text has a measured return yet."
                          if not past else f"{len(past)} past win-back text{'s' if len(past) != 1 else ''}, "
-                                          "none measured yet — returns are matched against Toast check-ins.")}
+                                          "none measured yet — a return counts once its 14 days have passed, matched against "
+                                          "Toast check-ins.")}
     sent = sum(int(c["sent_count"]) for c in measured)
     back = sum(int(c.get("visits_matched") or 0) for c in measured)
     last = measured[0]
@@ -1342,6 +1981,9 @@ def winback_suggestion(restaurant_id, restaurant_name=None, surface="marketing",
     draft["segment_size"] = audience_size(restaurant_id, draft["segment"], db_path=db_path)
     draft["segment_label"] = SEGMENTS.get(draft["segment"], {}).get("label")
     draft["return"] = winback_return(restaurant_id, db_path=db_path)
+    # The draft opens with the name, so the whole budget is the message's;
+    # an edit that drops the name gets it back in front at the send, counted
+    # (check_campaign_text refuses what then runs over).
     draft["max_chars"] = CAMPAIGN_MAX_CHARS
     draft["sms_window"] = guest_sms_window_label()
     insight_store.present_recs(restaurant_id, "marketing", surface,
@@ -1365,10 +2007,12 @@ def _answer_winback(restaurant_id, draft_id, status, user_id=None, sent_message=
         conn.close()
 
 
-def send_winback(restaurant_id, draft_id, message=None, user_id=None, db_path=DB_PATH) -> dict:
+def send_winback(restaurant_id, draft_id, message=None, user_id=None, hold=False, db_path=DB_PATH) -> dict:
     """The owner's send of a win-back draft — through start_campaign, so
-    consent, quiet hours, the frequency cap and MAX_CAMPAIGN_CHARS all
-    apply. The draft is answered only once the campaign is accepted."""
+    consent, quiet hours (`hold`: queue it for 8:00 AM), the frequency cap
+    and the length with the restaurant's name all apply. The draft is
+    answered only once the campaign is accepted; the recommendation is
+    marked implemented only once texts went (_on_campaign_done)."""
     conn = get_conn(db_path)
     try:
         row = conn.execute("SELECT * FROM guest_campaign_drafts WHERE id=? AND restaurant_id=?",
@@ -1382,9 +2026,9 @@ def send_winback(restaurant_id, draft_id, message=None, user_id=None, db_path=DB
     text = (message or row["message"] or "").strip()
     if not text:
         return {"ok": False, "error": "The message is empty."}
-    if len(text) > CAMPAIGN_MAX_CHARS:
-        return {"ok": False, "error": f"That message is {len(text)} characters. A guest text can carry "
-                                      f"{CAMPAIGN_MAX_CHARS} — shorten it and send again."}
+    too_long = check_campaign_text(restaurant_id, text, db_path=db_path)
+    if too_long:
+        return too_long
     # The owner's own words (or the fixed win-back copy): the residue / link
     # / phone check, now WITH the restaurant's never-say list (NS6 A3 #6).
     # Not the engine's claim rules — an offer, an award or a "because" the
@@ -1401,20 +2045,11 @@ def send_winback(restaurant_id, draft_id, message=None, user_id=None, db_path=DB
     refusal = check_public_reply(text, never_say=never_say)
     if refusal:
         return {"ok": False, "error": f"Not sent: {refusal}."}
-    rec_key = row["rec_key"]
-
-    def _sent(res):
-        # The texts went out: the win-back was implemented, not only
-        # accepted (ROI #27). Runs on the send thread once it finishes.
-        if (res or {}).get("sent"):
-            try:
-                import rec_ledger
-                rec_ledger.implemented(restaurant_id, rec_key, "marketing", user_id=user_id,
-                                       source_ref=f"winback:{draft_id}",
-                                       meta={"module": "marketing", "sent": res.get("sent")}, db_path=db_path)
-            except Exception as e:
-                print(f"[winback] implementation not recorded for {restaurant_id}: {e}")
-    result = start_campaign(restaurant_id, text, segment=row["segment"], on_done=_sent, db_path=db_path)
+    # The texts going out marks the win-back implemented (ROI #27): the
+    # campaign carries the draft, and its close does it (_on_campaign_done),
+    # whichever drain finishes it — a thread callback died with a deploy.
+    result = start_campaign(restaurant_id, text, segment=row["segment"], draft_id=draft_id, user_id=user_id,
+                            hold=hold, db_path=db_path)
     if not result.get("ok"):
         return result
     _answer_winback(restaurant_id, draft_id, "sent", user_id, sent_message=text, total=result.get("total"),
@@ -1601,33 +2236,55 @@ _WEEKDAY_NAMES = ("monday", "tuesday", "wednesday", "thursday", "friday", "satur
 _WINBACK_WORDS = ("win back", "win-back", "winback", "bring back", "come back", "haven't been", "havent been",
                   "haven't visited", "havent visited", "have not been", "missed", "miss you", "lapsed", "drifted",
                   "been a while", "lost guests", "inactive")
-_LOYALTY_WORDS = ("regular", "thank", "loyal", "vip", "best guests", "appreciate")
+_LOYALTY_WORDS = ("regular", "thank", "thank you", "loyal", "vip", "best guests", "appreciate", "appreciation")
 _NEW_WORDS = ("first-time", "first time", "first-timer", "new guest", "newcomer", "first visit", "one visit")
+_HOLIDAY_WORDS = ("holiday", "thanksgiving", "christmas", "new year", "new year's", "new years", "valentine",
+                  "valentine's", "mother's day", "mothers day", "father's day", "fathers day", "easter",
+                  "halloween", "fourth of july", "july 4th", "st patrick's", "super bowl", "game day")
 _EVENT_WORDS = ("event", "special", "tonight", "this weekend", "trivia", "live music", "happy hour", "promo",
                 "promote", "launch", "new menu", "fill", "slow", "quiet", "busier", "sales", "deal", "brunch",
-                "tasting", "party", "holiday", "game day")
+                "tasting", "party") + _HOLIDAY_WORDS
+_FILL_WORDS = ("fill", "slow", "quiet", "busier", "pack")
+
+
+def _term_re(words):
+    """Whole words or phrases, an optional plural "s", never part of a longer
+    word: "thank" is not "Thanksgiving" and "slow" is not "slow-roasted"
+    (CS-9, audit #52) — the old rules were substrings."""
+    alts = "|".join(re.escape(w).replace(r"\ ", r"\s+") for w in sorted(words, key=len, reverse=True))
+    return re.compile(r"(?<![\w-])(?:" + alts + r")s?(?![\w-])")
+
+
+_WINBACK_RE, _LOYALTY_RE, _NEW_RE = _term_re(_WINBACK_WORDS), _term_re(_LOYALTY_WORDS), _term_re(_NEW_WORDS)
+_EVENT_RE, _FILL_RE, _WEEKDAY_RE = _term_re(_EVENT_WORDS), _term_re(_FILL_WORDS), _term_re(_WEEKDAY_NAMES)
+_SIXTY_RE = _term_re(("60", "sixty", "two months", "2 months", "couple of months", "couple months"))
 
 
 def plan_campaign(prompt) -> dict:
     """What a typed goal asks for: the tone the draft is written in (a
     CAMPAIGN_PROMPTS key), the audience it goes to (a SEGMENTS key), the goal
     in the owner's words for the page, and the weekday it is meant to fill
-    when it names one (target_day, which starts the slow-day tracker once
-    it sends - _track_campaign_outcome). Keyword rules, no model call; the
-    owner can change the audience before anything goes out."""
-    p = " " + re.sub(r"\s+", " ", str(prompt or "").lower()) + " "
-    day = next((d for d in _WEEKDAY_NAMES if d in p), None)
-    if any(w in p for w in _WINBACK_WORDS):
-        sixty = any(w in p for w in ("60", "sixty", "two months", "2 months", "couple of months", "couple months"))
-        return {"type": "win_back", "segment": "lapsed_60" if sixty else "lapsed_30",
+    (target_day, which starts the slow-day tracker once texts go -
+    track_campaign_outcome). Keyword rules on whole words, no model call; the
+    owner can change the audience before anything goes out.
+
+    target_day is set only for a fill-a-night goal — a fill word AND a
+    weekday — and the weekday is the first one WRITTEN, not the first in
+    calendar order: "Fill Saturday, plus Tuesday trivia" fills Saturday
+    (CS-9). "Slow-roasted brisket Friday" names no slow night."""
+    p = " " + re.sub(r"\s+", " ", str(prompt or "").translate(_PLAIN).lower()) + " "
+    m = _WEEKDAY_RE.search(p)
+    day = m.group(0)[:-1] if m and m.group(0).endswith("days") else (m.group(0) if m else None)
+    if _WINBACK_RE.search(p):
+        return {"type": "win_back", "segment": "lapsed_60" if _SIXTY_RE.search(p) else "lapsed_30",
                 "goal": "Win back guests who drifted away", "target_day": None}
-    if any(w in p for w in _NEW_WORDS):
+    if _NEW_RE.search(p):
         return {"type": "loyalty", "segment": "new", "goal": "Turn first-timers into regulars", "target_day": None}
-    if any(w in p for w in _LOYALTY_WORDS):
+    if _LOYALTY_RE.search(p):
         return {"type": "loyalty", "segment": "regulars", "goal": "Thank your regulars", "target_day": None}
-    if day and any(w in p for w in ("fill", "slow", "quiet", "busier", "pack")):
+    if day and _FILL_RE.search(p):
         return {"type": "event", "segment": "all", "goal": f"Fill {day.capitalize()}", "target_day": day.capitalize()}
-    if any(w in p for w in _EVENT_WORDS) or day:
+    if _EVENT_RE.search(p) or day:
         return {"type": "event", "segment": "all", "goal": "Promote an event or special", "target_day": None}
     return {"type": "general", "segment": "all", "goal": "Send your guests a text", "target_day": None}
 
@@ -1647,8 +2304,17 @@ def campaign_overview(restaurant_id, db_path=DB_PATH) -> dict:
                     carried one (at least CAMPAIGN_RATE_MIN of them, each
                     CAMPAIGN_RATE_MIN_SENT or more) - else None
       back_rate     guests who came back within the attribution window per
-                    text, over campaigns Toast attribution has read - else None
-      delivered     sent / (sent + failed) this month - None before a send
+                    text, over campaigns whose whole window Toast attribution
+                    has read (CS-8) - else None
+      tap_by_segment / back_by_segment  the same two rates per audience, so
+                    a forecast for one audience uses that audience's record
+                    or none (CS-8: the all-audience rate was applied to any)
+      accepted      sent / (sent + failed) this month: texts the carrier
+                    ACCEPTED (Twilio's 201). There is no delivery receipt yet,
+                    so it is not called "delivered" (CS-13, audit #35)
+      sms           what the Studio's counter and preview need: the name the
+                    send puts in front, a tracked link's length, the STOP
+                    line's, the limit, and the number guests see it from
 
     SMS has no opens: a phone reports none, so there is no open rate here.
     Nothing is summed across these, and none is money."""
@@ -1675,7 +2341,7 @@ def campaign_overview(restaurant_id, db_path=DB_PATH) -> dict:
     hist = campaign_history(restaurant_id, limit=50, db_path=db_path)
     sized = [c for c in hist if (c.get("sent_count") or 0) >= CAMPAIGN_RATE_MIN_SENT]
     linked = [c for c in sized if c.get("link_token")]
-    attributed = [c for c in sized if c.get("visits_matched") is not None]
+    attributed = [c for c in sized if c.get("window_closed")]
 
     def rate(rows, key):
         if len(rows) < CAMPAIGN_RATE_MIN:
@@ -1717,8 +2383,14 @@ def campaign_overview(restaurant_id, db_path=DB_PATH) -> dict:
                            "channel": channel} if last else None),
         "tap_rate": rate(linked, "clicks"),
         "back_rate": rate(attributed, "visits_matched"),
-        "delivered": (round(m_sent / (m_sent + m_failed) * 100, 1) if (m_sent + m_failed) else None),
+        "tap_by_segment": _by_segment(linked, "clicks", rate),
+        "back_by_segment": _by_segment(attributed, "visits_matched", rate),
+        "accepted": (round(m_sent / (m_sent + m_failed) * 100, 1) if (m_sent + m_failed) else None),
         "texts_this_month": m_sent,
+        "texts_failed_this_month": m_failed,
+        "sms": {"prefix": sms_prefix(getattr(r, "name", "") if r else ""), "link_chars": link_chars(),
+                "link_example": _short_link("…"), "stop_chars": len(STOP_LINE), "max": CAMPAIGN_MAX_CHARS,
+                "sender": _sms_sender()},
         "sending_now": guest_sms_allowed_now(restaurant_id),
         "window": guest_sms_window_label(),
         "min_days_between": GUEST_SMS_MIN_DAYS_BETWEEN,
@@ -1729,6 +2401,27 @@ def campaign_overview(restaurant_id, db_path=DB_PATH) -> dict:
         "mailing_address_set": bool((getattr(r, "mailing_address", None) or "").strip()),
         "insights": campaign_insights(restaurant_id, hist=hist, db_path=db_path),
     }
+
+
+def _by_segment(rows, key, rate) -> dict:
+    """{segment: rate} over each audience's own campaigns; an audience below
+    the rate's minimum is absent, not zero."""
+    out = {}
+    for seg in SEGMENTS:
+        v = rate([c for c in rows if (c.get("segment") or "all") == seg], key)
+        if v:
+            out[seg] = v
+    return out
+
+
+def _sms_sender() -> str:
+    """The number guests see a campaign come from, for the Studio's phone
+    preview ("" when it isn't known here)."""
+    try:
+        import notify
+        return notify.guest_sender_display()
+    except Exception:
+        return ""
 
 
 def _email_subscribers(restaurant_id, db_path=DB_PATH) -> int:
@@ -1743,30 +2436,26 @@ def campaign_insights(restaurant_id, hist=None, db_path=DB_PATH) -> list:
     """At most three short things that worked, each measured and carrying
     what it rests on - never an estimate, never money:
 
-      back    the audience whose texts brought the most guests back, once
-              CAMPAIGN_RATE_MIN attributed campaigns of CAMPAIGN_RATE_MIN_SENT
-              or more texts went to it
+      back    how many texted guests came back within 14 days, over every
+              campaign whose window has closed (CAMPAIGN_RATE_MIN of them, each
+              CAMPAIGN_RATE_MIN_SENT or more texts). One figure across them:
+              this used to crown the audience with the highest raw rate, which
+              is regulars by construction - they come back whether or not they
+              are texted - with no holdout to say otherwise (CS-8, audit #63,
+              M-22). "Came back within", never "because of".
       opened  the last email's opens, as a floor ("at least"), once open
               tracking reports and it went to 10 or more
 
     An insight below its minimum is left out, not shown as zero."""
     out = []
     hist = hist if hist is not None else campaign_history(restaurant_id, limit=50, db_path=db_path)
-    by_seg = {}
-    for c in hist:
-        if (c.get("sent_count") or 0) >= CAMPAIGN_RATE_MIN_SENT and c.get("visits_matched") is not None:
-            by_seg.setdefault(c.get("segment") or "all", []).append(c)
-    rates = []
-    for seg, rows in by_seg.items():
-        sent = sum(int(c.get("sent_count") or 0) for c in rows)
-        if len(rows) >= CAMPAIGN_RATE_MIN and sent:
-            rates.append((round(sum(int(c.get("visits_matched") or 0) for c in rows) / sent * 100, 1), seg, len(rows)))
-    if rates:
-        pct, seg, n = max(rates)
-        label = SEGMENTS.get(seg, SEGMENTS["all"])["label"]
-        out.append({"kind": "back", "figure": f"{pct:g}%", "tone": "good",
-                    "text": f"came back after a text to {label[0].lower() + label[1:]}",
-                    "basis": f"{n} campaigns · a visit within {ATTRIBUTION_WINDOW_DAYS} days, matched in your POS"})
+    rows = [c for c in hist if (c.get("sent_count") or 0) >= CAMPAIGN_RATE_MIN_SENT and _window_closed(c)]
+    sent = sum(int(c.get("sent_count") or 0) for c in rows)
+    if len(rows) >= CAMPAIGN_RATE_MIN and sent:
+        pct = round(sum(int(c.get("visits_matched") or 0) for c in rows) / sent * 100, 1)
+        out.append({"kind": "back", "figure": f"{pct:g}%", "tone": "",
+                    "text": f"of texted guests came back within {ATTRIBUTION_WINDOW_DAYS} days",
+                    "basis": f"{len(rows)} campaigns · a visit matched in your POS, not proof the text brought them"})
     try:
         import guest_email
         last = next((n for n in guest_email.newsletter_history(restaurant_id, limit=5, db_path=db_path)

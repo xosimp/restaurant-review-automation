@@ -388,9 +388,14 @@ def test_a_segment_can_only_narrow_the_consented_set_never_widen_it(rid, db_path
         assert guest_marketing.segment_contacts(rid, segment, db_path=db_path) == []
 
 
-def test_an_unknown_segment_falls_back_to_everyone_rather_than_nobody(rid, db_path):
+def test_an_unknown_segment_reaches_nobody_and_a_send_to_it_is_refused(rid, db_path):
+    # It used to fall back to everyone consented: a misspelt audience texted
+    # the whole list (CS-17). Blank still means everyone.
     _guest(db_path, rid, "+15550000008", visits=1, days_ago=2)
-    assert len(guest_marketing.segment_contacts(rid, "made-up", db_path=db_path)) == 1
+    assert guest_marketing.segment_contacts(rid, "made-up", db_path=db_path) == []
+    assert len(guest_marketing.segment_contacts(rid, "", db_path=db_path)) == 1
+    out = guest_marketing.send_campaign(rid, "Pasta night", segment="made-up", db_path=db_path)
+    assert out["ok"] is False and out["blocked"] == "unknown_segment"
 
 
 # ── Frequency cap and campaign history ─────────────────────────────────────

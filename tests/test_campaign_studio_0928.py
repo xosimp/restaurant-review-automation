@@ -221,16 +221,19 @@ def test_the_overview_carries_email_reach_and_measured_insights(db, monkeypatch)
     for i in range(3):
         _guest(db, rid, i, email=i < 2)
     c = get_conn(db)
-    for sent, back, ts in ((40, 4, "2026-09-01 18:00:00"), (60, 9, "2026-09-10 18:00:00")):
+    # Both windows read in full (attribution_through = send day + 14).
+    for sent, back, ts, thr in ((40, 4, "2026-09-01 18:00:00", "2026-09-15"), (60, 9, "2026-09-10 18:00:00", "2026-09-24")):
         c.execute("INSERT INTO guest_campaigns (restaurant_id, message, sent_count, failed_count, created_at, segment, "
-                  "segment_label, visits_matched) VALUES (?,?,?,0,?,?,?,?)", (rid, "Hi", sent, ts, "regulars", "Regulars (3+ visits)", back))
+                  "segment_label, visits_matched, attribution_through) VALUES (?,?,?,0,?,?,?,?,?)",
+                  (rid, "Hi", sent, ts, "regulars", "Regulars (3+ visits)", back, thr))
     c.commit()
     c.close()
     ov = gm.campaign_overview(rid, db_path=db)
     assert ov["email_subscribers"] == 2 and ov["mailing_address_set"] is False
-    assert ov["insights"] == [{"kind": "back", "figure": "13%", "tone": "good",
-                               "text": "came back after a text to regulars (3+ visits)",
-                               "basis": "2 campaigns · a visit within 14 days, matched in your POS"}]
+    # No audience is crowned, and nothing says the text caused it (CS-8).
+    assert ov["insights"] == [{"kind": "back", "figure": "13%", "tone": "",
+                               "text": "of texted guests came back within 14 days",
+                               "basis": "2 campaigns · a visit matched in your POS, not proof the text brought them"}]
     assert ov["last_campaign"]["channel"] == "text"
 
 
@@ -338,12 +341,21 @@ def test_one_goal_drafts_every_channel_that_is_on():
 
 def test_the_send_is_two_presses_and_names_what_goes():
     paint = _between("window.cpPaint = function", "function cpPaintAi")
-    assert "label.push('Text ' + n)" in paint and "label.push('Email ' + m)" in paint and "label.push('Post to '" in paint
-    assert "'Tap again to ' + (people ? 'reach ' + _cpPlural(people, 'guest') : '')" in paint
+    assert "label.push('Text ' + n + (nowOk ? '' : ' at ' + open))" in paint and "label.push('Email ' + m)" in paint
+    assert "label.push('Post to ' + where)" in paint
+    # Armed, it names each channel; a guest on both lists is not counted
+    # twice as "reach N guests" (CS-22).
+    assert "'Tap again to ' + verbs.join(', ')" in paint and "people" not in paint
     send = _between("window.sendGuestCampaign = function(btn) {", "// A changed draft or audience is a new send")
     assert send.index("if (!_cp.armed) {") < send.index("fetch(")
-    assert "'/api/guest-newsletter', body" in send and "segment: _cp.seg" in send and "design: cpDesign()" in send
-    assert "'/api/post-to-instagram'" in send and "image_url: _cp.photo ? _cp.photo.url : ''" in send
+    # The requests are built when the button is ARMED, and the second press
+    # sends that snapshot (CS-4).
+    assert "_cp.snap = cpSnapshot(ready);" in send and "var snap = _cp.snap;" in send
+    assert "_cpVal(" not in send and "cpDesign()" not in send
+    assert "_cpPost('/api/guest-newsletter', body)" in send and "var body = snap.email.body;" in send
+    snap = _between("function cpSnapshot(ready) {", "\n}\n")
+    assert "segment: _cp.seg" in snap and "design: cpDesign()" in snap
+    assert "'/api/post-to-instagram'" in snap and "image_url: _cp.photo ? _cp.photo.url : ''" in snap
 
 
 def test_opens_show_as_a_floor_and_history_holds_both_channels():

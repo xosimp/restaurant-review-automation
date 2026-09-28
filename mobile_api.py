@@ -3726,12 +3726,18 @@ def mobile_guest_winback_send(current_user, draft_id):
     rid = current_user["restaurant_id"]
     if not _capi._restaurant_has_marketing_module(rid):
         return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    # Texting the guest list is publishing under the restaurant's name: the
+    # same approval rule as a post (CS-1, MB-14, audit #20).
+    from marketing_drafts import may_publish, CANNOT_PUBLISH
+    if not may_publish(current_user):
+        return jsonify(ok=False, error=CANNOT_PUBLISH), 403
     from ai_utils import ai_rate_limited
     if ai_rate_limited(f"guestcampaignsend:{rid}", max_calls=3, window_secs=300):
         return jsonify(ok=False, error="Too many campaigns sent recently — please wait a few minutes."), 429
     import guest_marketing as _gm
     data = request.get_json(silent=True) or {}
-    out = _gm.send_winback(rid, draft_id, message=data.get("message"), user_id=current_user.get("id"))
+    out = _gm.send_winback(rid, draft_id, message=data.get("message"), user_id=current_user.get("id"),
+                           hold=bool(data.get("hold")))
     return jsonify(**out), (202 if out.get("queued") else (200 if out.get("ok") else 400))
 
 
@@ -3758,39 +3764,70 @@ def mobile_guest_winback_dismiss(current_user, draft_id):
 @mobile_bp.route("/guest-campaign/send", methods=["POST"])
 @mobile_login_required
 def mobile_guest_campaign_send(current_user):
+    """{message, segment?, link_url?, type?, target_day?, hold?} — queue a
+    text to one audience. Needs MARKETING_APPROVE, as a post does (CS-1).
+    An unknown audience and a text over the limit WITH the restaurant's name
+    and the link are refused before anything is queued or a link minted
+    (CS-17, MB-10); nobody eligible writes no campaign (MB-11). `hold`: the
+    owner was told texts wait until 8:00 AM, so outside the window it is
+    queued for then instead of refused (CS-6). 202 when queued."""
     rid = current_user["restaurant_id"]
     if not _capi._restaurant_has_marketing_module(rid):
         return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    from marketing_drafts import may_publish, CANNOT_PUBLISH
+    if not may_publish(current_user):
+        return jsonify(ok=False, error=CANNOT_PUBLISH), 403
     from ai_utils import ai_rate_limited
     data = request.get_json() or {}
     message = (data.get("message") or "").strip()
     if not message:
         return jsonify(ok=False, error="Message required"), 400
+    import guest_marketing as _gm
+    target = (data.get("link_url") or "").strip() if isinstance(data.get("link_url"), str) else ""
+    segment, refused = _gm.prepare_campaign(rid, message, data.get("segment"), with_link=bool(target))
+    if refused:
+        return jsonify(**refused), 400
     if ai_rate_limited(f"guestcampaignsend:{rid}", max_calls=3, window_secs=300):
         return jsonify(ok=False, error="Too many campaigns sent recently — please wait a few minutes."), 429
     try:
-        from guest_marketing import send_campaign
-        # A campaign now goes to a segment, not to everyone consented — and
-        # can carry a tracked link, which SMS could never carry at all.
+        # A campaign goes to a segment, not to everyone consented — and can
+        # carry a tracked link, which SMS could never carry at all.
         link_token = None
-        target = (data.get("link_url") or "").strip()
         if target:
             import marketing_links as _ml
             made = _ml.create_link(rid, target, source="sms",
                                    campaign=(data.get("type") or "campaign"))
             if made.get("ok"):
                 link_token = made["token"]
-        from guest_marketing import start_campaign
-        _uid = current_user.get("id")
-        # Validated here (quiet hours, length); texted on a background
-        # thread (MOD-MKT-7). The outcome is tracked when the sends finish.
-        result = start_campaign(rid, message, segment=data.get("segment") or "all", link_token=link_token,
-                                on_done=lambda res: _capi._track_campaign_outcome(rid, data, res, _uid))
-        return jsonify(**result), (202 if result.get("queued") else 200)
+        # Queued here; texted by a background drain the scheduler resumes
+        # (MB-10). The slow-day tracker starts when the campaign finishes
+        # having sent something (guest_marketing._on_campaign_done).
+        result = _gm.start_campaign(rid, message, segment=segment, link_token=link_token,
+                                    target_day=data.get("target_day") if isinstance(data.get("target_day"), str) else None,
+                                    user_id=current_user.get("id"), hold=bool(data.get("hold")))
+        status = 202 if result.get("queued") else (200 if result.get("ok") or result.get("blocked") == "quiet_hours" else 400)
+        return jsonify(**result), status
     except Exception as e:
         import ops
         ops.capture(e, job="guest_campaign_send", context=f"restaurant_id={rid}")
         return jsonify(ok=False, error="Couldn't send the campaign — try again in a moment."), 500
+
+
+@mobile_bp.route("/guest-campaign/<int:campaign_id>/cancel", methods=["POST"])
+@mobile_login_required
+def mobile_guest_campaign_cancel(current_user, campaign_id):
+    """Stop a text campaign that is still sending or waiting for 8:00 AM:
+    its pending texts never go (guest_marketing.cancel_campaign). The same
+    approval as the send."""
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    from marketing_drafts import may_publish, CANNOT_PUBLISH
+    if not may_publish(current_user):
+        return jsonify(ok=False, error=CANNOT_PUBLISH), 403
+    import guest_marketing as _gm
+    out = _gm.cancel_campaign(rid, campaign_id)
+    return jsonify(**out), (200 if out.get("ok") else (404 if out.get("error") == "That campaign is gone." else 409))
 
 
 @mobile_bp.route("/marketing/performance")
@@ -4022,17 +4059,20 @@ def mobile_links(current_user):
 @mobile_login_required
 def mobile_guest_segments(current_user):
     """Who a campaign would actually reach, before it is sent."""
-    from guest_marketing import SEGMENTS, segment_counts, CAMPAIGN_DEFAULT_SEGMENT
+    from guest_marketing import SEGMENTS, segment_counts, eligible_counts, CAMPAIGN_DEFAULT_SEGMENT
     rid = current_user["restaurant_id"]
     if not _capi._restaurant_has_marketing_module(rid):
         return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
     counts = segment_counts(rid)
+    eligible = eligible_counts(rid)
     import guest_email as _ge
     emails = _ge.segment_counts(rid)
     # email_count: the same audience on the email list (Campaign Studio).
+    # eligible: who a text would reach NOW — the three-day spacing and any
+    # campaign still sending taken out — which is what "Text N" promises (CS-5).
     return jsonify(ok=True, defaults=CAMPAIGN_DEFAULT_SEGMENT, segments=[
         {"key": k, "label": v["label"], "help": v["help"], "count": counts.get(k, 0),
-         "email_count": emails.get(k, 0)}
+         "eligible": eligible.get(k, 0), "email_count": emails.get(k, 0)}
         for k, v in SEGMENTS.items()
     ])
 
@@ -4095,10 +4135,24 @@ def mobile_guest_newsletter(current_user):
         return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
     if request.method == "GET":
         return jsonify(ok=True, subscribers=_ge.subscriber_count(rid))
+    # Emailing the list is publishing under the restaurant's name (CS-1).
+    from marketing_drafts import may_publish, CANNOT_PUBLISH
+    if not may_publish(current_user):
+        return jsonify(ok=False, error=CANNOT_PUBLISH), 403
+    data = request.get_json() or {}
+    # The mailing address printed on every email is the restaurant's legal
+    # address: only the account owner sets it (MB-14). A teammate's send uses
+    # the one on file.
+    addr = data.get("mailing_address")
+    if isinstance(addr, str) and addr.strip():
+        from permissions import is_principal
+        on_file = " ".join(str(getattr(get_restaurant(rid), "mailing_address", "") or "").split())
+        if " ".join(addr.split()) != on_file and not is_principal(current_user):
+            return jsonify(ok=False, owner_only=True,
+                           error="Only the account owner can set the mailing address."), 403
     from ai_utils import ai_rate_limited
     if ai_rate_limited(f"newsletter:{rid}", max_calls=2, window_secs=600):
         return jsonify(ok=False, error="Too many newsletters sent recently — wait a few minutes."), 429
-    data = request.get_json() or {}
     # design and segment: the Campaign Studio's look and audience (9/28/26).
     result = _ge.send_newsletter(rid, data.get("body") or "", subject=data.get("subject"),
                                  mailing_address=data.get("mailing_address"),
