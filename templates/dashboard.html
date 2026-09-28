@@ -12764,6 +12764,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
            times copied to every day. Neither saves on its own - Save hours does. #}
         <div class="ac-inline" style="margin-bottom:10px;gap:8px;flex-wrap:wrap"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="asHoursFromGoogle(this)">Fill from Google</button><button type="button" class="cbtn cbtn-text cbtn-sm" onclick="asHoursSameEveryDay()">Same every day</button></div>
         <div id="as-hours-grid" style="display:grid;grid-template-columns:auto 1fr 1fr;gap:8px 12px;align-items:center;max-width:520px"></div>
+        <div id="as-hours-err" role="alert" hidden style="color:var(--red);font-size:13px;margin-top:8px;max-width:520px"></div>
         {# One closures list (U2-3): the scheduler's closed dates, the same
            ones Labor -> Scheduling rules shows. The draft leaves them empty. #}
         <div class="ac-field" style="margin-top:12px;max-width:520px"><label for="as-closure-new">Closed on these dates <small>the schedule leaves them empty &middot; the same list as Labor &rarr; Scheduling rules</small></label>
@@ -23600,8 +23601,8 @@ function openAlertsModal() {
     var digestDayEl = document.getElementById('al-digest-day');
     if (digestEl) digestEl.checked = !!s.digest_enabled;
     if (digestDayEl) digestDayEl.value = s.digest_day || 'monday';
-    document.getElementById('al-quiet-start').value = s.alert_quiet_start || '';
-    document.getElementById('al-quiet-end').value   = s.alert_quiet_end || '';
+    cavSetTime(document.getElementById('al-quiet-start'), s.alert_quiet_start || '');
+    cavSetTime(document.getElementById('al-quiet-end'), s.alert_quiet_end || '');
     updateSmsConsentVisibility();
   });
 }
@@ -23631,6 +23632,33 @@ function asFlash(id, msg) {
   setTimeout(function() { if (el.textContent === msg) el.textContent = ''; }, 2600);
 }
 
+// A time of day as a dropdown, not <input type=time> (owner, 9/28/26):
+// Safari draws an EMPTY time field as a grey "12:30 PM" that reads as a real
+// value, and a field edited only in part (just AM/PM) stays empty underneath -
+// Save hours then dropped Monday, Wednesday and Sunday's close times and said
+// "Saved". A select has no half-entered state and an unset one reads "\u2014".
+// Values stay "HH:MM" (24h), what the server stores; a stored time off the
+// 15-minute grid is kept as its own option rather than lost.
+function cavTimeLabel(hm) {
+  var p = /^(\d{1,2}):(\d{2})/.exec(hm || ''); if (!p) return '';
+  var h = +p[1], m = +p[2];
+  if (h === 0 && m === 0) return 'Midnight';
+  if (h === 12 && m === 0) return 'Noon';
+  return (h % 12 || 12) + (m ? ':' + (m < 10 ? '0' : '') + m : '') + (h < 12 ? 'am' : 'pm');
+}
+function cavTimeValue(v) {
+  var p = /^(\d{1,2}):(\d{2})/.exec(v || ''); if (!p) return '';
+  return (p[1].length < 2 ? '0' : '') + p[1] + ':' + p[2];
+}
+function cavTimeOptions(value) {
+  var v = cavTimeValue(value), list = [], t, i, h = '<option value="">\u2014</option>';
+  for (t = 0; t < 96; t++) { var hh = Math.floor(t / 4), mm = (t % 4) * 15; list.push((hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm); }
+  if (v && list.indexOf(v) < 0) { list.push(v); list.sort(); }
+  for (i = 0; i < list.length; i++) h += '<option value="' + list[i] + '"' + (list[i] === v ? ' selected' : '') + '>' + cavTimeLabel(list[i]) + '</option>';
+  return h;
+}
+function cavSetTime(el, value) { if (el) el.innerHTML = cavTimeOptions(value); }
+
 function buildAccountHoursGrid(open, close) {
   var grid = document.getElementById('as-hours-grid');
   if (!grid) return;
@@ -23638,11 +23666,12 @@ function buildAccountHoursGrid(open, close) {
            + '<div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.06em">Close</div>';
   for (var i = 0; i < AS_DAYS.length; i++) {
     var d = AS_DAYS[i];
-    html += '<label for="as-open-' + d + '" style="font-size:11.5px;color:var(--ink3)">' + d.slice(0, 3) + '</label>'
-         +  '<input type="time" id="as-open-' + d + '" value="' + ((open && open[d]) || '') + '" style="font-family:inherit;font-size:12px;padding:4px 6px;border:1px solid var(--paper3);border-radius:6px;background:var(--paper1);color:var(--ink)">'
-         +  '<input type="time" id="as-close-' + d + '" value="' + ((close && close[d]) || '') + '" style="font-family:inherit;font-size:12px;padding:4px 6px;border:1px solid var(--paper3);border-radius:6px;background:var(--paper1);color:var(--ink)">';
+    html += '<span style="font-size:11.5px;color:var(--ink3)">' + d.slice(0, 3) + '</span>'
+         +  '<select class="ac-select" id="as-open-' + d + '" aria-label="' + d + ' open">' + cavTimeOptions(open && open[d]) + '</select>'
+         +  '<select class="ac-select" id="as-close-' + d + '" aria-label="' + d + ' close">' + cavTimeOptions(close && close[d]) + '</select>';
   }
   grid.innerHTML = html;
+  var err = document.getElementById('as-hours-err'); if (err) err.hidden = true;
 }
 
 function _ehEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
@@ -24254,14 +24283,23 @@ function saveAutoApprove() {
 }
 
 function saveAccountHours() {
-  var open = {}, close = {};
+  var open = {}, close = {}, half = [];
   for (var i = 0; i < AS_DAYS.length; i++) {
     var d = AS_DAYS[i];
     var o = document.getElementById('as-open-' + d);
     var c = document.getElementById('as-close-' + d);
     if (o && o.value) open[d] = o.value;
     if (c && c.value) close[d] = c.value;
+    if (!open[d] !== !close[d]) half.push(d);
   }
+  // A day with one time and not the other is never saved as if it were
+  // finished: it names the day instead of dropping a time the owner meant.
+  var err = document.getElementById('as-hours-err');
+  if (half.length) {
+    if (err) { err.textContent = half.join(', ') + (half.length > 1 ? ' have' : ' has') + ' an open or a close time but not both. Set both, or leave both blank if it varies.'; err.hidden = false; }
+    return;
+  }
+  if (err) err.hidden = true;
   var chips = document.querySelectorAll('#as-closures [data-cdate]');
   var closures = [];
   for (var j = 0; j < chips.length; j++) closures.push(chips[j].getAttribute('data-cdate'));
@@ -24311,7 +24349,7 @@ function asHoursSameEveryDay() {
   if (!src) { toast('Fill in one day first', 'error'); return; }
   for (i = 0; i < AS_DAYS.length; i++) {
     var oi = document.getElementById('as-open-' + AS_DAYS[i]), ci = document.getElementById('as-close-' + AS_DAYS[i]);
-    if (oi) oi.value = src.o; if (ci) ci.value = src.c;
+    cavSetTime(oi, src.o); cavSetTime(ci, src.c);
   }
   var st = document.getElementById('as-hours-status'); if (st) st.textContent = src.day + '’s hours on every day — not saved yet';
 }
@@ -28105,11 +28143,11 @@ document.addEventListener('click', function(e) {
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:end">
         <div>
           <div style="font-size:14px;color:var(--ink3);margin-bottom:4px">Quiet start</div>
-          <input id="al-quiet-start" type="time" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:15px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+          <select id="al-quiet-start" aria-label="Quiet start" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:15px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box"></select>
         </div>
         <div>
           <div style="font-size:14px;color:var(--ink3);margin-bottom:4px">Quiet end</div>
-          <input id="al-quiet-end" type="time" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:15px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+          <select id="al-quiet-end" aria-label="Quiet end" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:15px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box"></select>
         </div>
       </div>
       <div style="font-size:12px;color:var(--ink3);margin-top:8px">Times use Chicago timezone. Leave start/end blank to disable quiet hours.</div>
