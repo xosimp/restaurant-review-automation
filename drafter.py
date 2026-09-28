@@ -275,6 +275,48 @@ def check_reply(draft, restaurant=None, **ctx_kw):
     return reply_reason(out.verdict), out
 
 
+def recheck_draft_flags(db_path=None) -> int:
+    """Clear "Read this one before you post it" from drafts today's rules no
+    longer flag. The flag is stored when a draft is written, so a rule that
+    changes kept flagging drafts written under the old one - "so we can make
+    this right" stayed flagged on Simple EJ's draft after the phrase was
+    allowed (owner, 9/28/26). Runs at boot in a background thread: a rule
+    change clears its own stale flags on the deploy that ships it. Only
+    drafted, still-flagged replies are read; a reply still flagged keeps its
+    flag, with today's reason. Returns how many flags were cleared."""
+    import models
+    conn = models.get_conn(db_path) if db_path else models.get_conn()
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT id, restaurant_id, text, author, draft_response, draft_review_reason FROM reviews "
+            "WHERE response_status='drafted' AND draft_needs_review=1 AND deleted_at IS NULL "
+            "AND draft_response IS NOT NULL AND TRIM(draft_response) != ''").fetchall()]
+    finally:
+        conn.close()
+    cleared, restaurants = 0, {}
+    for r in rows:
+        rid = r["restaurant_id"]
+        if rid not in restaurants:
+            restaurants[rid] = models.get_restaurant(rid, db_path) if db_path else models.get_restaurant(rid)
+        try:
+            reason, _ = check_reply(r["draft_response"], restaurants[rid], restaurant_id=rid, review_id=r["id"],
+                                    review_text=r["text"] or "", author=r["author"] or "", action="recheck_flag")
+        except Exception as e:
+            print(f"[drafter] flag recheck failed for review {r['id']}: {e!r}")
+            continue
+        if reason == r["draft_review_reason"]:
+            continue
+        conn = models.get_conn(db_path) if db_path else models.get_conn()
+        try:
+            conn.execute("UPDATE reviews SET draft_needs_review=?, draft_review_reason=? "
+                         "WHERE id=? AND response_status='drafted'", (1 if reason else 0, reason, r["id"]))
+            conn.commit()
+        finally:
+            conn.close()
+        cleared += 0 if reason else 1
+    return cleared
+
+
 def draft_response(review_id: int, rating: int, text: str,
                    sentiment: str, restaurant_name: str,
                    voice_notes: str = "", restaurant_id: int = None,

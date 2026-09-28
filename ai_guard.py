@@ -157,7 +157,11 @@ _REPLY_CLAIMS = (
         r"|\b(?:is|was|are|were)\s+(?:now\s+)?(?:fixed|resolved)\b"
         r"|\bmade\s+sure\b|\bmaking\s+sure\b"
         r"|\b(?:won['’]t|will\s+not|will\s+never|never)\s+happen\s+again\b"
-        r"|\bmake\s+(?:it|this|that|things)\s+(?:right|up\s+to\s+you)\b"
+        # "so we can make this right" is an invitation, not a promise (owner,
+        # 9/28/26 - and what the drafter is told to say); tied to a next
+        # visit it promises one, and "make it up to you" promises a comp.
+        r"|\bmake\s+(?:it|this|that|things)\s+right\s+(?:on|at|during|for)\s+your\s+next\b"
+        r"|\bmake\s+(?:it|this|that|things)\s+up\s+to\s+you\b"
         r"|\bguarantee[sd]?\b", re.I)),
     ("a guest's private visit details", re.compile(
         r"\b(?:at\s+)?table\s+\d{1,3}\b"

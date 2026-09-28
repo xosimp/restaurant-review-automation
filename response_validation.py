@@ -154,7 +154,7 @@ THE RULES (codes are stable; PROMPT_LIBRARY.md → Response Validation):
                                              drop (legal: caveat / drop)
   P1 public text: allergen / free-from / "safe for", fault and
      responsibility, inspection and compliance claims, comps ("on me",
-     "% off", "free"), "fixed / won't happen again / make it right /
+     "% off", "free"), "fixed / won't happen again / make it right on your next visit / make it up to you /
      guarantee", awards ("voted", "#1", "best in", "award-winning",
      "famous") and offers the owner never wrote (one vocabulary for every
      public surface: invented_offers), the never-say list,
@@ -1045,7 +1045,8 @@ _P1 = [
     # (OFFER_LABEL, invented_offers) - one list for every public surface.
     ("promise the restaurant never made", re.compile(
         r"\b(?:has\s+been\s+(?:fixed|addressed|resolved)|made\s+sure|won['’]t\s+happen\s+again|will\s+not\s+happen\s+"
-        r"again|never\s+happen\s+again|make\s+(?:it|this|things)\s+right|guarantee\w*)\b", re.I), False),
+        r"again|never\s+happen\s+again|make\s+(?:it|this|that|things)\s+right\s+(?:on|at|during|for)\s+your\s+next|"
+        r"make\s+(?:it|this|that|things)\s+up\s+to\s+you|guarantee\w*)\b", re.I), False),
     ("award or ranking claim", re.compile(
         r"(?:\bvoted\b|\baward[- ]winning\b|\bbest\s+(?:\w+\s+){0,2}in\s+(?:town|the\s+city|chicago|[A-Z]\w+)|"
         r"#\s?1\b|\bnumber\s+one\b|\bno\.\s?1\b|\bworld[- ]famous\b|\bfamous\b|\brated\s+\d(?:\.\d)?\s+stars?\s+by)",

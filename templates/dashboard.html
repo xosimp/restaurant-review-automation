@@ -3700,7 +3700,7 @@ svg:hover .hb-xh{opacity:1}
       // Each row names its own group and strength when the rows come from
       // different groups (#26): one header credited them all to the first.
       for(var i=0;i<d.rows.length;i++){var r=d.rows[i];
-        h+='<span class="hb-fresh-it '+(PILL[r.tone]||'unknown')+'"><i></i><b>'+esc(r.label)+'</b> '+num(r.value_text)+(r.standing?' · '+esc(r.standing):'')+(r.tag&&!d.strength?' <small>('+num(r.tag)+')</small>':'')
+        h+='<span class="hb-fresh-it '+(PILL[r.tone]||'unknown')+'"><i></i><b>'+esc(r.label)+'</b> <span class="bs">'+num(r.value_text)+(r.standing?' · '+esc(r.standing):'')+(r.tag&&!d.strength?' <small>('+num(r.tag)+')</small>':'')+'</span>'
           +(r.action&&r.action.ask?' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="'+esc(r.action.ask)+'">Ask →</button>':(r.open_module?' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-open-module="'+esc(r.open_module)+'">Open →</button>':''))+'</span>';}
       h+='</div>';
       if(d.below_minimum&&d.below_minimum.text)h+='<div class="bm-sub" style="margin-top:6px;font-size:12.5px;color:var(--ink3)">'+esc(d.below_minimum.text)+profileAction(d.below_minimum.action)+'</div>';
@@ -5461,7 +5461,10 @@ svg:hover .hb-xh{opacity:1}
       if(el.getAttribute('data-dh-compact')){var hp=worst.health_pct!=null?worst.health_pct:worst.pct;
         el.innerHTML='<span class="hb-fresh-it '+st+'" title="'+esc(worst.line||worst.basis||'')+'"><i></i><b>Data</b>'+(hp!=null?' <span class="hb-num">'+Math.round(hp)+'%</span>':'')+'</span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dh-open="1">Data health</button>';
         el.hidden=false;continue;}
-      el.innerHTML='<div class="hb-fresh"><span class="hb-fresh-it '+st+'" title="'+esc(worst.basis||'')+'"><i></i><b>Data</b> '+num(worst.line||'')+'</span>'
+      // The line is ONE inline run (.bs): loose inside the flex pill, each
+      // date, number and phrase became its own flex item and stacked
+      // ("Reviews / fetched  9/28/26  · Google reviews (sampled ...", 9/28/26).
+      el.innerHTML='<div class="hb-fresh"><span class="hb-fresh-it '+st+'" title="'+esc(worst.basis||'')+'"><i></i><b>Data</b> <span class="bs">'+num(worst.line||'')+'</span></span>'
         +(ci&&ci.line?'<span class="dh-imp">'+num(ci.line)+'</span>':'')
         +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dh-open="1">Data health</button></div>';
       el.hidden=false;
@@ -8054,7 +8057,8 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
       <div class="hb-sub"><span><span id="stat-received-mo-n" class="hb-num">{{ rstats.received_this_month }}</span> new this month</span><span class="sep">·</span><span>avg reply <span id="stat-resp-time-n" class="hb-num">{% if rstats.avg_response_hours and rstats.avg_response_hours <= 720 %}{% if rstats.avg_response_hours < 24 %}{{rstats.avg_response_hours}}h{% elif rstats.avg_response_hours < 168 %}{{(rstats.avg_response_hours / 24)|int}}d{% else %}{{(rstats.avg_response_hours / 168)|int}}w{% endif %}{% else %}—{% endif %}</span></span>{% if _gl and _gl.tone == 'bad' %}<span class="sep">·</span><span id="rv-fetch-line" class="dh-warn" style="color:var(--amber)">{{ _gl.line }}</span>{% endif %}<span id="stat-positive-n" hidden>{{ rstats.positive_pct }}%</span></div>
       {# Today (density round #48): the answer the inbox needs, and the top
          complaint from the stored diagnosis (filled by rvLoadWhy). #}
-      {% if rstats.total %}<div class="mod-today" id="rv-today"><span class="k">Today</span><span>{% if _urgent %}answer <b class="hb-num">{{ _urgent }}</b> urgent review{{ 's' if _urgent != 1 }}{% endif %}{% if _urgent and _await %} · {% endif %}{% if _await %}publish <b class="hb-num">{{ _await }}</b> drafted repl{{ 'ies' if _await != 1 else 'y' }}{% endif %}{% if not _urgent and not _await %}nothing waiting on a reply{% endif %}</span><span id="rv-today-why"></span></div>{% endif %}
+      {# The "Today: publish N drafted replies" line is gone (owner, 9/28/26):
+         the headline already says it ("5 replies ready to publish"). #}
       <div class="dh-badge" data-dh-module="reviews" hidden></div>
       <span id="stat-this-month-n" hidden>{{ rstats.this_month }}</span><span id="stat-rr-detail" hidden></span><span id="review-savings-rate" hidden></span><strong id="rr-sent-mo-inline" hidden></strong><strong id="rr-sent-total-inline" hidden></strong>
     </div>
@@ -16693,8 +16697,14 @@ function updateReviewStats(){
     // gives, which made an ordinary rating read like an alert.
     var ratingEl = document.getElementById('stat-rating');
     var ratingNEl = document.getElementById('stat-rating-n');
-    if(ratingEl && ratingNEl && d.avg_rating !== undefined){
-      ratingNEl.textContent = d.avg_rating;
+    // The pill is labelled "Google rating" when Google's own figure is on
+    // file (the template renders restaurant.gbp_rating): the refresh keeps
+    // that figure. It wrote avg_rating - the average of the few reviews
+    // Cavnar AI holds - so Simple EJ's 4.6 on Google became 4.4 a moment
+    // after the page loaded (owner, 9/28/26).
+    var _rv = (d.official_rating != null) ? d.official_rating : d.avg_rating;
+    if(ratingEl && ratingNEl && _rv !== undefined && _rv !== null){
+      ratingNEl.textContent = _rv;
     }
 
     // ── Responded this month ───────────────────────────────

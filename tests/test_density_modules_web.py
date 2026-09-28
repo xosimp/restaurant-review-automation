@@ -213,10 +213,11 @@ def test_every_module_has_a_today_line():
     # the overtime pill beside it, said twice. Intel's too (9/26/26): the
     # ways to improve are the list under the analysis. Food Cost's too
     # (9/26/26): the order list says what is running out. Marketing's too
-    # (9/28/26): the next-scheduled chip says it.
-    for tid in ("rv-today", "fc2-stock-status"):
+    # (9/28/26): the next-scheduled chip says it. Reviews' too (9/28/26):
+    # the headline already reads "5 replies ready to publish".
+    for tid in ("fc2-stock-status",):
         assert 'class="mod-today" id="%s"' % tid in s, tid
-    for gone in ("lb2-today", "in2-today", "fc2-today", "mkt-today"):
+    for gone in ("lb2-today", "in2-today", "fc2-today", "mkt-today", "rv-today"):
         assert 'id="%s"' % gone not in s, gone
 
 

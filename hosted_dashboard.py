@@ -1015,6 +1015,14 @@ try:
     from sales_audits import init_sales_audits as _isa2, ensure_first_audit as _efa
     _isa2()
     _efa()
+    # A reply rule that changed clears the draft flags it no longer raises
+    # (drafter.recheck_draft_flags) - off the boot path, a few regex reads.
+    try:
+        import threading as _thr_boot
+        import drafter as _drafter_boot
+        _thr_boot.Thread(target=_drafter_boot.recheck_draft_flags, daemon=True).start()
+    except Exception:
+        pass
     print("DB init OK")
 except Exception as _e:
     print(f"DB init error: {_e}")
