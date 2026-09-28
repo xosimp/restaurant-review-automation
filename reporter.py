@@ -1171,15 +1171,18 @@ def _follow_through_sections(restaurant_id, owner_view=False, include_results=Tr
         log.warning("digest reprice block failed: %s", e)
     try:
         import demand
-        slow = [d for d in ((demand.slow_days(restaurant_id) or {}).get("slow_days") or [])
+        # The Opportunity Feed's own reading and key (one owner — Marketing,
+        # re-audit AUX-7): the same slow night the feed and the morning brief
+        # name, said as measured. The line that called a guest text "the
+        # cheapest thing that moves it" is gone: nothing here measured that.
+        slow = [d for d in ((demand.reliably_slow_nights(restaurant_id) or {}).get("slow") or [])
                 if f"slow_day:{d.get('day')}" not in silenced]
         if slow:
             d = slow[0]
-            shown.append({"key": f"slow_day:{d['day']}", "module": "labor", "title": f"Fill {d['day']}s"})
+            shown.append({"key": f"slow_day:{d['day']}", "module": "marketing", "title": f"Fill {d['day']}s"})
             out.append(report_eyebrow("Your quietest day") + report_paragraph(_html.escape(
-                f"{d['day']}s run about {abs(d['vs_average_pct'])}% under a normal day "
-                f"({d['samples']} weeks of history). A text to the guest club aimed at that "
-                f"day is the cheapest thing that moves it — Cavnar AI tracks what it does.")))
+                f"{d['day']}s run about {abs(d['vs_typical_pct'])}% under a typical day: {d['under']} of the "
+                f"last {d['samples']} came in under it.")))
     except Exception as e:
         log.warning("digest slow-day block failed: %s", e)
     try:

@@ -558,7 +558,9 @@ def holiday_lift(restaurant_id, week_dates: list, db_path=DB_PATH) -> dict:
             hol_date = prior_dates[0] if prior_dates else last.isoformat()
             row = conn.execute("SELECT sales FROM labor_daily_history WHERE restaurant_id=? AND date=?",
                                (restaurant_id, hol_date)).fetchone()
-            entry = {"name": name, "lift_pct": None, "based_on": None}
+            # `date`: the night last year's figure is read from, so a reader
+            # can name ITS weekday (re-audit OPP-2).
+            entry = {"name": name, "lift_pct": None, "based_on": None, "date": hol_date}
             if row and row["sales"]:
                 hd = datetime.strptime(hol_date, "%Y-%m-%d").date()
                 same = conn.execute(

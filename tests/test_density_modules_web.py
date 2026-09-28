@@ -191,8 +191,11 @@ def test_marketing_header_is_the_shared_one_and_the_calendar_stacks_on_a_phone()
         assert 'id="%s"' % chip in panel
     assert "font-size:36px" not in panel, "no centred 36px tab titles"
     assert "@media (max-width:760px){.cal-grid{grid-template-columns:1fr}" in s
-    # the diagnosis sits under the brief, How you compare after it
-    assert panel.index('id="mkt-insight"') < panel.index('id="guest-diag"') < panel.index('data-bm-module="marketing"') < panel.index('id="mkt-guests"')
+    # How you compare under the brief; the campaigns' diagnosis (about the
+    # guest texts, not the social brief) opens from Campaigns → Performance
+    # (re-audit AUX-3, 9/28/26)
+    assert panel.index('id="mkt-insight"') < panel.index('data-bm-module="marketing"') < panel.index('id="mkt-guests"') < panel.index('id="guest-diag"')
+    assert panel.index('id="cp-perf-h"') < panel.index('id="guest-diag"')
 
 
 def test_chips_on_constants_are_neutral():

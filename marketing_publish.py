@@ -50,12 +50,24 @@ def _local_now(restaurant_id):
 def channels_for(restaurant_id, db_path: str = DB_PATH) -> dict:
     """Which destinations this restaurant can actually publish to."""
     r = get_restaurant(restaurant_id, db_path=db_path) if db_path != DB_PATH else get_restaurant(restaurant_id)
+    return channels_of(r)
+
+
+def channels_of(r) -> dict:
+    """channels_for on a restaurant already in hand (a Restaurant or Home's
+    dict) — the ONE "connected" rule (re-audit OPP-15): what each publish
+    route needs before it can post. The Opportunity Feed's posting card,
+    the Campaign Studio's social card (dashboard.html's _igConnected /
+    _fbConnected / _ggConnected, rendered from this) and Home's "Get a post
+    out" all read it, so a card never offers a post the Studio can't send."""
+    def v(name):
+        if r is None:
+            return None
+        return r.get(name) if isinstance(r, dict) else getattr(r, name, None)
     return {
-        "instagram": bool(r and getattr(r, "ig_token", None) and getattr(r, "ig_user_id", None)),
-        "facebook": bool(r and getattr(r, "fb_page_token", None) and getattr(r, "fb_page_id", None)),
-        "google": bool(r and getattr(r, "gmb_refresh_token", None)
-                       and getattr(r, "gmb_account_id", None)
-                       and getattr(r, "gmb_location_id", None)),
+        "instagram": bool(v("ig_token") and v("ig_user_id")),
+        "facebook": bool(v("fb_page_token") and v("fb_page_id")),
+        "google": bool(v("gmb_refresh_token") and v("gmb_account_id") and v("gmb_location_id")),
     }
 
 

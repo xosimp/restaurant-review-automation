@@ -144,8 +144,10 @@ def _shrink(rate, n, prior, k=SHRINK_K):
 # ── who may read which recommendation ───────────────────────────────────────
 
 # Kinds that are Food Cost whatever module their surface filed them under.
+# The Opportunity Feed's dish_promote rests on plate margins (re-audit OPP-5):
+# a login without Food Cost may not see it, nor answer it for the owner.
 FOOD_KINDS = ("reprice", "price_spike", "food_cost_driver", "cut_waste", "stock_low", "critical_low", "stock",
-              "diag_food", "food_diagnosis", "insight_food", "food_waste", "invoice")
+              "diag_food", "food_diagnosis", "insight_food", "food_waste", "invoice", "dish_promote")
 _MONEY_MODULE = {"food_cost": "food", "food": "food", "labor": "labor", "reviews": "reviews",
                  "marketing": "marketing", "intel": "intel"}
 # The names a surface files a module's evidence under, as the permission

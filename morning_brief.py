@@ -531,16 +531,28 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
     # ── a slow day worth acting on ──
     # Mondays only: which weekday is quiet does not change overnight, and a
     # line that says the same thing every morning is one people stop
-    # reading. It is also in the weekly digest.
-    if getattr(restaurant, "module_labor", 0) and "labor" not in denied and today.weekday() == 0:
-        sd = _safe(demand.slow_days, restaurant_id, db_path=db_path) or {}
-        slow = (sd.get("slow_days") or [])[:1]
+    # reading. It is also in the weekly digest. One owner (re-audit AUX-7,
+    # #43): Marketing's slow night — the Opportunity Feed's reading
+    # (demand.reliably_slow_nights) under the feed's key, slow_day:<Weekday>,
+    # so an answer here or on the feed card holds on both. It shows for a
+    # Marketing-only restaurant too, and opens the feed card when Marketing
+    # is on; a Labor-only restaurant still hears it.
+    marketing_on = bool(getattr(restaurant, "module_marketing", 0)) and "marketing" not in denied
+    labor_on = bool(getattr(restaurant, "module_labor", 0)) and "labor" not in denied
+    if (marketing_on or labor_on) and today.weekday() == 0:
+        sd = _safe(demand.reliably_slow_nights, restaurant_id, today=today, db_path=db_path) or {}
+        slow = (sd.get("slow") or [])[:1]
         if slow:
+            import rec_ledger
             d = slow[0]
-            lines.append({"key": "slow_day", "tone": "neutral", "rec": f"slow_day:{d['day']}",
-                          "_samples": d.get("samples"),
-                          "text": f"{d['day']}s run about {abs(d['vs_average_pct'])}% under a normal day.",
-                          "ask": f"How do I fill {d['day']}s?"})
+            key = rec_ledger.rec_key("slow_day", d["day"])
+            line = {"key": "slow_day", "tone": "neutral", "rec": key, "_samples": d.get("samples"),
+                    "text": f"{d['day']}s run about {abs(d['vs_typical_pct'])}% under a typical day.",
+                    "ask": f"How do I fill {d['day']}s?"}
+            if marketing_on:
+                import nav
+                line["action"] = {"label": "See the card", "nav": nav.path("marketing", "opportunities", card=key)}
+            lines.append(line)
 
     # ── today ──
     fc = _safe(demand.forecast_day, restaurant_id, today, db_path=db_path) if "labor" not in denied else None
@@ -817,7 +829,8 @@ def present_on_home(restaurant_id, brief, user_id=None, db_path=DB_PATH) -> dict
         return {}
 
 
-_LINE_MODULE = {"reviews": "reviews", "stock": "food", "schedule": "labor", "slow_day": "labor",
+# The slow night is Marketing's (one owner — outcomes.KIND_MODULE, the feed).
+_LINE_MODULE = {"reviews": "reviews", "stock": "food", "schedule": "labor", "slow_day": "marketing",
                 "money": "home", "fix_first": "home", "loss": "ops"}
 
 

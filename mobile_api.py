@@ -4044,13 +4044,18 @@ def mobile_marketing_opportunities(current_user):
     cards from measured signals — slow nights, holidays, category dips,
     dishes, idle lists, posting — the ones the owner already answered left
     out, each fact-based card without a confidence and every other with one
-    measured confidence. No model call: a draft is made when the owner taps."""
+    measured confidence. No model call: a draft is made when the owner taps.
+    Per viewer: a plate margin only for a Food Cost login. `?show=all` logs
+    the cards behind "Show more" as shown (they are on screen now); without
+    it only the first `visible` are."""
     rid = current_user["restaurant_id"]
     if not _capi._restaurant_has_marketing_module(rid):
         return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
     import marketing_opportunities
     try:
-        return jsonify(**marketing_opportunities.feed(rid, user_id=current_user.get("id"), surface="marketing"))
+        return jsonify(**marketing_opportunities.feed(rid, user_id=current_user.get("id"), user=current_user,
+                                                      surface="marketing",
+                                                      show_all=request.args.get("show") == "all"))
     except Exception as e:
         import ops
         ops.capture(e, job="marketing_opportunities", context=f"restaurant_id={rid}")
@@ -4104,6 +4109,11 @@ def mobile_guest_newsletter(current_user):
                                  mailing_address=data.get("mailing_address"),
                                  design=data.get("design") if isinstance(data.get("design"), dict) else None,
                                  segment=data.get("segment"))
+    if result.get("ok") and data.get("rec_key"):
+        # Began on an Opportunity Feed card: that card was acted on (OPP-10).
+        import marketing_opportunities
+        marketing_opportunities.implemented_by_send(rid, data.get("rec_key"), "email",
+                                                    user_id=current_user.get("id"), sent=result.get("total"))
     return jsonify(**result), (200 if result.get("ok") else 400)
 
 
@@ -4218,6 +4228,10 @@ def mobile_post_to_instagram(current_user):
     payload, status = _do_post_to_instagram(
         current_user["restaurant_id"], data.get("caption", ""), data.get("image_url", ""), data.get("topic", "")
     )
+    if payload.get("ok") and data.get("rec_key"):
+        import marketing_opportunities   # began on a feed card (OPP-10)
+        marketing_opportunities.implemented_by_send(current_user["restaurant_id"], data.get("rec_key"), "social",
+                                                    user_id=current_user.get("id"))
     return jsonify(**payload), status
 
 
@@ -4232,6 +4246,10 @@ def mobile_post_to_facebook(current_user):
     payload, status = _do_post_to_facebook(
         current_user["restaurant_id"], data.get("caption", ""), data.get("topic", "")
     )
+    if payload.get("ok") and data.get("rec_key"):
+        import marketing_opportunities   # began on a feed card (OPP-10)
+        marketing_opportunities.implemented_by_send(current_user["restaurant_id"], data.get("rec_key"), "social",
+                                                    user_id=current_user.get("id"))
     return jsonify(**payload), status
 
 

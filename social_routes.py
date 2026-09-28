@@ -181,6 +181,10 @@ def post_to_instagram(current_user):
     payload, status = _do_post_to_instagram(
         current_user["restaurant_id"], data.get("caption", ""), data.get("image_url", ""), data.get("topic", "")
     )
+    if payload.get("ok") and data.get("rec_key"):
+        import marketing_opportunities   # began on a feed card (OPP-10)
+        marketing_opportunities.implemented_by_send(current_user["restaurant_id"], data.get("rec_key"), "social",
+                                                    user_id=current_user.get("id"))
     return jsonify(**payload), status
 
 
@@ -611,6 +615,10 @@ def post_to_facebook(current_user):
     payload, status = _do_post_to_facebook(
         current_user["restaurant_id"], data.get("caption", ""), data.get("topic", "")
     )
+    if payload.get("ok") and data.get("rec_key"):
+        import marketing_opportunities   # began on a feed card (OPP-10)
+        marketing_opportunities.implemented_by_send(current_user["restaurant_id"], data.get("rec_key"), "social",
+                                                    user_id=current_user.get("id"))
     return jsonify(**payload), status
 
 

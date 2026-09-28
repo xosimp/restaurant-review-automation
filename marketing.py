@@ -899,6 +899,73 @@ def _calendar_ideas(text):
     return _week(parse_json_reply(text, accept=lambda v: _week(v) is not None))
 
 
+def _calendar_week_context(restaurant_id, iso_map, now):
+    """(prompt block, rules) for the content calendar: which date each of
+    the calendar's weekdays is (M/D/YY — the model put Halloween on the
+    wrong day with only "(Oct 31)" to go on), where an idea can go (the
+    accounts connected, the text and email lists' sizes — it was required
+    to include SMS without knowing whether anyone could be texted), and the
+    Opportunity Feed's measured cards, so the week plans around what the
+    feed found instead of competing with it (re-audit AUX-3 / AUX-9). Every
+    part is optional; never raises."""
+    from time_utils import mdy
+    lines = []
+    try:
+        today_iso = now.date().isoformat()
+        days = []
+        for dn in CALENDAR_DAYS:
+            iso = iso_map.get(dn)
+            if iso:
+                days.append(f"{dn} {mdy(iso)}" + (" (today)" if iso == today_iso else
+                                                  (" (already past)" if iso < today_iso else "")))
+        if days:
+            lines.append("THIS WEEK'S DATES: " + ", ".join(days) + ".")
+    except Exception:
+        pass
+    try:
+        from marketing_publish import channels_for
+        ch = channels_for(restaurant_id)
+        on = [label for key, label in (("instagram", "Instagram"), ("facebook", "Facebook"), ("google", "Google"))
+              if ch.get(key)]
+        lines.append("Accounts connected to post to: " + (", ".join(on) if on else
+                                                          "none yet (a social idea is written for the owner to post)")
+                     + ".")
+    except Exception:
+        pass
+    texts = emails = None
+    try:
+        import guest_marketing
+        texts = len(guest_marketing.segment_contacts(restaurant_id, "all"))
+    except Exception:
+        pass
+    try:
+        import guest_email
+        emails = guest_email.subscriber_count(restaurant_id)
+    except Exception:
+        pass
+    if texts is not None or emails is not None:
+        lines.append(f"Guests who can be texted: {texts if texts is not None else 'not known'}. "
+                     f"Guests on the email list: {emails if emails is not None else 'not known'}.")
+    try:
+        import marketing_opportunities
+        feed = marketing_opportunities.context_lines(restaurant_id)
+    except Exception:
+        feed = []
+    if feed:
+        lines.append("What Cavnar AI measured for this week (the owner sees these as cards; plan ideas around "
+                     "them where they fit and never contradict them):\n" + "\n".join(f"- {c['line']}" for c in feed))
+    rules = []
+    if texts:
+        rules.append("Include at least one SMS/loyalty_nudge idea this week to re-engage the guests who can be texted")
+    elif texts == 0:
+        rules.append("Nobody can be texted yet: no SMS or loyalty_nudge ideas")
+    if emails == 0:
+        rules.append("Nobody is on the email list yet: no Email or weekly_email ideas")
+    if not rules:
+        rules.append("Suggest an SMS or email idea only for a list the owner has")
+    return (("\n" + "\n".join(lines)) if lines else ""), "\n- ".join(rules)
+
+
 def get_content_calendar_ideas(restaurant_id: int = None, force: bool = False) -> list[dict]:
     """A week of content ideas. Generated once per restaurant per week and
     cached from then on; `force=True` is the owner explicitly asking for a
@@ -962,8 +1029,14 @@ def get_content_calendar_ideas(restaurant_id: int = None, force: bool = False) -
     except Exception:
         signal_block = ""
     never_clause = f"Never use these words or phrases: {p['never_say']}." if p.get('never_say') else ""
+    # What the week holds and where ideas can go (re-audit AUX-3 / AUX-9):
+    # the calendar never saw the Opportunity Feed, the accounts connected,
+    # the list sizes or which date each weekday is — so Halloween landed on
+    # the wrong day and an SMS idea was required of a restaurant with no
+    # text list.
+    week_block, sms_rule = _calendar_week_context(restaurant_id, iso_map, now)
 
-    prompt = f"""Generate a 7-day social media content calendar for {p['name']}, 
+    prompt = f"""Generate a 7-day social media content calendar for {p['name']},
 a {p['vibe']} in {p['neighborhood']}.
 
 Known for: {p['known_for']}{menu_context}
@@ -972,14 +1045,15 @@ Brand voice: {p['voice']}
 TODAY'S DATE: {today_str} (this is the real current date — do not assume any other date)
 Upcoming holidays/events in the next 30 days: {upcoming_holidays if upcoming_holidays else "No major holidays"}
 Recently generated content (avoid repeating these): {recent_topics}
-{signal_block}
+{signal_block}{week_block}
 
 Return ONLY valid JSON — no markdown fences. Array of 7 objects with:
 {{"day": "Monday", "platform": "Instagram & FB|Email|Google|SMS", "angle": "one short sentence, max 20 words", "type": "instagram_post|weekly_email|google_promo|happy_hour|loyalty_nudge"}}
 "day" must be just the weekday name (e.g. "Monday") — never include a date.
 
 Rules:
-- Include at least one SMS/loyalty_nudge idea per week to re-engage guests
+- {sms_rule}
+- Put a holiday idea only on the weekday THIS WEEK'S DATES gives its date; a holiday whose date isn't one of them belongs to another week
 - Reference real menu items and dishes by name when menu info is provided
 - For any upcoming holiday, make the content feel natural and relevant to THIS restaurant — skip it if it doesn't fit
 - Vary platforms across the 7 days — don't use Instagram more than 3 times
