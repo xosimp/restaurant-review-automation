@@ -14981,11 +14981,34 @@ function igConnect(){
 
 function gmbConnect(){
   var popup = window.open('/auth/google/connect','gmb_connect','width=500,height=600,left=200,top=100');
+  if(!popup){ toast('Your browser blocked the Google window. Allow pop-ups for this site, then connect again.','error'); return; }
   // "Handshake" — the OAuth round trip happens in the popup, so the marching
-  // dashes live in a floating card here until the popup reports back.
+  // dashes live in a floating card here until the popup reports back. The
+  // popup can also close without reporting (the owner closes it, or Google
+  // stops on its own page), so the card follows the window, not just the
+  // message: it used to stay on screen for good once the window was gone.
   cmFloat(cavnarHandshakeHtml('connecting',CM_GLYPH_GOOGLE,'Connecting · Google Business'));
+  var settled = false;
+  var watch = setInterval(function(){
+    var closed = true;
+    try { closed = popup.closed; } catch(err) { closed = false; }
+    if(!closed) return;
+    clearInterval(watch);
+    // The callback posts its result and then closes itself; give that
+    // message a moment to land before calling the window abandoned.
+    setTimeout(function(){
+      if(settled) return;
+      settled = true;
+      window.removeEventListener('message', gmbHandler);
+      cmFloatHide();
+      toast('Google Business isn\'t connected. The Google window closed before it finished.','error');
+    }, 800);
+  }, 600);
   function gmbHandler(e){
-    if(!e.data || !e.data.gmb) return;
+    if(e.origin !== window.location.origin) return;
+    if(!e.data || !e.data.gmb || settled) return;
+    settled = true;
+    clearInterval(watch);
     window.removeEventListener('message', gmbHandler);
     if(e.data.gmb === 'connected'){
       cmFloat(cavnarHandshakeHtml('connected',CM_GLYPH_GOOGLE,'Connected · Google Business'),1600);

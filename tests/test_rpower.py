@@ -360,22 +360,27 @@ def test_dates_are_sent_without_a_time_component():
 
 def _punch(**kw):
     base = {"in_dttm": "2026-09-10T08:00:00", "out_dttm": "2026-09-10T16:00:00",
-            "payroll_id": "20CY2G", "job_id": "COOK", "reg_hours": 7.5,
-            "ot_hours": 0, "dt_hours": 0, "break_minutes": 30}
+            "emp_mid": "4444", "payroll_id": "20CY2G", "job_mid": "7777", "job_id": "Q39U9N",
+            "reg_hours": 7.5, "ot_hours": 0, "dt_hours": 0, "break_minutes": 30}
     base.update(kw)
     return base
+
+
+# The shape of Simple EJ's lists on the first live sync (9/28/26): job codes
+# that mean nothing to anyone, names in POS capitals.
+_PEOPLE = {"jobs": {"7777": "Kitchen"}, "employees": {"4444": "Dana Reyes"}}
 
 
 def test_labor_rows_use_rpowers_own_payroll_hours(db_path):
     """RPOWER's hours come from the engine that actually pays these people. A
     derived number that disagrees with the paycheck is worse than none."""
     rows = rpower.normalise_entries([_punch(reg_hours=7.5, ot_hours=1.5)],
-                                    {"2026-09-10": 4200.0})
+                                    {"2026-09-10": 4200.0}, _PEOPLE)
     assert len(rows) == 1
     r = rows[0]
     assert r["actual_hours"] == 9.0, "reg + ot + dt, not wall clock"
-    assert r["role"] == "COOK"
-    assert r["employee"] == "20CY2G"
+    assert r["role"] == "Kitchen"
+    assert r["employee"] == "Dana Reyes"
     assert r["day"] == "Thursday"
     assert r["sales"] == 4200.0
     assert "OT 1.5h" in r["notes"]
@@ -402,14 +407,63 @@ def test_scheduled_hours_is_never_invented(db_path):
     assert rows[0]["scheduled_hours"] == rows[0]["actual_hours"]
 
 
+_JOBS = [{"mid": "7777", "name": "Kitchen", "ext_id": "Q39U9N"},
+         {"mid": "7778", "name": "Server AM", "ext_id": "Q39U9O"}]
+_EMPS = [{"mid": "4444", "fname": "DANA", "lname": "REYES", "name": "REYES, DANA", "payroll_id": "20CY2G"},
+         {"mid": "4445", "fname": "\\Sam", "lname": "McKenzie", "name": "", "payroll_id": "1C4PM4"},
+         {"mid": "4446", "fname": "", "lname": "", "name": "OKAFOR, CHIDI", "payroll_id": "N8UKIB"}]
+
+
 def test_the_shifts_csv_matches_what_labor_already_parses(db_path, monkeypatch):
     rid = _connected(db_path)
+    _stub_api(monkeypatch, {"job/getbycg": _JOBS, "employee/getbycg": _EMPS})
     monkeypatch.setattr(rpower, "fetch_time_entries", lambda r, s, e: [_punch()])
     monkeypatch.setattr(rpower, "fetch_business_days", lambda r, s, e: {"2026-09-10": 4200.0})
     csv_str = rpower.build_shifts_csv(rid, days=7)
     header = csv_str.splitlines()[0]
     assert header == ("date,day,employee,role,shift_start,shift_end,"
                       "scheduled_hours,actual_hours,sales,notes")
+
+
+def test_shifts_carry_the_stores_job_and_employee_names_not_its_codes(db_path, monkeypatch):
+    """Simple EJ's first live sync (9/28/26) stored every role as a job code
+    ("Q39U9N") and every person as a payroll code ("20CY2G"): `job_id` is the
+    job's ext_id, which a real store sets to anything. The names come from
+    the store's own job and employee lists."""
+    rid = _connected(db_path)
+    _stub_api(monkeypatch, {"job/getbycg": _JOBS, "employee/getbycg": _EMPS})
+    monkeypatch.setattr(rpower, "fetch_time_entries", lambda r, s, e: [
+        _punch(),
+        _punch(emp_mid="4445", payroll_id="1C4PM4", job_mid="7778", job_id="Q39U9O"),
+        _punch(emp_mid="4446", payroll_id="N8UKIB", in_dttm="2026-09-10T17:00:00",
+               out_dttm="2026-09-10T22:00:00")])
+    monkeypatch.setattr(rpower, "fetch_business_days", lambda r, s, e: {})
+    import csv as _csv
+    import io as _io
+    rows = list(_csv.DictReader(_io.StringIO(rpower.build_shifts_csv(rid, days=7))))
+    assert {(r["employee"], r["role"]) for r in rows} == {
+        ("Dana Reyes", "Kitchen"),        # POS capitals set in title case
+        ("Sam McKenzie", "Server AM"),    # stray backslash dropped, typed case kept
+        ("Chidi Okafor", "Kitchen"),      # "LAST, FIRST" turned around
+    }
+    for r in rows:
+        assert r["role"] not in ("Q39U9N", "Q39U9O") and r["employee"] not in ("20CY2G", "1C4PM4", "N8UKIB")
+
+
+def test_a_pull_that_cant_name_its_people_is_refused_not_saved(db_path, monkeypatch):
+    """Saved under payroll codes, people read as strangers and never merge
+    with the names every other screen uses — so the sync fails instead and
+    says why, and the stored shifts are left as they were."""
+    import models
+    rid = _connected(db_path)
+    _stub_api(monkeypatch, {"job/getbycg": _JOBS, "employee/getbycg": []})
+    monkeypatch.setattr(rpower, "fetch_time_entries", lambda r, s, e: [_punch()] * 3)
+    monkeypatch.setattr(rpower, "fetch_business_days", lambda r, s, e: {})
+    before = (models.get_client_data(rid, db_path=db_path) or {}).get("shifts_csv")
+    out = rpower.sync_to_db(rid)
+    assert out["ok"] is False and "could not be matched to an employee" in out["error"]
+    assert (models.get_client_data(rid, db_path=db_path) or {}).get("shifts_csv") == before
+    assert "could not be matched" in (models.get_restaurant(rid, db_path=db_path).rpower_sync_error or "")
 
 
 # ── pos.py integration ──────────────────────────────────────────────────────
@@ -503,6 +557,26 @@ def test_push_groups_shifts_by_payroll_id(db_path, monkeypatch):
     assert a1["schedules"][0] == {"inTime": "2026-09-15T17:00:00",
                                   "jobCode": "Bartender",
                                   "outTime": "2026-09-15T21:45:00"}
+
+
+def test_a_pushed_shift_goes_back_under_the_jobs_code_not_its_name(db_path, monkeypatch):
+    """The sync stores the job's name as the role; RPOWER's push wants the
+    code. fetch_job_codes() is the translation."""
+    rid = _connected(db_path)
+    _stub_api(monkeypatch, {"job/getbycg": _JOBS})
+    captured = {}
+
+    class _Resp:
+        ok, status_code, text = True, 200, "{}"
+
+    monkeypatch.setattr("requests.post", lambda url, headers=None, json=None, timeout=None:
+                        captured.update(body=json) or _Resp())
+    codes = rpower.fetch_job_codes(rid)
+    assert codes == {"kitchen": "Q39U9N", "server am": "Q39U9O"}
+    rpower.push_labor_schedule(rid, [{"employee_payroll_id": "A1", "role": "Server AM",
+                                      "start": "2026-09-15T17:00:00", "end": "2026-09-15T21:45:00"}],
+                               job_codes=codes)
+    assert captured["body"]["schedules"][0]["schedules"][0]["jobCode"] == "Q39U9O"
 
 
 def test_a_shift_with_no_payroll_id_is_reported_not_dropped(db_path, monkeypatch):

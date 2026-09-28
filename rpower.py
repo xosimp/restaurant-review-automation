@@ -871,7 +871,79 @@ def _punch_dt(raw) -> Optional[datetime]:
         return None
 
 
-def normalise_entries(time_entries: list, sales_by_date: dict) -> list:
+# ── who each punch belongs to ───────────────────────────────────────────────
+#
+# A timeclock row names its person and job only by reference: `emp_mid` /
+# `payroll_id` and `job_mid` / `job_id`. `job_id` is the job's `ext_id`,
+# which RPOWER's sample shows as "COOK" but a real store sets to whatever it
+# likes — Simple EJ's first live sync (9/28/26) stored 16 roles such as
+# "Q39U9N" and 74 employees named by payroll codes such as "20CY2G", and every
+# labor screen showed them. The names live in the store's own job and
+# employee lists, read once per sync; a pull where more than
+# UNRESOLVED_MAX_SHARE of the punches still have no person FAILS rather than
+# saving codes (the same rule toast._require_resolved applies).
+UNRESOLVED_MAX_SHARE = 0.05
+
+
+class RPowerUnresolved(RPowerError):
+    """Too many punches could not be matched to an RPOWER employee."""
+
+
+def _tidy_name(raw) -> str:
+    """One name part as a person would write it: stray punctuation from data
+    entry dropped, and ALL-CAPS or all-lower POS entry set in title case
+    (mixed case is kept — the owner typed "McKenzie" that way)."""
+    s = " ".join(str(raw or "").replace("\\", " ").split()).strip(" ,.;")
+    if s and (s.isupper() or s.islower()):
+        s = " ".join(w[:1].upper() + w[1:].lower() for w in s.split(" "))
+    return s
+
+
+def employee_display_name(emp: dict) -> str:
+    """"First Last" from an RPOWER employee record: fname + lname, else the
+    `name` field ("LAST, FIRST" is turned around), else ''."""
+    first, last = _tidy_name(emp.get("fname")), _tidy_name(emp.get("lname"))
+    if first or last:
+        return f"{first} {last}".strip()
+    name = str(emp.get("name") or "")
+    if "," in name:
+        last, _, first = name.partition(",")
+        return f"{_tidy_name(first)} {_tidy_name(last)}".strip()
+    return _tidy_name(name)
+
+
+def fetch_people(restaurant_id: int) -> dict:
+    """{"jobs": {job_mid: name}, "employees": {emp_mid: "First Last"}} for this
+    store's consolidation group — one paged read of each list."""
+    token, base = _ctx(restaurant_id)
+    jobs, emps = {}, {}
+    for j in _paged(token, "job/getbycg", {"cg": base["cg"], "sortorder": "name"}):
+        name = _tidy_name(j.get("name"))
+        if j.get("mid") and name:
+            jobs[str(j["mid"])] = name
+    for e in _paged(token, "employee/getbycg", {"cg": base["cg"], "sortorder": "name"}):
+        name = employee_display_name(e)
+        if e.get("mid") and name:
+            emps[str(e["mid"])] = name
+    return {"jobs": jobs, "employees": emps}
+
+
+def _require_resolved(entries: list, people: dict) -> None:
+    """Refuse a pull whose punches mostly can't be matched to a person: saved
+    under payroll codes they read as strangers and never merge with the
+    names every other screen uses."""
+    closed = [e for e in entries or [] if e.get("out_dttm")]
+    if not closed:
+        return
+    names = people.get("employees") or {}
+    missing = sum(1 for e in closed if str(e.get("emp_mid") or "") not in names)
+    if missing and missing / float(len(closed)) > UNRESOLVED_MAX_SHARE:
+        raise RPowerUnresolved(
+            f"{missing} of {len(closed)} RPOWER punches could not be matched to an employee; "
+            "nothing was saved from this read")
+
+
+def normalise_entries(time_entries: list, sales_by_date: dict, people: dict = None) -> list:
     """Timeclock punches into labor.py's CSV rows.
 
     Two things RPOWER gives us that Toast does not, and both are kept rather
@@ -884,12 +956,19 @@ def normalise_entries(time_entries: list, sales_by_date: dict) -> list:
       disagrees with the paycheck is worse than no number. `actual_hours` is
       therefore the sum of all three, and the split travels in `notes` so it
       is visible rather than discarded.
-    * `job_id` is the real job code, so `role` is what the restaurant calls
-      it rather than something inferred from a name.
+    * The job is the store's own job, so `role` is what the restaurant calls
+      it ("Server AM") rather than something inferred from a name.
+
+    `people` is fetch_people(): the job and employee names. Without it (or
+    for a reference the lists don't carry) the row falls back to RPOWER's
+    codes — build_shifts_csv never saves that, it requires the names first.
 
     `sales` is attached per day, not per shift — the same convention
     toast.normalise_entries uses, so labor.py's day aggregation is unchanged.
     """
+    people = people or {}
+    job_names = people.get("jobs") or {}
+    emp_names = people.get("employees") or {}
     rows = []
     for e in time_entries or []:
         start = _punch_dt(e.get("in_dttm"))
@@ -921,8 +1000,10 @@ def normalise_entries(time_entries: list, sales_by_date: dict) -> list:
         rows.append({
             "date": day,
             "day": _DOW_NAMES[start.weekday()],
-            "employee": (e.get("payroll_id") or e.get("emp_mid") or "").strip(),
-            "role": (e.get("job_id") or "").strip(),
+            "employee": (emp_names.get(str(e.get("emp_mid") or ""))
+                         or (e.get("payroll_id") or e.get("emp_mid") or "").strip()),
+            "role": (job_names.get(str(e.get("job_mid") or ""))
+                     or (e.get("job_id") or "").strip()),
             "shift_start": start.strftime("%H:%M"),
             "shift_end": end.strftime("%H:%M"),
             # RPOWER's timeclock is what was WORKED. It carries no schedule,
@@ -945,8 +1026,10 @@ def build_shifts_csv(restaurant_id: int, days: int = 60) -> Optional[str]:
     end = date.today()
     start = end - timedelta(days=days)
     entries = fetch_time_entries(restaurant_id, start, end)
+    people = fetch_people(restaurant_id) if entries else {}
+    _require_resolved(entries, people)
     sales = fetch_business_days(restaurant_id, start, end)
-    rows = normalise_entries(entries, sales)
+    rows = normalise_entries(entries, sales, people)
     if not rows:
         return ""
     fieldnames = ["date", "day", "employee", "role", "shift_start", "shift_end",
@@ -1039,7 +1122,16 @@ def get_connection_status(restaurant_id: int) -> dict:
 
 # ── write path: pushing a Cavnar schedule back into RPOWER ─────────────────
 
-def push_labor_schedule(restaurant_id: int, shifts: list) -> dict:
+def fetch_job_codes(restaurant_id: int) -> dict:
+    """{job name lower-cased: RPOWER job code (ext_id)} — the reverse of the
+    names the sync stores as `role`, for anything that writes back."""
+    token, base = _ctx(restaurant_id)
+    return {_tidy_name(j.get("name")).lower(): str(j.get("ext_id") or "").strip()
+            for j in _paged(token, "job/getbycg", {"cg": base["cg"], "sortorder": "name"})
+            if _tidy_name(j.get("name")) and str(j.get("ext_id") or "").strip()}
+
+
+def push_labor_schedule(restaurant_id: int, shifts: list, job_codes: dict = None) -> dict:
     """Send a generated schedule to the store's POS.
 
     The only write in the Core API, and it is OFF by default: RPOWER states
@@ -1067,6 +1159,9 @@ def push_labor_schedule(restaurant_id: int, shifts: list) -> dict:
     for s in shifts or []:
         pid = (s.get("employee_payroll_id") or s.get("payroll_id") or "").strip()
         job = (s.get("job") or s.get("role") or "").strip()
+        # The sync stores the job's NAME as the role ("Server AM"); RPOWER's
+        # push wants its code. Pass fetch_job_codes() to translate.
+        job = (job_codes or {}).get(job.lower(), job)
         start, end = s.get("start"), s.get("end")
         # An employee with no payroll id cannot be matched to anyone at the
         # store. Pushing them under a blank id would either fail the whole

@@ -784,19 +784,33 @@ def toggle_staff_signin_notify(current_user):
 # ── Admin routes ──────────────────────────────────────────────────────────────
 
 
+def _gmb_popup_error(message):
+    """The page the Google connect popup shows on a refusal: it reports the
+    error to the dashboard that opened it and says the same thing itself."""
+    import json as _json_pe
+    from html import escape as _esc_pe
+    return (
+        "<html><body><script>"
+        "window.opener&&window.opener.postMessage({gmb:'error',msg:" + _json_pe.dumps(message).replace("</", "<\\/") + "},'*');"
+        "</script><p>" + _esc_pe(message) + " Close this window.</p></body></html>"
+    )
+
+
 @auth_bp.route("/auth/google/connect")
 @login_required
 def gmb_connect(current_user):
     """Start Google OAuth flow for the logged-in client. Owner-only, like
     every other connection (Toast, Square, Clover, RPower, webhooks): the
     token it stores publishes replies under the restaurant's name."""
-    from permissions import principal_only
-    denied = principal_only(current_user, "the Google Business connection")
-    if denied:
-        return denied
+    from permissions import is_principal
+    # This route opens in a popup, so a refusal has to be a page that tells
+    # the dashboard (the opener) and the person looking at the popup - a
+    # bare JSON 403 left both waiting on "Connecting" forever.
+    if not is_principal(current_user):
+        return _gmb_popup_error("Only the account owner can connect Google Business."), 403
     from gmb import get_auth_url
     if not os.getenv("GOOGLE_CLIENT_ID"):
-        return jsonify(ok=False, error="Google OAuth not configured"), 500
+        return _gmb_popup_error("Google sign-in isn't set up on this server."), 500
     import secrets as _sec_gmb
     nonce = _sec_gmb.token_hex(16)
     url = get_auth_url(current_user["restaurant_id"], nonce)
