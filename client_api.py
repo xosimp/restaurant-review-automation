@@ -782,6 +782,15 @@ def retract(rid, current_user):
     payload, status = _do_retract(rid, current_user["restaurant_id"])
     return jsonify(**payload), status
 
+def unverified_is_figure_list(note) -> bool:
+    """True for the old "UNVERIFIED: $145, 38%" form - every part a short
+    figure - as opposed to a caveat sentence."""
+    import html as _h
+    parts = [p.strip() for p in _h.unescape(str(note or "")).split(",") if p.strip()]
+    return bool(parts) and all(len(p) <= 24 and any(ch.isdigit() for ch in p) and " " not in p
+                               for p in parts)
+
+
 def parse_insight_sections(text):
     """Splits free-form AI consultant prose into (intro, recommendations,
     forecast, unverified) — the one place this parsing happens, shared by
@@ -1121,13 +1130,22 @@ def format_insight_html(text, rec_items=None, surface=None, module=None):
     # suggestion to act on.
     unverified_html = ''
     if unverified:
+        # Two shapes reach here: the long-standing figure list ("$145, 38%"),
+        # which reads inside "Couldn't confirm ... against your actual
+        # numbers", and the validation layer's caveat sentences ("A cause
+        # here isn't shown by your numbers: ..."), which read on their own -
+        # wrapped, one came out as "Could not confirm Unsupported cause: ...
+        # against your actual numbers" (Simple EJ's, 9/28/26).
+        if unverified_is_figure_list(unverified):
+            body = 'Couldn\u2019t confirm ' + unverified + ' against your actual numbers.'
+        else:
+            body = unverified if unverified.rstrip().endswith('.') else unverified + '.'
         unverified_html = (
             '<div style="margin-top:10px;padding:10px 12px;background:rgba(184,127,31,.08);'
             'border-left:2px solid var(--amber);border-radius:0 6px 6px 0">'
             '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;'
-            'color:var(--amber);margin-bottom:4px">⚠ Unverified</div>'
-            '<div style="line-height:1.6;color:var(--ink2)">Could not confirm ' + unverified
-            + ' against your actual numbers.</div></div>'
+            'color:var(--amber);margin-bottom:4px">\u26a0 Unverified</div>'
+            '<div style="line-height:1.6;color:var(--ink2)">' + body + '</div></div>'
         )
 
     if not recs:

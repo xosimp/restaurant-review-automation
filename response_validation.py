@@ -1651,6 +1651,16 @@ def _norm_name(s):
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 
+def _cause_phrase(s, start, end, before=5, after=5) -> str:
+    """The words around a causal connective, inside its own clause: "that
+    day alone drives the gap" from "Cut Tuesday hours - that day alone
+    drives the gap, especially 9/15"."""
+    stops = r"[\u2014\u2013;:,.!?()\n]"
+    left = re.split(stops, s[:start])[-1].split()[-before:]
+    right = re.split(stops, s[end:])[0].split()[:after]
+    return " ".join(left + [s[start:end].strip()] + right).strip()
+
+
 def _cap_like(src, repl):
     if repl and src[:1].isupper():
         return repl[:1].upper() + repl[1:]
@@ -2630,9 +2640,16 @@ class _Run:
                 rewrites += 1
                 pos = start + len(repl)
                 continue
+            # The caveat quotes the claim: "Unsupported cause" with nothing
+            # to say which sentence left an owner reading the whole read
+            # as unverified - at Simple EJ's the measured 87.9% Tuesdays
+            # along with the one overreach, "that day alone drives the gap"
+            # (the other days ran 53.5% without it; 9/28/26).
+            phrase = _cause_phrase(s, start, end)
             self.emit("K1", "caveat", "drop", matched,
                       "a cause nothing stored supports" if not strength else "a cause stated more strongly than its anchor",
-                      "Unsupported cause: nothing measured here shows this caused it.")
+                      (f"A cause here isn't shown by your numbers: \u201c{phrase}\u201d." if not strength else
+                       f"A cause here is stated more firmly than your numbers show: \u201c{phrase}\u201d."))
         # Only a sentence this rule rewrote is tidied: a quoted guest line
         # that starts lower-case is not the engine's to recapitalise.
         return _tidy(s) if (rewrites and s[:1].islower()) else s

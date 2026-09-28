@@ -57,7 +57,8 @@ def test_a_cause_nothing_it_read_states_is_flagged_as_its_sentence(db_path):
     rid = _rid(db_path)
     answer, meta = _finish("Labor ran 31.4%. Ratings fell because the patio closed.", rid)
     assert meta["unsupported_causes"] == ["Ratings fell because the patio closed."]
-    assert "Unsupported cause" in " ".join(meta["validation"]["caveats"])
+    assert "A cause here isn't shown by your numbers: \u201cRatings fell because the patio closed\u201d." in \
+        meta["validation"]["caveats"]
 
 
 def test_another_tenants_name_is_dropped_from_the_answer(db_path):

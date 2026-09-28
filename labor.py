@@ -934,6 +934,16 @@ def _shift_rate(shift: dict, role_rates: dict, fallback: float) -> float:
     are the same role, and an exact match meant every per-role wage they
     had configured was silently ignored in favour of the flat default.
     """
+    # What the POS's payroll pays this person (rpower.normalise_entries'
+    # pay_rate) is what the hour cost - it beats any rate set for the role.
+    # Simple EJ's was costed at the $26 default while RPOWER sent cooks at
+    # $21-24 and servers at $9 on every punch (9/28/26).
+    try:
+        paid = float(shift.get("pay_rate") or 0)
+    except (TypeError, ValueError):
+        paid = 0.0
+    if 0 < paid <= 500:
+        return paid
     default = role_rates.get("_default", fallback)
     raw = shift.get("role", "") or ""
     if raw in role_rates:

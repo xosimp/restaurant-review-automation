@@ -964,11 +964,62 @@ def employee_display_name(emp: dict) -> str:
     return _tidy_name(name)
 
 
+# Station logins (Simple EJ's, 9/28/26): RPOWER employee records named for a
+# station, not a person - "Day Bar", "Night Bar", "Pm Host", "To Go AM",
+# "Party AM". Each is clocked in at the same minute as the real person on
+# that job (Day Bar 9:51-3:31 beside Amy Baylis 9:51-3:31 on 9/17) to ring
+# the station and pool its tips; RPOWER's payroll pays nothing through it.
+# Counted as a person, every one of its hours was a second copy of someone
+# else's, costed at the blended rate, and it headed the overtime list
+# ("To Am worked 61.8h") as if it were somebody. A record is a station only
+# when BOTH hold: every word of its name is a station, daypart or job word
+# (this store's own job names included), and none of its punches carries
+# pay. A person with no rate on file is still a person.
+_STATION_WORDS = frozenset((
+    "am pm day night morning evening lunch dinner brunch late overnight "
+    "bar host hostess to go togo take out takeout pickup curbside delivery online "
+    "party parties event events catering banquet private patio terrace lounge room "
+    "upstairs downstairs main front back floor foh boh kitchen expo line prep "
+    "server servers busser bussers barback bartender cashier counter register "
+    "station shared house tips tip pool training trainee manager mgr test "
+    "generic staff team service").split())
+
+
+def _name_words(name) -> list:
+    return [w for w in re.split(r"[^a-z0-9]+", str(name or "").lower()) if w]
+
+
+def is_station_name(name, job_names=()) -> bool:
+    """Every word of `name` is a station / daypart / job word."""
+    words = _name_words(name)
+    vocab = set(_STATION_WORDS)
+    for j in job_names or ():
+        vocab.update(_name_words(j))
+    return bool(words) and all(w in vocab for w in words)
+
+
+def _paid(entry) -> bool:
+    return any(float(entry.get(k) or 0) > 0 for k in ("reg_rate", "reg_pay", "ot_pay", "dt_pay"))
+
+
+def station_logins(entries: list, people: dict) -> dict:
+    """{emp_mid: name} of the station logins among these punches: a station
+    name (fetch_people's `station_names`) with no pay on any punch."""
+    cands = people.get("station_names") or {}
+    if not cands:
+        return {}
+    paid = {str(e.get("emp_mid") or "") for e in entries or [] if _paid(e)}
+    return {mid: nm for mid, nm in cands.items() if mid not in paid}
+
+
 def fetch_people(restaurant_id: int) -> dict:
-    """{"jobs": {job_mid: name}, "employees": {emp_mid: "First Last"}} for this
-    store's consolidation group — one paged read of each list."""
+    """{"jobs": {job_mid: name}, "employees": {emp_mid: "First Last"},
+    "station_names": {emp_mid: POS name}} for this store's consolidation
+    group — one paged read of each list. `station_names` are records whose
+    name is a station's (is_station_name); station_logins() decides from
+    their punches."""
     token, base = _ctx(restaurant_id)
-    jobs, emps = {}, {}
+    jobs, emps, stations = {}, {}, {}
     for j in _paged(token, "job/getbycg", {"cg": base["cg"], "sortorder": "name"}):
         name = _tidy_name(j.get("name"))
         if j.get("mid") and name:
@@ -977,7 +1028,12 @@ def fetch_people(restaurant_id: int) -> dict:
         name = employee_display_name(e)
         if e.get("mid") and name:
             emps[str(e["mid"])] = name
-    return {"jobs": jobs, "employees": emps}
+            # the POS's own full name ("To Go AM"; fname+lname lost the "Go")
+            full = _tidy_name(" ".join(str(e.get(k) or "") for k in ("fname", "mname", "lname")).strip()
+                              or e.get("name"))
+            if is_station_name(full, jobs.values()):
+                stations[str(e["mid"])] = full
+    return {"jobs": jobs, "employees": emps, "station_names": stations}
 
 
 def _require_resolved(entries: list, people: dict) -> None:
@@ -1021,8 +1077,12 @@ def normalise_entries(time_entries: list, sales_by_date: dict, people: dict = No
     people = people or {}
     job_names = people.get("jobs") or {}
     emp_names = people.get("employees") or {}
+    # Not labor: a station login's punches double someone else's (above).
+    stations = station_logins(time_entries, people)
     rows = []
     for e in time_entries or []:
+        if str(e.get("emp_mid") or "") in stations:
+            continue
         start = _punch_dt(e.get("in_dttm"))
         if not start:
             continue
@@ -1065,6 +1125,10 @@ def normalise_entries(time_entries: list, sales_by_date: dict, people: dict = No
             "actual_hours": actual,
             "sales": sales_by_date.get(day, ""),
             "notes": ", ".join(notes),
+            # What RPOWER's payroll pays this person an hour; blank when it
+            # has no rate on file, and labor.py then uses the owner's rate
+            # for the role or the blended rate (labor._shift_rate).
+            "pay_rate": round(float(e.get("reg_rate") or 0), 2) if float(e.get("reg_rate") or 0) > 0 else "",
         })
     rows.sort(key=lambda r: (r["date"], r["shift_start"]))
     return rows
@@ -1082,10 +1146,14 @@ def build_shifts_csv(restaurant_id: int, days: int = 60) -> Optional[str]:
     _require_resolved(entries, people)
     sales = fetch_business_days(restaurant_id, start, end)
     rows = normalise_entries(entries, sales, people)
+    left_out = station_logins(entries, people)
+    if left_out:
+        log.info("[rpower] rid=%s station logins left out of labor: %s",
+                 restaurant_id, ", ".join(sorted(set(left_out.values()))))
     if not rows:
         return ""
     fieldnames = ["date", "day", "employee", "role", "shift_start", "shift_end",
-                  "scheduled_hours", "actual_hours", "sales", "notes"]
+                  "scheduled_hours", "actual_hours", "sales", "notes", "pay_rate"]
     buf = _io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=fieldnames)
     writer.writeheader()

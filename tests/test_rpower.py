@@ -422,7 +422,7 @@ def test_the_shifts_csv_matches_what_labor_already_parses(db_path, monkeypatch):
     csv_str = rpower.build_shifts_csv(rid, days=7)
     header = csv_str.splitlines()[0]
     assert header == ("date,day,employee,role,shift_start,shift_end,"
-                      "scheduled_hours,actual_hours,sales,notes")
+                      "scheduled_hours,actual_hours,sales,notes,pay_rate")
 
 
 def test_shifts_carry_the_stores_job_and_employee_names_not_its_codes(db_path, monkeypatch):
@@ -777,3 +777,61 @@ def test_discovery_names_items_from_the_menu_and_keeps_non_dishes_off_the_list(d
     listed = [m["name"] for m in inventory_ledger.list_menu_items_with_recipes(rid)]
     assert rows["2256405207682999999"]["name"] == "Smash Burger"   # not sold this week, still named
     assert listed == ["Pretzel", "Smash Burger", "Add Chicken"]   # POS categories in order; no ids, no discounts
+
+
+# ── Station logins and what payroll pays (Simple EJ's, 9/28/26) ────────────
+
+_STATION_JOBS = [{"mid": "7780", "name": "Bartender AM"}, {"mid": "7781", "name": "Host AM"}]
+_STATION_EMPS = [
+    {"mid": "5001", "fname": "Day", "mname": "", "lname": "Bar", "name": "Day Bar"},
+    {"mid": "5002", "fname": "To", "mname": "Go", "lname": "AM", "name": "To Go AM"},
+    {"mid": "5003", "fname": "Amy", "mname": "", "lname": "Baylis", "name": "Baylis, Amy"},
+    {"mid": "5004", "fname": "Cory", "mname": "", "lname": "Tammen", "name": "Tammen, Cory"},
+    {"mid": "5005", "fname": "Party", "mname": "", "lname": "PM", "name": "Party PM"},
+]
+
+
+def test_a_station_login_is_left_out_of_labor_and_a_person_without_a_rate_is_not(monkeypatch):
+    """"Day Bar" clocks in at the same minute as the bartender on the job,
+    pools the bar's tips and is paid nothing: its hours are a copy of hers,
+    and it headed the overtime list as if it were a person."""
+    _stub_api(monkeypatch, {"job/getbycg": _STATION_JOBS, "employee/getbycg": _STATION_EMPS})
+    monkeypatch.setattr(rpower, "_ctx", lambda rid: ("tok", {"cg": 1, "store_mid": 2}))
+    people = rpower.fetch_people(1)
+    assert people["station_names"] == {"5001": "Day Bar", "5002": "To Go AM", "5005": "Party PM"}
+    punches = [
+        _punch(emp_mid="5001", job_mid="7780", in_dttm="2026-09-17T09:51:00", out_dttm="2026-09-17T15:31:00",
+               reg_hours=5.67, reg_rate=0, tips_total=36.27),
+        _punch(emp_mid="5003", job_mid="7780", in_dttm="2026-09-17T09:51:00", out_dttm="2026-09-17T15:31:00",
+               reg_hours=5.67, reg_rate=9.0),
+        _punch(emp_mid="5004", job_mid="7780", reg_rate=0),          # a person with no rate on file
+        _punch(emp_mid="5005", job_mid="7781", reg_rate=15.0),       # station-sounding, but paid: a person
+    ]
+    rows = rpower.normalise_entries(punches, {}, people)
+    assert sorted(r["employee"] for r in rows) == ["Amy Baylis", "Cory Tammen", "Party Pm"]
+    assert rpower.station_logins(punches, people) == {"5001": "Day Bar", "5002": "To Go AM"}
+    amy = next(r for r in rows if r["employee"] == "Amy Baylis")
+    cory = next(r for r in rows if r["employee"] == "Cory Tammen")
+    assert amy["pay_rate"] == 9.0 and cory["pay_rate"] == ""
+
+
+def test_station_words_include_the_stores_own_job_names():
+    assert rpower.is_station_name("Pm Host") and rpower.is_station_name("Night Bar")
+    assert rpower.is_station_name("Mascot AM", ["Mascot"]) and not rpower.is_station_name("Mascot AM")
+    assert not rpower.is_station_name("Amy Baylis") and not rpower.is_station_name("Berrier Josh")
+    assert not rpower.is_station_name("")
+
+
+def test_an_hour_costs_what_payroll_paid_before_any_role_or_blended_rate():
+    import labor
+    rates = {"_default": 26.0, "Server AM": 12.0}
+    assert labor._shift_rate({"role": "Server AM", "pay_rate": "9.0"}, rates, 26.0) == 9.0
+    assert labor._shift_rate({"role": "Server AM", "pay_rate": ""}, rates, 26.0) == 12.0
+    assert labor._shift_rate({"role": "Kitchen"}, rates, 26.0) == 26.0
+    assert labor._shift_rate({"role": "Kitchen", "pay_rate": "-4"}, rates, 26.0) == 26.0
+    shifts = [{"date": "2026-09-17", "day": "Thursday", "employee": "Amy Baylis", "role": "Bartender AM",
+               "scheduled_hours": 10, "actual_hours": 10, "sales": 1000, "pay_rate": 9.0},
+              {"date": "2026-09-17", "day": "Thursday", "employee": "Oscar Avelar", "role": "Kitchen",
+               "scheduled_hours": 10, "actual_hours": 10, "sales": 1000, "pay_rate": ""}]
+    a = labor.analyse_shifts(shifts, hourly_rate=26.0, labor_target=35.0)
+    assert a["total_labor_cost"] == 350.0          # 10h x $9 + 10h x $26
