@@ -763,7 +763,15 @@ def index(current_user):
         _export_scopes = _export_scopes_for(restaurant, current_user)
     except Exception:
         _export_scopes = ["reviews", "settings"]
+    # The one "connected" rule (marketing_publish.channels_of): the Studio's
+    # social card, the Opportunity Feed and Home agree on where a post can go.
+    try:
+        from marketing_publish import channels_of as _channels_of
+        _social_channels = _channels_of(restaurant)
+    except Exception:
+        _social_channels = {"instagram": False, "facebook": False, "google": False}
     return render_template('dashboard.html',
+        social_channels=_social_channels,
         show_welcome=show_welcome,
         is_principal=_principal, export_scopes=_export_scopes,
         onboarding_steps=onboarding_steps,

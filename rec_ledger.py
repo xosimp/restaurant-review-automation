@@ -121,6 +121,31 @@ def known_surface(surface, default="unknown") -> str:
 
 # How long each answer silences the same key everywhere.
 SILENCE_DAYS = {"hide": 14, "not_for_us": 3650, "done": 3650}
+# Advice about a situation that comes round again (re-audit OPP-9): a slow
+# Tuesday every week, a list going quiet again, a category dipping again,
+# another fortnight without a post. "Done" on "Fill Tuesday, 10/6/26" was an
+# answer about that Tuesday, and silenced every Tuesday for ten years — the
+# morning brief's slow-day line with it. Done here holds until the next
+# occurrence (RECURRING_DONE_DAYS); "not for us" holds a season
+# (RECURRING_DECLINE_DAYS) — long enough to be a decline on every surface
+# (insight_store.declined_signatures), never years. A caller's explicit
+# `silence_until` and a Track's measuring window are left as they are.
+RECURRING_DONE_DAYS = {"slow_day": 6, "list_idle": 30, "category_dip": 28, "post_this_week": 7}
+RECURRING_DECLINE_DAYS = 90
+
+
+def recurring_silence(key, event, kind=None):
+    """The days an answer to a recurring key holds (Done: until the next
+    occurrence; not for us: a season), or None for every other key and
+    answer — the caller's own silence applies."""
+    k = kind_of(key)
+    if k not in RECURRING_DONE_DAYS:
+        return None
+    if event == "completed":
+        return RECURRING_DONE_DAYS[k]
+    if event == "dismissed" and (kind or "hide") == "not_for_us":
+        return RECURRING_DECLINE_DAYS
+    return None
 # An accepted or completed recommendation is not re-asked while its outcome
 # is being measured.
 ACCEPTED_QUIET_DAYS = 14
@@ -232,9 +257,29 @@ def init_rec_ledger(db_path: str = DB_PATH):
             UNIQUE(restaurant_id, source, subject_key, day)
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_rec_missed_at ON rec_missed_detections(detected_at)")
+        cap_recurring_silences(conn)
         conn.commit()
     finally:
         conn.close()
+
+
+def cap_recurring_silences(conn) -> int:
+    """Recurring advice answered before re-audit OPP-9 kept a ten-year
+    silence ("Done" on one slow Tuesday hid every Tuesday after it): each is
+    brought back to what that answer holds now (RECURRING_DONE_DAYS /
+    RECURRING_DECLINE_DAYS), counted from the answer. Idempotent — a silence
+    already inside its cap is untouched. Runs at boot (init_rec_ledger), on
+    the caller's connection, uncommitted. Returns rows changed."""
+    n = 0
+    for kind, done_days in RECURRING_DONE_DAYS.items():
+        for status, days in (("completed", done_days), ("dismissed", RECURRING_DECLINE_DAYS)):
+            cur = conn.execute(
+                "UPDATE rec_instances SET silenced_until=datetime(COALESCE(closed_at, last_event_at), ?) "
+                "WHERE kind=? AND status=? AND silenced_until IS NOT NULL "
+                "AND silenced_until > datetime(COALESCE(closed_at, last_event_at), ?)",
+                (f"+{int(days)} days", kind, status, f"+{int(days)} days"))
+            n += cur.rowcount or 0
+    return n
 
 
 _ADDED_COLUMNS = (
@@ -445,8 +490,10 @@ def tags_for(key, module=None, kind=None, food_category=None) -> list:
             tags.add(f"focus:{p}_{topic}")
     bits = subject.split(":")
     first = bits[0].strip()
-    if kind in DISH_KINDS and first:
-        tags.add(f"dish:{_slug(first)}")
+    # A dish key's whole subject is the dish: "Steak: Ribeye" is one name,
+    # not "Steak" (re-audit OPP-17).
+    if kind in DISH_KINDS and subject.strip():
+        tags.add(f"dish:{_slug(subject.strip())}")
     if kind in ITEM_KINDS and first and len(first.split()) <= 4:
         tags.add(f"item:{_slug(first)}")
     if kind == "dsr_action" and len(bits) > 1 and "/" in bits[1]:
@@ -1074,10 +1121,18 @@ def _record_on(conn, restaurant_id, key, event, surface=None, user_id=None, role
     if added:
         if event in TERMINAL:
             _close(conn, rec_id, restaurant_id, key, TERMINAL[event], at=when)
+        recurring = recurring_silence(key, event, (meta or {}).get("kind"))
         if event == "dismissed":
             days = silence_days or SILENCE_DAYS.get((meta or {}).get("kind") or "hide", SILENCE_DAYS["hide"])
+            if recurring:
+                days = min(int(days), recurring)
             conn.execute("UPDATE rec_instances SET silenced_until=COALESCE(?, datetime(?, ?)) WHERE rec_id=?",
                          (_stamp(silence_until), base, f"+{int(days)} days", rec_id))
+        elif event == "completed" and recurring and not silence_until:
+            # Done on a recurring key holds until its next occurrence — set,
+            # not raised to an older (ten-year) silence (re-audit OPP-9).
+            conn.execute("UPDATE rec_instances SET silenced_until=datetime(?, ?) WHERE rec_id=?",
+                         (base, f"+{int(min(int(silence_days or recurring), recurring))} days", rec_id))
         elif event in ("accepted", "completed"):
             conn.execute("UPDATE rec_instances SET silenced_until=MAX(COALESCE(silenced_until, ''), "
                          "COALESCE(?, datetime(?, ?))) WHERE rec_id=?",

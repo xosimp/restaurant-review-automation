@@ -109,29 +109,78 @@ def _verdict(it):
     return None
 
 
-def dish_praise(restaurant_id, db_path=DB_PATH) -> list:
-    """Every active menu item with what guests wrote about it in the last
-    SENTIMENT_WINDOW_DAYS — [{"name", "positive_mentions", "negative_mentions",
-    "review_ids"}], most praised first. The same matcher as the scorecard
-    (_attach_sentiment: a mention matching several dishes counts for none),
-    over every active dish, priced or not: the Marketing Opportunity Feed
-    features a dish guests love whether or not it has a recipe on file."""
+# The most active menu items dish_praise reads. A Toast catalogue can carry
+# thousands of items (modifiers, retail, retired specials still flagged
+# active); the praise read is bounded however large it grows (re-audit OPP-18).
+DISH_PRAISE_MAX_ITEMS = 3000
+
+
+def dish_praise(restaurant_id, db_path=DB_PATH, mentions=None) -> list:
+    """Every active menu item guests named in the last SENTIMENT_WINDOW_DAYS,
+    counted in REVIEWS, not mentions — [{"name", "positive_reviews",
+    "negative_reviews", "review_ids"}], most praised first. One review that
+    says "carbonara", "the carbonara" and "Carbonara pasta" is one review
+    (re-audit OPP-7); "positive" is the review's own sentiment, so a caller
+    says "named in N positive reviews", never "named positively".
+
+    The scorecard's matcher, exactly (business_intelligence._same_thing: the
+    same normalised name, or a shared significant word; a mention matching
+    several dishes counts for none), over every active dish priced or not —
+    through a word index, so each mention is compared with the items that
+    share a word with it instead of the whole menu (OPP-18: 900k matcher
+    calls on a large catalogue). `mentions`: _dish_mentions' rows when the
+    caller already read them (the feed reads them once per build)."""
+    from business_intelligence import _norm, _MIN_DISH_TOKEN, _STOPWORDS
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT name FROM menu_items WHERE restaurant_id=? AND is_active=1",
-                            (restaurant_id,)).fetchall()
+        rows = conn.execute("SELECT name FROM menu_items WHERE restaurant_id=? AND is_active=1 "
+                            "ORDER BY id DESC LIMIT ?", (restaurant_id, DISH_PRAISE_MAX_ITEMS)).fetchall()
     finally:
         conn.close()
     items = [{"name": r["name"]} for r in rows if (r["name"] or "").strip()]
     if not items:
         return []
-    _attach_sentiment(items, _dish_mentions(restaurant_id, db_path))
-    return sorted((it for it in items if it["positive_mentions"] or it["negative_mentions"]),
-                  key=lambda it: (-it["positive_mentions"], it["negative_mentions"], it["name"]))
+    mentions = _dish_mentions(restaurant_id, db_path) if mentions is None else mentions
+    if not mentions:
+        return []
+
+    def words(norm):
+        return {t for t in norm.split() if len(t) >= _MIN_DISH_TOKEN and t not in _STOPWORDS}
+
+    by_name, by_word = {}, {}
+    for i, it in enumerate(items):
+        n = _norm(it["name"])
+        if not n:
+            continue
+        by_name.setdefault(n, set()).add(i)
+        for w in words(n):
+            by_word.setdefault(w, set()).add(i)
+    pos, neg = {}, {}
+    for m in mentions:
+        x = _norm(m.get("dish"))
+        if not x:
+            continue
+        hits = set(by_name.get(x, ()))
+        for w in words(x):
+            hits |= by_word.get(w, set())
+        if len(hits) != 1:
+            continue
+        i = next(iter(hits))
+        if m.get("sentiment") == "positive":
+            pos.setdefault(i, set()).add(m.get("review_id"))
+        elif m.get("sentiment") == "negative":
+            neg.setdefault(i, set()).add(m.get("review_id"))
+    out = []
+    for i in set(pos) | set(neg):
+        p, q = pos.get(i, set()), neg.get(i, set())
+        out.append({"name": items[i]["name"], "positive_reviews": len(p), "negative_reviews": len(q),
+                    "review_ids": sorted(x for x in (p | q) if x is not None)[:8]})
+    return sorted(out, key=lambda it: (-it["positive_reviews"], it["negative_reviews"], it["name"]))
 
 
-def dish_scorecard(restaurant_id, db_path=DB_PATH):
-    """One row per costed, priced dish: margin, popularity, sentiment, verdict."""
+def dish_scorecard(restaurant_id, db_path=DB_PATH, mentions=None):
+    """One row per costed, priced dish: margin, popularity, sentiment, verdict.
+    `mentions`: _dish_mentions' rows when the caller already read them."""
     import inventory_ledger
     data = inventory_ledger.menu_profitability(restaurant_id)
     priced = [dict(e) for e in (data.get("priced") or [])]
@@ -148,7 +197,7 @@ def dish_scorecard(restaurant_id, db_path=DB_PATH):
     for it in priced:
         it["quadrant"] = quad.get(it["name"])
 
-    _attach_sentiment(priced, _dish_mentions(restaurant_id, db_path))
+    _attach_sentiment(priced, _dish_mentions(restaurant_id, db_path) if mentions is None else mentions)
     for it in priced:
         v = _verdict(it)
         it["action"], it["why"] = (v if v else (None, None))

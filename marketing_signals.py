@@ -515,6 +515,16 @@ def weather_signal(restaurant_id) -> dict:
     weather.py has fed the labor scheduler for months. A patio push on the
     first genuinely warm day is the highest-return post a restaurant makes all
     year, and the content calendar was working from a fixed holiday list.
+
+    A note names a setting or a service only when the restaurant's own facts
+    back it (re-audit AUX-9): "patio weather" for a restaurant with a patio
+    (patio roles on its schedule, or a patio in its profile), "delivery and
+    takeout push" for one that does takeout or delivery (a delivery share,
+    or takeout/delivery in its profile) — the calendar is told never to
+    invent a patio, and this note was inventing one. Otherwise the day is
+    said plainly (the temperature, the forecast). The forecast's own words
+    are `short_forecast` (weather.get_forecast_for_week); the week starts on
+    the restaurant's own date.
     """
     try:
         from models import get_restaurant
@@ -522,17 +532,23 @@ def weather_signal(restaurant_id) -> dict:
         restaurant = get_restaurant(restaurant_id)
         if not restaurant:
             return {}
-        today = datetime.now().date()
+        try:
+            from time_utils import restaurant_now
+            today = restaurant_now(restaurant).date()
+        except Exception:
+            today = datetime.now().date()
         week = [(today + timedelta(days=i)).isoformat() for i in range(7)]
         forecast = get_forecast_for_week(restaurant, week) or []
     except Exception:
         return {}
+    facts = _setting_facts(restaurant)
 
     notes = []
     for day in forecast:
         try:
             high = day.get("high_f") if isinstance(day, dict) else None
-            desc = (day.get("summary") or day.get("forecast") or "") if isinstance(day, dict) else ""
+            desc = (day.get("short_forecast") or day.get("summary") or day.get("forecast") or "") \
+                if isinstance(day, dict) else ""
             date = day.get("date") if isinstance(day, dict) else None
         except Exception:
             continue
@@ -543,12 +559,31 @@ def weather_signal(restaurant_id) -> dict:
         except Exception:
             label = str(date)
         if high >= 72:
-            notes.append(f"{label}: {int(high)}°F — patio weather")
+            if facts["patio"]:
+                notes.append(f"{label}: {int(high)}°F — patio weather")
         elif high <= 38:
             notes.append(f"{label}: {int(high)}°F — a night for comfort food")
         elif desc and any(w in str(desc).lower() for w in ("rain", "storm", "snow")):
-            notes.append(f"{label}: {desc} — delivery and takeout push")
+            notes.append(f"{label}: {desc}" + (" — delivery and takeout push" if facts["takeout"] else ""))
     return {"notes": notes[:3]}
+
+
+def _setting_facts(restaurant) -> dict:
+    """What the restaurant's own record says it has: a patio (roles the
+    schedule thins on a rainy day, or the word in its profile) and takeout or
+    delivery (a delivery share, or the words in its profile)."""
+    import json as _json
+    text = " ".join(str(getattr(restaurant, f, None) or "") for f in
+                    ("known_for", "vibe", "menu_notes", "neighborhood", "voice_notes")).lower()
+    try:
+        patio_roles = _json.loads(getattr(restaurant, "patio_roles_json", None) or "[]") or []
+    except (TypeError, ValueError):
+        patio_roles = []
+    patio = bool(patio_roles) or any(w in text for w in ("patio", "outdoor seating", "rooftop", "beer garden",
+                                                         "terrace", "courtyard"))
+    takeout = bool(getattr(restaurant, "delivery_pct", None) or 0) or any(
+        w in text for w in ("takeout", "take-out", "take out", "delivery", "to-go"))
+    return {"patio": patio, "takeout": takeout}
 
 
 def generation_context(restaurant_id, db_path: str = DB_PATH) -> str:

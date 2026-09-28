@@ -115,8 +115,10 @@ def test_the_day_line_carries_the_weather_and_the_calendar(db_path, monkeypatch)
 def test_a_slow_weekday_is_named_with_a_way_to_act_on_it(db_path, monkeypatch):
     import demand
     rid = _rid(db_path, module_labor=1)
-    monkeypatch.setattr(demand, "slow_days", lambda *a, **k: {
-        "available": True, "slow_days": [{"day": "Tuesday", "vs_average_pct": -22, "samples": 8}]})
+    # The Opportunity Feed's own reading (one owner for the slow night,
+    # re-audit AUX-7): demand.reliably_slow_nights, not labor's slow_days.
+    monkeypatch.setattr(demand, "reliably_slow_nights", lambda *a, **k: {
+        "available": True, "slow": [{"day": "Tuesday", "vs_typical_pct": -22, "samples": 8, "under": 8}]})
     # Mondays only — the quiet weekday doesn't change overnight.
     line = _lines(rid, db_path, today=date(2026, 9, 21))["slow_day"]
     assert "Tuesdays run about 22% under" in line["text"] and "Tuesday" in line["ask"]

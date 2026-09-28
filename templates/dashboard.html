@@ -944,6 +944,12 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .mkt-opps-foot{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px;font-size:13.5px;color:var(--ink3)}
 .mkt-opps-foot .cv-ok{width:16px;height:16px}
 .mkt-opps-list.collapsed>.mkt-opp:nth-child(n+4){display:none}
+.mkt-opps .mkt-opps-load{margin:18px 0 6px}
+.mkt-opps-foot .mkt-opps-note{font-size:12.5px;color:var(--ink3)}
+.mkt-opps-foot .cv-warn{width:16px;height:16px}
+/* The SMS campaigns' "most likely cause" opens from Campaigns → Performance
+   (re-audit AUX-3), not from the social brief it was never about. */
+.cp-perf-cause .ai-cause-go{justify-content:flex-start;margin-top:14px}
 /* ── Campaigns (owner, 9/28/26) ─────────────────────────────────────────
    The guest text club rebuilt AI-first on its own Marketing tab: one
    question leads, four steps follow, a live phone shows the text. Depth
@@ -11409,14 +11415,13 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 
   <!-- AI marketing brief, on the shared card (density round #42) -->
   {# The same AI read box as Food Cost and Labor (owner, 9/28/26): .lb2-ai
-     with its breathing tag. .mkt-brief stays - the most likely cause finds
-     its host's read by it. #}
+     with its breathing tag. The brief is written from the Opportunity
+     Feed's cards above it (client_api._do_mkt_insight). Its old "most likely
+     cause" - a diagnosis of the guest TEXT campaigns, not of the social
+     brief - now opens from Campaigns → Performance (re-audit AUX-3). #}
   <section class="lb2-ai mkt-brief" aria-label="Cavnar AI marketing brief">
     <div class="tag">Cavnar AI&rsquo;s marketing brief</div>
     <div class="insight-text insight-loading" id="mkt-insight"><div class="cm-compose" data-w=".9,.75,.55"><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px"></div><div class="cm-caret" style="height:16px"></div></div></div>
-    {# The diagnosis sits under the brief as its "most likely cause"
-       (density round #42), not inside the Guest text club after a send. #}
-    <div class="diag" id="guest-diag" hidden style="margin-top:14px"></div>
   </section>
   <section class="hb-card bm-card" data-bm-module="marketing" hidden aria-label="How you compare" style="margin-top:18px"></section>
 
@@ -11692,6 +11697,10 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
       <div class="cp-h cp-hrow"><div><div class="k">Performance</div><h2 id="cp-perf-h">What went out</h2></div>
         <div class="cp-perfsum" id="cp-perfsum"></div></div>
       <div class="cp-insights" id="cp-insights" hidden></div>
+      {# The campaigns' "most likely cause" (guest_marketing.diagnose via
+         /api/marketing/diagnosis): its button opens the cause card here,
+         beside what went out - the host itself is never shown in place. #}
+      <div class="cp-perf-cause"><div class="diag" id="guest-diag" hidden></div></div>
       <div class="cp-camps" id="guest-history-list"><div class="cp-empty"><span class="art" aria-hidden="true"><i></i><i></i><i></i></span>Your first campaign lands here, with what it did.</div></div>
     </section>
 
@@ -14642,9 +14651,12 @@ function saveDraft(id) {
     }).catch(function(){ settle(); toast('Couldn\u2019t confirm that went through \u2014 refresh to check before trying again.','error'); });
   }).catch(function(){ settle(); toast('Network error — try again','error'); });
 }
-var _igConnected = {% if restaurant.ig_token %}true{% else %}false{% endif %};
-var _fbConnected = {% if restaurant.fb_page_token and restaurant.fb_page_id %}true{% else %}false{% endif %};
-var _ggConnected = {% if restaurant.gmb_refresh_token and restaurant.gmb_account_id and restaurant.gmb_location_id %}true{% else %}false{% endif %};
+{# One "connected" rule (marketing_publish.channels_of, re-audit OPP-15): the
+   Studio, the Opportunity Feed and Home read the same test each publish route
+   makes - Instagram needs its account id as well as the token. #}
+var _igConnected = {% if social_channels is defined and social_channels.instagram %}true{% else %}false{% endif %};
+var _fbConnected = {% if social_channels is defined and social_channels.facebook %}true{% else %}false{% endif %};
+var _ggConnected = {% if social_channels is defined and social_channels.google %}true{% else %}false{% endif %};
 
 var _toastTimer=null;
 function toggleRows(tbodyId, btnId, total) {
@@ -18040,7 +18052,8 @@ var DIAG_SURFACE={'lb2-diag':'labor','guest-diag':'marketing'};
 var CAUSE_HOSTS=['review-diagnosis','lb2-diag','guest-diag'];
 function _causeAi(host){
   var p=host.previousElementSibling;if(p&&p.classList&&p.classList.contains('lb2-ai'))return p;
-  var q=host.parentNode;if(q&&q.classList&&q.classList.contains('mkt-brief'))return q;
+  /* The campaigns' cause lives in Campaigns > Performance (re-audit AUX-3). */
+  var q=host.parentNode;if(q&&q.classList&&(q.classList.contains('mkt-brief')||q.classList.contains('cp-perf-cause')))return q;
   return null;
 }
 function causeSync(id){
@@ -26291,18 +26304,42 @@ function revokeOtherSessions(btn){
 // typical day, never an expected return. "Draft it" opens the Campaign
 // Studio with the goal filled in and drafts the channels the card names;
 // an answered card goes (recControlsHtml -> /api/recs/event). ES5 only.
+// Re-audit 9/28/26: the section opens on the sliding pulse while it reads;
+// only the cards on screen are logged as shown ("Show more" asks the server
+// for the rest, ?show=all) and the list stays open after an answer; a failed
+// reload leaves no stale "Show N more"; the empty state says what each read
+// found; "Draft it" names its card, is busy while it drafts, asks before it
+// replaces a draft in progress, turns on only channels that can reach
+// someone, and hands its card to the Studio so a send on any channel records
+// the card as acted on (mktOppRecKey -> rec_key).
 var MKT_OPP_KIND = {slow_night: 'Slow night', holiday: 'Holiday', category_dip: 'Sales dip', dish_promote: 'Dish',
                     dish_praise: 'Guest favorite', list_idle: 'Your list', posting: 'Posting'};
-var _mktOpps = [], _mktOppsChecked = [];
-function loadMktOpps() {
-  var sec = document.getElementById('mkt-opps'), list = document.getElementById('mkt-opps-list');
+var MKT_OPP_VISIBLE = 3;   /* marketing_opportunities.VISIBLE; .mkt-opps-list.collapsed shows three */
+var _mktOpps = [], _mktOppsChecked = [], _mktOppsSources = [];
+var _mktOppSt = {open: false, seq: 0, opened: {}, drafting: false, focused: ''};
+function loadMktOpps(quiet) {
+  var sec = document.getElementById('mkt-opps'), list = document.getElementById('mkt-opps-list'), foot = document.getElementById('mkt-opps-foot');
   if (!sec || !list) return;
-  fetch('/api/marketing/opportunities', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
-    sec.hidden = false;
-    if (!d || !d.ok) { loadFailed(list, d); return; }
-    _mktOpps = d.items || []; _mktOppsChecked = d.checked || [];
+  var seq = ++_mktOppSt.seq;
+  sec.hidden = false;
+  if (!quiet && !_mktOpps.length) {
+    list.classList.remove('collapsed');
+    list.innerHTML = '<div class="dr-pulse wide mkt-opps-load" role="status" aria-label="Loading opportunities"><i></i></div>';
+    if (foot) foot.innerHTML = '';
+  }
+  fetch('/api/marketing/opportunities' + (_mktOppSt.open ? '?show=all' : ''), {credentials: 'same-origin'}).then(apiJson).then(function(d) {
+    if (seq !== _mktOppSt.seq) return;
+    if (!d || !d.ok) { mktOppsFailed(d); return; }
+    _mktOpps = d.items || []; _mktOppsChecked = d.checked || []; _mktOppsSources = d.sources || [];
     mktPaintOpps();
-  }).catch(function() { sec.hidden = false; loadFailed(list, null); });
+    mktOppFocus();
+  }).catch(function() { if (seq === _mktOppSt.seq) mktOppsFailed(null); });
+}
+function mktOppsFailed(d) {
+  var list = document.getElementById('mkt-opps-list'), foot = document.getElementById('mkt-opps-foot');
+  _mktOpps = [];
+  if (foot) foot.innerHTML = '';
+  if (list) { list.classList.remove('collapsed'); loadFailed(list, d); }
 }
 function mktOppWhen(o) {
   if (o.days_away == null) return '';
@@ -26320,55 +26357,174 @@ function mktOppCard(o, i) {
     + (o.why ? '<div class="why">' + num(o.why) + '</div>' : '')
     + (meta.length ? '<div class="meta">' + meta.join('') + '</div>' : '')
     + '<div class="ft">' + conf + recControlsHtml(o.key, 'marketing', 'marketing', {noTrack: 1})
-    + '<button type="button" class="cbtn ' + (i === 0 ? 'cbtn-primary' : 'cbtn-secondary') + ' cbtn-sm mkt-opp-go" data-opp-draft="' + esc(o.key) + '">Draft it &rarr;</button></div>'
+    + '<button type="button" class="cbtn ' + (i === 0 ? 'cbtn-primary' : 'cbtn-secondary') + ' cbtn-sm mkt-opp-go" data-opp-draft="' + esc(o.key) + '" aria-label="Draft it: ' + esc(o.title || '') + '">Draft it &rarr;</button></div>'
     + '</div>';
+}
+// What each read found, in words (marketing_opportunities.SOURCES):
+// checked, nothing to read yet (and why), or couldn't be read.
+function mktOppsSourceWords() {
+  var ok = [], none = [], bad = [], i, s;
+  for (i = 0; i < _mktOppsSources.length; i++) {
+    s = _mktOppsSources[i];
+    if (s.state === 'failed') bad.push(s.label);
+    else if (s.state === 'no_data') none.push(s.label + (s.note ? ' (' + s.note + ')' : ''));
+    else ok.push(s.label);
+  }
+  if (!_mktOppsSources.length) ok = _mktOppsChecked.slice();
+  return {ok: ok, none: none, bad: bad};
+}
+function mktOppsEmpty() {
+  var w = mktOppsSourceWords(), t = '';
+  if (w.ok.length) t += ' Cavnar AI checked ' + w.ok.join(', ') + '.';
+  if (w.none.length) t += ' Nothing to read yet for ' + w.none.join('; ') + '.';
+  if (w.bad.length) t += ' Couldn’t check ' + w.bad.join(', ') + ' just now — it tries again next time.';
+  return '<i class="' + (w.bad.length ? 'cv-warn' : 'cv-ok') + '" aria-hidden="true"></i><span>' + num('Nothing stands out right now.' + t) + '</span>';
 }
 function mktPaintOpps() {
   var list = document.getElementById('mkt-opps-list'), foot = document.getElementById('mkt-opps-foot');
   if (!list || !foot) return;
   if (!_mktOpps.length) {
     list.innerHTML = ''; list.classList.remove('collapsed');
-    foot.innerHTML = '<i class="cv-ok" aria-hidden="true"></i><span>Nothing stands out right now. Cavnar AI checked ' + esc(_mktOppsChecked.join(', ')) + '.</span>';
+    foot.innerHTML = mktOppsEmpty();
     return;
   }
   var h = '';
   for (var i = 0; i < _mktOpps.length; i++) h += mktOppCard(_mktOpps[i], i);
   list.innerHTML = h;
-  var extra = _mktOpps.length - 3;
-  list.classList.toggle('collapsed', extra > 0);
-  foot.innerHTML = extra > 0 ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="mktOppsMore()">Show ' + extra + ' more</button>' : '';
+  var extra = _mktOpps.length - MKT_OPP_VISIBLE, folded = extra > 0 && !_mktOppSt.open, bad = mktOppsSourceWords().bad;
+  list.classList.toggle('collapsed', folded);
+  foot.innerHTML = (folded ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="mktOppsMore(this)">Show ' + extra + ' more</button>' : '')
+    + (bad.length ? '<span class="mkt-opps-note">' + esc('Couldn’t check ' + bad.join(', ') + ' just now.') + '</span>' : '');
 }
-window.mktOppsMore = function() {
-  var list = document.getElementById('mkt-opps-list'), foot = document.getElementById('mkt-opps-foot');
-  if (list) list.classList.remove('collapsed');
-  if (foot) foot.innerHTML = '';
+// "Show more": the rest are on screen from here, so the server logs them as
+// shown now (?show=all) - not on load, when a card behind the fold nobody
+// opened expired as ignored.
+window.mktOppsMore = function(btn, after) {
+  var done = (btn && window.cbtnBusy) ? cbtnBusy(btn) : function() {};
+  var seq = ++_mktOppSt.seq;
+  fetch('/api/marketing/opportunities?show=all', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
+    done();
+    if (seq !== _mktOppSt.seq) return;
+    if (!d || !d.ok) { if (typeof toast === 'function') toast((d && d.error) || 'Couldn’t load the rest', 'error'); return; }
+    _mktOppSt.open = true;
+    _mktOpps = d.items || []; _mktOppsChecked = d.checked || []; _mktOppsSources = d.sources || [];
+    mktPaintOpps();
+    if (after) after();
+  }).catch(function() { done(); if (typeof toast === 'function') toast('Couldn’t reach Cavnar AI', 'error'); });
 };
-// A card answered here (Done / Pass) leaves the feed at once.
+// A card answered here (Done / Pass) leaves the feed at once; the list stays
+// as open as it was. A card that moves up from behind "Show more" is on
+// screen now but was never logged as shown: a quiet reload logs it.
 recOnAnswered(function(key) {
   var had = false;
   for (var i = _mktOpps.length - 1; i >= 0; i--) if (_mktOpps[i].key === key) { _mktOpps.splice(i, 1); had = true; }
-  if (had) mktPaintOpps();
+  if (!had) return;
+  mktPaintOpps();
+  var next = _mktOpps[MKT_OPP_VISIBLE - 1];
+  if (!_mktOppSt.open && next && !next.rec_id) loadMktOpps(true);
 });
-// "Draft it": the Campaign Studio, the goal typed in, the card's channels on.
-window.mktOppDraft = function(o) {
-  var a = o.action || {}, chans = a.channels || ['text', 'email', 'social'];
-  if (window.switchMktTab) switchMktTab('campaigns');
-  _cp.chan = {text: chans.indexOf('text') >= 0, email: chans.indexOf('email') >= 0,
-              social: chans.indexOf('social') >= 0 && cpSocialPlats().length > 0};
-  _cp.chanSet = true;
-  var p = document.getElementById('cp-prompt'); if (p) p.value = a.prompt || o.title || '';
-  cpCreate();
+// A link to one card (the morning brief's slow-night line opens
+// marketing/opportunities?card=<key>): that card, brought into view once.
+function mktOppFlash(key) {
+  var cards = document.querySelectorAll('#mkt-opps-list [data-opp-key]');
+  for (var i = 0; i < cards.length; i++) {
+    if (cards[i].getAttribute('data-opp-key') !== key) continue;
+    try { cards[i].scrollIntoView({behavior: 'smooth', block: 'center'}); } catch (e) { cards[i].scrollIntoView(); }
+    if (window.cavFlash) cavFlash(cards[i]);
+  }
+}
+function mktOppFocus() {
+  var p = window.cavNavParse ? cavNavParse(window.location.hash) : null;
+  var key = (p && p.head === 'marketing' && p.rest[0] === 'opportunities' && p.query.card) || '';
+  if (!key || _mktOppSt.focused === key) return;
+  var at = -1;
+  for (var i = 0; i < _mktOpps.length; i++) if (_mktOpps[i].key === key) at = i;
+  if (at < 0) return;
+  _mktOppSt.focused = key;
+  if (at >= MKT_OPP_VISIBLE && !_mktOppSt.open) { mktOppsMore(null, function() { mktOppFlash(key); }); return; }
+  mktOppFlash(key);
+}
+// "Draft it": the Campaign Studio, the goal typed in, the card's channels on
+// - only the ones that can reach someone: a text with nobody to text, an
+// email with no list, a post with no account connected is never drafted, and
+// a posting card never falls back to a guest text.
+function mktOppChans(o) {
+  var want = (o.action && o.action.channels) || ['text', 'email', 'social'], ov = (window._cp && _cp.ov) || {};
+  return {text: want.indexOf('text') >= 0 && +ov.subscribers > 0,
+          email: want.indexOf('email') >= 0 && +ov.email_subscribers > 0,
+          social: want.indexOf('social') >= 0 && cpSocialPlats().length > 0};
+}
+function mktOppNoChannel(o) {
+  var want = (o.action && o.action.channels) || [];
+  if (want.length === 1 && want[0] === 'social') return 'Connect Instagram, Facebook or Google first — Account → Connections.';
+  if (want.length === 1 && want[0] === 'email') return 'Nobody is on your email list yet.';
+  if (want.length === 1 && want[0] === 'text') return 'Nobody can be texted yet.';
+  return 'Nobody can be texted or emailed yet, and no account is connected to post to.';
+}
+function mktOppDrafting() { var b = window._cp && _cp.busy; return !!(b && (b.text || b.email || b.social)); }
+// A draft in progress for another goal, not yet sent.
+function mktOppHasDraft(o) {
+  var b = document.getElementById('cp-builder'), sb = document.getElementById('guest-send-btn');
+  if (!b || b.hidden || typeof cpHasDraft !== 'function') return false;
+  if (sb && sb.classList.contains('sent')) return false;
+  if (window._cp && _cp.prompt && o.action && _cp.prompt === o.action.prompt) return false;
+  return cpHasDraft('text') || cpHasDraft('email') || cpHasDraft('social');
+}
+// The card the Studio is drafting for, while its goal is still the card's:
+// every send route takes it as rec_key and records the card as acted on,
+// whichever channel went (marketing_opportunities.implemented_by_send).
+function mktOppRecKey() { return (window._cp && _cp.recKey && _cp.prompt === _cp.recFor) ? _cp.recKey : ''; }
+window.mktOppDraft = function(o, done) {
+  done = done || function() {};
+  function go() {
+    var ch = mktOppChans(o), a = o.action || {}, goal = (a.prompt || o.title || '').trim();
+    if (!ch.text && !ch.email && !ch.social) { if (typeof toast === 'function') toast(mktOppNoChannel(o), 'error'); done(); return; }
+    if (window.switchMktTab) switchMktTab('campaigns');
+    _cp.chan = ch; _cp.chanSet = true;
+    _cp.recKey = o.key; _cp.recFor = goal;
+    var p = document.getElementById('cp-prompt'); if (p) p.value = goal;
+    cpCreate();
+    // Busy until every channel's draft is back (the Studio's own flags).
+    (function idle(n) { if (mktOppDrafting() && n < 480) { setTimeout(function() { idle(n + 1); }, 250); return; } done(); })(0);
+  }
+  if (_cp.ov) { go(); return; }
+  // Which channels can reach someone is the audience's size: read it first.
+  fetch('/api/guest-overview', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
+    if (d && d.ok && !_cp.ov) _cp.ov = d;
+    go();
+  }).catch(function() { go(); });
 };
 document.addEventListener('click', function(e) {
   var t = e.target && e.target.closest ? e.target.closest('[data-opp-draft]') : null;
-  if (!t || t.disabled) return;
-  var key = t.getAttribute('data-opp-draft'), o = null;
-  for (var i = 0; i < _mktOpps.length; i++) if (_mktOpps[i].key === key) o = _mktOpps[i];
+  if (!t || t.disabled || t.getAttribute('aria-busy') === 'true') return;
+  var key = t.getAttribute('data-opp-draft'), o = null, i;
+  for (i = 0; i < _mktOpps.length; i++) if (_mktOpps[i].key === key) o = _mktOpps[i];
   if (!o) return;
+  // One draft at a time: two quick taps drafted every channel twice.
+  if (_mktOppSt.drafting || mktOppDrafting()) return;
+  // A draft in progress for another goal: the first tap asks, the second
+  // replaces it (the Studio's own send button: "Tap again").
+  if (mktOppHasDraft(o) && t.getAttribute('data-armed') !== '1') {
+    t.setAttribute('data-armed', '1');
+    t.setAttribute('data-label', t.innerHTML);
+    t.textContent = 'Replace your draft? Tap again';
+    setTimeout(function() {
+      if (t.getAttribute('data-armed') !== '1') return;
+      t.removeAttribute('data-armed'); t.innerHTML = t.getAttribute('data-label') || 'Draft it &rarr;';
+    }, 6000);
+    return;
+  }
+  if (t.getAttribute('data-armed') === '1') { t.removeAttribute('data-armed'); t.innerHTML = t.getAttribute('data-label') || 'Draft it &rarr;'; }
   // Opened, not answered: the owner still says Done or Pass on the card.
-  fetch('/api/recs/event', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({key: key, event: 'opened', surface: 'marketing', module: 'marketing'})}).catch(function() {});
-  mktOppDraft(o);
+  // Once per card per page, however many times it is tapped.
+  if (!_mktOppSt.opened[key]) {
+    _mktOppSt.opened[key] = 1;
+    fetch('/api/recs/event', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({key: key, event: 'opened', surface: 'marketing', module: 'marketing'})}).catch(function() {});
+  }
+  _mktOppSt.drafting = true;
+  var restore = window.cbtnBusy ? cbtnBusy(t, 'Drafting') : function() {};
+  mktOppDraft(o, function() { _mktOppSt.drafting = false; restore(); });
 });
 
 // ── Campaign Studio (owner, 9/28/26) ───────────────────────────────────────
@@ -26959,7 +27115,8 @@ window.sendGuestCampaign = function(btn) {
     var message = _cpVal('guest-campaign-message');
     var url = _cp.winback ? '/api/guest-winback/' + _cp.winback.id + '/send' : '/api/guest-campaign/send';
     var body = _cp.winback ? {message: message}
-      : {message: message, segment: _cp.seg, type: _cp.type, target_day: _cp.targetDay || '', link_url: _cpVal('guest-campaign-link')};
+      : {message: message, segment: _cp.seg, type: _cp.type, target_day: _cp.targetDay || '', link_url: _cpVal('guest-campaign-link'),
+         rec_key: mktOppRecKey()};
     fetch(url, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
       .then(apiJson).then(function(d) {
         if (d && d.ok) {
@@ -26976,7 +27133,8 @@ window.sendGuestCampaign = function(btn) {
       });
   });
   if (ready.email) steps.push(function(next) {
-    var body = {subject: _cpVal('guest-newsletter-subject'), body: _cpVal('guest-newsletter-body'), design: cpDesign(), segment: _cp.seg};
+    var body = {subject: _cpVal('guest-newsletter-subject'), body: _cpVal('guest-newsletter-body'), design: cpDesign(), segment: _cp.seg,
+                rec_key: mktOppRecKey()};
     var addr = _cpVal('cp-addr-in'); if (addr && !ov.mailing_address_set) body.mailing_address = addr;
     _cpPost('/api/guest-newsletter', body).then(function(d) {
       if (d && d.ok) {
@@ -26993,6 +27151,7 @@ window.sendGuestCampaign = function(btn) {
       var url = p.key === 'instagram' ? '/api/post-to-instagram' : (p.key === 'facebook' ? '/api/post-to-facebook' : '/api/post-to-google');
       var body = p.key === 'instagram' ? {caption: cap, topic: _cp.prompt, image_url: _cp.photo ? _cp.photo.url : ''}
         : (p.key === 'facebook' ? {caption: cap, topic: _cp.prompt} : {summary: cap, cta_type: '', cta_url: '', topic: _cp.prompt});
+      body.rec_key = mktOppRecKey();
       _cpPost(url, body).then(function(d) {
         if (d && d.ok) line(true, 'Posted to ' + p.label); else line(false, p.label + ': ' + _escHtml((d && d.error) || 'couldn’t post'));
         next();

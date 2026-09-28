@@ -2067,15 +2067,20 @@ def _do_rec_event(u):
     refused = (started or {}).get("tracker_refused")
     if tracker:
         meta["tracker_id"] = tracker.get("id")
+    # Recurring advice (a slow weekday, an idle list, a category dip, a
+    # posting gap) comes back with its next occurrence: the answer says how
+    # long it holds instead of "won't suggest it again" (re-audit OPP-9).
+    held = _rl.recurring_silence(key.strip(), event, meta.get("kind"))
     if event == "completed":
         silence = _rl.SILENCE_DAYS["done"]
-        message = "Done \u2014 Cavnar AI won\u2019t suggest it again"
+        message = (f"Done \u2014 hidden for {held} days" if held
+                   else "Done \u2014 Cavnar AI won\u2019t suggest it again")
         if tracker:
             message += f". Now {tracker['label_text']}"
         elif refused and refused.get("code") == "in_flight":
             message += f". {refused['reason']}"
     elif event == "dismissed" and meta.get("kind") == "not_for_us":
-        message = "Noted \u2014 it won\u2019t come back"
+        message = f"Noted \u2014 hidden for {held} days" if held else "Noted \u2014 it won\u2019t come back"
     elif event == "accepted":
         if tracker:
             window = int(tracker.get("window_days") or info["default_window_days"])

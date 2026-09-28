@@ -3267,6 +3267,33 @@ def _do_mkt_insight(rid, raw=False):
         # the same advice back (M-8).
         import insight_store as _ist_ans_m
         answered_m = _ist_ans_m.do_not_repeat_block(rid, ("insight_marketing",))
+        # The Opportunity Feed's current cards (re-audit AUX-3, first audit
+        # #43): the owner reads them directly above this brief, and the
+        # brief called a different thing "the single biggest opportunity
+        # this week" ("Halloween" over the feed's "Fill Tuesday"). It is now
+        # written from them - one answer to "what should I do this week".
+        # Measured lines, no plate margins (every Marketing login reads it).
+        try:
+            import marketing_opportunities as _mo_m
+            _feed_m = _mo_m.context_lines(rid)
+        except Exception:
+            _feed_m = []
+        feed_clause = ""
+        if _feed_m:
+            feed_clause = ("\n\nWhat Cavnar AI measured for this week, in order (the owner sees these as cards "
+                           "above this brief; every figure in them is measured):\n"
+                           + "\n".join(f"- {c['line']}" for c in _feed_m)
+                           + "\nLine 1 names the first of these as this week's biggest opportunity. The two "
+                             "recommendations add to them (an angle, a dish, a post for one of them) and never "
+                             "contradict them or put something else ahead of them.")
+        # Inputs this read never had: the feed's cards bring sales (a slow
+        # night, a category) and the guest list (an idle list) when they
+        # carry them.
+        _missing_m = ["guests", "sales"]
+        if any({"sales", "pos"} & set(c.get("sources") or ()) for c in _feed_m):
+            _missing_m.remove("sales")
+        if any(c.get("kind") == "list_idle" for c in _feed_m):
+            _missing_m.remove("guests")
         prompt = f"""You are the Cavnar AI Marketing Consultant for {name}.
 Today: {today_m}
 
@@ -3277,7 +3304,7 @@ Brand voice: {p["voice"]}.
 {menu_clause}
 {never_clause}
 Upcoming holidays in the next 30 days: {upcoming if upcoming else "none"}.
-Recent content already generated (do NOT repeat these): {recent_str}.{perf_clause}
+Recent content already generated (do NOT repeat these): {recent_str}.{perf_clause}{feed_clause}
 
 Return EXACTLY this shape and nothing else:
 
@@ -3303,7 +3330,8 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
         # built from (counts) and the reach change (%, with its direction);
         # the prompt backs anything else it states. No cause anchors: a topic
         # that was posted, or a holiday coming up, is not evidence of what
-        # moved reach. Guests and sales were never inputs (M2).
+        # moved reach. Guests and sales are inputs only through the feed's
+        # cards (_missing_m, M2).
         import response_validation as _rv
         # No reach projection from figures the sync has stopped refreshing.
         _fc_line, _fc_pred = (None, None) if _mkt_unreliable else _mkt_forecast(_mkt_reach_vals, _mkt_diff)
@@ -3331,7 +3359,7 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
             restaurant_id=rid, surface="marketing_insight", facts=_mkt_facts, context_text=prompt,
             tenant_names_denied=_mkt_tenants, confidence=None,
             data_state=_dh_m.merge_data_state(
-                {"missing_inputs": ["guests", "sales"]},
+                {"missing_inputs": _missing_m},
                 {k: v for k, v in (_ready_m.get("data_state") or {}).items() if k != "not_current"}),
             policy={"action": "marketing_insight"})
 
@@ -4231,6 +4259,10 @@ def _do_post_to_google(current_user, data):
                     post_id=result.get("name") or None, post_platform="google")
     except Exception:
         pass
+    if data.get("rec_key"):
+        import marketing_opportunities   # began on a feed card (OPP-10)
+        marketing_opportunities.implemented_by_send(rid, data.get("rec_key"), "social",
+                                                    user_id=current_user.get("id"))
     # `post_id` is what the web read, `name` what the phone read.
     return {"ok": True, "post_id": result.get("name"), "name": result.get("name") or ""}, 200
 
@@ -7171,12 +7203,19 @@ def _track_campaign_outcome(rid, data, result, user_id):
     weekday's sales — only once it has actually SENT. Recording on the Ask
     confirmation instead would track a campaign that quiet hours or an empty
     segment then refused. Best-effort: tracking never fails the send."""
+    # A send that began on an Opportunity Feed card names it (`rec_key`):
+    # that card was acted on, whatever it was about (re-audit OPP-10).
+    if (result or {}).get("ok") and (result or {}).get("sent") and (data or {}).get("rec_key"):
+        import marketing_opportunities
+        marketing_opportunities.implemented_by_send(rid, data.get("rec_key"), "text", user_id=user_id,
+                                                    sent=result.get("sent"))
     day = (data.get("target_day") or "").strip().capitalize()
     if day not in _WEEKDAYS or not (result or {}).get("ok"):
         return None
     # The texts went out: "text your list before a slow <day>" was
-    # implemented (ROI #27) — recorded only if it was ever shown.
-    if (result or {}).get("sent"):
+    # implemented (ROI #27) — recorded only if it was ever shown, and once
+    # when the feed card that named it already recorded it above.
+    if (result or {}).get("sent") and (data.get("rec_key") or "") != f"slow_day:{day}":
         try:
             import rec_ledger
             from datetime import date as _d2

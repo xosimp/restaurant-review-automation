@@ -473,7 +473,13 @@ def signature_key(prefix: str, text: str) -> str:
 def declined_signatures(restaurant_id, db_path=DB_PATH) -> set:
     """The advice signatures of every recommendation this restaurant said
     "not for us" to, on any surface, while the answer holds. A plain hide
-    (two weeks) is not a decline and is not carried across."""
+    (two weeks) is not a decline and is not carried across.
+
+    A decline is a silence GRANTED for more than _DECLINE_MIN_DAYS, read
+    from when it was given — not one with that long still to run: a
+    recurring key's "not for us" holds a season (rec_ledger.
+    RECURRING_DECLINE_DAYS), and counted by what was left it stopped being a
+    decline on the other surfaces a month before it stopped on its own."""
     if not restaurant_id:
         return set()
     try:
@@ -483,7 +489,8 @@ def declined_signatures(restaurant_id, db_path=DB_PATH) -> set:
     try:
         rows = conn.execute(
             "SELECT key, title FROM rec_instances WHERE restaurant_id=? AND status='dismissed' "
-            "AND silenced_until IS NOT NULL AND silenced_until > datetime('now', ?)",
+            "AND silenced_until IS NOT NULL AND silenced_until > datetime('now') "
+            "AND silenced_until > datetime(COALESCE(closed_at, last_event_at), ?)",
             (restaurant_id, f"+{_DECLINE_MIN_DAYS} days")).fetchall()
     except Exception as e:
         print(f"[insight_store] declined signatures failed: {e}")

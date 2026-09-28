@@ -123,14 +123,25 @@ Drafts (create/edit/list), media upload, scheduling, attribution per post, the t
 
 Campaigns (9/28/26, the web's Marketing → Campaigns tab, formerly the guest text club):
 - `GET /api/guest-overview` / `/mobile/api/guest-overview` — `guest_marketing.campaign_overview` plus `join_url` (the signed `/join/<id>-<sig>`; a bare `/join/<id>` is refused) and `receipt_hint`. Fields: `subscribers`, `today`, `last_30`, `weekly` (12 × `{week_start, joined}`, oldest first), `last_campaign` (`{date, sent, segment_label}` or null), `tap_rate` / `back_rate` (`{pct, campaigns}`, null until `rate_min` campaigns of 10+ texts carry the measurement), `delivered` (% this month or null), `texts_this_month`, `sending_now`, `window`, `min_days_between`, `rate_min`. No open rate (SMS reports none) and no revenue. 403 without the Marketing module.
-- Marketing Opportunity Feed (9/28/26): `GET /api/marketing/opportunities` / `/mobile/api/marketing/opportunities`
-  → `{ok, items, checked}` (`marketing_opportunities.feed`). Each item: `key` (a rec_ledger key — `slow_day:<Weekday>`,
+- Marketing Opportunity Feed (9/28/26): `GET /api/marketing/opportunities[?show=all]` /
+  `/mobile/api/marketing/opportunities[?show=all]` → `{ok, items, visible, sources, checked}`
+  (`marketing_opportunities.feed`). Each item: `key` (a rec_ledger key — `slow_day:<Weekday>`,
   `holiday_promo:<ISO>`, `category_dip:<Category>`, `dish_promote:<Dish>`, `dish_praise:<Dish>`, `list_idle:text|email`,
-  `post_this_week`), `rec_id`, `kind`, `title`, `why`, `facts[]`, `stake` (`{amount, label}`, a measured gap, never an
-  expected return, or null), `when`, `days_away`, `action` (`{prompt, channels}` for the Campaign Studio), `score`,
-  `confidence` (K1, null on a fact card). Answered keys are left out (present_recs); `checked` names what was looked at.
-  Deterministic, stored per restaurant in `insight_cache` (kind `mkt_opps`) and rebuilt only when its fingerprint moves.
-  403 without the Marketing module.
+  `post_this_week` / `first_post` — Home's posting keys), `rec_id` (null for a card not yet logged as shown), `kind`,
+  `title`, `why`, `facts[]`, `stake` (`{amount, label}`, a measured gap, never an expected return, or null), `when`,
+  `days_away`, `action` (`{prompt, channels}` for the Campaign Studio), `score`, `confidence` (K1, null on a fact card).
+  Per viewer: a `dish_promote` card (a plate margin) only for a login with `FOOD_COST_VIEW` on a restaurant with the
+  Food Cost module. Answered keys are left out BEFORE each kind is capped (two slow nights, two of each dish kind, one
+  card per dish). Only the first `visible` (3) are logged as shown, with the confidence the page shows (K3); `?show=all`
+  ("Show more") logs the rest. `sources`: `[{key, label, state: checked|no_data|failed, note}]` per read (a failure
+  goes to `ops.capture` and that build is not stored); `checked` lists the labels read. Deterministic, stored per
+  restaurant in `insight_cache` (kind `mkt_opps`) under a fingerprint of every input (connections, consent and
+  unsubscribes, invite YESes, suppressions, processed dish reviews, finished sales nights, the category map, menu,
+  recipes, ingredient costs, item sales, skipped holidays). 403 without the Marketing module.
+  Studio sends from a card: `POST /api/guest-campaign/send`, `/api/guest-newsletter`, `/api/post-to-instagram`,
+  `/api/post-to-facebook`, `/api/post-to-google` (and their mobile twins) take an optional `rec_key`; after a
+  successful send it is recorded as `implemented` on that card's episode (`marketing_opportunities.implemented_by_send`
+  — feed kinds only, an episode someone was shown).
 - Campaign Studio (9/28/26): `GET /api/guest-overview` also returns `email_subscribers`, `mailing_address_set`,
   `insights` (`guest_marketing.campaign_insights`: at most three `{kind, figure, tone, text, basis}`, each measured —
   the audience whose texts brought the most guests back once 2 attributed campaigns went to it, the last email's opens
@@ -541,7 +552,12 @@ rates and pages are computed after redaction.
   `{action: "dismissed", kind, key, reason_code?, reason?}` (web and mobile
   twins; the reason is ≤200 characters).
   `recs/event` refuses the events the server writes itself (implemented,
-  superseded, checkin, abandoned, outcome, expired, shown). `GET decisions`
+  superseded, checkin, abandoned, outcome, expired, shown). **Recurring keys**
+  (`rec_ledger.RECURRING_DONE_DAYS`: `slow_day:*` 6 days, `list_idle:*` 30,
+  `category_dip:*` 28, `post_this_week` 7 — re-audit OPP-9): Done holds until
+  the next occurrence and "not for us" a season (90 days), and `message` says
+  so ("Done — hidden for 6 days", "Noted — hidden for 90 days") instead of
+  "won't suggest it again". `GET decisions`
   rows carry `reason_code`, and `answer` may be `implemented`; they are
   redacted for the login exactly as the record is (`decisions.history(viewer=)`:
   no food-cost, owner-only or loss decision for a manager, no food-cost or

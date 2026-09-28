@@ -430,6 +430,99 @@ def slow_days(restaurant_id, db_path=DB_PATH):
             "threshold_pct": SLOW_DAY_PCT, "consistency_floor": RELIABLY_SLOW_SHARE}
 
 
+_WEEKDAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+def weekday_gaps(restaurant_id, today=None, db_path=DB_PATH) -> dict:
+    """Every weekday's typical night against the typical day, from ONE
+    window (re-audit OPP-16): the LOOKBACK_WEEKS weeks of nights before
+    `today` — today left out, its sales are still coming in — finished
+    nights only (a night stored final=0 is one the POS has not closed; an
+    older row with no flag counts as final). The same medians labor's
+    forecast uses (each weekday's median; the typical day is the median of
+    those), but on the restaurant's own date and one set of nights, so a
+    card's % and its $ can never come from two windows.
+
+    {"available", "typical_day", "start", "end" (ISO, end exclusive),
+     "days": [{"day", "median_sales", "samples", "vs_typical_pct", "gap"
+     (typical day minus the weekday's median), "under" (its nights under
+     the typical day), "newest" (ISO)}], "reason"}. Never raises."""
+    today = today or local_today(restaurant_id)
+    start = today - timedelta(weeks=LOOKBACK_WEEKS)
+    try:
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT date, sales FROM labor_daily_history WHERE restaurant_id=? AND date>=? AND date<? "
+                "AND sales IS NOT NULL AND sales > 0 AND COALESCE(final, 1) != 0 ORDER BY date",
+                (restaurant_id, start.isoformat(), today.isoformat())).fetchall()
+        finally:
+            conn.close()
+    except Exception as e:
+        return {"available": False, "reason": f"sales history unreadable: {e}"}
+    by_day = {}
+    for r in rows:
+        try:
+            d = date.fromisoformat(str(r["date"])[:10])
+        except ValueError:
+            continue
+        by_day.setdefault(_WEEKDAY_NAMES[d.weekday()], []).append((d.isoformat(), float(r["sales"])))
+    # labor.build_demand_forecast's floor: three weekdays with two nights each.
+    usable = {k: v for k, v in by_day.items() if len(v) >= 2}
+    if len(usable) < 3:
+        return {"available": False, "reason": "not enough finished nights of sales in the last "
+                                              f"{LOOKBACK_WEEKS} weeks"}
+    medians = {k: _median([s for _d, s in v]) for k, v in usable.items()}
+    typical = _median(list(medians.values()))
+    if not typical or typical <= 0:
+        return {"available": False, "reason": "no usable sales figures"}
+    days = []
+    for k in _WEEKDAY_NAMES:
+        if k not in usable:
+            continue
+        vals = [s for _d, s in usable[k]]
+        med = medians[k]
+        days.append({"day": k, "median_sales": round(med, 2), "samples": len(vals),
+                     "vs_typical_pct": int(round((med / typical - 1) * 100)),
+                     "gap": round(typical - med, 2), "under": sum(1 for v in vals if v < typical),
+                     "newest": usable[k][-1][0]})
+    return {"available": True, "typical_day": round(typical, 2), "start": start.isoformat(),
+            "end": today.isoformat(), "days": days}
+
+
+def reliably_slow_nights(restaurant_id, today=None, db_path=DB_PATH) -> dict:
+    """The weekdays that run reliably under the typical day, slowest first —
+    weekday_gaps' one window under slow_days' own rules: SLOW_DAY_PCT under,
+    MIN_SAMPLES nights, RELIABLY_SLOW_SHARE of them under the typical day,
+    the newest no more than STALE_SAMPLE_DAYS old. The one reading of "a
+    slow night" the Marketing Opportunity Feed, the morning brief and the
+    weekly digest all say (one owner, one key: slow_day:<Weekday>).
+
+    {"available", "typical_day", "slow": [weekday_gaps day + "consistency"],
+     "reason"}."""
+    today = today or local_today(restaurant_id)
+    g = weekday_gaps(restaurant_id, today=today, db_path=db_path)
+    if not g.get("available"):
+        return {"available": False, "reason": g.get("reason")}
+    slow = []
+    for d in g["days"]:
+        n = d["samples"]
+        if n < MIN_SAMPLES or d["vs_typical_pct"] > -SLOW_DAY_PCT:
+            continue
+        share = d["under"] / n
+        if share < RELIABLY_SLOW_SHARE:
+            continue
+        try:
+            if (today - date.fromisoformat(d["newest"])).days > STALE_SAMPLE_DAYS:
+                continue
+        except ValueError:
+            continue
+        slow.append(dict(d, consistency=round(share, 2)))
+    slow.sort(key=lambda d: (d["vs_typical_pct"], d["day"]))
+    return {"available": True, "typical_day": g["typical_day"], "slow": slow,
+            "threshold_pct": SLOW_DAY_PCT, "consistency_floor": RELIABLY_SLOW_SHARE}
+
+
 def prep_list(restaurant_id, day=None, db_path=DB_PATH, limit=15):
     """Expected ingredient usage for `day` against what's on hand.
 
@@ -543,8 +636,11 @@ def upcoming_holidays(restaurant_id, now=None, days=HOLIDAY_LOOKAHEAD_DAYS, db_p
     carries what THIS restaurant's own sales showed on that holiday last
     year (schedule_economics.holiday_lift — its sales against the same
     weekday either side), or the generic label and nothing else:
-    [{"name", "date", "date_str" (M/D/YY), "days_away", "lift_pct",
-      "based_on", "label", "claim_kind"}]."""
+    [{"name", "display_name" (the name without the calendar's hint),
+      "approximate" (a date the calendar only estimates — never measured),
+      "date", "date_str" (M/D/YY), "days_away", "lift_pct", "based_on",
+      "last_year_date", "last_year_weekday" (the night the lift was read
+      from), "label", "claim_kind"}]."""
     import re
     from datetime import datetime
     from time_utils import mdy
@@ -569,19 +665,50 @@ def upcoming_holidays(restaurant_id, now=None, days=HOLIDAY_LOOKAHEAD_DAYS, db_p
         if not 0 <= away <= days:
             continue
         iso = hdate.date().isoformat()
-        entry = {"name": chunk[:chunk.rfind("(")].strip(), "date": iso, "date_str": mdy(iso),
+        name = chunk[:chunk.rfind("(")].strip()
+        display = holiday_display_name(name)
+        approximate = display in APPROXIMATE_HOLIDAYS
+        entry = {"name": name, "display_name": display, "approximate": approximate,
+                 "date": iso, "date_str": mdy(iso),
                  "days_away": away, "lift_pct": None, "based_on": None,
-                 "label": HOLIDAY_GENERIC_LABEL, "claim_kind": None}
+                 "label": HOLIDAY_GENERIC_LABEL, "claim_kind": None,
+                 "last_year_date": None, "last_year_weekday": None}
         try:
             import schedule_economics
-            own = (schedule_economics.holiday_lift(restaurant_id, [iso], db_path=db_path) or {}).get(iso) or {}
+            # A holiday whose date is only approximated (the Super Bowl) has
+            # no "last year's night" to read: the calendar's guess for last
+            # year may not have been the game at all (re-audit OPP-1).
+            own = {} if approximate else \
+                ((schedule_economics.holiday_lift(restaurant_id, [iso], db_path=db_path) or {}).get(iso) or {})
             if own.get("lift_pct") is not None and own.get("based_on"):
                 lift = int(own["lift_pct"])
+                # Last year's holiday is measured against ITS weekday (Veterans
+                # Day 2025 was a Tuesday), not this year's (re-audit OPP-2).
+                ly = own.get("date")
+                try:
+                    ly_wd = datetime.strptime(str(ly)[:10], "%Y-%m-%d").strftime("%A") if ly else None
+                except ValueError:
+                    ly_wd = None
                 entry.update({
                     "lift_pct": lift, "based_on": own["based_on"], "claim_kind": "measured",
+                    "last_year_date": (str(ly)[:10] if ly_wd else None), "last_year_weekday": ly_wd,
                     "label": (f"Last year {abs(lift)}% {'above' if lift >= 0 else 'below'} a typical "
-                              f"{hdate.strftime('%A')} here — {own['based_on']}")})
+                              f"{ly_wd or 'night'} here — {own['based_on']}")})
         except Exception:
             pass
         out.append(entry)
     return out
+
+
+# The calendar's names carry hints for the model ("Halloween — great for
+# themed specials", "Veterans Day — many restaurants offer free/discounted
+# meals for veterans"); an owner-facing card, and a goal typed into the
+# Campaign Studio, say only the holiday's own name (re-audit OPP-1). The
+# Super Bowl's date is the calendar's approximation (marketing.py), never
+# stated as fact.
+APPROXIMATE_HOLIDAYS = ("Super Bowl Sunday",)
+
+
+def holiday_display_name(name) -> str:
+    """The holiday's own name, without the calendar's hint after " — "."""
+    return str(name or "").split(" — ", 1)[0].strip()

@@ -1084,7 +1084,9 @@ def _build(current_user, present=True):
         # put "5 this week" under "3 this month".
         mkt["week"] = _mkt.count_pieces(rid, "-7 days")
         mkt["last_at"] = (_one_dict(conn, "SELECT MAX(created_at) AS t FROM marketing_content_log WHERE restaurant_id=?", (rid,)) or {}).get("t")
-        mkt["last_posted_at"] = (_one_dict(conn, "SELECT MAX(created_at) AS t FROM marketing_content_log WHERE restaurant_id=? AND post_id IS NOT NULL", (rid,)) or {}).get("t")
+        # When the last post went LIVE (a scheduled one goes live after it
+        # was written) - the Opportunity Feed's posting card reads the same.
+        mkt["last_posted_at"] = (_one_dict(conn, "SELECT MAX(COALESCE(posted_at, created_at)) AS t FROM marketing_content_log WHERE restaurant_id=? AND post_id IS NOT NULL", (rid,)) or {}).get("t")
         mkt["scheduled"] = _rows_dict(conn, "SELECT id, platform, topic, content_type, scheduled_for, status FROM marketing_scheduled_posts WHERE restaurant_id=? AND status IN ('scheduled','pending') AND scheduled_for >= datetime('now') ORDER BY scheduled_for LIMIT 3", (rid,))
         mkt["failed"] = _rows_dict(conn, "SELECT id, platform, topic, error, scheduled_for FROM marketing_scheduled_posts WHERE restaurant_id=? AND status='failed' ORDER BY id DESC LIMIT 3", (rid,))
         mkt["posted_since"] = (_one_dict(conn, "SELECT COUNT(*) AS n FROM marketing_scheduled_posts WHERE restaurant_id=? AND status='posted' AND posted_at >= ?", (rid, since_sql)) or {}).get("n") or 0
@@ -1098,8 +1100,13 @@ def _build(current_user, present=True):
                 "ORDER BY COALESCE(c.posted_at, c.created_at) DESC LIMIT 1", (rid,))
         except Exception:
             mkt["post_result"] = None
-        mkt["ig_connected"] = bool(r.get("ig_token"))
-        mkt["fb_connected"] = bool(r.get("fb_page_token"))
+        # The one "connected" rule (marketing_publish.channels_of): what each
+        # publish route needs, shared with the Studio and the Opportunity Feed.
+        from marketing_publish import channels_of as _channels_of
+        _ch = _channels_of(r)
+        mkt["ig_connected"] = _ch["instagram"]
+        mkt["fb_connected"] = _ch["facebook"]
+        mkt["can_post"] = any(_ch.values())
 
     # ── intel ───────────────────────────────────────────────────────────────
     intel = None
@@ -1897,7 +1904,10 @@ def _build(current_user, present=True):
                      f"{(f.get('platform') or '').title()}: {str(f.get('error') or 'unknown error')[:100]}", "marketing", "Fix and retry")
         if not mkt.get("ig_connected") and not mkt.get("fb_connected"):
             add_attn("social_not_connected", "watch", "No social account connected", "Posts can be drafted and copied, but one-click publishing and post metrics need Instagram or Facebook connected.", "account", "Connect Instagram")
-        if posted_age is not None and posted_age > 10 and (mkt.get("ig_connected") or mkt.get("fb_connected")):
+        # One posting rule with the Opportunity Feed (re-audit OPP-17): more
+        # than POST_IDLE_DAYS since a post went live, somewhere to post to.
+        from marketing_opportunities import POST_IDLE_DAYS as _POST_IDLE
+        if posted_age is not None and posted_age > _POST_IDLE and mkt.get("can_post"):
             # Only what the data shows (#46): "accounts that post weekly hold
             # reach" had no source here — reach is not measured.
             add_rec("post_this_week", "Get a post out this week", f"Nothing has gone live in {int(posted_age)} days.",
