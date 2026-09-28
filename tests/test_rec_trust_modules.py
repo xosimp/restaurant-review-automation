@@ -826,7 +826,8 @@ def test_the_web_drafts_list_offers_nothing_on_an_expired_draft():
     src = pathlib.Path(__file__).resolve().parent.parent.joinpath("templates", "dashboard.html").read_text()
     i = src.index("function loadMktDrafts(")
     body = src[i:src.index("function useMktDraft(", i)]
-    assert "'Expired'" in body and "(approved || expired) ? ''" in body and "(expired ? '' :" in body
+    # A guest text or email draft offers no Approve either (AUX-5): it opens in Campaigns.
+    assert "'Expired'" in body and "(approved || expired || toStudio) ? ''" in body and "(expired ? '' :" in body
 
 
 # ── #16 dates ───────────────────────────────────────────────────────────────

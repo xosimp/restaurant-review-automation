@@ -1992,14 +1992,18 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
                                                                     "to this login"})})
                     continue
                 _progress(_TOOL_LABELS.get(block.name, "Preparing that action"), "shaping")
+                # The owner's own question is where an offer in a guest text
+                # or caption may come from - never the model (AUX-2).
                 proposal = tools.build_proposal(block.name, block.input,
-                                                restaurant_id=getattr(restaurant, "id", None))
+                                                restaurant_id=getattr(restaurant, "id", None),
+                                                owner_words=(question or "")[:_MAX_QUESTION_LENGTH])
                 if proposal is None:
                     # Bad or missing arguments (e.g. no review_id), or a link
                     # to a site that is not the restaurant's own (NS5 C1) —
                     # tell the model rather than raising a half-built card.
                     _why = tools.proposal_refusal(block.name, block.input,
-                                                  restaurant_id=getattr(restaurant, "id", None))
+                                                  restaurant_id=getattr(restaurant, "id", None),
+                                                  owner_words=(question or "")[:_MAX_QUESTION_LENGTH])
                     results.append({
                         "type": "tool_result", "tool_use_id": block.id,
                         "content": json.dumps({

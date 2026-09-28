@@ -84,14 +84,14 @@ def test_force_is_the_owner_asking_for_a_different_week(rid, monkeypatch):
     # test_a_forced_redraw_moments_later_returns_what_was_just_built).
     _age_calendar(rid, marketing.RECENT_CALENDAR_SECONDS + 60)
 
-    other = _week("Wine dinner")
+    other = _week("Sunday gravy close-up")
     _fake_generation(monkeypatch, other, calls)
     fresh = marketing.get_content_calendar_ideas(restaurant_id=rid, force=True)
 
     assert len(calls) == 2
-    assert fresh[0]["angle"] == "Wine dinner"
+    assert fresh[0]["angle"] == "Sunday gravy close-up"
     # and the new one replaces the old for subsequent plain reads
-    assert marketing.get_content_calendar_ideas(restaurant_id=rid)[0]["angle"] == "Wine dinner"
+    assert marketing.get_content_calendar_ideas(restaurant_id=rid)[0]["angle"] == "Sunday gravy close-up"
 
 
 def test_one_restaurants_calendar_is_never_served_to_another(db_path, rid, monkeypatch):
@@ -142,12 +142,12 @@ def test_a_forced_redraw_later_on_really_does_redraw(rid, monkeypatch):
     marketing.get_content_calendar_ideas(restaurant_id=rid, force=True)
     _age_calendar(rid, marketing.RECENT_CALENDAR_SECONDS + 60)
 
-    other = _week("Wine dinner")
+    other = _week("Sunday gravy close-up")
     _fake_generation(monkeypatch, other, calls)
     fresh = marketing.get_content_calendar_ideas(restaurant_id=rid, force=True)
 
     assert len(calls) == 2
-    assert fresh[0]["angle"] == "Wine dinner"
+    assert fresh[0]["angle"] == "Sunday gravy close-up"
 
 
 def test_an_aged_calendar_is_not_mistaken_for_a_fresh_one(rid, monkeypatch):

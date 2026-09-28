@@ -281,7 +281,7 @@ def test_generated_content_and_regenerated_drafts_carry_the_validation_object(db
     import mobile_api
     rid = _rid(db_path, module_marketing=1, module_reviews=1)
     monkeypatch.setattr(marketing, "get_client", lambda *a, **k: object(), raising=False)
-    monkeypatch.setattr(marketing, "create_with_retry", lambda client, **kw: _msg("Pizza night is back this Friday."))
+    monkeypatch.setattr(marketing, "create_with_retry", lambda client, **kw: _msg("Pizza night this Friday."))
     monkeypatch.setattr(marketing, "log_content", lambda *a, **k: None)
     out, status = client_api._do_generate_content(rid, "instagram_post", "pizza night")
     assert status == 200 and out["validation"]["verdict"] == "pass"

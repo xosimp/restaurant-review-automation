@@ -291,8 +291,14 @@ final class MarketingViewModel {
     /// that one type swaps the destinations rather than adding a third button.
     var isGooglePost: Bool { selectedType == "google_promo" }
 
+    /// Content publishes posts only. A text or an email type (the server's
+    /// content-type `channel`: loyalty_nudge, weekly_email, and the old
+    /// quiet-night guest_sms draft) is sent from Campaigns, never posted to
+    /// Instagram, Facebook or Google or scheduled there (Marketing audit
+    /// AUX-4 — a win-back SMS could be posted to Facebook).
     var canPostSomewhere: Bool {
-        isGooglePost ? channels.google : (channels.instagram || channels.facebook)
+        guard !["loyalty_nudge", "weekly_email", "guest_sms"].contains(selectedType) else { return false }
+        return isGooglePost ? channels.google : (channels.instagram || channels.facebook)
     }
 
     // MARK: - Load

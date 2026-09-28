@@ -250,10 +250,11 @@ def preview(platform, body, *, media_token=None, cta_type=None, base_url=""):
         segments = -(-length // 153)  # concatenated SMS parts are 153 chars each
         problems.append(f"Sends as {segments} linked texts rather than one.")
 
-    # The prompts for instagram_post, loyalty_nudge and event_announcement ask
-    # Claude for TWO versions. Publishing that untouched posts both, plus the
-    # labels — the single worst thing this module could do, so it is caught
-    # here rather than discovered on the restaurant's real feed.
+    # The prompts once asked Claude for TWO versions (marketing.PROMPTS asks
+    # for one piece now), and a draft saved from then — or two options
+    # pasted in by hand — would post both, plus the labels: the single worst
+    # thing this module could do, so it is still caught here rather than
+    # discovered on the restaurant's real feed.
     lowered = body.lower()
     if "option 1" in lowered and "option 2" in lowered:
         problems.append("This still has both drafts in it — keep the one you want.")
@@ -289,6 +290,12 @@ def schedule_post(restaurant_id, platform, body, scheduled_for, *, topic="",
     platform = (platform or "").lower().strip()
     if platform not in PLATFORMS:
         return {"ok": False, "error": f"Cavnar AI can't schedule posts to {platform or 'that'}."}
+    # A guest text or an email is never a post (AUX-4): the Content tab
+    # offered Instagram/Facebook for them, and a "SUBJECT LINE: … BODY:"
+    # email could be queued to Facebook. They are sent from Campaigns.
+    from marketing import is_social_type
+    if content_type and not is_social_type(content_type):
+        return {"ok": False, "error": "A guest text or email isn't a post — send it from Campaigns."}
     body = (body or "").strip()
     if not body:
         return {"ok": False, "error": "There's no post text to schedule."}

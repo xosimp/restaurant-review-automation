@@ -2432,11 +2432,22 @@ TOOLS = [
         "spec": {
             "name": "send_guest_campaign",
             "description": (
-                "Propose texting the consented guest list. Does NOT send — the owner confirms first. "
-                "Always include the exact message you are proposing so they can read it before agreeing."
+                "Propose texting consented guests. Does NOT send — the owner confirms first. "
+                "Always include the exact message you are proposing so they can read it before agreeing, "
+                "and say which guests get it (segment). The text is held to the same rules as every guest "
+                "text: no offer, price, date, time or event the owner did not say in their own words or menu "
+                "notes, nothing new/back/better/changed they did not say, no invented sign-off, at most "
+                "300 characters, links only in link_url."
             ),
-            "input_schema": {"type": "object", "required": ["message"], "properties": {
+            "input_schema": {"type": "object", "required": ["message", "segment"], "properties": {
                 "message": {"type": "string", "description": "The exact SMS body to send."},
+                # guest_marketing.SEGMENTS (a test pins the two together).
+                # Required: a text used to go to everyone consented whenever
+                # the model left the audience out (AUX-2 / #15).
+                "segment": {"type": "string", "enum": ["all", "lapsed_30", "lapsed_60", "regulars", "new"],
+                            "description": "Who gets it: all (everyone consented), lapsed_30 / lapsed_60 "
+                                           "(no visit in 30+ / 60+ days), regulars (3+ visits), new "
+                                           "(first-timers). Ask the owner when they haven't said."},
                 "link_url": {"type": "string",
                              "description": "Optional: one page on the restaurant's OWN website (its menu or "
                                             "booking page), sent as a tracked link. Any other domain is refused."},
@@ -2844,8 +2855,12 @@ def run_read_tool(name, restaurant_id, tool_input, restaurant=None):
         return json.dumps({"error": f"could not read {name}"})
 
 
-def build_proposal(name, tool_input, restaurant_id=None):
+def build_proposal(name, tool_input, restaurant_id=None, owner_words=""):
     """Turn a write-tool call into the confirm card the client renders.
+
+    `owner_words` is what the owner asked in this turn (Ask passes the
+    question): a guest text or caption may carry an offer, a price or a date
+    the owner said there, never one the model added (proposal_refusal).
 
     `route` is what the client posts to on confirm — the same authenticated
     endpoint the button in the UI already uses, so a proposal can never
@@ -2866,7 +2881,7 @@ def build_proposal(name, tool_input, restaurant_id=None):
     # staff under "Send the current schedule", `earned`/`include_4star`
     # turned on 3-4 star auto-publishing under a card that said 5-star.
     args = proposal_args(name, tool_input)
-    if proposal_refusal(name, args, restaurant_id):
+    if proposal_refusal(name, args, restaurant_id, owner_words=owner_words):
         return None
     if name == "send_supplier_order":
         args = {k: v for k, v in args.items() if k not in ("draft_hash", "resend")}
@@ -3013,7 +3028,8 @@ PROPOSAL_DENYLIST = frozenset({
 _FIELD_LABELS = {
     "schedule_id": "Schedule #", "enabled": "Auto-approve", "daily_cap": "At most a day",
     "months": "Keep reviews (months)", "supplier_email": "Supplier", "draft_hash": "Order version",
-    "message": "Message", "link_url": "Link", "target_day": "For", "title": "Title", "detail": "Detail",
+    "message": "Message", "link_url": "Link", "target_day": "For", "segment": "Audience",
+    "title": "Title", "detail": "Detail",
     "severity": "Severity", "assignee_contact_id": "Assigned contact #", "caption": "Caption",
     "image_url": "Image", "topic": "Topic", "name": "Name", "email": "Email",
     "decision": "Answer",
@@ -3104,11 +3120,14 @@ def _is_own(host: str, domains: set) -> bool:
     return bool(host) and any(host == d or host.endswith("." + d) for d in domains)
 
 
-def proposal_refusal(name, tool_input, restaurant_id=None):
+def proposal_refusal(name, tool_input, restaurant_id=None, owner_words=""):
     """Why a proposal cannot be built as the model wrote it, or None: a
     link to anywhere but the restaurant's own domains — in a link field or
     inside the words that go out (NS5 C1). Guest texts and captions reach
-    the public; a review that planted a link must not ride along."""
+    the public; a review that planted a link must not ride along. And the
+    words themselves (AUX-2 / #15): a guest text or a caption the model
+    composed is held to the same guard as every public drafter before the
+    owner sees Send — _public_copy_refusal."""
     args = proposal_args(name, tool_input)
     domains = None
     for k, v in args.items():
@@ -3122,6 +3141,70 @@ def proposal_refusal(name, tool_input, restaurant_id=None):
                 return (f"The {_FIELD_LABELS.get(k, k).lower()} links to {host or 'another site'}, which is not "
                         "the restaurant's own website. Links in anything guests receive go only to the "
                         "restaurant's own site — leave the link out or use their menu or booking page.")
+    return _public_copy_refusal(name, args, restaurant_id, owner_words)
+
+
+# guest_marketing.SEGMENTS' keys, as send_guest_campaign's schema names them
+# (tests/test_mkt_fix_e1_ai.py pins the two together).
+GUEST_SEGMENTS = ("all", "lapsed_30", "lapsed_60", "regulars", "new")
+
+
+def _public_copy_refusal(name, args, restaurant_id, owner_words=""):
+    """Why a model-composed guest text or caption cannot be proposed, or
+    None. Ask's send_guest_campaign and publish_* cards used to carry the
+    model's words straight to Send: start_campaign checks quiet hours and
+    length, the publish routes nothing, and "win back lapsed guests" became
+    "20% off this week, we miss you!" to every consented guest (AUX-2).
+
+    The guest text: an audience it names (no silent "all"), the words'
+    length, and the guest_sms surface of response_validation with the
+    restaurant's own words as the offer source - its profile and menu notes
+    (marketing.marketing_context) plus what the owner asked in this turn
+    (`owner_words`): the shared offer vocabulary, invented prices / times /
+    dates / events, new-back-better-changed, the sign-off, never-say, awards,
+    another tenant's name. A caption: the same on social_post. A draft the
+    engine would reword is refused too - what the card shows is what goes
+    out, as bulk approve holds a reworded reply."""
+    import response_validation as rv
+    if name == "send_guest_campaign":
+        seg = args.get("segment")
+        if seg not in GUEST_SEGMENTS:
+            return ("Say which guests this text goes to — segment is one of: all (everyone consented), "
+                    "lapsed_30, lapsed_60, regulars, new. Ask the owner if they haven't said.")
+        text, surface, what = (args.get("message") or "").strip(), "guest_sms", "text"
+        try:
+            import guest_marketing
+            limit = guest_marketing.CAMPAIGN_MAX_CHARS
+        except Exception:
+            limit = 300
+        if len(text) > limit:
+            return (f"The text is {len(text)} characters; a guest text carries at most {limit} (the opt-out line "
+                    "and any link are added after). Shorten it.")
+        # A link here has already been checked as the restaurant's own (the
+        # loop above); the words around it are what the guest-text check reads.
+        text = " ".join(_LINK_RE.sub(" ", text).split())
+    elif name in ("publish_instagram_post", "publish_facebook_post"):
+        text, surface, what = (args.get("caption") or "").strip(), "social_post", "caption"
+    else:
+        return None
+    if not text:
+        return None
+    try:
+        import marketing
+        out = rv.enforce(text, marketing.marketing_context(restaurant_id, surface, topic=owner_words or "",
+                                                           action=f"ask_{name}"), marker=False)
+    except Exception as e:
+        log.warning("proposal copy check failed for %s: %s", name, e)
+        return f"The {what} couldn't be checked right now — try again in a moment."
+    v = out.verdict
+    if v is not None and v.verdict == "refuse":
+        return (f"The {what} can't go out as written: {marketing.refusal_detail(v)}. Rewrite it without that — "
+                "an offer, price, date, time or event has to be in the owner's own words or menu notes.")
+    if " ".join(str(out).split()) != text:
+        changed = next((f for f in (v.findings if v else []) if f.get("severity") == "rewrite"), None)
+        span = (changed or {}).get("span") or ""
+        return (f"The {what} can't go out as written" + (f": '{span}' is a claim Cavnar AI can't make" if span else "")
+                + ". Rewrite it without that.")
     return None
 
 
@@ -3147,6 +3230,12 @@ def fields_shown(body) -> list:
             val = "only the lines Cavnar AI checked"
         if k == "review_ids" and isinstance(v, (list, tuple)):
             val = f"only the {len(v)} listed above"
+        if k == "segment":
+            try:
+                import guest_marketing
+                val = (guest_marketing.SEGMENTS.get(str(v)) or {}).get("label") or val
+            except Exception:
+                pass
         out.append({"key": k, "label": _FIELD_LABELS.get(k, k.replace("_", " ").capitalize()), "value": val})
     return out
 
@@ -3295,8 +3384,10 @@ def proposal_details(name, args, restaurant_id) -> dict:
         preview = (args.get("message") or "").strip() or None
         try:
             import guest_marketing
-            details.append({"label": "Recipients", "value": f"{guest_marketing.audience_size(restaurant_id)} "
-                                                            "consented guests"})
+            seg = args.get("segment") or "all"
+            label = (guest_marketing.SEGMENTS.get(seg) or guest_marketing.SEGMENTS["all"])["label"]
+            details.append({"label": "Recipients",
+                            "value": f"{guest_marketing.audience_size(restaurant_id, seg)} guests · {label}"})
         except Exception:
             pass
         if args.get("target_day"):

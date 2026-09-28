@@ -2,6 +2,7 @@
 marketing.py — AI-powered marketing content generation for restaurants
 """
 import json
+import re
 from ai_utils import create_with_retry, extract_text, get_client, model_for
 
 
@@ -29,17 +30,18 @@ def get_upcoming_holidays(from_date=None) -> str:
 
     # Dining-relevant holidays only — skip civic/cultural holidays
     # that don't naturally drive restaurant visits or fit most concepts.
-    # Veterans Day added: many restaurants run free/discounted meal promos
-    # for veterans, which is a real measurable traffic driver, not just a
-    # civic observance.
+    # Names and dates only, never an offer: "Veterans Day — many restaurants
+    # offer free/discounted meals" and "Halloween — great for themed
+    # specials" read to the model as a promotion to write, and the
+    # restaurant had agreed to none (Marketing audit AI-3 / #16).
     fixed = [
         (1, 1, "New Year's Day"),
         (2, 14, "Valentine's Day"),
         (3, 17, "St. Patrick's Day"),
         (5, 5, "Cinco de Mayo"),
         (7, 4, "Fourth of July — summer cookout season"),
-        (10, 31, "Halloween — great for themed specials"),
-        (11, 11, "Veterans Day — many restaurants offer free/discounted meals for veterans"),
+        (10, 31, "Halloween"),
+        (11, 11, "Veterans Day"),
         (12, 24, "Christmas Eve — holiday dining"),
         (12, 25, "Christmas Day"),
         (12, 31, "New Year's Eve — celebration dining"),
@@ -154,48 +156,80 @@ def get_profile_for_restaurant(restaurant_id: int = None) -> dict:
             "sign_off_name": r.sign_off_name or r.name,
             "menu_notes":   r.menu_notes or "",
             "skip_holidays": r.skip_holidays or "",
+            # The restaurant's own site (Settings → menu link): the one link
+            # public copy may carry without the owner typing it (AUX-1).
+            "website":      getattr(r, "menu_url", None) or "",
         }
     except Exception:
         return DEFAULT_PROFILE
 
 CONTENT_TYPES = [
+    # `channel` is where the piece goes. The Content tab publishes to social
+    # accounts only: a text or an email type is written and sent from the
+    # Campaign Studio (text / email channel), never offered Instagram,
+    # Facebook or a schedule (Marketing audit AUX-4 / UX-3 — a win-back SMS
+    # and a "SUBJECT LINE: … BODY:" email could be posted to Facebook).
     {
         "id": "instagram_post",
         "label": "Instagram/FB post",
         "icon": "camera",
+        "channel": "social",
         "description": "Caption + hashtags for a food or ambiance photo",
     },
     {
         "id": "weekly_email",
         "label": "Weekly email",
         "icon": "mail",
-        "description": "Short newsletter to regulars — specials, events, updates",
+        "channel": "email",
+        "description": "An email to your list, written and sent from Campaigns",
     },
     {
         "id": "google_promo",
         "label": "Google post",
         "icon": "search",
+        "channel": "social",
         "description": "Short promotional post for Google Business Profile",
     },
     {
         "id": "loyalty_nudge",
         "label": "Re-engagement text",
         "icon": "message",
-        "description": "SMS to guests who haven't visited in 3+ weeks",
+        "channel": "text",
+        "description": "A text to your guests, written and sent from Campaigns",
     },
     {
         "id": "happy_hour",
         "label": "Happy hour promo",
         "icon": "glass",
-        "description": "Social post driving traffic to Mon-Thu 4-6pm deals",
+        "channel": "social",
+        "description": "Social post for your happy hour, in your own details",
     },
     {
         "id": "event_announcement",
         "label": "Event announcement",
         "icon": "calendar",
+        "channel": "social",
         "description": "Post announcing a special dinner, wine night, or seasonal menu",
     },
 ]
+
+# Where each kind of piece goes: "social" (a post), "text" or "email" (the
+# Campaign Studio). guest_sms is the quiet-night job's old guest-text draft.
+CONTENT_CHANNELS = {ct["id"]: ct["channel"] for ct in CONTENT_TYPES}
+CONTENT_CHANNELS["guest_sms"] = "text"
+
+
+def content_channel(content_type) -> str:
+    """"social", "text" or "email" for a content type; an unknown or empty
+    type is a social post (the Content tab's default)."""
+    return CONTENT_CHANNELS.get(str(content_type or "").strip(), "social")
+
+
+def is_social_type(content_type) -> bool:
+    """Whether a piece of this type may be published or scheduled to a
+    social account (Instagram, Facebook, Google)."""
+    return content_channel(content_type) == "social"
+
 
 # Every one of these used to ask for length. instagram_post wanted TWO
 # versions (a punchy one AND a 3-4 sentence story), google_promo allowed 100
@@ -228,7 +262,7 @@ SUBJECT LINE: (one option, under 8 words)
 BODY: (3-4 short sentences, conversational, like the owner typed it between shifts)
 
 Mention a specific dish by name if menu items are given below.
-No "Dear valued customer". No corporate sign-offs. End with a first name sign-off like "— Sarah" or "— the Maplewood team".""",
+No "Dear valued customer". No corporate sign-offs. {sign_off_rule}""",
 
     "google_promo": """Write a Google Business Profile post for {restaurant} in {neighborhood}.
 Topic: {topic}. Known for: {known_for}.
@@ -240,19 +274,19 @@ Reference a specific menu item if provided below. No hashtags. No emojis.
 Return the post only — no preamble, no alternatives.""",
 
     "loyalty_nudge": """Write ONE SMS re-engagement message for guests of {restaurant}.
-Topic/offer: {topic}
+Topic: {topic}
 Voice: {voice}
 
 Rules: under 160 characters, hard limit. Personal, not automated. Includes the
-restaurant name. Soft incentive if relevant. Return the message only — no
-alternatives, no labels, no quotes around it.""",
+restaurant name. Return the message only — no alternatives, no labels, no
+quotes around it.""",
 
     "happy_hour": """Write ONE social post promoting happy hour at {restaurant}.
 Happy hour details: {topic}
 Voice: {voice}.
 
 Length: 1-2 short sentences, then 4-6 hashtags. Make people want to leave work early.
-If the topic doesn't specify exact times or deals, write something that feels authentic without inventing specifics.
+If the details don't give exact days, times, prices or deals, write it without any: never invent them.
 Return the post only — no alternatives, no labels.""",
 
     "event_announcement": """Write ONE social post announcing this for {restaurant}.
@@ -263,6 +297,38 @@ Length: 2 short sentences — what it is, and when — then 4-6 hashtags.
 Never invent a date, time or price that isn't in the event details above.
 Return the post only — no alternatives, no labels.""",
 }
+
+# The hard rules every public piece is written under, the same four the
+# newsletter and the guest text carry (Marketing audit AUX-1 / #17) — and
+# response_validation holds the draft to them (invented_offers,
+# invented_specifics), so a draft that breaks one is refused, not published.
+PUBLIC_COPY_RULES = (
+    "\n\nHard rules — a draft that breaks one is thrown away:\n"
+    "1. No offer: no discount, percentage or dollars off, free item, half price, 2-for-1, BOGO, deals, "
+    "giveaway or anything on the house, unless the owner's words above say it, in those words.\n"
+    "2. No price, date, time or event that isn't written above.\n"
+    "3. Nothing is new, back, better or changed unless the owner's words above say so.\n"
+    "4. No links, email addresses or phone numbers unless they are written above."
+)
+# Said when the topic is a suggestion (a calendar idea, the quiet-night job),
+# not something the owner typed: it is never where an offer comes from (AI-2).
+SUGGESTED_TOPIC_RULE = ("\nThe topic above is a suggestion, not the owner's words: it is never a source for an offer, "
+                        "a price, a date, a time or an event.")
+
+# What a calendar idea may carry for the owner and a public topic never may
+# (AUX-15 / #88): "Feature Short Rib — your best-margin plate (22% food
+# cost)" is the owner's card; the post is about "Feature Short Rib".
+_INTERNAL_TOPIC_RE = re.compile(
+    r"\s*[—–-]+\s*your\s+best[\s-]margin\s+plate\b[^\n]*$"
+    r"|\s*\(?\s*\d+(?:\.\d+)?\s?%\s*(?:food|plate|drink|pour|beverage)\s+cost\s*\)?"
+    r"|\s*\(?\s*(?:food|plate)\s+cost\s*(?:of|at|:)?\s*\d+(?:\.\d+)?\s?%\s*\)?", re.I)
+
+
+def public_topic(topic) -> str:
+    """The topic as the public may see it: an internal cost figure and the
+    margin label taken out. Every generator reads its topic through this."""
+    t = _INTERNAL_TOPIC_RE.sub("", str(topic or ""))
+    return " ".join(t.split()).strip(" —–-")
 
 
 def get_recent_content(restaurant_id: int, limit: int = 5) -> list:
@@ -459,24 +525,33 @@ def _owner_source(p, topic=""):
     asked for. An offer, an award or a sourcing claim whose words are here is
     theirs to publish (response_validation P1, offer_source)."""
     p = p or {}
-    parts = [p.get("known_for"), p.get("vibe"), p.get("neighborhood"), p.get("voice"), p.get("menu_notes"), topic]
+    parts = [p.get("known_for"), p.get("vibe"), p.get("neighborhood"), p.get("voice"), p.get("menu_notes"),
+             p.get("website"), topic]
     return " ".join(str(x) for x in parts if x)
 
 
 def validate_marketing_text(text, restaurant_id, surface, profile=None, topic="", untrusted=(),
-                            action="marketing_content"):
+                            action="marketing_content", given="", topic_is_owner=True):
     """`text` through response_validation on a public marketing surface
     (social_post, calendar_idea): an rv.Validated str ("" when refused, in
     enforce mode) carrying `.verdict`. No marker: public text never had it."""
     import response_validation as rv
-    ctx = marketing_context(restaurant_id, surface, profile, topic=topic, untrusted=untrusted, action=action)
+    ctx = marketing_context(restaurant_id, surface, profile, topic=topic, untrusted=untrusted, action=action,
+                            given=given, topic_is_owner=topic_is_owner)
     return rv.enforce(text or "", ctx, marker=False)
 
 
-def marketing_context(restaurant_id, surface, profile=None, topic="", untrusted=(), action="marketing_content"):
+def marketing_context(restaurant_id, surface, profile=None, topic="", untrusted=(), action="marketing_content",
+                      given="", topic_is_owner=True):
     """The ValidationContext for owner-profile marketing text: offer_source
-    is what the owner wrote (_owner_source), never_say the restaurant's list,
-    names the restaurant's own, tenant_names_denied every other tenant."""
+    is what the owner wrote (_owner_source — the topic only when the owner
+    typed it: a calendar angle a model wrote is never the owner saying so,
+    AI-2), never_say the restaurant's list, names the restaurant's own,
+    tenant_names_denied every other tenant. The figures in the owner's words
+    are typed facts and the owner's words the context, so a figure a draft
+    states is held to them (F1); `given` is what the system handed the model
+    as fact — today's date, the holiday dates — which may back a date and
+    never an offer (response_validation.invented_specifics)."""
     import response_validation as rv
     p = profile if profile is not None else get_profile_for_restaurant(restaurant_id)
     tenants = set()
@@ -487,10 +562,13 @@ def marketing_context(restaurant_id, surface, profile=None, topic="", untrusted=
         except Exception:
             tenants = set()
     names = {n for n in ((p or {}).get("name"), (p or {}).get("sign_off_name")) if n}
+    source = _owner_source(p, public_topic(topic) if topic_is_owner else "")
     return rv.ValidationContext(
         restaurant_id=restaurant_id, surface=surface, names_allowed=names, tenant_names_denied=tenants,
-        never_say=(p or {}).get("never_say") or "", offer_source=_owner_source(p, topic),
-        untrusted=[u for u in (untrusted or ()) if u], policy={"action": action})
+        never_say=(p or {}).get("never_say") or "", offer_source=source,
+        facts=rv.owner_facts(source), context_text=" ".join(x for x in (source, given) if x),
+        untrusted=[u for u in (untrusted or ()) if u],
+        policy={"action": action, "given_text": given or "", "context_facts": True})
 
 
 def refusal_detail(verdict) -> str:
@@ -506,11 +584,29 @@ def refusal_detail(verdict) -> str:
 
 
 def generate_content(content_type: str, topic: str,
-                     restaurant_id: int = None) -> str:
-    """Generate marketing content for a given type and topic."""
+                     restaurant_id: int = None, topic_is_owner: bool = True) -> str:
+    """Generate marketing content for a given type and topic.
+
+    `topic_is_owner` is whether the owner typed the topic. A calendar idea's
+    angle ("Write this") and a scheduled job's topic were written by a model
+    or by us: the draft is written from them, but nothing in them — an
+    offer, a price, a date, an event — counts as the owner saying so (AI-2).
+    Every draft is held to one public-copy guard set (response_validation:
+    the shared offer vocabulary, invented prices / times / dates / events /
+    new-back-better-changed claims / links, the sign-off name), with the
+    owner's figures as typed facts (AUX-1)."""
     from datetime import datetime
     prompt_template = PROMPTS.get(content_type, PROMPTS["instagram_post"])
     p = get_profile_for_restaurant(restaurant_id)
+    # A cost figure a calendar card carries for the owner is never part of
+    # a public topic (AUX-15 / #88). The log keeps the words as asked, so a
+    # later publish of the same topic completes this row.
+    asked_topic = topic
+    topic = public_topic(topic)
+    # The owner picking "Happy hour promo" is the owner saying there is one.
+    owner_topic = topic if topic_is_owner else ""
+    if topic_is_owner and content_type == "happy_hour":
+        owner_topic = f"happy hour {topic}".strip()
 
     # Avoid repeating recent themes — but never the topic the owner just
     # asked for. Pressing Regenerate on the same topic used to hand the model
@@ -519,12 +615,12 @@ def generate_content(content_type: str, topic: str,
     # answer the contradiction instead of the brief ("Since I already have two
     # prior posts...").
     recent = get_recent_content(restaurant_id, limit=5)
-    asked_for = (topic or "").strip().lower()
-    recent = [r for r in recent if (r.get("topic") or "").strip().lower() != asked_for]
+    asked_for = {(topic or "").strip().lower(), (asked_topic or "").strip().lower()}
+    recent = [r for r in recent if (r.get("topic") or "").strip().lower() not in asked_for]
     recent_context = ""
     if recent:
         recent_topics = ", ".join(
-            f"{r['type'].replace('_',' ')} about {r['topic']}" for r in recent
+            f"{r['type'].replace('_',' ')} about {public_topic(r['topic'])}" for r in recent
         )
         recent_context = f"\n\nIMPORTANT: You have recently generated content about: {recent_topics}. Do NOT repeat these themes or topics. Be fresh and different."
 
@@ -563,6 +659,11 @@ def generate_content(content_type: str, topic: str,
         except Exception:
             signal_context = ""
 
+    # The weekly email signs off as the restaurant actually does (its
+    # sign-off name, else its own name) — never an invented "— Sarah".
+    sign_off = (p.get("sign_off_name") or p.get("name") or "").strip()
+    sign_off_rule = (f'End with this sign-off on its own line: "— {sign_off}". No other name.' if sign_off
+                     else "No sign-off name.")
     prompt = prompt_template.format(
         restaurant=p["name"],
         neighborhood=p["neighborhood"],
@@ -570,11 +671,13 @@ def generate_content(content_type: str, topic: str,
         voice=p["voice"],
         known_for=p["known_for"],
         topic=topic,
+        sign_off_rule=sign_off_rule,
     ) + location_context + recent_context + seasonal_context + never_clause + menu_clause + signal_context
     # A topic can be the owner's aim ("Fill Tuesday dinner", the Opportunity
     # Feed's slow night); said to the public it announces a slow night.
     prompt += ("\nThe topic may be the owner's own aim. Never say or hint that a night is slow, quiet or empty, "
                "or that the restaurant wants to fill tables.")
+    prompt += PUBLIC_COPY_RULES + ("" if topic_is_owner else SUGGESTED_TOPIC_RULE)
 
     import data_health
     msg = create_with_retry(
@@ -609,17 +712,21 @@ def generate_content(content_type: str, topic: str,
     # award ("famous", "voted", "#1"), a sourcing or allergen claim the owner
     # never wrote, fault and inspection claims, another tenant's name.
     # What the owner wrote is the offer source: the profile the prompt was
-    # built from (known for, vibe, voice, menu notes) and the topic they
-    # asked for. What guests said (the signal block) is never a source.
-    result = validate_marketing_text(result, restaurant_id, "social_post", p, topic=topic,
+    # built from (known for, vibe, voice, menu notes, their website) and the
+    # topic they typed — not a calendar angle or a job's topic (AI-2). What
+    # guests said (the signal block) is never a source. Today's date and the
+    # holiday dates the prompt carried may back a date, never an offer.
+    given = f"Today's date: {today_date}. Upcoming holidays: {upcoming or 'none'}."
+    result = validate_marketing_text(result, restaurant_id, "social_post", p, topic=owner_topic,
                                      untrusted=[signal_context] if signal_context else (),
-                                     action="marketing_content")
+                                     action="marketing_content", given=given)
     if result.verdict is not None and result.verdict.verdict == "refuse":
         raise ValueError(f"marketing copy rejected: {refusal_detail(result.verdict)}")
 
-    # Log this content for future memory. Its row id travels with the text,
-    # so a publish completes THIS row (MB-8), not a guess by topic.
-    row_id = log_content(restaurant_id, content_type, topic)
+    # Log this content for future memory — the owner's own topic, not the
+    # public one (AUX-15). Its row id travels with the text, so a publish
+    # completes THIS row (MB-8), not a guess by topic.
+    row_id = log_content(restaurant_id, content_type, asked_topic)
     try:
         result.content_log_id = row_id
     except AttributeError:
@@ -750,6 +857,11 @@ def _with_margin_idea(restaurant_id, ideas, days_map, iso_map):
             return ideas
         best = min(priced, key=lambda p: p["food_cost_pct"])
         day = "Thursday" if "Thursday" in days_map else next(iter(days_map), "")
+        # The card is the owner's, and keeps the figure that earned it; the
+        # post written from it is about "Feature <dish>" only - generate_content
+        # reads every topic through public_topic, so neither the food-cost
+        # figure nor the margin label reaches a public prompt or post (#88),
+        # whichever client sends the angle as the topic.
         idea = {"day": day, "date": days_map.get(day, ""), "iso_date": iso_map.get(day, ""),
                 "platform": "Instagram & FB", "type": "instagram_post",
                 "angle": f"Feature {best['name']} — your best-margin plate ({best['food_cost_pct']:.0f}% food cost)",
@@ -867,8 +979,11 @@ def _validated_ideas(restaurant_id, ideas, profile=None, untrusted=()):
             dropped += 1
             continue
         worst = max(verdicts, key=lambda x: rv.VERDICTS.index(x["verdict"]) if x else -1, default=None)
-        new["validation"] = worst or {"verdict": "pass", "caveats": [], "controls": True, "codes": [],
-                                      "version": rv.VERSION}
+        new["validation"] = dict(worst or {"verdict": "pass", "caveats": [], "controls": True, "codes": [],
+                                           "version": rv.VERSION})
+        # Which public-copy vocabulary checked it: a week cached under an
+        # older one is checked again on read (_revalidated).
+        new["validation"]["public"] = rv.PUBLIC_COPY_VERSION
         kept.append(new)
     if dropped and not kept:
         try:
@@ -886,7 +1001,8 @@ def _revalidated(restaurant_id, ideas):
     an older version, never reaches the owner unchecked."""
     import response_validation as rv
     stale = [i for i in ideas or [] if isinstance(i, dict) and i.get("source") != "menu_margins"
-             and ((i.get("validation") or {}).get("version") != rv.VERSION)]
+             and ((i.get("validation") or {}).get("version") != rv.VERSION
+                  or (i.get("validation") or {}).get("public") != rv.PUBLIC_COPY_VERSION)]
     if not stale:
         return ideas
     week_range = next((i.get("week_range") for i in ideas if isinstance(i, dict) and i.get("week_range")), None)
