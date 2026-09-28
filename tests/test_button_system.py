@@ -30,7 +30,7 @@ EXEMPT_CLASSES = {"tab", "swg-chip", "rm", "hb-refresh", "hb-chip", "hb-x", "hb-
                   "ask-chip", "ask-send", "faq-q", "rv2-topic", "more", "on", "rv-tab-active", "mtab",
                   "ac-hitem",  # Account health items: list-row selectors that jump to a section
                   "in2-viewall", "in2-gbp-link"}  # AI visibility: text-style "view all" / checklist nav links
-EXEMPT_IDS = {"loc-switcher-btn", "notif-btn", "changelog-btn", "team-msg-btn", "mkt-tab-content-btn",
+EXEMPT_IDS = {"loc-switcher-btn", "notif-btn", "changelog-btn", "team-msg-btn", "mkt-tab-content-btn", "mkt-tab-campaigns-btn",
               "mkt-tab-queue-btn", "mkt-tab-analytics-btn", "sched-toggle-label", "perf-tab-dow",
               "perf-tab-trend", "perf-tab-weekday", "ask-cavnar-fab"}
 EXEMPT_ATTRS = ("data-ask=", "data-score=", "data-quality-shift=", 'role="listitem"', 'role="tab"')

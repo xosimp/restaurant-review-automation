@@ -930,6 +930,169 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .mkt-attr-line{margin-top:4px}
 .mkt-alltime{font-size:13.5px;color:var(--ink3);margin:0 0 14px}
 .mkt-sec{margin-top:6px}
+/* ── Campaigns (owner, 9/28/26) ─────────────────────────────────────────
+   The guest text club rebuilt AI-first on its own Marketing tab: one
+   question leads, four steps follow, a live phone shows the text. Depth
+   from surfaces and one ember glow on the prompt; everything else quiet.
+   DESIGN_SYSTEM.md -> Campaigns. */
+.cp{--cp-line:rgba(14,12,10,.09);--cp-soft:rgba(14,12,10,.04);--cp-tint:rgba(200,75,47,.09);--cp-ring:rgba(200,75,47,.28);
+  display:flex;flex-direction:column;gap:76px;padding:6px 0 48px}
+[data-theme="dark"] .cp{--cp-line:rgba(255,255,255,.07);--cp-soft:rgba(255,255,255,.04);--cp-tint:rgba(212,88,58,.14);--cp-ring:rgba(212,88,58,.3)}
+.cp-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.cp-card{border-radius:20px;background:var(--surface);border:1px solid var(--cp-line);box-shadow:var(--elev-card)}
+[data-theme="dark"] .cp-card{background:var(--surface-glass),var(--surface)}
+@keyframes cpRise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes cpBreathe{0%,100%{box-shadow:0 0 0 0 var(--cp-ring)}50%{box-shadow:0 0 0 9px rgba(0,0,0,0)}}
+@keyframes cpGrow{from{transform:scaleY(0)}to{transform:scaleY(1)}}
+.cp-chip{display:inline-flex;align-items:center;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:12px;padding:2px 9px;border-radius:999px;background:var(--cp-soft);color:var(--ink2);white-space:nowrap}
+.cp-chip.good{background:rgba(78,173,122,.14);color:var(--green)}
+.cp-chip.warn{background:rgba(212,160,48,.14);color:var(--amber)}
+.cp-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px}
+.cp-kpi{padding:20px 20px 18px;display:flex;flex-direction:column;gap:10px;animation:cpRise .5s ease both}
+.cp-kpi:nth-child(2){animation-delay:.05s}.cp-kpi:nth-child(3){animation-delay:.1s}.cp-kpi:nth-child(4){animation-delay:.15s}.cp-kpi:nth-child(5){animation-delay:.2s}
+.cp-kpi .l,.cp-fc .l,.cp-step .lbl{font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
+.cp-kpi .v{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:34px;letter-spacing:-.02em;line-height:1;color:var(--ink)}
+.cp-kpi .s{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--ink3);min-height:20px}
+.cp-sec{display:flex;flex-direction:column;gap:22px}
+.cp-h .k{font-size:12px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ember)}
+.cp-h h2{margin:8px 0 0;font-family:'Clash Display',sans-serif;font-weight:500;font-size:32px;letter-spacing:-.01em;color:var(--ink);text-wrap:balance}
+.cp-hrow{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;flex-wrap:wrap}
+.cp-prompt{position:relative;display:flex;align-items:center;gap:16px;margin:0;padding:12px 12px 12px 20px;border-radius:24px;background:radial-gradient(120% 170% at 0% 0%,var(--cp-tint),transparent 58%),var(--surface);border:1px solid var(--cp-ring);box-shadow:0 0 0 6px rgba(200,75,47,.05),0 40px 90px -50px rgba(200,75,47,.55);transition:box-shadow .25s ease}
+.cp-prompt:focus-within{box-shadow:0 0 0 6px rgba(200,75,47,.12),0 40px 90px -46px rgba(200,75,47,.65)}
+.cp-orb{width:38px;height:38px;border-radius:50%;flex:none;background:radial-gradient(circle at 35% 30%,var(--ember2),var(--ember) 72%);animation:cpBreathe 3.4s ease-in-out infinite}
+.cp-prompt input{flex:1;min-width:0;height:56px;border:0;outline:none;background:transparent;color:var(--ink);font-family:'Apfel Grotezk',sans-serif;font-size:21px}
+.cp-prompt input::placeholder{color:var(--ink3);opacity:.75}
+.cp-prompt .cbtn{flex:none;min-height:54px;border-radius:15px;padding-left:26px;padding-right:26px}
+.cp-ideas{display:flex;flex-wrap:wrap;gap:10px}
+.cp-idea{display:inline-flex;align-items:center;gap:8px;border-radius:999px}
+.cp-idea i{width:7px;height:7px;border-radius:50%;background:var(--ember)}
+.cp-idea i.d2{background:var(--green)}.cp-idea i.d3{background:var(--amber)}.cp-idea i.d4{background:var(--ember2)}
+.cp-sugg{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:16px 20px;border-radius:18px;background:var(--sf-ai),var(--surface);border:1px solid var(--sf-ai-line)}
+.cp-sugg .k{font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);display:flex;align-items:center;gap:8px}
+.cp-sugg .k:before{content:'';width:7px;height:7px;border-radius:50%;background:var(--ember);box-shadow:0 0 8px var(--ember)}
+.cp-sugg .t{flex:1;min-width:220px;font-size:16px;color:var(--ink)}
+.cp-sugg .t .hb-num{font-weight:700}
+.cp-builder{display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:28px;align-items:start;animation:cpRise .45s ease both}
+.cp-steps{display:flex;flex-direction:column;gap:14px}
+.cp-step{display:flex;align-items:flex-start;gap:18px;padding:22px 24px;flex-wrap:wrap}
+.cp-step .n{width:28px;height:28px;border-radius:50%;flex:none;box-sizing:border-box;display:flex;align-items:center;justify-content:center;border:2px solid var(--cp-line);color:var(--ink3);font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:13px}
+.cp-step.done .n{font-size:0;border:0;background:radial-gradient(circle at 35% 30%,var(--hb-pop2),var(--hb-pop) 72%);color:var(--hb-pop-ink);box-shadow:0 0 0 3px var(--hb-pop-ring)}
+.cp-step.done .n:before{content:'';width:5px;height:10px;margin-top:-3px;border:solid currentColor;border-width:0 2.4px 2.4px 0;transform:rotate(45deg)}
+.cp-step.now{border-color:var(--cp-ring);box-shadow:0 0 0 4px rgba(200,75,47,.06),var(--elev-card)}
+.cp-step.now .n{border-color:var(--ember);color:var(--ember2)}
+.cp-step .b{flex:1;min-width:0;display:flex;flex-direction:column;gap:12px}
+.cp-step .lbl{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:22px}
+.cp-step .t{font-size:19px;font-weight:700;color:var(--ink);line-height:1.35}
+.cp-tag{font-size:11.5px;font-weight:700;letter-spacing:.04em;text-transform:none;color:var(--ink2);background:var(--cp-soft);padding:3px 10px;border-radius:999px}
+.cp-tag.ai{color:var(--ember2);background:var(--cp-tint)}
+.cp-tag:empty{display:none}
+.cp-aud{display:flex;align-items:baseline;gap:12px;font-size:17px;color:var(--ink2)}
+.cp-aud .hb-num{font-weight:600;font-size:40px;line-height:1;color:var(--ink)}
+.cp-segs{display:flex;flex-wrap:wrap;gap:8px}
+.cp-seg{border-radius:999px;transition:background .2s,border-color .2s,color .2s}
+.cp-seg .c{font-family:'Space Grotesk',sans-serif;margin-left:6px;opacity:.75}
+.cp-seg.on,.cp-seg.on:hover{border-color:var(--ember);background:var(--cp-tint);color:var(--ink)}
+.cp-seg:disabled{opacity:.45}
+.cp-rewrite{flex:none}
+.cp-msg{width:100%;box-sizing:border-box;resize:vertical;min-height:108px;border-radius:14px;border:1px solid var(--cp-line);background:var(--sf-recess);color:var(--ink);padding:16px 18px;font-family:'Apfel Grotezk',sans-serif;font-size:17px;line-height:1.55;outline:none;transition:border-color .2s}
+.cp-msg:focus{border-color:var(--cp-ring)}
+.cp-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13.5px;color:var(--ink2)}
+.cp-sp{flex:1}
+.cp-linksw{display:inline-flex;align-items:center;gap:10px;cursor:pointer}
+.cp-link{height:44px;box-sizing:border-box;font-size:15px}
+.cp-sendrow{flex-direction:row!important;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.cp-checks{display:flex;flex-wrap:wrap;gap:10px 18px;font-size:14px;color:var(--ink2)}
+.cp-checks span{display:inline-flex;align-items:center;gap:8px}
+.cp-checks .cv-ok,.cp-checks .cv-warn{width:16px;height:16px}
+.cp-step-send .cbtn,#guest-send-btn{min-height:52px;border-radius:15px;padding-left:28px;padding-right:28px}
+#guest-send-btn.arm{animation:cpBreathe 1.6s ease-in-out infinite}
+.cp-status{flex-basis:100%;margin-left:46px;display:flex;align-items:center;gap:10px;font-size:15px;color:var(--ink2)}
+.cp-status.bad{color:var(--red)}
+.cp-side{display:flex;flex-direction:column;gap:14px;position:sticky;top:calc(var(--cav-chrome,90px) + 18px)}
+.cp-phone{align-self:center;width:290px;height:560px;box-sizing:border-box;padding:11px;border-radius:46px;background:linear-gradient(160deg,#3a332d,#15120f);box-shadow:0 0 0 1px rgba(255,255,255,.08),0 50px 90px -40px rgba(0,0,0,.7),0 30px 80px -50px rgba(200,75,47,.45)}
+.cp-phone .scr{width:100%;height:100%;border-radius:36px;background:#0b0a09;overflow:hidden;display:flex;flex-direction:column}
+.cp-phone .top{display:flex;flex-direction:column;align-items:center;gap:6px;padding:34px 0 12px;background:rgba(255,255,255,.04);border-bottom:1px solid rgba(255,255,255,.06);font-size:12.5px;color:#f0ebe0}
+.cp-phone .av{width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,#e8956a,#d4583a);display:flex;align-items:center;justify-content:center;font-family:'Clash Display',sans-serif;font-weight:600;font-size:14px;color:#fff}
+.cp-phone .thread{flex:1;padding:16px 13px;display:flex;flex-direction:column;gap:8px;overflow:hidden}
+.cp-phone .when{text-align:center;font-size:10.5px;color:#8f857a}
+.cp-phone .bub{align-self:flex-start;max-width:88%;padding:11px 14px;border-radius:20px 20px 20px 6px;background:#2b2724;color:#f0ebe0;font-size:13.5px;line-height:1.45;white-space:pre-wrap;word-break:break-word;transition:opacity .25s}
+.cp-phone .bub .lk{display:block;margin-top:8px;color:#6aabff;text-decoration:underline}
+.cp-phone .bub .stop{display:block;margin-top:8px;color:#a39a8e;font-size:12px}
+.cp-phone .bub.empty #cp-bub-t{color:#8f857a}
+.cp-fc{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.cp-fc .cp-card{padding:14px 16px;box-shadow:none}
+.cp-fc .v{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:25px;margin-top:6px;color:var(--ink)}
+.cp-fc .v.good{color:var(--green)}.cp-fc .v.warn{color:var(--amber)}
+.cp-fc .s{font-size:12.5px;color:var(--ink3);margin-top:2px}
+.cp-ai{padding:16px 18px;border-radius:16px;background:var(--sf-ai),var(--surface);border:1px solid var(--sf-ai-line)}
+.cp-ai .tag{font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);display:flex;align-items:center;gap:8px}
+.cp-ai .tag:before{content:'';width:7px;height:7px;border-radius:50%;background:var(--ember);box-shadow:0 0 8px var(--ember)}
+.cp-ai .t{font-size:15px;line-height:1.5;margin-top:8px;color:var(--ink)}
+.cp-ai .s{font-size:12.5px;color:var(--ink3);margin-top:6px}
+.cp-audgrid{display:grid;grid-template-columns:minmax(0,1fr) 440px;gap:24px;align-items:stretch}
+.cp-grow{padding:26px 28px;display:flex;flex-direction:column;gap:22px}
+.cp-growhd{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;font-size:15px;color:var(--ink2)}
+.cp-growhd .big{font-weight:600;font-size:44px;line-height:1;color:var(--ink)}
+.cp-growth{height:150px;display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:10px;align-items:end;position:relative;padding-bottom:22px;border-bottom:1px solid var(--cp-line)}
+.cp-growth .b{position:relative;height:100%;display:flex;align-items:flex-end}
+.cp-growth .b i{display:block;width:100%;border-radius:6px 6px 3px 3px;background:linear-gradient(180deg,var(--ember2),rgba(200,75,47,.35));transform-origin:bottom;animation:cpGrow .7s cubic-bezier(.2,.8,.2,1) both}
+.cp-growth .b.now i{background:linear-gradient(180deg,var(--ember),var(--ember2))}
+.cp-growth .b .n{position:absolute;left:0;right:0;text-align:center;font-family:'Space Grotesk',sans-serif;font-size:11.5px;font-weight:700;color:var(--ink3)}
+.cp-growth .b .d{position:absolute;left:0;right:0;bottom:-22px;text-align:center;font-family:'Space Grotesk',sans-serif;font-size:11px;color:var(--ink3);white-space:nowrap}
+.cp-segrows{display:flex;flex-direction:column;gap:12px}
+.cp-segrows .r{display:grid;grid-template-columns:170px minmax(0,1fr) 48px;align-items:center;gap:14px;font-size:14px;color:var(--ink2)}
+.cp-segrows .bar{height:8px;border-radius:999px;background:var(--cp-soft);overflow:hidden}
+.cp-segrows .bar i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--ember),var(--ember2));transition:width .8s cubic-bezier(.2,.8,.2,1)}
+.cp-segrows .c{font-family:'Space Grotesk',sans-serif;font-weight:700;text-align:right;color:var(--ink)}
+.cp-qr{padding:26px 28px;display:flex;flex-direction:column;gap:20px}
+.cp-qrhd{display:flex;gap:22px;align-items:center}
+.cp-qrhd img{width:164px;height:164px;flex:none;padding:10px;border-radius:18px;background:#fff;box-shadow:0 20px 40px -22px rgba(0,0,0,.55)}
+.cp-qrhd .t{font-family:'Clash Display',sans-serif;font-weight:500;font-size:22px;color:var(--ink)}
+.cp-qrhd .s{font-size:14px;color:var(--ink3);margin-top:6px;line-height:1.45}
+.cp-places{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.cp-places>div{display:flex;flex-direction:column;align-items:center;gap:8px;padding:14px 6px 12px;border-radius:14px;background:var(--cp-soft);font-size:12px;font-weight:700;color:var(--ink2)}
+.cp-places .pl{display:flex;align-items:center;justify-content:center;background:var(--paper);border:1px solid var(--cp-line);box-shadow:0 8px 16px -10px rgba(0,0,0,.4)}
+.cp-places .pl i{width:13px;height:13px;background:repeating-linear-gradient(90deg,var(--ink) 0 2px,transparent 2px 4px),repeating-linear-gradient(0deg,var(--ink) 0 2px,transparent 2px 4px);background-blend-mode:multiply;opacity:.8}
+.cp-places .tent{width:38px;height:44px;border-radius:4px 4px 2px 2px;transform:perspective(80px) rotateX(14deg)}
+.cp-places .receipt{width:28px;height:48px;border-radius:2px;align-items:flex-end;padding-bottom:6px;box-sizing:border-box}
+.cp-places .menu{width:36px;height:48px;border-radius:3px;align-items:flex-end;padding-bottom:6px;box-sizing:border-box}
+.cp-places .window{width:44px;height:44px;border-radius:50%}
+.cp-qracts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.cp-qracts .cbtn{justify-content:center;padding-left:6px;padding-right:6px}
+.cp-join{font-family:'Space Grotesk',sans-serif;font-size:12.5px;color:var(--ink3);word-break:break-all}
+.cp-perfsum{display:flex;gap:22px;flex-wrap:wrap;font-size:13.5px;color:var(--ink3)}
+.cp-perfsum b{font-family:'Space Grotesk',sans-serif;font-size:20px;color:var(--ink);margin-right:4px}
+.cp-camps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.cp-camp{padding:22px 22px 20px;display:flex;flex-direction:column;gap:14px;animation:cpRise .45s ease both}
+.cp-camp.best{border-color:var(--cp-ring)}
+.cp-camp .hd{display:flex;align-items:center;gap:8px}
+.cp-camp .hd .dt{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:14px;color:var(--ink)}
+.cp-camp .hd .bd{margin-left:auto;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--ember2)}
+.cp-camp .m{font-size:15px;line-height:1.5;color:var(--ink2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.cp-camp .mx{display:flex;flex-direction:column;gap:9px;margin-top:auto}
+.cp-camp .mx .r{display:grid;grid-template-columns:86px minmax(0,1fr) 44px;align-items:center;gap:10px;font-size:13px;color:var(--ink3)}
+.cp-camp .mx .bar{height:6px;border-radius:999px;background:var(--cp-soft);overflow:hidden}
+.cp-camp .mx .bar i{display:block;height:100%;border-radius:999px}
+.cp-camp .mx .v{font-family:'Space Grotesk',sans-serif;font-weight:700;text-align:right;color:var(--ink)}
+.cp-empty{grid-column:1/-1;padding:28px;border-radius:18px;border:1px dashed var(--cp-line);font-size:15px;color:var(--ink3);text-align:center}
+.cp-set{overflow:hidden;padding:0}
+.cp-set .r{display:flex;align-items:center;gap:16px;width:100%;box-sizing:border-box;padding:18px 24px;border-top:1px solid var(--cp-line);font-size:15px;text-align:left}
+.cp-set .r:first-child{border-top:0}
+.cp-set .r.cbtn{height:auto;min-height:0;border-radius:0;justify-content:flex-start;font-weight:400;color:inherit}
+.cp-set .r.cbtn:hover{background:var(--cp-soft)}
+.cp-set .ic{width:34px;height:34px;border-radius:10px;flex:none;background:var(--cp-tint);color:var(--ember2);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800}
+.cp-set b{width:180px;flex:none;font-size:15.5px;color:var(--ink)}
+.cp-set .v{flex:1;min-width:0;color:var(--ink3)}
+.cp-set .on{font-size:12px;font-weight:700;color:var(--green)}
+.cp-set .go{color:var(--ink3);font-size:20px}
+.cp-receipts{display:block!important;padding:0!important}
+.cp-receipts summary{display:flex;align-items:center;gap:16px;padding:18px 24px;cursor:pointer;list-style:none}
+.cp-receipts summary::-webkit-details-marker{display:none}
+.cp-receipts[open] .go{transform:rotate(90deg)}
+.cp-rhint{padding:0 24px 20px 74px;font-size:14.5px;line-height:1.6;color:var(--ink2);max-width:70ch}
+@media (max-width:1100px){.cp-kpis{grid-template-columns:repeat(6,minmax(0,1fr))}.cp-kpis>*{grid-column:span 2}.cp-kpis>:nth-child(n+4){grid-column:span 3}.cp-builder,.cp-audgrid{grid-template-columns:1fr}.cp-side{position:static}.cp-camps{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:640px){.cp-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.cp-kpis>*,.cp-kpis>:nth-child(n+4){grid-column:auto}.cp-kpis>:last-child{grid-column:1/-1}.cp-camps{grid-template-columns:1fr}.cp-prompt{flex-wrap:wrap}.cp-prompt .cbtn{width:100%}.cp-set b{width:auto}.cp-qracts,.cp-places{grid-template-columns:repeat(2,minmax(0,1fr))}.cp-segrows .r{grid-template-columns:120px minmax(0,1fr) 40px}}
+@media (prefers-reduced-motion:reduce){.cp-kpi,.cp-builder,.cp-camp,.cp-orb,.cp-growth .b i,#guest-send-btn.arm{animation:none}}
 
 /* cal-card (a day that already HAS generated content) keeps its ember tint
    on purpose — it's a meaningful "has content" signal against cal-day's
@@ -1963,6 +2126,9 @@ function cavNavSection(p) {
   var mod = CAV_NAV_CANON[p.head] || p.head;
   var sec = document.querySelector('[data-nav="' + mod + '/' + p.rest[0] + '"]');
   if (!sec) return false;
+  /* A section on one of Marketing's own tabs (Campaigns) opens that tab. */
+  var mt = sec.closest ? sec.closest('[id^="mkt-tab-"]') : null;
+  if (mt && window.switchMktTab) window.switchMktTab(mt.id.replace('mkt-tab-', ''));
   if (sec.tagName === 'DETAILS') sec.open = true;
   var d = sec.parentNode && sec.parentNode.closest ? sec.parentNode.closest('details') : null;
   while (d) { d.open = true; d = d.parentNode && d.parentNode.closest ? d.parentNode.closest('details') : null; }
@@ -11106,6 +11272,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
   <div style="display:flex;justify-content:flex-start;margin:22px 0 18px">
     <div style="display:inline-flex;border:1px solid var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
       <button id="mkt-tab-content-btn"   onclick="switchMktTab('content')"   class="rv-tab-active" style="border:none;padding:7px 18px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;transition:background .15s,color .15s">Content</button>
+      <button id="mkt-tab-campaigns-btn" onclick="switchMktTab('campaigns')" style="border:none;padding:7px 18px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Campaigns</button>
       <button id="mkt-tab-queue-btn" onclick="switchMktTab('queue')" style="border:none;padding:7px 18px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Scheduled</button>
       <button id="mkt-tab-analytics-btn" onclick="switchMktTab('analytics')" style="border:none;padding:7px 18px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
     </div>
@@ -11218,84 +11385,6 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     <div class="cal-grid" id="cal-grid"><div class="hb-empty" style="grid-column:1/-1">Generate week builds the calendar.</div></div>
   </section>
 
-  <!-- Guest SMS lifecycle marketing. data-nav="marketing/guests" is the nav
-       path's section (nav.py): a win-back link lands here. -->
-  <div class="hb-sh"><div><div class="k">Guests</div><h2>Guest text club</h2></div></div>
-  <div class="hb-card mkt-card" id="mkt-guests" data-nav="marketing/guests">
-    <p class="mkt-help">Guests join themselves, by the link or the QR code — only a guest who opts in can be texted.</p>
-
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
-      <code id="guest-join-link" style="flex:1;min-width:220px;font-size:11px;color:var(--ink);background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;padding:8px 10px;word-break:break-all">{{request.url_root.rstrip('/')}}/join/{{restaurant.id}}</code>
-      <button onclick="copyGuestJoinLink()" class="cbtn cbtn-secondary cbtn-sm" id="guest-copy-btn">Copy link</button>
-    </div>
-
-    <div style="display:flex;gap:14px;align-items:center;margin-bottom:14px;padding:12px;background:var(--paper2);border-radius:8px;flex-wrap:wrap">
-      <img src="/api/guest-qr" alt="QR code linking to the guest join page" width="72" height="72" style="border-radius:6px;background:white;padding:4px;flex-shrink:0">
-      <div style="flex:1;min-width:180px">
-        <div style="font-size:14px;color:var(--ink);font-weight:600;margin-bottom:2px">Print this where guests can scan it</div>
-        <div style="font-size:13px;color:var(--ink3);line-height:1.5">A table tent, a receipt or a menu insert.</div>
-      </div>
-      <a href="/api/guest-qr?download=1" download="guest-text-club-qr.png" class="cbtn cbtn-secondary cbtn-sm" style="flex-shrink:0">Download QR code</a>
-    </div>
-
-    {% set _pos = (restaurant.pos_system or '')|lower %}
-    <details class="how-this" style="margin-bottom:16px">
-      <summary>How to add this to your receipts</summary>
-      <div>
-        {% if 'square' in _pos %}
-        You're connected to Square — Square lets you add a custom message to your receipt footer under Square Dashboard → Settings → Checkout → Receipts. Paste in something like "Join our text club →" with the link above (Square's built-in receipt editor doesn't accept an image upload for the footer, so use the text link rather than the QR image itself).
-        {% elif 'toast' in _pos %}
-        You're connected to Toast — check Toast Web under your restaurant's receipt/order settings for a custom footer message field, and paste in the join link there. If you don't see that option, Toast support can usually enable it.
-        {% elif 'clover' in _pos %}
-        You're connected to Clover — look under Clover Dashboard → Setup → Receipts for a custom message option, or search the Clover App Market for a receipt-customization app if your device doesn't have one built in.
-        {% else %}
-        Whatever POS you use, check its receipt or footer-message settings — most systems let you add a custom line of text, which is where this join link belongs. If yours doesn't support that, printing the QR code on a table tent or near the register works just as well.
-        {% endif %}
-      </div>
-    </details>
-
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--paper3)">
-      <div id="guest-contacts-summary" style="font-size:12px;color:var(--ink3)"><div class="dr-pulse" role="status" aria-label="Loading guests"><i></i></div></div>
-      <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="openGuestContactsModal()">Manage<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-    </div>
-
-    <div id="guest-winback" hidden style="margin-bottom:16px;padding:14px 16px;border-radius:12px;background:var(--hb-tint);border:1px solid var(--hb-line2)"></div>
-    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin-bottom:8px">Send a campaign</div>
-    <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
-      <select id="guest-campaign-type" class="topic-input" style="flex:1;min-width:140px" onchange="guestTypeChanged()">
-        <option value="win_back">Win-back</option>
-        <option value="event">Event / special</option>
-        <option value="loyalty">Loyalty thank-you</option>
-        <option value="general">General</option>
-      </select>
-      <!-- Who it goes to. "Win-back" used to be a TONE the copy was written
-           in, never an AUDIENCE it was sent to. -->
-      <select id="guest-campaign-segment" class="topic-input" style="flex:1;min-width:180px" onchange="renderSegmentHelp()"></select>
-      <input type="text" id="guest-campaign-topic" class="topic-input" placeholder="Optional details (e.g. half-price wine Wednesdays)" style="flex:2;min-width:200px">
-      <button onclick="generateGuestCampaign()" class="cbtn cbtn-secondary" id="guest-generate-btn">Generate</button>
-    </div>
-    <div id="guest-segment-help" style="font-size:11px;color:var(--ink3);line-height:1.55;margin-bottom:10px"></div>
-    <!-- draft_campaign_message's own prompt forbids links, so a text could
-         never carry one — meaning a text club could ask guests to come back
-         and never learn whether one did. -->
-    <input type="text" id="guest-campaign-link" class="topic-input" placeholder="Link to track (optional) — e.g. your menu or booking page" style="width:100%;box-sizing:border-box;margin-bottom:10px">
-    <textarea id="guest-campaign-message" rows="3" placeholder="Generated message will appear here — edit before sending" maxlength="300" style="width:100%;padding:10px 12px;border:1px solid var(--paper3);border-radius:8px;font-family:'Apfel Grotezk',sans-serif;font-size:13px;color:var(--ink);background:var(--paper2);outline:none;resize:vertical;margin-bottom:10px;box-sizing:border-box"></textarea>
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <button onclick="sendGuestCampaign()" class="cbtn cbtn-secondary" id="guest-send-btn">Send to this audience</button>
-      <span id="guest-campaign-status" style="font-size:12px;display:none"></span>
-    </div>
-
-    <!-- What has already gone out. guest_campaigns has recorded every send
-         since the table existed and nothing ever displayed it. -->
-    <div id="guest-history-wrap" style="display:none;margin-top:18px;padding-top:16px;border-top:1px solid var(--paper3)">
-      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin-bottom:8px">Campaigns sent</div>
-      <div id="guest-history-list"></div>
-    </div>
-
-    <!-- The rules this list runs under, stated rather than assumed. -->
-    <div id="guest-ledger" style="display:none;margin-top:16px;padding-top:14px;border-top:1px solid var(--paper3);font-size:11.5px;color:var(--ink3);line-height:1.6"></div>
-  </div>
-
   <!-- The newsletter channel. `weekly_email` has generated newsletters since
        this product existed with no list and no way to send one. -->
   <div class="hb-sh"><div><div class="k">Email</div><h2>Email newsletter<small><span id="guest-newsletter-count"></span></small></h2></div></div>
@@ -11317,6 +11406,146 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
   <div class="hb-card mkt-card"><div id="mkt-drafts-list"><div class="hb-empty">Nothing saved yet.</div></div></div>
 
     </div><!-- /mkt-tab-content -->
+
+  {# Campaigns (owner, 9/28/26): the guest text club rebuilt AI-first, on its
+     own tab. It opens on one question - what should this text do - and the
+     draft, the audience and a live phone follow from the answer. Four
+     sections: Create, Audience, Performance, Settings. Every figure is
+     measured (guest_marketing.campaign_overview); SMS has no opens, so no
+     open rate. data-nav="marketing/guests" still lands here (a win-back
+     link). DESIGN_SYSTEM.md -> Campaigns. #}
+  <div id="mkt-tab-campaigns" style="display:none">
+  <div class="cp" id="mkt-guests" data-nav="marketing/guests">
+
+    <div class="cp-kpis" aria-label="Your guest list">
+      <div class="cp-card cp-kpi"><div class="l">Subscribers</div><div class="v"><span id="cp-k-subs">—</span></div><div class="s"><span class="cp-chip" id="cp-k-today">+0</span>today</div></div>
+      <div class="cp-card cp-kpi"><div class="l">Growth</div><div class="v"><span id="cp-k-growth">—</span></div><div class="s"><span class="cp-chip">30 days</span>new opt-ins</div></div>
+      <div class="cp-card cp-kpi"><div class="l">Last campaign</div><div class="v"><span id="cp-k-last">—</span></div><div class="s" id="cp-k-last-s">nothing sent yet</div></div>
+      <div class="cp-card cp-kpi" title="Taps on the tracked link, per text sent. Texts report no opens, so there is no open rate."><div class="l">Tap rate</div><div class="v"><span id="cp-k-tap">—</span></div><div class="s" id="cp-k-tap-s">after 2 campaigns with a link</div></div>
+      <div class="cp-card cp-kpi" title="Guests who visited within 14 days of a text, matched in your POS, per text sent."><div class="l">Came back</div><div class="v"><span id="cp-k-back">—</span></div><div class="s" id="cp-k-back-s">within 14 days</div></div>
+    </div>
+
+    <section class="cp-sec" aria-labelledby="cp-create-h">
+      <div class="cp-h"><div class="k">Create</div><h2 id="cp-create-h">What should this text do?</h2></div>
+      <form class="cp-prompt" onsubmit="event.preventDefault();cpCreate()">
+        <span class="cp-orb" aria-hidden="true"></span>
+        <label for="cp-prompt" class="cp-sr">What should this text do?</label>
+        <input id="cp-prompt" maxlength="280" autocomplete="off" placeholder="Bring back guests who haven&rsquo;t visited in 30 days">
+        <button type="submit" class="cbtn cbtn-primary cbtn-lg" id="cp-create-btn">Create &rarr;</button>
+      </form>
+      <div class="cp-sugg" id="guest-winback" hidden></div>
+      <div class="cp-ideas" id="cp-ideas">
+        <button type="button" class="cbtn cbtn-secondary cbtn-sm cp-idea" data-cp-idea="Bring back guests who haven't been in for 30 days"><i class="d1"></i>Bring back guests gone 30 days</button>
+        <button type="button" class="cbtn cbtn-secondary cbtn-sm cp-idea" data-cp-idea="Thank our regulars for coming back"><i class="d2"></i>Thank your regulars</button>
+        <button type="button" class="cbtn cbtn-secondary cbtn-sm cp-idea" data-cp-idea="Promote this week's special"><i class="d3"></i>Promote this week&rsquo;s special</button>
+        <button type="button" class="cbtn cbtn-secondary cbtn-sm cp-idea" data-cp-idea="Welcome our first-time guests back"><i class="d4"></i>Welcome back first-timers</button>
+      </div>
+
+      <div class="cp-builder" id="cp-builder" hidden>
+        <div class="cp-steps">
+          <div class="cp-card cp-step done" id="cp-step-goal">
+            <span class="n" aria-hidden="true"></span>
+            <div class="b"><div class="lbl">Goal <span class="cp-tag" id="cp-goal-k"></span></div><div class="t" id="cp-goal-t"></div></div>
+            <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="cpChangeGoal()">Change</button>
+          </div>
+          <div class="cp-card cp-step done" id="cp-step-aud">
+            <span class="n" aria-hidden="true"></span>
+            <div class="b">
+              <div class="lbl">Audience <span class="cp-tag ai" id="cp-aud-k">Picked by Cavnar AI</span></div>
+              <div class="cp-aud"><span class="hb-num" id="cp-aud-n">0</span><span id="cp-aud-l"></span></div>
+              <div class="cp-segs" id="cp-segs" role="radiogroup" aria-label="Who it goes to"></div>
+            </div>
+          </div>
+          <div class="cp-card cp-step now" id="cp-step-msg">
+            <span class="n" aria-hidden="true">3</span>
+            <div class="b">
+              <div class="lbl">Message <button type="button" class="cbtn cbtn-secondary cbtn-sm cp-rewrite" id="cp-rewrite" onclick="cpCreate(true)">Rewrite &#8635;</button></div>
+              <label for="guest-campaign-message" class="cp-sr">Message</label>
+              <textarea id="guest-campaign-message" class="cp-msg" rows="3" maxlength="300" oninput="cpPaint()"></textarea>
+              <div class="cp-meta">
+                <span class="cp-chip hb-num" id="cp-chars">0 / 300</span><span class="cp-chip" id="cp-fit"></span>
+                <span class="cp-sp"></span>
+                <label class="cp-linksw"><span class="ac-switch"><input type="checkbox" id="cp-link-on" onchange="cpLinkToggle()"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></span>Track taps on a link</label>
+              </div>
+              <input type="url" id="guest-campaign-link" class="ac-input cp-link" placeholder="Your menu or booking page" oninput="cpPaint()" hidden>
+            </div>
+          </div>
+          <div class="cp-card cp-step" id="cp-step-send">
+            <span class="n" aria-hidden="true">4</span>
+            <div class="b cp-sendrow">
+              <div class="cp-checks" id="cp-checks"></div>
+              <button type="button" class="cbtn cbtn-primary cbtn-lg" id="guest-send-btn" onclick="sendGuestCampaign(this)">Send</button>
+            </div>
+            <div class="cp-status" id="guest-campaign-status" hidden></div>
+          </div>
+        </div>
+        <div class="cp-side">
+          <div class="cp-phone" aria-label="What your guests see">
+            <div class="scr">
+              <div class="top"><span class="av">{{ (restaurant.name or 'Us')[:2]|upper }}</span><b>{{ restaurant.name }}</b></div>
+              <div class="thread"><div class="when">Today</div><div class="bub" id="cp-bubble"><span id="cp-bub-t"></span><span class="lk" id="cp-bub-link" hidden></span><span class="stop">Reply STOP to unsubscribe.</span></div></div>
+            </div>
+          </div>
+          <div class="cp-fc">
+            <div class="cp-card"><div class="l">Expected taps</div><div class="v hb-num" id="cp-f-taps">—</div><div class="s" id="cp-f-taps-s">needs a link</div></div>
+            <div class="cp-card"><div class="l">Likely back</div><div class="v hb-num" id="cp-f-back">—</div><div class="s" id="cp-f-back-s">within 14 days</div></div>
+            <div class="cp-card"><div class="l">Goes out</div><div class="v" id="cp-f-when">—</div><div class="s" id="cp-f-when-s"></div></div>
+            <div class="cp-card"><div class="l">Reaches</div><div class="v hb-num" id="cp-f-n">0</div><div class="s">guests who opted in</div></div>
+          </div>
+          <div class="cp-ai" id="cp-ai" hidden><div class="tag">Cavnar AI</div><div class="t" id="cp-ai-t"></div><div class="s" id="cp-ai-s"></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="cp-sec" aria-labelledby="cp-aud-h">
+      <div class="cp-h"><div class="k">Audience</div><h2 id="cp-aud-h">Who&rsquo;s listening</h2></div>
+      <div class="cp-audgrid">
+        <div class="cp-card cp-grow">
+          <div class="cp-growhd"><span class="hb-num big" id="cp-a-subs">—</span><span>opted in</span><span class="cp-chip good" id="cp-a-30"></span></div>
+          <div class="cp-growth" id="cp-growth" role="img" aria-label="Opt-ins per week, last 12 weeks"></div>
+          <div class="cp-segrows" id="cp-segrows"></div>
+        </div>
+        <div class="cp-card cp-qr">
+          <div class="cp-qrhd">
+            <img src="/api/guest-qr" alt="QR code guests scan to join" width="164" height="164">
+            <div><div class="t">Scan to join</div><div class="s">Guests opt in themselves &mdash; only they can.</div></div>
+          </div>
+          <div class="cp-places" aria-hidden="true">
+            <div><span class="pl tent"><i></i></span>Table tent</div>
+            <div><span class="pl receipt"><i></i></span>Receipt</div>
+            <div><span class="pl menu"><i></i></span>Menu</div>
+            <div><span class="pl window"><i></i></span>Window</div>
+          </div>
+          <div class="cp-qracts">
+            <a class="cbtn cbtn-secondary" href="/api/guest-qr?download=1" download="join-{{ restaurant.id }}-qr.png">Download</a>
+            <button type="button" class="cbtn cbtn-secondary" onclick="cpPrintQr()">Print</button>
+            <button type="button" class="cbtn cbtn-secondary" onclick="cpShareJoin()">Share</button>
+            <button type="button" class="cbtn cbtn-secondary" id="guest-copy-btn" onclick="copyGuestJoinLink()">Copy link</button>
+          </div>
+          <code class="cp-join" id="guest-join-link"></code>
+        </div>
+      </div>
+    </section>
+
+    <section class="cp-sec" aria-labelledby="cp-perf-h">
+      <div class="cp-h cp-hrow"><div><div class="k">Performance</div><h2 id="cp-perf-h">What your texts did</h2></div>
+        <div class="cp-perfsum" id="cp-perfsum"></div></div>
+      <div class="cp-camps" id="guest-history-list"><div class="cp-empty">Your first campaign shows up here, with its taps and the guests who came back.</div></div>
+    </section>
+
+    <section class="cp-sec" aria-labelledby="cp-set-h">
+      <div class="cp-h"><div class="k">Settings</div><h2 id="cp-set-h">The rules every text follows</h2></div>
+      <div class="cp-card cp-set">
+        <div class="r"><span class="ic" aria-hidden="true">&#9719;</span><b>Sending hours</b><span class="v" id="cp-s-hours">8:00 AM &ndash; 9:00 PM, your time</span><span class="on">Always on</span></div>
+        <div class="r"><span class="ic" aria-hidden="true">&#8635;</span><b>Spacing</b><span class="v">One text per guest every 3 days</span><span class="on">Always on</span></div>
+        <div class="r"><span class="ic" aria-hidden="true">&#10005;</span><b>Opt-outs</b><span class="v">STOP and HELP are handled for you</span><span class="on">Always on</span></div>
+        <div class="r"><span class="ic" aria-hidden="true">&#10003;</span><b>Consent</b><span class="v" id="guest-ledger">&hellip;</span></div>
+        <button type="button" class="r cbtn cbtn-text" onclick="openGuestContactsModal()"><span class="ic" aria-hidden="true">&#9776;</span><b>Contacts</b><span class="v" id="guest-contacts-summary">&hellip;</span><span class="go" aria-hidden="true">&rsaquo;</span></button>
+        <details class="r cp-receipts"><summary><span class="ic" aria-hidden="true">&#9113;</span><b>Receipts</b><span class="v">Put your join link on every receipt</span><span class="go" aria-hidden="true">&rsaquo;</span></summary><div class="cp-rhint" id="cp-receipt-hint"></div></details>
+      </div>
+    </section>
+  </div>
+  </div><!-- /mkt-tab-campaigns -->
 
   <!-- Scheduled sub-tab: the queue. Everything this module did was
        generate-now/post-now, and an owner does admin at 11pm. -->
@@ -14711,8 +14940,8 @@ window.switchIntelTab = function(tab) {
 // Three panels now, not two — the queue is its own place because "what is
 // going out and when" is a different question from "what should I write".
 window.switchMktTab = function(tab) {
-  var panels = {content: 'mkt-tab-content', queue: 'mkt-tab-queue', analytics: 'mkt-tab-analytics'};
-  var buttons = {content: 'mkt-tab-content-btn', queue: 'mkt-tab-queue-btn', analytics: 'mkt-tab-analytics-btn'};
+  var panels = {content: 'mkt-tab-content', campaigns: 'mkt-tab-campaigns', queue: 'mkt-tab-queue', analytics: 'mkt-tab-analytics'};
+  var buttons = {content: 'mkt-tab-content-btn', campaigns: 'mkt-tab-campaigns-btn', queue: 'mkt-tab-queue-btn', analytics: 'mkt-tab-analytics-btn'};
   for (var key in panels) {
     var panel = document.getElementById(panels[key]);
     if (panel) panel.style.display = (key === tab) ? '' : 'none';
@@ -14726,6 +14955,7 @@ window.switchMktTab = function(tab) {
   if (tab === 'analytics' && !mktPerfLoaded) { mktPerfLoaded = true; loadMktPerformance(); }
   if (tab === 'analytics') { loadMktWindow(); loadMktAttribution(); }
   if (tab === 'queue') loadMktQueue();
+  if (tab === 'campaigns') { loadGuestOverview(); if (window.cpPaint) cpPaint(); }
 };
 
 function loadSentimentTrend(){
@@ -17664,7 +17894,9 @@ document.addEventListener('DOMContentLoaded',function(){
   })(CAUSE_HOSTS[i]);
 });
 function loadMarketingDiagnosis(){
-  fetch('/api/marketing/diagnosis',{credentials:'same-origin'}).then(apiJson).then(function(d){renderDiagnosis('guest-diag',d&&d.diagnosis);}).catch(function(){});
+  fetch('/api/marketing/diagnosis',{credentials:'same-origin'}).then(apiJson).then(function(d){renderDiagnosis('guest-diag',d&&d.diagnosis);
+    // The same read is the Campaigns page's strategist line (9/28/26).
+    if(window._cp){_cp.diag=d&&d.diagnosis;if(window.cpPaint)cpPaintAi();}}).catch(function(){});
 }
 // One card: each latest answer carries its own question's history (a dot
 // per check), so the history no longer repeats the questions in a second
@@ -25793,6 +26025,7 @@ function revokeOtherSessions(btn){
     if (n === 'inventory' && !_fcMenuLoaded) { _fcMenuLoaded = true; loadFcMenu(); fc2LoadPendingInvoices(); }
     if (n === 'marketing' && !_gcLoaded) {
       _gcLoaded = true;
+      loadGuestOverview();
       loadGuestContactsSummary();
       loadGuestSegments();
       loadGuestHistory();
@@ -25802,149 +26035,351 @@ function revokeOtherSessions(btn){
   };
 })();
 
-// ── Guest SMS lifecycle marketing ───────────────────────────────────────────
+// ── Campaigns (owner, 9/28/26) ─────────────────────────────────────────────
+// The guest text club, AI-first: one goal typed in (or a suggestion
+// tapped) drafts the text and picks its audience (guest_marketing.
+// plan_campaign + the one model call); the four steps and the phone follow
+// from it. Every figure on the page is measured (campaign_overview): there
+// is no open rate, because a text reports none. ES5 only.
 var _gcLoaded = false;
-function loadGuestContactsSummary() {
-  var el = document.getElementById('guest-contacts-summary');
-  if (!el) return;
-  fetch('/api/guest-contacts').then(apiJson).then(function(d){
-    if (!d.ok) { loadFailed(el, d); return; }
-    var total = d.contacts.length;
-    var consented = d.contacts.filter(function(c){ return c.consent && !c.unsubscribed; }).length;
-    el.textContent = consented + ' text-eligible · ' + total + ' total contact' + (total === 1 ? '' : 's');
-  }).catch(function(){ loadFailed(el, null); });
+var _cp = {ov: null, segs: [], seg: 'all', type: 'general', prompt: '', goal: '', targetDay: null,
+           winback: null, hist: [], diag: null, armed: null};
+function _cpEl(id) { return document.getElementById(id); }
+function _cpNum(el, v, o) { if (!el) return; if (v == null) { el.textContent = '—'; return; } if (window.cavCount) cavCount(el, v, o || {}); else el.textContent = String(v); }
+function _cpSegOf(key) { for (var i = 0; i < _cp.segs.length; i++) if (_cp.segs[i].key === key) return _cp.segs[i]; return null; }
+
+function loadGuestOverview() {
+  fetch('/api/guest-overview', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
+    if (!d || !d.ok) return;
+    _cp.ov = d;
+    _cpNum(_cpEl('cp-k-subs'), d.subscribers);
+    var td = _cpEl('cp-k-today'); if (td) { td.textContent = '+' + (d.today || 0); td.className = 'cp-chip' + (d.today ? ' good' : ''); }
+    _cpNum(_cpEl('cp-k-growth'), d.last_30, {prefix: d.last_30 ? '+' : ''});
+    var lc = d.last_campaign, lk = _cpEl('cp-k-last'), ls = _cpEl('cp-k-last-s');
+    if (lk) lk.textContent = lc && lc.date ? mdy(lc.date) : '—';
+    if (ls) ls.innerHTML = lc ? '<span class="cp-chip hb-num">' + (+lc.sent || 0) + '</span>texted' : 'nothing sent yet';
+    var rateMin = d.rate_min || 2;
+    [['tap', d.tap_rate, 'with a link', 'after ' + rateMin + ' campaigns with a link'],
+     ['back', d.back_rate, 'matched in your POS', 'within 14 days']].forEach(function(k) {
+      var v = _cpEl('cp-k-' + k[0]), s = _cpEl('cp-k-' + k[0] + '-s');
+      if (k[1]) { _cpNum(v, k[1].pct, {decimals: 1, suffix: '%'}); if (s) s.innerHTML = '<span class="cp-chip hb-num">' + k[1].campaigns + '</span>campaigns ' + k[2]; }
+      else { if (v) v.textContent = '—'; if (s) s.textContent = k[3]; }
+    });
+    var as = _cpEl('cp-a-subs'); _cpNum(as, d.subscribers);
+    var a30 = _cpEl('cp-a-30'); if (a30) a30.textContent = '+' + (d.last_30 || 0) + ' in 30 days';
+    cpPaintGrowth();
+    var jl = _cpEl('guest-join-link'); if (jl) jl.textContent = d.join_url || '';
+    var rh = _cpEl('cp-receipt-hint'); if (rh) rh.textContent = d.receipt_hint || '';
+    var hr = _cpEl('cp-s-hours'); if (hr && d.window) hr.textContent = d.window.replace(' and ', ' – ') + ', your time';
+    var ps = _cpEl('cp-perfsum');
+    if (ps) ps.innerHTML = '<span><b>' + (+d.texts_this_month || 0) + '</b>texted this month</span>'
+      + (d.delivered != null ? '<span><b>' + d.delivered + '%</b>delivered</span>' : '');
+    cpPaint();
+  }).catch(function() {});
+}
+function cpPaintGrowth() {
+  var host = _cpEl('cp-growth'), w = (_cp.ov && _cp.ov.weekly) || [];
+  if (!host || !w.length) return;
+  var max = 1, i, h = '';
+  for (i = 0; i < w.length; i++) max = Math.max(max, w[i].joined);
+  for (i = 0; i < w.length; i++) {
+    var pct = Math.round(w[i].joined / max * 100), last = i === w.length - 1;
+    h += '<div class="b' + (last ? ' now' : '') + '" title="Week of ' + mdy(w[i].week_start) + ': ' + w[i].joined + ' joined">'
+      + '<span class="n" style="bottom:calc(' + Math.max(pct, 2) + '% + 4px)">' + (w[i].joined || '') + '</span>'
+      + '<i style="height:' + Math.max(pct, 2) + '%;animation-delay:' + (i * 0.04) + 's"></i>'
+      + ((i === 0 || last) ? '<span class="d">' + mdy(w[i].week_start).replace(/\/\d+$/, '') + '</span>' : '') + '</div>';
+  }
+  host.innerHTML = h;
 }
 
-// ── Audience, history, compliance and the newsletter ────────────────────────
+function loadGuestContactsSummary() {
+  var el = _cpEl('guest-contacts-summary');
+  if (!el) return;
+  fetch('/api/guest-contacts').then(apiJson).then(function(d) {
+    if (!d.ok) { loadFailed(el, d); return; }
+    var total = d.contacts.length;
+    var consented = d.contacts.filter(function(c) { return c.consent && !c.unsubscribed; }).length;
+    el.textContent = consented + ' can be texted · ' + total + ' on the list · add, remove or mark a visit';
+  }).catch(function() { loadFailed(el, null); });
+}
+
+// ── Audience ───────────────────────────────────────────────────────────────
 window._guestSegments = [];
 window._guestDefaults = {};
-function loadGuestSegments(){
-  fetch('/api/guest-segments').then(apiJson).then(function(d){
-    if(!d.ok) return;
-    window._guestSegments = d.segments;
+function loadGuestSegments() {
+  fetch('/api/guest-segments').then(apiJson).then(function(d) {
+    if (!d.ok) return;
+    _cp.segs = d.segments || [];
+    window._guestSegments = _cp.segs;
     window._guestDefaults = d.defaults || {};
-    var sel = document.getElementById('guest-campaign-segment');
-    if(!sel) return;
-    var current = sel.value;
-    sel.innerHTML = '';
-    for(var i=0;i<d.segments.length;i++){
-      var s = d.segments[i];
-      var o = document.createElement('option');
-      o.value = s.key;
-      o.textContent = s.label + ' (' + s.count + ')';
-      sel.appendChild(o);
-    }
-    // Picking a tone suggests the audience it was written for, instead of
-    // leaving the two unrelated the way "win-back to everyone" was.
-    var type = (document.getElementById('guest-campaign-type')||{}).value;
-    sel.value = current || window._guestDefaults[type] || 'all';
-    renderSegmentHelp();
-  }).catch(function(){});
-}
-function guestTypeChanged(){
-  var type = document.getElementById('guest-campaign-type').value;
-  var sel = document.getElementById('guest-campaign-segment');
-  if(sel && window._guestDefaults[type]){ sel.value = window._guestDefaults[type]; renderSegmentHelp(); }
-}
-function renderSegmentHelp(){
-  var sel = document.getElementById('guest-campaign-segment');
-  var help = document.getElementById('guest-segment-help');
-  if(!sel || !help) return;
-  for(var i=0;i<window._guestSegments.length;i++){
-    if(window._guestSegments[i].key === sel.value){
-      var s = window._guestSegments[i];
-      help.textContent = s.help + ' Goes to ' + s.count + ' guest' + (s.count === 1 ? '' : 's')
-        + ', between 8:00 AM and 9:00 PM. Nobody gets two campaigns inside three days.';
-      return;
-    }
-  }
-  help.textContent = '';
-}
-/* A drafted win-back text for guests who have drifted away (audit #47).
-   Nothing is sent until the owner presses Send — and then consent, quiet
-   hours and the three-day cap apply like any campaign. */
-function loadWinback(){
-  var box=document.getElementById('guest-winback');if(!box)return;
-  fetch('/api/guest-winback',{credentials:'same-origin'}).then(apiJson).then(function(d){
-    if(!d||!d.ok||!d.available||!d.draft){box.hidden=true;box.innerHTML='';return;}
-    var w=d.draft,ret=(w['return']||{}).text||'';
-    box.innerHTML='<div class="hb-kicker" style="margin-bottom:6px">Suggested \u00b7 win-back text</div>'
-      +'<div style="font-size:14px;color:var(--ink);margin-bottom:6px"><b class="hb-num">'+w.segment_size+'</b> opted-in guest'+(w.segment_size===1?'':'s')+' '+recEsc((w.segment_label||'').toLowerCase())+' can be texted.</div>'
-      +(ret?'<div style="font-size:12.5px;color:var(--ink3);margin-bottom:8px">'+recEsc(ret)+'</div>':'')
-      +'<textarea id="guest-winback-msg" rows="3" maxlength="'+(w.max_chars||300)+'" class="topic-input" style="width:100%;box-sizing:border-box;margin-bottom:8px">'+recEsc(w.message)+'</textarea>'
-      // One tap that names who it reaches (friction #41): the card is the
-      // confirm surface — the text and the head count are both on it.
-      +'<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button type="button" class="cbtn cbtn-primary cbtn-sm" id="guest-winback-send" data-winback-id="'+w.id+'">Text these '+(+w.segment_size||0)+' guest'+(w.segment_size===1?'':'s')+'</button>'
-      +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-winback-dismiss="'+w.id+'">Pass</button>'
-      +'<span style="font-size:12px;color:var(--ink3)">Texts go out '+recEsc(w.sms_window||'during the day')+'; nobody gets two inside three days.</span></div>';
-    box.hidden=false;
-  }).catch(function(){});
-}
-document.addEventListener('click',function(e){
-  var t=e.target&&e.target.closest?e.target.closest('[data-winback-id],[data-winback-dismiss]'):null;if(!t||t.disabled)return;
-  e.preventDefault();
-  var box=document.getElementById('guest-winback');
-  /* "Not for us" asks why first, like every other one (re-audit K3): the
-     same reason picker, and its code goes with the dismiss. Skip sends no
-     code; Cancel sends nothing. */
-  if(t.hasAttribute('data-winback-dismiss')){
-    var id=t.getAttribute('data-winback-dismiss'),row=t.parentNode;
-    recReasonPicker(row,{
-      onPick:function(code,note,picker){
-        var body={kind:'not_for_us'};if(code)body.reason_code=code;if(note)body.reason=note;
-        fetch('/api/guest-winback/'+id+'/dismiss',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(apiJson).then(function(d){
-          if(!d||!d.ok){picker.unlock();if(typeof toast==='function')toast((d&&d.error)||'Couldn\u2019t save that','error');return;}
-          picker.close();
-          if(box){box.innerHTML='<span class="rec-ans-done">Noted \u2014 no win-back suggestion for this group.</span>';}
-        }).catch(function(){picker.unlock();if(typeof toast==='function')toast('Network error','error');});
+    var rows = _cpEl('cp-segrows');
+    if (rows) {
+      var total = 1, h = '', i;
+      for (i = 0; i < _cp.segs.length; i++) total = Math.max(total, _cp.segs[i].count);
+      for (i = 0; i < _cp.segs.length; i++) {
+        var s = _cp.segs[i];
+        h += '<div class="r" title="' + _escHtml(s.help || '') + '"><span>' + _escHtml(s.label) + '</span><span class="bar"><i style="width:' + Math.round(s.count / total * 100) + '%"></i></span><span class="c">' + s.count + '</span></div>';
       }
-    });
-    return;
-  }
-  t.disabled=true;
-  var m=document.getElementById('guest-winback-msg');
-  fetch('/api/guest-winback/'+t.getAttribute('data-winback-id')+'/send',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:m?m.value:''})}).then(apiJson).then(function(d){
-    if(!d||!d.ok){t.disabled=false;if(typeof toast==='function')toast((d&&d.error)||'Couldn\'t send that','error');return;}
-    if(box)box.innerHTML='<span class="rec-ans-done">Sending to '+(d.total||0)+' guest'+(d.total===1?'':'s')+' \u2014 it will show in your campaign history.</span>';
-  }).catch(function(){t.disabled=false;if(typeof toast==='function')toast('Network error','error');});
+      rows.innerHTML = h;
+    }
+    cpPaint();
+  }).catch(function() {});
+}
+function cpPickSeg(key) {
+  if (_cp.winback && key !== _cp.winback.segment) _cp.winback = null;   // their own campaign now
+  _cp.seg = key; _cp.armed = null;
+  var sb = _cpEl('guest-send-btn'); if (sb) sb.classList.remove('sent');
+  var k = _cpEl('cp-aud-k'); if (k) k.textContent = 'Your pick';
+  cpPaint();
+}
+
+// ── Create ─────────────────────────────────────────────────────────────────
+document.addEventListener('click', function(e) {
+  var t = e.target && e.target.closest ? e.target.closest('[data-cp-idea],[data-cp-seg],[data-winback-use],[data-winback-dismiss]') : null;
+  if (!t || t.disabled) return;
+  if (t.hasAttribute('data-cp-idea')) { var p = _cpEl('cp-prompt'); if (p) p.value = t.getAttribute('data-cp-idea'); cpCreate(); return; }
+  if (t.hasAttribute('data-cp-seg')) { cpPickSeg(t.getAttribute('data-cp-seg')); return; }
+  if (t.hasAttribute('data-winback-use')) { cpUseWinback(); return; }
+  /* Pass asks why first, like every other one (re-audit K3): the same
+     reason picker; Skip sends no code, Cancel sends nothing. */
+  e.preventDefault();
+  var id = t.getAttribute('data-winback-dismiss'), row = t.parentNode, box = _cpEl('guest-winback');
+  recReasonPicker(row, {
+    onPick: function(code, note, picker) {
+      var body = {kind: 'not_for_us'}; if (code) body.reason_code = code; if (note) body.reason = note;
+      fetch('/api/guest-winback/' + id + '/dismiss', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}).then(apiJson).then(function(d) {
+        if (!d || !d.ok) { picker.unlock(); if (typeof toast === 'function') toast((d && d.error) || 'Couldn’t save that', 'error'); return; }
+        picker.close();
+        if (box) box.innerHTML = '<span class="rec-ans-done">Noted — no win-back suggestion for this group.</span>';
+      }).catch(function() { picker.unlock(); if (typeof toast === 'function') toast('Network error', 'error'); });
+    }
+  });
 });
-function loadGuestHistory(){
+window.cpCreate = function(rewrite) {
+  var inp = _cpEl('cp-prompt'), btn = rewrite ? _cpEl('cp-rewrite') : _cpEl('cp-create-btn');
+  var prompt = rewrite ? _cp.prompt : ((inp && inp.value) || '').trim();
+  if (!prompt) { if (inp) { inp.focus(); inp.placeholder = 'Say what you want the text to do — e.g. fill Thursday dinner'; } return; }
+  if (!btn || btn.disabled) return;
+  var label = btn.innerHTML; btn.disabled = true;
+  btn.innerHTML = '<div class="pulse-bar-track-on-accent" style="width:40px"><div class="pulse-bar-on-accent"></div></div>';
+  fetch('/api/guest-campaign/draft', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(rewrite ? {prompt: prompt, type: _cp.type} : {prompt: prompt})}).then(apiJson).then(function(d) {
+    btn.disabled = false; btn.innerHTML = label;
+    if (!d || !d.ok) { if (typeof toast === 'function') toast((d && d.error) || 'Couldn’t draft that — try again.', 'error'); return; }
+    var first = !_cp.prompt || !rewrite;
+    _cp.prompt = prompt; _cp.winback = null; _cp.armed = null;
+    if (!rewrite) {
+      _cp.type = d.type || 'general'; _cp.goal = d.goal || ''; _cp.targetDay = d.target_day || null;
+      _cp.seg = d.segment || window._guestDefaults[_cp.type] || 'all';
+      var k = _cpEl('cp-aud-k'); if (k) k.textContent = 'Picked by Cavnar AI';
+    }
+    var m = _cpEl('guest-campaign-message'); if (m) m.value = d.message || '';
+    cpOpenBuilder(first && !rewrite);
+  }).catch(function() { btn.disabled = false; btn.innerHTML = label; if (typeof toast === 'function') toast('Couldn’t reach Cavnar AI', 'error'); });
+};
+function cpOpenBuilder(scroll) {
+  var b = _cpEl('cp-builder'); if (!b) return;
+  var wasHidden = b.hidden; b.hidden = false;
+  var st = _cpEl('guest-campaign-status'); if (st) { st.hidden = true; st.className = 'cp-status'; }
+  var send = _cpEl('guest-send-btn'); if (send) { send.disabled = false; send.classList.remove('sent'); }
+  cpPaint();
+  if (scroll || wasHidden) try { b.scrollIntoView({behavior: 'smooth', block: 'start'}); } catch (e) { b.scrollIntoView(); }
+}
+window.cpChangeGoal = function() { var p = _cpEl('cp-prompt'); if (p) { p.focus(); p.select(); try { p.scrollIntoView({behavior: 'smooth', block: 'center'}); } catch (e) {} } };
+window.cpLinkToggle = function() {
+  var on = _cpEl('cp-link-on'), l = _cpEl('guest-campaign-link');
+  if (l) { l.hidden = !(on && on.checked); if (!l.hidden) l.focus(); else l.value = ''; }
+  cpPaint();
+};
+window.cpPaint = function() {
+  var seg = _cpSegOf(_cp.seg) || {key: _cp.seg, label: 'Everyone consented', count: 0};
+  var n = +seg.count || 0, ov = _cp.ov || {};
+  var gt = _cpEl('cp-goal-t'); if (gt) gt.textContent = _cp.prompt ? '“' + _cp.prompt + '”' : '';
+  var gk = _cpEl('cp-goal-k'); if (gk) gk.textContent = _cp.goal || '';
+  var an = _cpEl('cp-aud-n'); if (an && an.textContent !== String(n)) _cpNum(an, n);
+  var al = _cpEl('cp-aud-l'); if (al) al.textContent = seg.label ? seg.label.charAt(0).toLowerCase() + seg.label.slice(1) : '';
+  var segs = _cpEl('cp-segs');
+  if (segs) {
+    var h = '';
+    for (var i = 0; i < _cp.segs.length; i++) {
+      var s = _cp.segs[i], on = s.key === _cp.seg;
+      h += '<button type="button" role="radio" aria-checked="' + on + '" class="cbtn cbtn-secondary cbtn-sm cp-seg' + (on ? ' on' : '') + '" data-cp-seg="' + _escHtml(s.key) + '"' + (s.count ? '' : ' disabled') + ' title="' + _escHtml(s.help || '') + '">' + _escHtml(s.label) + '<span class="c">' + s.count + '</span></button>';
+    }
+    segs.innerHTML = h;
+  }
+  var msg = ((_cpEl('guest-campaign-message') || {}).value || '').trim();
+  var link = ((_cpEl('guest-campaign-link') || {}).value || '').trim();
+  var full = msg.length + (link ? 26 : 0) + 29;
+  var ch = _cpEl('cp-chars'); if (ch) ch.textContent = msg.length + ' / 300';
+  var fit = _cpEl('cp-fit');
+  // A character outside the GSM alphabet (an em dash, a curly quote, an
+  // emoji) sends the whole text as Unicode: 70 characters a part, not 160.
+  var uni = /[^\n\r !"#$%&'()*+,\-.\/0-9:;>=<?@A-Z\[\\\]^_a-z{|}~£¥èéùìòÇØøÅåÄÖÑÜäöñüàÉ¡¿§ΔΦΓΛΩΠΨΣΘΞÆæß€¤]/.test(msg + link);
+  var one = uni ? 70 : 160, per = uni ? 67 : 153;
+  if (fit) {
+    var parts = full <= one ? 1 : Math.ceil(full / per);
+    fit.textContent = parts === 1 ? 'Fits one text' : parts + ' texts per guest';
+    fit.className = 'cp-chip ' + (parts === 1 ? 'good' : 'warn');
+    fit.title = uni ? 'A dash, curly quote or emoji sends this as Unicode: ' + one + ' characters a text' : '';
+  }
+  var bt = _cpEl('cp-bub-t'), bub = _cpEl('cp-bubble');
+  if (bt) bt.textContent = msg || 'Your text shows up here as guests will see it.';
+  if (bub) bub.classList.toggle('empty', !msg);
+  var bl = _cpEl('cp-bub-link'); if (bl) { bl.hidden = !link; bl.textContent = link ? 'cavnar.ai/g/…' : ''; }
+  // What it should do, from what past texts did: a rate only once it rests
+  // on campaign_overview's minimum, else a dash that says what it waits for.
+  function est(id, rate, needLink, doneLbl) {
+    var v = _cpEl(id), s = _cpEl(id + '-s'); if (!v) return;
+    if (needLink && !link) { v.textContent = '—'; if (s) s.textContent = 'turn on link tracking'; return; }
+    if (!rate) { v.textContent = '—'; if (s) s.textContent = 'after ' + (ov.rate_min || 2) + ' campaigns'; return; }
+    v.textContent = '~' + Math.round(n * rate.pct / 100);
+    if (s) s.textContent = rate.pct + '% ' + doneLbl + ' · ' + rate.campaigns + ' campaigns';
+  }
+  est('cp-f-taps', ov.tap_rate, true, 'on past links');
+  est('cp-f-back', ov.back_rate, false, 'came back');
+  var fw = _cpEl('cp-f-when'), fws = _cpEl('cp-f-when-s'), now = ov.sending_now !== false;
+  var open = ((ov.window || '8:00 AM and 9:00 PM').split(' and ')[0]) || '8:00 AM';
+  if (fw) { fw.textContent = now ? 'Now' : open; fw.className = 'v ' + (now ? 'good' : 'warn'); }
+  if (fws) fws.textContent = now ? 'texts go out in the background' : 'texts only go out ' + (ov.window || '').replace(' and ', '–');
+  var fn = _cpEl('cp-f-n'); if (fn) fn.textContent = n;
+  var ck = _cpEl('cp-checks');
+  if (ck) {
+    var ok = '<i class="cv-ok" aria-hidden="true"></i>', warn = '<i class="cv-warn" aria-hidden="true"></i>';
+    ck.innerHTML = '<span>' + (n ? ok : warn) + (n ? n + ' who opted in' : 'Nobody in this group yet') + '</span>'
+      + '<span>' + (now ? ok + 'Goes out now' : warn + 'Held until ' + open) + '</span>'
+      + '<span>' + ok + 'Nobody texted twice in ' + (ov.min_days_between || 3) + ' days</span>'
+      + (link ? '<span>' + ok + 'Taps tracked</span>' : '');
+  }
+  var sb = _cpEl('guest-send-btn');
+  if (sb && !sb.classList.contains('sent')) {
+    sb.disabled = !msg || !n || !now;
+    sb.classList.toggle('arm', !!_cp.armed);
+    sb.textContent = _cp.armed ? 'Tap again to text ' + n + (n === 1 ? ' guest' : ' guests') : 'Send to ' + n + (n === 1 ? ' guest' : ' guests');
+  }
+  var sm = _cpEl('cp-step-msg'), ss = _cpEl('cp-step-send');
+  if (sm) { sm.classList.toggle('done', !!msg); sm.classList.toggle('now', !msg); }
+  if (ss) ss.classList.toggle('now', !!msg);
+  cpPaintAi();
+};
+function cpPaintAi() {
+  var box = _cpEl('cp-ai'), dg = _cp.diag;
+  if (!box) return;
+  if (!dg || !dg.available || !dg.cause) { box.hidden = true; return; }
+  _cpEl('cp-ai-t').textContent = dg.cause;
+  var pct = dg.confidence_detail && dg.confidence_detail.pct != null ? dg.confidence_detail.pct : null;
+  _cpEl('cp-ai-s').textContent = (dg.summary || '') + (pct != null ? ' · ' + pct + '% confidence' : '');
+  box.hidden = false;
+}
+
+// ── The win-back Cavnar AI drafts on its own (audit #47) ────────────────────
+function loadWinback() {
+  var box = _cpEl('guest-winback'); if (!box) return;
+  fetch('/api/guest-winback', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
+    if (!d || !d.ok || !d.available || !d.draft) { box.hidden = true; box.innerHTML = ''; _cp.wb = null; return; }
+    var w = d.draft; _cp.wb = w;
+    box.innerHTML = '<div class="k">Cavnar AI suggests</div>'
+      + '<div class="t">Bring back <span class="hb-num">' + (+w.segment_size || 0) + '</span> guest' + (w.segment_size === 1 ? '' : 's') + ' ' + recEsc((w.segment_label || '').toLowerCase()) + '</div>'
+      + '<button type="button" class="cbtn cbtn-primary cbtn-sm" data-winback-use="' + w.id + '">Use this</button>'
+      + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-winback-dismiss="' + w.id + '">Pass</button>';
+    box.hidden = false;
+  }).catch(function() {});
+}
+function cpUseWinback() {
+  var w = _cp.wb; if (!w) return;
+  _cp.winback = {id: w.id, segment: w.segment}; _cp.armed = null;
+  _cp.prompt = 'Bring back guests ' + (w.segment_label || '').toLowerCase();
+  _cp.goal = 'Win back guests who drifted away'; _cp.type = 'win_back'; _cp.targetDay = null;
+  _cp.seg = w.segment || 'lapsed_30';
+  var p = _cpEl('cp-prompt'); if (p) p.value = _cp.prompt;
+  var m = _cpEl('guest-campaign-message'); if (m) m.value = w.message || '';
+  var k = _cpEl('cp-aud-k'); if (k) k.textContent = 'Picked by Cavnar AI';
+  cpOpenBuilder(true);
+}
+
+// ── Send ───────────────────────────────────────────────────────────────────
+// Two presses, both on the button: the first arms it ("Tap again to text
+// 18 guests"), the second sends. A text can't be taken back, and the button
+// says the head count, which is the decision (friction #41).
+window.sendGuestCampaign = function(btn) {
+  btn = btn || _cpEl('guest-send-btn');
+  var message = ((_cpEl('guest-campaign-message') || {}).value || '').trim();
+  var status = _cpEl('guest-campaign-status');
+  if (!message || !btn || btn.disabled) return;
+  if (!_cp.armed) {
+    _cp.armed = setTimeout(function() { _cp.armed = null; cpPaint(); }, 6000);
+    cpPaint(); return;
+  }
+  clearTimeout(_cp.armed); _cp.armed = null;
+  var seg = _cpSegOf(_cp.seg) || {label: 'this audience', count: 0};
+  btn.disabled = true; btn.classList.remove('arm'); btn.textContent = 'Sending…';
+  var url = _cp.winback ? '/api/guest-winback/' + _cp.winback.id + '/send' : '/api/guest-campaign/send';
+  var body = _cp.winback ? {message: message}
+    : {message: message, segment: _cp.seg, type: _cp.type, target_day: _cp.targetDay || '',
+       link_url: ((_cpEl('guest-campaign-link') || {}).value || '').trim()};
+  function say(html, bad) { if (!status) return; status.innerHTML = html; status.className = 'cp-status' + (bad ? ' bad' : ''); status.hidden = false; }
+  fetch(url, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
+    .then(apiJson).then(function(d) {
+      if (d && d.ok) {
+        var total = d.total != null ? d.total : (d.sent || seg.count);
+        btn.classList.add('sent'); btn.textContent = '✓ Sent to ' + total;
+        say('<i class="cv-ok" aria-hidden="true"></i>' + (d.queued ? 'Texting ' + total + ' guest' + (total === 1 ? '' : 's') + ' now — Performance fills in as they go.'
+          : 'Sent to ' + (d.sent || 0) + ' of ' + (d.total || 0) + '.' + (d.skipped_recent ? ' ' + d.skipped_recent + ' skipped — texted in the last few days.' : '')));
+        if (_cp.winback) { _cp.winback = null; var wb = _cpEl('guest-winback'); if (wb) { wb.hidden = true; wb.innerHTML = ''; } }
+        setTimeout(function() { loadGuestHistory(); loadGuestOverview(); }, d.queued ? 4000 : 0);
+        loadGuestSegments();
+        if (typeof toast === 'function') toast('Texting ' + total + ' guest' + (total === 1 ? '' : 's'), 'success');
+      } else {
+        btn.disabled = false; cpPaint();
+        say((d && d.error) || 'Couldn’t send the campaign.', true);
+      }
+    }).catch(function() {
+      // The response was lost, not necessarily the send: the texts may
+      // already be going out. The button stays off until a reload; a resend
+      // then texts only guests the first one never reached.
+      btn.textContent = 'Sending may have finished';
+      say('Lost the connection mid-send. Performance below shows what went out; reload to send to anyone it missed.', true);
+      loadGuestHistory();
+    });
+};
+// A new draft or a different audience un-sends the button.
+document.addEventListener('input', function(e) { if (e.target && e.target.id === 'guest-campaign-message') { var b = _cpEl('guest-send-btn'); if (b && b.classList.contains('sent')) { b.classList.remove('sent'); cpPaint(); } } });
+
+// ── Performance ────────────────────────────────────────────────────────────
+function loadGuestHistory() {
   loadMarketingDiagnosis();
   loadWinback();
-  fetch('/api/guest-campaigns').then(apiJson).then(function(d){
-    if(!d.ok) return;
-    var wrap = document.getElementById('guest-history-wrap');
-    var list = document.getElementById('guest-history-list');
-    if(list && d.campaigns.length){
+  fetch('/api/guest-campaigns').then(apiJson).then(function(d) {
+    if (!d.ok) return;
+    _cp.hist = d.campaigns || [];
+    var list = _cpEl('guest-history-list');
+    if (list && _cp.hist.length) {
+      // The best campaign by taps per text, once two carried a link.
+      var best = null, bestR = -1, linked = 0, i;
+      for (i = 0; i < _cp.hist.length; i++) { var c0 = _cp.hist[i]; if (c0.link_token && c0.sent_count >= 10) { linked++; var r0 = (c0.clicks || 0) / c0.sent_count; if (r0 > bestR) { bestR = r0; best = c0.id; } } }
+      if (linked < 2) best = null;
       var html = '';
-      for(var i=0;i<d.campaigns.length;i++){
-        var c = d.campaigns[i];
-        html += '<div style="padding:9px 0;border-bottom:1px solid var(--paper3)">'
-          + '<div style="display:flex;justify-content:space-between;gap:8px">'
-          + '<span style="font-size:11px;font-weight:600;color:var(--ember)">' + _escHtml(mdy(c.created_at||'')) + '</span>'
-          + '<span style="font-size:11px;color:var(--ink3);font-family:\'Space Grotesk\',sans-serif">' + c.sent_count + ' sent'
-          + (c.clicks ? ' · ' + c.clicks + ' taps' : '')
-          + (c.visits_matched ? ' · ' + c.visits_matched + ' came back' : '') + '</span></div>'
-          + (c.segment_label ? '<div style="font-size:11px;color:var(--ink3)">' + _escHtml(c.segment_label) + '</div>' : '')
-          + '<div style="font-size:12px;color:var(--ink);line-height:1.5;margin-top:2px">' + _escHtml(c.message) + '</div>'
-          + '</div>';
+      var bar = function(sent, lbl, v, color, empty) {
+        return '<div class="r"><span>' + lbl + '</span><span class="bar"><i style="width:' + (v == null || !sent ? 0 : Math.max(2, Math.round(v / sent * 100))) + '%;background:' + color + '"></i></span><span class="v">' + (v == null ? empty : v) + '</span></div>';
+      };
+      for (i = 0; i < _cp.hist.length && i < 9; i++) {
+        var c = _cp.hist[i], sent = +c.sent_count || 0;
+        html += '<div class="cp-card cp-camp' + (c.id === best ? ' best' : '') + '" style="animation-delay:' + (i * 0.05) + 's">'
+          + '<div class="hd"><span class="dt">' + _escHtml(window.mdyAt ? mdyAt(c.created_at || '') : mdy(c.created_at || '')) + '</span>'
+          + '<span class="cp-chip">' + _escHtml(c.segment_label || 'Everyone consented') + '</span>'
+          + (c.id === best ? '<span class="bd">Best</span>' : '') + '</div>'
+          + '<div class="m">' + _escHtml(c.message) + '</div>'
+          + '<div class="mx">' + bar(sent, 'Texted', sent, 'var(--ink3)', '0')
+          + bar(sent, 'Tapped', c.link_token ? (c.clicks || 0) : null, 'var(--ember2)', 'no link')
+          + bar(sent, 'Came back', c.visits_matched, 'var(--green)', c.attribution_through ? '0' : '…') + '</div></div>';
       }
       list.innerHTML = html;
-      if(wrap) wrap.style.display = 'block';
     }
-    var led = document.getElementById('guest-ledger');
-    if(led && d.ledger){
+    var led = _cpEl('guest-ledger');
+    if (led && d.ledger) {
       var L = d.ledger;
-      led.style.display = 'block';
-      led.innerHTML = '<strong style="color:var(--ink)">Consent &amp; sending.</strong> '
-        + '<span style="font-family:\'Space Grotesk\',sans-serif;color:#2d6a4f;font-weight:700">' + L.textable + '</span> text-eligible, '
-        + '<span style="font-family:\'Space Grotesk\',sans-serif;font-weight:700">' + L.no_consent + '</span> without consent, '
-        + '<span style="font-family:\'Space Grotesk\',sans-serif;font-weight:700">' + L.unsubscribed + '</span> unsubscribed. '
-        + '<span style="font-family:\'Space Grotesk\',sans-serif;font-weight:700">' + L.texts_this_month + '</span> texts this month across '
-        + '<span style="font-family:\'Space Grotesk\',sans-serif;font-weight:700">' + L.campaigns_this_month + '</span> campaigns. '
-        + 'Texts go out between ' + _escHtml(L.window) + ' only, and no guest gets two inside ' + L.min_days_between + ' days.';
+      led.innerHTML = '<b class="hb-num">' + L.textable + '</b> opted in · <b class="hb-num">' + L.no_consent + '</b> without consent · <b class="hb-num">' + L.unsubscribed + '</b> unsubscribed';
     }
-  }).catch(function(){});
+  }).catch(function() {});
 }
 function loadGuestNewsletter(){
   fetch('/api/guest-newsletter').then(apiJson).then(function(d){
@@ -25993,13 +26428,29 @@ function sendGuestNewsletter(mailingAddress){
 }
 
 window.copyGuestJoinLink = function() {
-  var link = document.getElementById('guest-join-link').textContent;
-  navigator.clipboard.writeText(link).then(function(){
-    var btn = document.getElementById('guest-copy-btn');
-    var orig = btn.textContent;
-    btn.textContent = '✓ Copied';
-    setTimeout(function(){ btn.textContent = orig; }, 2000);
-  });
+  var link = (document.getElementById('guest-join-link') || {}).textContent || '';
+  var btn = document.getElementById('guest-copy-btn');
+  if (!link) return;
+  function done() { if (!btn) return; var orig = btn.textContent; btn.textContent = '\u2713 Copied'; setTimeout(function(){ btn.textContent = orig; }, 2000); }
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(link).then(done, function() { window.prompt('Copy this link', link); });
+  else window.prompt('Copy this link', link);
+};
+// Print: the QR with the restaurant's name, on its own page. Share: the
+// device's share sheet where it has one, else the link copied.
+window.cpPrintQr = function() {
+  var w = window.open('', '_blank'); if (!w) return;
+  var name = (document.querySelector('.cp-phone .top b') || {}).textContent || '';
+  w.document.write('<!doctype html><title>Scan to join</title><body style="margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:system-ui,sans-serif">'
+    + '<img src="/api/guest-qr" style="width:320px;height:320px" onload="setTimeout(function(){window.print()},200)">'
+    + '<h1 style="font-size:28px;margin:18px 0 4px">Scan to get texts from ' + String(name).replace(/[<>&]/g, '') + '</h1>'
+    + '<p style="color:#555;margin:0">Reply STOP any time to opt out.</p></body>');
+  w.document.close();
+};
+window.cpShareJoin = function() {
+  var link = (document.getElementById('guest-join-link') || {}).textContent || '';
+  if (!link) return;
+  if (navigator.share) { navigator.share({title: 'Get texts from us', url: link}).catch(function() {}); return; }
+  copyGuestJoinLink();
 };
 
 window.openGuestContactsModal = function() {
@@ -26091,90 +26542,6 @@ window.markGuestVisit = function(id, btn) {
       toast(d.error || 'Could not mark visit', 'error');
     }
   }).catch(function(){ btn.textContent = orig; toast('Network error — try again', 'error'); });
-};
-
-window.generateGuestCampaign = function() {
-  var btn = document.getElementById('guest-generate-btn');
-  var type = document.getElementById('guest-campaign-type').value;
-  var topic = document.getElementById('guest-campaign-topic').value.trim();
-  btn.disabled = true;
-  btn.innerHTML = '<div class="pulse-bar-track-on-accent" style="width:36px"><div class="pulse-bar-on-accent"></div></div>';
-  fetch('/api/guest-campaign/draft', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({type: type, topic: topic})
-  }).then(apiJson).then(function(d){
-    btn.disabled = false;
-    btn.textContent = 'Generate';
-    if (d.ok) {
-      document.getElementById('guest-campaign-message').value = d.message;
-    } else {
-      var status = document.getElementById('guest-campaign-status');
-      status.textContent = d.error || 'Could not generate a message.';
-      status.style.color = 'var(--red)';
-      status.style.display = 'inline';
-    }
-  }).catch(function(){
-    btn.disabled = false;
-    btn.textContent = 'Generate';
-  });
-};
-
-window.sendGuestCampaign = function() {
-  var message = document.getElementById('guest-campaign-message').value.trim();
-  var status = document.getElementById('guest-campaign-status');
-  if (!message) {
-    status.textContent = 'Write or generate a message first.';
-    status.style.color = 'var(--red)';
-    status.style.display = 'inline';
-    return;
-  }
-  var segEl = document.getElementById('guest-campaign-segment');
-  var segment = segEl ? segEl.value : 'all';
-  var segLabel = (segEl && segEl.selectedOptions.length) ? segEl.selectedOptions[0].textContent : 'this audience';
-  // The last guard names the head count, not just the segment (friction
-  // #41, U1-15): "Text 142 guests?" is the decision being made.
-  var segCount = null, segs = window._guestSegments || [];
-  for (var si = 0; si < segs.length; si++) { if (segs[si].key === segment) { segCount = segs[si].count; segLabel = segs[si].label; break; } }
-  var who = segCount != null ? (segCount + ' guest' + (segCount === 1 ? '' : 's') + ' (' + segLabel + ')') : segLabel;
-  if (!confirm('Text ' + who + '? This can\'t be undone.')) { return; }
-  var btn = document.getElementById('guest-send-btn');
-  btn.disabled = true;
-  btn.textContent = 'Sending…';
-  fetch('/api/guest-campaign/send', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({message: message, segment: segment, type: document.getElementById('guest-campaign-type').value,
-                          link_url: (document.getElementById('guest-campaign-link')||{}).value || ''})
-  }).then(apiJson).then(function(d){
-    btn.disabled = false;
-    btn.textContent = 'Send to this audience';
-    if (d.ok && d.queued) {
-      // Texted in the background now; the history fills in as they go.
-      status.textContent = 'Sending to ' + d.total + ' guest' + (d.total === 1 ? '' : 's') + ' now — the history below fills in as they go.';
-      status.style.color = '#2d6a4f';
-      setTimeout(loadGuestHistory, 4000);
-      loadGuestSegments();
-    } else if (d.ok) {
-      status.textContent = 'Sent to ' + d.sent + ' of ' + d.total + ' guests.'
-        + (d.skipped_recent ? ' ' + d.skipped_recent + ' skipped — texted in the last few days.' : '');
-      status.style.color = '#2d6a4f';
-      loadGuestSegments();
-      loadGuestHistory();
-    } else {
-      status.textContent = d.error || 'Could not send campaign.';
-      status.style.color = 'var(--red)';
-    }
-    status.style.display = 'inline';
-  }).catch(function(){
-    // The response was lost, not necessarily the send: the texts may
-    // already be going out. Say so and show the history, rather than
-    // offering the same button again. The button stays off until a reload;
-    // a resend then texts only guests the first one never reached.
-    btn.textContent = 'Sending may have finished';
-    status.textContent = 'Lost the connection mid-send. The history below shows what went out; reload the page to send to anyone it missed.';
-    status.style.color = 'var(--red)';
-    status.style.display = 'inline';
-    loadGuestHistory();
-  });
 };
 
 // ── Location switcher (multi-location owners) ─────────────────────────────

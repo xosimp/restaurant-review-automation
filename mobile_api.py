@@ -3677,10 +3677,18 @@ def mobile_guest_campaign_draft(current_user):
         return jsonify(ok=False, error="Too many requests — please wait a moment and try again."), 429
     data = request.get_json() or {}
     try:
-        from guest_marketing import draft_campaign_message
+        from guest_marketing import draft_campaign_message, plan_campaign
         restaurant = get_restaurant(rid)
-        message = draft_campaign_message(restaurant, campaign_type=data.get("type", "general"), topic=data.get("topic", ""))
-        return jsonify(ok=True, message=message, validation=_rv_of(message))
+        # The Campaigns page sends the owner's goal as `prompt` (9/28/26):
+        # it chooses the tone and the audience; a type sent alongside wins.
+        prompt = str(data.get("prompt") or "").strip()[:280]
+        plan = plan_campaign(prompt) if prompt else None
+        ctype = data.get("type") or (plan["type"] if plan else "general")
+        message = draft_campaign_message(restaurant, campaign_type=ctype, topic=data.get("topic") or "", goal=prompt)
+        out = dict(ok=True, message=message, validation=_rv_of(message), type=ctype)
+        if plan:
+            out.update(segment=plan["segment"], goal=plan["goal"], target_day=plan["target_day"])
+        return jsonify(**out)
     except ValueError as e:
         # The guard refused the copy (an invented offer, a link, too long):
         # say which, so the owner knows why nothing came back (M-24).
@@ -4025,6 +4033,21 @@ def mobile_guest_segments(current_user):
     ])
 
 
+@mobile_bp.route("/guest-overview")
+@mobile_login_required
+def mobile_guest_overview(current_user):
+    """The Campaigns page's figures (guest_marketing.campaign_overview) and
+    the guests' join link - the signed one the QR code carries; the bare-id
+    form the web used to show is refused by /join (guest_links)."""
+    from guest_marketing import campaign_overview
+    from guest_links import sign_join
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    return jsonify(ok=True, join_url=request.url_root.rstrip("/") + f"/join/{sign_join(rid)}",
+                   receipt_hint=_receipt_hint(get_restaurant(rid)), **campaign_overview(rid))
+
+
 @mobile_bp.route("/guest-campaigns")
 @mobile_login_required
 def mobile_guest_campaign_history(current_user):
@@ -4113,22 +4136,10 @@ def mobile_post_to_facebook(current_user):
     return jsonify(**payload), status
 
 
-@mobile_bp.route("/guest-join-link")
-@mobile_login_required
-def mobile_guest_join_link(current_user):
-    """The web's /api/guest-qr renders a downloadable PNG — mobile just
-    returns the join URL and lets the app render its own QR code (CoreImage
-    has a QR filter built in) rather than round-tripping an image."""
-    rid = current_user["restaurant_id"]
-    if not _capi._restaurant_has_marketing_module(rid):
-        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
-    from guest_links import sign_join
-    join_url = request.url_root.rstrip("/") + f"/join/{sign_join(rid)}"
-    # The web tab prints POS-specific instructions for where this link belongs
-    # (dashboard.html's "Add this to your receipts"), which is the step that
-    # actually gets guests into the club. Served here so the app shows the
-    # same guidance instead of hardcoding a second copy that drifts.
-    r = get_restaurant(rid)
+def _receipt_hint(r):
+    """Where the join link goes on this restaurant's receipts, by its POS -
+    the step that actually gets guests onto the list. One copy for the
+    phone's join-link route and the web's Campaigns page (guest-overview)."""
     pos = (getattr(r, "pos_system", "") or "").lower()
     if "square" in pos:
         hint = ("Square lets you add a custom receipt footer under Square Dashboard "
@@ -4146,6 +4157,22 @@ def mobile_guest_join_link(current_user):
         hint = ("Most POS systems let you add a custom line to the receipt footer — "
                 "that's where this link belongs. If yours doesn't, the QR code on a "
                 "table tent or by the register works just as well.")
+    return hint
+
+
+@mobile_bp.route("/guest-join-link")
+@mobile_login_required
+def mobile_guest_join_link(current_user):
+    """The web's /api/guest-qr renders a downloadable PNG — mobile just
+    returns the join URL and lets the app render its own QR code (CoreImage
+    has a QR filter built in) rather than round-tripping an image."""
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    from guest_links import sign_join
+    join_url = request.url_root.rstrip("/") + f"/join/{sign_join(rid)}"
+    r = get_restaurant(rid)
+    hint = _receipt_hint(r)
     return jsonify(ok=True, join_url=join_url, pos_system=getattr(r, "pos_system", None) or "",
                    receipt_hint=hint)
 

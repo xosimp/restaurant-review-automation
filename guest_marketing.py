@@ -804,10 +804,12 @@ def _validate_sms(text, restaurant, offer_source, never_say):
     return out
 
 
-def draft_campaign_message(restaurant, campaign_type="general", topic=""):
+def draft_campaign_message(restaurant, campaign_type="general", topic="", goal=""):
     """AI-drafts a short SMS (under ~300 chars — a real SMS/MMS segment
     budget, not email) in the restaurant's own voice. Reuses marketing.py's
-    profile lookup for brand voice instead of re-deriving it."""
+    profile lookup for brand voice instead of re-deriving it. `goal` is the
+    owner's own words from the Campaigns page ("fill Thursday dinner"): what
+    the text is for, not copy to include, and a source an offer may cite."""
     from marketing import get_profile_for_restaurant
 
     p = get_profile_for_restaurant(restaurant.id)
@@ -819,11 +821,18 @@ def draft_campaign_message(restaurant, campaign_type="general", topic=""):
     # post or review reply already can.
     menu_clause = f" Menu & current specials: {p['menu_notes']}. Reference something specific when it fits naturally." if p.get("menu_notes") else ""
     topic_clause = f" Topic/specifics to include: {topic}." if topic else ""
+    goal_clause = f" What the owner wants this text to do, in their words: {goal}." if goal else ""
 
     prompt = (
         f"Write {intent} for {p['name']}, a {p['vibe']} in {p['neighborhood']}. "
-        f"Brand voice: {p['voice']}.{never_clause}{menu_clause}{topic_clause}\n\n"
+        f"Brand voice: {p['voice']}.{never_clause}{menu_clause}{topic_clause}{goal_clause}\n\n"
         "Rules: under 300 characters total (this is a real text message, not an email). "
+        # A guest text is refused on any stated cause ("because of you",
+        # "thanks to our new chef"): the guard can't tell warmth from a claim.
+        "Give no reason or cause for anything: no 'because', 'due to', 'thanks to' or 'since'. "
+        # One em dash or curly quote sends the whole text as Unicode, 70
+        # characters a part instead of 160: two or three texts per guest.
+        "Plain keyboard punctuation only: no em dashes, curly quotes or ellipsis characters. "
         "No markdown, no emoji spam (at most one emoji). No links or phone numbers. "
         "End naturally — no 'reply STOP to unsubscribe' (that's added automatically). "
         "Never invent an offer: no discount, percentage or dollars off, free item, half price, "
@@ -853,7 +862,7 @@ def draft_campaign_message(restaurant, campaign_type="general", topic=""):
     # dessert with any entree" and "20% off all week" both passed (M-24).
     # invented_offers stays: it names half price, two-for-one, "$5 off" and
     # "discount", which the engine's comp rule does not.
-    offer_source = (topic or "") + " " + (p.get("menu_notes") or "")
+    offer_source = (topic or "") + " " + (goal or "") + " " + (p.get("menu_notes") or "")
     offers = invented_offers(text, offer_source)
     if offers:
         raise ValueError("campaign copy rejected: it offers " + ", ".join(offers[:3])
@@ -1222,10 +1231,11 @@ def winback_key(segment):
 def _winback_message(restaurant_name):
     """Deterministic copy — no model on a page load. The owner edits it, or
     asks for an AI rewrite with the composer's own win-back draft. No offer,
-    no discount: nobody has agreed to one."""
+    no discount: nobody has agreed to one. Plain punctuation: an em dash
+    sent it as Unicode, three texts a guest where this is one."""
     name = (restaurant_name or "us").strip()
     msg = (f"Hi from {name}! It's been a little while and we'd love to have you back. "
-           f"Come see us this week — your table's waiting.")
+           f"Come see us this week. Your table's waiting.")
     return msg[:CAMPAIGN_MAX_CHARS]
 
 
@@ -1553,6 +1563,130 @@ def consent_ledger(restaurant_id, db_path=DB_PATH) -> dict:
         "campaigns_this_month": int(campaigns),
         "window": guest_sms_window_label(),
         "min_days_between": GUEST_SMS_MIN_DAYS_BETWEEN,
+    }
+
+
+# ── Campaigns (owner, 9/28/26) ─────────────────────────────────────────────
+# The page starts from what the owner wants to happen ("Bring back guests
+# who haven't been in for 30 days"), not from a type, an audience and a
+# topic field. plan_campaign reads that goal deterministically - the draft
+# that follows is the one model call - and campaign_overview is everything
+# the page shows around it, all of it measured.
+
+_WEEKDAY_NAMES = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+_WINBACK_WORDS = ("win back", "win-back", "winback", "bring back", "come back", "haven't been", "havent been",
+                  "haven't visited", "havent visited", "have not been", "missed", "miss you", "lapsed", "drifted",
+                  "been a while", "lost guests", "inactive")
+_LOYALTY_WORDS = ("regular", "thank", "loyal", "vip", "best guests", "appreciate")
+_NEW_WORDS = ("first-time", "first time", "first-timer", "new guest", "newcomer", "first visit", "one visit")
+_EVENT_WORDS = ("event", "special", "tonight", "this weekend", "trivia", "live music", "happy hour", "promo",
+                "promote", "launch", "new menu", "fill", "slow", "quiet", "busier", "sales", "deal", "brunch",
+                "tasting", "party", "holiday", "game day")
+
+
+def plan_campaign(prompt) -> dict:
+    """What a typed goal asks for: the tone the draft is written in (a
+    CAMPAIGN_PROMPTS key), the audience it goes to (a SEGMENTS key), the goal
+    in the owner's words for the page, and the weekday it is meant to fill
+    when it names one (target_day, which starts the slow-day tracker once
+    it sends - _track_campaign_outcome). Keyword rules, no model call; the
+    owner can change the audience before anything goes out."""
+    p = " " + re.sub(r"\s+", " ", str(prompt or "").lower()) + " "
+    day = next((d for d in _WEEKDAY_NAMES if d in p), None)
+    if any(w in p for w in _WINBACK_WORDS):
+        sixty = any(w in p for w in ("60", "sixty", "two months", "2 months", "couple of months", "couple months"))
+        return {"type": "win_back", "segment": "lapsed_60" if sixty else "lapsed_30",
+                "goal": "Win back guests who drifted away", "target_day": None}
+    if any(w in p for w in _NEW_WORDS):
+        return {"type": "loyalty", "segment": "new", "goal": "Turn first-timers into regulars", "target_day": None}
+    if any(w in p for w in _LOYALTY_WORDS):
+        return {"type": "loyalty", "segment": "regulars", "goal": "Thank your regulars", "target_day": None}
+    if day and any(w in p for w in ("fill", "slow", "quiet", "busier", "pack")):
+        return {"type": "event", "segment": "all", "goal": f"Fill {day.capitalize()}", "target_day": day.capitalize()}
+    if any(w in p for w in _EVENT_WORDS) or day:
+        return {"type": "event", "segment": "all", "goal": "Promote an event or special", "target_day": None}
+    return {"type": "general", "segment": "all", "goal": "Send your guests a text", "target_day": None}
+
+
+CAMPAIGN_RATE_MIN = 2           # campaigns a rate rests on before the page shows it
+CAMPAIGN_RATE_MIN_SENT = 10     # texts a campaign needs to count toward a rate
+
+
+def campaign_overview(restaurant_id, db_path=DB_PATH) -> dict:
+    """The Campaigns page's figures, every one measured:
+
+      subscribers   guests who can be texted (consented, not unsubscribed)
+      today / last_30  opt-ins by consent_at, on the restaurant's calendar
+      weekly        opt-ins per week, oldest first, the last 12 weeks
+      last_campaign the newest send: its local date, sent, audience
+      tap_rate      taps on the tracked link per text, over campaigns that
+                    carried one (at least CAMPAIGN_RATE_MIN of them, each
+                    CAMPAIGN_RATE_MIN_SENT or more) - else None
+      back_rate     guests who came back within the attribution window per
+                    text, over campaigns Toast attribution has read - else None
+      delivered     sent / (sent + failed) this month - None before a send
+
+    SMS has no opens: a phone reports none, so there is no open rate here.
+    Nothing is summed across these, and none is money."""
+    from time_utils import restaurant_now_by_id
+    now = restaurant_now_by_id(restaurant_id, naive=True)
+    today = now.date()
+    contacts = get_guest_contacts(restaurant_id, db_path=db_path)
+    textable = [c for c in contacts if c["consent"] and not c["unsubscribed"]]
+
+    def consent_day(c):
+        try:
+            return datetime.fromisoformat(str(c.get("consent_at") or "")[:19]).date()
+        except ValueError:
+            return None
+
+    days = [d for d in (consent_day(c) for c in textable) if d]
+    week0 = today - timedelta(days=today.weekday())          # this week's Monday
+    weekly = []
+    for i in range(11, -1, -1):
+        start = week0 - timedelta(weeks=i)
+        weekly.append({"week_start": start.isoformat(),
+                       "joined": sum(1 for d in days if start <= d < start + timedelta(days=7))})
+
+    hist = campaign_history(restaurant_id, limit=50, db_path=db_path)
+    sized = [c for c in hist if (c.get("sent_count") or 0) >= CAMPAIGN_RATE_MIN_SENT]
+    linked = [c for c in sized if c.get("link_token")]
+    attributed = [c for c in sized if c.get("visits_matched") is not None]
+
+    def rate(rows, key):
+        if len(rows) < CAMPAIGN_RATE_MIN:
+            return None
+        sent = sum(int(c.get("sent_count") or 0) for c in rows)
+        return {"pct": round(sum(int(c.get(key) or 0) for c in rows) / sent * 100, 1), "campaigns": len(rows)} if sent else None
+
+    month = f"{today.year:04d}-{today.month:02d}"
+    this_month = [c for c in hist if str(c.get("created_at") or "")[:7] == month]
+    m_sent = sum(int(c.get("sent_count") or 0) for c in this_month)
+    m_failed = sum(int(c.get("failed_count") or 0) for c in this_month)
+    last = hist[0] if hist else None
+    from time_utils import local_iso
+    tz = None
+    try:
+        from models import get_restaurant
+        r = get_restaurant(restaurant_id, db_path)
+        tz = getattr(r, "timezone", None) if r else None
+    except Exception:
+        tz = None
+    return {
+        "subscribers": len(textable),
+        "today": sum(1 for d in days if d == today),
+        "last_30": sum(1 for d in days if (today - d).days < 30),
+        "weekly": weekly,
+        "last_campaign": ({"date": local_iso(last.get("created_at"), tz), "sent": int(last.get("sent_count") or 0),
+                           "segment_label": last.get("segment_label") or SEGMENTS["all"]["label"]} if last else None),
+        "tap_rate": rate(linked, "clicks"),
+        "back_rate": rate(attributed, "visits_matched"),
+        "delivered": (round(m_sent / (m_sent + m_failed) * 100, 1) if (m_sent + m_failed) else None),
+        "texts_this_month": m_sent,
+        "sending_now": guest_sms_allowed_now(restaurant_id),
+        "window": guest_sms_window_label(),
+        "min_days_between": GUEST_SMS_MIN_DAYS_BETWEEN,
+        "rate_min": CAMPAIGN_RATE_MIN,
     }
 
 

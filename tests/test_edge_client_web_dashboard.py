@@ -314,8 +314,11 @@ def test_the_guest_blast_and_ask_confirm_still_exist(src):
 
 
 def test_the_guest_blast_asks_before_it_sends(src):
+    # Campaigns (9/28/26): the first press arms the button ("Tap again to
+    # text N guests"); only a second press inside 6s reaches the fetch.
     body = _function(src, "sendGuestCampaign")
-    assert body.index("confirm(") < body.index("fetch(")
+    arm = body.index("if (!_cp.armed) {")
+    assert arm < body.index("cpPaint(); return;") < body.index("fetch(")
 
 
 def test_a_guest_blast_that_lost_its_response_does_not_invite_a_blind_resend(src):

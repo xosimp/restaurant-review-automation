@@ -909,7 +909,7 @@ def test_m26_freshness_and_next_post_dates_read_mdy():
     f = freshness("2026-09-21 10:00:00")
     assert f["as_of"] == "9/21/26" and f["as_of_iso"] == "2026-09-21"
     assert "Next post {_mdy(" in _read("home_brief.py")
-    assert "_escHtml(mdy(c.created_at||''))" in _read("templates", "dashboard.html")
+    assert "_escHtml(window.mdyAt ? mdyAt(c.created_at || '') : mdy(c.created_at || ''))" in _read("templates", "dashboard.html")
 
 
 # ── M-29 Edit on an approved reply is an undo, not a skip ──────────────────

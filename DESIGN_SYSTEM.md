@@ -1132,6 +1132,7 @@ Every block keeps its empty state; a quiet day is a short page.
 | Working orb | `CavnarWorkingOrb(state:label:)` — an inline orb in one of the nine states with its line of text, for a model genuinely working; `CavnarLoadingOrb` is the full-screen form |
 | AI consultant strip | `AIConsultantView` / `AIConsultantEmbeddedStrip` — sparkle + the insight's first line + chevron, breathing while the first insight loads; opens the full read |
 | Motion | The numbered `CavnarMotion.swift` structs — see §11 — plus `Animation.cavnarEase(_:)`, the one easing |
+| Guided builder (web) | Marketing → Campaigns (`.cp-*`, 9/28/26): one prompt field (`.cp-prompt`, the orb, one primary Create →) with idea chips under it; Create opens numbered step cards (`.cp-step` — a 28px ring numeral, `.now` in ember, `.done` a green `--hb-pop` tick with the numeral hidden) beside a sticky side column: a phone preview that renders the text exactly as sent (with the STOP line), recessed forecast tiles and the Cavnar AI read. A forecast is a measured rate or "—" with what it waits for ("after 2 campaigns"), never an estimate. The send is a two-press primary ("Send to N guests" → "Tap again to text N guests" for 6s), no `confirm()`. The segment counter counts the link and the STOP line, and a text with any non-GSM character (an em dash, a curly quote, an emoji) at 70/67 characters a part. Five KPI tiles run 5 across, 3+2 under 1100px and 2+2+1 on a phone; never an orphan tile |
 
 ---
 

@@ -4122,6 +4122,13 @@ def guest_segments_api(current_user):
     return _m("mobile_guest_segments")(current_user)
 
 
+@client_bp.route("/api/guest-overview")
+@login_required
+def guest_overview_api(current_user):
+    """Web twin — the one body is mobile_api.mobile_guest_overview."""
+    return _m("mobile_guest_overview")(current_user)
+
+
 @client_bp.route("/api/guest-campaigns")
 @login_required
 def guest_campaigns_api(current_user):
