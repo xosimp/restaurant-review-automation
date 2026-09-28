@@ -289,6 +289,27 @@ def _quality(ctx):
                         "meets_profile": s.get("meets_profile"), "headline": s.get("headline")} for s in shifts]}
 
 
+# The share of a night's hours the POS must price before its wages are the
+# night's labor cost (the rest at the owner's role or blended rate).
+POS_PAY_MIN_SHARE = 0.5
+
+
+def _pos_pay_share(rows):
+    """Share of these shifts' hours that carry the POS's own pay rate
+    (0..1), or None with no hours."""
+    from labor import _shift_hours
+    total = paid = 0.0
+    for r in rows or []:
+        h = _shift_hours(r)
+        total += h
+        try:
+            if float(r.get("pay_rate") or 0) > 0:
+                paid += h
+        except (TypeError, ValueError):
+            pass
+    return (paid / total) if total > 0 else None
+
+
 def collect(ctx):
     import pos
     from notify import labor_target_for
@@ -328,6 +349,15 @@ def collect(ctx):
     # the % are withheld and the hours stay.
     import thresholds
     cost_basis = thresholds.labor_cost_basis(ctx.restaurant)
+    # Hours the POS's own payroll prices (rpower pay_rate) are costed at what
+    # it pays, whatever the settings say: Simple EJ's had no wage entered,
+    # so the report withheld labor $ and % while RPOWER sent a real rate on
+    # most punches (owner, 9/28/26). Past POS_PAY_MIN_SHARE of the night's
+    # hours the dollars are the POS's wages, and the note says what share
+    # still rests on the fallback rate.
+    pos_share = _pos_pay_share(day_rows)
+    if cost_basis == "default" and pos_share is not None and pos_share >= POS_PAY_MIN_SHARE:
+        cost_basis = "pos_wages"
     costed = cost_basis != "default"
     cost = round(float(hist.get("labor_cost") or 0), 2) if costed else None
 
@@ -400,8 +430,13 @@ def collect(ctx):
         "pct_basis": basis,
         "cost_basis": cost_basis,
         "cost_basis_label": thresholds.LABOR_COST_BASIS_LABELS.get(cost_basis),
-        "cost_note": None if costed else "Set your wage rates to see labor cost — Cavnar AI won't cost your "
-                                         "hours at an assumed $26/hr and call it payroll.",
+        "cost_note": (None if costed and not (cost_basis == "pos_wages" and pos_share is not None and pos_share < 0.995)
+                      else (f"{round((1 - pos_share) * 100)}% of tonight's hours have no pay rate in the POS and are "
+                            f"costed at your role or blended rate; set pay by role to cost them exactly."
+                            if costed else
+                            "Set your wage rates to see labor cost — Cavnar AI won't cost your "
+                            "hours at an assumed $26/hr and call it payroll.")),
+        "pos_pay_share_pct": round(pos_share * 100) if pos_share is not None else None,
         # Where the target came from (thresholds.target_for): the clients
         # colour a figure over a target the owner never set amber, not red,
         # as the scorecard does (D3-12).

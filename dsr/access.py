@@ -343,7 +343,7 @@ def render(report, user, restaurant=None, versions=None):
     from the one stored snapshot."""
     from time_utils import mdy
     view = view_for(user)
-    stored = report.get("facts") or {}
+    stored = _live_labor(_live_categories(report.get("facts") or {}, report, restaurant), report, restaurant)
     if view == OWNER:
         stored = _live_budget(stored, report, restaurant)
     facts, hidden = redact(stored, user)
@@ -505,6 +505,88 @@ def _yesterday(report, restaurant, user=None, view=OWNER):
         return predictions.review(rid, report.get("business_date"), allowed=_cite_rule(user, view)) if rid else None
     except Exception:
         return None
+
+
+def _live_categories(facts, report, restaurant):
+    """The facts with the Sales block's categories under the category map as
+    it stands NOW (block_sales.live_categories): the owner maps departments
+    after the first report, and a built report kept saying "unmapped"
+    (Simple EJ's, 9/28/26). The dollars are the night's; only which
+    category each department counts toward is read today. Every view."""
+    sales = ((facts or {}).get("blocks") or {}).get("sales") or {}
+    if sales.get("status") != dsr.READY or not sales.get("detail"):
+        return facts
+    try:
+        from dsr.block_sales import live_categories
+        rid = report.get("restaurant_id") or getattr(restaurant, "id", None)
+        net = (sales.get("metrics") or {}).get("net")
+        cats, unmapped = live_categories(sales.get("detail") or {}, rid, net)
+    except Exception:
+        return facts
+    out = copy.deepcopy(facts)
+    s = out["blocks"]["sales"]
+    d = s.setdefault("detail", {})
+    d["categories"], d["unmapped"] = cats, unmapped
+    m = s.setdefault("metrics", {})
+    for k in [k for k in m if k.startswith("cat:")]:
+        del m[k]
+    for c in cats:
+        m[f"cat:{c['category']}"] = c["net"]
+    if unmapped:
+        m[f"cat:{dsr.UNMAPPED}"] = round(sum(float(u.get("net") or 0) for u in unmapped), 2)
+    return out
+
+
+def _live_labor(facts, report, restaurant):
+    """A Labor block that withheld its dollars for want of a wage rate, costed
+    now where the POS's own pay prices the night (block_labor
+    POS_PAY_MIN_SHARE): Simple EJ's 9/27 report was built before RPOWER's
+    pay reached the shifts, and said "-" for labor $ and % (owner, 9/28/26).
+    The hours are the report's; the dollars are the archive's, costed at the
+    POS's wages, and detail.costed_after_report says so."""
+    labor = ((facts or {}).get("blocks") or {}).get("labor") or {}
+    lm = labor.get("metrics") or {}
+    if labor.get("status") != dsr.READY or lm.get("cost") is not None \
+            or (labor.get("detail") or {}).get("cost_basis") != "default":
+        return facts
+    try:
+        from dsr import store
+        from dsr.block_labor import POS_PAY_MIN_SHARE, _pos_pay_share
+        from labor import load_shifts
+        from models import get_client_data
+        rid = report.get("restaurant_id") or getattr(restaurant, "id", None)
+        day = str(report.get("business_date"))[:10]
+        raw = (get_client_data(rid) or {}).get("shifts_csv") or ""
+        rows = [r for r in (load_shifts(csv_string=raw) if raw.strip() else []) if str(r.get("date") or "")[:10] == day]
+        share = _pos_pay_share(rows)
+        if share is None or share < POS_PAY_MIN_SHARE:
+            return facts
+        conn = store.get_conn()
+        try:
+            h = conn.execute("SELECT labor_cost FROM labor_daily_history WHERE restaurant_id=? AND date=? "
+                             "AND COALESCE(final, 1)=1", (rid, day)).fetchone()
+        finally:
+            conn.close()
+        cost = float(h["labor_cost"]) if h and h["labor_cost"] else None
+    except Exception:
+        return facts
+    if not cost:
+        return facts
+    out = copy.deepcopy(facts)
+    lb = out["blocks"]["labor"]
+    m = lb.setdefault("metrics", {})
+    net = ((((out.get("blocks") or {}).get("sales") or {}).get("metrics")) or {}).get("net")
+    m["cost"] = round(cost, 2)
+    if net:
+        m["pct"] = round(cost / float(net) * 100.0, 1)
+        if m.get("target_pct") is not None:
+            m["vs_target_pts"] = round(m["pct"] - float(m["target_pct"]), 1)
+    d = lb.setdefault("detail", {})
+    d.update({"cost_basis": "pos_wages", "costed_after_report": True, "pos_pay_share_pct": round(share * 100),
+              "cost_note": ("Costed after this report at the POS's own pay rates"
+                            + (f"; {round((1 - share) * 100)}% of the night's hours have no POS rate and use "
+                               f"your role or blended rate." if share < 0.995 else "."))})
+    return out
 
 
 def _live_budget(facts, report, restaurant):

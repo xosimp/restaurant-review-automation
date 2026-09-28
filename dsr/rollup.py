@@ -195,6 +195,31 @@ def _totals(rows, cats):
     return t
 
 
+def _day_categories(rid, m, facts, db_path):
+    """{category: net} for one day under the category map as it stands now:
+    from the day's department dollars (sales.dep:*, every night built or
+    filled since 9/28/26), else its report's stored departments
+    (block_sales.live_categories), else the category figures as stored (an
+    imported workbook states categories itself)."""
+    from dsr.block_sales import categorize, live_categories
+    net = m.get("sales.net")
+    deps = {k[len("sales.dep:"):]: v for k, v in m.items() if k.startswith("sales.dep:")}
+    try:
+        if deps:
+            cats, unmapped = categorize(store.category_map(rid, db_path=db_path), deps, net)
+        else:
+            sales = ((facts or {}).get("blocks") or {}).get("sales") or {}
+            if sales.get("status") != _dsr.READY or not sales.get("detail"):
+                raise LookupError
+            cats, unmapped = live_categories(sales["detail"], rid, net, db_path=db_path)
+    except Exception:
+        return {k[len("sales.cat:"):]: v for k, v in m.items() if k.startswith("sales.cat:")}
+    out = {c["category"]: c["net"] for c in cats}
+    if unmapped:
+        out[_dsr.UNMAPPED] = round(sum(float(u.get("net") or 0) for u in unmapped), 2)
+    return out
+
+
 def _rows(restaurant, start, end, db_path):
     rid = restaurant.id
     days = [(start + timedelta(days=i)).isoformat() for i in range((end - start).days + 1)]
@@ -222,7 +247,7 @@ def _rows(restaurant, start, end, db_path):
             "status": rep["status"] if rep is not None else None,
             "provisional": bool(rep["provisional"]) if rep is not None else False,
             "version": rep["version"] if rep is not None else None,
-            "cats": {k[len("sales.cat:"):]: v for k, v in m.items() if k.startswith("sales.cat:")},
+            "cats": _day_categories(restaurant.id, m, facts, db_path),
             "gross": m.get("sales.gross"), "net": net,
             "gross_basis": _gross_basis(facts) if rep is not None else None,
             "transactions": m.get("sales.transactions"), "guests": m.get("sales.guests"),

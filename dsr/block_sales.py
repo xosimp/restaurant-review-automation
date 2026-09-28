@@ -98,10 +98,21 @@ def evening_share(hourly, net):
     return round(late / net * 100.0, 1)
 
 
-def _categories(ctx, by_department, net):
-    """(categories, unmapped, unallocated). Categories in Erik's order, then
-    any the owner named themselves, then nothing guessed."""
-    mapping = store.category_map(ctx.restaurant_id, db_path=ctx.db_path)
+def _arrange(cats, net):
+    """Categories in Erik's order, then any the owner named themselves, each
+    with its share of net."""
+    order = [c for c in dsr.DEFAULT_CATEGORIES if c in cats] + sorted(c for c in cats if c not in dsr.DEFAULT_CATEGORIES)
+    out = []
+    for name in order:
+        c = cats[name]
+        c["share_pct"] = round(c["net"] / net * 100.0, 1) if net and net > 0 else None
+        out.append(c)
+    return out
+
+
+def categorize(mapping, by_department, net):
+    """(categories, unmapped) for {department: net} under a category map -
+    one rule for a night being collected and a stored night being shown."""
     cats, unmapped = {}, []
     for dep, amount in sorted(by_department.items(), key=lambda kv: -kv[1]):
         cat = store.category_for(dep, mapping)
@@ -111,14 +122,44 @@ def _categories(ctx, by_department, net):
         c = cats.setdefault(cat, {"category": cat, "net": 0.0, "departments": []})
         c["net"] = round(c["net"] + amount, 2)
         c["departments"].append(dep)
-    order = [c for c in dsr.DEFAULT_CATEGORIES if c in cats] + sorted(c for c in cats if c not in dsr.DEFAULT_CATEGORIES)
-    out = []
-    for name in order:
-        c = cats[name]
-        c["share_pct"] = round(c["net"] / net * 100.0, 1) if net and net > 0 else None
-        out.append(c)
+    return _arrange(cats, net), unmapped
+
+
+def _categories(ctx, by_department, net):
+    """(categories, unmapped, unallocated). Categories in Erik's order, then
+    any the owner named themselves, then nothing guessed."""
+    mapping = store.category_map(ctx.restaurant_id, db_path=ctx.db_path)
+    out, unmapped = categorize(mapping, by_department, net)
     unallocated = round(net - sum(by_department.values()), 2) if net is not None else None
     return out, unmapped, (unallocated if unallocated and abs(unallocated) >= 0.01 else None)
+
+
+def live_categories(detail, restaurant_id, net, db_path=None):
+    """(categories, unmapped) of a STORED night under the category map as it
+    stands now. A report freezes its categories when it is built, and the
+    owner maps departments after the first report: Simple EJ's 9/27 report,
+    built at 11:31am, said "unmapped" beside every department mapped that
+    afternoon (owner, 9/28/26). A night that kept its departments
+    (detail.by_department) is re-categorised whole; an older one keeps the
+    categories it had and places the departments it left unmapped."""
+    kw = {"db_path": db_path} if db_path else {}
+    mapping = store.category_map(restaurant_id, **kw)
+    by_dep = (detail or {}).get("by_department")
+    if isinstance(by_dep, dict) and by_dep:
+        return categorize(mapping, {k: float(v or 0) for k, v in by_dep.items()}, net)
+    cats = {c["category"]: {"category": c["category"], "net": float(c.get("net") or 0),
+                            "departments": list(c.get("departments") or [])}
+            for c in (detail or {}).get("categories") or [] if c.get("category")}
+    unmapped = []
+    for u in (detail or {}).get("unmapped") or []:
+        cat = store.category_for(u.get("department"), mapping)
+        if cat == dsr.UNMAPPED:
+            unmapped.append(u)
+            continue
+        c = cats.setdefault(cat, {"category": cat, "net": 0.0, "departments": []})
+        c["net"] = round(c["net"] + float(u.get("net") or 0), 2)
+        c["departments"].append(u.get("department"))
+    return _arrange(cats, net), unmapped
 
 
 def _items(items):
@@ -257,6 +298,10 @@ def _ready(ctx, data, provider, closed_by):
     cats, unmapped, unallocated = _categories(ctx, data["by_department"], net)
     for c in cats:
         metrics[f"cat:{c['category']}"] = c["net"]
+    # Each department's own dollars too: categories are derived from these
+    # whenever a night is shown, under the map as it stands then.
+    for dep, amount in data["by_department"].items():
+        metrics[f"dep:{dep}"] = round(float(amount or 0), 2)
     if unmapped:
         metrics[f"cat:{dsr.UNMAPPED}"] = round(sum(u["net"] for u in unmapped), 2)
     metrics["evening_share_pct"] = evening_share(hourly, net)
@@ -278,6 +323,7 @@ def _ready(ctx, data, provider, closed_by):
         "hourly": hourly,
         "categories": cats,
         "unmapped": unmapped,
+        "by_department": {dep: round(float(v or 0), 2) for dep, v in data["by_department"].items()},
         "unallocated": unallocated,
         "top_items": top,
         "bottom_items": bottom,

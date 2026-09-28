@@ -1217,6 +1217,13 @@ def sync_to_db(restaurant_id: int) -> dict:
                 # starts from the night it first runs): read from RPOWER,
                 # units only, then nothing until a day goes missing again.
                 inventory_ledger.backfill_item_sales(restaurant_id, days=60)
+                # The Daily Sales Report's grids for the nights before it
+                # started (dsr.backfill): figures only, no reports or email.
+                from models import get_restaurant as _get_r_dsr
+                _r_dsr = _get_r_dsr(restaurant_id)
+                if _r_dsr is not None and getattr(_r_dsr, "dsr_enabled", 0):
+                    from dsr import backfill as _dsr_backfill
+                    _dsr_backfill.backfill(_r_dsr, days=60)
             except Exception as _menu_e:
                 log.warning("[rpower sync] menu item discovery error for %s: %s", restaurant_id, _menu_e)
             dr = analysis.get("date_range", {})

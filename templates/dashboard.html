@@ -743,7 +743,8 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none;box
 .cf>b{font-weight:700;color:var(--cf-c)}
 .cf>b .hb-num{font-weight:600;letter-spacing:-.01em}
 .cf .cf-r{color:var(--ink3)}
-.cf .cf-why{margin-left:2px}
+/* Why? lines up with the text it follows: no button inset (owner, 9/28/26). */
+.cf .cf-why{margin-left:0;padding-left:0!important}
 .cf .cf-c{flex-basis:100%;font-size:12.5px;color:var(--amber)}
 /* The pill form (cavConfLine(c,{pill:1}), density fix #23): the figure
    alone, toned the same way, opening the same Why? panel. */
@@ -3492,16 +3493,18 @@ svg:hover .hb-xh{opacity:1}
       // A band from an older server has no percentage to draw, so no meter;
       // a K1 object with none draws the hatched, empty one.
       +(n.k1?'<span class="cf-m'+(n.pct==null?' none':'')+'" role="img" aria-label="'+esc(n.label)+'"><i style="width:'+(n.pct==null?0:n.pct)+'%"></i></span>':'')
-      +'<b>'+num(n.label)+'</b>'
-      +(n.reason&&!o.noReason?'<span class="cf-r">— '+num(n.reason)+'</span>':'');
+      +'<b>'+num(n.label)+'</b>';
+    // The caution sits right under the confidence it qualifies (owner,
+    // 9/28/26: it trailed below Why?, apart from the % it explains). It is
+    // left off when the reason on the line says the same thing ("no track
+    // record here yet - ..." twice, 9/25/26).
+    if(n.caution&&!o.noCaution&&!(n.reason&&!o.noReason&&cfSameHead(n.reason,n.caution)))h+='<span class="cf-c">'+num(n.caution)+'</span>';
+    h+=(n.reason&&!o.noReason?'<span class="cf-r">— '+num(n.reason)+'</span>':'');
     if(n.dims){
       h+='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm cf-why" data-explain="'+esc(panel(n))+'" data-explain-title="How sure is this?" data-explain-kicker="Confidence"'
         +(o.key?' data-explain-key="'+esc(o.key)+'" data-explain-surface="'+esc(o.surface||'home')+'" data-explain-module="'+esc(o.module||o.surface||'home')+'"':'')
         +' aria-label="Why '+esc(n.label)+'?">Why?</button>';
     }
-    // The caution is left off when the reason already on the line says the
-    // same thing ("no track record here yet - ..." twice, 9/25/26).
-    if(n.caution&&!o.noCaution&&!(n.reason&&!o.noReason&&cfSameHead(n.reason,n.caution)))h+='<span class="cf-c">'+num(n.caution)+'</span>';
     return h+'</div>';
   }
   // The claim tag (J5): AI-written beats the kind, because the owner's
@@ -6590,14 +6593,23 @@ svg:hover .hb-xh{opacity:1}
   // folded away under the report, with the verification count (ID1-17: it
   // sat mid-page, between the actions and the blocks).
   function builtHtml(ck,n){
-    var rows='',sg=ck.stages||[],bl=ck.blocks||[],i;
-    for(i=0;i<sg.length;i++)if(sg[i].at_local)rows+='<div class="dr-step done"><span class="ic"><i class="cv-ok cv-md" aria-hidden="true"></i></span><span class="t">'+esc(sg[i].label)+'</span><span class="at">'+esc(stamp(sg[i].at_local))+'</span></div>';
-    for(i=0;i<bl.length;i++){var x=bl[i];if(!x.status)continue;var ok=x.status==='ready';
-      rows+='<div class="dr-step '+(ok?'done':'gap')+'"><span class="ic">'+(ok?'<i class="cv-ok cv-md" aria-hidden="true"></i>':'<i class="cv-warn cv-md" aria-hidden="true"></i>')+'</span><span class="t">'+esc(x.label)+(ok?'':'<small>'+esc(x.reason||BSTATUS[x.status]||x.status)+'</small>')+'</span><span class="at">'+esc(stamp(x.at_local))+'</span></div>';}
+    var rows='',sg=ck.stages||[],bl=ck.blocks||[],i,steps=[];
+    for(i=0;i<sg.length;i++)if(sg[i].at_local)steps.push({ok:true,label:sg[i].label,at:stamp(sg[i].at_local)});
+    for(i=0;i<bl.length;i++){var x=bl[i];if(!x.status)continue;
+      steps.push({ok:x.status==='ready',label:x.label,why:x.reason||BSTATUS[x.status]||x.status,at:stamp(x.at_local)});}
+    /* A night built in one pass has one time: said once in the heading, not
+       eleven times down the side (owner, 9/28/26: "why are all the times
+       the same?"). Otherwise a row shows its time only when it changes. */
+    var seen={},uniq=[],prev='';
+    for(i=0;i<steps.length;i++)if(steps[i].at&&!seen[steps[i].at]){seen[steps[i].at]=1;uniq.push(steps[i].at);}
+    var onePass=uniq.length===1;
+    for(i=0;i<steps.length;i++){var st=steps[i],at=(onePass||st.at===prev)?'':st.at;prev=st.at||prev;
+      rows+='<div class="dr-step '+(st.ok?'done':'gap')+'"><span class="ic">'+(st.ok?'<i class="cv-ok cv-md" aria-hidden="true"></i>':'<i class="cv-warn cv-md" aria-hidden="true"></i>')+'</span><span class="t">'+esc(st.label)+(st.ok?'':'<small>'+esc(st.why)+'</small>')+'</span><span class="at">'+esc(at)+'</span></div>';}
     var vf=verifyHtml(n&&n.verification);
     if(!rows&&!vf)return '';
-    return '<details class="dr-sec" id="dr-built"><summary><span class="ttl">How the night was built</span><span class="src">'+esc(CLOSED[ck.closed_by]||'')+'</span><span class="sp"></span><span class="sum">each step at the time it finished</span></summary><div class="dr-sec-b">'
-      +note('Each block carries its source; nothing is estimated to fill a gap.')+rows+vf+'</div></details>';
+    var sum=onePass?('built in one pass · '+uniq[0]):'when each step was done';
+    return '<details class="dr-sec" id="dr-built"><summary><span class="ttl">How the night was built</span><span class="src">'+esc(CLOSED[ck.closed_by]||'')+'</span><span class="sp"></span><span class="sum">'+esc(sum)+'</span></summary><div class="dr-sec-b">'
+      +note(onePass?'Every step ran in one pass: everything it needed was already in when the report was built. A step still waiting on data runs again later, and shows its own time.':'Each block carries its source; nothing is estimated to fill a gap.')+rows+vf+'</div></details>';
   }
   // The verification count: how many of the written lines were kept.
   // "Traced to a measured fact" never covers an estimate (H13): a line
