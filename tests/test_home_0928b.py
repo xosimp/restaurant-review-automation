@@ -45,5 +45,5 @@ def test_the_results_curve_has_a_drawn_empty_state():
 
 def test_kpi_cards_span_their_row_and_sparklines_stay_inside():
     assert ".dr-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr))" in SRC
-    assert "auto-fill,minmax(190px,1fr)" not in SRC
+    assert ".dr-kpis{display:grid;grid-template-columns:repeat(auto-fill" not in SRC
     assert ".dr-spark{color:var(--ink3);flex:0 1 84px;min-width:36px;height:auto}" in SRC
