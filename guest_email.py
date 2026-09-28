@@ -13,12 +13,14 @@ difference is that email carries its own per-guest unsubscribe token, because
 CAN-SPAM requires the link to work without the recipient identifying
 themselves first.
 """
+import json
 import logging
 import config
 import re
 import secrets
 
 from models import get_conn, DB_PATH
+from ai_utils import create_with_retry, extract_text, get_client, model_for
 
 log = logging.getLogger(__name__)
 
@@ -62,14 +64,15 @@ def set_guest_email(contact_id, restaurant_id, email, consent=False, db_path: st
         conn.close()
 
 
-def subscribers(restaurant_id, db_path: str = DB_PATH) -> list:
+def subscribers(restaurant_id, segment=None, db_path: str = DB_PATH) -> list:
     """Consented, not unsubscribed, and not on the suppression list: an
     address that bounced or complained was still counted (and sent to) as a
-    subscriber (MOD-EML-7)."""
+    subscriber (MOD-EML-7). `segment` narrows them the way it narrows a
+    text's audience (guest_marketing.filter_segment)."""
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
-            "SELECT id, name, email, email_token FROM guest_contacts "
+            "SELECT id, name, email, email_token, last_visit, visit_count FROM guest_contacts "
             "WHERE restaurant_id=? AND email IS NOT NULL AND TRIM(email) != '' "
             "AND email_consent=1 AND email_unsubscribed=0 "
             "AND LOWER(TRIM(email)) NOT IN (SELECT email FROM email_suppressions "
@@ -78,11 +81,23 @@ def subscribers(restaurant_id, db_path: str = DB_PATH) -> list:
         ).fetchall()
     finally:
         conn.close()
-    return [dict(r) for r in rows]
+    people = [dict(r) for r in rows]
+    if segment and segment != "all":
+        from guest_marketing import filter_segment
+        people = filter_segment(restaurant_id, people, segment)
+    return people
 
 
 def subscriber_count(restaurant_id, db_path: str = DB_PATH) -> int:
     return len(subscribers(restaurant_id, db_path=db_path))
+
+
+def segment_counts(restaurant_id, db_path: str = DB_PATH) -> dict:
+    """Each audience's size by email, beside guest_marketing.segment_counts'
+    by text: the Campaign Studio sends both to one audience."""
+    from guest_marketing import SEGMENTS, filter_segment
+    people = subscribers(restaurant_id, db_path=db_path)
+    return {key: len(filter_segment(restaurant_id, people, key)) for key in SEGMENTS}
 
 
 def restaurant_for_token(token, db_path: str = DB_PATH):
@@ -156,6 +171,185 @@ def _split_generated(body: str):
     return subject[:140], "\n".join(rest).strip()
 
 
+# ── Campaign Studio (9/28/26): the email drafted, designed and previewed ──
+# One prompt drafts a text, an email and a social post. The email carries a
+# headline, a photo from the restaurant's own media library and one button,
+# and the page shows it through preview(): the same _render the send uses,
+# so what the owner approves is what guests get.
+
+_URL_RE = re.compile(r"^https?://[^\s<>\"']+$", re.I)
+
+
+def clean_design(design, restaurant_id, db_path: str = DB_PATH) -> dict:
+    """What an email carries besides its text, in the shapes the frame
+    renders: a headline, a preheader, a button (its label, and a link only
+    when it is http(s)) and a photo from THIS restaurant's media library by
+    id - never an image URL from the request, which could be anyone's
+    picture or a tracking pixel. Anything else is dropped."""
+    d = design if isinstance(design, dict) else {}
+
+    def line(key, n):
+        return " ".join(str(d.get(key) or "").split())[:n]
+
+    out = {"headline": line("headline", 120), "preheader": line("preheader", 140),
+           "button_label": line("button_label", 40), "button_url": "", "image_media_id": None}
+    url = str(d.get("button_url") or "").strip()[:500]
+    if url and _URL_RE.match(url):
+        out["button_url"] = url
+    try:
+        mid = int(d.get("image_media_id")) if d.get("image_media_id") not in (None, "") else None
+    except (TypeError, ValueError):
+        mid = None
+    if mid:
+        from marketing_media import get_media_token
+        if get_media_token(mid, restaurant_id, db_path=db_path):
+            out["image_media_id"] = mid
+    return out
+
+
+def _image_url(design, restaurant_id, base, db_path: str = DB_PATH) -> str:
+    if not (design or {}).get("image_media_id"):
+        return ""
+    from marketing_media import get_media_token, media_url
+    token = get_media_token(design["image_media_id"], restaurant_id, db_path=db_path)
+    return media_url(base, token) if token else ""
+
+
+def _paragraphs(body_text: str) -> str:
+    import html as _html
+    from emails import BRAND
+    return "".join(
+        f'<p style="font-size:16px;line-height:1.7;color:{BRAND["body"]};margin:0 0 16px">'
+        f'{_html.escape(p.strip()).replace(chr(10), "<br>")}</p>'
+        for p in (body_text or "").split("\n\n") if p.strip())
+
+
+_NEWSLETTER_KEYS = ("subject", "preheader", "headline", "body", "button")
+
+
+def draft_newsletter(restaurant, goal: str = "", topic: str = "") -> dict:
+    """AI-drafts the Campaign Studio's email from the owner's goal: subject,
+    preheader, headline, a short letter and the button's words. The same
+    guards as the guest text (guest_marketing.draft_campaign_message): no
+    offer the owner never wrote (invented_offers), and every field through
+    the Response Validation Layer on a public surface - a refusal names why,
+    "newsletter copy rejected: ...". Raises ValueError when the model's JSON
+    can't be read."""
+    from marketing import get_profile_for_restaurant, refusal_detail
+    from guest_marketing import invented_offers
+    import data_health
+
+    p = get_profile_for_restaurant(restaurant.id)
+    never = f" Never use these words or phrases: {p['never_say']}." if p.get("never_say") else ""
+    menu = (f" Menu & current specials: {p['menu_notes']}. Reference something specific when it fits."
+            if p.get("menu_notes") else "")
+    goal_clause = f"What the owner wants this email to do, in their words: {goal}.\n" if goal else ""
+    topic_clause = f"Topic/specifics to include: {topic}.\n" if topic else ""
+    prompt = (
+        f"Write a short email from {p['name']}, a {p['vibe']} in {p['neighborhood']}, to guests who joined its list.\n"
+        f"Brand voice: {p['voice']}. Known for: {p['known_for']}.{never}{menu}\n"
+        f"{goal_clause}{topic_clause}\n"
+        "Return ONLY a JSON object, no markdown, with exactly these keys:\n"
+        '  "subject": the subject line, under 8 words, no emoji\n'
+        '  "preheader": one line under 90 characters that adds to the subject (the inbox shows it after the subject)\n'
+        '  "headline": the email\'s big line, under 8 words\n'
+        '  "body": 2 or 3 short paragraphs separated by a blank line, under 80 words in all, as if the owner wrote '
+        "it between shifts. No greeting (one is added), no links\n"
+        '  "button": 2 to 4 words for its one button, like "Book a table" or "See the menu"\n'
+        "\nHard rules. A draft that breaks one is thrown away:\n"
+        "1. No offer (a discount, percentage or dollars off, a free item, half price, buy-one-get-one, anything "
+        "on the house) unless the owner's words or the menu above say it, in those words.\n"
+        "2. No dish, drink, event, date, price or detail of the room that is not written above.\n"
+        # Drafts told guests "Tuesdays have been quiet", "someone asked about
+        # you the other day" and "happy hour is back": a slow day, a thing
+        # nobody said and a change nobody made, under the owner's name.
+        "3. No story: nothing anyone said, asked, noticed or did, and nothing about how busy or slow it is.\n"
+        "4. Nothing is new, back, started or changed unless the owner's words say so.\n"
+        "5. It goes to many guests at once: never say how long it has been since a guest's visit.\n"
+        "6. Give no reason or cause for anything: no 'because', 'due to', 'thanks to' or 'since'.\n"
+        "7. No phone numbers or links."
+    )
+    message = create_with_retry(
+        get_client(),
+        model=model_for("guest_marketing"),
+        max_tokens=700,
+        messages=[{"role": "user", "content": prompt}],
+        restaurant_id=restaurant.id,
+        action="guest_newsletter_draft",
+        # Rests on no data source: a guest email drafted from the owner's goal.
+        readiness=data_health.NOT_APPLICABLE,
+    )
+    if getattr(message, "stop_reason", None) == "max_tokens":
+        raise ValueError("newsletter copy was truncated")
+    raw = extract_text(message).strip()
+    found = re.search(r"\{.*\}", raw, re.S)
+    try:
+        data = json.loads(found.group(0)) if found else None
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        raise ValueError("newsletter copy was unreadable")
+    fields = {k: str(data.get(k) or "").strip() for k in _NEWSLETTER_KEYS}
+    for k in ("subject", "preheader", "headline", "button"):
+        fields[k] = " ".join(fields[k].split())
+    fields["subject"], fields["preheader"] = fields["subject"][:140], fields["preheader"][:140]
+    fields["headline"], fields["button"] = fields["headline"][:120], fields["button"][:40]
+    fields["body"] = re.sub(r"\n{3,}", "\n\n", fields["body"].replace("\r", "")).strip()[:1500]
+    if not (fields["subject"] and fields["body"]):
+        raise ValueError("newsletter copy was unreadable")
+
+    offer_source = f"{topic} {goal} {p.get('menu_notes') or ''}"
+    offers = invented_offers(" ".join(fields.values()), offer_source)
+    if offers:
+        raise ValueError("newsletter copy rejected: it offers " + ", ".join(offers[:3])
+                         + ", which nobody told Cavnar AI the restaurant is running")
+    for k in _NEWSLETTER_KEYS:
+        if not fields[k]:
+            continue
+        checked = _validate_copy(fields[k], restaurant.id, p, f"{goal} {topic}".strip())
+        if checked.verdict is not None and checked.verdict.verdict == "refuse":
+            raise ValueError(f"newsletter copy rejected: {refusal_detail(checked.verdict)}")
+        fields[k] = str(checked)
+    return {"subject": fields["subject"], "preheader": fields["preheader"], "headline": fields["headline"],
+            "body": fields["body"], "button_label": fields["button"]}
+
+
+def _validate_copy(text, restaurant_id, profile, source):
+    """One field of the drafted email after the Response Validation Layer,
+    on the public social_post surface with marketing's context: the owner's
+    words (`source`) as the offer source, the never-say list, the
+    restaurant's own names and no other tenant's."""
+    import response_validation as rv
+    from marketing import marketing_context
+    return rv.enforce(text or "", marketing_context(restaurant_id, "social_post", profile, topic=source,
+                                                    action="guest_newsletter_draft"), marker=False)
+
+
+def preview(restaurant_id, subject="", body="", design=None, base=None, db_path: str = DB_PATH) -> dict:
+    """The email exactly as a guest gets it - _render, the frame, the
+    preheader - for the page's live preview. The greeting uses the first
+    subscriber's first name when one has one, as that guest's copy would."""
+    import emails as _emails
+    from models import get_restaurant
+    restaurant = get_restaurant(restaurant_id)
+    if not restaurant:
+        return {"ok": False, "error": "Restaurant not found."}
+    auto_subject, body_text = _split_generated(body or "")
+    subject = (subject or auto_subject or f"News from {restaurant.name}").strip()[:140]
+    d = clean_design(design, restaurant_id, db_path=db_path)
+    base = (base or config.base_url()).rstrip("/")
+    named = next((x for x in subscribers(restaurant_id, db_path=db_path) if (x.get("name") or "").strip()), None)
+    person = {"email": "", "name": (named or {}).get("name") or "", "email_token": "preview"}
+    payload = _render(restaurant, person, subject, _paragraphs(body_text), base, d,
+                      _image_url(d, restaurant_id, base, db_path))
+    html = payload["html"]
+    if payload.get("preheader"):
+        html = _emails.with_preheader(html, payload["preheader"])
+    return {"ok": True, "html": html, "subject": subject, "body": body_text, "preheader": d["preheader"],
+            "image_url": _image_url(d, restaurant_id, base, db_path),
+            "mailing_address": bool((getattr(restaurant, "mailing_address", None) or "").strip())}
+
+
 # Sent on the owner's request before it returns; the rest go out from the
 # scheduler tick (run_newsletter_sends). One synchronous Resend call per
 # subscriber inside the request held a web thread for minutes on a big list
@@ -171,7 +365,7 @@ NEEDS_ADDRESS = ("Add your restaurant's mailing address before sending — the l
 
 
 def send_newsletter(restaurant_id, body, subject=None, db_path: str = DB_PATH,
-                    mailing_address=None) -> dict:
+                    mailing_address=None, design=None, segment=None) -> dict:
     """Send a generated newsletter to this restaurant's consented subscribers.
 
     The email goes out FROM Cavnar AI's verified sending domain on the
@@ -184,7 +378,9 @@ def send_newsletter(restaurant_id, body, subject=None, db_path: str = DB_PATH,
     The first NEWSLETTER_INLINE_BATCH go out now and the scheduler sends the
     rest. Pressing send again with the same subject and text resumes the same
     newsletter rather than mailing everyone again (MOD-EML-3). A newsletter
-    needs the restaurant's mailing address (MOD-EML-6).
+    needs the restaurant's mailing address (MOD-EML-6). `design` is the
+    Campaign Studio's look (clean_design) and `segment` its audience; both
+    are part of what makes a press "the same newsletter".
     """
     import hashlib
     from models import get_restaurant, update_restaurant
@@ -198,9 +394,17 @@ def send_newsletter(restaurant_id, body, subject=None, db_path: str = DB_PATH,
     if not body_text:
         return {"ok": False, "error": "There's no newsletter text to send."}
 
-    people = subscribers(restaurant_id, db_path=db_path)
+    from guest_marketing import SEGMENTS
+    segment = (segment or "all").strip().lower()
+    if segment not in SEGMENTS:
+        segment = "all"
+    people = subscribers(restaurant_id, segment=segment, db_path=db_path)
     if not people:
+        if segment != "all" and subscribers(restaurant_id, db_path=db_path):
+            return {"ok": False, "error": "Nobody in that audience is on your email list yet."}
         return {"ok": False, "error": "Nobody has opted in to email yet — the join page collects it."}
+    d = clean_design(design, restaurant_id, db_path=db_path)
+    design_json = json.dumps(d, sort_keys=True) if any(v for v in d.values()) else None
 
     address = " ".join(str(mailing_address or "").split())[:200]
     if address:
@@ -208,7 +412,7 @@ def send_newsletter(restaurant_id, body, subject=None, db_path: str = DB_PATH,
     elif not (getattr(restaurant, "mailing_address", None) or "").strip():
         return {"ok": False, "error": NEEDS_ADDRESS, "needs_mailing_address": True}
 
-    digest = hashlib.sha256(f"{subject}\n{body_text}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(f"{subject}\n{body_text}\n{design_json or ''}\n{segment}".encode("utf-8")).hexdigest()
 
     conn = get_conn(db_path)
     try:
@@ -223,9 +427,10 @@ def send_newsletter(restaurant_id, body, subject=None, db_path: str = DB_PATH,
             newsletter_id = row["id"]
         else:
             newsletter_id = conn.execute(
-                "INSERT INTO guest_newsletters (restaurant_id, subject, body, content_hash, total) "
-                "VALUES (?,?,?,?,?)",
-                (restaurant_id, subject, body_text, digest, len(people))).lastrowid
+                "INSERT INTO guest_newsletters (restaurant_id, subject, body, content_hash, total, design, "
+                "segment, segment_label) VALUES (?,?,?,?,?,?,?,?)",
+                (restaurant_id, subject, body_text, digest, len(people), design_json, segment,
+                 SEGMENTS[segment]["label"])).lastrowid
             conn.executemany(
                 "INSERT OR IGNORE INTO guest_newsletter_recipients (newsletter_id, contact_id, email) "
                 "VALUES (?,?,?)", [(newsletter_id, p["id"], p["email"]) for p in people])
@@ -240,7 +445,7 @@ def send_newsletter(restaurant_id, body, subject=None, db_path: str = DB_PATH,
 
     result = _send_batch(newsletter_id, limit=NEWSLETTER_INLINE_BATCH, db_path=db_path)
     status = newsletter_status(newsletter_id, db_path=db_path)
-    return {"ok": True, "newsletter_id": newsletter_id, "subject": subject,
+    return {"ok": True, "newsletter_id": newsletter_id, "subject": subject, "segment": segment,
             "sent": status["sent"], "failed": status["failed"], "total": status["total"],
             "queued": status["pending"], "this_batch": result["sent"]}
 
@@ -258,37 +463,41 @@ def newsletter_status(newsletter_id, db_path: str = DB_PATH) -> dict:
             "total": sum(counts.values())}
 
 
-def _render(restaurant, person, subject, paragraphs, base):
+def _render(restaurant, person, subject, paragraphs, base, design=None, image_url=""):
+    """One guest's newsletter: the restaurant's own frame
+    (emails.guest_newsletter_email) with the design's headline, photo and
+    button, the greeting, the letter and the CAN-SPAM footer."""
     import html as _html
     import emails as _emails
+    B = _emails.BRAND
+    d = design or {}
     unsub = f"{base}/e/{person['email_token']}"
     greeting = ""
     if (person.get("name") or "").strip():
-        greeting = (f'<p style="font-size:15px;line-height:1.7;color:#1a1714;margin:0 0 14px">'
+        greeting = (f'<p style="font-size:16px;line-height:1.7;color:{B["ink"]};margin:0 0 16px">'
                     f'Hi {_html.escape(person["name"].split()[0])} —</p>')
+    name = _html.escape(restaurant.name)
     address = _html.escape((getattr(restaurant, "mailing_address", None) or "").strip())
-    inner = (
-        f'<p style="font-size:11px;letter-spacing:1px;text-transform:uppercase;color:#7a736a;margin:0 0 14px">'
-        f'{_html.escape(restaurant.name)}</p>'
-        + greeting + paragraphs +
-        f'<hr style="border:none;border-top:1px solid #e0dbd0;margin:22px 0"/>'
-        f'<p style="font-size:11px;color:#7a736a;margin:0">You get this because you joined '
-        f'{_html.escape(restaurant.name)}\'s list. '
-        f'<a href="{unsub}" style="color:#7a736a;text-decoration:underline">Unsubscribe</a>.</p>'
-        f'<p style="font-size:11px;color:#7a736a;margin:6px 0 0">{_html.escape(restaurant.name)} · {address}</p>'
-    )
+    footer = (f'You get this because you joined {name}\'s list. '
+              f'<a href="{unsub}" style="color:{B["muted"]};text-decoration:underline">Unsubscribe</a>.'
+              f'<br>{name}' + (f' · {address}' if address else ''))
+    html = _emails.guest_newsletter_email(
+        restaurant.name, greeting + paragraphs, headline=d.get("headline") or "", image_url=image_url or "",
+        button_label=d.get("button_label") or "", button_url=d.get("button_url") or "", footer_html=footer)
     payload = {
         # display_from: a comma or quote in the name split this header into
         # two mailboxes (MOD-EML-2).
         "from": _emails.display_from(restaurant.name),
         "to": [person["email"]],
         "subject": subject,
-        "html": _emails._branded_email(inner),
+        "html": html,
         "headers": {"List-Unsubscribe": f"<{unsub}>",
                     "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"},
     }
     if restaurant.owner_email:
         payload["reply_to"] = restaurant.owner_email
+    if d.get("preheader"):
+        payload["preheader"] = d["preheader"]
     return payload
 
 
@@ -310,11 +519,13 @@ def _send_batch(newsletter_id, limit=None, max_seconds=None, db_path: str = DB_P
     restaurant = get_restaurant(nl["restaurant_id"])
     if not restaurant:
         return {"sent": 0, "failed": 0}
-    base = config.base_url()
-    paragraphs = "".join(
-        f'<p style="font-size:15px;line-height:1.7;color:#1a1714;margin:0 0 14px">{_html.escape(p)}</p>'
-        for p in nl["body"].split("\n\n") if p.strip()
-    )
+    base = config.base_url().rstrip("/")
+    paragraphs = _paragraphs(nl["body"])
+    try:
+        design = json.loads(nl["design"] or "{}") if "design" in nl.keys() else {}
+    except ValueError:
+        design = {}
+    image_url = _image_url(design, nl["restaurant_id"], base, db_path)
     started = _time.monotonic()
     sent = failed = done = 0
     while limit is None or done < limit:
@@ -346,18 +557,20 @@ def _send_batch(newsletter_id, limit=None, max_seconds=None, db_path: str = DB_P
             _finish_recipient(row["id"], "skipped", None, db_path)
             continue
         person = {"email": row["email"], "name": row["name"], "email_token": row["email_token"]}
+        message_id = None
         try:
-            result = _emails.deliver(_render(restaurant, person, nl["subject"], paragraphs, base),
+            result = _emails.deliver(_render(restaurant, person, nl["subject"], paragraphs, base, design, image_url),
                                      restaurant_id=nl["restaurant_id"], email_type="guest_newsletter")
             ok = bool(getattr(result, "ok", result))
             err = None if ok else str(getattr(result, "error", "") or "")[:300]
+            message_id = getattr(result, "message_id", None)
         except Exception as e:
             log.warning("newsletter send failed for %s: %s", row["email"], e)
             ok, err = False, str(e)[:300]
         except BaseException:
             _finish_recipient(row["id"], "pending", None, db_path, only_if="sending")
             raise
-        _finish_recipient(row["id"], "sent" if ok else "failed", err, db_path)
+        _finish_recipient(row["id"], "sent" if ok else "failed", err, db_path, message_id=message_id)
         if ok:
             sent += 1
         else:
@@ -365,12 +578,14 @@ def _send_batch(newsletter_id, limit=None, max_seconds=None, db_path: str = DB_P
     return {"sent": sent, "failed": failed}
 
 
-def _finish_recipient(recipient_id, status, error, db_path, only_if=None):
+def _finish_recipient(recipient_id, status, error, db_path, only_if=None, message_id=None):
     conn = get_conn(db_path)
     try:
-        sql = ("UPDATE guest_newsletter_recipients SET status=?, error=?, "
+        # message_id ties the recipient to email_log, where Resend's open and
+        # click events land (newsletter_history).
+        sql = ("UPDATE guest_newsletter_recipients SET status=?, error=?, message_id=COALESCE(?, message_id), "
                "sent_at=CASE WHEN ?='sent' THEN datetime('now') ELSE sent_at END WHERE id=?")
-        args = [status, error, status, recipient_id]
+        args = [status, error, message_id, status, recipient_id]
         if only_if:
             sql += " AND status=?"
             args.append(only_if)
@@ -378,6 +593,59 @@ def _finish_recipient(recipient_id, status, error, db_path, only_if=None):
         conn.commit()
     finally:
         conn.close()
+
+
+def opens_tracked(db_path: str = DB_PATH) -> bool:
+    """Whether Resend's open events reach this platform at all. None in 90
+    days means open tracking is off on the Resend side, and a newsletter's
+    opens are then unknown - never zero."""
+    conn = get_conn(db_path)
+    try:
+        return conn.execute("SELECT 1 FROM email_log WHERE opened_at IS NOT NULL "
+                            "AND sent_at >= datetime('now','-90 days') LIMIT 1").fetchone() is not None
+    finally:
+        conn.close()
+
+
+def newsletter_history(restaurant_id, limit: int = 20, db_path: str = DB_PATH) -> list:
+    """Every newsletter, newest first: its subject, look, audience, how many
+    went out, and - where open tracking is on and the send kept its message
+    id - how many opened and clicked. Those two are a FLOOR, not a rate
+    (models.mark_email_engagement): Apple Mail opens mail nobody read and a
+    reader with images off never registers. None when unknown."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT n.id, n.subject, n.body, n.design, n.segment, n.segment_label, n.total, n.created_at, "
+            "       n.completed_at, "
+            "       SUM(CASE WHEN r.status='sent' THEN 1 ELSE 0 END) AS sent, "
+            "       SUM(CASE WHEN r.status='failed' THEN 1 ELSE 0 END) AS failed, "
+            "       SUM(CASE WHEN r.status IN ('pending','sending') THEN 1 ELSE 0 END) AS pending, "
+            "       SUM(CASE WHEN r.message_id IS NOT NULL THEN 1 ELSE 0 END) AS tracked, "
+            "       SUM(CASE WHEN e.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened, "
+            "       SUM(CASE WHEN e.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked "
+            "FROM guest_newsletters n "
+            "LEFT JOIN guest_newsletter_recipients r ON r.newsletter_id = n.id "
+            "LEFT JOIN email_log e ON r.message_id IS NOT NULL AND e.message_id = r.message_id "
+            "WHERE n.restaurant_id=? GROUP BY n.id ORDER BY n.id DESC LIMIT ?",
+            (restaurant_id, limit)).fetchall()
+    finally:
+        conn.close()
+    tracking = opens_tracked(db_path) if rows else False
+    out = []
+    for r in rows:
+        item = dict(r)
+        try:
+            item["design"] = json.loads(item.get("design") or "{}")
+        except ValueError:
+            item["design"] = {}
+        measured = tracking and (item.get("tracked") or 0) > 0
+        item["opened"] = int(item["opened"] or 0) if measured else None
+        item["clicked"] = int(item["clicked"] or 0) if measured else None
+        for k in ("sent", "failed", "pending", "tracked"):
+            item[k] = int(item.get(k) or 0)
+        out.append(item)
+    return out
 
 
 def run_newsletter_sends(db_path: str = DB_PATH, max_seconds=None) -> dict:

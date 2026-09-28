@@ -478,10 +478,11 @@ def test_marketing_sends_a_weekly_email_as_a_newsletter_and_schedules_inline():
 
 
 def test_texting_guests_names_the_head_count():
-    # Campaigns (9/28/26): the button names the count, and so does its armed
-    # second press; a win-back sends through the same button.
+    # Campaign Studio (9/28/26): the button names each channel's count
+    # ("Text 31 · Email 18"), and its armed second press the guests reached;
+    # a win-back sends through the same button.
     paint = SRC[SRC.index("window.cpPaint = function"):SRC.index("function cpPaintAi")]
-    assert "'Tap again to text ' + n + (n === 1 ? ' guest' : ' guests')" in paint
-    assert "'Send to ' + n + (n === 1 ? ' guest' : ' guests')" in paint
-    assert "var n = +seg.count || 0" in paint
+    assert "label.push('Text ' + n)" in paint and "label.push('Email ' + m)" in paint
+    assert "'Tap again to ' + (people ? 'reach ' + _cpPlural(people, 'guest') : '')" in paint
+    assert "var n = +seg.count || 0, m = +seg.email_count || 0" in paint
     assert "Bring back <span class=\"hb-num\">' + (+w.segment_size || 0) + '</span> guest'" in SRC

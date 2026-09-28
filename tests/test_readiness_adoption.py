@@ -32,6 +32,7 @@ NOT_APPLICABLE_SITES = {
     ("invoices.py", "extract"): "invoice OCR the owner confirms line by line",
     ("sales_audit_notes_ai.py", "_call_claude"): "internal notes from the auditor's own input",
     ("guest_marketing.py", "draft_campaign_message"): "guest SMS copy from the owner's offer",
+    ("guest_email.py", "draft_newsletter"): "the guest email drafted from the owner's goal",
     ("competitor.py", "fetch_menu_from_pdf_bytes"): "menu extraction from the supplied PDF",
     ("competitor.py", "fetch_menu_from_url"): "menu extraction from the supplied page",
 }

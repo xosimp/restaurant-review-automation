@@ -4146,6 +4146,27 @@ def guest_newsletter_api(current_user):
     return _m("mobile_guest_newsletter")(current_user)
 
 
+@client_bp.route("/api/guest-newsletter/draft", methods=["POST"])
+@login_required
+def guest_newsletter_draft_api(current_user):
+    """Web twin — the one body is mobile_api.mobile_guest_newsletter_draft."""
+    return _m("mobile_guest_newsletter_draft")(current_user)
+
+
+@client_bp.route("/api/guest-newsletter/preview", methods=["POST"])
+@login_required
+def guest_newsletter_preview_api(current_user):
+    """Web twin — the one body is mobile_api.mobile_guest_newsletter_preview."""
+    return _m("mobile_guest_newsletter_preview")(current_user)
+
+
+@client_bp.route("/api/guest-newsletters")
+@login_required
+def guest_newsletters_api(current_user):
+    """Web twin — the one body is mobile_api.mobile_guest_newsletters."""
+    return _m("mobile_guest_newsletters")(current_user)
+
+
 @client_bp.route("/api/marketing/preview", methods=["POST"])
 @login_required
 def marketing_preview_api(current_user):

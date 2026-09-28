@@ -950,7 +950,7 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .cp-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px}
 .cp-kpi{padding:20px 20px 18px;display:flex;flex-direction:column;gap:10px;animation:cpRise .5s ease both}
 .cp-kpi:nth-child(2){animation-delay:.05s}.cp-kpi:nth-child(3){animation-delay:.1s}.cp-kpi:nth-child(4){animation-delay:.15s}.cp-kpi:nth-child(5){animation-delay:.2s}
-.cp-kpi .l,.cp-fc .l,.cp-step .lbl{font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
+.cp-kpi .l,.cp-pc .lbl,.cp-pick .l{font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
 .cp-kpi .v{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:34px;letter-spacing:-.02em;line-height:1;color:var(--ink)}
 .cp-kpi .s{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--ink3);min-height:20px}
 .cp-sec{display:flex;flex-direction:column;gap:22px}
@@ -972,22 +972,9 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .cp-sugg .k:before{content:'';width:7px;height:7px;border-radius:50%;background:var(--ember);box-shadow:0 0 8px var(--ember)}
 .cp-sugg .t{flex:1;min-width:220px;font-size:16px;color:var(--ink)}
 .cp-sugg .t .hb-num{font-weight:700}
-.cp-builder{display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:28px;align-items:start;animation:cpRise .45s ease both}
-.cp-steps{display:flex;flex-direction:column;gap:14px}
-.cp-step{display:flex;align-items:flex-start;gap:18px;padding:22px 24px;flex-wrap:wrap}
-.cp-step .n{width:28px;height:28px;border-radius:50%;flex:none;box-sizing:border-box;display:flex;align-items:center;justify-content:center;border:2px solid var(--cp-line);color:var(--ink3);font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:13px}
-.cp-step.done .n{font-size:0;border:0;background:radial-gradient(circle at 35% 30%,var(--hb-pop2),var(--hb-pop) 72%);color:var(--hb-pop-ink);box-shadow:0 0 0 3px var(--hb-pop-ring)}
-.cp-step.done .n:before{content:'';width:5px;height:10px;margin-top:-3px;border:solid currentColor;border-width:0 2.4px 2.4px 0;transform:rotate(45deg)}
-.cp-step.now{border-color:var(--cp-ring);box-shadow:0 0 0 4px rgba(200,75,47,.06),var(--elev-card)}
-.cp-step.now .n{border-color:var(--ember);color:var(--ember2)}
-.cp-step .b{flex:1;min-width:0;display:flex;flex-direction:column;gap:12px}
-.cp-step .lbl{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:22px}
-.cp-step .t{font-size:19px;font-weight:700;color:var(--ink);line-height:1.35}
 .cp-tag{font-size:11.5px;font-weight:700;letter-spacing:.04em;text-transform:none;color:var(--ink2);background:var(--cp-soft);padding:3px 10px;border-radius:999px}
 .cp-tag.ai{color:var(--ember2);background:var(--cp-tint)}
 .cp-tag:empty{display:none}
-.cp-aud{display:flex;align-items:baseline;gap:12px;font-size:17px;color:var(--ink2)}
-.cp-aud .hb-num{font-weight:600;font-size:40px;line-height:1;color:var(--ink)}
 .cp-segs{display:flex;flex-wrap:wrap;gap:8px}
 .cp-seg{border-radius:999px;transition:background .2s,border-color .2s,color .2s}
 .cp-seg .c{font-family:'Space Grotesk',sans-serif;margin-left:6px;opacity:.75}
@@ -1000,15 +987,10 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .cp-sp{flex:1}
 .cp-linksw{display:inline-flex;align-items:center;gap:10px;cursor:pointer}
 .cp-link{height:44px;box-sizing:border-box;font-size:15px}
-.cp-sendrow{flex-direction:row!important;align-items:center;justify-content:space-between;flex-wrap:wrap}
 .cp-checks{display:flex;flex-wrap:wrap;gap:10px 18px;font-size:14px;color:var(--ink2)}
 .cp-checks span{display:inline-flex;align-items:center;gap:8px}
 .cp-checks .cv-ok,.cp-checks .cv-warn{width:16px;height:16px}
-.cp-step-send .cbtn,#guest-send-btn{min-height:52px;border-radius:15px;padding-left:28px;padding-right:28px}
 #guest-send-btn.arm{animation:cpBreathe 1.6s ease-in-out infinite}
-.cp-status{flex-basis:100%;margin-left:46px;display:flex;align-items:center;gap:10px;font-size:15px;color:var(--ink2)}
-.cp-status.bad{color:var(--red)}
-.cp-side{display:flex;flex-direction:column;gap:14px;position:sticky;top:calc(var(--cav-chrome,90px) + 18px)}
 .cp-phone{align-self:center;width:290px;height:560px;box-sizing:border-box;padding:11px;border-radius:46px;background:linear-gradient(160deg,#3a332d,#15120f);box-shadow:0 0 0 1px rgba(255,255,255,.08),0 50px 90px -40px rgba(0,0,0,.7),0 30px 80px -50px rgba(200,75,47,.45)}
 .cp-phone .scr{width:100%;height:100%;border-radius:36px;background:#0b0a09;overflow:hidden;display:flex;flex-direction:column}
 .cp-phone .top{display:flex;flex-direction:column;align-items:center;gap:6px;padding:34px 0 12px;background:rgba(255,255,255,.04);border-bottom:1px solid rgba(255,255,255,.06);font-size:12.5px;color:#f0ebe0}
@@ -1019,11 +1001,6 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .cp-phone .bub .lk{display:block;margin-top:8px;color:#6aabff;text-decoration:underline}
 .cp-phone .bub .stop{display:block;margin-top:8px;color:#a39a8e;font-size:12px}
 .cp-phone .bub.empty #cp-bub-t{color:#8f857a}
-.cp-fc{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
-.cp-fc .cp-card{padding:14px 16px;box-shadow:none}
-.cp-fc .v{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:25px;margin-top:6px;color:var(--ink)}
-.cp-fc .v.good{color:var(--green)}.cp-fc .v.warn{color:var(--amber)}
-.cp-fc .s{font-size:12.5px;color:var(--ink3);margin-top:2px}
 .cp-ai{padding:16px 18px;border-radius:16px;background:var(--sf-ai),var(--surface);border:1px solid var(--sf-ai-line)}
 .cp-ai .tag{font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);display:flex;align-items:center;gap:8px}
 .cp-ai .tag:before{content:'';width:7px;height:7px;border-radius:50%;background:var(--ember);box-shadow:0 0 8px var(--ember)}
@@ -1090,7 +1067,128 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .cp-receipts summary::-webkit-details-marker{display:none}
 .cp-receipts[open] .go{transform:rotate(90deg)}
 .cp-rhint{padding:0 24px 20px 74px;font-size:14.5px;line-height:1.6;color:var(--ink2);max-width:70ch}
-@media (max-width:1100px){.cp-kpis{grid-template-columns:repeat(6,minmax(0,1fr))}.cp-kpis>*{grid-column:span 2}.cp-kpis>:nth-child(n+4){grid-column:span 3}.cp-builder,.cp-audgrid{grid-template-columns:1fr}.cp-side{position:static}.cp-camps{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* Campaign Studio (9/28/26): one goal, the channels it goes out on, a
+   plan strip (goal, audience, photo) over one card per channel, and one
+   send bar. The email preview is the server's own render in a sandboxed
+   frame, desktop or phone width. */
+#guest-send-btn{min-height:52px;border-radius:15px;padding-left:28px;padding-right:28px}
+.cp-pick{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.cp-pick .l{margin-right:4px}
+.cp-pk{border-radius:999px;gap:8px}
+.cp-pk .c{font-family:'Space Grotesk',sans-serif;margin-left:4px;opacity:.7}
+.cp-pk .ck{width:15px;height:15px;border-radius:5px;border:1.5px solid var(--ink3);box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;transition:background .2s,border-color .2s;color:var(--cb-accent-ink)}
+.cp-pk.on,.cp-pk.on:hover{border-color:var(--ember);background:var(--cp-tint);color:var(--ink)}
+.cp-pk.on .ck{background:var(--ember);border-color:var(--ember)}
+.cp-pk.on .ck:before{content:'';width:3px;height:7px;margin-top:-2px;border:solid currentColor;border-width:0 2px 2px 0;transform:rotate(45deg)}
+.cp-builder{display:flex;flex-direction:column;gap:18px;animation:cpRise .45s ease both}
+.cp-plan{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,2fr) 210px;gap:14px;align-items:stretch}
+.cp-pc{padding:18px 20px;display:flex;flex-direction:column;gap:10px}
+.cp-pc .lbl{display:flex;align-items:center;gap:6px 10px;min-height:22px;flex-wrap:wrap}
+.cp-pc .lbl .cp-tag{white-space:nowrap}
+.cp-goalc .t{flex:1;font-family:'Clash Display',sans-serif;font-weight:500;font-size:20px;line-height:1.25;color:var(--ink);text-wrap:balance}
+.cp-goalc .cbtn{align-self:flex-start}
+.cp-audc .cp-segs{gap:8px}
+.cp-seg{display:inline-flex;flex-direction:column;align-items:flex-start;gap:3px;height:auto;min-height:0;padding:9px 14px;border-radius:14px;text-align:left;transition:background .2s,border-color .2s,color .2s}
+.cp-seg b{font-size:14px;color:var(--ink)}
+.cp-seg .c{font-size:12.5px;font-weight:400;color:var(--ink3)}
+.cp-seg .c .hb-num{font-weight:700;color:var(--ink2)}
+.cp-seg .r{font-size:12px;font-weight:700;color:var(--green)}
+.cp-photo-pick{height:auto;min-height:0;padding:0;border:0;background:none;box-shadow:none;display:flex;align-items:center;gap:12px;font-weight:700;font-size:14px;color:var(--ember2);justify-content:flex-start}
+.cp-photo-pick:hover{background:none;color:var(--ink)}
+.cp-photo-pick .img{width:64px;height:64px;border-radius:14px;flex:none;background:var(--cp-soft) center/cover no-repeat;border:1px dashed var(--cp-line)}
+.cp-photo-pick .img[style*="url"]{border-style:solid}
+.cp-photos{padding:14px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;animation:cpRise .3s ease both}
+.cp-thumbs{display:flex;gap:8px;flex-wrap:wrap}
+.cp-thumb{width:64px;height:64px;min-height:0;padding:0;border-radius:12px;background:var(--cp-soft) center/cover no-repeat;border:2px solid transparent}
+.cp-thumb.on{border-color:var(--ember);box-shadow:0 0 0 3px var(--cp-tint)}
+.cp-upload{cursor:pointer}
+.cp-photo-st,.cp-photo-none{font-size:13px;color:var(--ink3)}
+.cp-chs{display:grid;grid-template-columns:330px minmax(0,1fr);gap:16px;align-items:start}
+.cp-chs>.cp-ch{grid-column:1}
+.cp-chs>.cp-ch-em{grid-column:2;grid-row:1/span 2}
+.cp-chs.noem{grid-template-columns:repeat(2,minmax(0,1fr))}
+.cp-chs.noem>.cp-ch{grid-column:auto}
+.cp-chs[data-n="1"],.cp-chs.noem[data-n="1"]{grid-template-columns:minmax(0,780px);justify-content:center}
+.cp-chs[data-n="1"]>.cp-ch{grid-column:1;grid-row:auto}
+.cp-ch{position:relative;overflow:hidden;animation:cpRise .45s ease both;transition:box-shadow .25s,transform .25s}
+.cp-ch:hover{box-shadow:0 30px 60px -36px rgba(0,0,0,.55),var(--elev-card)}
+.cp-chh{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--cp-line);flex-wrap:wrap}
+.cp-inc{display:inline-flex;align-items:center;gap:9px;font-size:15.5px;color:var(--ink)}
+.cp-inc b:before{content:'';display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ember);margin-right:9px;vertical-align:1px;box-shadow:0 0 8px rgba(200,75,47,.6)}
+.cp-chsub{font-size:13px;color:var(--ink3)}
+.cp-chh .cp-rewrite{margin-left:auto}
+.cp-chb{padding:16px;display:flex;flex-direction:column;gap:12px;transition:opacity .25s,filter .25s}
+.cp-ch.busy .cp-chb{opacity:.35;filter:saturate(.6);pointer-events:none}
+.cp-ch.busy:after{content:'';position:absolute;left:0;right:0;top:52px;height:2px;background:linear-gradient(90deg,transparent,var(--ember),transparent);background-size:40% 100%;background-repeat:no-repeat;animation:cpScan 1.1s ease-in-out infinite}
+@keyframes cpScan{from{background-position:-40% 0}to{background-position:140% 0}}
+.cp-chft{font-size:13px;color:var(--ink3);display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-height:18px}
+.cp-chft:empty{display:none}
+.cp-chft b{color:var(--ink);font-size:15px}
+.cp-chft .bad{color:var(--red)}.cp-chft .warn{color:var(--amber)}
+.cp-ch .cp-phone{width:250px;height:470px;padding:9px;border-radius:40px}
+.cp-ch .cp-phone .scr{border-radius:32px}
+.cp-view{display:inline-flex;gap:4px;margin-left:auto}
+.cp-view .cbtn.on{border-color:var(--ember);background:var(--cp-tint);color:var(--ink)}
+.cp-ch-em .cp-view+.cp-rewrite{margin-left:0}
+.cp-subj{display:flex;align-items:center;gap:12px;padding:2px 2px 0}
+.cp-subj label{font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3)}
+.cp-subj input{flex:1;min-width:0;height:40px;border:0;border-bottom:1px solid var(--cp-line);background:transparent;color:var(--ink);font-family:'Apfel Grotezk',sans-serif;font-size:17px;font-weight:700;outline:none}
+.cp-subj input:focus{border-color:var(--ember)}
+.cp-stage{border-radius:16px;background:var(--sf-recess);padding:18px;display:flex;justify-content:center;transition:padding .3s}
+.cp-emframe{width:100%;max-width:620px;border-radius:12px;overflow:hidden;box-shadow:0 24px 50px -30px rgba(0,0,0,.6);transition:max-width .35s cubic-bezier(.2,.8,.2,1),border-radius .35s}
+.cp-emframe iframe{display:block;width:100%;height:560px;border:0;background:var(--sf-recess)}
+.cp-stage.phone .cp-emframe{max-width:375px;border-radius:34px;border:9px solid #1d1a17;box-shadow:0 0 0 1px rgba(255,255,255,.08),0 40px 70px -34px rgba(0,0,0,.8)}
+.cp-emedit{border-radius:14px;border:1px solid var(--cp-line);overflow:hidden}
+.cp-emedit summary{cursor:pointer;list-style:none;padding:12px 16px;font-size:14px;font-weight:700;color:var(--ember2)}
+.cp-emedit summary::-webkit-details-marker{display:none}
+.cp-emedit summary:after{content:' \203A';display:inline-block;transition:transform .2s}
+.cp-emedit[open] summary:after{transform:rotate(90deg)}
+.cp-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:4px 16px 16px}
+.cp-fields label{display:flex;flex-direction:column;gap:6px;font-size:12.5px;font-weight:700;color:var(--ink3)}
+.cp-fields label.w{grid-column:1/-1}
+.cp-fields input,.cp-fields textarea{box-sizing:border-box;width:100%;border-radius:10px;border:1px solid var(--cp-line);background:var(--sf-recess);color:var(--ink);padding:10px 12px;font-family:'Apfel Grotezk',sans-serif;font-size:15px;font-weight:400;outline:none;resize:vertical}
+.cp-fields input:focus,.cp-fields textarea:focus{border-color:var(--cp-ring)}
+.cp-plats{display:inline-flex;gap:6px}
+.cp-plat.on{border-color:var(--ember);background:var(--cp-tint);color:var(--ink)}
+.cp-post{border-radius:16px;overflow:hidden;background:var(--sf-recess);border:1px solid var(--cp-line)}
+.cp-post .hd{display:flex;align-items:center;gap:9px;padding:10px 12px;font-size:13px;color:var(--ink)}
+.cp-post .av{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,var(--ember2),var(--ember));color:var(--cb-accent-ink);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700}
+.cp-post .ph{aspect-ratio:1/1;background:var(--cp-soft) center/cover no-repeat;display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--ink3)}
+.cp-post .ph.has span{display:none}
+.cp-post .cap{padding:11px 12px 14px;font-size:13.5px;line-height:1.5;color:var(--ink);white-space:pre-wrap;word-break:break-word;max-height:150px;overflow:auto}
+.cp-sendbar{display:flex;align-items:center;gap:14px 20px;flex-wrap:wrap;padding:16px 16px 16px 22px}
+.cp-sendbar .cp-checks{flex:1;min-width:260px}
+.cp-sendbar #guest-send-btn{margin-left:auto}
+.cp-addr{flex-basis:100%;display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:13.5px;color:var(--amber)}
+.cp-addr input{flex:1;min-width:240px;height:42px;box-sizing:border-box}
+.cp-status{flex-basis:100%;display:flex;flex-direction:column;gap:6px;font-size:15px;color:var(--ink2)}
+.cp-status .ln{display:flex;align-items:center;gap:10px}
+.cp-status .ln.bad{color:var(--red)}
+.cp-insights{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+.cp-ins{padding:20px 22px;display:flex;flex-direction:column;gap:8px;animation:cpRise .45s ease both}
+.cp-ins .f{font-weight:600;font-size:32px;letter-spacing:-.02em;color:var(--ink)}
+.cp-ins .f.good{color:var(--green)}
+.cp-ins .t{font-size:15.5px;line-height:1.4;color:var(--ink)}
+.cp-ins .b{font-size:12.5px;color:var(--ink3)}
+.cp-camp .hd .kd,.cp-camp .th .kd{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--ember2)}
+.cp-camp.em{padding-top:0}
+.cp-camp .th{margin:0 -22px;height:96px;background:linear-gradient(135deg,var(--cp-tint),var(--cp-soft)) center/cover no-repeat;display:flex;align-items:flex-end;padding:10px 22px;box-sizing:border-box}
+.cp-camp .th.img .kd{padding:3px 9px;border-radius:999px;background:rgba(0,0,0,.5);color:#f0ebe0}
+.cp-camp .acts{display:flex;gap:16px;flex-wrap:wrap;padding-top:4px;border-top:1px solid var(--cp-line)}
+.cp-segrows .r.hd{font-size:11.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
+.cp-segrows .r{grid-template-columns:170px minmax(0,1fr) 44px 44px!important}
+.cp-segrows .bar{position:relative}
+.cp-segrows .bar i.em{position:absolute;left:0;bottom:0;height:3px;background:var(--ink3);opacity:.55}
+.cp-segrows .c.e{color:var(--ink3)}
+.cp-empty .art{display:flex;justify-content:center;gap:6px;margin-bottom:12px}
+.cp-empty .art i{width:34px;height:44px;border-radius:8px;background:linear-gradient(160deg,var(--cp-tint),var(--cp-soft));border:1px solid var(--cp-line);transform:rotate(-6deg)}
+.cp-empty .art i:nth-child(2){transform:translateY(-6px);background:linear-gradient(160deg,var(--ember2),var(--ember));opacity:.8}
+.cp-empty .art i:nth-child(3){transform:rotate(6deg)}
+@media (max-width:1100px){.cp-plan{grid-template-columns:minmax(0,1fr) minmax(0,1.6fr)}.cp-photoc{grid-column:1/-1;flex-direction:row;align-items:center;justify-content:space-between}}
+@media (max-width:900px){.cp-chs,.cp-chs.noem{grid-template-columns:1fr}.cp-chs>.cp-ch,.cp-chs>.cp-ch-em{grid-column:1;grid-row:auto}.cp-chs>.cp-ch-em{order:-1}}
+@media (max-width:760px){.cp-plan,.cp-fields,.cp-insights{grid-template-columns:1fr}.cp-ch .cp-phone{width:230px;height:430px}}
+@media (prefers-reduced-motion:reduce){.cp-ch,.cp-ins,.cp-photos,.cp-ch.busy:after{animation:none}.cp-emframe{transition:none}}
+@media (max-width:1100px){.cp-kpis{grid-template-columns:repeat(6,minmax(0,1fr))}.cp-kpis>*{grid-column:span 2}.cp-kpis>:nth-child(n+4){grid-column:span 3}.cp-audgrid{grid-template-columns:1fr}.cp-camps{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:640px){.cp-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.cp-kpis>*,.cp-kpis>:nth-child(n+4){grid-column:auto}.cp-kpis>:last-child{grid-column:1/-1}.cp-camps{grid-template-columns:1fr}.cp-prompt{flex-wrap:wrap}.cp-prompt .cbtn{width:100%}.cp-set b{width:auto}.cp-qracts,.cp-places{grid-template-columns:repeat(2,minmax(0,1fr))}.cp-segrows .r{grid-template-columns:120px minmax(0,1fr) 40px}}
 @media (prefers-reduced-motion:reduce){.cp-kpi,.cp-builder,.cp-camp,.cp-orb,.cp-growth .b i,#guest-send-btn.arm{animation:none}}
 
@@ -11385,19 +11483,6 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     <div class="cal-grid" id="cal-grid"><div class="hb-empty" style="grid-column:1/-1">Generate week builds the calendar.</div></div>
   </section>
 
-  <!-- The newsletter channel. `weekly_email` has generated newsletters since
-       this product existed with no list and no way to send one. -->
-  <div class="hb-sh"><div><div class="k">Email</div><h2>Email newsletter<small><span id="guest-newsletter-count"></span></small></h2></div></div>
-  <div class="hb-card mkt-card" id="mkt-newsletter" data-nav="marketing/newsletter">
-    <p class="mkt-help">"Send as newsletter" on a Weekly email above fills this in; guests opt in to email separately from texts.</p>
-    <input type="text" id="guest-newsletter-subject" class="topic-input" placeholder="Subject (optional — taken from the generated copy if blank)" style="width:100%;box-sizing:border-box;margin-bottom:10px">
-    <textarea id="guest-newsletter-body" rows="5" placeholder="Newsletter text" style="width:100%;padding:10px 12px;border:1px solid var(--paper3);border-radius:8px;font-family:'Apfel Grotezk',sans-serif;font-size:13px;color:var(--ink);background:var(--paper2);outline:none;resize:vertical;margin-bottom:10px;box-sizing:border-box"></textarea>
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <button onclick="sendGuestNewsletter()" class="cbtn cbtn-secondary" id="guest-newsletter-btn">Send to subscribers</button>
-      <span id="guest-newsletter-status" style="font-size:12px;display:none"></span>
-    </div>
-  </div>
-
   <!-- Drafts. Generated copy used to survive exactly as long as the screen
        it was on — write a caption, get called to the floor, come back, gone. -->
   <div class="hb-sh"><div><div class="k">Drafts</div><h2>Saved drafts</h2></div>
@@ -11418,7 +11503,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
   <div class="cp" id="mkt-guests" data-nav="marketing/guests">
 
     <div class="cp-kpis" aria-label="Your guest list">
-      <div class="cp-card cp-kpi"><div class="l">Subscribers</div><div class="v"><span id="cp-k-subs">—</span></div><div class="s"><span class="cp-chip" id="cp-k-today">+0</span>today</div></div>
+      <div class="cp-card cp-kpi"><div class="l">Subscribers</div><div class="v"><span id="cp-k-subs">—</span></div><div class="s"><span class="cp-chip" id="cp-k-today">+0</span>today <span id="cp-k-email"></span></div></div>
       <div class="cp-card cp-kpi"><div class="l">Growth</div><div class="v"><span id="cp-k-growth">—</span></div><div class="s"><span class="cp-chip">30 days</span>new opt-ins</div></div>
       <div class="cp-card cp-kpi"><div class="l">Last campaign</div><div class="v"><span id="cp-k-last">—</span></div><div class="s" id="cp-k-last-s">nothing sent yet</div></div>
       <div class="cp-card cp-kpi" title="Taps on the tracked link, per text sent. Texts report no opens, so there is no open rate."><div class="l">Tap rate</div><div class="v"><span id="cp-k-tap">—</span></div><div class="s" id="cp-k-tap-s">after 2 campaigns with a link</div></div>
@@ -11426,13 +11511,14 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     </div>
 
     <section class="cp-sec" aria-labelledby="cp-create-h">
-      <div class="cp-h"><div class="k">Create</div><h2 id="cp-create-h">What should this text do?</h2></div>
+      <div class="cp-h"><div class="k">Create</div><h2 id="cp-create-h">What should this campaign do?</h2></div>
       <form class="cp-prompt" onsubmit="event.preventDefault();cpCreate()">
         <span class="cp-orb" aria-hidden="true"></span>
-        <label for="cp-prompt" class="cp-sr">What should this text do?</label>
+        <label for="cp-prompt" class="cp-sr">What should this campaign do?</label>
         <input id="cp-prompt" maxlength="280" autocomplete="off" placeholder="Bring back guests who haven&rsquo;t visited in 30 days">
         <button type="submit" class="cbtn cbtn-primary cbtn-lg" id="cp-create-btn">Create &rarr;</button>
       </form>
+      <div class="cp-pick" id="cp-pick" role="group" aria-label="Channels"></div>
       <div class="cp-sugg" id="guest-winback" hidden></div>
       <div class="cp-ideas" id="cp-ideas">
         <button type="button" class="cbtn cbtn-secondary cbtn-sm cp-idea" data-cp-idea="Bring back guests who haven't been in for 30 days"><i class="d1"></i>Bring back guests gone 30 days</button>
@@ -11442,57 +11528,103 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
       </div>
 
       <div class="cp-builder" id="cp-builder" hidden>
-        <div class="cp-steps">
-          <div class="cp-card cp-step done" id="cp-step-goal">
-            <span class="n" aria-hidden="true"></span>
-            <div class="b"><div class="lbl">Goal <span class="cp-tag" id="cp-goal-k"></span></div><div class="t" id="cp-goal-t"></div></div>
+        <div class="cp-plan">
+          <div class="cp-card cp-pc cp-goalc" id="cp-step-goal">
+            <div class="lbl">Goal <span class="cp-tag" id="cp-goal-k"></span></div>
+            <div class="t" id="cp-goal-t"></div>
             <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="cpChangeGoal()">Change</button>
           </div>
-          <div class="cp-card cp-step done" id="cp-step-aud">
-            <span class="n" aria-hidden="true"></span>
-            <div class="b">
-              <div class="lbl">Audience <span class="cp-tag ai" id="cp-aud-k">Picked by Cavnar AI</span></div>
-              <div class="cp-aud"><span class="hb-num" id="cp-aud-n">0</span><span id="cp-aud-l"></span></div>
-              <div class="cp-segs" id="cp-segs" role="radiogroup" aria-label="Who it goes to"></div>
-            </div>
+          <div class="cp-card cp-pc cp-audc" id="cp-step-aud">
+            <div class="lbl">Audience <span class="cp-tag ai" id="cp-aud-k">Picked by Cavnar AI</span></div>
+            <div class="cp-segs" id="cp-segs" role="radiogroup" aria-label="Who it goes to"></div>
           </div>
-          <div class="cp-card cp-step now" id="cp-step-msg">
-            <span class="n" aria-hidden="true">3</span>
-            <div class="b">
-              <div class="lbl">Message <button type="button" class="cbtn cbtn-secondary cbtn-sm cp-rewrite" id="cp-rewrite" onclick="cpCreate(true)">Rewrite &#8635;</button></div>
-              <label for="guest-campaign-message" class="cp-sr">Message</label>
-              <textarea id="guest-campaign-message" class="cp-msg" rows="3" maxlength="300" oninput="cpPaint()"></textarea>
+          <div class="cp-card cp-pc cp-photoc" id="cp-step-photo">
+            <div class="lbl">Photo</div>
+            <button type="button" class="cbtn cp-photo-pick" id="cp-photo-pick" onclick="cpTogglePhotos()" aria-expanded="false"><span class="img" id="cp-photo-img"></span><span id="cp-photo-l">Add a photo</span></button>
+          </div>
+        </div>
+        <div class="cp-card cp-photos" id="cp-photos" hidden>
+          <div class="cp-thumbs" id="cp-thumbs"></div>
+          <label class="cbtn cbtn-secondary cbtn-sm cp-upload">Upload<input type="file" accept="image/*" id="cp-photo-file" onchange="cpUploadPhoto(this)" hidden></label>
+          <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" id="cp-photo-none" onclick="cpPickPhoto(null)">No photo</button>
+          <span class="cp-photo-st" id="cp-photo-st" aria-live="polite"></span>
+        </div>
+        <div class="cp-ai" id="cp-ai" hidden><div class="tag">Cavnar AI</div><div class="t" id="cp-ai-t"></div><div class="s" id="cp-ai-s"></div></div>
+
+        <div class="cp-chs" id="cp-chs">
+          <article class="cp-card cp-ch" id="cp-ch-text" aria-label="Text message">
+            <header class="cp-chh">
+              <span class="cp-inc"><b>Text</b></span>
+              <span class="cp-chsub" id="cp-text-sub"></span>
+              <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm cp-rewrite" id="cp-rewrite" onclick="cpRewrite('text')">Rewrite &#8635;</button>
+            </header>
+            <div class="cp-chb" id="cp-text-b">
+              <div class="cp-phone" aria-label="What your guests see">
+                <div class="scr">
+                  <div class="top"><span class="av">{{ (restaurant.name or 'Us')[:2]|upper }}</span><b>{{ restaurant.name }}</b></div>
+                  <div class="thread"><div class="when">Today</div><div class="bub" id="cp-bubble"><span id="cp-bub-t"></span><span class="lk" id="cp-bub-link" hidden></span><span class="stop">Reply STOP to unsubscribe.</span></div></div>
+                </div>
+              </div>
+              <label for="guest-campaign-message" class="cp-sr">Text message</label>
+              <textarea id="guest-campaign-message" class="cp-msg" rows="4" maxlength="300" oninput="cpPaint()"></textarea>
               <div class="cp-meta">
                 <span class="cp-chip hb-num" id="cp-chars">0 / 300</span><span class="cp-chip" id="cp-fit"></span>
                 <span class="cp-sp"></span>
-                <label class="cp-linksw"><span class="ac-switch"><input type="checkbox" id="cp-link-on" onchange="cpLinkToggle()"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></span>Track taps on a link</label>
+                <label class="cp-linksw"><span class="ac-switch"><input type="checkbox" id="cp-link-on" onchange="cpLinkToggle()"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></span>Track taps</label>
               </div>
               <input type="url" id="guest-campaign-link" class="ac-input cp-link" placeholder="Your menu or booking page" oninput="cpPaint()" hidden>
+              <div class="cp-chft" id="cp-text-ft"></div>
             </div>
-          </div>
-          <div class="cp-card cp-step" id="cp-step-send">
-            <span class="n" aria-hidden="true">4</span>
-            <div class="b cp-sendrow">
-              <div class="cp-checks" id="cp-checks"></div>
-              <button type="button" class="cbtn cbtn-primary cbtn-lg" id="guest-send-btn" onclick="sendGuestCampaign(this)">Send</button>
+          </article>
+
+          <article class="cp-card cp-ch cp-ch-em" id="cp-ch-email" data-nav="marketing/newsletter" aria-label="Email">
+            <header class="cp-chh">
+              <span class="cp-inc"><b>Email</b></span>
+              <span class="cp-chsub" id="cp-email-sub"></span>
+              <span class="cp-view" role="group" aria-label="Preview size"><button type="button" class="cbtn cbtn-secondary cbtn-sm on" data-cp-view="desktop">Desktop</button><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-cp-view="phone">Phone</button></span>
+              <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm cp-rewrite" id="cp-em-rewrite" onclick="cpRewrite('email')">Rewrite &#8635;</button>
+            </header>
+            <div class="cp-chb" id="cp-email-b">
+              <div class="cp-subj"><label for="guest-newsletter-subject">Subject</label><input type="text" id="guest-newsletter-subject" maxlength="140" autocomplete="off" oninput="cpEmailChanged()"></div>
+              <div class="cp-stage" id="cp-em-stage"><div class="cp-emframe"><iframe id="cp-em-frame" title="The email as your guests get it" sandbox="allow-same-origin"></iframe></div></div>
+              <details class="cp-emedit" id="cp-em-edit">
+                <summary>Edit the email</summary>
+                <div class="cp-fields">
+                  <label>Headline<input type="text" id="cp-em-headline" maxlength="120" oninput="cpEmailChanged()"></label>
+                  <label>Inbox preview line<input type="text" id="cp-em-pre" maxlength="140" oninput="cpEmailChanged()"></label>
+                  <label class="w">Letter<textarea id="guest-newsletter-body" rows="6" oninput="cpEmailChanged()"></textarea></label>
+                  <label>Button<input type="text" id="cp-em-btn" maxlength="40" placeholder="Book a table" oninput="cpEmailChanged()"></label>
+                  <label>Button link<input type="url" id="cp-em-url" maxlength="500" placeholder="https://" oninput="cpEmailChanged()"></label>
+                </div>
+              </details>
+              <div class="cp-chft" id="cp-email-ft"></div>
             </div>
-            <div class="cp-status" id="guest-campaign-status" hidden></div>
-          </div>
+          </article>
+
+          <article class="cp-card cp-ch" id="cp-ch-social" aria-label="Social post" hidden>
+            <header class="cp-chh">
+              <span class="cp-inc"><b>Social</b></span>
+              <span class="cp-plats" id="cp-so-plats"></span>
+              <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm cp-rewrite" id="cp-so-rewrite" onclick="cpRewrite('social')">Rewrite &#8635;</button>
+            </header>
+            <div class="cp-chb" id="cp-social-b">
+              <div class="cp-post">
+                <div class="hd"><span class="av">{{ (restaurant.name or 'Us')[:2]|upper }}</span><b>{{ restaurant.name }}</b></div>
+                <div class="ph" id="cp-so-photo"><span>Add a photo above</span></div>
+                <div class="cap" id="cp-so-cap"></div>
+              </div>
+              <label for="cp-so-caption" class="cp-sr">Caption</label>
+              <textarea id="cp-so-caption" class="cp-msg" rows="4" maxlength="2200" oninput="cpPaint()"></textarea>
+              <div class="cp-chft" id="cp-social-ft"></div>
+            </div>
+          </article>
         </div>
-        <div class="cp-side">
-          <div class="cp-phone" aria-label="What your guests see">
-            <div class="scr">
-              <div class="top"><span class="av">{{ (restaurant.name or 'Us')[:2]|upper }}</span><b>{{ restaurant.name }}</b></div>
-              <div class="thread"><div class="when">Today</div><div class="bub" id="cp-bubble"><span id="cp-bub-t"></span><span class="lk" id="cp-bub-link" hidden></span><span class="stop">Reply STOP to unsubscribe.</span></div></div>
-            </div>
-          </div>
-          <div class="cp-fc">
-            <div class="cp-card"><div class="l">Expected taps</div><div class="v hb-num" id="cp-f-taps">—</div><div class="s" id="cp-f-taps-s">needs a link</div></div>
-            <div class="cp-card"><div class="l">Likely back</div><div class="v hb-num" id="cp-f-back">—</div><div class="s" id="cp-f-back-s">within 14 days</div></div>
-            <div class="cp-card"><div class="l">Goes out</div><div class="v" id="cp-f-when">—</div><div class="s" id="cp-f-when-s"></div></div>
-            <div class="cp-card"><div class="l">Reaches</div><div class="v hb-num" id="cp-f-n">0</div><div class="s">guests who opted in</div></div>
-          </div>
-          <div class="cp-ai" id="cp-ai" hidden><div class="tag">Cavnar AI</div><div class="t" id="cp-ai-t"></div><div class="s" id="cp-ai-s"></div></div>
+
+        <div class="cp-card cp-sendbar" id="cp-step-send">
+          <div class="cp-checks" id="cp-checks"></div>
+          <div class="cp-addr" id="cp-addr" hidden><label for="cp-addr-in">Mailing address &mdash; the law prints it on every email</label><input type="text" id="cp-addr-in" class="ac-input" maxlength="200" placeholder="Street, city, state and ZIP" oninput="cpPaint()"></div>
+          <button type="button" class="cbtn cbtn-primary cbtn-lg" id="guest-send-btn" onclick="sendGuestCampaign(this)">Send</button>
+          <div class="cp-status" id="guest-campaign-status" hidden></div>
         </div>
       </div>
     </section>
@@ -11528,18 +11660,21 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     </section>
 
     <section class="cp-sec" aria-labelledby="cp-perf-h">
-      <div class="cp-h cp-hrow"><div><div class="k">Performance</div><h2 id="cp-perf-h">What your texts did</h2></div>
+      <div class="cp-h cp-hrow"><div><div class="k">Performance</div><h2 id="cp-perf-h">What went out</h2></div>
         <div class="cp-perfsum" id="cp-perfsum"></div></div>
-      <div class="cp-camps" id="guest-history-list"><div class="cp-empty">Your first campaign shows up here, with its taps and the guests who came back.</div></div>
+      <div class="cp-insights" id="cp-insights" hidden></div>
+      <div class="cp-camps" id="guest-history-list"><div class="cp-empty"><span class="art" aria-hidden="true"><i></i><i></i><i></i></span>Your first campaign lands here, with what it did.</div></div>
     </section>
 
     <section class="cp-sec" aria-labelledby="cp-set-h">
-      <div class="cp-h"><div class="k">Settings</div><h2 id="cp-set-h">The rules every text follows</h2></div>
+      <div class="cp-h"><div class="k">Settings</div><h2 id="cp-set-h">The rules every campaign follows</h2></div>
       <div class="cp-card cp-set">
         <div class="r"><span class="ic" aria-hidden="true">&#9719;</span><b>Sending hours</b><span class="v" id="cp-s-hours">8:00 AM &ndash; 9:00 PM, your time</span><span class="on">Always on</span></div>
         <div class="r"><span class="ic" aria-hidden="true">&#8635;</span><b>Spacing</b><span class="v">One text per guest every 3 days</span><span class="on">Always on</span></div>
         <div class="r"><span class="ic" aria-hidden="true">&#10005;</span><b>Opt-outs</b><span class="v">STOP and HELP are handled for you</span><span class="on">Always on</span></div>
         <div class="r"><span class="ic" aria-hidden="true">&#10003;</span><b>Consent</b><span class="v" id="guest-ledger">&hellip;</span></div>
+        <div class="r"><span class="ic" aria-hidden="true">&#9993;</span><b>Email</b><span class="v">Unsubscribe link on every email; replies go to {{ restaurant.owner_email or 'you' }}</span><span class="on">Always on</span></div>
+        <div class="r"><span class="ic" aria-hidden="true">&#9906;</span><b>Mailing address</b><span class="v" id="cp-s-addr">{{ restaurant.mailing_address or 'Asked for on your first email' }}</span></div>
         <button type="button" class="r cbtn cbtn-text" onclick="openGuestContactsModal()"><span class="ic" aria-hidden="true">&#9776;</span><b>Contacts</b><span class="v" id="guest-contacts-summary">&hellip;</span><span class="go" aria-hidden="true">&rsaquo;</span></button>
         <details class="r cp-receipts"><summary><span class="ic" aria-hidden="true">&#9113;</span><b>Receipts</b><span class="v">Put your join link on every receipt</span><span class="go" aria-hidden="true">&rsaquo;</span></summary><div class="cp-rhint" id="cp-receipt-hint"></div></details>
       </div>
@@ -23182,18 +23317,16 @@ function genContent(fromCalendar){
       if(btn){btn.disabled=false;btn.style.opacity='';}
     });
 }
-// "Send as newsletter": the generated Weekly email into the newsletter box,
-// and the page to it (friction #41). Sending still takes the newsletter's
-// own button and confirm — nothing goes out from here.
+// "Send as newsletter": the generated Weekly email into the Campaign
+// Studio's email, previewed as guests get it (friction #41). Sending still
+// takes the studio's own two-press button; nothing goes out from here.
 function mktSendAsNewsletter(){
   var out=document.getElementById('mkoutput'),body=document.getElementById('guest-newsletter-body');
   if(!out||!body)return;
   var text=_mktBody();
   if(!text)return toast('Generate a Weekly email first','warning');
-  body.value=text;
-  var sec=document.getElementById('mkt-newsletter');
-  if(sec&&sec.scrollIntoView)sec.scrollIntoView({behavior:'smooth',block:'start'});
-  try{body.focus({preventScroll:true});}catch(e){body.focus();}
+  if(window.switchMktTab)switchMktTab('campaigns');
+  if(window.cpUseEmailText)cpUseEmailText(text);
 }
 function downloadCal(){
   var ideas = window._calIdeas;
@@ -26029,35 +26162,67 @@ function revokeOtherSessions(btn){
       loadGuestContactsSummary();
       loadGuestSegments();
       loadGuestHistory();
-      loadGuestNewsletter();
       loadMktDrafts();
     }
   };
 })();
 
-// ── Campaigns (owner, 9/28/26) ─────────────────────────────────────────────
-// The guest text club, AI-first: one goal typed in (or a suggestion
-// tapped) drafts the text and picks its audience (guest_marketing.
-// plan_campaign + the one model call); the four steps and the phone follow
-// from it. Every figure on the page is measured (campaign_overview): there
-// is no open rate, because a text reports none. ES5 only.
+// ── Campaign Studio (owner, 9/28/26) ───────────────────────────────────────
+// One goal typed in (or a suggestion tapped) drafts every channel at once:
+// the text (guest_marketing.plan_campaign + its model call), the email
+// (guest_email.draft_newsletter, previewed through the server's own render
+// of the email guests get) and, when an account is connected, the social
+// post (marketing.generate_content). One audience, one photo, one send.
+// Every figure is measured (campaign_overview); an email's opens are a
+// floor, never a rate, and there is no open rate for texts. ES5 only.
 var _gcLoaded = false;
 var _cp = {ov: null, segs: [], seg: 'all', type: 'general', prompt: '', goal: '', targetDay: null,
-           winback: null, hist: [], diag: null, armed: null};
+           winback: null, hist: [], mail: [], diag: null, armed: null, planned: false, ready: {},
+           chan: {text: false, email: false, social: false}, chanSet: false, busy: {}, err: {},
+           emView: 'desktop', photo: null, media: null, plats: {}, platsSet: false, pvSeq: 0, pvTimer: null};
 function _cpEl(id) { return document.getElementById(id); }
 function _cpNum(el, v, o) { if (!el) return; if (v == null) { el.textContent = '—'; return; } if (window.cavCount) cavCount(el, v, o || {}); else el.textContent = String(v); }
 function _cpSegOf(key) { for (var i = 0; i < _cp.segs.length; i++) if (_cp.segs[i].key === key) return _cp.segs[i]; return null; }
+function _cpPlural(n, one) { return n + ' ' + one + (n === 1 ? '' : 's'); }
+function _cpVal(id) { return ((_cpEl(id) || {}).value || '').trim(); }
+function _cpPost(url, body) {
+  return fetch(url, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}).then(apiJson);
+}
+// The connected accounts a post can go to. A caption written for Instagram
+// reads right on Facebook; Google gets its own kind of post, so it is the
+// destination only when neither of the others is connected.
+function cpSocialPlats() {
+  var out = [];
+  if (typeof _igConnected !== 'undefined' && _igConnected) out.push({key: 'instagram', label: 'Instagram'});
+  if (typeof _fbConnected !== 'undefined' && _fbConnected) out.push({key: 'facebook', label: 'Facebook'});
+  if (!out.length && typeof _ggConnected !== 'undefined' && _ggConnected) out.push({key: 'google', label: 'Google'});
+  return out;
+}
+function cpSelPlats() {
+  var all = cpSocialPlats(), out = [];
+  for (var i = 0; i < all.length; i++) if (_cp.plats[all[i].key] !== false) out.push(all[i]);
+  return out;
+}
+function cpSocialType() { var p = cpSocialPlats(); return p.length && p[0].key === 'google' ? 'google_promo' : 'instagram_post'; }
+function cpOnChans() { var out = []; ['text', 'email', 'social'].forEach(function(k) { if (_cp.chan[k]) out.push(k); }); return out; }
 
 function loadGuestOverview() {
   fetch('/api/guest-overview', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
     if (!d || !d.ok) return;
     _cp.ov = d;
+    if (!_cp.chanSet) {
+      _cp.chan.text = d.subscribers > 0;
+      _cp.chan.email = d.email_subscribers > 0;
+      _cp.chan.social = cpSocialPlats().length > 0;
+      if (!_cp.chan.text && !_cp.chan.email) { _cp.chan.text = true; _cp.chan.email = true; }
+    }
     _cpNum(_cpEl('cp-k-subs'), d.subscribers);
     var td = _cpEl('cp-k-today'); if (td) { td.textContent = '+' + (d.today || 0); td.className = 'cp-chip' + (d.today ? ' good' : ''); }
+    var em = _cpEl('cp-k-email'); if (em) em.textContent = d.email_subscribers ? '· ' + d.email_subscribers + ' by email' : '';
     _cpNum(_cpEl('cp-k-growth'), d.last_30, {prefix: d.last_30 ? '+' : ''});
     var lc = d.last_campaign, lk = _cpEl('cp-k-last'), ls = _cpEl('cp-k-last-s');
     if (lk) lk.textContent = lc && lc.date ? mdy(lc.date) : '—';
-    if (ls) ls.innerHTML = lc ? '<span class="cp-chip hb-num">' + (+lc.sent || 0) + '</span>texted' : 'nothing sent yet';
+    if (ls) ls.innerHTML = lc ? '<span class="cp-chip hb-num">' + (+lc.sent || 0) + '</span>' + (lc.channel === 'email' ? 'emailed' : 'texted') : 'nothing sent yet';
     var rateMin = d.rate_min || 2;
     [['tap', d.tap_rate, 'with a link', 'after ' + rateMin + ' campaigns with a link'],
      ['back', d.back_rate, 'matched in your POS', 'within 14 days']].forEach(function(k) {
@@ -26071,9 +26236,8 @@ function loadGuestOverview() {
     var jl = _cpEl('guest-join-link'); if (jl) jl.textContent = d.join_url || '';
     var rh = _cpEl('cp-receipt-hint'); if (rh) rh.textContent = d.receipt_hint || '';
     var hr = _cpEl('cp-s-hours'); if (hr && d.window) hr.textContent = d.window.replace(' and ', ' – ') + ', your time';
-    var ps = _cpEl('cp-perfsum');
-    if (ps) ps.innerHTML = '<span><b>' + (+d.texts_this_month || 0) + '</b>texted this month</span>'
-      + (d.delivered != null ? '<span><b>' + d.delivered + '%</b>delivered</span>' : '');
+    cpPaintInsights();
+    cpPaintPerfSum();
     cpPaint();
   }).catch(function() {});
 }
@@ -26090,6 +26254,27 @@ function cpPaintGrowth() {
       + ((i === 0 || last) ? '<span class="d">' + mdy(w[i].week_start).replace(/\/\d+$/, '') + '</span>' : '') + '</div>';
   }
   host.innerHTML = h;
+}
+// What worked, measured (campaign_insights): each card carries what it rests on.
+function cpPaintInsights() {
+  var box = _cpEl('cp-insights'), list = (_cp.ov && _cp.ov.insights) || [];
+  if (!box) return;
+  if (!list.length) { box.hidden = true; box.innerHTML = ''; return; }
+  var h = '';
+  for (var i = 0; i < list.length; i++) {
+    var it = list[i];
+    h += '<div class="cp-card cp-ins"><div class="f hb-num' + (it.tone === 'good' ? ' good' : '') + '">' + _escHtml(it.figure) + '</div>'
+      + '<div class="t">' + _escHtml(it.text) + '</div><div class="b">' + _escHtml(it.basis) + '</div></div>';
+  }
+  box.innerHTML = h; box.hidden = false;
+}
+function cpPaintPerfSum() {
+  var ps = _cpEl('cp-perfsum'), d = _cp.ov; if (!ps || !d) return;
+  var mailed = 0, now = new Date(), key = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2);
+  for (var i = 0; i < _cp.mail.length; i++) if (String(_cp.mail[i].created_at || '').slice(0, 7) === key) mailed += +_cp.mail[i].sent || 0;
+  ps.innerHTML = '<span><b>' + (+d.texts_this_month || 0) + '</b>texted this month</span>'
+    + (mailed ? '<span><b>' + mailed + '</b>emailed</span>' : '')
+    + (d.delivered != null ? '<span><b>' + d.delivered + '%</b>texts delivered</span>' : '');
 }
 
 function loadGuestContactsSummary() {
@@ -26114,16 +26299,26 @@ function loadGuestSegments() {
     window._guestDefaults = d.defaults || {};
     var rows = _cpEl('cp-segrows');
     if (rows) {
-      var total = 1, h = '', i;
-      for (i = 0; i < _cp.segs.length; i++) total = Math.max(total, _cp.segs[i].count);
+      var total = 1, h = '<div class="r hd"><span></span><span></span><span class="c">Text</span><span class="c">Email</span></div>', i;
+      for (i = 0; i < _cp.segs.length; i++) total = Math.max(total, _cp.segs[i].count, _cp.segs[i].email_count || 0);
       for (i = 0; i < _cp.segs.length; i++) {
         var s = _cp.segs[i];
-        h += '<div class="r" title="' + _escHtml(s.help || '') + '"><span>' + _escHtml(s.label) + '</span><span class="bar"><i style="width:' + Math.round(s.count / total * 100) + '%"></i></span><span class="c">' + s.count + '</span></div>';
+        h += '<div class="r" title="' + _escHtml(s.help || '') + '"><span>' + _escHtml(s.label) + '</span><span class="bar"><i style="width:' + Math.round(s.count / total * 100) + '%"></i><i class="em" style="width:' + Math.round((s.email_count || 0) / total * 100) + '%"></i></span><span class="c">' + s.count + '</span><span class="c e">' + (s.email_count || 0) + '</span></div>';
       }
       rows.innerHTML = h;
     }
     cpPaint();
   }).catch(function() {});
+}
+// A segment's own record: the share of guests who came back after texts to
+// it, once CAMPAIGN_RATE_MIN attributed campaigns of 10+ went there.
+function cpSegRecord(key) {
+  var sent = 0, back = 0, n = 0, min = (_cp.ov && _cp.ov.rate_min) || 2;
+  for (var i = 0; i < _cp.hist.length; i++) {
+    var c = _cp.hist[i];
+    if ((c.segment || 'all') === key && c.sent_count >= 10 && c.visits_matched != null) { n++; sent += +c.sent_count; back += +c.visits_matched; }
+  }
+  return n >= min && sent ? Math.round(back / sent * 1000) / 10 + '% came back' : '';
 }
 function cpPickSeg(key) {
   if (_cp.winback && key !== _cp.winback.segment) _cp.winback = null;   // their own campaign now
@@ -26135,10 +26330,19 @@ function cpPickSeg(key) {
 
 // ── Create ─────────────────────────────────────────────────────────────────
 document.addEventListener('click', function(e) {
-  var t = e.target && e.target.closest ? e.target.closest('[data-cp-idea],[data-cp-seg],[data-winback-use],[data-winback-dismiss]') : null;
+  var t = e.target && e.target.closest ? e.target.closest('[data-cp-idea],[data-cp-seg],[data-cp-chan],[data-cp-plat],[data-cp-view],[data-cp-photo],[data-cp-retry],[data-cp-reuse],[data-cp-improve],[data-winback-use],[data-winback-dismiss]') : null;
   if (!t || t.disabled) return;
   if (t.hasAttribute('data-cp-idea')) { var p = _cpEl('cp-prompt'); if (p) p.value = t.getAttribute('data-cp-idea'); cpCreate(); return; }
   if (t.hasAttribute('data-cp-seg')) { cpPickSeg(t.getAttribute('data-cp-seg')); return; }
+  if (t.hasAttribute('data-cp-chan')) { var ck = t.getAttribute('data-cp-chan'); cpToggleChan(ck, !_cp.chan[ck]); return; }
+  if (t.hasAttribute('data-cp-plat')) { var pk = t.getAttribute('data-cp-plat'); _cp.plats[pk] = _cp.plats[pk] === false; _cp.armed = null; cpPaint(); return; }
+  if (t.hasAttribute('data-cp-view')) { cpEmView(t.getAttribute('data-cp-view')); return; }
+  if (t.hasAttribute('data-cp-photo')) { cpPickPhotoId(+t.getAttribute('data-cp-photo')); return; }
+  if (t.hasAttribute('data-cp-retry')) { cpRewrite(t.getAttribute('data-cp-retry')); return; }
+  if (t.hasAttribute('data-cp-reuse') || t.hasAttribute('data-cp-improve')) {
+    var imp = t.hasAttribute('data-cp-improve'), spec = (t.getAttribute(imp ? 'data-cp-improve' : 'data-cp-reuse') || '').split(':');
+    cpReuse(spec[0], +spec[1], imp); return;
+  }
   if (t.hasAttribute('data-winback-use')) { cpUseWinback(); return; }
   /* Pass asks why first, like every other one (re-audit K3): the same
      reason picker; Skip sends no code, Cancel sends nothing. */
@@ -26155,32 +26359,87 @@ document.addEventListener('click', function(e) {
     }
   });
 });
+// The channels under the prompt: which ones the campaign is drafted for and
+// sent on. Turning one on after a draft drafts it from the same goal.
+function cpPaintPick() {
+  var host = _cpEl('cp-pick'); if (!host) return;
+  var ov = _cp.ov || {}, plats = cpSocialPlats(), h = '<span class="l">Draft for</span>';
+  var items = [['text', 'Text', ov.subscribers], ['email', 'Email', ov.email_subscribers]];
+  if (plats.length) items.push(['social', plats.map(function(p) { return p.label; }).join(' & '), null]);
+  for (var i = 0; i < items.length; i++) {
+    var k = items[i][0], on = !!_cp.chan[k];
+    h += '<button type="button" class="cbtn cbtn-secondary cbtn-sm cp-pk' + (on ? ' on' : '') + '" data-cp-chan="' + k + '" aria-pressed="' + on + '">'
+      + '<i class="ck" aria-hidden="true"></i>' + _escHtml(items[i][1]) + (items[i][2] != null ? '<span class="c">' + (+items[i][2] || 0) + '</span>' : '') + '</button>';
+  }
+  host.innerHTML = h;
+}
+window.cpToggleChan = function(k, on) {
+  _cp.chan[k] = !!on; _cp.chanSet = true; _cp.armed = null;
+  var b = _cpEl('cp-builder');
+  if (on && b && !b.hidden && _cp.prompt && !cpHasDraft(k) && !_cp.busy[k]) cpDraft(k, _cp.prompt, false);
+  cpPaint();
+};
+function cpHasDraft(k) {
+  if (k === 'text') return !!_cpVal('guest-campaign-message');
+  if (k === 'email') return !!_cpVal('guest-newsletter-body');
+  return !!_cpVal('cp-so-caption');
+}
 window.cpCreate = function(rewrite) {
-  var inp = _cpEl('cp-prompt'), btn = rewrite ? _cpEl('cp-rewrite') : _cpEl('cp-create-btn');
-  var prompt = rewrite ? _cp.prompt : ((inp && inp.value) || '').trim();
-  if (!prompt) { if (inp) { inp.focus(); inp.placeholder = 'Say what you want the text to do — e.g. fill Thursday dinner'; } return; }
-  if (!btn || btn.disabled) return;
-  var label = btn.innerHTML; btn.disabled = true;
-  btn.innerHTML = '<div class="pulse-bar-track-on-accent" style="width:40px"><div class="pulse-bar-on-accent"></div></div>';
-  fetch('/api/guest-campaign/draft', {method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(rewrite ? {prompt: prompt, type: _cp.type} : {prompt: prompt})}).then(apiJson).then(function(d) {
-    btn.disabled = false; btn.innerHTML = label;
-    if (!d || !d.ok) { if (typeof toast === 'function') toast((d && d.error) || 'Couldn’t draft that — try again.', 'error'); return; }
-    var first = !_cp.prompt || !rewrite;
-    _cp.prompt = prompt; _cp.winback = null; _cp.armed = null;
-    if (!rewrite) {
-      _cp.type = d.type || 'general'; _cp.goal = d.goal || ''; _cp.targetDay = d.target_day || null;
+  if (rewrite) { cpRewrite('text'); return; }
+  var inp = _cpEl('cp-prompt');
+  var prompt = ((inp && inp.value) || '').trim();
+  if (!prompt) { if (inp) { inp.focus(); inp.placeholder = 'Say what you want it to do — e.g. fill Thursday dinner'; } return; }
+  var chans = cpOnChans();
+  if (!chans.length) { _cp.chan.text = true; chans = ['text']; }
+  _cp.prompt = prompt; _cp.winback = null; _cp.armed = null; _cp.planned = false; _cp.chanSet = true;
+  var btn = _cpEl('cp-create-btn');
+  if (btn && !btn.disabled) { btn.setAttribute('data-label', btn.innerHTML); btn.disabled = true; btn.innerHTML = '<div class="pulse-bar-track-on-accent" style="width:40px"><div class="pulse-bar-on-accent"></div></div>'; }
+  var k = _cpEl('cp-aud-k'); if (k) k.textContent = 'Picked by Cavnar AI';
+  chans.forEach(function(c) { cpDraft(c, prompt, true); });
+  cpOpenBuilder(true);
+};
+function cpCreateIdle() {
+  if (_cp.busy.text || _cp.busy.email || _cp.busy.social) return;
+  var btn = _cpEl('cp-create-btn');
+  if (btn && btn.disabled) { btn.disabled = false; btn.innerHTML = btn.getAttribute('data-label') || 'Create &rarr;'; }
+}
+// One channel's draft. The first answer that carries a plan (the text's or
+// the email's plan_campaign) sets the goal, tone and audience once.
+function cpDraft(k, prompt, plan) {
+  _cp.busy[k] = true; _cp.err[k] = ''; _cp.armed = null;
+  var url, body;
+  if (k === 'text') { url = '/api/guest-campaign/draft'; body = plan ? {prompt: prompt} : {prompt: prompt, type: _cp.type}; }
+  else if (k === 'email') { url = '/api/guest-newsletter/draft'; body = {prompt: prompt}; }
+  else { url = '/api/generate-content'; body = {type: cpSocialType(), topic: prompt}; }
+  cpPaint();
+  _cpPost(url, body).then(function(d) {
+    _cp.busy[k] = false;
+    var good = d && (k === 'social' ? !!d.content : d.ok);
+    if (!good) { _cp.err[k] = (d && d.error) || 'Couldn’t draft this one.'; cpPaint(); cpCreateIdle(); return; }
+    if (plan && !_cp.planned && d.segment) {
+      _cp.planned = true; _cp.type = d.type || 'general'; _cp.goal = d.goal || ''; _cp.targetDay = d.target_day || null;
       _cp.seg = d.segment || window._guestDefaults[_cp.type] || 'all';
-      var k = _cpEl('cp-aud-k'); if (k) k.textContent = 'Picked by Cavnar AI';
     }
-    var m = _cpEl('guest-campaign-message'); if (m) m.value = d.message || '';
-    cpOpenBuilder(first && !rewrite);
-  }).catch(function() { btn.disabled = false; btn.innerHTML = label; if (typeof toast === 'function') toast('Couldn’t reach Cavnar AI', 'error'); });
+    if (k === 'text') { var m = _cpEl('guest-campaign-message'); if (m) m.value = d.message || ''; }
+    else if (k === 'email') {
+      var set = function(id, v) { var el = _cpEl(id); if (el) el.value = v || ''; };
+      set('guest-newsletter-subject', d.subject); set('cp-em-pre', d.preheader); set('cp-em-headline', d.headline);
+      set('guest-newsletter-body', d.body); set('cp-em-btn', d.button_label);
+      if (!_cpVal('cp-em-url') && d.button_url) set('cp-em-url', d.button_url);
+      cpEmailChanged(true);
+    } else { var c = _cpEl('cp-so-caption'); if (c) c.value = d.content || ''; }
+    cpPaint(); cpCreateIdle();
+  }).catch(function() { _cp.busy[k] = false; _cp.err[k] = 'Couldn’t reach Cavnar AI.'; cpPaint(); cpCreateIdle(); });
+}
+window.cpRewrite = function(k) {
+  if (!_cp.prompt) { cpChangeGoal(); return; }
+  if (_cp.busy[k]) return;
+  cpDraft(k, _cp.prompt, false);
 };
 function cpOpenBuilder(scroll) {
   var b = _cpEl('cp-builder'); if (!b) return;
   var wasHidden = b.hidden; b.hidden = false;
-  var st = _cpEl('guest-campaign-status'); if (st) { st.hidden = true; st.className = 'cp-status'; }
+  var st = _cpEl('guest-campaign-status'); if (st) { st.hidden = true; st.innerHTML = ''; }
   var send = _cpEl('guest-send-btn'); if (send) { send.disabled = false; send.classList.remove('sent'); }
   cpPaint();
   if (scroll || wasHidden) try { b.scrollIntoView({behavior: 'smooth', block: 'start'}); } catch (e) { b.scrollIntoView(); }
@@ -26191,33 +26450,126 @@ window.cpLinkToggle = function() {
   if (l) { l.hidden = !(on && on.checked); if (!l.hidden) l.focus(); else l.value = ''; }
   cpPaint();
 };
+
+// ── The email: its look, and the preview the server renders ───────────────
+function cpDesign() {
+  return {headline: _cpVal('cp-em-headline'), preheader: _cpVal('cp-em-pre'), button_label: _cpVal('cp-em-btn'),
+          button_url: _cpVal('cp-em-url'), image_media_id: _cp.photo ? _cp.photo.id : null};
+}
+window.cpEmailChanged = function(now) {
+  _cp.armed = null;
+  var sb = _cpEl('guest-send-btn'); if (sb && sb.classList.contains('sent')) sb.classList.remove('sent');
+  clearTimeout(_cp.pvTimer);
+  _cp.pvTimer = setTimeout(cpEmailPreview, now === true ? 0 : 450);
+  cpPaint();
+};
+function cpEmailPreview() {
+  var body = _cpVal('guest-newsletter-body');
+  if (!body) return;
+  var seq = ++_cp.pvSeq;
+  _cpPost('/api/guest-newsletter/preview', {subject: _cpVal('guest-newsletter-subject'), body: body, design: cpDesign()}).then(function(d) {
+    if (seq !== _cp.pvSeq || !d || !d.ok) return;
+    var f = _cpEl('cp-em-frame');
+    if (f) { f.onload = cpFitFrame; f.srcdoc = d.html; }
+    var sj = _cpEl('guest-newsletter-subject'); if (sj && !sj.value && d.subject) sj.value = d.subject;
+    // A Weekly email from Content arrives as "SUBJECT LINE: … BODY: …";
+    // the server splits it, and the letter box takes just the letter.
+    var bx = _cpEl('guest-newsletter-body'); if (bx && d.body && /^\s*subject/i.test(bx.value)) bx.value = d.body;
+    if (_cp.ov && d.mailing_address) _cp.ov.mailing_address_set = true;
+    cpPaint();
+  }).catch(function() {});
+}
+function cpFitFrame() {
+  var f = _cpEl('cp-em-frame'); if (!f) return;
+  try { f.style.height = Math.max(420, f.contentWindow.document.documentElement.scrollHeight) + 'px'; } catch (e) {}
+}
+function cpEmView(v) {
+  _cp.emView = v === 'phone' ? 'phone' : 'desktop';
+  var st = _cpEl('cp-em-stage'); if (st) st.classList.toggle('phone', _cp.emView === 'phone');
+  var bs = document.querySelectorAll('[data-cp-view]');
+  for (var i = 0; i < bs.length; i++) bs[i].classList.toggle('on', bs[i].getAttribute('data-cp-view') === _cp.emView);
+  setTimeout(cpFitFrame, 80);
+}
+
+// ── One photo: the email's header and the post's picture ──────────────────
+window.cpTogglePhotos = function() {
+  var tray = _cpEl('cp-photos'), pick = _cpEl('cp-photo-pick'); if (!tray) return;
+  tray.hidden = !tray.hidden;
+  if (pick) pick.setAttribute('aria-expanded', String(!tray.hidden));
+  if (!tray.hidden && _cp.media === null) cpLoadMedia();
+};
+function cpLoadMedia() {
+  _cp.media = [];
+  var box = _cpEl('cp-thumbs'); if (box) box.innerHTML = '<div class="dr-pulse"><i></i></div>';
+  fetch('/api/marketing/media', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
+    _cp.media = (d && d.ok && d.media) || [];
+    cpPaintThumbs();
+  }).catch(function() { if (box) box.textContent = 'Couldn’t load your photos.'; });
+}
+function cpPaintThumbs() {
+  var box = _cpEl('cp-thumbs'); if (!box) return;
+  if (!_cp.media.length) { box.innerHTML = '<span class="cp-photo-none">No photos yet. Upload one.</span>'; return; }
+  var h = '';
+  for (var i = 0; i < _cp.media.length && i < 12; i++) {
+    var m = _cp.media[i], on = _cp.photo && _cp.photo.id === m.id;
+    h += '<button type="button" class="cbtn cp-thumb' + (on ? ' on' : '') + '" data-cp-photo="' + m.id + '" aria-pressed="' + !!on + '" style="background-image:url(' + _escHtml(m.url) + ')"><span class="cp-sr">Use this photo</span></button>';
+  }
+  box.innerHTML = h;
+}
+function cpPickPhotoId(id) {
+  for (var i = 0; i < (_cp.media || []).length; i++) if (_cp.media[i].id === id) { cpPickPhoto({id: id, url: _cp.media[i].url}); return; }
+}
+window.cpPickPhoto = function(item) {
+  _cp.photo = item && item.id ? item : null;
+  var img = _cpEl('cp-photo-img'), l = _cpEl('cp-photo-l');
+  if (img) img.style.backgroundImage = _cp.photo ? 'url(' + _cp.photo.url + ')' : '';
+  if (l) l.textContent = _cp.photo ? 'Change photo' : 'Add a photo';
+  cpPaintThumbs();
+  if (_cpVal('guest-newsletter-body')) cpEmailChanged(true); else cpPaint();
+};
+window.cpUploadPhoto = function(input) {
+  var file = input.files && input.files[0]; if (!file) return;
+  var st = _cpEl('cp-photo-st'); if (st) st.textContent = 'Uploading…';
+  _mktShrinkPhoto(file, function(ready) {
+    var form = new FormData(); form.append('file', ready, (ready && ready.name) || 'photo.jpg');
+    fetch('/api/marketing/media', {method: 'POST', credentials: 'same-origin', body: form}).then(apiJson).then(function(d) {
+      input.value = '';
+      if (!d || !d.ok) { if (st) st.textContent = (d && d.error) || 'Upload failed'; return; }
+      if (st) st.textContent = '';
+      _cp.media = [{id: d.media_id, url: d.url}].concat(_cp.media || []);
+      cpPickPhoto({id: d.media_id, url: d.url});
+    }).catch(function() { if (st) st.textContent = 'Upload failed'; });
+  });
+};
+
+// ── Paint: every card, the checks and the one send button ──────────────────
 window.cpPaint = function() {
-  var seg = _cpSegOf(_cp.seg) || {key: _cp.seg, label: 'Everyone consented', count: 0};
-  var n = +seg.count || 0, ov = _cp.ov || {};
+  cpPaintPick();
+  var seg = _cpSegOf(_cp.seg) || {key: _cp.seg, label: 'Everyone consented', count: 0, email_count: 0};
+  var n = +seg.count || 0, m = +seg.email_count || 0, ov = _cp.ov || {};
   var gt = _cpEl('cp-goal-t'); if (gt) gt.textContent = _cp.prompt ? '“' + _cp.prompt + '”' : '';
   var gk = _cpEl('cp-goal-k'); if (gk) gk.textContent = _cp.goal || '';
-  var an = _cpEl('cp-aud-n'); if (an && an.textContent !== String(n)) _cpNum(an, n);
-  var al = _cpEl('cp-aud-l'); if (al) al.textContent = seg.label ? seg.label.charAt(0).toLowerCase() + seg.label.slice(1) : '';
   var segs = _cpEl('cp-segs');
   if (segs) {
     var h = '';
     for (var i = 0; i < _cp.segs.length; i++) {
-      var s = _cp.segs[i], on = s.key === _cp.seg;
-      h += '<button type="button" role="radio" aria-checked="' + on + '" class="cbtn cbtn-secondary cbtn-sm cp-seg' + (on ? ' on' : '') + '" data-cp-seg="' + _escHtml(s.key) + '"' + (s.count ? '' : ' disabled') + ' title="' + _escHtml(s.help || '') + '">' + _escHtml(s.label) + '<span class="c">' + s.count + '</span></button>';
+      var s = _cp.segs[i], on = s.key === _cp.seg, rec = cpSegRecord(s.key), any = s.count || s.email_count;
+      h += '<button type="button" role="radio" aria-checked="' + on + '" class="cbtn cbtn-secondary cp-seg' + (on ? ' on' : '') + '" data-cp-seg="' + _escHtml(s.key) + '"' + (any ? '' : ' disabled') + ' title="' + _escHtml(s.help || '') + '">'
+        + '<b>' + _escHtml(s.label) + '</b><span class="c"><span class="hb-num">' + s.count + '</span> text · <span class="hb-num">' + (s.email_count || 0) + '</span> email</span>'
+        + (rec ? '<span class="r">' + rec + '</span>' : '') + '</button>';
     }
     segs.innerHTML = h;
   }
-  var msg = ((_cpEl('guest-campaign-message') || {}).value || '').trim();
-  var link = ((_cpEl('guest-campaign-link') || {}).value || '').trim();
+  // Text
+  var msg = _cpVal('guest-campaign-message'), link = _cpVal('guest-campaign-link');
   var full = msg.length + (link ? 26 : 0) + 29;
   var ch = _cpEl('cp-chars'); if (ch) ch.textContent = msg.length + ' / 300';
   var fit = _cpEl('cp-fit');
   // A character outside the GSM alphabet (an em dash, a curly quote, an
   // emoji) sends the whole text as Unicode: 70 characters a part, not 160.
   var uni = /[^\n\r !"#$%&'()*+,\-.\/0-9:;>=<?@A-Z\[\\\]^_a-z{|}~£¥èéùìòÇØøÅåÄÖÑÜäöñüàÉ¡¿§ΔΦΓΛΩΠΨΣΘΞÆæß€¤]/.test(msg + link);
-  var one = uni ? 70 : 160, per = uni ? 67 : 153;
+  var one = uni ? 70 : 160, per = uni ? 67 : 153, parts = full <= one ? 1 : Math.ceil(full / per);
   if (fit) {
-    var parts = full <= one ? 1 : Math.ceil(full / per);
     fit.textContent = parts === 1 ? 'Fits one text' : parts + ' texts per guest';
     fit.className = 'cp-chip ' + (parts === 1 ? 'good' : 'warn');
     fit.title = uni ? 'A dash, curly quote or emoji sends this as Unicode: ' + one + ' characters a text' : '';
@@ -26226,39 +26578,84 @@ window.cpPaint = function() {
   if (bt) bt.textContent = msg || 'Your text shows up here as guests will see it.';
   if (bub) bub.classList.toggle('empty', !msg);
   var bl = _cpEl('cp-bub-link'); if (bl) { bl.hidden = !link; bl.textContent = link ? 'cavnar.ai/g/…' : ''; }
-  // What it should do, from what past texts did: a rate only once it rests
-  // on campaign_overview's minimum, else a dash that says what it waits for.
-  function est(id, rate, needLink, doneLbl) {
-    var v = _cpEl(id), s = _cpEl(id + '-s'); if (!v) return;
-    if (needLink && !link) { v.textContent = '—'; if (s) s.textContent = 'turn on link tracking'; return; }
-    if (!rate) { v.textContent = '—'; if (s) s.textContent = 'after ' + (ov.rate_min || 2) + ' campaigns'; return; }
-    v.textContent = '~' + Math.round(n * rate.pct / 100);
-    if (s) s.textContent = rate.pct + '% ' + doneLbl + ' · ' + rate.campaigns + ' campaigns';
+  var tsub = _cpEl('cp-text-sub'); if (tsub) tsub.textContent = _cpPlural(n, 'guest');
+  // A forecast is a measured rate or nothing: the rate past texts earned,
+  // on campaign_overview's minimum, times this audience.
+  var tft = _cpEl('cp-text-ft');
+  if (tft && !_cp.err.text) {
+    var bits = [];
+    if (ov.back_rate && n) bits.push('<b class="hb-num">~' + Math.round(n * ov.back_rate.pct / 100) + '</b> likely back · ' + ov.back_rate.pct + '% of past texts');
+    if (link && ov.tap_rate && n) bits.push('<b class="hb-num">~' + Math.round(n * ov.tap_rate.pct / 100) + '</b> taps');
+    tft.innerHTML = bits.join(' · ');
   }
-  est('cp-f-taps', ov.tap_rate, true, 'on past links');
-  est('cp-f-back', ov.back_rate, false, 'came back');
-  var fw = _cpEl('cp-f-when'), fws = _cpEl('cp-f-when-s'), now = ov.sending_now !== false;
-  var open = ((ov.window || '8:00 AM and 9:00 PM').split(' and ')[0]) || '8:00 AM';
-  if (fw) { fw.textContent = now ? 'Now' : open; fw.className = 'v ' + (now ? 'good' : 'warn'); }
-  if (fws) fws.textContent = now ? 'texts go out in the background' : 'texts only go out ' + (ov.window || '').replace(' and ', '–');
-  var fn = _cpEl('cp-f-n'); if (fn) fn.textContent = n;
-  var ck = _cpEl('cp-checks');
-  if (ck) {
-    var ok = '<i class="cv-ok" aria-hidden="true"></i>', warn = '<i class="cv-warn" aria-hidden="true"></i>';
-    ck.innerHTML = '<span>' + (n ? ok : warn) + (n ? n + ' who opted in' : 'Nobody in this group yet') + '</span>'
-      + '<span>' + (now ? ok + 'Goes out now' : warn + 'Held until ' + open) + '</span>'
-      + '<span>' + ok + 'Nobody texted twice in ' + (ov.min_days_between || 3) + ' days</span>'
-      + (link ? '<span>' + ok + 'Taps tracked</span>' : '');
+  // Email
+  var esub = _cpEl('cp-email-sub'); if (esub) esub.textContent = _cpPlural(m, 'subscriber');
+  var eft = _cpEl('cp-email-ft');
+  if (eft && !_cp.err.email) {
+    var lastMail = null; for (var j = 0; j < _cp.mail.length; j++) if (_cp.mail[j].opened != null && _cp.mail[j].sent >= 10) { lastMail = _cp.mail[j]; break; }
+    eft.innerHTML = lastMail ? 'Last email: at least <b class="hb-num">' + Math.round(lastMail.opened / lastMail.sent * 100) + '%</b> opened' : '';
   }
+  // Social
+  var plats = cpSocialPlats(), sel = cpSelPlats(), cap = _cpVal('cp-so-caption');
+  var ph = _cpEl('cp-so-plats');
+  if (ph) {
+    var hp = '';
+    for (var q = 0; q < plats.length; q++) {
+      var pon = _cp.plats[plats[q].key] !== false;
+      hp += '<button type="button" class="cbtn cbtn-secondary cbtn-sm cp-plat' + (pon ? ' on' : '') + '" data-cp-plat="' + plats[q].key + '" aria-pressed="' + pon + '">' + plats[q].label + '</button>';
+    }
+    ph.innerHTML = hp;
+  }
+  var sc = _cpEl('cp-so-cap'); if (sc) sc.textContent = cap || 'Your caption shows here.';
+  var sp = _cpEl('cp-so-photo');
+  if (sp) { sp.style.backgroundImage = _cp.photo ? 'url(' + _cp.photo.url + ')' : ''; sp.classList.toggle('has', !!_cp.photo); }
+  var needPhoto = _cp.plats.instagram !== false && !_cp.photo && plats.length && plats[0].key === 'instagram';
+  var sft = _cpEl('cp-social-ft');
+  if (sft && !_cp.err.social) sft.innerHTML = needPhoto ? '<span class="warn">Instagram needs a photo: pick one above</span>' : '';
+  // Cards: shown when their channel is on, busy while drafting, an error in place of the footer
+  ['text', 'email', 'social'].forEach(function(k) {
+    var card = _cpEl('cp-ch-' + k); if (!card) return;
+    card.hidden = !_cp.chan[k] || (k === 'social' && !plats.length);
+    card.classList.toggle('busy', !!_cp.busy[k]);
+    var ft = _cpEl('cp-' + k + '-ft');
+    if (ft && _cp.err[k]) ft.innerHTML = '<span class="bad">' + _escHtml(_cp.err[k]) + '</span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-cp-retry="' + k + '">Draft it again</button>';
+  });
+  var chs = _cpEl('cp-chs');
+  if (chs) { chs.setAttribute('data-n', String(cpOnChans().filter(function(k) { return k !== 'social' || plats.length; }).length)); chs.classList.toggle('noem', !_cp.chan.email); }
+  // Checks and the send: each channel goes only when it can; the button names what goes.
+  var ok = '<i class="cv-ok" aria-hidden="true"></i>', warn = '<i class="cv-warn" aria-hidden="true"></i>';
+  var open = ((ov.window || '8:00 AM and 9:00 PM').split(' and ')[0]) || '8:00 AM', nowOk = ov.sending_now !== false;
+  var ck = [], label = [], people = 0, ready = {};
+  if (_cp.chan.text) {
+    if (!n) ck.push(warn + 'Nobody here has joined by text');
+    else if (!nowOk) ck.push(warn + 'Texts wait until ' + open);
+    else ck.push(ok + 'Nobody texted twice in ' + (ov.min_days_between || 3) + ' days');
+    if (n && nowOk && msg && !_cp.busy.text) { ready.text = true; label.push('Text ' + n); people += n; }
+  }
+  var addr = _cpVal('cp-addr-in'), addrOk = !!ov.mailing_address_set || addr.replace(/\s/g, '').length >= 8;
+  var ab = _cpEl('cp-addr'); if (ab) ab.hidden = !(_cp.chan.email && m && !ov.mailing_address_set);
+  if (_cp.chan.email) {
+    if (!m) ck.push(warn + 'Nobody here is on your email list');
+    else if (!addrOk) ck.push(warn + 'Add your mailing address');
+    else ck.push(ok + 'Unsubscribe link and address on every email');
+    if (m && addrOk && _cpVal('guest-newsletter-subject') && _cpVal('guest-newsletter-body') && !_cp.busy.email) { ready.email = true; label.push('Email ' + m); people += m; }
+  }
+  if (_cp.chan.social && plats.length) {
+    if (!sel.length) ck.push(warn + 'Pick where to post');
+    else if (needPhoto) ck.push(warn + 'Instagram needs a photo');
+    else ck.push(ok + 'Posts to ' + sel.map(function(p) { return p.label; }).join(' and '));
+    if (sel.length && !needPhoto && cap && !_cp.busy.social) { ready.social = true; label.push('Post to ' + sel.map(function(p) { return p.label; }).join(' & ')); }
+  }
+  _cp.ready = ready;
+  var cks = _cpEl('cp-checks'); if (cks) cks.innerHTML = ck.map(function(x) { return '<span>' + x + '</span>'; }).join('');
   var sb = _cpEl('guest-send-btn');
   if (sb && !sb.classList.contains('sent')) {
-    sb.disabled = !msg || !n || !now;
+    sb.disabled = !label.length;
     sb.classList.toggle('arm', !!_cp.armed);
-    sb.textContent = _cp.armed ? 'Tap again to text ' + n + (n === 1 ? ' guest' : ' guests') : 'Send to ' + n + (n === 1 ? ' guest' : ' guests');
+    sb.textContent = _cp.armed
+      ? 'Tap again to ' + (people ? 'reach ' + _cpPlural(people, 'guest') : '') + (ready.social ? (people ? ' and post' : 'post it') : '')
+      : (label.length ? label.join(' · ') + ' →' : 'Send');
   }
-  var sm = _cpEl('cp-step-msg'), ss = _cpEl('cp-step-send');
-  if (sm) { sm.classList.toggle('done', !!msg); sm.classList.toggle('now', !msg); }
-  if (ss) ss.classList.toggle('now', !!msg);
   cpPaintAi();
 };
 function cpPaintAi() {
@@ -26286,7 +26683,8 @@ function loadWinback() {
 }
 function cpUseWinback() {
   var w = _cp.wb; if (!w) return;
-  _cp.winback = {id: w.id, segment: w.segment}; _cp.armed = null;
+  _cp.winback = {id: w.id, segment: w.segment}; _cp.armed = null; _cp.planned = true;
+  _cp.chan = {text: true, email: false, social: false}; _cp.chanSet = true;
   _cp.prompt = 'Bring back guests ' + (w.segment_label || '').toLowerCase();
   _cp.goal = 'Win back guests who drifted away'; _cp.type = 'win_back'; _cp.targetDay = null;
   _cp.seg = w.segment || 'lapsed_30';
@@ -26295,136 +26693,180 @@ function cpUseWinback() {
   var k = _cpEl('cp-aud-k'); if (k) k.textContent = 'Picked by Cavnar AI';
   cpOpenBuilder(true);
 }
+// A past campaign back in the studio: as it went ("Use again"), or redrafted
+// from itself ("Improve with Cavnar AI").
+function cpReuse(kind, id, improve) {
+  var src = kind === 'email' ? _cp.mail : _cp.hist, c = null, i;
+  for (i = 0; i < src.length; i++) if (src[i].id === id) c = src[i];
+  if (!c) return;
+  _cp.chan = {text: kind === 'text', email: kind === 'email', social: false}; _cp.chanSet = true;
+  _cp.winback = null; _cp.armed = null; _cp.planned = true; _cp.seg = c.segment || 'all';
+  _cp.goal = improve ? 'Improve a past campaign' : 'Send it again';
+  if (kind === 'text') {
+    _cp.prompt = improve ? 'A better version of this text: ' + c.message : 'Again: ' + c.message;
+    var m = _cpEl('guest-campaign-message'); if (m) m.value = c.message || '';
+  } else {
+    var dz = c.design || {};
+    _cp.prompt = improve ? 'A better version of this email: ' + c.subject + '. ' + String(c.body || '').slice(0, 180) : 'Again: ' + c.subject;
+    var set = function(fid, v) { var el = _cpEl(fid); if (el) el.value = v || ''; };
+    set('guest-newsletter-subject', c.subject); set('guest-newsletter-body', c.body); set('cp-em-headline', dz.headline);
+    set('cp-em-pre', dz.preheader); set('cp-em-btn', dz.button_label); set('cp-em-url', dz.button_url);
+    _cp.photo = dz.image_media_id && c.image_url ? {id: dz.image_media_id, url: c.image_url} : null;
+    cpPickPhoto(_cp.photo);
+  }
+  var p = _cpEl('cp-prompt'); if (p) p.value = _cp.prompt.slice(0, 280);
+  cpOpenBuilder(true);
+  if (improve) cpDraft(kind, _cp.prompt.slice(0, 280), false);
+}
+// "Send as newsletter" on a generated Weekly email lands here, as the email.
+window.cpUseEmailText = function(text) {
+  _cp.chan = {text: false, email: true, social: false}; _cp.chanSet = true;
+  _cp.winback = null; _cp.armed = null; _cp.planned = true;
+  _cp.prompt = 'Your weekly email'; _cp.goal = 'Send your weekly email';
+  var set = function(id, v) { var el = _cpEl(id); if (el) el.value = v || ''; };
+  set('guest-newsletter-subject', ''); set('guest-newsletter-body', text);
+  var p = _cpEl('cp-prompt'); if (p) p.value = _cp.prompt;
+  cpOpenBuilder(true);
+  cpEmailChanged(true);
+};
 
 // ── Send ───────────────────────────────────────────────────────────────────
-// Two presses, both on the button: the first arms it ("Tap again to text
-// 18 guests"), the second sends. A text can't be taken back, and the button
-// says the head count, which is the decision (friction #41).
+// Two presses, both on the button: the first arms it ("Tap again to reach
+// 31 guests and post"), the second sends each channel that can go, one
+// after another. Nothing sent can be taken back, and the button says the
+// head count, which is the decision (friction #41).
 window.sendGuestCampaign = function(btn) {
   btn = btn || _cpEl('guest-send-btn');
-  var message = ((_cpEl('guest-campaign-message') || {}).value || '').trim();
-  var status = _cpEl('guest-campaign-status');
-  if (!message || !btn || btn.disabled) return;
+  var status = _cpEl('guest-campaign-status'), ready = _cp.ready || {};
+  if (!btn || btn.disabled || !(ready.text || ready.email || ready.social)) return;
   if (!_cp.armed) {
     _cp.armed = setTimeout(function() { _cp.armed = null; cpPaint(); }, 6000);
     cpPaint(); return;
   }
   clearTimeout(_cp.armed); _cp.armed = null;
-  var seg = _cpSegOf(_cp.seg) || {label: 'this audience', count: 0};
   btn.disabled = true; btn.classList.remove('arm'); btn.textContent = 'Sending…';
-  var url = _cp.winback ? '/api/guest-winback/' + _cp.winback.id + '/send' : '/api/guest-campaign/send';
-  var body = _cp.winback ? {message: message}
-    : {message: message, segment: _cp.seg, type: _cp.type, target_day: _cp.targetDay || '',
-       link_url: ((_cpEl('guest-campaign-link') || {}).value || '').trim()};
-  function say(html, bad) { if (!status) return; status.innerHTML = html; status.className = 'cp-status' + (bad ? ' bad' : ''); status.hidden = false; }
-  fetch(url, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
-    .then(apiJson).then(function(d) {
+  var steps = [], lines = [], lost = false, ov = _cp.ov || {};
+  function line(good, text) {
+    lines.push('<div class="ln' + (good ? '' : ' bad') + '"><i class="' + (good ? 'cv-ok' : 'cv-bad') + '" aria-hidden="true"></i>' + text + '</div>');
+    if (status) { status.innerHTML = lines.join(''); status.hidden = false; }
+  }
+  if (ready.text) steps.push(function(next) {
+    var message = _cpVal('guest-campaign-message');
+    var url = _cp.winback ? '/api/guest-winback/' + _cp.winback.id + '/send' : '/api/guest-campaign/send';
+    var body = _cp.winback ? {message: message}
+      : {message: message, segment: _cp.seg, type: _cp.type, target_day: _cp.targetDay || '', link_url: _cpVal('guest-campaign-link')};
+    fetch(url, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
+      .then(apiJson).then(function(d) {
+        if (d && d.ok) {
+          var total = d.total != null ? d.total : (d.sent || 0);
+          line(true, (d.queued ? 'Texting ' : 'Texted ') + _cpPlural(total, 'guest') + (d.skipped_recent ? ' · ' + d.skipped_recent + ' skipped, texted in the last few days' : ''));
+          if (_cp.winback) { _cp.winback = null; var wb = _cpEl('guest-winback'); if (wb) { wb.hidden = true; wb.innerHTML = ''; } }
+        } else line(false, 'Text: ' + _escHtml((d && d.error) || 'couldn’t send'));
+        next();
+      }).catch(function() {
+        // The response was lost, not necessarily the send: the texts may
+        // already be going out. Performance shows what went; a resend after
+        // a reload texts only the guests the first one never reached.
+        lost = true; line(false, 'Text: the connection dropped mid-send. Performance shows what went out.'); next();
+      });
+  });
+  if (ready.email) steps.push(function(next) {
+    var body = {subject: _cpVal('guest-newsletter-subject'), body: _cpVal('guest-newsletter-body'), design: cpDesign(), segment: _cp.seg};
+    var addr = _cpVal('cp-addr-in'); if (addr && !ov.mailing_address_set) body.mailing_address = addr;
+    _cpPost('/api/guest-newsletter', body).then(function(d) {
       if (d && d.ok) {
-        var total = d.total != null ? d.total : (d.sent || seg.count);
-        btn.classList.add('sent'); btn.textContent = '✓ Sent to ' + total;
-        say('<i class="cv-ok" aria-hidden="true"></i>' + (d.queued ? 'Texting ' + total + ' guest' + (total === 1 ? '' : 's') + ' now — Performance fills in as they go.'
-          : 'Sent to ' + (d.sent || 0) + ' of ' + (d.total || 0) + '.' + (d.skipped_recent ? ' ' + d.skipped_recent + ' skipped — texted in the last few days.' : '')));
-        if (_cp.winback) { _cp.winback = null; var wb = _cpEl('guest-winback'); if (wb) { wb.hidden = true; wb.innerHTML = ''; } }
-        setTimeout(function() { loadGuestHistory(); loadGuestOverview(); }, d.queued ? 4000 : 0);
-        loadGuestSegments();
-        if (typeof toast === 'function') toast('Texting ' + total + ' guest' + (total === 1 ? '' : 's'), 'success');
-      } else {
-        btn.disabled = false; cpPaint();
-        say((d && d.error) || 'Couldn’t send the campaign.', true);
-      }
-    }).catch(function() {
-      // The response was lost, not necessarily the send: the texts may
-      // already be going out. The button stays off until a reload; a resend
-      // then texts only guests the first one never reached.
-      btn.textContent = 'Sending may have finished';
-      say('Lost the connection mid-send. Performance below shows what went out; reload to send to anyone it missed.', true);
-      loadGuestHistory();
+        line(true, (d.queued ? 'Emailing ' : 'Emailed ') + _cpPlural(d.total || 0, 'guest') + (d.queued ? ', the rest over the next few minutes' : ''));
+        if (_cp.ov) _cp.ov.mailing_address_set = true;
+      } else line(false, 'Email: ' + _escHtml((d && d.error) || 'couldn’t send'));
+      next();
+    }).catch(function() { lost = true; line(false, 'Email: the connection dropped. The same email sent again resumes it and mails nobody twice.'); next(); });
+  });
+  if (ready.social) cpSelPlats().forEach(function(p) {
+    steps.push(function(next) {
+      var cap = _cpVal('cp-so-caption');
+      var url = p.key === 'instagram' ? '/api/post-to-instagram' : (p.key === 'facebook' ? '/api/post-to-facebook' : '/api/post-to-google');
+      var body = p.key === 'instagram' ? {caption: cap, topic: _cp.prompt, image_url: _cp.photo ? _cp.photo.url : ''}
+        : (p.key === 'facebook' ? {caption: cap, topic: _cp.prompt} : {summary: cap, cta_type: '', cta_url: '', topic: _cp.prompt});
+      _cpPost(url, body).then(function(d) {
+        if (d && d.ok) line(true, 'Posted to ' + p.label); else line(false, p.label + ': ' + _escHtml((d && d.error) || 'couldn’t post'));
+        next();
+      }).catch(function() { lost = true; line(false, p.label + ': the connection dropped. Check the account before posting it again.'); next(); });
     });
+  });
+  var at = 0;
+  (function run() {
+    if (at < steps.length) { steps[at++](run); return; }
+    btn.classList.add('sent'); btn.textContent = lost ? 'Check Performance' : '✓ Sent';
+    if (!lost && typeof toast === 'function') toast('Campaign sent', 'success');
+    setTimeout(function() { loadGuestHistory(); loadGuestOverview(); loadGuestSegments(); }, 3500);
+  })();
 };
-// A new draft or a different audience un-sends the button.
-document.addEventListener('input', function(e) { if (e.target && e.target.id === 'guest-campaign-message') { var b = _cpEl('guest-send-btn'); if (b && b.classList.contains('sent')) { b.classList.remove('sent'); cpPaint(); } } });
+// A changed draft or audience is a new send: the button comes back.
+document.addEventListener('input', function(e) {
+  var b = _cpEl('guest-send-btn'), bl = _cpEl('cp-builder');
+  if (b && bl && e.target && bl.contains(e.target) && b.classList.contains('sent')) { b.classList.remove('sent'); b.disabled = false; cpPaint(); }
+});
 
-// ── Performance ────────────────────────────────────────────────────────────
+// ── Performance: texts and emails, one list ────────────────────────────────
 function loadGuestHistory() {
   loadMarketingDiagnosis();
   loadWinback();
+  var texts = null, mails = null;
+  function draw() { if (texts !== null && mails !== null) { cpPaintHistory(); cpPaintPerfSum(); cpPaint(); } }
   fetch('/api/guest-campaigns').then(apiJson).then(function(d) {
-    if (!d.ok) return;
-    _cp.hist = d.campaigns || [];
-    var list = _cpEl('guest-history-list');
-    if (list && _cp.hist.length) {
-      // The best campaign by taps per text, once two carried a link.
-      var best = null, bestR = -1, linked = 0, i;
-      for (i = 0; i < _cp.hist.length; i++) { var c0 = _cp.hist[i]; if (c0.link_token && c0.sent_count >= 10) { linked++; var r0 = (c0.clicks || 0) / c0.sent_count; if (r0 > bestR) { bestR = r0; best = c0.id; } } }
-      if (linked < 2) best = null;
-      var html = '';
-      var bar = function(sent, lbl, v, color, empty) {
-        return '<div class="r"><span>' + lbl + '</span><span class="bar"><i style="width:' + (v == null || !sent ? 0 : Math.max(2, Math.round(v / sent * 100))) + '%;background:' + color + '"></i></span><span class="v">' + (v == null ? empty : v) + '</span></div>';
-      };
-      for (i = 0; i < _cp.hist.length && i < 9; i++) {
-        var c = _cp.hist[i], sent = +c.sent_count || 0;
-        html += '<div class="cp-card cp-camp' + (c.id === best ? ' best' : '') + '" style="animation-delay:' + (i * 0.05) + 's">'
-          + '<div class="hd"><span class="dt">' + _escHtml(window.mdyAt ? mdyAt(c.created_at || '') : mdy(c.created_at || '')) + '</span>'
-          + '<span class="cp-chip">' + _escHtml(c.segment_label || 'Everyone consented') + '</span>'
-          + (c.id === best ? '<span class="bd">Best</span>' : '') + '</div>'
-          + '<div class="m">' + _escHtml(c.message) + '</div>'
-          + '<div class="mx">' + bar(sent, 'Texted', sent, 'var(--ink3)', '0')
-          + bar(sent, 'Tapped', c.link_token ? (c.clicks || 0) : null, 'var(--ember2)', 'no link')
-          + bar(sent, 'Came back', c.visits_matched, 'var(--green)', c.attribution_through ? '0' : '…') + '</div></div>';
-      }
-      list.innerHTML = html;
-    }
+    texts = (d && d.ok && d.campaigns) || []; _cp.hist = texts;
     var led = _cpEl('guest-ledger');
-    if (led && d.ledger) {
+    if (led && d && d.ledger) {
       var L = d.ledger;
       led.innerHTML = '<b class="hb-num">' + L.textable + '</b> opted in · <b class="hb-num">' + L.no_consent + '</b> without consent · <b class="hb-num">' + L.unsubscribed + '</b> unsubscribed';
     }
-  }).catch(function() {});
+    draw();
+  }).catch(function() { texts = []; draw(); });
+  fetch('/api/guest-newsletters').then(apiJson).then(function(d) {
+    mails = (d && d.ok && d.newsletters) || []; _cp.mail = mails; draw();
+  }).catch(function() { mails = []; draw(); });
 }
-function loadGuestNewsletter(){
-  fetch('/api/guest-newsletter').then(apiJson).then(function(d){
-    if(!d.ok) return;
-    var el = document.getElementById('guest-newsletter-count');
-    if(el) el.textContent = d.subscribers + ' subscribed';
-  }).catch(function(){});
-}
-function sendGuestNewsletter(mailingAddress){
-  var body = document.getElementById('guest-newsletter-body').value.trim();
-  var status = document.getElementById('guest-newsletter-status');
-  if(!body){ status.textContent = 'Paste in the newsletter text first.'; status.style.color='var(--red)'; status.style.display='inline'; return; }
-  if(!mailingAddress && !confirm('Email this to every subscriber? This can\'t be undone.')) return;
-  var btn = document.getElementById('guest-newsletter-btn');
-  btn.disabled = true; btn.textContent = 'Sending…';
-  var payload = {body: body, subject: document.getElementById('guest-newsletter-subject').value.trim()};
-  if(mailingAddress){ payload.mailing_address = mailingAddress; }
-  fetch('/api/guest-newsletter', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify(payload)})
-    .then(apiJson).then(function(d){
-      btn.disabled = false; btn.textContent = 'Send to subscribers';
-      status.style.display = 'inline';
-      if(d.ok){
-        // The first batch goes out now and the rest over the next few
-        // minutes (MOD-EML-3); pressing Send again resumes, never repeats.
-        status.textContent = d.queued
-          ? 'Sending to ' + d.total + ' — ' + d.sent + ' out so far, the rest over the next few minutes.'
-          : 'Sent to ' + d.sent + ' of ' + d.total + '.';
-        status.style.color = 'var(--green)';
-        document.getElementById('guest-newsletter-body').value = '';
-      } else if(d.needs_mailing_address){
-        // CAN-SPAM: a newsletter carries the restaurant's postal address
-        // (MOD-EML-6). Asked once; kept on the restaurant after that.
-        var addr = window.prompt((d.error || 'Add your mailing address.') + '\n\nStreet, city, state and ZIP:', '');
-        if(addr && addr.replace(/\s/g, '').length >= 8){ sendGuestNewsletter(addr); return; }
-        status.textContent = d.error;
-        status.style.color = 'var(--red)';
-      } else {
-        status.textContent = d.error || 'Could not send.';
-        status.style.color = 'var(--red)';
-      }
-    }).catch(function(){
-      btn.disabled = false; btn.textContent = 'Send to subscribers';
-      status.textContent = 'Network error — try again.'; status.style.color='var(--red)'; status.style.display='inline';
-    });
+function cpPaintHistory() {
+  var list = _cpEl('guest-history-list'); if (!list) return;
+  var items = [], i;
+  for (i = 0; i < _cp.hist.length; i++) items.push({kind: 'text', at: String(_cp.hist[i].created_at || ''), c: _cp.hist[i]});
+  for (i = 0; i < _cp.mail.length; i++) items.push({kind: 'email', at: String(_cp.mail[i].created_at || ''), c: _cp.mail[i]});
+  if (!items.length) return;
+  items.sort(function(a, b) { return a.at < b.at ? 1 : (a.at > b.at ? -1 : 0); });
+  // The best text by taps per text, once two carried a link.
+  var best = null, bestR = -1, linked = 0;
+  for (i = 0; i < _cp.hist.length; i++) { var c0 = _cp.hist[i]; if (c0.link_token && c0.sent_count >= 10) { linked++; var r0 = (c0.clicks || 0) / c0.sent_count; if (r0 > bestR) { bestR = r0; best = c0.id; } } }
+  if (linked < 2) best = null;
+  var bar = function(sent, lbl, v, color, empty, pre) {
+    return '<div class="r"><span>' + lbl + '</span><span class="bar"><i style="width:' + (v == null || !sent ? 0 : Math.max(2, Math.round(v / sent * 100))) + '%;background:' + color + '"></i></span><span class="v">' + (v == null ? empty : (v ? pre || '' : '') + v) + '</span></div>';
+  };
+  var html = '';
+  for (i = 0; i < items.length && i < 9; i++) {
+    var it = items[i], c = it.c, when = _escHtml(window.mdyAt ? mdyAt(c.created_at || '') : mdy(c.created_at || ''));
+    var acts = '<div class="acts"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-cp-reuse="' + it.kind + ':' + c.id + '">Use again</button>'
+      + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-cp-improve="' + it.kind + ':' + c.id + '">Improve with Cavnar AI</button></div>';
+    if (it.kind === 'text') {
+      var sent = +c.sent_count || 0;
+      html += '<div class="cp-card cp-camp' + (c.id === best ? ' best' : '') + '" style="animation-delay:' + (i * 0.05) + 's">'
+        + '<div class="hd"><span class="kd">Text</span><span class="dt">' + when + '</span>'
+        + '<span class="cp-chip">' + _escHtml(c.segment_label || 'Everyone consented') + '</span>'
+        + (c.id === best ? '<span class="bd">Best</span>' : '') + '</div>'
+        + '<div class="m">' + _escHtml(c.message) + '</div>'
+        + '<div class="mx">' + bar(sent, 'Texted', sent, 'var(--ink3)', '0')
+        + bar(sent, 'Tapped', c.link_token ? (c.clicks || 0) : null, 'var(--ember2)', 'no link')
+        + bar(sent, 'Came back', c.visits_matched, 'var(--green)', c.attribution_through ? '0' : '…') + '</div>' + acts + '</div>';
+    } else {
+      var es = +c.sent || 0, img = c.image_url ? ' style="background-image:url(' + _escHtml(c.image_url) + ')"' : '';
+      html += '<div class="cp-card cp-camp em" style="animation-delay:' + (i * 0.05) + 's">'
+        + '<div class="th' + (c.image_url ? ' img' : '') + '"' + img + '><span class="kd">Email</span></div>'
+        + '<div class="hd"><span class="dt">' + when + '</span><span class="cp-chip">' + _escHtml(c.segment_label || 'Everyone consented') + '</span></div>'
+        + '<div class="m"><b>' + _escHtml(c.subject || '') + '</b></div>'
+        + '<div class="mx">' + bar(c.total || es, 'Emailed', es, 'var(--ink3)', '0')
+        + bar(es, 'Opened', c.opened, 'var(--ember2)', 'not tracked', '≥')
+        + bar(es, 'Clicked', c.clicked, 'var(--green)', 'not tracked', '≥') + '</div>' + acts + '</div>';
+    }
+  }
+  list.innerHTML = html;
 }
 
 window.copyGuestJoinLink = function() {

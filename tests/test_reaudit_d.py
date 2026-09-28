@@ -118,7 +118,7 @@ def test_answerable_brief_lines_carry_done_and_not_for_us_but_not_track():
 
 def test_the_win_back_not_for_us_asks_why_and_sends_the_code():
     # Campaigns (9/28/26): the win-back's Pass lives in the page's one click handler.
-    i = SRC.index("closest('[data-cp-idea],[data-cp-seg],[data-winback-use],[data-winback-dismiss]')")
+    i = SRC.index("closest('[data-cp-idea],[data-cp-seg],[data-cp-chan],[data-cp-plat],[data-cp-view],[data-cp-photo],[data-cp-retry],[data-cp-reuse],[data-cp-improve],[data-winback-use],[data-winback-dismiss]')")
     h = SRC[i:SRC.index("window.cpCreate = function", i)]
     assert "recReasonPicker(row, {" in h
     assert "if (code) body.reason_code = code; if (note) body.reason = note;" in h

@@ -161,6 +161,14 @@ def init_guest_marketing(db_path=DB_PATH):
         # restaurant held back by its own 8am-9pm window is reached later
         # the same day; this keeps the others from being re-fetched from
         # the POS every hour (MOD-MKT-12).
+        # Campaign Studio (9/28/26): an email carries its look (headline,
+        # photo, button) and its audience like a text does, and each
+        # recipient keeps the send's message id so Resend's open and click
+        # events (email_log) can be read back per newsletter.
+        "ALTER TABLE guest_newsletters ADD COLUMN design TEXT",
+        "ALTER TABLE guest_newsletters ADD COLUMN segment TEXT",
+        "ALTER TABLE guest_newsletters ADD COLUMN segment_label TEXT",
+        "ALTER TABLE guest_newsletter_recipients ADD COLUMN message_id TEXT",
         """CREATE TABLE IF NOT EXISTS optin_invite_runs (
             restaurant_id INTEGER NOT NULL,
             business_date TEXT NOT NULL,
@@ -682,6 +690,14 @@ def segment_contacts(restaurant_id, segment="all", db_path=DB_PATH):
     narrow the eligible set, never widen it.
     """
     contacts = get_guest_contacts(restaurant_id, consent_only=True, db_path=db_path)
+    return filter_segment(restaurant_id, contacts, segment)
+
+
+def filter_segment(restaurant_id, contacts, segment="all"):
+    """`contacts` narrowed to `segment`. Consent is the caller's: texts pass
+    SMS-consented guests, the newsletter its email subscribers, and this
+    only ever narrows what it was given."""
+    contacts = list(contacts)
     segment = (segment or "all").strip().lower()
     if segment not in SEGMENTS:
         segment = "all"
@@ -833,6 +849,8 @@ def draft_campaign_message(restaurant, campaign_type="general", topic="", goal="
         # One em dash or curly quote sends the whole text as Unicode, 70
         # characters a part instead of 160: two or three texts per guest.
         "Plain keyboard punctuation only: no em dashes, curly quotes or ellipsis characters. "
+        # The owner's "45 days" is an audience, not a fact about each guest.
+        "It goes to many guests at once: never say how long it has been since a guest's visit. "
         "No markdown, no emoji spam (at most one emoji). No links or phone numbers. "
         "End naturally — no 'reply STOP to unsubscribe' (that's added automatically). "
         "Never invent an offer: no discount, percentage or dollars off, free item, half price, "
@@ -1664,8 +1682,19 @@ def campaign_overview(restaurant_id, db_path=DB_PATH) -> dict:
     m_sent = sum(int(c.get("sent_count") or 0) for c in this_month)
     m_failed = sum(int(c.get("failed_count") or 0) for c in this_month)
     last = hist[0] if hist else None
+    channel = "text"
+    # The newest campaign on either channel (Campaign Studio, 9/28/26).
+    try:
+        import guest_email
+        mail = guest_email.newsletter_history(restaurant_id, limit=1, db_path=db_path)
+    except Exception:
+        mail = []
+    if mail and (not last or str(mail[0].get("created_at") or "") > str(last.get("created_at") or "")):
+        last = {"created_at": mail[0]["created_at"], "sent_count": mail[0]["sent"] or mail[0]["total"],
+                "segment_label": mail[0].get("segment_label")}
+        channel = "email"
     from time_utils import local_iso
-    tz = None
+    tz, r = None, None
     try:
         from models import get_restaurant
         r = get_restaurant(restaurant_id, db_path)
@@ -1678,7 +1707,8 @@ def campaign_overview(restaurant_id, db_path=DB_PATH) -> dict:
         "last_30": sum(1 for d in days if (today - d).days < 30),
         "weekly": weekly,
         "last_campaign": ({"date": local_iso(last.get("created_at"), tz), "sent": int(last.get("sent_count") or 0),
-                           "segment_label": last.get("segment_label") or SEGMENTS["all"]["label"]} if last else None),
+                           "segment_label": last.get("segment_label") or SEGMENTS["all"]["label"],
+                           "channel": channel} if last else None),
         "tap_rate": rate(linked, "clicks"),
         "back_rate": rate(attributed, "visits_matched"),
         "delivered": (round(m_sent / (m_sent + m_failed) * 100, 1) if (m_sent + m_failed) else None),
@@ -1687,7 +1717,61 @@ def campaign_overview(restaurant_id, db_path=DB_PATH) -> dict:
         "window": guest_sms_window_label(),
         "min_days_between": GUEST_SMS_MIN_DAYS_BETWEEN,
         "rate_min": CAMPAIGN_RATE_MIN,
+        # The email channel (Campaign Studio, 9/28/26): who can be emailed,
+        # and whether the law's mailing address is on file to email them.
+        "email_subscribers": _email_subscribers(restaurant_id, db_path),
+        "mailing_address_set": bool((getattr(r, "mailing_address", None) or "").strip()),
+        "insights": campaign_insights(restaurant_id, hist=hist, db_path=db_path),
     }
+
+
+def _email_subscribers(restaurant_id, db_path=DB_PATH) -> int:
+    try:
+        import guest_email
+        return guest_email.subscriber_count(restaurant_id, db_path=db_path)
+    except Exception:
+        return 0
+
+
+def campaign_insights(restaurant_id, hist=None, db_path=DB_PATH) -> list:
+    """At most three short things that worked, each measured and carrying
+    what it rests on - never an estimate, never money:
+
+      back    the audience whose texts brought the most guests back, once
+              CAMPAIGN_RATE_MIN attributed campaigns of CAMPAIGN_RATE_MIN_SENT
+              or more texts went to it
+      opened  the last email's opens, as a floor ("at least"), once open
+              tracking reports and it went to 10 or more
+
+    An insight below its minimum is left out, not shown as zero."""
+    out = []
+    hist = hist if hist is not None else campaign_history(restaurant_id, limit=50, db_path=db_path)
+    by_seg = {}
+    for c in hist:
+        if (c.get("sent_count") or 0) >= CAMPAIGN_RATE_MIN_SENT and c.get("visits_matched") is not None:
+            by_seg.setdefault(c.get("segment") or "all", []).append(c)
+    rates = []
+    for seg, rows in by_seg.items():
+        sent = sum(int(c.get("sent_count") or 0) for c in rows)
+        if len(rows) >= CAMPAIGN_RATE_MIN and sent:
+            rates.append((round(sum(int(c.get("visits_matched") or 0) for c in rows) / sent * 100, 1), seg, len(rows)))
+    if rates:
+        pct, seg, n = max(rates)
+        label = SEGMENTS.get(seg, SEGMENTS["all"])["label"]
+        out.append({"kind": "back", "figure": f"{pct:g}%", "tone": "good",
+                    "text": f"came back after a text to {label[0].lower() + label[1:]}",
+                    "basis": f"{n} campaigns · a visit within {ATTRIBUTION_WINDOW_DAYS} days, matched in your POS"})
+    try:
+        import guest_email
+        last = next((n for n in guest_email.newsletter_history(restaurant_id, limit=5, db_path=db_path)
+                     if n["sent"] >= CAMPAIGN_RATE_MIN_SENT), None)
+    except Exception:
+        last = None
+    if last and last.get("opened") is not None:
+        out.append({"kind": "opened", "figure": f"≥{round(last['opened'] / last['sent'] * 100):g}%", "tone": "",
+                    "text": "opened your last email, at least",
+                    "basis": "Apple Mail counts some opens nobody made"})
+    return out[:3]
 
 
 # ── Automated post-visit review request ─────────────────────────────────────

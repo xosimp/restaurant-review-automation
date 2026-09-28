@@ -2344,6 +2344,9 @@ def init_db(db_path: str = DB_PATH):
         )""",
         "CREATE INDEX IF NOT EXISTS idx_email_log_restaurant ON email_log(restaurant_id, sent_at)",
         "CREATE INDEX IF NOT EXISTS idx_email_log_sent ON email_log(sent_at)",   # prune_ledgers (DATA-40)
+        # Resend's open/click events find their send by message id, and the
+        # Campaign Studio reads a newsletter's opens back the same way.
+        "CREATE INDEX IF NOT EXISTS idx_email_log_message ON email_log(message_id)",
         # Addresses Resend told us are undeliverable or that reported us as
         # spam. Suppressed at send time: retrying a hard bounce forever, or
         # continuing to mail someone who hit "report spam", is exactly what

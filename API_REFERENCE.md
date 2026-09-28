@@ -122,6 +122,25 @@ Drafts (create/edit/list), media upload, scheduling, attribution per post, the t
 
 Campaigns (9/28/26, the web's Marketing → Campaigns tab, formerly the guest text club):
 - `GET /api/guest-overview` / `/mobile/api/guest-overview` — `guest_marketing.campaign_overview` plus `join_url` (the signed `/join/<id>-<sig>`; a bare `/join/<id>` is refused) and `receipt_hint`. Fields: `subscribers`, `today`, `last_30`, `weekly` (12 × `{week_start, joined}`, oldest first), `last_campaign` (`{date, sent, segment_label}` or null), `tap_rate` / `back_rate` (`{pct, campaigns}`, null until `rate_min` campaigns of 10+ texts carry the measurement), `delivered` (% this month or null), `texts_this_month`, `sending_now`, `window`, `min_days_between`, `rate_min`. No open rate (SMS reports none) and no revenue. 403 without the Marketing module.
+- Campaign Studio (9/28/26): `GET /api/guest-overview` also returns `email_subscribers`, `mailing_address_set`,
+  `insights` (`guest_marketing.campaign_insights`: at most three `{kind, figure, tone, text, basis}`, each measured —
+  the audience whose texts brought the most guests back once 2 attributed campaigns went to it, the last email's opens
+  as a floor; never an estimate or money) and `last_campaign.channel` (`text` / `email`, the newer of the two).
+  `GET /api/guest-segments` adds each segment's `email_count` (the same audience on the email list).
+- `POST /api/guest-newsletter/draft` / `/mobile/api/guest-newsletter/draft` `{prompt, topic?}` →
+  `guest_email.draft_newsletter`: `subject`, `preheader`, `headline`, `body`, `button_label`, `button_url` (the
+  restaurant's `menu_url`, else ""), and the prompt's plan (`type`, `segment`, `goal`, `target_day`). 400 without a
+  prompt, 422 with the reason when the guard refused the copy, 429 past 8 a minute. Nothing is sent.
+- `POST /api/guest-newsletter/preview` / mobile twin `{subject, body, design}` → `{html, subject, body, preheader,
+  image_url, mailing_address}`: the email exactly as a guest gets it (`guest_email.preview`, the send's own `_render`);
+  `body` is the letter split from a raw Weekly email.
+- `POST /api/guest-newsletter` also takes `design` (`guest_email.clean_design`: `headline`, `preheader`,
+  `button_label`, `button_url` — http(s) only — and `image_media_id`, one of THIS restaurant's `marketing_media`; an
+  image URL is never accepted) and `segment` (a `SEGMENTS` key; the email goes to that audience's subscribers). Both
+  are part of the 24-hour same-newsletter check. The reply adds `segment`.
+- `GET /api/guest-newsletters` / mobile twin → `newsletters`: `guest_email.newsletter_history` (subject, body, design,
+  `image_url`, `segment_label`, `total`, `sent`, `failed`, `pending`, and `opened` / `clicked` — a FLOOR, null unless
+  open tracking reports and the send kept its message id).
 - `POST /api/guest-campaign/draft` (and its mobile twin) takes `prompt` (≤280 chars, the owner's goal): `guest_marketing.plan_campaign` picks the tone, audience and target day by keyword, and the reply adds `type`, `segment`, `goal`, `target_day`. A `type` sent with it wins (Rewrite keeps the tone). The prompt reaches the model as the goal, not as copy to include, and an offer it names may appear in the draft.
 
 Client adoption (parity round, 9/25/26): iOS sends `type` with `POST /mobile/api/guest-campaign/send` (it labels the tracked link; the phone's sends all read "campaign"), and reads `GET /mobile/api/marketing/diagnosis` (strategy_routes, both prefixes) under the brief. Reviews: iOS calls `POST /mobile/api/templates` `{title, body}` ("Save as template") and `DELETE /mobile/api/templates/<id>`, and `GET /mobile/api/review-request-stats` in the request sheet; the web's review request sends the optional `message` (≤200 chars) `_do_send_review_request` always read.

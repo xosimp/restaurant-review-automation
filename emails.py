@@ -860,6 +860,49 @@ def _branded_email(inner_html: str) -> str:
 """)
 
 
+def guest_newsletter_email(restaurant_name: str, body_html: str, headline: str = "",
+                           image_url: str = "", button_label: str = "", button_url: str = "",
+                           footer_html: str = "") -> str:
+    """A restaurant's newsletter to its own guests (Campaign Studio, 9/28/26).
+
+    Not _branded_email: that frame is Cavnar AI's own short mail, wordmark
+    and seal, and a guest reading it met a software company where they
+    expected their restaurant. Here the restaurant's name is the masthead,
+    then an optional full-width photo from its media library, the headline
+    (Georgia, a system serif: a letter, not a report), the letter, ONE ember
+    button, and the CAN-SPAM footer. 560px, report_shell's width; light only.
+    Everything owner- or model-written arrives escaped by the caller except
+    body_html and footer_html, which the caller builds from escaped parts."""
+    B = BRAND
+    photo = (f'<tr><td style="padding:0;line-height:0"><img src="{esc(image_url)}" width="560" alt="" '
+             f'style="display:block;width:100%;max-width:560px;height:auto;border:0;outline:none"></td></tr>'
+             if image_url else "")
+    h1 = (f'<h1 style="margin:0 0 16px;font-family:Georgia,\'Times New Roman\',serif;font-weight:400;'
+          f'font-size:30px;line-height:1.18;color:{B["strong"]}">{esc(headline)}</h1>' if headline else "")
+    button = ""
+    if button_label and button_url:
+        button = (f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:10px 0 6px">'
+                  f'<tr><td style="background:{B["ember"]};border-radius:8px">'
+                  f'<a href="{esc(button_url)}" style="display:inline-block;padding:14px 26px;font-family:{_SANS};'
+                  f'font-size:15px;font-weight:700;color:{B["card"]};text-decoration:none">{esc(button_label)}</a>'
+                  f'</td></tr></table>')
+    return _html_document(f"""
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:{B["paper"]}">
+  <tr><td align="center" style="padding:28px 12px 36px">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;width:100%">
+      <tr><td align="center" style="padding:0 0 18px;font-family:{_SANS};font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:{B["muted"]}">{esc(restaurant_name)}</td></tr>
+      <tr><td style="background:{B["card"]};border:1px solid {B["border"]};border-radius:12px;overflow:hidden">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+          {photo}
+          <tr><td style="padding:30px 32px 30px;font-family:{_SANS}">{h1}{body_html}{button}</td></tr>
+        </table>
+      </td></tr>
+      <tr><td style="padding:18px 8px 0;font-family:{_SANS};font-size:11px;line-height:1.6;color:{B["muted"]};text-align:center">{footer_html}</td></tr>
+    </table>
+  </td></tr>
+</table>""", bg=B["paper"])
+
+
 def _send_branded(to_email: str, subject: str, inner_html: str, from_label: str = "Cavnar AI",
                   email_type: str = None, preheader: str = None,
                   restaurant_id: int = None):

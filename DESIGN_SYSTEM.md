@@ -1132,7 +1132,7 @@ Every block keeps its empty state; a quiet day is a short page.
 | Working orb | `CavnarWorkingOrb(state:label:)` — an inline orb in one of the nine states with its line of text, for a model genuinely working; `CavnarLoadingOrb` is the full-screen form |
 | AI consultant strip | `AIConsultantView` / `AIConsultantEmbeddedStrip` — sparkle + the insight's first line + chevron, breathing while the first insight loads; opens the full read |
 | Motion | The numbered `CavnarMotion.swift` structs — see §11 — plus `Animation.cavnarEase(_:)`, the one easing |
-| Guided builder (web) | Marketing → Campaigns (`.cp-*`, 9/28/26): one prompt field (`.cp-prompt`, the orb, one primary Create →) with idea chips under it; Create opens numbered step cards (`.cp-step` — a 28px ring numeral, `.now` in ember, `.done` a green `--hb-pop` tick with the numeral hidden) beside a sticky side column: a phone preview that renders the text exactly as sent (with the STOP line), recessed forecast tiles and the Cavnar AI read. A forecast is a measured rate or "—" with what it waits for ("after 2 campaigns"), never an estimate. The send is a two-press primary ("Send to N guests" → "Tap again to text N guests" for 6s), no `confirm()`. The segment counter counts the link and the STOP line, and a text with any non-GSM character (an em dash, a curly quote, an emoji) at 70/67 characters a part. Five KPI tiles run 5 across, 3+2 under 1100px and 2+2+1 on a phone; never an orphan tile |
+| Campaign Studio (web) | Marketing → Campaigns (`.cp-*`, 9/28/26): one prompt field (`.cp-prompt`, the orb, one primary Create →), the channel chips it drafts for under it (`.cp-pick`: Text, Email and the connected social accounts, each with its reach), then idea chips. Create drafts every channel at once into a plan strip (Goal · Audience chips carrying text and email counts and a measured "N% came back" · one shared Photo) over one card per channel (`.cp-ch`): the text in a phone, the email as the server renders it (a sandboxed iframe, `allow-same-origin` only; Desktop / Phone width), the post as a feed card. Edit is progressive (`<details>` "Edit the email"); a drafting card dims under a moving ember hairline, a failed one says why with "Draft it again". The email takes the wide column with text and social stacked beside it; one channel centres at 780px; under 900px it is one column, email first. One send bar under the cards: a check per channel (a warn disc where it cannot go and why), the mailing-address field when the law needs it, and one two-press primary naming what goes ("Text 31 · Email 18 · Post to Instagram →" → "Tap again to reach 49 guests and post", 6s); a channel that cannot go is left out of the label, not blocked. Forecasts are a measured rate times the audience or nothing; an email's opens are "at least" (Apple Mail); there is no dark preview because the email is light-only. The segment counter counts the link and the STOP line, and a non-GSM character (an em dash, a curly quote, an emoji) at 70/67 characters a part. Five KPI tiles run 5 across, 3+2 under 1100px and 2+2+1 on a phone; never an orphan tile |
 
 ---
 
@@ -1237,6 +1237,14 @@ Three exist. Pick by what the email *is*, not by which is nearest:
    confirmation, a link. Wordmark, one white card, seal footer.
 3. **Bespoke** — legacy. 14 emails still are. Not a starting point; migrate
    onto `report_shell` when you touch one.
+4. **`guest_newsletter_email(restaurant_name, body_html, headline, image_url,
+   button_label, button_url, footer_html)`** — a restaurant's newsletter to
+   ITS guests (Campaign Studio, 9/28/26). Not Cavnar AI's mail, so no
+   wordmark or seal: the restaurant's name as the masthead, an optional
+   full-width photo from its media library, a Georgia headline (a letter,
+   not a report), the letter at 16px in `body`, ONE `ember` button (only
+   with an http(s) link), the CAN-SPAM footer (why, unsubscribe, address).
+   560px like `report_shell`.
 
 Widths are 560px (`report_shell`) and 480px (`_branded_email`). Do not
 introduce a third.

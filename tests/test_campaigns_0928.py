@@ -243,15 +243,17 @@ def test_the_copy_link_is_the_signed_one():
     assert "d.join_url" in ov and "fetch('/api/guest-overview'" in ov
 
 
-def test_a_forecast_is_measured_or_a_dash():
+def test_a_forecast_is_measured_or_nothing():
+    # Campaign Studio (9/28/26): the text card's footer carries a forecast
+    # only when a measured rate exists; the KPI tiles say what they wait for.
     paint = _between("window.cpPaint = function", "function cpPaintAi")
-    assert "if (!rate) { v.textContent = '—';" in paint
-    assert "'after ' + (ov.rate_min || 2) + ' campaigns'" in paint
+    assert "if (ov.back_rate && n) bits.push(" in paint and "if (link && ov.tap_rate && n)" in paint
+    assert "'after ' + rateMin + ' campaigns with a link'" in SRC
 
 
 def test_the_counter_knows_a_unicode_text_is_shorter():
     paint = _between("window.cpPaint = function", "function cpPaintAi")
-    assert "var one = uni ? 70 : 160, per = uni ? 67 : 153;" in paint
+    assert "var one = uni ? 70 : 160, per = uni ? 67 : 153, parts = full <= one ? 1 : Math.ceil(full / per);" in paint
     assert "+ (link ? 26 : 0) + 29" in paint                            # the link and the STOP line count
 
 
@@ -262,6 +264,5 @@ def test_nav_to_the_section_opens_its_sub_tab():
 
 
 def test_layout_details():
-    assert ".cp-step.done .n{font-size:0;" in SRC                       # a done step shows its tick alone
     assert ".cp-kpis>:last-child{grid-column:1/-1}" in SRC               # no orphan KPI on a phone
     assert ".cp-kpis>:nth-child(n+4){grid-column:span 3}" in SRC

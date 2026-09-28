@@ -4027,8 +4027,12 @@ def mobile_guest_segments(current_user):
     if not _capi._restaurant_has_marketing_module(rid):
         return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
     counts = segment_counts(rid)
+    import guest_email as _ge
+    emails = _ge.segment_counts(rid)
+    # email_count: the same audience on the email list (Campaign Studio).
     return jsonify(ok=True, defaults=CAMPAIGN_DEFAULT_SEGMENT, segments=[
-        {"key": k, "label": v["label"], "help": v["help"], "count": counts.get(k, 0)}
+        {"key": k, "label": v["label"], "help": v["help"], "count": counts.get(k, 0),
+         "email_count": emails.get(k, 0)}
         for k, v in SEGMENTS.items()
     ])
 
@@ -4075,9 +4079,84 @@ def mobile_guest_newsletter(current_user):
     if ai_rate_limited(f"newsletter:{rid}", max_calls=2, window_secs=600):
         return jsonify(ok=False, error="Too many newsletters sent recently — wait a few minutes."), 429
     data = request.get_json() or {}
+    # design and segment: the Campaign Studio's look and audience (9/28/26).
     result = _ge.send_newsletter(rid, data.get("body") or "", subject=data.get("subject"),
-                                 mailing_address=data.get("mailing_address"))
+                                 mailing_address=data.get("mailing_address"),
+                                 design=data.get("design") if isinstance(data.get("design"), dict) else None,
+                                 segment=data.get("segment"))
     return jsonify(**result), (200 if result.get("ok") else 400)
+
+
+@mobile_bp.route("/guest-newsletter/draft", methods=["POST"])
+@mobile_login_required
+def mobile_guest_newsletter_draft(current_user):
+    """The Campaign Studio's email from the owner's goal (`prompt`):
+    subject, preheader, headline, the letter and the button's words
+    (guest_email.draft_newsletter). Nothing is sent."""
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    from ai_utils import ai_rate_limited
+    if ai_rate_limited(f"newsletterdraft:{rid}", max_calls=8, window_secs=60):
+        return jsonify(ok=False, error="Too many requests — please wait a moment and try again."), 429
+    data = request.get_json() or {}
+    prompt = str(data.get("prompt") or "").strip()[:280]
+    topic = str(data.get("topic") or "").strip()[:280]
+    if not (prompt or topic):
+        return jsonify(ok=False, error="Say what the email should do."), 400
+    import guest_email as _ge
+    try:
+        draft = _ge.draft_newsletter(get_restaurant(rid), goal=prompt, topic=topic)
+    except ValueError as e:
+        if str(e).startswith("newsletter copy rejected: "):
+            return jsonify(ok=False, error="Cavnar AI didn't use that draft — "
+                           + str(e)[len("newsletter copy rejected: "):] + ". Try again, or write it yourself."), 422
+        import ops
+        ops.capture(e, job="guest_newsletter_draft", context=f"restaurant_id={rid}")
+        return jsonify(ok=False, error="Couldn't draft the email right now — try again in a moment."), 500
+    except Exception as e:
+        import ops
+        ops.capture(e, job="guest_newsletter_draft", context=f"restaurant_id={rid}")
+        return jsonify(ok=False, error="Couldn't draft the email right now — try again in a moment."), 500
+    r = get_restaurant(rid)
+    # The goal's plan, as the text draft returns it: the studio sets its
+    # audience from whichever channel answers first.
+    from guest_marketing import plan_campaign
+    plan = plan_campaign(prompt) if prompt else {}
+    return jsonify(ok=True, button_url=(getattr(r, "menu_url", None) or "") if r else "",
+                   **{k: plan[k] for k in ("type", "segment", "goal", "target_day") if k in plan}, **draft)
+
+
+@mobile_bp.route("/guest-newsletter/preview", methods=["POST"])
+@mobile_login_required
+def mobile_guest_newsletter_preview(current_user):
+    """The email exactly as a guest gets it, for the live preview: the same
+    renderer the send uses (guest_email.preview)."""
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    data = request.get_json() or {}
+    import guest_email as _ge
+    out = _ge.preview(rid, subject=str(data.get("subject") or "")[:140], body=str(data.get("body") or "")[:4000],
+                      design=data.get("design") if isinstance(data.get("design"), dict) else None,
+                      base=request.url_root)
+    return jsonify(**out), (200 if out.get("ok") else 404)
+
+
+@mobile_bp.route("/guest-newsletters")
+@mobile_login_required
+def mobile_guest_newsletters(current_user):
+    """Every newsletter sent, newest first (guest_email.newsletter_history):
+    opened and clicked are a floor, and null where nothing measured them."""
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    import guest_email as _ge
+    items = _ge.newsletter_history(rid)
+    base = request.url_root.rstrip("/")
+    for n in items:
+        n["image_url"] = _ge._image_url(n.get("design") or {}, rid, base)
+    return jsonify(ok=True, newsletters=items)
 
 
 @mobile_bp.route("/marketing/preview", methods=["POST"])
