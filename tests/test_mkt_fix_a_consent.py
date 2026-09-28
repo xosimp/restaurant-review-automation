@@ -347,8 +347,12 @@ def test_mb2_every_text_audience_reads_the_one_rule():
     for fn in ("def marketing_audience(", "def marketing_audience_count(", "def segment_counts(",
                "def consent_ledger(", "def get_guest_contacts("):
         assert "marketing_text_sql()" in src.split(fn)[1].split("\ndef ")[0], fn
-    assert "marketing_text_sql" in open(mo.__file__, encoding="utf-8").read()
-    assert "response='yes'" not in open(mo.__file__, encoding="utf-8").read()
+    mo_src = open(mo.__file__, encoding="utf-8").read()
+    lists_body = mo_src.split("def lists(")[1].split("\ndef ")[0]
+    # The feed's list counts read the one rule; its own review-YES exclusion
+    # is gone. (The cache fingerprint still COUNTS invite replies so a new one
+    # rebuilds the feed - an input, not a consent check.)
+    assert "marketing_text_sql" in lists_body and "response='yes'" not in lists_body
 
 
 # ══ MB-4 · the public join: double opt-in ══════════════════════════════════
