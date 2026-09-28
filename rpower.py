@@ -1213,6 +1213,10 @@ def sync_to_db(restaurant_id: int) -> dict:
             try:
                 import inventory_ledger
                 inventory_ledger.discover_menu_items(restaurant_id, days=2)
+                # Dish sales for days the nightly job never recorded (it
+                # starts from the night it first runs): read from RPOWER,
+                # units only, then nothing until a day goes missing again.
+                inventory_ledger.backfill_item_sales(restaurant_id, days=60)
             except Exception as _menu_e:
                 log.warning("[rpower sync] menu item discovery error for %s: %s", restaurant_id, _menu_e)
             dr = analysis.get("date_range", {})

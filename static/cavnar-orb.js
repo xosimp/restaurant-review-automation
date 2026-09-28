@@ -674,9 +674,21 @@
     setState(handle, state || 'breathing');
     if (!handle.reduced && !handle.paused) start(handle);
     handle._vis = function () {
-      if (document.visibilityState === 'hidden') stop(handle); else if (!handle.paused) start(handle);
+      if (document.visibilityState === 'hidden') stop(handle); else if (!handle.paused && handle.inView !== false) start(handle);
     };
     document.addEventListener('visibilitychange', handle._vis);
+    // Only an orb on screen animates. An orb in a panel the owner has left
+    // (display:none) or scrolled past kept drawing every frame for the life
+    // of the page - a long session stacked them up on Safari's main thread
+    // (owner, 9/28/26: a notification click "lagged ultra hard").
+    if (typeof IntersectionObserver !== 'undefined') {
+      handle._io = new IntersectionObserver(function (entries) {
+        handle.inView = entries[entries.length - 1].isIntersecting;
+        if (!handle.inView) stop(handle);
+        else if (!handle.paused && !handle.reduced && document.visibilityState !== 'hidden') start(handle);
+      });
+      handle._io.observe(canvas);
+    }
     return handle;
   }
 
@@ -713,7 +725,7 @@
     // Reduced motion gets one still frame of the new state rather than
     // nothing — the state change is still information.
     if (handle.reduced) draw(handle, 0.6);
-    else if (!handle.running && !handle.paused) start(handle);
+    else if (!handle.running && !handle.paused && handle.inView !== false) start(handle);
   }
 
   function setTheme(handle, dark) {
@@ -724,6 +736,7 @@
   function destroy(handle) {
     stop(handle);
     if (handle._vis) document.removeEventListener('visibilitychange', handle._vis);
+    if (handle._io) { handle._io.disconnect(); handle._io = null; }
   }
 
   global.CavnarOrb = {

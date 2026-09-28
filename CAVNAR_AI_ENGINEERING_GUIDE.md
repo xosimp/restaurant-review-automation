@@ -141,7 +141,7 @@ Full detail: `SYSTEM_ARCHITECTURE.md` §Auth.
 
 ## 11. Verification policy (see `TESTING.md` for the full version)
 
-Run only the test file(s) that cover what changed. The full suite (about 3,400 tests, ~7 minutes) is a pre-push or full-audit step, run once — not a per-edit habit. Color lint and ES5 checks only when a template/CSS/JS file actually changed. This is a deliberate, requested change from running the full suite by default — see `feedback_lean_verification` in project memory for the reasoning and date.
+Run only the test file(s) that cover what changed. The full suite (about 11,000 tests, 4-5 minutes in parallel) runs only after an audit or fix round, a big code change or a large batch of changes, or when asked — never as a routine pre-push step after a few tweaks (Will, 9/28/26: it "stalls productivity"). Color lint and ES5 checks only when a template/CSS/JS file actually changed. This is a deliberate, requested change from running the full suite by default — see `feedback_lean_verification` in project memory for the reasoning and date.
 
 ---
 

@@ -2828,6 +2828,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 /* Only the thin line is drawn with a dash offset; the blurred glow and the
    fill fade in on opacity (compositor work, no per-frame filter re-raster). */
 .hb-cl{position:relative}.hb-cl>svg:first-child{position:relative;z-index:1}
+/* The target line's label: at the left end of the line (the hot dot is at
+   the right), just above it, on a pill the curve can't swallow. */
+.hb-cl-target{position:absolute;left:0;transform:translateY(calc(-100% - 4px));z-index:2;pointer-events:none;font-family:'Space Grotesk',sans-serif;font-size:11.5px;font-weight:600;line-height:1;letter-spacing:.02em;color:var(--ink2);background:var(--surface);border:1px solid var(--hb-line);border-radius:999px;padding:3px 8px;white-space:nowrap}
 .hb-cl>.hb-cl-glow{position:absolute!important;inset:0;width:100%!important;height:100%!important;margin:0!important;z-index:0;pointer-events:none}
 .hb-draw{stroke-dasharray:2000;stroke-dashoffset:2000;animation:hbDraw 2.4s cubic-bezier(.35,0,.15,1) forwards}
 @keyframes hbDraw{to{stroke-dashoffset:0}}
@@ -3809,7 +3812,10 @@ svg:hover .hb-xh{opacity:1}
     var hasTarget=opts.target!=null,ty=0;
     if(hasTarget){
       ty=h-pad-((opts.target-min)/rng)*(h-2*pad-8)-4;
-      s+='<line x1="0" y1="'+ty.toFixed(1)+'" x2="'+w+'" y2="'+ty.toFixed(1)+'" stroke="'+col+'" stroke-opacity=".45" stroke-dasharray="4 5"/><text x="'+(w-4)+'" y="'+(ty-5).toFixed(1)+'" text-anchor="end" font-size="10" font-family="Space Grotesk, sans-serif" fill="'+col+'" fill-opacity=".8">'+(opts.targetLabel||('target '+opts.target+'%'))+'</text>';
+      // The label is HTML over the chart (.hb-cl-target), not SVG text: the
+      // svg stretches (preserveAspectRatio none), so its text came out a
+      // squashed 10px sliver under the hot endpoint dot (owner, 9/28/26).
+      s+='<line x1="0" y1="'+ty.toFixed(1)+'" x2="'+w+'" y2="'+ty.toFixed(1)+'" stroke="'+col+'" stroke-opacity=".45" stroke-dasharray="4 5"/>';
     }
     var fillD=line+' L'+last[0].toFixed(1)+' '+h+' L'+first[0].toFixed(1)+' '+h+' Z';
     if(hasTarget){
@@ -3840,7 +3846,8 @@ svg:hover .hb-xh{opacity:1}
     s=s.replace('<svg ','<svg data-pts="'+px.join(';')+'" data-vals="'+vals.map(function(v){return +v;}).join(',')+'" data-lbl="'+esc((opts.labels||[]).join('|'))+'" data-pre="'+esc(opts.prefix||'')+'" data-unit="'+esc(opts.unit||'')+'" ');
     // The animating svg first (querySelector('svg') and closest('svg[data-pts]')
     // keep finding it); the glow layer after it, drawn underneath by CSS.
-    return '<div class="hb-cl">'+s+'</svg>'+gl+'</div>';
+    var tgtLbl=hasTarget?'<span class="hb-cl-target" style="top:'+(ty/h*100).toFixed(2)+'%">'+esc(opts.targetLabel||('target '+opts.target+'%'))+'</span>':'';
+    return '<div class="hb-cl">'+s+'</svg>'+gl+tgtLbl+'</div>';
   }
   // ── charts: crosshair + tooltip ───────────────────────────────────────────
   // One fixed tooltip for every glowLine on the page. The svg is
@@ -9357,6 +9364,10 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .lb2-bn .hb-num{font-size:34px;font-weight:600;line-height:1;color:var(--ink)}
 .lb2-bn .pct{font-size:18px;font-weight:600}
 .lb2-bn .pct.good{color:var(--hb-good)}.lb2-bn .pct.bad{color:var(--hb-bad)}
+/* The target beside the actual, across a hairline, so the two read side by
+   side: "37.5% | 35% target" (owner, 9/28/26). */
+.lb2-bn .lb2-vs{display:inline-flex;align-items:baseline;gap:5px;padding-left:10px;border-left:1px solid var(--hb-line);font-size:14px;font-weight:600;color:var(--ink3)}
+.lb2-bn .lb2-vs .hb-num{font-size:18px;font-weight:600;color:var(--ink2)}
 .lb2-bn .lb2-gap{font-size:15px;font-weight:600;color:var(--hb-warn)}.lb2-bn .lb2-gap .hb-num{font-size:18px;color:var(--hb-warn)}.lb2-bn .lb2-gap.good{color:var(--hb-good)}
 #panel-labor .two-col{margin-top:30px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px}
 /* No rule above the Every day and person disclosure (owner, 9/26/26). */
@@ -9413,7 +9424,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
            tone, "over target", never "savings" or green (Money labels). The
            /api/labor-gap read restates it from the same window. #}
         {% set _gap_ok = labor.is_live and savings_breakdown and savings_breakdown.labor_monthly > 0 %}
-        <div class="lb2-bn"><span class="l">Labor</span><span class="row"><span class="hb-num stat-n">${{ labor.total_labor_cost|int|format_num }}</span><span class="hb-num pct stat-n {{ 'good' if _lp <= _lt else 'bad' }}">{{ _lp }}%</span><span class="lb2-gap" id="gap-amount"{% if not _gap_ok %} hidden{% endif %}>{% if _gap_ok %}<span class="hb-num">${{ savings_breakdown.labor_monthly|format_num }}</span>/mo over {{ _tl }}{% endif %}</span></span></div>
+        <div class="lb2-bn"><span class="l">Labor</span><span class="row"><span class="hb-num stat-n">${{ labor.total_labor_cost|int|format_num }}</span><span class="hb-num pct stat-n {{ 'good' if _lp <= _lt else 'bad' }}">{{ _lp }}%</span><span class="lb2-vs" title="Your labor target"><span class="hb-num">{{ _lt|round(1)|string|replace('.0', '') }}%</span> target</span><span class="lb2-gap" id="gap-amount"{% if not _gap_ok %} hidden{% endif %}>{% if _gap_ok %}<span class="hb-num">${{ savings_breakdown.labor_monthly|format_num }}</span>/mo over {{ _tl }}{% endif %}</span></span></div>
       </div>
       {# Everything labor.py knows is incomplete about this upload. It has
          computed these for a while and no surface showed them, so a

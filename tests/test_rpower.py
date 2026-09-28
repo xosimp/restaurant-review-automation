@@ -856,3 +856,54 @@ def test_the_timeclock_read_keeps_the_last_day_of_every_chunk(monkeypatch):
     monkeypatch.setattr(rpower, "_paged", lambda token, path, params: rpower._request(token, path, params))
     got = rpower.fetch_time_entries(1, days[0], days[-1])
     assert sorted(p["in_dttm"][:10] for p in got) == [d.isoformat() for d in days]
+
+
+def test_dish_sales_are_backfilled_for_days_the_nightly_job_never_saw(db_path, monkeypatch):
+    """Simple EJ's had RPOWER sales from 8/26 and dish sales from none: the
+    nightly job records forward from its first night. The RPOWER sync fills
+    the missing days - units only, dishes only, never stock depletion."""
+    import inventory_ledger
+    from datetime import date as _date, timedelta as _td
+    from models import get_conn
+    rid = _connected(db_path)
+    rpower._menu_cache.clear()
+    _stub_api(monkeypatch, {
+        "menuitem/getbycg": [{"mid": "d1", "name": "Pretzel`", "slscat_mid": "c1", "is_mod": 0},
+                             {"mid": "m1", "name": "No Lettuce`", "slscat_mid": "c2", "is_mod": 0},
+                             {"mid": "d2", "name": "Smash Burger`", "slscat_mid": "c1", "is_mod": 0}],
+        "salescategory/getbycg": [{"mid": "c1", "name": "01. Shareables"}, {"mid": "c2", "name": "(Modifiers)"}],
+    })
+    for other in ("toast", "square", "clover"):
+        monkeypatch.setattr(f"{other}.is_connected", lambda r: False)
+    today = inventory_ledger.local_today(rid)
+    d1, d2, d3 = [(today - _td(days=n)).isoformat() for n in (3, 2, 1)]
+    calls = []
+
+    def sels(r, d):
+        calls.append(d.isoformat())
+        return [{"item": {"guid": "d1"}, "quantity": 2.0}, {"item": {"guid": "m1"}, "quantity": 5.0},
+                {"item": {"guid": "d2"}, "quantity": 1.0}, {"item": {"guid": "d1"}, "quantity": 1.0}]
+    monkeypatch.setattr(rpower, "fetch_order_selections", sels)
+    c = get_conn(db_path)
+    for d, sales in ((d1, 4000.0), (d2, 0.0), (d3, 5000.0)):
+        c.execute("INSERT INTO labor_daily_history (restaurant_id, date, sales, labor_cost) VALUES (?,?,?,?)",
+                  (rid, d, sales, 1000.0))
+    c.execute("INSERT INTO menu_items (restaurant_id, toast_guid, name, is_active) VALUES (?,?,?,1)", (rid, "d1", "Pretzel"))
+    pretzel = c.execute("SELECT id FROM menu_items WHERE toast_guid='d1'").fetchone()[0]
+    # the nightly job already recorded d3 - that row is the record
+    c.execute("INSERT INTO menu_item_sales (restaurant_id, menu_item_id, business_date, qty_sold) VALUES (?,?,?,?)",
+              (rid, pretzel, d3, 9.0))
+    c.commit()
+    c.close()
+
+    out = inventory_ledger.backfill_item_sales(rid, days=10)
+    assert calls == [d1]                        # the closed day and the recorded day are not re-read
+    assert out == {"days": 1, "rows": 2, "remaining": 0, "failed": 0}
+    c = get_conn(db_path)
+    got = {(r["name"], r["business_date"]): r["qty_sold"] for r in c.execute(
+        "SELECT mi.name, s.business_date, s.qty_sold FROM menu_item_sales s JOIN menu_items mi ON mi.id=s.menu_item_id "
+        "WHERE s.restaurant_id=?", (rid,))}
+    assert got == {("Pretzel", d1): 3.0, ("Smash Burger", d1): 1.0, ("Pretzel", d3): 9.0}
+    assert c.execute("SELECT COUNT(*) FROM ingredient_stock_events WHERE restaurant_id=?", (rid,)).fetchone()[0] == 0
+    c.close()
+    assert inventory_ledger.backfill_item_sales(rid, days=10)["days"] == 0     # nothing left to fill

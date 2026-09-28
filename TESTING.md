@@ -11,9 +11,9 @@ About 160 test files and 3,400 tests (`python3 -m pytest --collect-only -q | tai
 
 ## When the full suite *is* worth running
 
-- Immediately before a **push to `main`** for anything non-trivial (a genuine pre-flight check, once, not repeated per edit within the same task).
-- After a change to a **widely shared file** — `models.py`, `auth.py`, `ai_utils.py`, a shared template component used by every module — where the blast radius is genuinely unknown.
-- When explicitly asked for a full audit or a re-audit closing out a set of findings.
+- After an **audit, re-audit or fix round**, or a **big code change / large batch of changes** (many files, a refactor, a new module).
+- When explicitly asked.
+- **Not** before every push, and **not** after a few tweaks — those get the targeted test files that cover them, then push (Will, 9/15/26 and 9/28/26: the 4-5 minute suite after small changes "stalls productivity"). Touching a widely shared file (`models.py`, `auth.py`, `dashboard.html`) is not by itself a trigger: run the files that cover the change.
 
 Even then: run it **once**, not once "to be sure" and again "just to double check." If it's green, it's green.
 
@@ -26,7 +26,8 @@ python3 -m pytest tests/test_labor_module_ui.py -q -p no:warnings
 # One test by name, when iterating on a single fix
 python3 -m pytest tests/test_shift_quality.py::test_a_specific_case -q
 
-# Full suite — pre-push or full-audit only. Parallel across every core
+# Full suite — audits, fix rounds and big changes only (never a routine
+# pre-push step). Parallel across every core
 # (pytest-xdist, in requirements-dev.txt); --dist loadfile keeps a file's
 # tests on one worker, so module-scoped fixtures such as the app
 # subprocesses boot once per file. Each worker imports conftest on its own

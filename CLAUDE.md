@@ -136,10 +136,13 @@ A deletion is only "verified" when the trace is written down alongside it.
   whitelist, and `get_restaurant()`'s hydration. Miss the whitelist and writes
   silently no-op — `tests/test_models.py` now asserts every `al_*`/`alert_*`
   dataclass field is whitelisted.
-- **Targeted tests by default.** Run the full suite once before pushing, or
-  when asked — not after every edit — and always in parallel:
-  `python3 -m pytest -q -p no:warnings -n auto --dist loadfile` (~3 min;
-  a serial run is 10+). One suite at a time: two at once halve each other.
+- **Targeted tests by default — and before a push too.** The full suite
+  (~4-5 min) is NOT a pre-push step. Run it only after an audit or fix
+  round, a big code change, a large batch of changes, or when asked — never
+  after a few tweaks, never twice "to be sure" (Will, 9/15/26 and again
+  9/28/26: "it stalls productivity"). When it does run, in parallel:
+  `python3 -m pytest -q -p no:warnings -n auto --dist loadfile`. One suite
+  at a time: two at once halve each other.
 - **`get_restaurant()` is memoised per Flask request**, and only per request —
   outside one (scheduler, tests, scripts) it is uncached, deliberately, so a
   long-running job sees rows change under it. Any new write path to

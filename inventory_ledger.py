@@ -886,6 +886,13 @@ def discover_menu_items(restaurant_id: int, days: int = 7) -> dict:
                 continue
             seen[guid] = sel.get("displayName") or seen.get(guid) or guid
 
+    return _store_discovered(restaurant_id, seen, _mod)
+
+
+def _store_discovered(restaurant_id: int, seen: dict, _mod) -> dict:
+    """Upsert the items a scan saw ({guid: display name}) into menu_items -
+    discover_menu_items' second half, shared with backfill_item_sales."""
+    from models import db_conn
     # A POS whose sales name items only by id (RPOWER) names them from its
     # menu, with the store's own category and what each line is. Without it
     # every item was stored under its 19-digit id (owner, 9/28/26). A failed
@@ -945,6 +952,81 @@ def discover_menu_items(restaurant_id: int, days: int = 7) -> dict:
         conn.commit()
 
     return {"discovered": discovered, "updated": updated, "hidden": hidden, "total_seen": len(seen)}
+
+
+# One sync's worth of catch-up days (a POS day read each): the rest follow
+# on the next sync, since what is missing is re-derived every time.
+BACKFILL_MAX_DAYS_PER_RUN = 45
+
+
+def backfill_item_sales(restaurant_id: int, days: int = 60, max_days: int = BACKFILL_MAX_DAYS_PER_RUN) -> dict:
+    """Units sold per dish for the business days the nightly depletion job
+    never recorded - it records forward from the night it first runs, so a
+    newly connected POS had no dish history at all (Simple EJ's, 9/28/26:
+    RPOWER from 8/26, dish sales from none). A day counts as missing when the
+    archive shows sales that day (labor_daily_history) and menu_item_sales
+    has nothing for it. Units only: never ingredient depletion - replaying a
+    past day into the stock ledger would re-deplete stock a count already
+    settled. Items first sold in the window are named and classed from the
+    POS menu first (_store_discovered); only active menu items (dishes)
+    are recorded, as the nightly job does. Returns {days, rows, remaining,
+    failed}."""
+    import pos as _pos
+    from models import db_conn, get_conn
+
+    end = local_today(restaurant_id) - timedelta(days=1)
+    start = end - timedelta(days=max(1, int(days)) - 1)
+    conn = get_conn()
+    try:
+        have = {str(r[0])[:10] for r in conn.execute(
+            "SELECT DISTINCT business_date FROM menu_item_sales WHERE restaurant_id=? AND business_date BETWEEN ? AND ?",
+            (restaurant_id, start.isoformat(), end.isoformat())).fetchall()}
+        sold = [str(r[0])[:10] for r in conn.execute(
+            "SELECT date FROM labor_daily_history WHERE restaurant_id=? AND date BETWEEN ? AND ? AND sales > 0 "
+            "ORDER BY date", (restaurant_id, start.isoformat(), end.isoformat())).fetchall()]
+    finally:
+        conn.close()
+    missing = [d for d in sold if d not in have]
+    todo = missing[:max(0, int(max_days))]
+    if not todo:
+        return {"days": 0, "rows": 0, "remaining": 0, "failed": 0}
+    _name, _mod = _pos.connected_provider(restaurant_id)
+    per_day, seen, failed = {}, {}, 0
+    for d in todo:
+        try:
+            sels, _ = _pos.fetch_order_selections(restaurant_id, date.fromisoformat(d))
+        except Exception as e:
+            failed += 1
+            log.warning(f"[item_sales_backfill] rid={restaurant_id} {d}: {e}")
+            continue
+        qty = {}
+        for sel in sels:
+            g = (sel.get("item") or {}).get("guid")
+            if not g:
+                continue
+            qty[g] = qty.get(g, 0.0) + float(sel.get("quantity", 0) or 0)
+            seen.setdefault(g, sel.get("displayName") or g)
+        per_day[d] = qty
+    if seen:
+        _store_discovered(restaurant_id, seen, _mod)
+    rows = 0
+    with db_conn() as conn:
+        ids = {r["toast_guid"]: r["id"] for r in conn.execute(
+            "SELECT id, toast_guid FROM menu_items WHERE restaurant_id=? AND is_active=1 AND toast_guid IS NOT NULL",
+            (restaurant_id,)).fetchall()}
+        for d, qty in per_day.items():
+            for g, q in qty.items():
+                mid = ids.get(g)
+                if mid is None or q <= 0:
+                    continue
+                # Never over a row the nightly job wrote: it is the record.
+                conn.execute(
+                    "INSERT INTO menu_item_sales (restaurant_id, menu_item_id, business_date, qty_sold) "
+                    "VALUES (?,?,?,?) ON CONFLICT(restaurant_id, menu_item_id, business_date) DO NOTHING",
+                    (restaurant_id, mid, d, q))
+                rows += 1
+        conn.commit()
+    return {"days": len(per_day), "rows": rows, "remaining": len(missing) - len(todo), "failed": failed}
 
 
 def import_csv_to_ingredients(restaurant_id: int) -> dict:
