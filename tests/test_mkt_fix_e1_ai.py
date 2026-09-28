@@ -590,3 +590,15 @@ def test_the_margin_card_keeps_its_figure_and_the_post_never_sees_it(db, monkeyp
 def test_the_preview_comment_no_longer_claims_the_prompts_ask_for_two_versions():
     src = open(os.path.join(ROOT, "marketing_publish.py"), encoding="utf-8").read()
     assert "ask\n    # Claude for TWO versions" not in src and "loyalty_nudge and event_announcement ask" not in src
+
+
+def test_an_address_or_a_link_is_not_an_offer():
+    """Found merging the fix round: "deals" joined the one offer vocabulary,
+    and the matcher read it inside "deals@..." - a newsletter naming an email
+    address was refused as an offer (and for the wrong reason). Addresses and
+    links are masked before offers are read; the contact checks judge them."""
+    import response_validation as rv
+    assert rv.invented_offers("Write to deals@kitchen.test for a table.") == []
+    assert rv.invented_offers("Menu at https://kitchen.test/free-parking-deals") == []
+    assert rv.invented_offers("Grab our deals this week") == ["deals"]
+    assert rv.invented_offers("Half-price apps, see www.kitchen.test") == ["Half-price"]

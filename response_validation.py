@@ -1138,12 +1138,19 @@ def _roots(s) -> set:
     return {_root(w) for w in re.findall(r"[a-z][a-z']+", _norm_copy(s))}
 
 
+# An email address or a link is not an offer, whatever its letters spell:
+# "deals@kitchen.com" or ".../free-parking" named no deal (fix-round merge,
+# 9/28/26). Masked to spaces of the same length, so every span still lines
+# up with the text as written; the contact-detail checks judge them.
+_OFFER_MASK_RE = re.compile(r"(?:https?://|www\.)\S+|[\w.+-]+@[\w-]+(?:\.[\w-]+)+", re.I)
+
+
 def _offer_hits(text) -> list:
     """[(family, key, phrase, items, (start, end))] for every offer `text`
     states, in text order: the phrase as written, a key two phrasings of
     one offer share ("half-price" / "50% off" → half; "2-for-1" / "BOGO" →
     2for1; "$5 off"), for a free thing the words naming it, and its span."""
-    text = str(text or "")
+    text = _OFFER_MASK_RE.sub(lambda m: " " * len(m.group(0)), str(text or ""))
     hits, taken = [], []
 
     def add(a, b, fam, key, items=()):
