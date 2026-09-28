@@ -758,7 +758,7 @@ def test_hashtags_survive_the_markdown_stripper(rid, db_path, monkeypatch):
     monkeypatch.setattr(marketing, "create_with_retry", lambda *a, **kw: None)
     monkeypatch.setattr(
         marketing, "extract_text",
-        lambda m: "Truffle season just landed.\n\n#GiaMia #TruffleSeason #WoodFired")
+        lambda m: "Truffle season is here.\n\n#GiaMia #TruffleSeason #WoodFired")
 
     out = marketing.generate_content("instagram_post", "truffle", restaurant_id=rid)
 

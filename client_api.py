@@ -3957,7 +3957,10 @@ def _do_generate_content(restaurant_id, content_type, topic, from_calendar=False
     content_type = content_type or "instagram_post"
     topic = topic or ""
     try:
-        result = generate_content(content_type, topic, restaurant_id=restaurant_id)
+        # A calendar idea's angle was written by a model: the post is written
+        # from it, but it is never the owner's word for an offer (AI-2).
+        result = generate_content(content_type, topic, restaurant_id=restaurant_id,
+                                  topic_is_owner=not from_calendar)
     except Exception as e:
         # A budget stop says the account is paused, never "try again" (AI-11).
         from ai_utils import AIBudgetExceeded, user_facing_error

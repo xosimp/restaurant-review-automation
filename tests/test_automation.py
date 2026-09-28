@@ -511,19 +511,26 @@ def test_a_close_out_86_becomes_a_zero_count_and_a_callout_becomes_an_issue(db_p
 
 
 def test_the_quiet_night_push_carries_the_drafts_it_wrote(db_path, monkeypatch):
+    """The post is drafted; the guest text is not (AUX-5 / #38): a guest_sms
+    draft had no send path, so the text is written from Marketing's card for
+    the night in the Campaign Studio instead."""
     import strategy_jobs, marketing, marketing_drafts, guest_marketing
     rid = _rid(db_path, module_marketing=1)
     r = models.get_restaurant(rid, db_path=db_path)
-    monkeypatch.setattr(marketing, "generate_content", lambda ct, topic, restaurant_id=None: "Come in Tuesday!")
-    monkeypatch.setattr(guest_marketing, "draft_campaign_message", lambda *a, **k: "Tuesday special — reply YES")
+    asked = []
+    monkeypatch.setattr(marketing, "generate_content",
+                        lambda ct, topic, restaurant_id=None, topic_is_owner=True:
+                        asked.append(topic_is_owner) or "Come in Tuesday!")
+    monkeypatch.setattr(guest_marketing, "draft_campaign_message",
+                        lambda *a, **k: pytest.fail("the quiet-night job drafts no guest text"))
     saved = []
     monkeypatch.setattr(marketing_drafts, "save_draft", lambda rid_, body, **k: saved.append((body, k.get("content_type"))) or {"ok": True, "id": len(saved)})
     out = strategy_jobs._draft_quiet_night_fill(r, {"weekday": "Tuesday"}, db_path)
-    assert out == {"post_draft_id": 1, "sms_draft_id": 2}
-    assert saved == [("Come in Tuesday!", "instagram_post"), ("Tuesday special — reply YES", "guest_sms")]
-    # A model failure costs the drafts, never the heads-up.
+    assert out == {"post_draft_id": 1}
+    assert saved == [("Come in Tuesday!", "instagram_post")]
+    assert asked == [False], "the job's topic is ours, never the owner's word for an offer"
+    # A model failure costs the draft, never the heads-up.
     monkeypatch.setattr(marketing, "generate_content", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("budget")))
-    monkeypatch.setattr(guest_marketing, "draft_campaign_message", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("budget")))
     import ops
     monkeypatch.setattr(ops, "capture", lambda *a, **k: None)
     assert strategy_jobs._draft_quiet_night_fill(r, {"weekday": "Tuesday"}, db_path) == {}

@@ -11422,11 +11422,15 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="openBrandVoice()">Update brand voice<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
   </div>
   <div class="slabel" style="margin-top:14px">Content type</div>
-  <div class="ct-grid">{% for ct in ctypes %}
-    <div class="ct-btn {{'selected' if loop.first}}" data-type="{{ct.id}}" onclick="selectCt('{{ct.id}}',this)">
+  {# Content is social-only (Marketing audit AUX-4): a text or an email type
+     (marketing.CONTENT_TYPES channel) opens the Campaign Studio on that
+     channel instead of drafting here, where only Instagram, Facebook and
+     Google could publish it. The "popular" badge went (AUX-16): nothing
+     measured it. #}
+  <div class="ct-grid">{% for ct in ctypes %}{% set _ct_ch = ct.channel or 'social' %}
+    <div class="ct-btn {{'selected' if loop.first}}" data-type="{{ct.id}}" data-channel="{{_ct_ch}}" onclick="{% if _ct_ch == 'social' %}selectCt('{{ct.id}}',this){% else %}mktCtToStudio('{{ct.id}}'){% endif %}">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:4px">
         <div class="ct-label">{{ct.label}}</div>
-        {% if ct.id in ['instagram_post','google_promo'] %}<span style="font-size:8px;font-weight:700;background:var(--ember);color:white;padding:1px 5px;border-radius:8px;letter-spacing:.3px;flex-shrink:0">popular</span>{% endif %}
       </div>
       <div class="ct-desc">{{ct.description}}</div>
     </div>{% endfor %}
@@ -17238,6 +17242,8 @@ var laborLoaded=false,invLoaded=false,reviewInsightLoaded=false,sentimentTrendLo
 var _twTokens={};
 var _laborInsightFull=null,_invInsightFull=null;
 function postToInstagram(){
+  // A text or an email is never a post (AUX-4): it goes to the Studio.
+  if(!_mktIsSocial(selCt))return mktToStudio(_mktChannelOf(selCt),(document.getElementById('mktopic')||{}).value);
   // Read through _mktBody: a failed generation's message is never a caption.
   var content=_mktBody();
   if(!content)return toast('Generate content first','warning');
@@ -17261,6 +17267,7 @@ function postToInstagram(){
     });
 }
 function postToFacebook(){
+  if(!_mktIsSocial(selCt))return mktToStudio(_mktChannelOf(selCt),(document.getElementById('mktopic')||{}).value);
   var content=_mktBody();
   if(!content)return toast('Generate content first','warning');
   var btn=document.getElementById('fb-post-btn');
@@ -17355,7 +17362,42 @@ function _mktBody(){
   var text = (el.innerText || el.textContent || '').trim();
   return (text === 'Select a type and click Generate.') ? '' : text;
 }
+// Where each content type goes (marketing.CONTENT_CHANNELS): 'social', 'text'
+// or 'email'. The Content tab publishes social posts only; a text or an email
+// is written and sent from the Campaign Studio (Marketing audit AUX-4 / UX-3:
+// a win-back SMS or a "SUBJECT LINE: ... BODY:" email could be posted to
+// Facebook). guest_sms is the quiet-night job's old guest-text draft.
+var _MKT_CHANNEL = { {% for ct in ctypes %}{{ ct.id|tojson }}: {{ (ct.channel or 'social')|tojson }}, {% endfor %}'guest_sms': 'text' };
+function _mktChannelOf(type){ return _MKT_CHANNEL[type] || 'social'; }
+function _mktIsSocial(type){ return _mktChannelOf(type) === 'social'; }
+// A calendar idea's channel: its platform when that names SMS or Email (the
+// model can pair a platform with a type that does not match), else its type.
+function _mktIdeaChannel(i){
+  var p = String((i && i.platform) || '');
+  if (/\bsms\b|\btext\b/i.test(p)) return 'text';
+  if (/\bemail\b/i.test(p)) return 'email';
+  return _mktChannelOf(i && i.type);
+}
+// The Campaign Studio on one channel, the goal typed in: the Studio's own
+// entry (the Opportunity Feed's "Draft it", mktOppDraft) - the Campaigns tab,
+// that channel on, the goal planned and drafted there. With no goal it waits
+// on the Studio's prompt.
+function mktToStudio(channel, goal){
+  var g = String(goal || '').replace(/^\s+|\s+$/g, '');
+  if (window.mktOppDraft) { mktOppDraft({title: g, action: {channels: [channel], prompt: g}}); return; }
+  if (window.switchMktTab) switchMktTab('campaigns');
+  var p = document.getElementById('cp-prompt');
+  if (p) { p.value = g; try { p.focus(); } catch (e) {} }
+}
+// A text or email tile: the Studio, with whatever topic is typed as the goal.
+function mktCtToStudio(type){
+  var t = document.getElementById('mktopic');
+  mktToStudio(_mktChannelOf(type), t ? t.value : '');
+}
 function _mktPlatform(){
+  var ch = _mktChannelOf(selCt);
+  if (ch === 'text') return 'sms';
+  if (ch === 'email') return 'email';
   return selCt === 'google_promo' ? 'google' : 'instagram';
 }
 
@@ -17460,6 +17502,9 @@ function loadMktDrafts(){
       // A quiet-night draft still unapproved after its night is retired
       // ('expired'): shown as such, never offered for approval or sending.
       var expired = x.status === 'expired';
+      // A guest text or an email is sent from Campaigns, never approved here
+      // (AUX-5): Approve only flipped its status and sent nothing.
+      var toStudio = !_mktIsSocial(x.content_type);
       html += '<div style="padding:11px 0;border-bottom:1px solid var(--paper3)' + (expired ? ';opacity:.65' : '') + '">'
         + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'
         + '<span style="font-size:12px;font-weight:600;color:var(--ink)">' + _escHtml(x.topic || 'Untitled') + '</span>'
@@ -17468,9 +17513,10 @@ function loadMktDrafts(){
         + '<div style="font-size:12px;color:var(--ink3);line-height:1.5;margin-top:3px;max-height:38px;overflow:hidden">' + _escHtml(x.body) + '</div>'
         + _mktDraftByline(x)
         + (expired ? '<div style="font-size:11.5px;color:var(--ink3);margin-top:3px">Its night has passed, so it can\u2019t be approved or sent.</div>' : '')
+        + ((toStudio && !expired) ? '<div style="font-size:11.5px;color:var(--ink3);margin-top:3px">' + (approved ? 'Approving it sent nothing. ' : '') + 'A ' + (_mktChannelOf(x.content_type) === 'email' ? 'guest email' : 'guest text') + ' is sent from Campaigns.</div>' : '')
         + '<div style="display:flex;gap:14px;margin-top:6px">'
-        + (expired ? '' : '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="useMktDraft(' + x.id + ')">Open</button>')
-        + ((approved || expired) ? '' : '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="approveMktDraft(' + x.id + ')">Approve</button>')
+        + (expired ? '' : '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="useMktDraft(' + x.id + ')">' + (toStudio ? 'Open in Campaigns' : 'Open') + '</button>')
+        + ((approved || expired || toStudio) ? '' : '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="approveMktDraft(' + x.id + ')">Approve</button>')
         + '<button class="cbtn cbtn-text cbtn-inline cbtn-danger cbtn-sm" onclick="deleteMktDraft(' + x.id + ')">Delete</button>'
         + '</div></div>';
     }
@@ -17486,11 +17532,32 @@ function _mktDraftByline(x){
   if(!parts.length) return '';
   return '<div style="font-size:11.5px;color:var(--ink3);margin-top:3px">' + parts.join(' \u00b7 ') + '</div>';
 }
+function _mktDraftById(id){
+  var drafts = window._mktDrafts || [];
+  for(var i=0;i<drafts.length;i++){ if(drafts[i].id === id) return drafts[i]; }
+  return null;
+}
+// A saved guest text or email opens where it is sent: the Studio's email
+// with its words (cpUseEmailText, as "Send as newsletter" does), or its text
+// channel planned from the goal - a quiet-night draft ("Tuesday night guest
+// text") as "Fill Tuesday dinner", the Opportunity Feed's own prompt, so the
+// audience and the target day are set (AUX-5 / #38).
+function _mktDraftToStudio(x){
+  var ch = _mktChannelOf(x.content_type);
+  if (ch === 'email' && window.cpUseEmailText) {
+    if (window.switchMktTab) switchMktTab('campaigns');
+    cpUseEmailText(x.body || '');
+    return;
+  }
+  var m = /^(\w+) night guest text$/.exec(x.topic || '');
+  mktToStudio(ch, m ? ('Fill ' + m[1] + ' dinner') : (x.topic || ''));
+}
 function useMktDraft(id){
   var drafts = window._mktDrafts || [];
   for(var i=0;i<drafts.length;i++){
     if(drafts[i].id === id){
       var x = drafts[i];
+      if(!_mktIsSocial(x.content_type)){ _mktDraftToStudio(x); return; }
       document.getElementById('mkoutput').textContent = x.body;
       document.getElementById('mkoutput').removeAttribute('data-gen-error');
       document.getElementById('mkoutput').removeAttribute('data-mkt-posted');
@@ -17522,6 +17589,9 @@ function approveMktDraft(id){
   fetch('/api/marketing/drafts/' + id + '/approve', {method:'POST'})
     .then(apiJson).then(function(d){
       if(d.ok){ toast('Approved','success'); loadMktDrafts(); }
+      // A guest text or email: approving sends nothing, so it opens in the
+      // Studio, where it is sent (marketing_drafts.approve_draft, AUX-5).
+      else if(d.code === 'send_from_campaigns' && _mktDraftById(id)){ toast(d.error,'warning'); _mktDraftToStudio(_mktDraftById(id)); }
       else toast(d.error || 'Could not approve','error');
     }).catch(function(){});
 }
@@ -17533,6 +17603,8 @@ function deleteMktDraft(id){
 
 // ── Scheduling ──────────────────────────────────────────────────────────────
 function openMktSchedule(){
+  // Only a post is scheduled to Instagram, Facebook or Google (AUX-4).
+  if(!_mktIsSocial(selCt)) return mktToStudio(_mktChannelOf(selCt), (document.getElementById('mktopic')||{}).value);
   var body = _mktBody();
   if(!body) return toast('Generate content first','warning');
   var modal = document.getElementById('mkt-schedule-modal');
@@ -23263,6 +23335,9 @@ var _genInFlight=false;
 function genContent(fromCalendar){
   if(_genInFlight)return;
   var topic=document.getElementById('mktopic').value.trim();
+  // The Content tab writes posts. A text or an email is written and sent
+  // in the Campaign Studio (AUX-4), never drafted here beside Post buttons.
+  if(!_mktIsSocial(selCt)){mktToStudio(_mktChannelOf(selCt),topic);return;}
   if(!topic){toast('Enter a topic','warning');return;}
   var btn=document.querySelector('.cbtn-primary[onclick*="genContent"]');
   var box=document.getElementById('mkoutput');
@@ -23309,10 +23384,17 @@ function genContent(fromCalendar){
       var ggCta=document.getElementById('gg-cta-row');
       var photoRow=document.getElementById('mkt-photo-row');
       var _isGooglePost=selCt==='google_promo';
-      if(photoRow)photoRow.style.display=(_igConnected&&!_isGooglePost)?'flex':'none';
+      var _isPost=_mktIsSocial(selCt);
+      if(photoRow)photoRow.style.display=(_isPost&&_igConnected&&!_isGooglePost)?'flex':'none';
       // A Google Promo belongs on the Google listing, not Instagram — so that
       // one type swaps the destinations rather than adding a third button.
-      if(_isGooglePost){
+      // A text or an email gets no publish button at all (AUX-4).
+      if(!_isPost){
+        if(igBtn)igBtn.style.display='none';
+        if(fbBtn)fbBtn.style.display='none';
+        if(ggBtn)ggBtn.style.display='none';
+        if(ggCta)ggCta.style.display='none';
+      } else if(_isGooglePost){
         if(igBtn)igBtn.style.display='none';
         if(fbBtn)fbBtn.style.display='none';
         if(_ggConnected&&ggBtn)ggBtn.style.display='inline-block';
@@ -23386,14 +23468,13 @@ function downloadCal(){
   if(!ideas || !ideas.length){ toast('Generate the calendar first','warning'); return; }
   var rows = [['Day','Platform','Content Idea','Type']];
   ideas.forEach(function(i){
-    rows.push([
-      (i.day||'').replace(/,/g,' '),
-      (i.platform||'').replace(/,/g,' '),
-      (i.angle||'').replace(/,/g,' '),
-      (i.type||'').replace(/,/g,' ')
-    ]);
+    rows.push([i.day, i.platform, i.angle, i.type]);
   });
-  var csv = rows.map(function(r){ return r.map(function(cel){ return '"'+cel+'"'; }).join(','); }).join(String.fromCharCode(10));
+  // RFC 4180 (AUX-17): every field quoted, a quote inside doubled, commas
+  // and line breaks kept inside the quotes, CRLF between records. A model
+  // angle with a quote in it ("the 'Nonna' special") used to break the row.
+  var cell = function(v){ return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'; };
+  var csv = rows.map(function(r){ return r.map(cell).join(','); }).join(String.fromCharCode(13, 10));
   var blob = new Blob([csv], {type:'text/csv'});
   var url = URL.createObjectURL(blob);
   var a = document.createElement('a');
@@ -23504,6 +23585,11 @@ function generateFromCalIdx(idx) {
   document.querySelectorAll('.cal-card').forEach(function(c){c.style.outline='none';});
   var btns=document.querySelectorAll('.cal-card button[data-idx]');
   for(var b=0;b<btns.length;b++){if(btns[b].dataset.idx==idx){var card=btns[b].closest('.cal-card');if(card)card.style.outline='2px solid var(--ember)';break;}}
+  // An SMS or Email idea is written in the Campaign Studio on that channel,
+  // never in the post composer beside Instagram/Facebook (AUX-4). Its angle
+  // passed the same public-copy check as the week (marketing._validated_ideas).
+  var ch = _mktIdeaChannel(i);
+  if (ch !== 'social') { mktToStudio(ch, i.angle || ''); return; }
   generateFromCal(i.type || 'instagram_post', i.angle || '');
 }
 function calWriteForDay(day) {
@@ -23511,6 +23597,7 @@ function calWriteForDay(day) {
   if (t) { t.value = ''; t.placeholder = 'What should ' + day + '\u2019s post be about?'; t.scrollIntoView({behavior: 'smooth', block: 'center'}); setTimeout(function(){ try { t.focus({preventScroll: true}); } catch (e) {} }, 350); }
 }
 function generateFromCal(type, topic) {
+  if (!_mktIsSocial(type)) { mktToStudio(_mktChannelOf(type), topic); return; }
   document.querySelectorAll('.ct-btn').forEach(function(b){
     if(b.dataset&&b.dataset.type===type){ b.click(); }
   });

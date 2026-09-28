@@ -1988,16 +1988,19 @@ def run_demand_opportunity(db_path=DB_PATH, restaurants=None):
             ignored = quiet_night_ignored_weeks(r.id, db_path=db_path)
             alert_id = notify.record_notification(r.id, "demand_opportunity", db_path=db_path,
                                                   value=float(out["typical_sales"]))
-            # The fill, drafted: a post and a guest text for that night,
-            # saved as drafts behind the same approval as any other. The
-            # push used to ask "what could fill it?" — now it says "here's
-            # what I wrote; approve it". Drafting can fail (budget, model)
-            # without costing the owner the heads-up.
+            # The fill: a post for that night, saved as a draft behind the
+            # same approval as any other, and the guest text drafted where it
+            # can be sent — Marketing's card for the night opens the Campaign
+            # Studio (text channel, audience, target day). The push used to
+            # say "a post and a guest text are drafted — approve them", and
+            # approving the text sent nothing (AUX-5 / #38). Drafting can
+            # fail (budget, model) without costing the owner the heads-up.
             drafted = {} if ignored >= QUIET_NIGHT_IGNORED_LIMIT else _draft_quiet_night_fill(r, out, db_path)
             body = (f"About ${out['typical_sales']:,.0f}, {out['below_average_pct']:.0f}% under a "
                     f"typical day across {out['samples']} of them. ")
-            body += ("A post and a guest text are drafted — approve them from Marketing."
-                     if drafted else "Two days to do something about it.")
+            body += (f"A post is drafted, and Marketing's Fill {out['weekday']} card writes the guest text."
+                     if drafted else
+                     f"Two days to do something about it: Marketing's Fill {out['weekday']} card writes the text.")
             # Its measured confidence and the date the sales run through,
             # on the push itself (T1).
             conf = quiet_night_confidence(r.id, qn_key, out, db_path=db_path)
@@ -2016,7 +2019,9 @@ def run_demand_opportunity(db_path=DB_PATH, restaurants=None):
             push.fire_push(
                 r.id, "demand_opportunity",
                 f"{out['weekday']} is usually your quietest night", body,
-                data={"ask_prompt": f"What could fill {out['weekday']} night?", **drafted,
+                # It opens Marketing, where the post and the night's card are
+                # (it used to open Ask on "What could fill …?").
+                data={"nav": "marketing", **drafted,
                       "alert_id": alert_id, "surface": "alert_push", "answerable": ans,
                       **({"rec_key": rec["key"]} if ans else {})},
                 db_path=db_path, user_ids=audience,
@@ -2062,6 +2067,9 @@ def quiet_night_confidence(restaurant_id, key, out, db_path=DB_PATH) -> dict:
 # Drafted-and-ignored weeks in a row after which the fill is no longer drafted.
 QUIET_NIGHT_IGNORED_LIMIT = 2
 # The topic suffixes _draft_quiet_night_fill writes — how its drafts are known.
+# It no longer drafts the guest text (AUX-5); _QN_SMS_SUFFIX stays so the
+# guest-text drafts written before still expire and still count as a week's
+# drafts (expire_quiet_night_drafts, quiet_night_ignored_weeks).
 _QN_POST_SUFFIX = " night — a reason to come in this week"
 _QN_SMS_SUFFIX = " night guest text"
 # A quiet-night draft is about a night two days after it was written; a day
@@ -2141,31 +2149,36 @@ def expire_quiet_night_drafts(restaurant_id, db_path=DB_PATH) -> int:
 
 
 def _draft_quiet_night_fill(r, out, db_path):
-    """Draft the post and the text that would fill the quiet night. Returns
-    {"post_draft_id", "sms_draft_id"} for whatever was saved, {} if neither."""
+    """Draft the post that would fill the quiet night. Returns
+    {"post_draft_id"} when it was saved, {} if not.
+
+    It used to draft a guest text too (content_type 'guest_sms', campaign
+    type "slow_day"), and that text dead-ended (Marketing audit AUX-5 /
+    AI-5 / #38): no client could send a guest_sms draft, Approve only flipped
+    its status, Open loaded it into the social composer, and "slow_day" was
+    not a campaign prompt at all (it fell back to "general"). An owner
+    approved it and believed guests had been texted. The text is now drafted
+    where it can be sent: the push opens Marketing, whose Opportunity Feed
+    card for the same night ("Fill Tuesday dinner") drafts it in the
+    Campaign Studio with the text channel, the audience and the target day
+    set - the fill-a-night plan (guest_marketing.plan_campaign), measured by
+    the slow-day tracker. The post stays a draft here: it has a real publish
+    path from the Content tab."""
     import ops
     saved = {}
     weekday = out.get("weekday") or "the quiet night"
     topic = f"{weekday}{_QN_POST_SUFFIX}"
     try:
         import marketing, marketing_drafts
-        body = marketing.generate_content("instagram_post", topic, restaurant_id=r.id)
+        # The topic is ours, not the owner's: nothing in it is an offer
+        # source (AI-2).
+        body = marketing.generate_content("instagram_post", topic, restaurant_id=r.id, topic_is_owner=False)
         if body and body.strip():
             res = marketing_drafts.save_draft(r.id, body.strip(), content_type="instagram_post", topic=topic)
             if res.get("ok"):
                 saved["post_draft_id"] = res["id"]
     except Exception as e:
         ops.capture(e, job="quiet_night_post", context=f"restaurant_id={r.id}")
-    try:
-        import guest_marketing, marketing_drafts
-        msg = guest_marketing.draft_campaign_message(r, campaign_type="slow_day", topic=topic)
-        if msg and msg.strip():
-            res = marketing_drafts.save_draft(r.id, msg.strip(), content_type="guest_sms",
-                                              topic=f"{weekday}{_QN_SMS_SUFFIX}")
-            if res.get("ok"):
-                saved["sms_draft_id"] = res["id"]
-    except Exception as e:
-        ops.capture(e, job="quiet_night_sms", context=f"restaurant_id={r.id}")
     return saved
 
 

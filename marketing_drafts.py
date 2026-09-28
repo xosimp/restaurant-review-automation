@@ -133,6 +133,22 @@ def approve_draft(draft_id, restaurant_id, *, user_id=None, role=None,
                 "error": "Ask the main account to approve this before it goes out."}
     conn = get_conn(db_path)
     try:
+        # Approval releases a POST to be published. A guest text or an email
+        # (the quiet-night job's old 'guest_sms' drafts, a saved Re-engagement
+        # text or Weekly email) has no publish step after it: approving one
+        # flipped its status and sent nothing, and the owner believed guests
+        # had been texted (Marketing audit AUX-5 / #38). Those are sent from
+        # the Campaign Studio, and the refusal says so.
+        row = conn.execute("SELECT content_type FROM marketing_drafts WHERE id=? AND restaurant_id=?",
+                           (draft_id, restaurant_id)).fetchone()
+        if row is not None:
+            from marketing import content_channel
+            channel = content_channel(row["content_type"])
+            if channel != "social":
+                return {"ok": False, "code": "send_from_campaigns", "channel": channel,
+                        "error": ("A guest text isn't approved here — open it in Campaigns to send it."
+                                  if channel == "text" else
+                                  "An email isn't approved here — open it in Campaigns to send it.")}
         n = conn.execute(
             "UPDATE marketing_drafts SET status='approved', approved_by=?, "
             "approved_at=datetime('now'), updated_at=datetime('now') "

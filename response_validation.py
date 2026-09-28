@@ -156,8 +156,13 @@ THE RULES (codes are stable; PROMPT_LIBRARY.md → Response Validation):
      responsibility, inspection and compliance claims, comps ("on me",
      "% off", "free"), "fixed / won't happen again / make it right /
      guarantee", awards ("voted", "#1", "best in", "award-winning",
-     "famous") and offers the owner never wrote, the never-say list,
-     ai_guard.check_public_reply / check_marketing_copy          refuse
+     "famous") and offers the owner never wrote (one vocabulary for every
+     public surface: invented_offers), the never-say list,
+     ai_guard.check_public_reply / check_marketing_copy; on the marketing
+     surfaces (social_post, calendar_idea, guest_sms) also a price, time,
+     date, event, new / back / better / changed claim, link or phone
+     number the owner's words don't state (invented_specifics) and a
+     sign-off nobody named (invented_signoff)                    refuse
   I1 injection residue, a model-written "UNVERIFIED:" marker, and (on
      unattended owner surfaces) a six-word echo of untrusted text
                                                  drop (public: refuse)
@@ -1036,11 +1041,8 @@ _P1 = [
     ("inspection or compliance claim", re.compile(
         r"\b(?:health\s+inspection|passed\s+(?:our|the|a|every)\s+\w*\s*inspection|(?:fully\s+)?compliant|"
         r"(?-i:\bADA\b)|up\s+to\s+code|health\s+code|certified\s+(?:kitchen|safe))\b", re.I), False),
-    ("comp or discount offer", re.compile(
-        r"\b(?:(?:dinner|lunch|brunch|drinks?|round|dessert|meal|coffee|appetizer|glass|next\s+\w+|it|that|this)"
-        r"(?:\s+is|\s+are|\s+will\s+be|['’]s)?\s+on\s+(?:me|us)|on\s+the\s+house|\d{1,3}\s?(?:%|percent)\s+off|buy\s+you\s+a\s+(?:drink|round|coffee|"
-        r"dessert)|(?:is|are|will\s+be)\s+free|free\s+(?:drink|dessert|meal|round|glass|appetizer|entr[eé]e|coffee|"
-        r"dinner|lunch|brunch)|complimentary|bogo|buy\s+one,?\s+get)\b", re.I), True),
+    # "comp or discount offer" is the shared offer vocabulary below
+    # (OFFER_LABEL, invented_offers) - one list for every public surface.
     ("promise the restaurant never made", re.compile(
         r"\b(?:has\s+been\s+(?:fixed|addressed|resolved)|made\s+sure|won['’]t\s+happen\s+again|will\s+not\s+happen\s+"
         r"again|never\s+happen\s+again|make\s+(?:it|this|things)\s+right|guarantee\w*)\b", re.I), False),
@@ -1055,6 +1057,399 @@ _P1 = [
     ("private guest detail", re.compile(r"\b(?:table\s+\d+|your\s+usual\b|your\s+(?:\d{1,2}(?::\d{2})?\s?[ap]m\s+)?"
                                         r"(?:\w+\s+)?reservation)\b", re.I), False),
 ]
+
+# ── public copy: one guard set for every public surface ─────────────────────
+#
+# Marketing audit AUX-1 / #16 / #17 (9/28/26). Five paths write copy the
+# public reads - the Content generator, the newsletter, the guest text, Ask's
+# proposals and the calendar - and each carried its own subset of the offer
+# words: the social post and the calendar knew "% off", "on us" and "free
+# dessert" but not "half price", "$5 off", "2-for-1" or "discount"; the guest
+# text and the newsletter knew those but not the plurals ("free desserts");
+# none read a price, a time, a date, an event or "back by popular demand"
+# the owner never wrote. A weekly email asked for "fall menu" came back
+# "Half-price apps Tuesday. — Sarah" and passed.
+#
+# One vocabulary now. On every public surface (P1) an offer is the owner's to
+# make: invented_offers. On the marketing surfaces (social_post,
+# calendar_idea, guest_sms) so is every price, time, date and event, anything
+# new / back / better / changed, any link, email address or phone number,
+# and the name a piece signs off with: invented_specifics. "The owner's
+# words" are ValidationContext.offer_source (profile, menu notes, the topic
+# they typed - never a model-written calendar angle); policy["given_text"]
+# is what the system itself handed the model as fact (today's date, the
+# holiday dates) - it may back a date, never an offer. PURE, like the rest.
+
+# Stamped on a calendar idea's verdict: a week checked under an older
+# vocabulary is checked again on read (marketing._revalidated).
+PUBLIC_COPY_VERSION = "pc1"
+MARKETING_SURFACES = frozenset({"social_post", "calendar_idea", "guest_sms"})
+OFFER_LABEL = "comp or discount offer"
+
+_DASHES = "\u2010\u2011\u2012\u2013\u2014"
+_SEP = r"[\s\-" + _DASHES + r"]*"          # "2-for-1", "2 for 1", "half-price", "half price"
+_OFFER_NUM = {"one": "1", "two": "2", "three": "3", "four": "4", "1": "1", "2": "2", "3": "3", "4": "4"}
+
+_OFFER_RES = (
+    # (family, pattern). The key a hit is compared on is built in _offer_hits.
+    ("pct", re.compile(r"(?<![\w.])(\d{1,3})\s?(?:%|percent\b|per\s+cent\b)\s*(?:off\b|discount)", re.I)),
+    ("money", re.compile(r"(?:\$\s?(\d+(?:\.\d{1,2})?)|(?<![\w.$])(\d+(?:\.\d{1,2})?)\s+(?:dollars|bucks))\s+off\b",
+                         re.I)),
+    ("half", re.compile(r"\bhalf" + _SEP + r"(?:price[ds]?|off)\b|\bhalf\s+the\s+price\b", re.I)),
+    ("multi", re.compile(r"(?<![\w.$])(one|two|three|four|[1-4])" + _SEP + r"(?:for|4)" + _SEP +
+                         r"(one|two|three|[1-3])(?![\w%:.])|\bbuy" + _SEP + r"(?:one|1),?" + _SEP + r"get(?:" + _SEP +
+                         r"(?:one|1)(?:\s+free)?)?\b|\bb\.?o\.?g\.?o\b", re.I)),
+    ("discount", re.compile(r"\bdiscount(?:s|ed)?\b", re.I)),
+    ("deal", re.compile(r"\bdeals\b|\b(?:happy\s+hour|drink|food|daily|weekly|lunch|dinner|special|late" + _SEP +
+                        r"night|combo|meal)\s+deal\b|\bon\s+sale\b|\b(?:reduced|discounted|special|sale)\s+prices?\b|"
+                        r"\b(?:bottomless|unlimited)\s+(?:mimosas?|brunch|drinks?|wings?|pasta|refills?|fries)\b|"
+                        r"\ball" + _SEP + r"you" + _SEP + r"can" + _SEP + r"(?:eat|drink)\b", re.I)),
+    ("giveaway", re.compile(r"\bgive" + _SEP + r"aways?\b|\braffles?\b|\bsweepstakes\b|\bprizes?\b|"
+                            r"\bwin\s+(?:a|an|free|two|2)\b", re.I)),
+    ("coupon", re.compile(r"\bcoupons?\b|\bpromo\s+codes?\b|\bvouchers?\b", re.I)),
+    ("free", re.compile(
+        r"\bon\s+the\s+house\b|\bcomplimentary\b|\bcomp(?:ed|['’]d)\b|\bfor\s+free\b|\bfree\s+of\s+charge\b|"
+        r"\b(?:eats?|drinks?|dine|dines)\s+free\b|(?:\b(?:is|are|will\s+be|comes?)\s+|['’](?:s|re)\s+)free\b(?![\-" +
+        _DASHES + r"])|\b(?:dinner|lunch|brunch|drinks?|round|dessert|meal|coffee|appetizer|glass|next\s+\w+|it|that|"
+        r"this)(?:\s+is|\s+are|\s+will\s+be|['’]s)?\s+on\s+(?:me|us)\b|\bbuy\s+you\s+a\s+(?:drink|round|coffee|"
+        r"dessert)\b|\b(?:our|my)\s+treat\b", re.I)),
+)
+# "free <thing>": the thing is read from the words after it. The word before
+# can make "free" a description, not an offer ("gluten free", "feel free");
+# so can the word after ("free time", "free to", "free-range").
+_FREE_ITEM_RE = re.compile(r"(?<![\w\-" + _DASHES + r"])free(?![\-" + _DASHES + r"])\s+([a-z][\w'’\-]*)"
+                           r"(?:\s+([a-z][\w'’\-]*))?", re.I)
+_FREE_BEFORE_SKIP = frozenset((
+    "gluten dairy nut nuts peanut sugar fat meat alcohol allergen cruelty hands care tax duty stress worry hassle "
+    "fuss cage crate smoke scent fragrance caffeine soy egg wheat grain carb salt msg lactose feel rent toll "
+    "commission trouble pain guilt additive preservative antibiotic hormone plastic waste grease set break "
+    "breaking run running roam roaming feeling").split())
+_FREE_AFTER_SKIP = frozenset("to from of time will spirit spirits spirited and or range flowing the a an".split())
+
+
+def _norm_copy(s) -> str:
+    """Lower-case, curly quotes straightened, dashes and hyphens as spaces."""
+    s = str(s or "").lower().replace("’", "'")
+    s = re.sub(r"[\-" + _DASHES + r"]+", " ", s)
+    return " ".join(s.split())
+
+
+def _roots(s) -> set:
+    return {_root(w) for w in re.findall(r"[a-z][a-z']+", _norm_copy(s))}
+
+
+def _offer_hits(text) -> list:
+    """[(family, key, phrase, items, (start, end))] for every offer `text`
+    states, in text order: the phrase as written, a key two phrasings of
+    one offer share ("half-price" / "50% off" → half; "2-for-1" / "BOGO" →
+    2for1; "$5 off"), for a free thing the words naming it, and its span."""
+    text = str(text or "")
+    hits, taken = [], []
+
+    def add(a, b, fam, key, items=()):
+        if any(a < y and x < b for x, y in taken):
+            return
+        taken.append((a, b))
+        hits.append((a, fam, key, text[a:b].strip(), tuple(items), (a, b)))
+
+    for fam, pat in _OFFER_RES:
+        for m in pat.finditer(text):
+            f, key = fam, fam
+            if fam == "pct":
+                key = "half" if int(m.group(1)) == 50 else f"{int(m.group(1))}%"
+                f = "half" if key == "half" else "pct"
+            elif fam == "money":
+                key = "$" + str(float(m.group(1) or m.group(2))).rstrip("0").rstrip(".")
+            elif fam == "multi":
+                a_, b_ = m.group(1), m.group(2)
+                key = (f"{_OFFER_NUM.get(a_.lower(), a_)}for{_OFFER_NUM.get(b_.lower(), b_)}"
+                       if a_ and b_ else "2for1")
+            add(m.start(), m.end(), f, key)
+    for m in _FREE_ITEM_RE.finditer(text):
+        before = re.findall(r"[a-z']+", text[max(0, m.start() - 24):m.start()].lower())
+        if before and before[-1] in _FREE_BEFORE_SKIP:
+            continue
+        first, second = (m.group(1) or "").lower(), (m.group(2) or "").lower()
+        if first in _FREE_AFTER_SKIP:
+            continue
+        if first == "for":
+            items, end = [], m.end()
+        else:
+            items = [first] + ([second] if second and second not in _FREE_AFTER_SKIP | {"for", "with", "on",
+                                                                                      "at", "in", "this"} else [])
+            end = m.end() if len(items) == 2 else m.end(1)
+        add(m.start(), end, "free", "free", items)
+    return [h[1:] for h in sorted(hits, key=lambda h: h[0])]
+
+
+def _offers_judged(text, source=""):
+    """[(phrase, span, owner_said)] for every offer in `text`."""
+    hits = _offer_hits(text)
+    if not hits:
+        return []
+    src = _norm_copy(source)
+    src_hits = _offer_hits(source)
+    keys = {h[1] for h in src_hits}
+    fams = {h[0] for h in src_hits}
+    src_roots = _roots(source)
+    out = []
+    for fam, key, phrase, items, span in hits:
+        if _norm_copy(phrase) and _norm_copy(phrase) in src:
+            ok = True
+        elif fam in ("pct", "money", "half", "multi"):
+            ok = key in keys
+        elif fam == "free":
+            ok = "free" in fams and (not items or any(_root(w) in src_roots for w in items))
+        else:
+            ok = fam in fams
+        out.append((phrase, span, ok))
+    return out
+
+
+def invented_offers(text, source="") -> list:
+    """The offers in `text` the owner never wrote: the phrases as written,
+    in text order. Allowed when the owner's words (`source`) state the same
+    offer - the phrase itself, or another phrasing of it ("half-price wine"
+    allows "50% off wine"; "20% off" never allows "30% off"; "free dessert"
+    allows "complimentary desserts", never "free drinks")."""
+    out = []
+    for phrase, _span, ok in _offers_judged(text, source):
+        if not ok and phrase not in out:
+            out.append(phrase)
+    return out
+
+
+# The specifics the marketing surfaces may state only from the owner's words.
+_COPY_PRICE_RE = re.compile(r"\$\s?(\d[\d,]*(?:\.\d{1,2})?)|(?<![\w.$])(\d[\d,]*(?:\.\d{1,2})?)\s+(?:dollars|bucks)\b",
+                            re.I)
+_COPY_PCT_RE = re.compile(r"(?<![\w.])(\d{1,3}(?:\.\d+)?)\s?(?:%|percent\b|per\s+cent\b)", re.I)
+_COPY_TIME_RE = re.compile(
+    r"(?<![\w:/])(\d{1,2})(?::([0-5]\d))?\s?(a\.?m\.?|p\.?m\.?)(?![a-z])"
+    r"|(?<![\w:/])(\d{1,2})(?::([0-5]\d))?(?=\s?(?:-|–|—|to)\s?\d{1,2}(?::[0-5]\d)?\s?(?:a\.?m|p\.?m))"
+    r"|(?<![\w:/])(\d{1,2}):([0-5]\d)(?![\w:])", re.I)
+_MONTHS = {m: i + 1 for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct",
+                                            "nov", "dec"))}
+_COPY_DATE_RE = re.compile(
+    r"(?<![\w/])(\d{1,2})/(\d{1,2})(?:/\d{2,4})?(?![\w/])"
+    r"|\b(jan|feb|mar|apr|may|jun|jul|aug|sept?|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b"
+    r"|\b(\d{1,2})(?:st|nd|rd|th)\b", re.I)
+_COPY_EVENTS = (
+    # (the event as the copy says it, what in the owner's words allows it)
+    (r"\btrivia\b", r"trivia"),
+    (r"\blive\s+(?:music|band|jazz|acoustic|entertainment|set|dj|performance)\b", r"\blive\b|\bband\b|music"),
+    (r"\bdjs?\b|\bdisc\s+jockey\b", r"\bdj"),
+    (r"\bkaraoke\b", r"karaoke"),
+    (r"\bopen\s+mic\b", r"open mic"),
+    (r"\bcomedy\s+(?:night|show|hour)\b|\bstand\s?up\s+comed", r"comed"),
+    (r"\bbingo\b", r"bingo"),
+    (r"\bdrag\s+(?:brunch|show|night|queens?)\b", r"\bdrag\b"),
+    (r"\b(?:wine|beer|whiske?y|bourbon|tequila|mezcal|sake|cocktail|spirits?)\s+(?:dinner|tasting|pairing|class|"
+     r"night|flight\s+night)s?\b", r"tasting|dinner|pairing|class|flight"),
+    (r"\btasting\s+(?:event|night|party)\b", r"tasting"),
+    (r"\b(?:cooking|cocktail|pasta|pizza|mixology|baking)\s+class(?:es)?\b|\bmasterclass\b", r"class"),
+    (r"\bpaint(?:ing)?\s+(?:and|&|n['’]?)\s+sip\b|\bsip\s+(?:and|&|n['’]?)\s+paint\b", r"paint"),
+    (r"\bpop-?ups?\b", r"pop ?ups?"),         # "pop-up"/"popup", never the verb ("pop up for a slice")
+    (r"\b(?:watch|viewing|game\s?day)\s+part(?:y|ies)\b", r"watch|viewing|game ?day"),
+    (r"\bcostume\s+(?:contest|party|parade)\b", r"costume"),
+    (r"\btap\s+takeover\b|\bmeet\s+the\s+(?:brewer|winemaker|maker|chef|farmer)\b", r"takeover|meet the"),
+    (r"\bguest\s+chefs?\b|\bchef['’]?s\s+table\b|\bcollab(?:oration)?\s+dinner\b", r"guest chef|chef'?s table|collab"),
+    (r"\b(?:halloween|holiday|christmas|new\s+year['’]?s(?:\s+eve)?|nye|anniversary|birthday|launch|release|block|"
+     r"dance|super\s+bowl)\s+part(?:y|ies)\b", r"part(?:y|ies)"),
+    (r"\bhappy\s+hours?\b", r"happy hour"),
+    (r"\bprix\s?fixe\b", r"prix ?fixe"),
+    (r"\btickets?\b|\brsvp\b", r"ticket|rsvp"),
+)
+_COPY_EVENT_RES = [(re.compile(p.replace(r"\s", r"[\s\-" + _DASHES + r"]"), re.I), re.compile(a, re.I))
+                   for p, a in _COPY_EVENTS]
+_NEW_NOUNS = (r"menus?|dish(?:es)?|items?|specials?|cocktails?|drinks?|flavou?rs?|chefs?|hours|location|spot|patio|"
+              r"look|recipes?|plates?|additions?|arrivals?|beers?|wines?|desserts?|brunch|lunch|dinner|seasonal|"
+              r"season|offerings?|sandwich(?:es)?|pizzas?|pasta|tacos?|burgers?|space|room|bar|kitchen|owners?|"
+              r"management|lights?|decor|interior|website|app|selection|line\s?up|options?|twist|takes?|creations?|"
+              r"release|batch|bottles?|taps?|pours?|salads?|bowls?|entr[eé]es?|apps?|appetizers?|sides?|sauces?|"
+              r"bread|pastr(?:y|ies)|coffee|roast|blend")
+_COPY_CHANGES = (
+    # new
+    (r"\b(?:all|brand)[\s\-" + _DASHES + r"]+new\b|\bnewly\s+\w+|\bnew(?![\s\-" + _DASHES + r"]+(?:years?\b|year['’]s|"
+     r"favou?rites?\b|faves?\b|friends?\b|faces?\b|week\b|month\b|day\b|to\s+you\b|england\b|york\b|orleans\b|mexico\b|"
+     r"jersey\b|haven\b))[\s\-" + _DASHES + r"]+(?:[\w'’]+\s+){0,2}?(?:" + _NEW_NOUNS + r")\b|\bintroduc(?:ing|es|ed)\b|"
+     r"\bdebut(?:s|ing|ed)?\b|\bjust\s+(?:added|launched|landed|dropped|arrived|opened|released)\b|"
+     r"\bnow\s+(?:open|serving|offering|pouring|available|delivering|booking|taking)\b|\bgrand\s+(?:re)?opening\b|"
+     r"\bre[\-" + _DASHES + r"]?opening\b|\bon\s+the\s+menu\s+now\b",
+     r"\bnew\b|\bnewly\b|introduc|launch|debut|\badded\b|opening|\bopen\b|now serving|now available|release"),
+    # back
+    (r"\b(?:is|are|['’]s|['’]re)\s+(?:finally\s+|officially\s+|so\s+)?back\b|\bback\s+(?:by\s+popular\s+demand|on\s+the\s+"
+     r"menu|in\s+stock|in\s+season|for\s+(?:the|a|another|one)\b)|\breturns?\s+(?:this|to|for|on|next|tonight|today|"
+     r"tomorrow)\b|\b(?:has|have)\s+returned\b|\bthe\s+return\s+of\b|\bcomeback\b",
+     r"\bback\b|return|comeback"),
+    # better
+    (r"\b(?:new\s+and\s+)?improved\b|\bbetter\s+than\s+ever\b|\bnow\s+(?:even\s+)?better\b|\bupgraded\b|"
+     r"\beven\s+better\b",
+     r"better|improv|upgrad"),
+    # changed
+    (r"\b(?:we['’]ve|we\s+have|has\s+been|have\s+been|just|recently)\s+(?:changed|updated|revamped|refreshed|redesigned|"
+     r"remodel(?:l)?ed|renovated|reimagined|expanded|extended)\b|\b(?:revamped|refreshed|redesigned|remodel(?:l)?ed|"
+     r"renovated|reimagined|updated|expanded|extended|changed)\s+(?:our\s+|the\s+)?(?:menu|space|patio|bar|dining\s+room|"
+     r"look|kitchen|hours|recipe|decor)\b|\bunder\s+new\s+(?:management|ownership)\b|\blimited[\s\-" + _DASHES +
+     r"]+(?:time|run|edition)\b|\bwhile\s+(?:it|they|supplies)\s+lasts?\b",
+     r"chang|updat|revamp|refresh|redesign|remodel|renovat|reimagin|expand|extend|limited|\blasts?\b"),
+)
+_COPY_CHANGE_RES = [(re.compile(p, re.I), re.compile(a, re.I)) for p, a in _COPY_CHANGES]
+_COPY_CONTACT_RE = re.compile(
+    r"https?://[^\s)]+|\bwww\.[^\s)]+|[\w.+-]+@[\w-]+\.[\w.]+|"
+    # a bare domain: Ask's link list (ask_cavnar_tools._LINK_RE), or any
+    # name.tld that carries a path
+    r"\b[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|co|us|biz|info|me|app|ly|link|site|online|shop|"
+    r"store|xyz|example|club|live|win|top|click|page|menu|restaurant|bar|cafe|pizza|test)(?:/[^\s)]*)?(?![\w.])|"
+    r"\b[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.[a-z]{2,12}/[^\s)]+|"
+    r"(?<![\w$])\+?\d[\d\-(). ]{8,}\d(?![\w%])", re.I)
+_SIGNOFF_RE = re.compile(r"^(?:[—–]|-{1,2}|~)\s*((?:the\s+)?[A-Z][\w'’&.]*(?:\s+(?:[A-Z&][\w'’&.]*|team|crew|family|"
+                         r"kitchen|staff|gang|folks))*)\s*[.!]?$")
+
+LABEL_PRICE = "a price or figure nobody gave"
+LABEL_TIME = "a time nobody gave"
+LABEL_DATE = "a date nobody gave"
+LABEL_EVENT = "an event nobody told Cavnar AI about"
+LABEL_CHANGE = "says something is new, back, better or changed"
+LABEL_CONTACT = "a link or phone number the owner didn't give"
+LABEL_SIGNOFF = "signs off as someone nobody named"
+
+
+def _num(raw):
+    try:
+        return round(float(str(raw).replace(",", "")), 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def _times_in(text) -> set:
+    out = set()
+    for m in _COPY_TIME_RE.finditer(str(text or "")):
+        h = m.group(1) or m.group(4) or m.group(6)
+        mi = m.group(2) or m.group(5) or m.group(7) or "00"
+        if h is not None:
+            out.add((int(h) % 12 or 12, int(mi)))
+    return out
+
+
+def _dates_in(text) -> tuple:
+    """({(month, day)}, {day}) for every date `text` states."""
+    pairs, days = set(), set()
+    for m in _COPY_DATE_RE.finditer(str(text or "")):
+        if m.group(1):
+            mo, d = int(m.group(1)), int(m.group(2))
+            if 1 <= mo <= 12 and 1 <= d <= 31:
+                pairs.add((mo, d))
+                days.add(d)
+        elif m.group(3):
+            d = int(m.group(4))
+            pairs.add((_MONTHS[m.group(3).lower()[:3]], d))
+            days.add(d)
+        elif m.group(5):
+            days.add(int(m.group(5)))
+    return pairs, days
+
+
+def _norm_contact(s) -> str:
+    s = str(s or "").lower().strip().rstrip(".,;:!?)/")
+    s = re.sub(r"^https?://", "", s)
+    return s[4:] if s.startswith("www.") else s
+
+
+def invented_specifics(text, source="", given="") -> list:
+    """[(label, phrase)] for every specific in public marketing copy the
+    owner's words (`source`) do not state: a price or percentage, a time, a
+    date (the system's own `given` text - today's date, the holiday dates -
+    may back a date), an event, a claim that something is new / back /
+    better / changed, a link, email address or phone number. Text order
+    within each kind; the kinds in that order."""
+    text, source, given = str(text or ""), str(source or ""), str(given or "")
+    out = []
+    src_fig = _g._figures(source)
+    # An offer the owner stated ("half-price wine" said as "50% off wine")
+    # is the offer check's to judge; its figure is not read again here.
+    full = text
+    for _phrase, (a, b), ok in _offers_judged(full, source):
+        if ok:
+            text = text[:a] + " " * (b - a) + text[b:]
+    for m in _COPY_PRICE_RE.finditer(text):
+        v = _num(m.group(1) or m.group(2))
+        if v is not None and v not in src_fig["money"] and v not in src_fig["bare"]:
+            out.append((LABEL_PRICE, m.group(0).strip()))
+    for m in _COPY_PCT_RE.finditer(text):
+        v = _num(m.group(1))
+        if v is not None and v not in src_fig["pct"]:
+            out.append((LABEL_PRICE, m.group(0).strip()))
+    known_times = _times_in(source)
+    src_numbers = {int(x) for x in re.findall(r"(?<![\d:.])(\d{1,2})(?![\d])", source)}
+    for m in _COPY_TIME_RE.finditer(text):
+        h = m.group(1) or m.group(4) or m.group(6)
+        mi = int(m.group(2) or m.group(5) or m.group(7) or 0)
+        t = (int(h) % 12 or 12, mi)
+        if t not in known_times and not (mi == 0 and int(h) in src_numbers):
+            out.append((LABEL_TIME, m.group(0).strip()))
+    pairs, days = _dates_in(source + "\n" + given)
+    for m in _COPY_DATE_RE.finditer(text):
+        got_pairs, got_days = _dates_in(m.group(0))
+        if (got_pairs and not got_pairs <= pairs) or (not got_pairs and not got_days <= days):
+            out.append((LABEL_DATE, m.group(0).strip()))
+    src_norm = _norm_copy(source)
+    for pat, allow in _COPY_EVENT_RES:
+        m = pat.search(text)
+        if m and not allow.search(src_norm) and _norm_copy(m.group(0)) not in src_norm:
+            out.append((LABEL_EVENT, m.group(0).strip()))
+    for pat, allow in _COPY_CHANGE_RES:
+        m = pat.search(text)
+        if m and not allow.search(src_norm) and _norm_copy(m.group(0)) not in src_norm:
+            out.append((LABEL_CHANGE, m.group(0).strip()))
+    # A link is the owner's when the owner's words name it or its site (the
+    # restaurant's own website, as Ask's proposals allow); an address or a
+    # phone number only when they wrote that one.
+    src_low = source.lower()
+    src_hosts = {_norm_contact(m.group(0)).split("/", 1)[0] for m in _COPY_CONTACT_RE.finditer(source)}
+    src_digits = re.sub(r"\D", "", source)
+    for m in _COPY_CONTACT_RE.finditer(text):
+        raw = m.group(0).strip()
+        if re.fullmatch(r"\+?[\d\-(). ]+", raw):
+            digits = re.sub(r"\D", "", raw)
+            if len(digits) >= 10 and digits not in src_digits:
+                out.append((LABEL_CONTACT, raw))
+            continue
+        norm = _norm_contact(raw)
+        if norm in src_low or ("@" not in norm and norm.split("/", 1)[0] in src_hosts):
+            continue
+        out.append((LABEL_CONTACT, raw))
+    return out
+
+
+def invented_signoff(text, names_allowed=(), source=""):
+    """The name a piece signs off with ("— Sarah" on its last line) when it
+    is nobody the restaurant named - neither its name, its sign-off name nor
+    a name in the owner's words - else None."""
+    lines = [ln.strip() for ln in str(text or "").strip().split("\n") if ln.strip()]
+    if not lines:
+        return None
+    m = _SIGNOFF_RE.match(lines[-1])
+    if not m:
+        return None
+    who = _norm_copy(m.group(1)).strip(" .!")
+    who = re.sub(r"^the\s+", "", who)
+    who_core = re.sub(r"\s+(?:team|crew|family|kitchen|staff|gang|folks)$", "", who).strip()
+    if not who_core:
+        return None
+    allowed = [_norm_copy(n) for n in names_allowed or () if n]
+    if any(a and (a in who or who_core in a) for a in allowed) or who_core in _norm_copy(source):
+        return None
+    return m.group(1)
+
+
+def owner_facts(source) -> list:
+    """Typed facts for the figures the owner's own words state - a price in
+    the menu notes, "20% off" in the topic - so the figure rules (F1) have
+    something to hold a public post's figures to (kind "price")."""
+    f = _g._figures(str(source or ""))
+    out = [Fact(f"owner.price.{i}", v, "$", "price") for i, v in enumerate(sorted(f["money"]))]
+    out += [Fact(f"owner.percent.{i}", v, "%", "price") for i, v in enumerate(sorted(f["pct"]))]
+    return out
 
 # B1's grammar (BM3-1: a phrase list let 9 of 9 probe phrasings through).
 # A group of OTHER businesses: the nouns, and up to two words describing
@@ -1795,6 +2190,19 @@ class _Run:
                     continue
                 self.emit("P1", "refuse", span=phrase, detail=label)
                 break
+        # The one offer vocabulary, every public surface (AUX-1 / #16).
+        offers = invented_offers(body, ctx.offer_source)
+        if offers:
+            self.emit("P1", "refuse", span=offers[0], detail=OFFER_LABEL)
+        if ctx.surface in MARKETING_SURFACES:
+            # Prices, times, dates, events, new/back/better/changed, links
+            # and phone numbers only from the owner's words (#17).
+            for label, span in invented_specifics(body, ctx.offer_source, ctx.policy.get("given_text") or ""):
+                self.emit("P1", "refuse", span=span, detail=label)
+                break
+            who = invented_signoff(body, ctx.names_allowed, ctx.offer_source)
+            if who:
+                self.emit("P1", "refuse", span=who, detail=LABEL_SIGNOFF)
         if ctx.surface == "reply_public":
             # An absolute about how the restaurant runs, in public, is a
             # claim nobody checked (NS2 H8): held for a person to read.

@@ -639,6 +639,8 @@ CAMPAIGN_PROMPTS = {
     "loyalty": "a short thank-you/loyalty text rewarding a regular guest",
     "general": "a short promotional text on the topic given",
 }
+# Campaign types other code names, and the prompt each one is.
+CAMPAIGN_TYPE_ALIASES = {"slow_day": "event", "quiet_night": "event"}
 
 
 # ── Audience segments ──────────────────────────────────────────────────────
@@ -769,26 +771,24 @@ def _too_soon(contact, now):
 CAMPAIGN_MAX_CHARS = 300
 
 
-# Offer shapes ai_guard.unsupported_commitments (written for review replies)
-# does not name, because a reply never runs a promotion and a text does.
-_EXTRA_OFFER_RE = re.compile(
-    r"\b(half[- ]?price|half[- ]?off|b\.?o\.?g\.?o\b|buy one,? get one|two[- ]for[- ]one|2[- ]for[- ]1|"
-    r"\$\s?\d+(?:\.\d\d)?\s+off|discount(?:ed)?|on the house)\b", re.I)
-
-
 def invented_offers(text, allowed_source=""):
     """Offers in guest-text copy that the owner never wrote down (M-24): a
-    freebie, a percentage or dollar off, half price, BOGO, a discount. An
-    offer whose words appear in the owner's own topic or menu notes is
-    theirs and is allowed. Returns the offending phrases."""
+    freebie, a percentage or dollar off, half price, BOGO, a discount - the
+    one offer vocabulary every public surface reads
+    (response_validation.invented_offers, Marketing audit AUX-1 / #16; this
+    module's own list missed the plurals and the social post's missed half
+    price, "$5 off" and 2-for-1) - plus the comps and commitments
+    ai_guard.unsupported_commitments names (a refund, a gift card, "from now
+    on"). An offer whose words appear in the owner's own topic or menu notes
+    is theirs and is allowed. Returns the offending phrases."""
+    import response_validation as rv
     from ai_guard import unsupported_commitments
-    found = list(unsupported_commitments(text or ""))
-    for m in _EXTRA_OFFER_RE.finditer(text or ""):
-        ph = m.group(0).strip()
-        if ph and ph not in found:
-            found.append(ph)
     src = re.sub(r"\s+", " ", (allowed_source or "").lower())
-    return [ph for ph in found if re.sub(r"\s+", " ", ph.lower()) not in src]
+    found = [ph for ph in unsupported_commitments(text or "") if re.sub(r"\s+", " ", ph.lower()) not in src]
+    for ph in rv.invented_offers(text or "", allowed_source or ""):
+        if ph not in found:
+            found.append(ph)
+    return found
 
 
 def _validate_sms(text, restaurant, offer_source, never_say):
@@ -829,6 +829,9 @@ def draft_campaign_message(restaurant, campaign_type="general", topic="", goal="
     from marketing import get_profile_for_restaurant
 
     p = get_profile_for_restaurant(restaurant.id)
+    # "slow_day" (the quiet-night job's type) is the fill-a-night plan,
+    # plan_campaign's "event" - it used to fall through to "general" (AUX-5).
+    campaign_type = CAMPAIGN_TYPE_ALIASES.get(campaign_type, campaign_type)
     intent = CAMPAIGN_PROMPTS.get(campaign_type, CAMPAIGN_PROMPTS["general"])
     never_clause = f" Never use these words or phrases: {p['never_say']}." if p.get("never_say") else ""
     # Same profile dict marketing.py's own generator uses menu_notes from —
@@ -857,6 +860,8 @@ def draft_campaign_message(restaurant, campaign_type="general", topic="", goal="
         "The owner's goal is theirs, not something to tell guests: never say or hint that a night is slow, "
         "quiet or empty, or that the restaurant wants to fill tables. "
         "Nothing is new, back, better or changed unless the owner's words say so. "
+        # The shared public-copy guard refuses these (AUX-1 / #17).
+        "No price, date, time or event that isn't written above. "
         "No markdown, no emoji spam (at most one emoji). No links or phone numbers. "
         "End naturally — no 'reply STOP to unsubscribe' (that's added automatically). "
         "Never invent an offer: no discount, percentage or dollars off, free item, half price, "

@@ -49,7 +49,8 @@ def test_supplier_order_resend_and_hash_are_never_the_models(rid):
 
 
 def test_every_body_field_is_shown_on_the_card(rid):
-    for name, inp in (("send_guest_campaign", {"message": "Patio's open tonight!", "target_day": "Friday"}),
+    for name, inp in (("send_guest_campaign", {"message": "Patio's open tonight!", "target_day": "Friday",
+                                               "segment": "all"}),
                       ("create_issue", {"title": "Walk-in at 45F", "detail": "Check the seal", "severity": "high"}),
                       ("set_data_retention", {"months": 12}),
                       ("publish_instagram_post", {"caption": "Fall menu is here", "topic": "fall"})):
@@ -61,7 +62,8 @@ def test_every_body_field_is_shown_on_the_card(rid):
 def test_a_field_outside_the_schema_is_dropped(rid):
     p = t.build_proposal("send_guest_campaign", {"message": "Hi!", "segment": "all", "type": "blast"},
                          restaurant_id=rid)
-    assert set(p["body"]) == {"message"}
+    # `segment` is the tool's own field now (AUX-2): the audience, never a silent "all".
+    assert set(p["body"]) == {"message", "segment"}
 
 
 def test_a_link_to_another_site_refuses_the_proposal(rid):
@@ -76,11 +78,12 @@ def test_a_link_to_another_site_refuses_the_proposal(rid):
 
 
 def test_a_link_to_the_restaurants_own_site_is_kept_and_shown(rid):
-    inp = {"message": "Fall menu is up!", "link_url": "https://pcafe.com/fall"}
+    inp = {"message": "Fall menu is up!", "link_url": "https://pcafe.com/fall", "segment": "all"}
     p = t.build_proposal("send_guest_campaign", inp, restaurant_id=rid)
     assert p["body"]["link_url"] == "https://pcafe.com/fall"
     assert {"key": "link_url", "label": "Link", "value": "https://pcafe.com/fall"} in p["fields_shown"]
-    assert t.build_proposal("send_guest_campaign", {"message": "Menu: www.pcafe.com/menu"}, restaurant_id=rid)
+    assert t.build_proposal("send_guest_campaign", {"message": "Menu: www.pcafe.com/menu", "segment": "all"},
+                            restaurant_id=rid)
 
 
 def test_the_publish_card_names_the_blockers_before_the_tap(db_path, rid):

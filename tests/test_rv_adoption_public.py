@@ -255,7 +255,7 @@ def test_a_post_offering_a_discount_nobody_set_is_refused(db, monkeypatch):
 def test_a_post_repeating_what_the_owner_is_known_for_passes(db, monkeypatch):
     import response_validation as rv
     rid = _restaurant(db, known_for="famous meatballs and Sunday gravy")
-    out = _post(db, monkeypatch, rid, "Our famous meatballs are back this week! #GiaMia")
+    out = _post(db, monkeypatch, rid, "Our famous meatballs, all week long! #GiaMia")
     assert out.startswith("Our famous meatballs") and rv.validation_of(out)["verdict"] == "pass"
 
 
@@ -284,7 +284,7 @@ def test_calendar_ideas_the_engine_refuses_are_dropped(db, monkeypatch):
     _week(monkeypatch, IDEAS)
     out = marketing.get_content_calendar_ideas(restaurant_id=rid)
     angles = [i["angle"] for i in out]
-    assert angles == ["Truffle pasta close-up", "Weekly email: the new fall menu"]
+    assert angles == ["Truffle pasta close-up"]   # "the new fall menu": a new thing nobody said (AUX-1)
     assert all(i["validation"]["version"] == rv.VERSION for i in out)
     # What was cached is what was shown.
     assert marketing.get_cached_calendar(rid) == out
@@ -295,4 +295,4 @@ def test_a_calendar_cached_before_the_engine_is_revalidated_on_read(db, monkeypa
     rid = _restaurant(db)
     marketing._cache_calendar(rid, [dict(i) for i in IDEAS])       # an old row: no verdict on any idea
     out = marketing.get_cached_calendar(rid)
-    assert [i["angle"] for i in out] == ["Truffle pasta close-up", "Weekly email: the new fall menu"]
+    assert [i["angle"] for i in out] == ["Truffle pasta close-up"]
