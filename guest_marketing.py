@@ -391,8 +391,11 @@ def guest_sms_window_label() -> str:
 
 def marketing_text_sql(alias="") -> str:
     """WHERE fragment (no leading AND) for "may receive a marketing text".
-    `alias` is the guest_contacts table alias in the caller's query."""
-    p = f"{alias}." if alias else ""
+    `alias` is the guest_contacts table alias in the caller's query (none:
+    the table's own name). Always qualified: inside the STOP subquery a bare
+    `phone` would be the opt-out table's own column, and any one STOP on file
+    would empty every audience."""
+    p = f"{alias or 'guest_contacts'}."
     return (f"{p}consent=1 AND COALESCE({p}unsubscribed,0)=0 AND NOT EXISTS ("
             f"SELECT 1 FROM guest_sms_optouts o_ WHERE o_.phone={p}phone "
             f"AND o_.restaurant_id IN (0, {p}restaurant_id))")
@@ -867,7 +870,11 @@ def _undo_stop(phone, message_sid=None, db_path=DB_PATH) -> list:
                             (phone,)).fetchall()
         held, resumed = set(), []
         for r in rows:
+            # The owner's unsubscribe stands unless the guest opted back in
+            # (resubscribed / confirmed) after it; the guest's own STOP to
+            # the shared number, recorded after it, does not undo it.
             last = conn.execute("SELECT event, source FROM guest_consent_events WHERE restaurant_id=? AND phone=? "
+                                "AND ((event='opted_out' AND source='owner') OR event IN ('resubscribed','confirmed')) "
                                 "ORDER BY id DESC LIMIT 1", (r["restaurant_id"], phone)).fetchone()
             if last and last["event"] == "opted_out" and last["source"] == "owner":
                 held.add(r["id"])
