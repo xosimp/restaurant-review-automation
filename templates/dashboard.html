@@ -6117,8 +6117,11 @@ svg:hover .hb-xh{opacity:1}
 .dr-miss{margin-top:16px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:13.5px;color:var(--ink3)}
 .dr-miss span.m{color:var(--hb-warn);background:var(--amber-bg);border-radius:999px;padding:4px 11px;font-weight:600}
 /* KPIs with direction, the manager's shift, tomorrow, predictions graded (9/25/26) */
-.dr-kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;margin-top:14px}
-.dr-kpi{padding:14px 16px;border-radius:12px;background:var(--hb-inner);border:1px solid var(--hb-line2);min-width:0}
+/* auto-fit, not auto-fill: four cards span the row (the All KPIs row under
+   them too) instead of leaving empty tracks beside them; 230px leaves the
+   value and its sparkline room side by side (owner, 9/28/26). */
+.dr-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-top:14px}
+.dr-kpi{padding:14px 16px;border-radius:12px;background:var(--hb-inner);border:1px solid var(--hb-line2);min-width:0;overflow:hidden}
 .dr-kpi .k{font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
 .dr-kpi .k small{font-weight:500;letter-spacing:0;text-transform:none}
 .dr-kpi .row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px}
@@ -6126,7 +6129,10 @@ svg:hover .hb-xh{opacity:1}
 .dr-kpi .chg,.dr-kpi .stk{font-size:13px;font-weight:600;margin-top:6px;color:var(--ink2)}
 .dr-kpi .chg.good,.dr-kpi .stk.good{color:var(--hb-good)}.dr-kpi .chg.bad,.dr-kpi .stk.bad{color:var(--hb-bad)}
 .dr-kpi .sub{font-size:12.5px;color:var(--ink2);margin-top:4px}.dr-kpi .sub.dim,.dr-tmr .sub.dim{color:var(--ink3)}
-.dr-spark{color:var(--ink3);flex:none}.dr-spark .dot{fill:var(--ember)}
+/* The sparkline gives way to its value: it shrinks (viewBox keeps its
+   shape) rather than running into the next card. */
+.dr-spark{color:var(--ink3);flex:0 1 84px;min-width:36px;height:auto}.dr-spark .dot{fill:var(--ember)}
+.dr-kpi .row>.v{flex:none}
 .dr-shift{margin-top:18px}.dr-shift-rows{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-top:10px}
 .dr-shift-rows .c{padding:12px 14px;border-radius:12px;background:var(--hb-inner);border:1px solid var(--hb-line2)}
 .dr-shift-rows .v{font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:600;color:var(--ink);line-height:1}
