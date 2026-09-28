@@ -751,16 +751,21 @@ def test_a_studio_send_on_any_channel_marks_its_card_implemented(db):
 
 
 def test_every_send_route_takes_the_cards_key_and_the_studio_passes_it():
+    # A text campaign is queued and sent later (slice C's durable queue), so
+    # its card key is stored on the campaign (guest_campaigns.rec_key) and
+    # marked by the tracker once texts actually went.
+    gm_src = open("guest_marketing.py", encoding="utf-8").read()
+    assert 'implemented_by_send(restaurant_id, rec_key, "text"' in gm_src and "rec_key=rec_key" in gm_src
+    assert 'rec_key=data.get("rec_key")' in open("mobile_api.py", encoding="utf-8").read()
     for path, needle in (("mobile_api.py", 'implemented_by_send(rid, data.get("rec_key"), "email"'),
-                         ("client_api.py", 'implemented_by_send(rid, data.get("rec_key"), "text"'),
                          ("client_api.py", 'implemented_by_send(rid, data.get("rec_key"), "social"'),
                          ("social_routes.py", 'data.get("rec_key"), "social"'),
                          ("mobile_api.py", 'data.get("rec_key"), "social"')):
         assert needle in open(path, encoding="utf-8").read(), (path, needle)
     assert open("social_routes.py", encoding="utf-8").read().count('data.get("rec_key"), "social"') == 2
     assert open("mobile_api.py", encoding="utf-8").read().count('data.get("rec_key"), "social"') == 2
-    send = _between("window.sendGuestCampaign = function(btn) {", "// A changed draft or audience is a new send")
-    assert send.count("rec_key: mktOppRecKey()") == 2 and "body.rec_key = mktOppRecKey();" in send
+    snap = _between("function cpSnapshot(ready) {", "function cpMarkSent(")
+    assert "mktOppRecKey()" in snap and snap.count("rec_key: rk") == 2 and "b.rec_key = rk;" in snap
     assert "function mktOppRecKey() { return (window._cp && _cp.recKey && _cp.prompt === _cp.recFor)" in SRC
 
 

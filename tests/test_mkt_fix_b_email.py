@@ -454,7 +454,7 @@ def test_the_retry_and_send_new_routes_and_their_web_twins(db, web, outbox):
 
 def test_the_studio_reports_sent_failed_and_queued_by_name_never_the_total():
     send = SRC[SRC.index("window.sendGuestCampaign = function(btn) {"):SRC.index("// A changed draft or audience is a new send")]
-    email = send[send.index("if (ready.email)"):send.index("if (ready.social)")]
+    email = send[send.index("if (snap.email)"):send.index("if (snap.social)")]
     assert "cpMailResult(d)" in email and "d.total" not in email
     res = SRC[SRC.index("function cpMailResult(d, noActs) {"):SRC.index("function cpMailAct(")]
     assert "d.total" not in res and "+d.sent" in res and "d.failed" in res and "d.queued" in res

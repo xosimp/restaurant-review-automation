@@ -27348,6 +27348,9 @@ window.cpUseEmailText = function(text) {
 // the head count, which is the decision (friction #41).
 function cpSnapshot(ready) {
   var ov = _cp.ov || {}, snap = {seg: _cp.seg};
+  // The Opportunity Feed card this draft began on, if any (OPP-10): every
+  // channel's send names it, and the card is marked acted on when one sends.
+  var rk = typeof mktOppRecKey === 'function' ? mktOppRecKey() : '';
   if (ready.text) {
     var message = _cpVal('guest-campaign-message'), hold = ov.sending_now === false;
     snap.text = {sig: cpSig('text'),
@@ -27356,11 +27359,11 @@ function cpSnapshot(ready) {
       // window they are queued for then rather than refused (CS-6).
       body: _cp.winback ? {message: message, hold: hold}
         : {message: message, segment: _cp.seg, type: _cp.type, target_day: _cp.targetDay || '', link_url: _cpVal('guest-campaign-link'), hold: hold,
-           rec_key: mktOppRecKey()}};
+           rec_key: rk}};
   }
   if (ready.email) {
     var body = {subject: _cpVal('guest-newsletter-subject'), body: _cpVal('guest-newsletter-body'), design: cpDesign(), segment: _cp.seg,
-                rec_key: mktOppRecKey()};
+                rec_key: rk};
     var addr = _cpVal('cp-addr-in'); if (addr && !ov.mailing_address_set) body.mailing_address = addr;
     snap.email = {sig: cpSig('email'), body: body};
   }
@@ -27372,7 +27375,7 @@ function cpSnapshot(ready) {
     snap.social = {sig: cpSig('social'), posts: cpSelPlats().map(function(p) {
       var b = p.key === 'instagram' ? {caption: cap, topic: _cp.prompt, image_url: _cp.photo ? _cp.photo.url : ''}
         : (p.key === 'facebook' ? {caption: cap, topic: _cp.prompt, media_id: mid} : {summary: cap, cta_type: '', cta_url: '', topic: _cp.prompt, media_id: mid});
-      b.rec_key = mktOppRecKey();
+      b.rec_key = rk;
       return {label: p.label,
         url: p.key === 'instagram' ? '/api/post-to-instagram' : (p.key === 'facebook' ? '/api/post-to-facebook' : '/api/post-to-google'),
         body: b};

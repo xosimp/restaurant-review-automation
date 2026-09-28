@@ -2189,17 +2189,10 @@ def _on_campaign_done(campaign_id, db_path=DB_PATH):
         return
     rid, sent = camp["restaurant_id"], int(camp["sent_count"])
     rec_key = camp["rec_key"] if "rec_key" in camp.keys() else None
-    if rec_key:
-        # Began on an Opportunity Feed card: that card was acted on, whatever
-        # it was about (re-audit OPP-10) - recorded once texts actually went.
-        try:
-            import marketing_opportunities
-            marketing_opportunities.implemented_by_send(rid, rec_key, "text", user_id=camp["created_by"], sent=sent)
-        except Exception as e:
-            print(f"[campaign] feed card not recorded for {rid}: {e}")
-    if camp["target_day"]:
-        track_campaign_outcome(rid, camp["target_day"], {"ok": True, "sent": sent}, camp["created_by"],
-                               rec_key=rec_key)
+    # The feed card it began on (OPP-10) and a fill-a-night tracker, both
+    # only now that texts actually went.
+    track_campaign_outcome(rid, camp["target_day"], {"ok": True, "sent": sent}, camp["created_by"],
+                           rec_key=rec_key)
     if camp["winback_draft_id"]:
         try:
             conn = get_conn(db_path)
@@ -2228,7 +2221,19 @@ def track_campaign_outcome(restaurant_id, target_day, result, user_id=None, rec_
     client_api._track_campaign_outcome."""
     day = str(target_day or "").strip().capitalize()
     res = result or {}
-    if day not in _WEEKDAY_TITLES or not res.get("ok") or not int(res.get("sent") or 0):
+    if not res.get("ok") or not int(res.get("sent") or 0):
+        return None
+    if rec_key:
+        # Began on an Opportunity Feed card: that card was acted on, whatever
+        # it was about (re-audit OPP-10) — recorded once texts actually went.
+        try:
+            import marketing_opportunities
+            marketing_opportunities.implemented_by_send(restaurant_id, rec_key, "text", user_id=user_id,
+                                                        sent=int(res.get("sent")))
+        except Exception as e:
+            import ops
+            ops.capture(e, job="campaign_card_implemented", context=f"restaurant_id={restaurant_id}")
+    if day not in _WEEKDAY_TITLES:
         return None
     # The texts went out: "text your list before a slow <day>" was
     # implemented (ROI #27) — recorded only if it was ever shown, and once:
