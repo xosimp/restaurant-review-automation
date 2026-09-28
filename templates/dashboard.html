@@ -1186,6 +1186,8 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .cp-ins .b{font-size:12.5px;color:var(--ink3)}
 .cp-camp .hd .kd,.cp-camp .th .kd{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--ember2)}
 .cp-camp.em{padding-top:0}
+.cp-camp.em .mx .r{grid-template-columns:112px minmax(0,1fr) 44px}
+.cp-camp .nt{font-size:12.5px;color:var(--ink3);margin-top:-6px}
 .cp-camp .th{margin:0 -22px;height:96px;background:linear-gradient(135deg,var(--cp-tint),var(--cp-soft)) center/cover no-repeat;display:flex;align-items:flex-end;padding:10px 22px;box-sizing:border-box}
 .cp-camp .th.img .kd{padding:3px 9px;border-radius:999px;background:rgba(0,0,0,.5);color:#f0ebe0}
 .cp-camp .acts{display:flex;gap:16px;flex-wrap:wrap;padding-top:4px;border-top:1px solid var(--cp-line)}
@@ -26313,8 +26315,9 @@ document.addEventListener('click', function(e) {
 // (guest_email.draft_newsletter, previewed through the server's own render
 // of the email guests get) and, when an account is connected, the social
 // post (marketing.generate_content). One audience, one photo, one send.
-// Every figure is measured (campaign_overview); an email's opens are a
-// floor, never a rate, and there is no open rate for texts. ES5 only.
+// Every figure is measured (campaign_overview); an email's opens are as
+// recorded (Apple Mail auto-opens included), never "at least", and there is
+// no open rate for texts. ES5 only.
 var _gcLoaded = false;
 var _cp = {ov: null, segs: [], seg: 'all', type: 'general', prompt: '', goal: '', targetDay: null,
            winback: null, hist: [], mail: [], diag: null, armed: null, planned: false, ready: {},
@@ -26733,7 +26736,7 @@ window.cpPaint = function() {
   var eft = _cpEl('cp-email-ft');
   if (eft && !_cp.err.email) {
     var lastMail = null; for (var j = 0; j < _cp.mail.length; j++) if (_cp.mail[j].opened != null && _cp.mail[j].sent >= 10) { lastMail = _cp.mail[j]; break; }
-    eft.innerHTML = lastMail ? 'Last email: at least <b class="hb-num">' + Math.round(lastMail.opened / lastMail.sent * 100) + '%</b> opened' : '';
+    eft.innerHTML = lastMail ? 'Last email: <b class="hb-num">' + lastMail.opened + '</b> opens recorded of <span class="hb-num">' + lastMail.sent + '</span> sent (includes Apple Mail auto-opens)' : '';
   }
   // Social
   var plats = cpSocialPlats(), sel = cpSelPlats(), cap = _cpVal('cp-so-caption');
@@ -26915,11 +26918,12 @@ window.sendGuestCampaign = function(btn) {
     var addr = _cpVal('cp-addr-in'); if (addr && !ov.mailing_address_set) body.mailing_address = addr;
     _cpPost('/api/guest-newsletter', body).then(function(d) {
       if (d && d.ok) {
-        line(true, (d.queued ? 'Emailing ' : 'Emailed ') + _cpPlural(d.total || 0, 'guest') + (d.queued ? ', the rest over the next few minutes' : ''));
+        line(!d.failed, cpMailResult(d));
         if (_cp.ov) _cp.ov.mailing_address_set = true;
-      } else line(false, 'Email: ' + _escHtml((d && d.error) || 'couldn’t send'));
+      } else if (d && d.already_sent) line(false, cpMailResult(d));
+      else line(false, 'Email: ' + _escHtml((d && d.error) || 'couldn’t send'));
       next();
-    }).catch(function() { lost = true; line(false, 'Email: the connection dropped. The same email sent again resumes it and mails nobody twice.'); next(); });
+    }).catch(function() { lost = true; line(false, 'Email: the connection dropped. Performance shows what went out; sending the same email again today mails nobody twice.'); next(); });
   });
   if (ready.social) cpSelPlats().forEach(function(p) {
     steps.push(function(next) {
@@ -26945,6 +26949,52 @@ window.sendGuestCampaign = function(btn) {
 document.addEventListener('input', function(e) {
   var b = _cpEl('guest-send-btn'), bl = _cpEl('cp-builder');
   if (b && bl && e.target && bl.contains(e.target) && b.classList.contains('sent')) { b.classList.remove('sent'); b.disabled = false; cpPaint(); }
+});
+
+// ── An email's send result, told straight (CS-3 / CS-15) ──────────────────
+// Sent, failed, skipped and queued each by name, never the total as sent; a
+// failure a retry can reach gets "Retry N failed"; the same email already
+// sent today says so, with an offer to send it to just the new subscribers.
+function cpMailBtn(attr, id, text) {
+  return '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" ' + attr + '="' + (+id || 0) + '">' + text + '</button>';
+}
+function cpMailResult(d, noActs) {
+  var bits = [], acts = '';
+  if (d.already_sent) {
+    bits.push('Email: ' + _escHtml(d.error || 'already sent today'));
+    if (d.new_subscribers) acts += cpMailBtn('data-cp-mail-new', d.newsletter_id, 'Send to the ' + _cpPlural(+d.new_subscribers, 'new subscriber'));
+  } else {
+    if (+d.sent || !d.queued) bits.push((d.resumed ? 'Resumed · emailed ' : 'Emailed ') + _cpPlural(+d.sent || 0, 'guest'));
+    if (d.queued) bits.push('<span class="hb-num">' + d.queued + '</span> ' + (+d.sent ? 'more ' : '') + 'queued, going out in the background');
+    if (d.added != null && !d.added && !d.queued) bits.push('nobody new to send to');
+  }
+  if (d.failed) bits.push('<span class="hb-num">' + d.failed + '</span> failed');
+  if (d.skipped) bits.push('<span class="hb-num">' + d.skipped + '</span> skipped (unsubscribed or suppressed)');
+  if (d.retryable) acts += cpMailBtn('data-cp-mail-retry', d.newsletter_id, 'Retry ' + d.retryable + ' failed');
+  return '<span>' + bits.join(' · ') + '</span>' + (noActs ? '' : acts);
+}
+function cpMailAct(btn, url) {
+  var ln = btn.closest ? (btn.closest('.ln') || btn.parentNode) : btn.parentNode;
+  btn.disabled = true; btn.textContent = 'Sending…';
+  _cpPost(url, {}).then(function(d) {
+    if (ln && ln.classList && ln.classList.contains('ln')) {
+      var good = !!(d && d.ok && !d.failed);
+      ln.className = 'ln' + (good ? '' : ' bad');
+      ln.innerHTML = '<i class="' + (good ? 'cv-ok' : 'cv-bad') + '" aria-hidden="true"></i>'
+        + (d && d.ok ? cpMailResult(d) : '<span>Email: ' + _escHtml((d && d.error) || 'couldn’t send') + '</span>');
+    } else {
+      btn.disabled = false; btn.textContent = d && d.ok ? 'Done' : 'Try again';
+      if (typeof toast === 'function') toast(d && d.ok ? cpMailResult(d, true).replace(/<[^>]+>/g, '') : ((d && d.error) || 'Couldn’t send'), d && d.ok && !d.failed ? 'success' : 'error');
+    }
+    setTimeout(function() { loadGuestHistory(); loadGuestOverview(); }, 1500);
+  }).catch(function() { btn.disabled = false; btn.textContent = 'Try again'; });
+}
+document.addEventListener('click', function(e) {
+  var t = e.target && e.target.closest ? e.target.closest('[data-cp-mail-retry],[data-cp-mail-new]') : null;
+  if (!t || t.disabled) return;
+  var retry = t.hasAttribute('data-cp-mail-retry'), id = +t.getAttribute(retry ? 'data-cp-mail-retry' : 'data-cp-mail-new');
+  if (!id) return;
+  cpMailAct(t, '/api/guest-newsletter/' + id + (retry ? '/retry' : '/send-new'));
 });
 
 // ── Performance: texts and emails, one list ────────────────────────────────
@@ -26996,14 +27046,21 @@ function cpPaintHistory() {
         + bar(sent, 'Tapped', c.link_token ? (c.clicks || 0) : null, 'var(--ember2)', 'no link')
         + bar(sent, 'Came back', c.visits_matched, 'var(--green)', c.attribution_through ? '0' : '…') + '</div>' + acts + '</div>';
     } else {
-      var es = +c.sent || 0, img = c.image_url ? ' style="background-image:url(' + _escHtml(c.image_url) + ')"' : '';
+      // Emailed is what was sent, failures their own row with a retry when
+      // one can reach them, and opens and clicks as recorded - Apple Mail's
+      // auto-opens push opens up, so never shown as a floor (CS-3, CS-7).
+      var es = +c.sent || 0, ef = +c.failed || 0, img = c.image_url ? ' style="background-image:url(' + _escHtml(c.image_url) + ')"' : '';
+      var eacts = c.retryable ? acts.replace('<div class="acts">', '<div class="acts">' + cpMailBtn('data-cp-mail-retry', c.id, 'Retry ' + c.retryable + ' failed')) : acts;
       html += '<div class="cp-card cp-camp em" style="animation-delay:' + (i * 0.05) + 's">'
         + '<div class="th' + (c.image_url ? ' img' : '') + '"' + img + '><span class="kd">Email</span></div>'
         + '<div class="hd"><span class="dt">' + when + '</span><span class="cp-chip">' + _escHtml(c.segment_label || 'Everyone consented') + '</span></div>'
         + '<div class="m"><b>' + _escHtml(c.subject || '') + '</b></div>'
         + '<div class="mx">' + bar(c.total || es, 'Emailed', es, 'var(--ink3)', '0')
-        + bar(es, 'Opened', c.opened, 'var(--ember2)', 'not tracked', '≥')
-        + bar(es, 'Clicked', c.clicked, 'var(--green)', 'not tracked', '≥') + '</div>' + acts + '</div>';
+        + (ef ? bar(c.total || ef, 'Failed', ef, 'var(--red)', '0') : '')
+        + (c.pending ? bar(c.total || c.pending, 'Queued', +c.pending, 'var(--ink3)', '0') : '')
+        + bar(es, 'Opens recorded', c.opened, 'var(--ember2)', 'not tracked')
+        + bar(es, 'Clicks recorded', c.clicked, 'var(--green)', 'not tracked') + '</div>'
+        + (c.opened != null ? '<div class="nt">Opens include Apple Mail auto-opens.</div>' : '') + eacts + '</div>';
     }
   }
   list.innerHTML = html;

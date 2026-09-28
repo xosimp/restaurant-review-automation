@@ -4153,6 +4153,20 @@ def guest_newsletter_api(current_user):
     return _m("mobile_guest_newsletter")(current_user)
 
 
+@client_bp.route("/api/guest-newsletter/<int:newsletter_id>/retry", methods=["POST"])
+@login_required
+def guest_newsletter_retry_api(current_user, newsletter_id):
+    """Web twin — the one body is mobile_api.mobile_guest_newsletter_retry."""
+    return _m("mobile_guest_newsletter_retry")(current_user, newsletter_id)
+
+
+@client_bp.route("/api/guest-newsletter/<int:newsletter_id>/send-new", methods=["POST"])
+@login_required
+def guest_newsletter_send_new_api(current_user, newsletter_id):
+    """Web twin — the one body is mobile_api.mobile_guest_newsletter_send_new."""
+    return _m("mobile_guest_newsletter_send_new")(current_user, newsletter_id)
+
+
 @client_bp.route("/api/guest-newsletter/draft", methods=["POST"])
 @login_required
 def guest_newsletter_draft_api(current_user):
@@ -7284,7 +7298,11 @@ def guest_newsletter_unsubscribe(token):
     GET only shows the page with a button; the POST (that button, or a mail
     client's RFC 8058 one-click) unsubscribes. A GET that wrote meant link
     scanners and prefetchers opted guests out (MOD-EML-5). The token is the
-    credential, so there is nothing for CSRF to protect."""
+    credential, so there is nothing for CSRF to protect.
+
+    The POST unsubscribes the ADDRESS the email went to from this
+    restaurant — every contact row carrying it, now or later — not one row
+    (guest_email.unsubscribe, CS-2)."""
     from guest_email import unsubscribe, restaurant_for_token
     if request.method != "POST":
         name = restaurant_for_token(token)
@@ -7292,7 +7310,8 @@ def guest_newsletter_unsubscribe(token):
             return render_template("unsubscribed.html", ok=False, restaurant_name=""), 404
         return render_template("unsubscribed.html", ok=True, confirm=True, audience="guest",
                                restaurant_name=name)
-    name = unsubscribe(token)
+    one_click = (request.form.get("List-Unsubscribe") or "").strip().lower() == "one-click"
+    name = unsubscribe(token, source="one_click" if one_click else "link")
     if not name:
         return render_template("unsubscribed.html", ok=False, restaurant_name=""), 404
     return render_template("unsubscribed.html", ok=True, audience="guest", restaurant_name=name)

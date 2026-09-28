@@ -136,7 +136,8 @@ def test_the_preview_is_the_restaurants_email_as_sent(db):
                              "button_url": "https://ej.test/book", "image_media_id": mid}, base="https://dash.test", db_path=db)
     h = out["html"]
     assert out["ok"] and out["subject"] == "Pull up a chair" and out["body"] == "The kitchen is on.\n\nCome by."
-    assert "SIMPLE EJ" in h.upper() and "Come see us" in h and "Hi Guest1 —" in h
+    # The greeting is a stand-in, never a real guest's name (CS-19).
+    assert "SIMPLE EJ" in h.upper() and "Come see us" in h and "Hi Alex —" in h and "Guest1" not in h
     assert 'href="https://ej.test/book"' in h and ">Book a table</a>" in h
     assert f'src="https://dash.test/m/tok{rid}.jpg"' in h
     assert "Unsubscribe" in h and "214 Main St" in h and "Ready this week" in h
@@ -164,6 +165,7 @@ def test_an_email_goes_to_the_audience_a_text_would(db, monkeypatch):
     _guest(db, rid, 1, visits=4)                  # a regular
     _guest(db, rid, 2, visits=1)
     _guest(db, rid, 3, visits=5, email=False)     # a regular with no email
+    monkeypatch.setattr(emails, "_resend_key", lambda: "k")
     sent = []
     monkeypatch.setattr(emails, "deliver", lambda payload, **kw: sent.append(payload) or emails.SendResult(True, message_id=f"m{len(sent)}"))
     out = ge.send_newsletter(rid, "Thanks for coming in.", subject="Thank you", segment="regulars",
@@ -181,6 +183,7 @@ def test_an_email_goes_to_the_audience_a_text_would(db, monkeypatch):
                                design={"headline": "The best part of our week", "button_label": "See the menu",
                                        "button_url": "https://ej.test/menu"}, db_path=db)
     assert again["newsletter_id"] == out["newsletter_id"] and len(sent) == 1   # the same press resumes
+    assert again["ok"] is False and again["already_sent"] is True               # and says it mailed nobody (CS-15)
     other = ge.send_newsletter(rid, "Thanks for coming in.", subject="Thank you", segment="all", db_path=db)
     assert other["newsletter_id"] != out["newsletter_id"]
 
@@ -193,14 +196,16 @@ def test_an_empty_audience_says_so(db):
     assert not out["ok"] and out["error"] == "Nobody in that audience is on your email list yet."
 
 
-def test_opens_are_a_floor_and_unknown_without_tracking(db, monkeypatch):
+def test_opens_are_as_recorded_and_unknown_without_tracking(db, monkeypatch):
     rid = _rid(db)
     _address(db, rid)
+    monkeypatch.setattr(emails, "_resend_key", lambda: "k")
     for i in range(4):
         _guest(db, rid, i)
     ids = iter(range(100))
     monkeypatch.setattr(emails, "deliver", lambda payload, **kw: emails.SendResult(True, message_id=f"msg{next(ids)}"))
     ge.send_newsletter(rid, "Hi", subject="S", db_path=db)
+    ge.run_newsletter_sends(db_path=db)             # three go inline now (CS-18); the tick sends the rest
     item = ge.newsletter_history(rid, db_path=db)[0]
     assert item["sent"] == 4 and item["opened"] is None and item["clicked"] is None     # nothing reports opens yet
     c = get_conn(db)
@@ -346,8 +351,10 @@ def test_the_send_is_two_presses_and_names_what_goes():
     assert "'/api/post-to-instagram'" in send and "image_url: _cp.photo ? _cp.photo.url : ''" in send
 
 
-def test_opens_show_as_a_floor_and_history_holds_both_channels():
+def test_opens_show_as_recorded_and_history_holds_both_channels():
     hist = _between("function cpPaintHistory() {", "\n}\n")
-    assert "bar(es, 'Opened', c.opened, 'var(--ember2)', 'not tracked', '≥')" in hist
+    # Recorded, never "at least" (CS-7): Apple Mail auto-opens push opens up.
+    assert "bar(es, 'Opens recorded', c.opened, 'var(--ember2)', 'not tracked')" in hist
+    assert "≥" not in hist and "at least" not in hist
     assert "data-cp-reuse=" in hist and "data-cp-improve=" in hist
     assert "'/api/guest-newsletters'" in SRC

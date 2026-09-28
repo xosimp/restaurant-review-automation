@@ -4104,7 +4104,43 @@ def mobile_guest_newsletter(current_user):
                                  mailing_address=data.get("mailing_address"),
                                  design=data.get("design") if isinstance(data.get("design"), dict) else None,
                                  segment=data.get("segment"))
-    return jsonify(**result), (200 if result.get("ok") else 400)
+    # 409: the same email already went out today and mailed nobody now; the
+    # reply says when, and how many subscribers it hasn't reached (CS-15).
+    return jsonify(**result), (200 if result.get("ok") else (409 if result.get("already_sent") else 400))
+
+
+@mobile_bp.route("/guest-newsletter/<int:newsletter_id>/retry", methods=["POST"])
+@mobile_login_required
+def mobile_guest_newsletter_retry(current_user, newsletter_id):
+    """Send again to the recipients of one newsletter whose send failed for
+    a reason a retry can fix (guest_email.retry_failed) — never a rejected,
+    suppressed or unsubscribed address. Idempotent (CS-3)."""
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    from ai_utils import ai_rate_limited
+    if ai_rate_limited(f"newsletterretry:{rid}", max_calls=6, window_secs=600):
+        return jsonify(ok=False, error="Too many retries — wait a few minutes."), 429
+    import guest_email as _ge
+    result = _ge.retry_failed(rid, newsletter_id)
+    return jsonify(**{k: v for k, v in result.items() if k != "status"}), result.get("status", 200)
+
+
+@mobile_bp.route("/guest-newsletter/<int:newsletter_id>/send-new", methods=["POST"])
+@mobile_login_required
+def mobile_guest_newsletter_send_new(current_user, newsletter_id):
+    """One newsletter to the subscribers in its audience it never reached —
+    the "Already sent — N new subscribers since" offer
+    (guest_email.send_to_new_subscribers). A second press adds nobody."""
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    from ai_utils import ai_rate_limited
+    if ai_rate_limited(f"newsletternew:{rid}", max_calls=4, window_secs=600):
+        return jsonify(ok=False, error="Too many sends recently — wait a few minutes."), 429
+    import guest_email as _ge
+    result = _ge.send_to_new_subscribers(rid, newsletter_id)
+    return jsonify(**{k: v for k, v in result.items() if k != "status"}), result.get("status", 200)
 
 
 @mobile_bp.route("/guest-newsletter/draft", methods=["POST"])

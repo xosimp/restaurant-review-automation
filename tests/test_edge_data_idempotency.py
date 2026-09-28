@@ -463,6 +463,7 @@ def test_concurrent_newsletters_keep_every_unsubscribe_link_valid(db_path, monke
         return True
 
     monkeypatch.setattr(emails, "deliver", deliver)
+    monkeypatch.setattr(emails, "_resend_key", lambda: "k")     # no key refuses the send up front (CS-3)
     send = lambda: guest_email.send_newsletter(rid, "BODY:\nTruffle season.", subject="News", db_path=db_path)
     _run_together(send, send)
     assert links, "nothing was sent"

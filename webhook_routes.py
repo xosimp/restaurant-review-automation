@@ -1200,19 +1200,41 @@ def _logged_send(message_id):
 
 
 def _unsubscribe_guest_email(address, restaurant_id):
+    """A complaint about a restaurant's guest mail unsubscribes the address
+    from that restaurant the way its own link does — by address, every row
+    with it now or later (guest_email.unsubscribe_address, CS-2) — beside
+    the cross-restaurant guest suppression the caller writes."""
     if not (address and restaurant_id):
         return
     try:
-        from models import get_conn as _gc
-        conn = _gc()
-        try:
-            conn.execute("UPDATE guest_contacts SET email_unsubscribed=1 "
-                         "WHERE restaurant_id=? AND LOWER(email)=LOWER(?)", (restaurant_id, address))
-            conn.commit()
-        finally:
-            conn.close()
+        import guest_email
+        guest_email.unsubscribe_address(restaurant_id, address, source="complaint")
     except Exception as e:
         print(f"[resend-webhook] guest unsubscribe failed: {e}")
+
+
+# The unsubscribe links Cavnar AI puts in its own mail: /e/ (a newsletter),
+# /ue/ (a guest email with no list), /u/ (owner product mail). Resend
+# rewrites every link for click tracking, the footer's too, so a guest
+# unsubscribing was counted as a click on the newsletter (CS-7 / EML-5).
+_UNSUBSCRIBE_PATH = r"^/(?:e|ue|u)/[^/]+/?$"
+
+
+def _is_unsubscribe_click(data) -> bool:
+    """Whether a Resend click event is on one of our unsubscribe links: the
+    path, on this platform's own host (config.base_url, which built it)."""
+    import re
+    from urllib.parse import urlparse
+    click = data.get("click") if isinstance(data, dict) else None
+    link = (click or {}).get("link") if isinstance(click, dict) else None
+    if not link:
+        return False
+    try:
+        u = urlparse(str(link).strip())
+        ours = urlparse(config.base_url()).netloc.lower()
+    except Exception:
+        return False
+    return bool(re.match(_UNSUBSCRIBE_PATH, u.path or "")) and (not ours or u.netloc.lower() == ours)
 
 
 @webhook_bp.route("/webhooks/resend", methods=["POST"])
@@ -1246,6 +1268,8 @@ def resend_webhook():
     # not erase the fact that the mail was delivered. See
     # models.mark_email_engagement for why these are a floor, not a rate.
     engagement = {"email.opened": "opened", "email.clicked": "clicked"}.get(etype)
+    if engagement == "clicked" and _is_unsubscribe_click(data):
+        engagement = None       # leaving the list is not a click on the email
     if engagement:
         from models import mark_email_engagement
         mark_email_engagement(message_id, engagement)

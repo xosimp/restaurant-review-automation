@@ -133,7 +133,9 @@ Campaigns (9/28/26, the web's Marketing → Campaigns tab, formerly the guest te
 - Campaign Studio (9/28/26): `GET /api/guest-overview` also returns `email_subscribers`, `mailing_address_set`,
   `insights` (`guest_marketing.campaign_insights`: at most three `{kind, figure, tone, text, basis}`, each measured —
   the audience whose texts brought the most guests back once 2 attributed campaigns went to it, the last email's opens
-  as a floor; never an estimate or money) and `last_campaign.channel` (`text` / `email`, the newer of the two).
+  as recorded — Apple Mail auto-opens included, never "at least"; never an estimate or money) and
+  `last_campaign.channel` (`text` / `email`, the newer of the two). An email's `last_campaign.sent` is what was sent,
+  never the recipient total.
   `GET /api/guest-segments` adds each segment's `email_count` (the same audience on the email list).
 - `POST /api/guest-newsletter/draft` / `/mobile/api/guest-newsletter/draft` `{prompt, topic?}` →
   `guest_email.draft_newsletter`: `subject`, `preheader`, `headline`, `body`, `button_label`, `button_url` (the
@@ -145,10 +147,28 @@ Campaigns (9/28/26, the web's Marketing → Campaigns tab, formerly the guest te
 - `POST /api/guest-newsletter` also takes `design` (`guest_email.clean_design`: `headline`, `preheader`,
   `button_label`, `button_url` — http(s) only — and `image_media_id`, one of THIS restaurant's `marketing_media`; an
   image URL is never accepted) and `segment` (a `SEGMENTS` key; the email goes to that audience's subscribers). Both
-  are part of the 24-hour same-newsletter check. The reply adds `segment`.
+  are part of the 24-hour same-newsletter check. The reply adds `segment`, and reports `sent`, `failed`,
+  `retryable` (failures a retry can reach), `skipped` (unsubscribed / suppressed since it was recorded) and `queued`
+  separately — never the total as sent; `resumed` when the press picked up an unfinished send. At most 3 go out
+  inside the request (bounded at 5s), the scheduler tick sends the rest. Refused up front, nothing recorded, with no
+  Resend key (`not_configured`). The same email again after it finished is a **409** `{already_sent, newsletter_id,
+  sent_on (M/D/YY), new_subscribers, error: "Already sent on 9/28/26 — 3 new subscribers since."}` (fix round B,
+  9/28/26). Recipients are one per address (lower-cased).
+- `POST /api/guest-newsletter/<id>/retry` / `/mobile/api/guest-newsletter/<id>/retry` → `guest_email.retry_failed`:
+  the failures a retry can fix (Resend 5xx/408/429, timeout, no key at the time) go back to pending and the first few
+  are sent; never a rejected (4xx), suppressed, unsubscribed or interrupted-mid-send recipient. Idempotent (a second
+  press retries 0). `{retried, sent, failed, retryable, skipped, total, queued}`; 404 for another restaurant's, 400
+  without a key, 429 past 6 in 10 minutes.
+- `POST /api/guest-newsletter/<id>/send-new` / mobile twin → `guest_email.send_to_new_subscribers`: the newsletter to
+  the subscribers in its audience it never reached, added to the same newsletter; a second press adds nobody.
+  `{added, sent, failed, …}`; 429 past 4 in 10 minutes.
+- `/e/<token>` (GET confirms, POST — the button or RFC 8058 one-click — unsubscribes): the token resolves to the
+  address that email went to (`guest_newsletter_recipients.email_token`, else the contact's current one) and that
+  ADDRESS is opted out of this restaurant's newsletters (`guest_email_optouts`), every contact row with it included.
 - `GET /api/guest-newsletters` / mobile twin → `newsletters`: `guest_email.newsletter_history` (subject, body, design,
-  `image_url`, `segment_label`, `total`, `sent`, `failed`, `pending`, and `opened` / `clicked` — a FLOOR, null unless
-  open tracking reports and the send kept its message id).
+  `image_url`, `segment_label`, `total`, `sent`, `failed`, `retryable`, `skipped`, `pending`, and `opened` /
+  `clicked` — as RECORDED: opens include Apple Mail auto-opens, a click on the unsubscribe link is not counted; null
+  unless open tracking reports and the send kept its message id).
 - `POST /api/guest-campaign/draft` (and its mobile twin) takes `prompt` (≤280 chars, the owner's goal): `guest_marketing.plan_campaign` picks the tone, audience and target day by keyword, and the reply adds `type`, `segment`, `goal`, `target_day`. A `type` sent with it wins (Rewrite keeps the tone). The prompt reaches the model as the goal, not as copy to include, and an offer it names may appear in the draft.
 
 Client adoption (parity round, 9/25/26): iOS sends `type` with `POST /mobile/api/guest-campaign/send` (it labels the tracked link; the phone's sends all read "campaign"), and reads `GET /mobile/api/marketing/diagnosis` (strategy_routes, both prefixes) under the brief. Reviews: iOS calls `POST /mobile/api/templates` `{title, body}` ("Save as template") and `DELETE /mobile/api/templates/<id>`, and `GET /mobile/api/review-request-stats` in the request sheet; the web's review request sends the optional `message` (≤200 chars) `_do_send_review_request` always read.

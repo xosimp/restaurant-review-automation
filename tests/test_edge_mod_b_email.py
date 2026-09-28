@@ -458,6 +458,7 @@ class _Killed(BaseException):
 def test_a_newsletter_interrupted_mid_send_mails_only_the_rest_when_resent(db_path, monkeypatch):
     """A6 Newsletter #7 / MOD-EML-3."""
     rid = _newsletter_world(db_path, n=5, name="Resume Co")
+    monkeypatch.setattr(emails, "_resend_key", lambda: "k")
     got = []
 
     def dies_after_two(payload=None, **k):

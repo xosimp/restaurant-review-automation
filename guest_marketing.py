@@ -169,6 +169,40 @@ def init_guest_marketing(db_path=DB_PATH):
         "ALTER TABLE guest_newsletters ADD COLUMN segment TEXT",
         "ALTER TABLE guest_newsletters ADD COLUMN segment_label TEXT",
         "ALTER TABLE guest_newsletter_recipients ADD COLUMN message_id TEXT",
+        # Guest email consent belongs to the ADDRESS, per restaurant (marketing
+        # fix round B, 9/28/26: MB-12 / CS-2). An unsubscribe was one contact
+        # row's flag, so the same address on a second row (a couple, two
+        # phones) kept getting mail and the public form could clear it. This
+        # outlives the row, like guest_sms_optouts. guest_email owns it.
+        """CREATE TABLE IF NOT EXISTS guest_email_optouts (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL,
+            email         TEXT    NOT NULL,
+            source        TEXT,
+            created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(restaurant_id, email)
+        )""",
+        "INSERT OR IGNORE INTO guest_email_optouts (restaurant_id, email, source) "
+        "SELECT restaurant_id, LOWER(TRIM(email)), 'backfill' FROM guest_contacts "
+        "WHERE email_unsubscribed=1 AND email IS NOT NULL AND TRIM(email) != ''",
+        # The unsubscribe token each email carried, so an old link reaches
+        # the address that email went to after the contact's address changed;
+        # and whether a failed send is worth retrying (not a rejected address).
+        "ALTER TABLE guest_newsletter_recipients ADD COLUMN email_token TEXT",
+        "CREATE INDEX IF NOT EXISTS idx_gnr_token ON guest_newsletter_recipients(email_token)",
+        "UPDATE guest_newsletter_recipients SET email_token = (SELECT g.email_token FROM guest_contacts g "
+        "WHERE g.id = guest_newsletter_recipients.contact_id "
+        "AND LOWER(TRIM(g.email)) = LOWER(TRIM(guest_newsletter_recipients.email))) "
+        "WHERE email_token IS NULL AND status='sent'",
+        "ALTER TABLE guest_newsletter_recipients ADD COLUMN retryable INTEGER",
+        "UPDATE guest_newsletter_recipients SET status='skipped' "
+        "WHERE status='failed' AND error LIKE 'recipient suppressed%'",
+        "UPDATE guest_newsletter_recipients SET retryable = CASE "
+        "WHEN error LIKE 'RESEND_API_KEY%' OR error LIKE 'flood guard%' THEN 1 "
+        "WHEN error = 'interrupted while sending' THEN 0 "
+        "WHEN error LIKE '%\"statusCode\":4%' AND error NOT LIKE '%\"statusCode\":408%' "
+        "     AND error NOT LIKE '%\"statusCode\":429%' THEN 0 ELSE 1 END "
+        "WHERE status='failed' AND retryable IS NULL",
         """CREATE TABLE IF NOT EXISTS optin_invite_runs (
             restaurant_id INTEGER NOT NULL,
             business_date TEXT NOT NULL,
@@ -1696,7 +1730,9 @@ def campaign_overview(restaurant_id, db_path=DB_PATH) -> dict:
     except Exception:
         mail = []
     if mail and (not last or str(mail[0].get("created_at") or "") > str(last.get("created_at") or "")):
-        last = {"created_at": mail[0]["created_at"], "sent_count": mail[0]["sent"] or mail[0]["total"],
+        # Sent, never the total: an email that failed to everyone read
+        # "Last campaign: 40 emailed" (CS-3).
+        last = {"created_at": mail[0]["created_at"], "sent_count": mail[0]["sent"],
                 "segment_label": mail[0].get("segment_label")}
         channel = "email"
     from time_utils import local_iso
@@ -1746,8 +1782,9 @@ def campaign_insights(restaurant_id, hist=None, db_path=DB_PATH) -> list:
       back    the audience whose texts brought the most guests back, once
               CAMPAIGN_RATE_MIN attributed campaigns of CAMPAIGN_RATE_MIN_SENT
               or more texts went to it
-      opened  the last email's opens, as a floor ("at least"), once open
-              tracking reports and it went to 10 or more
+      opened  the last email's opens recorded (Apple Mail auto-opens
+              included, so never "at least"), once open tracking reports
+              and it went to 10 or more
 
     An insight below its minimum is left out, not shown as zero."""
     out = []
@@ -1774,9 +1811,10 @@ def campaign_insights(restaurant_id, hist=None, db_path=DB_PATH) -> list:
     except Exception:
         last = None
     if last and last.get("opened") is not None:
-        out.append({"kind": "opened", "figure": f"≥{round(last['opened'] / last['sent'] * 100):g}%", "tone": "",
-                    "text": "opened your last email, at least",
-                    "basis": "Apple Mail counts some opens nobody made"})
+        # Recorded, not "at least" (CS-7): Apple Mail's auto-opens push it up.
+        out.append({"kind": "opened", "figure": f"{round(last['opened'] / last['sent'] * 100):g}%", "tone": "",
+                    "text": "opens recorded on your last email",
+                    "basis": "includes Apple Mail auto-opens"})
     return out[:3]
 
 
