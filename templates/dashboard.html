@@ -6975,6 +6975,9 @@ svg:hover .hb-xh{opacity:1}
       if(has(m,'pct')){var s='of net sales';if(isNum(m.target_pct))s+=' · '+esc(d.target_label||'target')+' '+hn(pct(m.target_pct,0));if(isNum(m.vs_target_pts))s+=' · '+hn((m.vs_target_pts>0?'+':(m.vs_target_pts<0?'−':''))+Math.abs(m.vs_target_pts).toFixed(1)+' pts');
         t+=tile('Labor',esc(pct(m.pct)),s,isNum(m.vs_target_pts)?(m.vs_target_pts>0?(d.target_source==='default'?'warn':'bad'):'good'):'');}
       if(has(m,'cost'))t+=tile('Labor cost',esc(money(m.cost)));
+      // The owner's night with the salaries' share beside the hourly figure
+      // (dsr.access._live_salaries); the % above stays hourly, against target.
+      if(isNum(m.salaried_total_pct))t+=tile('With salaries',esc(pct(m.salaried_total_pct)),hn(money(m.salaried_total_cost))+' · '+hn(money(m.salaried_cost))+' salaries');
       if(has(m,'hours'))t+=tile('Hours',esc(cnt(m.hours)));
       if(isNum(m.overtime_hours))t+=tile('Overtime',esc(cnt(m.overtime_hours))+'<small>hrs</small>','',m.overtime_hours>0?'bad':'');
       if(isNum(m.hours_after_6pm_share_pct)&&isNum(m.sales_after_6pm_share_pct))t+=tile('After 6pm',esc(pct(m.hours_after_6pm_share_pct,0))+'<small>of hours</small>','against '+hn(pct(m.sales_after_6pm_share_pct,0))+' of sales');
@@ -9449,6 +9452,8 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .lb2-bn .lb2-vs{display:inline-flex;align-items:baseline;gap:5px;padding-left:10px;border-left:1px solid var(--hb-line);font-size:14px;font-weight:600;color:var(--ink3)}
 .lb2-bn .lb2-vs .hb-num{font-size:18px;font-weight:600;color:var(--ink2)}
 .lb2-bn .lb2-gap{font-size:15px;font-weight:600;color:var(--hb-warn)}.lb2-bn .lb2-gap .hb-num{font-size:18px;color:var(--hb-warn)}.lb2-bn .lb2-gap.good{color:var(--hb-good)}
+/* Salaries beside hourly labor: a second-tier figure, never the headline. */
+.lb2-bn.lb2-sal .hb-num{font-size:24px;color:var(--ink2)}.lb2-bn.lb2-sal .pct{font-size:16px;color:var(--ink2)}.lb2-bn.lb2-sal .lb2-vs .hb-num{font-size:15px}
 #panel-labor .two-col{margin-top:30px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px}
 /* No rule above the Every day and person disclosure (owner, 9/26/26). */
 #lb2-money-all{border-top:none}
@@ -9502,9 +9507,17 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
         {# Labor % said once, beside its gap in dollars (density round #26):
            "31.2% · $2,140/mo over target". The gap is an opportunity - warn
            tone, "over target", never "savings" or green (Money labels). The
-           /api/labor-gap read restates it from the same window. #}
+           /api/labor-gap read restates it from the same window. The dollars
+           are costed_labor - the days that carry sales, the same days as the
+           % (labor.py NS3 H4) - so the salaries line below adds up. #}
         {% set _gap_ok = labor.is_live and savings_breakdown and savings_breakdown.labor_monthly > 0 %}
-        <div class="lb2-bn"><span class="l">Labor</span><span class="row"><span class="hb-num stat-n">${{ labor.total_labor_cost|int|format_num }}</span><span class="hb-num pct stat-n {{ 'good' if _lp <= _lt else 'bad' }}">{{ _lp }}%</span><span class="lb2-vs" title="Your labor target"><span class="hb-num">{{ _lt|round(1)|string|replace('.0', '') }}%</span> target</span><span class="lb2-gap" id="gap-amount"{% if not _gap_ok %} hidden{% endif %}>{% if _gap_ok %}<span class="hb-num">${{ savings_breakdown.labor_monthly|format_num }}</span>/mo over {{ _tl }}{% endif %}</span></span></div>
+        <div class="lb2-bn"><span class="l">{{ 'Hourly labor' if labor_salaried else 'Labor' }}</span><span class="row"><span class="hb-num stat-n">${{ (labor.costed_labor if labor.costed_labor is not none else labor.total_labor_cost)|int|format_num }}</span><span class="hb-num pct stat-n {{ 'good' if _lp <= _lt else 'bad' }}">{{ _lp }}%</span><span class="lb2-vs" title="Your labor target"><span class="hb-num">{{ _lt|round(1)|string|replace('.0', '') }}%</span> target</span><span class="lb2-gap" id="gap-amount"{% if not _gap_ok %} hidden{% endif %}>{% if _gap_ok %}<span class="hb-num">${{ savings_breakdown.labor_monthly|format_num }}</span>/mo over {{ _tl }}{% endif %}</span></span></div>
+        {# Salaries beside hourly labor, never in it (owner, 9/28/26): the
+           target judges the hourly figure, which a schedule can change; the
+           owner's alone (labor.salaried_summary). #}
+        {% if labor_salaried %}
+        <div class="lb2-bn lb2-sal"><span class="l">With salaries</span><span class="row"><span class="hb-num stat-n">${{ labor_salaried.total_cost|int|format_num }}</span><span class="hb-num pct stat-n">{{ labor_salaried.total_pct }}%</span><span class="lb2-vs" title="Each trading day carries its share of the salaries: annual pay &divide; 52 weeks &divide; the days you trade a week. Set in Settings &rarr; Salaried staff."><span class="hb-num">${{ labor_salaried.cost|int|format_num }}</span> salaries &middot; <span class="hb-num">{{ labor_salaried.people }}</span> {{ 'person' if labor_salaried.people == 1 else 'people' }}</span></span></div>
+        {% endif %}
       </div>
       {# Everything labor.py knows is incomplete about this upload. It has
          computed these for a while and no surface showed them, so a
@@ -12995,6 +13008,16 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
         </div>
         <div class="lb2-sub" style="margin-top:14px">Pay by role<small>per hour · blank uses the blended rate</small></div>
         <div id="as-tg-roles" class="ac-rows"></div>
+        <!-- Salaried staff (owner, 9/28/26): paid a salary, not by the hour.
+             Their punches leave hourly labor; Labor and the daily report show
+             the salaries beside it. One person saves per add or remove. Shown
+             to the account holder only (targets can_edit), like the saves. -->
+        <div id="as-tg-sal-wrap" hidden>
+        <div class="lb2-sub" style="margin-top:14px">Salaried staff<small>paid a salary, not by the hour · shown beside hourly labor, never in it</small></div>
+        <div id="as-tg-sal" class="ac-rows"></div>
+        <div class="ac-row as-tg-sal-add"><div class="l"><input class="ac-input" type="text" id="as-tg-sal-name" list="as-tg-sal-names" maxlength="80" placeholder="Name, as on your POS" aria-label="Salaried person&rsquo;s name"><datalist id="as-tg-sal-names"></datalist></div>
+          <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-sal-annual" min="1000" max="2000000" step="1000" style="width:130px" placeholder="Per year" aria-label="Annual salary"><button type="button" class="cbtn cbtn-secondary cbtn-sm" id="as-tg-sal-addbtn">Add</button></div></div>
+        </div>
         <div class="ac-note" id="as-tg-ro" hidden>Only the account owner can change targets and pay rates.</div>
       </div>
 
@@ -31894,9 +31917,44 @@ window.cavPalette = cavPalette;
       h += '<div class="ac-row"><div class="l"><b>' + e(roles[i]) + '</b></div><div class="c"><input class="ac-input ac-num" type="number" min="2" max="250" step="0.25" style="width:96px" data-tg-role="' + e(roles[i]) + '" value="' + (cur === null ? '' : e(cur)) + '" placeholder="' + e(t.hourly_rate || '') + '" aria-label="' + e(roles[i]) + ' hourly rate"' + (ro ? ' disabled' : '') + '></div></div>';
     }
     $id('as-tg-roles').innerHTML = h;
+    tgRenderSalaried(t);
     var roNote = $id('as-tg-ro'); if (roNote) roNote.hidden = !ro;
     card.hidden = false;
   }
+  /* Salaried staff: one row per person, each add or remove its own save
+     (models.salaried_staff). */
+  function tgMoney(v) { return '$' + Math.round(+v || 0).toLocaleString(); }
+  function tgRenderSalaried(t) {
+    var box = $id('as-tg-sal'), wrap = $id('as-tg-sal-wrap'); if (!box) return;
+    if (wrap) wrap.hidden = !(_tg && _tg.can_edit);
+    var sal = t.salaried || [], h = '', i;
+    if (!sal.length) h = '<div class="sr-note">Nobody yet. Add the people paid a salary and Labor shows their pay beside hourly labor.</div>';
+    for (i = 0; i < sal.length; i++) {
+      h += '<div class="ac-row"><div class="l"><b>' + e(sal[i].name) + '</b><span><span class="hb-num">' + tgMoney(sal[i].annual) + '</span> a year &middot; <span class="hb-num">' + tgMoney(sal[i].per_day) + '</span> a trading day</span></div>'
+        + '<div class="c"><button type="button" class="cbtn cbtn-ghost cbtn-sm" data-tg-sal-rm="' + e(sal[i].name) + '">Remove</button></div></div>';
+    }
+    box.innerHTML = h;
+    var dl = $id('as-tg-sal-names'), names = t.salaried_names || [], o = '';
+    for (i = 0; i < names.length; i++) o += '<option value="' + e(names[i]) + '"></option>';
+    if (dl) dl.innerHTML = o;
+  }
+  function tgSalSave(body, done) {
+    status('as-tg-status', 'Saving…');
+    postJ('/api/account/targets', body, function (d) {
+      if (d.ok) { _tg.targets = d.targets; tgRenderSalaried(d.targets); status('as-tg-status', 'Saved'); if (done) done(); }
+      else status('as-tg-status', d.error || 'Could not save', true);
+    });
+  }
+  document.addEventListener('click', function (ev) {
+    var t = ev.target; if (!t || !t.closest || !_tg) return;
+    var rm = t.closest('[data-tg-sal-rm]');
+    if (rm) { tgSalSave({salaried_remove: rm.getAttribute('data-tg-sal-rm')}); return; }
+    if (!t.closest('#as-tg-sal-addbtn')) return;
+    var n = $id('as-tg-sal-name'), a = $id('as-tg-sal-annual');
+    if (!n.value.replace(/\s/g, '')) { status('as-tg-status', 'Add a name', true); return; }
+    if (!(+a.value > 0)) { status('as-tg-status', 'Add the annual salary', true); return; }
+    tgSalSave({salaried_add: {name: n.value, annual: +a.value}}, function () { n.value = ''; a.value = ''; });
+  });
   window.tgLoad = function () {
     getJ('/api/account/targets', function (d) { if (d.ok) { _tg = d; tgRender(); } });
   };

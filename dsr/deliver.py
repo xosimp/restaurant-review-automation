@@ -334,6 +334,10 @@ def digest(payload, restaurant, kind=FIRST):
         stats.append({"value": f"{lm['pct']:.1f}%",
                       "label": "Labor" + (f" · target {target:g}%" if target is not None else ""),
                       "tone": None if pts is None else (("warn" if starting else "bad") if pts > 0 else "good")})
+        # The owner's: hourly labor plus the night's share of the salaries
+        # (access._live_salaries) - beside the hourly %, never judged.
+        if _num(lm.get("salaried_total_pct")):
+            stats.append({"value": f"{lm['salaried_total_pct']:.1f}%", "label": "Labor with salaries", "tone": None})
 
     narrative = payload.get("narrative") or {}
     notes = (payload.get("checklist") or {}).get("narrative") or {}

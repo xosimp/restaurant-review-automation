@@ -581,6 +581,49 @@ def analyse_shifts_for_restaurant(restaurant_id: int, client_data=_UNREAD,
     return _analyse_for_restaurant(restaurant_id, client_data, window_days)
 
 
+def _without_salaried(restaurant_id, shifts):
+    """(the shifts less the salaried people's punches, their hours)."""
+    try:
+        from models import get_restaurant, salaried_staff, salaried_name_key
+        names = {salaried_name_key(s["name"]) for s in salaried_staff(get_restaurant(restaurant_id))}
+    except Exception:
+        names = set()
+    if not names:
+        return shifts, 0.0
+    kept, hours = [], 0.0
+    for s in shifts:
+        if salaried_name_key(s.get("employee")) in names:
+            hours += _shift_hours(s)
+        else:
+            kept.append(s)
+    return kept, hours
+
+
+def salaried_summary(restaurant, analysis):
+    """The salaries beside the hourly figure, over the analysis's own window
+    (owner, 9/28/26: hourly labor stays the headline against the target —
+    it is what a schedule can change — and the salaries sit beside it).
+
+    Each day with a sales figure carries one trading day's share
+    (models.salaried_day_share: annual ÷ 52 ÷ trading days a week), so the
+    total covers the same days as the sales it is divided by. Owner-only:
+    it is two people's pay. None with nobody salaried or no sales."""
+    from models import salaried_staff, salaried_day_share
+    staff = salaried_staff(restaurant)
+    share = salaried_day_share(restaurant)
+    a = analysis or {}
+    sales = float(a.get("total_sales") or 0)
+    days = sum(1 for d in (a.get("by_day") or {}).values() if d.get("sales"))
+    if not staff or not share or not a.get("is_live") or sales <= 0 or not days:
+        return None
+    cost = round(share * days, 2)
+    hourly = float(a.get("costed_labor") if a.get("costed_labor") is not None else a.get("total_labor_cost") or 0)
+    total = round(hourly + cost, 2)
+    return {"people": len(staff), "days": days, "per_day": round(share, 2), "cost": cost,
+            "hourly_cost": round(hourly, 2), "total_cost": total, "total_pct": round(total / sales * 100, 1),
+            "hours_left_out": a.get("salaried_hours_left_out") or 0.0}
+
+
 def full_history_by_day(restaurant_id: int) -> dict:
     """The per-day breakdown of the WHOLE shifts file, for the
     labor_daily_history archive (YoY and trends) — not the current window
@@ -605,6 +648,12 @@ def _analyse_for_restaurant(restaurant_id, client_data, window_days):
             _today = None
     shifts = current_window(load_shifts_for_restaurant(restaurant_id, allow_sample=True,
                                                        client_data=client_data), window_days, today=_today)
+    # A salaried person's pay is their salary (salaried_summary), not their
+    # punches: costed by the hour too, Erik's own 2.1h on Manager FOH was $55
+    # of "labor" at the $26 default on top of the salary (owner, 9/28/26).
+    salaried_hours = 0.0
+    if is_live:
+        shifts, salaried_hours = _without_salaried(restaurant_id, shifts)
     rate   = get_hourly_rate(restaurant_id)
     target = get_labor_target(restaurant_id)
     from models import get_role_rates, compute_blended_rate
@@ -619,6 +668,7 @@ def _analyse_for_restaurant(restaurant_id, client_data, window_days):
                             week_start_day=get_week_start_day(restaurant_id),
                             covers_by_date=covers_by_date)
     result['is_live'] = is_live
+    result['salaried_hours_left_out'] = round(salaried_hours, 1)
     result['blended_rate'] = blended
     result['role_rates'] = {k: v for k, v in role_rates.items() if k != "_default"}
     # Where the labor COST comes from (thresholds.labor_cost_basis): on the

@@ -37,6 +37,8 @@ After the backstops and before the sweep, three economic passes (`schedule_econo
 ### Data flow
 POS shift CSV (`date,day,employee,role,shift_start,shift_end,scheduled_hours,actual_hours,sales,notes`) → `labor.py` loads and aggregates → labor % vs `labor_target_pct`, overtime detection (1.5× over 40h on the restaurant's own `week_start_day`-anchored workweek), overstaffed-day detection (high labor % on a day, contrasted against sales) → rendered on the Labor tab (web `#panel-labor`, iOS `LaborView`).
 
+
+**Salaried staff** (owner, 9/28/26 — Simple EJ's: Erik and Jim at $150K each): set in Settings → Targets & pay rates (`restaurants.salaried_staff_json`). Their punches leave hourly labor — a salaried person's pay is the salary — and their salary sits **beside** the hourly figure, never in it: the Labor hero's "With salaries" line (`labor.salaried_summary`) and the owner's daily report tile and email stat (`dsr.access._live_salaries`), each day with sales carrying annual ÷ 52 ÷ trading days a week. The labor target, the overstaffed days and every schedule budget judge hourly labor, which a schedule can change. Owner-only: it is named people's pay.
 ### Shift Quality Engine (`shift_quality.py`)
 Evaluates a *generated* schedule, not raw historical shifts. `ShiftContext` (per-shift facts: role, flagged constraints, closing, elsewhere-that-day, prior pattern, availability) feeds sixteen `DimensionResult`s combined via the `DIMENSIONS` registry into one 0–100 score:
 

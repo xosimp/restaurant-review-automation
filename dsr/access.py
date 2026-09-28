@@ -47,7 +47,7 @@ import dsr
 OWNER = "owner"
 MANAGER = "manager"
 
-OWNER_ONLY_PREFIXES = ("budget", "vs_budget", "prime_cost", "source_checks")
+OWNER_ONLY_PREFIXES = ("budget", "vs_budget", "prime_cost", "source_checks", "salaried")
 LOSS_KEYS = ("comps", "voids", "refunds")
 # Figures that close the net equation (D2-2): net = gross − discounts −
 # comps, and on the "everything rung" basis gross = items + tax + voids — so
@@ -346,7 +346,7 @@ def render(report, user, restaurant=None, versions=None):
     stored = _live_target(_live_labor(_live_categories(report.get("facts") or {}, report, restaurant),
                                       report, restaurant), restaurant)
     if view == OWNER:
-        stored = _live_budget(stored, report, restaurant)
+        stored = _live_salaries(_live_budget(stored, report, restaurant), restaurant)
     facts, hidden = redact(stored, user)
     # "Did we win today?" — the owner's scorecard (dsr.scorecard): score,
     # wins and risks, all from the measured blocks. The manager's view keeps
@@ -618,6 +618,37 @@ def _live_target(facts, restaurant):
         lm["vs_target_pts"] = round(float(lm["pct"]) - now, 1)
     ld = lb.setdefault("detail", {})
     ld["target_source"], ld["target_label"] = t.get("source"), t.get("label")
+    return out
+
+
+def _live_salaries(facts, restaurant):
+    """The owner's Labor block with the night's share of the salaries beside
+    the hourly figure (owner, 9/28/26): salaried_cost is one trading day's
+    share (models.salaried_day_share), salaried_total_pct is hourly labor
+    plus it over tonight's net. Hourly labor, its % and the target are
+    untouched. Owner-only by prefix (OWNER_ONLY_PREFIXES) as well as by
+    where it is called."""
+    blocks = (facts or {}).get("blocks") or {}
+    labor, sales = blocks.get("labor") or {}, blocks.get("sales") or {}
+    lm, sm = labor.get("metrics") or {}, sales.get("metrics") or {}
+    if restaurant is None or labor.get("status") != dsr.READY or sales.get("status") != dsr.READY:
+        return facts
+    try:
+        from models import salaried_staff, salaried_day_share
+        share = salaried_day_share(restaurant)
+        people = len(salaried_staff(restaurant))
+        cost, net = lm.get("cost"), sm.get("net")
+        if not share or cost is None or not net or float(net) <= 0:
+            return facts
+        total = float(cost) + share
+    except Exception:
+        return facts
+    out = copy.deepcopy(facts)
+    m = out["blocks"]["labor"].setdefault("metrics", {})
+    m["salaried_cost"] = round(share, 2)
+    m["salaried_people"] = people
+    m["salaried_total_cost"] = round(total, 2)
+    m["salaried_total_pct"] = round(total / float(net) * 100.0, 1)
     return out
 
 

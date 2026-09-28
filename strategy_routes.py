@@ -4001,16 +4001,20 @@ def _targets_payload(rid):
     import staff_settings as _ss
     from models import get_restaurant, weekly_revenue_target
     r = get_restaurant(rid)
+    from models import salaried_staff, open_days_per_week
+    _sal, _od = salaried_staff(r), open_days_per_week(r)
     try:
         rates = {k: float(v) for k, v in (_json.loads(r.role_rates_json or "{}") or {}).items() if k != "_default"}
     except Exception:
         rates = {}
-    roles = []
+    roles, names = [], []
     try:
         for e in _ss.roster(rid):
             role = (e.get("role") or "").strip()
             if role and role.lower() not in {x.lower() for x in roles}:
                 roles.append(role)
+            if (e.get("name") or "").strip():
+                names.append(e["name"].strip())
     except Exception:
         pass
     for k in rates:
@@ -4023,6 +4027,11 @@ def _targets_payload(rid):
             "weekly_revenue_target": weekly_revenue_target(r),
             "hourly_rate": r.hourly_rate, "week_start_day": int(getattr(r, "week_start_day", 0) or 0),
             "role_rates": rates, "roles": sorted(roles, key=str.lower),
+            # Salaried people (models.salaried_staff): costed by salary beside
+            # hourly labor, never by the hour. The owner's alone (_do_targets_get);
+            # `names` fills the add box so a name matches the punches exactly.
+            "salaried": [dict(x, per_day=round(x["annual"] / 52.0 / _od, 2)) for x in _sal],
+            "salaried_names": sorted(set(names), key=str.lower),
             # The standing notes every schedule draft's prompt carries
             # (labor.py ADDITIONAL SCHEDULING NOTES), set from the schedule
             # workspace's Advanced AI panel as well as admin.
@@ -4040,6 +4049,9 @@ def _do_targets_get(u):
         # Wages are the owner's and the schedule sender's (F2-20).
         t["role_rates"], t["hourly_rate"] = {}, None
         t["sources"].pop("hourly_rate", None)
+    if not _principal(u):
+        # Salaries are named people's pay: the owner's alone.
+        t["salaried"], t["salaried_names"] = [], []
     return {"ok": True, "targets": t, "can_edit": _principal(u), "sees_pay": _sees_pay(u)}, 200
 
 
@@ -4092,6 +4104,30 @@ def _do_targets_set(u):
                 return {"ok": False, "error": f"The rate for {role} must be between $2 and $250 an hour."}, 400
             rates[role] = round(rate, 2)
         upd["role_rates_json"] = _json.dumps(rates) if rates else None
+    if "salaried_add" in b or "salaried_remove" in b:
+        # One person per save, read-modify-write here: an add or a remove
+        # never sends the whole list, so nothing typed elsewhere is lost.
+        from models import salaried_staff, salaried_name_key, SALARY_MAX
+        staff = salaried_staff(get_restaurant(_rid(u)))
+        add, rm = b.get("salaried_add"), b.get("salaried_remove")
+        if rm not in (None, ""):
+            key = salaried_name_key(rm)
+            staff = [x for x in staff if salaried_name_key(x["name"]) != key]
+        if add is not None:
+            if not isinstance(add, dict):
+                return {"ok": False, "error": "Give a name and an annual salary."}, 400
+            name = " ".join(str(add.get("name") or "").split())[:80]
+            try:
+                annual = float(add.get("annual"))
+            except (TypeError, ValueError):
+                annual = 0.0
+            if not name:
+                return {"ok": False, "error": "Give the person's name as it appears on your POS."}, 400
+            if not 1000 <= annual <= SALARY_MAX:
+                return {"ok": False, "error": "An annual salary is between $1,000 and $2,000,000."}, 400
+            key = salaried_name_key(name)
+            staff = [x for x in staff if salaried_name_key(x["name"]) != key] + [{"name": name, "annual": round(annual, 2)}]
+        upd["salaried_staff_json"] = _json.dumps(staff) if staff else None
     if "sched_notes" in b:
         # The owner's own words to the schedule drafter: plain text, control
         # characters dropped, the same 2,000-character cap admin applies.

@@ -468,8 +468,19 @@ def index(current_user):
                 labor['trend_delta'] = None
         except Exception:
             labor['trend_delta'] = None
+        # The salaries beside hourly labor (labor.salaried_summary): the owner's
+        # alone - it is two people's pay.
+        labor_salaried = None
+        try:
+            from permissions import is_principal as _is_principal
+            if _is_principal(current_user):
+                from labor import salaried_summary
+                labor_salaried = salaried_summary(restaurant, labor)
+        except Exception:
+            labor_salaried = None
     except Exception as e:
         print(f"Labor analysis error: {e}")
+        labor_salaried = None
         labor = {"is_live":False,"total_labor_cost":0,"total_sales":0,"overall_labor_pct":0,
                  "overstaffed_days":[],"understaffed_days":[],"overtime_risk":[],
                  "dow_summary":{},"potential_savings":0,"potential_savings_weekly":0,"potential_savings_monthly":0,"period_days":0,"labor_target":30.0,
@@ -808,6 +819,7 @@ def index(current_user):
         viewing_as=current_user.get("is_admin", 0),
         labor_target=_labor_target_for(restaurant),
         labor_overtime_cost=labor_overtime_cost,
+        labor_salaried=labor_salaried,
         mkt_stats=mkt_stats,
         savings_breakdown=savings_breakdown,
         competitor_data=competitor_data,

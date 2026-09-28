@@ -325,6 +325,9 @@ class Restaurant:
     monthly_revenue_target: float        = 0.0
     hours_notes: Optional[str]           = None
     role_rates_json: Optional[str]       = None
+    # Salaried people (owner, 9/28/26): [{"name": "Erik Baylis", "annual": 150000}]. Costed by
+    # salary (labor.salaried_summary), never by the hour: their punches leave hourly labor.
+    salaried_staff_json: Optional[str]   = None
     close_times_json: Optional[str]      = None   # e.g. {"Monday":"9:00pm","Friday":"10:00pm"} — per-day close time, used to hard-cap generated shift_end
     role_close_buffer_json: Optional[str] = None  # e.g. {"Bartender":60} — minutes a role may run past close; any role not listed defaults to 0 (must end at or before close)
     section_count: Optional[int]         = None
@@ -818,6 +821,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "monthly_revenue_target", "REAL"),
         ("restaurants", "hours_notes", "TEXT"),
         ("restaurants", "role_rates_json", "TEXT"),
+        ("restaurants", "salaried_staff_json", "TEXT"),
         ("restaurants", "close_times_json", "TEXT"),
         ("restaurants", "role_close_buffer_json", "TEXT"),
         ("restaurants", "section_count", "INTEGER"),
@@ -3352,7 +3356,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
     allowed = {
         "name","owner_email","google_place_id","yelp_business_id","voice_notes",
         "neighborhood","vibe","known_for","sign_off_name","never_say",
-        "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","quality_weights_json","monthly_revenue_target","hours_notes","role_rates_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","waste_target_pct","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","demo_cleared_at","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
+        "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","quality_weights_json","monthly_revenue_target","hours_notes","role_rates_json","salaried_staff_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","waste_target_pct","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","demo_cleared_at","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","staff_signin_notify","marketing_emails_opt_out","mailing_address","monthly_review_enabled","timezone","onboarding_dismissed",
@@ -3738,6 +3742,7 @@ def _restaurant_from_row(row) -> Restaurant:
         hours_notes=row["hours_notes"] if "hours_notes" in row.keys() else None,
         email_theme=row["email_theme"] if "email_theme" in row.keys() and row["email_theme"] else "dark",
         role_rates_json=row["role_rates_json"] if "role_rates_json" in row.keys() else None,
+        salaried_staff_json=row["salaried_staff_json"] if "salaried_staff_json" in row.keys() else None,
         close_times_json=row["close_times_json"] if "close_times_json" in row.keys() else None,
         role_close_buffer_json=row["role_close_buffer_json"] if "role_close_buffer_json" in row.keys() else None,
         inventory_updated_at=row["inventory_updated_at"] if "inventory_updated_at" in row.keys() else None,
@@ -6813,6 +6818,61 @@ def get_role_rates(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         except Exception:
             pass
     return {"_default": base}
+
+
+SALARY_MAX = 2_000_000
+
+
+def salaried_name_key(name) -> str:
+    """How a salaried person's name meets a punch's: case and spacing
+    ignored ("erik  baylis" is RPOWER's "Erik Baylis")."""
+    return " ".join(str(name or "").lower().split())
+
+
+def salaried_staff(restaurant) -> list:
+    """[{"name", "annual"}] — the restaurant's salaried people (owner,
+    9/28/26: Erik and Jim at $150K each). A malformed row is skipped."""
+    import json as _json
+    raw = getattr(restaurant, "salaried_staff_json", None) if restaurant is not None else None
+    try:
+        rows = _json.loads(raw) if raw else []
+    except (TypeError, ValueError):
+        return []
+    out = []
+    for row in rows if isinstance(rows, list) else []:
+        try:
+            name, annual = " ".join(str(row.get("name") or "").split())[:80], float(row.get("annual"))
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if name and 0 < annual <= SALARY_MAX:
+            out.append({"name": name, "annual": round(annual, 2)})
+    return out
+
+
+def open_days_per_week(restaurant) -> int:
+    """The weekdays the restaurant trades, from its open/close times (7
+    when none are set)."""
+    import json as _json
+    days = set()
+    for field in ("open_times_json", "close_times_json"):
+        try:
+            d = _json.loads(getattr(restaurant, field, None) or "{}")
+        except (TypeError, ValueError):
+            d = {}
+        if isinstance(d, dict):
+            days |= {str(k).strip().lower() for k, v in d.items() if str(v or "").strip()}
+    n = len(days & {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"})
+    return n or 7
+
+
+def salaried_day_share(restaurant):
+    """One trading day's share of the salaries: annual ÷ 52 weeks ÷ the
+    days the restaurant trades a week, so a week's trading days carry
+    exactly a week's salary. None with nobody salaried."""
+    staff = salaried_staff(restaurant)
+    if not staff:
+        return None
+    return sum(s["annual"] for s in staff) / 52.0 / open_days_per_week(restaurant)
 
 
 def get_close_times(restaurant_id: int, db_path: str = DB_PATH) -> dict:

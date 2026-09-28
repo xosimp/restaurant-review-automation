@@ -989,7 +989,8 @@ def employee_display_name(emp: dict) -> str:
 # ("To Am worked 61.8h") as if it were somebody. A record is a station only
 # when BOTH hold: every word of its name is a station, daypart or job word
 # (this store's own job names included), and none of its punches carries
-# pay. A person with no rate on file is still a person.
+# pay. A person with no rate on file is still a person. "System Manager"
+# (12h on Manager FOH, no pay, 9/28/26) is RPOWER's own login, not a manager.
 _STATION_WORDS = frozenset((
     "am pm day night morning evening lunch dinner brunch late overnight "
     "bar host hostess to go togo take out takeout pickup curbside delivery online "
@@ -997,7 +998,7 @@ _STATION_WORDS = frozenset((
     "upstairs downstairs main front back floor foh boh kitchen expo line prep "
     "server servers busser bussers barback bartender cashier counter register "
     "station shared house tips tip pool training trainee manager mgr test "
-    "generic staff team service").split())
+    "generic staff team service system admin").split())
 
 
 def _name_words(name) -> list:
