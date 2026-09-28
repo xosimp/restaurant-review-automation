@@ -152,3 +152,16 @@ def test_the_caution_sits_under_the_confidence_and_why_is_not_inset():
     fn = s[s.index("  function line(c,o){"):s.index("  // The claim tag (J5)")]
     assert fn.index("class=\"cf-c\"") < fn.index("class=\"cf-r\"") < fn.index("cf-why")
     assert ".cf .cf-why{margin-left:0;padding-left:0!important}" in s
+
+
+def test_the_labor_target_is_the_one_set_now(db):
+    from models import update_restaurant, get_restaurant
+    r = _ejs(db)
+    facts = {"blocks": {"labor": dsr.block(dsr.READY, source="rpower",
+                                           metrics={"pct": 35.7, "target_pct": 30.0, "vs_target_pts": 5.7},
+                                           detail={"target_source": "default"})}}
+    update_restaurant(r.id, {"labor_target_pct": 35.0}, db_path=db)
+    r = get_restaurant(r.id, db_path=db)
+    lb = access._live_target(facts, r)["blocks"]["labor"]
+    assert (lb["metrics"]["target_pct"], lb["metrics"]["vs_target_pts"]) == (35.0, 0.7)
+    assert lb["detail"]["target_source"] == "set"

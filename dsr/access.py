@@ -343,7 +343,8 @@ def render(report, user, restaurant=None, versions=None):
     from the one stored snapshot."""
     from time_utils import mdy
     view = view_for(user)
-    stored = _live_labor(_live_categories(report.get("facts") or {}, report, restaurant), report, restaurant)
+    stored = _live_target(_live_labor(_live_categories(report.get("facts") or {}, report, restaurant),
+                                      report, restaurant), restaurant)
     if view == OWNER:
         stored = _live_budget(stored, report, restaurant)
     facts, hidden = redact(stored, user)
@@ -586,6 +587,37 @@ def _live_labor(facts, report, restaurant):
               "cost_note": ("Costed after this report at the POS's own pay rates"
                             + (f"; {round((1 - share) * 100)}% of the night's hours have no POS rate and use "
                                f"your role or blended rate." if share < 0.995 else "."))})
+    return out
+
+
+def _live_target(facts, restaurant):
+    """The Labor block measured against the labor target as it stands NOW:
+    Simple EJ's 9/27 report froze "Cavnar AI's starting target 30%" at
+    11:31am and Erik set 35% that afternoon (owner, 9/28/26). The figure is
+    the night's; the target is the owner's current one (thresholds.target_for,
+    the one read every surface uses)."""
+    labor = ((facts or {}).get("blocks") or {}).get("labor") or {}
+    if labor.get("status") != dsr.READY or restaurant is None:
+        return facts
+    try:
+        import thresholds
+        t = thresholds.target_for(restaurant, "labor")
+        now = float(t.get("pct"))
+    except Exception:
+        return facts
+    m = labor.get("metrics") or {}
+    was = m.get("target_pct")
+    d = labor.get("detail") or {}
+    if was is not None and abs(float(was) - now) < 1e-9 and d.get("target_source") == t.get("source"):
+        return facts
+    out = copy.deepcopy(facts)
+    lb = out["blocks"]["labor"]
+    lm = lb.setdefault("metrics", {})
+    lm["target_pct"] = now
+    if lm.get("pct") is not None:
+        lm["vs_target_pts"] = round(float(lm["pct"]) - now, 1)
+    ld = lb.setdefault("detail", {})
+    ld["target_source"], ld["target_label"] = t.get("source"), t.get("label")
     return out
 
 
