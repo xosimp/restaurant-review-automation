@@ -15,6 +15,7 @@ Nothing here runs in the request path. Who runs each one:
 | `docusign_create_template.py` | one-off (built the live DocuSign template, Sep 7 2026) | creates the DocuSign template from that PDF |
 | `seed_review_account.py` | `admin_routes.py` (`/admin/seed-review-account`), `docs/app-store-submission.md` | the App Store reviewer's demo account |
 | `seed_simple_ejs_reviews.py` | one-off, kept for the record | the seed used for Simple EJ's review history |
+| `load_checklists.py` | by hand on production (railway ssh), after a client's `docs/clients/<client>/checklists.json` changes | loads its sheets onto that restaurant's staff checklists; dry run unless `--apply`, idempotent |
 | `loadtest_staff_signin.py` | by hand | load test for the staff PIN sign-in |
 | `rollback_employee_auth.py` | by hand, only if the employee-auth rollout has to be reversed | the rollback |
 

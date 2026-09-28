@@ -1,7 +1,7 @@
 {
  "restaurant": "Simple EJ's (official account, not the test account)",
  "source": "Erik's paper checklists, received Sep 23 2026. Wording is Erik's; only capitalisation was normalised (the server closing sheet is printed in all caps). Items are in his order. A line with `items` is a parent with sub-steps, exactly as on his sheet.",
- "job_codes_note": "job_code values are the role names on the roster. RPOWER's job list at Simple EJ's (read 9/28/26): Barback AM/PM, Bartender, Bartender AM/PM, Busser AM/PM, Dishwasher, Host AM/PM, Kitchen, Manager BOH/FOH, Mascot, Server AM/PM, Training, Utility AM/PM. 'Server' and older 'Bartender' sheets are not yet re-pointed to an AM/PM job; confirm with Erik which job each sheet belongs to before loading.",
+ "job_codes_note": "job_code values are RPOWER job names at Simple EJ's (read 9/28/26): Barback AM/PM, Bartender, Bartender AM/PM, Busser AM/PM, Dishwasher, Host AM/PM, Kitchen, Manager BOH/FOH, Mascot, Server AM/PM, Training, Utility AM/PM. The server sheets were written as opening / end of morning / closing (Erik, 9/23): the opening and end-of-morning sheets are the morning server's (Server AM), the closing sheet the night server's (Server PM) - Will, 9/28/26. A staff member's checklist is one flat list per job, so a sheet sharing a job with another carries a `prefix` that heads each of its lines (the end-of-morning lines read \"Before clocking out: ...\"). Loaded onto rid 5 with scripts/load_checklists.py.",
  "pending": [
   "Host - Opening (Will has it, not yet sent)",
   "Host - Closing (Will has it, not yet sent)",
@@ -109,7 +109,7 @@
    ]
   },
   {
-   "job_code": "Server",
+   "job_code": "Server AM",
    "shift_kind": "opening",
    "title": "Server opening checklist",
    "sections": [
@@ -175,7 +175,7 @@
    ]
   },
   {
-   "job_code": "Server",
+   "job_code": "Server AM",
    "shift_kind": "mid",
    "title": "Server end of morning shift (before clocking out)",
    "sections": [
@@ -193,10 +193,11 @@
       }
      ]
     }
-   ]
+   ],
+   "prefix": "Before clocking out"
   },
   {
-   "job_code": "Server",
+   "job_code": "Server PM",
    "shift_kind": "closing",
    "title": "Server closing checklist",
    "records": [
