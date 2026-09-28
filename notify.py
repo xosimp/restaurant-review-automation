@@ -693,13 +693,17 @@ SMS_CTA_TOKEN = "dashboard.cavnar.ai"
 
 
 def with_sender(text: str) -> str:
-    """An alert text that names who sent it. Carriers require the sender in
+    """An alert text that names who sent it and how to stop it. Carriers require the sender in
     every message of a registered program, and the review alerts opened on
     the restaurant ("🔴 1★ Review — Simple EJ's") - the campaign's samples
     read "Cavnar AI: ..." while the texts never said Cavnar AI (A2P 10DLC
     review, 9/28/26)."""
     t = str(text or "")
-    return t if not t.strip() or t.lstrip().startswith("Cavnar AI") else "Cavnar AI: " + t.lstrip()
+    if not t.strip():
+        return t
+    t = t if t.lstrip().startswith("Cavnar AI") else "Cavnar AI: " + t.lstrip()
+    # ...and how to stop them, as the campaign's registered samples do.
+    return t if "STOP" in t.upper() else t.rstrip() + " Reply STOP to opt out."
 
 
 def keyed_sms_text(sms_text: str, rec: str = None, rid: int = None) -> str:

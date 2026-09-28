@@ -14,7 +14,8 @@ def test_every_alert_text_names_cavnar_ai_once():
     assert notify.with_sender("🔴 1★ Review — Simple EJ's\n\"cold fries\"\nRespond now · dashboard.cavnar.ai") \
         .startswith("Cavnar AI: 🔴 1★ Review — Simple EJ's")
     assert notify.with_sender("Cavnar AI · Simple EJ's: 3 things this morning.") == \
-        "Cavnar AI · Simple EJ's: 3 things this morning."
+        "Cavnar AI · Simple EJ's: 3 things this morning. Reply STOP to opt out."
+    assert notify.with_sender("Cavnar AI: done. Reply STOP to cancel.") == "Cavnar AI: done. Reply STOP to cancel."
     assert notify.with_sender("") == ""
     src = inspect.getsource(notify.deliver_alert)
     assert "with_sender(keyed_sms_text(" in src
