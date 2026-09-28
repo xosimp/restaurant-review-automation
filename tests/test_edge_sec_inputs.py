@@ -96,8 +96,10 @@ def _optin(c, token, i, xff):
                   json={"name": f"Guest {i}", "phone": f"51255501{i:02d}", "consent": True})
 
 
-def test_the_public_opt_in_throttles_one_address(db_path):
-    import guest_links
+def test_the_public_opt_in_throttles_one_address(db_path, monkeypatch):
+    import guest_links, guest_marketing
+    # A join sends one confirmation text (double opt-in, MB-4): a recorder.
+    monkeypatch.setattr(guest_marketing, "send_sms", lambda phone, msg, **kw: True)
     rid = _marketing_restaurant(db_path)
     c = _optin_client()
     token = guest_links.sign_join(rid)

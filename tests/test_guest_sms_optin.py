@@ -108,7 +108,10 @@ def test_stop_variants_all_work(db_path):
 
 # ── Inbound: YES ─────────────────────────────────────────────────────────
 
-def test_yes_reply_grants_consent_and_arms_the_followup(db_path):
+def test_yes_reply_grants_review_link_consent_only(db_path):
+    """The invite asks "can we text you a quick link to leave a review" —
+    a YES is consent to that and nothing more (MB-2, owner 9/28/26): it
+    used to set marketing consent and a visit (#6)."""
     rid = _restaurant(db_path)
     gm.add_guest_contact_manual(rid, "5551234567", name="Ben", db_path=db_path)
     gm.record_optin_invite(rid, "5551234567", external_ref="order-1", db_path=db_path)
@@ -118,8 +121,8 @@ def test_yes_reply_grants_consent_and_arms_the_followup(db_path):
 
     reply = gm.handle_inbound_sms("+15551234567", "YES", db_path=db_path)
     after = gm.get_guest_contacts(rid, db_path=db_path)[0]
-    assert after["consent"] is True
-    assert after["last_visit"] is not None   # follow-up job can now fire
+    assert after["consent"] is False and after["review_only"] is True
+    assert after["last_visit"] is None and after["visit_count"] == 0   # a YES is not a visit
     assert "Text Club Co" in reply
 
 
@@ -140,20 +143,36 @@ def test_the_invite_records_the_response(db_path):
 
 # ── Toast opt-in invites ─────────────────────────────────────────────────
 
-def _toast_restaurant(db_path):
+_GUESTS = [{"order_guid": "order-1", "name": "Demo Guest One", "phone": "+15550000001"},
+           {"order_guid": "order-2", "name": "Demo Guest Two", "phone": "+15550000002"}]
+
+
+@pytest.fixture
+def pos_guests(monkeypatch):
+    """A POS that shares guest records for every restaurant id in `on`."""
+    import pos
+    import types
+    on = set()
+    monkeypatch.setattr(pos, "PROVIDERS", {"toast": types.SimpleNamespace(
+        is_connected=lambda r: r in on, fetch_order_customers=lambda r, day: [dict(g) for g in _GUESTS],
+        sync_to_db=lambda r: {}, build_shifts_csv=lambda r, days=60: None)})
+    return on
+
+
+def _toast_restaurant(db_path, pos_guests=None, enabled=True):
+    """A real (not demo) restaurant whose owner turned invites on (MB-3)."""
     rid = _restaurant(db_path, module_marketing=1)
-    conn = get_conn(db_path)
-    conn.execute("UPDATE restaurants SET is_demo=1, toast_client_id='demo', toast_client_secret='demo', "
-                 "toast_restaurant_guid='demo' WHERE id=?", (rid,))
-    conn.commit()
-    conn.close()
+    if pos_guests is not None:
+        pos_guests.add(rid)
+    if enabled:
+        gm.set_optin_invites(rid, True, user_id=1, acknowledged=True, db_path=db_path)
     return rid
 
 
-def test_toast_guests_are_invited_but_never_auto_consented(db_path, monkeypatch):
+def test_toast_guests_are_invited_but_never_auto_consented(db_path, monkeypatch, pos_guests):
     """The whole point: Toast handing us a number is not the guest agreeing
     to be texted marketing."""
-    rid = _toast_restaurant(db_path)
+    rid = _toast_restaurant(db_path, pos_guests)
     sent = _sent_sms(monkeypatch)
     result = gm.run_toast_optin_invites(business_date=date(2026, 9, 3), db_path=db_path)
 
@@ -165,18 +184,25 @@ def test_toast_guests_are_invited_but_never_auto_consented(db_path, monkeypatch)
     assert all("Reply STOP" in msg for _, msg in sent)
 
 
-def test_a_toast_guest_cannot_be_texted_a_campaign_until_they_opt_in(db_path, monkeypatch):
-    rid = _toast_restaurant(db_path)
+def test_a_toast_guest_cannot_be_texted_a_campaign_even_after_yes(db_path, monkeypatch, pos_guests):
+    """A YES to the review-link invite is review-only consent (MB-2, owner
+    9/28/26): it used to put the guest in every campaign. Only the join
+    form's confirmed double opt-in makes them textable."""
+    rid = _toast_restaurant(db_path, pos_guests)
     _sent_sms(monkeypatch)
     gm.run_toast_optin_invites(business_date=date(2026, 9, 3), db_path=db_path)
     assert gm.send_campaign(rid, "Come back!", db_path=db_path)["sent"] == 0
 
     gm.handle_inbound_sms("+15550000001", "YES", db_path=db_path)
+    assert gm.send_campaign(rid, "Come back!", db_path=db_path)["sent"] == 0
+
+    assert gm.request_public_optin(rid, "+15550000001", name="Guest One", db_path=db_path)["ok"]
+    gm.handle_inbound_sms("+15550000001", "Y", db_path=db_path)
     assert gm.send_campaign(rid, "Come back!", db_path=db_path)["sent"] == 1
 
 
-def test_rerunning_the_invite_job_does_not_re_text_anyone(db_path, monkeypatch):
-    rid = _toast_restaurant(db_path)
+def test_rerunning_the_invite_job_does_not_re_text_anyone(db_path, monkeypatch, pos_guests):
+    rid = _toast_restaurant(db_path, pos_guests)
     sent = _sent_sms(monkeypatch)
     gm.run_toast_optin_invites(business_date=date(2026, 9, 3), db_path=db_path)
     second = gm.run_toast_optin_invites(business_date=date(2026, 9, 3), db_path=db_path)
@@ -184,8 +210,8 @@ def test_rerunning_the_invite_job_does_not_re_text_anyone(db_path, monkeypatch):
     assert len(sent) == 2          # still just the original two
 
 
-def test_an_unsubscribed_guest_is_never_re_invited(db_path, monkeypatch):
-    rid = _toast_restaurant(db_path)
+def test_an_unsubscribed_guest_is_never_re_invited(db_path, monkeypatch, pos_guests):
+    rid = _toast_restaurant(db_path, pos_guests)
     gm.add_guest_contact_manual(rid, "+15550000001", db_path=db_path)
     gm.handle_inbound_sms("+15550000001", "STOP", db_path=db_path)
     sent = _sent_sms(monkeypatch)
@@ -193,8 +219,8 @@ def test_an_unsubscribed_guest_is_never_re_invited(db_path, monkeypatch):
     assert all(phone != "+15550000001" for phone, _ in sent)
 
 
-def test_a_restaurant_without_toast_is_skipped(db_path, monkeypatch):
-    _restaurant(db_path, module_marketing=1)     # marketing on, no Toast
+def test_a_restaurant_without_toast_is_skipped(db_path, monkeypatch, pos_guests):
+    _toast_restaurant(db_path)                   # invites on, no POS sharing guests
     sent = _sent_sms(monkeypatch)
     assert gm.run_toast_optin_invites(business_date=date(2026, 9, 3), db_path=db_path)["invited"] == 0
     assert sent == []

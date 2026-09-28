@@ -9,11 +9,28 @@ staff/owner alert routing, a different table with a different lifecycle.
 
 Consent model mirrors alert_contacts exactly and for the same reason: an
 owner manually adding a guest's number (from a receipt, a comment card)
-is NOT the guest consenting to marketing texts — only add_guest_contact_
-public_optin() (the guest submitting the public join page themselves) can
-ever set consent=True. TCPA marketing consent has to come from the
-recipient, not be asserted on their behalf.
+is NOT the guest consenting to marketing texts. TCPA marketing consent has
+to come from the recipient, not be asserted on their behalf.
+
+Two scopes (marketing audit MB-2 / SMS-1, 9/28/26):
+
+  consent=1         MARKETING texts — campaigns, win-back, every count of
+                    "who can be texted". Set only by a confirmed opt-in: the
+                    guest replying Y to the join form's confirmation text
+                    (double opt-in, request_public_optin), or
+                    add_guest_contact_public_optin for another explicit
+                    marketing opt-in. marketing_text_sql() is the one
+                    definition every send and count reads.
+  review_consent=1  REVIEW LINKS only — the guest said YES to "can we text
+                    you a quick link to leave a review". That YES used to set
+                    consent=1 and put the guest on every promo blast.
+
+A join is not a visit and neither is a YES: neither touches last_visit or
+visit_count. Every consent change is written to guest_consent_events, an
+append-only ledger that outlives the contact row.
 """
+import hashlib
+import json
 import os
 import re
 from datetime import datetime, timedelta
@@ -112,6 +129,72 @@ CREATE TABLE IF NOT EXISTS guest_campaign_drafts (
     answered_by    INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_guest_campaign_drafts_rid ON guest_campaign_drafts(restaurant_id, status);
+-- Phone-only lookups (a STOP, an inbound reply, the invite pass) scanned the
+-- whole table: the only index was UNIQUE(restaurant_id, phone) (MB-21, #94).
+CREATE INDEX IF NOT EXISTS idx_guest_contacts_phone ON guest_contacts(phone);
+CREATE INDEX IF NOT EXISTS idx_guest_campaigns_rid_created ON guest_campaigns(restaurant_id, created_at);
+-- Consent evidence (MB-4 / SMS-4 / ARC-13, 9/28/26): one row per consent
+-- change, never rewritten (the trigger below) and never deleted with the
+-- contact. consent + consent_at on the contact row were the only record,
+-- and deleting the guest deleted them. restaurant_id 0 is the shared number
+-- (a STOP to all of them). created_at is UTC.
+CREATE TABLE IF NOT EXISTS guest_consent_events (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    restaurant_id      INTEGER NOT NULL DEFAULT 0,
+    channel            TEXT    NOT NULL DEFAULT 'sms',
+    phone              TEXT,
+    email              TEXT,
+    event              TEXT    NOT NULL,
+    source             TEXT    NOT NULL,
+    ip                 TEXT,
+    user_agent         TEXT,
+    disclosure_version TEXT,
+    disclosure_hash    TEXT,
+    message_sid        TEXT,
+    detail             TEXT,
+    created_at         TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_gce_phone ON guest_consent_events(phone, restaurant_id);
+CREATE INDEX IF NOT EXISTS idx_gce_rid ON guest_consent_events(restaurant_id, created_at);
+CREATE TRIGGER IF NOT EXISTS guest_consent_events_append_only
+BEFORE UPDATE ON guest_consent_events
+BEGIN
+    SELECT RAISE(ABORT, 'guest_consent_events is append-only');
+END;
+-- The public join form's pending opt-ins (double opt-in, MB-4 / #3). A row
+-- is a request, not consent: consent is set only when that phone replies
+-- Y within JOIN_CONFIRM_HOURS. The rows are also the durable per-phone and
+-- per-IP submission limit — the old limit lived in one process's memory.
+-- status: pending | confirmed | already | blocked_stop | send_failed | stopped
+CREATE TABLE IF NOT EXISTS guest_optin_requests (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    restaurant_id      INTEGER NOT NULL,
+    phone              TEXT    NOT NULL,
+    name               TEXT,
+    ip                 TEXT,
+    user_agent         TEXT,
+    disclosure_version TEXT,
+    disclosure_hash    TEXT,
+    status             TEXT    NOT NULL DEFAULT 'pending',
+    requested_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+    confirmed_at       TEXT,
+    confirm_sid        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_gor_phone ON guest_optin_requests(phone, requested_at);
+CREATE INDEX IF NOT EXISTS idx_gor_ip ON guest_optin_requests(ip, requested_at);
+-- "Which restaurant did you mean?" — asked when one YES could answer more
+-- than one restaurant. A bare restaurant name counts only as the answer to
+-- an open question for that phone (MB-1 / #6); it never opts anyone in on
+-- its own. candidates is JSON [restaurant_id, ...].
+CREATE TABLE IF NOT EXISTS sms_pending_questions (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone        TEXT    NOT NULL,
+    candidates   TEXT    NOT NULL,
+    asked_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+    answered_at  TEXT,
+    answer_rid   INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_spq_phone ON sms_pending_questions(phone, asked_at);
 """
 
 
@@ -209,13 +292,79 @@ def init_guest_marketing(db_path=DB_PATH):
             done_at       TEXT NOT NULL DEFAULT (datetime('now')),
             PRIMARY KEY (restaurant_id, business_date)
         )""",
+        # Consent scopes (MB-2, 9/28/26): `consent` is marketing consent;
+        # a YES to the review-link invite is review_consent and nothing more.
+        "ALTER TABLE guest_contacts ADD COLUMN review_consent INTEGER DEFAULT 0",
+        "ALTER TABLE guest_contacts ADD COLUMN review_consent_at TEXT",
+        # How the row was first created: manual | join | toast_invite. NULL
+        # on rows from before this existed. The retention purge
+        # (purge_unanswered_contacts) only ever considers toast_invite and
+        # join rows, so a legacy or hand-added guest is never purged.
+        "ALTER TABLE guest_contacts ADD COLUMN source TEXT",
     ):
         try:
             conn.execute(col_sql)
         except Exception:
             pass
     conn.commit()
+    try:
+        _backfill_consent_scopes(conn)
+    except Exception as e:
+        print(f"[guest_marketing] consent-scope backfill skipped: {e}")
     conn.close()
+
+
+def _backfill_consent_scopes(conn):
+    """Boot-time, idempotent. Two corrections to rows written before the
+    consent scopes existed (owner decision 9/28/26):
+
+    1. A guest whose only consent came from a YES to the review-link invite
+       becomes REVIEW-ONLY: consent=0, review_consent=1, a 'review_only'
+       evidence row. "Only" means the marketing consent was not already on
+       the row before that YES (consent_at more than a minute before the
+       reply) and no confirmed marketing opt-in has been recorded since —
+       so a guest who later confirms through the join form is never
+       demoted on a later boot.
+    2. Rows the invite job created (the contact and the invite written in
+       the same second) are marked source='toast_invite', so the retention
+       purge can find the ones that never answered.
+    """
+    rows = conn.execute(
+        "SELECT g.id, g.restaurant_id, g.phone, g.consent_at, MIN(i.responded_at) AS yes_at "
+        "FROM guest_contacts g JOIN sms_optin_invites i "
+        "  ON i.restaurant_id = g.restaurant_id AND i.phone = g.phone AND i.response = 'yes' "
+        "WHERE g.consent = 1 AND NOT EXISTS (SELECT 1 FROM guest_consent_events e "
+        "  WHERE e.restaurant_id = g.restaurant_id AND e.phone = g.phone "
+        "  AND e.event IN ('confirmed', 'review_only')) "
+        "GROUP BY g.id").fetchall()
+    demoted = 0
+    for r in rows:
+        consent_at = _parse_local(r["consent_at"])
+        yes_at = _parse_local(r["yes_at"])
+        if consent_at and yes_at and consent_at < yes_at - timedelta(seconds=60):
+            continue          # marketing consent predates the YES: it came from elsewhere
+        conn.execute("UPDATE guest_contacts SET consent=0, review_consent=1, "
+                     "review_consent_at=COALESCE(review_consent_at, consent_at) WHERE id=?", (r["id"],))
+        _insert_consent_event(conn, r["restaurant_id"], "review_only", "backfill", phone=r["phone"],
+                              detail="consent came only from a YES to the review-link invite")
+        demoted += 1
+    conn.execute(
+        "UPDATE guest_contacts SET source='toast_invite' WHERE source IS NULL AND EXISTS ("
+        "  SELECT 1 FROM sms_optin_invites i WHERE i.restaurant_id = guest_contacts.restaurant_id "
+        "  AND i.phone = guest_contacts.phone "
+        "  AND ABS(julianday(i.sent_at) - julianday(guest_contacts.created_at)) < 120.0 / 86400)")
+    conn.commit()
+    if demoted:
+        print(f"[guest_marketing] {demoted} review-link YES contact(s) moved to review-only consent")
+    return demoted
+
+
+def _parse_local(value):
+    """A stored naive-local ISO stamp, or None."""
+    try:
+        return datetime.fromisoformat(str(value or "").strip().replace(" ", "T")[:26]) if value else None
+    except ValueError:
+        return None
 
 
 # ── Quiet hours for guest texts ────────────────────────────────────────────
@@ -267,52 +416,162 @@ def guest_sms_window_label() -> str:
     return f"{_fmt(GUEST_SMS_EARLIEST_HOUR)} and {_fmt(GUEST_SMS_LATEST_HOUR)}"
 
 
+# ── Who may be texted: one definition (MB-2 / OPP-6, 9/28/26) ─────────────
+# The feed counted "opted-in guests" without the review-link YESes, the
+# Studio counted them, and the send texted them. Every marketing send and
+# every count of who can be texted now reads this one fragment; a guest is
+# in it only with MARKETING consent, not unsubscribed, and no STOP on file
+# for this restaurant or the shared number.
+
+def marketing_text_sql(alias="") -> str:
+    """WHERE fragment (no leading AND) for "may receive a marketing text".
+    `alias` is the guest_contacts table alias in the caller's query (none:
+    the table's own name). Always qualified: inside the STOP subquery a bare
+    `phone` would be the opt-out table's own column, and any one STOP on file
+    would empty every audience."""
+    p = f"{alias or 'guest_contacts'}."
+    return (f"{p}consent=1 AND COALESCE({p}unsubscribed,0)=0 AND NOT EXISTS ("
+            f"SELECT 1 FROM guest_sms_optouts o_ WHERE o_.phone={p}phone "
+            f"AND o_.restaurant_id IN (0, {p}restaurant_id))")
+
+
+def review_text_sql(alias="") -> str:
+    """WHERE fragment for "may receive a review-link text": marketing
+    consent, or the narrower review-link consent a YES to the invite gives."""
+    p = f"{alias}." if alias else ""
+    return f"({p}consent=1 OR COALESCE({p}review_consent,0)=1) AND COALESCE({p}unsubscribed,0)=0"
+
+
+_CONTACT_COLS = ("id, name, phone, consent, consent_at, unsubscribed, last_visit, last_review_requested_at, "
+                 "visit_count, last_campaign_at, review_consent, source")
+
+
+def _contact_dict(r):
+    return {"id": r["id"], "name": r["name"] or "", "phone": r["phone"],
+            "consent": bool(r["consent"]), "consent_at": r["consent_at"],
+            "unsubscribed": bool(r["unsubscribed"]), "last_visit": r["last_visit"],
+            "last_review_requested_at": r["last_review_requested_at"],
+            "visit_count": int(r["visit_count"] or 0),
+            "last_campaign_at": r["last_campaign_at"],
+            # Review-link consent only: can get a review link, never a campaign.
+            "review_only": bool(r["review_consent"]) and not bool(r["consent"]),
+            "source": r["source"]}
+
+
 def get_guest_contacts(restaurant_id, consent_only=False, db_path=DB_PATH):
-    """consent_only=True is the enforcement point for actually sending SMS —
-    same shape as notify.get_alert_contacts. Management UI wants
-    consent_only=False so the owner can see (and remove) every contact,
-    consented or not."""
+    """consent_only=True is the enforcement point for actually sending a
+    MARKETING text (marketing_text_sql) — same shape as
+    notify.get_alert_contacts. Management UI wants consent_only=False so
+    the owner can see (and remove) every contact, consented or not.
+    `consent` in each row is marketing consent; `review_only` marks a guest
+    who agreed to review links and nothing else."""
     conn = get_conn(db_path)
-    query = ("SELECT id, name, phone, consent, consent_at, unsubscribed, "
-             "last_visit, last_review_requested_at, visit_count, last_campaign_at "
-             "FROM guest_contacts WHERE restaurant_id=?")
+    query = f"SELECT {_CONTACT_COLS} FROM guest_contacts WHERE restaurant_id=?"
     if consent_only:
-        query += " AND consent=1 AND unsubscribed=0"
+        query += " AND " + marketing_text_sql()
     rows = conn.execute(query + " ORDER BY id DESC", (restaurant_id,)).fetchall()
     conn.close()
-    return [
-        {"id": r["id"], "name": r["name"] or "", "phone": r["phone"],
-         "consent": bool(r["consent"]), "consent_at": r["consent_at"],
-         "unsubscribed": bool(r["unsubscribed"]), "last_visit": r["last_visit"],
-         "last_review_requested_at": r["last_review_requested_at"],
-         "visit_count": int(r["visit_count"] or 0),
-         "last_campaign_at": r["last_campaign_at"]}
-        for r in rows
-    ]
+    return [_contact_dict(r) for r in rows]
 
 
-def add_guest_contact_manual(restaurant_id, phone, name=None, db_path=DB_PATH):
+# ── Consent evidence ────────────────────────────────────────────────────────
+
+CONSENT_EVENTS = ("requested", "confirmed", "opted_out", "resubscribed", "review_only")
+
+
+def _insert_consent_event(conn, restaurant_id, event, source, phone=None, email=None, channel="sms",
+                          ip=None, user_agent=None, disclosure_version=None, disclosure_hash=None,
+                          message_sid=None, detail=None):
+    conn.execute(
+        "INSERT INTO guest_consent_events (restaurant_id, channel, phone, email, event, source, ip, "
+        "user_agent, disclosure_version, disclosure_hash, message_sid, detail) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (int(restaurant_id or 0), channel, phone, email, event, source, (ip or None),
+         (user_agent or "")[:300] or None, disclosure_version, disclosure_hash, message_sid,
+         (detail or "")[:300] or None))
+
+
+def record_consent_event(restaurant_id, event, source, phone=None, email=None, channel="sms", ip=None,
+                         user_agent=None, disclosure_version=None, disclosure_hash=None, message_sid=None,
+                         detail=None, db_path=DB_PATH):
+    """Append one consent change to guest_consent_events. Never raises: a
+    STOP or an opt-in is not lost because its evidence row failed, but the
+    failure is captured for the operator. Also the entry point for the email
+    channel (channel='email')."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            _insert_consent_event(conn, restaurant_id, event, source,
+                                  phone=_normalize_phone(phone) if phone else None, email=email,
+                                  channel=channel, ip=ip, user_agent=user_agent,
+                                  disclosure_version=disclosure_version, disclosure_hash=disclosure_hash,
+                                  message_sid=message_sid, detail=detail)
+            conn.commit()
+        finally:
+            conn.close()
+        return True
+    except Exception as e:
+        try:
+            import ops
+            ops.capture(e, job="guest_consent_evidence", context=f"restaurant_id={restaurant_id} event={event}")
+        except Exception:
+            pass
+        return False
+
+
+def consent_events(restaurant_id=None, phone=None, db_path=DB_PATH) -> list:
+    """The evidence for a restaurant or a number, newest first — "how did
+    this number get on the list" answered from the record, not the row."""
+    conn = get_conn(db_path)
+    try:
+        where, args = [], []
+        if restaurant_id is not None:
+            where.append("restaurant_id IN (0, ?)")
+            args.append(int(restaurant_id))
+        if phone:
+            where.append("phone=?")
+            args.append(_normalize_phone(phone))
+        sql = "SELECT * FROM guest_consent_events" + (" WHERE " + " AND ".join(where) if where else "")
+        return [dict(r) for r in conn.execute(sql + " ORDER BY id DESC LIMIT 500", args).fetchall()]
+    finally:
+        conn.close()
+
+
+def add_guest_contact_manual(restaurant_id, phone, name=None, db_path=DB_PATH, source="manual"):
     """Owner adding a number for their own reference/tracking — never
     consented, can never receive a campaign until the guest opts in
     themselves via the public join page."""
-    return _upsert_contact(restaurant_id, phone, name=name, consent=False, db_path=db_path)
+    return _upsert_contact(restaurant_id, phone, name=name, consent=False, db_path=db_path, source=source)
 
 
-def add_guest_contact_public_optin(restaurant_id, phone, name=None, db_path=DB_PATH):
-    """The guest submitting the public opt-in page themselves."""
-    return _upsert_contact(restaurant_id, phone, name=name, consent=True, db_path=db_path)
+def add_guest_contact_public_optin(restaurant_id, phone, name=None, db_path=DB_PATH, source="explicit_optin",
+                                   message_sid=None, ip=None, user_agent=None, disclosure_version=None,
+                                   disclosure_hash=None, detail=None):
+    """A CONFIRMED marketing opt-in by the guest themselves: their Y to the
+    join form's confirmation text (confirm path in handle_inbound_sms), or
+    another guest-initiated marketing opt-in. The public form itself no
+    longer calls this — it records a pending request (request_public_optin)
+    and consent waits for the phone's own Y (double opt-in, MB-4). Writes a
+    'confirmed' evidence row. Never a visit, never un-STOPs."""
+    cid = _upsert_contact(restaurant_id, phone, name=name, consent=True, db_path=db_path)
+    record_consent_event(restaurant_id, "confirmed", source, phone=phone, message_sid=message_sid, ip=ip,
+                         user_agent=user_agent, disclosure_version=disclosure_version,
+                         disclosure_hash=disclosure_hash, detail=detail, db_path=db_path)
+    return cid
 
 
-def add_guest_contact_sms_optin(restaurant_id, phone, name=None, db_path=DB_PATH):
-    """The guest texting YES back to an opt-in invite.
+def add_guest_contact_sms_optin(restaurant_id, phone, name=None, db_path=DB_PATH, message_sid=None, detail=None):
+    """The guest texting YES back to the review-link invite ("Reply YES if
+    we can text you a quick link to leave a review").
 
-    Consent-equivalent to the public opt-in page: in both cases the guest
-    themselves takes an affirmative action. A number Toast happened to
-    capture at checkout is NOT this — that only ever reaches
-    add_guest_contact_manual (consent=False), because handing a phone
-    number to a POS for a receipt is not agreeing to marketing texts.
-    """
-    return _upsert_contact(restaurant_id, phone, name=name, consent=True, db_path=db_path)
+    That YES agreed to a review link and nothing else, so it sets
+    review_consent — never marketing consent (MB-2 / SMS-1). It used to set
+    consent=1 and the guest was in every promo blast from then on. A number
+    Toast happened to capture at checkout is not even this; that only ever
+    reaches add_guest_contact_manual."""
+    cid = _upsert_contact(restaurant_id, phone, name=name, consent=False, review=True, db_path=db_path)
+    record_consent_event(restaurant_id, "review_only", "sms_reply", phone=phone, message_sid=message_sid,
+                         detail=detail, db_path=db_path)
+    return cid
 
 
 def _record_optout(phone, restaurant_id=0, db_path=DB_PATH):
@@ -331,40 +590,50 @@ def _opted_out_here(conn, restaurant_id, phone) -> bool:
         (phone, int(restaurant_id or 0))).fetchone() is not None
 
 
-def _upsert_contact(restaurant_id, phone, name, consent, db_path):
+def _upsert_contact(restaurant_id, phone, name, consent, db_path, review=False, source=None):
+    """Create or update one contact. `consent` grants MARKETING consent,
+    `review` the review-link scope; neither is ever revoked here (that is
+    unsubscribe's job, an explicit action).
+
+    Neither is a visit (MB-5 / #3 / #6): last_visit and visit_count are left
+    alone. The join form used to set last_visit=now and visit_count+1 on
+    every submission, so three submits made a "Regular (3+ visits)" and a
+    window-QR join got a "thanks for visiting" review request three hours
+    later. `source` is recorded on a new row (see purge_unanswered_contacts);
+    an existing row the invite job created takes the new source, so a guest
+    the owner or the guest has touched is never purged as an unanswered
+    invite."""
     phone = _normalize_phone(phone)
     conn = get_conn(db_path)
     existing = conn.execute(
-        "SELECT id, consent FROM guest_contacts WHERE restaurant_id=? AND phone=?",
+        "SELECT id, consent, source FROM guest_contacts WHERE restaurant_id=? AND phone=?",
         (restaurant_id, phone)
     ).fetchone()
     now_iso = None
-    if consent:
+    if consent or review:
         from time_utils import restaurant_now_by_id
         now_iso = restaurant_now_by_id(restaurant_id, naive=True).isoformat()
+    clean_name = (name or "").strip() or None
     if existing:
-        # Re-submitting the opt-in page (or re-adding the same number) only
-        # ever upgrades consent, never revokes it silently — revoking is
-        # unsubscribe()'s job specifically so it's an explicit action.
+        # Never un-STOPs: a STOP is undone only by an exact START/UNSTOP/YES
+        # texted from that phone (handle_inbound_sms). Nor does a submission
+        # rename an existing guest (COALESCE).
         if consent:
-            # A guest scanning the table QR code and submitting is itself a
-            # fresh visit signal — set last_visit=now every submission (not
-            # just the first), so a repeat guest's automated review-request
-            # follow-up re-fires for *this* visit. consent_at only gets set
-            # once though (COALESCE) — consent doesn't need re-timestamping.
-            # Never un-STOPs: the public form is open to anyone with the
-            # link, and a STOP is undone only by a START texted from that
-            # phone (resubscribe_guest, handle_inbound_sms). The form used to
-            # re-subscribe whoever's number was typed in (MOD-MKT-9). Nor
-            # does a stranger's submission rename an existing guest.
             conn.execute(
                 "UPDATE guest_contacts SET consent=1, consent_at=COALESCE(consent_at,?), "
-                "name=COALESCE(name,?), last_visit=?, "
-                "visit_count=COALESCE(visit_count,0)+1 WHERE id=?",
-                (now_iso, name, now_iso, existing["id"])
+                "name=COALESCE(name,?) WHERE id=?",
+                (now_iso, clean_name, existing["id"])
             )
-        elif name:
-            conn.execute("UPDATE guest_contacts SET name=? WHERE id=?", (name, existing["id"]))
+        if review:
+            conn.execute(
+                "UPDATE guest_contacts SET review_consent=1, review_consent_at=COALESCE(review_consent_at,?), "
+                "name=COALESCE(name,?) WHERE id=?",
+                (now_iso, clean_name, existing["id"])
+            )
+        if not consent and not review and clean_name:
+            conn.execute("UPDATE guest_contacts SET name=? WHERE id=?", (clean_name, existing["id"]))
+        if existing["source"] == "toast_invite" and source and source != "toast_invite":
+            conn.execute("UPDATE guest_contacts SET source=? WHERE id=?", (source, existing["id"]))
         conn.commit()
         contact_id = existing["id"]
     else:
@@ -373,10 +642,10 @@ def _upsert_contact(restaurant_id, phone, name, consent, db_path):
         # re-typing it, the public form. Only their own START undoes it.
         stopped = _opted_out_here(conn, restaurant_id, phone)
         cur = conn.execute(
-            "INSERT INTO guest_contacts (restaurant_id, name, phone, consent, consent_at, "
-            "last_visit, visit_count, unsubscribed) VALUES (?,?,?,?,?,?,?,?)",
-            (restaurant_id, (name or "").strip() or None, phone, int(consent), now_iso,
-             now_iso, 1 if consent else 0, 1 if stopped else 0)
+            "INSERT INTO guest_contacts (restaurant_id, name, phone, consent, consent_at, review_consent, "
+            "review_consent_at, visit_count, unsubscribed, source) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (restaurant_id, clean_name, phone, 1 if consent else 0, now_iso if consent else None,
+             1 if review else 0, now_iso if review else None, 0, 1 if stopped else 0, source)
         )
         conn.commit()
         contact_id = cur.lastrowid
@@ -390,7 +659,8 @@ def delete_guest_contact(contact_id, restaurant_id, db_path=DB_PATH):
 
     The row goes (the owner's list no longer shows them), but a STOP it
     carried is kept in guest_sms_optouts first, so the same number added
-    again later is added unsubscribed (CLIENT-34)."""
+    again later is added unsubscribed (CLIENT-34). The consent evidence
+    (guest_consent_events) is not touched: it outlives the row."""
     conn = get_conn(db_path)
     try:
         row = conn.execute("SELECT phone, unsubscribed FROM guest_contacts WHERE id=? AND restaurant_id=?",
@@ -424,14 +694,17 @@ def mark_guest_visit(contact_id, restaurant_id, db_path=DB_PATH):
     conn.close()
 
 
-def unsubscribe_guest(restaurant_id, phone, db_path=DB_PATH):
+def unsubscribe_guest(restaurant_id, phone, db_path=DB_PATH, source="owner"):
+    phone = _normalize_phone(phone)
     conn = get_conn(db_path)
-    conn.execute(
-        "UPDATE guest_contacts SET unsubscribed=1 WHERE restaurant_id=? AND phone=?",
-        (restaurant_id, _normalize_phone(phone))
-    )
+    n = conn.execute(
+        "UPDATE guest_contacts SET unsubscribed=1 WHERE restaurant_id=? AND phone=? AND unsubscribed=0",
+        (restaurant_id, phone)
+    ).rowcount
     conn.commit()
     conn.close()
+    if n:
+        record_consent_event(restaurant_id, "opted_out", source, phone=phone, db_path=db_path)
 
 
 def phone_opted_out(phone, db_path=DB_PATH) -> bool:
@@ -458,15 +731,155 @@ def phone_opted_out(phone, db_path=DB_PATH) -> bool:
 # Every outbound message this system sends promises "Reply STOP to
 # unsubscribe". Until these handlers existed that promise was not actually
 # kept by anything — a guest could text STOP and keep receiving messages.
+#
+# Keywords are EXACT (MB-1 / #6, 9/28/26). A reply that merely contained a
+# restaurant's name used to opt the sender in and delete their STOP: "Why is
+# Kimball Diner still texting me? I said stop" came back "Thanks! You're in",
+# and "what time does kimball diner close tonight" from a hand-added number
+# made it consented. Now:
+#   * a STOP in any reasonable form stops (unchanged: NFKC, zero-width, short
+#     phrases — _is_stop);
+#   * only a message that IS exactly START / UNSTOP / YES / Y (after
+#     normalisation) undoes a STOP, and it grants no consent a row did not
+#     already have;
+#   * only an exact YES / Y answers a pending question — the join form's
+#     confirmation (marketing consent) or the review-link invite
+#     (review-only consent);
+#   * a restaurant's name counts only as the answer to a "which restaurant
+#     did you mean" question open for that phone, or after an explicit YES
+#     ("yes kimball diner") naming one of the restaurants it could answer.
 
 STOP_KEYWORDS  = {"stop", "stopall", "unsubscribe", "cancel", "end", "quit", "revoke"}
-START_KEYWORDS = {"start", "unstop", "yes", "y"}
+YES_WORDS      = {"yes", "y"}
+RESUME_WORDS   = {"start", "unstop"}
+START_KEYWORDS = YES_WORDS | RESUME_WORDS      # exact-message opt-in keywords (Twilio's defaults)
 HELP_KEYWORDS  = {"help", "info"}
+
+# ── The public join form: double opt-in (MB-4 / #3 / #9, owner 9/28/26) ────
+JOIN_CONFIRM_HOURS = 48        # a Y later than this confirms nothing
+JOIN_PHONE_DAILY_LIMIT = 3     # form submissions for one number per 24h, all restaurants
+JOIN_IP_HOURLY_LIMIT = 20      # durable, beside the in-process per-IP limit on the route
+JOIN_RESEND_MINUTES = 10       # a double tap does not send a second confirmation text
+QUESTION_HOURS = 24            # how long "which restaurant did you mean" stays open
+
+JOIN_DISCLOSURE_VERSION = "2026-09-28"
+JOIN_DISCLOSURE = ("I agree to receive recurring marketing text messages from {restaurant} at the number "
+                   "provided. Consent is not a condition of purchase. Msg frequency varies. Msg & data rates "
+                   "may apply. Reply STOP to cancel, HELP for help. We'll text you once to confirm.")
+
+
+def join_disclosure(restaurant_name) -> str:
+    """The consent sentence the join page shows, word for word — the one
+    whose version and hash each request records."""
+    return JOIN_DISCLOSURE.format(restaurant=(restaurant_name or "this restaurant").strip())
+
+
+def join_disclosure_hash() -> str:
+    return hashlib.sha256(f"{JOIN_DISCLOSURE_VERSION}\n{JOIN_DISCLOSURE}".encode("utf-8")).hexdigest()[:16]
+
+
+_GSM_SWAPS = {"‘": "'", "’": "'", "“": '"', "”": '"', "–": "-", "—": "-",
+              "…": "...", " ": " "}
+_CONFIRM_TAIL = (": Reply Y to confirm texts from us. Msg frequency varies. Msg & data rates may apply. "
+                 "Reply STOP to cancel, HELP for help.")
+
+
+def confirmation_text(restaurant_name) -> str:
+    """The one confirmation text a join sends — a single GSM-7 segment
+    (160 characters), the restaurant's name trimmed to fit. A curly
+    apostrophe would make it UCS-2 and three segments."""
+    name = "".join(_GSM_SWAPS.get(ch, ch) for ch in (restaurant_name or "")).strip() or "Text club"
+    room = 160 - len(_CONFIRM_TAIL)
+    return name[:room].rstrip() + _CONFIRM_TAIL
+
+
+def request_public_optin(restaurant_id, phone, name=None, ip=None, user_agent=None, db_path=DB_PATH) -> dict:
+    """The public join form's submission: a PENDING opt-in and one
+    confirmation text. Consent is set only when that phone replies Y within
+    JOIN_CONFIRM_HOURS (handle_inbound_sms). Anyone with the link could
+    enrol any number, turning a POS-captured number into a textable one and
+    arming a "thanks for visiting" review text three hours later (MB-4,
+    ARC-1).
+
+    Never touches consent, last_visit or visit_count, and never re-subscribes
+    a STOP. A number not yet on the list is added unconsented (so an email
+    given on the same form has a row to attach to). A number that already
+    has marketing consent, or that texted STOP, gets no text — and the form's
+    answer is the same either way, so the page does not tell a stranger who
+    is on the list.
+
+    Returns {"ok": True, "pending": True, "contact_id"} or
+    {"ok": False, "status": 429|502, "error"}."""
+    phone = _normalize_phone(phone)
+    ip = (ip or "").strip() or None
+    conn = get_conn(db_path)
+    try:
+        r = conn.execute("SELECT name FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+        restaurant_name = (r["name"] if r else "") or ""
+        by_phone = conn.execute("SELECT COUNT(*) FROM guest_optin_requests WHERE phone=? "
+                                "AND requested_at >= datetime('now','-1 day')", (phone,)).fetchone()[0]
+        by_ip = (conn.execute("SELECT COUNT(*) FROM guest_optin_requests WHERE ip=? "
+                              "AND requested_at >= datetime('now','-1 hour')", (ip,)).fetchone()[0] if ip else 0)
+        recent = conn.execute("SELECT 1 FROM guest_optin_requests WHERE phone=? AND restaurant_id=? "
+                              "AND status='pending' AND requested_at >= datetime('now', ?) LIMIT 1",
+                              (phone, restaurant_id, f"-{JOIN_RESEND_MINUTES} minutes")).fetchone()
+        on_list = conn.execute("SELECT id FROM guest_contacts WHERE restaurant_id=? AND phone=?",
+                               (restaurant_id, phone)).fetchone()
+        existing = conn.execute("SELECT id FROM guest_contacts WHERE restaurant_id=? AND phone=? AND "
+                                + marketing_text_sql(), (restaurant_id, phone)).fetchone()
+    finally:
+        conn.close()
+    if by_phone >= JOIN_PHONE_DAILY_LIMIT:
+        return {"ok": False, "status": 429,
+                "error": "We've already sent that number a text to confirm. Reply Y to it to finish joining."}
+    if by_ip >= JOIN_IP_HOURLY_LIMIT:
+        return {"ok": False, "status": 429, "error": "Too many attempts. Please try again later."}
+
+    # A new number is added unconsented with the name typed; an existing
+    # guest is never renamed by a stranger's submission (the name waits on
+    # the request and is applied, if the row has none, on the Y).
+    contact_id = _upsert_contact(restaurant_id, phone, name=None if on_list else name, consent=False,
+                                 db_path=db_path, source="join")
+    if recent:
+        return {"ok": True, "pending": True, "contact_id": contact_id}
+    stopped = phone_opted_out(phone, db_path=db_path)
+    status = "already" if existing else ("blocked_stop" if stopped else "pending")
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute(
+            "INSERT INTO guest_optin_requests (restaurant_id, phone, name, ip, user_agent, disclosure_version, "
+            "disclosure_hash, status) VALUES (?,?,?,?,?,?,?,?)",
+            (restaurant_id, phone, (name or "").strip()[:80] or None, ip, (user_agent or "")[:300] or None,
+             JOIN_DISCLOSURE_VERSION, join_disclosure_hash(), status))
+        request_id = cur.lastrowid
+        conn.commit()
+    finally:
+        conn.close()
+    if status != "pending":
+        return {"ok": True, "pending": True, "contact_id": contact_id}
+    record_consent_event(restaurant_id, "requested", "join_form", phone=phone, ip=ip, user_agent=user_agent,
+                         disclosure_version=JOIN_DISCLOSURE_VERSION, disclosure_hash=join_disclosure_hash(),
+                         detail=f"join request {request_id}", db_path=db_path)
+    try:
+        sent = bool(send_sms(phone, confirmation_text(restaurant_name), use_case="guest"))
+    except Exception:
+        sent = False
+    if not sent:
+        conn = get_conn(db_path)
+        try:
+            conn.execute("UPDATE guest_optin_requests SET status='send_failed' WHERE id=?", (request_id,))
+            conn.commit()
+        finally:
+            conn.close()
+        return {"ok": False, "status": 502,
+                "error": "We couldn't send the confirmation text just now. Please try again in a few minutes."}
+    return {"ok": True, "pending": True, "contact_id": contact_id}
 
 
 def resubscribe_guest(restaurant_id, phone, db_path=DB_PATH):
-    """The guest's own START (handle_inbound_sms) — the one thing that undoes
-    a STOP, including one kept after their contact row was deleted."""
+    """Undo a STOP for one restaurant (and the shared number's record of
+    it). The inbound handler's START uses _undo_stop, which follows the STOP
+    everywhere it went."""
     phone = _normalize_phone(phone)
     conn = get_conn(db_path)
     conn.execute(
@@ -477,6 +890,38 @@ def resubscribe_guest(restaurant_id, phone, db_path=DB_PATH):
                  (phone, int(restaurant_id or 0)))
     conn.commit()
     conn.close()
+
+
+def _undo_stop(phone, message_sid=None, db_path=DB_PATH) -> list:
+    """The guest's own exact START / UNSTOP / YES: their STOP went to every
+    restaurant on the shared number, so this undoes it everywhere — except a
+    row the OWNER unsubscribed (unsubscribe_guest), which the guest's
+    keyword to the shared number does not override. Grants no consent: a
+    row that had none still has none. Returns the restaurant ids resumed."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT id, restaurant_id FROM guest_contacts WHERE phone=? AND unsubscribed=1",
+                            (phone,)).fetchall()
+        held, resumed = set(), []
+        for r in rows:
+            # The owner's unsubscribe stands unless the guest opted back in
+            # (resubscribed / confirmed) after it; the guest's own STOP to
+            # the shared number, recorded after it, does not undo it.
+            last = conn.execute("SELECT event, source FROM guest_consent_events WHERE restaurant_id=? AND phone=? "
+                                "AND ((event='opted_out' AND source='owner') OR event IN ('resubscribed','confirmed')) "
+                                "ORDER BY id DESC LIMIT 1", (r["restaurant_id"], phone)).fetchone()
+            if last and last["event"] == "opted_out" and last["source"] == "owner":
+                held.add(r["id"])
+                continue
+            conn.execute("UPDATE guest_contacts SET unsubscribed=0 WHERE id=?", (r["id"],))
+            resumed.append(r["restaurant_id"])
+        conn.execute("DELETE FROM guest_sms_optouts WHERE phone=?", (phone,))
+        for rid in [0] + resumed:
+            _insert_consent_event(conn, rid, "resubscribed", "sms_reply", phone=phone, message_sid=message_sid)
+        conn.commit()
+        return resumed
+    finally:
+        conn.close()
 
 
 def record_optin_invite(restaurant_id, phone, source="toast_order", external_ref=None, db_path=DB_PATH):
@@ -502,59 +947,46 @@ def record_optin_invite(restaurant_id, phone, source="toast_order", external_ref
 _INVITE_REPLY_WINDOW_DAYS = 14
 
 
-def _inbound_candidates(phone, db_path=DB_PATH):
-    """Every restaurant this phone could plausibly be replying to, newest
-    invite first, as [(restaurant_id, name)].
+def _pending_answers(phone, db_path=DB_PATH) -> list:
+    """What a YES from this phone could be answering, newest first:
+    [{"rid", "name", "kind"}] with kind "confirm" (a join request waiting
+    for its Y, JOIN_CONFIRM_HOURS) or "invite" (a review-link invite,
+    _INVITE_REPLY_WINDOW_DAYS). One entry per restaurant; a join request
+    wins over an invite at the same restaurant.
 
     Every restaurant shares one platform Twilio number, so the inbound `To`
-    cannot identify the restaurant. This used to take the single most recent
-    invite and treat it as the answer — which silently attributed a guest's
-    YES to whichever restaurant happened to text last. A diner on two
-    restaurants' lists could consent to one and be enrolled in the other's
-    marketing, with that owner then seeing their phone number.
-    """
-    phone = _normalize_phone(phone)
+    cannot identify the restaurant. The old fallback — every restaurant
+    with a contact row for this phone — is gone: a row is not a question,
+    and treating it as one is how a hand-added number was opted in (MB-1)."""
     conn = get_conn(db_path)
     try:
-        rows = conn.execute(
-            "SELECT i.restaurant_id, r.name, MAX(i.sent_at) AS last_sent "
-            "FROM sms_optin_invites i JOIN restaurants r ON r.id = i.restaurant_id "
-            "WHERE i.phone=? AND i.responded_at IS NULL "
-            "  AND i.sent_at >= datetime('now', ?) "
-            "GROUP BY i.restaurant_id ORDER BY last_sent DESC",
-            (phone, f"-{_INVITE_REPLY_WINDOW_DAYS} days")
-        ).fetchall()
-        if rows:
-            return [(r["restaurant_id"], r["name"] or "") for r in rows]
-        rows = conn.execute(
-            "SELECT DISTINCT g.restaurant_id, r.name FROM guest_contacts g "
-            "JOIN restaurants r ON r.id = g.restaurant_id WHERE g.phone=?",
-            (phone,)
-        ).fetchall()
-        return [(r["restaurant_id"], r["name"] or "") for r in rows]
+        confirms = conn.execute(
+            "SELECT q.restaurant_id AS rid, r.name, MAX(q.requested_at) AS at FROM guest_optin_requests q "
+            "JOIN restaurants r ON r.id = q.restaurant_id WHERE q.phone=? AND q.status='pending' "
+            "AND q.requested_at >= datetime('now', ?) GROUP BY q.restaurant_id",
+            (phone, f"-{JOIN_CONFIRM_HOURS} hours")).fetchall()
+        invites = conn.execute(
+            "SELECT i.restaurant_id AS rid, r.name, MAX(i.sent_at) AS at FROM sms_optin_invites i "
+            "JOIN restaurants r ON r.id = i.restaurant_id WHERE i.phone=? AND i.responded_at IS NULL "
+            "AND i.sent_at >= datetime('now', ?) GROUP BY i.restaurant_id",
+            (phone, f"-{_INVITE_REPLY_WINDOW_DAYS} days")).fetchall()
     finally:
         conn.close()
-
-
-def _match_named_restaurant(body, candidates):
-    """Did the guest name one of them in the reply itself?"""
-    text = " ".join((body or "").lower().split())
-    for rid, name in candidates:
-        n = " ".join((name or "").lower().split())
-        if n and n in text:
-            return rid
-    return None
-
+    out = {}
+    for r in invites:
+        out[r["rid"]] = {"rid": r["rid"], "name": r["name"] or "", "kind": "invite", "at": r["at"] or ""}
+    for r in confirms:
+        out[r["rid"]] = {"rid": r["rid"], "name": r["name"] or "", "kind": "confirm", "at": r["at"] or ""}
+    return sorted(out.values(), key=lambda p: p["at"], reverse=True)
 
 
 def _mark_invite_response(phone, response, db_path=DB_PATH, restaurant_id=None):
     """Close the invite this reply answers.
 
-    `restaurant_id` pins which one. Without it (a STOP, which is global by
-    design) the most recent unanswered invite is closed, but a YES must
-    always pass the restaurant it was actually resolved to — closing the
-    wrong restaurant's invite leaves the right one open forever and the
-    guest never gets their review link.
+    `restaurant_id` pins which one. Without it the most recent unanswered
+    invite is closed, but a YES must always pass the restaurant it was
+    actually resolved to — closing the wrong restaurant's invite leaves the
+    right one open forever and the guest never gets their review link.
     """
     from time_utils import restaurant_now_by_id
     conn = get_conn(db_path)
@@ -571,16 +1003,145 @@ def _mark_invite_response(phone, response, db_path=DB_PATH, restaurant_id=None):
                 "ORDER BY sent_at DESC, id DESC LIMIT 1", (_normalize_phone(phone),)
             ).fetchone()
         if not row:
-            return
+            return None
         now_iso = restaurant_now_by_id(row["restaurant_id"], naive=True).isoformat()
         conn.execute("UPDATE sms_optin_invites SET responded_at=?, response=? WHERE id=?",
                      (now_iso, response, row["id"]))
+        conn.commit()
+        return row["id"]
+    finally:
+        conn.close()
+
+
+def _apply_yes(phone, pending, message_sid=None, db_path=DB_PATH):
+    """A YES resolved to one restaurant's pending question. The reply."""
+    rid, kind = pending["rid"], pending["kind"]
+    conn = get_conn(db_path)
+    try:
+        r = conn.execute("SELECT name, google_place_id FROM restaurants WHERE id=?", (rid,)).fetchone()
+    finally:
+        conn.close()
+    name = ((r["name"] if r else "") or "us").strip()
+    if kind == "confirm":
+        conn = get_conn(db_path)
+        try:
+            req = conn.execute(
+                "SELECT * FROM guest_optin_requests WHERE phone=? AND restaurant_id=? AND status='pending' "
+                "AND requested_at >= datetime('now', ?) ORDER BY id DESC LIMIT 1",
+                (phone, rid, f"-{JOIN_CONFIRM_HOURS} hours")).fetchone()
+            if req is None:
+                return None
+            conn.execute("UPDATE guest_optin_requests SET status='confirmed', confirmed_at=datetime('now'), "
+                         "confirm_sid=? WHERE phone=? AND restaurant_id=? AND status='pending'",
+                         (message_sid, phone, rid))
+            conn.commit()
+        finally:
+            conn.close()
+        add_guest_contact_public_optin(rid, phone, name=req["name"], db_path=db_path, source="sms_reply",
+                                       message_sid=message_sid, ip=req["ip"], user_agent=req["user_agent"],
+                                       disclosure_version=req["disclosure_version"],
+                                       disclosure_hash=req["disclosure_hash"],
+                                       detail=f"confirmed join request {req['id']}")
+        return (f"{name}: You're in! Msg frequency varies. Msg & data rates may apply. "
+                "Reply STOP to cancel, HELP for help.")
+
+    # A YES to the review-link invite: review-link consent, and the link
+    # they asked for, now. It is never a visit (#6) and never marketing
+    # consent (MB-2).
+    invite_id = _mark_invite_response(phone, "yes", db_path=db_path, restaurant_id=rid)
+    add_guest_contact_sms_optin(rid, phone, db_path=db_path, message_sid=message_sid,
+                                detail=f"invite {invite_id}" if invite_id else None)
+    link = _google_review_link(r["google_place_id"] if r else None)
+    if not link:
+        return f"Thanks! {name} can text you a review link now. Reply STOP to opt out."
+    from time_utils import restaurant_now_by_id
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE guest_contacts SET last_review_requested_at=? WHERE restaurant_id=? AND phone=?",
+                     (restaurant_now_by_id(rid, naive=True).isoformat(), rid, phone))
+        row = conn.execute("SELECT name FROM guest_contacts WHERE restaurant_id=? AND phone=?",
+                           (rid, phone)).fetchone()
+        conn.execute("INSERT INTO review_requests (restaurant_id, customer_name, customer_email, customer_phone, "
+                     "method, status) VALUES (?,?,?,?,?,?)",
+                     (rid, (row["name"] if row else "") or "", "", phone, "sms_reply", "sent"))
+        conn.commit()
+    except Exception as e:
+        import ops
+        ops.capture(e, job="guest_review_reply", context=f"restaurant_id={rid}")
+    finally:
+        conn.close()
+    return f"Thanks! Here's the link to review {name}: {link} Reply STOP to opt out."
+
+
+def _open_question(phone, db_path=DB_PATH):
+    conn = get_conn(db_path)
+    try:
+        return conn.execute(
+            "SELECT id, candidates FROM sms_pending_questions WHERE phone=? AND answered_at IS NULL "
+            "AND asked_at >= datetime('now', ?) ORDER BY id DESC LIMIT 1",
+            (phone, f"-{QUESTION_HOURS} hours")).fetchone()
+    finally:
+        conn.close()
+
+
+def _close_questions(phone, answer_rid=None, db_path=DB_PATH):
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE sms_pending_questions SET answered_at=datetime('now'), answer_rid=? "
+                     "WHERE phone=? AND answered_at IS NULL", (answer_rid, phone))
         conn.commit()
     finally:
         conn.close()
 
 
-_ZERO_WIDTH = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u200e\u200f\u2060\ufeff"), None)
+def _ask_which(phone, pending, db_path=DB_PATH):
+    """Several restaurants are waiting on this phone's answer and only the
+    guest knows which they meant — consent recorded against a guess is
+    consent for a business they never agreed to hear from."""
+    conn = get_conn(db_path)
+    try:
+        conn.execute("INSERT INTO sms_pending_questions (phone, candidates) VALUES (?,?)",
+                     (phone, json.dumps([p["rid"] for p in pending])))
+        conn.commit()
+    finally:
+        conn.close()
+    names = " or ".join(p["name"] for p in pending[:3] if p["name"])
+    return (f"Thanks! Which restaurant did you mean: {names}? "
+            "Reply with the name. Reply STOP to opt out of all of them.")
+
+
+def _named_answer(phone, norm, pending, db_path=DB_PATH):
+    """The pending restaurant a name picks out, or None. "yes <name>" is an
+    explicit YES naming one of the restaurants it could answer; a bare name
+    counts only while a "which restaurant" question is open for this phone.
+    The whole message must be the name — "why is kimball diner still
+    texting me" names a restaurant and answers nothing."""
+    words = norm.split()
+    after_yes = " ".join(words[1:]) if len(words) > 1 and words[0] in YES_WORDS else None
+    by_name = {}
+    for p in pending:
+        key = _normalise_sms(p["name"])
+        if key:
+            by_name.setdefault(key, []).append(p)
+    if after_yes and len(by_name.get(after_yes, [])) == 1:
+        _close_questions(phone, by_name[after_yes][0]["rid"], db_path=db_path)
+        return by_name[after_yes][0]
+    q = _open_question(phone, db_path=db_path)
+    if not q:
+        return None
+    try:
+        asked = set(int(x) for x in json.loads(q["candidates"] or "[]"))
+    except (ValueError, TypeError):
+        asked = set()
+    for text in (norm, after_yes):
+        hits = [p for p in by_name.get(text or "", []) if p["rid"] in asked]
+        if len(hits) == 1:
+            _close_questions(phone, hits[0]["rid"], db_path=db_path)
+            return hits[0]
+    return None
+
+
+_ZERO_WIDTH = dict.fromkeys(map(ord, "​‌‍‎‏⁠﻿"), None)
 _STOP_PHRASES = ("stop", "unsubscribe", "opt out", "optout", "remove me", "stop texting", "cancel", "end", "quit")
 
 
@@ -611,59 +1172,92 @@ def _is_stop(body: str) -> bool:
     return False
 
 
-def handle_inbound_sms(from_phone, body, db_path=DB_PATH):
+def _stop_everywhere(phone, message_sid=None, db_path=DB_PATH):
+    """A STOP unsubscribes the guest from EVERY restaurant that has their
+    number, closes every question waiting on them, and is recorded apart
+    from the contact rows (which an owner can delete)."""
+    from time_utils import restaurant_now_by_id
+    conn = get_conn(db_path)
+    try:
+        rids = [r[0] for r in conn.execute("SELECT DISTINCT restaurant_id FROM guest_contacts WHERE phone=?",
+                                           (phone,)).fetchall()]
+        conn.execute("UPDATE guest_contacts SET unsubscribed=1 WHERE phone=?", (phone,))
+        conn.execute("INSERT OR IGNORE INTO guest_sms_optouts (restaurant_id, phone) VALUES (0, ?)", (phone,))
+        for inv in conn.execute("SELECT id, restaurant_id FROM sms_optin_invites WHERE phone=? "
+                                "AND responded_at IS NULL", (phone,)).fetchall():
+            conn.execute("UPDATE sms_optin_invites SET responded_at=?, response='stop' WHERE id=?",
+                         (restaurant_now_by_id(inv["restaurant_id"], naive=True).isoformat(), inv["id"]))
+        conn.execute("UPDATE guest_optin_requests SET status='stopped' WHERE phone=? AND status='pending'", (phone,))
+        conn.execute("UPDATE sms_pending_questions SET answered_at=datetime('now') WHERE phone=? "
+                     "AND answered_at IS NULL", (phone,))
+        conn.commit()
+    finally:
+        conn.close()
+    for rid in [0] + rids:
+        record_consent_event(rid, "opted_out", "sms_reply", phone=phone, message_sid=message_sid, db_path=db_path)
+
+
+def handle_inbound_sms(from_phone, body, db_path=DB_PATH, message_sid=None):
     """Process one inbound guest text. Returns a reply string to send back
-    (or None to stay silent).
+    (or None to stay silent). `message_sid` is Twilio's MessageSid for the
+    inbound text, kept on the consent evidence it produces.
 
     A STOP unsubscribes the guest from EVERY restaurant that has their
     number, not just the one we think they were replying to — when someone
     says stop, the safe reading is stop, not "stop from this one tenant".
     """
     phone = _normalize_phone(from_phone)
-    _norm = _normalise_sms(body)
-    word = _norm.split()[0] if _norm else ""
+    norm = _normalise_sms(body)
+    word = norm.split()[0] if norm else ""
 
     if _is_stop(body):
-        conn = get_conn(db_path)
-        conn.execute("UPDATE guest_contacts SET unsubscribed=1 WHERE phone=?", (phone,))
-        # Kept apart from the contact rows, which an owner can delete.
-        conn.execute("INSERT OR IGNORE INTO guest_sms_optouts (restaurant_id, phone) VALUES (0, ?)",
-                     (phone,))
-        conn.commit()
-        conn.close()
-        _mark_invite_response(phone, "stop", db_path=db_path)
+        _stop_everywhere(phone, message_sid=message_sid, db_path=db_path)
         return "You're unsubscribed and won't get any more texts from us. Reply START to opt back in."
 
-    candidates = _inbound_candidates(phone, db_path=db_path)
-    if not candidates:
-        return None          # nothing of ours — stay silent rather than guess
+    pending = _pending_answers(phone, db_path=db_path)
 
     if word in HELP_KEYWORDS:
         # The carrier requirement for HELP: name the program, say how to stop.
-        names = " and ".join(n for _, n in candidates[:3] if n) or "a restaurant you joined"
-        return (f"Guest texts from {names}, sent by Cavnar AI. Msg & data rates may apply. "
+        conn = get_conn(db_path)
+        try:
+            known = [r[0] or "" for r in conn.execute(
+                "SELECT DISTINCT r.name FROM guest_contacts g JOIN restaurants r ON r.id = g.restaurant_id "
+                "WHERE g.phone=?", (phone,)).fetchall()]
+        finally:
+            conn.close()
+        names = []
+        for n in [p["name"] for p in pending] + known:
+            if n and n not in names:
+                names.append(n)
+        if not names:
+            return None          # nothing of ours — stay silent rather than guess
+        return (f"Guest texts from {' and '.join(names[:3])}, sent by Cavnar AI. Msg & data rates may apply. "
                 "Reply STOP to unsubscribe.")
 
-    if word in START_KEYWORDS or _match_named_restaurant(body, candidates):
-        # One candidate is unambiguous. Several means two restaurants texted
-        # this number and only the guest knows which they meant — consent
-        # recorded against a guess is consent for a business they never
-        # agreed to hear from, so ask instead of picking.
-        restaurant_id = (candidates[0][0] if len(candidates) == 1
-                         else _match_named_restaurant(body, candidates))
-        if restaurant_id is None:
-            names = " or ".join(n for _, n in candidates[:3] if n)
-            return (f"Thanks! Which restaurant did you mean — {names}? "
-                    "Reply with the name. Reply STOP to opt out of all of them.")
-        conn = get_conn(db_path)
-        row = conn.execute("SELECT name FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
-        conn.close()
-        add_guest_contact_sms_optin(restaurant_id, phone, db_path=db_path)
-        resubscribe_guest(restaurant_id, phone, db_path=db_path)
-        _mark_invite_response(phone, "yes", db_path=db_path, restaurant_id=restaurant_id)
-        name = row["name"] if row else "us"
-        return f"Thanks! You're in — we'll text you a review link after your next visit to {name}. Reply STOP anytime."
+    if norm in START_KEYWORDS:
+        resumed = None
+        if phone_opted_out(phone, db_path=db_path):
+            resumed = _undo_stop(phone, message_sid=message_sid, db_path=db_path)
+        if norm in YES_WORDS and pending:
+            if len(pending) == 1:
+                _close_questions(phone, pending[0]["rid"], db_path=db_path)
+                return _apply_yes(phone, pending[0], message_sid=message_sid, db_path=db_path)
+            return _ask_which(phone, pending, db_path=db_path)
+        if resumed is not None:
+            conn = get_conn(db_path)
+            try:
+                names = [r[0] for r in conn.execute(
+                    "SELECT name FROM restaurants WHERE id IN (%s)" % ",".join("?" * len(resumed)),
+                    resumed).fetchall()] if resumed else []
+            finally:
+                conn.close()
+            who = f" from {' and '.join(n for n in names[:3] if n)}" if any(names) else ""
+            return f"You're resubscribed to texts{who}. Reply STOP to opt out."
+        return None
 
+    picked = _named_answer(phone, norm, pending, db_path=db_path)
+    if picked:
+        return _apply_yes(phone, picked, message_sid=message_sid, db_path=db_path)
     return None
 
 
@@ -717,24 +1311,108 @@ CAMPAIGN_DEFAULT_SEGMENT = {
 }
 
 
+def _norm_segment(segment):
+    segment = (segment or "all").strip().lower()
+    return segment if segment in SEGMENTS else "all"
+
+
+_ISO_GLOB = "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*"
+
+
+def _iso_col(col):
+    """A stored stamp in comparable form: first 19 characters, 'T' between
+    date and time — the same truncation filter_segment parses."""
+    return f"replace(substr({col},1,19),' ','T')"
+
+
+def _segment_where(segment, now, alias=""):
+    """SQL twin of filter_segment: (fragment, params). `now` is the
+    restaurant's naive local clock. lapsed_N is "last visit N or more whole
+    days ago" — last_visit <= now - N days — and a missing or unreadable
+    visit is never lapsed."""
+    p = f"{alias}." if alias else ""
+    segment = _norm_segment(segment)
+    if segment in ("lapsed_30", "lapsed_60"):
+        cutoff = (now - timedelta(days=30 if segment == "lapsed_30" else 60)).strftime("%Y-%m-%dT%H:%M:%S")
+        return (f"({p}last_visit GLOB '{_ISO_GLOB}' AND {_iso_col(p + 'last_visit')} <= ?)", [cutoff])
+    if segment == "regulars":
+        return f"COALESCE({p}visit_count,0) >= 3", []
+    if segment == "new":
+        return f"COALESCE({p}visit_count,0) = 1", []
+    return "1=1", []
+
+
+def _not_recent_where(now, alias=""):
+    """SQL twin of `not _too_soon`: no campaign text inside
+    GUEST_SMS_MIN_DAYS_BETWEEN whole days (an unreadable stamp does not hold
+    a guest back, as in _too_soon)."""
+    p = f"{alias}." if alias else ""
+    cutoff = (now - timedelta(days=GUEST_SMS_MIN_DAYS_BETWEEN)).strftime("%Y-%m-%dT%H:%M:%S")
+    return (f"({p}last_campaign_at IS NULL OR {p}last_campaign_at NOT GLOB '{_ISO_GLOB}' "
+            f"OR {_iso_col(p + 'last_campaign_at')} <= ?)", [cutoff])
+
+
+def marketing_audience(restaurant_id, segment="all", exclude_recent=False, db_path=DB_PATH) -> list:
+    """THE audience of a marketing text (MB-2 / OPP-6): guests with
+    marketing consent (marketing_text_sql), narrowed to `segment`, and with
+    exclude_recent also without a campaign text inside the frequency window.
+    Everything that sends or counts a text audience — the send, the Studio's
+    counts, the win-back floor, the Opportunity Feed — reads this or its
+    SQL (marketing_text_sql + _segment_where), so a card, a count and a send
+    can never disagree about who is in it. Filtered in SQL (CS-19 / #94):
+    the whole list was loaded and filtered in Python once per segment."""
+    from time_utils import restaurant_now_by_id
+    now = restaurant_now_by_id(restaurant_id, naive=True)
+    where, args = _segment_where(segment, now)
+    sql = (f"SELECT {_CONTACT_COLS} FROM guest_contacts WHERE restaurant_id=? AND "
+           f"{marketing_text_sql()} AND {where}")
+    params = [restaurant_id] + args
+    if exclude_recent:
+        w2, a2 = _not_recent_where(now)
+        sql += f" AND {w2}"
+        params += a2
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(sql + " ORDER BY id DESC", params).fetchall()
+    finally:
+        conn.close()
+    return [_contact_dict(r) for r in rows]
+
+
+def marketing_audience_count(restaurant_id, segment="all", exclude_recent=False, db_path=DB_PATH) -> int:
+    """len(marketing_audience(...)), counted in SQL."""
+    from time_utils import restaurant_now_by_id
+    now = restaurant_now_by_id(restaurant_id, naive=True)
+    where, args = _segment_where(segment, now)
+    sql = f"SELECT COUNT(*) FROM guest_contacts WHERE restaurant_id=? AND {marketing_text_sql()} AND {where}"
+    params = [restaurant_id] + args
+    if exclude_recent:
+        w2, a2 = _not_recent_where(now)
+        sql += f" AND {w2}"
+        params += a2
+    conn = get_conn(db_path)
+    try:
+        return int(conn.execute(sql, params).fetchone()[0] or 0)
+    finally:
+        conn.close()
+
+
 def segment_contacts(restaurant_id, segment="all", db_path=DB_PATH):
-    """Consented, non-unsubscribed contacts matching `segment`.
+    """Consented, non-unsubscribed contacts matching `segment` — the
+    marketing audience (marketing_audience).
 
     Consent is applied first and unconditionally — a segment can only ever
     narrow the eligible set, never widen it.
     """
-    contacts = get_guest_contacts(restaurant_id, consent_only=True, db_path=db_path)
-    return filter_segment(restaurant_id, contacts, segment)
+    return marketing_audience(restaurant_id, segment, db_path=db_path)
 
 
 def filter_segment(restaurant_id, contacts, segment="all"):
     """`contacts` narrowed to `segment`. Consent is the caller's: texts pass
     SMS-consented guests, the newsletter its email subscribers, and this
-    only ever narrows what it was given."""
+    only ever narrows what it was given. _segment_where is its SQL twin."""
     contacts = list(contacts)
-    segment = (segment or "all").strip().lower()
-    if segment not in SEGMENTS:
-        segment = "all"
+    segment = _norm_segment(segment)
     if segment == "all":
         return contacts
 
@@ -772,10 +1450,30 @@ def filter_segment(restaurant_id, contacts, segment="all"):
     return out
 
 
-def segment_counts(restaurant_id, db_path=DB_PATH) -> dict:
+def segment_counts(restaurant_id, db_path=DB_PATH, exclude_recent=False) -> dict:
     """How many guests each segment would reach right now, so the owner picks
-    an audience seeing its size rather than after sending to it."""
-    return {key: len(segment_contacts(restaurant_id, key, db_path=db_path)) for key in SEGMENTS}
+    an audience seeing its size rather than after sending to it. One
+    aggregate query over the marketing audience (was: the whole list loaded
+    once per segment, CS-19 / ARC-6)."""
+    from time_utils import restaurant_now_by_id
+    now = restaurant_now_by_id(restaurant_id, naive=True)
+    cols, params = [], []
+    for key in SEGMENTS:
+        where, args = _segment_where(key, now)
+        cols.append(f"COALESCE(SUM(CASE WHEN {where} THEN 1 ELSE 0 END),0)")
+        params += args
+    sql = f"SELECT {', '.join(cols)} FROM guest_contacts WHERE restaurant_id=? AND {marketing_text_sql()}"
+    params.append(restaurant_id)
+    if exclude_recent:
+        w2, a2 = _not_recent_where(now)
+        sql += f" AND {w2}"
+        params += a2
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(sql, params).fetchone()
+    finally:
+        conn.close()
+    return {key: int(row[i] or 0) for i, key in enumerate(SEGMENTS)}
 
 
 # ── Send frequency ─────────────────────────────────────────────────────────
@@ -945,10 +1643,10 @@ MAX_CAMPAIGN_CHARS = 1600
 
 
 def audience_size(restaurant_id, segment="all", db_path=DB_PATH) -> int:
-    """How many guests a campaign to this segment would text right now."""
-    from time_utils import restaurant_now_by_id
-    now = restaurant_now_by_id(restaurant_id, naive=True)
-    return sum(1 for c in segment_contacts(restaurant_id, segment, db_path=db_path) if not _too_soon(c, now))
+    """How many guests a campaign to this segment would text right now: the
+    marketing audience less anyone inside the frequency window, counted in
+    SQL (marketing_audience_count)."""
+    return marketing_audience_count(restaurant_id, segment, exclude_recent=True, db_path=db_path)
 
 
 def start_campaign(restaurant_id, message, segment="all", link_token=None, on_done=None, db_path=DB_PATH) -> dict:
@@ -1500,9 +2198,11 @@ def dismiss_winback(restaurant_id, draft_id, user_id=None, kind="not_for_us", db
 
 
 ATTRIBUTION_WINDOW_DAYS = 14
+ATTRIBUTION_PASS_SECONDS = int(os.getenv("CAMPAIGN_ATTRIBUTION_SECONDS", str(10 * 60)))
+ATTRIBUTION_CURSOR_KEY = "campaign_attribution_cursor"
 
 
-def run_campaign_attribution(db_path=DB_PATH, today=None):
+def run_campaign_attribution(db_path=DB_PATH, today=None, max_seconds=None):
     """Daily: for every campaign sent in the last ATTRIBUTION_WINDOW_DAYS
     at a Toast-connected restaurant, count recipients Toast identified on
     a check on a later business day. Written to guest_campaigns as
@@ -1512,111 +2212,180 @@ def run_campaign_attribution(db_path=DB_PATH, today=None):
     Partial by nature — Toast only has a customer on a check when one was
     captured — and said so wherever the number is shown. Each business
     date is fetched once per restaurant per run, whatever the number of
-    campaigns, and only dates not yet read for that campaign."""
+    campaigns, and only dates not yet read for that campaign.
+
+    On the restaurant's own calendar (MB-19 / #57): a campaign's send day is
+    the LOCAL date of its UTC created_at (a 7pm Central text is stored as
+    the next UTC day, so the window started a day late and skipped the first
+    evening), and the window reads through the restaurant's last CLOSED
+    business day, never today's open one. `today` pins the local date (the
+    last day read is the day before it).
+
+    Bounded and resumable (MB-18 / #62): a resumable_sweep over restaurants
+    with a cursor, and each campaign's attribution_through is its own
+    cursor, so a pass cut off by the bound loses nothing."""
     from datetime import date as _date, timedelta as _td
     from models import get_restaurant
-    today = today or _date.today()
-    yesterday = today - _td(days=1)
-    floor = (today - _td(days=ATTRIBUTION_WINDOW_DAYS + 1)).isoformat()
+    from time_utils import local_iso, restaurant_now
+    import pos as _pos
+    import scheduler
+    if max_seconds is None:
+        max_seconds = ATTRIBUTION_PASS_SECONDS
+    # A coarse UTC floor for the query; each campaign's window is then
+    # decided on its own restaurant's calendar below.
+    base = today or datetime.utcnow().date()
+    floor = (base - _td(days=ATTRIBUTION_WINDOW_DAYS + 3)).isoformat()
     conn = get_conn(db_path)
     try:
         camps = conn.execute(
-            "SELECT id, restaurant_id, substr(created_at,1,10) AS sent_on, attribution_through "
-            "FROM guest_campaigns WHERE substr(created_at,1,10) >= ? AND sent_count > 0 "
+            "SELECT id, restaurant_id, created_at, attribution_through "
+            "FROM guest_campaigns WHERE created_at >= ? AND sent_count > 0 "
             "ORDER BY restaurant_id, id", (floor,)).fetchall()
     finally:
         conn.close()
-    checked = matched = 0
-    phones_by_day = {}          # (rid, iso date) -> set of normalized phones
-    import pos as _pos
+    by_rid = {}
     for c in camps:
-        rid = c["restaurant_id"]
-        r = get_restaurant(rid)
+        by_rid.setdefault(c["restaurant_id"], []).append(c)
+    totals = {"checked": 0, "matched": 0}
+
+    def _one(rid):
+        r = get_restaurant(rid, db_path=db_path)
         # Any POS that shares guest records — Toast today; RPOWER once its
         # customer scope is granted — not a Toast field check.
         if not r or not _pos.supports(rid, "fetch_order_customers"):
-            continue
+            return
         if (getattr(r, "billing_status", None) or "trial").lower() in ("churned", "cancelled", "canceled", "paused"):
-            continue          # no POS calls on behalf of an account that asked for quiet
-        sent_on = _date.fromisoformat(c["sent_on"])
-        # From the day AFTER the send (M-22): the send day's orders include
-        # the lunch before a 3pm text, which is not a guest coming back.
-        start = (_date.fromisoformat(c["attribution_through"]) + _td(days=1) if c["attribution_through"]
-                 else sent_on + _td(days=1))
-        end = min(yesterday, sent_on + _td(days=ATTRIBUTION_WINDOW_DAYS))
-        if start > end:
-            continue
-        conn = get_conn(db_path)
-        try:
-            recips = conn.execute("SELECT id, phone FROM guest_campaign_recipients WHERE campaign_id=? AND visited_on IS NULL",
-                                  (c["id"],)).fetchall()
-        finally:
-            conn.close()
-        if not recips:
-            continue
-        by_phone = {rr["phone"]: rr["id"] for rr in recips}
-        newly = []
-        day = start
-        ok = True
-        while day <= end:
-            key = (rid, day.isoformat())
-            if key not in phones_by_day:
-                try:
-                    custs, _prov = _pos.fetch_order_customers(rid, day)
-                    phones_by_day[key] = {_normalize_phone(x.get("phone")) for x in custs if x.get("phone")}
-                except Exception as e:
-                    import ops
-                    ops.capture(e, job="campaign_attribution", context=f"restaurant_id={rid} date={day}")
-                    ok = False
-                    break
-            for ph in phones_by_day[key] & set(by_phone):
-                if by_phone[ph] not in [n[0] for n in newly]:
-                    newly.append((by_phone[ph], day.isoformat()))
-            day += _td(days=1)
-        through = (day - _td(days=1)) if ok else (day - _td(days=1))
-        conn = get_conn(db_path)
-        try:
-            for rec_id, on in newly:
-                conn.execute("UPDATE guest_campaign_recipients SET visited_on=? WHERE id=? AND visited_on IS NULL", (on, rec_id))
-            total = conn.execute("SELECT COUNT(*) FROM guest_campaign_recipients WHERE campaign_id=? AND visited_on IS NOT NULL",
-                                 (c["id"],)).fetchone()[0]
-            if through >= start:
-                conn.execute("UPDATE guest_campaigns SET visits_matched=?, attribution_through=? WHERE id=?",
-                             (int(total), through.isoformat(), c["id"]))
-            conn.commit()
-        finally:
-            conn.close()
-        checked += 1
-        matched += len(newly)
-    return {"campaigns_checked": checked, "visits_matched": matched}
+            return          # no POS calls on behalf of an account that asked for quiet
+        tz = getattr(r, "timezone", None)
+        local_today = today or restaurant_now(r, naive=True).date()
+        last_closed = (today - _td(days=1)) if today else _last_closed_business_date(r)
+        phones_by_day = {}          # iso date -> set of normalized phones
+        for c in by_rid[rid]:
+            try:
+                sent_on = _date.fromisoformat(local_iso(c["created_at"], tz))
+            except ValueError:
+                continue
+            if sent_on < local_today - _td(days=ATTRIBUTION_WINDOW_DAYS + 1):
+                continue
+            # From the day AFTER the send (M-22): the send day's orders include
+            # the lunch before a 3pm text, which is not a guest coming back.
+            start = (_date.fromisoformat(c["attribution_through"]) + _td(days=1) if c["attribution_through"]
+                     else sent_on + _td(days=1))
+            end = min(last_closed, sent_on + _td(days=ATTRIBUTION_WINDOW_DAYS))
+            if start > end:
+                continue
+            conn = get_conn(db_path)
+            try:
+                recips = conn.execute("SELECT id, phone FROM guest_campaign_recipients WHERE campaign_id=? "
+                                      "AND visited_on IS NULL", (c["id"],)).fetchall()
+            finally:
+                conn.close()
+            if not recips:
+                continue
+            by_phone = {rr["phone"]: rr["id"] for rr in recips}
+            newly = []
+            day = start
+            while day <= end:
+                key = day.isoformat()
+                if key not in phones_by_day:
+                    try:
+                        custs, _prov = _pos.fetch_order_customers(rid, day)
+                        phones_by_day[key] = {_normalize_phone(x.get("phone")) for x in custs if x.get("phone")}
+                    except Exception as e:
+                        import ops
+                        ops.capture(e, job="campaign_attribution", context=f"restaurant_id={rid} date={day}")
+                        break
+                for ph in phones_by_day[key] & set(by_phone):
+                    if by_phone[ph] not in [n[0] for n in newly]:
+                        newly.append((by_phone[ph], key))
+                day += _td(days=1)
+            through = day - _td(days=1)
+            conn = get_conn(db_path)
+            try:
+                for rec_id, on in newly:
+                    conn.execute("UPDATE guest_campaign_recipients SET visited_on=? WHERE id=? AND visited_on IS NULL",
+                                 (on, rec_id))
+                total = conn.execute("SELECT COUNT(*) FROM guest_campaign_recipients WHERE campaign_id=? "
+                                     "AND visited_on IS NOT NULL", (c["id"],)).fetchone()[0]
+                if through >= start:
+                    conn.execute("UPDATE guest_campaigns SET visits_matched=?, attribution_through=? WHERE id=?",
+                                 (int(total), through.isoformat(), c["id"]))
+                conn.commit()
+            finally:
+                conn.close()
+            totals["checked"] += 1
+            totals["matched"] += len(newly)
+
+    if by_rid:
+        _done, hit_bound = scheduler.resumable_sweep(ATTRIBUTION_CURSOR_KEY, sorted(by_rid), _one, max_seconds,
+                                                     job="campaign_attribution")
+        if hit_bound:
+            import ops
+            ops.capture(RuntimeError(f"Campaign attribution stopped at its {max_seconds}s bound after {_done} "
+                                     "restaurant(s); the next pass resumes from there"),
+                        job="campaign_attribution", context="time_bound")
+    return {"campaigns_checked": totals["checked"], "visits_matched": totals["matched"]}
+
+
+def _last_closed_business_date(restaurant, now_local=None):
+    """The restaurant's last CLOSED business day, on its own clock: the
+    service date running now (time_utils.business_date — last night's until
+    the business day turns over, a late close included) less one day. Never
+    today's open service, whose orders are still coming in."""
+    from time_utils import restaurant_now, business_date
+    local = now_local or restaurant_now(restaurant, naive=True)
+    return business_date(restaurant, local) - timedelta(days=1)
 
 
 def consent_ledger(restaurant_id, db_path=DB_PATH) -> dict:
-    """The compliance picture, in one call.
+    """The compliance picture, in one call, counted in SQL.
 
-    Consent has always been recorded — consent_at has been on every row since
-    the table existed — and never shown anywhere. If someone ever asks how a
-    number got on this list, this is the answer.
-    """
-    contacts = get_guest_contacts(restaurant_id, db_path=db_path)
+      textable      marketing consent, not unsubscribed (marketing_text_sql)
+      review_only   agreed to review links only (a YES to the invite) — never
+                    texted a campaign
+      pending       join-form requests still waiting for their Y
+      unsubscribed  said STOP (or the owner unsubscribed them)
+      no_consent    on the list with no consent of any kind
+
+    "This month" is the restaurant's own calendar month. The evidence behind
+    each number is in guest_consent_events (consent_events)."""
+    from datetime import timezone as _tz
+    from time_utils import restaurant_now_by_id
+    local_now = restaurant_now_by_id(restaurant_id)
+    try:
+        month_start = (local_now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                       .astimezone(_tz.utc).strftime("%Y-%m-%d %H:%M:%S"))
+    except Exception:
+        month_start = local_now.strftime("%Y-%m-01 00:00:00")
     conn = get_conn(db_path)
     try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS total, "
+            f"COALESCE(SUM(CASE WHEN {marketing_text_sql()} THEN 1 ELSE 0 END),0) AS textable, "
+            "COALESCE(SUM(CASE WHEN COALESCE(unsubscribed,0)=1 THEN 1 ELSE 0 END),0) AS unsubscribed, "
+            "COALESCE(SUM(CASE WHEN COALESCE(unsubscribed,0)=0 AND consent=0 AND COALESCE(review_consent,0)=1 "
+            "  THEN 1 ELSE 0 END),0) AS review_only, "
+            "COALESCE(SUM(CASE WHEN COALESCE(unsubscribed,0)=0 AND consent=0 AND COALESCE(review_consent,0)=0 "
+            "  THEN 1 ELSE 0 END),0) AS no_consent "
+            "FROM guest_contacts WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+        pending = conn.execute(
+            "SELECT COUNT(DISTINCT phone) FROM guest_optin_requests WHERE restaurant_id=? AND status='pending' "
+            "AND requested_at >= datetime('now', ?)", (restaurant_id, f"-{JOIN_CONFIRM_HOURS} hours")).fetchone()[0]
         this_month = conn.execute(
-            "SELECT COALESCE(SUM(sent_count),0) FROM guest_campaigns "
-            "WHERE restaurant_id=? AND created_at >= date('now','start of month')",
-            (restaurant_id,),
-        ).fetchone()[0] or 0
+            "SELECT COALESCE(SUM(sent_count),0) FROM guest_campaigns WHERE restaurant_id=? AND created_at >= ?",
+            (restaurant_id, month_start)).fetchone()[0] or 0
         campaigns = conn.execute(
-            "SELECT COUNT(*) FROM guest_campaigns WHERE restaurant_id=? "
-            "AND created_at >= date('now','start of month')", (restaurant_id,),
-        ).fetchone()[0] or 0
+            "SELECT COUNT(*) FROM guest_campaigns WHERE restaurant_id=? AND created_at >= ?",
+            (restaurant_id, month_start)).fetchone()[0] or 0
     finally:
         conn.close()
     return {
-        "total": len(contacts),
-        "textable": sum(1 for c in contacts if c["consent"] and not c["unsubscribed"]),
-        "unsubscribed": sum(1 for c in contacts if c["unsubscribed"]),
-        "no_consent": sum(1 for c in contacts if not c["consent"] and not c["unsubscribed"]),
+        "total": int(row["total"] or 0),
+        "textable": int(row["textable"] or 0),
+        "review_only": int(row["review_only"] or 0),
+        "pending": int(pending or 0),
+        "unsubscribed": int(row["unsubscribed"] or 0),
+        "no_consent": int(row["no_consent"] or 0),
         "texts_this_month": int(this_month),
         "campaigns_this_month": int(campaigns),
         "window": guest_sms_window_label(),
@@ -1828,69 +2597,191 @@ def _google_review_link(place_id):
             if place_id else "")
 
 
-def run_toast_optin_invites(business_date=None, db_path=DB_PATH):
-    """Daily job — invites guests Toast identified to opt in for themselves.
+OPTIN_INVITE_PASS_SECONDS = int(os.getenv("OPTIN_INVITE_SECONDS", "240"))
+OPTIN_INVITE_CURSOR_KEY = "optin_invite_cursor"
+# Retention (MB-3): a contact the invite job (or an unconfirmed join) put on
+# the list, who never answered and holds no consent, goes after this long.
+CONTACT_RETENTION_DAYS = 30
+PURGE_BATCH = 500
+
+# The owner's switch (Campaigns -> Settings) shows this sentence beside it;
+# turning the switch on is the acknowledgement, stored with who and when
+# (restaurants.optin_invites_ack_at / _ack_by) and the version here.
+OPTIN_INVITES_DISCLOSURE_VERSION = "2026-09-28"
+OPTIN_INVITES_DISCLOSURE = (
+    "Each afternoon, text guests your POS identified at your last service one message asking if they'd "
+    "like a review link; by turning this on you confirm those guests were told at checkout you may "
+    "text them about their visit.")
+
+
+def optin_invites_state(restaurant) -> dict:
+    """The switch as the Settings row reads it."""
+    return {"enabled": bool(getattr(restaurant, "optin_invites_enabled", 0)),
+            "acknowledged_at": getattr(restaurant, "optin_invites_ack_at", None),
+            "acknowledged_by": getattr(restaurant, "optin_invites_ack_by", None),
+            "disclosure": OPTIN_INVITES_DISCLOSURE,
+            "disclosure_version": OPTIN_INVITES_DISCLOSURE_VERSION}
+
+
+def set_optin_invites(restaurant_id, enabled, user_id=None, acknowledged=False, db_path=DB_PATH) -> dict:
+    """Turn the Toast opt-in invite texts on or off. On needs the owner's
+    acknowledgement of OPTIN_INVITES_DISCLOSURE; who and when is stored.
+    Off keeps the last acknowledgement on record."""
+    from models import update_restaurant, get_restaurant
+    if enabled and not acknowledged:
+        return {"ok": False, "error": "Turning invites on needs your acknowledgement of the sentence beside it."}
+    fields = {"optin_invites_enabled": 1 if enabled else 0}
+    if enabled:
+        from time_utils import utc_stamp
+        fields["optin_invites_ack_at"] = utc_stamp()
+        fields["optin_invites_ack_by"] = int(user_id) if user_id else None
+    update_restaurant(restaurant_id, fields, db_path=db_path)
+    r = get_restaurant(restaurant_id, db_path=db_path)
+    return dict(optin_invites_state(r), ok=True)
+
+
+def purge_unanswered_contacts(db_path=DB_PATH, limit=PURGE_BATCH, days=CONTACT_RETENTION_DAYS) -> int:
+    """Retention (MB-3): every identified POS guest used to be stored as a
+    contact forever. A contact the invite job created (source toast_invite),
+    or a join-form number that never confirmed (source join), is deleted
+    once it is `days` old when nobody answered in that time and nothing
+    else holds it: no consent of any kind, no email, no visit, no campaign,
+    no review ask, no invite answered or sent inside `days`, no join
+    confirmed or requested inside `days`. At most `limit` rows a pass.
+
+    Never purged: a STOP (guest_sms_optouts is not touched, and an
+    unsubscribed row's STOP is copied there before the row goes), the
+    invite record (so the number is not invited again), and the consent
+    evidence. Rows from before `source` existed are never considered."""
+    window = f"-{int(days)} days"
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT g.id, g.restaurant_id, g.phone, g.unsubscribed FROM guest_contacts g "
+            "WHERE g.source IN ('toast_invite', 'join') AND COALESCE(g.consent,0)=0 "
+            "AND COALESCE(g.review_consent,0)=0 AND COALESCE(TRIM(g.email),'')='' "
+            "AND g.last_visit IS NULL AND COALESCE(g.visit_count,0)=0 AND g.last_campaign_at IS NULL "
+            "AND g.last_review_requested_at IS NULL AND g.created_at < datetime('now', ?) "
+            "AND NOT EXISTS (SELECT 1 FROM sms_optin_invites i WHERE i.restaurant_id = g.restaurant_id "
+            "  AND i.phone = g.phone AND (i.responded_at IS NOT NULL OR i.sent_at >= datetime('now', ?))) "
+            "AND NOT EXISTS (SELECT 1 FROM guest_optin_requests q WHERE q.restaurant_id = g.restaurant_id "
+            "  AND q.phone = g.phone AND (q.status = 'confirmed' OR q.requested_at >= datetime('now', ?))) "
+            "ORDER BY g.id LIMIT ?", (window, window, window, int(limit))).fetchall()
+        for r in rows:
+            if r["unsubscribed"]:
+                conn.execute("INSERT OR IGNORE INTO guest_sms_optouts (restaurant_id, phone) VALUES (?,?)",
+                             (int(r["restaurant_id"]), r["phone"]))
+            conn.execute("DELETE FROM guest_contacts WHERE id=?", (r["id"],))
+        # The request rows are the durable submission limit (a day) and
+        # carry the IP; the evidence ledger keeps what they proved.
+        conn.execute("DELETE FROM guest_optin_requests WHERE id IN (SELECT id FROM guest_optin_requests "
+                     "WHERE status != 'confirmed' AND requested_at < datetime('now','-90 days') LIMIT ?)",
+                     (int(limit),))
+        conn.execute("DELETE FROM sms_pending_questions WHERE id IN (SELECT id FROM sms_pending_questions "
+                     "WHERE asked_at < datetime('now','-30 days') LIMIT ?)", (int(limit),))
+        conn.commit()
+    finally:
+        conn.close()
+    return len(rows)
+
+
+def run_toast_optin_invites(business_date=None, db_path=DB_PATH, max_seconds=None):
+    """Hourly through the afternoon — invites guests the POS identified at
+    each restaurant's last closed service to ask for a review link.
+
+    OFF until the owner turns it on (MB-3 / #2, owner decision 9/28/26): a
+    restaurant is invited for only with optin_invites_enabled=1 AND an
+    acknowledgement on record (Campaigns -> Settings), never a demo row. It
+    used to run for every restaurant with Marketing on — the default — so
+    every identified Toast guest got a cold text nobody at the restaurant
+    had chosen to send.
 
     The invite is a single transactional message tied to a visit that
     actually happened; it is deliberately NOT the review request and NOT a
-    campaign. The guest's number is stored unconsented (same footing as an
-    owner's manual add), and only a YES reply — handled in
-    handle_inbound_sms — ever sets consent. That keeps the one rule this
-    module is built around intact: consent comes from the guest.
+    campaign. The guest's number is stored unconsented (source
+    toast_invite), a YES reply sets REVIEW-LINK consent only (never
+    marketing, MB-2), and purge_unanswered_contacts removes the ones who
+    never answered after CONTACT_RETENTION_DAYS.
 
-    A guest already consented, already unsubscribed, already invited for
-    this order, or who has texted STOP to any restaurant on the shared
-    number is skipped, so re-running is safe. The scheduler runs this hourly
-    through the afternoon: a restaurant outside its own 8am-9pm window is
-    deferred and picked up by a later pass, and one already finished for
-    `business_date` (optin_invite_runs) is not fetched again (MOD-MKT-12).
-    A cancelled restaurant sends nothing.
-    """
-    from datetime import date as _date
-    from models import in_service_sql
+    A guest already consented (either scope), already unsubscribed, already
+    invited, or who has texted STOP to any restaurant on the shared number
+    is skipped, so re-running is safe. The business date is each
+    restaurant's own last CLOSED business day (MB-19 / #58) — the server's
+    "yesterday" was an open day for a restaurant behind UTC — unless
+    `business_date` pins one. A restaurant outside its own 8am-9pm window
+    is deferred to a later pass, and one finished for its date
+    (optin_invite_runs) is not fetched again (MOD-MKT-12).
 
-    if business_date is None:
-        business_date = _date.today()
-    bdate = str(business_date)
+    Bounded and resumable (MB-18 / #62): a resumable_sweep with a cursor,
+    and a restaurant cut off mid-list is not marked done — its invites so
+    far are recorded, so the next pass carries on from them."""
+    import time as _time
+    from models import in_service_sql, get_restaurant
+    import pos as _pos
+    import scheduler
+    if max_seconds is None:
+        max_seconds = OPTIN_INVITE_PASS_SECONDS
+    started = _time.monotonic()
+    counts = {"invited": 0, "skipped": 0, "failed": 0, "deferred": 0, "purged": 0}
+    try:
+        counts["purged"] = purge_unanswered_contacts(db_path=db_path)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="toast_optin_invites", context="retention purge")
 
     conn = get_conn(db_path)
     try:
-        restaurants = conn.execute(
-            "SELECT id, name FROM restaurants WHERE module_marketing=1 AND "
-            + in_service_sql("billing_status") +
-            " AND id NOT IN (SELECT restaurant_id FROM optin_invite_runs WHERE business_date=?)",
-            (bdate,)
+        rows = conn.execute(
+            "SELECT id, name FROM restaurants WHERE module_marketing=1 "
+            "AND COALESCE(optin_invites_enabled,0)=1 AND optin_invites_ack_at IS NOT NULL "
+            "AND COALESCE(is_demo,0)=0 AND " + in_service_sql("billing_status")
         ).fetchall()
     finally:
         conn.close()
     # Whichever POS shares guest records (pos.supports), not a Toast column.
-    import pos as _pos
-    restaurants = [r for r in restaurants if _pos.supports(r["id"], "fetch_order_customers")]
+    restaurants = {r["id"]: r for r in rows if _pos.supports(r["id"], "fetch_order_customers")}
 
-    invited, skipped, failed, deferred = 0, 0, 0, 0
-    for r in restaurants:
-        rid = r["id"]
-        # This job is scheduled on the SERVER's clock while restaurants
-        # keep their own timezones, so "11am" is not 11am everywhere. An
-        # opt-in invite is asking for marketing consent, which makes it a
-        # marketing text — same window as everything else here. A deferred
+    def _one(rid):
+        r = restaurants[rid]
+        if business_date is not None:
+            bdate = business_date
+        else:
+            robj = get_restaurant(rid, db_path=db_path)
+            if not robj:
+                return
+            bdate = _last_closed_business_date(robj)
+        bdate_s = str(bdate)
+        conn = get_conn(db_path)
+        try:
+            done = conn.execute("SELECT 1 FROM optin_invite_runs WHERE restaurant_id=? AND business_date=?",
+                                (rid, bdate_s)).fetchone()
+        finally:
+            conn.close()
+        if done:
+            return
+        # An opt-in invite asks for consent, which makes it a marketing text:
+        # the same 8am-9pm window as everything else here. A deferred
         # restaurant is not marked done, so the next hourly pass retries it.
         if not guest_sms_allowed_now(rid):
-            deferred += 1
-            continue
+            counts["deferred"] += 1
+            return
         try:
-            customers, _prov = _pos.fetch_order_customers(rid, business_date)
+            customers, _prov = _pos.fetch_order_customers(rid, bdate)
         except Exception:
-            failed += 1
-            continue       # not marked done: the next pass fetches again
+            counts["failed"] += 1
+            return       # not marked done: the next pass fetches again
 
+        finished = True
         for cust in customers:
+            if _time.monotonic() - started > max_seconds:
+                finished = False
+                break
             phone = _normalize_phone(cust["phone"])
             conn = get_conn(db_path)
             try:
                 existing = conn.execute(
-                    "SELECT consent, unsubscribed FROM guest_contacts WHERE restaurant_id=? AND phone=?",
-                    (rid, phone)
+                    "SELECT consent, review_consent, unsubscribed FROM guest_contacts "
+                    "WHERE restaurant_id=? AND phone=?", (rid, phone)
                 ).fetchone()
                 already_invited = conn.execute(
                     "SELECT 1 FROM sms_optin_invites WHERE restaurant_id=? AND phone=?", (rid, phone)
@@ -1898,20 +2789,21 @@ def run_toast_optin_invites(business_date=None, db_path=DB_PATH):
             finally:
                 conn.close()
 
-            if existing and (existing["consent"] or existing["unsubscribed"]):
-                skipped += 1
+            if existing and (existing["consent"] or existing["review_consent"] or existing["unsubscribed"]):
+                counts["skipped"] += 1
                 continue
             if already_invited or phone_opted_out(phone, db_path=db_path):
-                skipped += 1
+                counts["skipped"] += 1
                 continue
 
             # Stored unconsented — visible to the owner, textable only if
-            # the guest replies YES.
-            add_guest_contact_manual(rid, phone, name=cust.get("name") or None, db_path=db_path)
+            # the guest replies YES, purged if they never do.
+            add_guest_contact_manual(rid, phone, name=cust.get("name") or None, db_path=db_path,
+                                     source="toast_invite")
 
             if record_optin_invite(rid, phone, source="toast_order",
                                    external_ref=cust.get("order_guid"), db_path=db_path) is None:
-                skipped += 1
+                counts["skipped"] += 1
                 continue
 
             first = (cust.get("name") or "").split()[0] if cust.get("name") else "there"
@@ -1922,19 +2814,25 @@ def run_toast_optin_invites(business_date=None, db_path=DB_PATH):
             )
             try:
                 if send_sms(phone, message, use_case="guest"):
-                    invited += 1
+                    counts["invited"] += 1
                 else:
-                    failed += 1
+                    counts["failed"] += 1
             except Exception:
-                failed += 1
+                counts["failed"] += 1
 
-        conn = get_conn(db_path)
-        try:
-            conn.execute("INSERT OR IGNORE INTO optin_invite_runs (restaurant_id, business_date) "
-                         "VALUES (?,?)", (rid, bdate))
-            conn.commit()
-        finally:
-            conn.close()
+        if finished:
+            conn = get_conn(db_path)
+            try:
+                conn.execute("INSERT OR IGNORE INTO optin_invite_runs (restaurant_id, business_date) "
+                             "VALUES (?,?)", (rid, bdate_s))
+                conn.commit()
+            finally:
+                conn.close()
+
+    hit_bound = False
+    if restaurants:
+        _done, hit_bound = scheduler.resumable_sweep(OPTIN_INVITE_CURSOR_KEY, sorted(restaurants), _one,
+                                                     max_seconds, job="toast_optin_invites")
 
     conn = get_conn(db_path)
     try:
@@ -1942,13 +2840,16 @@ def run_toast_optin_invites(business_date=None, db_path=DB_PATH):
         conn.commit()
     finally:
         conn.close()
-    return {"invited": invited, "skipped": skipped, "failed": failed,
-            "deferred_quiet_hours": deferred}
+    return {"invited": counts["invited"], "skipped": counts["skipped"], "failed": counts["failed"],
+            "deferred_quiet_hours": counts["deferred"], "purged": counts["purged"],
+            "hit_bound": bool(hit_bound)}
 
 
 # One pass stops after this long; guests it did not reach stay eligible (the
 # claim below is their only marker), so the next hourly pass continues.
 REVIEW_REQUEST_PASS_SECONDS = 240
+# A review request asks about a visit this recent or not at all (MB-20).
+REVIEW_REQUEST_MAX_AGE_HOURS = 48
 
 
 def run_review_request_followups(delay_hours=None, db_path=DB_PATH, max_seconds=None):
@@ -1960,8 +2861,13 @@ def run_review_request_followups(delay_hours=None, db_path=DB_PATH, max_seconds=
     last_visit" rather than an exact hour-window match — that makes it
     idempotent under scheduler downtime/late ticks (it just catches up next
     run instead of missing the window) and naturally re-arms on a genuinely
-    new visit (see _upsert_contact, which bumps last_visit on every opt-in
-    submission).
+    new visit (a visit the owner marks; a join or a YES is never a visit).
+
+    Consent is the review scope (review_text_sql): marketing consent, or the
+    review-link consent a YES to the invite gives. And only a visit inside
+    REVIEW_REQUEST_MAX_AGE_HOURS is asked about (MB-20): with no upper
+    bound, a place_id added later or a resumed account texted "thanks for
+    visiting" to guests whose visit was months old.
 
     last_visit/last_review_requested_at are stored in each restaurant's own
     local time (time_utils.py — restaurants can have different timezones),
@@ -1990,6 +2896,9 @@ def run_review_request_followups(delay_hours=None, db_path=DB_PATH, max_seconds=
     if max_seconds is None:
         max_seconds = REVIEW_REQUEST_PASS_SECONDS
     started = _time.monotonic()
+    # A coarse bound in SQL (a local stamp two days old is at least this
+    # UTC date anywhere); the exact 48 hours is checked per restaurant below.
+    visit_floor = (datetime.utcnow() - timedelta(hours=REVIEW_REQUEST_MAX_AGE_HOURS + 30)).strftime("%Y-%m-%d")
 
     conn = get_conn(db_path)
     try:
@@ -2000,13 +2909,13 @@ def run_review_request_followups(delay_hours=None, db_path=DB_PATH, max_seconds=
                    r.name AS restaurant_name, r.google_place_id
             FROM guest_contacts gc
             JOIN restaurants r ON r.id = gc.restaurant_id
-            WHERE gc.consent=1 AND gc.unsubscribed=0
+            WHERE """ + review_text_sql("gc") + """
               AND r.module_marketing=1
               AND """ + in_service_sql("r.billing_status") + """
-              AND gc.last_visit IS NOT NULL
+              AND gc.last_visit IS NOT NULL AND gc.last_visit >= ?
               AND (gc.last_review_requested_at IS NULL OR gc.last_review_requested_at < gc.last_visit)
             ORDER BY gc.id
-            """
+            """, (visit_floor,)
         ).fetchall()
     finally:
         conn.close()
@@ -2022,6 +2931,8 @@ def run_review_request_followups(delay_hours=None, db_path=DB_PATH, max_seconds=
         now_local = restaurant_now_by_id(row["restaurant_id"], naive=True)
         if now_local - visited_at < timedelta(hours=delay_hours):
             continue  # not due yet
+        if now_local - visited_at > timedelta(hours=REVIEW_REQUEST_MAX_AGE_HOURS):
+            continue  # too long ago to ask "thanks for visiting" (MB-20)
         # A 9pm dinner came due at midnight and this job, which runs hourly,
         # texted them. Eligibility here is "older than", never an exact
         # window, so holding a guest until 8am costs nothing — the next tick
@@ -2040,9 +2951,8 @@ def run_review_request_followups(delay_hours=None, db_path=DB_PATH, max_seconds=
         conn = get_conn(db_path)
         try:
             cur = conn.execute(
-                "UPDATE guest_contacts SET last_review_requested_at=? WHERE id=? AND consent=1 "
-                "AND unsubscribed=0 AND (last_review_requested_at IS NULL "
-                "OR last_review_requested_at < last_visit)",
+                "UPDATE guest_contacts SET last_review_requested_at=? WHERE id=? AND " + review_text_sql() +
+                " AND (last_review_requested_at IS NULL OR last_review_requested_at < last_visit)",
                 (stamp, row["contact_id"])
             )
             conn.commit()

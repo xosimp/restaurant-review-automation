@@ -1104,7 +1104,11 @@ def twilio_inbound_sms():
         return Response("<Response></Response>", mimetype="text/xml")
 
     try:
-        reply = handle_inbound_sms(from_phone, body)
+        # The MessageSid rides on the consent evidence the reply produces
+        # (guest_consent_events), so a confirmation can be tied to Twilio's
+        # own record of the inbound text.
+        reply = handle_inbound_sms(from_phone, body,
+                                   message_sid=(params.get("MessageSid") or params.get("SmsSid") or None))
     except Exception as e:
         try:
             import ops

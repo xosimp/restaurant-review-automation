@@ -4087,6 +4087,29 @@ def mobile_guest_campaign_history(current_user):
     return jsonify(ok=True, campaigns=campaign_history(rid), ledger=consent_ledger(rid))
 
 
+@mobile_bp.route("/guest-optin-invites", methods=["GET", "POST"])
+@mobile_login_required
+def mobile_guest_optin_invites(current_user):
+    """The Toast opt-in invite switch (MB-3, owner decision 9/28/26). Off
+    until the owner turns it on; turning it on is their acknowledgement of
+    guest_marketing.OPTIN_INVITES_DISCLOSURE, stored with who and when.
+    POST {enabled, acknowledged}; only the account's owner login (owner or
+    client role) may change it. The web twin is /api/guest-optin-invites."""
+    import guest_marketing as _gm
+    from permissions import normalize_role, ROLE_OWNER, ROLE_CLIENT
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    if request.method == "GET":
+        return jsonify(ok=True, **_gm.optin_invites_state(get_restaurant(rid)))
+    if normalize_role(current_user.get("role")) not in (ROLE_OWNER, ROLE_CLIENT):
+        return jsonify(ok=False, error="Only the account owner can turn invite texts on or off."), 403
+    data = request.get_json(silent=True) or {}
+    res = _gm.set_optin_invites(rid, bool(data.get("enabled")), user_id=current_user.get("id"),
+                                acknowledged=bool(data.get("acknowledged")))
+    return jsonify(**res), (200 if res.get("ok") else 400)
+
+
 # ── Newsletter ────────────────────────────────────────────────────────────
 
 @mobile_bp.route("/guest-newsletter", methods=["GET", "POST"])

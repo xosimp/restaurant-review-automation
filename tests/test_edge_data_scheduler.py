@@ -276,7 +276,10 @@ def test_a_cancelled_restaurant_s_queued_action_does_not_run(db_path, monkeypatc
     assert ran == [], "a supplier order went out for an account that had cancelled"
 
 
-def _guest(db_path, rid, phone, visited_days_ago=2):
+def _guest(db_path, rid, phone, visited_days_ago=1):
+    # A day ago: inside the 48-hour window a review request may ask about
+    # (guest_marketing.REVIEW_REQUEST_MAX_AGE_HOURS, MB-20). Two days sat
+    # exactly on that edge.
     import time_utils
     local = time_utils.restaurant_now_by_id(rid, naive=True) - timedelta(days=visited_days_ago)
     _sql(db_path, "INSERT INTO guest_contacts (restaurant_id, name, phone, consent, last_visit) VALUES (?,?,?,1,?)",

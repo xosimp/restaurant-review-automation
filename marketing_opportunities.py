@@ -443,7 +443,11 @@ def _sales_days(restaurant_id, db_path):
 def lists(restaurant_id, now, db_path=DB_PATH):
     """Opted-in guests nobody has contacted in LIST_IDLE_DAYS. Counted in
     SQL. A text contact whose only YES was to a review-link invite is left
-    out: that YES agreed to a review link, not to marketing (audit SMS-1)."""
+    out: that YES agreed to a review link, not to marketing (audit SMS-1).
+    The text count is the one the Studio shows and the send texts
+    (guest_marketing.marketing_text_sql, which holds review-only guests out
+    at the source since 9/28/26, OPP-6)."""
+    from guest_marketing import marketing_text_sql
     conn = get_conn(db_path)
     try:
         def one(sql, args):
@@ -452,9 +456,8 @@ def lists(restaurant_id, now, db_path=DB_PATH):
                 return r[0] if r else None
             except Exception:
                 return None
-        texts = one("SELECT COUNT(*) FROM guest_contacts g WHERE g.restaurant_id=? AND g.consent=1 "
-                    "AND COALESCE(g.unsubscribed,0)=0 AND g.phone NOT IN (SELECT phone FROM sms_optin_invites "
-                    "WHERE restaurant_id=? AND response='yes')", (restaurant_id, restaurant_id)) or 0
+        texts = one("SELECT COUNT(*) FROM guest_contacts g WHERE g.restaurant_id=? AND "
+                    + marketing_text_sql("g"), (restaurant_id,)) or 0
         emails = one("SELECT COUNT(DISTINCT LOWER(TRIM(email))) FROM guest_contacts WHERE restaurant_id=? "
                      "AND email IS NOT NULL AND TRIM(email)!='' AND email_consent=1 "
                      "AND COALESCE(email_unsubscribed,0)=0 AND LOWER(TRIM(email)) NOT IN "

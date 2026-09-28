@@ -503,6 +503,10 @@ def test_idle_lists_are_counted_without_review_link_yeses(db):
     rid = _rid(db)
     assert mo.lists(rid, NOW, db).state == "no_data"
     _contacts(db, rid, 30, email=12, invite_yes=6)
+    # Rows written the pre-9/28/26 way (a review-link YES stored as consent=1)
+    # are moved to review-only consent by the boot backfill; from then on the
+    # feed, the Studio and the send read one rule (marketing_text_sql, OPP-6).
+    gm.init_guest_marketing(db)
     cards = {c["key"]: c for c in mo.lists(rid, NOW, db)}
     assert set(cards) == {"list_idle:email"}                                # 24 marketing-consented texts: under 25
     assert cards["list_idle:email"]["title"] == "Email the 12 guests on your list"
