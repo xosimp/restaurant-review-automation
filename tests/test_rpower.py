@@ -835,3 +835,24 @@ def test_an_hour_costs_what_payroll_paid_before_any_role_or_blended_rate():
                "scheduled_hours": 10, "actual_hours": 10, "sales": 1000, "pay_rate": ""}]
     a = labor.analyse_shifts(shifts, hourly_rate=26.0, labor_target=35.0)
     assert a["total_labor_cost"] == 350.0          # 10h x $9 + 10h x $26
+
+
+def test_the_timeclock_read_keeps_the_last_day_of_every_chunk(monkeypatch):
+    """timeclock/getbydaterange's enddate is exclusive (checked live 9/28/26:
+    9/15..9/15 returned nothing). Asked for each seven-day chunk's own last
+    day, every seventh day was lost - all of Simple EJ's Wednesdays."""
+    from datetime import date as _date, timedelta as _td
+    days = [_date(2026, 8, 31) + _td(days=i) for i in range(28)]
+    punches = [{"rid": f"r{i}", "emp_mid": "4444", "job_mid": "7777",
+                "in_dttm": f"{d.isoformat()}T10:00:00", "out_dttm": f"{d.isoformat()}T16:00:00"}
+               for i, d in enumerate(days)]
+
+    def timeclock(params):
+        lo, hi = params["startdate"], params["enddate"]
+        return [p for p in punches if lo <= p["in_dttm"][:10] < hi]      # exclusive end, as RPOWER does
+
+    _stub_api(monkeypatch, {"timeclock/getbydaterange": timeclock})
+    monkeypatch.setattr(rpower, "_ctx", lambda rid: ("tok", {"cg": 1, "store_mid": 2}))
+    monkeypatch.setattr(rpower, "_paged", lambda token, path, params: rpower._request(token, path, params))
+    got = rpower.fetch_time_entries(1, days[0], days[-1])
+    assert sorted(p["in_dttm"][:10] for p in got) == [d.isoformat() for d in days]

@@ -879,11 +879,26 @@ def fetch_time_entries(restaurant_id: int, start_date, end_date) -> list:
     whether the restaurant's breaks are paid; nothing here assumes.
     """
     token, base = _ctx(restaurant_id)
-    out = []
+    out, seen = [], set()
     for chunk_start, chunk_end in _chunk_range(start_date, end_date):
-        out.extend(_paged(token, "timeclock/getbydaterange", {
-            **base, "startdate": _d(chunk_start), "enddate": _d(chunk_end),
-            "sortorder": "in_dttm"}))
+        # timeclock/getbydaterange reads `enddate` as EXCLUSIVE (checked
+        # live 9/28/26: 9/15..9/15 returned no punches, 9/15..9/16 returned
+        # 9/15's), unlike the getbybusinessdate reads. Asked for its own
+        # last day, each seven-day chunk dropped it - every Wednesday of
+        # Simple EJ's 60-day sync was missing from Labor. So the day after
+        # is asked for, and only this chunk's own days are kept.
+        rows = _paged(token, "timeclock/getbydaterange", {
+            **base, "startdate": _d(chunk_start), "enddate": _d(chunk_end + timedelta(days=1)),
+            "sortorder": "in_dttm"})
+        for r in rows:
+            dt = _punch_dt(r.get("in_dttm"))
+            if dt is not None and not (chunk_start <= dt.date() <= chunk_end):
+                continue
+            key = r.get("rid") or (r.get("emp_mid"), r.get("in_dttm"), r.get("job_mid"))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(r)
     return out
 
 
