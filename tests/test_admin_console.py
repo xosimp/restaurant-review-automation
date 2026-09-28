@@ -121,3 +121,17 @@ def test_job_runs_are_recorded_by_run_job(db_path):
     rows = {r[0]: (r[1], r[2]) for r in conn.execute("SELECT job, ok, error FROM job_runs").fetchall()}
     conn.close()
     assert rows["probe_job"][0] == 1 and rows["probe_job_bad"][0] == 0 and "division" in rows["probe_job_bad"][1]
+
+
+def test_no_admin_onclick_puts_an_html_escaped_value_in_a_js_string():
+    """RPOWER token did nothing on Erik's live account (owner, 9/28/26):
+    rpowerOpen(5,'${esc(c.name)}') — the HTML parser turns &#39; back into
+    an apostrophe before the JS runs, so "Simple EJ's" ended the string and
+    the handler was a syntax error. Every quoted value in an onclick goes
+    through jsq() (a JS string, then HTML-escaped)."""
+    import re
+    src = open("templates/admin.html", encoding="utf-8").read()
+    assert "const jsq = (v) => esc(JSON.stringify(" in src
+    bad = [x for x in re.findall(r'onclick="[^"]*"', src) if re.search(r"'\$\{esc\(|'\+esc\(", x)]
+    assert bad == [], bad[:3]
+    assert "rpowerOpen(${c.id},'${jsq(c.name)}')" in src
