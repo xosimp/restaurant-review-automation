@@ -3266,6 +3266,9 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .dh-badge.dh-inline[hidden]{display:none}
 .dh-badge .hb-fresh{margin-top:0}
 .dh-badge .dh-imp{font-size:12.5px;color:var(--ink3)}
+/* The Data pill is the drawer's button (a .cbtn, kept in its pill look). */
+.cbtn.hb-fresh-it.dh-pill{height:auto;justify-content:flex-start;gap:6px;padding:4px 10px;border-radius:999px;background:var(--hb-inner);border:1px solid var(--hb-line2);box-shadow:none;color:var(--ink3);font-family:inherit;font-size:12.5px;font-weight:400;line-height:1.35;letter-spacing:0;white-space:normal;text-align:left}
+.cbtn.hb-fresh-it.dh-pill:hover{background:var(--hb-inner);border-color:var(--hb-line);box-shadow:none;transform:none}
 .dh-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--p-c);box-shadow:0 0 7px var(--p-c);margin-right:8px;vertical-align:middle}
 .dh-sync{margin-top:16px;display:flex;flex-direction:column;gap:8px;align-items:flex-start}
 .dh-sync-msg{font-size:13px;color:var(--p-ink2);line-height:1.5;width:100%}
@@ -5493,14 +5496,15 @@ svg:hover .hb-xh{opacity:1}
       // data, so the badge is just its state and the drawer - one line,
       // never a second, differently-worded date.
       if(el.getAttribute('data-dh-compact')){var hp=worst.health_pct!=null?worst.health_pct:worst.pct;
-        el.innerHTML='<span class="hb-fresh-it '+st+'" title="'+esc(worst.line||worst.basis||'')+'"><i></i><b>Data</b>'+(hp!=null?' <span class="hb-num">'+Math.round(hp)+'%</span>':'')+'</span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dh-open="1">Data health</button>';
+        el.innerHTML='<button type="button" class="cbtn hb-fresh-it dh-pill '+st+'" data-dh-open="1" title="'+esc(worst.line||worst.basis||'')+'" aria-label="Data health"><i></i><b>Data</b>'+(hp!=null?' <span class="hb-num">'+Math.round(hp)+'%</span>':'')+'</button>';
         el.hidden=false;continue;}
       // The line is ONE inline run (.bs): loose inside the flex pill, each
       // date, number and phrase became its own flex item and stacked
       // ("Reviews / fetched  9/28/26  · Google reviews (sampled ...", 9/28/26).
-      el.innerHTML='<div class="hb-fresh"><span class="hb-fresh-it '+st+'" title="'+esc(worst.basis||'')+'"><i></i><b>Data</b> <span class="bs">'+num(worst.line||'')+'</span></span>'
-        +(ci&&ci.line?'<span class="dh-imp">'+num(ci.line)+'</span>':'')
-        +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dh-open="1">Data health</button></div>';
+      /* The pill itself opens Data health: no orange "Data health" link at
+         the top of every module (owner, 9/28/26 - Account has it too). */
+      el.innerHTML='<div class="hb-fresh"><button type="button" class="cbtn hb-fresh-it dh-pill '+st+'" data-dh-open="1" title="'+esc(worst.basis||'')+'" aria-label="Data health"><i></i><b>Data</b> <span class="bs">'+num(worst.line||'')+'</span></button>'
+        +(ci&&ci.line?'<span class="dh-imp">'+num(ci.line)+'</span>':'')+'</div>';
       el.hidden=false;
     }
   }
@@ -8455,6 +8459,11 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .lb2-op-body{margin-top:16px;font-size:15px;line-height:1.55;color:var(--ink2)}
 .lb2-op-body .ac-row:first-child{border-top:none;padding-top:0}
 .lb2-op-form{margin-top:14px;flex-wrap:wrap}
+/* The date, the count and Save are one height (owner, 9/28/26): the inputs
+   stood ~44px beside a 30px Save. */
+.lb2-op-form{display:flex;align-items:center;gap:10px}
+.lb2-op-form>.ac-input,.lb2-op-form>.cbtn{box-sizing:border-box;height:36px;min-height:36px;margin:0}
+.lb2-op-form>.ac-input{padding-top:0;padding-bottom:0;font-size:14px}
 .lb2-op .fc2-import{margin-top:10px}
 .lb2-op .cap{font-size:13.5px;color:var(--ink3);margin-top:16px;padding-top:12px;border-top:1px solid var(--hb-line2);display:flex;justify-content:space-between;gap:10px}
 .lb2-cov{display:flex;flex-wrap:wrap;gap:8px}
@@ -10586,6 +10595,9 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .fc2-wt-tip .flag.bad{background:rgba(227,51,63,.16);color:var(--hb-bad)}.fc2-wt-tip .flag.good{background:rgba(78,173,122,.14);color:var(--hb-good)}
 .fc2-wt-tip .hint{margin-top:8px;font-size:12.5px;color:var(--ink3)}
 .fc2-wt-empty{padding:26px 20px 22px;text-align:center;width:100%}
+/* No tinted panel behind the waste trend's empty state (owner, 9/28/26):
+   the shared .pe watching-treatment's wash and dashed frame stay off it. */
+.fc2-wt-empty.pe{background:none;border:none}
 .fc2-wt-empty .t{font-family:'Clash Display',sans-serif;font-weight:500;font-size:22.5px;color:var(--ink);margin-top:10px}
 .fc2-wt-empty .r{font-size:15px;color:var(--ink2);margin:8px auto 0;max-width:540px;line-height:1.55}
 .fc2-wt-empty .prog{display:inline-flex;align-items:center;gap:10px;margin-top:14px;font-size:14px;color:var(--ink3)}
@@ -18475,7 +18487,7 @@ function lb2LoadCovers(){
     // What the POS counted on nights nobody entered (U2-18): offered for one
     // tap, never written on its own - a guest count is not always a cover.
     var off=d.pos_offers||[],oh='';
-    for(i=0;i<off.length&&i<3;i++)oh+='<div class="lb2-cov-offer">POS counted <b class="hb-num">'+esc(off[i].guests)+'</b> guests on '+esc(mdy(off[i].date))+' — <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-cov-pos="'+esc(off[i].date)+'" data-cov-n="'+esc(off[i].guests)+'">use it</button></div>';
+    for(i=0;i<off.length&&i<3;i++)oh+='<div class="lb2-cov-offer">POS counted <b class="hb-num">'+esc(off[i].guests)+'</b> guests on '+esc(mdy(off[i].date))+' — <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-cov-pos="'+esc(off[i].date)+'" data-cov-n="'+esc(off[i].guests)+'">save as covers</button></div>';
     if(!days.length){el.innerHTML=esc('No cover counts yet. Without them a lean day and a short-staffed one look the same to the analysis.')+oh;return;}
     var h='<div class="lb2-cov">';
     for(i=0;i<days.length&&i<14;i++)h+='<span><b class="hb-num">'+esc(days[i].covers)+'</b>'+esc(mdy(days[i].date))+'</span>';

@@ -21,7 +21,7 @@ def test_the_today_line_is_gone_from_reviews():
 
 
 def test_a_data_line_is_one_inline_run_inside_its_pill():
-    assert "<b>Data</b> <span class=\"bs\">'+num(worst.line||'')+'</span></span>" in SRC
+    assert "<b>Data</b> <span class=\"bs\">'+num(worst.line||'')+'</span></button>" in SRC
     assert re.search(r"\.hb-fresh-it \.bs\{display:inline\}", SRC)
 
 
