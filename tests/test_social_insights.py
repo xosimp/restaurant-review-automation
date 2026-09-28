@@ -29,32 +29,44 @@ class FakeReq:
 
 
 def test_ig_metrics_succeed_on_first_try():
+    """One call, with metric names Graph v21 accepts for media insights
+    (MB-7, 9/28/26): no `impressions` (retired) and no `comments_count` (a
+    media field, not an insights metric) — either refused the whole list."""
     fake = FakeReq([FakeResp(200, {"data": [
         {"name": "reach", "values": [{"value": 200}]},
-        {"name": "impressions", "values": [{"value": 250}]},
+        {"name": "likes", "values": [{"value": 20}]},
+        {"name": "comments", "values": [{"value": 3}]},
+        {"name": "shares", "values": [{"value": 1}]},
     ]})])
     m = sr._ig_post_metrics("p1", "tok", fake)
-    assert m == {"reach": 200, "impressions": 250}
+    assert m == {"reach": 200, "likes": 20, "comments": 3, "shares": 1}
     assert len(fake.calls) == 1
+    asked = fake.calls[0][1]["metric"].split(",")
+    assert "impressions" not in asked and "comments_count" not in asked
 
 
-def test_ig_metrics_fall_back_when_impressions_rejected(monkeypatch):
+def test_ig_metrics_fall_back_when_the_metric_list_is_rejected(monkeypatch):
+    """A refused list: reach alone, then likes and comments from the media
+    object's own fields — the failed first attempt reported, not silent."""
     captured = []
     monkeypatch.setattr(sr, "_capture_insights_error",
                         lambda what, post_id, resp: captured.append(what))
     fake = FakeReq([
-        FakeResp(400, {"error": {"message": "Invalid metric impressions"}}),
+        FakeResp(400, {"error": {"message": "(#100) metric[3] must be one of the following values"}}),
         FakeResp(200, {"data": [{"name": "reach", "values": [{"value": 120}]}]}),
+        FakeResp(200, {"like_count": 9, "comments_count": 2, "id": "p1"}),
     ])
     m = sr._ig_post_metrics("p1", "tok", fake)
-    assert m == {"reach": 120}
-    assert len(fake.calls) == 2
-    assert captured  # the failed first attempt was reported, not silent
+    assert m == {"reach": 120, "likes": 9, "comments": 2}
+    assert len(fake.calls) == 3
+    assert fake.calls[1][1]["metric"] == "reach"
+    assert fake.calls[2][1]["fields"] == "like_count,comments_count"
+    assert captured
 
 
-def test_ig_metrics_empty_when_both_attempts_fail(monkeypatch):
+def test_ig_metrics_empty_when_every_attempt_fails(monkeypatch):
     monkeypatch.setattr(sr, "_capture_insights_error", lambda *a, **k: None)
-    fake = FakeReq([FakeResp(400, {}), FakeResp(400, {})])
+    fake = FakeReq([FakeResp(400, {}), FakeResp(400, {}), FakeResp(400, {})])
     assert sr._ig_post_metrics("p1", "tok", fake) == {}
 
 
@@ -109,6 +121,7 @@ def test_refresh_post_metrics_writes_back_to_db(monkeypatch, db_path):
     fake = FakeReq([FakeResp(200, {"data": [
         {"name": "reach", "values": [{"value": 400}]},
         {"name": "likes", "values": [{"value": 30}]},
+        {"name": "comments", "values": [{"value": 4}]},
     ]})])
     # refresh_post_metrics() does `import requests as _req` inline every call —
     # swapping the module in sys.modules (auto-reverted by monkeypatch) is

@@ -315,7 +315,15 @@ def test_one_restaurant_cannot_read_or_approve_anothers_draft(db_path, rid):
 
 # ── Link tracking ──────────────────────────────────────────────────────────
 
+def _own_site(db_path, rid, url="https://example.com"):
+    """A short link may only go to the restaurant's own site (MB-21,
+    9/28/26): these links are to example.com, so it is theirs."""
+    from models import update_restaurant
+    update_restaurant(rid, {"menu_url": url}, db_path=db_path)
+
+
 def test_a_short_link_counts_the_tap_and_forwards(rid, db_path):
+    _own_site(db_path, rid)
     made = marketing_links.create_link(rid, "example.com/menu", source="sms",
                                        campaign="truffle", db_path=db_path)
     assert made["ok"]
@@ -326,6 +334,7 @@ def test_a_short_link_counts_the_tap_and_forwards(rid, db_path):
 
 
 def test_a_link_the_owner_already_tagged_keeps_their_own_utms(rid, db_path):
+    _own_site(db_path, rid)
     made = marketing_links.create_link(
         rid, "https://example.com/?utm_source=mine", source="sms", db_path=db_path)
     assert "utm_source=mine" in made["target_url"]
@@ -429,6 +438,7 @@ def test_a_campaign_can_carry_a_tracked_link(rid, db_path, monkeypatch, _inside_
     _guest(db_path, rid, "+15550000011", visits=1, days_ago=2)
     bodies = []
     monkeypatch.setattr(guest_marketing, "send_sms", lambda phone, body, **kw: bodies.append(body) or True)
+    _own_site(db_path, rid)
     made = marketing_links.create_link(rid, "https://example.com/menu", db_path=db_path)
 
     guest_marketing.send_campaign(rid, "Menu is live", link_token=made["token"], db_path=db_path)

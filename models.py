@@ -2009,6 +2009,23 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE marketing_content_log ADD COLUMN media_id INTEGER",
         "ALTER TABLE marketing_content_log ADD COLUMN link_token TEXT",
         "ALTER TABLE marketing_content_log ADD COLUMN posted_at TEXT",
+        # When the platform last answered for THIS post (MB-7): NULL means
+        # the sync never measured it. The metric columns above were created
+        # DEFAULT 0, so a post Meta refused to measure (every Instagram post,
+        # while the insights call was being rejected) read "0 reach" under a
+        # green "Metrics synced". A metric is measured when this is stamped
+        # or the column holds a non-zero figure (a row written before the
+        # stamp existed) — marketing_signals.MEASURED_SQL.
+        "ALTER TABLE marketing_content_log ADD COLUMN metrics_synced_at TEXT",
+        # ...and a post nobody ever measured holds NULL, not 0: blank, never
+        # zero. Only rows the sync never stamped and that hold nothing but the
+        # column defaults; idempotent, so it is safe on every boot.
+        "UPDATE marketing_content_log SET reach=NULL, impressions=NULL, engaged=NULL, likes=NULL, "
+        "comments=NULL, shares=NULL WHERE metrics_synced_at IS NULL "
+        "AND (reach IS NOT NULL OR impressions IS NOT NULL OR engaged IS NOT NULL OR likes IS NOT NULL "
+        "     OR comments IS NOT NULL OR shares IS NOT NULL) "
+        "AND COALESCE(reach,0)=0 AND COALESCE(impressions,0)=0 AND COALESCE(engaged,0)=0 "
+        "AND COALESCE(likes,0)=0 AND COALESCE(comments,0)=0 AND COALESCE(shares,0)=0",
         # Toast-driven food cost engine — persistent per-ingredient records
         # replacing the old re-parsed inventory_csv blob, plus a stock-event
         # ledger (recount/receiving/depletion/waste) and a recipe/BOM mapping

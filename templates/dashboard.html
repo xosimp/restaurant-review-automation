@@ -902,7 +902,17 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .cal-hd{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
 .cal-hd .cal-day-name{font-family:'Clash Display',sans-serif;font-size:20px;font-weight:500;color:var(--ink);letter-spacing:-.01em}
 .cal-hd .cal-date{font-family:'Space Grotesk',sans-serif;font-size:14px;color:var(--ink3)}
-.cal-card .cal-platform{align-self:flex-start;margin:12px 0 12px;padding:4px 11px;border-radius:999px;font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
+/* One chip for every channel (AUX-14): brand colours are for the brand's own
+   buttons only (DESIGN_SYSTEM §1), and SMS in #ef9f27 / Email in #2d6a4f had
+   no dark-mode twin. */
+.cal-card .cal-platform{align-self:flex-start;margin:12px 0 12px;padding:4px 11px;border-radius:999px;font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink2);background:var(--hb-tint)}
+/* Analytics' "Recently generated" chips (AUX-14): tokens in both themes,
+   the figures in words (loadRecentTopics) — they were per-theme hex pairs
+   and emoji. */
+.mkt-topic-chip{display:inline-flex;flex-direction:column;align-items:flex-start;gap:1px;padding:3px 9px;border-radius:12px;border:1px solid var(--hb-line);background:var(--hb-tint);color:var(--ink2);font-size:11px;font-weight:500;white-space:nowrap;vertical-align:top}
+.mkt-topic-chip.posted{background:var(--green-bg);color:var(--ink)}
+.mkt-topic-chip .posted-badge{font-size:10px;font-weight:700;color:var(--green)}
+.mkt-topic-chip .insights-badge{font-size:10.5px;font-weight:600;color:var(--ink2)}
 .cal-angle{flex:1;font-size:16px;line-height:1.6;color:var(--ink2)}
 .cal-acts{display:flex;align-items:center;flex-wrap:wrap;margin-top:16px;padding-top:14px;border-top:1px solid rgba(200,75,47,.16)}
 .cal-acts .rec-ans{margin-top:0}
@@ -11394,16 +11404,18 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
   </section>
 
   <!-- Marketing sub-tabs (segmented pill, under the header) -->
+  {# A tablist (AUX-11): each sub-tab says which panel it controls and
+     whether it is the selected one; switchMktTab keeps aria-selected true. #}
   <div style="display:flex;justify-content:flex-start;margin:22px 0 18px">
-    <div style="display:inline-flex;border:1px solid var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
-      <button id="mkt-tab-content-btn"   onclick="switchMktTab('content')"   class="rv-tab-active" style="border:none;padding:7px 18px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;transition:background .15s,color .15s">Content</button>
-      <button id="mkt-tab-campaigns-btn" onclick="switchMktTab('campaigns')" style="border:none;padding:7px 18px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Campaigns</button>
-      <button id="mkt-tab-queue-btn" onclick="switchMktTab('queue')" style="border:none;padding:7px 18px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Scheduled</button>
-      <button id="mkt-tab-analytics-btn" onclick="switchMktTab('analytics')" style="border:none;padding:7px 18px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
+    <div role="tablist" aria-label="Marketing sections" style="display:inline-flex;border:1px solid var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
+      <button type="button" role="tab" aria-selected="true" aria-controls="mkt-tab-content" id="mkt-tab-content-btn"   onclick="switchMktTab('content')"   class="rv-tab-active" style="border:none;padding:7px 18px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;transition:background .15s,color .15s">Content</button>
+      <button type="button" role="tab" aria-selected="false" aria-controls="mkt-tab-campaigns" id="mkt-tab-campaigns-btn" onclick="switchMktTab('campaigns')" style="border:none;padding:7px 18px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Campaigns</button>
+      <button type="button" role="tab" aria-selected="false" aria-controls="mkt-tab-queue" id="mkt-tab-queue-btn" onclick="switchMktTab('queue')" style="border:none;padding:7px 18px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Scheduled</button>
+      <button type="button" role="tab" aria-selected="false" aria-controls="mkt-tab-analytics" id="mkt-tab-analytics-btn" onclick="switchMktTab('analytics')" style="border:none;padding:7px 18px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
     </div>
   </div>
 
-  <div id="mkt-tab-content">
+  <div id="mkt-tab-content" role="tabpanel" aria-labelledby="mkt-tab-content-btn">
 
   <!-- AI marketing brief, on the shared card (density round #42) -->
   {# The same AI read box as Food Cost and Labor (owner, 9/28/26): .lb2-ai
@@ -11421,22 +11433,25 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
   <div class="hb-sh"><div><div class="k">Write</div><h2>A post in {{ restaurant.name }}'s voice</h2></div>
     <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="openBrandVoice()">Update brand voice<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
   </div>
-  <div class="slabel" style="margin-top:14px">Content type</div>
-  <div class="ct-grid">{% for ct in ctypes %}
-    <div class="ct-btn {{'selected' if loop.first}}" data-type="{{ct.id}}" onclick="selectCt('{{ct.id}}',this)">
+  <div class="slabel" id="mkt-ct-label" style="margin-top:14px">Content type</div>
+  {# Each card is a radio a keyboard reaches and works (AUX-11): Tab to
+     it, Enter or Space picks it (mktCtKey); aria-checked follows the pick. #}
+  <div class="ct-grid" role="radiogroup" aria-labelledby="mkt-ct-label">{% for ct in ctypes %}
+    <div class="ct-btn {{'selected' if loop.first}}" data-type="{{ct.id}}" role="radio" tabindex="0" aria-checked="{{'true' if loop.first else 'false'}}" onclick="selectCt('{{ct.id}}',this)" onkeydown="mktCtKey(event,this)">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:4px">
         <div class="ct-label">{{ct.label}}</div>
-        {% if ct.id in ['instagram_post','google_promo'] %}<span style="font-size:8px;font-weight:700;background:var(--ember);color:white;padding:1px 5px;border-radius:8px;letter-spacing:.3px;flex-shrink:0">popular</span>{% endif %}
+        {% if ct.id in ['instagram_post','google_promo'] %}<span style="font-size:10.5px;font-weight:700;background:var(--hb-tint2);color:var(--ink);padding:1px 6px;border-radius:8px;letter-spacing:.3px;flex-shrink:0">popular</span>{% endif %}
       </div>
       <div class="ct-desc">{{ct.description}}</div>
     </div>{% endfor %}
   </div>
   <div class="topic-row">
+    <label for="mktopic" class="sr-only">Topic or occasion</label>
     <input class="topic-input" id="mktopic" placeholder="Topic or occasion — e.g. new spring menu, Sunday brunch special…">
     <button class="cbtn cbtn-primary" onclick="genContent()">Generate <span style="font-size:15px;margin-left:6px">↺</span></button>
   </div>
   <div style="position:relative">
-    <div class="output-box" id="mkoutput" contenteditable="true" style="outline:none;cursor:text;padding-bottom:22px" title="Click to edit before posting" oninput="this.removeAttribute('data-gen-error');updateCharCount()"><span contenteditable="false" style="color:var(--ink3);font-style:italic;pointer-events:none;user-select:none">Select a type and click Generate.</span></div>
+    <div class="output-box" id="mkoutput" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Post text — edit it before it goes out" style="outline:none;cursor:text;padding-bottom:22px" title="Click to edit before posting" oninput="this.removeAttribute('data-gen-error');updateCharCount()"><span contenteditable="false" style="color:var(--ink3);font-style:italic;pointer-events:none;user-select:none">Select a type and click Generate.</span></div>
     <div id="char-counter" style="display:none;position:absolute;bottom:6px;right:10px;font-size:10px;color:var(--ink3);pointer-events:none;user-select:none;background:rgba(255,255,255,0.9);padding:1px 6px;border-radius:8px"><span id="char-count">0</span> <span id="char-limit-label"></span><span id="char-over" style="color:var(--red);display:none"> over limit</span></div>
     <div id="sms-counter" style="display:none;position:absolute;bottom:6px;right:10px;font-size:10px;color:var(--ink3);pointer-events:none;user-select:none;background:rgba(255,255,255,0.9);padding:1px 6px;border-radius:8px"><span id="sms-char-count">0</span>/160<span id="sms-over" style="color:var(--red);display:none"> over</span></div>
   </div>
@@ -11711,14 +11726,20 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 
   <!-- Scheduled sub-tab: the queue. Everything this module did was
        generate-now/post-now, and an owner does admin at 11pm. -->
-  <div id="mkt-tab-queue" style="display:none">
+  <div id="mkt-tab-queue" role="tabpanel" aria-labelledby="mkt-tab-queue-btn" style="display:none">
     <div class="hb-sh" style="margin-top:0;border-top:none;padding-top:0"><div><div class="k">Scheduled</div><h2>What's going out, and when</h2></div></div>
-    <div id="mkt-queue-list"><div class="no-data" style="padding:24px;text-align:center;color:var(--ink3);font-size:13px;font-style:italic">Nothing queued. Write a post on the Content tab, then choose Schedule.</div></div>
+    <div id="mkt-queue-list" aria-live="polite"><div class="dr-pulse" role="status" aria-label="Loading the queue"><i></i></div></div>
   </div>
 
   <!-- Analytics sub-tab: real Meta post performance, unlocked now that the app is Meta-approved -->
-  <div id="mkt-tab-analytics" style="display:none">
-    <div class="hb-sh" style="margin-top:0;border-top:none;padding-top:0"><div><div class="k">Analytics</div><h2>How your posts are performing</h2></div></div>
+  <div id="mkt-tab-analytics" role="tabpanel" aria-labelledby="mkt-tab-analytics-btn" style="display:none">
+    {# The figures are what the nightly sync stored (MB-17): the tab no
+       longer asks Meta every minute. "Refresh from Meta" asks once, rate
+       limited like the phone's. #}
+    <div class="hb-sh" style="margin-top:0;border-top:none;padding-top:0"><div><div class="k">Analytics</div><h2>How your posts are performing</h2></div>
+      <button type="button" class="cbtn cbtn-text cbtn-sm" id="mkt-refresh-meta-btn" onclick="mktRefreshFromMeta(this)">Refresh from Meta</button>
+    </div>
+    <div id="mkt-refresh-meta-note" class="hb-sub" role="status" aria-live="polite" hidden style="margin:0 0 10px"></div>
 
     <!-- A period, against the period before it. The all-time totals below
          are a number, not a metric: no denominator, no trend. -->
@@ -11760,14 +11781,15 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
          caption under the window's tiles, not a second row of tiles that
          repeated reach and engagement (density round #42). #}
       <div class="mkt-alltime">All time: <span class="hb-num" id="mkt-perf-reach">—</span> reach · <span class="hb-num" id="mkt-perf-engagement">—</span> engagement · <span class="hb-num" id="mkt-perf-published">—</span> posts published</div>
-      <div id="mkt-perf-top-wrap" class="dark-insight-card" style="display:none;border-radius:10px;padding:14px 18px;position:relative;overflow:hidden">
-        <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
-        <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:8px;padding-left:4px">Top performing post</div>
-        <div style="padding-left:4px">
-          <div id="mkt-perf-top-topic" style="font-size:14px;font-weight:600;color:#f0ebe0;margin-bottom:4px"></div>
-          <div id="mkt-perf-top-metrics" style="font-size:12px;color:rgba(240,235,224,.6)"></div>
-        </div>
-      </div>
+      {# One "best post" (AUX-13, marketing_signals.best_posts): named only
+         over six measured posts. The card is the shared .hb-card on
+         tokens (AUX-14), not a fixed-dark card with #f0ebe0 text. #}
+      <section id="mkt-perf-top-wrap" class="hb-card" aria-label="Top performing post" style="display:none;padding:14px 18px">
+        <div class="hb-kicker" style="margin-bottom:8px">Top performing post</div>
+        <div id="mkt-perf-top-topic" style="font-size:14.5px;font-weight:600;color:var(--ink);margin-bottom:4px"></div>
+        <div id="mkt-perf-top-metrics" style="font-size:13px;color:var(--ink3)"></div>
+      </section>
+      <div id="mkt-perf-top-note" class="hb-empty" hidden></div>
     </div>
     <div id="mkt-perf-empty" style="display:none"></div>
 
@@ -15136,6 +15158,7 @@ window.switchMktTab = function(tab) {
     var btn = document.getElementById(buttons[key]);
     if (btn) {
       btn.classList.toggle('rv-tab-active', key === tab);
+      btn.setAttribute('aria-selected', key === tab ? 'true' : 'false');
       btn.style.background = (key === tab) ? '' : 'transparent';
       btn.style.color = (key === tab) ? '' : 'var(--ink3)';
     }
@@ -17250,7 +17273,10 @@ function postToInstagram(){
   if(!igImgUrl){toast('Instagram needs a photo — add one first','warning');
     _done();
     return;}
-  fetch('/api/post-to-instagram',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({caption:content,topic:_igTopic,image_url:igImgUrl})})
+  // media_id: the server builds the photo's public URL (a reopened draft's
+  // was relative); content_log_id: the generated row this post completes
+  // (MB-8), never a guess by topic.
+  fetch('/api/post-to-instagram',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({caption:content,topic:_igTopic,image_url:igImgUrl,media_id:window._mktPhotoId||null,content_log_id:window._mktContentLogId||null})})
     .then(apiJson).then(function(d){
       _done();
       if(d.ok){toast('Posted to Instagram ✓','success');markTopicPosted('IG');_cmMktPosted('Posted to Instagram');loadMktPerformance();}
@@ -17268,7 +17294,9 @@ function postToFacebook(){
   // the page stays usable while the platform answers.
   var _done=(typeof cbtnBusy==='function'&&btn)?cbtnBusy(btn,'Posting…'):function(){};
   var _fbTopic=window._lastPostedTopic||'';
-  fetch('/api/post-to-facebook',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({caption:content,topic:_fbTopic})})
+  // The photo the preview shows goes too (CS-20): Facebook posted the words
+  // alone.
+  fetch('/api/post-to-facebook',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({caption:content,topic:_fbTopic,media_id:window._mktPhotoId||null,content_log_id:window._mktContentLogId||null})})
     .then(apiJson).then(function(d){
       _done();
       if(d.ok){toast('Posted to Facebook ✓','success');markTopicPosted('FB');_cmMktPosted('Posted to Facebook');loadMktPerformance();}
@@ -17448,9 +17476,12 @@ function saveMktDraft(){
 function loadMktDrafts(){
   var list = document.getElementById('mkt-drafts-list');
   if(!list) return;
+  // A failed load says so (DS §10, AUX-10): it used to read "Nothing saved
+  // yet" whenever the server refused or the connection dropped.
   fetch('/api/marketing/drafts').then(apiJson).then(function(d){
-    if(!d.ok || !d.drafts.length){
-      list.innerHTML = '<div class="no-data" style="padding:14px 0;font-size:12px;color:var(--ink3);font-style:italic">Nothing saved yet.</div>';
+    if(!d || !d.ok){ loadFailed(list, d); return; }
+    if(!(d.drafts || []).length){
+      list.innerHTML = '<div class="hb-empty">Nothing saved yet. Save draft keeps a post here until it goes out.</div>';
       return;
     }
     var html = '';
@@ -17463,7 +17494,7 @@ function loadMktDrafts(){
       html += '<div style="padding:11px 0;border-bottom:1px solid var(--paper3)' + (expired ? ';opacity:.65' : '') + '">'
         + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'
         + '<span style="font-size:12px;font-weight:600;color:var(--ink)">' + _escHtml(x.topic || 'Untitled') + '</span>'
-        + '<span style="font-size:11px;font-weight:700;color:' + (expired ? 'var(--ink3)' : (approved ? '#2d6a4f' : 'var(--ember2)')) + '">' + (expired ? 'Expired' : (approved ? 'Approved' : 'Draft')) + '</span>'
+        + '<span style="font-size:11px;font-weight:700;color:' + (expired ? 'var(--ink3)' : (approved ? 'var(--green)' : 'var(--ember2)')) + '">' + (expired ? 'Expired' : (approved ? 'Approved' : 'Draft')) + '</span>'
         + '</div>'
         + '<div style="font-size:12px;color:var(--ink3);line-height:1.5;margin-top:3px;max-height:38px;overflow:hidden">' + _escHtml(x.body) + '</div>'
         + _mktDraftByline(x)
@@ -17476,7 +17507,7 @@ function loadMktDrafts(){
     }
     list.innerHTML = html;
     window._mktDrafts = d.drafts;
-  }).catch(function(){});
+  }).catch(function(){ loadFailed(list, null); });
 }
 // Who wrote it and who released it, as the phone shows them.
 function _mktDraftByline(x){
@@ -17496,6 +17527,10 @@ function useMktDraft(id){
       document.getElementById('mkoutput').removeAttribute('data-mkt-posted');
       document.getElementById('mktopic').value = x.topic || '';
       window._mktDraftId = x.id;
+      // A reopened draft is not the generated row: its publish is its own
+      // piece in the content log (MB-8), with the draft's topic.
+      window._mktContentLogId = null;
+      window._lastPostedTopic = x.topic || '';
       // The type and the photo come back with the words, so a save or a
       // post from here is the draft that was saved, not a photo-less copy.
       var ctBtn = x.content_type ? document.querySelector('.ct-btn[data-type="' + x.content_type + '"]') : null;
@@ -17523,12 +17558,15 @@ function approveMktDraft(id){
     .then(apiJson).then(function(d){
       if(d.ok){ toast('Approved','success'); loadMktDrafts(); }
       else toast(d.error || 'Could not approve','error');
-    }).catch(function(){});
+    }).catch(function(){ toast('Could not approve — check your connection','error'); });
 }
 function deleteMktDraft(id){
   if(window._mktDraftId === id) window._mktDraftId = null;
   fetch('/api/marketing/drafts/' + id, {method:'DELETE'})
-    .then(function(){ loadMktDrafts(); }).catch(function(){});
+    .then(apiJson).then(function(d){
+      if(d && d.ok === false) toast(d.error || 'Could not delete that draft','error');
+      loadMktDrafts();
+    }).catch(function(){ toast('Could not delete — check your connection','error'); });
 }
 
 // ── Scheduling ──────────────────────────────────────────────────────────────
@@ -17580,8 +17618,16 @@ function confirmMktSchedule(){
 // did to sales" - /api/marketing/header and /api/marketing/attribution.
 // Counts only; a reach change is shown only when the server gives one.
 function mktLoadHeader(){
+  // The h1 never stays "Reading your posts…" (AUX-10): a refusal or a
+  // dropped connection puts the load-failed sentence where it was, and the
+  // next visit to Marketing asks again.
+  function _headFailed(d){
+    var head=document.getElementById('mkt-head');
+    if(head){head.className='hb-head';loadFailed(head,{error:(d&&d.error)||'Couldn’t read your posts just now.'});}
+    window._mktHeadDone=false;
+  }
   fetch('/api/marketing/header',{credentials:'same-origin'}).then(apiJson).then(function(d){
-    if(!d||!d.ok)return;
+    if(!d||!d.ok){_headFailed(d);return;}
     var head=document.getElementById('mkt-head');
     if(head){head.textContent=d.status||'';head.className='hb-head '+(d.tone==='good'||d.tone==='warn'||d.tone==='bad'?d.tone:'neutral');}
     function chip(id,val,tone){var c=document.getElementById(id),n=document.getElementById(id+'-n');if(n)n.innerHTML=val;if(c)c.className='hb-chip '+(tone||'neutral');}
@@ -17591,7 +17637,7 @@ function mktLoadHeader(){
     var rcEl=document.getElementById('mkt-chip-reach');if(rcEl)rcEl.title=rc==null?(d.change_note||'Not enough posts to compare periods'):'Reach, the last '+d.days+' days against the '+d.days+' before';
     var nx=d.next_scheduled;
     chip('mkt-chip-next',nx?(esc(nx.date)+(nx.time?' · '+esc(nx.time):'')):'none','neutral');
-  }).catch(function(){});
+  }).catch(function(){_headFailed(null);});
   fetch('/api/marketing/attribution',{credentials:'same-origin'}).then(apiJson).then(function(d){
     var el=document.getElementById('mkt-attr-line');if(!el)return;
     var vc=d&&d.ok?d.verdicts:null,vn=vc?(+vc.lifted||0)+(+vc.dropped||0)+(+vc.no_clear_change||0):0;
@@ -17600,7 +17646,11 @@ function mktLoadHeader(){
     // correlation, and said so.
     el.innerHTML='<span>What posts did to sales: <b class="hb-num">'+(+vc.lifted||0)+'</b> of <b class="hb-num">'+vn+'</b> measured lifted sales past normal variation</span><span class="sep">·</span><span>correlation, not proof</span>';
     el.hidden=false;
-  }).catch(function(){});
+  }).catch(function(){
+    // The sales line is an extra under the h1, never a placeholder: with
+    // no answer it stays hidden (the Analytics tab says the load failed).
+    var el=document.getElementById('mkt-attr-line');if(el)el.hidden=true;
+  });
 }
 // "6:45pm" from a stored "YYYY-MM-DDTHH:MM" (DESIGN_SYSTEM, Dates and times).
 function mktClock(v){
@@ -17610,12 +17660,15 @@ function mktClock(v){
 function loadMktQueue(){
   var list = document.getElementById('mkt-queue-list');
   if(!list) return;
+  // A failed load says so (DS §10, AUX-10): "Nothing queued" on a refusal
+  // told an owner with three posts waiting that none were.
   fetch('/api/marketing/schedule').then(apiJson).then(function(d){
-    if(!d.ok || !d.posts.length){
-      list.innerHTML = '<div class="no-data" style="padding:24px;text-align:center;color:var(--ink3);font-size:13px;font-style:italic">Nothing queued. Write a post on the Content tab, then choose Schedule.</div>';
+    if(!d || !d.ok){ loadFailed(list, d); return; }
+    if(!(d.posts || []).length){
+      list.innerHTML = '<div class="hb-empty">Nothing queued. Write a post on the Content tab, then choose Schedule.</div>';
       return;
     }
-    var colors = {posted:'#2d6a4f', failed:'var(--red)', cancelled:'var(--ink3)', scheduled:'var(--ember)'};
+    var colors = {posted:'var(--green)', failed:'var(--red)', cancelled:'var(--ink3)', scheduled:'var(--ember)'};
     var labels = {posted:'Posted', failed:"Didn't go out", cancelled:'Cancelled', scheduled:'Scheduled'};
     var html = '';
     for(var i=0;i<d.posts.length;i++){
@@ -17632,24 +17685,36 @@ function loadMktQueue(){
         + '</div>';
     }
     list.innerHTML = html;
-  }).catch(function(){});
+  }).catch(function(){ loadFailed(list, null); });
 }
 function cancelMktScheduled(id){
   fetch('/api/marketing/schedule/' + id, {method:'DELETE'})
     .then(apiJson).then(function(d){
       if(d.ok){ toast('Cancelled','success'); loadMktQueue(); }
       else toast(d.error || 'Could not cancel','error');
-    }).catch(function(){});
+    }).catch(function(){ toast('Could not cancel — check the queue before trying again','error'); loadMktQueue(); });
 }
 
 // ── Windowed analytics + attribution ────────────────────────────────────────
 function loadMktWindow(){
   var days = (document.getElementById('mkt-window-days')||{}).value || 30;
+  var body = document.getElementById('mkt-window-body');
+  var plats = document.getElementById('mkt-win-platforms');
+  // A refusal says so where the figures go (AUX-10); the tiles stayed
+  // hidden and the tab read as if there were nothing to show.
+  function _winFailed(d){
+    if(body) body.style.display = 'block';
+    var ids = ['mkt-win-reach','mkt-win-eng','mkt-win-rate'];
+    for(var j=0;j<ids.length;j++){ var t=document.getElementById(ids[j]); if(t) t.textContent='\u2014'; }
+    if(plats) loadFailed(plats, d);
+  }
   fetch('/api/marketing/performance-window?days=' + days).then(apiJson).then(function(d){
-    if(!d.ok) return;
-    document.getElementById('mkt-window-body').style.display = 'block';
-    document.getElementById('mkt-win-reach').textContent = (d.reach||0).toLocaleString();
-    document.getElementById('mkt-win-eng').textContent = (d.engagement||0).toLocaleString();
+    if(!d || !d.ok){ _winFailed(d); return; }
+    if(body) body.style.display = 'block';
+    // Reach is reach alone, and only from posts whose reach was measured;
+    // with none measured it is a dash, never 0 (MB-6, MB-7).
+    document.getElementById('mkt-win-reach').textContent = d.reach_posts ? (d.reach||0).toLocaleString() : '\u2014';
+    document.getElementById('mkt-win-eng').textContent = d.measured_posts ? (d.engagement||0).toLocaleString() : '\u2014';
     document.getElementById('mkt-win-rate').textContent = (d.engagement_rate === null || typeof d.engagement_rate === 'undefined') ? '\u2014' : d.engagement_rate + '%';
     var delta = function(el, v){
       var node = document.getElementById(el);
@@ -17660,26 +17725,32 @@ function loadMktWindow(){
     };
     delta('mkt-win-reach-d', (d.change||{}).reach);
     delta('mkt-win-eng-d', (d.change||{}).engagement);
-    var plats = document.getElementById('mkt-win-platforms');
     var html = '';
     // No period-on-period % under the post floor (marketing_signals
     // change_note, CA1 M5): the blank change says why.
     if(d.change_note) html += '<div style="font-size:12px;color:var(--ink3);padding:4px 0 7px">' + _escHtml(d.change_note) + '.</div>';
     for(var i=0;i<(d.by_platform||[]).length;i++){
       var p = d.by_platform[i];
+      // A platform whose reach was never measured (Google posts; a post
+      // Meta has not answered for) says so, never "0 reach".
+      var reachTxt = p.reach_posts ? (p.reach||0).toLocaleString() + ' reach' : 'reach not measured';
       html += '<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--paper3);font-size:12px">'
         + '<span style="color:var(--ink);font-weight:600;text-transform:capitalize">' + _escHtml(p.platform) + '</span>'
-        + '<span style="color:var(--ink3);font-family:\'Space Grotesk\',sans-serif">' + p.posts + ' posts · ' + p.reach.toLocaleString() + ' reach · ' + (p.engagement_rate === null ? '\u2014' : p.engagement_rate + '%') + '</span>'
+        + '<span style="color:var(--ink3);font-family:\'Space Grotesk\',sans-serif">' + p.posts + ' posts · ' + reachTxt + ' · ' + (p.engagement_rate === null ? '\u2014' : p.engagement_rate + '%') + '</span>'
         + '</div>';
     }
-    plats.innerHTML = html;
-  }).catch(function(){});
+    if(plats) plats.innerHTML = html;
+  }).catch(function(){ _winFailed(null); });
 }
 function loadMktAttribution(){
+  var card = document.getElementById('mkt-attr-card');
+  var body = document.getElementById('mkt-attr-body');
+  // A refusal or a dropped connection says so (AUX-10); a server answer
+  // with a reason (no POS, too little history) is the empty state below.
+  function _attrFailed(d){ if(card && body){ card.style.display = 'block'; loadFailed(body, d); } }
   fetch('/api/marketing/attribution').then(apiJson).then(function(d){
-    var card = document.getElementById('mkt-attr-card');
-    var body = document.getElementById('mkt-attr-body');
     if(!card || !body) return;
+    if(!d || (!d.ok && !d.reason)){ _attrFailed(d); return; }
     card.style.display = 'block';
     if(!d.ok || !(d.posts||[]).length){
       body.innerHTML = d.reason === 'no_pos_data'
@@ -17724,7 +17795,7 @@ function loadMktAttribution(){
     function _groups(title,rows,noun){if(!(rows||[]).length)return '';var g='<div class="hb-kicker" style="margin-top:12px">'+title+'</div>';for(var k=0;k<rows.length;k++){var r=rows[k];g+='<div style="display:flex;justify-content:space-between;gap:10px;padding:5px 0;font-size:13px"><span>'+_escHtml(String(r.group).replace('_',' '))+' <span style="color:var(--ink3)">\u00b7 '+r.posts+' '+noun+'</span></span><span class="hb-num" style="font-weight:700;color:'+(r.verdict?(r.verdict==='lifted'?'var(--hb-good)':(r.verdict==='dropped'?'var(--red)':'var(--ink3)')):(r.median_lift_pct>=0?'var(--hb-good)':'var(--red)'))+'"'+(r.verdicts?' title="'+(+r.verdicts.lifted||0)+' lifted \u00b7 '+(+r.verdicts.no_clear_change||0)+' no clear change \u00b7 '+(+r.verdicts.dropped||0)+' dropped"':'')+'>'+(r.verdict==='no_clear_change'?'no clear change \u00b7 ':'')+(r.median_lift_pct>0?'+':'')+Math.round(r.median_lift_pct)+'% median'+(r.median_item_lift_pct!=null?' \u00b7 dish '+(r.median_item_lift_pct>0?'+':'')+Math.round(r.median_item_lift_pct)+'%':'')+'</span></div>';}return g;}
     html+=_groups('By kind of post',d.by_kind,'posts')+_groups('By occasion',d.by_occasion,'posts')+_groups('By dish',d.by_dish,'posts');
     body.innerHTML = html;
-  }).catch(function(){});
+  }).catch(function(){ _attrFailed(null); });
 }
 
 function openBrandVoice(){
@@ -17774,7 +17845,7 @@ function postToGoogle(){
   // A busy button, not a full-screen overlay (friction #43): the rest of
   // the page stays usable while the platform answers.
   var _done=(typeof cbtnBusy==='function'&&btn)?cbtnBusy(btn,'Posting…'):function(){};
-  fetch('/api/post-to-google',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({summary:content,cta_type:ctaType,cta_url:ctaUrl,topic:window._lastPostedTopic||''})})
+  fetch('/api/post-to-google',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({summary:content,cta_type:ctaType,cta_url:ctaUrl,topic:window._lastPostedTopic||'',media_id:window._mktPhotoId||null,content_log_id:window._mktContentLogId||null})})
     .then(apiJson).then(function(d){
       _done();
       if(d.ok){toast('Posted to Google ✓','success');markTopicPosted('Google');_cmMktPosted('Posted to Google');loadMktPerformance();}
@@ -17799,6 +17870,7 @@ function clearMktOutput(){
   var el=document.getElementById('mkoutput');
   if(el){el.removeAttribute('data-mkt-posted');el.innerHTML='<span contenteditable="false" style="color:var(--ink3);font-style:italic;pointer-events:none;user-select:none">Select a type and click Generate.</span>';}
   window._lastPostedTopic='';
+  window._mktContentLogId=null;
   var charCountEl=document.getElementById('char-count');
   var charOver=document.getElementById('char-over');
   var smsCntEl=document.getElementById('sms-char-count');
@@ -17822,13 +17894,13 @@ function updateCharCount(){
     var cc=document.getElementById('char-count');
     var co=document.getElementById('char-over');
     if(cc)cc.textContent=len;
-    if(cc)cc.style.color=len>2200?'var(--red)':len>1800?'#ef9f27':'var(--ink3)';
+    if(cc)cc.style.color=len>2200?'var(--red)':len>1800?'var(--amber)':'var(--ink3)';
     if(co)co.style.display=len>2200?'inline':'none';
   } else if(isGoogle){
     var cc2=document.getElementById('char-count');
     var co2=document.getElementById('char-over');
     if(cc2)cc2.textContent=len;
-    if(cc2)cc2.style.color=len>1500?'var(--red)':len>1200?'#ef9f27':'var(--ink3)';
+    if(cc2)cc2.style.color=len>1500?'var(--red)':len>1200?'var(--amber)':'var(--ink3)';
     if(co2)co2.style.display=len>1500?'inline':'none';
   } else if(isSms){
     var sc=document.getElementById('sms-char-count');
@@ -17838,79 +17910,88 @@ function updateCharCount(){
   }
 }
 function loadRecentTopics(){
+  var row=document.getElementById('recent-topics-row');
+  var list=document.getElementById('recent-topics-list');
   fetch('/api/recent-topics').then(apiJson).then(function(d){
-    var row=document.getElementById('recent-topics-row');
-    var list=document.getElementById('recent-topics-list');
-    if(row&&list){
-      list.innerHTML='';
-      if(d.topics&&d.topics.length){
-        var frag=document.createDocumentFragment();
-        var _isDark=document.documentElement.getAttribute('data-theme')==='dark';
-        var _postedBg=_isDark?'rgba(111,207,151,.1)':'#eaf4ee';
-        var _postedBr=_isDark?'rgba(111,207,151,.28)':'#a7d7b8';
-        var _postedTx=_isDark?'#6fcf97':'#2d5a3d';
-        var _postedBadge=_isDark?'#6fcf97':'#2d6a4f';
-        var _pendingBg=_isDark?'rgba(212,160,48,.1)':'#fef0e8';
-        var _pendingBr=_isDark?'rgba(212,160,48,.28)':'#f5cdb0';
-        var _pendingTx=_isDark?'#d4a030':'#a84020';
-        for(var i=0;i<d.topics.length;i++){
-          var t=d.topics[i];
-          var topic=t.topic||t;
-          var posted=t.posted||false;
-          var platform=t.platform||'';
-          var metrics=t.metrics||{};
-          var chip=document.createElement('span');
-          chip.setAttribute('data-topic',topic);
-          var displayTopic=topic.length>40?topic.substring(0,40).trim()+'…':topic;
-          if(posted){
-            chip.style.cssText='background:'+_postedBg+';color:'+_postedTx+';font-size:10px;padding:2px 8px;border-radius:12px;border:1px solid '+_postedBr+';white-space:nowrap;font-weight:500;display:inline-flex;flex-direction:column;align-items:flex-start;vertical-align:top';
-            var topLine=document.createElement('span');
-            topLine.innerHTML=displayTopic+' <span class="posted-badge" style="color:'+_postedBadge+';font-weight:700;font-size:9px">&#10003; '+platform+'</span>';
-            chip.appendChild(topLine);
-            var reach=metrics.reach||metrics.impressions||0;
-            var likes=metrics.likes||0;
-            var comments=metrics.comments||0;
-            var parts=[];
-            if(reach)parts.push('&#128065; '+reach.toLocaleString());
-            if(likes)parts.push('&#9825; '+likes);
-            if(comments)parts.push('&#128172; '+comments);
-            if(parts.length){
-              var badge=document.createElement('span');
-              badge.className='insights-badge';
-              badge.style.cssText='font-size:9px;color:'+_postedBadge+';font-weight:600;margin-top:2px;line-height:1.4;';
-              badge.innerHTML=parts.join(' &middot; ');
-              chip.appendChild(badge);
-            }
-          } else {
-            chip.style.cssText='background:'+_pendingBg+';color:'+_pendingTx+';font-size:10px;padding:2px 8px;border-radius:12px;border:1px solid '+_pendingBr+';white-space:nowrap;font-weight:500';
-            chip.textContent=displayTopic;
-          }
-          frag.appendChild(chip);
-        }
-        list.appendChild(frag);
-      } else {
-        list.innerHTML='<span style="font-size:11px;color:var(--ink3);font-style:italic">none yet</span>';
-      }
-      row.style.display='';
+    if(!row||!list)return;
+    list.innerHTML='';
+    row.style.display='';
+    if(!d||d.ok===false){loadFailed(list,d);return;}
+    if(!(d.topics||[]).length){
+      list.innerHTML='<div class="hb-empty">Nothing generated yet. Write a post on the Content tab and it shows here with what it did.</div>';
+      return;
     }
-  }).catch(function(){});
+    // Tokens, not per-theme hex (AUX-14); figures in words, not emoji, and
+    // only the ones the platform measured (MB-7): a post nobody measured
+    // shows none, never a 0.
+    var frag=document.createDocumentFragment();
+    for(var i=0;i<d.topics.length;i++){
+      var t=d.topics[i];
+      var topic=String(t.topic||t);
+      var posted=t.posted||false;
+      var metrics=t.metrics||{};
+      var chip=document.createElement('span');
+      chip.className='mkt-topic-chip'+(posted?' posted':'');
+      chip.setAttribute('data-topic',topic);
+      var displayTopic=topic.length>40?topic.substring(0,40).trim()+'…':topic;
+      var topLine=document.createElement('span');
+      topLine.textContent=displayTopic;
+      chip.appendChild(topLine);
+      if(posted){
+        var where=document.createElement('span');
+        where.className='posted-badge';
+        where.textContent='Posted'+(t.platform?' · '+t.platform:'');
+        chip.appendChild(where);
+        var parts=[];
+        if(metrics.reach)parts.push(Number(metrics.reach).toLocaleString()+' reach');
+        if(metrics.likes)parts.push(metrics.likes+' like'+(metrics.likes===1?'':'s'));
+        if(metrics.comments)parts.push(metrics.comments+' comment'+(metrics.comments===1?'':'s'));
+        if(parts.length){
+          var badge=document.createElement('span');
+          badge.className='insights-badge hb-num';
+          badge.textContent=parts.join(' · ');
+          chip.appendChild(badge);
+        }
+      }
+      frag.appendChild(chip);
+    }
+    list.appendChild(frag);
+  }).catch(function(){if(row&&list){row.style.display='';loadFailed(list,null);}});
 }
+// Post metrics are read from what the nightly sync stored (MB-17). The tab
+// used to GET /api/post-insights every 60 seconds while it was open, and
+// every GET was up to 75 Graph calls on a request thread with no rate
+// limit. The topics load once per visit; "Refresh from Meta" asks Meta
+// once, rate limited like the phone's. The poller names stay for their
+// callers (switchTab, the session-ended stop).
 var _metricsPoller=null;
 function refreshMetrics(){
-  if(document.hidden)return;   // a background tab skips the tick (CLIENT-37)
-  // The first tick loads the topics even when the insights refresh fails -
-  // switchTab no longer calls loadRecentTopics itself (Friction audit #35).
-  fetch('/api/post-insights').then(apiJson).then(function(d){
-    if(d.ok||!window._mktTopicsOnce){window._mktTopicsOnce=true;loadRecentTopics();}
-  }).catch(function(){if(!window._mktTopicsOnce){window._mktTopicsOnce=true;loadRecentTopics();}});
+  if(document.hidden)return;
+  loadRecentTopics();
 }
 function startMetricsPoller(){
-  if(_metricsPoller)return;
-  refreshMetrics();
-  _metricsPoller=setInterval(refreshMetrics,60000);
+  if(window._mktTopicsOnce)return;
+  window._mktTopicsOnce=true;
+  loadRecentTopics();
 }
 function stopMetricsPoller(){
   if(_metricsPoller){clearInterval(_metricsPoller);_metricsPoller=null;}
+}
+function mktRefreshFromMeta(btn){
+  var note=document.getElementById('mkt-refresh-meta-note');
+  var _done=(typeof cbtnBusy==='function'&&btn)?cbtnBusy(btn,'Asking Meta…'):function(){};
+  function say(text,bad){if(!note)return;note.textContent=text;note.style.color=bad?'var(--red)':'';note.hidden=!text;}
+  fetch('/api/post-insights',{method:'POST',credentials:'same-origin'}).then(apiJson).then(function(d){
+    _done();
+    if(d&&d.throttled){say(d.error||'The numbers were just refreshed — try again in a couple of minutes.',false);return;}
+    if(d&&(d.ok||d.status==='partial')){
+      // Partial is said as partial: some posts Meta did not answer for.
+      say(d.ok?('Refreshed '+(d.refreshed||0)+' post'+(d.refreshed===1?'':'s')+' from Meta.'):(d.error||'Some posts couldn’t be measured.'),!d.ok);
+    } else {
+      say((d&&d.error)||'Meta didn’t answer just now — the figures below are from the last sync.',true);
+    }
+    loadRecentTopics();loadMktPerformance();loadMktWindow();
+  }).catch(function(){_done();say('Couldn’t reach the server — the figures below are from the last sync.',true);});
 }
 function loadMktPerformance(){
   var loadingEl=document.getElementById('mkt-perf-loading');
@@ -17923,10 +18004,17 @@ function loadMktPerformance(){
     // stale: reach and engagement are only as current as it (#36).
     var syncEl=document.getElementById('mkt-perf-sync'),ms=d&&d.metrics_sync;
     if(syncEl){if(ms&&ms.line){syncEl.textContent=ms.line;syncEl.className='dh-line'+(ms.tone==='warn'?' warn':'');syncEl.hidden=false;}else{syncEl.hidden=true;}}
-    if(!d.ok||!d.has_data){
+    if(!d||!d.ok){
+      // A refusal is a load failure, not "no data yet" (AUX-10).
       bodyEl.style.display='none';
       emptyEl.style.display='';
-      emptyEl.innerHTML=emptyStateHtml('No performance data yet','Post to Instagram or Facebook above — reach and engagement show up here once Meta reports them');
+      loadFailed(emptyEl,d);
+      return;
+    }
+    if(!d.has_data){
+      bodyEl.style.display='none';
+      emptyEl.style.display='';
+      emptyEl.innerHTML='<div class="hb-empty">'+(d.published?'No measured figures yet — reach and engagement show here once Meta reports them for your posts.':'Post to Instagram or Facebook above — reach and engagement show here once Meta reports them.')+'</div>';
       return;
     }
     emptyEl.style.display='none';
@@ -17934,28 +18022,36 @@ function loadMktPerformance(){
     var reachEl=document.getElementById('mkt-perf-reach');
     var engEl=document.getElementById('mkt-perf-engagement');
     var pubEl=document.getElementById('mkt-perf-published');
-    if(reachEl)reachEl.textContent=(d.total_reach||0).toLocaleString();
+    // Reach alone, over posts whose reach was measured (MB-6): a dash when
+    // none was, never a 0.
+    if(reachEl)reachEl.textContent=d.reach_posts?(d.total_reach||0).toLocaleString():'—';
     if(engEl)engEl.textContent=(d.total_engagement||0).toLocaleString();
     if(pubEl)pubEl.textContent=d.published||0;
     var topWrap=document.getElementById('mkt-perf-top-wrap');
+    var topNote=document.getElementById('mkt-perf-top-note');
     if(d.top_post&&topWrap){
       topWrap.style.display='';
+      if(topNote)topNote.hidden=true;
       var topic=d.top_post.topic||'';
       var platform=d.top_post.platform||'';
       document.getElementById('mkt-perf-top-topic').textContent=(topic.length>60?topic.substring(0,60).trim()+'…':topic)+(platform?' · '+platform:'');
       var parts=[];
-      if(d.top_post.reach)parts.push('👁 '+d.top_post.reach.toLocaleString()+' reach');
-      if(d.top_post.likes)parts.push('♥ '+d.top_post.likes+' likes');
-      if(d.top_post.comments)parts.push('💬 '+d.top_post.comments+' comments');
-      if(d.top_post.shares)parts.push('↻ '+d.top_post.shares+' shares');
-      document.getElementById('mkt-perf-top-metrics').textContent=parts.join('  ·  ');
-    } else if(topWrap){
-      topWrap.style.display='none';
+      if(d.top_post.reach)parts.push(d.top_post.reach.toLocaleString()+' reach');
+      if(d.top_post.likes)parts.push(d.top_post.likes+' likes');
+      if(d.top_post.comments)parts.push(d.top_post.comments+' comments');
+      if(d.top_post.shares)parts.push(d.top_post.shares+' shares');
+      document.getElementById('mkt-perf-top-metrics').textContent=parts.join(' · ');
+    } else {
+      if(topWrap)topWrap.style.display='none';
+      // One definition of the best post (AUX-13): it waits for the floor.
+      if(topNote){var fl=d.top_post_floor||6,n=d.measured_posts||0;
+        topNote.textContent='A top post is named once '+fl+' posts are measured — '+n+' so far.';topNote.hidden=false;}
     }
   }).catch(function(){
     loadingEl.style.display='none';
+    bodyEl.style.display='none';
     emptyEl.style.display='';
-    emptyEl.innerHTML=emptyStateHtml('Could not load performance data','Refresh the page to try again');
+    loadFailed(emptyEl,null);
   });
 }
 // A cached read served because a new one failed (client_api stale=True)
@@ -17969,7 +18065,7 @@ function loadMktInsight(){
   mktLoaded=true;
   var el=document.getElementById('mkt-insight');
   if(!el)return;
-  // Check sessionStorage cache (4-hour TTL) to avoid regenerating on every page reload
+  // Check sessionStorage cache (five-minute TTL, fiveMin below) to avoid regenerating on every page reload
   try{
     var cached=cavGet('mkt_brief');
     var cachedAt=parseInt(cavGet('mkt_brief_at')||'0',10);
@@ -23258,7 +23354,12 @@ function wtDrawObs(d){
   wtShow('fc2-wt-obs',true);box.innerHTML=h;
 }
 var selCt='{{ctypes[0].id if ctypes}}';
-function selectCt(id,el){selCt=id;document.querySelectorAll('.ct-btn').forEach(function(b){b.classList.remove('selected');});el.classList.add('selected');}
+function selectCt(id,el){selCt=id;document.querySelectorAll('.ct-btn').forEach(function(b){b.classList.remove('selected');b.setAttribute('aria-checked','false');});el.classList.add('selected');el.setAttribute('aria-checked','true');}
+// A content-type card by keyboard (AUX-11): Enter or Space picks it.
+function mktCtKey(e,el){
+  var k=e.key||'';
+  if(k==='Enter'||k===' '||k==='Spacebar'){e.preventDefault();selectCt(el.getAttribute('data-type'),el);}
+}
 var _genInFlight=false;
 function genContent(fromCalendar){
   if(_genInFlight)return;
@@ -23292,6 +23393,8 @@ function genContent(fromCalendar){
         return;
       }
       window._lastPostedTopic=topic;
+      // The generated row a publish of these words completes (MB-8).
+      window._mktContentLogId=d.content_log_id||null;
       // New words are a new draft, not an edit of the one last opened.
       window._mktDraftId=null;
       var _genContent = d.content||'';
@@ -23347,14 +23450,14 @@ function genContent(fromCalendar){
         if(charCountEl)charCountEl.textContent=contentLen;
         if(charLbl)charLbl.textContent='/ 2,200 Instagram limit';
         if(charOver)charOver.style.display=contentLen>2200?'inline':'none';
-        if(charCountEl)charCountEl.style.color=contentLen>2200?'var(--red)':contentLen>1800?'#ef9f27':'var(--ink3)';
+        if(charCountEl)charCountEl.style.color=contentLen>2200?'var(--red)':contentLen>1800?'var(--amber)':'var(--ink3)';
       } else if(isGoogle){
         if(counter)counter.style.display='none';
         if(charCtr)charCtr.style.display='block';
         if(charCountEl)charCountEl.textContent=contentLen;
         if(charLbl)charLbl.textContent='/ 1,500 Google post limit';
         if(charOver)charOver.style.display=contentLen>1500?'inline':'none';
-        if(charCountEl)charCountEl.style.color=contentLen>1500?'var(--red)':contentLen>1200?'#ef9f27':'var(--ink3)';
+        if(charCountEl)charCountEl.style.color=contentLen>1500?'var(--red)':contentLen>1200?'var(--amber)':'var(--ink3)';
       } else {
         if(counter)counter.style.display='none';
         if(charCtr)charCtr.style.display='none';
@@ -23444,10 +23547,6 @@ function renderCal(ideas){
     var rangeEl = document.getElementById('cal-week-range');
     if(rangeEl && weekRange) rangeEl.textContent = 'Week of ' + weekRange;
     window._calIdeas = d.ideas;
-    var platformColors = {
-      'Instagram':'#e1306c','Instagram & FB':'#e1306c','Facebook':'#1877f2','Email':'#2d6a4f',
-      'Google':'#4285f4','SMS':'#ef9f27'
-    };
     var html = '';
     // Every field is model output, and the calendar prompt carries a
     // guest's review verbatim: text, never markup.
@@ -23469,13 +23568,12 @@ function renderCal(ideas){
         var i=d.ideas[idx];
         if(i.day!==dayName)continue;
         found = true;
-        var pColor = platformColors[i.platform] || 'var(--ink3)';
         // Each idea is a recommendation (rec-ROI #41): writing from it is its
         // yes; Pass (with a reason) is its no; an answered idea keeps its
         // day in the week, marked, without the answer.
         html += '<div class="cal-card'+(i.answered?' answered':'')+'" style="animation-delay:'+(dn*0.06)+'s">';
         html += '<div class="cal-hd"><span class="cal-day-name">'+_e(i.day)+'</span><span class="cal-date">'+_e(i.date||dayDate)+'</span></div>';
-        html += '<span class="cal-platform" style="color:'+pColor+';background:'+(pColor.charAt(0)==='#'?pColor+'1f':'var(--hb-tint)')+'">'+_e(i.platform)+'</span>';
+        html += '<span class="cal-platform">'+_e(i.platform)+'</span>';
         html += '<div class="cal-angle">'+_e(i.angle)+'</div>';
         html += '<div class="cal-acts"><button type="button" data-idx="'+idx+'" onclick="generateFromCalIdx(this.dataset.idx)" class="cbtn cbtn-text cbtn-inline cbtn-sm">Write this →</button>';
         if(i.answered)html += '<span class="rec-ans-done">'+(i.written?'Written from this idea':'Answered')+'</span>';

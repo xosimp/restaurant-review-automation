@@ -855,7 +855,7 @@ LOCAL_POST_ACTIONS = ("LEARN_MORE", "BOOK", "ORDER", "SHOP", "SIGN_UP", "CALL")
 
 
 def create_local_post(restaurant_id: int, summary: str, cta_type: str = None,
-                      cta_url: str = None, language_code: str = "en-US") -> dict:
+                      cta_url: str = None, language_code: str = "en-US", photo_url: str = None) -> dict:
     """Publish a "What's new" post to the connected Google Business Profile.
 
     Marketing already generates this copy (the `google_promo` content type)
@@ -871,8 +871,16 @@ def create_local_post(restaurant_id: int, summary: str, cta_type: str = None,
     tests, but treat the first real post as the actual verification — same
     caveat style as toast.fetch_order_selections' refundStatus note.
 
+    `photo_url` (a public URL — the photo library's /m/<token>.jpg) rides
+    as the post's one PHOTO media item (LocalPost.media: mediaFormat +
+    sourceUrl), so the listing shows the photo the preview showed (CS-20,
+    SOC-10); it used to be dropped on a direct and a scheduled post alike.
+
     Returns {"ok": True, "name": "<post resource name>"} or
-    {"ok": False, "error": "..."}.
+    {"ok": False, "error": "...", "maybe_live": bool}: `maybe_live` when
+    Google may have accepted it anyway — no answer, a 5xx, a 429 or an
+    unreadable 200 — so a caller never retries it into a second post
+    (SOC-8). A 4xx with an error is Google saying no.
     """
     from models import get_restaurant
 
@@ -906,11 +914,17 @@ def create_local_post(restaurant_id: int, summary: str, cta_type: str = None,
                 return {"ok": False, "error": f"{cta_type} needs a link"}
             action["url"] = cta_url
         body["callToAction"] = action
+    photo_url = (photo_url or "").strip()
+    if photo_url:
+        if not photo_url.lower().startswith(("https://", "http://")):
+            return {"ok": False, "error": "Google needs the photo at a public web address"}
+        body["media"] = [{"mediaFormat": "PHOTO", "sourceUrl": photo_url}]
 
     # gmb_account_id is "accounts/123", gmb_location_id is "locations/456"
     # (see get_gmb_account_id / get_gmb_location_id) — localPosts hangs off
     # the combined parent.
     parent = f"{r.gmb_account_id}/{r.gmb_location_id}"
+    from ai_guard import safe_error as _safe_error
     try:
         resp = requests.post(
             f"https://mybusiness.googleapis.com/v4/{parent}/localPosts",
@@ -918,8 +932,57 @@ def create_local_post(restaurant_id: int, summary: str, cta_type: str = None,
             json=body,
             timeout=15,
         )
-        if resp.status_code in (200, 201):
-            return {"ok": True, "name": (resp.json() or {}).get("name", "")}
-        return {"ok": False, "error": f"GBP API {resp.status_code}: {resp.text[:300]}"}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        # The request may have reached Google before the connection died —
+        # unless the connection was never made.
+        never_sent = isinstance(e, getattr(getattr(requests, "exceptions", None), "ConnectTimeout", ()))
+        return {"ok": False, "maybe_live": not never_sent, "error": _safe_error(e)}
+    if resp.status_code in (200, 201):
+        try:
+            name = (resp.json() or {}).get("name", "")
+        except Exception:
+            name = ""
+        if name:
+            return {"ok": True, "name": name}
+        return {"ok": False, "maybe_live": True, "error": "Google answered without naming the post"}
+    maybe = resp.status_code >= 500 or resp.status_code == 429
+    return {"ok": False, "maybe_live": maybe,
+            "error": f"GBP API {resp.status_code}: {_safe_error(resp.text[:300], fallback='no detail')}"}
+
+
+# How long the same Google post (text and photo) is refused after a publish
+# started — the Instagram/Facebook cooldown (social_routes.IG_PUBLISH_DEDUP_MINUTES).
+GOOGLE_PUBLISH_DEDUP_MINUTES = 10
+
+
+def post_local(restaurant_id: int, summary: str, cta_type: str = None, cta_url: str = None,
+               photo_url: str = None) -> dict:
+    """create_local_post behind the double-publish guard every Instagram and
+    Facebook publish has (DATA-25, MB-21): a double press, the phone and the
+    laptop at once, or a scheduled retry after an unclear answer put the
+    same "What's new" post on the listing twice. One claim per restaurant,
+    text and photo, for GOOGLE_PUBLISH_DEDUP_MINUTES; given back only when
+    Google definitely refused (nothing is live). The one call behind the
+    direct post (client_api._do_post_to_google) and the scheduled one
+    (marketing_publish.publish_now).
+    -> create_local_post's answer, or {"ok": False, "duplicate": True,
+    "maybe_live": True, "error"}."""
+    import hashlib
+    import ops
+    summary = (summary or "").strip()
+    claim = "gbp_publish:%s:%s" % (restaurant_id, hashlib.sha256(
+        ((photo_url or "") + "\x1f" + summary).encode("utf-8")).hexdigest()[:24])
+    if not ops.claim_cooldown(claim, GOOGLE_PUBLISH_DEDUP_MINUTES):
+        return {"ok": False, "duplicate": True, "maybe_live": True,
+                "error": "This post is already being published. Check your Google listing before posting it again."}
+    kw = {"cta_type": cta_type or None, "cta_url": cta_url or None}
+    if photo_url:
+        kw["photo_url"] = photo_url
+    try:
+        result = create_local_post(restaurant_id, summary, **kw)
+    except Exception as e:
+        from ai_guard import safe_error as _safe_error
+        return {"ok": False, "maybe_live": True, "error": _safe_error(e)}
+    if not result.get("ok") and not result.get("maybe_live"):
+        ops.release_period("cooldown", claim)      # Google refused it; nothing is live
+    return result

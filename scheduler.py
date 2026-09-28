@@ -1523,11 +1523,21 @@ def run_marketing_metrics_sync():
             try:
                 result = social_routes.refresh_post_metrics(rid) or {}
             except Exception as e:
-                record_metrics_sync(rid, False, str(e))
+                from ai_guard import safe_error as _se
+                record_metrics_sync(rid, False, _se(e))
                 raise
-            if result.get("ok"):
+            # The pass is green only when every post it owed was measured
+            # (MB-7): it used to stamp success whenever the token was alive,
+            # so a night where Meta refused every insights call read
+            # "Metrics synced" over posts showing 0. A partial or failed
+            # pass is recorded as not ok, with how much it missed.
+            status = result.get("status") or ("ok" if result.get("ok") else "failed")
+            if status == "ok":
                 log.info(f"Metrics synced for {r.name} — {len(result.get('posts', []))} posts")
                 record_metrics_sync(rid, True)
+            elif status == "partial":
+                log.warning(f"Metrics sync partial for {r.name}: {result.get('error')}")
+                record_metrics_sync(rid, False, result.get("error") or "some posts couldn't be measured")
             else:
                 # Was only logged, so marketing figures read current after
                 # the Meta token died (CA3 F15). Stamped per restaurant for

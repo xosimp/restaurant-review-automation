@@ -285,14 +285,17 @@ def get_recent_content(restaurant_id: int, limit: int = 5) -> list:
 
 
 def log_content(restaurant_id: int, content_type: str, topic: str,
-                post_id: str = None, post_platform: str = None, body: str = None, tags: dict = None):
+                post_id: str = None, post_platform: str = None, body: str = None, tags: dict = None,
+                content_log_id: int = None):
     """Log generated content for memory — and tag it (marketing_tags.py)
     with the dish, occasion and kind it is about, so its result can be read
     against them. A post that went live also starts the month's observed
-    sales tracker (outcomes.observe)."""
+    sales tracker (outcomes.observe). `content_log_id` is the generated row a
+    publish completes (MB-8). Returns the row's id."""
     if not restaurant_id:
         return
-    row_id = _log_content_row(restaurant_id, content_type, topic, post_id, post_platform)
+    row_id = _log_content_row(restaurant_id, content_type, topic, post_id, post_platform,
+                              content_log_id=content_log_id)
     if row_id:
         try:
             import marketing_tags
@@ -395,37 +398,45 @@ def pieces_this_month(restaurant_id, db_path=None) -> int:
         conn.close()
 
 
-def _log_content_row(restaurant_id, content_type, topic, post_id, post_platform):
+# A new row's metrics are NULL — unmeasured — not the columns' DEFAULT 0
+# (MB-7): marketing_signals.MEASURED_SQL.
+_INSERT_ROW_SQL = ("INSERT INTO marketing_content_log (restaurant_id, content_type, topic, post_id, post_platform, "
+                   "origin, posted_at, reach, impressions, engaged, likes, comments, shares) "
+                   "VALUES (?,?,?,?,?,?,?,NULL,NULL,NULL,NULL,NULL,NULL)")
+
+
+def _log_content_row(restaurant_id, content_type, topic, post_id, post_platform, content_log_id=None):
     """The row write, returning the row's id (the updated or inserted one).
     Each new row records its origin (_content_origin) so a count of pieces
-    can leave out calendar markers and job drafts."""
+    can leave out calendar markers and job drafts.
+
+    A publish (post_id) stamps posted_at — the time it went out, which the
+    attribution window and "last post" read (MB-8) — and completes the
+    generated row it names by `content_log_id` (this restaurant's, not yet
+    posted). Without one it is its own row: "the most recent unposted row
+    for this topic" attached a Friday post to Monday's generation, or a
+    stale topic to the wrong row."""
     row_id = None
     origin = _content_origin(content_type)
     try:
         from models import get_conn
         conn = get_conn()
-        if post_id:
-            # Update the most recent unposted row for this topic instead of inserting a duplicate
+        target = None
+        if post_id and content_log_id:
             target = conn.execute(
-                "SELECT id FROM marketing_content_log WHERE restaurant_id=? AND topic=? AND post_id IS NULL "
-                "ORDER BY created_at DESC LIMIT 1", (restaurant_id, topic)).fetchone()
-            if target:
-                conn.execute("UPDATE marketing_content_log SET post_id=?, post_platform=? WHERE id=?",
-                             (post_id, post_platform, target["id"]))
-                row_id = target["id"]
-            else:
-                cur = conn.execute(
-                    "INSERT INTO marketing_content_log (restaurant_id, content_type, topic, post_id, post_platform, origin) "
-                    "VALUES (?,?,?,?,?,?)",
-                    (restaurant_id, content_type, topic, post_id, post_platform, origin)
-                )
-                row_id = cur.lastrowid
+                "SELECT id FROM marketing_content_log WHERE id=? AND restaurant_id=? "
+                "AND (post_id IS NULL OR TRIM(post_id) = '')", (int(content_log_id), restaurant_id)).fetchone()
+        if target:
+            conn.execute("UPDATE marketing_content_log SET post_id=?, post_platform=?, "
+                         "posted_at=COALESCE(posted_at, datetime('now')) WHERE id=?",
+                         (post_id, post_platform, target["id"]))
+            row_id = target["id"]
         else:
-            cur = conn.execute(
-                "INSERT INTO marketing_content_log (restaurant_id, content_type, topic, post_id, post_platform, origin) "
-                "VALUES (?,?,?,?,?,?)",
-                (restaurant_id, content_type, topic, post_id, post_platform, origin)
-            )
+            import datetime as _dt
+            posted_at = (_dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                         if post_id else None)
+            cur = conn.execute(_INSERT_ROW_SQL, (restaurant_id, content_type, topic, post_id, post_platform,
+                                                 origin, posted_at))
             row_id = cur.lastrowid
         conn.commit()
         conn.close()
@@ -606,8 +617,13 @@ def generate_content(content_type: str, topic: str,
     if result.verdict is not None and result.verdict.verdict == "refuse":
         raise ValueError(f"marketing copy rejected: {refusal_detail(result.verdict)}")
 
-    # Log this content for future memory
-    log_content(restaurant_id, content_type, topic)
+    # Log this content for future memory. Its row id travels with the text,
+    # so a publish completes THIS row (MB-8), not a guess by topic.
+    row_id = log_content(restaurant_id, content_type, topic)
+    try:
+        result.content_log_id = row_id
+    except AttributeError:
+        pass
 
     return result
 
