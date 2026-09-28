@@ -81,6 +81,12 @@
   .optin{display:flex;align-items:flex-start;gap:10px;margin:2px 0 16px;cursor:pointer}
   .optin input{margin-top:3px;width:17px;height:17px;accent-color:var(--ember);flex:none}
   .optin span{font-size:12.5px;line-height:1.5;color:var(--ink3)}
+  .optin a,.legal a{color:var(--ember2);text-decoration:underline;text-underline-offset:2px}
+  /* The program's Terms and Privacy Policy are linked on every screen of
+     this page, not only inside the consent box (Twilio A2P 10DLC review,
+     9/28/26: "the opt-in link lacks a Terms & Conditions / Privacy Policy
+     link"). */
+  .legal{margin-top:34px;text-align:center;font-size:12.5px;line-height:1.7;color:var(--ink3)}
 </style>
 </head>
 <body>
@@ -147,6 +153,7 @@
       restaurant's join code, which name on the roster is you, and a PIN.
       No manager involved at any point. -->
  <div id="signup-root" style="display:none">
+   <img class="wordmark" src="/static/brand/wordmark-light.svg" alt="Cavnar AI">
    <div class="backrow">
      <button type="button" onclick="signupBack()">&larr;</button>
      <span class="nm" id="su-title">Create your account</span>
@@ -158,7 +165,7 @@
      <input id="su-phone-in" class="fld" type="tel" inputmode="tel" autocomplete="tel" placeholder="(555) 014-2233">
      <label class="optin">
        <input type="checkbox" id="su-optin">
-       <span>I consent to receive a one-time SMS verification code from Cavnar AI at this number. Message and data rates may apply.</span>
+       <span>I agree to receive a one-time verification code by text message from Cavnar AI at this number, sent each time I ask for one. Message frequency: one message per request. Message and data rates may apply. Reply HELP for help, STOP to opt out. See our <a href="/terms#sms" target="_blank" rel="noopener">Terms of Service</a> and <a href="/privacy#sms" target="_blank" rel="noopener">Privacy Policy</a>.</span>
      </label>
      <button type="button" class="cbtn cbtn-primary" style="width:100%" onclick="suSendCode(this)">Text me a code</button>
    </div>
@@ -208,6 +215,12 @@
 
    <div class="err" id="su-err"></div>
  </div>
+
+ <footer class="legal">
+   Cavnar AI &middot; <a href="/terms" target="_blank" rel="noopener">Terms of Service</a> &middot;
+   <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a> &middot;
+   <a href="/terms#sms" target="_blank" rel="noopener">SMS terms</a>
+ </footer>
 </div>
 
 <script>
@@ -553,6 +566,10 @@
     });
   }
   window.suSetPin = suClaim;
+  {% if open_signup %}
+  /* /staff/signup: the phone step, open on arrival (the A2P opt-in URL). */
+  window.startSignup();
+  {% endif %}
 })();
 </script>
 </body>

@@ -247,6 +247,7 @@
   </style>
 </head>
 <body>
+<!--email_off-->
 
 <header>
   <a href="https://cavnar.ai" class="logo"><svg viewBox="-8 -20 477 128" height="0.8em" style="vertical-align:-0.08em" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><polygon points="0,0 64,0 64,21 21,21 21,79 64,79 64,100 0,100"/><polygon points="78,100 99,100 126,0 105,0"/><polygon points="154,100 133,100 106,0 127,0"/><polygon points="108.2,66 123.8,66 129.5,87 102.5,87"/><polygon points="139,0 160,0 187,100 166,100"/><polygon points="215,0 194,0 167,100 188,100"/><polygon points="225,0 246,0 246,100 225,100"/><polygon points="274,0 295,0 295,100 274,100"/><polygon points="225,0 246,0 295,100 274,100"/><polygon points="305,100 326,100 353,0 332,0"/><polygon points="381,100 360,100 333,0 354,0"/><polygon points="335.2,66 350.8,66 356.5,87 329.5,87"/><polygon points="391,0 412,0 412,100 391,100"/><path fill-rule="evenodd" d="M412,0 H447 L461,14 V44 L447,58 H412 Z M412,21 H435 L440,26 V32 L435,37 H412 Z"/><polygon points="425,58 446,58 457,100 436,100"/><circle cx="177" cy="13" r="8.5" fill="#D4583A"/></svg><span style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;font-weight:800;font-size:0.34em;letter-spacing:0.16em;color:#D4583A;vertical-align:0.62em;margin-left:0.12em;font-style:normal">AI</span></a>
@@ -264,7 +265,7 @@
     <div class="hero-meta">
       <span>Cavnar AI LLC</span>
       <span>Effective: May 14, 2026</span>
-      <span>Last updated: May 14, 2026</span>
+      <span>Last updated: September 28, 2026</span>
     </div>
   </div>
 </div>
@@ -314,6 +315,7 @@
       <ul>
         <li>Restaurant name, address, and contact information</li>
         <li>Owner and GM name, email address, and phone number</li>
+        <li>Mobile phone numbers given to us for text messages (account alerts, staff verification codes, schedule texts, inquiry replies), with a record of the consent given for each</li>
         <li>Dashboard login credentials (username and password — passwords are stored hashed and never readable)</li>
         <li>Restaurant profile information: neighborhood, vibe, brand voice notes, menu highlights</li>
         <li>Labor data: shift records, employee hours, sales figures uploaded by you or your operator</li>
@@ -381,6 +383,7 @@
         <li>Use your restaurant data to train AI models for other customers</li>
         <li>Use your information for advertising purposes</li>
         <li>Share your data with marketing companies or data brokers</li>
+        <li>Share mobile phone numbers or text-message opt-in consent with third parties or affiliates for marketing or promotional purposes</li>
         <li>Aggregate your data into industry reports without explicit written consent</li>
       </ul>
     </div>
@@ -426,6 +429,11 @@
             <td>Google Place ID used to retrieve public review data. Google's <a href="https://policies.google.com/privacy">privacy policy</a> applies.</td>
           </tr>
           <tr>
+            <td><strong>Twilio</strong></td>
+            <td>Text message (SMS) delivery</td>
+            <td>Mobile phone number and message content, only to deliver the texts you agreed to receive. Twilio's <a href="https://www.twilio.com/en-us/legal/privacy">privacy policy</a> applies.</td>
+          </tr>
+          <tr>
             <td><strong>DocuSign</strong></td>
             <td>Electronic service agreement signing</td>
             <td>Name, email address, and contract content. DocuSign's <a href="https://www.docusign.com/company/privacy-policy">privacy policy</a> applies.</td>
@@ -434,6 +442,7 @@
       </table>
 
       <p>We do not share your information with any other third parties except as required by law, to protect our rights, or in connection with a merger or acquisition (in which case you will be notified in advance).</p>
+      <p><strong>Mobile information.</strong> No mobile information will be shared with third parties or affiliates for marketing or promotional purposes. Information sharing to subcontractors in support services, such as customer service or text message delivery, is permitted. All the above categories exclude text messaging originator opt-in data and consent; this information will not be shared with any third parties.</p>
     </div>
 
     <div class="section" id="meta-instagram">
@@ -683,17 +692,21 @@
     <div class="section" id="sms">
       <div class="section-number">14 — SMS Messaging</div>
       <h2>SMS communications</h2>
-      <p>Cavnar AI LLC sends two kinds of SMS, each with its own separate consent:</p>
+      <p>You give consent to receive text messages directly to Cavnar AI (Cavnar AI LLC), separately for each program, by checking an unchecked box that names the program. We use a number only for the program it was given for. The programs are:</p>
       <ul>
-        <li><strong>Account alerts.</strong> When a restaurant owner or manager provides their mobile phone number and opts in to SMS alerts in their account settings, we use that number solely to send operational notifications related to their restaurant account (e.g., new review alerts, urgent activity notifications).</li>
-        <li><strong>Staff account verification.</strong> When a restaurant employee enters their mobile phone number in the Cavnar AI app to create their own staff account, we use that number solely to send a one-time numeric verification code confirming the number belongs to them. This number is not added to any alert or marketing list.</li>
+        <li><strong>Cavnar AI Staff Verification.</strong> A restaurant employee who enters their mobile number on the staff sign-up screen and checks the consent box gets a one-time verification code each time they ask for one, confirming the number belongs to them. The number is not added to any alert or marketing list.</li>
+        <li><strong>Cavnar AI Account Alerts.</strong> A restaurant owner or manager who opts in to text alerts in their account settings gets operational notifications about their restaurant account (for example new review alerts and urgent activity), and their two-step sign-in codes if they choose text delivery for those.</li>
+        <li><strong>Cavnar AI Schedule Texts.</strong> An employee who checks &ldquo;Text me when my schedule is posted&rdquo; in the staff portal gets a text when a week&rsquo;s schedule is posted.</li>
+        <li><strong>Inquiry replies.</strong> Someone who checks the SMS box on the cavnar.ai contact form gets texts about their inquiry and free audit.</li>
       </ul>
-      <p>We do not sell or share your SMS opt-in data or personal information with third parties for marketing purposes.</p>
+      <p><strong>No mobile information will be shared with third parties or affiliates for marketing or promotional purposes.</strong> Information sharing to subcontractors in support services, such as customer service or text message delivery, is permitted. All other categories exclude text messaging originator opt-in data and consent; this information will not be shared with any third parties. We do not sell or share your SMS opt-in data or personal information with third parties for marketing purposes.</p>
+      <p><strong>Guests of a restaurant.</strong> A restaurant that uses Cavnar AI can text guests who agreed to receive that restaurant&rsquo;s texts. Those texts are the restaurant&rsquo;s, sent in its name. A guest&rsquo;s number and consent are held for that restaurant alone: never shared with another restaurant, never used for Cavnar AI&rsquo;s own marketing, and never sold.</p>
       <ul>
-        <li>SMS consent is separate from, and not required for, use of the Cavnar AI platform.</li>
-        <li>To opt out of account alert messages at any time, reply <strong>STOP</strong> to any message we send. (Staff verification codes are single, one-time messages with nothing to opt out of.)</li>
+        <li>Consent to receive texts is separate from, and not required for, use of the Cavnar AI platform or any purchase.</li>
+        <li>To opt out at any time, reply <strong>STOP</strong> to any message. You will receive one confirmation and no further messages from that number.</li>
         <li>For help, reply <strong>HELP</strong> or contact <a href="mailto:will@cavnar.ai">will@cavnar.ai</a>.</li>
-        <li>Message &amp; data rates may apply. Message frequency for account alerts varies based on account activity; verification codes are sent only when requested.</li>
+        <li>Message &amp; data rates may apply. Verification codes are sent only when requested (one per request); alert and schedule texts vary with activity.</li>
+        <li>Full program terms: <a href="/terms#sms">SMS terms</a>.</li>
       </ul>
     </div>
 
@@ -721,5 +734,6 @@
   <p>© 2026 Cavnar AI LLC · <a href="https://cavnar.ai">cavnar.ai</a> · <a href="/pricing">Pricing</a> · <a href="mailto:will@cavnar.ai">will@cavnar.ai</a></p>
 </footer>
 
+<!--/email_off-->
 </body>
 </html>

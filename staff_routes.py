@@ -96,6 +96,17 @@ def portal_entry():
                            portal_token="", login_nonce="", join_code="", error=None)
 
 
+@staff_bp.route("/signup")
+def portal_signup():
+    """Create-your-account, open on arrival at the phone step: the public
+    page Twilio's A2P 10DLC reviewers are sent to for the staff verification
+    program, so the number field, the unchecked consent box and the Terms /
+    Privacy links are on screen without a click (9/28/26)."""
+    return render_template("staff_login.html", restaurant=None, roster=[],
+                           portal_token="", login_nonce="", join_code="", error=None,
+                           open_signup=True)
+
+
 @staff_bp.route("/r/<token>")
 def portal_login(token):
     """The restaurant's staff link: pick your name, enter your PIN."""
