@@ -930,6 +930,20 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .mkt-attr-line{margin-top:4px}
 .mkt-alltime{font-size:13.5px;color:var(--ink3);margin:0 0 14px}
 .mkt-sec{margin-top:6px}
+/* Marketing Opportunity Feed (9/28/26): Home's recommendation cards
+   (.hb-card.hb-rec in .hb-recs), a kind label for what the card rests on,
+   the measured gap as the .usd pill, one confidence line, one draft. */
+.mkt-opps{margin:26px 0 4px}
+.mkt-opps .hb-sh{margin-bottom:0}
+.mkt-opp .top{align-items:center}
+.mkt-opp .kd{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--ember)}
+.mkt-opp .when{font-family:'Space Grotesk',sans-serif;font-size:12.5px;font-weight:600;color:var(--ink3)}
+.mkt-opp .ft .cbtn-primary,.mkt-opp .ft .mkt-opp-go{margin-left:auto}
+.mkt-opp.gone{display:none}
+.mkt-opp .meta span .hb-num{background:none;border:0;padding:0;border-radius:0;font-size:inherit;letter-spacing:0;color:inherit}
+.mkt-opps-foot{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px;font-size:13.5px;color:var(--ink3)}
+.mkt-opps-foot .cv-ok{width:16px;height:16px}
+.mkt-opps-list.collapsed>.mkt-opp:nth-child(n+4){display:none}
 /* ── Campaigns (owner, 9/28/26) ─────────────────────────────────────────
    The guest text club rebuilt AI-first on its own Marketing tab: one
    question leads, four steps follow, a live phone shows the text. Depth
@@ -11365,6 +11379,19 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
       <span class="hb-chip neutral" id="mkt-chip-next"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num" id="mkt-chip-next-n">—</span></span><span class="l">next scheduled</span></span>
     </div>
   </div>
+
+  {# The Marketing Opportunity Feed (9/28/26): what Cavnar AI found worth
+     doing, from measured signals - a reliably slow night, last year's
+     holiday, a category falling, a dish that earns but doesn't sell, a dish
+     guests praise, a list nobody has contacted, nothing posted lately
+     (marketing_opportunities.feed via /api/marketing/opportunities). Ranked,
+     the answered ones gone, each with a one-tap draft into the Campaign
+     Studio. No model call on load; the draft is made when the owner taps. #}
+  <section class="mkt-opps" id="mkt-opps" data-nav="marketing/opportunities" aria-labelledby="mkt-opps-h" hidden>
+    <div class="hb-sh"><div><div class="k">Cavnar AI found</div><h2 id="mkt-opps-h">Opportunities this week</h2></div></div>
+    <div class="hb-recs mkt-opps-list" id="mkt-opps-list"></div>
+    <div class="mkt-opps-foot" id="mkt-opps-foot"></div>
+  </section>
 
   <!-- Marketing sub-tabs (segmented pill, under the header) -->
   <div style="display:flex;justify-content:flex-start;margin:22px 0 18px">
@@ -26158,6 +26185,7 @@ function revokeOtherSessions(btn){
     if (n === 'inventory' && !_fcMenuLoaded) { _fcMenuLoaded = true; loadFcMenu(); fc2LoadPendingInvoices(); }
     if (n === 'marketing' && !_gcLoaded) {
       _gcLoaded = true;
+      loadMktOpps();
       loadGuestOverview();
       loadGuestContactsSummary();
       loadGuestSegments();
@@ -26166,6 +26194,92 @@ function revokeOtherSessions(btn){
     }
   };
 })();
+
+// ── Marketing Opportunity Feed (9/28/26) ─────────────────────────────────
+// What Cavnar AI found worth doing, ranked (marketing_opportunities.feed).
+// Every figure is measured and says what it is - a slow night's gap to a
+// typical day, never an expected return. "Draft it" opens the Campaign
+// Studio with the goal filled in and drafts the channels the card names;
+// an answered card goes (recControlsHtml -> /api/recs/event). ES5 only.
+var MKT_OPP_KIND = {slow_night: 'Slow night', holiday: 'Holiday', category_dip: 'Sales dip', dish_promote: 'Dish',
+                    dish_praise: 'Guest favorite', list_idle: 'Your list', posting: 'Posting'};
+var _mktOpps = [], _mktOppsChecked = [];
+function loadMktOpps() {
+  var sec = document.getElementById('mkt-opps'), list = document.getElementById('mkt-opps-list');
+  if (!sec || !list) return;
+  fetch('/api/marketing/opportunities', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
+    sec.hidden = false;
+    if (!d || !d.ok) { loadFailed(list, d); return; }
+    _mktOpps = d.items || []; _mktOppsChecked = d.checked || [];
+    mktPaintOpps();
+  }).catch(function() { sec.hidden = false; loadFailed(list, null); });
+}
+function mktOppWhen(o) {
+  if (o.days_away == null) return '';
+  return o.days_away === 1 ? 'Tomorrow' : 'In ' + o.days_away + ' days';
+}
+function mktOppCard(o, i) {
+  var meta = [], f;
+  if (o.stake && o.stake.amount) meta.push('<span class="usd"><span class="hb-num">$' + Math.round(o.stake.amount).toLocaleString('en-US') + '</span> ' + esc(o.stake.label || '') + '</span>');
+  for (f = 0; f < (o.facts || []).length; f++) meta.push('<span>' + num(o.facts[f]) + '</span>');
+  var conf = (o.confidence && window.cavConfLine) ? cavConfLine(o.confidence, {key: o.key, surface: 'marketing', module: 'marketing', cls: 'hb-conf', pill: 1}) : '';
+  var when = mktOppWhen(o);
+  return '<div class="hb-card hb-rec hb-rise mkt-opp" style="--i:' + i + '" data-opp-key="' + esc(o.key) + '">'
+    + '<div class="top"><span class="kd">' + esc(MKT_OPP_KIND[o.kind] || 'Opportunity') + '</span>' + (when ? '<span class="when">' + esc(when) + '</span>' : '') + '</div>'
+    + '<div class="t">' + num(o.title) + '</div>'
+    + (o.why ? '<div class="why">' + num(o.why) + '</div>' : '')
+    + (meta.length ? '<div class="meta">' + meta.join('') + '</div>' : '')
+    + '<div class="ft">' + conf + recControlsHtml(o.key, 'marketing', 'marketing', {noTrack: 1})
+    + '<button type="button" class="cbtn ' + (i === 0 ? 'cbtn-primary' : 'cbtn-secondary') + ' cbtn-sm mkt-opp-go" data-opp-draft="' + esc(o.key) + '">Draft it &rarr;</button></div>'
+    + '</div>';
+}
+function mktPaintOpps() {
+  var list = document.getElementById('mkt-opps-list'), foot = document.getElementById('mkt-opps-foot');
+  if (!list || !foot) return;
+  if (!_mktOpps.length) {
+    list.innerHTML = ''; list.classList.remove('collapsed');
+    foot.innerHTML = '<i class="cv-ok" aria-hidden="true"></i><span>Nothing stands out right now. Cavnar AI checked ' + esc(_mktOppsChecked.join(', ')) + '.</span>';
+    return;
+  }
+  var h = '';
+  for (var i = 0; i < _mktOpps.length; i++) h += mktOppCard(_mktOpps[i], i);
+  list.innerHTML = h;
+  var extra = _mktOpps.length - 3;
+  list.classList.toggle('collapsed', extra > 0);
+  foot.innerHTML = extra > 0 ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="mktOppsMore()">Show ' + extra + ' more</button>' : '';
+}
+window.mktOppsMore = function() {
+  var list = document.getElementById('mkt-opps-list'), foot = document.getElementById('mkt-opps-foot');
+  if (list) list.classList.remove('collapsed');
+  if (foot) foot.innerHTML = '';
+};
+// A card answered here (Done / Pass) leaves the feed at once.
+recOnAnswered(function(key) {
+  var had = false;
+  for (var i = _mktOpps.length - 1; i >= 0; i--) if (_mktOpps[i].key === key) { _mktOpps.splice(i, 1); had = true; }
+  if (had) mktPaintOpps();
+});
+// "Draft it": the Campaign Studio, the goal typed in, the card's channels on.
+window.mktOppDraft = function(o) {
+  var a = o.action || {}, chans = a.channels || ['text', 'email', 'social'];
+  if (window.switchMktTab) switchMktTab('campaigns');
+  _cp.chan = {text: chans.indexOf('text') >= 0, email: chans.indexOf('email') >= 0,
+              social: chans.indexOf('social') >= 0 && cpSocialPlats().length > 0};
+  _cp.chanSet = true;
+  var p = document.getElementById('cp-prompt'); if (p) p.value = a.prompt || o.title || '';
+  cpCreate();
+};
+document.addEventListener('click', function(e) {
+  var t = e.target && e.target.closest ? e.target.closest('[data-opp-draft]') : null;
+  if (!t || t.disabled) return;
+  var key = t.getAttribute('data-opp-draft'), o = null;
+  for (var i = 0; i < _mktOpps.length; i++) if (_mktOpps[i].key === key) o = _mktOpps[i];
+  if (!o) return;
+  // Opened, not answered: the owner still says Done or Pass on the card.
+  fetch('/api/recs/event', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({key: key, event: 'opened', surface: 'marketing', module: 'marketing'})}).catch(function() {});
+  mktOppDraft(o);
+});
 
 // ── Campaign Studio (owner, 9/28/26) ───────────────────────────────────────
 // One goal typed in (or a suggestion tapped) drafts every channel at once:
@@ -26798,7 +26912,7 @@ window.sendGuestCampaign = function(btn) {
     if (at < steps.length) { steps[at++](run); return; }
     btn.classList.add('sent'); btn.textContent = lost ? 'Check Performance' : '✓ Sent';
     if (!lost && typeof toast === 'function') toast('Campaign sent', 'success');
-    setTimeout(function() { loadGuestHistory(); loadGuestOverview(); loadGuestSegments(); }, 3500);
+    setTimeout(function() { loadGuestHistory(); loadGuestOverview(); loadGuestSegments(); loadMktOpps(); }, 3500);
   })();
 };
 // A changed draft or audience is a new send: the button comes back.

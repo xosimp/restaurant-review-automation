@@ -122,6 +122,14 @@ Drafts (create/edit/list), media upload, scheduling, attribution per post, the t
 
 Campaigns (9/28/26, the web's Marketing → Campaigns tab, formerly the guest text club):
 - `GET /api/guest-overview` / `/mobile/api/guest-overview` — `guest_marketing.campaign_overview` plus `join_url` (the signed `/join/<id>-<sig>`; a bare `/join/<id>` is refused) and `receipt_hint`. Fields: `subscribers`, `today`, `last_30`, `weekly` (12 × `{week_start, joined}`, oldest first), `last_campaign` (`{date, sent, segment_label}` or null), `tap_rate` / `back_rate` (`{pct, campaigns}`, null until `rate_min` campaigns of 10+ texts carry the measurement), `delivered` (% this month or null), `texts_this_month`, `sending_now`, `window`, `min_days_between`, `rate_min`. No open rate (SMS reports none) and no revenue. 403 without the Marketing module.
+- Marketing Opportunity Feed (9/28/26): `GET /api/marketing/opportunities` / `/mobile/api/marketing/opportunities`
+  → `{ok, items, checked}` (`marketing_opportunities.feed`). Each item: `key` (a rec_ledger key — `slow_day:<Weekday>`,
+  `holiday_promo:<ISO>`, `category_dip:<Category>`, `dish_promote:<Dish>`, `dish_praise:<Dish>`, `list_idle:text|email`,
+  `post_this_week`), `rec_id`, `kind`, `title`, `why`, `facts[]`, `stake` (`{amount, label}`, a measured gap, never an
+  expected return, or null), `when`, `days_away`, `action` (`{prompt, channels}` for the Campaign Studio), `score`,
+  `confidence` (K1, null on a fact card). Answered keys are left out (present_recs); `checked` names what was looked at.
+  Deterministic, stored per restaurant in `insight_cache` (kind `mkt_opps`) and rebuilt only when its fingerprint moves.
+  403 without the Marketing module.
 - Campaign Studio (9/28/26): `GET /api/guest-overview` also returns `email_subscribers`, `mailing_address_set`,
   `insights` (`guest_marketing.campaign_insights`: at most three `{kind, figure, tone, text, basis}`, each measured —
   the audience whose texts brought the most guests back once 2 attributed campaigns went to it, the last email's opens

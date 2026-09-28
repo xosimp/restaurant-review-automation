@@ -4037,6 +4037,26 @@ def mobile_guest_segments(current_user):
     ])
 
 
+@mobile_bp.route("/marketing/opportunities")
+@mobile_login_required
+def mobile_marketing_opportunities(current_user):
+    """The Marketing Opportunity Feed (marketing_opportunities.feed): ranked
+    cards from measured signals — slow nights, holidays, category dips,
+    dishes, idle lists, posting — the ones the owner already answered left
+    out, each fact-based card without a confidence and every other with one
+    measured confidence. No model call: a draft is made when the owner taps."""
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    import marketing_opportunities
+    try:
+        return jsonify(**marketing_opportunities.feed(rid, user_id=current_user.get("id"), surface="marketing"))
+    except Exception as e:
+        import ops
+        ops.capture(e, job="marketing_opportunities", context=f"restaurant_id={rid}")
+        return jsonify(ok=False, error="Couldn't read your opportunities right now."), 500
+
+
 @mobile_bp.route("/guest-overview")
 @mobile_login_required
 def mobile_guest_overview(current_user):

@@ -424,6 +424,9 @@ def slow_days(restaurant_id, db_path=DB_PATH):
             continue
         slow.append(dict(d, consistency=consistency))
     return {"available": True, "slow_days": slow, "all_days": fc.get("days", []),
+            # The typical day each weekday is measured against, so a reader
+            # quoting it says one figure (the Marketing Opportunity Feed).
+            "typical_day": (round(float(overall), 2) if overall else None),
             "threshold_pct": SLOW_DAY_PCT, "consistency_floor": RELIABLY_SLOW_SHARE}
 
 

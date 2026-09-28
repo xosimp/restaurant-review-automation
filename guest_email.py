@@ -263,8 +263,10 @@ def draft_newsletter(restaurant, goal: str = "", topic: str = "") -> dict:
         # Drafts told guests "Tuesdays have been quiet", "someone asked about
         # you the other day" and "happy hour is back": a slow day, a thing
         # nobody said and a change nobody made, under the owner's name.
-        "3. No story: nothing anyone said, asked, noticed or did, and nothing about how busy or slow it is.\n"
-        "4. Nothing is new, back, started or changed unless the owner's words say so.\n"
+        "3. No story: nothing anyone said, asked, noticed or did, and nothing about how busy or slow it is. "
+        "The owner's goal is theirs, not the guest's: never say or hint that a night is slow or quiet, or that "
+        "the restaurant wants to fill tables (\"Let's fill our Tuesday tables\" is exactly what not to write).\n"
+        "4. Nothing is new, back, started, better or changed unless the owner's words say so.\n"
         "5. It goes to many guests at once: never say how long it has been since a guest's visit.\n"
         "6. Give no reason or cause for anything: no 'because', 'due to', 'thanks to' or 'since'.\n"
         "7. No phone numbers or links."

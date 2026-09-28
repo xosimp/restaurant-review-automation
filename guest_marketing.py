@@ -851,6 +851,12 @@ def draft_campaign_message(restaurant, campaign_type="general", topic="", goal="
         "Plain keyboard punctuation only: no em dashes, curly quotes or ellipsis characters. "
         # The owner's "45 days" is an audience, not a fact about each guest.
         "It goes to many guests at once: never say how long it has been since a guest's visit. "
+        # "Fill Tuesday dinner" is the owner's aim (the Opportunity Feed's
+        # slow night), and drafts told guests "Tuesday nights are looking a
+        # little quiet": a slow night said to the public, under their name.
+        "The owner's goal is theirs, not something to tell guests: never say or hint that a night is slow, "
+        "quiet or empty, or that the restaurant wants to fill tables. "
+        "Nothing is new, back, better or changed unless the owner's words say so. "
         "No markdown, no emoji spam (at most one emoji). No links or phone numbers. "
         "End naturally — no 'reply STOP to unsubscribe' (that's added automatically). "
         "Never invent an offer: no discount, percentage or dollars off, free item, half price, "

@@ -109,6 +109,27 @@ def _verdict(it):
     return None
 
 
+def dish_praise(restaurant_id, db_path=DB_PATH) -> list:
+    """Every active menu item with what guests wrote about it in the last
+    SENTIMENT_WINDOW_DAYS — [{"name", "positive_mentions", "negative_mentions",
+    "review_ids"}], most praised first. The same matcher as the scorecard
+    (_attach_sentiment: a mention matching several dishes counts for none),
+    over every active dish, priced or not: the Marketing Opportunity Feed
+    features a dish guests love whether or not it has a recipe on file."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT name FROM menu_items WHERE restaurant_id=? AND is_active=1",
+                            (restaurant_id,)).fetchall()
+    finally:
+        conn.close()
+    items = [{"name": r["name"]} for r in rows if (r["name"] or "").strip()]
+    if not items:
+        return []
+    _attach_sentiment(items, _dish_mentions(restaurant_id, db_path))
+    return sorted((it for it in items if it["positive_mentions"] or it["negative_mentions"]),
+                  key=lambda it: (-it["positive_mentions"], it["negative_mentions"], it["name"]))
+
+
 def dish_scorecard(restaurant_id, db_path=DB_PATH):
     """One row per costed, priced dish: margin, popularity, sentiment, verdict."""
     import inventory_ledger

@@ -106,7 +106,7 @@ def test_the_email_is_drafted_from_the_goal_with_the_hard_rules(db, monkeypatch)
                    "body": "The kitchen is on.\n\nCome sit with us this week.", "button_label": "Book a table"}
     p = seen["prompt"]
     assert "What the owner wants this email to do, in their words: Fill Tuesday lunch." in p
-    for rule in ("No offer", "No story: nothing anyone said, asked, noticed or did", "Nothing is new, back, started or changed",
+    for rule in ("No offer", "No story: nothing anyone said, asked, noticed or did", "Nothing is new, back, started, better or changed",
                  "never say how long it has been since a guest's visit", "Give no reason or cause for anything"):
         assert rule in p, rule
     assert seen["kw"]["action"] == "guest_newsletter_draft"

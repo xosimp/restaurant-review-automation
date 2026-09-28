@@ -560,6 +560,10 @@ def generate_content(content_type: str, topic: str,
         known_for=p["known_for"],
         topic=topic,
     ) + location_context + recent_context + seasonal_context + never_clause + menu_clause + signal_context
+    # A topic can be the owner's aim ("Fill Tuesday dinner", the Opportunity
+    # Feed's slow night); said to the public it announces a slow night.
+    prompt += ("\nThe topic may be the owner's own aim. Never say or hint that a night is slow, quiet or empty, "
+               "or that the restaurant wants to fill tables.")
 
     import data_health
     msg = create_with_retry(

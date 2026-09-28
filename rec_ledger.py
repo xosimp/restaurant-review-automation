@@ -343,6 +343,9 @@ KIND_TOPIC = {
     "stale_low_reviews": "replies", "review": "replies", "review_edit": "replies",
     "post_this_week": "posting", "first_post": "posting", "winback": "guest_outreach",
     "slow_day": "guest_outreach", "quiet_night": "guest_outreach", "review_requests": "guest_outreach",
+    # The Marketing Opportunity Feed's own kinds (marketing_opportunities).
+    "holiday_promo": "marketing", "category_dip": "sales", "dish_promote": "marketing",
+    "dish_praise": "marketing", "list_idle": "guest_outreach",
     "insight_marketing": "marketing", "intel_recs": "competition", "insight_intel": "competition",
     "competitor_move": "competition", "ai_visibility_drop": "visibility", "loss": "loss",
     "dsr_action:adjust_staffing": "staffing", "dsr_action:control_hours": "hours",
@@ -354,7 +357,7 @@ KIND_TOPIC = {
     "link:intel_x_reviews": "competition",
 }
 # Kinds whose subject names a dish, and kinds whose subject names an item.
-DISH_KINDS = ("reprice",)
+DISH_KINDS = ("reprice", "dish_promote", "dish_praise")
 ITEM_KINDS = ("cut_waste", "stock_low", "critical_low", "price_spike", "diag_food")
 REVIEW_CATEGORY_KINDS = ("top_issue", "diag_review")
 _TOPIC_LABELS = {"food_cost": "food cost", "guest_experience": "guest experience", "guest_outreach": "guest outreach"}
