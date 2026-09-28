@@ -9594,7 +9594,27 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     </section>
   </div>
   <script>
-  var _roleColors=['#c84b2f','#e8956a','#2d6a4f','#b7791f','#6aabff','#9e6bd6','#4dd0e1'];
+  /* One hue per job family, the AM/PM halves of a family two shades of it
+     (PM lighter): seven colours cycled over Simple EJ's sixteen RPOWER jobs,
+     so Kitchen and Host AM were the same red (owner, 9/28/26). Families take
+     hues in order of cost, so the biggest reads first. */
+  var _roleHues=['#d4583a','#5b9dff','#3fae7a','#e0a23a','#9e6bd6','#4dd0e1','#e36d9b','#9bbf4a',
+                 '#c9a27e','#2fa39a','#f08c6c','#8aa0b8','#b58cff','#ffb86b','#6fd08c','#d65f5f'];
+  var _ROLE_SHIFT=/\s+(am|pm|day|night|lunch|dinner|brunch)$/i;
+  function _roleFamily(n){return String(n||'').replace(_ROLE_SHIFT,'').replace(/\s+/g,' ').replace(/^\s|\s$/g,'').toLowerCase();}
+  function _roleShade(hex,amt){
+    var h=hex.replace('#',''),c=[parseInt(h.substr(0,2),16),parseInt(h.substr(2,2),16),parseInt(h.substr(4,2),16)],o='#',i,v;
+    for(i=0;i<3;i++){v=Math.round(amt>=0?c[i]+(255-c[i])*amt:c[i]*(1+amt));v=Math.max(0,Math.min(255,v)).toString(16);o+=(v.length<2?'0':'')+v;}
+    return o;}
+  function _roleColorList(list){
+    var fam={},nf=0,out=[],i,f,k,m,base;
+    for(i=0;i<list.length;i++){f=_roleFamily(list[i].name);if(!fam.hasOwnProperty(f))fam[f]=nf++;}
+    for(i=0;i<list.length;i++){k=fam[_roleFamily(list[i].name)];
+      /* Past sixteen families the hues come round again, a shade darker. */
+      base=k<_roleHues.length?_roleHues[k]:_roleShade(_roleHues[k%_roleHues.length],-0.3);
+      m=_ROLE_SHIFT.exec(String(list[i].name||''));
+      out.push(m&&/^(pm|night|dinner)$/i.test(m[1])?_roleShade(base,0.4):base);}
+    return out;}
   var _roleData=[
     {% for role, data in labor.role_summary_sorted %}
     {"name":"{{role|e}}","pct":{{data.labor_pct}},"hours":"{{data.hours|default('0')}}","hc":{{data.headcount|default(0)}},"cost":{{data.labor_cost|int|default(0)}}},
@@ -9614,10 +9634,10 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     var total=0;
     for(var i=0;i<_roleData.length;i++)total+=_roleData[i].cost;
     var circles='<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="var(--hb-line2)" stroke-width="'+sw+'"/>';
-    var cumOffset=0;
+    var cumOffset=0,_cols=_roleColorList(_roleData);
     for(var i=0;i<_roleData.length;i++){
       var d=_roleData[i];
-      var col=_roleColors[i%_roleColors.length];
+      var col=_cols[i];
       var segLen=total>0?(d.cost/total)*circ-gap:0;
       if(segLen<0)segLen=0;
       // "Donut Sweep" — each segment starts at zero length and sweeps in, one
@@ -9642,7 +9662,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
     var lhtml='';
     for(var i=0;i<_roleData.length;i++){
       var d=_roleData[i];
-      var col=_roleColors[i%_roleColors.length];
+      var col=_cols[i];
       var isLast=i===_roleData.length-1;
       lhtml+='<div style="display:flex;align-items:center;gap:10px;padding:7px 0;'+(isLast?'':'border-bottom:1px solid var(--hb-line2)')+'">';
       lhtml+='<span style="width:9px;height:9px;border-radius:50%;background:'+col+';flex-shrink:0;box-shadow:0 0 7px '+col+'99"></span>';

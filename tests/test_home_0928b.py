@@ -55,3 +55,22 @@ def test_more_reveals_rows_above_itself_not_below():
     assert '<details class="dr-more' not in SRC
     assert "b.innerHTML=open?'Show less':" in SRC
     assert ".hb-card>.dr-extra[hidden],.hb-recs>.dr-extra[hidden]{display:none}" in SRC
+
+
+def test_every_role_on_the_donut_has_its_own_colour(tmp_path):
+    import json
+    import shutil
+    import subprocess
+    import pytest
+    if not shutil.which("node"):
+        pytest.skip("node is not installed")
+    a = SRC.index("  var _roleHues=")
+    b = SRC.index("    return out;}", a) + len("    return out;}")
+    roles = ["Kitchen", "Server PM", "Dishwasher", "Bartender PM", "Bartender AM", "Server AM", "Host PM", "Host AM",
+             "Utility PM", "Barback PM", "Busser PM", "Utility AM", "Training", "Manager FOH", "Busser AM", "Barback AM"]
+    js = SRC[a:b] + "\nconsole.log(JSON.stringify(_roleColorList(%s.map(function(n){return {name:n};}))));" % json.dumps(roles)
+    cols = json.loads(subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=20).stdout)
+    assert len(set(cols)) == len(roles)                                  # Simple EJ's sixteen jobs, sixteen colours
+    fam = dict(zip(roles, cols))
+    assert fam["Server AM"] == "#5b9dff" and fam["Server PM"] != fam["Server AM"]    # a pair: one hue, two shades
+    assert "_roleColors[" not in SRC
