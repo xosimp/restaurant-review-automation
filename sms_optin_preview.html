@@ -82,7 +82,7 @@
     <div class="hero-inner">
       <div class="pill">A2P 10DLC Compliance</div>
       <h1>SMS opt-in</h1>
-      <p>Subscribe to Cavnar AI operational text alerts below — the same consent step a restaurant owner completes inside their account settings, reproduced here as a live, unauthenticated form for carrier and campaign review.</p>
+      <p>Subscribe to Cavnar AI operational text alerts below — the same consent step a restaurant owner or manager completes inside their account settings, reproduced here as a live, unauthenticated form for carrier and campaign review.</p>
     </div>
   </div>
 
@@ -90,7 +90,8 @@
     <div class="meta">
       <strong>Product:</strong> Cavnar AI Restaurant Intelligence Dashboard (dashboard.cavnar.ai)<br>
       <strong>Who this is for:</strong> A restaurant owner or manager, opting their own mobile number into alerts about their own account<br>
-      <strong>Where the same flow lives in-app:</strong> Account tab → Alert Settings → Delivery method (off by default; this page mirrors it exactly so reviewers without a login can complete it directly)
+      <strong>Where the same flow lives in-app:</strong> Account → Notifications → Delivery method (off by default; this page mirrors it so reviewers without a login can complete it directly)<br>
+      <strong>Text alerts are optional.</strong> Nothing in Cavnar AI requires them: every alert is also delivered by email and in the app, and an account works the same with the box left unchecked. Consent to texts is never a condition of using Cavnar AI or of any purchase.
     </div>
 
     <div class="card">
@@ -109,8 +110,8 @@
             <div class="hint">Standard message and data rates from your carrier may apply.</div>
           </div>
           <div class="consent-row">
-            <input type="checkbox" id="optin-consent" name="consent" required>
-            <label for="optin-consent">I agree to receive operational text message alerts from Cavnar&nbsp;AI about new customer reviews for my restaurant — including urgent alerts for 1-star and health/safety-related reviews — at the mobile number above. Message frequency varies with review activity, typically up to about 5 messages per week. <strong>Message and data rates may apply.</strong> Reply <strong>STOP</strong> to unsubscribe at any time, or <strong>HELP</strong> for help. See our <a href="/privacy">Privacy Policy</a> and <a href="/terms">Terms of Service</a>. Consent is not a condition of any purchase.</label>
+            <input type="checkbox" id="optin-consent" name="consent">
+            <label for="optin-consent">Optional: I agree to receive operational text message alerts from Cavnar&nbsp;AI about my restaurant at the mobile number above — new and urgent reviews (such as 1-star and health or safety mentions), issues assigned to me, staffing and labor alerts, and my sign-in codes if I choose text for two-step sign-in. Message frequency varies with activity, typically up to about 5 messages per week. <strong>Message and data rates may apply.</strong> Reply <strong>STOP</strong> to unsubscribe at any time, or <strong>HELP</strong> for help. See our <a href="/privacy#sms">Privacy Policy</a> and <a href="/terms#sms">Terms of Service</a>. Consent is not a condition of using Cavnar&nbsp;AI or of any purchase.</label>
           </div>
           <button type="submit">Subscribe to SMS alerts</button>
         </form>
@@ -123,14 +124,16 @@
         </div>
       </div>
     </div>
-    <p class="caption">Nothing here is pre-checked, and Subscribe is refused (server-side, not just in the browser) without both a phone number and the consent box checked — try submitting empty to see it.</p>
+    <p class="caption">Nothing here is pre-checked. Subscribing to texts needs a phone number and the box checked (checked on the server, not only in the browser) — leaving it unchecked simply means no texts; alerts still arrive by email and in the app.</p>
 
     <h2>Message program details</h2>
     <p>
       <strong>Sender:</strong> Cavnar AI LLC &middot;
-      <strong>Use case:</strong> Low-volume operational alerts (account owners/managers only) &middot;
-      <strong>Message types:</strong> New review notifications, urgent alerts for 1-star and health/safety-related reviews &middot;
-      <strong>Frequency:</strong> Typically 1–5 messages per week per recipient, driven by review activity &middot;
+      <strong>Program:</strong> Cavnar AI Account Alerts &middot;
+      <strong>Use case:</strong> Low-volume operational alerts to restaurant owners and managers who opted in with their own number &middot;
+      <strong>Message types:</strong> New and urgent review alerts, issues assigned to them, staffing and labor alerts, two-step sign-in codes (when chosen) &middot;
+      <strong>Frequency:</strong> Varies with activity, typically 1–5 messages per week per recipient &middot;
+      <strong>Optional:</strong> not required to use Cavnar AI; every alert also arrives by email and in the app &middot;
       <strong>Opt-out:</strong> Reply STOP at any time &middot;
       <strong>Help:</strong> Reply HELP or email <a href="mailto:will@cavnar.ai">will@cavnar.ai</a>
     </p>

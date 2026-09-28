@@ -54,8 +54,12 @@ def test_the_page_is_reachable_without_logging_in():
 
 def test_the_consent_checkbox_is_a_real_unchecked_input_by_default():
     html = _client().get("/sms-optin-preview").data.decode()
-    assert '<input type="checkbox" id="optin-consent" name="consent" required>' in html, \
+    # No `required` attribute (9/28/26, error 30923 "consent cannot be a
+    # required condition"): the box is optional to the account; subscribing
+    # to texts without it is refused on the server with a sentence.
+    assert '<input type="checkbox" id="optin-consent" name="consent">' in html, \
         "the consent control must be a real <input type=checkbox>, not a styled <span>"
+    assert "Text alerts are optional." in html and "never a condition of using Cavnar AI" in html
     assert "checked>" not in html.split('id="optin-consent"')[1][:5]
 
 
@@ -79,7 +83,7 @@ def test_all_four_required_disclosures_are_in_the_consent_label_itself():
     assert "per week" in label, "message frequency"
     assert "Message and data rates may apply" in label
     assert "STOP" in label and "HELP" in label
-    assert 'href="/privacy"' in label and 'href="/terms"' in label
+    assert 'href="/privacy#sms"' in label and 'href="/terms#sms"' in label
 
 
 def test_the_form_posts_to_itself():

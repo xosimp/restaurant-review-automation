@@ -692,6 +692,16 @@ def _resolve_cta(html: str, alert_type: str = None, review_id: int = None, rec: 
 SMS_CTA_TOKEN = "dashboard.cavnar.ai"
 
 
+def with_sender(text: str) -> str:
+    """An alert text that names who sent it. Carriers require the sender in
+    every message of a registered program, and the review alerts opened on
+    the restaurant ("🔴 1★ Review — Simple EJ's") - the campaign's samples
+    read "Cavnar AI: ..." while the texts never said Cavnar AI (A2P 10DLC
+    review, 9/28/26)."""
+    t = str(text or "")
+    return t if not t.strip() or t.lstrip().startswith("Cavnar AI") else "Cavnar AI: " + t.lstrip()
+
+
 def keyed_sms_text(sms_text: str, rec: str = None, rid: int = None) -> str:
     """The SMS with its closing dashboard address naming the recommendation
     it carries (…/?rec=<key>&src=alert_sms), so a tap is recorded as
@@ -1907,7 +1917,7 @@ def deliver_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: s
     lead_rec = next((r["key"] for r in recs if rec_delivery.presentable(r["key"])), None)
     if via_sms and contacts:
         texted = False
-        text_out = keyed_sms_text(sms_text, lead_rec, restaurant_id)
+        text_out = with_sender(keyed_sms_text(sms_text, lead_rec, restaurant_id))
         for c in contacts:
             texted = bool(send_sms(c["phone"], text_out)) or texted
         if texted:
