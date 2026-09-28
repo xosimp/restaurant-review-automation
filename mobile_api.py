@@ -4179,6 +4179,12 @@ def mobile_guest_newsletter(current_user):
         if " ".join(addr.split()) != on_file and not is_principal(current_user):
             return jsonify(ok=False, owner_only=True,
                            error="Only the account owner can set the mailing address."), 403
+    # An unknown audience is refused, never widened to everyone (CS-17) —
+    # the same rule the text send keeps (guest_marketing.known_segment).
+    import guest_marketing as _gm_nl
+    if data.get("segment") not in (None, "") and _gm_nl.known_segment(data.get("segment")) is None:
+        return jsonify(ok=False, blocked="unknown_segment",
+                       error="That audience isn't one Cavnar AI knows. Pick one of the audiences shown."), 400
     from ai_utils import ai_rate_limited
     if ai_rate_limited(f"newsletter:{rid}", max_calls=2, window_secs=600):
         return jsonify(ok=False, error="Too many newsletters sent recently — wait a few minutes."), 429
