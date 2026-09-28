@@ -193,18 +193,35 @@ def delete_media(media_id: int, restaurant_id: int, db_path: str = DB_PATH) -> b
     return bool(n)
 
 
-def media_in_use(media_id: int, restaurant_id: int, db_path: str = DB_PATH) -> bool:
-    """Whether a draft or a not-yet-published post of this restaurant's
-    still points at the photo."""
-    conn = get_conn(db_path)
+def _newsletter_sending_with(conn, media_id: int, restaurant_id: int) -> bool:
+    """Whether a newsletter still queued or sending carries the photo: its
+    guests' copies are rendered as they go out, so deleting it mid-send
+    mailed the rest a broken image (CS-21). A finished newsletter's copies
+    already point at the image URL; that is the post-publish case below."""
     try:
-        return bool(conn.execute(
-            "SELECT 1 FROM marketing_scheduled_posts WHERE media_id=? AND restaurant_id=? "
-            "AND status IN ('scheduled', 'publishing') "
-            "UNION ALL SELECT 1 FROM marketing_drafts WHERE media_id=? AND restaurant_id=? LIMIT 1",
-            (media_id, restaurant_id, media_id, restaurant_id)).fetchone())
+        return conn.execute(
+            "SELECT 1 FROM guest_newsletters WHERE restaurant_id=? AND completed_at IS NULL "
+            "AND design IS NOT NULL AND CAST(json_extract(design, '$.image_media_id') AS INTEGER)=? LIMIT 1",
+            (restaurant_id, media_id)).fetchone() is not None
     except Exception:
         return False
+
+
+def media_in_use(media_id: int, restaurant_id: int, db_path: str = DB_PATH) -> bool:
+    """Whether a draft, a not-yet-published post or a newsletter still
+    queued or sending of this restaurant's points at the photo."""
+    conn = get_conn(db_path)
+    try:
+        try:
+            if conn.execute(
+                    "SELECT 1 FROM marketing_scheduled_posts WHERE media_id=? AND restaurant_id=? "
+                    "AND status IN ('scheduled', 'publishing') "
+                    "UNION ALL SELECT 1 FROM marketing_drafts WHERE media_id=? AND restaurant_id=? LIMIT 1",
+                    (media_id, restaurant_id, media_id, restaurant_id)).fetchone():
+                return True
+        except Exception:
+            pass
+        return _newsletter_sending_with(conn, media_id, restaurant_id)
     finally:
         conn.close()
 
@@ -215,8 +232,8 @@ def remove_media(media_id: int, restaurant_id: int, db_path: str = DB_PATH) -> d
     and a photo a queued post needed ended in a bare 500 (MOD-A6-media-9)."""
     if media_in_use(media_id, restaurant_id, db_path=db_path):
         return {"ok": False, "status": 409,
-                "error": "A scheduled post or a draft still uses this photo. "
-                         "Remove it there first, then delete the photo."}
+                "error": "A scheduled post, a draft or an email still sending uses this photo. "
+                         "Remove it there first (or let the email finish), then delete the photo."}
     if delete_media(media_id, restaurant_id, db_path=db_path):
         return {"ok": True, "status": 200}
     if get_media_token(media_id, restaurant_id, db_path=db_path):
