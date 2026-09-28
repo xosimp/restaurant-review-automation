@@ -557,6 +557,9 @@ Two tinted cards exist, each once:
 
 ## 10. Empty, loading and error states
 
+- **A chart with nothing to draw yet draws its empty frame** (9/28/26, Home's results curve, `hbHeroEmpty` / `.hb-hero-empty`): the chart's own height, a faint dashed grid (`--hb-line`), a dashed `--ember2` ghost of the line to come drifting slowly (still under reduced motion), the seal at ~8% opacity on the right, and a Clash headline plus one `--ink3` line saying what fills it — never a lone grey sentence where the chart belongs.
+- **One tooltip per chart:** a chart that draws its own hover card (Labor's day card) carries `data-own-tip`, and the generic value chip and crosshair (`hbChartHover`, `.hb-xh`) stay off it.
+
 **Loading is the sliding ember pulse — never a spinner and never "…".**
 - Web: `.dr-pulse` (a 3px track with an ember light sliding across, `pulseBarSlide`) for a quick page load or a running job — markup `<div class="dr-pulse" role="status" aria-label="Loading …"><i></i></div>` (the `<i>` is the light; a pulse without it is a dead grey line; a `<span class="dr-pulse">` works inline, the class is `display:block`) — `.hb-skel` skeleton bars (`hbSkel` sweep), `.hb-load` + the orb canvas, `cbtnBusy()` inside a button (never a hand-rolled CSS spinner).
 - The orb has **the same nine states on both platforms** (`static/cavnar-orb.js`, `CavnarOrbState`): `connecting`, `solving`, `searching`, `working`, `shaping`, `composing`, `breathing` (idle), `listening` (reserved, voice), `weaving` (several reads in one round).

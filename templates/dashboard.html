@@ -2717,6 +2717,19 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 [data-theme="dark"] .hb-lit-layer i{background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='w'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch' seed='3'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 5 0 0 0 -2.5'/%3E%3C/filter%3E%3Cfilter id='b'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch' seed='3'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -5 0 0 0 2.5'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23w)' opacity='.012'/%3E%3Crect width='100%25' height='100%25' filter='url(%23b)' opacity='.11'/%3E%3C/svg%3E"),radial-gradient(closest-side,rgba(212,88,58,0.13) 0%,rgba(212,88,58,0.1209) 8%,rgba(212,88,58,0.104) 16%,rgba(212,88,58,0.0832) 24%,rgba(212,88,58,0.0624) 32%,rgba(212,88,58,0.0442) 40%,rgba(212,88,58,0.0286) 48%,rgba(212,88,58,0.0176) 56%,rgba(212,88,58,0.0097) 64%,rgba(212,88,58,0.0049) 72%,rgba(212,88,58,0.0021) 80%,rgba(212,88,58,0.0007) 90%,rgba(212,88,58,0.0) 100%);background-size:180px 180px,100% 100%}
 @media (prefers-reduced-motion:reduce){.hb-lit-layer{transition:none}}
 .hb-hero .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap}
+/* The results curve's empty state: its frame, drawn empty (9/28/26). */
+.hb-hero-empty{position:relative;height:190px;margin-top:14px;border-radius:16px;overflow:hidden;background:linear-gradient(180deg,var(--hb-inner) 0%,transparent 100%)}
+.hb-hero-empty .hb-ghost{position:absolute;inset:0;width:100%;height:100%}
+.hb-hero-empty .hb-ghost line{stroke:var(--hb-line);stroke-width:1;stroke-dasharray:3 7;vector-effect:non-scaling-stroke}
+.hb-hero-empty .hb-ghost .gf{fill:var(--ember2);opacity:.07}
+.hb-hero-empty .hb-ghost .gc{fill:none;stroke:var(--ember2);stroke-width:2;stroke-dasharray:7 8;opacity:.5;vector-effect:non-scaling-stroke;animation:hbGhostDrift 9s linear infinite}
+@keyframes hbGhostDrift{to{stroke-dashoffset:-150}}
+.hb-hero-empty .seal{position:absolute;right:34px;top:50%;width:132px;height:132px;transform:translateY(-50%);opacity:.08;pointer-events:none}
+.hb-hero-empty .msg{position:absolute;left:24px;top:50%;transform:translateY(-50%);max-width:min(54ch,calc(100% - 200px));display:flex;flex-direction:column;gap:6px}
+.hb-hero-empty .msg b{font-family:'Clash Display',sans-serif;font-size:21px;font-weight:500;letter-spacing:-.01em;color:var(--ink)}
+.hb-hero-empty .msg span{font-size:14px;line-height:1.55;color:var(--ink3)}
+@media (max-width:640px){.hb-hero-empty .seal{width:88px;height:88px;right:14px;opacity:.06}.hb-hero-empty .msg{max-width:calc(100% - 40px)}}
+@media (prefers-reduced-motion:reduce){.hb-hero-empty .hb-ghost .gc{animation:none}}
 .hb-hero .hd .hb-h3{margin-bottom:10px}
 .hb-hero .big{font-family:'Space Grotesk',sans-serif;font-size:clamp(40px,4.6vw,58px);font-weight:600;letter-spacing:-.03em;line-height:1;color:var(--ink)}
 .hb-hero .big small{font-family:'Apfel Grotezk',sans-serif;font-size:13px;font-weight:400;letter-spacing:0;color:var(--ink3);margin-left:10px}
@@ -3274,6 +3287,7 @@ html:not([data-theme="dark"]) .hb-chip{background:linear-gradient(180deg,rgba(25
 .hb-sg svg,.hb-hero svg{cursor:crosshair}
 .hb-xh{pointer-events:none;opacity:0;transition:opacity .15s ease}
 svg:hover .hb-xh{opacity:1}
+[data-own-tip] .hb-xh{display:none}
 .hb-sg:hover svg path[stroke-width="2.2"],.hb-hero:hover svg path[stroke-width="2.2"]{filter:brightness(1.12)}
 .hb-sg svg rect{transition:filter .15s ease}.hb-sg svg rect:hover{filter:brightness(1.2)}
 #hb-tip{position:fixed;z-index:9000;pointer-events:none;background:var(--surface);border:1px solid var(--hb-line);border-radius:10px;padding:7px 11px;font-size:12.5px;line-height:1.35;color:var(--ink2);box-shadow:0 2px 5px rgba(14,12,10,.08),0 16px 32px -14px rgba(14,12,10,.3);opacity:0;transition:opacity .12s ease;transform:translate(-50%,calc(-100% - 12px));white-space:nowrap}
@@ -3860,7 +3874,9 @@ svg:hover .hb-xh{opacity:1}
   function hbChartHover(e){
     var svg=e.target&&e.target.closest?e.target.closest('svg[data-pts]'):null;
     var tip=hbTip();
-    if(!svg){tip.className='';return;}
+    /* A chart with its own tooltip (Labor's day card) gets no second chip:
+       the small value chip sat over the card's Hours (owner, 9/28/26). */
+    if(!svg||svg.closest('[data-own-tip]')){tip.className='';return;}
     var pts=svg.getAttribute('data-pts').split(';').map(function(p){var a=p.split(',');return [+a[0],+a[1]];});
     var vals=svg.getAttribute('data-vals').split(','),lbl=(svg.getAttribute('data-lbl')||'').split('|');
     var vb=svg.viewBox.baseVal,r=svg.getBoundingClientRect(),x=(e.clientX-r.left)*vb.width/r.width;
@@ -4331,7 +4347,10 @@ svg:hover .hb-xh{opacity:1}
     var p=document.getElementById('hb-pulse');if(!p)return;
     var chips='';var snaps=d.snapshot||[];
     for(var j=0;j<snaps.length;j++){var s=snaps[j];if(s.status==='coming_soon')continue;var tone=s.sample?'sample':s.state;
-      chips+='<button class="hb-chip '+esc(tone)+'" onclick="hbOpen(\''+esc(s.key)+'\')" aria-label="'+esc(s.label)+'"><span class="dot"><b></b><i></i></span><span class="v hb-num">'+(s.sample?'—':esc(s.value)+(s.key==='reviews'&&s.value!=='—'?'★':s.key==='labor'?'%':''))+'</span><span class="l">'+esc(s.sample?s.label+' · sample':(s.key==='inventory'&&String(s.value||'').charAt(0)==='$'?'opportunity / mo':(PULSE[s.key]||s.label)))+'</span></button>';}
+      /* The rating chip says Google's own rating when it is on file, as the
+         Reviews tab does; the 30-day average is the Results tile's. */
+      var g=(s.key==='reviews'&&!s.sample&&s.google_rating!=null)?s.google_rating:null;
+      chips+='<button class="hb-chip '+esc(tone)+'" onclick="hbOpen(\''+esc(s.key)+'\')" aria-label="'+esc(s.label)+'"><span class="dot"><b></b><i></i></span><span class="v hb-num">'+(s.sample?'—':esc(g!=null?g:s.value)+(s.key==='reviews'&&(g!=null||s.value!=='—')?'★':s.key==='labor'?'%':''))+'</span><span class="l">'+esc(s.sample?s.label+' · sample':(g!=null?'Google rating':(s.key==='inventory'&&String(s.value||'').charAt(0)==='$'?'opportunity / mo':(PULSE[s.key]||s.label))))+'</span></button>';}
     p.innerHTML=chips;
     renderQuick(hbQuickUnsaid(d.quick_actions||[],d));
     window._hbQuick=d.quick_actions||[];   // the palette's One tap keeps them all
@@ -4406,8 +4425,20 @@ svg:hover .hb-xh{opacity:1}
     var h='<div class="hb-lit-layer" aria-hidden="true"><i></i></div><div class="hd"><div><div class="hb-h3"><span>Measured results</span></div><div class="big'+(big<0?' neg':'')+'"><span id="hb-big" class="hb-num">$0</span><small>a month, measured'+(isNet?', net':'')+'</small></div>'+netLine+(vals.length>1?'<div class="delta hb-num'+(delta<0?' bad':'')+'">'+(delta>=0?'+':'−')+'$'+Math.abs(Math.round(delta)).toLocaleString()+'/mo <span>over the last '+rangeLabel+'</span></div>':'')+_hbValueFrom(v)+(v.caveat?'<div class="delta"><span>'+esc(v.caveat)+'</span></div>':'')+'</div>';
     h+='<div class="hb-range">'+['1M','3M','6M','1Y'].map(function(r){return '<button class="'+(r===_hbRange?'on':'')+'" onclick="hbRange(\''+r+'\')">'+r+'</button>';}).join('')+'</div></div>';
     if(vals.length>1){h+=glowLine(vals,1000,190,EMBER2,{pad:18,prefix:'$',labels:sel.map(function(p){return mdy(p.date);})});h+='<div class="ax hb-num"><span>'+mdy(sel[0].date)+'</span><span>'+mdy(sel[sel.length-1].date)+'</span></div>';}
-    else h+='<div class="hb-empty" style="margin-top:14px">The curve starts on the second day of tracking.</div>';
+    else h+=hbHeroEmpty();
     el.innerHTML=h;countUp(document.getElementById('hb-big'),Math.abs(big),big<0?'−$':'$');
+  }
+  /* Before the results curve has two points: the chart's own frame, empty -
+     a faint grid, a dashed ghost of the line to come and the seal behind -
+     rather than one grey sentence where the chart belongs (owner, 9/28/26). */
+  function hbHeroEmpty(){
+    var d='M18 162 C150 154 250 140 360 126 S560 94 680 82 S880 46 982 30';
+    return '<div class="hb-hero-empty" role="img" aria-label="No measured results yet">'
+      +'<svg class="hb-ghost" viewBox="0 0 1000 190" preserveAspectRatio="none" aria-hidden="true">'
+      +'<line x1="0" y1="48" x2="1000" y2="48"/><line x1="0" y1="95" x2="1000" y2="95"/><line x1="0" y1="142" x2="1000" y2="142"/>'
+      +'<path class="gf" d="'+d+' L982 190 L18 190 Z"/><path class="gc" d="'+d+'"/></svg>'
+      +'<img class="seal" src="/static/brand/seal-color.svg" alt="" aria-hidden="true">'
+      +'<div class="msg"><b>Your measured results draw here</b><span>The line starts on the second day of tracking: one point a day, each measured before and after a change, never estimated.</span></div></div>';
   }
   // ── signals row ───────────────────────────────────────────────────────────
   // A flag's colour is its status (owner, 9/26/26): watch reads amber, not
@@ -8071,7 +8102,8 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
          complaint from the stored diagnosis (filled by rvLoadWhy). #}
       {# The "Today: publish N drafted replies" line is gone (owner, 9/28/26):
          the headline already says it ("5 replies ready to publish"). #}
-      <div class="dh-badge" data-dh-module="reviews" hidden></div>
+      {# No data-health line under the Reviews headline (owner, 9/28/26); the
+         Data health drawer stays on Home and in Account -> Integrations. #}
       <span id="stat-this-month-n" hidden>{{ rstats.this_month }}</span><span id="stat-rr-detail" hidden></span><span id="review-savings-rate" hidden></span><strong id="rr-sent-mo-inline" hidden></strong><strong id="rr-sent-total-inline" hidden></strong>
     </div>
     <div class="hb-pulse">
@@ -25038,6 +25070,7 @@ function _wireLaborHover(container,pts,vals,target,trend,min,rng){
 }
 function renderLaborHero(){
   var el=document.getElementById('lb2-hero-chart');if(!el||!window.CavnarCharts)return;
+  el.setAttribute('data-own-tip','1');
   var C=window.CavnarCharts,target=+window.laborTargetPct||30;
   var trend=_perfTab==='trend',pts=trend?_perfTrendData:_laborDaily();
   var kick=document.getElementById('lb2-hero-kicker');if(kick)kick.textContent=trend?'Labor % by week · last 8 weeks':'Labor % by day';

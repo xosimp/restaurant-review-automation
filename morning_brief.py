@@ -551,7 +551,11 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
                     "ask": f"How do I fill {d['day']}s?"}
             if marketing_on:
                 import nav
-                line["action"] = {"label": "See the card", "nav": nav.path("marketing", "opportunities", card=key)}
+                # Says where it goes: "See the card" left the owner asking
+                # why a slow-night line opened Marketing (9/28/26) - it opens
+                # the Marketing idea for filling that night.
+                line["action"] = {"label": f"Ideas to fill {d['day']}s",
+                                  "nav": nav.path("marketing", "opportunities", card=key)}
             lines.append(line)
 
     # ── today ──

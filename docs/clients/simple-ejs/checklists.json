@@ -1,159 +1,412 @@
 {
-  "restaurant": "Simple EJ's (official account, not the test account)",
-  "source": "Erik's paper checklists, received Sep 23 2026. Wording is Erik's; only capitalisation was normalised (the server closing sheet is printed in all caps). Items are in his order. A line with `items` is a parent with sub-steps, exactly as on his sheet.",
-  "job_codes_note": "job_code values are the role names on the roster. Confirm against his RPower job codes (e.g. BAR, SERVER) before loading.",
-  "pending": [
-    "Host - Opening (Will has it, not yet sent)",
-    "Host - Closing (Will has it, not yet sent)",
-    "Bartender - Closing (the main bartender is writing it; expected Monday)"
-  ],
-  "sheets": [
+ "restaurant": "Simple EJ's (official account, not the test account)",
+ "source": "Erik's paper checklists, received Sep 23 2026. Wording is Erik's; only capitalisation was normalised (the server closing sheet is printed in all caps). Items are in his order. A line with `items` is a parent with sub-steps, exactly as on his sheet.",
+ "job_codes_note": "job_code values are the role names on the roster. RPOWER's job list at Simple EJ's (read 9/28/26): Barback AM/PM, Bartender, Bartender AM/PM, Busser AM/PM, Dishwasher, Host AM/PM, Kitchen, Manager BOH/FOH, Mascot, Server AM/PM, Training, Utility AM/PM. 'Server' and older 'Bartender' sheets are not yet re-pointed to an AM/PM job; confirm with Erik which job each sheet belongs to before loading.",
+ "pending": [
+  "Host - Opening (Will has it, not yet sent)",
+  "Host - Closing (Will has it, not yet sent)",
+  "Bartender - Closing (Erik: still being written, as of 9/28/26)"
+ ],
+ "sheets": [
+  {
+   "job_code": "Bartender AM",
+   "shift_kind": "opening",
+   "title": "Bar opening duties",
+   "source": "Erik, 9/28/26 (\"Opening duties/checklist\"), sent by Will. His wording and order; only a doubled space was removed. Replaces the 9/23 paper sheet (kept under superseded).",
+   "sections": [
     {
-      "job_code": "Bartender",
-      "shift_kind": "opening",
-      "title": "Bartender opening checklist",
-      "sections": [
-        {
-          "title": "Prep & inventory",
-          "items": [
-            {"label": "Review prep list and complete all required prep"},
-            {"label": "Fill deli containers with backups needed for the day (juice, syrups, garnishes)"},
-            {"label": "Stock additional backup bottles as needed"},
-            {"label": "Restock beers"},
-            {"label": "Restock wines"},
-            {"label": "Fill and prepare all garnishes"}
-          ]
-        },
-        {
-          "title": "Ice, juices & stations",
-          "items": [
-            {"label": "Fill all ice bins"},
-            {"label": "Set out juices at all required stations"},
-            {"label": "Remove all bottle covers from wells"},
-            {"label": "Remove and set out beer brushes"},
-            {"label": "Set up well stations with:", "items": [
-              {"label": "Bar mats"},
-              {"label": "Jiggers"},
-              {"label": "Shakers"},
-              {"label": "Bar spoons"},
-              {"label": "Strainers"},
-              {"label": "Muddlers"}
-            ]}
-          ]
-        },
-        {
-          "title": "Cleaning & sanitation",
-          "items": [
-            {"label": "Fill sanitizing buckets"},
-            {"label": "Gather cleaning rags"},
-            {"label": "Gather polishing rags"},
-            {"label": "Check dehydrator and empty if needed"}
-          ]
-        },
-        {
-          "title": "Equipment & machines",
-          "items": [
-            {"label": "Drain and refill espresso machine"},
-            {"label": "Check frozen drink machines", "items": [
-              {"label": "Turn on"},
-              {"label": "Fill if needed"}
-            ]}
-          ]
-        },
-        {
-          "title": "Front-of-house setup",
-          "items": [
-            {"label": "Turn TVs on"},
-            {"label": "Set out plates"},
-            {"label": "Set out silverware"}
-          ]
-        }
-      ]
-    },
-    {
-      "job_code": "Server",
-      "shift_kind": "opening",
-      "title": "Server opening checklist",
-      "sections": [
-        {
-          "title": null,
-          "items": [
-            {"label": "Check Tock"},
-            {"label": "Brew iced tea and coffee"},
-            {"label": "Check walk-in cooler"},
-            {"label": "Set out lemons and creamers"},
-            {"label": "Put together soda machine"},
-            {"label": "Set up expo station for flow"},
-            {"label": "Check tables, booths and floors for debris"},
-            {"label": "Check and stock bathrooms"},
-            {"label": "Make sure host stand is clean and organized"},
-            {"label": "Walk through restaurant as guest"},
-            {"label": "Roll silverware"},
-            {"label": "Make sure server station and handhelds have receipt paper and check books"},
-            {"label": "Get ketchup from walk-in cooler"},
-            {"label": "Fill sani bucket and get clean cloths"},
-            {"label": "Unlock doors"},
-            {"label": "Unwrap straws"},
-            {"label": "Check table tents for debris"},
-            {"label": "Put napkins/utensil setups on app plates"}
-          ]
-        }
-      ]
-    },
-    {
-      "job_code": "Server",
-      "shift_kind": "mid",
-      "title": "Server end of morning shift (before clocking out)",
-      "sections": [
-        {
-          "title": null,
-          "items": [
-            {"label": "Roll silverware"},
-            {"label": "Stock anything that's low from previous shift"},
-            {"label": "Wipe down expo area"}
-          ]
-        }
-      ]
-    },
-    {
-      "job_code": "Server",
-      "shift_kind": "closing",
-      "title": "Server closing checklist",
-      "records": ["date", "closer_name"],
-      "sections": [
-        {
-          "title": null,
-          "items": [
-            {"label": "Stock straws, coasters, cups, to-gos, napkins"},
-            {"label": "Dump coffee & bring to dish"},
-            {"label": "If tea is half full: dump into container with the date & bring to dish"},
-            {"label": "Bring drink trays to dish"},
-            {"label": "Bring dirty food trays to dish"},
-            {"label": "Bring water pitchers to dish"},
-            {"label": "Bring old sani buckets to dish"},
-            {"label": "Bring ketchup pump to dish, wrap 2oz ketchup cups & tin, then bring to walk-in"},
-            {"label": "Bring apple juice to walk-in"},
-            {"label": "Wipe down server station"},
-            {"label": "Wipe down expo"},
-            {"label": "Wipe down handhelds & checkbooks"},
-            {"label": "Put napkins on app plates"},
-            {"label": "Break down soda machine & bring ice scooper to dish"},
-            {"label": "Wipe down both sinks"},
-            {"label": "Wrap grenadine"},
-            {"label": "Check storage room for any trash, food, or drinks"},
-            {"label": "Check the line for any leftover drinks"},
-            {"label": "Check condiments for debris"}
-          ]
-        },
-        {
-          "title": "Before you leave",
-          "items": [
-            {"label": "Roll silverware"},
-            {"label": "Check with closer before leaving", "sign_off": true},
-            {"label": "Have closer sign employee financial", "sign_off": true}
-          ]
-        }
-      ]
+     "title": "Opening duties",
+     "items": [
+      {
+       "label": "Punch in with your personal number"
+      },
+      {
+       "label": "Punch in day bar number 7777"
+      },
+      {
+       "label": "Grab your opening checklist"
+      },
+      {
+       "label": "Grab 4 rags from storage room (two rags for both Sani-buckets and two extra)"
+      },
+      {
+       "label": "Put garbage back in place & make sure they have bags in them. (1 can by left of bar, 2nd can by server well & 3rd at bar opening."
+      },
+      {
+       "label": "Lay down both rugs in their place (1 in front of server well & the other at bar opening)"
+      },
+      {
+       "label": "Go to Kettle one Espresso machine & unwrap plastic off, set up & turn on. Also turn dial in between 6-7."
+      },
+      {
+       "label": "Turn on lights for both coolers. Located on inside of coolers along the wall of cooler."
+      },
+      {
+       "label": "Pull all insert tabs off of beer spouts & soak in soda water"
+      },
+      {
+       "label": "Check to make sure all beer kegs are tapped & in stock in cooler"
+      },
+      {
+       "label": "Turn on slushy machine and make sure it is full on both sides. If not full refill."
+      },
+      {
+       "label": "Take covers off ice well & fill them up. If the 2nd or 3rd wells will be in use be sure to fill those too."
+      },
+      {
+       "label": "If the dehydrator is out remove all fruit & store properly. Then put dehydrator back in mechanical room"
+      },
+      {
+       "label": "Take out glass cleaner brushes from sink & be sure they are clean from debris from the bottom (such as mint leaves)"
+      },
+      {
+       "label": "Attach them to glass cleaner machine"
+      },
+      {
+       "label": "Clean & wipe down all 3 sink wells really well & clean glass cleaner machine as well"
+      },
+      {
+       "label": "Fill 3rd sink with cold water then add 1/2 of red sani-clean packet, Fill middle sink with warm water & Fill 1st sink with hot water then add green glass cleaning packet."
+      },
+      {
+       "label": "Grab your 2 red Sani-Buckets take them to kitchen to fill them with hot hot water & 2 pumps of Red Sanitizer located under kitchen sink across from dish cleaning station"
+      },
+      {
+       "label": "Add your rags to buckets & put one of each at each end of bar on floor"
+      },
+      {
+       "label": "Then wipe your bar down & set out specials tents"
+      },
+      {
+       "label": "Start to set up your bar for the day pull all liquor bottle tabs off & store in cup with soda water."
+      },
+      {
+       "label": "Make sure all liquor wells are stocked"
+      },
+      {
+       "label": "Set up your bar the juices, utensils, & fruit"
+      },
+      {
+       "label": "Make sure there is a back up for 2nd well & possibly a 3rd if you know it’s going to be busy."
+      },
+      {
+       "label": "Set up 2nd well juices in cooler in metal tin & set up fruit for 2nd well wrapped in plastic & leave on bar cart in cooler ready for later"
+      },
+      {
+       "label": "Make sure the fruit container back ups are full"
+      },
+      {
+       "label": "Make sure all back up drink mixes are made"
+      },
+      {
+       "label": "Check refrigerator in kitchen there are back ups"
+      },
+      {
+       "label": "Grab your 2 dish tubs"
+      }
+     ]
     }
-  ]
+   ]
+  },
+  {
+   "job_code": "Server",
+   "shift_kind": "opening",
+   "title": "Server opening checklist",
+   "sections": [
+    {
+     "title": null,
+     "items": [
+      {
+       "label": "Check Tock"
+      },
+      {
+       "label": "Brew iced tea and coffee"
+      },
+      {
+       "label": "Check walk-in cooler"
+      },
+      {
+       "label": "Set out lemons and creamers"
+      },
+      {
+       "label": "Put together soda machine"
+      },
+      {
+       "label": "Set up expo station for flow"
+      },
+      {
+       "label": "Check tables, booths and floors for debris"
+      },
+      {
+       "label": "Check and stock bathrooms"
+      },
+      {
+       "label": "Make sure host stand is clean and organized"
+      },
+      {
+       "label": "Walk through restaurant as guest"
+      },
+      {
+       "label": "Roll silverware"
+      },
+      {
+       "label": "Make sure server station and handhelds have receipt paper and check books"
+      },
+      {
+       "label": "Get ketchup from walk-in cooler"
+      },
+      {
+       "label": "Fill sani bucket and get clean cloths"
+      },
+      {
+       "label": "Unlock doors"
+      },
+      {
+       "label": "Unwrap straws"
+      },
+      {
+       "label": "Check table tents for debris"
+      },
+      {
+       "label": "Put napkins/utensil setups on app plates"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "job_code": "Server",
+   "shift_kind": "mid",
+   "title": "Server end of morning shift (before clocking out)",
+   "sections": [
+    {
+     "title": null,
+     "items": [
+      {
+       "label": "Roll silverware"
+      },
+      {
+       "label": "Stock anything that's low from previous shift"
+      },
+      {
+       "label": "Wipe down expo area"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "job_code": "Server",
+   "shift_kind": "closing",
+   "title": "Server closing checklist",
+   "records": [
+    "date",
+    "closer_name"
+   ],
+   "sections": [
+    {
+     "title": null,
+     "items": [
+      {
+       "label": "Stock straws, coasters, cups, to-gos, napkins"
+      },
+      {
+       "label": "Dump coffee & bring to dish"
+      },
+      {
+       "label": "If tea is half full: dump into container with the date & bring to dish"
+      },
+      {
+       "label": "Bring drink trays to dish"
+      },
+      {
+       "label": "Bring dirty food trays to dish"
+      },
+      {
+       "label": "Bring water pitchers to dish"
+      },
+      {
+       "label": "Bring old sani buckets to dish"
+      },
+      {
+       "label": "Bring ketchup pump to dish, wrap 2oz ketchup cups & tin, then bring to walk-in"
+      },
+      {
+       "label": "Bring apple juice to walk-in"
+      },
+      {
+       "label": "Wipe down server station"
+      },
+      {
+       "label": "Wipe down expo"
+      },
+      {
+       "label": "Wipe down handhelds & checkbooks"
+      },
+      {
+       "label": "Put napkins on app plates"
+      },
+      {
+       "label": "Break down soda machine & bring ice scooper to dish"
+      },
+      {
+       "label": "Wipe down both sinks"
+      },
+      {
+       "label": "Wrap grenadine"
+      },
+      {
+       "label": "Check storage room for any trash, food, or drinks"
+      },
+      {
+       "label": "Check the line for any leftover drinks"
+      },
+      {
+       "label": "Check condiments for debris"
+      }
+     ]
+    },
+    {
+     "title": "Before you leave",
+     "items": [
+      {
+       "label": "Roll silverware"
+      },
+      {
+       "label": "Check with closer before leaving",
+       "sign_off": true
+      },
+      {
+       "label": "Have closer sign employee financial",
+       "sign_off": true
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "superseded": [
+  {
+   "job_code": "Bartender",
+   "shift_kind": "opening",
+   "title": "Bartender opening checklist",
+   "sections": [
+    {
+     "title": "Prep & inventory",
+     "items": [
+      {
+       "label": "Review prep list and complete all required prep"
+      },
+      {
+       "label": "Fill deli containers with backups needed for the day (juice, syrups, garnishes)"
+      },
+      {
+       "label": "Stock additional backup bottles as needed"
+      },
+      {
+       "label": "Restock beers"
+      },
+      {
+       "label": "Restock wines"
+      },
+      {
+       "label": "Fill and prepare all garnishes"
+      }
+     ]
+    },
+    {
+     "title": "Ice, juices & stations",
+     "items": [
+      {
+       "label": "Fill all ice bins"
+      },
+      {
+       "label": "Set out juices at all required stations"
+      },
+      {
+       "label": "Remove all bottle covers from wells"
+      },
+      {
+       "label": "Remove and set out beer brushes"
+      },
+      {
+       "label": "Set up well stations with:",
+       "items": [
+        {
+         "label": "Bar mats"
+        },
+        {
+         "label": "Jiggers"
+        },
+        {
+         "label": "Shakers"
+        },
+        {
+         "label": "Bar spoons"
+        },
+        {
+         "label": "Strainers"
+        },
+        {
+         "label": "Muddlers"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "title": "Cleaning & sanitation",
+     "items": [
+      {
+       "label": "Fill sanitizing buckets"
+      },
+      {
+       "label": "Gather cleaning rags"
+      },
+      {
+       "label": "Gather polishing rags"
+      },
+      {
+       "label": "Check dehydrator and empty if needed"
+      }
+     ]
+    },
+    {
+     "title": "Equipment & machines",
+     "items": [
+      {
+       "label": "Drain and refill espresso machine"
+      },
+      {
+       "label": "Check frozen drink machines",
+       "items": [
+        {
+         "label": "Turn on"
+        },
+        {
+         "label": "Fill if needed"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "title": "Front-of-house setup",
+     "items": [
+      {
+       "label": "Turn TVs on"
+      },
+      {
+       "label": "Set out plates"
+      },
+      {
+       "label": "Set out silverware"
+      }
+     ]
+    }
+   ],
+   "replaced_on": "2026-09-28",
+   "replaced_by": "Bar opening duties (Bartender AM)"
+  }
+ ]
 }

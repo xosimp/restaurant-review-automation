@@ -1403,7 +1403,14 @@ def _build(current_user, present=True):
                          "interpretation": interp,
                          "state": "bad" if urgent else ("warn" if (awaiting or (rating_delta is not None and rating_delta <= -RATING_MOVE_STARS) or (total >= 5 and rate < 50)) else ("neutral" if total == 0 else "good")),
                          "spark": spark[-8:], "spark_label": "avg rating · 8 weeks" if len(spark) > 1 else None,
-                         "attention": bool(urgent or awaiting), "sample": False, "last_data": r.get("last_fetched_at")})
+                         "attention": bool(urgent or awaiting), "sample": False, "last_data": r.get("last_fetched_at"),
+                         # Google's own published rating, over every review
+                         # ever left - the hero chip's figure, as on Reviews.
+                         # `value` stays the 30-day average of the reviews
+                         # Cavnar AI holds (the Results tile's "Rating · 30
+                         # days"): the chip read 4.4 while Google said 4.6
+                         # (Simple EJ's, owner, 9/28/26).
+                         "google_rating": (round(float(r["gbp_rating"]), 1) if r.get("gbp_rating") else None)})
 
         # recommendations
         if awaiting >= 3:
@@ -2286,8 +2293,8 @@ def _build(current_user, present=True):
         quick.append({"key": "schedule", "label": "Build next week's schedule", "kind": "open_module", "module": "labor", "count": None})
     if "inventory" in active_keys and inv_live and (inv.get("critical_low") or inv.get("reorder_soon")):
         quick.append({"key": "order", "label": "Review the order draft", "kind": "open_module", "module": "inventory", "count": len(inv.get("reorder_soon") or []) + len(inv.get("critical_low") or [])})
-    if "marketing" in active_keys:
-        quick.append({"key": "post", "label": "Draft a post", "kind": "open_module", "module": "marketing", "count": None})
+    # No "Draft a post" here (owner, 9/28/26): Marketing's own feed and
+    # Studio are where a post starts.
     quick.append({"key": "alerts", "label": "All alerts", "kind": "alerts", "module": None, "count": sum(1 for a in alert_items if a["new"] and not a["resolved"]) or None})
     quick = quick[:6]
     for _q in quick:
