@@ -51,7 +51,9 @@ input:focus{border-color:var(--ember)}
       <div class="consent">
         <input type="checkbox" id="g-consent" required>
         <label for="g-consent" style="display:inline;font-weight:400;text-transform:none;letter-spacing:0;color:var(--ink3)">
-          I agree to receive recurring marketing text messages from {{restaurant_name}} at the number provided. Consent is not a condition of purchase. Message and data rates may apply. Reply STOP to unsubscribe, HELP for help.
+          {# The exact sentence whose version and hash each request records
+             (guest_marketing.JOIN_DISCLOSURE); edit it there, not here. #}
+          {{ disclosure }} <a href="/terms" target="_blank" rel="noopener" style="color:var(--ink3)">Terms</a> &middot; <a href="/privacy" target="_blank" rel="noopener" style="color:var(--ink3)">Privacy</a>
         </label>
       </div>
       <button type="submit" class="cbtn cbtn-primary cbtn-lg cbtn-block" id="submit-btn">Join the text club</button>
@@ -59,8 +61,9 @@ input:focus{border-color:var(--ember)}
     <div id="status"></div>
   </div>
   <div id="success-view">
-    <h1>You're in!</h1>
-    <p class="sub">Thanks for joining — {{restaurant_name}} will text you when there's something worth sharing.</p>
+    <h1>Check your texts</h1>
+    <p class="sub">We're texting your number to confirm. Reply <b>Y</b> to that text to finish joining &mdash; {{restaurant_name}} sends nothing else until you do.</p>
+    <p class="sub">Already a member? You're all set. No text? If you once texted STOP to us, reply START in that conversation first, then join again.</p>
   </div>
   <div class="fineprint">Powered by Cavnar AI · <a href="mailto:will@cavnar.ai" style="color:var(--ink3)">Contact support</a></div>
 </div>

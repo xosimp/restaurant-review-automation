@@ -11700,6 +11700,10 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
         <div class="r"><span class="ic" aria-hidden="true">&#8635;</span><b>Spacing</b><span class="v">One text per guest every 3 days</span><span class="on">Always on</span></div>
         <div class="r"><span class="ic" aria-hidden="true">&#10005;</span><b>Opt-outs</b><span class="v">STOP and HELP are handled for you</span><span class="on">Always on</span></div>
         <div class="r"><span class="ic" aria-hidden="true">&#10003;</span><b>Consent</b><span class="v" id="guest-ledger">&hellip;</span></div>
+        <!-- Toast opt-in invites (MB-3, 9/28/26): off until the owner turns
+             them on; turning on acknowledges the sentence beside the switch,
+             which comes from guest_marketing.OPTIN_INVITES_DISCLOSURE. -->
+        <div class="r" id="cp-inv-row" hidden><span class="ic" aria-hidden="true">&#9742;</span><b>Review-link invites</b><span class="v"><span id="cp-inv-say"></span> <span class="ac-status" id="cp-inv-status"></span></span><label class="ac-switch"><input type="checkbox" id="cp-inv-on" onchange="cpInvitesToggle(this)" aria-label="Text guests from your last service one review-link invite"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div>
         <div class="r"><span class="ic" aria-hidden="true">&#9993;</span><b>Email</b><span class="v">Unsubscribe link on every email; replies go to {{ restaurant.owner_email or 'you' }}</span><span class="on">Always on</span></div>
         <div class="r"><span class="ic" aria-hidden="true">&#9906;</span><b>Mailing address</b><span class="v" id="cp-s-addr">{{ restaurant.mailing_address or 'Asked for on your first email' }}</span></div>
         <button type="button" class="r cbtn cbtn-text" onclick="openGuestContactsModal()"><span class="ic" aria-hidden="true">&#9776;</span><b>Contacts</b><span class="v" id="guest-contacts-summary">&hellip;</span><span class="go" aria-hidden="true">&rsaquo;</span></button>
@@ -26217,9 +26221,34 @@ function revokeOtherSessions(btn){
       loadGuestSegments();
       loadGuestHistory();
       loadMktDrafts();
+      cpLoadInvites();
     }
   };
 })();
+
+// Review-link invite switch (Campaigns -> Settings, MB-3): its state and
+// the sentence the owner acknowledges come from /api/guest-optin-invites.
+function cpLoadInvites() {
+  fetch('/api/guest-optin-invites', {credentials: 'same-origin'}).then(apiJson).then(function(d) {
+    var row = document.getElementById('cp-inv-row'), el = document.getElementById('cp-inv-on');
+    var say = document.getElementById('cp-inv-say');
+    if (!d || !d.ok || !row || !el) return;
+    el.checked = !!d.enabled;
+    if (say) say.textContent = d.disclosure || '';
+    row.hidden = false;
+  }).catch(function() {});
+}
+window.cpInvitesToggle = function(el) {
+  var st = document.getElementById('cp-inv-status'), on = !!el.checked;
+  if (st) st.textContent = 'Saving';
+  fetch('/api/guest-optin-invites', {method: 'POST', credentials: 'same-origin',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({enabled: on, acknowledged: on})}).then(apiJson).then(function(d) {
+    if (d && d.ok) { if (st) st.textContent = 'Saved'; return; }
+    el.checked = !on;
+    if (st) st.textContent = (d && d.error) || 'Could not save';
+  }).catch(function() { el.checked = !on; if (st) st.textContent = 'Could not save'; });
+};
 
 // ── Marketing Opportunity Feed (9/28/26) ─────────────────────────────────
 // What Cavnar AI found worth doing, ranked (marketing_opportunities.feed).

@@ -4136,6 +4136,13 @@ def guest_overview_api(current_user):
     return _m("mobile_guest_overview")(current_user)
 
 
+@client_bp.route("/api/guest-optin-invites", methods=["GET", "POST"])
+@login_required
+def guest_optin_invites_api(current_user):
+    """Web twin — the one body is mobile_api.mobile_guest_optin_invites."""
+    return _m("mobile_guest_optin_invites")(current_user)
+
+
 @client_bp.route("/api/guest-campaigns")
 @login_required
 def guest_campaigns_api(current_user):
@@ -7331,10 +7338,18 @@ def guest_optin_page(token):
         return "Restaurant not found", 404
     if not restaurant.module_marketing:
         return "This text club isn't active right now.", 404
-    return render_template("guest_optin.html", restaurant_name=restaurant.name)
+    from guest_marketing import join_disclosure
+    return render_template("guest_optin.html", restaurant_name=restaurant.name,
+                           disclosure=join_disclosure(restaurant.name))
 
 @client_bp.route("/api/public/guest-optin/<token>", methods=["POST"])
 def guest_optin_submit(token):
+    """The public join form. Double opt-in (MB-4, owner 9/28/26): this
+    records a PENDING request and texts the number once asking for a Y;
+    marketing consent is set only by that phone's own Y
+    (guest_marketing.handle_inbound_sms). A join is not a visit and starts
+    no review request. Limits: the in-process per-IP one here, plus durable
+    per-phone and per-IP counts in guest_optin_requests."""
     from guest_links import verify_join
     restaurant_id = verify_join(token)
     if not restaurant_id:
@@ -7358,8 +7373,12 @@ def guest_optin_submit(token):
         return jsonify(ok=False, error="Enter a valid phone number"), 400
     if not data.get("consent"):
         return jsonify(ok=False, error="Consent is required to join"), 400
-    from guest_marketing import add_guest_contact_public_optin
-    contact_id = add_guest_contact_public_optin(restaurant_id, phone, name=name)
+    from guest_marketing import request_public_optin
+    res = request_public_optin(restaurant_id, phone, name=name, ip=request.remote_addr,
+                               user_agent=request.headers.get("User-Agent"))
+    if not res.get("ok"):
+        return jsonify(ok=False, error=res.get("error") or "Could not join right now."), int(res.get("status") or 400)
+    contact_id = res.get("contact_id")
 
     # Email is optional and separately consented — ticking the SMS box is not
     # agreement to a newsletter, same principle the SMS side is built on. An
@@ -7369,7 +7388,9 @@ def guest_optin_submit(token):
     if email and contact_id:
         set_guest_email(contact_id, restaurant_id, email,
                         consent=bool(data.get("email_consent")))
-    return jsonify(ok=True)
+    # The same answer whether a text went, the number is already on the list
+    # or it once texted STOP: the page does not tell a stranger which.
+    return jsonify(ok=True, pending=True)
 
 
 # ── Email history + preview send (web parity) ───────────────────────────────

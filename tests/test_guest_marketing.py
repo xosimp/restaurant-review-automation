@@ -259,12 +259,17 @@ def _backdate_visit(db_path, restaurant_id, contact_id, hours_ago):
     return ts
 
 
-def test_public_optin_sets_last_visit(db_path):
-    """The QR-code scan itself is the visit signal — no separate step needed."""
+def test_an_optin_is_not_a_visit(db_path):
+    """A join is not a visit (MB-5 / #3, 9/28/26). The QR-code scan used to
+    set last_visit=now and visit_count+1 on every submission: three submits
+    made a "Regular (3+ visits)" and a window-QR join got a "thanks for
+    visiting" review request three hours later."""
     r = _restaurant(db_path)
-    add_guest_contact_public_optin(r.id, "555-123-4567", db_path=db_path)
+    for _ in range(3):
+        add_guest_contact_public_optin(r.id, "555-123-4567", db_path=db_path)
     contacts = get_guest_contacts(r.id, db_path=db_path)
-    assert contacts[0]["last_visit"] is not None
+    assert contacts[0]["last_visit"] is None
+    assert contacts[0]["visit_count"] == 0
 
 
 def test_manual_add_does_not_set_last_visit(db_path):
@@ -274,18 +279,17 @@ def test_manual_add_does_not_set_last_visit(db_path):
     assert contacts[0]["last_visit"] is None
 
 
-def test_repeat_optin_bumps_last_visit_but_not_consent_at(db_path):
-    """A returning guest re-scanning the QR code is a fresh visit signal
-    (re-arms the review-request follow-up), but their original consent
-    timestamp shouldn't be rewritten."""
+def test_repeat_optin_touches_neither_the_visit_nor_consent_at(db_path):
+    """A re-scan is neither a visit (no re-armed review request) nor a new
+    consent: the original consent timestamp and the recorded visit stand."""
     r = _restaurant(db_path)
     cid = add_guest_contact_public_optin(r.id, "555-123-4567", db_path=db_path)
+    visit = _backdate_visit(db_path, r.id, cid, hours_ago=10)  # an owner-recorded visit
     first = get_guest_contacts(r.id, db_path=db_path)[0]
-    _backdate_visit(db_path, r.id, cid, hours_ago=10)  # simulate time passing
     add_guest_contact_public_optin(r.id, "555-123-4567", db_path=db_path)  # scans again
     second = get_guest_contacts(r.id, db_path=db_path)[0]
     assert second["consent_at"] == first["consent_at"]
-    assert second["last_visit"] != first["last_visit"]
+    assert second["last_visit"] == first["last_visit"] == visit
 
 
 def test_mark_guest_visit_sets_last_visit(db_path):

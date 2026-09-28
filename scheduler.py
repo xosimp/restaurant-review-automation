@@ -3482,19 +3482,20 @@ def scheduler_loop():
 
             if (_due(now, 11, until=OPTIN_INVITE_LATEST_HOUR)
                     and _ops.claim_period("optin_invite", f"{today}-{now.hour}")):
-                # From 11am, hourly — invite guests Toast identified
-                # yesterday to opt in for themselves. Yesterday, not today:
-                # Toast's business day doesn't end at midnight, so today's is
-                # still open and would be re-scanned tomorrow anyway. Hourly,
-                # not once: 11am here is 6am in Hawaii, and a restaurant
-                # outside its 8am-9pm window was deferred and never retried
-                # (MOD-MKT-12). The job skips restaurants it already finished
-                # for the date, so the later passes are cheap.
+                # From 11am, hourly — invite guests the POS identified at
+                # each restaurant's last CLOSED business day to ask for a
+                # review link; only restaurants whose owner turned invites
+                # on (Campaigns -> Settings, MB-3). The date is each
+                # restaurant's own (the job computes it): the server's
+                # "yesterday" was still an open day for a restaurant behind
+                # UTC (MB-19). Hourly, not once: 11am here is 6am in Hawaii,
+                # and a restaurant outside its 8am-9pm window was deferred
+                # and never retried (MOD-MKT-12). The job skips restaurants
+                # it already finished for their date, so later passes are
+                # cheap, and it is bounded with a cursor (MB-18).
                 log.info("Running Toast opt-in invites...")
                 from guest_marketing import run_toast_optin_invites
-                from datetime import date as _d, timedelta as _td
-                _ops.run_job("toast_optin_invites",
-                             lambda: run_toast_optin_invites(business_date=_d.today() - _td(days=1)),
+                _ops.run_job("toast_optin_invites", lambda: run_toast_optin_invites(),
                              claim="optin_invite")
 
             # 3am — the intelligence engine's feature pass (bounded, resumable),
@@ -3507,8 +3508,9 @@ def scheduler_loop():
                 _ops.run_job("intelligence_learning", _intel_jobs.run_learning)
 
             # Noon daily — which campaign recipients Toast saw on a later
-            # check (guest_marketing.run_campaign_attribution). Reads
-            # yesterday and earlier; each date fetched once per restaurant.
+            # check (guest_marketing.run_campaign_attribution). Reads each
+            # restaurant's closed business days on its own calendar; each
+            # date fetched once per restaurant; bounded with a cursor.
             if _due(now, 12) and _ops.claim_period("campaign_attribution", str(today)):
                 from guest_marketing import run_campaign_attribution
                 _ops.run_job("campaign_attribution", run_campaign_attribution)

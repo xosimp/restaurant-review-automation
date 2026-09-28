@@ -201,10 +201,12 @@ def test_a_bare_restaurant_id_is_not_a_join_token(db_path, web, monkeypatch):
     assert _optin(web, str(rid), "5551234567").status_code == 404
 
 
-def test_a_signed_join_token_is_accepted(db_path, web):
-    """A6 SMS #15 — the printed, signed form keeps working."""
+def test_a_signed_join_token_is_accepted(db_path, web, texts):
+    """A6 SMS #15 — the printed, signed form keeps working. (It sends the
+    double opt-in confirmation text, MB-4.)"""
     rid = _rid(db_path)
     assert _optin(web, guest_links.sign_join(rid), "5551234567").status_code == 200
+    assert [t["phone"] for t in texts] == ["+15551234567"]
 
 
 def test_a_spoofed_forwarded_for_header_does_not_bypass_the_opt_in_limit(db_path, web):
@@ -221,14 +223,14 @@ def test_a_seven_digit_number_is_refused(db_path, web):
     assert _optin(web, guest_links.sign_join(rid), "555-0123").status_code == 400
 
 
-def test_an_international_number_without_a_plus_keeps_its_country_code(db_path, web):
+def test_an_international_number_without_a_plus_keeps_its_country_code(db_path, web, texts):
     """A6 SMS #17 — 44 20 7946 0958 is a London number."""
     rid = _rid(db_path)
     assert _optin(web, guest_links.sign_join(rid), "44 20 7946 0958").status_code == 200
     assert [c["phone"] for c in gm.get_guest_contacts(rid, db_path=db_path)] == ["+442079460958"]
 
 
-def test_a_us_number_with_an_extension_is_stored_as_that_us_number_or_refused(db_path, web):
+def test_a_us_number_with_an_extension_is_stored_as_that_us_number_or_refused(db_path, web, texts):
     """A6 SMS #17 — '(630) 555-0123 x45' must not become +630555012345."""
     rid = _rid(db_path)
     resp = _optin(web, guest_links.sign_join(rid), "(630) 555-0123 x45")
@@ -435,34 +437,50 @@ def test_an_interrupted_review_request_run_does_not_re_text_guests(db_path, monk
     assert len(sent) == 4 and len(set(sent)) == 4, sent
 
 
-def _toast_restaurant(db_path, name, **kw):
+@pytest.fixture
+def pos_guests(monkeypatch):
+    """A POS that shares two identified guests for every restaurant id in
+    the returned set. Invites no longer run for demo rows (MB-3), so the
+    demo Toast data cannot stand in for one."""
+    import pos
+    import types
+    on = set()
+    guests = [{"order_guid": "o-1", "name": "Demo Guest One", "phone": "+15550000001"},
+              {"order_guid": "o-2", "name": "Demo Guest Two", "phone": "+15550000002"}]
+    monkeypatch.setattr(pos, "PROVIDERS", {"toast": types.SimpleNamespace(
+        is_connected=lambda r: r in on,
+        fetch_order_customers=lambda r, day: [dict(g, order_guid=f"{g['order_guid']}-{r}") for g in guests],
+        sync_to_db=lambda r: {}, build_shifts_csv=lambda r, days=60: None)})
+    return on
+
+
+def _toast_restaurant(db_path, name, pos_guests, **kw):
+    """A restaurant whose POS shares guests and whose owner turned the
+    invite texts on (Campaigns -> Settings, MB-3)."""
     rid = _rid(db_path, name=name, **kw)
-    conn = get_conn(db_path)
-    conn.execute("UPDATE restaurants SET is_demo=1, toast_client_id='demo', toast_client_secret='demo', "
-                 "toast_restaurant_guid='demo' WHERE id=?", (rid,))
-    conn.commit()
-    conn.close()
+    pos_guests.add(rid)
+    gm.set_optin_invites(rid, True, user_id=1, acknowledged=True, db_path=db_path)
     return rid
 
 
-def test_a_stop_to_one_restaurant_stops_another_restaurants_invite(db_path, texts):
+def test_a_stop_to_one_restaurant_stops_another_restaurants_invite(db_path, texts, pos_guests):
     """A6 Jobs #11 / MOD-MKT-12 — the reply promised 'no more texts from us',
     and 'us' is one shared number."""
-    a = _toast_restaurant(db_path, "Alpha")
+    a = _toast_restaurant(db_path, "Alpha", pos_guests)
     gm.run_toast_optin_invites(business_date=date(2026, 9, 3), db_path=db_path)
     invited = {t["phone"] for t in texts}
     assert invited
     victim = sorted(invited)[0]
     gm.handle_inbound_sms(victim, "STOP", db_path=db_path)
     texts.clear()
-    _toast_restaurant(db_path, "Bravo")
+    _toast_restaurant(db_path, "Bravo", pos_guests)
     gm.run_toast_optin_invites(business_date=date(2026, 9, 3), db_path=db_path)
-    assert victim not in {t["phone"] for t in texts}
+    assert texts and victim not in {t["phone"] for t in texts}
 
 
-def test_a_churned_restaurant_sends_no_opt_in_invites(db_path, texts):
+def test_a_churned_restaurant_sends_no_opt_in_invites(db_path, texts, pos_guests):
     """A6 Jobs #13 / MOD-MKT-12."""
-    rid = _toast_restaurant(db_path, "Gone Co")
+    rid = _toast_restaurant(db_path, "Gone Co", pos_guests)
     update_restaurant(rid, {"billing_status": "churned"}, db_path=db_path)
     gm.run_toast_optin_invites(business_date=date(2026, 9, 3), db_path=db_path)
     assert texts == []
