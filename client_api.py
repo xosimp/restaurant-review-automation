@@ -2310,9 +2310,17 @@ def _do_recent_topics(rid):
     hadn't — models.py owns this table's shape."""
     try:
         from models import get_conn
+        from marketing_signals import MEASURED_SQL, REACH_MEASURED_SQL
         conn = get_conn()
+        # A post's figures only when they were measured (MB-7): a post the
+        # sync never measured shows none, never "0". Reach is reach — not
+        # impressions standing in for it (MB-6).
         rows = conn.execute(
-            """SELECT topic, post_id, post_platform, reach, impressions, likes, comments
+            f"""SELECT topic, post_id, post_platform,
+                      CASE WHEN {REACH_MEASURED_SQL} THEN reach END AS reach,
+                      CASE WHEN {MEASURED_SQL} THEN impressions END AS impressions,
+                      CASE WHEN {MEASURED_SQL} THEN likes END AS likes,
+                      CASE WHEN {MEASURED_SQL} THEN comments END AS comments
                FROM marketing_content_log
                WHERE restaurant_id=? ORDER BY created_at DESC LIMIT 16""",
             (rid,)
@@ -2404,45 +2412,52 @@ def _do_mkt_performance(restaurant_id):
     was a line-for-line copy, down to the error status it disagreed on)."""
     rid = restaurant_id
     try:
+        from marketing_signals import MEASURED_SQL, REACH_MEASURED_SQL, ENGAGEMENTS_SQL, best_posts
         conn = get_conn()
+        try:
+            # Reach is reach alone (MB-6) — impressions are a separate count
+            # — over posts whose reach was measured; engagement over posts
+            # measured at all (MB-7). An unmeasured post adds nothing.
+            totals = conn.execute(f"""
+                SELECT COUNT(*) AS published,
+                       SUM(CASE WHEN {MEASURED_SQL} THEN 1 ELSE 0 END) AS measured,
+                       SUM(CASE WHEN {REACH_MEASURED_SQL} THEN 1 ELSE 0 END) AS reach_posts,
+                       SUM(CASE WHEN {REACH_MEASURED_SQL} THEN reach END) AS reach,
+                       SUM(CASE WHEN {MEASURED_SQL} AND impressions > 0 THEN impressions END) AS impressions,
+                       SUM(CASE WHEN {MEASURED_SQL} THEN {ENGAGEMENTS_SQL} END) AS engaged
+                FROM marketing_content_log WHERE restaurant_id=? AND post_id IS NOT NULL
+            """, (rid,)).fetchone()
+        finally:
+            conn.close()
 
-        published = conn.execute(
-            "SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=? AND post_id IS NOT NULL",
-            (rid,)
-        ).fetchone()[0] or 0
-
-        totals = conn.execute("""
-            SELECT COALESCE(SUM(reach),0) as reach, COALESCE(SUM(impressions),0) as impressions,
-                   COALESCE(SUM(likes),0) as likes, COALESCE(SUM(comments),0) as comments,
-                   COALESCE(SUM(shares),0) as shares
-            FROM marketing_content_log WHERE restaurant_id=? AND post_id IS NOT NULL
-        """, (rid,)).fetchone()
-
-        rows = conn.execute("""
-            SELECT topic, post_platform, reach, impressions, likes, comments, shares
-            FROM marketing_content_log
-            WHERE restaurant_id=? AND post_id IS NOT NULL
-              AND (reach > 0 OR impressions > 0 OR likes > 0 OR comments > 0)
-        """, (rid,)).fetchall()
-        conn.close()
-
+        # "Top performing post" is marketing_signals.best_posts — one
+        # definition with the brief and the generator, named only over
+        # BEST_POST_MIN_POSTS measured posts (AUX-13): it used to crown the
+        # only measured post there was.
+        ranking = best_posts(rid, top=1)
         top_post = None
-        if rows:
-            best = max(rows, key=lambda r: (r["reach"] or 0) + (r["impressions"] or 0))
+        if ranking["best"]:
+            best = ranking["best"][0]
+            # Integers for the phone's decoder; the web leaves a 0 out.
             top_post = {
-                "topic": best["topic"], "platform": best["post_platform"],
+                "topic": best["topic"], "platform": best["platform"],
                 "reach": best["reach"] or 0, "likes": best["likes"] or 0,
                 "comments": best["comments"] or 0, "shares": best["shares"] or 0,
+                "engagements": best["engagements"], "engagement_rate": best["engagement_rate"],
             }
 
-        total_engagement = (totals["likes"] or 0) + (totals["comments"] or 0) + (totals["shares"] or 0)
+        measured = int(totals["measured"] or 0)
         return {
             "ok": True,
-            "published": published,
-            "has_data": bool(rows),
-            "total_reach": (totals["reach"] or 0) + (totals["impressions"] or 0),
-            "total_engagement": total_engagement,
+            "published": int(totals["published"] or 0),
+            "has_data": bool(measured),
+            "measured_posts": measured,
+            "reach_posts": int(totals["reach_posts"] or 0),
+            "total_reach": int(totals["reach"] or 0),
+            "total_impressions": int(totals["impressions"] or 0) or None,
+            "total_engagement": int(totals["engaged"] or 0),
             "top_post": top_post,
+            "top_post_floor": ranking["floor"],
             "metrics_sync": _metrics_sync_line(rid),
         }, 200
     except Exception as e:
@@ -4002,8 +4017,10 @@ def _do_generate_content(restaurant_id, content_type, topic, from_calendar=False
         except Exception:
             pass
     from response_validation import validation_of as _rv_gc
+    # content_log_id: the generated row, which a publish of this text sends
+    # back so the post completes it by id (MB-8).
     return {"ok": True, "content": result, "tags": _post_tags_safe(restaurant_id, topic, result),
-            "validation": _rv_gc(result)}, 200
+            "validation": _rv_gc(result), "content_log_id": getattr(result, "content_log_id", None)}, 200
 
 
 @client_bp.route("/api/generate-content", methods=["POST"])
@@ -4246,17 +4263,35 @@ def _do_post_to_google(current_user, data):
     summary = (data.get("summary") or "").strip()
     if not summary:
         return {"ok": False, "error": "Post text is required"}, 400
-    result = _gmb.create_local_post(
+    # The photo the preview showed goes with it (CS-20): a library photo by
+    # media_id, or the image_url the composer holds.
+    from social_routes import photo_url_from, _content_log_id
+    photo_url, bad = photo_url_from(rid, data)
+    if bad:
+        return {"ok": False, "error": bad}, 400
+    # gmb.post_local: the double-publish guard Instagram and Facebook have
+    # (MB-21) — a second press inside ten minutes is refused, not posted.
+    result = _gmb.post_local(
         rid, summary,
         cta_type=(data.get("cta_type") or "").strip() or None,
         cta_url=(data.get("cta_url") or "").strip() or None,
+        photo_url=photo_url or None,
     )
     if not result.get("ok"):
+        if result.get("duplicate"):
+            return {"ok": False, "duplicate": True, "maybe_live": True, "error": result.get("error")}, 409
+        if result.get("maybe_live"):
+            return {"ok": False, "maybe_live": True,
+                    "error": "Google didn't answer clearly, so this post may already be live. "
+                             "Check your listing before posting it again."}, 200
         return {"ok": False, "error": result.get("error") or "Google rejected the post"}, 200
     try:
+        # Logged with its posted_at and against the generated row it names
+        # (MB-8) — never "the latest unposted row for this topic".
         from marketing import log_content
         log_content(rid, "google_promo", (data.get("topic") or summary)[:80],
-                    post_id=result.get("name") or None, post_platform="google")
+                    post_id=result.get("name") or None, post_platform="google", body=summary,
+                    content_log_id=_content_log_id(data))
     except Exception:
         pass
     if data.get("rec_key"):

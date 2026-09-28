@@ -468,7 +468,16 @@ def _clicks(db_path, rid):
     return marketing_links.link_stats(rid, db_path=db_path)[0]["clicks"]
 
 
+def _own_site(db_path, rid, url):
+    """A short link may only go to the restaurant's own site (MB-21,
+    9/28/26): make the link's host the restaurant's menu site."""
+    from urllib.parse import urlparse
+    host = urlparse(url).netloc
+    models.update_restaurant(rid, {"menu_url": "https://" + host}, db_path=db_path)
+
+
 def _link(db_path, rid, url="https://example.com/menu"):
+    _own_site(db_path, rid, url)
     made = marketing_links.create_link(rid, url, source="sms", campaign="wings", db_path=db_path)
     assert made["ok"]
     return made
@@ -546,6 +555,7 @@ def test_a_very_long_target_is_forwarded_intact(app, db_path):
 def test_a_target_with_a_line_break_cannot_inject_a_header(app, db_path):
     """A6 Links #7: CR/LF in a stored target never becomes a new header."""
     rid = _restaurant(db_path)
+    _own_site(db_path, rid, "https://example.com/")
     made = marketing_links.create_link(rid, "https://example.com/\r\nSet-Cookie: pwned=1", db_path=db_path)
     if made["ok"]:
         resp = app.test_client().get(f"/g/{made['token']}")

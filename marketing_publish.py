@@ -93,17 +93,27 @@ def publish_now(restaurant_id, platform, body, *, topic="", media_token=None,
                 return {"ok": False, "error": "Instagram needs a photo — add one before posting.", "reached_platform": False}
             payload, _ = _do_post_to_instagram(restaurant_id, body, image_url, topic)
         elif platform == "facebook":
+            # The scheduled photo goes out with the words (CS-20, SOC-10):
+            # it was accepted at scheduling and silently dropped here.
             from social_routes import _do_post_to_facebook
-            payload, _ = _do_post_to_facebook(restaurant_id, body, topic)
+            image_url = _media_url(base_url, media_token)
+            if image_url:
+                payload, _ = _do_post_to_facebook(restaurant_id, body, topic, image_url=image_url)
+            else:
+                payload, _ = _do_post_to_facebook(restaurant_id, body, topic)
         elif platform == "google":
             import gmb
             if not gmb.is_connected(restaurant_id):
                 return {"ok": False, "error": "Google Business isn't connected.", "reached_platform": False}
-            result = gmb.create_local_post(restaurant_id, body,
-                                           cta_type=cta_type or None, cta_url=cta_url or None)
+            # post_local: the photo, and the double-publish guard (MB-21).
+            # A timeout, 5xx or 429 may be live (maybe_live), so the queue
+            # stops rather than retrying it into a second post (SOC-8).
+            result = gmb.post_local(restaurant_id, body, cta_type=cta_type or None, cta_url=cta_url or None,
+                                    photo_url=_media_url(base_url, media_token))
             payload = {"ok": bool(result.get("ok")),
                        "post_id": result.get("name"),
-                       "error": result.get("error")}
+                       "error": result.get("error"),
+                       "maybe_live": bool(result.get("maybe_live"))}
         else:
             return {"ok": False, "error": f"Cavnar AI can't publish to {platform or 'that'}.", "reached_platform": False}
     except Exception as e:
@@ -127,7 +137,7 @@ def publish_now(restaurant_id, platform, body, *, topic="", media_token=None,
     # Instagram and Facebook log their own content row inside social_routes;
     # Google's doesn't, and neither records the scheduling/media provenance —
     # so the row is written (or completed) here, in the one place that knows
-    # all of it.
+    # all of it. Every row a publish writes carries posted_at (MB-8).
     _log_published(restaurant_id, content_type or _default_type(platform), topic or body[:80],
                    post_id, platform, scheduled_post_id=scheduled_post_id,
                    link_token=link_token, body=body, db_path=db_path)
@@ -168,11 +178,13 @@ def _log_published(restaurant_id, content_type, topic, post_id, platform,
             )
             row_id = existing["id"]
         else:
+            # Metrics NULL — unmeasured — not the columns' DEFAULT 0 (MB-7).
             cur = conn.execute(
                 "INSERT INTO marketing_content_log "
                 "(restaurant_id, content_type, topic, post_id, post_platform, "
-                " scheduled_post_id, link_token, posted_at) "
-                "VALUES (?,?,?,?,?,?,?,datetime('now'))",
+                " scheduled_post_id, link_token, posted_at, "
+                " reach, impressions, engaged, likes, comments, shares) "
+                "VALUES (?,?,?,?,?,?,?,datetime('now'),NULL,NULL,NULL,NULL,NULL,NULL)",
                 (restaurant_id, content_type, (topic or "")[:120], post_id, platform,
                  scheduled_post_id, link_token),
             )

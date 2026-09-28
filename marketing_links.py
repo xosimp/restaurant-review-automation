@@ -78,11 +78,68 @@ def _tag(url: str, source: str, campaign: str) -> str:
     return urlunparse(parsed._replace(query=urlencode(params)))
 
 
+# Booking pages live on the reservation system's own host: a restaurant
+# whose book is on Resy links guests to resy.com (restaurants.reservation_provider,
+# reservation_feeds.PROVIDERS).
+BOOKING_HOSTS = {
+    "tock": ("exploretock.com", "tock.com"),
+    "opentable": ("opentable.com",),
+    "resy": ("resy.com",),
+}
+
+
+def _host_of(url: str) -> str:
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    host = urlparse(raw if "://" in raw else "https://" + raw).netloc.lower()
+    host = host.rsplit("@", 1)[-1].split(":", 1)[0]
+    return host[4:] if host.startswith("www.") else host
+
+
+def allowed_hosts(restaurant_id, db_path: str = DB_PATH) -> set:
+    """Where a short link may send a guest (MB-21, SOC-11): the restaurant's
+    own website (its menu link, restaurants.menu_url), its booking system's
+    host, and the platform itself (a join link). A link minted to any other
+    host is an open redirect wearing the restaurant's name — a phishing
+    front any tenant could mint, and a reason carriers filter the number."""
+    out = set()
+    try:
+        import config
+        out.add(_host_of(config.base_url()))
+    except Exception:
+        pass
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT menu_url, reservation_provider FROM restaurants WHERE id=?",
+                           (restaurant_id,)).fetchone()
+    except Exception:
+        row = None
+    finally:
+        conn.close()
+    if row:
+        own = _host_of(row["menu_url"])
+        if own:
+            out.add(own)
+        out.update(BOOKING_HOSTS.get((row["reservation_provider"] or "").strip().lower(), ()))
+    return {h for h in out if h}
+
+
+def _is_allowed(host: str, allowed: set) -> bool:
+    return bool(host) and any(host == d or host.endswith("." + d) for d in allowed)
+
+
+NOT_OWN_SITE = ("Short links go only to your own website, your booking page or Cavnar AI. "
+                "Add your website as the Menu URL in Settings, then try again.")
+
+
 def create_link(restaurant_id, target_url, *, source="sms", campaign="", label="",
                 db_path: str = DB_PATH) -> dict:
     target = _valid_target(target_url)
     if not target:
         return {"ok": False, "error": "That doesn't look like a web address."}
+    if not _is_allowed(_host_of(target), allowed_hosts(restaurant_id, db_path=db_path)):
+        return {"ok": False, "not_own_site": True, "error": NOT_OWN_SITE}
     token = secrets.token_urlsafe(7)
     tagged = _tag(target, source, campaign)
     conn = get_conn(db_path)
@@ -132,12 +189,32 @@ def visitor_key(remote_addr: str, user_agent: str) -> str:
     return hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()[:32]
 
 
+# The writes a public GET may cause (MB-21): a counted tap is two writes on
+# the one SQLite writer, and /g/ needs no login. Past these a guest is still
+# forwarded — the tap is just not written. Per link, whoever asks, and per
+# visitor across links. Process-local (ai_utils.ai_rate_limited), like the
+# other request limits while gunicorn runs one worker.
+TAP_WRITES_PER_LINK_PER_MINUTE = 60
+TAP_WRITES_PER_VISITOR_PER_MINUTE = 10
+
+
+def _tap_write_allowed(token: str, visitor: str) -> bool:
+    from ai_utils import ai_rate_limited
+    if ai_rate_limited(f"gtap:{token}", max_calls=TAP_WRITES_PER_LINK_PER_MINUTE, window_secs=60):
+        return False
+    if visitor and ai_rate_limited(f"gtapv:{visitor}", max_calls=TAP_WRITES_PER_VISITOR_PER_MINUTE,
+                                   window_secs=60):
+        return False
+    return True
+
+
 def resolve(token: str, db_path: str = DB_PATH, count: bool = True, visitor: str = None):
     """Return where to send them, or None, and record the tap when `count`.
 
     The /g/ route passes count=False for a HEAD or a link-preview fetcher,
     and a `visitor` key so the same visitor tapping again within
-    TAP_DEDUPE_MINUTES is not counted twice."""
+    TAP_DEDUPE_MINUTES is not counted twice. A tap past the write budget
+    (_tap_write_allowed) forwards without writing."""
     conn = get_conn(db_path)
     try:
         row = conn.execute(
@@ -145,6 +222,8 @@ def resolve(token: str, db_path: str = DB_PATH, count: bool = True, visitor: str
         ).fetchone()
         if not row:
             return None
+        if count and not _tap_write_allowed(token, visitor):
+            count = False
         if count and visitor:
             seen = conn.execute(
                 "SELECT 1 FROM marketing_link_taps WHERE link_id=? AND visitor=? "

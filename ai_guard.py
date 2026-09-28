@@ -256,8 +256,13 @@ def reply_review_reason(draft: str, allowed_source: str = "") -> str | None:
 # A requests exception's message includes the URL it failed on, and every
 # Google Places URL in this codebase carries `key=` in its query string.
 # Six handlers returned str(e) straight to the browser.
-_SECRET_QS_RE = re.compile(r"([?&](?:key|api_key|token|access_token|secret)=)[^&\s\"']+", re.I)
+_SECRET_QS_RE = re.compile(r"([?&](?:key|api_key|token|access_token|secret|client_secret|fb_exchange_token|"
+                           r"refresh_token|appsecret_proof)=)[^&\s\"']+", re.I)
 _BEARER_RE = re.compile(r"(Bearer\s+)[A-Za-z0-9._\-]+", re.I)
+# The same names as a JSON key: Meta's me/accounts answer carries every
+# Page's "access_token", and an OAuth answer its own (MB-9).
+_SECRET_JSON_RE = re.compile(r"(\"(?:access_token|client_secret|refresh_token|fb_exchange_token)\"\s*:\s*\")"
+                             r"[^\"]+", re.I)
 
 
 def safe_error(exc, fallback: str = "Something went wrong on our side.") -> str:
@@ -276,8 +281,11 @@ def safe_error(exc, fallback: str = "Something went wrong on our side.") -> str:
 
 def redact_secrets(text: str) -> str:
     """`text` with anything that looks like a credential replaced by
-    [redacted]: key=/token=/secret= query parameters and bearer tokens."""
+    [redacted]: key=/token=/secret= query parameters (and a Meta OAuth
+    exchange's client_secret= / fb_exchange_token=), bearer tokens and a
+    JSON "access_token" value."""
     text = _SECRET_QS_RE.sub(r"\1[redacted]", str(text or ""))
+    text = _SECRET_JSON_RE.sub(r"\1[redacted]", text)
     return _BEARER_RE.sub(r"\1[redacted]", text)
 
 

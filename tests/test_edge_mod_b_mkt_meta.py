@@ -127,17 +127,25 @@ def _graph(monkeypatch, routes):
     return fake
 
 
+# The callback's two token exchanges are POSTs with the app secret in the
+# body, never a query string (MB-9, 9/28/26); they were GETs with params.
 def _is_code_exchange(kw):
-    return "code" in (kw.get("params") or {})
+    return "code" in (kw.get("data") or {})
 
 
 def _is_long_exchange(kw):
-    return (kw.get("params") or {}).get("grant_type") == "fb_exchange_token"
+    return (kw.get("data") or {}).get("grant_type") == "fb_exchange_token"
+
+
+def _web_state(rid):
+    """The state /instagram/connect mints for the web popup."""
+    import gmb
+    return "web~" + gmb.sign_mobile_state(rid)
 
 
 ATTACKER_OAUTH = [
-    ("GET", "oauth/access_token", FakeResp(200, {"access_token": "short-attacker"}), _is_code_exchange),
-    ("GET", "oauth/access_token", FakeResp(200, {"access_token": "long-attacker"}), _is_long_exchange),
+    ("POST", "oauth/access_token", FakeResp(200, {"access_token": "short-attacker"}), _is_code_exchange),
+    ("POST", "oauth/access_token", FakeResp(200, {"access_token": "long-attacker"}), _is_long_exchange),
     ("GET", "me/accounts", FakeResp(200, {"data": [{"id": "attacker_page", "access_token": "attacker-page-token"}]})),
     ("GET", "attacker_page", FakeResp(200, {"instagram_business_account": {"id": "attacker_ig"}})),
 ]
@@ -198,7 +206,7 @@ def test_no_instagram_business_account_on_any_page_writes_nothing_and_says_so(ap
     """A6 Meta #2: pages exist, none has an IG business account."""
     rid = _restaurant(db_path)
     _graph(monkeypatch, ATTACKER_OAUTH[:3] + [("GET", "attacker_page", FakeResp(200, {"id": "attacker_page"}))])
-    resp = app.test_client().get(f"/instagram/callback?code=c&state={rid}")
+    resp = app.test_client().get(f"/instagram/callback?code=c&state={_web_state(rid)}")
     assert resp.status_code == 200
     assert b"no_ig_account" in resp.data
     after = _meta_fields(db_path, rid)
@@ -210,9 +218,9 @@ def test_no_instagram_business_account_on_any_page_writes_nothing_and_says_so(ap
 def test_a_refused_token_exchange_writes_nothing_and_tells_the_popup(app, db_path, monkeypatch):
     """A6 Meta #3: Meta answers 400 to the code exchange (reused code)."""
     rid = _restaurant(db_path)
-    _graph(monkeypatch, [("GET", "oauth/access_token",
+    _graph(monkeypatch, [("POST", "oauth/access_token",
                           FakeResp(400, {"error": {"message": "This authorization code has been used."}}))])
-    resp = app.test_client().get(f"/instagram/callback?code=used&state={rid}")
+    resp = app.test_client().get(f"/instagram/callback?code=used&state={_web_state(rid)}")
     assert resp.status_code == 200
     assert b"token_failed" in resp.data
     assert not _meta_fields(db_path, rid)["ig_token"]
@@ -230,8 +238,8 @@ def test_a_callback_with_no_code_writes_nothing(app, db_path, monkeypatch):
 def test_a_non_json_token_exchange_answer_ends_in_the_popups_error_not_a_500(app, db_path, monkeypatch):
     """A6 Meta #3: an edge proxy page with a 200 status."""
     rid = _restaurant(db_path)
-    _graph(monkeypatch, [("GET", "oauth/access_token", FakeResp(200, None, text="<html>Please wait…</html>"))])
-    resp = app.test_client().get(f"/instagram/callback?code=c&state={rid}")
+    _graph(monkeypatch, [("POST", "oauth/access_token", FakeResp(200, None, text="<html>Please wait…</html>"))])
+    resp = app.test_client().get(f"/instagram/callback?code=c&state={_web_state(rid)}")
     assert resp.status_code == 200
     assert b"ig:'error'" in resp.data
     assert not _meta_fields(db_path, rid)["ig_token"]

@@ -52,6 +52,23 @@ _T90 = {1: 6.314, 2: 2.920, 3: 2.353, 4: 2.132, 5: 2.015, 6: 1.943, 7: 1.895, 8:
         12: 1.782, 15: 1.753, 20: 1.725, 30: 1.697}
 BAND_FALSE_ALARM_RATE = 0.10
 
+# ── What a measured post is (MB-6 / MB-7) ──────────────────────────────────
+#
+# A post's metrics are MEASURED when the sync stamped the row
+# (metrics_synced_at) or the row holds a non-zero figure (written before the
+# stamp existed, or seeded). The metric columns default to 0, so a post the
+# platform never answered for used to read "0 reach" — and every reader
+# summed those zeros. An unmeasured post is blank, never 0.
+MEASURED_SQL = ("(metrics_synced_at IS NOT NULL OR COALESCE(reach,0) > 0 OR COALESCE(impressions,0) > 0 "
+                "OR COALESCE(likes,0) > 0 OR COALESCE(comments,0) > 0 OR COALESCE(shares,0) > 0)")
+# Reach itself was measured: a figure the sync wrote (stamped) or a
+# non-zero one. Reach is REACH — unique accounts — never reach plus
+# impressions: Facebook's 1,000 reach and 1,600 impressions read as 2,600
+# "reach", and the engagement rate divided by that sum ran 2-3x low.
+REACH_MEASURED_SQL = "(reach IS NOT NULL AND (reach > 0 OR metrics_synced_at IS NOT NULL))"
+# What guests did with a measured post: likes (or reactions), comments, shares.
+ENGAGEMENTS_SQL = "(COALESCE(likes,0) + COALESCE(comments,0) + COALESCE(shares,0))"
+
 
 def _t90(df):
     if df <= 0:
@@ -309,11 +326,14 @@ def _beyond_sales(restaurant_id, row, posted, window_dates, days, db_path, first
         except Exception:
             out["guest_list_delta"] = None
         try:
-            m = conn.execute("SELECT COALESCE(reach,0)+COALESCE(impressions,0) AS seen, "
-                             "COALESCE(likes,0)+COALESCE(comments,0)+COALESCE(shares,0) AS engaged "
-                             "FROM marketing_content_log WHERE id=?", (row["id"],)).fetchone()
-            if m and m["seen"]:
-                out["engagement_rate"] = round(float(m["engaged"]) / float(m["seen"]), 4)
+            # Engagements over REACH, for a post whose reach was measured
+            # (MB-6): reach + impressions counted a Facebook viewer up to
+            # three times, so the rate read 2-3x low.
+            m = conn.execute(f"SELECT reach, {ENGAGEMENTS_SQL} AS engaged "
+                             f"FROM marketing_content_log WHERE id=? AND {MEASURED_SQL}",
+                             (row["id"],)).fetchone()
+            if m and m["reach"]:
+                out["engagement_rate"] = round(float(m["engaged"]) / float(m["reach"]), 4)
         except Exception:
             pass
     finally:
@@ -447,26 +467,101 @@ def _group_lift(scored, key):
 
 
 # ── What worked, fed back in ───────────────────────────────────────────────
+#
+# ONE definition of "the best post" (AUX-13), read by the Analytics tab's
+# "Top performing post", the generator's "what worked" line and (via
+# best_posts) the marketing brief: the most engagements — likes, comments,
+# shares — among the latest measured posts, reach breaking a tie, named
+# only once BEST_POST_MIN_POSTS posts were measured. Under that the top
+# three and the bottom three are the same posts, and one post is not a
+# pattern: Analytics crowned a single measured post, the brief refused
+# under six, and the generator ranked by engagement while the other two
+# ranked by reach plus impressions.
 
-def top_performing(restaurant_id, limit=3, db_path: str = DB_PATH) -> list:
-    """The posts that actually landed. Read by the generator and the calendar
-    so the system chases what worked instead of only avoiding what it just
-    said."""
+BEST_POST_MIN_POSTS = 6
+# How many of the latest measured posts the ranking reads.
+BEST_POST_RECENT = 20
+
+
+def _post_row(r) -> dict:
+    reach = r["reach"] if r["reach_measured"] else None
+    eng = int(r["engagements"] or 0)
+    return {"id": r["id"], "topic": r["topic"], "platform": r["post_platform"],
+            "posted_at": r["posted_at"], "reach": reach,
+            "impressions": r["impressions"] if r["impressions"] else None,
+            "likes": r["likes"], "comments": r["comments"], "shares": r["shares"],
+            "engagements": eng, "engaged": eng,
+            # Engagements over reach, for a post whose reach was measured.
+            "engagement_rate": round(eng / reach, 4) if reach else None}
+
+
+def best_posts(restaurant_id, top=3, recent=BEST_POST_RECENT, db_path: str = DB_PATH) -> dict:
+    """{"measured", "floor", "enough", "posts", "best", "weakest"} over the
+    `recent` latest published posts whose metrics were measured (newest
+    first, by the time each went out). `best` / `weakest` are the top and
+    bottom `top` by engagements then reach, and empty until `enough`
+    (measured >= BEST_POST_MIN_POSTS). Read-only: the one ranking every
+    "best post" reads."""
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
-            "SELECT topic, post_platform, "
-            "       COALESCE(reach,0) + COALESCE(impressions,0) AS seen, "
-            "       COALESCE(likes,0) + COALESCE(comments,0) + COALESCE(shares,0) AS engaged "
-            "FROM marketing_content_log "
-            "WHERE restaurant_id=? AND post_id IS NOT NULL AND topic IS NOT NULL "
-            "  AND (reach > 0 OR impressions > 0 OR likes > 0) "
-            "ORDER BY engaged DESC, seen DESC LIMIT ?",
-            (restaurant_id, limit),
+            f"SELECT id, topic, post_platform, COALESCE(posted_at, created_at) AS posted_at, "
+            f"       reach, impressions, likes, comments, shares, "
+            f"       {ENGAGEMENTS_SQL} AS engagements, "
+            f"       CASE WHEN {REACH_MEASURED_SQL} THEN 1 ELSE 0 END AS reach_measured "
+            f"FROM marketing_content_log "
+            f"WHERE restaurant_id=? AND post_id IS NOT NULL AND TRIM(post_id) != '' AND {MEASURED_SQL} "
+            f"ORDER BY COALESCE(posted_at, created_at) DESC, id DESC LIMIT ?",
+            (restaurant_id, int(recent)),
         ).fetchall()
     finally:
         conn.close()
-    return [dict(r) for r in rows]
+    posts = [_post_row(r) for r in rows]
+    enough = len(posts) >= BEST_POST_MIN_POSTS
+    ranked = sorted(posts, key=lambda p: (p["engagements"], p["reach"] or 0), reverse=True)
+    n = max(0, int(top))
+    return {"measured": len(posts), "floor": BEST_POST_MIN_POSTS, "enough": enough, "posts": posts,
+            "best": ranked[:n] if enough and n else [],
+            "weakest": list(reversed(ranked[-n:])) if enough and n else []}
+
+
+def top_performing(restaurant_id, limit=3, db_path: str = DB_PATH) -> list:
+    """The posts that actually landed, for the generator and the calendar,
+    so the system chases what worked instead of only avoiding what it just
+    said — best_posts' ranking and floor, never a single lucky post."""
+    return [p for p in best_posts(restaurant_id, top=limit, db_path=db_path)["best"] if p.get("topic")]
+
+
+def weekly_reach(restaurant_id, weeks=8, db_path: str = DB_PATH) -> list:
+    """Per week ('%Y-W%W') of the time each post WENT OUT (posted_at; the
+    generation time only for a row that predates the stamp):
+    [{week, posts, reach_posts, total_reach, avg_reach}], measured reach
+    only (None, never 0, for a week with none). The brief bucketed on
+    created_at — a caption written Monday and posted Friday landed in the
+    wrong week — while the header read posted_at (AUX-13). Read-only."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            f"SELECT strftime('%Y-W%W', COALESCE(posted_at, created_at)) AS week, COUNT(*) AS posts, "
+            f"       SUM(CASE WHEN {REACH_MEASURED_SQL} THEN 1 ELSE 0 END) AS reach_posts, "
+            f"       SUM(CASE WHEN {REACH_MEASURED_SQL} THEN reach END) AS total_reach "
+            f"FROM marketing_content_log "
+            f"WHERE restaurant_id=? AND post_id IS NOT NULL AND TRIM(post_id) != '' "
+            f"  AND COALESCE(posted_at, created_at) >= datetime('now', ?) "
+            f"GROUP BY week ORDER BY week",
+            (restaurant_id, f"-{int(weeks) * 7} days"),
+        ).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for w in rows:
+        n = int(w["reach_posts"] or 0)
+        total = w["total_reach"]
+        has = bool(n) and total is not None
+        out.append({"week": w["week"], "posts": int(w["posts"] or 0), "reach_posts": n,
+                    "total_reach": int(total) if has else None,
+                    "avg_reach": round(float(total) / n) if has else None})
+    return out
 
 
 def review_signal(restaurant_id, days=14, db_path: str = DB_PATH) -> dict:
@@ -595,9 +690,11 @@ def generation_context(restaurant_id, db_path: str = DB_PATH) -> str:
     """
     parts = []
 
+    # best_posts' ranking and floor (AUX-13): nothing under six measured
+    # posts, so one lucky post is never "what performed best".
     winners = top_performing(restaurant_id, db_path=db_path)
     if winners:
-        best = ", ".join(f"\"{w['topic']}\" ({w['engaged']} interactions)" for w in winners if w.get("topic"))
+        best = ", ".join(f"\"{w['topic']}\" ({w['engagements']} interactions)" for w in winners if w.get("topic"))
         if best:
             parts.append(f"Posts that performed best for this restaurant: {best}. "
                          "Lean toward what these have in common; don't copy them.")
@@ -636,7 +733,22 @@ def performance_window(restaurant_id, days=30, db_path: str = DB_PATH) -> dict:
     "Total reach 4,231" is a number, not a metric. Engagement RATE is the one
     a marketing director reads first, because it survives a restaurant's
     follower count changing.
+
+    Reach is reach alone (MB-6), summed over posts whose reach was measured;
+    impressions ride separately. The rate is engagements over reach across
+    the posts whose reach was measured. An unmeasured post (MB-7) adds
+    nothing to any figure: `measured_posts` / `reach_posts` say how many
+    posts the figures stand on, and a client shows a blank, not a 0, when
+    `reach_posts` is 0 (the integer fields stay integers for the phone's
+    decoder).
     """
+    agg = (f"COUNT(*) AS posts, "
+           f"SUM(CASE WHEN {MEASURED_SQL} THEN 1 ELSE 0 END) AS measured, "
+           f"SUM(CASE WHEN {REACH_MEASURED_SQL} THEN 1 ELSE 0 END) AS reach_posts, "
+           f"SUM(CASE WHEN {REACH_MEASURED_SQL} THEN reach END) AS reach, "
+           f"SUM(CASE WHEN {MEASURED_SQL} AND impressions > 0 THEN impressions END) AS impressions, "
+           f"SUM(CASE WHEN {MEASURED_SQL} THEN {ENGAGEMENTS_SQL} END) AS engaged, "
+           f"SUM(CASE WHEN {REACH_MEASURED_SQL} THEN {ENGAGEMENTS_SQL} END) AS engaged_on_reach")
     conn = get_conn(db_path)
     try:
         def bucket(start_days, end_days=None):
@@ -645,10 +757,7 @@ def performance_window(restaurant_id, days=30, db_path: str = DB_PATH) -> dict:
             date('now','-0 days') excluded it, so a post published this
             morning was missing from the headline while still showing up in
             the per-platform breakdown below."""
-            sql = ("SELECT COUNT(*) AS posts, "
-                   "       COALESCE(SUM(reach),0) + COALESCE(SUM(impressions),0) AS seen, "
-                   "       COALESCE(SUM(likes),0) + COALESCE(SUM(comments),0) + COALESCE(SUM(shares),0) AS engaged "
-                   "FROM marketing_content_log "
+            sql = (f"SELECT {agg} FROM marketing_content_log "
                    "WHERE restaurant_id=? AND post_id IS NOT NULL "
                    "  AND COALESCE(posted_at, created_at) >= date('now', ?)")
             args = [restaurant_id, f"-{start_days} days"]
@@ -661,59 +770,65 @@ def performance_window(restaurant_id, days=30, db_path: str = DB_PATH) -> dict:
         previous = bucket(days * 2, days)
 
         by_platform = conn.execute(
-            "SELECT post_platform AS platform, COUNT(*) AS posts, "
-            "       COALESCE(SUM(reach),0) + COALESCE(SUM(impressions),0) AS seen, "
-            "       COALESCE(SUM(likes),0) + COALESCE(SUM(comments),0) + COALESCE(SUM(shares),0) AS engaged "
+            f"SELECT post_platform AS platform, {agg} "
             "FROM marketing_content_log "
             "WHERE restaurant_id=? AND post_id IS NOT NULL "
             "  AND COALESCE(posted_at, created_at) >= date('now', ?) "
-            "GROUP BY post_platform ORDER BY seen DESC",
+            "GROUP BY post_platform",
             (restaurant_id, f"-{days} days"),
         ).fetchall()
     finally:
         conn.close()
 
+    def _n(row, key):
+        return int(row[key] or 0)
+
     def rate(row):
-        # None, not 0.0, when nothing was seen: 0% reads as "nobody engaged",
-        # and the truth is "reach was never measured" (MOD-MKT-18).
-        seen = row["seen"] or 0
-        return round((row["engaged"] or 0) / seen * 100, 1) if seen else None
+        # None, not 0.0, when no reach was measured: 0% reads as "nobody
+        # engaged", and the truth is "reach was never measured" (MOD-MKT-18).
+        reach = row["reach"] or 0
+        return round((row["engaged_on_reach"] or 0) / reach * 100, 1) if reach else None
 
-    enough = ((current["posts"] or 0) >= MIN_POSTS_FOR_CHANGE
-              and (previous["posts"] or 0) >= MIN_POSTS_FOR_CHANGE)
-
-    def change(now_v, then_v):
+    def enough(key):
         # A period-on-period % only when BOTH periods hold MIN_POSTS_FOR_CHANGE
-        # posts (CA1 M5): one post against two read as "−50%".
-        if not then_v or not enough:
+        # posts (CA1 M5): one post against two read as "−50%". Reach and
+        # engagement count the posts they were measured on, not the posts.
+        return _n(current, key) >= MIN_POSTS_FOR_CHANGE and _n(previous, key) >= MIN_POSTS_FOR_CHANGE
+
+    def change(key, basis):
+        now_v, then_v = _n(current, key), _n(previous, key)
+        if not then_v or not enough(basis):
             return None
         return round((now_v - then_v) / then_v * 100, 1)
 
-    return {
-        "days": days,
-        "posts": current["posts"] or 0,
-        "reach": current["seen"] or 0,
-        "engagement": current["engaged"] or 0,
-        "engagement_rate": rate(current),
-        "previous": {
-            "posts": previous["posts"] or 0,
-            "reach": previous["seen"] or 0,
-            "engagement": previous["engaged"] or 0,
-            "engagement_rate": rate(previous),
-        },
+    if not enough("posts"):
+        note = f"Too few posts to compare periods — {MIN_POSTS_FOR_CHANGE} each are needed"
+    elif not enough("reach_posts"):
+        note = (f"Too few posts with measured reach to compare periods — "
+                f"{MIN_POSTS_FOR_CHANGE} each are needed")
+    else:
+        note = None
+
+    def _bucket_out(row):
+        return {"posts": _n(row, "posts"), "measured_posts": _n(row, "measured"),
+                "reach_posts": _n(row, "reach_posts"), "reach": _n(row, "reach"),
+                "impressions": _n(row, "impressions") or None,
+                "engagement": _n(row, "engaged"), "engagement_rate": rate(row)}
+
+    out = {"days": days, **_bucket_out(current)}
+    out.update({
+        "previous": _bucket_out(previous),
         "change": {
-            "posts": change(current["posts"] or 0, previous["posts"] or 0),
-            "reach": change(current["seen"] or 0, previous["seen"] or 0),
-            "engagement": change(current["engaged"] or 0, previous["engaged"] or 0),
+            "posts": change("posts", "posts"),
+            "reach": change("reach", "reach_posts"),
+            "engagement": change("engaged", "measured"),
         },
-        "change_note": (None if enough else
-                        f"Too few posts to compare periods — {MIN_POSTS_FOR_CHANGE} each are needed"),
-        "by_platform": [
-            {"platform": r["platform"] or "unknown", "posts": r["posts"],
-             "reach": r["seen"], "engagement": r["engaged"], "engagement_rate": rate(r)}
-            for r in by_platform
-        ],
-    }
+        "change_note": note,
+        "by_platform": sorted(
+            (dict(platform=r["platform"] or "unknown", **_bucket_out(r)) for r in by_platform),
+            key=lambda p: (p["reach"], p["posts"]), reverse=True),
+    })
+    return out
 
 
 # ── The Marketing header (density round #10) ───────────────────────────────
@@ -722,7 +837,8 @@ def performance_window(restaurant_id, days=30, db_path: str = DB_PATH) -> dict:
 # measured chips (posts in the window, reach against the window before, the
 # next scheduled post) - all counts from rows already written. No model
 # call; the reach change keeps performance_window's floor (a % only when
-# both windows hold MIN_POSTS_FOR_CHANGE posts), so it is None, never 0.
+# both windows hold MIN_POSTS_FOR_CHANGE posts with MEASURED reach — reach
+# alone, never reach plus impressions, MB-6), so it is None, never 0.
 
 QUIET_AFTER_DAYS = 10     # "Nothing posted in N days" from this many days on
 REACH_MOVE_PCT = 5        # a reach change inside ±5% reads as "level"

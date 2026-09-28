@@ -175,7 +175,8 @@ def test_food_cost_carries_one_opportunity_figure():
 def test_marketing_has_one_primary_generate():
     s = _src()
     panel = _panel(s, "panel-marketing", "<!-- COMPETITOR INTEL -->")
-    content = panel[panel.index('<div id="mkt-tab-content">'):panel.index("<!-- /mkt-tab-content -->")]
+    # The wrapper carries role="tabpanel" since the sub-tabs became a tablist (AUX-11).
+    content = panel[panel.index('<div id="mkt-tab-content"'):panel.index("<!-- /mkt-tab-content -->")]
     prim = re.findall(r'<(?:button|label|a)[^>]*class="cbtn cbtn-primary(?! cbtn-(?:instagram|facebook))[^"]*"[^>]*>([^<]*)', content)
     assert [p.strip() for p in prim] == ["Generate"], prim
     cal = s[s.index("function renderCal(ideas){"):]

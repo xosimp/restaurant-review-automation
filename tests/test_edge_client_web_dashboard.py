@@ -166,8 +166,6 @@ POLLERS = {
     "activity feed, 60s": (lambda s: _function(s, "load", containing="/api/activity"),
                            lambda s: _function(s, "load", containing="/api/activity")),
     "review stats, 15s": (_review_stats_tick, lambda s: _function(s, "updateReviewStats")),
-    "marketing metrics, 60s": (lambda s: _function(s, "refreshMetrics"),
-                               lambda s: _function(s, "refreshMetrics")),
     "status dot, 120s": (lambda s: _function(s, "checkStatus"),
                          lambda s: _function(s, "checkStatus")),
 }
@@ -176,8 +174,11 @@ POLLERS = {
 def test_the_audited_pollers_are_still_on_intervals(src):
     assert "pollTimer = setInterval(load, 60000)" in src
     assert "}, 15000);" in src[src.index("var reviewPanel = document.getElementById('panel-reviews')"):][:200]
-    assert "setInterval(refreshMetrics,60000)" in src
     assert "setInterval(checkStatus, 120000)" in src
+    # The Marketing metrics poller is gone on purpose (MB-17, 9/28/26): it
+    # called Meta every 60s on a request thread. The tab reads the stored
+    # sync; "Refresh from Meta" is one rate-limited POST.
+    assert "setInterval(refreshMetrics" not in src
     for tick, fetcher in POLLERS.values():
         assert "fetch(" in tick(src) + fetcher(src)
 
