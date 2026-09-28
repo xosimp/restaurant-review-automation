@@ -294,7 +294,12 @@ textarea{resize:vertical;min-height:60px}
         <div class="form-group">
           <label>Monthly revenue target ($)</label>
           <input type="number" id="monthly_revenue_target" value="{{ restaurant.monthly_revenue_target or 0 }}" min="0" step="1000" placeholder="e.g. 365000">
-          <div class="hint">Used to compute PAR hours budget for AI schedule generation. Divide by 4.33 to get weekly projection.</div>
+          <div class="hint">Used to compute PAR hours budget for AI schedule generation. One target with the weekly below: a month is 52/12 = 4.33 weeks.</div>
+        </div>
+        <div class="form-group">
+          <label>Weekly revenue target ($)</label>
+          <input type="number" id="weekly_revenue_target" value="{{ ((restaurant.monthly_revenue_target or 0) * 12 / 52)|round(2) if restaurant.monthly_revenue_target else 0 }}" min="0" step="100" placeholder="e.g. 84000">
+          <div class="hint">For owners who plan by the week. Typing either one fills the other; the one typed last is saved.</div>
         </div>
         <div class="form-group full">
           <label>Restaurant hours &amp; shift rules (for AI schedule generation)</label>
@@ -864,6 +869,25 @@ var cavTouched = {};
     if (el) { el.addEventListener('input', mark(ids[i])); }
   }
 })();
+// One revenue target shown by the month and by the week: typing either box
+// fills the other, and only the box typed in last is saved (an untouched
+// monthly is re-sent exactly as stored, so a save never drifts it).
+var cavRevSource = null;
+(function () {
+  var mo = document.getElementById('monthly_revenue_target'), wk = document.getElementById('weekly_revenue_target');
+  if (!mo || !wk) return;
+  var WPM = 52 / 12;
+  mo.addEventListener('input', function () {
+    cavRevSource = 'monthly';
+    var v = parseFloat(mo.value) || 0;
+    wk.value = v > 0 ? Math.round(v / WPM * 100) / 100 : 0;
+  });
+  wk.addEventListener('input', function () {
+    cavRevSource = 'weekly';
+    var v = parseFloat(wk.value) || 0;
+    mo.value = v > 0 ? Math.round(v * WPM) : 0;
+  });
+})();
 function cavTouchedList() {
   var out = [];
   for (var k in cavTouched) { if (cavTouched.hasOwnProperty(k)) { out.push(k); } }
@@ -925,6 +949,7 @@ async function saveSettings() {
     module_marketing:document.getElementById('setting-mod-marketing').checked ? 1 : 0,
     touched:         cavTouchedList(),
   };
+  if (cavRevSource === 'weekly') payload.weekly_revenue_target = parseFloat(document.getElementById('weekly_revenue_target').value) || 0;
   const res = await fetch(window.location.pathname, {
     method: 'POST',
     headers: {'Content-Type':'application/json'},

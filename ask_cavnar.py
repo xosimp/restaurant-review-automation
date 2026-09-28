@@ -170,7 +170,10 @@ def _profile_context(restaurant):
         )
 
     if restaurant.monthly_revenue_target:
-        lines.append(f"- Monthly revenue target: ${restaurant.monthly_revenue_target:,.0f}")
+        # One target; the owner may plan by the week (models.weekly_revenue_target).
+        from models import weekly_revenue_target
+        lines.append(f"- Revenue target: ${weekly_revenue_target(restaurant):,.0f} a week "
+                     f"(${restaurant.monthly_revenue_target:,.0f} a month)")
 
     if restaurant.delivery_pct is not None:
         lines.append(f"- Delivery/takeout share of revenue: {restaurant.delivery_pct}%")

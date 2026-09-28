@@ -427,6 +427,14 @@ date picked but not added is added by the section's Save rather than dropped. A 
 `.ac-select` of 15-minute steps (`cavTimeOptions`, unset reads "—"), never `<input type=time>`:
 Safari draws an empty one as a grey "12:30 PM" that reads as a value (owner, 9/28/26).
 
+**One figure in two units.** Where one stored value is thought of in two
+units (the revenue target by the month and by the week), each unit gets its
+own `.ac-input.ac-num` row and the rows carry `data-tg-pair` naming each
+other: typing in one fills the other as you type, the helper text states
+the conversion ("× 4.33 (52 weeks over 12 months)"), and only the box typed
+in is saved — the other is display, rounded (whole dollars by the month,
+cents by the week), and is repainted from what the server stored.
+
 **Editable lines before an outward send.** A list that will be emailed
 (the supplier order) shows each line with a numeric `.fc2-inv-in` input and
 a running total; the send button names the recipient and the total

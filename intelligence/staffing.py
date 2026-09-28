@@ -157,8 +157,8 @@ def has_own_history(restaurant_id: int, shifts: list = None, db_path: str = DB_P
 
 def _own_sales_by_weekday(restaurant_id: int, restaurant=None, db_path: str = DB_PATH):
     """({weekday: average sales}, basis) from this restaurant's own daily
-    sales; failing that its own monthly revenue target spread evenly; else
-    ({}, None)."""
+    sales; failing that its own revenue target spread evenly over the week;
+    else ({}, None)."""
     conn = get_conn(db_path)
     try:
         rows = conn.execute("SELECT date, sales FROM labor_daily_history WHERE restaurant_id=? AND sales > 0 "
@@ -175,11 +175,12 @@ def _own_sales_by_weekday(restaurant_id: int, restaurant=None, db_path: str = DB
     if acc:
         return ({wd: sum(v) / len(v) for wd, v in acc.items()},
                 f"your own sales by weekday over the last {SALES_WEEKS} weeks")
-    target = float(getattr(restaurant, "monthly_revenue_target", 0) or 0) if restaurant is not None else 0.0
+    from models import weekly_revenue_target
+    target = weekly_revenue_target(restaurant) if restaurant is not None else 0.0
     if target > 0:
-        per_day = target / 30.4
+        per_day = target / 7.0
         return ({wd: per_day for wd in ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")},
-                "your monthly revenue target spread evenly across the week")
+                "your weekly revenue target spread evenly across the week")
     return {}, None
 
 
@@ -256,7 +257,7 @@ def starting_headcount(restaurant_id: int, restaurant=None, roster_roles: dict =
         return {"available": False, "own_history": False, "cohort_label": label,
                 "reason": ("Similar restaurants' staffing is on file, but it is measured per $1k of sales and this "
                            "restaurant has no sales of its own on file yet to scale it by — connect the POS or set a "
-                           "monthly revenue target.")}
+                           "revenue target.")}
     spelled = {fam: max(names.items(), key=lambda kv: (kv[1], kv[0]))[0] for fam, names in roles.items()}
     headcount, by_slot = {}, []
     for r in ratios:

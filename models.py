@@ -3289,6 +3289,36 @@ def _check_numeric_fields(updates):
 # change since a recommendation's data window (DH3-14).
 OWNER_TARGET_FIELDS = ("labor_target_pct", "food_cost_target", "waste_target_pct", "monthly_revenue_target")
 
+
+# The revenue target is ONE stored figure, `monthly_revenue_target`. An owner
+# who plans by the week (Simple EJ's, 9/28/26) sets it as a weekly figure:
+# every write path may pass `weekly_revenue_target` instead, and
+# update_restaurant stores it as weekly × metrics.WEEKS_PER_MONTH (52/12, the
+# one month definition). Read back ÷ 52/12 it returns to the cent, and every
+# reader of the monthly (the PAR hours budget, borrowed staffing, Ask) moves
+# with it — there is no second column to drift.
+def monthly_from_weekly(weekly) -> float:
+    """A weekly revenue target as the stored monthly. Blank/None is no
+    target (0); anything else that is not a number raises ValueError."""
+    if weekly is None or (isinstance(weekly, str) and not weekly.strip()):
+        return 0.0
+    try:
+        w = float(weekly)
+    except (TypeError, ValueError):
+        raise ValueError(f"weekly_revenue_target must be a number, not {weekly!r}") from None
+    from metrics import WEEKS_PER_MONTH
+    return w * WEEKS_PER_MONTH if w > 0 else 0.0
+
+
+def weekly_revenue_target(restaurant) -> float:
+    """The restaurant's revenue target per week, to the cent (0 = none)."""
+    try:
+        m = float(getattr(restaurant, "monthly_revenue_target", 0) or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    from metrics import WEEKS_PER_MONTH
+    return round(m / WEEKS_PER_MONTH, 2) if m > 0 else 0.0
+
 # A target written without saying where it came from is the owner's own
 # (every settings route writes the bare field); the seeding path passes its
 # source explicitly (Benchmarking audit #13). The blended hourly rate rides
@@ -3366,10 +3396,15 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "morning_brief_enabled", "morning_brief_hour", "briefing_level", "paused_until",
         "auto_draft_schedule", "external_scheduling_tool", "auto_draft_weekday", "auto_order_weekday",
     }
+    if "weekly_revenue_target" in fields:
+        # The weekly figure is the owner's; the monthly follows from it (see
+        # monthly_from_weekly). Given both, the weekly wins.
+        fields = dict(fields)
+        fields["monthly_revenue_target"] = monthly_from_weekly(fields.pop("weekly_revenue_target"))
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
-    _mark = [(_tf, _sf) for _tf, _sf in TARGET_SOURCE_FIELDS.items()
+    _mark =[(_tf, _sf) for _tf, _sf in TARGET_SOURCE_FIELDS.items()
              if _tf in updates and _sf not in updates and updates[_tf] not in (None, "")]
     if _mark:
         # Only a CHANGED value is the owner's own: a settings form that

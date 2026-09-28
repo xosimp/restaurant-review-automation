@@ -3993,13 +3993,13 @@ def _do_publish_check(u):
 
 _TARGET_BOUNDS = {"labor_target_pct": (5.0, 80.0), "food_cost_target": (5.0, 80.0),
                   "waste_target_pct": (0.0, 50.0), "monthly_revenue_target": (0.0, 100000000.0),
-                  "hourly_rate": (2.0, 250.0)}
+                  "weekly_revenue_target": (0.0, 20000000.0), "hourly_rate": (2.0, 250.0)}
 
 
 def _targets_payload(rid):
     import json as _json
     import staff_settings as _ss
-    from models import get_restaurant
+    from models import get_restaurant, weekly_revenue_target
     r = get_restaurant(rid)
     try:
         rates = {k: float(v) for k, v in (_json.loads(r.role_rates_json or "{}") or {}).items() if k != "_default"}
@@ -4018,6 +4018,9 @@ def _targets_payload(rid):
             roles.append(k)
     return {"labor_target_pct": r.labor_target_pct, "food_cost_target": r.food_cost_target,
             "waste_target_pct": r.waste_target_pct, "monthly_revenue_target": r.monthly_revenue_target,
+            # The same target by the week (models.weekly_revenue_target):
+            # owners who plan by the week set this one; the monthly follows.
+            "weekly_revenue_target": weekly_revenue_target(r),
             "hourly_rate": r.hourly_rate, "week_start_day": int(getattr(r, "week_start_day", 0) or 0),
             "role_rates": rates, "roles": sorted(roles, key=str.lower),
             # The standing notes every schedule draft's prompt carries
@@ -4095,6 +4098,10 @@ def _do_targets_set(u):
         raw = str(b.get("sched_notes") or "")
         notes = "".join(ch for ch in raw if ch in "\n\t" or ord(ch) >= 32).strip()[:2000]
         upd["sched_notes"] = notes or None
+    if "weekly_revenue_target" in upd:
+        # One revenue target: given by the week, update_restaurant stores
+        # the monthly it implies, so a monthly sent beside it is ignored.
+        upd.pop("monthly_revenue_target", None)
     if not upd:
         return {"ok": False, "error": "Nothing to change."}, 400
     # This card is where the owner states a target, one field per save: a
@@ -4106,9 +4113,11 @@ def _do_targets_set(u):
     for _tf, _sf in TARGET_SOURCE_FIELDS.items():
         if upd.get(_tf) not in (None, ""):
             upd[_sf] = "set"
+    from models import weekly_revenue_target
     before = get_restaurant(_rid(u))
     update_restaurant(_rid(u), upd)
-    changed = [k for k in upd if getattr(before, k, None) != upd[k]]
+    changed = [k for k in upd if (weekly_revenue_target(before) if k == "weekly_revenue_target"
+                                  else getattr(before, k, None)) != upd[k]]
     if changed:
         log_account_event(_rid(u), "targets_changed", current_user=u,
                           detail=", ".join(k.replace("_json", "").replace("_", " ") for k in changed))

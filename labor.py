@@ -3178,7 +3178,9 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                 "happen — an accurate 'no change' is more useful to the owner than a fabricated one."
             )
 
-    # Compute PAR hours budget — monthly_revenue_target takes priority, then YoY sum, then recent
+    # Compute PAR hours budget — the revenue target takes priority, then YoY sum, then recent.
+    # The target is stored monthly; ÷ 52/12 is exactly the weekly figure an
+    # owner who plans by the week typed (models.monthly_from_weekly).
     projected_revenue = 0.0
     if projected_revenue_override and float(projected_revenue_override) > 0:
         # The restaurant's own weekly pattern (schedule_economics
@@ -3499,7 +3501,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         # "0.0h is the MAXIMUM for the week", which reads as an instruction
         # to schedule nobody. Say there is no ceiling instead.
         par_block = ("\n\nPAR HOURS CEILING — none available. There isn't enough sales history "
-                     "(and no monthly revenue target on file) to put an honest weekly hours "
+                     "(and no revenue target on file) to put an honest weekly hours "
                      "budget on this schedule. Staff it from TYPICAL HEADCOUNT, the minimum "
                      "floors and the constraints below, and do not invent an hours figure to "
                      "aim at." + _daily_targets)
