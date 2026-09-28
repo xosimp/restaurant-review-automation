@@ -481,8 +481,11 @@ def test_texting_guests_names_the_head_count():
     # Campaign Studio (9/28/26): the button names each channel's count
     # ("Text 31 · Email 18"), and its armed second press the guests reached;
     # a win-back sends through the same button.
+    # Fix round (9/28/26): the text count is who a text reaches NOW (the
+    # three-day spacing out, CS-5), and the armed press names each channel
+    # rather than adding a guest on both lists up twice (CS-22).
     paint = SRC[SRC.index("window.cpPaint = function"):SRC.index("function cpPaintAi")]
-    assert "label.push('Text ' + n)" in paint and "label.push('Email ' + m)" in paint
-    assert "'Tap again to ' + (people ? 'reach ' + _cpPlural(people, 'guest') : '')" in paint
-    assert "var n = +seg.count || 0, m = +seg.email_count || 0" in paint
+    assert "label.push('Text ' + n + (nowOk ? '' : ' at ' + open))" in paint and "label.push('Email ' + m)" in paint
+    assert "'Tap again to ' + verbs.join(', ')" in paint
+    assert "n = seg.eligible != null ? +seg.eligible : nAll, m = +seg.email_count || 0" in paint
     assert "Bring back <span class=\"hb-num\">' + (+w.segment_size || 0) + '</span> guest'" in SRC

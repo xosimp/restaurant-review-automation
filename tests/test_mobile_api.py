@@ -1433,14 +1433,22 @@ def test_guest_campaign_send_returns_ok_and_texts_in_the_background(client, db_p
     rid = _restaurant(db_path, module_marketing=1)
     token = _login(client, db_path, rid)
     monkeypatch.setattr("guest_marketing.guest_sms_allowed_now", lambda r: True)
-    monkeypatch.setattr("guest_marketing.send_campaign", lambda *a, **kw: {"ok": True, "sent": 0})
+    drained = []
+    monkeypatch.setattr("guest_marketing._drain", lambda cid, **kw: drained.append(cid) or {"sent": 0, "failed": 0})
 
+    # Nobody to text: refused, and no campaign is recorded (MB-11).
+    resp = client.post(
+        "/mobile/api/guest-campaign/send", json={"message": "Hi there"}, headers=_auth_headers(token)
+    )
+    assert resp.status_code == 400 and resp.get_json()["blocked"] == "no_audience"
+
+    guest_marketing.add_guest_contact_public_optin(rid, "5551230000", name="Ana", db_path=db_path)
     resp = client.post(
         "/mobile/api/guest-campaign/send", json={"message": "Hi there"}, headers=_auth_headers(token)
     )
     data = resp.get_json()
     assert resp.status_code == 202
-    assert data["ok"] is True and data["queued"] is True and data["total"] == 0
+    assert data["ok"] is True and data["queued"] is True and data["total"] == 1 and data["campaign_id"]
 
 
 def test_guest_campaign_send_surfaces_a_quiet_hours_refusal(client, db_path, monkeypatch):

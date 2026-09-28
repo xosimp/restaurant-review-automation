@@ -486,10 +486,12 @@ def test_labor_diagnosis_names_the_biggest_driver_and_says_how_to_check(db_path)
 
 def test_marketing_diagnosis_compares_only_measured_campaigns(db_path, monkeypatch):
     import guest_marketing as gm
+    # "Came back" is read only off campaigns whose 14 days attribution has
+    # read in full (CS-8): each carries attribution_through past its window.
     rows = [
-        {"id": 1, "sent_count": 40, "clicks": 8, "visits_matched": 6, "segment": "regulars", "segment_label": "Regulars", "created_at": "2026-09-01 12:00:00", "link_token": "a"},
-        {"id": 2, "sent_count": 50, "clicks": 2, "visits_matched": 1, "segment": "lapsed", "segment_label": "Lapsed", "created_at": "2026-09-08 12:00:00", "link_token": "b"},
-        {"id": 3, "sent_count": 5, "clicks": 5, "visits_matched": 5, "segment": "all", "segment_label": "Everyone", "created_at": "2026-09-10 12:00:00"},
+        {"id": 1, "sent_count": 40, "clicks": 8, "visits_matched": 6, "segment": "regulars", "segment_label": "Regulars", "created_at": "2026-09-01 12:00:00", "link_token": "a", "attribution_through": "2026-09-15"},
+        {"id": 2, "sent_count": 50, "clicks": 2, "visits_matched": 1, "segment": "lapsed", "segment_label": "Lapsed", "created_at": "2026-09-08 12:00:00", "link_token": "b", "attribution_through": "2026-09-22"},
+        {"id": 3, "sent_count": 5, "clicks": 5, "visits_matched": 5, "segment": "all", "segment_label": "Everyone", "created_at": "2026-09-10 12:00:00", "attribution_through": "2026-09-24"},
     ]
     monkeypatch.setattr(gm, "campaign_history", lambda rid, limit=20, db_path=None: rows)
     d = gm.diagnose(1)

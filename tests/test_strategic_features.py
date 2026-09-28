@@ -475,10 +475,13 @@ def test_a_slow_day_campaign_is_tracked_only_once_it_actually_sent(db_path):
     rid = _rid(db_path)
     client_api._track_campaign_outcome(rid, {"target_day": "tuesday"}, {"ok": False}, None)
     assert outcomes.list_outcomes(rid) == []
-    client_api._track_campaign_outcome(rid, {"target_day": "tuesday"}, {"ok": True}, None)
+    # ok with nothing sent is not "sent" (MB-11): no tracker.
+    client_api._track_campaign_outcome(rid, {"target_day": "tuesday"}, {"ok": True, "sent": 0}, None)
+    assert outcomes.list_outcomes(rid) == []
+    client_api._track_campaign_outcome(rid, {"target_day": "tuesday"}, {"ok": True, "sent": 12}, None)
     rows = outcomes.list_outcomes(rid)
     assert len(rows) == 1 and rows[0]["metric"] == "weekday_sales:Tuesday"
-    client_api._track_campaign_outcome(rid, {"target_day": "Funday"}, {"ok": True}, None)
+    client_api._track_campaign_outcome(rid, {"target_day": "Funday"}, {"ok": True, "sent": 12}, None)
     assert len(outcomes.list_outcomes(rid)) == 1
 
 

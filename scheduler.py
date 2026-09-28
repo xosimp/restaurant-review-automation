@@ -3131,6 +3131,16 @@ def _minute_duties():
             log.info(f"Newsletter sends: {_nl}")
     except Exception as e:
         _ops.capture(e, job="newsletter_sends")
+    try:
+        # Guest text campaigns still sending, cut off by a deploy, or waiting
+        # on the 8am window, in bounded passes; the queue rows are the cursor
+        # (guest_marketing.run_campaign_sends, MB-10).
+        from guest_marketing import run_campaign_sends
+        _gc = run_campaign_sends()
+        if _gc.get("sent") or _gc.get("failed"):
+            log.info(f"Guest campaign sends: {_gc}")
+    except Exception as e:
+        _ops.capture(e, job="guest_campaign_sends")
 
 
 def _pulse_interval():

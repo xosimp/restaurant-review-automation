@@ -58,6 +58,52 @@ TWILIO_GUEST_MESSAGING_SERVICE_SID = os.getenv("TWILIO_GUEST_MESSAGING_SERVICE_S
 # set, and the publish emails instead (Friction audit #17).
 TWILIO_STAFF_MESSAGING_SERVICE_SID = os.getenv("TWILIO_STAFF_MESSAGING_SERVICE_SID", "")
 _guest_service_warned = False
+# Twilio's ValidityPeriod ceiling for a guest text: four hours (MB-13).
+GUEST_SMS_MAX_VALIDITY = 4 * 3600
+
+
+def guest_sender_display() -> str:
+    """The number guests see a campaign come from, formatted for the Campaign
+    Studio's phone preview — "(630) 555-0123" — or "" when it isn't known:
+    TWILIO_GUEST_FROM_NUMBER (display only; the guest Messaging Service picks
+    the real number), else TWILIO_FROM_NUMBER when guest texts still ride the
+    alert service. The preview used to show the restaurant's name and avatar
+    as the sender, which is not what a guest's phone shows (CS-12)."""
+    raw = os.getenv("TWILIO_GUEST_FROM_NUMBER", "")
+    if not raw and not TWILIO_GUEST_MESSAGING_SERVICE_SID:
+        raw = TWILIO_FROM
+    digits = "".join(c for c in (raw or "") if c.isdigit())
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    if len(digits) == 10:
+        return f"({digits[:3]}) {digits[3:6]}-{digits[6:]}"
+    return (raw or "").strip()
+
+
+def sms_stopped_phones(phones, db_path: str = DB_PATH) -> set:
+    """Which of `phones` (as given) texted STOP to the platform number —
+    guest_sms_optouts' restaurant 0 row, written by guest_marketing.
+    handle_inbound_sms for ANY inbound STOP. The owner-alert sender honours
+    it (MB-15): the STOP reply says every text from this number stops, and
+    alerts kept coming. Fails open to "none" only when the table does not
+    exist yet (no STOP can have been recorded)."""
+    wanted = {p: _normalize_phone(p) for p in phones if p}
+    if not wanted:
+        return set()
+    try:
+        conn = models.get_conn(db_path)
+    except Exception:
+        return set()
+    try:
+        norm = sorted(set(wanted.values()))
+        rows = conn.execute("SELECT phone FROM guest_sms_optouts WHERE restaurant_id=0 AND phone IN (%s)"
+                            % ",".join("?" * len(norm)), norm).fetchall()
+    except Exception:
+        return set()
+    finally:
+        conn.close()
+    stopped = {r[0] for r in rows}
+    return {p for p, n in wanted.items() if n in stopped}
 from emails import _resend_key
 
 def emails_sender(kind="client"):
@@ -130,8 +176,15 @@ def validate_twilio_signature(url: str, post_params: dict, signature: str) -> bo
     return hmac.compare_digest(expected, signature)
 
 
-def send_sms(to_phone: str, message: str, use_case: str = "alert") -> bool:
+def send_sms(to_phone: str, message: str, use_case: str = "alert", validity_seconds: int = None) -> bool:
     """Send a single SMS via Twilio. Returns True on success.
+
+    `validity_seconds` is Twilio's ValidityPeriod: how long the message may
+    wait in Twilio's queue before it is dropped rather than delivered late.
+    Guest campaign texts pass the seconds left until 9:00 PM on the
+    restaurant's clock (guest_marketing.guest_sms_validity_seconds), so a
+    list queued at 8:40pm never reaches a phone after 9 (MB-13, audit #60).
+    Clamped to 1..GUEST_SMS_MAX_VALIDITY; None leaves Twilio's default.
 
     Sends via MessagingServiceSid rather than a bare From number — the path
     Twilio's A2P 10DLC campaigns are registered against. A message sent with
@@ -180,6 +233,8 @@ def send_sms(to_phone: str, message: str, use_case: str = "alert") -> bool:
         data["MessagingServiceSid"] = service_sid
     else:
         data["From"] = TWILIO_FROM
+    if validity_seconds is not None:
+        data["ValidityPeriod"] = str(max(1, min(int(validity_seconds), GUEST_SMS_MAX_VALIDITY)))
     # One retry for a failure Twilio says is transient (429, 5xx) or a
     # connection that failed before a response (AI-27): a single blip lost an
     # owner's health alert text. NOT for a read timeout — Twilio's Messages
@@ -746,8 +801,15 @@ def get_alert_contacts(restaurant_id: int, sms_consent_only: bool = False, db_pa
         query += " AND sms_consent=1"
     rows = conn.execute(query + " ORDER BY id", (restaurant_id,)).fetchall()
     conn.close()
-    return [{"id": r["id"], "name": r["name"] or "", "phone": r["phone"],
-             "sms_consent": bool(r["sms_consent"])} for r in rows]
+    out = [{"id": r["id"], "name": r["name"] or "", "phone": r["phone"],
+            "sms_consent": bool(r["sms_consent"])} for r in rows]
+    if sms_consent_only and out:
+        # A number that texted STOP to the platform is not texted an alert
+        # either (MB-15): consent given in the Alerts form is withdrawn by
+        # the phone's own STOP, as it is for guests.
+        stopped = sms_stopped_phones([c["phone"] for c in out], db_path=db_path)
+        out = [c for c in out if c["phone"] not in stopped]
+    return out
 
 
 # Cavnar AI texts at most this many people per location: the alert contacts

@@ -309,7 +309,10 @@ def test_a_review_action_tells_the_owner_when_it_failed(src, fn):
 # ── CLIENT-1 / CLIENT-19: sends with side effects ───────────────────────────
 
 def test_the_guest_blast_and_ask_confirm_still_exist(src):
-    assert "/api/guest-campaign/send" in _function(src, "sendGuestCampaign")
+    # The request is built when the button is armed (cpSnapshot, CS-4) and
+    # sent from that snapshot by the second press.
+    assert "/api/guest-campaign/send" in _function(src, "cpSnapshot")
+    assert "fetch(snap.text.url" in _function(src, "sendGuestCampaign")
     assert _catch_bodies(_function(src, "sendGuestCampaign"))
     assert _catch_bodies(_function(src, "_runAskCavnarProposal"))
 

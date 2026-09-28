@@ -241,7 +241,8 @@ def test_a_campaign_inside_the_sms_budget_goes_out_in_full_with_the_stop_line(db
     result = guest_marketing.send_campaign(rid, message, db_path=db_path)
 
     assert result["sent"] == 1
-    assert bodies[0].startswith(message) and "Reply STOP" in bodies[0]
+    # Opens with the restaurant's name (CS-12), then the words in full.
+    assert bodies[0].startswith("Edge Marketing Co: " + message) and "Reply STOP" in bodies[0]
 
 
 def test_a_700_character_campaign_is_refused_before_any_text_is_sent(db_path, rid, monkeypatch):
