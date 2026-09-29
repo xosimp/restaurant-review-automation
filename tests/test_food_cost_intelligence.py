@@ -224,7 +224,10 @@ def test_the_prompt_forbids_inventing_a_cause_and_reranking():
     src = inspect.getsource(inventory.get_claude_insights)
     assert "Never state a cause that is not in the ROOT-CAUSE READ" in src
     assert "ALREADY RANKED" in src
-    assert "Do not promote a cheaper or easier item above a more expensive one" in src
+    # Since the memory audit (9/29/26, "what_worked") the ranking weighs
+    # dollars by how that kind of fix measured here, so the rule the model
+    # keeps is that IT never re-ranks.
+    assert "Do not re-rank them yourself" in src
 
 
 def test_the_insight_reads_diagnoses_rather_than_generating_them():

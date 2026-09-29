@@ -3270,6 +3270,9 @@ def init_db(db_path: str = DB_PATH):
     # One identity and event trail for every recommendation (rec_ledger).
     from rec_ledger import init_rec_ledger
     init_rec_ledger(db_path)
+    # The monthly what-worked snapshots (rec_learning, memory audit 9/29/26).
+    from rec_learning import init_rec_learning
+    init_rec_learning(db_path)
     # The rec-ROI columns on trackers written before them (module from the
     # recommendation's own rec_instances row, so after the ledger exists).
     from outcomes import init_outcomes

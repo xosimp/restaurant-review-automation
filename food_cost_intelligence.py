@@ -419,6 +419,40 @@ def _waste_confidence(weeks: int) -> str:
     return "low"
 
 
+# A cost driver's kind -> the rec_ledger lever topic its fix pulls, so the
+# driver is weighed by every result of that lever here (cut_waste,
+# food_waste and a nightly report's reduce_waste are all "waste").
+DRIVER_TOPIC = {"waste": "waste", "price": "purchasing", "sourcing": "purchasing", "menu": "pricing",
+                "portion": "food_cost"}
+
+
+def _learned_driver_weights(restaurant_id, drivers, db_path=DB_PATH):
+    """Put this restaurant's learned weight on each driver (`learned`:
+    {weight, why}) when it is not 1.0 (rec_learning.effectiveness). Never
+    raises; with nothing learned every driver is left as it was."""
+    if not drivers:
+        return
+    try:
+        import rec_learning
+        import rec_ledger
+        import business_intelligence as _bi_w
+        learned = rec_learning.effectiveness(restaurant_id, db_path=db_path)
+    except Exception as e:
+        print(f"[food_cost_intelligence] learned weights unavailable for {restaurant_id}: {e}")
+        return
+    for d in drivers:
+        try:
+            key = d.get("rec_key") or _bi_w.driver_key(d)
+            topic = DRIVER_TOPIC.get(d.get("kind"))
+            tags = list(rec_ledger.tags_for(key)) + ([f"topic:{topic}"] if topic else [])
+            w, why = learned.weight(key, tags=sorted(set(tags)))
+        except Exception as e:
+            print(f"[food_cost_intelligence] learned weight failed for a driver: {e}")
+            continue
+        if w != 1.0:
+            d["learned"] = {"weight": w, "why": list(why or [])[:3]}
+
+
 def driver_evidence(d: dict) -> dict:
     """A cost driver's Evidence Strength input (confidence_engine.evidence):
     what its own measurement rests on, per kind. Replaces the hand-set
@@ -870,14 +904,24 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     for d in drivers:
         d["value_kind"] = driver_value_kind(d)
 
-    # The priority model, in order: financial impact first, then confidence,
-    # then ease. Difficulty breaks a tie between two drivers worth similar
-    # money — it never promotes a small easy win over a large hard one,
-    # because that is the ranking an owner would not forgive.
+    # What this restaurant's own record says about each kind of fix (memory
+    # audit 9/29/26, "what_worked"): the effectiveness model's bounded weight
+    # (0.6-1.25x) for the driver's key and its lever — waste, purchasing,
+    # pricing, food cost — so a kind of fix that measurably worked here
+    # moves up and one that measurably made things worse moves down. It
+    # used to enter only as the confidence tie-break. The dollars shown are
+    # never changed.
+    _learned_driver_weights(restaurant_id, drivers, db_path=db_path)
+
+    # The priority model, in order: financial impact (weighted by that
+    # record) first, then confidence, then ease. Difficulty breaks a tie
+    # between two drivers worth similar money — it never promotes a small
+    # easy win over a large hard one, because that is the ranking an owner
+    # would not forgive.
     _CONF = {"high": 0, "medium": 1, "low": 2}
     _DIFF = {"low": 0, "medium": 1, "high": 2}
-    drivers.sort(key=lambda d: (-d["dollars_monthly"], _CONF.get(d["confidence"], 3),
-                                _DIFF.get(d["difficulty"], 3)))
+    drivers.sort(key=lambda d: (-d["dollars_monthly"] * float((d.get("learned") or {}).get("weight") or 1.0),
+                                _CONF.get(d["confidence"], 3), _DIFF.get(d["difficulty"], 3)))
     dedup = deduplicated_total(drivers)
     return {
         "available": bool(drivers),
@@ -904,7 +948,8 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         "complete": not degraded,
         "basis": ("Each driver is priced from this restaurant's own recorded usage and "
                   "prices, expressed monthly so drivers measured over different periods "
-                  "are comparable. Ranked by dollars, then confidence, then ease."),
+                  "are comparable. Ranked by dollars — weighted by how that kind of fix has measured "
+                  "here — then confidence, then ease."),
         "reason": None if drivers else
                   f"nothing clears the ${MIN_DRIVER_DOLLARS:g}/month floor",
     }
@@ -1377,7 +1422,7 @@ RESTAURANT: {restaurant_name}
 TODAY: {today}
 WINDOW: the last {window_days} days
 
-WHERE THE MONEY IS (measured — each figure is computed from this restaurant's own recorded usage and prices, already ranked by dollars, then confidence, then ease):
+WHERE THE MONEY IS (measured — each figure is computed from this restaurant's own recorded usage and prices, already ranked by dollars weighted by how that kind of fix has measured here, then confidence, then ease):
 {drivers_block}
 
 FOOD COST POSITION:

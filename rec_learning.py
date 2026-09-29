@@ -1376,3 +1376,311 @@ def answerable_episode(viewer, restaurant_id, key, db_path=DB_PATH):
     if ep is None or not ep.get("shown") or not viewer_sees(viewer, ep):
         return None
     return ep
+
+
+# ── what has worked HERE (memory audit 9/29/26, "what_worked") ──────────────
+#
+# The effectiveness model only ever reordered cards; no text generator knew
+# that two measured trims of Tuesday dinner improved labor % and coincided
+# with a rating drop, or that the owner had ignored a kind of advice six
+# times. what_worked(rid) is the per-restaurant record by kind and by
+# subject tag — acceptance, measured results (one per change) and how often
+# it was left unanswered — and what_worked_lines serves it to every model
+# call through memory_context. The nightly learning pass snapshots it by
+# month (rec_learning_summaries, kept forever), so how a restaurant's record
+# moved is never lost to the 365-day window.
+
+WORKED_TAG_PREFIXES = ("topic:", "focus:", "category:", "dish:", "item:", "daypart:", "day:")
+IGNORED_LINE_MIN = 3            # left unanswered this often, never taken → said
+WORKED_LINES_MAX = 6
+# The modules whose kinds and the lever topics whose tags each surface reads.
+SURFACE_SCOPE = {
+    "labor_read": (("labor", "schedule"), ("staffing", "hours", "overtime")),
+    "schedule": (("labor", "schedule"), ("staffing", "hours", "overtime")),
+    "food_read": (("food",), ("waste", "ordering", "purchasing", "pricing", "food_cost")),
+    "food_diagnosis": (("food",), ("waste", "ordering", "purchasing", "pricing", "food_cost")),
+    "review_read": (("reviews",), ("guest_experience", "replies")),
+    "review_diagnosis": (("reviews",), ("guest_experience", "replies", "staffing")),
+    "marketing": (("marketing", "guests"), ("posting", "marketing", "guest_outreach", "sales")),
+}
+
+
+def init_rec_learning(db_path: str = DB_PATH):
+    """Boot DDL (models.init_db): the monthly what-worked snapshots."""
+    conn = get_conn(db_path)
+    try:
+        conn.execute("""CREATE TABLE IF NOT EXISTS rec_learning_summaries (
+            restaurant_id   INTEGER NOT NULL,
+            month           TEXT    NOT NULL,
+            scope           TEXT    NOT NULL,
+            name            TEXT    NOT NULL,
+            module          TEXT,
+            shown           INTEGER NOT NULL DEFAULT 0,
+            settled         INTEGER NOT NULL DEFAULT 0,
+            taken           INTEGER NOT NULL DEFAULT 0,
+            dismissed       INTEGER NOT NULL DEFAULT 0,
+            ignored         INTEGER NOT NULL DEFAULT 0,
+            measured        INTEGER NOT NULL DEFAULT 0,
+            improved        INTEGER NOT NULL DEFAULT 0,
+            worsened        INTEGER NOT NULL DEFAULT 0,
+            no_clear_change INTEGER NOT NULL DEFAULT 0,
+            computed_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (restaurant_id, month, scope, name)
+        )""")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _worked_bucket():
+    return {"shown": 0, "settled": 0, "taken": 0, "dismissed": 0, "ignored": 0, "measured": 0, "improved": 0,
+            "worsened": 0, "no_clear_change": 0, "modules": {}}
+
+
+def what_worked(restaurant_id, db_path=DB_PATH, now=None, episodes=None) -> dict:
+    """{"kinds": {kind: stats}, "tags": {tag: stats}} over the last
+    EFFECT_WINDOW_DAYS — stats {shown, settled, taken, dismissed, ignored,
+    measured, improved, worsened, no_clear_change, module}. Counted the
+    way kind_record and the owner's record count: shown episodes, read
+    through learned_verdict, one result per change (_one_per_window).
+    Never raises."""
+    now = now or datetime.utcnow()
+    out = {"kinds": {}, "tags": {}}
+    try:
+        if episodes is None:
+            conn = get_conn(db_path)
+            try:
+                episodes = _load(conn, restaurant_id, since=_stamp(now - timedelta(days=EFFECT_WINDOW_DAYS)),
+                                 lean=True)
+            finally:
+                conn.close()
+    except Exception as e:
+        print(f"[rec_learning] what-worked record unavailable for {restaurant_id}: {e}")
+        return out
+    groups = {}
+    for e in episodes or []:
+        if not e.get("shown") or e.get("state") == "superseded":
+            continue
+        kind = e.get("kind") or rec_ledger.kind_of(e["key"])
+        names = [("kinds", kind)] + [("tags", t) for t in e.get("tag_list") or []
+                                     if str(t).startswith(WORKED_TAG_PREFIXES)]
+        for scope, name in names:
+            b = out[scope].setdefault(name, _worked_bucket())
+            b["shown"] += 1
+            m = e.get("module") or "home"
+            b["modules"][m] = b["modules"].get(m, 0) + 1
+            st = e.get("state")
+            if _settled(e):
+                b["settled"] += 1
+            if _taken(e):
+                b["taken"] += 1
+                if e.get("verdict"):
+                    groups.setdefault((scope, name), []).append(e)
+            elif st == "dismissed":
+                b["dismissed"] += 1
+            elif st == "ignored":
+                b["ignored"] += 1
+    for (scope, name), eps in groups.items():
+        b = out[scope][name]
+        for e in _one_per_window(eps):
+            if e["verdict"] in CLEAR_VERDICTS:
+                b["measured"] += 1
+                b[e["verdict"]] += 1
+    for scope in ("kinds", "tags"):
+        for b in out[scope].values():
+            mods = b.pop("modules")
+            b["module"] = sorted(mods.items(), key=lambda kv: (-kv[1], kv[0]))[0][0] if mods else None
+    return out
+
+
+def snapshot_what_worked(restaurant_id, db_path=DB_PATH, now=None) -> int:
+    """Write this month's what-worked rows (rec_learning_summaries), one per
+    kind and tag, replacing earlier writes of the same month — the nightly
+    learning pass. A past month's rows are never touched again: the history
+    of the record is kept forever. Returns rows written. Never raises."""
+    now = now or datetime.utcnow()
+    month = now.strftime("%Y-%m")
+    rec = what_worked(restaurant_id, db_path=db_path, now=now)
+    rows = [(restaurant_id, month, scope[:-1], name, b.get("module"), b["shown"], b["settled"], b["taken"],
+             b["dismissed"], b["ignored"], b["measured"], b["improved"], b["worsened"], b["no_clear_change"])
+            for scope in ("kinds", "tags") for name, b in rec[scope].items()]
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return 0
+    try:
+        conn.execute("DELETE FROM rec_learning_summaries WHERE restaurant_id=? AND month=?", (restaurant_id, month))
+        conn.executemany(
+            "INSERT INTO rec_learning_summaries (restaurant_id, month, scope, name, module, shown, settled, taken, "
+            "dismissed, ignored, measured, improved, worsened, no_clear_change) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            rows)
+        conn.commit()
+        return len(rows)
+    except Exception as e:
+        print(f"[rec_learning] what-worked snapshot failed for {restaurant_id}: {e}")
+        return 0
+    finally:
+        conn.close()
+
+
+def _stored_what_worked(restaurant_id, db_path=DB_PATH):
+    """The latest month's snapshot as what_worked's shape, or None."""
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return None
+    try:
+        row = conn.execute("SELECT MAX(month) AS m FROM rec_learning_summaries WHERE restaurant_id=?",
+                           (restaurant_id,)).fetchone()
+        if not row or not row["m"]:
+            return None
+        out = {"kinds": {}, "tags": {}}
+        for r in conn.execute("SELECT * FROM rec_learning_summaries WHERE restaurant_id=? AND month=?",
+                              (restaurant_id, row["m"])).fetchall():
+            d = dict(r)
+            out["kinds" if d["scope"] == "kind" else "tags"][d["name"]] = d
+        return out
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
+def _kind_label(kind) -> str:
+    k = str(kind or "")
+    if k.startswith("insight_"):
+        return f"the {k[len('insight_'):]} read's suggestions"
+    if k.startswith("diag_"):
+        return f"the {k[len('diag_'):]} diagnosis's action"
+    return k.replace("_", " ")
+
+
+def _worked_sentence(label, b) -> str:
+    """One line of the record: taken of settled, the measured results when
+    they clear the floor, how often it was left unanswered."""
+    bits = []
+    if b.get("settled"):
+        bits.append(f"taken {b['taken']} of {b['settled']} times it was answered or left")
+    if b.get("measured", 0) >= MIN_MEASURED_FOR_RATE:
+        bits.append(f"improved {b['improved']} of {b['measured']} measured results"
+                    + (f", {b['worsened']} worse" if b.get("worsened") else "")
+                    + " (before and after, not proof)")
+    elif b.get("measured"):
+        bits.append(f"{b['measured']} measured so far — too few to say")
+    if b.get("ignored", 0) >= IGNORED_LINE_MIN and not b.get("taken"):
+        bits.append(f"ignored {b['ignored']} times and never taken")
+    return f"{label}: " + "; ".join(bits) if bits else ""
+
+
+def what_worked_lines(req):
+    """memory_context provider: "WHAT HAS WORKED HERE" — per kind and per
+    subject tag of this restaurant's advice: how often it was taken, how
+    often a taken one measurably improved ("k of n (before and after)",
+    only at MIN_MEASURED_FOR_RATE results), and how often it was ignored.
+    Scoped to the surface's modules and levers (SURFACE_SCOPE); with
+    subjects ("day:friday", "labor:day:friday", "category:service"), the
+    tags that match them first. Computed by Cavnar AI: trusted lines.
+    Reads the nightly snapshot, else computes it."""
+    rid = getattr(req, "restaurant_id", None)
+    if not rid:
+        return []
+    db_path = getattr(req, "db_path", None) or DB_PATH
+    rec = _stored_what_worked(rid, db_path=db_path) or what_worked(rid, db_path=db_path)
+    modules, topics = SURFACE_SCOPE.get(getattr(req, "surface", None), (None, None))
+    subjects = [str(s).lower() for s in (getattr(req, "subjects", None) or ()) if s]
+    wanted_tags = set()
+    for s in subjects:
+        parts = s.split(":")
+        for i in range(len(parts) - 1):
+            wanted_tags.add(f"{parts[i]}:{parts[i + 1]}")
+    cand = []
+    for kind, b in (rec.get("kinds") or {}).items():
+        if modules and (b.get("module") or "home") not in modules:
+            continue
+        cand.append(("kind", kind, b))
+    for tag, b in (rec.get("tags") or {}).items():
+        head, _, val = tag.partition(":")
+        if topics and head == "topic" and val not in topics:
+            continue
+        if topics and head == "focus" and not any(val.endswith("_" + t) for t in topics):
+            continue
+        if modules and head not in ("topic", "focus") and (b.get("module") or "home") not in modules \
+                and tag not in wanted_tags:
+            continue
+        cand.append(("tag", tag, b))
+    lines = []
+    for scope, name, b in cand:
+        informative = (b.get("measured", 0) >= MIN_MEASURED_FOR_RATE
+                       or (b.get("ignored", 0) >= IGNORED_LINE_MIN and not b.get("taken"))
+                       or b.get("measured"))
+        if not informative:
+            continue
+        label = rec_ledger.tag_label(name) if scope == "tag" else _kind_label(name)
+        text = _worked_sentence(label, b)
+        if not text:
+            continue
+        weight = (3.0 if name in wanted_tags else 0.0) + (2.0 if b.get("measured", 0) >= MIN_MEASURED_FOR_RATE
+                                                          else 1.0 if b.get("ignored", 0) >= IGNORED_LINE_MIN
+                                                          else 0.5) + min(1.0, b.get("measured", 0) / 20.0)
+        lines.append({"text": text, "date": None, "source": "system", "subject": name, "weight": weight,
+                      "trusted": True})
+    lines.sort(key=lambda ln: -ln["weight"])
+    return lines[:WORKED_LINES_MAX]
+
+
+# Advice that takes hours or people OUT of a day. Adding coverage is also
+# "staffing", and its result says nothing about a trim.
+_CUT_KINDS = ("trim_day", "pulse_cut", "labor_over")
+_CUT_WORDS = None
+
+
+def _is_cut(e) -> bool:
+    global _CUT_WORDS
+    import re
+    if _CUT_WORDS is None:
+        _CUT_WORDS = re.compile(r"\b(cut|cuts|trim\w*|reduc\w*|fewer|drop|shorten\w*|send\s+\w+\s+home|"
+                                r"take\s+\w+\s+off)\b", re.I)
+    kind = e.get("kind") or rec_ledger.kind_of(e.get("key"))
+    if kind in _CUT_KINDS:
+        return True
+    if kind == "dsr_action" and ":control_hours:" in f"{e.get('key')}:":
+        return True
+    return bool(_CUT_WORDS.search(str(e.get("title") or "")))
+
+
+def worsened_levers(restaurant_id, db_path=DB_PATH, now=None, episodes=None) -> dict:
+    """{weekday: {"worsened", "measured", "label"}} — weekdays where advice
+    that CUT staffing or hours (topic staffing / hours, a day tag) was taken
+    and measured worse at least once, one result per change. What the
+    schedule optimizer reads to hold back a trim of the same day (memory
+    audit 9/29/26, "what_worked"). Never raises."""
+    now = now or datetime.utcnow()
+    try:
+        if episodes is None:
+            conn = get_conn(db_path)
+            try:
+                episodes = _load(conn, restaurant_id, since=_stamp(now - timedelta(days=EFFECT_WINDOW_DAYS)),
+                                 lean=True)
+            finally:
+                conn.close()
+    except Exception as e:
+        print(f"[rec_learning] worsened levers unavailable for {restaurant_id}: {e}")
+        return {}
+    by_day = {}
+    for e in episodes or []:
+        if not (e.get("shown") and _taken(e) and e.get("verdict")):
+            continue
+        tags = e.get("tag_list") or []
+        if not any(t in ("topic:staffing", "topic:hours") for t in tags) or not _is_cut(e):
+            continue
+        for t in tags:
+            if t.startswith("day:"):
+                by_day.setdefault(t[4:], []).append(e)
+    out = {}
+    for day, eps in by_day.items():
+        kept = [e for e in _one_per_window(eps) if e["verdict"] in CLEAR_VERDICTS]
+        worse = sum(1 for e in kept if e["verdict"] == "worsened")
+        if worse:
+            out[day] = {"worsened": worse, "measured": len(kept),
+                        "label": f"staffing cuts on {day.capitalize()}s"}
+    return out

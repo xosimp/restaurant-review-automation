@@ -494,6 +494,9 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     result["fairness_ledger"] = ledger
     result["could_hold"] = could_hold
     result["projected_revenue_source"] = revenue.get("source") if revenue.get("value") else ("monthly target ÷ 4.33" if monthly_rev_target else "recent sales scaled to a week")
+    # Where a cut measurably went worse here, for the optimizer (memory
+    # audit 9/29/26, "what_worked").
+    result["learned_worse"] = learned_worse_levers(restaurant_id)
     try:
         import reservation_feeds as _rf
         result["reservation_feed"] = _rf.status(restaurant)
@@ -2155,7 +2158,21 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=Non
             out["pending_time_off"] = {n: sorted(d) for n, d in c.pending_off.items()}
     except Exception as _cx:
         print(f"[schedule] live constraints unavailable: {_cx}")
+    out["learned_worse"] = learned_worse_levers(restaurant_id)
     return out
+
+
+def learned_worse_levers(restaurant_id) -> dict:
+    """{weekday: {worsened, measured, label}}: the days where cutting
+    staffing was taken and measured worse here (rec_learning.
+    worsened_levers) — the optimizer holds back a trim of the same day
+    (memory audit 9/29/26, "what_worked"). {} on any failure."""
+    try:
+        import rec_learning
+        return rec_learning.worsened_levers(restaurant_id) or {}
+    except Exception as e:
+        print(f"[schedule] learned levers unavailable for {restaurant_id}: {e}")
+        return {}
 
 
 def _prior_week_assignments(restaurant_id, days_back: int = 7, before: str = None) -> dict:

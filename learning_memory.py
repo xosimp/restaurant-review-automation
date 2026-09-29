@@ -7,6 +7,8 @@ and resumable), each step isolated so one failing never stops the others:
   claims       score every claim whose horizon has passed (ai_reads.score_due)
   summaries    write the quarterly "what we said, what was done, what
                happened" rows that outlive the raw reads (ai_reads)
+  what_worked  this month's what-worked record by kind and tag
+               (rec_learning.snapshot_what_worked; kept forever)
 
 Only restaurants that may teach a learner are passed in
 (models.learning_eligible): a demo, a test account or an internal one never
@@ -27,11 +29,19 @@ def _summaries(restaurant_id, today, db_path):
     return {"written": ai_reads.summarise_quarters(restaurant_id, today=today, db_path=db_path)}
 
 
-# name -> fn(restaurant_id, today, db_path) -> dict. Order matters: a step
-# that reads another's output runs after it.
+def _what_worked(restaurant_id, today, db_path):
+    import rec_learning
+    kw = {"db_path": db_path} if db_path else {}
+    return {"written": rec_learning.snapshot_what_worked(restaurant_id, **kw)}
+
+
+# name -> fn(restaurant_id, today, db_path) -> dict, run in this order;
+# each step reads only committed rows, so a failing step never corrupts the
+# next.
 STEPS = [
     ("claims", _claims),
     ("summaries", _summaries),
+    ("what_worked", _what_worked),
 ]
 
 

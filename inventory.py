@@ -1318,7 +1318,8 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
             cfo_block = (
                 "\n\nFOOD COST POSITION:\n" + position_block +
                 "\n\nPROFITABILITY:\n" + profit_block +
-                "\n\nWHERE THE MONEY IS (already ranked by dollars, then confidence, then ease "
+                "\n\nWHERE THE MONEY IS (already ranked by dollars weighted by how that kind of fix has "
+                "measured here, then confidence, then ease "
                 "— do NOT re-rank these):\n" + drivers_block +
                 "\n\nHOW FAR THESE FIGURES CAN BE TRUSTED:\n" + trust_block +
                 "\n\nWHERE AND WHEN THE WASTE LANDS:\n" + _pat +
@@ -1439,7 +1440,7 @@ Dollar figures the data supports (opportunities and per-order differences — no
 Write a food cost analysis. Rules that apply to everything:
 - Every dollar amount, percentage and quantity you write must appear verbatim somewhere above. Do not add, average, extrapolate or otherwise derive a number of your own — not even a rounded one.
 - Never state a cause that is not in the ROOT-CAUSE READ above. If there is none, describe what the figures show and stop.
-- The drivers above are ALREADY RANKED by dollars, then confidence, then ease. Follow that order. Do not promote a cheaper or easier item above a more expensive one.
+- The drivers above are ALREADY RANKED by dollars (weighted by how that kind of fix has measured here), then confidence, then ease. Follow that order. Do not re-rank them yourself.
 - Read "HOW FAR THESE FIGURES CAN BE TRUSTED" before you commit to anything. Low recipe coverage or a high inferred-waste share means the usage figures underneath are soft, and you must say so rather than writing past it.
 - Where a figure is marked as not computable, do not estimate it. "We cannot measure your food cost percentage until a second count is in" is a correct and useful sentence.
 - If the data does not support a genuine, specific opportunity, say so plainly in one sentence and write no recommendations at all. An honest "nothing worth changing this week" is a correct answer.
