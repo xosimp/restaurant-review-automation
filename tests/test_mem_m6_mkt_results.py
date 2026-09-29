@@ -204,4 +204,4 @@ def test_the_marketing_and_competitor_reads_are_kept_as_history():
     assert 'ai_reads.record_read(rid, "marketing_read", insight, subject="marketing"' in mkt
     assert mkt.index("_ist_m.put(rid, \"marketing\"") < mkt.index("ai_reads.record_read")
     comp = inspect.getsource(competitor.run_competitor_analysis)
-    assert 'ai_reads.record_read(restaurant_id, "competitor_read", insight, subject="intel"' in comp
+    assert 'ai_reads.record_read(restaurant_id, "competitor_read", str(insight), subject="intel"' in comp

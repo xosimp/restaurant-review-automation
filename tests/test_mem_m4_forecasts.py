@@ -23,9 +23,13 @@ def _db(db_path, monkeypatch):
     import schedule_economics  # noqa: F401 — bound get_conn, redirected below
     real = models.get_conn
     redirect = lambda *a, **k: real(db_path)
+    # Every module-level get_conn, not only those still bound to the real one:
+    # a module first imported while ANOTHER test file had patched models.get_conn
+    # kept that file's redirect, which points at a database already gone.
     for mod in list(sys.modules.values()):
         try:
-            if getattr(mod, "get_conn", None) is real:
+            fn = getattr(mod, "get_conn", None)
+            if mod is not models and callable(fn) and not isinstance(mod, type):
                 monkeypatch.setattr(mod, "get_conn", redirect)
         except Exception:
             pass
