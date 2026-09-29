@@ -352,12 +352,17 @@ def get_recent_content(restaurant_id: int, limit: int = 5) -> list:
 
 def log_content(restaurant_id: int, content_type: str, topic: str,
                 post_id: str = None, post_platform: str = None, body: str = None, tags: dict = None,
-                content_log_id: int = None):
+                content_log_id: int = None, user: dict = None):
     """Log generated content for memory — and tag it (marketing_tags.py)
     with the dish, occasion and kind it is about, so its result can be read
     against them. A post that went live also starts the month's observed
     sales tracker (outcomes.observe). `content_log_id` is the generated row a
-    publish completes (MB-8). Returns the row's id."""
+    publish completes (MB-8). Returns the row's id.
+
+    A publish a person made (`user`, the route's login) is a piece that went
+    out: its caption is measured against the model's draft
+    (marketing_voice.record_final; memory audit 9/29/26, mkt_edits). A
+    scheduled publish has no person — its draft's approval was recorded."""
     if not restaurant_id:
         return
     row_id = _log_content_row(restaurant_id, content_type, topic, post_id, post_platform,
@@ -379,6 +384,13 @@ def log_content(restaurant_id: int, content_type: str, topic: str,
         except Exception:
             pass
         post_went_live(restaurant_id, post_id)
+        if user and body:
+            try:
+                import marketing_voice
+                marketing_voice.record_final(restaurant_id, content_channel(content_type), body, "post_publish",
+                                             ref_id=row_id, user=user, content_log_id=content_log_id)
+            except Exception:
+                pass
     return row_id
 
 
@@ -584,7 +596,7 @@ def refusal_detail(verdict) -> str:
 
 
 def generate_content(content_type: str, topic: str,
-                     restaurant_id: int = None, topic_is_owner: bool = True) -> str:
+                     restaurant_id: int = None, topic_is_owner: bool = True, user_id: int = None) -> str:
     """Generate marketing content for a given type and topic.
 
     `topic_is_owner` is whether the owner typed the topic. A calendar idea's
@@ -594,7 +606,14 @@ def generate_content(content_type: str, topic: str,
     Every draft is held to one public-copy guard set (response_validation:
     the shared offer vocabulary, invented prices / times / dates / events /
     new-back-better-changed claims / links, the sign-off name), with the
-    owner's figures as typed facts (AUX-1)."""
+    owner's figures as typed facts (AUX-1).
+
+    Memory audit 9/29/26 (mkt_edits): the prompt carries the owner's voice on
+    this channel (marketing_voice.voice_block — their edits, three pieces
+    they sent in their own words, what their regenerated drafts had in
+    common), and the draft is kept (marketing_voice.record_draft, `user_id`
+    the person who asked) so what goes out can be measured against it; its
+    id rides on the text as `draft_ref`."""
     from datetime import datetime
     prompt_template = PROMPTS.get(content_type, PROMPTS["instagram_post"])
     p = get_profile_for_restaurant(restaurant_id)
@@ -659,6 +678,20 @@ def generate_content(content_type: str, topic: str,
         except Exception:
             signal_context = ""
 
+    # The owner's own voice on this channel, learned from what they changed
+    # and what they threw away (memory audit 9/29/26, mkt_edits), and what
+    # Cavnar AI remembers about the restaurant (memory_context, surface
+    # 'marketing'): the owner's constraints, goals, answers, what worked.
+    voice_context = ""
+    memory_block = ""
+    if restaurant_id:
+        try:
+            import marketing_voice
+            voice_context = marketing_voice.voice_block(restaurant_id, content_channel(content_type))
+        except Exception:
+            voice_context = ""
+        memory_block = marketing_memory_block(restaurant_id)
+
     # The weekly email signs off as the restaurant actually does (its
     # sign-off name, else its own name) — never an invented "— Sarah".
     sign_off = (p.get("sign_off_name") or p.get("name") or "").strip()
@@ -672,7 +705,8 @@ def generate_content(content_type: str, topic: str,
         known_for=p["known_for"],
         topic=topic,
         sign_off_rule=sign_off_rule,
-    ) + location_context + recent_context + seasonal_context + never_clause + menu_clause + signal_context
+    ) + (location_context + recent_context + seasonal_context + never_clause + menu_clause + signal_context
+         + voice_context + memory_block)
     # A topic can be the owner's aim ("Fill Tuesday dinner", the Opportunity
     # Feed's slow night); said to the public it announces a slow night.
     prompt += ("\nThe topic may be the owner's own aim. Never say or hint that a night is slow, quiet or empty, "
@@ -731,8 +765,34 @@ def generate_content(content_type: str, topic: str,
         result.content_log_id = row_id
     except AttributeError:
         pass
+    # The model's text, kept so the piece that goes out is measured against
+    # it (marketing_voice; mkt_edits). A scheduled job's draft has no person.
+    try:
+        import marketing_voice
+        draft_ref = marketing_voice.record_draft(restaurant_id, content_channel(content_type), str(result),
+                                                 "post" if user_id else "job", user_id=user_id,
+                                                 content_log_id=row_id)
+        result.draft_ref = draft_ref
+    except Exception:
+        pass
 
     return result
+
+
+def marketing_memory_block(restaurant_id, subjects=()) -> str:
+    """memory_context for a marketing generator (surface 'marketing'), as a
+    fenced, M/D/YY-dated prompt block, or "" — never raises into a draft.
+    Context for what to write, never a source for an offer or a claim (the
+    public-copy guard's offer source is still only the owner's profile)."""
+    try:
+        import memory_context
+        text = memory_context.memory_context(restaurant_id, "marketing", subjects=subjects).text
+    except Exception:
+        return ""
+    if not text:
+        return ""
+    return ("\n\nWHAT CAVNAR AI REMEMBERS ABOUT THIS RESTAURANT — context for what to write, never a source "
+            "for an offer, a price, a date or a claim:\n" + text + "\n")
 
 
 def calendar_idea_key(angle) -> str:
@@ -744,8 +804,10 @@ def calendar_idea_key(angle) -> str:
 
 
 def mark_calendar_idea_used(restaurant_id: int, content_type: str, topic: str):
-    """Track which calendar ideas were actually generated — feeds back into
-    future calendar quality — and record the idea as taken on the
+    """Track which calendar ideas were actually generated — the next week's
+    calendar reads them as the kinds of angle the owner picks
+    (chosen_calendar_angles; memory audit 9/29/26 — they used to come back
+    only as "avoid repeating these") — and record the idea as taken on the
     recommendation trail: writing from an idea is the owner's answer to it
     (#41)."""
     log_content(restaurant_id, f"calendar_{content_type}", topic)
@@ -759,6 +821,25 @@ def mark_calendar_idea_used(restaurant_id: int, content_type: str, topic: str):
                               source_ref=f"calendar:{key}:{_date.today().isoformat()}")
         except Exception as e:
             print(f"[marketing] calendar acceptance not recorded rid={restaurant_id}: {e}")
+
+
+def chosen_calendar_angles(restaurant_id: int, limit: int = 5) -> list:
+    """The calendar angles the owner chose to write from, newest first (the
+    calendar_* markers mark_calendar_idea_used logs). Never raises."""
+    if not restaurant_id:
+        return []
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            rows = conn.execute("SELECT topic FROM marketing_content_log WHERE restaurant_id=? "
+                                "AND content_type LIKE 'calendar\\_%' ESCAPE '\\' AND TRIM(COALESCE(topic, '')) != '' "
+                                "ORDER BY created_at DESC, id DESC LIMIT ?", (restaurant_id, int(limit))).fetchall()
+        finally:
+            conn.close()
+        return [public_topic(r["topic"]) for r in rows if public_topic(r["topic"])]
+    except Exception:
+        return []
 
 
 # A forced regeneration inside this window returns what was just built
@@ -1168,6 +1249,19 @@ def get_content_calendar_ideas(restaurant_id: int = None, force: bool = False) -
     # the wrong day and an SMS idea was required of a restaurant with no
     # text list.
     week_block, sms_rule = _calendar_week_context(restaurant_id, iso_map, now)
+    # What the owner picks and how they write (memory audit 9/29/26,
+    # mkt_edits): the angles they chose to write from are the kinds they
+    # like — offered again as kinds, never as the same topic — and their
+    # voice on social. Plus what Cavnar AI remembers (memory_context).
+    chosen = chosen_calendar_angles(restaurant_id) if restaurant_id else []
+    chosen_block = (("\nAngles the owner chose to write from lately (the KINDS of idea they pick — offer fresh ones "
+                     "of these kinds, never the same topic): " + "; ".join(chosen)) if chosen else "")
+    try:
+        import marketing_voice
+        voice_block = marketing_voice.voice_block(restaurant_id, "social") if restaurant_id else ""
+    except Exception:
+        voice_block = ""
+    memory_block = marketing_memory_block(restaurant_id) if restaurant_id else ""
 
     prompt = f"""Generate a 7-day social media content calendar for {p['name']},
 a {p['vibe']} in {p['neighborhood']}.
@@ -1177,8 +1271,8 @@ Brand voice: {p['voice']}
 {never_clause}
 TODAY'S DATE: {today_str} (this is the real current date — do not assume any other date)
 Upcoming holidays/events in the next 30 days: {upcoming_holidays if upcoming_holidays else "No major holidays"}
-Recently generated content (avoid repeating these): {recent_topics}
-{signal_block}{week_block}
+Recently generated content (avoid repeating these): {recent_topics}{chosen_block}
+{signal_block}{week_block}{voice_block}{memory_block}
 
 Return ONLY valid JSON — no markdown fences. Array of 7 objects with:
 {{"day": "Monday", "platform": "Instagram & FB|Email|Google|SMS", "angle": "one short sentence, max 20 words", "type": "instagram_post|weekly_email|google_promo|happy_hour|loyalty_nudge"}}

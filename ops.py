@@ -2138,6 +2138,10 @@ _RETENTION_DAYS = {
     # down, as a hash and signals (never its words) — the drafter's edit
     # note reads the last 90 days (models.REJECTIONS_KEEP_DAYS).
     "reply_draft_rejections": int(os.getenv("RETAIN_REPLY_REJECTIONS_DAYS", "90")),
+    # Marketing copy a model drafted (marketing_voice.DRAFTS_KEEP_DAYS): what
+    # went out keeps its original on marketing_edits; the rest is only
+    # needed to see which drafts were regenerated rather than used.
+    "marketing_model_drafts": int(os.getenv("RETAIN_MKT_MODEL_DRAFTS_DAYS", "90")),
 }
 
 # Each table's own timestamp column — they do not agree on a name.
@@ -2157,7 +2161,7 @@ _RETENTION_COLUMN = {
     "value_figures_daily": "date", "admin_issue_resolution_history": "created_at", "sms_log": "created_at",
     "push_outbox": "created_at", "webhook_outbox": "created_at", "morning_brief_deliveries": "created_at",
     "alert_storm_caps": "started_at", "login_history": "created_at",
-    "reply_draft_rejections": "created_at",
+    "reply_draft_rejections": "created_at", "marketing_model_drafts": "created_at",
 }
 # Every table above has an index on its column, created where the table is
 # or at boot here (_ensure_retention_indexes, DATA-40): these deletes run

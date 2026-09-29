@@ -1721,10 +1721,18 @@ def draft_campaign_message(restaurant, campaign_type="general", topic="", goal="
     menu_clause = f" Menu & current specials: {p['menu_notes']}. Reference something specific when it fits naturally." if p.get("menu_notes") else ""
     topic_clause = f" Topic/specifics to include: {topic}." if topic else ""
     goal_clause = f" What the owner wants this text to do, in their words: {goal}." if goal else ""
+    # The owner's voice on guest texts (what they change before a text goes
+    # out, three they sent in their own words, what their regenerated drafts
+    # had in common — marketing_voice; memory audit 9/29/26, mkt_edits) and
+    # what Cavnar AI remembers (memory_context, surface 'marketing').
+    import marketing_voice
+    from marketing import marketing_memory_block
+    voice = marketing_voice.voice_block(restaurant.id, "text")
+    memory = marketing_memory_block(restaurant.id)
 
     prompt = (
         f"Write {intent} for {p['name']}, a {p['vibe']} in {p['neighborhood']}. "
-        f"Brand voice: {p['voice']}.{never_clause}{menu_clause}{topic_clause}{goal_clause}\n\n"
+        f"Brand voice: {p['voice']}.{never_clause}{menu_clause}{topic_clause}{goal_clause}{voice}{memory}\n\n"
         f"Rules: under {budget} characters total (this is a real text message, not an email). "
         # A guest text is refused on any stated cause ("because of you",
         # "thanks to our new chef"): the guard can't tell warmth from a claim.
@@ -2761,12 +2769,21 @@ def winback_suggestion(restaurant_id, restaurant_name=None, surface="marketing",
                 restaurant_name = _r.name if _r else None
             except Exception:
                 restaurant_name = None
+        # The owner's own last win-back text, when they sent one lately, is
+        # the draft — their words, not the fixed copy they rewrote last time
+        # (memory audit 9/29/26, mkt_edits: every rewrite used to be thrown
+        # away and the next draft repeated the original).
+        try:
+            import marketing_voice
+            own = marketing_voice.last_sent(restaurant_id, "text", "winback", db_path=db_path)
+        except Exception:
+            own = None
+        message = (own or "").strip()[:CAMPAIGN_MAX_CHARS] or _winback_message(restaurant_name)
         conn = get_conn(db_path)
         try:
             cur = conn.execute("INSERT INTO guest_campaign_drafts (restaurant_id, kind, segment, segment_size, "
                                "message, rec_key) VALUES (?,?,?,?,?,?)",
-                               (restaurant_id, "winback", seg, size, _winback_message(restaurant_name),
-                                winback_key(seg)))
+                               (restaurant_id, "winback", seg, size, message, winback_key(seg)))
             conn.commit()
             draft = dict(conn.execute("SELECT * FROM guest_campaign_drafts WHERE id=?", (cur.lastrowid,)).fetchone())
         finally:
@@ -2801,7 +2818,8 @@ def _answer_winback(restaurant_id, draft_id, status, user_id=None, sent_message=
         conn.close()
 
 
-def send_winback(restaurant_id, draft_id, message=None, user_id=None, hold=False, db_path=DB_PATH) -> dict:
+def send_winback(restaurant_id, draft_id, message=None, user_id=None, hold=False, db_path=DB_PATH,
+                 user=None) -> dict:
     """The owner's send of a win-back draft — through start_campaign, so
     consent, quiet hours (`hold`: queue it for 8:00 AM), the frequency cap
     and the length with the restaurant's name all apply. The draft is
@@ -2848,6 +2866,20 @@ def send_winback(restaurant_id, draft_id, message=None, user_id=None, hold=False
         return result
     _answer_winback(restaurant_id, draft_id, "sent", user_id, sent_message=text, total=result.get("total"),
                     db_path=db_path)
+    # What the owner actually sent, measured against the draft (memory audit
+    # 9/29/26, mkt_edits — sent_message was written and read by nothing). A
+    # draft that already WAS the owner's own last win-back text is theirs
+    # from the start: kept as written, not as an edit of Cavnar AI's copy.
+    try:
+        import marketing_voice
+        drafted = row["message"] or ""
+        own = drafted.strip() == (marketing_voice.last_sent(restaurant_id, "text", "winback", db_path=db_path)
+                                  or "").strip()
+        marketing_voice.record_final(restaurant_id, "text", text, "winback", ref_id=draft_id,
+                                     user=user,
+                                     original_body=None if own else drafted, db_path=db_path)
+    except Exception as e:
+        print(f"[winback] edit not recorded for {restaurant_id}: {e}")
     try:
         import rec_ledger
         rec_ledger.record(restaurant_id, row["rec_key"], "accepted", surface="marketing", user_id=user_id,

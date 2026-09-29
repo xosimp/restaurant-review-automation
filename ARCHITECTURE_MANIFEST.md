@@ -219,6 +219,7 @@ Every root module, its layer and its one-line job. The test fails when a module 
 | `marketing_publish` | 2 | scheduled and direct publishing |
 | `marketing_signals` | 2 | per-post attribution and the summary |
 | `marketing_tags` | 2 | dish / occasion / kind tagging of posts |
+| `marketing_voice` | 2 | the owner's marketing voice (memory audit 9/29/26): every model draft kept 90 days (`marketing_model_drafts`), every piece that went out measured against it (`marketing_edits`: reply_edits.compare plus hashtags / emoji / sign-off, and who sent it), and `voice_block` — the account holder's style line, three pieces they sent (fenced) and what their regenerated drafts had in common — for the post, calendar, guest-text and email prompts |
 | `menu_intelligence` | 2 | dish scorecard and repricing |
 | `meta_api` | 2 | Instagram/Facebook Graph calls |
 | `metrics` | 2 | the registry of measurable things |

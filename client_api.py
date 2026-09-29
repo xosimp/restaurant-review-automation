@@ -4186,7 +4186,7 @@ def food_cost_waste_trend(current_user):
     except Exception as e:
         return jsonify(ok=False, weeks=[], error=_safe_err(e)), 500
 
-def _do_generate_content(restaurant_id, content_type, topic, from_calendar=False):
+def _do_generate_content(restaurant_id, content_type, topic, from_calendar=False, user_id=None):
     """Write one marketing post — the one body behind /api/generate-content
     and /mobile/api/marketing/generate-content. The two had drifted: the web
     answered a rate limit with 200 and no `ok`, the phone a failed model call
@@ -4204,7 +4204,7 @@ def _do_generate_content(restaurant_id, content_type, topic, from_calendar=False
         # A calendar idea's angle was written by a model: the post is written
         # from it, but it is never the owner's word for an offer (AI-2).
         result = generate_content(content_type, topic, restaurant_id=restaurant_id,
-                                  topic_is_owner=not from_calendar)
+                                  topic_is_owner=not from_calendar, user_id=user_id)
     except Exception as e:
         # A budget stop says the account is paused, never "try again" (AI-11).
         from ai_utils import AIBudgetExceeded, user_facing_error
@@ -4222,9 +4222,12 @@ def _do_generate_content(restaurant_id, content_type, topic, from_calendar=False
             pass
     from response_validation import validation_of as _rv_gc
     # content_log_id: the generated row, which a publish of this text sends
-    # back so the post completes it by id (MB-8).
+    # back so the post completes it by id (MB-8). draft_ref: the model's
+    # draft kept for measuring the owner's edit (marketing_voice; a save or
+    # a publish may send it back — the content-log id finds it too).
     return {"ok": True, "content": result, "tags": _post_tags_safe(restaurant_id, topic, result),
-            "validation": _rv_gc(result), "content_log_id": getattr(result, "content_log_id", None)}, 200
+            "validation": _rv_gc(result), "content_log_id": getattr(result, "content_log_id", None),
+            "draft_ref": getattr(result, "draft_ref", None)}, 200
 
 
 @client_bp.route("/api/generate-content", methods=["POST"])
@@ -4232,8 +4235,25 @@ def _do_generate_content(restaurant_id, content_type, topic, from_calendar=False
 def gen_content(current_user):
     data = request.get_json(silent=True) or {}
     payload, status = _do_generate_content(current_user["restaurant_id"], data.get("type"),
-                                           data.get("topic"), from_calendar=bool(data.get("from_calendar")))
+                                           data.get("topic"), from_calendar=bool(data.get("from_calendar")),
+                                           user_id=current_user.get("id"))
     return jsonify(**payload), status
+
+
+def _content_log_id_of(data):
+    """The generated content-log row a request names (social_routes._content_log_id)."""
+    from social_routes import _content_log_id
+    return _content_log_id(data)
+
+
+def _draft_ref_of(data):
+    """The model draft a request names (`draft_ref`, from a generate or a
+    Studio draft — marketing_voice.record_draft), or None; never guessed."""
+    try:
+        v = int((data or {}).get("draft_ref") or 0)
+    except (TypeError, ValueError):
+        return None
+    return v if v > 0 else None
 
 
 def _post_tags_safe(rid, topic, body):
@@ -4312,7 +4332,7 @@ def marketing_drafts_api(current_user):
 def marketing_draft_approve(draft_id, current_user):
     import marketing_drafts as _md
     result = _md.approve_draft(draft_id, current_user["restaurant_id"],
-                               user_id=current_user.get("id"), role=current_user.get("role"))
+                               user_id=current_user.get("id"), role=current_user.get("role"), user=current_user)
     return jsonify(**result), (200 if result.get("ok") else 403)
 
 
@@ -4502,7 +4522,7 @@ def _do_post_to_google(current_user, data):
         from marketing import log_content
         log_content(rid, "google_promo", (data.get("topic") or summary)[:80],
                     post_id=result.get("name") or None, post_platform="google", body=summary,
-                    content_log_id=_content_log_id(data))
+                    content_log_id=_content_log_id(data), user=current_user)
     except Exception:
         pass
     if data.get("rec_key"):

@@ -1107,6 +1107,10 @@ def ensure_columns(db_path: str = DB_PATH):
         ("reviews", "approved_by", "INTEGER"),
         ("reviews", "approved_role", "TEXT"),
         ("reviews", "approved_via", "TEXT"),
+        # The model's first text on a saved marketing draft, kept when the
+        # owner edits it (memory audit 9/29/26, mkt_edits): an edit used to
+        # overwrite `body` and the original was gone.
+        ("marketing_drafts", "original_body", "TEXT"),
         # Recipe provenance (audit #35): 'owner' (typed or imported by a
         # person), 'draft_accepted' (a Cavnar draft accepted unedited) or
         # 'draft_edited' (a draft line the owner changed before accepting).
@@ -2151,6 +2155,50 @@ def init_db(db_path: str = DB_PATH):
         )""",
         "CREATE INDEX IF NOT EXISTS idx_reply_rejections_rid ON reply_draft_rejections(restaurant_id, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_reply_rejections_created ON reply_draft_rejections(created_at)",
+        # Every piece of marketing copy a model drafted for a person — the
+        # post composer, the Campaign Studio's text and email (marketing_
+        # voice.record_draft) — kept 90 days (ops._RETENTION_DAYS): long
+        # enough to match what went out to what was drafted, and to see
+        # which drafts were regenerated rather than used (mkt_edits).
+        """CREATE TABLE IF NOT EXISTS marketing_model_drafts (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL,
+            channel         TEXT    NOT NULL,
+            source          TEXT,
+            body            TEXT    NOT NULL,
+            content_log_id  INTEGER,
+            user_id         INTEGER,
+            used_at         TEXT,
+            created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_model_drafts_rid ON marketing_model_drafts(restaurant_id, channel, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_model_drafts_created ON marketing_model_drafts(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_model_drafts_log ON marketing_model_drafts(content_log_id)",
+        # One row per marketing piece that went out — a post published or
+        # approved, a guest text or an email sent — with the model's
+        # original beside the final text, the edit measured and who sent it
+        # (marketing_voice.record_final). The owner's voice record: kept.
+        """CREATE TABLE IF NOT EXISTS marketing_edits (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL,
+            channel         TEXT    NOT NULL,
+            source          TEXT    NOT NULL,
+            ref_id          INTEGER,
+            draft_id        INTEGER,
+            original_body   TEXT,
+            final_body      TEXT    NOT NULL,
+            edit_distance   REAL,
+            edit_category   TEXT,
+            edit_signals    TEXT,
+            words_before    INTEGER,
+            words_after     INTEGER,
+            user_id         INTEGER,
+            authority       TEXT,
+            via             TEXT,
+            created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(restaurant_id, source, ref_id)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_edits_rid ON marketing_edits(restaurant_id, channel, id)",
 
         # Nothing this module published was measurable once it left the
         # platform. A short link is the only way to know a text drove a
