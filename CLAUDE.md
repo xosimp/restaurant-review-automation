@@ -22,7 +22,7 @@ exploring code:
 | `PROJECT_CONTEXT.md` / `ROADMAP.md` | Product state and direction |
 | `INTELLIGENCE_ENGINE.md` | The cross-restaurant learning layer and its privacy rules |
 | `docs/ops/SECURITY.md`, `docs/ops/RECOVERY.md`, `docs/ops/RAILWAY_SCHEDULER_SPLIT.md`, `docs/ops/PIN_PEPPER_RUNBOOK.md` | Controls, the emergency runbook, the deploy shape, the PIN pepper |
-| `docs/plans/` | Designs not yet built (task sheets, Back Office) |
+| `docs/plans/` | Designs not yet built (task sheets, Back Office, the DSR engine, Postgres and more workers, the restaurant health row, the review-fetch queue, the nonce CSP) |
 | `docs/history/` | Superseded material kept for the record; nothing in it is live |
 
 ---
@@ -117,7 +117,11 @@ A deletion is only "verified" when the trace is written down alongside it.
   an ISO date in owner-facing text is a bug.
 - **Email colours come from `emails.BRAND`**, enforced as a ratchet by
   `scripts/check_email_tokens.py`. Email is light-mode only, inline-styled,
-  and governed by `DESIGN_SYSTEM.md` → Email.
+  and governed by `DESIGN_SYSTEM.md` → Email. Every sender returns an
+  `emails.SendResult` and passes `restaurant_id`; act on `.ok`, and never
+  write a `log_email` row for a send that did not happen. One email has one
+  sender — the welcome is `emails.send_welcome_with_set_password_link`
+  whoever sends it.
 - **Value delivered is only what was measured.** `value_delivered.py`
   returns four figures — `delivered` (from `outcomes.py`, before/after,
   caveated), `avoided` (cost avoidance at STATED rates, counted only for
@@ -136,6 +140,17 @@ A deletion is only "verified" when the trace is written down alongside it.
   whitelist, and `get_restaurant()`'s hydration. Miss the whitelist and writes
   silently no-op — `tests/test_models.py` now asserts every `al_*`/`alert_*`
   dataclass field is whitelisted.
+- **An admin action audits itself through one typed call**,
+  `admin_events.record_admin_action` (actor, target, before/after, result) —
+  never `admin_events.record("admin", …)` from a route
+  (`tests/test_fix_int2_admin.py` holds `admin_routes.py` to it). A sensitive
+  one takes `@recent_auth_required()` directly under `@admin_required`, or
+  `auth.reauth_refusal(current_user)` for the part of a route that needs it;
+  `docs/ops/SECURITY.md` lists them and `tests/test_docs_controls.py` holds
+  the list. Admin work that calls a provider or a model runs on the one admin
+  job pool (`admin_routes._submit_admin_job`) or `ops.run_admin_task`, never
+  a thread per click; a thread a request starts is `ai_utils.attributed(fn)`,
+  so its model calls stay the requester's.
 - **Targeted tests by default — and before a push too.** The full suite
   (~4-5 min) is NOT a pre-push step. Run it only after an audit or fix
   round, a big code change, a large batch of changes, or when asked — never
@@ -149,41 +164,94 @@ A deletion is only "verified" when the trace is written down alongside it.
   `restaurants` outside `update_restaurant` must call
   `models._invalidate_request_cache(rid)`.
 - **Never put schema DDL on a request or per-call path.** Every table is
-  created at boot — by `init_db()` or by one of the `init_*` functions
+  created at boot — by `init_db()` (which also calls `ops.init_ops`,
+  `billing_jobs.init_billing`, `admin_events.init_admin_events`,
+  `offboarding.init_offboarding`, `admin_ops.init_admin_ops` and
+  `ai_utils.init_ai_ops`) or by one of the `init_*` functions
   `hosted_dashboard.py` calls right after it (`auth`, `push`, `webhooks`,
-  `guest_marketing`, `sales_audits`, `ops`). `ai_utils._ensure_usage_schema` is the pattern where a lazy
-  table is unavoidable: once per database per process, with a self-healing
-  retry if a write later fails on a missing column.
-- **The scheduler only runs on Railway** (`scheduler.scheduling_allowed()`):
-  a local backend has its own SQLite file and lease but production's Resend
-  and Twilio keys, so a local scheduler re-sends real briefs, digests, alerts
-  and issue texts. `ALLOW_LOCAL_SCHEDULER=1` overrides it deliberately.
+  `guest_marketing`, `sales_audits`, `platform_monitor.init_platform_tables`,
+  `provider_health.init_provider_health`). `ai_utils._ensure_usage_schema` is
+  the pattern where a lazy table is unavoidable: once per database per
+  process, with a self-healing retry if a write later fails on a missing
+  column.
+- **The scheduler only runs on Railway** (`scheduler.scheduling_allowed()`,
+  also false while `RESTORE_FROM` is set): a local backend has its own SQLite
+  file and lease but production's Resend and Twilio keys, so a local
+  scheduler re-sends real briefs, digests, alerts and issue texts. The same
+  gate refuses every admin action that emails, texts, or changes Stripe or
+  DocuSign (`admin_routes._send_blocked`, `_live_actions_refused`,
+  `LOCAL_SENDS_REFUSED`, `billing_jobs._sending_allowed`); a send that is only
+  a side effect of an admin action is skipped with a note instead, and a new
+  admin send checks the gate too. Deliberately NOT gated: the admin's own 2FA
+  code (`/admin/two-factor/send`), the owner and login flows in
+  `auth_routes`, and `/api/send-referral` — a local backend with the
+  production `.env` still sends those. `ALLOW_LOCAL_SCHEDULER=1` overrides
+  both deliberately.
+- **Never run a copy of the app from a worktree with Flask's own `.env`
+  loading.** `hosted_dashboard.py` loads the `.env` beside it and runs
+  `app.run(..., load_dotenv=False)`, because Flask's lookup walks up from the
+  working directory — a copy under `.claude/worktrees/` loaded the main
+  checkout's `.env` (production's keys). A throwaway server for a UI check
+  runs with no provider keys in its environment.
 - **Deployment shape.** The scheduler runs in the web process by default.
   **Never run it as a separate Railway service**: volumes cannot be shared
   between services, so it would schedule against an empty database while the
   real jobs stopped. `worker.py` is only valid as a second process in the same
   service — see `docs/ops/RAILWAY_SCHEDULER_SPLIT.md`. The single-runner guarantee is
-  `ops.acquire_scheduler_lease()`, and the lease lives in the SQLite file.
-- **Do not raise gunicorn `--workers` past 1** until these process-local
-  dicts are moved into the database: `client_api._order_send_last`
-  (supplier-email cooldown) and `ai_utils._ai_call_log` (AI rate limit).
-  Each worker gets its own copy, so two workers silently double both limits.
-  (The login brute-force limiter is durable now — `security.login_throttled`
-  on the `login_attempts` table; `auth_routes._login_attempts` is only its
-  fail-closed fallback.) Railway usage (Sep 2026) showed ~19 vCPU-minutes
-  of CPU for the whole billing period, so there is no load reason to do it yet.
+  `ops.acquire_scheduler_lease()`, and the lease lives in the SQLite file:
+  the lease keeper renews it every minute, a kept lease silent for 4 minutes
+  is taken over, and the web process's supervisor restarts a dead scheduler
+  thread together with its keeper (`scheduler._run_scheduler_thread`). With a
+  volume attached Railway runs one deployment at a time: a boot that fails,
+  or a `/health` that is not 200 within the 120-second healthcheck, is
+  downtime until a rollback — `/health` answers 200 for a degraded platform
+  on purpose and must stay read-only.
+- **Do not raise gunicorn `--workers` past 1** until the process-local
+  state that still multiplies with workers is moved into the database:
+  `security._admin_hits` (the admin request ceiling), `ai_utils._breakers`
+  (per-process AI breakers), the console's fleet memo
+  (`admin_ops._fleet_state`) and the bounded pools (`ASK_MAX_CONCURRENT`,
+  the two admin pools — `ops.run_admin_task` and
+  `admin_routes._submit_admin_job` — and the webhook and push delivery
+  pools); the inventory and order are in
+  `docs/plans/POSTGRES_AND_WORKERS_PLAN.md`. Each worker gets its own copy,
+  so two workers silently double every limit. (Already durable: the login
+  limiter — `security.login_throttled` on `login_attempts`,
+  `auth_routes._login_attempts` only its fail-closed fallback; the
+  supplier-email cooldown — `ops.claim_cooldown` rows,
+  `client_api._order_send_last` is gone; the AI rate limit —
+  `ai_rate_events`, `ai_utils._ai_call_log` only its fallback.) Railway
+  usage (Sep 2026) showed ~19 vCPU-minutes of CPU for the whole billing
+  period, so there is no load reason to do it yet.
 - **Every outbound HTTP call names a timeout**, enforced by
   `scripts/check_timeouts.py`. With `--workers 1 --threads 4`, one call
   waiting on the OS's TCP behaviour is a quarter of the platform.
+- **Dependencies are locked.** Edit `requirements.in` (direct dependencies,
+  pinned exactly), then re-lock `requirements.txt` with `pip-compile` under
+  Python 3.12 (`.python-version` pins 3.12.7). Railway and CI install the
+  lock (CI with `--no-deps`, then `pip check`). Never edit a version in
+  `requirements.txt` by hand.
 - **Work that iterates every restaurant must be bounded and resumable.**
   `run_daily_fetch` is the pattern: a worker pool, a wall-clock bound, and a
   cursor in `job_cursors` so the next pass starts where the last one
   stopped. A time bound without a cursor is worse than no bound — it starves
   the same tail every pass.
+- **A scheduled job is one `jobs_registry.JOBS` entry plus one
+  `ops.run_job("<name>", fn)` call in `scheduler_loop`**, returning
+  `{attempted, ok, failed, skipped, hit_bound}` or raising
+  (`tests/test_fix_d_jobs.py` keeps the two in step; `ops.run_outcome` reads
+  any other result as partial, never clean). A growing ledger gets an entry
+  in `ops._RETENTION_DAYS` / `_RETENTION_COLUMN`; a finding about a model's
+  output is `ai_utils.record_quality_event`, not `ops.capture`.
 - **Recovery lives in `docs/ops/RECOVERY.md`.** The local backup snapshot is
   deliberately NOT redacted (it never leaves the volume and is the restore
-  artifact); only the emailed copy is. Do not reintroduce redaction on the
-  local path.
+  artifact); only the off-site copies are — the object-storage and emailed
+  copies are scrubbed through `offsite_backup`'s one registry and
+  Fernet-encrypted, and the backup fails when no off-site copy was made. Do
+  not reintroduce redaction on the local path. `tests/test_docs_controls.py`
+  holds `docs/ops/SECURITY.md`, `RECOVERY.md` and `RAILWAY_SCHEDULER_SPLIT.md`
+  (and `DATABASE_SCHEMA.md`'s scrub list and retention table) to the code:
+  change a control and its sentence together.
 - **Static assets have no cache-busting** (`/static/cavnar-orb.js`, bare
   path). Do not add a far-future `max-age` until they are hashed or
   versioned, or a JS fix will be stranded in browser caches.
