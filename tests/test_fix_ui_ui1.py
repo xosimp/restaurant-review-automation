@@ -212,7 +212,11 @@ def test_roles_are_labelled_as_the_owner_sees_them_and_confirmed(page):
 
 def test_resend_welcome_names_the_address_and_keeps_the_password(page):
     rw = _fn(page, "resendWelcome")
-    assert "one-hour set-password link" in rw and "current password keeps working" in rw
+    # One welcome email now (INT-2): its link's lifetime is the model's, and
+    # the confirm says it — not the one hour B2's separate email used.
+    import models
+    days = models.SET_PASSWORD_LINK_HOURS // 24
+    assert "set-password link" in rw and f"for {days} days" in rw and "current password keeps working" in rw
 
 
 def test_test_sends_name_the_recipient_and_can_go_to_me(page):

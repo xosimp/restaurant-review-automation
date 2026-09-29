@@ -1538,6 +1538,9 @@ const HEALTH_TILE = {critical:'background:var(--red-bg);color:var(--red-t)', war
 function actionsMenu(c, d){
   const b = (label, js, cls) => `<button data-a class="w ${cls||''}" onclick="menusClose();${js}">${label}</button>`;
   const a = (label, href) => `<a data-a href="${href}">${label}</a>`;
+  // The legacy settings and data pages refuse support logins (INT-2): hidden
+  // from support like every write control.
+  const aw = (label, href) => `<a data-a class="w" href="${href}">${label}</a>`;
   const login = c.logins.find(l=>l.is_active && (l.role==='client'||l.role==='owner')) || c.logins.find(l=>l.is_active) || {};
   const n = jsq(c.name), em = jsq((c.owner||{}).email || c.owner_email || '');
   const status = (c.billing||{}).status || 'trial';
@@ -1548,7 +1551,7 @@ function actionsMenu(c, d){
     <span class="lbl">Messages</span>${b('Resend welcome email…', `resendWelcome(${c.id},'${n}','${em}')`)}${b('Resend contract…', `resendContract(${c.id},'${n}','${jsq(c.owner_email||'')}')`)}${status!=='active'?b(status==='past_due'?'Send card-update link…':'Resend payment link…', `resendPayment(${c.id},'${n}','${jsq(status)}','${jsq(c.owner_email||'')}')`):''}
     ${b('Send test digest…', `testSend('digest',${c.id},'${n}','${jsq(c.owner_email||'')}')`)}${b('Send test urgent alert…', `testSend('urgent',${c.id},'${n}','${jsq(c.owner_email||'')}')`)}${b('Send value recap…', `valueRecap(${c.id},'${n}','${jsq(c.owner_email||'')}')`)}
     <span class="lbl">Integrations &amp; data</span>${b('RPOWER token &amp; sync…', `rpowerOpen(${c.id},'${jsq(c.name)}')`)}${b('Toast credentials…', `toastOpen(${c.id},'${jsq(c.name)}')`)}${b('Sync Toast now', `act('/admin/toast/sync/${c.id}','Sync Toast now for ${n}')`)}${b('Refresh Instagram token', `act('/admin/refresh-ig-token/${c.id}','Refresh the Instagram and Facebook tokens for ${n}')`)}
-    ${b('Branding &amp; peer profile…', `brandOpen(${c.id},'${n}')`)}${a('Full settings', '/admin/client-settings/'+c.id)}${a('Manage data (CSV)', '/admin/client-data/'+c.id)}${a('Recommendations for this client', '#analytics/recommendations/'+c.id)}
+    ${b('Branding &amp; peer profile…', `brandOpen(${c.id},'${n}')`)}${aw('Full settings', '/admin/client-settings/'+c.id)}${aw('Manage data (CSV)', '/admin/client-data/'+c.id)}${a('Recommendations for this client', '#analytics/recommendations/'+c.id)}
     ${b('Add a location to this brand…', `addLocationOpen(${c.id},'${jsq(c.brand||c.name)}')`)}
     <span class="lbl">Access</span>${a('View dashboard as this client', '/admin/view-as/'+c.id)}${b('Send a password-reset link…', `sendResetLink(${login.id||0}, '${jsq(login.username||'')}', '${jsq(login.email||'')}')`)}
     ${b(c.is_demo ? 'Mark as real client…' : 'Mark as demo…', `setDemo(${c.id},${c.is_demo?0:1},'${n}')`)}
@@ -2016,6 +2019,12 @@ async function offStep(id, step, status, label, name){
   let note = '';
   if(status === 'skipped'){ note = prompt('Skip “' + label + '” for ' + name + '? Say why (it is kept with the step):'); if(note === null) return; if(!note.trim()){ toast('A skip needs a reason', 'bad'); return; } }
   else if(status === 'done' && step === 'integrations'){ if(!confirm('Revoke every connection for ' + name + '? This clears its stored Google, Meta, POS, back-office and reservation credentials and turns its outbound webhooks off. It cannot be undone from here — they would reconnect.')) return; }
+  // Marking these two done carries them out (INT-2): the Stripe step cancels
+  // the live subscription now (a covered location is refused — cancel on the
+  // paying location), the DocuSign step voids the envelope still waiting for a
+  // signature. Both ask for the password first and refuse on a local backend.
+  else if(status === 'done' && step === 'stripe'){ if(!confirm('Cancel the Stripe subscription for ' + name + ' now? Stripe stops billing at once and nothing is refunded automatically. A location covered by another location’s subscription is refused.')) return; }
+  else if(status === 'done' && step === 'docusign'){ if(!confirm('Void the DocuSign envelope still waiting for ' + name + '’s signature? It can no longer be signed. A contract that is already signed is not voided — skip this step with a note instead.')) return; }
   else if(!confirm((status === 'done' ? 'Mark “' + label + '” done for ' : 'Set “' + label + '” back to pending for ') + name + '?')) return;
   const d = await post('/admin/api/client/' + id + '/offboarding/' + encodeURIComponent(step), {status, note});
   if(say(d, status === 'done' ? label + ' — done' : (status === 'skipped' ? label + ' — skipped' : label + ' — back to pending'))) lazy('off-card', () => offboardHtml({id:id, name:name}));
@@ -3595,10 +3604,12 @@ async function resetPassword(rid, name, email){
   const d = await post('/admin/reset-password-by-restaurant/' + rid, {});
   say(d, 'Reset link sent');
 }
-// Resend welcome (#22): the username and a one-hour set-password link to
-// the owner login's own address; the current password keeps working.
+// Resend welcome (#22): the username and a set-password link (one use,
+// 3 days — models.SET_PASSWORD_LINK_HOURS) to the owner login's own address;
+// the current password keeps working. A suppressed or missing address is a
+// 409 and a failed send a 502 — say() shows either sentence.
 async function resendWelcome(rid, name, email){
-  if(!confirm('Email ' + (email || 'the owner') + ' their username and a one-hour set-password link' + (name ? ' for ' + name : '') + '? Their current password keeps working.')) return;
+  if(!confirm('Email ' + (email || 'the owner') + ' their username and a set-password link' + (name ? ' for ' + name : '') + '? The link works once, for 3 days. Their current password keeps working.')) return;
   const d = await post('/admin/resend-welcome/' + rid, {});
   say(d, 'Welcome email sent');
 }
