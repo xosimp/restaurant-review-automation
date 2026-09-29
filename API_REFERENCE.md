@@ -4,21 +4,21 @@ This documents **patterns and resource groups**, not every individual route — 
 
 ## Blueprints (registered in `hosted_dashboard.py`)
 
-| Blueprint | File | URL prefix | Auth | Routes |
+| Blueprint | File | URL prefix | Auth | Routes (`python3 scripts/repo_inventory.py`, 9/29/26 after the integration wave) |
 |---|---|---|---|---|
-| `client_bp` | `client_api.py` | `/api/*` (+ page and public-token routes: `/approve/<id>`, `/e/<token>`, `/s/<token>`, `/join/<token>`, `/u/<token>`, `/m/<token>.jpg`) | web session cookie (`auth.login_required`) | 194 |
-| `mobile_bp` | `mobile_api.py` | `/mobile/api/*` | Bearer token (`auth.mobile_login_required`) | 205 |
-| `strategy_bp` / `strategy_mobile_bp` | `strategy_routes.py` | each `_ROUTES` entry at `/api/…` **and** `/mobile/api/…` | session / bearer | 113 + 113 |
+| `client_bp` | `client_api.py` | `/api/*` (+ page and public-token routes: `/approve/<id>`, `/e/<token>`, `/s/<token>`, `/join/<token>`, `/u/<token>`, `/m/<token>.jpg`) | web session cookie (`auth.login_required`) | 229 |
+| `mobile_bp` | `mobile_api.py` | `/mobile/api/*` | Bearer token (`auth.mobile_login_required`) | 239 |
+| `strategy_bp` / `strategy_mobile_bp` | `strategy_routes.py` | each `_ROUTES` entry at `/api/…` **and** `/mobile/api/…` | session / bearer | 126 + 126 |
 | `issue_link_bp` | `strategy_routes.py` | `/i/<token>` | signed token | 1 |
-| `admin_bp` | `admin_routes.py` | `/admin/*`, plus `/privacy`, `/terms`, `/sms-optin-preview`, `/.well-known/security.txt`, `/og-image.png`, `/favicon.*`, `/api/competitor-intel`, `/api/send-referral`, `/api/export-reviews`, `/api/log-activity` | `auth.admin_required` (writes need `is_admin`; the `support` role reads; the admin second factor, the request ceiling and, on sensitive routes, step-up — see *Admin console API*) | 179 (9/29/26) |
+| `admin_bp` | `admin_routes.py` | `/admin/*`, plus `/privacy`, `/terms`, `/sms-optin-preview`, `/.well-known/security.txt`, `/og-image.png`, `/favicon.*`, `/api/competitor-intel`, `/api/send-referral`, `/api/export-reviews`, `/api/log-activity` | `auth.admin_required` (writes need `is_admin`; the `support` role reads; the admin second factor, the request ceiling and, on sensitive routes, step-up — see *Admin console API*) | 180 |
 | `audit_bp` | `sales_audit_routes.py` | `/admin/audits/*` (+ a public shared report by token) | admin | 22 |
-| `staff_bp` | `staff_routes.py` | `/staff/*` — PIN sign-in, today, availability, time off, pre-shift | staff session (`auth.staff_login_required`) | 21 |
+| `staff_bp` | `staff_routes.py` | `/staff/*` — PIN sign-in, today, availability, time off, pre-shift | staff session (`auth.staff_login_required`) | 31 |
 | `auth_bp` | `auth_routes.py` | `/login`, `/logout`, `/forgot-password`, `/reset-password/<token>`, `/verify-2fa`, `/auth/*`, and the account-security `/api/*` routes (sessions, change-password, update-email, 2FA toggles) | none → issues session; the `/api/*` ones need a session | 22 |
 | `webhook_bp` | `webhook_routes.py` | `/stripe-webhook`, `/webhooks/resend`, `/webhooks/twilio/sms`, `/webhooks/twilio/status`, `/docusign/callback`, `/docusign/callback2`, `/docusign/webhook` (inbound), and the public `/pay/<token>/<period>` | signature-verified (the pay link by its signed token) | 8 |
 | `social_bp` | `social_routes.py` | Instagram/Facebook OAuth + `/api/post-to-facebook`, `/api/post-insights` | mixed | 9 |
-| `toast_bp` / `square_bp` / `clover_bp` / `rpower_bp` | `*_routes.py` | POS connect + `/admin/<pos>/*` sync/bootstrap | mixed | 8 / 7 / 7 / 6 |
+| `toast_bp` / `square_bp` / `clover_bp` / `rpower_bp` | `*_routes.py` | POS connect + `/admin/<pos>/*` sync/bootstrap | mixed | 8 / 7 / 7 / 8 |
 | `status_bp` | `status_routes.py` | `/status` public page, `/api/status`, `/admin/status/*` (update, incident, incident update / resolve, incidents, services), and `/admin/api/ops/state` (each system's state for the console) | public / `auth.admin_required`, as admin_bp | 9 |
-| app-level | `hosted_dashboard.py` | `/`, `/health` (read-only; the contract is in `SYSTEM_ARCHITECTURE.md` → Signals), `/sitemap.xml`, `/robots.txt`, `/og-image-v2.png`, `/.well-known/apple-app-site-association` (+ `/apple-app-site-association`) | — | 7 |
+| app-level | `hosted_dashboard.py` | `/` (+ `/schedule/studio`, the same shell), `/health` (read-only; the contract is in `SYSTEM_ARCHITECTURE.md` → Signals), `/sitemap.xml`, `/robots.txt`, `/og-image-v2.png`, `/.well-known/apple-app-site-association` (+ `/apple-app-site-association`), and Flask's `/static/<path>` | — | 9 |
 
 Every response carries `X-Request-ID` (an inbound `X-Request-ID` / `X-Railway-Request-Id` of 8–128 safe characters is echoed, else a new one) — quote it when reporting a failure; the logs are filterable by it. The outbound-webhook config routes (`GET/POST/DELETE /api/webhook`, `POST /api/webhook/test`) are in `client_bp`, not `webhook_bp`. `audit_app.py` is a separate standalone Flask app (the digital audit scorecard on :9000), not a blueprint. There is no web `/register` and no web `/me`; both exist only under `/mobile/api/` (and `/staff/api/me`). `hosted_dashboard` refuses to boot if two rules share a (path, method).
 
@@ -26,7 +26,7 @@ Two 409s a client may meet on writes. **`location_changed`**: the dashboard name
 
 ## The `_m()` delegation pattern
 
-58 of `client_bp`'s `/api/*` handlers are one line (the rest own their body or share a `_do_*` with mobile — see *Which pattern to use* below):
+59 of `client_bp`'s `/api/*` handlers are one line, and 100 are a bare `_m()` delegation once a docstring is set aside (counted 9/29/26; the rest own their body or share a `_do_*` with mobile — see *Which pattern to use* below):
 ```python
 @client_bp.route("/api/ask-cavnar/opening")
 @login_required
