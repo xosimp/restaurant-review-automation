@@ -4840,8 +4840,9 @@ def _target_set_notes(rid):
     try:
         import change_log
         from time_utils import mdy
-        for field in ("labor_target_pct", "food_cost_target", "waste_target_pct", "monthly_revenue_target",
-                      "weekly_revenue_target", "hourly_rate"):
+        # The same settable fields the targets route bounds (one list): these
+        # name change-log rows, they judge no figure against a target.
+        for field in _TARGET_BOUNDS:
             rows = change_log.history(rid, field=field, limit=1)
             if not rows:
                 continue
