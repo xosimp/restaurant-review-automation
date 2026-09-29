@@ -688,7 +688,13 @@ def test_the_owner_pos_connects_refuse_a_store_bound_elsewhere():
     for fn in (toast_routes.client_save_toast, square_routes.client_save_square, clover_routes.client_save_clover,
                mobile_api.mobile_connect_toast, mobile_api.mobile_connect_square, mobile_api.mobile_connect_clover):
         assert "owner_pos_binding_refusal(" in inspect.getsource(fn), fn.__name__
-    _says(SECURITY, "the owner's own connects refuse it too, 409 (`models.owner_pos_binding_refusal`")
+    # The admin's refusal names the other restaurant (pos_binding_conflict
+    # returns its name); the owner's never does.
+    assert "already connected to {clash}" in inspect.getsource(toast_routes.save_toast_credentials)
+    import models
+    assert "{what}" in inspect.getsource(models.owner_pos_binding_refusal)
+    _says(SECURITY, "the operator's message names that restaurant",
+          "the owner's own connects refuse it too, 409, with a sentence that never names the other restaurant")
 
 
 def test_login_history_is_on_the_retention_registry():
