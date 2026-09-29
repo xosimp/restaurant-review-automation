@@ -328,7 +328,8 @@ def test_notification_figures(db_path):
     n = admin_ops.notifications()
     row = next(e for e in n["engagement"] if e["alert_type"] == "1star")
     assert (row["alerts"], row["delivered"], row["opened"], row["open_rate"]) == (12, 4, 1, 25.0)
-    assert n["storm_counts"]["today"] == 1 and n["auto_caps_supported"] is False
+    # E's alert_storm_caps is merged: automatic caps are read (none is on here).
+    assert n["storm_counts"]["today"] == 1 and n["auto_caps_supported"] is True and n["auto_caps"] == []
     assert n["posts_failed_total"] == 65 and len(n["scheduled_posts"]) == 60
     assert _rec(rid)["scheduled_posts"]["pending"] == 5
 

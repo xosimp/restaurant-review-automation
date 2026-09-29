@@ -894,6 +894,13 @@ def _load_with(conn):
     sms_cost = per_rid("SELECT restaurant_id, ROUND(SUM(COALESCE(cost_usd,0)),4) AS cost, COUNT(*) AS n "
                        "FROM sms_log WHERE created_at >= ? GROUP BY restaurant_id", (w["month"],),
                        label="sms_log", optional=True)
+    # The automatic alert-storm cap in force (fix round E, #92): one per
+    # restaurant per local day, until its next local midnight (UTC stamp),
+    # unless an admin lifted it. The newest wins.
+    storm_caps = per_rid("SELECT restaurant_id, local_day, started_at, until_at, alerts_in_window, threshold, "
+                         "suppressed FROM alert_storm_caps WHERE lifted_at IS NULL "
+                         "AND julianday(until_at) > julianday('now') ORDER BY id",
+                         label="alert_storm_caps", optional=True)
 
     d = dict(now=w["now"], windows=w, rests=rests, users=by_rid, reviews=reviews, ai_month=ai_month,
              ai_today=ai_today, ai_prev=ai_prev, ai_week=ai_week, ai_failed_week=ai_failed_week,
@@ -907,7 +914,7 @@ def _load_with(conn):
              resolved=resolved, data_health_daily=data_health_daily, source_health=source_health,
              mirror=mirror, mirror_available=bool(mirror_cols), mirror_cols=mirror_cols,
              status_changes=status_changes, events=events, suppressed=suppressed, risk_state=risk_state,
-             sms_cost=sms_cost, rest_names={r["id"]: r.get("name") for r in rests},
+             sms_cost=sms_cost, storm_caps=storm_caps, rest_names={r["id"]: r.get("name") for r in rests},
              has_converted_at=bool(rests) and "converted_at" in rests[0],
              pos_states={}, loaded_at=_utc_stamp(w["now"]))
     d["billing_groups"] = _billing_groups(rests, mirror)
@@ -1709,6 +1716,7 @@ def location_record(r, d):
         "sms": {"sent_30d": sms.get("n") or 0, "cost_30d": float(sms.get("cost") or 0)} if sms else None,
         "alerts_7d": al.get("fired_7d") or 0,
         "alert_cap": r.get("alert_max_per_day") or 0,
+        "storm_cap": _storm_cap_view((d.get("storm_caps") or {}).get(rid)),
         "scheduled_posts": {"failed": sp.get("failed") or 0, "pending": sp.get("pending") or 0},
         "guests": (d["guests"].get(rid) or {}).get("n") or 0,
         "sessions": (d["sessions"].get(rid) or {}).get("n") or 0,
@@ -1726,6 +1734,22 @@ def location_record(r, d):
         "data_completeness": completeness,
         "churn_risk": churn,
     }
+
+
+def _storm_cap_view(row):
+    """The automatic alert-storm cap on this restaurant now (fix round E,
+    #92), or None: {cap, until, reason} plus the ledger's own fields.
+    Only health and safety alerts go out until `until` (UTC, the
+    restaurant's next local midnight); an admin lifts it with POST
+    /admin/api/client/<rid>/storm-cap/lift."""
+    if not row:
+        return None
+    n, limit = row.get("alerts_in_window"), row.get("threshold")
+    reason = (f"{n} alerts in an hour" + (f" (limit {limit})" if limit else "")) if n is not None else "alert storm"
+    return {"cap": "health and safety alerts only", "until": _iso_z(row.get("until_at"), "UTC"),
+            "reason": reason, "until_at": row.get("until_at"), "started_at": _iso_z(row.get("started_at"), "UTC"),
+            "local_day": row.get("local_day"), "alerts_in_window": n, "threshold": limit,
+            "suppressed": row.get("suppressed") or 0}
 
 
 DELETION_DUE_DAYS = 30
@@ -2712,6 +2736,9 @@ def client_detail(rid):
             "logins": logins, "sessions": sessions, "jobs": jobs, "job_runs": runs, "ai_quality": quality,
             "scheduled_posts": posts, "webhook_deliveries": hooks, "schedules": schedules, "staff_notes": notes,
             "data_sources": sources, "errors": errors[:60], "issues_resolved": rec.get("issues_resolved") or [],
+            # The automatic alert-storm cap in force, or None (E's #92) —
+            # the client page read the fleet's messaging health for it.
+            "storm_cap": rec.get("storm_cap"),
             "timeline_url": f"/admin/api/client/{rid}/timeline"}
 
 
@@ -4907,8 +4934,18 @@ def _webhook_health(conn):
 
 def _auto_caps(conn):
     """([{restaurant_id, restaurant, cap, until, reason}], supported) — the
-    temporary storm caps applied automatically (workstream E), read from
-    whichever shape they are stored in."""
+    temporary storm caps applied automatically (workstream E). E stores them
+    in alert_storm_caps (one per restaurant per local day, until its next
+    local midnight, unless lifted); the other shapes are kept for a database
+    that has not had E's migration."""
+    if _columns(conn, "alert_storm_caps"):
+        rows = _rows_dict(conn, "SELECT c.restaurant_id, r.name AS restaurant, c.local_day, c.started_at, c.until_at, "
+                                "c.alerts_in_window, c.threshold, c.suppressed FROM alert_storm_caps c "
+                                "LEFT JOIN restaurants r ON r.id=c.restaurant_id WHERE c.lifted_at IS NULL "
+                                "AND julianday(c.until_at) > julianday('now') ORDER BY c.restaurant_id",
+                          label="alert_storm_caps")
+        return [dict(_storm_cap_view(r), restaurant_id=r["restaurant_id"], restaurant=r["restaurant"])
+                for r in rows], True
     cols = _columns(conn, "alert_auto_caps")
     if cols:
         until = "until" if "until" in cols else ("expires_at" if "expires_at" in cols else None)
@@ -5340,9 +5377,16 @@ def _slim(r):
             "deletion_due": (r.get("deletion") or {}).get("due_at")}
 
 
-def clients_page(q=None, health=None, segment="customer", status=None, sort="name", page=1, per_page=50):
+def clients_page(q=None, health=None, segment="customer", status=None, sort="name", page=1, per_page=50,
+                 churn=None, has_issues=None, joined_days=None, inactive_days=None):
     """The fleet list, filtered, sorted and paged on the server as slim rows
-    (#79) — the full records are ~8 KB each. Counts come from the full set."""
+    (#79) — the full records are ~8 KB each. Counts come from the full set.
+
+    The filters the console had in the browser before it paged on the
+    server (UI-1 request 4): `churn` (a churn-risk level, e.g. "high"),
+    `has_issues` (open issues), `joined_days` (created within that many
+    days) and `inactive_days` (no owner activity in that many days, or
+    never)."""
     with _collecting() as bucket:
         recs, d, meta = _records_cached()
     seg = (segment or "customer").lower()
@@ -5358,6 +5402,16 @@ def clients_page(q=None, health=None, segment="customer", status=None, sort="nam
         items = [r for r in items if r["health"] == health]
     if status:
         items = [r for r in items if r["billing"]["status"] == status]
+    if churn:
+        items = [r for r in items if ((r.get("churn_risk") or {}).get("level") or "") == str(churn).lower()]
+    if has_issues not in (None, "", "0", 0, False, "false"):
+        items = [r for r in items if r["issues"]]
+    if joined_days:
+        items = [r for r in items if (_age_days(r["created_at"], "UTC") is not None
+                                      and _age_days(r["created_at"], "UTC") <= int(joined_days))]
+    if inactive_days:
+        items = [r for r in items if (_age_days(r["last_active"], "UTC") is None
+                                      or _age_days(r["last_active"], "UTC") > int(inactive_days))]
     if q:
         ql, qd = q.strip().lower(), _DIGITS.sub("", q)
         items = [r for r in items if ql in " ".join(str(x or "") for x in (
@@ -5388,7 +5442,10 @@ def onboarding_list():
             continue
         rows.append({**_slim(r), "steps": r["onboarding"]["steps"], "done": r["onboarding"]["done"],
                      "total": r["onboarding"]["total"], "owner_hid_card": r["onboarding"]["dismissed"],
-                     "days_since_signup": int(_age_days(r["created_at"], "UTC") or 0)})
+                     "days_since_signup": int(_age_days(r["created_at"], "UTC") or 0),
+                     # The contract is the first onboarding step (UI-1 request 3).
+                     "contract_status": r["billing"].get("contract_status"),
+                     "signed_at": r["billing"].get("signed_at")})
     rows.sort(key=lambda x: (x["done"] / max(1, x["total"]), -x["days_since_signup"]))
     return {"ok": True, "rows": rows, **_payload_meta(meta, bucket)}
 
