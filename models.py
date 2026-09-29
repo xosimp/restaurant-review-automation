@@ -2679,6 +2679,35 @@ def init_db(db_path: str = DB_PATH):
         "ON ask_cavnar_conversations(restaurant_id, updated_at)",
         "ALTER TABLE ask_cavnar_messages ADD COLUMN conversation_id INTEGER",
         "CREATE INDEX IF NOT EXISTS idx_ask_cavnar_conversation ON ask_cavnar_messages(conversation_id, id)",
+        # A chat's rolling summary of the turns that scrolled out of the
+        # replayed window — decisions, figures read, proposals, open
+        # questions — validated like any output and replayed as the first
+        # context block (ask_conversations, memory audit 9/29/26
+        # conversations); and the modules the chat has touched.
+        "ALTER TABLE ask_cavnar_conversations ADD COLUMN summary_json TEXT",
+        "ALTER TABLE ask_cavnar_conversations ADD COLUMN summary_through_id INTEGER",
+        "ALTER TABLE ask_cavnar_conversations ADD COLUMN summary_at TEXT",
+        "ALTER TABLE ask_cavnar_conversations ADD COLUMN topics TEXT",
+        "CREATE INDEX IF NOT EXISTS idx_ask_conversations_user ON ask_cavnar_conversations(restaurant_id, user_id, updated_at)",
+        # What each chat was about, written when the chat itself is evicted
+        # by the per-login cap — kept forever: one small row per chat, the
+        # plainest record of what this owner keeps asking (read by the
+        # "questions you often ask" line and read_past_conversations).
+        """CREATE TABLE IF NOT EXISTS ask_topics (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            user_id         INTEGER,
+            conversation_id INTEGER,
+            title           TEXT,
+            summary_json    TEXT,
+            topics          TEXT,
+            tools           TEXT,
+            message_count   INTEGER,
+            started_at      TEXT,
+            ended_at        TEXT,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_ask_topics_user ON ask_topics(restaurant_id, user_id, created_at)",
         # "Was this useful?" on an Ask answer (ROI audit #48): one row per
         # answer and login, changed in place if they change their mind. The
         # message can be trimmed from the transcript later; the rating is
@@ -6361,7 +6390,7 @@ def init_ask_memory(db_path: str = DB_PATH):
             origin        TEXT,
             created_at    TEXT,
             archived_at   TEXT    NOT NULL DEFAULT (datetime('now')),
-            reason        TEXT    NOT NULL,     -- evicted | expired | retracted
+            reason        TEXT    NOT NULL,     -- evicted | expired | retracted | forgotten (a derived fact)
             archived_by   INTEGER
         )
     """)
@@ -6526,6 +6555,22 @@ def restore_ask_fact(restaurant_id: int, archive_id: int, db_path: str = DB_PATH
     finally:
         conn.close()
     return r["fact"]
+
+
+def delete_ask_facts(restaurant_id: int, ids, db_path: str = DB_PATH) -> int:
+    """Delete facts by id — a derived fact being replaced by its newer
+    reading (owner_memory.derive_rating_preferences). Not archived."""
+    ids = [int(i) for i in ids or () if i is not None]
+    if not ids:
+        return 0
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute(f"DELETE FROM ask_memory WHERE restaurant_id=? AND id IN ({','.join('?' for _ in ids)})",
+                         (restaurant_id, *ids)).rowcount
+        conn.commit()
+        return n
+    finally:
+        conn.close()
 
 
 def forget_ask_fact(restaurant_id: int, fact: str, db_path: str = DB_PATH) -> bool:
@@ -11876,10 +11921,14 @@ _ASK_HISTORY_LIMIT = 40
 
 # Transcripts are conveniences, not records — the action audit in
 # ask_cavnar_actions is the part that must survive, and it is never pruned.
-# Both caps are per restaurant: turns kept within one chat, and chats kept
-# in the history list (oldest chats fall off, with their messages).
+# Turns are kept per chat; chats are kept PER LOGIN (memory audit 9/29/26,
+# conversations): the cap was 50 per restaurant across every login, so a
+# manager who chatted daily pushed the owner's history out within about
+# seven weeks. A restaurant-wide ceiling still bounds the table. What an
+# evicted chat was about is kept in ask_topics first (_topic_row), forever.
 _ASK_TRANSCRIPT_KEEP = 200
 _ASK_CONVERSATIONS_KEEP = 50
+_ASK_CONVERSATIONS_KEEP_RESTAURANT = 250
 _ASK_TITLE_MAX = 80
 
 
@@ -11921,6 +11970,48 @@ def _ask_title(question: str) -> str:
     return text
 
 
+def _topic_row(conn, conversation_id) -> bool:
+    """Keep what an evicted chat was about in ask_topics: its title, its
+    rolling summary (if one was written), the modules it touched, the tools
+    it ran, how many turns and when. Nothing a model writes here — it is
+    copied from the chat's own rows. On the caller's connection."""
+    import json as _json
+    c = conn.execute("SELECT id, restaurant_id, user_id, title, created_at, updated_at, summary_json, topics "
+                     "FROM ask_cavnar_conversations WHERE id=?", (conversation_id,)).fetchone()
+    if not c:
+        return False
+    rows = conn.execute("SELECT tools_json FROM ask_cavnar_messages WHERE conversation_id=? AND role='assistant' "
+                        "AND tools_json IS NOT NULL", (conversation_id,)).fetchall()
+    tools = []
+    for r in rows:
+        try:
+            for t in _json.loads(r["tools_json"] or "[]") or []:
+                name = (t or {}).get("name") if isinstance(t, dict) else None
+                if name and name not in tools:
+                    tools.append(name)
+        except (TypeError, ValueError):
+            continue
+    n = conn.execute("SELECT COUNT(*) FROM ask_cavnar_messages WHERE conversation_id=?",
+                     (conversation_id,)).fetchone()[0]
+    if not n:
+        return False                    # an empty chat said nothing worth keeping
+    conn.execute("INSERT INTO ask_topics (restaurant_id, user_id, conversation_id, title, summary_json, topics, tools, "
+                 "message_count, started_at, ended_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                 (c["restaurant_id"], c["user_id"], c["id"], c["title"], c["summary_json"], c["topics"],
+                  ",".join(tools[:20]) or None, int(n), c["created_at"], c["updated_at"]))
+    return True
+
+
+def _evict_ask_conversations(conn, ids):
+    for cid in ids:
+        try:
+            _topic_row(conn, cid)
+        except Exception as e:
+            print(f"[ask] topic row for chat {cid} not kept: {e}")
+        conn.execute("DELETE FROM ask_cavnar_messages WHERE conversation_id=?", (cid,))
+        conn.execute("DELETE FROM ask_cavnar_conversations WHERE id=?", (cid,))
+
+
 def create_ask_conversation(restaurant_id, user_id=None, db_path: str = DB_PATH) -> int:
     conn = get_conn(db_path)
     try:
@@ -11928,16 +12019,20 @@ def create_ask_conversation(restaurant_id, user_id=None, db_path: str = DB_PATH)
             "INSERT INTO ask_cavnar_conversations (restaurant_id, user_id) VALUES (?,?)",
             (restaurant_id, user_id)
         )
-        # Keep the history list bounded — the oldest chats fall off with
-        # their messages. The action audit is untouched.
-        stale = conn.execute(
+        # Keep the history list bounded — THIS login's oldest chats fall off
+        # past _ASK_CONVERSATIONS_KEEP (and anyone's past the restaurant
+        # ceiling), each first written to ask_topics. The action audit is
+        # untouched.
+        mine = conn.execute(
+            "SELECT id FROM ask_cavnar_conversations WHERE restaurant_id=? AND user_id IS ? "
+            "ORDER BY updated_at DESC, id DESC LIMIT -1 OFFSET ?",
+            (restaurant_id, user_id, _ASK_CONVERSATIONS_KEEP)).fetchall()
+        _evict_ask_conversations(conn, [s["id"] for s in mine])
+        everyone = conn.execute(
             "SELECT id FROM ask_cavnar_conversations WHERE restaurant_id=? "
             "ORDER BY updated_at DESC, id DESC LIMIT -1 OFFSET ?",
-            (restaurant_id, _ASK_CONVERSATIONS_KEEP)
-        ).fetchall()
-        for s in stale:
-            conn.execute("DELETE FROM ask_cavnar_messages WHERE conversation_id=?", (s["id"],))
-            conn.execute("DELETE FROM ask_cavnar_conversations WHERE id=?", (s["id"],))
+            (restaurant_id, _ASK_CONVERSATIONS_KEEP_RESTAURANT)).fetchall()
+        _evict_ask_conversations(conn, [s["id"] for s in everyone])
         conn.commit()
         return cur.lastrowid
     finally:
@@ -12188,7 +12283,7 @@ def ask_feedback_rows(restaurant_id, user_id=None, days: int = 180, db_path: str
 
 
 def save_ask_message(restaurant_id, role, content, proposals=None, user_id=None,
-                     conversation_id=None, db_path: str = DB_PATH) -> int:
+                     conversation_id=None, db_path: str = DB_PATH, tools=None, meta=None) -> int:
     """Appends a turn and returns the conversation it landed in.
 
     With no conversation_id, the turn goes into THIS login's current chat
@@ -12206,14 +12301,39 @@ def save_ask_message(restaurant_id, role, content, proposals=None, user_id=None,
         conversation_id = current_ask_conversation_id(restaurant_id, db_path=db_path, viewer_id=user_id)
     if conversation_id is None:
         conversation_id = create_ask_conversation(restaurant_id, user_id=user_id, db_path=db_path)
+    # An assistant turn keeps the tool calls it made (names and arguments,
+    # so a follow-up can re-read the same data) and its meta (depth, tools,
+    # modules, verdict, confidence, topic — what a rating of it is about).
+    tools_json = meta_json = None
+    if role == "assistant":
+        try:
+            if tools:
+                tools_json = _json.dumps([{"name": str((t or {}).get("name") or "")[:60],
+                                           "input": (t or {}).get("input") or {}}
+                                          for t in tools if isinstance(t, dict)][:20], default=str)[:6000]
+            if meta:
+                meta_json = _json.dumps(meta, default=str)[:4000]
+        except (TypeError, ValueError):
+            tools_json = meta_json = None
     conn = get_conn(db_path)
     try:
         conn.execute(
-            "INSERT INTO ask_cavnar_messages (restaurant_id, user_id, role, content, proposals, conversation_id) "
-            "VALUES (?,?,?,?,?,?)",
+            "INSERT INTO ask_cavnar_messages (restaurant_id, user_id, role, content, proposals, conversation_id, "
+            "tools_json, meta_json) VALUES (?,?,?,?,?,?,?,?)",
             (restaurant_id, user_id, role, content,
-             _json.dumps(proposals) if proposals else None, conversation_id)
+             _json.dumps(proposals) if proposals else None, conversation_id, tools_json, meta_json)
         )
+        # The modules this chat has touched (ask_topics keeps them when the
+        # chat itself is evicted).
+        if role == "assistant" and meta and meta.get("modules_consulted"):
+            row = conn.execute("SELECT topics FROM ask_cavnar_conversations WHERE id=?", (conversation_id,)).fetchone()
+            have = [t for t in str((row["topics"] if row else "") or "").split(",") if t]
+            for m in meta.get("modules_consulted") or []:
+                m = str(m).strip()[:40]
+                if m and m not in have:
+                    have.append(m)
+            conn.execute("UPDATE ask_cavnar_conversations SET topics=? WHERE id=?",
+                         (",".join(have[:12]) or None, conversation_id))
         # The first real question names the chat; later turns only bump it
         # to the top of the history list.
         if role == "user":
@@ -12239,7 +12359,7 @@ def save_ask_message(restaurant_id, role, content, proposals=None, user_id=None,
 
 
 def get_ask_history(restaurant_id, limit: int = _ASK_HISTORY_LIMIT, conversation_id=None, viewer_id=None,
-                    db_path: str = DB_PATH) -> list:
+                    db_path: str = DB_PATH, with_tools: bool = False) -> list:
     """Oldest-first, so it can be handed straight to the model. Without a
     conversation_id this is the restaurant's current chat; a specific id
     must belong to this restaurant (anything else reads as empty)."""
@@ -12251,7 +12371,7 @@ def get_ask_history(restaurant_id, limit: int = _ASK_HISTORY_LIMIT, conversation
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
-            "SELECT id, role, content, proposals, created_at FROM ask_cavnar_messages "
+            "SELECT id, role, content, proposals, created_at, tools_json FROM ask_cavnar_messages "
             "WHERE restaurant_id=? AND conversation_id=?" + _viewer_clause(viewer_id)[0] +
             " ORDER BY id DESC LIMIT ?",
             [restaurant_id, conversation_id, *_viewer_clause(viewer_id)[1], limit]
@@ -12266,6 +12386,14 @@ def get_ask_history(restaurant_id, limit: int = _ASK_HISTORY_LIMIT, conversation
                 d["proposals"] = _json.loads(d["proposals"])
             except Exception:
                 d["proposals"] = None
+        # The tool calls an assistant turn made (conversations): read by the
+        # replay (`with_tools`), never part of what a client is sent.
+        raw_tools = d.pop("tools_json", None)
+        if raw_tools and with_tools:
+            try:
+                d["tools"] = _json.loads(raw_tools) or []
+            except Exception:
+                pass
         out.append(d)
     return out
 

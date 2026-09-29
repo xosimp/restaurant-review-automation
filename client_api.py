@@ -2775,7 +2775,7 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversa
         # `user` scopes what the answer may draw on to what this login's role
         # can read — a manager never gets food cost through Ask either.
         answer, truncated, proposals, meta = ask_with_tools(
-            restaurant, question, history=history, user=user, screen=screen,
+            restaurant, question, history=history, user=user, screen=screen, conversation_id=conversation_id,
             **({'brief': True} if brief else {}))
 
         message_id = None
@@ -2787,15 +2787,25 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversa
             _ac_props.record_proposals(restaurant_id, proposals, user_id=user_id)
             conversation_id = save_ask_message(restaurant_id, "user", question, user_id=user_id,
                                                conversation_id=conversation_id)
+            # The turn keeps its tool calls and its meta (memory audit
+            # 9/29/26, conversations / ask_feedback).
             save_ask_message(restaurant_id, "assistant", answer,
                              proposals=proposals or None, user_id=user_id,
-                             conversation_id=conversation_id)
+                             conversation_id=conversation_id, tools=(meta or {}).get("tool_calls"),
+                             meta=_ac_props.turn_record(meta))
             from models import latest_ask_answer_id
             message_id = latest_ask_answer_id(restaurant_id, conversation_id, user_id=user_id)
         except Exception as e:
             # Never fail a good answer because the transcript couldn't be written.
             import ops
             ops.capture(e, job="ask_cavnar_persist", context=f"restaurant_id={restaurant_id}")
+        # Turns that scrolled out of the replayed window go into the chat's
+        # rolling summary (only when enough are new; never fails the answer).
+        try:
+            import ask_conversations
+            ask_conversations.maybe_summarize(restaurant_id, conversation_id, user_id=user_id)
+        except Exception as e:
+            print(f"[ask] conversation summary skipped rid={restaurant_id}: {e}")
         # The answer's own concrete suggestions, keyed and presented on "ask"
         # (#48) — read from its text, no second model call.
         import ask_cavnar as _ac_sug
@@ -2886,7 +2896,7 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
             history = [{"role": h["role"], "content": h["content"]}
                        for h in get_ask_history(rid, conversation_id=cid, viewer_id=uid)]
             answer, truncated, proposals, meta = ask_with_tools(
-                restaurant, question, history=history, user=user, screen=screen,
+                restaurant, question, history=history, user=user, screen=screen, conversation_id=cid,
                 on_progress=lambda label, state: events.put(
                     {"type": "progress", "label": label, "state": state}),
                 **({"brief": True} if brief else {}))
@@ -2896,7 +2906,8 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
                 _ac_props.record_proposals(rid, proposals, user_id=uid)
                 cid = save_ask_message(rid, "user", question, user_id=uid, conversation_id=cid)
                 save_ask_message(rid, "assistant", answer, proposals=proposals or None,
-                                 user_id=uid, conversation_id=cid)
+                                 user_id=uid, conversation_id=cid, tools=(meta or {}).get("tool_calls"),
+                                 meta=_ac_props.turn_record(meta))
                 from models import latest_ask_answer_id
                 mid = latest_ask_answer_id(rid, cid, user_id=uid)
             except Exception as _pe:
@@ -2907,6 +2918,14 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
                         "conversation_id": cid, "message_id": mid,
                         "suggestions": _ac_sug.record_suggestions(rid, answer, meta, user_id=uid),
                         **_ask_meta(meta)})
+            # After the answer is on its way: fold the turns that scrolled out
+            # of the replayed window into the chat's rolling summary (memory
+            # audit 9/29/26, conversations). Only when enough are new.
+            try:
+                import ask_conversations
+                ask_conversations.maybe_summarize(rid, cid, user_id=uid)
+            except Exception as _se:
+                print(f"[ask] conversation summary skipped rid={rid}: {_se}")
         except Exception as e:
             from ai_utils import AIBudgetExceeded, AIRefused, user_facing_error
             msg, _status = user_facing_error(e, "Couldn't get an answer right now — try again.")

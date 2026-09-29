@@ -279,9 +279,98 @@ def forget(restaurant_id, fact, user=None, db_path=None) -> dict:
     row = exact[0]
     if not _may_edit(row, user):
         return {"error": "that note was added by someone else; only its author or the owner can drop it"}
-    models.forget_ask_fact(restaurant_id, row["fact"], db_path=db_path or models.DB_PATH)
+    if row.get("origin") == "ratings":
+        # A preference read off their ratings, forgotten: kept in the archive
+        # as 'forgotten' so the next rating does not simply put it back
+        # (derive_rating_preferences reads it).
+        models.archive_ask_facts(restaurant_id, [row["id"]], "forgotten",
+                                 archived_by=(user or {}).get("id"), db_path=db_path or models.DB_PATH)
+    else:
+        models.forget_ask_fact(restaurant_id, row["fact"], db_path=db_path or models.DB_PATH)
     invalidate(restaurant_id)
     return {"forgotten": row["fact"]}
+
+
+# ── preferences read off the owner's own ratings (ask_feedback) ─────────────
+#
+# Five "not helpful — too long, just give me the number" notes used to change
+# nothing. The pattern becomes a preference fact — visible in Account,
+# labelled as coming from their ratings, forgettable — and the depth Ask
+# chooses for that login (memory audit 9/29/26, ask_feedback).
+
+RATING_PREF_MIN = 3
+RATING_PREF_SUBJECT = "ask:answer_length"
+_WANTS_SHORT_RE = re.compile(r"\b(too long|shorter|too much|too wordy|wordy|just (give me )?the (number|answer|figure)|"
+                             r"get to the point|tl;?dr|less text|keep it short|be brief)\b", re.I)
+_WANTS_MORE_RE = re.compile(r"\b(more detail|more details|explain|too short|not enough|go deeper|elaborate|"
+                            r"what does that mean|why\?|say why|the reasoning)\b", re.I)
+
+
+def _rating_pref_rows(restaurant_id, user_id, db_path=None):
+    import models
+    return [f for f in models.get_ask_memory(restaurant_id, db_path=db_path or models.DB_PATH)
+            if str(f.get("subject") or "").startswith(RATING_PREF_SUBJECT) and f.get("user_id") == user_id
+            and f.get("origin") == "ratings"]
+
+
+def rating_preference(restaurant_id, user_id, db_path=None):
+    """"short" | "full" | None — the answer length this login's ratings ask
+    for (the live derived fact; a forgotten one is gone)."""
+    if user_id is None:
+        return None
+    for f in _rating_pref_rows(restaurant_id, user_id, db_path=db_path):
+        return str(f["subject"]).rsplit(":", 1)[-1] if str(f["subject"]).count(":") >= 2 else None
+    return None
+
+
+def derive_rating_preferences(restaurant_id, user, db_path=None):
+    """Read this login's ratings for a length preference and keep it as a
+    fact (kind preference, origin "ratings", visible to them alone), or
+    retire one the ratings no longer support. Returns {"preference",
+    "fact"} or None. A preference they forgot is not re-derived until
+    RATING_PREF_MIN new ratings since the forget say it again."""
+    import models
+    uid = (user or {}).get("id") if isinstance(user, dict) else user
+    if uid is None:
+        return None
+    rows = models.ask_feedback_rows(restaurant_id, user_id=uid, db_path=db_path or models.DB_PATH)
+    forgotten = [a for a in models.get_ask_memory_archive(restaurant_id, limit=200, db_path=db_path or models.DB_PATH)
+                 if a.get("reason") == "forgotten" and a.get("user_id") == uid
+                 and str(a.get("subject") or "").startswith(RATING_PREF_SUBJECT)]
+    if forgotten:
+        since = max(str(a.get("archived_at") or "") for a in forgotten)
+        rows = [r for r in rows if str(r.get("updated_at") or "") > since]
+    bad = [r for r in rows if not r.get("helpful")]
+    long_rated = [r for r in rows if r.get("depth") == "executive"]
+    long_bad = [r for r in long_rated if not r.get("helpful")]
+    wants_short = [r for r in bad if _WANTS_SHORT_RE.search(str(r.get("note") or ""))]
+    wants_more = [r for r in bad if r.get("depth") in ("brief", "standard")
+                  and _WANTS_MORE_RE.search(str(r.get("note") or ""))]
+    pref, text = None, None
+    if len(wants_short) >= RATING_PREF_MIN or (len(long_bad) >= RATING_PREF_MIN and 2 * len(long_bad) > len(long_rated)):
+        pref = "short"
+        basis = (f"{len(wants_short)} answers rated not helpful as too long" if len(wants_short) >= RATING_PREF_MIN
+                 else f"{len(long_bad)} of {len(long_rated)} long answers rated not helpful")
+        text = f"Prefers short, direct answers — lead with the number ({basis})"
+    elif len(wants_more) >= RATING_PREF_MIN:
+        pref = "full"
+        text = f"Prefers fuller answers with the reasoning ({len(wants_more)} short answers rated not helpful as too thin)"
+    old = _rating_pref_rows(restaurant_id, uid, db_path=db_path)
+    if pref is None:
+        if old:
+            models.delete_ask_facts(restaurant_id, [f["id"] for f in old], db_path=db_path or models.DB_PATH)
+            invalidate(restaurant_id)
+        return None
+    if old and old[0]["fact"] == text:
+        return {"preference": pref, "fact": text}
+    if old:
+        models.delete_ask_facts(restaurant_id, [f["id"] for f in old], db_path=db_path or models.DB_PATH)
+    models.remember_ask_fact(restaurant_id, text, kind="preference", source="Your ratings", user_id=uid,
+                             db_path=db_path or models.DB_PATH, modules=None,
+                             subject=f"{RATING_PREF_SUBJECT}:{pref}", audience="author",
+                             author_label="From their own ratings", authority="system", origin="ratings")
+    invalidate(restaurant_id)
+    return {"preference": pref, "fact": text}
 
 
 def retract_for_keys(restaurant_id, keys, titles=(), archived_by=None, db_path=None) -> int:
@@ -474,7 +563,8 @@ def goal_lines(req):
         if not _wanted(g.get("metric")):
             continue
         base = str(g.get("metric") or "").split(":", 1)[0]
-        who = labels.get(g.get("created_by")) or "a teammate"
+        who = ("the sales audit" if g.get("source") == "audit"
+               else labels.get(g.get("created_by")) or "a teammate")
         out.append({"text": f"Proposed goal, waiting for the owner to confirm — {goals.describe_target(g)}",
                     "date": str(g.get("created_at") or "")[:10] or None, "source": "system", "trusted": True,
                     "subject": base, "weight": 0.5, "who": f"proposed by {who}", "module": _METRIC_MODULE.get(base),
@@ -600,6 +690,126 @@ def target_for(restaurant_id, metric, db_path=None):
     return out
 
 
+# ── the sales audit, as the restaurant's founding memory ────────────────────
+#
+# The in-person audit asks the owner what frustrates them, where money leaks,
+# what their targets are and how purchasing works — and none of it became
+# memory, so Ask asked again (memory audit 9/29/26, sales_audit). When an
+# audit is linked to the account (promise.link), the owner's own answers to
+# the questions below are seeded as facts sourced "Sales audit M/D/YY" —
+# visible in Account and forgettable like any other — with the report-safe
+# conversation insights the report itself showed; and the targets they gave
+# become PROPOSED goals the owner confirms. Once per audit and account.
+# Never seeded: contact details, internal notes, sales observations, money
+# guesses, or anything about how to sell to them.
+AUDIT_FACT_QUESTIONS = (
+    ("lab_frustration", "The labor problem that frustrates them most", ("labor",)),
+    ("lab_waste_where", "Where they feel labor is wasted", ("labor",)),
+    ("lab_hard_shifts", "The shifts hardest to staff", ("labor", "schedule")),
+    ("lab_ot_why", "Why overtime happens", ("labor",)),
+    ("lab_ot_positions", "Positions that run overtime", ("labor",)),
+    ("wl_peak_times", "Peak wait times", ("labor", "schedule")),
+    ("food_waste_where", "Where most waste happens", ("food",)),
+    ("food_high_cost_items", "High-cost items", ("food",)),
+    ("food_low_margin_items", "Low-margin items", ("food",)),
+    ("food_purchasing", "How purchasing works", ("food",)),
+    ("food_invoice_review", "Who reviews invoices", ("food",)),
+    ("rev_top_complaints", "Top guest complaints at the audit", ("reviews",)),
+    ("rev_top_compliments", "Recurring compliments", ("reviews", "marketing")),
+    ("mkt_promos", "Promotions and discounts they run", ("marketing",)),
+    ("ops_wish_sooner", "What they wish they knew sooner", ()),
+    ("ops_leaking", "Where they think money leaks", ()),
+    ("ops_fix_tomorrow", "What they would fix tomorrow", ()),
+    ("pri_top3", "Their top concerns", ()),
+    ("pri_losing_money", "Where they feel they lose money", ()),
+    ("pri_metric", "The number they watch most closely", ()),
+    ("pri_three_things", "The three things they want to know every morning", ()),
+    ("pri_improve_year", "What they are trying to improve this year", ()),
+)
+# The audit's stated targets -> the goal each proposes.
+AUDIT_TARGETS = (("lab_target_pct", "labor_pct"), ("food_target_pct", "food_cost_pct"))
+_AUDIT_CATEGORY_MODULES = {"labor": ("labor",), "food": ("food",), "bar": ("food",), "reviews": ("reviews",),
+                           "marketing": ("marketing",), "waitlist": ("labor",), "operations": (),
+                           "technology": ()}
+
+
+def seed_from_audit(audit_id, restaurant_id, db_path=None) -> dict:
+    """Seed the account's memory from a linked audit (see above). Returns
+    {"facts": n, "goals": [metric...], "skipped": reason|None}. Never
+    raises into the link that called it."""
+    out = {"facts": 0, "goals": [], "skipped": None}
+    if not audit_id or not restaurant_id:
+        out["skipped"] = "no audit or account"
+        return out
+    try:
+        import ops
+        if not ops.claim_marker("audit_memory", f"{int(audit_id)}:{int(restaurant_id)}"):
+            out["skipped"] = "already seeded from this audit"
+            return out
+    except Exception as e:
+        log.debug("owner_memory: audit seed marker unavailable: %s", e)
+    try:
+        import sales_audits
+        audit = sales_audits.get_audit(audit_id, db_path=db_path or _default_db())
+    except Exception as e:
+        out["skipped"] = f"audit unreadable: {e}"
+        return out
+    if not audit:
+        out["skipped"] = "no such audit"
+        return out
+    when = _mdy(audit.get("audit_date"))
+    label = f"Sales audit {when}" if when else "Sales audit"
+    answers = audit.get("answers") or {}
+    for qid, what, mods in AUDIT_FACT_QUESTIONS:
+        val = answers.get(qid)
+        if not isinstance(val, str) or not val.strip():
+            continue
+        text = f"{what}: {' '.join(val.split())}"
+        kind = "goal" if qid == "pri_improve_year" and not looks_like_target(val) else "context"
+        try:
+            remember(restaurant_id, text, kind=kind, modules=list(mods), audience="principals", user=None,
+                     source=label, origin="audit", author_label=label, db_path=db_path)
+            out["facts"] += 1
+        except ValueError:
+            continue
+    # The report-safe insights the report itself carried (sales_audits.
+    # public_view: drawn from audit notes Will ticked for the report).
+    try:
+        view = sales_audits.public_view(audit) or {}
+        for ins in view.get("conversation") or []:
+            text = " ".join(str(ins.get("text") or "").split())
+            if not text:
+                continue
+            mods = _AUDIT_CATEGORY_MODULES.get(str(ins.get("category") or ""), ())
+            try:
+                remember(restaurant_id, text, kind="context", modules=list(mods), audience="principals", user=None,
+                         source=label, origin="audit", author_label=label, db_path=db_path)
+                out["facts"] += 1
+            except ValueError:
+                continue
+    except Exception as e:
+        log.debug("owner_memory: audit insights not seeded: %s", e)
+    # The targets they stated become goals the owner confirms.
+    try:
+        import goals
+        waiting = {g["metric"] for g in goals.proposed(restaurant_id, db_path=db_path or _default_db())}
+        active = {g["metric"] for g in goals.progress(restaurant_id, db_path=db_path or _default_db())}
+        for qid, metric in AUDIT_TARGETS:
+            try:
+                target = float(str(answers.get(qid)).replace("%", "").strip())
+            except (TypeError, ValueError):
+                continue
+            if not (0 < target < 100) or metric in waiting or metric in active:
+                continue
+            goals.propose_goal(restaurant_id, metric, target, note=f"The target you gave at the {label.lower()}",
+                               user_id=None, db_path=db_path or _default_db(), authority="audit", source="audit")
+            out["goals"].append(metric)
+    except Exception as e:
+        log.debug("owner_memory: audit goals not proposed: %s", e)
+    invalidate(restaurant_id)
+    return out
+
+
 # ── Account's view of the memory ────────────────────────────────────────────
 
 def account_view(restaurant_id, user, db_path=None) -> dict:
@@ -638,8 +848,9 @@ def account_view(restaurant_id, user, db_path=None) -> dict:
         archived.append({"id": a["id"], "fact": a["fact"], "kind": a.get("kind") or "context",
                          "author": a.get("author_label") or a.get("source"), "reason": a.get("reason"),
                          "reason_label": {"evicted": "its lane was full", "expired": "its date passed",
-                                          "retracted": "you used that recommendation again"}.get(a.get("reason"),
-                                                                                                a.get("reason")),
+                                          "retracted": "you used that recommendation again",
+                                          "forgotten": "you asked Cavnar AI to forget it"}.get(a.get("reason"),
+                                                                                               a.get("reason")),
                          "archived_on": _mdy(str(a.get("archived_at") or "")[:10]),
                          "can_restore": principal or (a.get("user_id") is not None and user is not None
                                                       and a.get("user_id") == user.get("id"))})

@@ -310,7 +310,7 @@ def _do_goals_list(u):
     props = [g for g in goals.proposed(_rid(u)) if _metric_visible(u, g.get("metric"))]
     labels = owner_memory._user_labels([g.get("created_by") for g in props])
     for g in props:
-        g["proposed_by"] = labels.get(g.get("created_by"))
+        g["proposed_by"] = "Your sales audit" if g.get("source") == "audit" else labels.get(g.get("created_by"))
     return {"ok": True, "goals": [g for g in goals.progress(_rid(u))
                                   if _metric_visible(u, g.get("metric"))],
             "proposed": props, "can_confirm": bool(is_principal(u))}, 200
@@ -3001,7 +3001,17 @@ def _do_ask_feedback(u):
         ask_cavnar.invalidate_context(_rid(u))
     except Exception as e:
         print(f"[ask] context not refreshed after feedback rid={_rid(u)}: {e}")
-    return {"ok": True, "feedback": row, "summary": ask_feedback_summary(_rid(u))}, 200
+    # What their ratings now say about answer length — a preference they can
+    # see (and forget) in Account, and the depth Ask picks for them (memory
+    # audit 9/29/26, ask_feedback). Their own ratings only.
+    preference = None
+    try:
+        import owner_memory
+        preference = owner_memory.derive_rating_preferences(_rid(u), u)
+    except Exception as e:
+        print(f"[ask] rating preference not derived rid={_rid(u)}: {e}")
+    return {"ok": True, "feedback": row, "summary": ask_feedback_summary(_rid(u), user_id=u.get("id")),
+            "preference": preference}, 200
 
 
 def _do_good_news(u):
