@@ -1224,7 +1224,30 @@ never with text: the rebuild cut the visible text across its screens by 69%
   recipient; the toast is the server's own sentence (`say(d)`) — its `error`
   on any non-2xx, never "done" for a 409 or a 502. An action that starts a
   background job follows it to its end (`pollJob`), and a value handed over
-  once (a new password) opens in the Shown-once box.
+  once (a new password) opens in the Shown-once box. A write that acts
+  outside Cavnar AI — cancels a Stripe subscription, voids a DocuSign
+  envelope, revokes every connection — says so in its confirm in plain
+  words, with what cannot be undone; a confirm that states a lifetime
+  (the welcome's set-password link: once, for 3 days) is pinned to the
+  server's constant by a test (`tests/test_fix_ui_ui1.py` reads
+  `models.SET_PASSWORD_LINK_HOURS`). A link to a page support is
+  refused (the legacy settings and data pages) carries `.w` like a write —
+  every one, held source-wide by `tests/test_fix_integration_lead.py`.
+- **One stored field edited in place** (the client's menu notes, UI-3)
+  sends only that field, with the version and the value it loaded
+  (`expected_version`, `base`) — the settings contract. A 409 refills the
+  box with what is stored now and keeps the admin's own text under it
+  ("Your text, not saved") to put back; no answer at all says the outcome
+  is unknown and asks for a reload, never "saved". A counter shows the
+  length against the server's own cap and "not saved" while the text
+  differs from what was loaded.
+- **The server's guards are answered in one place** (`api()`): 401 → sign
+  in again; 403 `two_factor_required` → the enrolment page; 403
+  `reauth_required` → the password asked once, however many calls asked
+  at once, then the call sent again (Cancel returns the refusal); 503
+  `busy` → wait its `Retry-After` once (10 seconds at most); 429 → say so,
+  retry nothing. The HTTP status rides on the answer as `_status`, so a
+  caller can tell a refusal (409) from a send that failed (502).
 - **A form an action needs** opens in one modal (`formOpen(spec)`: fields,
   the go button, `submit` returning the server's answer); a refusal keeps it
   open with the server's sentence under the buttons.

@@ -1,5 +1,6 @@
 """The controls docs/ops/SECURITY.md, RECOVERY.md and RAILWAY_SCHEDULER_SPLIT.md
-state, checked against the code (fix round, #146).
+state, checked against the code (fix round, #146) — and DATABASE_SCHEMA.md's
+off-site scrub list and retention table, against their registries.
 
 An operator reads those files during an incident and acts on them. Each test
 below pairs one stated control with the code that implements it — reading the
@@ -164,9 +165,41 @@ def test_the_step_up_routes_are_the_ones_the_doc_lists():
                     found.add(d.args[0].value)
     assert found == _STEP_UP_TODAY
     import admin_routes
+    import offboarding
     for name in _STEP_UP_IN_PART:
         assert "reauth_refusal(" in inspect.getsource(getattr(admin_routes, name)), name
-    _says(SECURITY, "applied today")
+    assert tuple(admin_routes._SETTINGS_STEP_UP_FIELDS) == (
+        "billing_status", "module_reviews", "module_labor", "module_inventory", "module_marketing", "owner_email")
+    assert tuple(offboarding.ACTING_STEPS) == ("integrations", "stripe", "docusign")
+    _says(SECURITY, "applied today", f"the decorator, on {len(_STEP_UP_TODAY)} routes",
+          "`offboarding.acting_steps`: integrations, stripe, docusign",
+          "the billing status, a module switch or the owner email (`_settings_step_up_fields`)")
+
+
+def test_an_expired_console_read_is_401_json_and_a_page_is_a_redirect():
+    """A fetch() under /admin/api/ that met an expired session got a 302 to
+    the HTML login page, which fetch followed and failed to parse (INT-2):
+    it answers 401 {session_expired} like a write; a page still redirects."""
+    from flask import Blueprint, Flask
+    import auth
+    app = Flask(__name__)
+    login_bp = Blueprint("auth", __name__)
+    login_bp.add_url_rule("/login", "login", lambda: "login")
+    app.register_blueprint(login_bp)
+
+    @auth.admin_required
+    def view(current_user=None):
+        return "reached"
+
+    with app.test_request_context("/admin/api/clients/list", method="GET"):
+        resp, status = view()
+        assert status == 401 and resp.get_json()["session_expired"] is True
+    with app.test_request_context("/admin/api/anything", method="POST"):
+        assert view()[1] == 401
+    with app.test_request_context("/admin", method="GET"):
+        resp = view()
+        assert resp.status_code == 302 and resp.location.endswith("/login")
+    _says(SECURITY, "**401 `{session_expired: true}`**", "a page get is a **302** to the login page")
 
 
 def test_the_admin_second_factor_states():
@@ -236,9 +269,25 @@ def test_the_password_policy_is_eight_characters_and_not_breached():
 
 
 def test_the_welcome_carries_a_72_hour_set_password_link_not_a_password():
+    """One welcome email, whichever sender (INT-2): the outbox after signing
+    or a checkout, and the console's Resend welcome, all call
+    emails.send_welcome_with_set_password_link, which mints the link at send
+    time for models.SET_PASSWORD_LINK_HOURS (the resend used to mint a
+    one-hour link of its own)."""
+    import admin_routes
     import billing_jobs
-    assert billing_jobs.WELCOME_LINK_HOURS == 72
-    _says(SECURITY, "temporary passwords are never stored or emailed", "72 hours from signing")
+    import emails
+    import models
+    assert models.SET_PASSWORD_LINK_HOURS == 72
+    assert billing_jobs.WELCOME_LINK_HOURS == models.SET_PASSWORD_LINK_HOURS
+    assert emails.SET_PASSWORD_LINK_DAYS * 24 == models.SET_PASSWORD_LINK_HOURS
+    assert inspect.signature(models.create_set_password_token).parameters["hours"].default == 72
+    assert "create_set_password_token(user[\"id\"], db_path=dbp)" in inspect.getsource(
+        emails.send_welcome_with_set_password_link)
+    assert "send_welcome_with_set_password_link(" in inspect.getsource(admin_routes.resend_welcome_email)
+    assert "send_welcome_with_set_password_link(" in inspect.getsource(billing_jobs)
+    _says(SECURITY, "temporary passwords are never stored or emailed",
+          "one-use set-password link valid for 72 hours from the send (`models.set_password_link_hours`")
 
 
 # ── break-glass and the boot seed ───────────────────────────────────────────
@@ -253,6 +302,17 @@ def test_the_break_glass_variables_are_read_at_every_boot():
     assert os.path.exists(os.path.join(ROOT, "scripts", "unlock_login.py"))
     _says(SECURITY, "login_unlock_usernames", "admin_2fa_reset_usernames", "scripts/unlock_login.py")
     _says(RECOVERY, "login_unlock_usernames=<username>", "admin_2fa_reset_usernames=<username>")
+
+
+def test_a_break_glass_unlock_says_when_no_login_has_the_name(db_path, capsys):
+    """A misspelt LOGIN_UNLOCK_USERNAMES used to print "unlock" while the
+    real login stayed locked; it says the name is no login (INT-2)."""
+    import auth
+    import security
+    auth.init_auth(db_path)
+    assert security.apply_boot_unlocks(env={"LOGIN_UNLOCK_USERNAMES": "no-such-login"}, db_path=db_path) == []
+    assert "NO login is named 'no-such-login'" in capsys.readouterr().out
+    _says(SECURITY, "prints `no login is named '<name>'` in the boot log", "records `login_exists`")
 
 
 def test_the_admin_seed_needs_a_password_and_no_admin(db_path):
@@ -354,6 +414,35 @@ def test_the_scrub_empties_the_tables_the_doc_names():
                                                 "async_jobs"}
     schema = _read("DATABASE_SCHEMA.md")
     assert all(f"`{t}`" in schema for t in offsite_backup.SCRUB_TABLES)
+    # The backup email says what THIS run's scrub did, not a fixed sentence.
+    import scheduler
+    assert "offsite_backup.describe_scrub(scrubbed)" in inspect.getsource(scheduler._scrub_lines_html)
+    _says(SECURITY, "`user_backup_codes`", "`async_jobs`", "(`offsite_backup.describe_scrub`), not a fixed sentence")
+
+
+def test_the_documented_retention_table_is_the_registry():
+    """DATABASE_SCHEMA.md's *Retention* table, row by row, against
+    ops._RETENTION_DAYS / _RETENTION_COLUMN: every registered table named
+    once, with its days and its column (the integration wave added eight)."""
+    import ops
+    text = _read("DATABASE_SCHEMA.md")
+    sec = text[text.index("## Retention — the one registry"):]
+    sec = sec[:sec.index("\n## ", 5)]
+    seen = {}
+    for line in sec.splitlines():
+        if not line.startswith("| `"):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        tables = re.findall(r"`([a-z0-9_]+)`", cells[0])
+        days = int(re.match(r"\d+", cells[1]).group(0))
+        cols = re.findall(r"`([a-z0-9_]+)`", cells[2])
+        for i, t in enumerate(tables):
+            assert t not in seen, t
+            seen[t] = (days, cols[min(i, len(cols) - 1)])
+    assert set(seen) == set(ops._RETENTION_DAYS)
+    for t, (days, col) in seen.items():
+        assert ops._RETENTION_DAYS[t] == days, t
+        assert ops._RETENTION_COLUMN.get(t, "created_at") == col, t
 
 
 def test_an_unclassified_credential_column_is_scrubbed_anyway():
@@ -411,8 +500,8 @@ def test_a_backup_is_stale_after_26_hours_and_the_drill_checks_both_copies():
 # ── /health, paging, the monitors ────────────────────────────────────────────
 
 _HEALTH_ERRORS = ("db_unavailable", "db_unreadable", "schema_mismatch", "db_not_writable", "data_missing")
-_HEALTH_PROBLEMS = ("db_busy", "db_not_wal", "scheduler_stale", "jobs_overdue", "backup_stale",
-                    "offsite_backup_stale")
+_HEALTH_PROBLEMS = ("db_busy", "db_not_wal", "scheduler_stale", "scheduler_wedged", "scheduler_stalled",
+                    "jobs_overdue", "backup_stale", "offsite_backup_stale")
 
 
 def test_every_health_code_the_runbook_names_is_one_the_code_answers():
@@ -531,14 +620,32 @@ def test_a_laptop_or_a_pending_restore_sends_nothing(monkeypatch):
     _says(SECURITY, "refused 409 where `scheduler.scheduling_allowed()` is false")
 
 
-def test_the_two_sends_the_doc_named_as_ungated_are_gated_now():
-    """SECURITY.md named two admin sends not gated on a local backend; the
-    integration wave (INT-2) gated both with _send_blocked, the same 409 as
-    every other admin send. (The doc's "two exceptions today" sentence is
-    the docs pass's to take out.)"""
+def test_every_admin_send_is_gated_and_the_doc_names_the_deliberate_exceptions():
+    """The alert-contact test and the contract resend were the two admin
+    sends a local backend let through; INT-2 gated both with _send_blocked,
+    mark-signed now checks before it writes, and three kinds of send are
+    left ungated on purpose — each named in SECURITY.md."""
     import admin_routes
-    for fn in (admin_routes.test_alert_sms_route, admin_routes.resend_contract):
+    import client_api
+    for fn in (admin_routes.test_alert_sms_route, admin_routes.resend_contract, admin_routes.resend_welcome_email,
+               admin_routes.test_digest, admin_routes.test_urgent, admin_routes._send_reset_link_to):
         assert "_send_blocked()" in inspect.getsource(fn), fn.__name__
+    signed = inspect.getsource(admin_routes.admin_api_billing_mark_signed)
+    assert signed.index("_live_actions_refused()") < signed.index("update_restaurant(")
+    assert "_send_blocked" not in inspect.getsource(admin_routes.admin_two_factor_send)
+    assert '"deletion.notice_skipped"' in _read("client_api.py") and client_api
+    _says(SECURITY, "refused, 409, one shared sentence", "checked before anything is written",
+          "deliberately not gated", "`post /admin/two-factor/send`", "`post /api/send-referral`",
+          "recorded as `deletion.notice_skipped`")
+
+
+def test_a_copy_of_the_app_never_loads_another_checkouts_env():
+    """Flask's own .env lookup walks up from the working directory, so a
+    worktree's copy loaded the main checkout's .env (production's keys)."""
+    src = _read("hosted_dashboard.py")
+    assert 'load_dotenv(pathlib.Path(__file__).parent / ".env")' in src
+    assert "app.run(host=\"0.0.0.0\", port=PORT, debug=False, load_dotenv=False)" in src
+    _says(SECURITY, "`app.run(..., load_dotenv=false)`")
 
 
 # ── support masking, the AI trace, the breaker ───────────────────────────────
@@ -554,7 +661,52 @@ def test_support_reads_are_masked():
     assert "cus_ABCDEFGH1234" not in out["note"]
     admin_src = _read("admin_routes.py")
     assert 'resp.headers["X-Redacted"] = "support"' in admin_src
-    _says(SECURITY, "x-redacted: support")
+    import sales_audit_routes
+    assert "_admin_support_redaction(resp)" in inspect.getsource(sales_audit_routes._support_redaction)
+    _says(SECURITY, "x-redacted: support", "`sales_audit_routes._support_redaction`")
+
+
+def test_support_is_refused_the_legacy_client_pages():
+    import admin_routes
+    page, status = admin_routes._legacy_page_refused({"id": 9, "is_admin": 0, "role": "support"})
+    assert status == 403 and "Use the admin console" in page
+    assert admin_routes._legacy_page_refused({"id": 1, "is_admin": 1}) is None
+    for fn in (admin_routes.client_settings_page, admin_routes.client_data_page):
+        assert "_legacy_page_refused(current_user)" in inspect.getsource(fn), fn.__name__
+    _says(SECURITY, "support gets a 403 page that points at the console instead (`admin_routes._legacy_page_refused`)")
+
+
+def test_the_audit_keeps_only_a_phones_last_four():
+    import admin_events
+    out = admin_events._redact({"phone": "(512) 555-0123", "to_phone": "+15125550199", "phone_last4": "0123",
+                                "password": "hunter2hunter2"})
+    assert out["phone"] == "…0123" and out["to_phone"] == "…0199" and out["phone_last4"] == "0123"
+    assert out["password"] == "[redacted]"
+    _says(SECURITY, "keeps only the last four digits of a value under any key naming a phone (`admin_events._redact`)")
+
+
+def test_the_owner_pos_connects_refuse_a_store_bound_elsewhere():
+    import clover_routes
+    import mobile_api
+    import square_routes
+    import toast_routes
+    for fn in (toast_routes.client_save_toast, square_routes.client_save_square, clover_routes.client_save_clover,
+               mobile_api.mobile_connect_toast, mobile_api.mobile_connect_square, mobile_api.mobile_connect_clover):
+        assert "owner_pos_binding_refusal(" in inspect.getsource(fn), fn.__name__
+    # The admin's refusal names the other restaurant (pos_binding_conflict
+    # returns its name); the owner's never does.
+    assert "already connected to {clash}" in inspect.getsource(toast_routes.save_toast_credentials)
+    import models
+    assert "{what}" in inspect.getsource(models.owner_pos_binding_refusal)
+    _says(SECURITY, "the operator's message names that restaurant",
+          "the owner's own connects refuse it too, 409, with a sentence that never names the other restaurant")
+
+
+def test_login_history_is_on_the_retention_registry():
+    import ops
+    assert ops._RETENTION_DAYS["login_history"] == 90
+    assert ops._RETENTION_COLUMN.get("login_history", "created_at") == "created_at"
+    _says(SECURITY, "`login_history` (90 days) among them")
 
 
 def test_the_task_poll_is_admin_only_and_serves_only_task_results():
@@ -566,7 +718,9 @@ def test_the_task_poll_is_admin_only_and_serves_only_task_results():
     src = inspect.getsource(admin_routes.admin_api_task)
     assert 'current_user.get("is_admin")' in src and "_ADMIN_TASK_KINDS" in src and "_ADMIN_TASK_RESULT_KEYS" in src
     assert "password_once" not in admin_routes._ADMIN_TASK_RESULT_KEYS
-    _says(SECURITY, "get /admin/api/tasks/<job_id>")
+    assert tuple(admin_routes._ADMIN_TASK_KINDS) == ("review_fetch_one", "pos_sync_one")
+    _says(SECURITY, "get /admin/api/tasks/<job_id>` is 403 for support",
+          "(`_admin_task_kinds`: `review_fetch_one`, `pos_sync_one`")
 
 
 def test_ai_trace_text_is_admin_only_and_kept_thirty_days():
@@ -585,6 +739,53 @@ def test_the_ai_breaker_reset_is_admin_only_and_this_process_only():
     assert "Admins only" in src and "reset_breaker(" in src
     assert "_breakers" in inspect.getsource(ai_utils.reset_breaker)
     _says(RECOVERY, "closes it now — in this process only")
+
+
+# ── the scheduler's supervisor, billing jobs, offboarding ─────────────────────
+
+def test_the_supervisor_restarts_the_scheduler_with_its_lease_keeper():
+    """A restarted loop without the lease keeper let its lease look
+    abandoned after 4 minutes (D #134): the supervisor starts the thread
+    body start_scheduler uses, with backoff, and flips /status's scheduler
+    row while the heartbeat is stale."""
+    import platform_monitor
+    import scheduler
+    src = _read("hosted_dashboard.py")
+    body = src[src.index("def _restart_scheduler_loop"):]
+    body = body[:body.index("\ndef ", 1)]
+    assert "target=_sched_mod._run_scheduler_thread" in body
+    assert "_LEASE_KEEPER.start()" in inspect.getsource(scheduler._run_scheduler_thread)
+    assert platform_monitor.PlatformSupervisor()._backoff == 30.0
+    assert "min(600.0, self._backoff * 2)" in inspect.getsource(platform_monitor.PlatformSupervisor._watch_scheduler)
+    assert "check_scheduler_liveness" in inspect.getsource(platform_monitor.PlatformSupervisor._check_liveness)
+    _says(RECOVERY, "the lease keeper and then the loop (`scheduler._run_scheduler_thread`)",
+          "backoff (30 seconds, doubling to 10 minutes)", "(`status_manager.check_scheduler_liveness`)")
+
+
+def test_the_billing_jobs_the_runbook_names_are_registered():
+    import jobs_registry
+    assert jobs_registry.JOBS["stripe_reconcile"]["target"] == ("billing_jobs", "reconcile_stripe")
+    assert jobs_registry.JOBS["owed_sends"]["cadence"] == "every tick"
+    assert jobs_registry.JOBS["provider_probes"]["target"] == ("provider_health", "run_probes")
+    assert "reconcile_stripe" not in jobs_registry.JOBS
+    _says(RECOVERY, "the `stripe_reconcile` job (3:30am ct, `billing_jobs.reconcile_stripe`)",
+          "the `owed_sends` job drains due rows on every tick", "probed hourly by the `provider_probes` job")
+
+
+def test_the_offboarding_steps_that_act_and_their_refusals():
+    import offboarding
+    src = inspect.getsource(offboarding.set_step)
+    assert 'code = 409 if (detail.get("covered") or detail.get("local_backend")) else 502' in src
+    void = inspect.getsource(offboarding._void_open_envelope)
+    assert '"local_backend": True' in void and "already signed" in void and "}, 502)" in void
+    delete = inspect.getsource(offboarding.delete_restaurant_now)
+    assert "admin_homes(" in delete and 'state["outstanding"]' in delete
+    withdraw = inspect.getsource(offboarding.withdraw_deletion_request)
+    assert withdraw.count("}, 409") == 2
+    _says(RECOVERY, "409 for a location billed under another's subscription",
+          "when the envelope is already signed (skip it with that note)",
+          "409 if there is none, or it changed while you looked",
+          "while an admin or support login calls it home")
 
 
 # ── outbound ─────────────────────────────────────────────────────────────────
