@@ -341,6 +341,21 @@ def last_nights(restaurant_id, today=None, db_path=None) -> dict:
     return out
 
 
+def day_splh_objective(objective, weekday):
+    """The whole night's sales-per-labor-hour objective for `weekday` from
+    schedule_economics.splh_objective's per-daypart ones — the day's sales
+    over the hours each daypart's objective allows — so a night the DSR
+    measured as one figure is set against one figure. None when there is no
+    objective for that day."""
+    if not (objective or {}).get("available"):
+        return None
+    parts = (objective.get("by_day") or {}).get(weekday) or {}
+    sales = (objective.get("daypart_sales") or {}).get(weekday) or {}
+    have = [p for p in parts if parts.get(p) and sales.get(p)]
+    allowed = sum(float(sales[p]) / float(parts[p]) for p in have)
+    return (sum(float(sales[p]) for p in have) / allowed) if allowed else None
+
+
 def last_nights_block(restaurant_id, week_dates, today=None, db_path=None) -> str:
     """The schedule input "WHAT THE LAST NIGHTS SHOWED": per weekday of the
     week being drafted, what the last four weeks of nightly reports
@@ -350,7 +365,7 @@ def last_nights_block(restaurant_id, week_dates, today=None, db_path=None) -> st
         return ""
     try:
         import schedule_economics
-        objective = (schedule_economics.splh_by_daypart(restaurant_id) or {})
+        objective = schedule_economics.splh_objective(restaurant_id) or {}
     except Exception:
         objective = {}
     lines = []
@@ -370,7 +385,10 @@ def last_nights_block(restaurant_id, week_dates, today=None, db_path=None) -> st
             avg = sum(e["labor_vs_target"]) / len(e["labor_vs_target"])
             bits.append(f"labor {abs(avg):.1f} pts {'over' if avg > 0 else 'under'} target on average")
         if e["splh"]:
-            bits.append(f"about ${sum(e['splh']) / len(e['splh']):,.0f} sales per labor hour")
+            got = sum(e["splh"]) / len(e["splh"])
+            want = day_splh_objective(objective, wd)
+            bits.append(f"about ${got:,.0f} sales per labor hour"
+                        + (f" against a ${want:,.0f} objective" if want else ""))
         if not bits:
             continue
         # What the night was is people's words (a closer's note, the

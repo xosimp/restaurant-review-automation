@@ -202,6 +202,23 @@ def test_what_the_last_nights_showed_reaches_the_draft(monkeypatch):
     assert ai_guard.wrap_untrusted("9/25/26: Cubs game (closer's note)") in block
 
 
+def test_a_nights_sales_per_labor_hour_is_set_against_its_objective(monkeypatch):
+    import schedule_economics
+    rid = _rid()
+    for w in range(3):
+        f = (date(2026, 9, 25) - timedelta(weeks=w)).isoformat()
+        _metric(rid, f, "sales.net", 6000)
+        _metric(rid, f, "labor.hours", 100)
+    monkeypatch.setattr(schedule_economics, "splh_objective", lambda r, **k: {
+        "available": True, "by_day": {"Friday": {"morning": 50.0, "night": 80.0}},
+        "daypart_sales": {"Friday": {"morning": 2000.0, "night": 6000.0}}})
+    # 8,000 of sales over the 40 + 75 hours the objectives allow: $70 a labor hour.
+    assert round(staffing_signals.day_splh_objective(schedule_economics.splh_objective(rid), "Friday"), 2) == 69.57
+    week = [(date(2026, 9, 28) + timedelta(days=i)).isoformat() for i in range(7)]
+    block = staffing_signals.last_nights_block(rid, week, today=date(2026, 9, 28))
+    assert "about $60 sales per labor hour against a $70 objective" in block
+
+
 def test_an_open_dsr_staffing_action_is_a_soft_requirement_until_its_week_passes():
     rid = _rid()
     conn = models.get_conn()
