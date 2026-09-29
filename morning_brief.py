@@ -260,6 +260,61 @@ def _dsr_yesterday_line(night):
             "source": "dsr", "dsr_date": night["date"]}
 
 
+BRIEF_MEMORY_LINES = 2
+
+
+def _memory_lines(restaurant_id, today, viewer, lines, db_path=DB_PATH):
+    """Brief lines from memory_context's "brief" block: a constraint the owner
+    set that is dated today ("Your note for today: …"), and the measured
+    effect of what is listed for today when the today line carries none
+    ("Remembered: …"). At most BRIEF_MEMORY_LINES; [] when memory has
+    nothing dated today."""
+    import memory_context
+    block = memory_context.memory_context(restaurant_id, "brief", viewer=viewer,
+                                          now=datetime.combine(today, datetime.min.time()), db_path=db_path)
+    out = []
+
+    def _is_today(v):
+        try:
+            return str(v)[:10] == today.isoformat() or (hasattr(v, "isoformat") and v.isoformat()[:10] == today.isoformat())
+        except Exception:
+            return False
+    for ln in (block.sections or {}).get("constraints") or []:
+        if _is_today(ln.get("date")) and ln.get("text"):
+            out.append({"key": "memory:constraint", "tone": "action", "source": "memory", "claim_kind": "owner",
+                        "text": f"Your note for today: {' '.join(str(ln['text']).split())}",
+                        "ask": "What should I keep in mind today?"})
+            break
+    has_effects = any(l.get("key") == "today" and "measured" in (l.get("text") or "") for l in lines)
+    if not has_effects:
+        for ln in (block.sections or {}).get("events") or []:
+            if _is_today(ln.get("date")) and ln.get("text"):
+                out.append({"key": "memory:event", "tone": "neutral", "source": "memory", "claim_kind": "measured",
+                            "text": "Remembered: " + " ".join(str(ln["text"]).split()),
+                            "ask": "How have nights like today gone here?"})
+                break
+    return out[:BRIEF_MEMORY_LINES]
+
+
+def _record_read(restaurant_id, brief, view=None, db_path=DB_PATH):
+    """Keep the brief a person was sent as history (ai_reads.record_read,
+    surface "brief", memory audit 9/29/26) — once per view per day. Never
+    raises."""
+    try:
+        import ai_reads
+        text = "\n".join(l.get("text") or "" for l in brief.get("lines") or [] if l.get("text"))
+        if not text.strip():
+            return None
+        return ai_reads.record_read(restaurant_id, "brief", text, subject=f"brief:{brief.get('date')}",
+                                    meta={"date": brief.get("date"), "view": view,
+                                          "lines": [l.get("key") for l in brief.get("lines") or []],
+                                          "recs": [l.get("rec") for l in brief.get("lines") or [] if l.get("rec")]},
+                                    db_path=None if db_path == DB_PATH else db_path)
+    except Exception as e:
+        log.warning("morning_brief: read not recorded rid=%s: %s", restaurant_id, e)
+        return None
+
+
 def _holiday_today(day):
     """The dining holiday on `day` from the calendar, or None."""
     try:
@@ -659,6 +714,14 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
             lines.append({"key": "today", "tone": "neutral", "outside": True,
                           "text": "Today" + context + ".",
                           "ask": "What should I focus on before service today?"})
+
+    # ── what Cavnar AI remembers about today ── memory_context (surface
+    # "brief", memory audit 9/29/26): the owner's own time-bound notes for
+    # today, in their words, and a measured event effect the today line did
+    # not already carry. Deterministic — the brief shows memory, it asks no
+    # model.
+    for ml in (_safe(_memory_lines, restaurant_id, today, viewer, lines, db_path) or []):
+        lines.append(ml)
 
     # ── one thing the reviews alone can say ──
     # A reviews-only brief had three possible lines and the retention audit
@@ -1480,6 +1543,7 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
     holds = _safe(_notify_h.dropped_holds, restaurant_id, db_path) or []
     folded = False
     built, pushed, emailed, empty, failed, retry = {}, 0, 0, 0, 0, False
+    sent_views = set()
     for u in people:
         done = _ledger_get(restaurant_id, u["id"], brief_date, db_path)
         if done and done["status"] in ("sent", "queued"):
@@ -1559,12 +1623,14 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
             if queued:
                 pushed += 1
                 folded = folded or bool(held)
+                sent_views.add(key)
                 continue
         if u.get("email"):
             result = _email_brief(restaurant_id, u, brief, name, today, db_path)
             if result.ok:
                 emailed += 1
                 folded = folded or bool(held)
+                sent_views.add(key)
                 _ledger_set(restaurant_id, u["id"], brief_date, "email", "sent", db_path=db_path)
             else:
                 failed += 1
@@ -1576,6 +1642,8 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
                         "the push could not be queued and there is no email on file", db_path=db_path)
     if folded:
         _notify_h.mark_holds_folded([h["id"] for h in holds], db_path)
+    for k in sent_views:
+        _record_read(restaurant_id, built[k], view=k[2], db_path=db_path)
     return {"sent": pushed + emailed, "push": pushed, "email": emailed, "failed": failed, "empty": empty,
             "retry": retry, "recipients": len(people)}
 
