@@ -1127,6 +1127,19 @@ def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH
         if user_ids is not None:
             allowed = {int(u) for u in user_ids}
             tokens = [t for t in tokens if int(t.get("user_id") or 0) in allowed]
+        # Each login's OWN choices at this location (preferences, memory
+        # audit 9/29/26 owner_layers): push off, a type they muted, their own
+        # quiet hours. They only ever take a push away from that login's own
+        # phones — the location's matrix, quiet hours and cap were applied
+        # when the alert was raised — and health, safety and an assigned
+        # issue always reach them.
+        try:
+            import preferences as _prefs
+            _pc = {}
+            tokens = [t for t in tokens if _prefs.push_allowed(t.get("user_id"), restaurant_id, alert_type,
+                                                               db_path=db_path, _cache=_pc)]
+        except Exception as e:
+            print(f"[push] login preferences not applied ({alert_type}, rid={restaurant_id}): {e}")
         outbox_ids = _outbox_write(tokens, restaurant_id, alert_type, title, body, data, db_path) if tokens else []
         group = _PushGroup(len(tokens), on_failed) if (on_failed is not None and tokens) else None
         dropped = []

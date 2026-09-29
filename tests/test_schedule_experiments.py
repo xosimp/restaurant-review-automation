@@ -191,23 +191,31 @@ def _arm(read, key):
 
 
 def test_the_readout_means_and_intervals_are_the_stated_maths(db):
-    _world(db, 2, 3, {"model": lambda r, w: 4 + w, "solver": lambda r, w: 8})
+    # The intervals are clustered by restaurant (memory audit PLATFORM-13):
+    # se² = G/(G−1) × Σ_r (Σ_i∈r (x − m) ÷ n)², t on G − 1 degrees of freedom;
+    # the difference's per-restaurant influence is its share of one arm's
+    # residuals minus its share of the other's.
+    _world(db, 3, 3, {"model": lambda r, w: 3 + r + w, "solver": lambda r, w: 8})
     read = sx.readout(db_path=db)
     m, s = _arm(read, "model"), _arm(read, "solver")
-    vals = [0.4, 0.5, 0.6, 0.4, 0.5, 0.6]
-    mean = sum(vals) / 6
-    sd = math.sqrt(sum((v - mean) ** 2 for v in vals) / 5)
-    assert m["acceptance"]["n"] == 6 and m["restaurants"] == 2 and m["generated"] == 6
+    vals = {r: [(3 + r + w) / 10 for w in range(3)] for r in range(3)}
+    flat = [v for vs in vals.values() for v in vs]
+    mean = sum(flat) / 9
+    u = [sum(v - mean for v in vs) / 9 for vs in vals.values()]
+    se = math.sqrt(3 / 2 * sum(x * x for x in u))
+    t = metrics.t_ppf(0.95, 2)
+    assert m["acceptance"]["n"] == 9 and m["restaurants"] == 3 and m["generated"] == 9
     assert m["acceptance"]["mean"] == pytest.approx(mean, abs=1e-4)
     lo, hi = m["acceptance"]["ci90"]
-    assert lo == pytest.approx(mean - 1.645 * sd / math.sqrt(6), abs=1e-4)
-    assert hi == pytest.approx(mean + 1.645 * sd / math.sqrt(6), abs=1e-4)
+    assert lo == pytest.approx(mean - t * se, abs=1e-4) and hi == pytest.approx(mean + t * se, abs=1e-4)
     assert s["acceptance"]["mean"] == pytest.approx(0.8) and s["acceptance"]["sd"] == 0
     d = s["vs_control"]["acceptance"]
-    assert d["diff"] == pytest.approx(0.8 - mean, abs=1e-4)
-    se_ = math.sqrt(sd ** 2 / 6)
-    assert d["ci90"][0] == pytest.approx(0.8 - mean - 1.645 * se_, abs=1e-4)
-    assert m["quality"]["mean"] == 80 and m["issues"]["n"] == 6 and m["labor_pct"]["mean"] == pytest.approx(30.0)
+    # solver − model: the solver arm has no spread, so each restaurant's
+    # influence is minus its share of the model arm's residuals.
+    assert d["diff"] == pytest.approx(0.8 - mean, abs=1e-4) and d["clusters"] == 3
+    assert d["ci90"][0] == pytest.approx(0.8 - mean - t * se, abs=1e-4)
+    assert m["quality"]["mean"] == 80 and m["issues"]["n"] == 9 and m["labor_pct"]["mean"] == pytest.approx(30.0)
+    assert read["method"] == sx.VERDICT_METHOD
 
 
 def test_below_the_minimum_sample_no_winner_is_called(db):

@@ -310,8 +310,14 @@ def _beyond_sales(restaurant_id, row, posted, window_dates, days, db_path, first
             if w not in _TOPIC_STOPWORDS:
                 needles.add(w)
         if needles:
+            # The one review time axis (models.REVIEW_TIME_AXIS_BARE), live
+            # reviews only: a bare review_date read missed every review
+            # stored without one and counted reviews Google had removed
+            # (memory audit 9/29/26, time_axis).
+            from models import REVIEW_TIME_AXIS_BARE
             after = (posted + timedelta(days=14)).strftime("%Y-%m-%d")
-            rows = conn.execute("SELECT text FROM reviews WHERE restaurant_id=? AND review_date >= ? AND review_date < ?",
+            rows = conn.execute("SELECT text FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
+                                f"AND date({REVIEW_TIME_AXIS_BARE}) >= ? AND date({REVIEW_TIME_AXIS_BARE}) < ?",
                                 (restaurant_id, posted.strftime("%Y-%m-%d"), after)).fetchall()
             out["reviews_mentioning"] = sum(1 for r in rows if any(n in (r["text"] or "").lower() for n in needles))
         # guest list: consents in the 7 days after vs the 7 before
@@ -564,18 +570,38 @@ def weekly_reach(restaurant_id, weeks=8, db_path: str = DB_PATH) -> list:
     return out
 
 
+def _local_today(restaurant_id):
+    """The restaurant's own calendar date — the edge of every window here. The
+    server's clock is UTC on the host: for a restaurant west of it the
+    fortnight started a day off (memory audit 9/29/26, time_axis)."""
+    try:
+        from time_utils import restaurant_now_by_id
+        return restaurant_now_by_id(restaurant_id).date()
+    except Exception:
+        return datetime.now().date()
+
+
 def review_signal(restaurant_id, days=14, db_path: str = DB_PATH) -> dict:
     """What guests are actually praising and complaining about right now.
 
     Review Intelligence has categorised every review since this product
     existed. marketing.py never read one.
+
+    The window is the product's ONE review time axis
+    (models.REVIEW_TIME_AXIS_BARE: the review's own date, else when it was
+    fetched — an empty review_date string is no date) ending on the
+    restaurant's own today. `COALESCE(review_date, fetched_at)` read a
+    backfilled review stored with review_date '' as this fortnight's praise
+    ('' is not NULL), and the server's date started the window a day off
+    west of the server (memory audit 9/29/26, time_axis).
     """
-    since = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    from models import REVIEW_TIME_AXIS_BARE
+    since = (_local_today(restaurant_id) - timedelta(days=days)).isoformat()
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
             "SELECT rating, text, categories, sentiment FROM reviews "
-            "WHERE restaurant_id=? AND deleted_at IS NULL AND COALESCE(review_date, fetched_at) >= ? "
+            f"WHERE restaurant_id=? AND deleted_at IS NULL AND date({REVIEW_TIME_AXIS_BARE}) >= ? "
             "ORDER BY rating DESC LIMIT 60",
             (restaurant_id, since),
         ).fetchall()

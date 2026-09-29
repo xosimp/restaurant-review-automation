@@ -898,6 +898,41 @@ def get_cached_calendar(restaurant_id: int, max_age_seconds: int = None):
         return None
 
 
+PAST_CALENDAR_WEEKS = 4
+
+
+def past_calendar_angles(restaurant_id: int, weeks: int = PAST_CALENDAR_WEEKS, limit: int = 20) -> list:
+    """The ideas of the last `weeks` weeks' calendars, newest first — the
+    rows content_calendar_cache kept and nothing read (memory audit 9/29/26,
+    "dead_memory"): the calendar prompt now sees them as "don't repeat", so
+    a slow Tuesday is not the same happy-hour post four weeks running."""
+    if not restaurant_id:
+        return []
+    try:
+        from models import get_conn
+        this_week = _week_start(restaurant_id).strftime("%Y-%m-%d")
+        conn = get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT ideas_json FROM content_calendar_cache WHERE restaurant_id=? AND week_start < ? "
+                "ORDER BY week_start DESC LIMIT ?", (restaurant_id, this_week, int(weeks))).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return []
+    out = []
+    for r in rows:
+        try:
+            ideas = json.loads(r["ideas_json"] or "[]") or []
+        except (TypeError, ValueError):
+            continue
+        for i in ideas:
+            angle = str((i or {}).get("angle") or "").strip() if isinstance(i, dict) else ""
+            if angle and angle not in out:
+                out.append(angle[:160])
+    return out[:limit]
+
+
 def _cache_calendar(restaurant_id: int, ideas: list):
     if not (restaurant_id and ideas):
         return
@@ -1223,6 +1258,15 @@ def get_content_calendar_ideas(restaurant_id: int = None, force: bool = False) -
     today_str = now.strftime("%B %d, %Y")
     recent = get_recent_content(restaurant_id, limit=5)
     recent_topics = ", ".join(r['topic'] for r in recent) if recent else "none"
+    # The last four weeks' calendar ideas (Cavnar AI's own earlier output,
+    # fenced as text that is not an instruction): not to be repeated.
+    past_angles = past_calendar_angles(restaurant_id)
+    if past_angles:
+        from ai_guard import wrap_untrusted as _wu_cal
+        past_block = ("\nIdeas already given in the last four weeks' calendars (do not repeat them; "
+                      "a new angle on the same dish is fine): " + _wu_cal("; ".join(past_angles)))
+    else:
+        past_block = ""
 
     # Build upcoming holidays in the next 30 days
     upcoming_holidays = get_upcoming_holidays(now)
@@ -1271,7 +1315,7 @@ Brand voice: {p['voice']}
 {never_clause}
 TODAY'S DATE: {today_str} (this is the real current date — do not assume any other date)
 Upcoming holidays/events in the next 30 days: {upcoming_holidays if upcoming_holidays else "No major holidays"}
-Recently generated content (avoid repeating these): {recent_topics}{chosen_block}
+Recently generated content (avoid repeating these): {recent_topics}{past_block}{chosen_block}
 {signal_block}{week_block}{voice_block}{memory_block}
 
 Return ONLY valid JSON — no markdown fences. Array of 7 objects with:

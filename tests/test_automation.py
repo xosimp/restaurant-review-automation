@@ -683,11 +683,20 @@ def test_hiding_twice_asks_why_and_remembers_the_answer(db_path, monkeypatch):
     remembered = []
     monkeypatch.setattr(models, "remember_ask_fact", lambda r, fact, **k: remembered.append((fact, k.get("kind"))) or {"fact": fact})
     home_brief.dismiss(rid, "trim_day:Tuesday")
-    home_brief.dismiss(rid, "trim_day:Tuesday", reason="Tuesday is our delivery day", title="Trim Tuesday lunch")
+    out = home_brief.dismiss(rid, "trim_day:Tuesday", reason="Tuesday is our delivery day", title="Trim Tuesday lunch")
     conn = get_conn(db_path)
     assert home_brief.times_hidden(conn, rid) == {"trim_day:Tuesday": 2}
+    # The why is kept WITH the answer (rec_events meta), where
+    # decisions.history, the decline filters and Ask's decisions section
+    # read it — no longer copied into ask_memory, where it evicted the
+    # owner's own facts (memory audit 9/29/26, owner_lanes).
+    import json as _json
+    metas = [_json.loads(r[0] or "{}") for r in conn.execute(
+        "SELECT meta FROM rec_events WHERE restaurant_id=? AND key='trim_day:Tuesday' AND event='dismissed'",
+        (rid,)).fetchall()]
     conn.close()
-    assert remembered == [("Not doing “Trim Tuesday lunch”: Tuesday is our delivery day", "preference")]
+    assert remembered == [] and out["remembered"] is True
+    assert any(m.get("reason") == "Tuesday is our delivery day" for m in metas)
 
 
 def test_recipe_drafts_use_only_the_restaurants_own_ingredients(db_path, monkeypatch):

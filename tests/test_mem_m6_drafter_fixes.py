@@ -82,6 +82,27 @@ def test_a_managers_or_an_admins_done_is_not_the_owners_confirmation(db_path):
     assert drafter.confirmed_fixes(rid, ["wait_time"]) == []
 
 
+def test_the_answers_recorded_authority_decides_whose_done_it_was(db_path):
+    """rec_ledger records whose answer it was on rec_events.authority (M1):
+    a view-as session is minted for the owner's own login, so its Done
+    carries the owner's role — only the authority (and the `via` M1 puts on
+    the meta) says an admin gave it."""
+    rid = _rid(db_path)
+    rec_ledger.present(rid, "diag_review:wait_time", "reviews", "reviews", title=FIX, db_path=db_path)
+    assert rec_ledger.record(rid, "diag_review:wait_time", "completed", surface="reviews", user_id=11, role="client",
+                             authority="admin", via={"admin_id": 99, "admin": "support", "role": "admin"},
+                             db_path=db_path)
+    rec_ledger.present(rid, "top_issue:wait_time", "reviews", "reviews", title=FIX, db_path=db_path)
+    assert rec_ledger.record(rid, "top_issue:wait_time", "completed", surface="reviews", user_id=12, role="client",
+                             authority="delegate", db_path=db_path)
+    assert drafter.confirmed_fixes(rid, ["wait_time"]) == []
+    rec_ledger.present(rid, "diag_review:food_quality", "reviews", "reviews", title="New fryer oil schedule",
+                       db_path=db_path)
+    assert rec_ledger.record(rid, "diag_review:food_quality", "completed", surface="reviews", user_id=11,
+                             role="manager", authority="principal", db_path=db_path)
+    assert [f["text"] for f in drafter.confirmed_fixes(rid, ["food_quality"])] == ["New fryer oil schedule"]
+
+
 def test_the_prompt_offers_the_change_and_lifts_the_no_fix_rule_only_for_it(db_path, monkeypatch):
     rid = _rid(db_path)
     _confirm(db_path, rid)

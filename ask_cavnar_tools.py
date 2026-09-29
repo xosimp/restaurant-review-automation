@@ -38,6 +38,9 @@ _UNTRUSTED_CONTENT_TOOLS = {
     # The DSR carries the manager's close-out verbatim ("notes"), and the
     # week grid the closer's Influence/Result line — staff-written text.
     "read_dsr", "read_week",
+    # Earlier chats and stored reads can quote guests; close-outs are the
+    # closer's own words (memory audit 9/29/26, conversations / ask_reach).
+    "read_past_conversations", "read_recent_reads", "read_closeouts",
 }
 
 _UNTRUSTED_NOTE = (
@@ -341,38 +344,49 @@ def _read_alerts(restaurant_id, days=7, _viewer=None):
     return {"alerts": out, "outstanding": sum(1 for a in out if a["needs_action"] and not a["handled"])}
 
 
-def _remember(restaurant_id, fact, kind="context"):
-    """Record something the owner said that should survive this conversation."""
-    from models import remember_ask_fact
+def _viewer_user(viewer):
+    """The login behind a viewer_restaurant (None: an unrestricted caller)."""
+    return getattr(viewer, "_ask_dsr_user", None) if viewer is not None else None
+
+
+def _remember(restaurant_id, fact, kind="context", modules=None, subject=None, valid_until=None, due_on=None,
+              audience=None, _viewer=None):
+    """Record something the owner (or a teammate) said that should survive
+    this conversation — typed (owner_memory.remember: kind, modules,
+    subject, dates, audience) and stamped with who said it, so every
+    generator that reads owner memory reads it, and a manager's remark is
+    never shown as the owner's (memory audit 9/29/26, owner_lanes /
+    owner_reach). A measurable target is refused here and pointed at
+    set_goal, where it is measured and becomes the modules' target."""
+    import owner_memory
     try:
-        saved = remember_ask_fact(restaurant_id, fact, kind=kind, source="Ask Cavnar AI")
-        return {"remembered": saved["fact"]}
+        saved = owner_memory.remember(restaurant_id, fact, kind=kind or "context", modules=modules,
+                                      subject=subject, valid_until=valid_until, due_on=due_on, audience=audience,
+                                      user=_viewer_user(_viewer), source="Ask Cavnar AI", origin="ask")
     except ValueError as e:
         return {"error": str(e)}
+    out = {"remembered": saved["fact"], "kind": saved["kind"], "audience": saved["audience"]}
+    if saved.get("valid_until"):
+        out["until"] = saved["valid_until"]
+    if saved.get("due_on"):
+        out["due_on"] = saved["due_on"]
+    if saved.get("evicted"):
+        out["note"] = ("That lane was full, so the oldest note of this kind moved to the archive the owner "
+                       "can see in Account.")
+    return out
 
 
-def _forget(restaurant_id, fact):
+def _forget(restaurant_id, fact, _viewer=None):
     """Drop one remembered fact.
 
     Memory that can only be written to is memory the owner cannot correct.
     The facts are already in the snapshot, so the model can read them back
-    and match one the owner names; this is the other half.
-    """
-    from models import forget_ask_fact, get_ask_memory
-    text = (fact or "").strip()
-    if not text:
-        return {"error": "name the note to drop"}
-    if forget_ask_fact(restaurant_id, text):
-        return {"forgotten": text}
-    # Matched loosely so "forget the thing about December" lands, rather
-    # than the owner having to quote their own note back word for word.
-    lowered = text.lower()
-    for f in get_ask_memory(restaurant_id):
-        stored = f["fact"]
-        if lowered in stored.lower() or stored.lower() in lowered:
-            forget_ask_fact(restaurant_id, stored)
-            return {"forgotten": stored}
-    return {"error": "no note like that", "remembered": [f["fact"] for f in get_ask_memory(restaurant_id)]}
+    and match one the owner names; this is the other half. Exact text
+    first, then a loose match — but only when exactly one note matches (it
+    used to drop the first of several). A teammate may drop only what they
+    added themselves."""
+    import owner_memory
+    return owner_memory.forget(restaurant_id, fact, user=_viewer_user(_viewer))
 
 
 def _read_staff_availability(restaurant_id):
@@ -511,10 +525,22 @@ def _read_competitors(restaurant_id, limit=5):
             ],
         })
     from ai_guard import freshness
-    fresh = freshness(getattr(r, "competitor_updated_at", None))
+    fresh = freshness(getattr(r, "competitor_updated_at", None), source="competitor")
+    # The OPEN recommendations only (memory audit 9/29/26, ask_reach): every
+    # stored line used to come back, so a line the owner answered "Not for
+    # us" on Intel was suggested again through this tool. The snapshot's
+    # own filter (client_api.intel_open_recs: answered and withheld lines
+    # out) is the one rule; a stale read carries none at all (competitor_age).
+    try:
+        from client_api import intel_open_recs
+        recs = intel_open_recs(restaurant_id, restaurant=r)["recs"]
+    except Exception:
+        recs = extract_recs(blob.get("insight", "") or "")
+    if fresh["stale"]:
+        recs = []
     return {
         "has_data": True,
-        "updated_at": getattr(r, "competitor_updated_at", None),
+        # M/D/YY (as_of); the stored stamp stays out of what the model reads.
         # The age travels with the claims, not just beside them in the UI.
         # Quoted into an answer without it, a six-week-old competitor summary
         # reads exactly like one written this morning.
@@ -522,12 +548,13 @@ def _read_competitors(restaurant_id, limit=5):
         "age_days": fresh["age_days"],
         "stale": fresh["stale"],
         "_freshness_note": (
-            f"This competitor set was gathered {fresh['age_days']} days ago"
-            f" ({fresh['as_of']}). Say so when you use it, and do not state it as today's position."
-            if fresh["stale"] else None
+            (f"This competitor set was gathered {fresh['age_days']} days ago ({fresh['as_of']})"
+             if fresh.get("age_days") is not None else "This competitor set has no date")
+            + ", so it is stale: its recommendations are left out. Say so when you use it, and do not state "
+              "it as today's position." if fresh["stale"] else None
         ),
         "competitors": out,
-        "recommendations": extract_recs(blob.get("insight", "") or ""),
+        "recommendations": recs,
     }
 
 
@@ -1228,7 +1255,11 @@ def _read_restaurant_memory(restaurant_id, _viewer=None):
         feats = {k: v for k, v in feats.items() if intelligence.visible(k, denied)}
     slopes = {k: v for k, v in (mem["slopes"] or {}).items() if intelligence.visible(k, denied)}
     return {"busiest_days": mem["busiest_days"], "seasonality": mem["seasonality"],
+            # `declined`: advice said "not for us" 3+ times in 180 days, by
+            # subject (memory audit 9/29/26, "one_hide") — `ignored` keeps
+            # the kinds for older readers.
             "record": {"worked": mem["record"]["worked"], "ignored": mem["record"]["ignored"],
+                       "declined": mem["record"].get("declined_detail") or [],
                        "by_kind": {k: {"accepted": v["accepted"], "declined": v["declined"], "measured": v["measured"],
                                        "improved": v["improved"], "success_rate": v["success_rate"]}
                                    for k, v in mem["record"]["by_kind"].items()}},
@@ -1331,9 +1362,17 @@ def _read_open_issues(restaurant_id, _viewer=None):
 
 
 def _read_goals(restaurant_id, _viewer=None):
+    """The active goals with where each stands, and the goals waiting for
+    the owner to confirm (a teammate's, or the sales audit's — memory audit
+    9/29/26, owner_goals): a proposed goal judges nothing until confirmed."""
     import goals
     return {"goals": [{**g, "summary": goals.summarise(g)} for g in goals.progress(restaurant_id)
-                      if metric_visible(_viewer, g.get("metric"))]}
+                      if metric_visible(_viewer, g.get("metric"))],
+            "waiting_for_the_owner": [{"metric": g.get("metric"), "summary": g.get("summary"),
+                                       "source": g.get("source")}
+                                      for g in goals.proposed(restaurant_id) if metric_visible(_viewer, g.get("metric"))],
+            "note": ("An active goal is the target the modules judge its figure against. A goal waiting for the "
+                     "owner judges nothing until they confirm it in Goals.")}
 
 
 def _read_outcomes(restaurant_id, _viewer=None):
@@ -1348,13 +1387,29 @@ def _read_outcomes(restaurant_id, _viewer=None):
 
 
 def _set_goal(restaurant_id, metric=None, target=None, deadline=None, note=None, _viewer=None):
+    """Set the goal the owner stated. It carries who set it, and a goal is
+    the target every module judges the metric against (owner_memory.
+    target_for) — so an account holder's is active at once, while a
+    teammate's (or an admin's through view-as) is PROPOSED for an account
+    holder to confirm in Goals (memory audit 9/29/26, owner_goals)."""
     import goals
     if not metric_visible(_viewer, metric):
         return {"error": "Food cost goals are for logins that can see food cost."}
+    user = _viewer_user(_viewer)
     try:
-        g = goals.set_goal(restaurant_id, metric, target, deadline=deadline, note=note)
+        from permissions import answer_authority
+        authority = answer_authority(user) if user is not None else None
+    except Exception:
+        authority = "delegate"
+    try:
+        g = goals.set_goal(restaurant_id, metric, target, deadline=deadline, note=note,
+                           user_id=(user or {}).get("id"), authority=authority, source="ask")
     except ValueError as e:
         return {"error": str(e)}
+    if g.get("proposed"):
+        return {"ok": True, "proposed": True, "goal": g, "summary": g.get("summary"),
+                "note": ("Proposed, not set: a goal becomes the target every module judges against, so the "
+                         "owner confirms it in Goals. Tell them it is waiting for the owner.")}
     return {"ok": True, "goal": g, "summary": goals.summarise(g)}
 
 
@@ -1493,7 +1548,31 @@ def _read_dsr(restaurant_id, date=None, _viewer=None):
         return {"exists": False, "date": day.isoformat(), "label": memory.day_label(day),
                 "note": "There is no daily report for that night. Say so; never estimate one.",
                 "nights_with_reports": nearby}
-    return memory.compact(report, user)
+    out = memory.compact(report, user)
+    # The report's own Tomorrow (prep, the forecast and its measured
+    # confidence, what tomorrow's report will grade) and how the previous
+    # night's predictions about THIS night turned out, graded — as this
+    # login's view may read them (memory audit 9/29/26, ask_reach: read_dsr
+    # left both out).
+    try:
+        from time_utils import mdy
+        from dsr import predictions
+        view = access.view_for(user)
+        t = access.tomorrow_for(report.get("facts") or {}, user, view)
+        if t:
+            out["tomorrow"] = {"date": mdy(t.get("date")), "items": [i.get("text") for i in t.get("items") or []
+                                                                      if i.get("text")][:10],
+                               "forecast": t.get("forecast"), "confidence": t.get("confidence"),
+                               "predictions": [p.get("text") for p in t.get("predictions") or [] if p.get("text")]}
+        rev = predictions.review(restaurant_id, day, allowed=access._cite_rule(user, view))
+        if rev:
+            out["predictions_about_this_night"] = {
+                "items": [{"said": i.get("text"), "outcome": i.get("outcome"), "actual": i.get("actual_text")}
+                          for i in rev.get("items") or []],
+                "record": rev.get("accuracy")}
+    except Exception as e:
+        log.debug("read_dsr: tomorrow / predictions unavailable for rid=%s: %s", restaurant_id, e)
+    return out
 
 
 def _find_days(restaurant_id, metric=None, op=None, value=None, start=None, end=None, limit=None, _viewer=None):
@@ -1528,12 +1607,26 @@ def _find_days(restaurant_id, metric=None, op=None, value=None, start=None, end=
     rows = store.find_days(restaurant_id, metric, op, threshold, start=lo, end=hi)
     measured = store.metric_series(restaurant_id, metric, lo or "0001-01-01", hi or "9999-12-31")
     cap = _days(limit, default=20, ceiling=_FIND_DAYS_MAX)
-    return {"metric": metric, "op": op, "value": threshold,
+    # What kind of figure the metric is (dsr.narrative.kind_of, memory audit
+    # 9/29/26 QUALITY-17): the Intel block's weather_* keys are the forecast
+    # for each night and events_listed what the owner listed — "the 6 nights
+    # it rained" must never be read off a forecast probability.
+    from dsr.narrative import kind_of as _kind_of
+    kind = _kind_of(metric)
+    note = "Newest first. Only nights with a recorded figure can match; a night with no figure is not counted."
+    if kind == "projection":
+        note += (" This metric is a FORECAST made for each night, not what happened: say 'forecast to …', never "
+                 "that it happened. Observed weather is intel.observed_* where recorded.")
+    elif kind == "plan":
+        note += " This metric is what the owner listed or planned for each night, not a measurement of it."
+    elif kind != "measured":
+        note += f" This metric is an {kind}, not a measurement: say so."
+    return {"metric": metric, "op": op, "value": threshold, "kind": kind,
             "start": lo.isoformat() if lo else None, "end": hi.isoformat() if hi else None,
             "count": len(rows), "measured_nights": len(measured),
             "nights": [{"date": d, "label": memory.day_label(d), "value": v} for d, v in rows[:cap]],
             "truncated": len(rows) > cap,
-            "note": "Newest first. Only nights with a measured figure can match; a night with no figure is not counted."}
+            "note": note}
 
 
 _GRID_ROW_KEYS = ("date", "label", "status", "provisional", "gross", "net", "cats", "transactions", "guests",
@@ -1596,6 +1689,361 @@ def _read_period(restaurant_id, date=None, _viewer=None):
 
 # ── Tool registry ───────────────────────────────────────────────────────────
 # `kind` drives everything: "read" executes, "write" only ever proposes.
+
+# ── What the other surfaces told the owner, and what is coming (ask_reach) ──
+# Memory audit 9/29/26: Ask could not see the reads other surfaces showed
+# the owner ("why did the Food tab tell me to cut salmon orders?"), what is
+# on this week (the owner's own 60-cover party), how the forecasts have held
+# up, the close-outs outside one night's report, or what marketing did.
+
+_READ_KINDS = (("reviews", "reviews", "the Reviews read"), ("food", "inventory", "the Food Cost read"),
+               ("marketing", "marketing", "the Marketing read"), ("labor", "labor", "the Labor read"))
+
+
+def _local_today_of(restaurant_id):
+    try:
+        from time_utils import restaurant_now_by_id
+        return restaurant_now_by_id(restaurant_id, naive=True).date()
+    except Exception:
+        from datetime import date as _d
+        return _d.today()
+
+
+def _read_text(payload):
+    if isinstance(payload, str):
+        return payload
+    if isinstance(payload, dict):
+        for k in ("insight", "text", "summary", "read"):
+            if isinstance(payload.get(k), str) and payload[k].strip():
+                return payload[k]
+    return ""
+
+
+def _read_recent_reads(restaurant_id, module=None, days=30, _viewer=None):
+    """What Cavnar AI already told this owner, each with its date: the kept
+    history of reads, diagnoses, digests, briefs and DSR narratives
+    (ai_reads.recent_reads), the current stored module reads
+    (insight_store), the competitor read, and the last week of daily-report
+    leads — for the modules this login may see. Model-written text: fenced."""
+    from time_utils import mdy
+    denied = _denied(_viewer)
+    want = str(module or "").strip().lower() or None
+    window = _days(days, 30, 180)
+    reads, seen = [], set()
+    try:
+        import ai_reads
+        for r in ai_reads.recent_reads(restaurant_id, days=window, limit=20) or []:
+            surface = str(r.get("surface") or "")
+            mod = _MODULE_OF_SURFACE.get(surface.split(":", 1)[0], None)
+            if mod and mod in denied:
+                continue
+            if want and want not in (surface, mod or ""):
+                continue
+            seen.add(surface.split(":", 1)[0])
+            reads.append({"what": surface, "date": mdy(str(r.get("created_at") or "")[:10]),
+                          "text": str(r.get("summary") or "")[:1500], "subject": r.get("subject")})
+    except Exception as e:
+        log.debug("read_recent_reads: ai_reads unavailable: %s", e)
+    try:
+        import insight_store
+        for kind, perm_module, label in _READ_KINDS:
+            if perm_module in denied or kind in seen or (want and want not in (kind, perm_module)):
+                continue
+            payload, at = insight_store.latest(restaurant_id, kind)
+            text = _read_text(payload)
+            if text.strip():
+                reads.append({"what": label, "date": mdy(str(at or "")[:10]), "text": text[:1500]})
+    except Exception as e:
+        log.debug("read_recent_reads: stored reads unavailable: %s", e)
+    if "intel" not in denied and (not want or want in ("intel", "competitors", "competitor")):
+        try:
+            import json as _json
+            from ai_guard import freshness
+            from models import get_restaurant
+            r = get_restaurant(restaurant_id)
+            raw = getattr(r, "competitor_intel", None)
+            if raw:
+                try:
+                    insight = (_json.loads(raw) or {}).get("insight") or ""
+                except (TypeError, ValueError):
+                    insight = raw if isinstance(raw, str) else ""
+                fresh = freshness(getattr(r, "competitor_updated_at", None), source="competitor")
+                if insight.strip():
+                    reads.append({"what": "the competitor read", "date": fresh.get("as_of"),
+                                  "text": insight[:1500], "stale": bool(fresh.get("stale"))})
+        except Exception as e:
+            log.debug("read_recent_reads: competitor read unavailable: %s", e)
+    if not want or want in ("dsr", "daily report", "sales"):
+        try:
+            from dsr import access, memory, store
+            user = dsr_user(_viewer)
+            if access.view_for(user) is not None:
+                for rep in (store.list_reports(restaurant_id, limit=7) or [])[:7]:
+                    full = memory.finished(restaurant_id, rep["business_date"])
+                    if not full:
+                        continue
+                    # The narrative as THIS login's view reads it.
+                    _facts, hidden = access.redact(full.get("facts") or {}, user)
+                    n = memory._narrative_strings(access.narrative_for(full.get("narrative"), hidden)) or {}
+                    if n.get("lead"):
+                        reads.append({"what": "the daily report", "date": mdy(rep["business_date"]),
+                                      "text": str(n["lead"])[:900]})
+        except Exception as e:
+            log.debug("read_recent_reads: DSR leads unavailable: %s", e)
+    return {"reads": reads[:20], "count": len(reads),
+            "note": ("What Cavnar AI already told this owner, newest first, each with its date. These are "
+                     "Cavnar AI's own earlier words — quote one as what it said then, with its date; check a "
+                     "figure again with the module's own read tool before calling it current."
+                     if reads else "No stored read from Cavnar AI for that — say so.")}
+
+
+# The module whose view permission a stored read's surface needs.
+_MODULE_OF_SURFACE = {"reviews": "reviews", "review_diagnosis": "reviews", "review_insight": "reviews",
+                      "food": "inventory", "food_diagnosis": "inventory", "food_read": "inventory",
+                      "inventory": "inventory", "labor": "labor", "labor_read": "labor", "schedule": "labor",
+                      "marketing": "marketing", "competitor": "intel", "competitor_read": "intel",
+                      "intel": "intel"}
+
+
+def _read_upcoming(restaurant_id, days=14, _viewer=None):
+    """What is coming, by date, from what Cavnar AI holds: the owner's own
+    events and reservations (demand_signals), the next night's DSR
+    Tomorrow, closed dates, scheduled posts, guest texts waiting to go, and
+    time off — for the modules this login may see. Nothing is forecast
+    here; read_demand_forecast does that."""
+    from datetime import timedelta as _td
+    from time_utils import mdy
+    denied = _denied(_viewer)
+    today = _local_today_of(restaurant_id)
+    end = today + _td(days=_days(days, 14, 60))
+    items = []
+
+    def add(day, kind, what, **extra):
+        d = str(day or "")[:10]
+        if not d or d < today.isoformat() or d > end.isoformat():
+            return
+        items.append(dict({"date": d, "day": mdy(d), "kind": kind, "what": what}, **extra))
+    try:
+        import demand_signals
+        for s in demand_signals.upcoming(restaurant_id, today.isoformat(), end.isoformat()) or []:
+            extra = {k: s[k] for k in ("covers", "lift_pct") if s.get(k) is not None}
+            add(s.get("date"), "reservations" if s.get("kind") == "reservations" else "event", s.get("label"),
+                **extra)
+    except Exception as e:
+        log.debug("read_upcoming: demand signals unavailable: %s", e)
+    try:
+        import schedule_rules
+        from models import get_restaurant
+        cl = schedule_rules.closures(get_restaurant(restaurant_id))
+        for d in cl.get("closed_dates") or []:
+            add(d, "closed", "The restaurant is closed")
+        weekly = cl.get("closed_weekdays") or []
+    except Exception:
+        weekly = []
+    if "marketing" not in denied:
+        try:
+            import marketing_publish
+            for p in marketing_publish.list_scheduled(restaurant_id, include_done=False) or []:
+                add(str(p.get("scheduled_for") or "")[:10], "post", f"{(p.get('platform') or 'Social').title()} post"
+                    + (f" about {p['topic']}" if p.get("topic") else ""))
+        except Exception as e:
+            log.debug("read_upcoming: scheduled posts unavailable: %s", e)
+        try:
+            from models import get_conn as _gc
+            conn = _gc()
+            try:
+                for c in conn.execute("SELECT created_at, target_day, total FROM guest_campaigns WHERE restaurant_id=? "
+                                      "AND status='waiting'", (restaurant_id,)).fetchall():
+                    add(today.isoformat(), "guest_text",
+                        "A guest text is queued to go out" + (f" (to fill {c['target_day']})" if c["target_day"] else "")
+                        + (f", to {c['total']} guests" if c["total"] else ""))
+            finally:
+                conn.close()
+        except Exception as e:
+            log.debug("read_upcoming: queued campaigns unavailable: %s", e)
+    if "labor" not in denied:
+        try:
+            import time_off
+            for name, dates in (time_off.approved_in_window(restaurant_id, today, end) or {}).items():
+                for d in dates:
+                    add(d, "time_off", f"{name} is off (approved)")
+            for r in time_off.pending(restaurant_id) or []:
+                add(r.get("start_date"), "time_off_request",
+                    f"{r.get('employee_name')} asked for time off, {mdy(r.get('start_date'))}–{mdy(r.get('end_date'))}"
+                    " (waiting for an answer)")
+        except Exception as e:
+            log.debug("read_upcoming: time off unavailable: %s", e)
+    tomorrow = None
+    try:
+        from dsr import access, store
+        user = dsr_user(_viewer)
+        view = access.view_for(user)
+        if view is not None:
+            latest = store.latest_finished_report(restaurant_id, today, since=today - _td(days=3)) \
+                if hasattr(store, "latest_finished_report") else None
+            if latest:
+                t = access.tomorrow_for(latest.get("facts") or {}, user, view)
+                if t and str(t.get("date") or "")[:10] >= today.isoformat():
+                    tomorrow = {"date": mdy(t.get("date")), "items": [i.get("text") for i in t.get("items") or []
+                                                                       if i.get("text")][:8],
+                                "forecast": t.get("forecast"), "confidence": t.get("confidence")}
+    except Exception as e:
+        log.debug("read_upcoming: DSR tomorrow unavailable: %s", e)
+    items.sort(key=lambda i: (i["date"], i["kind"]))
+    return {"from": mdy(today), "through": mdy(end), "items": items[:60], "closed_weekdays": weekly,
+            "tomorrow_from_the_daily_report": tomorrow,
+            "note": ("Everything here is on the books — events and reservations the owner listed, closures, "
+                     "scheduled posts, queued guest texts and time off. None of it is a forecast; say so if asked "
+                     "how busy a day will be, and call read_demand_forecast for that.")}
+
+
+def _read_forecast_record(restaurant_id, _viewer=None):
+    """How Cavnar AI's own forecasts have held up here: every forecast_log
+    kind's record (scored periods, mean error, bias, whether it beats a
+    naive guess, withheld or not), the daily demand forecast's accuracy and
+    the weekly projection's, and the daily report's graded predictions —
+    for the modules this login may see."""
+    denied = _denied(_viewer)
+    out = {"forecasts": {}}
+    kind_module = {"waste_week": "inventory", "profitability_month": "inventory", "revenue_week": "labor",
+                   "labor_week": "labor", "marketing_reach_week": "marketing", "review_rating_week": "reviews"}
+    try:
+        import forecast_log
+        for kind in forecast_log.KINDS:
+            if kind_module.get(kind) in denied:
+                continue
+            a = forecast_log.accuracy(restaurant_id, kind)
+            out["forecasts"][kind] = {k: a.get(k) for k in (
+                "available", "scored", "mean_error_pct", "bias_pct", "reading", "withheld", "reason",
+                "beats_naive", "skill_pct") if k in a}
+            out["forecasts"][kind]["what"] = forecast_log.KINDS[kind].get("actual")
+    except Exception as e:
+        log.debug("read_forecast_record: forecast_log unavailable: %s", e)
+    if "labor" not in denied:
+        try:
+            import demand
+            out["daily_demand"] = demand.demand_accuracy(restaurant_id)
+            if hasattr(demand, "week_projection_accuracy"):
+                out["weekly_projection"] = demand.week_projection_accuracy(restaurant_id)
+        except Exception as e:
+            log.debug("read_forecast_record: demand accuracy unavailable: %s", e)
+    try:
+        from dsr import access, predictions
+        user = dsr_user(_viewer)
+        view = access.view_for(user)
+        if view is not None:
+            rule = access._cite_rule(user, view)
+            hidden = [k for k in getattr(predictions, "PREDICTION_CITES", {})
+                      if not all(rule(c) for c in predictions.cites_for(k))]
+            out["daily_report_predictions"] = predictions.accuracy(restaurant_id, _local_today_of(restaurant_id),
+                                                                   exclude_keys=hidden)
+    except Exception as e:
+        log.debug("read_forecast_record: DSR predictions unavailable: %s", e)
+    out["note"] = ("Each record is Cavnar AI's own forecasts scored against what happened here. Quote the record "
+                   "with its count; a forecast marked withheld is not to be restated.")
+    return out
+
+
+def _read_closeouts(restaurant_id, days=7):
+    """The last close-outs — the closer's own account of each night (what
+    went well and wrong, what ran out, who didn't make it, equipment, the
+    influence line) — people's words, fenced."""
+    import closeout
+    from time_utils import mdy
+    from models import get_conn as _gc
+    window = _days(days, 7, 60)
+    conn = _gc()
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM close_outs WHERE restaurant_id=? AND business_date >= date('now', ?) "
+            "ORDER BY business_date DESC LIMIT 30", (restaurant_id, f"-{int(window)} days")).fetchall()]
+    except Exception:
+        rows = []
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        fields = {closeout.LABELS.get(f, f): str(r.get(f)).strip()[:400] for f in closeout.FIELDS
+                  if isinstance(r.get(f), str) and r.get(f).strip()}
+        if fields:
+            out.append({"night": mdy(r.get("business_date")), "by": r.get("submitted_by"),
+                        "notes": "\n".join(f"{k}: {v}" for k, v in fields.items())})
+    return {"closeouts": out, "count": len(out),
+            "note": ("The closer's own words about each night — what they saw, not measured data. Never quote a "
+                     "figure from them as data." if out else "No close-out was filed in that window.")}
+
+
+def _read_marketing_results(restaurant_id):
+    """What marketing did, measured: the posts' sales and dish lift
+    (attribution), and the guest texts' returns — guests who came back
+    within the window per campaign and for win-back texts, only for
+    campaigns whose window has closed."""
+    from time_utils import mdy
+    out = {}
+    try:
+        from marketing_signals import attribution_summary
+        a = attribution_summary(restaurant_id)
+        if a.get("ok"):
+            out["posts"] = {"measured": a.get("measured"), "median_lift_pct": a.get("median_lift_pct"),
+                            "by_kind": a.get("by_kind"), "by_occasion": a.get("by_occasion"),
+                            "by_dish": a.get("by_dish"),
+                            "weakest": [{"topic": w.get("topic"), "lift_pct": w.get("lift_pct")}
+                                        for w in a.get("weakest") or []]}
+    except Exception as e:
+        log.debug("read_marketing_results: attribution unavailable: %s", e)
+    try:
+        import guest_marketing
+        camps = []
+        for c in guest_marketing.campaign_history(restaurant_id, limit=12) or []:
+            item = {"sent_on": mdy(str(c.get("created_at") or "")[:10]), "segment": c.get("segment_label") or
+                    c.get("segment"), "sent": c.get("sent_count"), "clicks": c.get("clicks"),
+                    "target_day": c.get("target_day")}
+            if c.get("window_closed"):
+                item["came_back"] = c.get("visits_matched")
+            else:
+                item["came_back"] = None
+                item["return_note"] = "its 14-day window has not closed yet — no return counted"
+            camps.append(item)
+        out["guest_texts"] = camps
+        out["winback"] = guest_marketing.winback_return(restaurant_id)
+    except Exception as e:
+        log.debug("read_marketing_results: campaigns unavailable: %s", e)
+    out["note"] = ("Lift is sales in the days after a post against the same weekday before it; a text's return "
+                   "is guests the POS identified on a later check (partial — only when a guest was captured). "
+                   "Before and after, not proof — say so, and name the count.")
+    return out
+
+
+def _read_past_conversations(restaurant_id, query=None, days=90, _viewer=None):
+    """This person's own earlier chats — titles and Cavnar AI's notes on
+    each, including chats past the history list's cap (ask_topics) — so
+    "what was option 2 on Monday?" has an answer in a new chat (memory
+    audit 9/29/26, conversations). Viewer-scoped: a login reads its own
+    chats only. Titles are their words and notes are model-written; both
+    reach the model fenced."""
+    import ask_conversations
+    from ai_guard import wrap_untrusted
+    user = _viewer_user(_viewer)
+    uid = (user or {}).get("id")
+    current = getattr(_viewer, "_ask_conversation_id", None) if _viewer is not None else None
+    rows = ask_conversations.past_conversations(restaurant_id, uid, query=query, days=_days(days, 90, 400),
+                                               exclude_id=current)
+    out = []
+    for r in rows:
+        item = {"conversation_id": r.get("conversation_id"), "date": r.get("date"),
+                "title": wrap_untrusted(r.get("title") or ""), "message_count": r.get("message_count"),
+                "still_in_history": bool(r.get("still_open"))}
+        if r.get("notes"):
+            item["notes"] = r["notes"]
+        if r.get("excerpt"):
+            item["excerpt"] = wrap_untrusted(r["excerpt"])
+        out.append(item)
+    return {"conversations": out, "count": len(out),
+            "note": ("This person's own earlier chats: a title is their question, notes are Cavnar AI's notes on "
+                     "that chat, an excerpt is its last answer. Quote an option or a figure from them only as what "
+                     "was said then, with its date — check a figure again with the matching read tool before "
+                     "calling it current." if out else "No earlier chat matches that. Say so plainly.")}
+
 
 def _read_time_off(restaurant_id):
     """Pending time off and swap/drop requests, by id — what decide_time_off
@@ -1783,25 +2231,52 @@ TOOLS = [
         # an unattended run.
         "kind": "action",
         "fn": _remember,
+        "wants_viewer": True,
         "module": None,
         "spec": {
             "name": "remember",
-            "description": ("Record one durable fact about this owner or their plans, so it "
-                            "survives into future conversations — they are hiring, they are "
-                            "pushing on food cost, football season starts next month, they want "
-                            "labor under 26%. Call this when the owner tells you something that "
-                            "should change how you answer NEXT week, not something that is "
-                            "already in the data. Keep it to one short sentence in their own "
-                            "terms. Do not record trivia, and do not record the same thing twice."),
+            "description": ("Record one durable fact the person you are talking to told you, so it survives "
+                            "into future conversations AND reaches every other part of Cavnar AI that plans "
+                            "for them — the schedule draft, the labor and food reads, the daily report, "
+                            "marketing and review replies. Call it when they tell you something that should "
+                            "change how Cavnar AI works NEXT week and is not already in the data: 'we're adding "
+                            "two bartenders from 10/12' (context, labor, valid until a month after), "
+                            "'football Sundays start next week' (context, labor + marketing), 'never cut the "
+                            "host — she's our brand' (constraint, labor), 'stop suggesting the salmon "
+                            "special' (preference, food + marketing), 'check Friday's comps with me next "
+                            "week' (followup, due date). One short sentence in their own terms; no trivia; "
+                            "never the same thing twice.\n"
+                            "NOT for: a measurable target ('labor under 26% by December') — call set_goal, "
+                            "which measures it and makes it the target the modules judge against; a date the "
+                            "restaurant is closed — propose add_closed_date; a person who can't work a "
+                            "weekday — propose set_staff_unavailable. Those write the store the schedule "
+                            "actually obeys.\n"
+                            "audience: 'team' when managers should know it too (most operational facts), "
+                            "'principals' for anything private to the owner (personnel changes, pay, money, "
+                            "selling), 'author' for a personal reminder."),
             "input_schema": {"type": "object", "properties": {
-                "fact": {"type": "string", "description": "One short sentence."},
-                "kind": {"type": "string", "enum": ["goal", "context", "preference", "followup"]},
+                "fact": {"type": "string", "description": "One short sentence, in their own terms."},
+                "kind": {"type": "string", "enum": ["constraint", "context", "preference", "goal", "followup"],
+                         "description": ("constraint: a hard rule to respect; context: something true about the "
+                                         "business for a while; preference: how they like things done or said; "
+                                         "goal: an aim no number measures; followup: something to raise again "
+                                         "by a date.")},
+                "modules": {"type": "array", "items": {"type": "string", "enum": [
+                    "reviews", "labor", "schedule", "food", "marketing", "intel", "guests", "ops"]},
+                    "description": "The parts of the business it is about. Omit for the whole business."},
+                "subject": {"type": "string",
+                            "description": "Optional tag: day:<weekday>, dish:<name>, person:<name>, item:<name>."},
+                "valid_until": {"type": "string",
+                                "description": "YYYY-MM-DD for a fact that stops being true (a season, a hire)."},
+                "due_on": {"type": "string", "description": "YYYY-MM-DD, for a followup."},
+                "audience": {"type": "string", "enum": ["team", "principals", "author"]},
             }, "required": ["fact"]},
         },
     },
     {
         "kind": "action",
         "fn": _forget,
+        "wants_viewer": True,
         "module": None,
         "spec": {
             "name": "forget",
@@ -2266,6 +2741,103 @@ TOOLS = [
                 "additionalProperties": False},
         },
     },
+    {
+        "kind": "read",
+        "fn": _read_recent_reads,
+        "module": None,
+        "wants_viewer": True,
+        "spec": {
+            "name": "read_recent_reads",
+            "description": (
+                "WHAT CAVNAR AI ALREADY TOLD THIS OWNER elsewhere, each with its date: the Reviews, Food Cost, "
+                "Marketing and Labor reads, the competitor read, the diagnoses, the weekly email, the morning "
+                "brief and the last week of daily-report summaries. Call it for 'why did the Food tab tell me to "
+                "cut salmon orders', 'what did last week's email say', 'what did you tell me about labor'. "
+                "module narrows it: reviews | food | marketing | labor | intel | dsr."),
+            "input_schema": {"type": "object", "additionalProperties": False, "properties": {
+                "module": {"type": "string"},
+                "days": {"type": "integer", "description": "How far back. Default 30."}}},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_upcoming,
+        "module": None,
+        "wants_viewer": True,
+        "spec": {
+            "name": "read_upcoming",
+            "description": (
+                "WHAT IS COMING, BY DATE, from what is on the books: the owner's own events and reservations, "
+                "tomorrow from the daily report (prep, the forecast and its record), closed dates, scheduled "
+                "social posts, guest texts waiting to go, and approved or requested time off. Call it for "
+                "'what's on this Friday', 'anything I should know about next week', 'who's off Saturday'. Not a "
+                "forecast — read_demand_forecast for how busy a day will be."),
+            "input_schema": {"type": "object", "additionalProperties": False, "properties": {
+                "days": {"type": "integer", "description": "How far ahead. Default 14, at most 60."}}},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_forecast_record,
+        "module": None,
+        "wants_viewer": True,
+        "spec": {
+            "name": "read_forecast_record",
+            "description": (
+                "HOW CAVNAR AI'S FORECASTS HAVE HELD UP HERE: every weekly and monthly forecast's scored record "
+                "(waste, profitability, revenue, labor, marketing reach, rating — mean error, bias, whether it "
+                "beats a simple guess, withheld or not), the daily demand forecast's accuracy and the weekly "
+                "projection's, and the daily report's graded predictions. Call it for 'how accurate has your "
+                "forecast been', 'can I trust the projection', before leaning on any forecast."),
+            "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_closeouts,
+        "module": None,
+        "spec": {
+            "name": "read_closeouts",
+            "description": (
+                "THE CLOSERS' OWN NOTES on recent nights: what went well and wrong, what ran out, who didn't make "
+                "it, equipment and maintenance, and the influence line (a game, an event). Call it for 'what "
+                "happened on Saturday', 'what keeps running out', 'any equipment problems this week'."),
+            "input_schema": {"type": "object", "additionalProperties": False, "properties": {
+                "days": {"type": "integer", "description": "How far back. Default 7."}}},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_marketing_results,
+        "module": "module_marketing",
+        "spec": {
+            "name": "read_marketing_results",
+            "description": (
+                "WHAT MARKETING DID, MEASURED: sales and dish lift after posts (by kind, occasion and dish, and "
+                "the weakest), and each guest text's return — guests the POS saw come back within the window — "
+                "plus the win-back texts' return per 100 texted. Call it for 'did last month's Tuesday campaign "
+                "work', 'which posts actually sell', before proposing a campaign like one that already ran."),
+            "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_past_conversations,
+        "module": None,
+        "wants_viewer": True,
+        "spec": {
+            "name": "read_past_conversations",
+            "description": (
+                "THIS PERSON'S EARLIER CHATS WITH YOU: their past conversation titles and your notes on each "
+                "(what they decided, the figures you read out, the options you proposed, what was left open) — "
+                "including chats too old for the history list. Call it for 'what was option 2 on Monday', 'what "
+                "did you tell me about labor last week', 'did we already talk about the patio'. Only their own "
+                "chats; this conversation is not included (it is in front of you)."),
+            "input_schema": {"type": "object", "additionalProperties": False, "properties": {
+                "query": {"type": "string", "description": "Words to look for, e.g. 'tuesday labor options'."},
+                "days": {"type": "integer", "description": "How far back. Default 90."}}},
+        },
+    },
     # ── The nightly Daily Sales Report ──────────────────────────────────────
     {
         "kind": "read",
@@ -2666,6 +3238,48 @@ TOOLS = [
                 "decision": {"type": "string", "enum": ["approve", "deny"]}}},
         },
     },
+    # A structured constraint the owner states becomes a confirm card that
+    # writes the store the schedule obeys (memory audit 9/29/26,
+    # owner_reach), not a sentence in memory: the closures list and a
+    # person's availability. Both routes exist on web and mobile already.
+    {
+        "kind": "write",
+        "confirm": True,
+        "route": {"web": "/api/account-settings/closures", "mobile": "/mobile/api/account/closures",
+                  "method": "POST"},
+        "summary": "Mark {closed_day} as closed",
+        "module": None,
+        "spec": {
+            "name": "add_closed_date",
+            "description": (
+                "Propose adding a date the restaurant is CLOSED (a holiday, a private buyout, a repair) to the "
+                "closures the schedule and every forecast obey. Use it instead of remember when the owner says "
+                "they are closed on a date. Does NOT change anything — the owner confirms first."),
+            "input_schema": {"type": "object", "required": ["date"], "additionalProperties": False, "properties": {
+                "date": {"type": "string", "description": "YYYY-MM-DD, today or later."}}},
+        },
+    },
+    {
+        "kind": "write",
+        "confirm": True,
+        "route": {"web": "/api/labor/availability", "mobile": "/mobile/api/labor/availability", "method": "POST"},
+        "summary": "Mark {employee_name} as not available on {weekdays}",
+        "module": "module_labor",
+        "spec": {
+            "name": "set_staff_unavailable",
+            "description": (
+                "Propose recording that one person on the team cannot work certain weekdays, in the availability "
+                "the schedule draft treats as a hard rule. Use it instead of remember when the owner says someone "
+                "can't work a day ('Maria can't close Sundays' → Maria, Sunday). The name must be someone on the "
+                "roster; their other blocked days and notes are kept. Does NOT change anything — the owner "
+                "confirms first."),
+            "input_schema": {"type": "object", "required": ["employee_name", "weekdays"],
+                             "additionalProperties": False, "properties": {
+                "employee_name": {"type": "string"},
+                "weekdays": {"type": "array", "items": {"type": "string", "enum": [
+                    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]}}}},
+        },
+    },
     {
         "kind": "read",
         "fn": _read_time_off,
@@ -2735,6 +3349,8 @@ _BY_NAME = {t["spec"]["name"]: t for t in TOOLS}
 
 # Tools with no module flag that still read a module, by permission key.
 _INTEL_TOOLS = {"read_competitors", "read_ai_visibility", "refresh_competitors"}
+# Write tools whose route saves for an account holder only.
+_PRINCIPAL_TOOLS = {"add_closed_date"}
 # Metrics that are the Food Cost module's numbers wherever they appear.
 _FOOD_METRICS = {"food_cost_pct", "weekly_waste"}
 _MODULE_FLAGS = {"reviews": "module_reviews", "labor": "module_labor",
@@ -2797,6 +3413,14 @@ def tool_allowed(name, restaurant):
         return False
     if name in _DSR_TOOLS and not getattr(restaurant, "dsr_enabled", 1):
         return False
+    if name in _PRINCIPAL_TOOLS:
+        # Closures save for the account holder only (F2-3): a card a
+        # manager could never confirm is not offered to them.
+        user = getattr(restaurant, "_ask_dsr_user", None)
+        if user is not None:
+            from permissions import is_principal
+            if not is_principal(user):
+                return False
     return True
 
 
@@ -2931,6 +3555,18 @@ def build_proposal(name, tool_input, restaurant_id=None, owner_words=""):
     args = proposal_args(name, tool_input)
     if proposal_refusal(name, args, restaurant_id, owner_words=owner_words):
         return None
+    if name in _CONSTRAINT_CARDS:
+        # The body is built from the stored list or row, never the model's
+        # words: a closure date, or the person's whole availability with
+        # the new weekdays merged in (their other blocked days and notes
+        # kept — a whole-row save must never drop what the owner set).
+        body, summary_text, _why = _constraint_card(name, args, restaurant_id)
+        if body is None:
+            return None
+        tool_route = dict(tool["route"])
+        out = {"action": name, "summary": summary_text, "route": tool_route, "body": body, "target": {},
+               "fields_shown": fields_shown(body), "requires_confirmation": True}
+        return out
     if name == "send_supplier_order":
         args = {k: v for k, v in args.items() if k not in ("draft_hash", "resend")}
         if restaurant_id is not None:
@@ -3083,7 +3719,97 @@ _FIELD_LABELS = {
     "decision": "Answer",
     "use_checked": "Lines",
     "review_ids": "Replies",
+    "add": "Closed on",
+    "employee_name": "Who",
+    "unavailable_days": "Not available on",
+    "notes": "Their notes (kept)",
 }
+
+
+_CONSTRAINT_CARDS = ("add_closed_date", "set_staff_unavailable")
+_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+def _roster_names(restaurant_id) -> dict:
+    """{lowercased name: name} of the people on this restaurant's roster —
+    the shifts on file and anyone with an availability row."""
+    names = {}
+    try:
+        from models import load_shifts_for_restaurant_roles, get_staff_availability
+        for n in (load_shifts_for_restaurant_roles(restaurant_id) or {}):
+            if str(n).strip():
+                names[str(n).strip().lower()] = str(n).strip()
+        for row in get_staff_availability(restaurant_id) or []:
+            n = str(row.get("employee_name") or "").strip()
+            if n:
+                names[n.lower()] = n
+    except Exception as e:
+        log.warning("ask_cavnar roster names for rid=%s unavailable: %s", restaurant_id, e)
+    return names
+
+
+def _constraint_card(name, args, restaurant_id):
+    """(body, summary, None) for a closure or availability card built from
+    what is stored, or (None, None, why) when it cannot be proposed."""
+    import json as _json
+    from time_utils import mdy
+    if name == "add_closed_date":
+        raw = str(args.get("date") or "").strip()
+        day = None
+        try:
+            import owner_memory
+            day = owner_memory._parse_day(raw)
+        except Exception:
+            day = None
+        if day is None:
+            return None, None, "Give the closed date as YYYY-MM-DD."
+        if restaurant_id is not None:
+            try:
+                import owner_memory
+                today = owner_memory._local_today(restaurant_id)
+            except Exception:
+                from datetime import date as _d
+                today = _d.today()
+            if day < today:
+                return None, None, "That date has passed — a closure is for today or later."
+            try:
+                import schedule_rules
+                from models import get_restaurant
+                if day.isoformat() in schedule_rules.closures(get_restaurant(restaurant_id))["closed_dates"]:
+                    return None, None, f"{mdy(day)} is already on the closures list — nothing to change."
+            except Exception:
+                pass
+        return {"add": day.isoformat()}, f"Mark {day.strftime('%A')} {mdy(day)} as closed", None
+    # set_staff_unavailable
+    who = " ".join(str(args.get("employee_name") or "").split())
+    days = [str(d).strip().capitalize() for d in (args.get("weekdays") or []) if str(d).strip()]
+    days = [d for d in days if d in _WEEKDAYS]
+    if not who or not days:
+        return None, None, "Name the person and the weekdays they can't work."
+    if restaurant_id is None:
+        return ({"employee_name": who, "unavailable_days": sorted(days, key=_WEEKDAYS.index)},
+                f"Mark {who} as not available on {', '.join(days)}", None)
+    roster = _roster_names(restaurant_id)
+    canonical = roster.get(who.lower())
+    if not canonical:
+        return None, None, (f"There is no {who} on the roster here. Check the name with read_shifts, or add them "
+                            "in Labor first.")
+    blocked, notes = set(days), None
+    try:
+        from models import get_staff_availability
+        row = next((r for r in get_staff_availability(restaurant_id) or []
+                    if str(r.get("employee_name") or "").strip().lower() == canonical.lower()), None)
+        if row:
+            blocked |= set(_json.loads(row.get("unavailable_days") or "[]") or [])
+            notes = row.get("notes")
+    except Exception:
+        pass
+    if len(blocked) >= 7:
+        return None, None, f"That would leave {canonical} unable to work any day — say which days they CAN work."
+    body = {"employee_name": canonical, "unavailable_days": sorted(blocked, key=_WEEKDAYS.index)}
+    if notes:
+        body["notes"] = notes
+    return body, f"Mark {canonical} as not available on {', '.join(sorted(set(days), key=_WEEKDAYS.index))}", None
 
 
 def _invoice_or_po(name, args, restaurant_id):
@@ -3177,6 +3903,8 @@ def proposal_refusal(name, tool_input, restaurant_id=None, owner_words=""):
     composed is held to the same guard as every public drafter before the
     owner sees Send — _public_copy_refusal."""
     args = proposal_args(name, tool_input)
+    if name in _CONSTRAINT_CARDS:
+        return _constraint_card(name, args, restaurant_id)[2]
     domains = None
     for k, v in args.items():
         if not isinstance(v, str) or k in ("image_url", "email", "supplier_email"):

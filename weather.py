@@ -366,3 +366,121 @@ def forecast_for_day(restaurant, day, db_path=DB_PATH):
         night = _row(d, by_night[d])
         night["low_f"] = night.pop("high_f")
     return {"day": _row(d, by_day[d]) if d in by_day else None, "night": night}
+
+
+# ── the weather that actually happened (memory audit 9/29/26, event_memory) ──
+#
+# Everything above is the NWS FORECAST, and it is overwritten on every
+# refresh; nothing kept what the weather DID, so the effect of rain on this
+# restaurant could never be learned and the nightly report said "Cavnar AI has
+# no source for the weather that actually happened". The same free, keyless
+# API publishes the observations of the nearest station
+# (/points → observationStations → /stations/{id}/observations). They are
+# read here, summarised per local day, and kept by event_memory.weather_daily.
+# NWS serves only about the last week of observations, so a day is captured
+# within days of happening (event_memory.run_event_memory) or not at all.
+
+# What counts as a wet observation: NWS presentWeather codes and the words
+# in its textDescription.
+_WET_WEATHER = ("rain", "drizzle", "thunderstorms", "showers", "snow", "sleet", "freezing_rain", "hail",
+                "ice_pellets", "snow_grains")
+_WET_WORDS = ("rain", "drizzle", "thunder", "shower", "snow", "sleet", "hail")
+# A measured hourly precipitation at or above this (mm) is wet on its own.
+_WET_MM = 0.2
+
+
+def observation_station(lat, lon):
+    """(station id, failure) — the nearest NWS observation station for a
+    point: "KMDW", None; or None, "not_covered" | "transient". Two calls,
+    each with a timeout; the caller keeps the answer (weather_daily.station)
+    so it is asked once per restaurant."""
+    headers = {"User-Agent": _USER_AGENT, "Accept": "application/geo+json"}
+    try:
+        points = requests.get(f"https://api.weather.gov/points/{lat},{lon}", headers=headers, timeout=10)
+        if getattr(points, "status_code", 200) == 404:
+            return None, "not_covered"
+        points.raise_for_status()
+        url = (points.json().get("properties") or {}).get("observationStations")
+        if not url:
+            return None, "not_covered"
+        st = requests.get(url, headers=headers, timeout=10)
+        st.raise_for_status()
+        feats = st.json().get("features") or []
+        sid = ((feats[0].get("properties") or {}).get("stationIdentifier")) if feats else None
+        return (sid, None) if sid else (None, "not_covered")
+    except Exception:
+        return None, "transient"
+
+
+def fetch_observations(station, start_utc, end_utc):
+    """(observations, failure) for one station between two aware UTC
+    datetimes: [{"at" (aware UTC datetime), "temp_f", "precip_mm", "wet",
+    "text"}], oldest first. failure is None, "not_found" or "transient".
+    One call, with a timeout."""
+    from datetime import timezone as _tz
+    headers = {"User-Agent": _USER_AGENT, "Accept": "application/geo+json"}
+    fmt = "%Y-%m-%dT%H:%M:%SZ"
+    try:
+        resp = requests.get(f"https://api.weather.gov/stations/{station}/observations",
+                            params={"start": start_utc.astimezone(_tz.utc).strftime(fmt),
+                                    "end": end_utc.astimezone(_tz.utc).strftime(fmt)},
+                            headers=headers, timeout=15)
+        if getattr(resp, "status_code", 200) == 404:
+            return [], "not_found"
+        resp.raise_for_status()
+        feats = resp.json().get("features") or []
+    except Exception:
+        return [], "transient"
+    out = []
+    for f in feats:
+        p = (f or {}).get("properties") or {}
+        try:
+            at = datetime.fromisoformat(str(p.get("timestamp") or "").replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=_tz.utc)
+        temp_c = (p.get("temperature") or {}).get("value")
+        precip = (p.get("precipitationLastHour") or {}).get("value")
+        text = str(p.get("textDescription") or "").strip()
+        codes = [str((w or {}).get("weather") or "").lower() for w in (p.get("presentWeather") or [])]
+        wet = (any(c in _WET_WEATHER for c in codes) or any(w in text.lower() for w in _WET_WORDS)
+               or (isinstance(precip, (int, float)) and precip >= _WET_MM))
+        out.append({"at": at, "temp_f": (round(temp_c * 9 / 5 + 32, 1) if isinstance(temp_c, (int, float)) else None),
+                    "precip_mm": (float(precip) if isinstance(precip, (int, float)) else None),
+                    "wet": bool(wet), "text": text})
+    out.sort(key=lambda o: o["at"])
+    return out, None
+
+
+def summarise_day(observations, tz, day, service=None):
+    """The observed weather of one LOCAL day from a station's observations:
+    {"high_f", "low_f", "precip_in", "rain", "wet_hours", "conditions",
+    "n_obs"} — or None with no observation that day. `service` is the
+    (opens, closes) naive local window the night is judged on (rain during
+    service is what moves a night); None reads 11am–11pm. `rain` is 1 when
+    any observation during service was wet, 0 when observations covered
+    service and none was, and None when service went unobserved. `precip_in`
+    is the station's measured total for the day, None when it reported no
+    figure (never 0 for an unreported hour)."""
+    from datetime import time as _time
+    local = [(o["at"].astimezone(tz).replace(tzinfo=None), o) for o in observations or []]
+    today = [(t, o) for t, o in local if t.date() == day]
+    if not today:
+        return None
+    if service:
+        s0, s1 = service
+    else:
+        s0 = datetime.combine(day, _time(11, 0))
+        s1 = datetime.combine(day, _time(23, 0))
+    in_service = [(t, o) for t, o in local if s0 <= t < s1]
+    temps = [o["temp_f"] for _t, o in today if o["temp_f"] is not None]
+    mm = [o["precip_mm"] for _t, o in today if o["precip_mm"] is not None]
+    wet_hours = len({t.replace(minute=0, second=0, microsecond=0) for t, o in in_service if o["wet"]})
+    texts = [o["text"] for _t, o in in_service if o["text"]]
+    conditions = max(set(texts), key=texts.count) if texts else None
+    return {"high_f": max(temps) if temps else None, "low_f": min(temps) if temps else None,
+            "precip_in": round(sum(mm) / 25.4, 2) if mm else None,
+            "rain": (1 if wet_hours else 0) if in_service else None,
+            "wet_hours": wet_hours if in_service else None,
+            "conditions": conditions, "n_obs": len(today)}

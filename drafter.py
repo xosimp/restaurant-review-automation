@@ -249,14 +249,20 @@ _FIX_STOPWORDS = {"with", "from", "that", "this", "your", "their", "have", "more
                   "night", "nights", "days", "week", "weeks", "about", "them", "they", "will", "make", "sure", "team"}
 
 
-def _principal_answer(role, meta) -> bool:
-    """An answer the account holder gave: a principal role (TEAM_INVITE), and
-    nothing on it saying an admin or a view-as session gave it (the
-    authority / via the answer records — memory audit M1)."""
+def _principal_answer(role, meta, authority=None) -> bool:
+    """An answer the account holder gave. The answer's own authority decides
+    (rec_events.authority, permissions.answer_authority — memory audit M1):
+    'principal' is the owner's; 'delegate' (a manager's) and 'admin' (an
+    admin, support, or anyone through view-as, whose meta carries `via`)
+    never are. An answer with none recorded (a system answer, or one from
+    before the column) is the owner's only from a principal role
+    (TEAM_INVITE)."""
     m = meta if isinstance(meta, dict) else {}
-    if str(m.get("authority") or "").lower() in ("admin", "delegate") or str(m.get("via") or "") == "view_as":
+    auth = str(authority or m.get("authority") or "").strip().lower()
+    via = m.get("via")
+    if auth in ("admin", "delegate") or via == "view_as" or (isinstance(via, dict) and via):
         return False
-    if str(m.get("authority") or "").lower() == "principal":
+    if auth == "principal":
         return True
     try:
         from permissions import TEAM_INVITE, has_permission
@@ -277,12 +283,20 @@ def confirmed_fixes(restaurant_id, categories, db_path=None) -> list:
         conn = get_conn(db_path) if db_path else get_conn()
         try:
             marks = ",".join("?" for _ in keys)
-            rows = conn.execute(
-                f"SELECT i.key, i.title, e.event, e.role, e.meta, e.at FROM rec_instances i "
-                f"JOIN rec_events e ON e.rec_id = i.rec_id "
-                f"WHERE i.restaurant_id=? AND i.key IN ({marks}) AND e.event IN ('completed', 'implemented') "
-                f"AND e.at >= datetime('now', ?) ORDER BY e.at DESC, e.id DESC",
-                (restaurant_id, *keys, f"-{int(CONFIRMED_FIX_DAYS)} days")).fetchall()
+            rows = []
+            # Whose answer it was (rec_events.authority, memory audit M1); a
+            # database from before the column is read without it.
+            for who in ("e.authority", "NULL AS authority"):
+                try:
+                    rows = conn.execute(
+                        f"SELECT i.key, i.title, e.event, e.role, e.meta, e.at, {who} FROM rec_instances i "
+                        f"JOIN rec_events e ON e.rec_id = i.rec_id "
+                        f"WHERE i.restaurant_id=? AND i.key IN ({marks}) AND e.event IN ('completed', 'implemented') "
+                        f"AND e.at >= datetime('now', ?) ORDER BY e.at DESC, e.id DESC",
+                        (restaurant_id, *keys, f"-{int(CONFIRMED_FIX_DAYS)} days")).fetchall()
+                    break
+                except Exception:
+                    rows = []
         finally:
             conn.close()
     except Exception:
@@ -294,7 +308,7 @@ def confirmed_fixes(restaurant_id, categories, db_path=None) -> list:
         except Exception:
             meta = {}
         text = " ".join(str(r["title"] or "").split())
-        if not text or not _principal_answer(r["role"], meta):
+        if not text or not _principal_answer(r["role"], meta, r["authority"]):
             continue
         if text.lower() in seen:
             continue

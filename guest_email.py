@@ -983,7 +983,7 @@ def newsletter_history(restaurant_id, limit: int = 20, db_path: str = DB_PATH) -
     try:
         rows = conn.execute(
             "SELECT n.id, n.subject, n.body, n.design, n.segment, n.segment_label, n.total, n.created_at, "
-            "       n.completed_at, "
+            "       n.completed_at, n.opens_recorded, n.clicks_recorded, n.tracked_recorded, n.results_stamped_at, "
             "       SUM(CASE WHEN r.status='sent' THEN 1 ELSE 0 END) AS sent, "
             "       SUM(CASE WHEN r.status='failed' THEN 1 ELSE 0 END) AS failed, "
             "       SUM(CASE WHEN r.status='failed' AND r.retryable=1 THEN 1 ELSE 0 END) AS retryable, "
@@ -1007,7 +1007,20 @@ def newsletter_history(restaurant_id, limit: int = 20, db_path: str = DB_PATH) -
             item["design"] = json.loads(item.get("design") or "{}")
         except ValueError:
             item["design"] = {}
-        measured = tracking and (item.get("tracked") or 0) > 0
+        stamped = item.pop("results_stamped_at", None)
+        rec = {k: item.pop(k, None) for k in ("opens_recorded", "clicks_recorded", "tracked_recorded")}
+        if stamped:
+            # The results as they stood 30 days after the send, stamped on
+            # the row (history_rollups.stamp_newsletter_results): email_log's
+            # rows age out at 365 days, and the live join then read a
+            # measured 0 (memory audit 9/29/26, "rollups"). Opens stamped
+            # NULL were unknown then (tracking off) and stay unknown.
+            item["tracked"] = int(rec["tracked_recorded"] or 0)
+            item["opened"], item["clicked"] = rec["opens_recorded"], rec["clicks_recorded"]
+            item["results_as_of"] = stamped
+            measured = rec["opens_recorded"] is not None and item["tracked"] > 0
+        else:
+            measured = tracking and (item.get("tracked") or 0) > 0
         item["opened"] = int(item["opened"] or 0) if measured else None
         item["clicked"] = int(item["clicked"] or 0) if measured else None
         for k in ("sent", "failed", "retryable", "skipped", "pending", "tracked"):

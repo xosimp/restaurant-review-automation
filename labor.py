@@ -1894,13 +1894,19 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
         try:
             from models import get_conn as _gc_l
             _c = _gc_l()
+            # How many labor periods are on file (labor_history keeps one row
+            # per period). It counted client_data rows by a `data_type`
+            # column that table never had, so the query always failed and
+            # the line never reached the read (memory audit 9/29/26,
+            # "dead_memory"); and client_data holds one row per restaurant.
             row = _c.execute(
-                "SELECT COUNT(*) as cnt FROM client_data WHERE restaurant_id=? AND data_type='shifts'",
+                "SELECT COUNT(DISTINCT period_start) AS cnt FROM labor_history WHERE restaurant_id=?",
                 (restaurant_id,)
             ).fetchone()
             _c.close()
             if row and row["cnt"] > 1:
-                upload_context = f"\nThis client has uploaded shift data {row['cnt']} times — they are actively engaged. Acknowledge their consistency and note if numbers are trending better or need more attention."
+                upload_context = (f"\nThis restaurant has {row['cnt']} labor periods on file — say whether the "
+                                  "numbers are trending better or need more attention.")
         except Exception:
             pass
 
@@ -3135,10 +3141,18 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
             dow_name = row.get("next_week_dow", "")
             nw_date  = row.get("next_week_date", "")
             if row.get("yoy_sales"):
-                line = (f"  {dow_name} {nw_date}: last year same day → "
-                        f"${row['yoy_sales']:,.0f} sales, "
-                        f"{row['yoy_labor_pct']}% labor, "
-                        f"{row['yoy_hours']}h total hours")
+                # Last year's sales may come from an imported DSR workbook,
+                # which carries no labor or hours (models.
+                # get_yoy_schedule_context, memory audit 9/29/26): only what
+                # is on file is said, never "None% labor".
+                bits = [f"${row['yoy_sales']:,.0f} sales"]
+                if row.get("yoy_labor_pct") is not None:
+                    bits.append(f"{row['yoy_labor_pct']}% labor")
+                if row.get("yoy_hours"):
+                    bits.append(f"{row['yoy_hours']}h total hours")
+                src = {"import": " (your imported DSR workbook)", "dsr": " (that night's report)"}.get(
+                    row.get("yoy_source"), "")
+                line = f"  {dow_name} {nw_date}: last year same day → " + ", ".join(bits) + src
                 # Flag if this day is a holiday match
                 if row.get("is_holiday"):
                     line += f" ← USE THIS (matched to {row['holiday_name']} last year)"

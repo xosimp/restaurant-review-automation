@@ -802,12 +802,42 @@ def snapshot(restaurant_id, restaurant=None, ctx=None, db_path=None, now=None, u
                # (counts_as_current — the cadence rule, #27), and what
                # Account → Connections says about the POS and Google.
                "count_current": sum(1 for l in connected if l.get("counts_current")),
-               "connections": connection_lines(restaurant, now=now, db_path=db_path)}
+               "connections": connection_lines(restaurant, now=now, db_path=db_path),
+               # The sources the owner said they don't trust (a "don't trust
+               # the data" answer on a card): open until re-verified here —
+               # every card resting on one is held to low evidence meanwhile
+               # (memory audit 9/29/26, "reasons").
+               "distrusted": distrusted_items(restaurant_id, db_path=db_path)}
     except Exception as e:
         print(f"[data_health] snapshot failed for {restaurant_id}: {e}")
         return {"ok": False, "error": "Data health could not be read right now."}
     if use_cache and ctx is None and now is None:
         _cache_put(key, out)
+    return out
+
+
+def distrusted_items(restaurant_id, db_path=None) -> list:
+    """The Data Health items for data the owner said they don't trust:
+    [{source, label, since (M/D/YY), reports, text, verify}] — `verify`
+    names the route that re-verifies it (POST {"source"}). Never raises."""
+    try:
+        import rec_ledger
+        from time_utils import mdy
+        rows = rec_ledger.distrusted_sources(restaurant_id, db_path=db_path or DB_PATH)
+    except Exception as e:
+        print(f"[data_health] distrust unreadable for {restaurant_id}: {e}")
+        return []
+    out = []
+    for src, info in sorted(rows.items()):
+        label = df.SOURCES.get(src, {}).get("label", src)
+        since = mdy(str(info.get("since") or "")[:10])
+        n = int(info.get("reports") or 1)
+        out.append({"source": src, "label": label, "since": since, "reports": n,
+                    "text": (f"You said you don't trust the {label.lower()} data ({since}"
+                             + (f", {n} times" if n > 1 else "") + "). Recommendations resting on it are held "
+                             "at low confidence until you re-verify it."),
+                    "verify": {"web": "/api/data-health/verify", "mobile": "/mobile/api/data-health/verify",
+                               "source": src}})
     return out
 
 

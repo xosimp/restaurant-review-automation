@@ -44,6 +44,7 @@ from datetime import date, timedelta
 
 import models as _models_mod
 from models import DB_PATH
+import canonical_facts as _cf
 from . import privacy
 from .stats import median, percentile
 
@@ -59,7 +60,10 @@ def get_conn(db_path=None):
 # concept is its own S7, the non-sales structural dimensions joined, and
 # labor % is withheld on the assumed wage. Similarity reads version-2 rows
 # only, so a type code from the old mixed vocabulary is never compared.
-DNA_VERSION = 2
+# 3 (memory audit 9/29/26, canonical_facts): staffing issues over WATCHED
+# nights only, reviews Google removed left out of the review mix, and loss
+# rates over final days — a version-2 row measured all three the old way.
+DNA_VERSION = 3
 MIN_ROBUST_N = 30          # restaurants measuring a dimension before the robust z replaces the anchors
 MAD_K = 1.4826
 Z_CLIP = 3.0
@@ -259,15 +263,19 @@ def _d(x):
     return str(x or "")[:10]
 
 
-def _sales_days(conn, rid, since):
-    """[(date, sales, hours, labor_pct)] — final days with sales, oldest first."""
+def _sales_days(conn, rid, since, until=None):
+    """[(date, sales, hours, labor_pct)] — final days with sales, oldest
+    first, from `since` through `until` (a past day for the features
+    backfill: nothing after it is read)."""
+    hi = (until.isoformat() if until else "9999-12-31")
     try:
         rows = conn.execute("SELECT date, sales, total_hours, labor_pct FROM labor_daily_history WHERE restaurant_id=? "
-                            "AND date >= ? AND sales > 0 AND COALESCE(final, 1) = 1 ORDER BY date",
-                            (rid, since.isoformat())).fetchall()
+                            "AND date >= ? AND date <= ? AND sales > 0 AND COALESCE(final, 1) = 1 ORDER BY date",
+                            (rid, since.isoformat(), hi)).fetchall()
     except Exception:
         rows = conn.execute("SELECT date, sales, total_hours, labor_pct FROM labor_daily_history WHERE restaurant_id=? "
-                            "AND date >= ? AND sales > 0 ORDER BY date", (rid, since.isoformat())).fetchall()
+                            "AND date >= ? AND date <= ? AND sales > 0 ORDER BY date",
+                            (rid, since.isoformat(), hi)).fetchall()
     out, seen = [], set()
     for r in rows:
         d = _d(r["date"])
@@ -311,7 +319,7 @@ def _weekend_share(days, today):
 DAYPART_SPLIT_HOUR = 16           # "before 4pm"
 
 
-def _dsr_hourly(conn, rid, since):
+def _dsr_hourly(conn, rid, since, until=None):
     """{business_date: (before 4pm, all)} from the nightly Daily Sales
     Report's hourly split (facts_json → blocks.sales.detail.hourly, each
     hour's net from the POS's own ticket times — RPOWER's ticket open time,
@@ -322,8 +330,9 @@ def _dsr_hourly(conn, rid, since):
     from time_utils import BUSINESS_DAY_START_HOUR
     try:
         rows = conn.execute("SELECT business_date, version, facts_json FROM dsr_reports WHERE restaurant_id=? "
-                            "AND business_date >= ? AND status IN ('final','provisional') "
-                            "ORDER BY business_date, version", (rid, since.isoformat())).fetchall()
+                            "AND business_date >= ? AND business_date <= ? AND status IN ('final','provisional') "
+                            "ORDER BY business_date, version",
+                            (rid, since.isoformat(), until.isoformat() if until else "9999-12-31")).fetchall()
     except Exception:
         return {}
     out = {}
@@ -361,8 +370,8 @@ def _daypart_mix(conn, rid, days, today):
     since = today - timedelta(days=56)
     try:
         rows = conn.execute("SELECT business_date, MAX(CASE WHEN captured_hour <= 16 THEN net_sales END) AS early "
-                            "FROM pos_intraday WHERE restaurant_id=? AND business_date >= ? GROUP BY business_date",
-                            (rid, since.isoformat())).fetchall()
+                            "FROM pos_intraday WHERE restaurant_id=? AND business_date >= ? AND business_date <= ? "
+                            "GROUP BY business_date", (rid, since.isoformat(), today.isoformat())).fetchall()
     except Exception:
         rows = []
     final = {d.isoformat(): s for d, s, _h, _p in days}
@@ -382,7 +391,7 @@ def _daypart_mix(conn, rid, days, today):
         seen.add(day)
     n_dsr = 0
     if n < 28:
-        for day, (e, t) in _dsr_hourly(conn, rid, since).items():
+        for day, (e, t) in _dsr_hourly(conn, rid, since, until=today).items():
             if day in seen:
                 continue
             early += e
@@ -585,18 +594,34 @@ def _publish_rate(conn, rid, today):
     return _m(round(min(1.0, pub / float(window)), 3), window, f"{pub} of the last {window} weeks published")
 
 
-def _staffing_issues(conn, rid, today):
+# Watched nights a staffing-issues rate needs before it is a reading.
+STAFFING_MIN_WATCHED_NIGHTS = 8
+
+
+def _staffing_issues(conn, rid, today, db_path=DB_PATH):
+    """Coverage and no-show issues per 100 people-shifts over the nights
+    someone WATCHED (canonical_facts.watched_nights: the clock-in check ran).
+    schedule_outcomes stores issues=0 whether or not a night was watched, so
+    a restaurant without coverage checks read 0 issues — the best possible
+    value — in similarity and predictions (QUALITY-18). A night with an
+    issue recorded was watched by definition. Withdrawn below
+    STAFFING_MIN_WATCHED_NIGHTS watched nights."""
+    since = today - timedelta(days=56)
     try:
-        r = conn.execute("SELECT COUNT(DISTINCT history_id) AS w, SUM(issues) AS i, SUM(people) AS p "
-                         "FROM schedule_outcomes WHERE restaurant_id=? AND date >= ?",
-                         (rid, (today - timedelta(days=56)).isoformat())).fetchone()
+        rows = conn.execute("SELECT history_id, date, issues, people FROM schedule_outcomes "
+                            "WHERE restaurant_id=? AND date >= ? AND date <= ?",
+                            (rid, since.isoformat(), today.isoformat())).fetchall()
     except Exception:
         return _need(0, "no schedule outcomes")
-    weeks = int(r["w"] or 0) if r else 0
-    if weeks < 4 or not (r["p"] or 0):
-        return _need(weeks, f"{weeks} published weeks with outcomes in the last 8")
-    return _m(round(float(r["i"] or 0) / float(r["p"]) * 100.0, 2), weeks,
-              f"coverage and no-show issues per 100 people-shifts, {weeks} weeks")
+    watched = _cf.watched_nights(rid, since, today, db_path=db_path)
+    seen = [r for r in rows if (r["issues"] or 0) or _d(r["date"]) in watched]
+    nights = len({_d(r["date"]) for r in seen})
+    weeks = len({r["history_id"] for r in seen})
+    people = sum(int(r["people"] or 0) for r in seen)
+    if nights < STAFFING_MIN_WATCHED_NIGHTS or not people:
+        return _need(nights, f"{nights} watched nights in the last 8 weeks (needs {STAFFING_MIN_WATCHED_NIGHTS})")
+    return _m(round(sum(int(r["issues"] or 0) for r in seen) / float(people) * 100.0, 2), nights,
+              f"coverage and no-show issues per 100 people-shifts, {nights} watched nights over {weeks} weeks")
 
 
 def _staff_rows(conn, rid):
@@ -642,13 +667,16 @@ def _tenure(staff, today):
 
 def _review_mix(conn, rid, today):
     try:
-        rows = conn.execute("SELECT review_date, sentiment, categories FROM reviews WHERE restaurant_id=? "
-                            "AND COALESCE(review_date, fetched_at) >= ?",
-                            (rid, (today - timedelta(days=90)).isoformat())).fetchall()
+        # Live reviews on the one time axis (QUALITY-16): removed ones kept
+        # counting here while every Reviews screen left them out.
+        rows = conn.execute(f"SELECT date({_cf.REVIEW_AXIS}) AS at, sentiment, categories FROM reviews "
+                            f"WHERE restaurant_id=? AND {_cf.LIVE_REVIEWS_SQL} AND date({_cf.REVIEW_AXIS}) >= ? "
+                            f"AND date({_cf.REVIEW_AXIS}) <= ?",
+                            (rid, (today - timedelta(days=90)).isoformat(), today.isoformat())).fetchall()
     except Exception:
         rows = []
     d30 = (today - timedelta(days=30)).isoformat()
-    last30 = [r for r in rows if r["sentiment"] and _d(r["review_date"]) >= d30]
+    last30 = [r for r in rows if r["sentiment"] and _d(r["at"]) >= d30]
     if len(last30) >= 5:
         neg = _m(round(sum(1 for r in last30 if r["sentiment"] == "negative") / float(len(last30)), 3),
                  len(last30), f"{len(last30)} analysed reviews, last 30 days")
@@ -717,7 +745,8 @@ def _loss_rate(conn, rid, kind, today):
     try:
         r = conn.execute("SELECT COUNT(*) AS days, COALESCE(SUM(p.amount),0) AS amt, SUM(l.sales) AS s "
                          "FROM pos_loss_daily p JOIN labor_daily_history l ON l.restaurant_id=p.restaurant_id "
-                         "AND l.date=p.business_date AND l.sales > 0 WHERE p.restaurant_id=? AND p.kind=? "
+                         f"AND l.date=p.business_date AND l.sales > 0 AND {_cf.final_sql('l')} "
+                         "WHERE p.restaurant_id=? AND p.kind=? "
                          "AND p.business_date >= ?", (rid, kind, (today - timedelta(days=28)).isoformat())).fetchone()
     except Exception:
         return _need(0, "no loss data from the POS")
@@ -855,7 +884,7 @@ def measure(restaurant_id, today=None, db_path=DB_PATH, features=None, restauran
             "labor_swing": lambda: _labor_cost(f, "labor_pct_sd_28d", "labor_swing", restaurant),
             "overtime_intensity": lambda: _overtime(restaurant_id, days, today, db_path),
             "schedule_publish_rate": lambda: _publish_rate(conn, restaurant_id, today),
-            "staffing_issues": lambda: _staffing_issues(conn, restaurant_id, today),
+            "staffing_issues": lambda: _staffing_issues(conn, restaurant_id, today, db_path),
             "retention": lambda: _retention(staff, today),
             "tenure_depth": lambda: _tenure(staff, today),
             "rating_level": lambda: _from_feature(f, "avg_rating_30d", "rating_level", f.get("reviews_30d")),
@@ -930,9 +959,14 @@ def anchor_norms() -> dict:
 def platform_norms(db_path=DB_PATH, weeks=2) -> dict:
     """Per numeric dimension: the robust centre and scale over the latest
     real restaurants' raw values when at least MIN_ROBUST_N measure it,
-    else the stated anchor. Read once per nightly pass."""
+    else the stated anchor. Read once per nightly pass. A pooled figure:
+    a restaurant whose reviews come through the owner's Google connection
+    contributes none of its review dimensions (provenance.REVIEW_DNA_DIMS —
+    Google user data never trains a pooled figure), and a restaurant that
+    may not teach (jobs.excluded_learning_ids) contributes nothing."""
     from .features import iso_week
-    from .jobs import seeded_restaurant_ids
+    from .jobs import seeded_restaurant_ids, excluded_learning_ids
+    from . import provenance
     norms = anchor_norms()
     floor = iso_week(date.today() - timedelta(weeks=weeks))
     conn = get_conn(db_path)
@@ -945,7 +979,8 @@ def platform_norms(db_path=DB_PATH, weeks=2) -> dict:
         rows = []
     finally:
         conn.close()
-    seeded = seeded_restaurant_ids(db_path=db_path)
+    seeded = seeded_restaurant_ids(db_path=db_path) | excluded_learning_ids(db_path=db_path)
+    google = provenance.google_connected_ids(db_path=db_path)
     vals = {}
     for r in rows:
         if r["restaurant_id"] in seeded:
@@ -955,6 +990,8 @@ def platform_norms(db_path=DB_PATH, weeks=2) -> dict:
         except (TypeError, ValueError):
             continue
         for dim, e in dims.items():
+            if r["restaurant_id"] in google and dim in provenance.REVIEW_DNA_DIMS:
+                continue
             if dim in norms:
                 x = _t(dim, (e or {}).get("raw"))
                 if x is not None:
