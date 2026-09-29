@@ -2000,3 +2000,246 @@ def answer_mention(restaurant_id, signal_id, confirm: bool, user=None, db_path=N
         return (cur.rowcount or 0) > 0
     finally:
         conn.close()
+
+
+# ── the people memory (memory_context provider "people") ───────────────────
+#
+# What Cavnar AI remembers about the staff, as dated lines for the model
+# calls that decide who works or read what guests said about service
+# (memory audit 9/29/26: memory_context "people"). Each surface reads only
+# what no block of its own already says — the schedule prompt carries
+# attendance (its RELIABILITY block), the standing patterns (its learned
+# block), staff notes, tenure and last month's pattern itself — so the
+# section never pays twice for one fact. Every line names a person, so
+# none is trusted: the assembler fences them all.
+
+_MEMORY_PARTS = {
+    "schedule": ("roles", "covers", "mentions"),
+    "labor_read": ("attendance", "standing", "roles", "changes", "covers"),
+    "review_diagnosis": ("attendance", "changes", "mentions"),
+}
+_MEMORY_DEFAULT_PARTS = ("attendance", "standing", "roles", "changes", "covers", "mentions")
+MEMORY_NEW_DAYS = 28           # "new since" — a first shift in the last four weeks
+MEMORY_GONE_DAYS = 21          # "no shifts since" — three weeks without one…
+MEMORY_GONE_WITHIN_DAYS = 90   # …after working inside the last quarter
+MEMORY_HISTORY_DAYS = 56       # below eight weeks of history everyone looks new: say nothing
+MEMORY_COVER_DAYS = 180
+MEMORY_MENTION_DAYS = 180
+
+
+def memory_lines(req) -> list:
+    """memory_context provider "people": [{text, date, source, subject,
+    weight, trusted, module}] for `req.surface` (schedule, labor_read,
+    review_diagnosis; any other surface — Ask — reads every part). Parts:
+
+      attendance  who missed or was late on watched shifts, and on which
+                  weekday (attendance.summary_lines); or that nothing was
+                  watched yet, so no one's reliability is known
+      standing    the manager's standing preferences still in force
+                  (schedule_standing_patterns, active)
+      roles       promotions and roles someone is trained for beyond the one
+                  they work (person_roles)
+      changes     who is new in the last four weeks and who has had no
+                  shift for three, against the restaurant's own last shift
+                  (never today: a sync that stopped is not a departure)
+      covers      who picks up shifts for teammates, and who said no
+      mentions    guests naming someone in reviews the owner CONFIRMED"""
+    rid = req.restaurant_id
+    db = getattr(req, "db_path", None)
+    now = getattr(req, "now", None)
+    try:
+        from datetime import datetime as _dt
+        today = now.date() if isinstance(now, _dt) else (now or None)
+    except Exception:
+        today = None
+    from datetime import date as _date
+    today = today or _date.today()
+    parts = _MEMORY_PARTS.get(getattr(req, "surface", None), _MEMORY_DEFAULT_PARTS)
+    out = []
+    for part in parts:
+        try:
+            out += _MEMORY_READERS[part](rid, today, db)
+        except Exception as e:             # one part's failure never costs the others
+            _log.warning("[people] memory part %s failed rid=%s: %s", part, rid, e)
+    return out
+
+
+def _mem_line(text, date_, subject, weight, source="system", module="labor", trusted=False):
+    return {"text": text, "date": date_, "source": source, "subject": subject, "weight": float(weight),
+            "trusted": trusted, "module": module}
+
+
+def _mem_attendance(rid, today, db):
+    import attendance
+    lines = attendance.summary_lines(rid, today=today, db_path=db)
+    if not lines:
+        if attendance.watched(rid, days=90, db_path=db):
+            return []                      # watched, and nobody missed: nothing to say
+        return [_mem_line("Attendance is not watched here yet: no published week has been checked against the "
+                          "punches, so no one's reliability is known. Say nothing about who shows up.",
+                          None, "labor", 1.0, trusted=True)]
+    return [_mem_line(l["text"], l["date"],
+                      f"labor:day:{l['top_day'].lower()}" if l.get("top_day") else "labor",
+                      3.0 + min(int(l.get("misses") or 0), 6) * 0.5) for l in lines]
+
+
+def _mem_standing(rid, today, db):
+    import schedule_versions
+    kw = {"db_path": db} if db else {}
+    rows = [r for r in schedule_versions.standing_patterns(rid, include_retired=False, **kw)
+            if r.get("status") == "active"]
+    rows.sort(key=lambda r: -(int(r.get("times_applied") or 0)))
+    out = []
+    for r in rows[:6]:
+        text = str(r.get("text") or "").split(" — ")[0].strip().rstrip(".")
+        if not text:
+            continue
+        kept = int(r.get("times_applied") or 0)
+        out.append(_mem_line(f"Standing preference (learned {r.get('first_learned')}"
+                             + (f", kept {kept} week{'s' if kept != 1 else ''}" if kept else "")
+                             + f"): {text}.",
+                             r.get("last_confirmed_iso"),
+                             f"labor:day:{str(r['day']).lower()}" if r.get("day") else "schedule",
+                             2.0 + min(kept, 10) / 10.0, source="manager"))
+    return out
+
+
+def _mem_roles(rid, today, db):
+    from time_utils import mdy
+    held = held_roles(rid, db_path=db, today=today)
+    if not held:
+        return []
+    import staff_settings
+    try:
+        worked = {_nk(e["name"]): e.get("role") for e in staff_settings.roster(rid, db_path=db or DB_PATH)}
+    except Exception:
+        worked = {}
+    out = []
+    for r in held[:8]:
+        base = worked.get(r["key"])
+        since = f" on {mdy(r['since'])}" if r.get("since") else ""
+        if r["primary"]:
+            text = f"{r['name']} was promoted to {r['role']}{since}."
+        elif base and str(base).lower() != str(r["role"]).lower():
+            text = f"{r['name']} is trained for {r['role']}" + (f" since {mdy(r['since'])}" if r.get("since") else "") \
+                   + f" as well as {base}, and can fill a {r['role']} gap."
+        else:
+            text = f"{r['name']} is trained for {r['role']}" + (f" since {mdy(r['since'])}" if r.get("since") else "") + "."
+        out.append(_mem_line(text, r.get("since"), "schedule", 2.0,
+                             source="owner" if r.get("source") in (None, "owner") else str(r["source"])))
+    return out
+
+
+def _mem_changes(rid, today, db):
+    import shift_facts
+    from datetime import date as _d, timedelta as _td
+    from time_utils import mdy
+    ten = shift_facts.tenure(rid, db_path=db)
+    if not ten:
+        return []
+    firsts = [v["first"] for v in ten.values() if v.get("first")]
+    lasts = [v["last"] for v in ten.values() if v.get("last")]
+    if not firsts or not lasts:
+        return []
+    start, end = _d.fromisoformat(min(firsts)[:10]), _d.fromisoformat(max(lasts)[:10])
+    if (end - start).days < MEMORY_HISTORY_DAYS:
+        return []
+    new = sorted((v["first"], n) for n, v in ten.items() if v.get("first")
+                 and _d.fromisoformat(v["first"][:10]) > end - _td(days=MEMORY_NEW_DAYS))
+    gone = sorted(((v["last"], n) for n, v in ten.items() if v.get("last")
+                   and end - _td(days=MEMORY_GONE_WITHIN_DAYS) <= _d.fromisoformat(v["last"][:10])
+                   <= end - _td(days=MEMORY_GONE_DAYS) and int(v.get("shifts") or 0) >= 4), reverse=True)
+    out = []
+    if new:
+        names = ", ".join(f"{n} (first shift {mdy(f)})" for f, n in new[:6])
+        out.append(_mem_line(f"New on the staff in the four weeks to {mdy(end)}: {names}.", new[0][0],
+                             "labor", 2.5))
+    if gone:
+        names = ", ".join(f"{n} (last shift {mdy(l_)})" for l_, n in gone[:6])
+        out.append(_mem_line(f"No shifts in the three weeks to {mdy(end)} after working before: {names}. "
+                             "Whether they left isn't known.", gone[0][0], "labor", 2.5))
+    return out
+
+
+def _mem_covers(rid, today, db):
+    rec = cover_record(rid, days=MEMORY_COVER_DAYS, db_path=db)
+    if not rec:
+        return []
+    names = _display_names(rid, list(rec), db)
+    rows = sorted(rec.items(), key=lambda kv: (-kv[1]["accepted"], kv[1]["declined"]))
+    out = []
+    for key, c in rows:
+        a, d = int(c.get("accepted") or 0), int(c.get("declined") or 0)
+        if a < 2 and d < 2:
+            continue
+        bits = []
+        if a:
+            bits.append(f"covered {a} shift{'s' if a != 1 else ''} for teammates")
+        if d:
+            bits.append(f"didn't take {d} cover{'s' if d != 1 else ''} they were asked to")
+        out.append(_mem_line(f"{names.get(key, key)} " + " and ".join(bits) + " in the last 6 months.", None,
+                             "schedule", 1.0 + min(a, 10) / 10.0))
+        if len(out) >= 4:
+            break
+    return out
+
+
+def _mem_mentions(rid, today, db):
+    from datetime import timedelta as _td
+    from time_utils import mdy
+    since = (today - _td(days=MEMORY_MENTION_DAYS)).isoformat()
+    by = {}
+    for m in mentions(rid, status="confirmed", db_path=db, limit=200):
+        if not m.get("date_iso") or m["date_iso"] < since:
+            continue
+        e = by.setdefault(m["name"], {"pos": 0, "neg": 0, "n": 0, "first": m["date_iso"], "last": m["date_iso"]})
+        e["n"] += 1
+        if (m.get("polarity") or 0) > 0:
+            e["pos"] += 1
+        elif (m.get("polarity") or 0) < 0:
+            e["neg"] += 1
+        e["first"], e["last"] = min(e["first"], m["date_iso"]), max(e["last"], m["date_iso"])
+    out = []
+    for name, e in sorted(by.items(), key=lambda kv: -kv[1]["n"])[:4]:
+        tone = []
+        if e["pos"]:
+            tone.append(f"{e['pos']} positive")
+        if e["neg"]:
+            tone.append(f"{e['neg']} negative")
+        out.append(_mem_line(f"Guests named {name} in {e['n']} review{'s' if e['n'] != 1 else ''} since "
+                             f"{mdy(e['first'])}" + (f" ({', '.join(tone)})" if tone else "")
+                             + " — confirmed by the owner.", e["last"], "reviews", 1.5 + min(e["n"], 10) / 10.0,
+                             module="reviews"))
+    return out
+
+
+def _display_names(rid, keys, db):
+    """{name_key: display name} for keys a store holds, through the people
+    table (the canonical spelling) and then the roster."""
+    out = {}
+    conn = _conn(db)
+    try:
+        for r in conn.execute("SELECT name_key, display_name FROM people WHERE restaurant_id=? AND merged_into IS NULL",
+                              (rid,)).fetchall():
+            if r["name_key"] in keys:
+                out[r["name_key"]] = r["display_name"]
+    except Exception:
+        pass
+    finally:
+        conn.close()
+    missing = [k for k in keys if k not in out]
+    if missing:
+        try:
+            import staff_settings
+            for e in staff_settings.roster(rid, db_path=db or DB_PATH):
+                k = _nk(e["name"])
+                if k in missing and k not in out:
+                    out[k] = e["name"]
+        except Exception:
+            pass
+    return out
+
+
+_MEMORY_READERS ={"attendance": _mem_attendance, "standing": _mem_standing, "roles": _mem_roles,
+                   "changes": _mem_changes, "covers": _mem_covers, "mentions": _mem_mentions}
+

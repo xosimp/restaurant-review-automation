@@ -434,37 +434,42 @@ def watched(restaurant_id, days=90, db_path=None) -> bool:
 
 def summary_lines(restaurant_id, today=None, db_path=None, limit=6) -> list:
     """Plain sentences about attendance over the last 12 weeks, for the
-    people memory: who missed shifts, on which weekdays, and whether the
-    nights were watched at all."""
+    people memory: who missed shifts or came late, and on which weekday.
+    Every watched shift counts — the recorded outcomes and an upload's real
+    schedule against its punches (reliability_events), the same shifts the
+    reliability figure reads — so the memory never says less than the
+    schedule's own RELIABILITY block."""
     today = today or date.today()
     since = (today - timedelta(weeks=12)).isoformat()
-    evs = events(restaurant_id, since=since, db_path=db_path)
+    evs = [e for e in reliability_events(restaurant_id, since=since, db_path=db_path)
+           if str(e[1])[:10] <= today.isoformat()]
     if not evs:
         return []
     by = {}
-    for e in evs:
-        t = by.setdefault(e["employee_name"], {"n": 0, "miss": 0, "late": 0, "days": {}, "last": e["business_date"]})
+    for name, day, outcome in evs:
+        t = by.setdefault(_nk(name), {"name": name, "n": 0, "miss": 0, "late": 0, "days": {}, "last": day})
         t["n"] += 1
-        t["last"] = max(t["last"], e["business_date"])
-        if e["outcome"] in MISSES:
+        t["last"] = max(t["last"], day)
+        if outcome in MISSES:
             t["miss"] += 1
-            wd = date.fromisoformat(e["business_date"]).strftime("%A")
+            wd = date.fromisoformat(str(day)[:10]).strftime("%A")
             t["days"][wd] = t["days"].get(wd, 0) + 1
-        elif e["outcome"] == "late":
+        elif outcome == "late":
             t["late"] += 1
     lines = []
-    for name, t in sorted(by.items(), key=lambda kv: (-kv[1]["miss"], -kv[1]["late"], kv[0])):
+    for t in sorted(by.values(), key=lambda t: (-t["miss"], -t["late"], t["name"])):
         if not t["miss"] and t["late"] < 2:
             continue
         bits = []
+        top_day = max(t["days"].items(), key=lambda kv: kv[1]) if t["days"] else None
         if t["miss"]:
-            top = max(t["days"].items(), key=lambda kv: kv[1])
             bits.append(f"missed {t['miss']} of {t['n']} watched shifts"
-                        + (f", {top[1]} of them {top[0]}s" if top[1] >= 2 else ""))
+                        + (f", {top_day[1]} of them {top_day[0]}s" if top_day[1] >= 2 else ""))
         if t["late"] >= 2:
             bits.append(f"late {t['late']} times")
-        lines.append({"text": f"{name}: " + "; ".join(bits) + " (last 12 weeks)", "date": t["last"],
-                      "name": name, "weekdays": sorted(t["days"])})
+        lines.append({"text": f"{t['name']}: " + "; ".join(bits) + " (last 12 weeks)", "date": t["last"],
+                      "name": t["name"], "weekdays": sorted(t["days"]), "misses": t["miss"], "late": t["late"],
+                      "top_day": top_day[0] if top_day and top_day[1] >= 2 else None})
         if len(lines) >= limit:
             break
     return lines

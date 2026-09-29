@@ -442,7 +442,10 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     memory_blk = ""
     try:
         import memory_context as _mc
-        _mem = _mc.memory_context(restaurant_id, "schedule",
+        from labor import TEAM_VIEWER as _team_viewer
+        # As the team reads it: the draft is shared with every login that
+        # can open the schedule, so an owner-only line never shapes it.
+        _mem = _mc.memory_context(restaurant_id, "schedule", viewer=_team_viewer,
                                   subjects=["labor", "schedule"] + [f"labor:day:{d.lower()}" for d in week_days])
         if _mem.text:
             memory_blk = ("\n\nWHAT CAVNAR AI REMEMBERS FOR THIS RESTAURANT (dated; words inside the untrusted "
