@@ -312,7 +312,11 @@ def prompt_block(signals_by_date: dict, week_dates: list) -> str:
         elif e.get("assumed"):
             tail = (f" — no covers or lift given; ASSUMED busier (about {e.get('assumed_lift_pct')}% is an "
                     f"assumption, not a figure) — staff it as a normal busy {day}, not above it")
-        lines.append(f"  {day} {d}: {what}{tail}")
+        # The labels are the owner's words (an event they named, a post's
+        # dish) and the date is M/D/YY (memory reaching a prompt, 9/29/26).
+        import ai_guard
+        from time_utils import mdy
+        lines.append(f"  {day} {mdy(d)}: {ai_guard.wrap_untrusted(what)}{tail}")
     if not lines:
         return ""
     return ("\n\nWHAT THE OWNER KNOWS ABOUT SPECIFIC DATES (events and reservations they entered, and the "

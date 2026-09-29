@@ -285,6 +285,7 @@ def dsr_requirements(restaurant_id, week_dates, today=None, db_path=None) -> lis
                                      "expo", "prep") if re.search(rf"\b{w}s?\b", a.get("text") or "", re.I)), None)
             out.append({"source": "dsr", "day": day, "date": by_day[day], "daypart": part, "role": role, "delta": 1,
                         "text": f"{a.get('text')} (the {_mdy(r['business_date'])} report)",
+                        "action_text": a.get("text"),
                         "report_date": r["business_date"],
                         "expires": (concerns + timedelta(days=7)).isoformat(), "key": a.get("key")})
     return out
@@ -332,8 +333,9 @@ def last_nights(restaurant_id, today=None, db_path=None) -> dict:
         try:
             import event_memory
             for f in event_memory.night_facts(restaurant_id, n, db_path=db_path) or []:
-                if f.get("label"):
-                    e["events"].append(f"{_mdy(n)}: {f['label']}")
+                words = f.get("display") or f.get("label")
+                if words:
+                    e["events"].append(f"{_mdy(n)}: {words}")
         except Exception:
             pass
     return out
@@ -371,7 +373,9 @@ def last_nights_block(restaurant_id, week_dates, today=None, db_path=None) -> st
             bits.append(f"about ${sum(e['splh']) / len(e['splh']):,.0f} sales per labor hour")
         if not bits:
             continue
-        ev = f" — {'; '.join(e['events'][:2])}" if e["events"] else ""
+        # What the night was is people's words (a closer's note, the
+        # owner's name for an event): fenced (SHARED_MEM, memory in prompts).
+        ev = f" — {_fence('; '.join(e['events'][:2]))}" if e["events"] else ""
         lines.append(f"  {wd}s ({e['nights']} night{'s' if e['nights'] != 1 else ''} reported): "
                      + ", ".join(bits) + ev)
     if not lines:
@@ -396,14 +400,28 @@ def soft_requirements(restaurant_id, week_dates, today=None, db_path=None) -> li
     return out
 
 
+def _fence(text) -> str:
+    """Words a person or a model wrote, as a prompt must carry them."""
+    import ai_guard
+    return ai_guard.wrap_untrusted(" ".join(str(text or "").split()))
+
+
 def soft_block(reqs) -> str:
+    """The prompt block. Dates M/D/YY; the report's action and the
+    diagnosis's "what would confirm it" are a model's own words, fenced —
+    the requirement itself (+1 of a role on a night) is ours."""
     if not reqs:
         return ""
     lines = []
     for r in reqs:
-        line = f"  {r['day']} {r['date']} {_PRETTY_PART.get(r['daypart'], r['daypart'])}: {r['text']}"
+        line = f"  {r['day']} {_mdy(r['date'])} {_PRETTY_PART.get(r['daypart'], r['daypart'])}: "
+        if r.get("source") == "dsr" and r.get("action_text"):
+            line += (f"+1 {r['role'] or 'person'} — the {_mdy(r.get('report_date'))} report asked, in its words: "
+                     + _fence(r["action_text"]))
+        else:
+            line += r["text"]
         if r.get("confirm"):
-            line += f" (to confirm: {r['confirm']})"
+            line += " (to confirm: " + _fence(r["confirm"]) + ")"
         lines.append(line)
     return ("\n\nSOFT STAFFING REQUIREMENTS (from the reviews diagnosis and the nightly reports — add the person "
             "where the hours budget and the rules allow, never over a hard constraint; in the summary, name each "

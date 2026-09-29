@@ -60,6 +60,9 @@ def test_a_fill_tuesday_text_is_a_signal_on_tuesday_that_every_reader_sees():
     assert row["lift_pct"] is None                         # no measured campaign lift yet: the assumed path
     block = demand_signals.prompt_block(demand_signals.by_date(rid, ["2026-09-29"]), ["2026-09-29"])
     assert "Text to 412 guests to fill Tuesday" in block and "ASSUMED" in block
+    # The owner's words are fenced and the date is M/D/YY, like all memory in a prompt.
+    import ai_guard
+    assert "Tuesday 9/29/26: " + ai_guard.UNTRUSTED_OPEN in block and "2026-09-29" not in block
     # No trim of that night, and the reason is said.
     g = staffing_signals.trim_guard(rid, "Tuesday", on_date=date(2026, 9, 29))
     assert g["suppress"] is True and "Text to 412 guests" in g["why"] and "9/29/26" in g["why"]
@@ -158,7 +161,10 @@ def test_a_staffing_diagnosis_is_a_soft_plus_one_for_the_draft(monkeypatch):
     week = [(date(2026, 10, 5) + timedelta(days=i)).isoformat() for i in range(7)]
     reqs = staffing_signals.review_requirements(rid, week)
     assert len(reqs) == 1 and reqs[0]["text"].startswith("+1 server Friday dinner") and reqs[0]["date"] == "2026-10-09"
-    assert "SOFT STAFFING REQUIREMENTS" in staffing_signals.soft_block(reqs)
+    block = staffing_signals.soft_block(reqs)
+    assert "SOFT STAFFING REQUIREMENTS" in block and "Friday 10/9/26 dinner: +1 server Friday dinner" in block
+    import ai_guard
+    assert "(to confirm: " + ai_guard.wrap_untrusted("wait times with 5 servers") + ")" in block
     rows = [{"date": "2026-10-09", "employee": n, "role": "Server", "shift_start": "5:00pm", "shift_end": "10:00pm"}
             for n in ("A", "B", "C")]
     done = staffing_signals.applied(reqs, rows, {("Friday", "night"): {"Server": 2}})
@@ -175,7 +181,12 @@ def _metric(rid, day, metric, value):
     conn.close()
 
 
-def test_what_the_last_nights_showed_reaches_the_draft():
+def test_what_the_last_nights_showed_reaches_the_draft(monkeypatch):
+    import ai_guard
+    import event_memory
+    monkeypatch.setattr(event_memory, "night_facts", lambda r, day, db_path=None: [
+        {"kind": "event", "label": "cubs game", "display": "Cubs game (closer's note)"}]
+        if str(day) == "2026-09-25" else [], raising=False)
     rid = _rid()
     fridays = [date(2026, 9, 25) - timedelta(weeks=w) for w in range(3)]
     for f in fridays:
@@ -187,6 +198,8 @@ def test_what_the_last_nights_showed_reaches_the_draft():
     assert "WHAT THE LAST NIGHTS SHOWED" in block
     assert "Fridays (3 nights reported): 3 no-shows, 12 overtime hours, labor 2.0 pts over target" in block
     assert "Tuesdays" not in block                       # nothing measured, nothing said
+    # What the night was (event_memory, M5) is a person's words: fenced.
+    assert ai_guard.wrap_untrusted("9/25/26: Cubs game (closer's note)") in block
 
 
 def test_an_open_dsr_staffing_action_is_a_soft_requirement_until_its_week_passes():
@@ -203,6 +216,12 @@ def test_an_open_dsr_staffing_action_is_a_soft_requirement_until_its_week_passes
     reqs = staffing_signals.dsr_requirements(rid, week, today=date(2026, 9, 28))
     assert [(r["day"], r["role"]) for r in reqs] == [("Friday", "dishwasher")]
     assert "the 9/25/26 report" in reqs[0]["text"]
+    # In the prompt the report's action is the DSR model's own words, fenced;
+    # the date is M/D/YY.
+    import ai_guard
+    block = staffing_signals.soft_block(reqs)
+    assert "Friday 10/2/26 dinner: +1 dishwasher — the 9/25/26 report asked, in its words: " in block
+    assert ai_guard.wrap_untrusted("Add a dishwasher Friday at 7pm.") in block and "2026-10-02" not in block
     # A week later the Friday it was about has passed.
     later = [(date(2026, 10, 12) + timedelta(days=i)).isoformat() for i in range(7)]
     assert staffing_signals.dsr_requirements(rid, later, today=date(2026, 10, 12)) == []
