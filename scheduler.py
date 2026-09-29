@@ -700,16 +700,16 @@ def run_daily_fetch(restaurant_ids=None):
                 except Exception:
                     pass
 
-            # Draft — include approved examples for style learning. Same
-            # unconditional-sweep reasoning as the analysis loop above.
-            from models import get_approved_examples
-            approved_examples = get_approved_examples(rid, limit=4)
+            # Draft. Same unconditional-sweep reasoning as the analysis loop
+            # above. Each draft picks its own style examples from the owner's
+            # approvals for reviews of its star band (drafter.draft_response;
+            # memory audit 9/29/26, reply_voice) — four fetched here once
+            # used to be every draft's examples, 1-star or 5.
             for r in get_pending_drafts(rid, limit=50):
                 try:
                     draft_response(r.id, r.rating, r.text, r.sentiment,
                                   restaurant.name, restaurant.voice_notes or "",
                                   restaurant_id=rid,
-                                  approved_examples=approved_examples,
                                   sign_off=restaurant.sign_off_name or restaurant.name,
                                   never_say=restaurant.never_say or "",
                                   language=getattr(restaurant, "response_language", None) or None,

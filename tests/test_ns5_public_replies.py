@@ -176,7 +176,7 @@ def test_bulk_approve_holds_a_reply_that_makes_a_claim(db, monkeypatch):
     good = _new_review(db, rid, "b2", 5, "Great", "Thanks so much, see you soon!", processed=1)
     approved = []
     monkeypatch.setattr(client_api, "_do_approve",
-                        lambda review_id, r, google=None, bulk=False: (approved.append(review_id) or ({"ok": True}, 200)))
+                        lambda review_id, r, google=None, bulk=False, **_k: (approved.append(review_id) or ({"ok": True}, 200)))
     payload, status = client_api._do_approve_all(rid)
     assert status == 200 and approved == [good]
     assert payload.get("held_for_review") == 1

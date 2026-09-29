@@ -1639,7 +1639,7 @@ def mobile_approve_review(review_id, current_user):
     _body = request.get_json(silent=True) or {}
     payload, status = _capi._do_approve(review_id, current_user["restaurant_id"],
                                         confirm_flagged=_body.get("confirm_flagged") is True,
-                                        expected_draft=_body.get("expected_draft"))
+                                        expected_draft=_body.get("expected_draft"), user=current_user)
     return jsonify(**payload), status
 
 
@@ -1651,7 +1651,7 @@ def mobile_approve_all_reviews(current_user):
     Ask Cavnar's proposal all run the identical bulk-approve path."""
     data = request.get_json(silent=True) or {}
     payload, status = _capi._do_approve_all(current_user["restaurant_id"], data.get("limit", 25),
-                                            review_ids=data.get("review_ids"))
+                                            review_ids=data.get("review_ids"), user=current_user)
     return jsonify(**payload), status
 
 

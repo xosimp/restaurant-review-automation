@@ -148,7 +148,7 @@ def invalidate_insight_cache(restaurant_id, prefixes=None):
 # without duplicating it.
 
 def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_flagged=False,
-                expected_draft=None):
+                expected_draft=None, user=None):
     """Approve (and post) one drafted reply.
 
     `confirm_flagged`: the person was shown the reply guard's flag on this
@@ -172,7 +172,13 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_
 
     `expected_draft`: the reply text the person approved (the phone sends
     it). When the stored reply is different, nothing is posted and the 409
-    says so (`draft_changed`) — see models.claim_approval."""
+    says so (`draft_changed`) — see models.claim_approval.
+
+    `user`: the login approving (the route's current_user). Who approved is
+    recorded with the approval (models.reply_approver: the login, its
+    answer_authority, normal or view-as — memory audit 9/29/26,
+    reply_voice), so the drafter's examples, its edit note and auto-approve
+    trust learn only the owner's voice."""
     if auto is None:
         try:
             from flask import has_request_context
@@ -183,11 +189,12 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_
     # live, drafted reply, and only once however many approves arrive
     # together (MOD-REV-4, MOD-REV-5). Nothing below — the action label, the
     # webhook, the Google post, the confirmation — happens for a loser.
-    from models import claim_approval
+    from models import claim_approval, reply_approver
     if not isinstance(expected_draft, str):
         expected_draft = None
     if not claim_approval(rid, restaurant_id, publishable_only=bool(bulk),
-                          allow_flagged=bool(confirm_flagged), expected_draft=expected_draft):
+                          allow_flagged=bool(confirm_flagged), expected_draft=expected_draft,
+                          approver=reply_approver(user, auto=bool(auto))):
         _gc = get_conn()
         _cur = _gc.execute("SELECT response_status, deleted_at, draft_needs_review, draft_review_reason, "
                            "draft_response "
@@ -434,7 +441,7 @@ def _do_retry_post(rid, restaurant_id):
     return _post_payload(rid, restaurant_id, auto_posted, post_error), 200
 
 
-def _do_approve_all(restaurant_id, limit=25, review_ids=None):
+def _do_approve_all(restaurant_id, limit=25, review_ids=None, user=None):
     """Publish every drafted reply in one go.
 
     `review_ids`: the replies a confirm card listed (ask_cavnar_tools
@@ -528,7 +535,7 @@ def _do_approve_all(restaurant_id, limit=25, review_ids=None):
     google = {}
     for row in rows:
         try:
-            payload, status = _do_approve(row["id"], restaurant_id, google, bulk=True)
+            payload, status = _do_approve(row["id"], restaurant_id, google, bulk=True, user=user)
             if status == 200 and payload.get("ok"):
                 approved += 1
                 if payload.get("auto_posted"):
@@ -582,7 +589,7 @@ def approve_all_reviews_api(current_user):
     # this route, its mobile twin and Ask's confirm all do it.
     data = request.get_json(silent=True) or {}
     payload, status = _do_approve_all(current_user["restaurant_id"], data.get("limit", 25),
-                                      review_ids=data.get("review_ids"))
+                                      review_ids=data.get("review_ids"), user=current_user)
     return jsonify(**payload), status
 
 
@@ -696,7 +703,7 @@ def _do_retract(rid, restaurant_id):
 def approve(rid, current_user):
     _body = request.get_json(silent=True) or {}
     payload, status = _do_approve(rid, current_user["restaurant_id"],
-                                  confirm_flagged=_body.get("confirm_flagged") is True)
+                                  confirm_flagged=_body.get("confirm_flagged") is True, user=current_user)
     return jsonify(**payload), status
 
 
@@ -4547,7 +4554,7 @@ def _do_regenerate_draft(review_id, restaurant_id):
     """Regenerate AI draft for a review — delegates to drafter.draft_response()
     so a regenerated draft gets the same quality/model/urgency-escalation as
     the original draft (this used to be a separate, drifted reimplementation)."""
-    from models import get_conn, get_approved_examples
+    from models import get_conn
     from drafter import draft_response, DraftNotReplaced
     from ai_utils import ai_rate_limited
     if ai_rate_limited(f"regen:{restaurant_id}", max_calls=10, window_secs=60):
@@ -4569,13 +4576,13 @@ def _do_regenerate_draft(review_id, restaurant_id):
                 "response_status": r.get("response_status")}, 409
     restaurant = get_restaurant(restaurant_id)
     try:
-        examples = get_approved_examples(restaurant_id, limit=4)
+        # Style examples are the drafter's own pick for this review's star
+        # band (memory audit 9/29/26, reply_voice).
         new_draft = draft_response(
             review_id, r.get("rating", 3), r["text"], r.get("sentiment", "neutral"),
             restaurant.name,
             voice_notes=restaurant.voice_notes or "",
             restaurant_id=restaurant_id,
-            approved_examples=examples,
             sign_off=restaurant.sign_off_name or restaurant.name,
             never_say=restaurant.never_say or "",
             language=getattr(restaurant, "response_language", None) or None,

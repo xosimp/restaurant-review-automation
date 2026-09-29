@@ -112,33 +112,48 @@ def compare(original, final) -> dict:
             "signals": signals}
 
 
-def style_note(summaries) -> str:
+# The signals that say something about the owner's voice whatever the star
+# rating: a note built from another band's edits carries only these
+# (memory audit 9/29/26, reply_voice) — "they cut it down" learned on 5-star
+# thank-yous is no guide to a 1-star apology, and neither is the length.
+BAND_FREE_SIGNALS = ("removed_exclamations", "added_exclamations")
+
+
+def style_note(summaries, only=None, with_length=True, scope="") -> str:
     """The drafter's OWNER'S EDITS block, from the most recent edit
     summaries (newest first): the signals at least MIN_SIGNAL_SHARE of the
     edited replies share (and at least MIN_EDITS of them), and the typical
     length the owner leaves. "" below MIN_EDITS edited replies — a pattern
     needs more than one afternoon's edits. Deterministic: the same rows give
-    the same words, so a stored prompt fingerprint holds."""
+    the same words, so a stored prompt fingerprint holds.
+
+    `only`: the signals this note may name (BAND_FREE_SIGNALS for a note
+    borrowed from other bands); `with_length` False drops the length
+    sentence and "rewrite" line; `scope` names what the edits were measured
+    on ("replies to 1-2★ reviews")."""
     edited = [s for s in (summaries or []) if s and s.get("category") in ("light", "heavy", "rewrite")][:NOTE_WINDOW]
     if len(edited) < MIN_EDITS:
         return ""
+    allowed = tuple(only) if only is not None else tuple(SIGNAL_TEXT)
     counts = {}
     for s in edited:
         for sig in set(s.get("signals") or []):
-            if sig in SIGNAL_TEXT:
+            if sig in SIGNAL_TEXT and sig in allowed:
                 counts[sig] = counts.get(sig, 0) + 1
     need = max(MIN_EDITS, int(len(edited) * MIN_SIGNAL_SHARE + 0.999))
     common = [sig for sig in SIGNAL_TEXT if counts.get(sig, 0) >= need][:MAX_NOTE_SIGNALS]
     heavy = sum(1 for s in edited if s.get("category") in ("heavy", "rewrite"))
     bits = [SIGNAL_TEXT[s] for s in common]
-    if heavy >= need:
+    if with_length and heavy >= need:
         bits.append("they rewrite most of it in their own words")
-    lengths = sorted(int(s.get("words_after") or 0) for s in edited if s.get("words_after"))
-    typical = lengths[len(lengths) // 2] if lengths else None
+    typical = None
+    if with_length:
+        lengths = sorted(int(s.get("words_after") or 0) for s in edited if s.get("words_after"))
+        typical = lengths[len(lengths) // 2] if lengths else None
     if not bits and typical is None:
         return ""
     line = (f"\nOWNER'S EDITS — measured from the last {len(edited)} drafts the owner changed before "
-            f"approving, not guessed:")
+            f"approving{(' (' + scope + ')') if scope else ''}, not guessed:")
     if bits:
         line += " " + "; ".join(bits) + "."
     if typical:
