@@ -159,9 +159,11 @@ def test_the_other_workstreams_ledgers_are_registered_for_retention():
     for table, col, days in (("value_figures_daily", "date", 120), ("admin_issue_resolution_history", "created_at", 400),
                              ("sms_log", "created_at", 90), ("push_outbox", "created_at", 30),
                              ("webhook_outbox", "created_at", 30), ("morning_brief_deliveries", "created_at", 90),
-                             ("alert_storm_caps", "started_at", 365)):
+                             ("alert_storm_caps", "started_at", 365), ("login_history", "created_at", 90)):
         assert ops._RETENTION_DAYS[table] == days and ops._RETENTION_COLUMN[table] == col, table
     assert "business_metrics_daily" not in ops._RETENTION_DAYS, "the MRR history is never pruned"
+    import auth
+    assert ops._RETENTION_DAYS["login_history"] == auth.LOGIN_HISTORY_RETENTION_DAYS, "the boot prune's window"
     # One pruner per table: the platform telemetry is the supervisor's.
     import platform_monitor
     assert not set(platform_monitor.TELEMETRY_RETENTION_DAYS) & set(ops._RETENTION_DAYS)

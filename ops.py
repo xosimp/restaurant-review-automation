@@ -2127,11 +2127,13 @@ _RETENTION_DAYS = {
     "webhook_outbox":     int(os.getenv("RETAIN_WEBHOOK_OUTBOX_DAYS", "30")),
     "morning_brief_deliveries": int(os.getenv("RETAIN_BRIEF_DELIVERIES_DAYS", "90")),
     "alert_storm_caps":   int(os.getenv("RETAIN_ALERT_STORM_CAPS_DAYS", "365")),
-    # login_history (90 days, auth.LOGIN_HISTORY_RETENTION_DAYS, pruned at
-    # boot today) and view_as_sessions join once auth.init_auth indexes
-    # their created_at: every delete here must use an index
-    # (tests/test_edge_data_claims_and_lease.py), and both tables are made
-    # after this module's boot init runs.
+    # The sign-in record: 90 days, auth.LOGIN_HISTORY_RETENTION_DAYS, which
+    # auth.prune_login_history also applies at boot. Its created_at index is
+    # auth.AUTH_INDEXES' idx_login_history_created (INT-2), made at boot with
+    # the table — after this module's own boot init, so it is not made here.
+    "login_history":      int(os.getenv("RETAIN_LOGIN_HISTORY_DAYS", "90")),
+    # view_as_sessions is not here: auth.record_view_as_session deletes its
+    # rows past two days whenever a view-as opens, and one pruner per table.
 }
 
 # Each table's own timestamp column — they do not agree on a name.
@@ -2150,7 +2152,7 @@ _RETENTION_COLUMN = {
     "missed_windows": "created_at",
     "value_figures_daily": "date", "admin_issue_resolution_history": "created_at", "sms_log": "created_at",
     "push_outbox": "created_at", "webhook_outbox": "created_at", "morning_brief_deliveries": "created_at",
-    "alert_storm_caps": "started_at",
+    "alert_storm_caps": "started_at", "login_history": "created_at",
 }
 # Every table above has an index on its column, created where the table is
 # or at boot here (_ensure_retention_indexes, DATA-40): these deletes run
