@@ -528,12 +528,17 @@ def _recipe_provenance(restaurant_id, dish_ids, db_path=DB_PATH) -> dict:
 
 
 def _food_cost_target(restaurant_id) -> float:
-    """restaurants.food_cost_target — the same target Home and cogs use.
+    """The food cost target the menu driver judges dishes against — the one
+    target read (thresholds.target_value), so the owner's active goal on
+    food cost % comes first ("food cost 28% by 12/1" in Goals while the
+    drivers kept judging against 30% — memory audit 9/29/26, owner_goals),
+    then restaurants.food_cost_target, the same target Home and cogs use.
     The menu driver used a fixed 35% while Home judged against this."""
     try:
         from models import get_restaurant
+        import thresholds
         r = get_restaurant(restaurant_id)
-        t = _f(getattr(r, "food_cost_target", None), 0.0) if r else 0.0
+        t = _f(thresholds.target_value(r, "food"), 0.0) if r else 0.0
         return t if 5.0 <= t <= 80.0 else 30.0
     except Exception:
         return 30.0

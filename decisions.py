@@ -186,6 +186,10 @@ def history(restaurant_id, limit=40, db_path=DB_PATH, sees_loss=True, viewer=Non
                     r["answered_on"] = day
                 if meta.get("reason") and not r.get("reason"):
                     r["reason"] = str(meta["reason"])[:200]
+                if meta.get("title") and r.get("title") == _humanize(key):
+                    # The card's words as the owner answered them (home_brief
+                    # keeps them on the answer, memory audit 9/29/26).
+                    r["title"] = str(meta["title"])[:200]
                 if meta.get("reason_code") in _rl.REASON_CODES and not r.get("reason_code"):
                     # The owner's one-tap why (already doing it, too costly …).
                     r["reason_code"] = meta["reason_code"]
@@ -461,6 +465,14 @@ def restore_kind(restaurant_id, kind, user_id=None, surface="home", db_path=DB_P
             conn.close()
         for k in keys:
             rec_ledger.unsilence(restaurant_id, k, db_path=db_path)
+        # Any remembered "Not doing X" about a key of the restored kind is
+        # retracted with its silence (memory audit 9/29/26, owner_lanes).
+        try:
+            import owner_memory
+            owner_memory.retract_for_keys(restaurant_id, keys, archived_by=user_id,
+                                          db_path=None if db_path == DB_PATH else db_path)
+        except Exception as e:
+            print(f"[decisions] restore_kind memory not retracted: {e}")
         if dropped:
             try:
                 import home_brief

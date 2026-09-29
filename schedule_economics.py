@@ -143,11 +143,90 @@ def cost_delta(before_rows: list, after_rows: list, role_rates: dict, blended_ra
 
 # ── weekly revenue from the restaurant's own pattern ──────────────────────
 
-def projected_weekly_revenue(restaurant_id, weeks: int = 8, db_path=DB_PATH) -> dict:
-    """{"value", "source", "weeks"} — the median of the last `weeks` complete
-    weeks of daily sales, so the budget follows how this restaurant
-    actually earns rather than a twelfth of a monthly target. None when
-    fewer than three complete weeks exist."""
+# The week's own budget is the projection once the owner has budgeted this
+# many of its nights in the DSR (memory audit 9/29/26, owner_goals).
+BUDGET_MIN_NIGHTS = 5
+
+
+def budgeted_week_revenue(restaurant_id, week_dates, db_path=DB_PATH) -> dict:
+    """{"value", "source", "nights"} from the owner's own nightly budgets
+    (dsr_budgets, net, else gross) for the week being scheduled, when at
+    least BUDGET_MIN_NIGHTS of its nights are budgeted: the owner who
+    budgets a record festival week in the DSR had the schedule's hours
+    budget built from last month's median week. A night not budgeted is
+    filled from the restaurant's own median for that weekday (said in the
+    source); None value when too few nights are budgeted."""
+    dates = [str(d)[:10] for d in week_dates or () if d]
+    if not dates:
+        return {"value": None, "source": None, "nights": 0}
+    try:
+        from dsr import store as _dsr_store
+        got = _dsr_store.budgets_for(restaurant_id, min(dates), max(dates), db_path=db_path)
+    except Exception:
+        return {"value": None, "source": None, "nights": 0}
+    per_night = {}
+    for d in dates:
+        b = got.get(d) or {}
+        v = b.get("net") if b.get("net") not in (None, "") else b.get("gross")
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            continue
+        if v > 0:
+            per_night[d] = v
+    if len(per_night) < BUDGET_MIN_NIGHTS:
+        return {"value": None, "source": None, "nights": len(per_night)}
+    total = sum(per_night.values())
+    missing = [d for d in dates if d not in per_night]
+    filled = 0
+    if missing:
+        medians = _weekday_medians(restaurant_id, db_path=db_path)
+        for d in missing:
+            try:
+                wd = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
+            except ValueError:
+                continue
+            if medians.get(wd):
+                total += medians[wd]
+                filled += 1
+    src = f"your budget ({len(per_night)} of {len(dates)} nights budgeted"
+    src += (f"; {filled} filled from your usual {'night' if filled == 1 else 'nights'})" if filled else ")")
+    return {"value": round(total, 0), "source": src, "nights": len(per_night)}
+
+
+def _weekday_medians(restaurant_id, weeks: int = 8, db_path=DB_PATH) -> dict:
+    """{weekday: median daily sales} over the last `weeks` weeks."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT day_of_week, sales FROM labor_daily_history WHERE restaurant_id=? AND sales IS NOT NULL "
+            "AND sales > 0 AND date >= date('now', ?)", (restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+    by = {}
+    for r in rows:
+        by.setdefault(str(r["day_of_week"] or "").capitalize(), []).append(float(r["sales"] or 0))
+    out = {}
+    for wd, vals in by.items():
+        vals.sort()
+        n = len(vals)
+        out[wd] = vals[n // 2] if n % 2 else (vals[n // 2 - 1] + vals[n // 2]) / 2
+    return out
+
+
+def projected_weekly_revenue(restaurant_id, weeks: int = 8, db_path=DB_PATH, week_dates=None) -> dict:
+    """{"value", "source", "weeks"} — the week's own budget when the owner
+    has budgeted at least BUDGET_MIN_NIGHTS of `week_dates` in the DSR
+    (budgeted_week_revenue, source "your budget …"); else the median of the
+    last `weeks` complete weeks of daily sales, so the budget follows how
+    this restaurant actually earns rather than a twelfth of a monthly
+    target. None when neither exists (fewer than three complete weeks)."""
+    if week_dates:
+        own = budgeted_week_revenue(restaurant_id, week_dates, db_path=db_path)
+        if own.get("value"):
+            return {"value": own["value"], "source": own["source"], "weeks": 0, "budget_nights": own["nights"]}
     conn = get_conn(db_path)
     try:
         rows = conn.execute(

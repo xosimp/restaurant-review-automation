@@ -192,12 +192,21 @@ def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=Non
             smeta = {"until": until, "days": days}
             if code:
                 smeta["reason_code"] = code
+            if reason:
+                # The owner's own why stays with the answer (it is no longer
+                # copied into ask_memory — owner_lanes).
+                smeta["reason"] = reason
             rec_ledger.record(rid, key, "snoozed", surface=surface, user_id=user_id, role=role,
                               meta=smeta, snooze_until=until, require_existing=require_existing)
         else:
             meta = {"kind": _LEDGER_KIND[kind]}
             if reason:
                 meta["reason"] = reason
+            if title:
+                # The card's own words, kept with the answer: decisions.history
+                # names the decision by them when the episode has no title of
+                # its own (they used to ride in on the ask_memory copy).
+                meta["title"] = str(title)[:200]
             if code:
                 meta["reason_code"] = code
             rec_ledger.record(rid, key, "completed" if kind == "done" else "dismissed", surface=surface,
@@ -213,15 +222,13 @@ def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=Non
             if k != key and k not in quiet:
                 dismiss(rid, k, kind=kind, user_id=user_id, days=days, surface=surface, role=role, _card=False,
                         reason_code=reason_code)
-    # The why, remembered: "not doing X: the patio closes in October" is a
-    # preference the assistant reads back in every future answer.
-    if reason:
-        try:
-            from models import remember_ask_fact
-            remember_ask_fact(rid, f"Not doing \u201c{(title or key)[:80]}\u201d: {reason}", kind="preference",
-                              source="Home", user_id=user_id)
-        except Exception:
-            pass
+    # The why is kept WITH the answer (rec_events meta.reason above), where
+    # decisions.history, the decline filters and Ask's decisions section read
+    # it. It used to be copied into ask_memory as "Not doing X: reason" too,
+    # where a busy week of Home passes evicted the owner's own facts ("labor
+    # under 26%", "football season starts next month") from a shared
+    # 12-slot pool, and outlived a "Use again" (memory audit 9/29/26,
+    # owner_lanes). `remembered` still says the reason was recorded.
     return {"ok": True, "key": key, "kind": kind, "days": int(days), "remembered": bool(reason)}
 
 
@@ -248,6 +255,15 @@ def undismiss(rid, key, _card=True):
             n = n or 1
     except Exception as e:
         print(f"[home] ledger unsilence failed: {e}")
+    # A remembered "Not doing X" about this card is retracted with it — the
+    # owner just asked for X again, and Ask kept steering away from it
+    # (memory audit 9/29/26, owner_lanes). Archived, not deleted: Account
+    # shows it and can put it back.
+    try:
+        import owner_memory
+        owner_memory.retract_for_keys(rid, [(key or "").strip()[:160]])
+    except Exception as e:
+        print(f"[home] remembered answer not retracted: {e}")
     invalidate(rid)
     return {"ok": True, "restored": n}
 
@@ -1652,7 +1668,7 @@ def _build(current_user, present=True):
                              "value": "—" if _lab_short else f"{pct:.1f}", "unit": "" if _lab_short else "% of sales",
                              "delta": (None if _lab_short else
                                        ({"value": f"{delta:+.1f} pts", "label": "vs prior period", "good": delta <= 0} if delta is not None else {"value": f"target {labor_target:.0f}%", "label": "", "good": over <= 0})),
-                             "secondary": [{"label": "Target" if _labor_tgt_for["source"] == "set" else "Starting target", "value": f"{labor_target:.0f}%"}, {"label": "Over 40h", "value": str(ot_now["people"] if ot_now else 0)}, {"label": "Recoverable", "value": f"${savings:,.0f}/wk" if savings > 0 else "—"}],
+                             "secondary": [{"label": {"set": "Target", "goal": "Your goal"}.get(_labor_tgt_for["source"], "Starting target"), "value": f"{labor_target:.0f}%"}, {"label": "Over 40h", "value": str(ot_now["people"] if ot_now else 0)}, {"label": "Recoverable", "value": f"${savings:,.0f}/wk" if savings > 0 else "—"}],
                              "interpretation": _lab_interp,
                              "state": _lab_state,
                              "below_floor": _lab_short, "stale": _lab_stale,

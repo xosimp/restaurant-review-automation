@@ -134,10 +134,14 @@ Every root module, its layer and its one-line job. The test fails when a module 
 | `decisions` | 2 | the owner's decision record |
 | `memory_context` | 2 | the one reader that assembles a restaurant's memory for a model call: fenced, M/D/YY-dated sections from lazily imported providers (`PROVIDERS`), in priority order within a budget (memory audit 9/29/26) |
 | `owner_memory` | 2 | what the owner tells Cavnar AI, typed (facts, constraints, goals, conversation summaries) and served to every model call through memory_context; `target_for` gives a module the owner's goal as its target (memory audit 9/29/26) |
+| `ask_conversations` | 2 | what Ask remembers of a chat beyond the turns it replays: the rolling summary of the turns that scrolled out (one small validated model call, replayed first), what the last answer read (its tool calls), this login's past chats and `ask_topics` (read_past_conversations), the "questions you often ask" line; the `conversation` memory_context provider (memory audit 9/29/26) |
 | `ai_reads` | 2 | Cavnar AI's history of its own reasoning: every read, diagnosis, digest, brief and narrative kept, its claims scored at their horizon, the last claim served back (memory audit 9/29/26) |
 | `event_memory` | 2 | what each night teaches: measured effects of events, holidays, weather and campaigns on this restaurant's sales, and its public history (memory audit 9/29/26) |
 | `change_log` | 2 | a lasting, attributed history of settings, targets, prices, menu, roster and hours changes (memory audit 9/29/26) |
 | `canonical_facts` | 2 | one reader per stored fact every learner reads through (memory audit 9/29/26): final days (`FINAL_SQL`), the nightly net by basis (`net_series` — the report's net, an imported workbook, the POS total, each naming its basis and source; two figures compared only on one basis), last year (`last_year_net`, `sales_history`), live reviews on the one axis, measured reach, watched nights, published weeks, and the kinds a stored figure is; `tests/test_mem_m5_canonical_facts.py` holds the learners to it from the source |
+
+
+| `preferences` | 2 | who a setting belongs to (memory audit 9/29/26, owner_layers): a login's own notification choices (push on/off, muted types, their own quiet hours — applied in `push.fire_push`, only ever taking a push away), the location's (the restaurants columns every reader reads) and the organisation's defaults (`apply_to_all_locations` writes every location of the group, `inherit_org_defaults` fills a joining location's unset fields); `resolve` names the source; engagement per login |
 | `delayed` | 2 | actions with an undo window |
 | `demand` | 2 | demand forecast from same-weekday medians |
 | `demo_seed` | 4 | the Simple EJ's demo account (the Gia Mia demo was removed 9/25/26) |

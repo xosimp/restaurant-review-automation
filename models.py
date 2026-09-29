@@ -2787,6 +2787,35 @@ def init_db(db_path: str = DB_PATH):
         "ON ask_cavnar_conversations(restaurant_id, updated_at)",
         "ALTER TABLE ask_cavnar_messages ADD COLUMN conversation_id INTEGER",
         "CREATE INDEX IF NOT EXISTS idx_ask_cavnar_conversation ON ask_cavnar_messages(conversation_id, id)",
+        # A chat's rolling summary of the turns that scrolled out of the
+        # replayed window — decisions, figures read, proposals, open
+        # questions — validated like any output and replayed as the first
+        # context block (ask_conversations, memory audit 9/29/26
+        # conversations); and the modules the chat has touched.
+        "ALTER TABLE ask_cavnar_conversations ADD COLUMN summary_json TEXT",
+        "ALTER TABLE ask_cavnar_conversations ADD COLUMN summary_through_id INTEGER",
+        "ALTER TABLE ask_cavnar_conversations ADD COLUMN summary_at TEXT",
+        "ALTER TABLE ask_cavnar_conversations ADD COLUMN topics TEXT",
+        "CREATE INDEX IF NOT EXISTS idx_ask_conversations_user ON ask_cavnar_conversations(restaurant_id, user_id, updated_at)",
+        # What each chat was about, written when the chat itself is evicted
+        # by the per-login cap — kept forever: one small row per chat, the
+        # plainest record of what this owner keeps asking (read by the
+        # "questions you often ask" line and read_past_conversations).
+        """CREATE TABLE IF NOT EXISTS ask_topics (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            user_id         INTEGER,
+            conversation_id INTEGER,
+            title           TEXT,
+            summary_json    TEXT,
+            topics          TEXT,
+            tools           TEXT,
+            message_count   INTEGER,
+            started_at      TEXT,
+            ended_at        TEXT,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_ask_topics_user ON ask_topics(restaurant_id, user_id, created_at)",
         # "Was this useful?" on an Ask answer (ROI audit #48): one row per
         # answer and login, changed in place if they change their mind. The
         # message can be trimmed from the transcript later; the rating is
@@ -2804,6 +2833,27 @@ def init_db(db_path: str = DB_PATH):
             UNIQUE(restaurant_id, message_id, user_id)
         )""",
         "CREATE INDEX IF NOT EXISTS idx_ask_feedback_restaurant ON ask_feedback(restaurant_id, created_at)",
+        # What each rating was ABOUT (memory audit 9/29/26, ask_feedback): a
+        # count of "helpful" taught nothing specific. Copied from the rated
+        # answer's own meta (ask_cavnar_messages.meta_json) when it is rated:
+        # the depth contract, the tools and modules it read, the Response
+        # Validation verdict, its confidence and a topic.
+        "ALTER TABLE ask_feedback ADD COLUMN depth TEXT",
+        "ALTER TABLE ask_feedback ADD COLUMN tools TEXT",
+        "ALTER TABLE ask_feedback ADD COLUMN modules TEXT",
+        "ALTER TABLE ask_feedback ADD COLUMN verdict TEXT",
+        "ALTER TABLE ask_feedback ADD COLUMN topic TEXT",
+        "ALTER TABLE ask_feedback ADD COLUMN confidence_pct INTEGER",
+        # Whose rating it is (permissions.answer_authority): an admin's — a
+        # view-as session is the owner's login — is kept for the record and
+        # never read as the owner's preference or record.
+        "ALTER TABLE ask_feedback ADD COLUMN authority TEXT",
+        # Each assistant turn keeps the tool calls it made (names and
+        # arguments) and its meta, so a follow-up can re-read the same data
+        # and a rating knows what it rated (memory audit 9/29/26,
+        # conversations / ask_feedback). User turns leave both empty.
+        "ALTER TABLE ask_cavnar_messages ADD COLUMN tools_json TEXT",
+        "ALTER TABLE ask_cavnar_messages ADD COLUMN meta_json TEXT",
         """CREATE TABLE IF NOT EXISTS ask_cavnar_actions (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
             restaurant_id INTEGER NOT NULL REFERENCES restaurants(id),
@@ -3037,6 +3087,15 @@ def init_db(db_path: str = DB_PATH):
             achieved_at     TEXT
         )""",
         "CREATE INDEX IF NOT EXISTS idx_goals_restaurant ON owner_goals(restaurant_id, status)",
+        # Who set a goal and with what authority, and who confirmed it (memory
+        # audit 9/29/26, owner_goals): a goal is the target every module
+        # judges its figure against (owner_memory.target_for), so a
+        # teammate's (or an admin's) goal is 'proposed' until an account
+        # holder confirms it — it no longer silently replaces the owner's.
+        "ALTER TABLE owner_goals ADD COLUMN authority TEXT",
+        "ALTER TABLE owner_goals ADD COLUMN source TEXT",
+        "ALTER TABLE owner_goals ADD COLUMN confirmed_by INTEGER",
+        "ALTER TABLE owner_goals ADD COLUMN confirmed_at TEXT",
 
         # Moments worth marking, each fired at most once ever. The UNIQUE
         # index IS the once-only guarantee: milestones.fire() does an INSERT
@@ -3399,6 +3458,10 @@ def init_db(db_path: str = DB_PATH):
     # (menu_intelligence) — audit #22 / #26 / #41.
     from insight_store import init_insight_store
     init_insight_store(db_path)
+    # Who a setting belongs to: a login's own, the location's, or the whole
+    # organisation's (preferences — memory audit 9/29/26, owner_layers).
+    from preferences import init_preferences
+    init_preferences(db_path)
     from menu_intelligence import init_menu_intelligence
     init_menu_intelligence(db_path)
     # Job claims, runs, failures, async jobs and the scheduler lease — at
@@ -3962,6 +4025,14 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
     if "location_group" in updates or "owner_email" in updates:
         try:
             _sync_restaurant_organization(restaurant_id, db_path=db_path)
+        except Exception:
+            pass
+        # A location joining a group takes the organisation's defaults on the
+        # settings it has not made its own (preferences, memory audit 9/29/26
+        # owner_layers). A deliberate function-scope L1 -> L2 import.
+        try:
+            import preferences as _prefs
+            _prefs.inherit_org_defaults(restaurant_id, db_path=db_path)
         except Exception:
             pass
 
@@ -6370,11 +6441,46 @@ def init_shift_profiles(db_path: str = DB_PATH):
 # two bartenders and want labor down had to say it again on Wednesday, which
 # is exactly the "stop making me explain my restaurant" problem.
 #
-# Deliberately small and deliberately written rather than inferred. The model
-# calls a tool to record a fact; nothing is harvested automatically, because a
-# memory that fills itself becomes a second prompt nobody reviewed.
-ASK_MEMORY_LIMIT = 12
+# Deliberately written rather than inferred. The model calls a tool to record
+# a fact (or the owner types one in Account); nothing is harvested from
+# behaviour, because a memory that fills itself becomes a second prompt
+# nobody reviewed. The one derived fact — an answer-length preference read
+# off the owner's own ratings (owner_memory.derive_rating_preferences) — is
+# labelled as such, visible in Account and forgettable like any other.
+#
+# LANES, not one pool (memory audit 9/29/26, owner_lanes). It was one 12-slot
+# FIFO shared by every kind and every login, and Home's "Not doing X: reason"
+# answers were copied into it — so a busy week of Home passes evicted "we want
+# labor under 26%" and "football season starts next month", unattributed and
+# without trace. Now each kind has its own budget (ASK_MEMORY_CAPS): a write
+# past one evicts the oldest fact OF THAT KIND, into ask_memory_archive with
+# its reason, where Account shows it. Constraints, context and preferences
+# stay until someone retracts them; a time-bound fact ends at valid_until; a
+# follow-up expires 7 days after its due date (owner_memory.expire). Home's
+# decline reasons are not copied here any more — they live on the answer in
+# rec_events (decisions.history reads them there). Measurable goals belong in
+# owner_goals (goals.set_goal); the "goal" kind is for aims no metric reads.
+ASK_MEMORY_KINDS = ("constraint", "context", "preference", "goal", "followup")
+ASK_MEMORY_CAPS = {"constraint": 30, "context": 30, "preference": 30, "goal": 10, "followup": 20}
+# The most facts of ONE kind (the context lane) — kept as a name older
+# readers and tests use; the budget is per kind (ASK_MEMORY_CAPS).
+ASK_MEMORY_LIMIT = ASK_MEMORY_CAPS["context"]
 ASK_MEMORY_MAX_LENGTH = 240
+ASK_MEMORY_AUDIENCES = ("team", "principals", "author")
+# The modules a fact can be about — the generators that read it
+# (owner_memory.SURFACE_MODULES). rec_ledger.MODULES' working vocabulary.
+ASK_MEMORY_MODULES = ("reviews", "labor", "schedule", "food", "marketing", "intel", "guests", "ops")
+_ASK_MEMORY_COLUMNS = (
+    ("modules", "TEXT"),          # comma list of ASK_MEMORY_MODULES; empty = every generator
+    ("subject", "TEXT"),          # a ledger tag or advice signature ("day:sunday", "person:maria")
+    ("audience", "TEXT"),         # team | principals | author — who may read it
+    ("author_label", "TEXT"),     # "Erik, owner" — who said it, as the prompt and Account show it
+    ("authority", "TEXT"),        # permissions.answer_authority at write time: principal | delegate | admin
+    ("valid_until", "TEXT"),      # YYYY-MM-DD: a time-bound fact ends after this day
+    ("due_on", "TEXT"),           # YYYY-MM-DD: a follow-up's due date (expires 7 days after)
+    ("origin", "TEXT"),           # ask | account | audit | ratings | home (legacy)
+    ("updated_at", "TEXT"),
+)
 
 
 def init_ask_memory(db_path: str = DB_PATH):
@@ -6384,62 +6490,230 @@ def init_ask_memory(db_path: str = DB_PATH):
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
             restaurant_id INTEGER NOT NULL REFERENCES restaurants(id),
             fact          TEXT    NOT NULL,
-            kind          TEXT,             -- goal | context | preference | followup
+            kind          TEXT,             -- constraint | context | preference | goal | followup
             source        TEXT,             -- where it came from, for the owner to judge
-            user_id       INTEGER,
+            user_id       INTEGER,          -- who said it (the login), NULL for a seeded fact
             created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
             UNIQUE(restaurant_id, fact)
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ask_memory_rest "
                  "ON ask_memory(restaurant_id, created_at)")
+    have = {r[1] for r in conn.execute("PRAGMA table_info(ask_memory)").fetchall()}
+    for col, decl in _ASK_MEMORY_COLUMNS:
+        if col not in have:
+            try:
+                conn.execute(f"ALTER TABLE ask_memory ADD COLUMN {col} {decl}")
+            except Exception as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
+    # What left the memory without the owner asking — a lane's budget full,
+    # a date passed, a "Use again" that retracted it — kept so forgetting is
+    # visible (Account lists it) and reversible (restore puts it back).
+    # Pruned at ops._RETENTION_DAYS["ask_memory_archive"].
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS ask_memory_archive (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL,
+            fact          TEXT    NOT NULL,
+            kind          TEXT,
+            source        TEXT,
+            user_id       INTEGER,
+            author_label  TEXT,
+            modules       TEXT,
+            subject       TEXT,
+            audience      TEXT,
+            valid_until   TEXT,
+            due_on        TEXT,
+            origin        TEXT,
+            created_at    TEXT,
+            archived_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+            reason        TEXT    NOT NULL,     -- evicted | expired | retracted | forgotten (a derived fact)
+            archived_by   INTEGER
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ask_memory_archive_rest "
+                 "ON ask_memory_archive(restaurant_id, archived_at)")
+    # The retention delete's own index (ops prune_ledgers ranges on it).
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ask_memory_archive_at ON ask_memory_archive(archived_at)")
     conn.commit()
     conn.close()
 
 
+_ASK_ARCHIVE_COLS = ("restaurant_id", "fact", "kind", "source", "user_id", "author_label", "modules", "subject",
+                     "audience", "valid_until", "due_on", "origin", "created_at")
+
+
+def _archive_ask_rows(conn, restaurant_id, ids, reason, archived_by=None) -> int:
+    """Move these ask_memory rows to ask_memory_archive, on the caller's
+    connection (uncommitted)."""
+    ids = [int(i) for i in ids or () if i is not None]
+    if not ids:
+        return 0
+    marks = ",".join("?" for _ in ids)
+    cols = ", ".join(_ASK_ARCHIVE_COLS)
+    conn.execute(
+        f"INSERT INTO ask_memory_archive ({cols}, reason, archived_by) "
+        f"SELECT {cols}, ?, ? FROM ask_memory WHERE restaurant_id=? AND id IN ({marks})",
+        (str(reason)[:20], archived_by, restaurant_id, *ids))
+    return conn.execute(f"DELETE FROM ask_memory WHERE restaurant_id=? AND id IN ({marks})",
+                        (restaurant_id, *ids)).rowcount
+
+
+def archive_ask_facts(restaurant_id: int, ids, reason: str, archived_by: int = None,
+                      db_path: str = DB_PATH) -> int:
+    """Archive facts by id (a date passed, an answer retracted). Returns how
+    many moved."""
+    conn = get_conn(db_path)
+    try:
+        n = _archive_ask_rows(conn, restaurant_id, ids, reason, archived_by)
+        conn.commit()
+        return n
+    finally:
+        conn.close()
+
+
 def remember_ask_fact(restaurant_id: int, fact: str, kind: str = "context",
                       source: str = None, user_id: int = None,
-                      db_path: str = DB_PATH) -> dict:
-    """Record one durable fact about this owner. Idempotent on the text.
+                      db_path: str = DB_PATH, modules=None, subject: str = None,
+                      audience: str = None, author_label: str = None, authority: str = None,
+                      valid_until: str = None, due_on: str = None, origin: str = None) -> dict:
+    """Record one durable fact. Idempotent on the text (a repeat updates the
+    fact's type and stamps it again).
 
-    Oldest facts fall off past ASK_MEMORY_LIMIT rather than growing without
-    bound — a memory that only ever accumulates ends up costing every
-    subsequent question more and telling the model less.
-    """
+    The owner-facing path is owner_memory.remember, which types the fact and
+    stamps its author; this is the storage write and its one invariant: each
+    kind keeps at most ASK_MEMORY_CAPS[kind] facts, and one past that evicts
+    the OLDEST fact OF THAT KIND into ask_memory_archive — never a fact of
+    another kind, and never silently."""
     text = (fact or "").strip()[:ASK_MEMORY_MAX_LENGTH]
     if not text:
         raise ValueError("a fact needs some text")
+    kind = kind if kind in ASK_MEMORY_KINDS else "context"
+    if isinstance(modules, (list, tuple, set)):
+        mods = [str(m).strip().lower() for m in modules if str(m).strip().lower() in ASK_MEMORY_MODULES]
+        modules = ",".join(dict.fromkeys(mods)) or None
+    elif modules:
+        mods = [m.strip().lower() for m in str(modules).split(",") if m.strip().lower() in ASK_MEMORY_MODULES]
+        modules = ",".join(dict.fromkeys(mods)) or None
+    else:
+        modules = None
+    audience = audience if audience in ASK_MEMORY_AUDIENCES else "team"
     conn = get_conn(db_path)
+    evicted = 0
     try:
         conn.execute(
-            "INSERT INTO ask_memory (restaurant_id, fact, kind, source, user_id) "
-            "VALUES (?,?,?,?,?) ON CONFLICT(restaurant_id, fact) DO UPDATE SET "
-            "kind=excluded.kind, source=excluded.source, created_at=datetime('now')",
-            (restaurant_id, text, (kind or "context")[:20], (source or "")[:160] or None, user_id))
-        conn.execute(
-            "DELETE FROM ask_memory WHERE restaurant_id=? AND id NOT IN "
-            "(SELECT id FROM ask_memory WHERE restaurant_id=? ORDER BY created_at DESC, id DESC LIMIT ?)",
-            (restaurant_id, restaurant_id, ASK_MEMORY_LIMIT))
+            "INSERT INTO ask_memory (restaurant_id, fact, kind, source, user_id, modules, subject, audience, "
+            "author_label, authority, valid_until, due_on, origin, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now')) ON CONFLICT(restaurant_id, fact) DO UPDATE SET "
+            "kind=excluded.kind, source=excluded.source, user_id=COALESCE(excluded.user_id, ask_memory.user_id), "
+            "modules=excluded.modules, subject=excluded.subject, audience=excluded.audience, "
+            "author_label=COALESCE(excluded.author_label, ask_memory.author_label), "
+            "authority=COALESCE(excluded.authority, ask_memory.authority), valid_until=excluded.valid_until, "
+            "due_on=excluded.due_on, origin=COALESCE(excluded.origin, ask_memory.origin), "
+            "created_at=datetime('now'), updated_at=datetime('now')",
+            (restaurant_id, text, kind, (source or "")[:160] or None, user_id, modules,
+             (str(subject).strip()[:120] or None) if subject else None, audience,
+             (str(author_label).strip()[:80] or None) if author_label else None,
+             (str(authority)[:20] or None) if authority else None,
+             (str(valid_until)[:10] or None) if valid_until else None,
+             (str(due_on)[:10] or None) if due_on else None,
+             (str(origin)[:20] or None) if origin else None))
+        cap = ASK_MEMORY_CAPS.get(kind, ASK_MEMORY_LIMIT)
+        over = [r["id"] for r in conn.execute(
+            "SELECT id FROM ask_memory WHERE restaurant_id=? AND COALESCE(kind, 'context')=? "
+            "ORDER BY created_at DESC, id DESC LIMIT -1 OFFSET ?", (restaurant_id, kind, cap)).fetchall()]
+        evicted = _archive_ask_rows(conn, restaurant_id, over, "evicted")
         conn.commit()
     finally:
         conn.close()
-    return {"fact": text, "kind": kind or "context"}
+    return {"fact": text, "kind": kind, "evicted": evicted}
 
 
-def get_ask_memory(restaurant_id: int, db_path: str = DB_PATH) -> list:
+def get_ask_memory(restaurant_id: int, db_path: str = DB_PATH, kinds=None) -> list:
+    """Every live fact, newest first, with who wrote it and its type. The
+    lanes bound it (ASK_MEMORY_CAPS); what a model reads of it is chosen and
+    budgeted by memory_context, and what a login may read by owner_memory."""
     try:
         conn = get_conn(db_path)
-        rows = conn.execute(
-            "SELECT fact, kind, source, created_at FROM ask_memory WHERE restaurant_id=? "
-            "ORDER BY created_at DESC, id DESC LIMIT ?",
-            (restaurant_id, ASK_MEMORY_LIMIT)).fetchall()
-        conn.close()
+        try:
+            args = [restaurant_id]
+            where = ""
+            if kinds:
+                kinds = [k for k in kinds if k in ASK_MEMORY_KINDS]
+                where = f" AND COALESCE(kind, 'context') IN ({','.join('?' for _ in kinds)})"
+                args += kinds
+            rows = conn.execute(
+                "SELECT id, fact, kind, source, user_id, created_at, modules, subject, audience, author_label, "
+                "authority, valid_until, due_on, origin, updated_at FROM ask_memory WHERE restaurant_id=?"
+                + where + " ORDER BY created_at DESC, id DESC", args).fetchall()
+        finally:
+            conn.close()
         return [dict(r) for r in rows]
     except Exception:
         return []
 
 
+def get_ask_memory_archive(restaurant_id: int, limit: int = 30, db_path: str = DB_PATH) -> list:
+    """What left the memory without the owner asking, newest first."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT id, fact, kind, source, user_id, author_label, modules, subject, audience, valid_until, "
+                "due_on, origin, created_at, archived_at, reason FROM ask_memory_archive WHERE restaurant_id=? "
+                "ORDER BY archived_at DESC, id DESC LIMIT ?", (restaurant_id, int(limit))).fetchall()
+        finally:
+            conn.close()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
+def restore_ask_fact(restaurant_id: int, archive_id: int, db_path: str = DB_PATH):
+    """Put an archived fact back (it keeps its author and type). Returns the
+    fact, or None when there is no such archived row for this restaurant."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT * FROM ask_memory_archive WHERE id=? AND restaurant_id=?",
+                           (int(archive_id), restaurant_id)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    r = dict(row)
+    remember_ask_fact(restaurant_id, r["fact"], kind=r.get("kind") or "context", source=r.get("source"),
+                      user_id=r.get("user_id"), db_path=db_path, modules=r.get("modules"),
+                      subject=r.get("subject"), audience=r.get("audience"), author_label=r.get("author_label"),
+                      valid_until=r.get("valid_until"), due_on=r.get("due_on"), origin=r.get("origin"))
+    conn = get_conn(db_path)
+    try:
+        conn.execute("DELETE FROM ask_memory_archive WHERE id=? AND restaurant_id=?", (int(archive_id), restaurant_id))
+        conn.commit()
+    finally:
+        conn.close()
+    return r["fact"]
+
+
+def delete_ask_facts(restaurant_id: int, ids, db_path: str = DB_PATH) -> int:
+    """Delete facts by id — a derived fact being replaced by its newer
+    reading (owner_memory.derive_rating_preferences). Not archived."""
+    ids = [int(i) for i in ids or () if i is not None]
+    if not ids:
+        return 0
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute(f"DELETE FROM ask_memory WHERE restaurant_id=? AND id IN ({','.join('?' for _ in ids)})",
+                         (restaurant_id, *ids)).rowcount
+        conn.commit()
+        return n
+    finally:
+        conn.close()
+
+
 def forget_ask_fact(restaurant_id: int, fact: str, db_path: str = DB_PATH) -> bool:
+    """Delete one fact by its exact text. An owner's "forget that" is a
+    deletion — not archived, unlike what the lanes and dates remove."""
     conn = get_conn(db_path)
     try:
         cur = conn.execute("DELETE FROM ask_memory WHERE restaurant_id=? AND fact=?",
@@ -9762,6 +10036,9 @@ ACCOUNT_EVENT_TYPES = (
     # POS failing 2+ days running (pos.note_sync_failure) and reviews Google
     # counted that a Places fetch never returned (scheduler._record_places_gap).
     "pos_sync_failing", "review_fetch_gap",
+    # A group owner made this location's settings every location's
+    # (preferences.apply_to_all_locations, memory audit 9/29/26).
+    "preferences_applied",
 )
 
 ACCOUNT_EVENT_LABELS = {
@@ -9793,6 +10070,7 @@ ACCOUNT_EVENT_LABELS = {
     "supplier_order_sent": "Supplier order sent",
     "schedule_published": "Schedule sent to staff",
     "memory_added": "Fact added to what Cavnar AI remembers",
+    "preferences_applied": "Settings applied to every location",
     "memory_forgotten": "Fact removed from what Cavnar AI remembers",
     "time_off_decided": "Time-off request answered",
     "covers_imported": "Cover counts entered",
@@ -11797,10 +12075,14 @@ _ASK_HISTORY_LIMIT = 40
 
 # Transcripts are conveniences, not records — the action audit in
 # ask_cavnar_actions is the part that must survive, and it is never pruned.
-# Both caps are per restaurant: turns kept within one chat, and chats kept
-# in the history list (oldest chats fall off, with their messages).
+# Turns are kept per chat; chats are kept PER LOGIN (memory audit 9/29/26,
+# conversations): the cap was 50 per restaurant across every login, so a
+# manager who chatted daily pushed the owner's history out within about
+# seven weeks. A restaurant-wide ceiling still bounds the table. What an
+# evicted chat was about is kept in ask_topics first (_topic_row), forever.
 _ASK_TRANSCRIPT_KEEP = 200
 _ASK_CONVERSATIONS_KEEP = 50
+_ASK_CONVERSATIONS_KEEP_RESTAURANT = 250
 _ASK_TITLE_MAX = 80
 
 
@@ -11842,6 +12124,48 @@ def _ask_title(question: str) -> str:
     return text
 
 
+def _topic_row(conn, conversation_id) -> bool:
+    """Keep what an evicted chat was about in ask_topics: its title, its
+    rolling summary (if one was written), the modules it touched, the tools
+    it ran, how many turns and when. Nothing a model writes here — it is
+    copied from the chat's own rows. On the caller's connection."""
+    import json as _json
+    c = conn.execute("SELECT id, restaurant_id, user_id, title, created_at, updated_at, summary_json, topics "
+                     "FROM ask_cavnar_conversations WHERE id=?", (conversation_id,)).fetchone()
+    if not c:
+        return False
+    rows = conn.execute("SELECT tools_json FROM ask_cavnar_messages WHERE conversation_id=? AND role='assistant' "
+                        "AND tools_json IS NOT NULL", (conversation_id,)).fetchall()
+    tools = []
+    for r in rows:
+        try:
+            for t in _json.loads(r["tools_json"] or "[]") or []:
+                name = (t or {}).get("name") if isinstance(t, dict) else None
+                if name and name not in tools:
+                    tools.append(name)
+        except (TypeError, ValueError):
+            continue
+    n = conn.execute("SELECT COUNT(*) FROM ask_cavnar_messages WHERE conversation_id=?",
+                     (conversation_id,)).fetchone()[0]
+    if not n:
+        return False                    # an empty chat said nothing worth keeping
+    conn.execute("INSERT INTO ask_topics (restaurant_id, user_id, conversation_id, title, summary_json, topics, tools, "
+                 "message_count, started_at, ended_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                 (c["restaurant_id"], c["user_id"], c["id"], c["title"], c["summary_json"], c["topics"],
+                  ",".join(tools[:20]) or None, int(n), c["created_at"], c["updated_at"]))
+    return True
+
+
+def _evict_ask_conversations(conn, ids):
+    for cid in ids:
+        try:
+            _topic_row(conn, cid)
+        except Exception as e:
+            print(f"[ask] topic row for chat {cid} not kept: {e}")
+        conn.execute("DELETE FROM ask_cavnar_messages WHERE conversation_id=?", (cid,))
+        conn.execute("DELETE FROM ask_cavnar_conversations WHERE id=?", (cid,))
+
+
 def create_ask_conversation(restaurant_id, user_id=None, db_path: str = DB_PATH) -> int:
     conn = get_conn(db_path)
     try:
@@ -11849,16 +12173,20 @@ def create_ask_conversation(restaurant_id, user_id=None, db_path: str = DB_PATH)
             "INSERT INTO ask_cavnar_conversations (restaurant_id, user_id) VALUES (?,?)",
             (restaurant_id, user_id)
         )
-        # Keep the history list bounded — the oldest chats fall off with
-        # their messages. The action audit is untouched.
-        stale = conn.execute(
+        # Keep the history list bounded — THIS login's oldest chats fall off
+        # past _ASK_CONVERSATIONS_KEEP (and anyone's past the restaurant
+        # ceiling), each first written to ask_topics. The action audit is
+        # untouched.
+        mine = conn.execute(
+            "SELECT id FROM ask_cavnar_conversations WHERE restaurant_id=? AND user_id IS ? "
+            "ORDER BY updated_at DESC, id DESC LIMIT -1 OFFSET ?",
+            (restaurant_id, user_id, _ASK_CONVERSATIONS_KEEP)).fetchall()
+        _evict_ask_conversations(conn, [s["id"] for s in mine])
+        everyone = conn.execute(
             "SELECT id FROM ask_cavnar_conversations WHERE restaurant_id=? "
             "ORDER BY updated_at DESC, id DESC LIMIT -1 OFFSET ?",
-            (restaurant_id, _ASK_CONVERSATIONS_KEEP)
-        ).fetchall()
-        for s in stale:
-            conn.execute("DELETE FROM ask_cavnar_messages WHERE conversation_id=?", (s["id"],))
-            conn.execute("DELETE FROM ask_cavnar_conversations WHERE id=?", (s["id"],))
+            (restaurant_id, _ASK_CONVERSATIONS_KEEP_RESTAURANT)).fetchall()
+        _evict_ask_conversations(conn, [s["id"] for s in everyone])
         conn.commit()
         return cur.lastrowid
     finally:
@@ -11988,59 +12316,132 @@ def latest_ask_answer_id(restaurant_id, conversation_id, user_id=None, db_path: 
     return int(row[0]) if row and row[0] else None
 
 
-def record_ask_feedback(restaurant_id, message_id, helpful, note=None, user_id=None, db_path: str = DB_PATH):
+def record_ask_feedback(restaurant_id, message_id, helpful, note=None, user_id=None, db_path: str = DB_PATH,
+                        authority=None):
     """Rate one Ask answer: `helpful` true/false, an optional note. The
     message must be an ASSISTANT turn of THIS restaurant, given to this
     login (or to nobody in particular) — a rating of another restaurant's,
     or another login's, answer is refused (None), never written. Rating the
     same answer again replaces the rating. Returns the stored row."""
+    import json as _json
     conn = get_conn(db_path)
     try:
         msg = conn.execute(
-            "SELECT id, conversation_id, user_id FROM ask_cavnar_messages WHERE id=? AND restaurant_id=? "
+            "SELECT id, conversation_id, user_id, meta_json FROM ask_cavnar_messages WHERE id=? AND restaurant_id=? "
             "AND role='assistant'", (int(message_id), restaurant_id)).fetchone()
         if not msg or (msg["user_id"] is not None and user_id is not None and msg["user_id"] != user_id):
             return None
         note = (str(note).strip()[:500] or None) if note else None
+        # What the rated answer was (its meta, stored with the turn): the
+        # depth contract, the tools and modules it read, the validation
+        # verdict, its confidence and a topic (memory audit 9/29/26,
+        # ask_feedback). An older turn has none; the rating still counts.
+        try:
+            meta = _json.loads(msg["meta_json"] or "{}") or {}
+        except (TypeError, ValueError):
+            meta = {}
         conn.execute(
-            "INSERT INTO ask_feedback (restaurant_id, user_id, message_id, conversation_id, helpful, note) "
-            "VALUES (?,?,?,?,?,?) ON CONFLICT(restaurant_id, message_id, user_id) DO UPDATE SET "
-            "helpful=excluded.helpful, note=excluded.note, updated_at=datetime('now')",
-            (restaurant_id, user_id, int(message_id), msg["conversation_id"], 1 if helpful else 0, note))
+            "INSERT INTO ask_feedback (restaurant_id, user_id, message_id, conversation_id, helpful, note, depth, "
+            "tools, modules, verdict, topic, confidence_pct, authority) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(restaurant_id, message_id, user_id) DO UPDATE SET "
+            "helpful=excluded.helpful, note=excluded.note, depth=excluded.depth, tools=excluded.tools, "
+            "modules=excluded.modules, verdict=excluded.verdict, topic=excluded.topic, "
+            "confidence_pct=excluded.confidence_pct, authority=excluded.authority, updated_at=datetime('now')",
+            (restaurant_id, user_id, int(message_id), msg["conversation_id"], 1 if helpful else 0, note,
+             (str(meta.get("depth"))[:20] if meta.get("depth") else None),
+             _json.dumps(list(meta.get("tools_used") or [])[:12]) if meta.get("tools_used") else None,
+             _json.dumps(list(meta.get("modules_consulted") or [])[:12]) if meta.get("modules_consulted") else None,
+             (str(meta.get("verdict"))[:20] if meta.get("verdict") else None),
+             (str(meta.get("topic"))[:40] if meta.get("topic") else None),
+             (int(meta["confidence_pct"]) if isinstance(meta.get("confidence_pct"), (int, float)) else None),
+             (str(authority)[:20] if authority else None)))
         conn.commit()
-        row = conn.execute("SELECT message_id, conversation_id, helpful, note, updated_at FROM ask_feedback "
-                           "WHERE restaurant_id=? AND message_id=? AND user_id IS ?",
+        row = conn.execute("SELECT message_id, conversation_id, helpful, note, updated_at, depth, topic "
+                           "FROM ask_feedback WHERE restaurant_id=? AND message_id=? AND user_id IS ?",
                            (restaurant_id, int(message_id), user_id)).fetchone()
     finally:
         conn.close()
     return ({"message_id": row["message_id"], "conversation_id": row["conversation_id"],
-             "helpful": bool(row["helpful"]), "note": row["note"], "rated_at": row["updated_at"]} if row else None)
+             "helpful": bool(row["helpful"]), "note": row["note"], "rated_at": row["updated_at"],
+             "depth": row["depth"], "topic": row["topic"]} if row else None)
 
 
-def ask_feedback_summary(restaurant_id, days: int = 90, db_path: str = DB_PATH) -> dict:
-    """How this restaurant has rated Ask's answers: {"rated", "helpful",
-    "not_helpful", "notes"} over the last `days` — notes are the most recent
-    "not helpful" notes (at most two), for the assistant's context. Pure
-    SQL; read by the Ask opening and the context snapshot, never a model."""
+def ask_feedback_summary(restaurant_id, days: int = 90, db_path: str = DB_PATH, user_id=None) -> dict:
+    """How Ask's answers have been rated: {"rated", "helpful",
+    "not_helpful", "notes", "by_depth", "by_topic", "days"} over the last
+    `days` — notes are the most recent "not helpful" notes (at most two),
+    for the assistant's context. `user_id` reads ONE login's ratings: a
+    teammate's "not helpful" is theirs, never the owner's (memory audit
+    9/29/26, ask_feedback). Pure SQL; read by the Ask opening, the context
+    snapshot and the depth choice, never a model."""
     conn = get_conn(db_path)
+    since = f"-{int(days)} days"
+    # An admin's rating (view-as included) is never the owner's.
+    who = (" AND user_id=?" if user_id is not None else "") + " AND COALESCE(authority, '') != 'admin'"
+    args = (restaurant_id, since) + ((user_id,) if user_id is not None else ())
     try:
         row = conn.execute("SELECT COUNT(*) AS n, COALESCE(SUM(helpful), 0) AS yes FROM ask_feedback "
-                           "WHERE restaurant_id=? AND updated_at >= datetime('now', ?)",
-                           (restaurant_id, f"-{int(days)} days")).fetchone()
+                           "WHERE restaurant_id=? AND updated_at >= datetime('now', ?)" + who, args).fetchone()
         notes = [r["note"] for r in conn.execute(
             "SELECT note FROM ask_feedback WHERE restaurant_id=? AND helpful=0 AND note IS NOT NULL "
-            "AND updated_at >= datetime('now', ?) ORDER BY updated_at DESC, id DESC LIMIT 2",
-            (restaurant_id, f"-{int(days)} days")).fetchall()]
+            "AND updated_at >= datetime('now', ?)" + who + " ORDER BY updated_at DESC, id DESC LIMIT 2",
+            args).fetchall()]
+        try:
+            by_depth = [{"depth": r["depth"], "rated": int(r["n"]), "helpful": int(r["yes"] or 0),
+                         "not_helpful": int(r["n"]) - int(r["yes"] or 0)} for r in conn.execute(
+                "SELECT depth, COUNT(*) AS n, COALESCE(SUM(helpful), 0) AS yes FROM ask_feedback "
+                "WHERE restaurant_id=? AND updated_at >= datetime('now', ?)" + who +
+                " AND depth IS NOT NULL GROUP BY depth ORDER BY n DESC", args).fetchall()]
+            by_topic = [{"topic": r["topic"], "rated": int(r["n"]), "helpful": int(r["yes"] or 0),
+                         "not_helpful": int(r["n"]) - int(r["yes"] or 0)} for r in conn.execute(
+                "SELECT topic, COUNT(*) AS n, COALESCE(SUM(helpful), 0) AS yes FROM ask_feedback "
+                "WHERE restaurant_id=? AND updated_at >= datetime('now', ?)" + who +
+                " AND topic IS NOT NULL GROUP BY topic ORDER BY n DESC", args).fetchall()]
+        except Exception:
+            by_depth, by_topic = [], []
     except Exception:
-        return {"rated": 0, "helpful": 0, "not_helpful": 0, "notes": []}
+        return {"rated": 0, "helpful": 0, "not_helpful": 0, "notes": [], "by_depth": [], "by_topic": [],
+                "days": int(days)}
     finally:
         conn.close()
     n, yes = int(row["n"] or 0), int(row["yes"] or 0)
-    return {"rated": n, "helpful": yes, "not_helpful": n - yes, "notes": notes, "days": int(days)}
+    return {"rated": n, "helpful": yes, "not_helpful": n - yes, "notes": notes, "days": int(days),
+            "by_depth": by_depth, "by_topic": by_topic}
+
+
+def ask_feedback_rows(restaurant_id, user_id=None, days: int = 180, db_path: str = DB_PATH) -> list:
+    """The ratings themselves, newest first: [{helpful, note, depth, topic,
+    tools, modules, verdict, confidence_pct, updated_at, user_id}] — what the
+    derived preferences and the answer's own accuracy are read from."""
+    import json as _json
+    # An admin's rating (view-as included) is never the owner's.
+    who = (" AND user_id=?" if user_id is not None else "") + " AND COALESCE(authority, '') != 'admin'"
+    args = (restaurant_id, f"-{int(days)} days") + ((user_id,) if user_id is not None else ())
+    try:
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT helpful, note, depth, topic, tools, modules, verdict, confidence_pct, updated_at, user_id "
+                "FROM ask_feedback WHERE restaurant_id=? AND updated_at >= datetime('now', ?)" + who +
+                " ORDER BY updated_at DESC, id DESC LIMIT 500", args).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return []
+    out = []
+    for r in rows:
+        d = dict(r)
+        for k in ("tools", "modules"):
+            try:
+                d[k] = _json.loads(d[k]) if d.get(k) else []
+            except (TypeError, ValueError):
+                d[k] = []
+        out.append(d)
+    return out
 
 
 def save_ask_message(restaurant_id, role, content, proposals=None, user_id=None,
-                     conversation_id=None, db_path: str = DB_PATH) -> int:
+                     conversation_id=None, db_path: str = DB_PATH, tools=None, meta=None) -> int:
     """Appends a turn and returns the conversation it landed in.
 
     With no conversation_id, the turn goes into THIS login's current chat
@@ -12058,14 +12459,39 @@ def save_ask_message(restaurant_id, role, content, proposals=None, user_id=None,
         conversation_id = current_ask_conversation_id(restaurant_id, db_path=db_path, viewer_id=user_id)
     if conversation_id is None:
         conversation_id = create_ask_conversation(restaurant_id, user_id=user_id, db_path=db_path)
+    # An assistant turn keeps the tool calls it made (names and arguments,
+    # so a follow-up can re-read the same data) and its meta (depth, tools,
+    # modules, verdict, confidence, topic — what a rating of it is about).
+    tools_json = meta_json = None
+    if role == "assistant":
+        try:
+            if tools:
+                tools_json = _json.dumps([{"name": str((t or {}).get("name") or "")[:60],
+                                           "input": (t or {}).get("input") or {}}
+                                          for t in tools if isinstance(t, dict)][:20], default=str)[:6000]
+            if meta:
+                meta_json = _json.dumps(meta, default=str)[:4000]
+        except (TypeError, ValueError):
+            tools_json = meta_json = None
     conn = get_conn(db_path)
     try:
         conn.execute(
-            "INSERT INTO ask_cavnar_messages (restaurant_id, user_id, role, content, proposals, conversation_id) "
-            "VALUES (?,?,?,?,?,?)",
+            "INSERT INTO ask_cavnar_messages (restaurant_id, user_id, role, content, proposals, conversation_id, "
+            "tools_json, meta_json) VALUES (?,?,?,?,?,?,?,?)",
             (restaurant_id, user_id, role, content,
-             _json.dumps(proposals) if proposals else None, conversation_id)
+             _json.dumps(proposals) if proposals else None, conversation_id, tools_json, meta_json)
         )
+        # The modules this chat has touched (ask_topics keeps them when the
+        # chat itself is evicted).
+        if role == "assistant" and meta and meta.get("modules_consulted"):
+            row = conn.execute("SELECT topics FROM ask_cavnar_conversations WHERE id=?", (conversation_id,)).fetchone()
+            have = [t for t in str((row["topics"] if row else "") or "").split(",") if t]
+            for m in meta.get("modules_consulted") or []:
+                m = str(m).strip()[:40]
+                if m and m not in have:
+                    have.append(m)
+            conn.execute("UPDATE ask_cavnar_conversations SET topics=? WHERE id=?",
+                         (",".join(have[:12]) or None, conversation_id))
         # The first real question names the chat; later turns only bump it
         # to the top of the history list.
         if role == "user":
@@ -12091,7 +12517,7 @@ def save_ask_message(restaurant_id, role, content, proposals=None, user_id=None,
 
 
 def get_ask_history(restaurant_id, limit: int = _ASK_HISTORY_LIMIT, conversation_id=None, viewer_id=None,
-                    db_path: str = DB_PATH) -> list:
+                    db_path: str = DB_PATH, with_tools: bool = False) -> list:
     """Oldest-first, so it can be handed straight to the model. Without a
     conversation_id this is the restaurant's current chat; a specific id
     must belong to this restaurant (anything else reads as empty)."""
@@ -12103,7 +12529,7 @@ def get_ask_history(restaurant_id, limit: int = _ASK_HISTORY_LIMIT, conversation
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
-            "SELECT id, role, content, proposals, created_at FROM ask_cavnar_messages "
+            "SELECT id, role, content, proposals, created_at, tools_json FROM ask_cavnar_messages "
             "WHERE restaurant_id=? AND conversation_id=?" + _viewer_clause(viewer_id)[0] +
             " ORDER BY id DESC LIMIT ?",
             [restaurant_id, conversation_id, *_viewer_clause(viewer_id)[1], limit]
@@ -12118,6 +12544,14 @@ def get_ask_history(restaurant_id, limit: int = _ASK_HISTORY_LIMIT, conversation
                 d["proposals"] = _json.loads(d["proposals"])
             except Exception:
                 d["proposals"] = None
+        # The tool calls an assistant turn made (conversations): read by the
+        # replay (`with_tools`), never part of what a client is sent.
+        raw_tools = d.pop("tools_json", None)
+        if raw_tools and with_tools:
+            try:
+                d["tools"] = _json.loads(raw_tools) or []
+            except Exception:
+                pass
         out.append(d)
     return out
 

@@ -301,22 +301,61 @@ def _do_routing_contact(u):
 # ── goals & outcomes ──────────────────────────────────────────────────────────
 
 def _do_goals_list(u):
+    """The active goals, and the goals a teammate proposed that wait for an
+    account holder (`proposed`, each with who proposed it; `can_confirm`
+    says whether this login may confirm them)."""
     import goals
+    import owner_memory
+    from permissions import is_principal
+    props = [g for g in goals.proposed(_rid(u)) if _metric_visible(u, g.get("metric"))]
+    labels = owner_memory._user_labels([g.get("created_by") for g in props])
+    for g in props:
+        g["proposed_by"] = "Your sales audit" if g.get("source") == "audit" else labels.get(g.get("created_by"))
     return {"ok": True, "goals": [g for g in goals.progress(_rid(u))
-                                  if _metric_visible(u, g.get("metric"))]}, 200
+                                  if _metric_visible(u, g.get("metric"))],
+            "proposed": props, "can_confirm": bool(is_principal(u))}, 200
 
 
 def _do_goal_set(u):
+    """Set a goal. An account holder's goal is active at once and becomes
+    the target every module judges the metric against (owner_memory.
+    target_for); a teammate's is PROPOSED and waits for an account holder
+    (memory audit 9/29/26, owner_goals) — `goal.proposed` says which."""
     import goals
+    from permissions import answer_authority
     b = _body()
     if not _metric_visible(u, b.get("metric")):
         return _forbidden("Food cost goals are for logins that can see food cost.")
     try:
         g = goals.set_goal(_rid(u), b.get("metric"), b.get("target"), deadline=b.get("deadline"),
-                           note=b.get("note"), user_id=u.get("id"))
+                           note=b.get("note"), user_id=u.get("id"), authority=answer_authority(u),
+                           source="goals")
     except ValueError as e:
         return {"ok": False, "error": str(e)}, 400
+    return {"ok": True, "goal": g, "proposed": bool(g.get("proposed"))}, 200
+
+
+def _do_goal_confirm(u, goal_id):
+    """An account holder confirms a teammate's proposed goal: it becomes the
+    active goal (and the target) on its metric."""
+    import goals
+    from permissions import is_principal
+    if not is_principal(u):
+        return _forbidden("Only the owner can confirm a goal.")
+    g = goals.confirm_goal(_rid(u), goal_id, user_id=u.get("id"))
+    if g is None:
+        return {"ok": False, "error": "Goal not found."}, 404
     return {"ok": True, "goal": g}, 200
+
+
+def _do_goal_decline(u, goal_id):
+    import goals
+    from permissions import is_principal
+    if not is_principal(u):
+        return _forbidden("Only the owner can decline a goal.")
+    if not goals.decline_goal(_rid(u), goal_id, user_id=u.get("id")):
+        return {"ok": False, "error": "Goal not found."}, 404
+    return {"ok": True}, 200
 
 
 def _do_goal_end(u, goal_id):
@@ -1271,22 +1310,30 @@ def _do_trust(u):
 
 def _do_memory_add(u):
     """The owner adds a fact directly — the profile is theirs to write, not
-    only the assistant's to keep."""
-    from models import remember_ask_fact
+    only the assistant's to keep. Typed like Ask's own (owner_memory.
+    remember): a kind, the modules it is about, a date it holds until (or a
+    follow-up's due date) and who may read it; the author is this login."""
+    import owner_memory
     from client_api import log_account_event
     b = _body()
     fact = (b.get("fact") or "").strip()[:300]
     kind = (b.get("kind") or "context").strip()
     if not fact:
         return {"ok": False, "error": "Write the fact first."}, 400
-    if kind not in ("goal", "context", "preference", "followup"):
+    if kind not in owner_memory.KINDS:
         kind = "context"
+    modules = b.get("modules") if isinstance(b.get("modules"), list) else None
     try:
-        saved = remember_ask_fact(_rid(u), fact, kind=kind, source="Account", user_id=u.get("id"))
+        saved = owner_memory.remember(_rid(u), fact, kind=kind, modules=modules,
+                                      valid_until=b.get("valid_until") or None, due_on=b.get("due_on") or None,
+                                      audience=b.get("audience") or None, user=u, source="Account",
+                                      origin="account")
     except ValueError as e:
         return {"ok": False, "error": str(e)}, 400
     log_account_event(_rid(u), "memory_added", current_user=u, detail=fact[:120])
-    return {"ok": True, "fact": saved.get("fact") if isinstance(saved, dict) else fact}, 200
+    return {"ok": True, "fact": saved.get("fact") if isinstance(saved, dict) else fact,
+            "kind": saved.get("kind"), "audience": saved.get("audience"),
+            "evicted": saved.get("evicted", 0)}, 200
 
 
 def _do_decisions(u):
@@ -2700,22 +2747,139 @@ def _do_marketing_diagnosis(u):
 
 
 def _do_memory_list(u):
-    """What Ask Cavnar remembers about this restaurant, with who added it —
-    so the owner can read and correct the memory that shapes every answer."""
-    from models import get_ask_memory
-    return {"ok": True, "facts": get_ask_memory(_rid(u))}, 200
+    """What Cavnar AI remembers about this restaurant, with who added each
+    fact — so the owner can read and correct the memory that shapes every
+    answer (owner_memory.account_view): the facts this login may read, the
+    lanes and how full each is, and what left without anyone asking (a full
+    lane, a date passed, a retracted answer), which can be put back."""
+    import owner_memory
+    return {"ok": True, **owner_memory.account_view(_rid(u), u)}, 200
 
 
 def _do_memory_forget(u):
-    from models import forget_ask_fact
+    """Forget one fact by its exact text. A teammate may forget only what
+    they added; an account holder any fact."""
+    import owner_memory
     from client_api import log_account_event
     fact = (_body().get("fact") or "").strip()
     if not fact:
         return {"ok": False, "error": "Which fact?"}, 400
-    ok = forget_ask_fact(_rid(u), fact)
-    if ok:
-        log_account_event(_rid(u), "memory_forgotten", current_user=u, detail=fact[:120])
-    return ({"ok": True} if ok else {"ok": False, "error": "No fact like that."}), (200 if ok else 404)
+    rows = owner_memory.facts_for(_rid(u), viewer=u, include_expired=True)
+    row = next((r for r in rows if r["fact"] == fact), None)
+    if row is None:
+        return {"ok": False, "error": "No fact like that."}, 404
+    out = owner_memory.forget(_rid(u), fact, user=u)
+    if out.get("error"):
+        return {"ok": False, "error": out["error"]}, 403
+    log_account_event(_rid(u), "memory_forgotten", current_user=u, detail=fact[:120])
+    return {"ok": True}, 200
+
+
+# ── preferences: the login's own, the location's, the organisation's ─────────
+# (memory audit 9/29/26, owner_layers — preferences.py)
+
+_SHOWN_LOCATION_KEYS = ("voice_notes", "never_say", "sign_off_name", "briefing_level", "morning_brief_enabled",
+                        "morning_brief_hour", "alert_quiet_start", "alert_quiet_end", "alert_max_per_day")
+
+
+def _do_preferences_get(u):
+    """What this login's settings resolve to and where each came from:
+    `mine` (this login's own notification choices and whether they get this
+    location's brief), `location` (the location settings a group shares,
+    each with its source — "all locations", "this location" or "default"),
+    whether this login may apply them to every location, the group's
+    locations, and `never_opened` — the alert types delivered to this
+    login's phone and never opened by them."""
+    import preferences
+    from auth import get_team_access
+    from models import get_restaurant
+    r = get_restaurant(_rid(u))
+    if r is None:
+        return {"ok": False, "error": "Restaurant not found."}, 404
+    mine = {k: preferences.resolve(k, r, user=u)["value"] for k in preferences.LOGIN_KEYS}
+    try:
+        mine["morning_brief"] = bool((get_team_access(_rid(u)).get(u.get("id")) or {}).get("morning_brief"))
+    except Exception:
+        mine["morning_brief"] = None
+    location = {k: preferences.resolve(k, r, user=u) for k in _SHOWN_LOCATION_KEYS}
+    locs = [{"id": loc["id"], "name": loc.get("location_name") or loc.get("name")}
+            for loc in preferences.group_locations(r)]
+    return {"ok": True, "mine": mine, "location": location,
+            "can_apply_to_all": preferences.may_apply_to_all(u, r) and len(locs) > 1,
+            "locations": locs, "org_keys": list(preferences.ORG_KEYS),
+            "unmutable_types": sorted(preferences.UNMUTABLE_TYPES),
+            "never_opened": preferences.never_opened_for_login(u.get("id"), _rid(u))}, 200
+
+
+def _do_preferences_mine(u):
+    """This login's own choices at this location: push on or off, the alert
+    types they mute on their own phone, their own quiet hours (only ever
+    taking alerts away from their phone — the owner's settings still
+    apply), and whether they get this location's morning brief. Any
+    console login, for itself only."""
+    import preferences
+    from auth import set_morning_brief_pref, TeamAccessError
+    b = _body()
+    try:
+        mine = preferences.set_login_overrides(u.get("id"), _rid(u),
+                                               {k: b[k] for k in preferences.LOGIN_KEYS if k in b})
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}, 400
+    if "morning_brief" in b:
+        try:
+            set_morning_brief_pref(_rid(u), u.get("id"), bool(b.get("morning_brief")))
+        except TeamAccessError as e:
+            return {"ok": False, "error": e.message}, 400
+        mine["morning_brief"] = bool(b.get("morning_brief"))
+    return {"ok": True, "mine": mine}, 200
+
+
+def _do_preferences_apply_to_all(u):
+    """A group owner makes this location's settings (`keys`, from
+    preferences.ORG_KEYS) the organisation's default and every location's —
+    "add 'cheap' to never-say everywhere" in one save."""
+    import preferences
+    from client_api import log_account_event
+    from models import get_restaurant
+    r = get_restaurant(_rid(u))
+    if r is None:
+        return {"ok": False, "error": "Restaurant not found."}, 404
+    if not preferences.may_apply_to_all(u, r):
+        return _forbidden("Only the owner of every location can apply a setting to all of them.")
+    keys = _body().get("keys")
+    if not isinstance(keys, list) or not keys:
+        return {"ok": False, "error": "Which settings? Send keys."}, 400
+    out = preferences.apply_to_all_locations(r, keys, user=u)
+    if not out["keys"]:
+        return {"ok": False, "error": "None of those settings can be applied to every location.",
+                "skipped": out["skipped"]}, 400
+    log_account_event(_rid(u), "preferences_applied", current_user=u,
+                      detail=f"{', '.join(out['keys'])[:100]} → {len(out['locations'])} locations")
+    return {"ok": True, **out}, 200
+
+
+def _do_memory_restore(u):
+    """Put back a fact that left without anyone asking (a full lane, a date
+    passed, a retracted answer) — ask_memory_archive by id."""
+    import owner_memory
+    from models import restore_ask_fact
+    from client_api import log_account_event
+    try:
+        aid = int(_body().get("id"))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "Which fact?"}, 400
+    view = owner_memory.account_view(_rid(u), u)
+    item = next((a for a in view["archived"] if a["id"] == aid), None)
+    if item is None:
+        return {"ok": False, "error": "No fact like that."}, 404
+    if not item.get("can_restore"):
+        return {"ok": False, "error": "Only the owner or the person who added it can put it back."}, 403
+    fact = restore_ask_fact(_rid(u), aid)
+    if not fact:
+        return {"ok": False, "error": "No fact like that."}, 404
+    owner_memory.invalidate(_rid(u))
+    log_account_event(_rid(u), "memory_added", current_user=u, detail=f"restored: {fact[:110]}")
+    return {"ok": True, "fact": fact}, 200
 
 
 def _do_delayed_pending(u):
@@ -2923,7 +3087,9 @@ def _do_ask_feedback(u):
     if note is not None and not isinstance(note, str):
         return {"ok": False, "error": "note must be text"}, 400
     from models import record_ask_feedback, ask_feedback_summary
-    row = record_ask_feedback(_rid(u), mid, helpful, note, user_id=u.get("id"))
+    from permissions import answer_authority
+    authority = answer_authority(u)
+    row = record_ask_feedback(_rid(u), mid, helpful, note, user_id=u.get("id"), authority=authority)
     if row is None:
         return {"ok": False, "error": "That answer isn't in your Ask history."}, 404
     try:
@@ -2931,7 +3097,18 @@ def _do_ask_feedback(u):
         ask_cavnar.invalidate_context(_rid(u))
     except Exception as e:
         print(f"[ask] context not refreshed after feedback rid={_rid(u)}: {e}")
-    return {"ok": True, "feedback": row, "summary": ask_feedback_summary(_rid(u))}, 200
+    # What their ratings now say about answer length — a preference they can
+    # see (and forget) in Account, and the depth Ask picks for them (memory
+    # audit 9/29/26, ask_feedback). Their own ratings only.
+    preference = None
+    if authority != "admin":             # an admin's rating (view-as too) never trains the owner's
+        try:
+            import owner_memory
+            preference = owner_memory.derive_rating_preferences(_rid(u), u)
+        except Exception as e:
+            print(f"[ask] rating preference not derived rid={_rid(u)}: {e}")
+    return {"ok": True, "feedback": row, "summary": ask_feedback_summary(_rid(u), user_id=u.get("id")),
+            "preference": preference}, 200
 
 
 def _do_good_news(u):
@@ -4262,6 +4439,8 @@ _ROUTES = [
     ("/goals", ["GET"], _do_goals_list, "goals_list"),
     ("/goals", ["POST"], _do_goal_set, "goal_set"),
     ("/goals/<int:goal_id>/end", ["POST"], _do_goal_end, "goal_end"),
+    ("/goals/<int:goal_id>/confirm", ["POST"], _do_goal_confirm, "goal_confirm"),
+    ("/goals/<int:goal_id>/decline", ["POST"], _do_goal_decline, "goal_decline"),
     ("/outcomes", ["GET"], _do_outcomes_list, "outcomes_list"),
     ("/outcomes", ["POST"], _do_outcome_record, "outcome_record"),
     ("/outcomes/<int:outcome_id>/abandon", ["POST"], _do_outcome_abandon, "outcome_abandon"),
@@ -4348,6 +4527,10 @@ _ROUTES = [
     ("/account/trust", ["GET"], _do_trust, "trust"),
     ("/decisions", ["GET"], _do_decisions, "decisions"),
     ("/account/memory/forget", ["POST"], _do_memory_forget, "memory_forget"),
+    ("/account/memory/restore", ["POST"], _do_memory_restore, "memory_restore"),
+    ("/account/preferences", ["GET"], _do_preferences_get, "preferences_get"),
+    ("/account/preferences/mine", ["POST"], _do_preferences_mine, "preferences_mine"),
+    ("/account/preferences/apply-to-all", ["POST"], _do_preferences_apply_to_all, "preferences_apply_to_all"),
     ("/actions/pending", ["GET"], _do_delayed_pending, "delayed_pending"),
     ("/actions/<int:action_id>/cancel", ["POST"], _do_delayed_cancel, "delayed_cancel"),
     ("/account/pause", ["GET"], _do_pause_status, "pause_status"),
