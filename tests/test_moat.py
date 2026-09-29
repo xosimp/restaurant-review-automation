@@ -554,7 +554,9 @@ def test_the_group_email_is_one_message_logged_for_every_location(db_path, monke
     monkeypatch.setattr(emails, "_resend_key", lambda: "k")
     monkeypatch.setattr(emails, "_monthly_review_sections", lambda rid, months=1: [f"<p>section for {rid}</p>"] if rid == a else [])
     delivered = []
-    monkeypatch.setattr(emails, "deliver", lambda **kw: delivered.append(kw))
+    # deliver returns a SendResult; the sibling locations' rows carry its
+    # real outcome now (fix round E, #16/#119), so the stub returns one.
+    monkeypatch.setattr(emails, "deliver", lambda **kw: delivered.append(kw) or emails.SendResult(True))
     logged = []
     monkeypatch.setattr(models, "log_email", lambda rid, et, to, subj, db_path=None, **k: logged.append((rid, et)))
     rs = [models.get_restaurant(a, db_path=db_path), models.get_restaurant(b, db_path=db_path)]

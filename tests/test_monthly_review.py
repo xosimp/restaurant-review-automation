@@ -171,7 +171,10 @@ def test_the_quarterly_job_skips_a_paused_account_and_respects_the_monthly_switc
                         lambda *a, **k: [_R("active"), _R("paused"), _R("active", enabled=0)])
     monkeypatch.setattr(scheduler, "local_due", lambda *a, **k: True)
     import emails
-    monkeypatch.setattr(emails, "send_quarterly_summary_email", lambda **kw: calls.append(kw))
+    # A SendResult, as every sender returns now (fix round E, #16); the stub
+    # returned None, which the job now reads as "not sent".
+    monkeypatch.setattr(emails, "send_quarterly_summary_email",
+                        lambda **kw: calls.append(kw) or emails.SendResult(True))
     out = scheduler.run_quarterly_summaries()
     assert out == {"sent": 1, "skipped": 2, "failed": 0}
 

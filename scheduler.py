@@ -959,15 +959,15 @@ def run_weekly_digests():
                     # transient Resend failure lost the week's digest
                     # (MOD-EML-8). Give the claims back so the next hourly
                     # tick inside the window tries again; a refusal that will
-                    # not change (suppressed, a 4xx) keeps them.
-                    transient = (not str(result.error or "").startswith("recipient suppressed")
-                                 and (result.status_code is None or result.status_code in _emails._RETRY_STATUS)
-                                 and result.attempts)
-                    if transient:
+                    # not change (suppressed, a 4xx) keeps them. One rule for
+                    # every sender now: SendResult.transient.
+                    if result.transient:
                         for rest, _rep in items:
                             _ops.release_period(f"weekly_digest:{rest.id}",
                                                 _rnow(rest, naive=True).date().isoformat())
-                for rest, _rep in items:
+                # The integration hears "the weekly report went out" only
+                # when it did.
+                for rest, _rep in (items if getattr(result, "ok", False) else []):
                     try:
                         from webhooks import fire_webhook as _fw_rep
                         _fw_rep(rest.id, "report.weekly", {"restaurant": rest.name, "email": bucket["to"]})
@@ -1931,15 +1931,86 @@ def _onboarding_engagement(restaurant_id):
         return 0, None
 
 
+def onboarding_eligible(r):
+    """(True, None) when restaurant `r` may be sent onboarding mail, else
+    (False, why) — one gate for the day-2/7/30 sequence, the lifecycle
+    emails and the step nudges (#20).
+
+    Onboarding starts once the contract is signed (or the client pays) AND
+    the welcome email that creates their login was delivered
+    (models.onboarding_started_at). It used to key on billing_status and
+    created_at alone, so unsigned prospects, demo accounts and every
+    location of a group got it, saying "Log in anytime" before any login
+    existed. In service means past due keeps it and a paused, churned or
+    canceled account does not (#155); internal and pending accounts are
+    not clients being onboarded."""
+    from models import in_service, is_paying, onboarding_started_at
+    if not getattr(r, "owner_email", None):
+        return False, "no owner email"
+    if int(getattr(r, "is_demo", 0) or 0):
+        return False, "demo account"
+    status = (getattr(r, "billing_status", None) or "").strip().lower()
+    if not in_service(r) or status in ("internal", "pending"):
+        return False, f"billing status {status or 'unknown'}"
+    if (getattr(r, "contract_status", None) or "").lower() != "signed" and not is_paying(r):
+        return False, "contract not signed"
+    started = onboarding_started_at(r.id)
+    if not started:
+        return False, "welcome email not delivered yet"
+    return True, None
+
+
+def _onboarding_days(r):
+    """Whole days since this restaurant's onboarding began (UTC), or None."""
+    from models import onboarding_started_at
+    started = parse_stored_dt(onboarding_started_at(r.id), tz="UTC")
+    if started is None:
+        return None
+    return (datetime.utcnow() - started).days
+
+
+def _onboarding_outcome(r, key, result, claim_period=None):
+    """Record what one onboarding/lifecycle send did (#16).
+
+    ok — marked sent. Transient (a 429, a 5xx, a timeout) — nothing is
+    marked and the day's claim is released, so the next hourly tick inside
+    the window tries again (the weekly digest's pattern). Refused for good
+    (suppressed, a 4xx) — marked failed so it is not retried, and raised to
+    the operator. Anything else (no key, no postal address, a build error) —
+    raised and left for tomorrow's pass. Returns True when it was sent."""
+    from models import mark_onboarding_sent
+    if getattr(result, "ok", False):
+        mark_onboarding_sent(r.id, key)
+        return True
+    if getattr(result, "skipped", False):
+        mark_onboarding_sent(r.id, key, status="skipped", error=getattr(result, "error", None))
+        return False
+    err = getattr(result, "error", None) or "not sent"
+    if getattr(result, "transient", False):
+        log.warning(f"Onboarding {key} for {r.name} failed (will retry): {err}")
+        if claim_period:
+            _ops.release_period(f"onboarding:{r.id}", claim_period)
+        return False
+    if getattr(result, "refused", False):
+        mark_onboarding_sent(r.id, key, status="failed", error=err)
+    _ops.capture(RuntimeError(f"onboarding {key} not sent: {err}"), job="onboarding_email",
+                 context=f"restaurant_id={r.id}")
+    return False
+
+
 def run_onboarding_sequence(local_hour: int = None):
     """
-    Check all active clients and send the right onboarding email based on days since signup.
-    Runs at 10am in each restaurant's own timezone. Skips clients who already
-    received each email (UNIQUE constraint).
-    Only sends to clients with billing_status in ('trial', 'active').
+    Send each signed, onboarded client the right onboarding email for how
+    long ago their onboarding began. Runs at 10am in each restaurant's own
+    timezone; each step at most once per restaurant (onboarding_emails), and
+    once per OWNER across a group's locations.
+
+    Who: onboarding_eligible — contract signed or paying, the welcome email
+    delivered, not a demo, in service (#20, #155). A step is marked done
+    only when Resend accepted it (#16); a transient failure releases the
+    day's claim for the next tick, a permanent one is recorded and raised.
     """
-    from datetime import datetime, timedelta
-    from models import get_all_restaurants, get_onboarding_sent, mark_onboarding_sent
+    from models import get_all_restaurants, get_onboarding_sent, mark_onboarding_sent, owner_got_onboarding_step
     from emails import send_onboarding_day2, send_onboarding_day7, send_onboarding_day30
 
     try:
@@ -1948,38 +2019,28 @@ def run_onboarding_sequence(local_hour: int = None):
         log.error(f"run_onboarding_sequence: could not load restaurants: {e}")
         return
 
-    now = _chi_now()
-
+    from time_utils import restaurant_now as _rnow
     for r in restaurants:
-        # Only send to trial or active clients
-        if getattr(r, "billing_status", "trial") not in ("trial", "active"):
-            continue
-        # Need an email address
-        if not r.owner_email:
+        ok, _why = onboarding_eligible(r)
+        if not ok:
             continue
         # 10am in the restaurant's own timezone, once a day — the loop
         # attempts this hourly. local_hour=None (a direct call: a test, an
         # admin re-run) is never time-gated, matching notify._gated_out.
         if local_hour is not None and not local_due(r, local_hour, claim_key="onboarding"):
             continue
-        # Need a signup date
-        if not r.created_at:
-            continue
+        period = _rnow(r, naive=True).date().isoformat() if local_hour is not None else None
         # Onboarding day-2/7/30 are all product-tips/marketing content, not
         # transactional — the one flag gates all three from this single
-        # early-continue, same as the owner_email/created_at guards above.
+        # early-continue, same as the owner_email guard above.
         _opted_out = bool(getattr(r, "marketing_emails_opt_out", 0))
 
-        # parse_stored_dt normalises both stored shapes (naive SQLite
-        # datetimes and offset-aware isoformat strings) to naive local.
-        # Comparing the two directly used to raise TypeError here, which
-        # escaped the loop and killed the whole sweep on the first
-        # offset-aware restaurant — so nobody got onboarding email at all.
-        created = parse_stored_dt(r.created_at)
-        if created is None:
+        # Days since onboarding BEGAN (the welcome email), not since the
+        # row was created: a prospect created a month before signing used
+        # to get the day-30 check-in on their second day.
+        days_since = _onboarding_days(r)
+        if days_since is None:
             continue
-
-        days_since = (now - created).days
         already_sent = get_onboarding_sent(r.id)
 
         # Build module list for context
@@ -1988,6 +2049,14 @@ def run_onboarding_sequence(local_hour: int = None):
         if r.module_labor:    modules.append("Labor Optimizer")
         if r.module_inventory: modules.append("Food Cost Control")
         if r.module_marketing: modules.append("Marketing Autopilot")
+
+        def _covered(key):
+            """Another location of this owner already got this step: it is
+            theirs, not a second copy (#20)."""
+            if owner_got_onboarding_step(r.owner_email, key, exclude_restaurant_id=r.id):
+                mark_onboarding_sent(r.id, key, status="covered")
+                return True
+            return False
 
         # Day 2 — a window, not ">= 2". These sends were open-ended, which
         # was harmless only while the whole job was crashing before it could
@@ -1998,31 +2067,29 @@ def run_onboarding_sequence(local_hour: int = None):
         if _opted_out and days_since < 60:
             continue
         if 2 <= days_since <= 6 and "day_2" not in already_sent:
-            try:
-                send_onboarding_day2(
+            if not _covered("day_2"):
+                result = send_onboarding_day2(
                     to_email=r.owner_email,
                     restaurant_name=r.name,
                     owner_name=r.owner_name,
                     modules=modules,
                     restaurant_id=r.id,
                 )
-                mark_onboarding_sent(r.id, "day_2")
-                log.info(f"Onboarding day 2 sent to {r.owner_email} ({r.name})")
-            except Exception as e:
-                log.error(f"Onboarding day 2 failed for {r.name}: {e}")
+                if _onboarding_outcome(r, "day_2", result, period):
+                    log.info(f"Onboarding day 2 sent to {r.owner_email} ({r.name})")
 
         # Day 7 — same windowing rationale as day 2 above.
         elif 7 <= days_since <= 29 and "day_7" not in already_sent:
             # "Here's what you're missing" to someone who signs in every
             # morning is the clearest possible sign nobody reads what they
-            # do. Marked sent, not deferred: they are past needing it.
+            # do. Marked done, not deferred: they are past needing it.
             _logins, _days_idle = _onboarding_engagement(r.id)
             if _logins >= ONBOARDING_SETTLED_LOGINS and (_days_idle or 99) <= 7:
-                mark_onboarding_sent(r.id, "day_7")
+                mark_onboarding_sent(r.id, "day_7", status="skipped", error="settled: signs in often")
                 log.info(f"Onboarding day 7 skipped for {r.name} — "
                          f"{_logins} logins, last {_days_idle}d ago")
                 continue
-            try:
+            if not _covered("day_7"):
                 # Pull actual activity stats for personalization
                 try:
                     from models import get_conn as _gc
@@ -2042,7 +2109,7 @@ def run_onboarding_sequence(local_hour: int = None):
                     approved_count = 0
                     pending_count = 0
 
-                send_onboarding_day7(
+                result = send_onboarding_day7(
                     to_email=r.owner_email,
                     restaurant_name=r.name,
                     owner_name=r.owner_name,
@@ -2052,26 +2119,22 @@ def run_onboarding_sequence(local_hour: int = None):
                     pending_count=pending_count,
                     restaurant_id=r.id,
                 )
-                mark_onboarding_sent(r.id, "day_7")
-                log.info(f"Onboarding day 7 sent to {r.owner_email} ({r.name})")
-            except Exception as e:
-                log.error(f"Onboarding day 7 failed for {r.name}: {e}")
+                if _onboarding_outcome(r, "day_7", result, period):
+                    log.info(f"Onboarding day 7 sent to {r.owner_email} ({r.name})")
 
         # Day 30 — same windowing rationale; two weeks of grace, then the
         # onboarding sequence is simply over for that client.
         elif 30 <= days_since <= 44 and "day_30" not in already_sent:
-            try:
-                send_onboarding_day30(
+            if not _covered("day_30"):
+                result = send_onboarding_day30(
                     to_email=r.owner_email,
                     restaurant_name=r.name,
                     owner_name=r.owner_name,
                     modules=modules,
                     restaurant_id=r.id,
                 )
-                mark_onboarding_sent(r.id, "day_30")
-                log.info(f"Onboarding day 30 sent to {r.owner_email} ({r.name})")
-            except Exception as e:
-                log.error(f"Onboarding day 30 failed for {r.name}: {e}")
+                if _onboarding_outcome(r, "day_30", result, period):
+                    log.info(f"Onboarding day 30 sent to {r.owner_email} ({r.name})")
 
         # Days 60, 90, 180 — the lifecycle after onboarding. The retention
         # audit found nothing spoke to an owner between the day-30 check-in
@@ -2079,22 +2142,125 @@ def run_onboarding_sequence(local_hour: int = None):
         # now measurable, the first record window, the six-month ledger), so
         # like the monthly they are gated on monthly_review_enabled and NOT
         # on the marketing opt-out — the day-30 gate above already sent us
-        # past that `continue` for opted-out clients, so re-check here.
+        # past that `continue` for opted-out clients, so re-check here. They
+        # are about THIS location's own figures, so each location gets its
+        # own.
         for _day in (60, 90, 180):
             _key = f"day_{_day}"
             if _day <= days_since <= _day + 14 and _key not in already_sent:
                 if not getattr(r, "monthly_review_enabled", 1):
-                    mark_onboarding_sent(r.id, _key)      # respected, not deferred
+                    mark_onboarding_sent(r.id, _key, status="skipped", error="monthly review switched off")
                     break
-                try:
-                    from emails import send_lifecycle_email
-                    send_lifecycle_email(_day, to_email=r.owner_email, restaurant_name=r.name,
-                                         owner_name=r.owner_name, restaurant_id=r.id)
-                    mark_onboarding_sent(r.id, _key)
+                from emails import send_lifecycle_email
+                result = send_lifecycle_email(_day, to_email=r.owner_email, restaurant_name=r.name,
+                                              owner_name=r.owner_name, restaurant_id=r.id)
+                if _onboarding_outcome(r, _key, result, period):
                     log.info(f"Lifecycle day {_day} sent to {r.owner_email} ({r.name})")
-                except Exception as e:
-                    log.error(f"Lifecycle day {_day} failed for {r.name}: {e}")
                 break
+
+
+# ── Step-based onboarding nudges (#41) ──────────────────────────────────────
+# The sequence above is time-based: day 2, 7, 30 whatever the owner has or
+# hasn't done. These are the other half: one short email per setup step
+# still missing — Google not connected, no brand voice, no reply approved
+# yet, the app not installed — each at most once, never before the step has
+# had a fair chance, and never again once it is done. Same gate as the
+# sequence (onboarding_eligible), same per-owner rule, and they honour the
+# marketing opt-out like the other onboarding mail. Scheduled by the
+# integration wave (jobs_registry); `run_onboarding_nudges(local_hour=11)`.
+
+# (step key, earliest day since onboarding began). Latest is the window's end.
+ONBOARDING_NUDGE_STEPS = (("reviews", 2), ("voice", 4), ("respond", 6), ("app", 8))
+ONBOARDING_NUDGE_LAST_DAY = 45
+
+
+def onboarding_missing_steps(r):
+    """The setup steps this restaurant has NOT done, in nudge order, each
+    {"key", ...facts the email needs}. Read fresh, so a step done since the
+    last pass is never nudged. Only steps the owner can act on today."""
+    from models import get_conn as _gc
+    import os as _os
+    missing = []
+    conn = _gc()
+    try:
+        row = conn.execute("SELECT gmb_refresh_token, reviews_live, voice_notes FROM restaurants WHERE id=?",
+                           (r.id,)).fetchone()
+        if r.module_reviews and row is not None and not (row["gmb_refresh_token"] or row["reviews_live"]):
+            missing.append({"key": "reviews"})
+        if row is not None and not (row["voice_notes"] or "").strip():
+            missing.append({"key": "voice"})
+        if r.module_reviews:
+            approved = conn.execute("SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
+                                    "AND response_status IN ('approved','posted')", (r.id,)).fetchone()[0]
+            waiting = conn.execute("SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
+                                   "AND COALESCE(TRIM(draft_response),'')!='' "
+                                   "AND response_status NOT IN ('approved','posted','skipped')",
+                                   (r.id,)).fetchone()[0]
+            # Nothing to approve is not a missing step: there is no draft yet.
+            if not approved and waiting:
+                missing.append({"key": "respond", "waiting": int(waiting)})
+        # The app step only when there is somewhere to send them (never an
+        # invented store link).
+        app_url = (_os.getenv("IOS_APP_STORE_URL") or "").strip()
+        if app_url:
+            has_device = conn.execute(
+                "SELECT 1 FROM device_tokens d JOIN users u ON u.id=d.user_id WHERE d.restaurant_id=? "
+                "AND COALESCE(u.is_admin,0)=0 LIMIT 1", (r.id,)).fetchone()
+            if not has_device:
+                missing.append({"key": "app", "url": app_url})
+    except Exception as e:
+        log.warning(f"onboarding steps unreadable for {r.id}: {e}")
+    finally:
+        conn.close()
+    return missing
+
+
+def run_onboarding_nudges(local_hour: int = None):
+    """One nudge per missing setup step (#41). At most one email per
+    restaurant per day; each step's nudge at most once (onboarding_emails
+    key "nudge_<step>"), marked only when Resend accepted it (#16). Returns
+    {"attempted", "ok", "failed", "skipped"}."""
+    from models import get_all_restaurants, get_onboarding_sent, mark_onboarding_sent, owner_got_onboarding_step
+    from emails import send_onboarding_nudge
+    from time_utils import restaurant_now as _rnow
+    out = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0}
+    try:
+        restaurants = get_all_restaurants()
+    except Exception as e:
+        log.error(f"run_onboarding_nudges: could not load restaurants: {e}")
+        return out
+    for r in restaurants:
+        ok, _why = onboarding_eligible(r)
+        if not ok or getattr(r, "marketing_emails_opt_out", 0):
+            out["skipped"] += 1
+            continue
+        days = _onboarding_days(r)
+        if days is None or days > ONBOARDING_NUDGE_LAST_DAY:
+            out["skipped"] += 1
+            continue
+        missing = [m for m in onboarding_missing_steps(r)
+                   if days >= dict(ONBOARDING_NUDGE_STEPS).get(m["key"], 999)]
+        done = set(get_onboarding_sent(r.id))
+        todo = [m for m in missing if f"nudge_{m['key']}" not in done]
+        if not todo:
+            continue
+        if local_hour is not None and not local_due(r, local_hour, claim_key="onboarding_nudge"):
+            continue
+        step = todo[0]
+        key = f"nudge_{step['key']}"
+        if owner_got_onboarding_step(r.owner_email, key, exclude_restaurant_id=r.id):
+            mark_onboarding_sent(r.id, key, status="covered")
+            continue
+        out["attempted"] += 1
+        result = send_onboarding_nudge(step, to_email=r.owner_email, restaurant_name=r.name,
+                                       owner_name=r.owner_name, restaurant_id=r.id)
+        if _onboarding_outcome(r, key, result, None):
+            out["ok"] += 1
+            continue
+        out["failed"] += 1
+        if local_hour is not None and getattr(result, "transient", False):
+            _ops.release_period(f"onboarding_nudge:{r.id}", _rnow(r, naive=True).date().isoformat())
+    return out
 
 
 def check_inactive_clients():
@@ -2803,8 +2969,39 @@ def _push_month_ready(r):
     return len(users)
 
 
+def _summary_audience(r):
+    """Whether restaurant `r` gets the monthly and quarterly summaries by
+    billing state: in service (past due keeps them; paused, churned and
+    canceled do not — canceled used to get them, #155) and a real client
+    (not the operator's internal account)."""
+    from models import in_service
+    return bool(r.owner_email) and in_service(r) and (r.billing_status or "").lower() != "internal"
+
+
+def _summary_outcome(job, rs, result, claim_key):
+    """What one monthly or quarterly send did (#16): 'sent', 'skipped'
+    (nothing to report) or 'failed'. A transient failure gives the day's
+    claims back so the next hourly tick inside the 9am window retries; any
+    other failure is raised to the operator."""
+    from time_utils import restaurant_now as _rnow
+    if getattr(result, "ok", False):
+        return "sent"
+    if getattr(result, "skipped", False):
+        return "skipped"
+    err = getattr(result, "error", None) or "not sent"
+    if getattr(result, "transient", False):
+        for r in rs:
+            _ops.release_period(f"{claim_key}:{r.id}", _rnow(r, naive=True).date().isoformat())
+    _ops.capture(RuntimeError(f"{job} not sent: {err}"), job=job, context=f"restaurant_id={rs[0].id}")
+    return "failed"
+
+
 def run_monthly_summaries():
-    """1st of the month, 9am — the monthly summary email to active clients."""
+    """1st of the month, 9am — the monthly summary email to active clients.
+
+    Counted as sent, and the "August is in" push fired, only when Resend
+    accepted the email (#16) — every attempt used to count as sent and the
+    phones were told the month was in whether or not the email went."""
     from emails import send_monthly_summary_email, send_monthly_group_summary_email
     from models import get_all_restaurants
     sent = skipped = failed = 0
@@ -2813,8 +3010,9 @@ def run_monthly_summaries():
     # grouped by owner email; a group of one takes the single-location path.
     due = []
     for r in get_all_restaurants():
-        # 'paused' is the owner's own request for quiet — the monthly stops too.
-        if not r.owner_email or r.billing_status in ('internal', 'churned', 'paused'):
+        # 'paused' is the owner's own request for quiet — the monthly stops
+        # too, and so does a cancellation (#155).
+        if not _summary_audience(r):
             skipped += 1
             continue
         # 9am local on the 1st, not 9am Chicago — and the restaurant's own
@@ -2839,7 +3037,7 @@ def run_monthly_summaries():
         try:
             if len(rs) == 1:
                 r = rs[0]
-                send_monthly_summary_email(
+                result = send_monthly_summary_email(
                     to_email=r.owner_email,
                     restaurant_name=r.name,
                     owner_name=r.owner_name,
@@ -2850,29 +3048,40 @@ def run_monthly_summaries():
                     has_marketing=bool(r.module_marketing),
                 )
             else:
-                send_monthly_group_summary_email(rs[0].owner_email, rs[0].owner_name, sorted(rs, key=lambda x: x.name))
+                result = send_monthly_group_summary_email(rs[0].owner_email, rs[0].owner_name,
+                                                          sorted(rs, key=lambda x: x.name))
+        except Exception as me:
+            result = _emails.not_sent("build_error", str(me)[:300])
+        outcome = _summary_outcome("monthly_summary", rs, result, "monthly_summary")
+        if outcome == "sent":
             sent += len(rs)
             log.info(f"Monthly summary sent to {', '.join(x.name for x in rs)}")
+            # The month-ready push only after the email went: it says the
+            # month is in, and a phone must not hear that about an email
+            # that never arrived.
             for r in rs:
                 try:
                     _push_month_ready(r)
                 except Exception as pe:
                     _ops.capture(pe, job="month_ready_push", context=f"restaurant_id={r.id}")
-        except Exception as me:
+        elif outcome == "skipped":
+            skipped += len(rs)
+        else:
             failed += len(rs)
-            log.error(f"Monthly summary failed for {', '.join(x.name for x in rs)}: {me}")
-            _ops.capture(me, job="monthly_summary", context=f"restaurant_id={rs[0].id}")
+            log.error(f"Monthly summary failed for {', '.join(x.name for x in rs)}: "
+                      f"{getattr(result, 'error', None)}")
     return {"sent": sent, "skipped": skipped, "failed": failed}
 
 
 def run_quarterly_summaries():
     """1st of Jan / Apr / Jul / Oct, 9am local — the quarter that just
-    ended. Same audience and the same switch as the monthly."""
+    ended. Same audience and the same switch as the monthly; counted as sent
+    only when Resend accepted it (#16), "nothing to report" is skipped."""
     from emails import send_quarterly_summary_email
     from models import get_all_restaurants
     sent = skipped = failed = 0
     for r in get_all_restaurants():
-        if not r.owner_email or r.billing_status in ('internal', 'churned', 'paused'):
+        if not _summary_audience(r):
             skipped += 1
             continue
         if not local_due(r, 9, claim_key="quarterly_summary", day=1):
@@ -2882,12 +3091,17 @@ def run_quarterly_summaries():
             skipped += 1
             continue
         try:
-            send_quarterly_summary_email(to_email=r.owner_email, restaurant_name=r.name,
-                                         owner_name=r.owner_name, restaurant_id=r.id)
-            sent += 1
+            result = send_quarterly_summary_email(to_email=r.owner_email, restaurant_name=r.name,
+                                                  owner_name=r.owner_name, restaurant_id=r.id)
         except Exception as qe:
+            result = _emails.not_sent("build_error", str(qe)[:300])
+        outcome = _summary_outcome("quarterly_summary", [r], result, "quarterly_summary")
+        if outcome == "sent":
+            sent += 1
+        elif outcome == "skipped":
+            skipped += 1
+        else:
             failed += 1
-            _ops.capture(qe, job="quarterly_summary", context=f"restaurant_id={r.id}")
     return {"sent": sent, "skipped": skipped, "failed": failed}
 
 
