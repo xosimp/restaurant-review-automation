@@ -1220,6 +1220,15 @@ def implemented(restaurant_id, keys, surface, user_id=None, role=None, source_re
             if record(restaurant_id, k, "implemented", surface=surface, user_id=user_id, role=role,
                       meta=meta, source_ref=source_ref, db_path=db_path):
                 n += 1
+                # The change was made: measure it (memory audit 9/29/26,
+                # "positive_volume") — the tracker its number carries,
+                # under the slice gate. After the write has committed, never
+                # inside it (implemented_on's callers are caught up nightly).
+                try:
+                    import outcomes
+                    outcomes.autostart_implemented(restaurant_id, k, user_id=user_id, db_path=db_path)
+                except Exception as e:
+                    print(f"[rec_ledger] implemented tracker not started for {k}: {e}")
         except Exception as e:
             print(f"[rec_ledger] implemented not recorded for {k}: {e}")
     return n

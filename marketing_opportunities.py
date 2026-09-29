@@ -777,7 +777,7 @@ def feed(restaurant_id, user_id=None, db_path=DB_PATH, surface="marketing", user
         items.append(dict(c, text=c["title"], module="marketing", model_written=False, confidence=conf,
                           evidence_sources=(["marketing"] + (["food"] if c.get("food") else [])
                                             + [s for s in c.get("sources") or [] if s != "marketing"]),
-                          dollar_value=None))
+                          dollar_value=None, expected_metric=card_expected_metric(c)))
     on_screen = items if show_all else items[:VISIBLE]
     shown = insight_store.present_recs(restaurant_id, "marketing", surface, on_screen, user_id=uid,
                                        db_path=db_path)
@@ -794,6 +794,26 @@ def feed(restaurant_id, user_id=None, db_path=DB_PATH, surface="marketing", user
     sources = [dict(s) for s in built.get("sources") or [] if margins or s["key"] not in FOOD_SOURCES]
     return {"ok": True, "items": out, "visible": VISIBLE, "sources": sources,
             "checked": [s["label"] for s in sources if s["state"] == "checked"]}
+
+
+def card_expected_metric(card):
+    """The number a feed card is measured on (memory audit 9/29/26,
+    "positive_volume"): its kind's own number (a slow weekday's sales), or
+    — for a card aimed at one weekday — that weekday's sales. A post, a
+    promotion or a dish mention has no honest number of its own (every
+    unrelated thing that moves sales would read as the post working): None."""
+    try:
+        import outcomes
+        key = str((card or {}).get("key") or "")
+        carried = outcomes._rec_metric(key, None)
+        if carried:
+            return carried
+        day = outcomes._named_weekday(f"{key} {(card or {}).get('title') or ''}")
+        if day and str((card or {}).get("kind") or key.split(":", 1)[0]) in ("slow_day", "quiet_night"):
+            return f"weekday_sales:{day}"
+    except Exception:
+        pass
+    return None
 
 
 # ── what the other Marketing surfaces are told ──────────────────────────────

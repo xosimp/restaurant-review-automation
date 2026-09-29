@@ -96,6 +96,101 @@ def _weekday_sales(rid, start, end, param, db_path):
     return round(med, 2), f"median of {len(vals)} {day}s"
 
 
+def _labor_pct_day(rid, start, end, param, db_path):
+    """Labor % on one weekday: that weekday's labor dollars over its sales,
+    in the window (memory audit 9/29/26, "positive_volume") — a finer grain
+    than the restaurant's labor %, so a trim of Tuesday and a trim of Friday
+    are measured side by side instead of queueing for one labor tracker."""
+    day = (param or "").strip().capitalize()
+    if day not in _WEEKDAYS:
+        return None, "which weekday?"
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT SUM(labor_cost) AS labor, SUM(sales) AS sales, COUNT(*) AS n "
+            "FROM labor_daily_history WHERE restaurant_id=? AND date>=? AND date<=? AND day_of_week=? "
+            "AND sales IS NOT NULL AND sales > 0 AND labor_cost IS NOT NULL",
+            (rid, _d(start), _d(end), day)).fetchone()
+    finally:
+        conn.close()
+    if not row or (row["n"] or 0) < 2 or not _f(row["sales"]):
+        return None, f"fewer than two {day}s with both labor and sales in this window"
+    return round(_f(row["labor"]) / _f(row["sales"]) * 100, 1), f"{row['n']} {day}s"
+
+
+_PARTS = ("morning", "night")
+# The schedule's own daypart line (schedule_rules.daypart_of): before 3pm is
+# the morning, after it the night — the hour the intraday split reads.
+_PART_SPLIT_HOUR = 15
+
+
+def _part_param(param):
+    """("Friday", "night") from "Friday night" (any case), or (None, None)."""
+    bits = str(param or "").replace("/", " ").replace("_", " ").split()
+    if len(bits) != 2:
+        return None, None
+    day, part = bits[0].capitalize(), bits[1].lower()
+    return (day, part) if day in _WEEKDAYS and part in _PARTS else (None, None)
+
+
+def _labor_pct_part(rid, start, end, param, db_path):
+    """Labor % on one weekday's morning or night. Only on days whose sales
+    split is MEASURED — the POS's intraday captures for that date, one at
+    or before 3pm and the day's last — never the assumed 40/60 split; the
+    day's labor dollars are split by the published schedule's hours in each
+    daypart (stated in the detail). Unknown below two such days."""
+    day, part = _part_param(param)
+    if not day:
+        return None, "which weekday and daypart?"
+    conn = get_conn(db_path)
+    try:
+        days = conn.execute(
+            "SELECT date, sales, labor_cost FROM labor_daily_history WHERE restaurant_id=? AND date>=? AND date<=? "
+            "AND day_of_week=? AND sales IS NOT NULL AND sales > 0 AND labor_cost IS NOT NULL",
+            (rid, _d(start), _d(end), day)).fetchall()
+        if not days:
+            return None, f"no {day}s with labor and sales in this window"
+        dates = [str(r["date"])[:10] for r in days]
+        marks = ",".join("?" for _ in dates)
+        caps = {}
+        for r in conn.execute(f"SELECT business_date, captured_hour, net_sales FROM pos_intraday WHERE restaurant_id=? "
+                              f"AND business_date IN ({marks}) ORDER BY captured_hour", (rid, *dates)).fetchall():
+            caps.setdefault(str(r["business_date"])[:10], []).append((int(r["captured_hour"]), _f(r["net_sales"], 0.0)))
+        hours = {}
+        try:
+            for r in conn.execute(f"SELECT date, daypart, hours, history_id FROM schedule_outcomes WHERE "
+                                  f"restaurant_id=? AND date IN ({marks}) ORDER BY history_id", (rid, *dates)).fetchall():
+                hours.setdefault(str(r["date"])[:10], {})[r["daypart"]] = _f(r["hours"], 0.0)
+        except Exception:
+            hours = {}
+    finally:
+        conn.close()
+    labor = sales = 0.0
+    n = 0
+    for r in days:
+        d = str(r["date"])[:10]
+        c = caps.get(d) or []
+        at_split = max((v for h, v in c if h <= _PART_SPLIT_HOUR), default=None)
+        total = c[-1][1] if c else None
+        h = hours.get(d) or {}
+        h_total = sum(h.get(p, 0.0) for p in _PARTS)
+        if at_split is None or not total or total <= 0 or h_total <= 0 or c[-1][0] <= _PART_SPLIT_HOUR:
+            continue
+        morning_share = min(1.0, at_split / total)
+        share = morning_share if part == "morning" else 1.0 - morning_share
+        part_sales = _f(r["sales"]) * share
+        if part_sales <= 0:
+            continue
+        labor += _f(r["labor_cost"]) * (h.get(part, 0.0) / h_total)
+        sales += part_sales
+        n += 1
+    if n < 2 or sales <= 0:
+        return None, (f"fewer than two {day}s with the sales split measured by the POS through the day "
+                      f"(the assumed split is never used)")
+    return round(labor / sales * 100, 1), (f"{n} {day} {part}s; sales split measured by the POS through the day, "
+                                            f"labor split by the published schedule's hours")
+
+
 def _avg_rating(rid, start, end, param, db_path):
     conn = get_conn(db_path)
     try:
@@ -180,6 +275,39 @@ def _weekly_waste(rid, start, end, param, db_path):
     if costed < n:
         detail += f" ({n - costed} without a unit cost not priced)"
     return round(_f(row["cost"]) / max(days, 1) * 7, 2), detail
+
+
+def _item_waste(rid, start, end, param, db_path):
+    """One ingredient's waste per week (memory audit 9/29/26,
+    "positive_volume"): a finer grain than the week's waste, so trackers on
+    two items run side by side. A window in which the restaurant logged
+    waste but none of this item is a measured $0 — the item's waste
+    stopped; a window with no waste logged at all is unknown."""
+    name = " ".join(str(param or "").split()).lower()
+    if not name:
+        return None, "which item?"
+    conn = get_conn(db_path)
+    try:
+        logged = conn.execute(
+            "SELECT COUNT(*) AS n FROM ingredient_stock_events WHERE restaurant_id=? AND event_type='waste' "
+            "AND event_date>=? AND event_date<=?", (rid, _d(start), _d(end))).fetchone()
+        item = conn.execute("SELECT id, unit_cost FROM ingredients WHERE restaurant_id=? AND LOWER(TRIM(name))=? "
+                            "ORDER BY is_active DESC, id LIMIT 1", (rid, name)).fetchone()
+        row = conn.execute(
+            "SELECT COALESCE(SUM(qty), 0) AS q, COUNT(*) AS n FROM ingredient_stock_events WHERE restaurant_id=? "
+            "AND event_type='waste' AND ingredient_id=? AND event_date>=? AND event_date<=?",
+            (rid, item["id"] if item else -1, _d(start), _d(end))).fetchone()
+    finally:
+        conn.close()
+    if not item:
+        return None, f"{param} is not an ingredient on file"
+    if not logged or not (logged["n"] or 0):
+        return None, "no waste logged in this window"
+    cost = _f(item["unit_cost"], 0.0)
+    if cost <= 0:
+        return None, f"{param} has no unit cost, so its waste can't be priced"
+    days = (date.fromisoformat(_d(end)) - date.fromisoformat(_d(start))).days + 1
+    return round(_f(row["q"], 0.0) * cost / max(days, 1) * 7, 2), f"{int(row['n'] or 0)} waste events of {param}, per week"
 
 
 def _loss_rate(kind):
@@ -353,17 +481,23 @@ _REGISTRY = {
     # returns None): a faster reply is worth something, but nothing here
     # can say how much.
     "response_hours": (_response_hours, "Reply time", "h", True, 0.25, 30),
+    # The finer grains (memory audit 9/29/26, "positive_volume"): one
+    # weekday's labor %, one weekday's morning or night, one item's waste.
+    # Eight of a weekday in the window, like one weekday's sales.
+    "labor_pct_day":  (_labor_pct_day,  "Labor % on",      "%",  True,  1.0,  56),
+    "labor_pct_part": (_labor_pct_part, "Labor % on",      "%",  True,  1.5,  56),
+    "item_waste":     (_item_waste,     "Waste of",        "$",  True,  0.15, 28),
 }
 
 # Relative noise: these are fractions of the baseline, not absolute amounts.
-_RELATIVE_NOISE = {"sales", "weekday_sales", "weekly_waste", "overtime_hours", "response_hours"}
+_RELATIVE_NOISE = {"sales", "weekday_sales", "weekly_waste", "overtime_hours", "response_hours", "item_waste"}
 # The smallest band a relative metric can have, in its own unit. A relative
 # band on a baseline near zero is no band at all: 15% of half an overtime
 # hour would call a half-hour move a result.
 _NOISE_FLOOR = {"overtime_hours": 2.0, "response_hours": 2.0,
                 # $10 a week: a relative band on a near-zero waste baseline
                 # called a cent's move "worse" (re-audit A9).
-                "weekly_waste": 10.0}
+                "weekly_waste": 10.0, "item_waste": 5.0}
 
 # Metric FAMILIES: numbers that measure the same money or the same guest
 # experience, so one change moving both is one result, not two (rec-ROI
@@ -374,7 +508,8 @@ _NOISE_FLOOR = {"overtime_hours": 2.0, "response_hours": 2.0,
 # measured.
 FAMILIES = {
     "labor_pct": "labor_cost", "overtime_hours": "labor_cost",
-    "food_cost_pct": "food_cost", "weekly_waste": "food_cost",
+    "labor_pct_day": "labor_cost", "labor_pct_part": "labor_cost",
+    "food_cost_pct": "food_cost", "weekly_waste": "food_cost", "item_waste": "food_cost",
     "sales": "sales", "weekday_sales": "sales",
     "avg_rating": "guest_rating", "complaints": "guest_rating",
     "response_hours": "reply_speed",
@@ -389,10 +524,11 @@ FAMILY_LABELS = {"labor_cost": "labor cost", "food_cost": "food cost", "sales": 
 # readings of one family overlap, the broader one is the family's money —
 # netting an overtime loss against a labor % win subtracted the premium a
 # second time.
-BREADTH = {"overtime_hours": 1, "weekly_waste": 1, "weekday_sales": 1, "complaints": 1}
+BREADTH = {"overtime_hours": 1, "weekly_waste": 1, "weekday_sales": 1, "complaints": 1,
+           "labor_pct_day": 1, "labor_pct_part": 1, "item_waste": 1}
 # Measured per trading day (labor_daily_history): a day with no row is a day
 # not measured. Every other metric is read over its window as a whole.
-PER_DAY_METRICS = {"labor_pct", "sales", "weekday_sales"}
+PER_DAY_METRICS = {"labor_pct", "sales", "weekday_sales", "labor_pct_day"}
 # Metrics a season moves: their baseline is matched by weekday and, where a
 # year of history allows, adjusted by what the same weeks did last year
 # (outcomes.record, audit #30).
@@ -407,7 +543,10 @@ SALES_PRICED = {"labor_pct", "food_cost_pct", "comp_rate", "void_rate", "sales"}
 WEEKDAY_MIX_METRICS = {"labor_pct", "food_cost_pct", "comp_rate", "void_rate", "sales", "weekly_waste"}
 # Metrics whose window coverage can be counted in trading days, and so
 # carry a coverage floor in outcome tracking (re-audit A2).
-COVERAGE_METRICS = {"labor_pct", "sales", "weekday_sales", "comp_rate", "void_rate"}
+COVERAGE_METRICS = {"labor_pct", "sales", "weekday_sales", "comp_rate", "void_rate", "labor_pct_day"}
+# Metrics that read one weekday (their parameter), so a month holds
+# WEEKS_PER_MONTH of them and a window's coverage counts only that weekday.
+WEEKDAY_METRICS = {"weekday_sales", "labor_pct_day"}
 # How far back the trading weekdays are read from when a window's coverage
 # is judged: eight weeks, so a closed day is told apart from a missed sync.
 TRADING_REFERENCE_DAYS = 56
@@ -427,6 +566,7 @@ def parse(key):
 
 
 _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+_LOWER_DAYS = tuple(d.lower() for d in _WEEKDAYS)
 
 
 def normalize(key):
@@ -440,10 +580,15 @@ def normalize(key):
     if param is None:
         return base
     param = param.strip()
-    if base == "weekday_sales":
+    if base in ("weekday_sales", "labor_pct_day"):
         param = param.capitalize()
+    elif base == "labor_pct_part":
+        day, part = _part_param(param)
+        param = f"{day} {part}" if day else param
     elif base == "complaints":
         param = _category_id(param)
+    elif base == "item_waste":
+        param = " ".join(param.split())
     return f"{base}:{param}" if param else base
 
 
@@ -454,8 +599,12 @@ def known(key) -> bool:
     base, param = parse(key)
     if base not in _REGISTRY:
         return False
-    if base == "weekday_sales":
+    if base in ("weekday_sales", "labor_pct_day"):
         return (param or "").strip().capitalize() in _WEEKDAYS
+    if base == "labor_pct_part":
+        return _part_param(param)[0] is not None
+    if base == "item_waste":
+        return bool(str(param or "").strip())
     return True
 
 
@@ -466,11 +615,64 @@ def family(key) -> str:
     return FAMILIES.get(base, base)
 
 
+def grain(key) -> tuple:
+    """The part of its family a metric reads (memory audit 9/29/26,
+    "positive_volume"): () for the whole family — labor %, overtime, sales,
+    the week's waste, food cost, the rating, complaints about anything —
+    else a path: ("friday",) one weekday, ("friday", "night") one weekday's
+    night, ("item", "salmon") one ingredient, ("category", "service") one
+    complaint theme. Two readings overlap when one path is a prefix of the
+    other (slices_collide)."""
+    base, param = parse(normalize(key))
+    if not param:
+        return ()
+    if base in ("weekday_sales", "labor_pct_day"):
+        return (param.strip().lower(),)
+    if base == "labor_pct_part":
+        day, part = _part_param(param)
+        return (day.lower(), part) if day else ()
+    if base == "item_waste":
+        return ("item", " ".join(param.lower().split()))
+    if base == "complaints":
+        return ("category", _category_id(param))
+    return ()
+
+
+def grains_overlap(a, b) -> bool:
+    """Whether two grains can read the same data: either is the whole
+    family, one is a prefix of the other, or they are of different kinds (a
+    weekday and an item — which cannot be told apart, so they overlap)."""
+    ga, gb = tuple(a or ()), tuple(b or ())
+    if not ga or not gb:
+        return True
+    day_a, day_b = ga[0] in _LOWER_DAYS, gb[0] in _LOWER_DAYS
+    if day_a != day_b:
+        return True
+    n = min(len(ga), len(gb))
+    return ga[:n] == gb[:n]
+
+
+def slices_collide(a, b) -> bool:
+    """Whether trackers on metrics `a` and `b` would read the same change:
+    the same family and overlapping grains. A labor % tracker collides with
+    every weekday's; Tuesday's labor % and Friday's do not, so they run
+    side by side (outcomes' one-change-per-number gate reads this)."""
+    return family(a) == family(b) and grains_overlap(grain(a), grain(b))
+
+
 def describe(key) -> dict:
     base, param = parse(key)
     fn, label, unit, lower, noise, window = _REGISTRY[base]
     if param:
-        label = f"{label} {param.capitalize()}" if base == "weekday_sales" else f"{label} ({param})"
+        if base in ("weekday_sales", "labor_pct_day"):
+            label = f"{label} {param.capitalize()}"
+        elif base == "labor_pct_part":
+            day, part = _part_param(param)
+            label = f"{label} {day} {part}s" if day else f"{label} ({param})"
+        elif base == "item_waste":
+            label = f"{label} {param}"
+        else:
+            label = f"{label} ({param})"
     return {"key": key, "label": label, "unit": unit, "lower_is_better": lower,
             "noise": noise, "relative_noise": base in _RELATIVE_NOISE,
             "noise_floor": _NOISE_FLOOR.get(base, 0.0), "family": FAMILIES.get(base, base),
@@ -823,7 +1025,9 @@ def _day_sql(base, param):
     extra = []
     if base == "labor_pct":
         sql += " AND labor_cost IS NOT NULL"
-    if base == "weekday_sales":
+    if base == "labor_pct_day":
+        sql += " AND labor_cost IS NOT NULL"
+    if base in WEEKDAY_METRICS:
         sql += " AND day_of_week=?"
         extra.append((param or "").strip().capitalize())
     return sql, extra
@@ -911,7 +1115,7 @@ def days_per_month(restaurant_id, key, start=None, end=None, db_path=DB_PATH):
     weekday's sales recur WEEKS_PER_MONTH times a month. Everything else is
     a calendar figure. None when a sales-priced metric has no trading day."""
     base, _ = parse(key)
-    if base == "weekday_sales":
+    if base in WEEKDAY_METRICS:
         return WEEKS_PER_MONTH
     if base not in SALES_PRICED:
         return DAYS_PER_MONTH
@@ -966,7 +1170,7 @@ def coverage(restaurant_id, key, start, end, db_path=DB_PATH):
     ref_start = min(s, e - timedelta(days=TRADING_REFERENCE_DAYS - 1))
     closed_weekdays, closed = _closures(restaurant_id, db_path)
     traded = trading_weekdays(restaurant_id, ref_start, e, db_path) - closed_weekdays
-    if base == "weekday_sales":
+    if base in WEEKDAY_METRICS:
         day = (param or "").strip().capitalize()
         wanted = {_WEEKDAYS.index(day)} & traded if day in _WEEKDAYS else set()
     else:
@@ -1051,7 +1255,18 @@ def monthly_dollars(restaurant_id, key, delta, db_path=DB_PATH, window=None):
     if base == "weekday_sales":
         # One weekday recurs WEEKS_PER_MONTH times a month, not DAYS.
         return round(delta * WEEKS_PER_MONTH, 2)
-    if base == "weekly_waste":
+    if base == "labor_pct_day":
+        # A point of one weekday's labor % is worth a point of that
+        # weekday's sales, WEEKS_PER_MONTH times a month.
+        _b, day = parse(key)
+        if window:
+            s = measure(restaurant_id, f"weekday_sales:{day}", _d(start), _d(end), db_path)[0]
+        else:
+            s = trailing(restaurant_id, f"weekday_sales:{day}", days=56, db_path=db_path)["value"]
+        if s is None:
+            return None
+        return round(-delta / 100 * s * WEEKS_PER_MONTH, 2)
+    if base in ("weekly_waste", "item_waste"):
         return round(-delta * WEEKS_PER_MONTH, 2)
     if base == "overtime_hours":
         # Hours a week x the premium an overtime hour carries x weeks a

@@ -297,17 +297,16 @@ def test_3_a_second_campaign_on_the_same_weekday_is_refused(db_path):
                     "weekday_sales:Tuesday", today=TODAY - timedelta(days=3))
     got = client_api._track_campaign_outcome(rid, {"target_day": "tuesday"}, {"ok": True, "sent": 12}, 1)
     assert got["tracker_refused"]["code"] == "in_flight"
-    # A campaign is an automatic start, so the FAMILY gate (re-audit A18):
-    # another weekday's sales is the same sales money while Tuesdays are
-    # measured, and the family rule would count only one of the two anyway.
-    wed = client_api._track_campaign_outcome(rid, {"target_day": "wednesday"}, {"ok": True, "sent": 12}, 1)
-    assert wed["tracker_refused"]["code"] == "in_flight"
-    conn = get_conn(db_path)
-    conn.execute("UPDATE recommendation_outcomes SET status='abandoned' WHERE restaurant_id=?", (rid,))
-    conn.commit()
-    conn.close()
+    # A campaign is an automatic start, so the family gate — which since the
+    # memory audit (9/29/26, "positive_volume") reads the metric's SLICE:
+    # Wednesdays' sales are other nights' data than Tuesdays', so the two
+    # run side by side (the value ledger still counts one per family and
+    # day), while the whole week's sales would collide with both.
     wed = client_api._track_campaign_outcome(rid, {"target_day": "wednesday"}, {"ok": True, "sent": 12}, 1)
     assert wed["tracker"]["metric"] == "weekday_sales:Wednesday" and wed["tracker"]["module"] == "marketing"
+    # The same weekday again the same day is the same tracker, never a second.
+    again = client_api._track_campaign_outcome(rid, {"target_day": "wednesday"}, {"ok": True, "sent": 9}, 1)
+    assert again["tracker"]["id"] == wed["tracker"]["id"]
 
 
 def test_3_ask_is_told_it_is_already_measured(db_path):

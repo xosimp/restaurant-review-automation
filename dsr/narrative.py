@@ -1506,7 +1506,7 @@ def settle_actions(actions, F, ctx, declined, dropped):
             dropped.append({"field": field, "text": a["text"], "why": why, "key": key})
             continue
         seen.add(key)
-        keyed.append(dict(a, key=key))
+        keyed.append(dict(a, key=key, expected_metric=action_expected_metric(dict(a, key=key), ctx)))
     if not keyed:
         return []
     from home_brief import order_recommendations
@@ -1626,6 +1626,33 @@ def action_confidence(action, F, ctx, tctx=None) -> dict:
         return confidence_engine.unknown()
 
 
+def action_expected_metric(action, ctx):
+    """The number an action is measured on, at the finest slice the report
+    knows (memory audit 9/29/26, "positive_volume"): the kind decides
+    whether there is one (outcomes.DSR_ACTION_METRICS — a reorder or a talk
+    with the team has none); an hours action for tomorrow's service reads
+    tomorrow's weekday's labor %, a waste action on an ingredient on file
+    that item's waste. Never raises."""
+    try:
+        import outcomes
+        m = outcomes.DSR_ACTION_METRICS.get(action.get("kind"))
+        if not m:
+            return None
+        if m == "labor_pct" and action.get("urgency") == "before_service":
+            from datetime import timedelta as _td
+            return f"labor_pct_day:{(ctx.business_date + _td(days=1)).strftime('%A')}"
+        if m == "weekly_waste" and "/" in str(action.get("key") or ""):
+            entity = str(action["key"]).split("/", 1)[1].replace("-", " ").strip()
+            item = outcomes._named_ingredient(ctx.restaurant_id, entity, db_path=getattr(ctx, "db_path", None)
+                                              or outcomes.DB_PATH)
+            if item:
+                return f"item_waste:{item}"
+        return m
+    except Exception as e:
+        _capture(e, getattr(ctx, "restaurant_id", None), "action expected metric")
+        return None
+
+
 def ledger_items(actions) -> list:
     """rec_ledger.present_many items for the actions a reader was shown —
     the attributes the episode is created with (module from the action's
@@ -1645,6 +1672,10 @@ def ledger_items(actions) -> list:
                     "model_written": True,
                     # Snapshotted at delivery (K3).
                     "confidence": a.get("confidence") if isinstance(a.get("confidence"), dict) else None,
+                    # The number it is measured on (memory audit 9/29/26):
+                    # Track starts on it, and an action left unanswered gets
+                    # its do-nothing comparison (outcomes.observe_untaken).
+                    "expected_metric": a.get("expected_metric"),
                     # An action resting on a figure the Manager DSR never shows
                     # (budget, prime cost, loss lines, the Food block) is never
                     # listed to a manager in the recommendation record either.

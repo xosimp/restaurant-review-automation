@@ -478,6 +478,15 @@ def metric_for_rec(restaurant_id, key, body_metric=None, db_path=DB_PATH, viewer
     if key.startswith("dsr_action:"):
         parts = key.split(":")
         m = DSR_ACTION_METRICS.get(parts[1] if len(parts) > 1 else "")
+        if m:
+            # The finer slice the action was presented on (tomorrow's labor %,
+            # one item's waste — dsr.narrative, memory audit 9/29/26), when it
+            # is the kind's own number read closer: the kind still decides
+            # WHETHER there is a number.
+            rec = _latest_rec(restaurant_id, key, db_path)
+            em = rec["expected_metric"] if rec is not None else None
+            if em and metrics.known(em) and metrics.family(em) == metrics.family(m):
+                m = metrics.normalize(em)
         return _seen(m), True
     m = _kind_metric(key)
     if m:
@@ -611,14 +620,16 @@ def tracker_reply(row) -> dict:
 def _live_on(conn, restaurant_id, metric, family=False, include_informational=False):
     rows = conn.execute("SELECT * FROM recommendation_outcomes WHERE restaurant_id=? AND status='tracking' "
                         "ORDER BY id", (restaurant_id,)).fetchall()
-    fam = metrics.family(metric)
     want = metrics.normalize(metric)
     for r in rows:
         if not include_informational and _informational_key(r["source_key"]):
             continue
         # Normalised both sides: a row written before keys were normalised
-        # still blocks its own number (re-audit A17).
-        if (metrics.family(r["metric"]) == fam) if family else (metrics.normalize(r["metric"]) == want):
+        # still blocks its own number (re-audit A17). The family gate reads
+        # the metric's SLICE (metrics.slices_collide, memory audit 9/29/26
+        # "positive_volume"): labor % blocks every weekday's labor %, but
+        # Tuesday's and Friday's — or two items' waste — run side by side.
+        if metrics.slices_collide(r["metric"], metric) if family else (metrics.normalize(r["metric"]) == want):
             return r
     return None
 
@@ -685,6 +696,172 @@ def observe(restaurant_id, action, detail=None, user_id=None, db_path=DB_PATH, t
         return None
 
 
+# ── the number every recommendation carries (memory audit 9/29/26) ─────────
+# Only Home's cards and the reprice suggestions carried expected_metric, so a
+# dismissed or expired DSR action, read line, feed card or schedule item had
+# no do-nothing comparison (observe_untaken) and no number for a tracker to
+# start on. expected_metric_for gives each the finest HONEST slice its words
+# name — one weekday's labor % for "trim Tuesday", one item's waste for "cut
+# the salmon order", one complaint theme for the Reviews line — else its
+# module's own number, else None: marketing advice has no honest number.
+
+_WEEKDAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+_LABOR_KINDS = ("insight_labor", "diag_labor", "labor_over", "trim_day", "schedule_to_target", "optimizer",
+                "schedule_hours", "labor")
+_FOOD_KINDS = ("insight_food", "diag_food", "cut_waste", "food_waste", "food_cost_driver", "stock_low",
+               "critical_low", "price_spike")
+_REVIEW_KINDS = ("insight_review", "diag_review", "top_issue")
+_WASTE_WORDS = None
+
+
+def _named_weekday(text):
+    import re
+    low = str(text or "").lower()
+    for d in _WEEKDAY_NAMES:
+        if re.search(rf"(?<![a-z]){d.lower()}(?:s|'s|’s)?(?![a-z])", low):
+            return d
+    return None
+
+
+def _named_ingredient(restaurant_id, text, db_path=DB_PATH):
+    """The longest active ingredient name the text names as whole words, or None."""
+    import re
+    low = " ".join(str(text or "").lower().split())
+    if not restaurant_id or not low:
+        return None
+    try:
+        conn = get_conn(db_path)
+        try:
+            names = [str(r["name"]) for r in conn.execute(
+                "SELECT name FROM ingredients WHERE restaurant_id=? AND COALESCE(is_active, 1)=1",
+                (restaurant_id,)).fetchall() if r["name"]]
+        finally:
+            conn.close()
+    except Exception:
+        return None
+    best = None
+    for n in names:
+        nl = " ".join(n.lower().split())
+        if len(nl) >= 3 and re.search(rf"(?<![a-z0-9]){re.escape(nl)}(?![a-z0-9])", low):
+            if best is None or len(nl) > len(best):
+                best = nl
+    return best
+
+
+def expected_metric_for(key, text=None, module=None, restaurant_id=None, db_path=DB_PATH):
+    """The metric a recommendation should carry when it is presented, or
+    None. A kind's own number (a DSR action's, a slow day's, overtime) wins;
+    labor advice naming a weekday reads that weekday's labor %; food advice
+    about waste, orders or portions naming an ingredient on file reads that
+    item's waste, else food cost %; Reviews advice naming a complaint theme
+    reads that theme's share, else the rating. Never raises."""
+    try:
+        key = str(key or "")
+        kind = key.split(":", 1)[0]
+        words = f"{key.split(':', 1)[1] if ':' in key else ''} {text or ''}"
+        carried = _rec_metric(key, None)
+        day = _named_weekday(words)
+        if carried:
+            if carried == "labor_pct" and day:
+                return f"labor_pct_day:{day}"
+            return carried
+        if kind in _LABOR_KINDS or (module in ("labor", "schedule") and kind.startswith("insight_")):
+            return f"labor_pct_day:{day}" if day and kind not in ("schedule_to_target", "optimizer") else "labor_pct"
+        if kind in _FOOD_KINDS or module == "food":
+            global _WASTE_WORDS
+            import re
+            if _WASTE_WORDS is None:
+                _WASTE_WORDS = re.compile(r"\b(wast\w*|spoil\w*|order\w*|par|pars|portion\w*|prep\w*|over-?order\w*|"
+                                          r"trim\w*|shelf)\b", re.I)
+            item = _named_ingredient(restaurant_id, words, db_path=db_path)
+            if item and _WASTE_WORDS.search(words):
+                return f"item_waste:{item}"
+            return "food_cost_pct"
+        if kind in _REVIEW_KINDS or module == "reviews":
+            try:
+                import insight_store
+                subj = insight_store._text_subject(words)
+            except Exception:
+                subj = None
+            if kind in ("diag_review", "top_issue") and ":" in key:
+                subj = subj or f"category:{key.split(':', 1)[1]}"
+            if subj and subj.startswith("category:") and metrics.known(f"complaints:{subj.split(':', 1)[1]}"):
+                return metrics.normalize(f"complaints:{subj.split(':', 1)[1]}")
+            return "avg_rating"
+    except Exception as e:
+        print(f"[outcomes] expected metric unavailable for {key}: {e}")
+    return None
+
+
+# ── advice taken: the change was made (memory audit 9/29/26) ───────────────
+# Only Track and Done started a tracker, so a restaurant produced at most a
+# dozen labor results a year and most kinds never reached the five a rate
+# needs. A recommendation whose change was actually MADE (rec_ledger.
+# implemented: a price applied, a schedule edited to match, an order sent)
+# now starts the tracker its number carries — the kind's own metric or the
+# one it was presented with, never a module guess — under the slice gate.
+# Kinds with their own automatic trackers keep them (a reprice's monthly
+# tracker, a slow-day campaign's, Ask's own).
+AUTOSTART_SKIP_KINDS = ("reprice", "slow_day", "campaign", "ask", "observed")
+AUTOSTART_LOOKBACK_DAYS = 7
+
+
+def autostart_implemented(restaurant_id, key, user_id=None, db_path=DB_PATH, today=None):
+    """Start the tracker an implemented recommendation carries, or None
+    (already tracked, no number it carries, a kind with its own tracker, or
+    the number already being measured — the slice gate). Never raises."""
+    key = str(key or "").strip()
+    kind = key.split(":", 1)[0]
+    if not key or kind in AUTOSTART_SKIP_KINDS or _informational_key(key):
+        return None
+    try:
+        conn = get_conn(db_path)
+        try:
+            ep = conn.execute("SELECT title, tracker_id, module, implemented_at FROM rec_instances WHERE "
+                              "restaurant_id=? AND key=? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                              (restaurant_id, key)).fetchone()
+        finally:
+            conn.close()
+        if ep is None or ep["tracker_id"]:
+            return None
+        metric, _auth = metric_for_rec(restaurant_id, key, db_path=db_path)
+        if not metric or not metrics.known(metric):
+            return None
+        if today is None and ep["implemented_at"]:
+            try:
+                today = min(_day(ep["implemented_at"]), local_today(restaurant_id, db_path))
+            except Exception:
+                today = None
+        return record(restaurant_id, "recommendation", key, ep["title"] or key, metric, user_id=user_id,
+                      db_path=db_path, today=today, module=ep["module"], gate="family")
+    except TrackerRefused:
+        return None
+    except Exception as e:
+        print(f"[outcomes] implemented tracker not started for {restaurant_id} {key}: {e}")
+        return None
+
+
+def autostart_due(restaurant_id, db_path=DB_PATH, today=None) -> int:
+    """The nightly catch-up: every episode implemented in the last
+    AUTOSTART_LOOKBACK_DAYS with no tracker (a change recorded inside a
+    caller's own transaction — a schedule save — cannot start one there).
+    Returns how many started. Never raises."""
+    today = today or local_today(restaurant_id, db_path)
+    since = (today - timedelta(days=AUTOSTART_LOOKBACK_DAYS)).isoformat()
+    try:
+        conn = get_conn(db_path)
+        try:
+            keys = [r["key"] for r in conn.execute(
+                "SELECT DISTINCT key FROM rec_instances WHERE restaurant_id=? AND implemented_at IS NOT NULL "
+                "AND implemented_at >= ? AND tracker_id IS NULL", (restaurant_id, since)).fetchall()]
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[outcomes] implemented episodes unreadable for {restaurant_id}: {e}")
+        return 0
+    return sum(1 for k in keys if autostart_implemented(restaurant_id, k, db_path=db_path))
+
+
 # ── advice not taken: the comparison group (CA2 #11) ────────────────────────
 # Only recommendations the owner TOOK were ever measured, so a success rate
 # had nothing to be compared with: a number that improves after most bad
@@ -714,10 +891,17 @@ def observe_untaken(restaurant_id, db_path=DB_PATH, today=None) -> int:
         try:
             eps = [dict(r) for r in conn.execute(
                 "SELECT * FROM rec_instances i WHERE i.restaurant_id=? AND i.status IN ('dismissed','expired') "
-                "AND i.expected_metric IS NOT NULL AND i.tracker_id IS NULL "
+                "AND i.tracker_id IS NULL "
                 "AND COALESCE(i.closed_at, i.created_at) >= ? "
                 "AND EXISTS (SELECT 1 FROM rec_events s WHERE s.rec_id=i.rec_id AND s.event='shown') "
                 "ORDER BY i.created_at", (restaurant_id, since)).fetchall()]
+            # The number each carried: as presented, else its kind's own (a
+            # nightly-report action's, a slow day's, overtime — memory audit
+            # 9/29/26), so a kind that names its number by definition gets
+            # its do-nothing comparison too.
+            for e in eps:
+                e["expected_metric"] = _rec_metric(e["key"], e.get("expected_metric"))
+            eps = [e for e in eps if e.get("expected_metric")]
             started = {r["source_key"] for r in conn.execute(
                 "SELECT source_key FROM recommendation_outcomes WHERE restaurant_id=? AND source_key LIKE ?",
                 (restaurant_id, UNTAKEN_PREFIX + "%")).fetchall()}
@@ -1124,6 +1308,20 @@ _COUNTS_SQL = ("(o.owner_checkin IS NULL OR (o.owner_checkin NOT LIKE ? AND o.ow
                "AND (o.concurrent IS NULL OR TRIM(o.concurrent) IN ('', '[]'))")
 
 
+def _rec_metric(key, expected_metric):
+    """The metric a recommendation carries by its kind or as presented, or
+    None (its family is then _rec_family's module fallback)."""
+    key = str(key or "")
+    if key.startswith("dsr_action:"):
+        if expected_metric and metrics.known(expected_metric):
+            return metrics.normalize(expected_metric)
+        return DSR_ACTION_METRICS.get(key.split(":")[1] if ":" in key else "")
+    m = _kind_metric(key)
+    if m:
+        return m
+    return metrics.normalize(expected_metric) if expected_metric and metrics.known(expected_metric) else None
+
+
 def _rec_family(key, module, expected_metric):
     key = str(key or "")
     if key.startswith("dsr_action:"):
@@ -1226,7 +1424,14 @@ def find_concurrent(r, start, end, db_path=DB_PATH, read_windows=None):
             if _informational_key(o["source_key"]):
                 continue        # reading an alert (or advice not taken) is not a change
             ofam = metrics.family(o["metric"])
-            if ofam != fam and not (cost and ofam == "sales"):
+            if ofam == fam:
+                # Another slice of the same family (Friday's labor % beside
+                # Tuesday's, another item's waste) reads other data: it is
+                # not a change on this number (memory audit 9/29/26).
+                if not metrics.slices_collide(o["metric"], r["metric"]):
+                    continue
+            elif not (cost and ofam == "sales"
+                      and metrics.grains_overlap(metrics.grain(o["metric"]), metrics.grain(r["metric"]))):
                 continue
             o_end = _iso(o["after_end"]) or (_day(o["evaluate_on"]) - timedelta(days=1)).isoformat()
             if o_end < s:
@@ -1258,6 +1463,9 @@ def find_concurrent(r, start, end, db_path=DB_PATH, read_windows=None):
                 continue
             if _rec_family(key, ev["module"], ev["expected_metric"]) != fam:
                 continue
+            rm = _rec_metric(key, ev["expected_metric"])
+            if rm and not metrics.slices_collide(rm, r["metric"]):
+                continue                 # the same lever on another slice
             seen.add(key)
             out.append({"kind": "accepted_rec", "label": owner_title(ev["title"] or key),
                         "date": _iso(ev["at"])})

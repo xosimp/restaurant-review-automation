@@ -2538,6 +2538,21 @@ def mark_next_week_built(restaurant_id, history_id) -> int:
 SHOWN_RECOMMENDATIONS = 5
 
 
+def schedule_item_metric(item):
+    """The number a schedule recommendation is measured on (memory audit
+    9/29/26, "positive_volume"): a trim of a weekday reads that weekday's
+    labor %. Coverage, leadership, pairing, fatigue and ratings advice adds
+    or moves people for service's sake and has no honest number: None."""
+    if str((item or {}).get("kind") or "") != "hours":
+        return None
+    try:
+        import outcomes
+        return outcomes.expected_metric_for("schedule_hours:" + str(item.get("key") or ""), item.get("text"),
+                                            module="schedule")
+    except Exception:
+        return None
+
+
 def present_quality(restaurant_id, quality, user_id=None):
     """The quality verdict's recommendations, recorded as shown on
     "schedule_review" by the response that SERVES them to a person — the
@@ -2558,7 +2573,8 @@ def present_quality(restaurant_id, quality, user_id=None):
         ids = rec_delivery.present_now(
             restaurant_id, "schedule_review",
             [{"key": it["key"], "module": "schedule", "title": str(it.get("text") or "")[:200],
-              "kind": "schedule_" + str(it.get("kind") or "other"), "position": i} for i, it in enumerate(items)],
+              "kind": "schedule_" + str(it.get("kind") or "other"), "position": i,
+              "expected_metric": schedule_item_metric(it)} for i, it in enumerate(items)],
             user_id=user_id)
         for it in items:
             it["rec_key"] = it["key"]

@@ -990,6 +990,15 @@ def insight_rec_items(rid, text, prefix, module, surface, user_id=None, promote=
     items = [{"index": i, "key": insight_store.line_key(prefix, r), "text": r} for i, r in enumerate(recs)]
     if not items:
         return []
+    # The number each line would be measured on — the finest slice its words
+    # name (outcomes.expected_metric_for, memory audit 9/29/26) — so Track
+    # starts on it and a line left unanswered gets its do-nothing comparison.
+    try:
+        import outcomes as _oc_em
+        for it in items:
+            it["expected_metric"] = _oc_em.expected_metric_for(it["key"], it["text"], module=module, restaurant_id=rid)
+    except Exception as e:
+        print(f"[insight] expected metrics unavailable rid={rid}: {e}")
     try:
         import rec_trust
         _ctx = rec_trust.Context(rid)
@@ -1045,6 +1054,27 @@ def diagnosis_rec_key(prefix, diag):
     return insight_store.line_key(prefix, diag.get("cause") or diag.get("recommended_action") or "")
 
 
+def diagnosis_expected_metric(rid, prefix, diag):
+    """The number a diagnosis's action is measured on (memory audit
+    9/29/26): the theme's complaint share for a review diagnosis, the lead
+    driver's own number for a food one (ai_reads.food_diagnosis_metric),
+    labor % for a labor one. Never raises."""
+    try:
+        if prefix == "diag_review" and diag.get("category"):
+            import metrics as _m_dx
+            key = f"complaints:{diag['category']}"
+            return _m_dx.normalize(key) if _m_dx.known(key) else "avg_rating"
+        if prefix == "diag_food":
+            import ai_reads
+            _lead, drv = ai_reads.food_diagnosis_lead(diag.get("drivers"))
+            return ai_reads.food_diagnosis_metric(drv) if _lead else "food_cost_pct"
+        if prefix == "diag_labor":
+            return "labor_pct"
+    except Exception as e:
+        print(f"[diagnosis] expected metric unavailable rid={rid}: {e}")
+    return None
+
+
 def present_diagnoses(rid, diags, prefix, module, surface, user_id=None, shown=None):
     """Give each diagnosis with a recommended action a rec_key, log it as
     shown, and mark one the owner already answered (`answered`: the card
@@ -1068,7 +1098,8 @@ def present_diagnoses(rid, diags, prefix, module, surface, user_id=None, shown=N
                 _cd = d.get("confidence_detail") if isinstance(d.get("confidence_detail"), dict) else None
                 items.append({"key": d["rec_key"], "text": d["recommended_action"], "model_written": True,
                               "confidence": _cd,
-                              "confidence_band": (_cd or {}).get("band") or d.get("confidence")})
+                              "confidence_band": (_cd or {}).get("band") or d.get("confidence"),
+                              "expected_metric": diagnosis_expected_metric(rid, prefix, d)})
     kept = {k["key"] for k in insight_store.present_recs(rid, module, surface, items, user_id=user_id)}
     presented = {it["key"] for it in items}
     silenced = None
@@ -1793,10 +1824,15 @@ def _review_insight_recs(rid, payload):
         # says how steady the rating line is, not how well supported this
         # action is — and admin's acceptance-by-confidence mixed the two.
         conf = _do_today_confidence(rid, payload)
+        try:
+            import outcomes as _oc_dt
+            _em_dt = _oc_dt.expected_metric_for(key, line, module="reviews", restaurant_id=rid)
+        except Exception:
+            _em_dt = None
         kept = [] if declined else insight_store.present_recs(
             rid, "reviews", "reviews",
             [{"key": key, "text": line, "title": line, "model_written": True,
-              "confidence": conf, "confidence_band": conf.get("band")}])
+              "confidence": conf, "confidence_band": conf.get("band"), "expected_metric": _em_dt}])
         if kept:
             payload["recs"].append({"key": key, "text": line, "kind": "do_today", "rec_key": key,
                                     "answerable": True, "confidence_detail": conf, "advice_signature": sig})

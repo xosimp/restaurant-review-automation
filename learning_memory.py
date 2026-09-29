@@ -9,6 +9,9 @@ and resumable), each step isolated so one failing never stops the others:
                happened" rows that outlive the raw reads (ai_reads)
   what_worked  this month's what-worked record by kind and tag
                (rec_learning.snapshot_what_worked; kept forever)
+  implemented_trackers  start the tracker of every change made this week
+               that has none yet (outcomes.autostart_due) — one recorded
+               inside a caller's own transaction could not start it there
 
 Only restaurants that may teach a learner are passed in
 (models.learning_eligible): a demo, a test account or an internal one never
@@ -38,10 +41,17 @@ def _what_worked(restaurant_id, today, db_path):
 # name -> fn(restaurant_id, today, db_path) -> dict, run in this order;
 # each step reads only committed rows, so a failing step never corrupts the
 # next.
+def _implemented_trackers(restaurant_id, today, db_path):
+    import outcomes
+    kw = {"db_path": db_path} if db_path else {}
+    return {"started": outcomes.autostart_due(restaurant_id, today=today, **kw)}
+
+
 STEPS = [
     ("claims", _claims),
     ("summaries", _summaries),
     ("what_worked", _what_worked),
+    ("implemented_trackers", _implemented_trackers),
 ]
 
 

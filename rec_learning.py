@@ -1091,6 +1091,17 @@ def kind_record(restaurant_id, kind, db_path=DB_PATH, restaurant=None, now=None,
         out["measured"] += claims["measured"]
         out["improved"] += claims["improved"]
         measured = list(measured) + list(claims.get("results") or [])
+    # Pooled by lever (memory audit 9/29/26, "positive_volume"): below its
+    # own floor a kind borrows the measured results of every kind that pulls
+    # the same lever here (the topic tag — trim_day, a nightly report's
+    # adjust_staffing and a labor read's cut are all "staffing"), so one
+    # kind's five results no longer have to come from that kind alone. The
+    # confidence engine reads it with the same shrinkage toward doing
+    # nothing, and says it is pooled.
+    if out["measured"] < MIN_MEASURED_FOR_RATE:
+        pool = _lever_pool(episodes, kind)
+        if pool and pool["measured"] >= MIN_MEASURED_FOR_RATE:
+            out["pooled"] = pool
     out["untaken"] = untaken_comparison(restaurant_id, kind, taken_measured=out["measured"],
                                         taken_improved=out["improved"], db_path=db_path)
     try:
@@ -1146,6 +1157,31 @@ def kind_record(restaurant_id, kind, db_path=DB_PATH, restaurant=None, now=None,
     except Exception as e:
         print(f"[rec_learning] cohort record unavailable for {kind}: {e}")
     return out
+
+
+def _lever_pool(episodes, kind):
+    """{"topic", "label", "measured", "improved", "kinds"}: the measured
+    results of every kind sharing `kind`'s lever (its commonest topic tag
+    here, else the ledger's topic for the kind), taken and shown, one per
+    change (_one_per_window) — or None with no lever. Pure over the
+    episodes it is handed."""
+    mine = [e for e in episodes or [] if (e.get("kind") or rec_ledger.kind_of(e.get("key"))) == kind]
+    counts = {}
+    for e in mine:
+        for t in e.get("tag_list") or []:
+            if str(t).startswith("topic:"):
+                counts[t] = counts.get(t, 0) + 1
+    topic = max(counts.items(), key=lambda kv: (kv[1], kv[0]))[0] if counts else None
+    if topic is None:
+        t = rec_ledger._topic_of(kind, f"{kind}:")
+        topic = f"topic:{t}" if t else None
+    if topic is None:
+        return None
+    pool = [e for e in episodes or [] if e.get("shown") and _taken(e) and topic in (e.get("tag_list") or [])]
+    measured = [e for e in _one_per_window(pool) if e.get("verdict") in CLEAR_VERDICTS]
+    return {"topic": topic.split(":", 1)[1], "label": rec_ledger.tag_label(topic).lower(),
+            "measured": len(measured), "improved": sum(1 for e in measured if e["verdict"] == "improved"),
+            "kinds": sorted({e.get("kind") or rec_ledger.kind_of(e.get("key")) for e in measured})}
 
 
 def _claim_results(restaurant_id, kind, db_path=DB_PATH):
