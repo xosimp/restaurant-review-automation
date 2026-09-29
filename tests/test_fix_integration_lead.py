@@ -130,3 +130,57 @@ def test_every_link_to_a_legacy_client_page_is_hidden_from_a_support_login():
             line = src[src.rfind("\n", 0, m.start()) + 1:src.find("\n", m.start())]
             assert any(s in line for s in not_links), f"unclassified legacy-page reference: {line.strip()[:160]}"
     assert seen >= 12
+
+
+def test_the_client_list_route_passes_every_filter_the_list_takes(world):
+    """/admin/api/clients/list dropped churn, has_issues, joined_days and
+    inactive_days on the floor, though admin_ops.clients_page takes them."""
+    c, rid = world["c"], world["rid"]
+
+    def ids(qs):
+        r = c.get("/admin/api/clients/list?segment=all&per_page=200" + qs)
+        assert r.status_code == 200, (qs, r.status_code)
+        return [x["id"] for x in r.get_json()["items"]]
+    assert rid in ids("")
+    assert rid not in ids("&churn=high")          # a new account carries no high churn risk
+    assert rid in ids("&joined_days=1")           # created today
+    assert rid in ids("&joined_days=abc")         # not a whole number: ignored, never a 500
+
+
+def test_an_expired_session_answers_a_json_ask_with_401_wherever_the_read_lives(world):
+    """The console reads /admin/status/services and /incidents, outside
+    /admin/api/: an expired session there was a 302 to the login page, which
+    fetch() followed and couldn't parse. A JSON ask is a 401 on any path now;
+    a browser page GET still gets the redirect."""
+    from flask import Flask
+    import status_routes
+    from auth_routes import auth_bp
+    app = Flask(__name__)
+    for bp in (status_routes.status_bp, auth_bp):
+        app.register_blueprint(bp)
+    c = app.test_client()
+    c.set_cookie("session_token", "expired-or-forged")
+    for path in ("/admin/status/services", "/admin/status/incidents"):
+        r = c.get(path, headers={"Accept": "application/json"})
+        assert r.status_code == 401 and r.get_json()["session_expired"] is True, path
+        page = c.get(path, headers={"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"})
+        assert page.status_code == 302 and "/login" in page.headers["Location"], path
+
+
+def test_the_console_asks_for_json_on_every_call_and_a_login_redirect_signs_in():
+    import os
+    import re
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "templates", "admin.html")).read()
+    body = re.search(r"async function api\(path, opts, _retry, _s0\)\{(.*?)\n\}", src, re.S).group(1)
+    assert "{'Accept': 'application/json'}" in body and "fetch(path, o)" in body
+    assert "r.redirected && r.url.indexOf(location.origin + '/login') === 0" in body
+
+
+def test_the_suppressed_welcome_refusal_names_the_tab_the_console_has():
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    routes = open(os.path.join(root, "admin_routes.py")).read()
+    page = open(os.path.join(root, "templates", "admin.html")).read()
+    assert "Messaging → Suppressions" not in routes
+    assert "under Operations → Email & SMS" in routes and "['email', 'Email &amp; SMS'" in page

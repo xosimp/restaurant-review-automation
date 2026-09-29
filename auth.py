@@ -4094,9 +4094,15 @@ _SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
 
 def _admin_wants_json():
     """_wants_json_response, plus the console's own GETs under /admin/api/
-    and the phone's /mobile/api/ — fetch() and the app parse JSON."""
+    and the phone's /mobile/api/ — fetch() and the app parse JSON — and any
+    request whose Accept header prefers JSON: the console's api() says so on
+    every call, so a read outside /admin/api/ (/admin/status/services,
+    /admin/status/incidents) gets the 401 that sends the admin to sign in,
+    not a 302 to a login page fetch() follows and can't parse. A browser
+    navigation prefers text/html and still gets the redirect."""
     path = request.path or ""
-    return _wants_json_response() or path.startswith("/admin/api/") or path.startswith("/mobile/api/")
+    return (_wants_json_response() or path.startswith("/admin/api/") or path.startswith("/mobile/api/")
+            or request.accept_mimetypes.best == "application/json")
 
 
 # ── the internal logins' second factor (SECURITY-1) ──────────────────────────

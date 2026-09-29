@@ -3025,9 +3025,9 @@ def resend_welcome_email(restaurant_id, current_user):
         _ops.release_period("cooldown", cooldown_key)
         if suppressed:
             return jsonify(ok=False, suppressed=True, email=email, error=(
-                f"Not sent: {email} is on the suppression list after a bounce or complaint. Lift it from "
-                f"Messaging → Suppressions (after checking the address is right), then send again. Nothing "
-                f"about their login changed.")), 409
+                f"Not sent: {email} is on the suppression list after a bounce or complaint. Reinstate it "
+                f"under Operations → Email & SMS (after checking the address is right), then send again. "
+                f"Nothing about their login changed.")), 409
         if inactive:
             return jsonify(ok=False, error="The owner login is inactive or has no email address. "
                                            "Nothing was sent."), 409
@@ -5640,11 +5640,16 @@ def admin_api_issue_resolutions(current_user):
 def admin_api_clients_list(current_user):
     """The fleet list as slim rows, filtered, sorted and paged on the server
     (#79). ?q= &health= &segment=customer|internal|all &status= &sort=name|
-    health|mrr|last_active|created &page= &per_page="""
+    health|mrr|last_active|created &churn= &has_issues= &joined_days=
+    &inactive_days= &page= &per_page= — a day count that isn't a whole
+    number is ignored, never a 500."""
     a = request.args
     return jsonify(**_admin_ops_c.clients_page(q=a.get("q"), health=a.get("health"),
                                                segment=a.get("segment", "customer"), status=a.get("status"),
-                                               sort=a.get("sort", "name"), **_page_args()))
+                                               sort=a.get("sort", "name"), churn=a.get("churn"),
+                                               has_issues=a.get("has_issues"),
+                                               joined_days=a.get("joined_days", type=int),
+                                               inactive_days=a.get("inactive_days", type=int), **_page_args()))
 
 
 @admin_bp.route("/admin/api/onboarding")

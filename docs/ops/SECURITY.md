@@ -150,4 +150,3 @@ Account → Security → Activity carries sign-ins, lockouts, freezes, PIN reset
 - Guest phone numbers are plaintext (looked up by value for consent and STOP).
 - Request rate limits beyond login, the admin ceiling and paid actions belong at the gateway (Cloudflare); the public webhook routes have none.
 - A local backend with the production `.env` still sends the three deliberately ungated kinds (*Sends from a backend that is not production*).
-- The console reads `/admin/status/services` and `/admin/status/incidents` with `fetch`, but they are not under `/admin/api/`: an expired session there is a 302 to the login page, which `fetch` follows and then cannot parse: `api()` answers `{ok: false, error: "HTTP 200"}` instead of sending the admin to sign in.

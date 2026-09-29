@@ -3,7 +3,7 @@
 What these protect:
   * An owner's own POS connect — web and app, Toast, Square and Clover —
     refuses a store already bound to another live restaurant, without naming
-    it (a demo is exempt), as the admin saves already did.
+    it (a demo is exempt). The admin saves refuse too, and do name it.
   * A dispute, refund or admin hold is shown as a hold — on the blocked page
     (no Resume) and in the message the phone shows.
   * Anything logged through an admin's view-as session names the admin.

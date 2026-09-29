@@ -564,11 +564,15 @@ let _seq = 0;
 let _reauthP = null, _reauthRes = null;
 async function api(path, opts, _retry, _s0){
   const s = _s0 == null ? _seq : _s0;
-  const r = await fetch(path, opts);
+  // Accept: JSON on every call, so an expired session answers 401 on any
+  // path (auth._admin_wants_json), not a 302 to a login page.
+  const o = Object.assign({}, opts || {});
+  o.headers = Object.assign({'Accept': 'application/json'}, (opts && opts.headers) || {});
+  const r = await fetch(path, o);
   let j; try{ j = await r.json(); }catch(e){ j = {ok:false, error:'HTTP '+r.status}; }
   if(j && typeof j === 'object' && !Array.isArray(j)) j._status = r.status;
   if(r.headers.get('X-Redacted') === 'support') document.body.classList.add('role-support');
-  if(r.status===401){ location.href='/login?next=/admin'; }
+  if(r.status===401 || (r.redirected && r.url.indexOf(location.origin + '/login') === 0)){ location.href='/login?next=/admin'; }
   else if(r.status===403 && j && j.two_factor_required){ location.href = j.enrol_url || '/admin/two-factor'; }
   else if(r.status===403 && j && j.reauth_required && !_retry){
     if(await reauth()) return api(path, opts, true, s);
