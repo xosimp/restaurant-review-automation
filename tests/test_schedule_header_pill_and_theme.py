@@ -671,7 +671,11 @@ def test_rating_number_carries_no_status_color_only_the_dot_does():
     fn = _fn("updateReviewStats")
     rating_block = fn[fn.index("// ── Avg rating"):fn.index("// ── Responded this month")]
     assert "statGlow(ratingNEl" not in rating_block
-    assert "ratingNEl.textContent = d.avg_rating;" in rating_block
+    # The figure is Google's own rating when it's on file, else the average
+    # of the reviews held (owner, 9/28/26) — written as plain text, no class.
+    assert "var _rv = (d.official_rating != null) ? d.official_rating : d.avg_rating;" in rating_block
+    assert "ratingNEl.textContent = _rv;" in rating_block
+    assert "ratingNEl.className" not in rating_block and "ratingNEl.classList" not in rating_block
     assert "#panel-reviews .rating-star{margin-left:2px}" in s
 
 

@@ -1572,7 +1572,7 @@ def save_client_settings(restaurant_id, current_user):
     try:
         fields = _parse_client_settings(data)
     except _SettingsError as e:
-        return jsonify(ok=False, error=str(e)), 400
+        return jsonify(ok=False, error=_safe_err(e)), 400
     if "cut_floor_default" in data:
         fields["cut_floor_default"] = _cut_floor
     sent = set(fields)          # what the admin sent, as opposed to what this save derives
@@ -3489,7 +3489,7 @@ def admin_set_brand(restaurant_id, current_user):
             else:
                 updates[key] = sanitize(str(raw), max_len=80)
     except ValueError as e:
-        return jsonify(ok=False, error=str(e)), 400
+        return jsonify(ok=False, error=_safe_err(e)), 400
     if "category" in data:
         from intelligence.categories import valid as _valid_category
         cat = (str(data.get("category") or "")).strip().lower()
@@ -5536,7 +5536,7 @@ def admin_set_reviews_fetching(restaurant_id, current_user):
     try:
         on = _settings_flag(data, "on")
     except _SettingsError as e:
-        return jsonify(ok=False, error=str(e)), 400
+        return jsonify(ok=False, error=_safe_err(e)), 400
     current = get_restaurant(restaurant_id)
     if not current:
         return jsonify(ok=False, error="Restaurant not found"), 404
@@ -5564,7 +5564,7 @@ def _admin_busy(e):
     503 with Retry-After, never a fifth request queued on four threads.
     X-Admin-Busy marks the refusal so request metrics can tell it from a
     server error."""
-    resp = jsonify(ok=False, busy=True, error=str(e), retry_after=e.retry_after)
+    resp = jsonify(ok=False, busy=True, error=_safe_err(e), retry_after=e.retry_after)
     resp.status_code = 503
     resp.headers["Retry-After"] = str(e.retry_after)
     resp.headers["X-Admin-Busy"] = "1"

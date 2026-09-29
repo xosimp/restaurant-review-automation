@@ -60,3 +60,30 @@ def test_the_consoles_busy_refusal_is_not_a_server_error():
     c.get("/api/real_outage")
     assert [s[2] for s in list(http_layer._samples)][-1] == 503 and len(list(http_layer._pending_5xx)) == 1
     http_layer.reset_metrics()
+
+
+def test_a_stale_count_is_never_its_own_repeat_offender(db_path, monkeypatch):
+    """The food read's "last week" is a week before the week it reads, not six
+    days before today: a count more than six days old was compared with the
+    snapshot its own first render wrote, and the same items came back as
+    "REPEAT waste offenders (2+ weeks)" (and the calendar changed the prompt)."""
+    import json
+    import inventory
+    import models
+    from tests.test_rv_adoption_insights import _rid, _stub_food, _food_analysis
+    rid = _rid(db_path)
+    seen = {}
+    _stub_food(monkeypatch, "Waste ran $160 this week.\n1. Trim the Salmon par — $96 a week, low effort", seen)
+    inventory.get_claude_insights(_food_analysis(), restaurant_id=rid, is_live=True)
+    inventory.get_claude_insights(_food_analysis(), restaurant_id=rid, is_live=True)
+    assert all("REPEAT waste offenders" not in p for p in seen["prompts"])
+    # A genuinely earlier week with the same top items does make it a repeat.
+    top = [x["item"] for x in _food_analysis()["waste_items"][:4]]
+    c = models.get_conn()          # the connection the food read itself uses
+    c.execute("INSERT INTO inventory_history (restaurant_id, waste_json, week_end, source) VALUES (?,?,?,?)",
+              (rid, json.dumps({"total_waste_cost": 90.0, "top_items": top}), "2026-09-13", "test"))
+    c.commit(); c.close()
+    seen.clear()
+    _stub_food(monkeypatch, "Waste ran $160 this week.\n1. Trim the Salmon par — $96 a week, low effort", seen)
+    inventory.get_claude_insights(_food_analysis(), restaurant_id=rid, is_live=True)
+    assert any("REPEAT waste offenders" in p for p in seen.get("prompts", []))

@@ -1111,11 +1111,23 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
             from models import get_conn as _gc_inv
             _conn_inv = _gc_inv()
             import json as _json_inv
+            # The week this read is about, found first: "last week" is a week
+            # before IT, not six days before today. Against today, a count
+            # that is itself more than six days old was compared with its own
+            # snapshot — the render below writes it — and the same items were
+            # told to the owner as "REPEAT waste offenders (2+ weeks)"; the
+            # prompt, and so the stored read's fingerprint, also changed with
+            # the calendar.
+            try:
+                _week_end_str = datetime.strptime(analysis.get("week_end", ""), "%m/%d/%y").strftime("%Y-%m-%d")
+            except Exception:
+                from time_utils import restaurant_now_by_id as _rnbi
+                _week_end_str = _rnbi(restaurant_id).strftime('%Y-%m-%d')
             _prev_top = _conn_inv.execute("""
                 SELECT waste_json FROM inventory_history
-                WHERE restaurant_id=? AND week_end < date('now','-6 days')
+                WHERE restaurant_id=? AND week_end <= date(?, '-7 days')
                 ORDER BY week_end DESC LIMIT 1
-            """, (restaurant_id,)).fetchone()
+            """, (restaurant_id, _week_end_str)).fetchone()
             if _prev_top and _prev_top["waste_json"]:
                 try:
                     prev_items = set(_json_inv.loads(_prev_top["waste_json"]).get("top_items") or [])
@@ -1137,11 +1149,6 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
             # DDL on the render path is exactly the cost waste_trend removed
             # with its own _SCHEMA_ENSURED guard.
             import json as _json_inv2
-            try:
-                _week_end_str = datetime.strptime(analysis.get("week_end", ""), "%m/%d/%y").strftime("%Y-%m-%d")
-            except Exception:
-                from time_utils import restaurant_now_by_id as _rnbi
-                _week_end_str = _rnbi(restaurant_id).strftime('%Y-%m-%d')
             snapshot = {
                 "total_waste_cost": analysis['total_waste_cost_week'],
                 "top_items": [x["item"] for x in analysis["waste_items"][:4]]
