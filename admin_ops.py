@@ -1820,15 +1820,20 @@ def _issue_category(key):
     return parts[0] if parts else ""
 
 
-def _make_issue(key, rid, title, severity, *, since=None, zone=OPERATOR_TZ, occurrence=None, occurrence_zone=None,
+_SINCE = object()
+
+
+def _make_issue(key, rid, title, severity, *, since=None, zone=OPERATOR_TZ, occurrence=_SINCE, occurrence_zone=None,
                 action=None, action_route=None, action_kind=None, action_href=None, action_payload=None,
                 detail=None, resolvable=True, segment="customer"):
     """One issue in the shape every list shows. `since` is when it began
-    (shown as an age); `occurrence` defaults to it. action_kind says what the
-    console should do with the action: 'post' action_route, go to
-    action_href ('link'), open a templated email ('mailto'), or nothing."""
+    (shown as an age); `occurrence` defaults to it, and None makes the issue
+    condition-level (a resolution holds while the condition lasts).
+    action_kind says what the console should do with the action: 'post'
+    action_route, go to action_href ('link'), open a templated email
+    ('mailto'), or nothing."""
     since_dt = _parse_utc(since, zone) if since else None
-    occ_raw = occurrence if occurrence is not None else since
+    occ_raw = since if occurrence is _SINCE else occurrence
     occ_dt = _parse_utc(occ_raw, occurrence_zone or zone) if occ_raw else None
     if action_kind is None:
         if action_route:
@@ -2055,9 +2060,10 @@ def _issues_for(r, d, owner, integrations, modules, onboarding, last_active, bil
     prev = (d["ai_prev"].get(rid) or {}).get("calls") or 0
     ai_href = "#operations/ai"
     if wk >= 40 and prev and wk > 4 * prev:
+        # A rolling-window condition: resolved, it holds while the spike
+        # lasts and a later spike (after it clears) raises again.
         add("ai_spike", f"AI usage {wk // max(prev, 1)}× last week's ({wk} calls)", "warning", ai.get("last_at"),
-            "Open AI ops", None, zone="UTC", occurrence=_utc_stamp(_today_start()), occurrence_zone="UTC",
-            action_kind="link", action_href=ai_href)
+            "Open AI ops", None, zone="UTC", occurrence=None, action_kind="link", action_href=ai_href)
     if float(ai.get("cost") or 0) > 25:
         add("ai_cost", f"${float(ai['cost']):.2f} AI spend in 30 days", "warning", ai.get("last_at"), "Open AI ops",
             None, zone="UTC", occurrence=None, action_kind="link", action_href=ai_href)

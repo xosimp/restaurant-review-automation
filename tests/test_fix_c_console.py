@@ -214,6 +214,18 @@ def test_a_cleared_condition_retires_its_resolution(db_path):
                  (key,))[-1]["action"] == "cleared"
 
 
+def test_a_rolling_condition_stays_resolved_while_it_lasts(db_path):
+    """30 days of AI spend over $25 has no single occurrence: resolved, it
+    holds while the condition lasts — a new AI call does not reopen it."""
+    import ai_utils
+    rid = _mk(db_path)
+    ai_utils.log_ai_usage(rid, "insights", "claude-x", 10, 10, db_path=db_path)
+    _sql(db_path, "UPDATE ai_usage SET cost_usd=30")
+    assert admin_ops.resolve_issue(f"{rid}:ai_cost", "expected", "will")["scope"] == "condition"
+    ai_utils.log_ai_usage(rid, "insights", "claude-x", 10, 10, db_path=db_path)
+    assert not any(i["key"] == f"{rid}:ai_cost" for i in _rec(rid)["issues"])
+
+
 def test_a_legacy_resolution_does_not_mute_a_newer_payment_failure(db_path):
     """`5:billing` resolved in October must not hide January's failure."""
     rid = _mk(db_path, billing_status="past_due")
