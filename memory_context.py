@@ -76,6 +76,7 @@ PROVIDERS = {
     "last_claim":   ("ai_reads:claim_lines", 30),             # what this surface said last time, and its verdict
     "decisions":    ("decisions:memory_lines", 40),           # relevant answers and declines
     "what_worked":  ("rec_learning:what_worked_lines", 50),   # measured results for this kind
+    "links":        ("link_memory:link_lines", 55),           # cross-module links this surface acts on, kept
     "events":       ("event_memory:memory_lines", 60),        # how events, weather, campaigns moved sales here
     "people":       ("people:memory_lines", 70),              # attendance, standing patterns, notes (staffing)
     "marketing":    ("marketing:memory_lines", 80),           # what worked in marketing, the owner's voice
@@ -97,12 +98,13 @@ SURFACE_SECTIONS = {
     "schedule": ("constraints", "goals", "last_claim", "decisions", "what_worked", "events", "people"),
     "labor_read": ("constraints", "goals", "last_claim", "decisions", "what_worked", "events", "people"),
     "food_read": ("constraints", "goals", "last_claim", "decisions", "what_worked"),
+    "review_read": ("constraints", "goals", "last_claim", "decisions", "what_worked"),
     "review_diagnosis": ("constraints", "last_claim", "decisions", "what_worked", "people"),
-    "food_diagnosis": ("constraints", "last_claim", "decisions", "what_worked"),
-    "dsr_narrative": ("constraints", "goals", "last_claim", "decisions", "events"),
+    "food_diagnosis": ("constraints", "last_claim", "decisions", "what_worked", "links"),
+    "dsr_narrative": ("constraints", "goals", "last_claim", "decisions", "what_worked", "events"),
     "brief": ("constraints", "goals", "decisions", "events"),
     "digest": ("constraints", "goals", "decisions", "what_worked"),
-    "marketing": ("constraints", "goals", "decisions", "what_worked", "events", "marketing"),
+    "marketing": ("constraints", "goals", "decisions", "what_worked", "events", "marketing", "links"),
     "reply_drafter": ("constraints", "decisions", "marketing"),
     "competitor_read": ("constraints", "last_claim", "decisions"),
     "weekly_plan": ("constraints", "goals", "last_claim", "decisions", "what_worked", "events"),
@@ -115,7 +117,7 @@ DEFAULT_BUDGET_CHARS = 2400
 # conversation carry the most weight: they are the memory the owner would
 # otherwise have to repeat.
 SECTION_SHARES = {"constraints": 3, "goals": 2, "last_claim": 2, "decisions": 3, "what_worked": 2,
-                  "events": 2, "people": 2, "marketing": 2, "conversation": 3}
+                  "events": 2, "people": 2, "marketing": 2, "conversation": 3, "links": 2}
 DEFAULT_SHARE = 2
 
 # How each section is headed in the prompt. The heading says what the lines
@@ -130,6 +132,8 @@ SECTION_TITLES = {
     "events": "WHAT EVENTS, WEATHER AND CAMPAIGNS HAVE DONE HERE",
     "people": "THE PEOPLE",
     "marketing": "MARKETING MEMORY",
+    "links": ("WHAT TWO MODULES KEEP POINTING AT TOGETHER (found by Cavnar AI's cross-module read, with how long "
+              "each has stood — a co-occurrence, never a proven cause)"),
     "conversation": ("EARLIER IN THIS CONVERSATION, AND WHAT THIS PERSON OFTEN ASKS (notes on turns no longer shown, "
                      "what your last answer read — use them to resolve what they refer back to)"),
 }

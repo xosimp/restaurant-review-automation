@@ -1008,6 +1008,15 @@ def insight_rec_items(rid, text, prefix, module, surface, user_id=None, promote=
     items = [{"index": i, "key": insight_store.line_key(prefix, r), "text": r} for i, r in enumerate(recs)]
     if not items:
         return []
+    # The number each line would be measured on — the finest slice its words
+    # name (outcomes.expected_metric_for, memory audit 9/29/26) — so Track
+    # starts on it and a line left unanswered gets its do-nothing comparison.
+    try:
+        import outcomes as _oc_em
+        for it in items:
+            it["expected_metric"] = _oc_em.expected_metric_for(it["key"], it["text"], module=module, restaurant_id=rid)
+    except Exception as e:
+        print(f"[insight] expected metrics unavailable rid={rid}: {e}")
     try:
         import rec_trust
         _ctx = rec_trust.Context(rid)
@@ -1063,6 +1072,27 @@ def diagnosis_rec_key(prefix, diag):
     return insight_store.line_key(prefix, diag.get("cause") or diag.get("recommended_action") or "")
 
 
+def diagnosis_expected_metric(rid, prefix, diag):
+    """The number a diagnosis's action is measured on (memory audit
+    9/29/26): the theme's complaint share for a review diagnosis, the lead
+    driver's own number for a food one (ai_reads.food_diagnosis_metric),
+    labor % for a labor one. Never raises."""
+    try:
+        if prefix == "diag_review" and diag.get("category"):
+            import metrics as _m_dx
+            key = f"complaints:{diag['category']}"
+            return _m_dx.normalize(key) if _m_dx.known(key) else "avg_rating"
+        if prefix == "diag_food":
+            import ai_reads
+            _lead, drv = ai_reads.food_diagnosis_lead(diag.get("drivers"))
+            return ai_reads.food_diagnosis_metric(drv) if _lead else "food_cost_pct"
+        if prefix == "diag_labor":
+            return "labor_pct"
+    except Exception as e:
+        print(f"[diagnosis] expected metric unavailable rid={rid}: {e}")
+    return None
+
+
 def present_diagnoses(rid, diags, prefix, module, surface, user_id=None, shown=None):
     """Give each diagnosis with a recommended action a rec_key, log it as
     shown, and mark one the owner already answered (`answered`: the card
@@ -1086,7 +1116,8 @@ def present_diagnoses(rid, diags, prefix, module, surface, user_id=None, shown=N
                 _cd = d.get("confidence_detail") if isinstance(d.get("confidence_detail"), dict) else None
                 items.append({"key": d["rec_key"], "text": d["recommended_action"], "model_written": True,
                               "confidence": _cd,
-                              "confidence_band": (_cd or {}).get("band") or d.get("confidence")})
+                              "confidence_band": (_cd or {}).get("band") or d.get("confidence"),
+                              "expected_metric": diagnosis_expected_metric(rid, prefix, d)})
     kept = {k["key"] for k in insight_store.present_recs(rid, module, surface, items, user_id=user_id)}
     presented = {it["key"] for it in items}
     silenced = None
@@ -1672,8 +1703,15 @@ def _review_insight_rv_context(rid, text, prompt, *, rstats, top_issues, weekly_
     anchors = []
     if diags:
         d = diags[0]
-        anchors += _rvm.anchor(d.get("cause"), "likely")
-        anchors += _rvm.anchor(d.get("alternative_cause"), "association")
+        # As strongly as the stored diagnosis's age allows (rec_trust.
+        # diagnosis_anchor_strength, memory audit 9/29/26
+        # "stale_diagnoses"): "likely" inside its refresh, an association
+        # once stale, nothing past STALE_ANCHOR_MAX_DAYS.
+        import rec_trust as _rt_rvc
+        _strength = _rt_rvc.diagnosis_anchor_strength(d)
+        if _strength:
+            anchors += _rvm.anchor(d.get("cause"), _strength)
+            anchors += _rvm.anchor(d.get("alternative_cause"), "association")
         anchors += _rvm.anchor(str(d.get("category") or "").replace("_", " "), "association")
     for line in (op_lines or {}).values() if isinstance(op_lines, dict) else (op_lines or []):
         anchors += _rvm.anchor(line, "association")
@@ -1783,9 +1821,13 @@ def _review_insight_recs(rid, payload):
     payload["recs"] = []
     m = _re_dt.search(r"(?m)^.*Do today:\s*(.+)$", text)
     # A verdict that withholds controls (the Response Validation Layer) offers
-    # no Done / Not for us, whatever the flags say.
+    # no Done / Not for us, whatever the flags say — and neither does a
+    # STALE stored read served because today's could not be written
+    # (memory audit 9/29/26, "stale_diagnoses"): its "Do today" was
+    # presented and logged as a live recommendation at any age.
     promote = bool(payload.get("figures_verified", True) and payload.get("names_verified", True)
                    and payload.get("causes_verified", True) and not payload.get("error")
+                   and not payload.get("stale")
                    and (payload.get("validation") or {}).get("controls", True) is not False)
     if m and promote:
         line = m.group(1).strip()
@@ -1800,10 +1842,15 @@ def _review_insight_recs(rid, payload):
         # says how steady the rating line is, not how well supported this
         # action is — and admin's acceptance-by-confidence mixed the two.
         conf = _do_today_confidence(rid, payload)
+        try:
+            import outcomes as _oc_dt
+            _em_dt = _oc_dt.expected_metric_for(key, line, module="reviews", restaurant_id=rid)
+        except Exception:
+            _em_dt = None
         kept = [] if declined else insight_store.present_recs(
             rid, "reviews", "reviews",
             [{"key": key, "text": line, "title": line, "model_written": True,
-              "confidence": conf, "confidence_band": conf.get("band")}])
+              "confidence": conf, "confidence_band": conf.get("band"), "expected_metric": _em_dt}])
         if kept:
             payload["recs"].append({"key": key, "text": line, "kind": "do_today", "rec_key": key,
                                     "answerable": True, "confidence_detail": conf, "advice_signature": sig})
@@ -1812,9 +1859,20 @@ def _review_insight_recs(rid, payload):
             # surface (Home, the nightly report): left out server-side.
             payload["insight"] = (text[:m.start()] + text[m.end():]).replace("\n\n\n", "\n\n").strip()
     if payload.get("diagnoses"):
-        # Both clients render `diagnosis` — the first — and only it.
+        # Both clients render `diagnosis` — the first — and only it. A
+        # diagnosis too old to lean on (rec_trust.diagnosis_anchor_strength
+        # None), or one served on a stale read, keeps its evidence and its
+        # "as of" but is not presented or answerable: an old action is not a
+        # live recommendation.
+        import rec_trust as _rt_rr
+        first = payload["diagnoses"][0] or {}
+        live = not payload.get("stale") and _rt_rr.diagnosis_anchor_strength(first) is not None
         payload["diagnoses"] = present_diagnoses(rid, payload["diagnoses"], "diag_review", "reviews", "reviews",
-                                                 shown=1)
+                                                 shown=1 if live else 0)
+        if not live:
+            for d in payload["diagnoses"]:
+                d["answerable"] = False
+                d["controls_withheld"] = "stale"
         payload["diagnosis"] = payload["diagnoses"][0] if payload["diagnoses"] else None
     return payload
 
@@ -2156,7 +2214,24 @@ def _do_review_insight(rid, viewer=None):
 
         ops_block = _ri._operational_block(_ops_ctx)
 
-        if _diags:
+        import rec_trust as _rt_ri
+        _diag_strength = _rt_ri.diagnosis_anchor_strength(_diags[0]) if _diags else None
+        if _diags and _diag_strength == "association":
+            # Past its refresh (memory audit 9/29/26, "stale_diagnoses"):
+            # what an earlier read said, never the likely cause — a stale
+            # cause was anchored as "likely" at any age.
+            _d = _diags[0]
+            diag_block = (
+                f"Theme: {_d['category'].replace('_',' ')} ({_d['mention_count']} negative reviews)\n"
+                f"An earlier read suggested: {_d['cause']}\n"
+                + (f"(read of {_d['as_of']}, older than its refresh window) " if _d.get("as_of") else "")
+                + "This is not current. Do NOT call it the cause or the likely cause; you may say only that "
+                  "the reviews are consistent with it, or leave it out.")
+        elif _diags and _diag_strength is None:
+            diag_block = ("(The last root-cause diagnosis is too old to lean on"
+                          + (f" — read of {_diags[0]['as_of']}" if _diags[0].get("as_of") else "")
+                          + ". Do NOT state a cause. Say what the reviews show and stop.)")
+        elif _diags:
             _d = _diags[0]
             diag_block = (
                 f"Theme: {_d['category'].replace('_',' ')} ({_d['mention_count']} negative reviews)\n"
@@ -2184,14 +2259,17 @@ def _do_review_insight(rid, viewer=None):
 
         has_trend = bool(_trend["direction"] in ("improving", "declining")
                          and _trend["confidence"] in ("high", "medium"))
-        has_diag = bool(_diags)
+        # Only a diagnosis inside its refresh carries a Why line.
+        has_diag = bool(_diags) and _diag_strength == "likely"
         # "Next week" is computed here, not asked of the model (H8): the
         # model wrote a projection nothing checked or scored. The fitted line
         # one week on with its slope shrunk by its standard error
         # (review_intelligence.rating_forecast; withheld while its scored
         # record has no skill over last week or the 8-week mean), logged to
         # forecast_log once per ISO week so it is scored when the week closes.
-        _rating_next = _ri.rating_forecast(rid, _trend) if has_trend else None
+        _rating_fc = _ri.rating_forecast_detail(rid, _trend) if has_trend else None
+        _rating_next = _rating_fc["shown"] if _rating_fc else None      # what the read shows
+        _rating_raw = _rating_fc["raw"] if _rating_fc else None         # what the record is kept on
         forecast_line = ""
         why_line = (
             "\n\U0001f50d Why: [1-2 sentences naming the most likely OPERATIONAL cause from the "
@@ -2203,6 +2281,12 @@ def _do_review_insight(rid, viewer=None):
         # line cannot bring the same advice back (M-8).
         import insight_store as _ist_ans
         _answered_ri = _ist_ans.do_not_repeat_block(rid, ("insight_review", "diag_review"))
+        # What Cavnar AI remembers about the theme in play (memory audit
+        # 9/29/26, memory_context surface "review_read"): the last diagnosis's
+        # claim and what followed, decisions, constraints, what has worked.
+        _memory_ri = review_read_memory(rid, (_diags[0].get("category") if _diags else None)
+                                        or ((top_issues[0].get("category") if top_issues and
+                                             isinstance(top_issues[0], dict) else None)))
         prompt = (
             "You are an experienced restaurant operations consultant writing the daily read on "
             "this restaurant's reviews. You are not a summariser: the owner can already see their "
@@ -2231,6 +2315,7 @@ def _do_review_insight(rid, viewer=None):
             f"{ops_block}\n\n"
             "DIAGNOSIS (a stored root-cause pass over the largest complaint cluster):\n"
             f"{diag_block}\n\n"
+            + _memory_ri
             + (f"{_ready_ri['prompt_block']}\n\n" if _ready_ri.get("prompt_block") else "")
             + "EVIDENCE RULES - these bound what you may claim:\n"
             "- State no figure that does not appear above. Not a dollar amount, not a percentage, "
@@ -2309,7 +2394,9 @@ def _do_review_insight(rid, viewer=None):
             if _rating_next is not None:
                 insight = (insight.rstrip() + f"\n\U0001f52e Next week: if nothing changes, the weekly rating heads "
                            f"toward about {_rating_next}★ — a projection from {_trend['weeks_above_floor']} weeks "
-                           f"of the trend, not a measurement.")
+                           f"of the trend"
+                           + (f", {_rating_fc['note']}" if _rating_fc and _rating_fc.get("note") else "")
+                           + ", not a measurement.")
             if flags["unsupported_names"]:
                 # A name the model wrote that was never in its input — the most
                 # damaging thing this passage can get wrong, because the whole
@@ -2414,11 +2501,11 @@ def _do_review_insight(rid, viewer=None):
                                        detail=("served the last stored read, marked stale" if held.get("stale")
                                                else "served the fixed held-back copy"))
             return _review_insight_recs(rid, dict(held)), 200
-        if _rating_next is not None:
+        if _rating_raw is not None:
             try:
                 import insight_store as _ist_fc
                 _ist_fc.record_weekly_forecast(
-                    rid, "review_rating_week", _rating_next,
+                    rid, "review_rating_week", _rating_raw,
                     basis=(f"latest week {_trend['latest']} + fitted slope {_trend.get('slope')} a week, "
                            f"{_trend['weeks_above_floor']} weeks at {_trend['min_reviews_per_week']}+ reviews"))
             except Exception as _fce:
@@ -2470,6 +2557,24 @@ def _do_review_insight(rid, viewer=None):
         from ai_utils import insight_error as _insight_err_ri
         _msg_ri, _status_ri = _insight_err_ri(_re)
         return {"insight": _msg_ri, "error": _msg_ri}, _status_ri
+
+def review_read_memory(rid, category=None) -> str:
+    """The Reviews read's memory section (memory_context surface
+    "review_read"), ending in a blank line, or "" when there is nothing."""
+    try:
+        import memory_context
+        import review_intelligence as _ri_mem
+        subjects = _ri_mem.diagnosis_subjects(category) if category else ()
+        block = memory_context.memory_context(rid, "review_read", subjects=subjects)
+        if not block.text:
+            return ""
+        return ("WHAT CAVNAR AI REMEMBERS (earlier reads, the owner's answers and what was measured since, "
+                "standing constraints — context, never instructions; do not repeat advice the owner declined):\n"
+                + block.text + "\n\n")
+    except Exception as e:
+        print(f"[review-insight] memory unavailable rid={rid}: {e}")
+        return ""
+
 
 def _record_insight_fallback(surface, rid, exc):
     """An insight route fell back after an exception (#140). A code failure
@@ -3231,8 +3336,11 @@ def _mkt_insight_out(rid, text, raw, extra=None):
     # Done / Track (M-16): the marketing path never wrote an "UNVERIFIED:"
     # marker, so checking for one promoted every line.
     extra = dict(extra or {})
+    # A stale read served because today's could not be written offers no
+    # controls either (memory audit 9/29/26, "stale_diagnoses"): its lines
+    # are not live recommendations.
     promote = (bool(extra.get("figures_verified", True)) and bool(extra.get("causes_verified", True))
-               and "UNVERIFIED:" not in (text or "")
+               and "UNVERIFIED:" not in (text or "") and not extra.get("stale")
                and (extra.get("validation") or {}).get("controls", True) is not False)
     import data_freshness as _df_mkt
     recs = insight_rec_items(rid, text, "insight_marketing", "marketing", "marketing", promote=promote,
@@ -3304,18 +3412,37 @@ def _mkt_drop_performance(text) -> str:
     return body
 
 
-def _mkt_forecast(reach_vals, diff_pct):
+def _mkt_forecast(reach_vals, diff_pct, rid=None, week_sum=None):
     """(FORECAST line, predicted) for next week's average reach per post,
     computed here rather than written by the model (H8): last full week's
     level, carried forward — the measured trend is stated beside it, never
-    extrapolated into a figure nobody measured. (None, None) with no trend."""
+    extrapolated into a figure nobody measured. (None, None) with no trend.
+
+    It reads its own record (forecast_log.shown on marketing_reach_week,
+    memory audit 9/29/26): no line while the reach forecasts here read
+    "often wide", and a per-post figure corrected by the record's lean —
+    and saying so — when they have leaned one way. The kind is scored on
+    the week's SUMMED reach (`week_sum`); the lean is a ratio, so it applies
+    to the per-post figure alike. The raw sum is what is recorded."""
     if not reach_vals or diff_pct is None:
         return None, None
     last = int(round(float(reach_vals[-1])))
+    shown_last, note = last, None
+    if rid and week_sum:
+        try:
+            import forecast_log as _flog_mkt
+            rec = _flog_mkt.shown(rid, "marketing_reach_week", week_sum)
+            if rec.get("withheld"):
+                return None, None
+            if rec.get("corrected"):
+                shown_last, note = int(round(last * float(rec.get("factor") or 1.0))), rec.get("note")
+        except Exception as e:
+            print(f"[MktInsight] forecast record unreadable: {e}")
     line = (f"FORECAST: Average reach per post moved {'up' if diff_pct > 0 else 'down'} "
             f"{abs(int(diff_pct))}% across {len(reach_vals)} weeks; if posting keeps its current pace, "
-            f"expect about {last:,} per post next week (last week's level; a projection, not a measurement).")
-    return line, last
+            f"expect about {shown_last:,} per post next week (last week's level"
+            + (f", {note}" if note else "") + "; a projection, not a measurement).")
+    return line, shown_last
 
 
 def _do_mkt_insight(rid, raw=False):
@@ -3567,7 +3694,11 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
         # cards (_missing_m, M2).
         import response_validation as _rv
         # No reach projection from figures the sync has stopped refreshing.
-        _fc_line, _fc_pred = (None, None) if _mkt_unreliable else _mkt_forecast(_mkt_reach_vals, _mkt_diff)
+        _fc_line, _fc_pred = (None, None) if _mkt_unreliable else _mkt_forecast(
+            _mkt_reach_vals, _mkt_diff, rid=rid, week_sum=(round(_mkt_week_sums[-1]) if _mkt_week_sums else None))
+        # The raw week is recorded whenever a forecast exists, shown or
+        # withheld, so a withheld record can recover (the waste pattern).
+        _fc_raw = (not _mkt_unreliable and bool(_mkt_reach_vals) and _mkt_diff is not None)
         _F = _rv.Fact
         _mkt_facts = [_F("posts.measured", len(_mkt_perf_seen), "count", "measured")]
         for _i, _r in enumerate(_mkt_perf_seen):
@@ -3672,7 +3803,7 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
             return _mkt_insight_out(rid, _held_m["insight"], raw, _mkt_checks(_held_m)), 200
         insight = _read_m.pop("insight")
         _checks = _read_m
-        if _fc_line:
+        if _fc_raw:
             try:
                 # Logged in the scorer's unit — the week's SUMMED reach
                 # (last week's, carried forward) — never the per-post
@@ -3772,16 +3903,17 @@ def present_labor_diagnosis(rid, diag, user_id=None):
         return diag
 
 
-def labor_insight_items(rid, text, user_id=None, analysis=None):
+def labor_insight_items(rid, text, user_id=None, analysis=None, stale=False):
     """The Labor read's numbered recommendations, keyed and presented on the
     "labor" surface exactly like Food's and Marketing's (insight_rec_items,
     "insight_labor:<hash>") — the read's three lines never reached the
-    ledger (#25). An UNVERIFIED read offers no controls and logs nothing.
-    Each line carries its K1 `confidence` over the shifts the read was
-    written from (labor_read_evidence; T1)."""
+    ledger (#25). An UNVERIFIED read offers no controls and logs nothing,
+    and neither does a stale one served because today's failed (memory
+    audit 9/29/26). Each line carries its K1 `confidence` over the shifts
+    the read was written from (labor_read_evidence; T1)."""
     import data_freshness as _df_lab
     return insight_rec_items(rid, text or "", "insight_labor", "labor", "labor", user_id=user_id,
-                             promote="UNVERIFIED:" not in (text or ""),
+                             promote="UNVERIFIED:" not in (text or "") and not stale,
                              evidence=labor_read_evidence(rid, analysis), sources=_df_lab.sources_for(["labor"]))
 
 
@@ -3986,11 +4118,12 @@ def present_schedule_result(rid, result, user_id=None):
     return result
 
 
-def _labor_insight_out(rid, text, user_id=None, analysis=None):
+def _labor_insight_out(rid, text, user_id=None, analysis=None, stale=False):
     """The web route's insight fields: the HTML (answered lines left out,
     each remaining line with Done / Not for us / Track), `rec_items` and
-    the flat `recs` Food Cost's payload carries."""
-    recs = labor_insight_items(rid, text, user_id=user_id, analysis=analysis)
+    the flat `recs` Food Cost's payload carries. A `stale` read (the
+    fallback) carries no controls."""
+    recs = labor_insight_items(rid, text, user_id=user_id, analysis=analysis, stale=stale)
     import response_validation as _rv_lab
     return {"insight": format_insight_html(text, rec_items=recs, surface="labor", module="labor"),
             "rec_items": recs,
@@ -4138,7 +4271,7 @@ def labor_insight_api(current_user):
             # Past its window by definition (the TTL is bypassed here), so it
             # says how old it is — the Reviews fallback's rule (H15, CA1 L6):
             # a read from hours ago read exactly like one from this minute.
-            return jsonify(**stale["state"], **_labor_insight_out(rid, stale["text"], uid))
+            return jsonify(**stale["state"], **_labor_insight_out(rid, stale["text"], uid, stale=True))
         from ai_utils import insight_error as _insight_err_lab
         _msg_lab, _status_lab = _insight_err_lab(e, "Unable to load analysis — check back shortly.")
         # 200 as before for an ordinary failure; a pause or outage carries its

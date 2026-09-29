@@ -319,7 +319,10 @@ NON_OPENING = ("outcome", "opened", "evidence_viewed", "implemented", "supersede
 # restore_kind's stamp is what decisions.quiet_kinds counts from — and stay
 # out of every acceptance figure (admin_ops), so none is read as a
 # recommendation that was taken.
-BOOKKEEPING_PREFIXES = ("restore_kind:", "calibration:", "standby:", "conflict:")
+BOOKKEEPING_PREFIXES = ("restore_kind:", "calibration:", "standby:", "conflict:",
+                        # "keep suggesting this kind?" — a question about
+                        # Cavnar AI's advice, not advice (memory audit 9/29/26)
+                        "kind_hold:")
 # How close (seconds) an answer the ledger already holds must be to an older
 # ledger's row for sync_existing to treat the row as that same answer.
 SAME_ANSWER_SECONDS = 300
@@ -708,7 +711,7 @@ KIND_TOPIC = {
     "dsr_action:respond_reviews": "replies", "dsr_action:promote": "marketing",
     "link:reviews_x_labor": "staffing", "link:reviews_x_food_cost": "food_cost",
     "link:reviews_x_menu": "guest_experience", "link:marketing_x_reviews": "marketing",
-    "link:intel_x_reviews": "competition",
+    "link:intel_x_reviews": "competition", "link:dsr_x_reviews": "staffing", "link:marketing_x_labor": "staffing",
 }
 # Kinds whose subject names a dish, and kinds whose subject names an item.
 DISH_KINDS = ("reprice", "dish_promote", "dish_praise")
@@ -1834,6 +1837,15 @@ def implemented(restaurant_id, keys, surface, user_id=None, role=None, source_re
             if record(restaurant_id, k, "implemented", surface=surface, user_id=user_id, role=role,
                       meta=meta, source_ref=source_ref, db_path=db_path):
                 n += 1
+                # The change was made: measure it (memory audit 9/29/26,
+                # "positive_volume") — the tracker its number carries,
+                # under the slice gate. After the write has committed, never
+                # inside it (implemented_on's callers are caught up nightly).
+                try:
+                    import outcomes
+                    outcomes.autostart_implemented(restaurant_id, k, user_id=user_id, db_path=db_path)
+                except Exception as e:
+                    print(f"[rec_ledger] implemented tracker not started for {k}: {e}")
         except Exception as e:
             print(f"[rec_ledger] implemented not recorded for {k}: {e}")
     return n

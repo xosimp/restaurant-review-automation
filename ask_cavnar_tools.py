@@ -815,6 +815,7 @@ def _read_business_snapshot(restaurant_id, _viewer=None):
         "labor": brief.get("labor"),
         "marketing": brief.get("marketing"),
         "visibility": brief.get("visibility"),
+        "dsr": brief.get("dsr"),
         "modules_consulted": brief.get("modules_consulted"),
         "modules_off": brief.get("modules_off"),
         "degraded": brief.get("degraded"),
@@ -1734,20 +1735,31 @@ def _read_recent_reads(restaurant_id, module=None, days=30, _viewer=None):
         import ai_reads
         for r in ai_reads.recent_reads(restaurant_id, days=window, limit=20) or []:
             surface = str(r.get("surface") or "")
-            mod = _MODULE_OF_SURFACE.get(surface.split(":", 1)[0], None)
-            if mod and mod in denied:
+            base = surface.split(":", 1)[0]
+            # Every kept read is scoped by its surface (ai_reads.SURFACE_MODULE):
+            # a module's read needs that module's view, an owner-level one
+            # (the monthly review, digest, brief, Monday plan, nightly report)
+            # is the account holder's, and a surface the map does not know is
+            # never served (fails closed).
+            if not _read_surface_allowed(base, _viewer, denied):
                 continue
-            if want and want not in (surface, mod or ""):
+            mod = ai_reads.SURFACE_MODULE.get(base)
+            mod = None if mod == ai_reads.OWNER_ONLY else mod
+            if want and want not in (surface, base, mod or ""):
                 continue
-            seen.add(surface.split(":", 1)[0])
-            reads.append({"what": surface, "date": mdy(str(r.get("created_at") or "")[:10]),
+            seen.add(base)
+            reads.append({"what": ai_reads.SURFACE_LABELS.get(base, surface),
+                          "date": mdy(str(r.get("created_at") or "")[:10]),
                           "text": str(r.get("summary") or "")[:1500], "subject": r.get("subject")})
     except Exception as e:
         log.debug("read_recent_reads: ai_reads unavailable: %s", e)
     try:
         import insight_store
+        import ai_reads as _air_k
         for kind, perm_module, label in _READ_KINDS:
-            if perm_module in denied or kind in seen or (want and want not in (kind, perm_module)):
+            # The current stored read is already listed when its kept history is.
+            if (perm_module in denied or _air_k.STORE_SURFACE.get(kind, kind) in seen
+                    or (want and want not in (kind, perm_module))):
                 continue
             payload, at = insight_store.latest(restaurant_id, kind)
             text = _read_text(payload)
@@ -1795,6 +1807,28 @@ def _read_recent_reads(restaurant_id, module=None, days=30, _viewer=None):
                      "Cavnar AI's own earlier words — quote one as what it said then, with its date; check a "
                      "figure again with the module's own read tool before calling it current."
                      if reads else "No stored read from Cavnar AI for that — say so.")}
+
+
+def _read_surface_allowed(surface, viewer, denied) -> bool:
+    """Whether the login behind `viewer` may read a kept read of `surface`
+    (ai_reads.SURFACE_MODULE): a module's read needs that module's view; an
+    OWNER_ONLY read is the account holder's (permissions.is_principal) — an
+    unrestricted caller (no login stamped) reads as the owner; a surface
+    the map does not name is refused."""
+    import ai_reads
+    m = ai_reads.SURFACE_MODULE.get(surface)
+    if not m:
+        return False
+    if m == ai_reads.OWNER_ONLY:
+        user = getattr(viewer, "_ask_dsr_user", None) if viewer is not None else None
+        if user is None:
+            return True
+        try:
+            from permissions import is_principal
+            return bool(is_principal(user))
+        except Exception:
+            return False
+    return m not in denied
 
 
 # The module whose view permission a stored read's surface needs.

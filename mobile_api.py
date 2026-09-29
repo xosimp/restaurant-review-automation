@@ -803,10 +803,15 @@ def _home_pulse(key, kpi, rstats, labor, restaurant, inv, inv_live=False):
     if key == "labor":
         from notify import labor_target_for as _labor_target_for
         from thresholds import LABOR_OVER_TARGET_PTS
+        import restaurant_thresholds as _rthr_pulse
         target = _labor_target_for(restaurant)
         pct = (labor or {}).get("overall_labor_pct", 0) or 0
         on_track = pct <= target
-        tone = "good" if on_track else ("bad" if pct - target >= LABOR_OVER_TARGET_PTS else "warn")
+        # The margin fitted to this restaurant's own swing, never below the
+        # stated one (restaurant_thresholds, memory audit 9/29/26).
+        _over = _rthr_pulse.margin(getattr(restaurant, "id", None), "labor_over_period",
+                                   stated=LABOR_OVER_TARGET_PTS)
+        tone = "good" if on_track else ("bad" if pct - target >= _over else "warn")
         return {"value": value, "label": "labor · on target" if on_track else f"labor · over {int(target)}%",
                 "tone": tone}
     if key == "inventory":
@@ -3149,7 +3154,7 @@ def mobile_labor_insight(current_user):
         stale = _capi.labor_stale_read(rid)
         if stale:
             _an = _capi.labor_analysis_safe(rid)
-            _recs = _capi.labor_insight_items(rid, stale["text"], user_id=uid, analysis=_an)
+            _recs = _capi.labor_insight_items(rid, stale["text"], user_id=uid, analysis=_an, stale=True)
             return jsonify(ok=True, insight=stale["text"], diagnosis=_capi._labor_diagnosis_safe(rid, _an, user_id=uid),
                            rec_items=_recs, validation=_rv_of(stale["text"]),
                            **stale["state"], **_insight_json(stale["text"], _recs))

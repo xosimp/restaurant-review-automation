@@ -436,6 +436,22 @@ def reprice_suggestions(restaurant_id, db_path=DB_PATH):
     # the two are different units and must not be sorted against each other.
     out.sort(key=lambda d: (d["monthly_margin_lost"] is None,
                             -(d["monthly_margin_lost"] or d["increase_per_plate"])))
+    # The reprice guard (memory audit 9/29/26, "links"): a dish guests are
+    # naming in complaints while Food Cost ranks it as a driver — a live
+    # reviews_x_menu link — carries `guard`, and the one-tap cards (Home,
+    # the action queue) do not offer it: fix the plate before the price,
+    # _verdict's own rule for a dish drawing complaints. The suggestion
+    # itself stays, with the guard's words, for the owner to decide.
+    try:
+        import link_memory
+        listed = link_memory.do_not_promote(restaurant_id, db_path=db_path)
+        if listed:
+            for d in out:
+                g = link_memory.dish_guard(restaurant_id, d["dish"], listed=listed)
+                if g:
+                    d["guard"] = g
+    except Exception as e:
+        print(f"[menu_intelligence] reprice guard unavailable for {restaurant_id}: {e}")
     return {
         "available": True,
         "suggestions": out,

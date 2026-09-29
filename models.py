@@ -1178,6 +1178,12 @@ def ensure_columns(db_path: str = DB_PATH):
         # outcomes later and never feeds anything on its own (H1, K6).
         ("review_diagnoses", "model_confidence", "TEXT"),
         ("food_cost_diagnoses", "model_confidence", "TEXT"),
+        # A food diagnosis whose lead driver is no longer ranked (or no
+        # driver clears the floor) is retired, not deleted: stamped and kept
+        # as history, and no surface serves it as the current cause
+        # (memory audit 9/29/26, "stale_diagnoses").
+        ("food_cost_diagnoses", "retired_at", "TEXT"),
+        ("food_cost_diagnoses", "retired_reason", "TEXT"),
         # 'owner' | 'job' | 'marker' — so "pieces this month" counts content
         # a person made or published, not calendar markers and job drafts.
         ("marketing_content_log", "origin", "TEXT"),
@@ -3552,6 +3558,10 @@ def init_db(db_path: str = DB_PATH):
         # Set when a closed period's actual still could not be measured
         # forecast_log.UNSCORABLE_AFTER_DAYS later: never retried (B6 #11).
         "ALTER TABLE forecast_log ADD COLUMN unscorable_at TEXT",
+        # The measured event a scored period's miss is explained by (memory
+        # audit 9/29/26, "forecasts": event_memory.night_facts), so the bias
+        # correction does not learn an event week as the forecast's lean.
+        "ALTER TABLE forecast_log ADD COLUMN explained_by TEXT",
     ]
     try:
         for m in migrations:
@@ -3597,6 +3607,16 @@ def init_db(db_path: str = DB_PATH):
     # One identity and event trail for every recommendation (rec_ledger).
     from rec_ledger import init_rec_ledger
     init_rec_ledger(db_path)
+    # The monthly what-worked snapshots (rec_learning, memory audit 9/29/26).
+    from rec_learning import init_rec_learning
+    init_rec_learning(db_path)
+    # The trigger margins fitted to each restaurant's own noise
+    # (restaurant_thresholds, memory audit 9/29/26).
+    from restaurant_thresholds import init_restaurant_thresholds
+    init_restaurant_thresholds(db_path)
+    # The monthly learning scorecard (learning_scorecard, memory audit 9/29/26).
+    from learning_scorecard import init_learning_scorecard
+    init_learning_scorecard(db_path)
     # When each automation earned trust and when it lapsed (memory audit
     # 9/29/26, trust_ledger).
     from automation_trust import init_automation_trust
@@ -3628,6 +3648,13 @@ def init_db(db_path: str = DB_PATH):
     # (menu_intelligence) — audit #22 / #26 / #41.
     from insight_store import init_insight_store
     init_insight_store(db_path)
+    # Cavnar AI's history of its own reads, their checkable claims and the
+    # quarterly summaries that outlive them (ai_reads, memory audit 9/29/26).
+    from ai_reads import init_ai_reads
+    init_ai_reads(db_path)
+    # The cross-module links, kept (memory audit 9/29/26, "links").
+    from link_memory import init_link_memory
+    init_link_memory(db_path)
     # Who a setting belongs to: a login's own, the location's, or the whole
     # organisation's (preferences — memory audit 9/29/26, owner_layers).
     from preferences import init_preferences

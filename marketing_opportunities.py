@@ -376,7 +376,16 @@ def dish_margins(restaurant_id, db_path=DB_PATH, praise=None, mentions=None):
     days = _sales_days(restaurant_id, db_path)
     praised = {str(p.get("name") or "").strip().lower(): int(p.get("positive_reviews") or 0) for p in praise or []}
     out = Found()
-    promote = sorted((d for d in usable if d.get("action") == "promote"), key=lambda d: -float(d["margin"]))
+    # Marketing's do-not-promote list (memory audit 9/29/26, "links"): a
+    # dish guests name in complaints while Food Cost ranks it as a driver
+    # (a live reviews_x_menu link) is never put in front of guests.
+    try:
+        import link_memory
+        _dnp = link_memory.do_not_promote(restaurant_id, db_path=db_path)
+    except Exception:
+        _dnp = {}
+    promote = sorted((d for d in usable if d.get("action") == "promote"
+                      and not link_memory_names(_dnp, d.get("name"))), key=lambda d: -float(d["margin"]))
     for i, d in enumerate(promote):
         name = d["name"]
         pos = praised.get(name.strip().lower(), 0)
@@ -390,6 +399,17 @@ def dish_margins(restaurant_id, db_path=DB_PATH, praise=None, mentions=None):
             evidence={"n": days, "kind": "trading_days", "basis": f"{days} days of item sales"},
             sources=("pos", "sales"), score=62 + (4 if pos >= 2 else 0) - i * 0.1, food=True))
     return out
+
+
+def link_memory_names(listed, name):
+    """Whether the do-not-promote list names this menu dish (never raises)."""
+    if not listed:
+        return False
+    try:
+        import link_memory
+        return bool(link_memory.names_dish(listed, name))
+    except Exception:
+        return False
 
 
 def dish_praise_cards(restaurant_id, db_path=DB_PATH, praise=None):
@@ -807,7 +827,7 @@ def feed(restaurant_id, user_id=None, db_path=DB_PATH, surface="marketing", user
         items.append(dict(c, text=c["title"], module="marketing", model_written=False, confidence=conf,
                           evidence_sources=(["marketing"] + (["food"] if c.get("food") else [])
                                             + [s for s in c.get("sources") or [] if s != "marketing"]),
-                          dollar_value=None))
+                          dollar_value=None, expected_metric=card_expected_metric(c)))
     # Advice pulling against other advice (memory audit 9/29/26,
     # "conflicts"): promoting a dish whose ingredient is critically low, or
     # filling a night another surface says to trim — the card carries
@@ -818,7 +838,14 @@ def feed(restaurant_id, user_id=None, db_path=DB_PATH, surface="marketing", user
                                       db_path=db_path)
     except Exception as e:
         print(f"[mkt_opps] lever conflicts unavailable for {restaurant_id}: {e}")
-    on_screen = items if show_all else items[:VISIBLE]
+    # Fewer on the first screen while the owner is fatigued
+    # (learning_scorecard.volume_limit, memory audit 9/29/26).
+    try:
+        import learning_scorecard as _lsc
+        _visible = _lsc.volume_limit(restaurant_id, "feed_cards", VISIBLE)
+    except Exception:
+        _visible = VISIBLE
+    on_screen = items if show_all else items[:_visible]
     shown = insight_store.present_recs(restaurant_id, "marketing", surface, on_screen, user_id=uid,
                                        db_path=db_path)
     ids = {s["key"]: s.get("rec_id") for s in shown}
@@ -835,6 +862,26 @@ def feed(restaurant_id, user_id=None, db_path=DB_PATH, surface="marketing", user
     sources = [dict(s) for s in built.get("sources") or [] if margins or s["key"] not in FOOD_SOURCES]
     return {"ok": True, "items": out, "visible": VISIBLE, "sources": sources,
             "checked": [s["label"] for s in sources if s["state"] == "checked"]}
+
+
+def card_expected_metric(card):
+    """The number a feed card is measured on (memory audit 9/29/26,
+    "positive_volume"): its kind's own number (a slow weekday's sales), or
+    — for a card aimed at one weekday — that weekday's sales. A post, a
+    promotion or a dish mention has no honest number of its own (every
+    unrelated thing that moves sales would read as the post working): None."""
+    try:
+        import outcomes
+        key = str((card or {}).get("key") or "")
+        carried = outcomes._rec_metric(key, None)
+        if carried:
+            return carried
+        day = outcomes._named_weekday(f"{key} {(card or {}).get('title') or ''}")
+        if day and str((card or {}).get("kind") or key.split(":", 1)[0]) in ("slow_day", "quiet_night"):
+            return f"weekday_sales:{day}"
+    except Exception:
+        pass
+    return None
 
 
 # ── what the other Marketing surfaces are told ──────────────────────────────

@@ -224,15 +224,22 @@ def test_the_prompt_forbids_inventing_a_cause_and_reranking():
     src = inspect.getsource(inventory.get_claude_insights)
     assert "Never state a cause that is not in the ROOT-CAUSE READ" in src
     assert "ALREADY RANKED" in src
-    assert "Do not promote a cheaper or easier item above a more expensive one" in src
+    # Since the memory audit (9/29/26, "what_worked") the ranking weighs
+    # dollars by how that kind of fix measured here, so the rule the model
+    # keeps is that IT never re-ranks.
+    assert "Do not re-rank them yourself" in src
 
 
 def test_the_insight_reads_diagnoses_rather_than_generating_them():
     """Producing one is a Sonnet call over the ranked drivers and belongs on
     the scheduler, not on the critical path of a page load."""
     src = inspect.getsource(inventory.get_claude_insights)
-    assert "get_diagnosis(restaurant_id, include_stale=True)" in src
-    assert "_fci.diagnose(" not in src and "_fci2.diagnose(" not in src
+    # The read lives in root_cause_block since the memory audit (9/29/26),
+    # which also bounds how far a stale one is leaned on.
+    helper = inspect.getsource(inventory.root_cause_block)
+    assert "root_cause_block(restaurant_id)" in src
+    assert "get_diagnosis(restaurant_id, include_stale=True)" in helper
+    assert all("diagnose(" not in s for s in (src, helper))
 
 
 # ── P1-5 · the benchmark denominator ────────────────────────────────────────

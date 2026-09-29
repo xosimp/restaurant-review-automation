@@ -166,7 +166,9 @@ BLOCKING = {
 # sales, rating and food cost; the demand forecast is built from sales and
 # the weather.
 TOOL_SOURCES = {
-    "read_business_snapshot": ("reviews", "labor", "pos", "sales", "inventory", "marketing", "visibility"),
+    # The daily report's nights ride in it for the DSR link (memory audit
+    # 9/29/26, "links"). Competitors are not read by it.
+    "read_business_snapshot": ("reviews", "labor", "pos", "sales", "inventory", "marketing", "visibility", "dsr"),
     "read_outcomes": ("sales", "labor", "reviews"),
     "read_goals": ("sales", "labor", "reviews"),
     "read_decisions": ("sales", "labor", "reviews"),

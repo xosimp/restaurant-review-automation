@@ -3555,10 +3555,37 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
         # nobody anything).
         if getattr(result, "ok", False):
             shown.flush()
+            _record_monthly_read(restaurant_id, subject, verdict, summary_paragraph, review,
+                                 action if action_key else None, action_key)
         return result
     except Exception as e:
         print(f"send_monthly_summary_email failed: {e}")
         return not_sent("build_error", str(e)[:300])
+
+
+def _record_monthly_read(restaurant_id, subject, verdict, summary_paragraph, review, action, action_key):
+    """The monthly review that went out, kept as history (ai_reads, memory
+    audit 9/29/26): email_log keeps the subject only, so "what did last
+    month's review tell me?" had no answer. Only a delivered email is
+    kept — nothing that was not sent was said. Never raises."""
+    if not restaurant_id:
+        return
+    try:
+        import ai_reads
+        import monthly_review as _mrv
+        fix = (review or {}).get("fix_first") or {}
+        body = [str(verdict or subject or "").strip(), " ".join(str(summary_paragraph or "").split())]
+        body += list(_mrv.lines(review) if review else [])
+        if action:
+            body.append(f"Your next move: {action}")
+        elif isinstance(fix, dict) and (fix.get("what") or fix.get("label")):
+            body.append(f"The one thing: {fix.get('what') or fix.get('label')}")
+        keys = [k for k in (action_key, fix.get("key") if isinstance(fix, dict) else None) if k]
+        ai_reads.record_read(restaurant_id, "monthly_review", "\n".join(b for b in body if b),
+                             meta={"kind": "monthly_email", "summary": verdict or subject,
+                                   "month": (review or {}).get("month"), "rec_keys": keys or None})
+    except Exception as e:
+        print(f"[monthly] review history not kept for {restaurant_id}: {e}")
 
 
 def _html_esc(text) -> str:

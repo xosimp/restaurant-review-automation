@@ -1691,13 +1691,14 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
         conn.close()
         import models as _models_inv
         _models_inv._invalidate_request_cache(restaurant_id)
-        # The read kept as history, not only the blob overwritten each week
-        # (ai_reads; memory audit 9/29/26): the next competitor read sees what
-        # the last one said through memory_context's last_claim section.
+        # The read kept as history (ai_reads, memory audit 9/29/26): the blob is
+        # overwritten every Monday, so what last week's read said was gone; the
+        # next competitor read sees it through memory_context's last_claim section.
         try:
             import ai_reads
-            ai_reads.record_read(restaurant_id, "competitor_read", insight, subject="intel",
-                                 meta={"competitors": [c.get("name") for c in competitors][:8],
+            ai_reads.record_read(restaurant_id, "competitor_read", str(insight), subject="intel",
+                                 meta={"kind": "competitor", "verdict": ai_reads.verdict_of(insight),
+                                       "competitors": [c.get("name") for c in competitors][:8],
                                        "date": _now_ct.strftime("%Y-%m-%d")})
         except Exception as _are:
             print(f"[Competitor] read not kept as history: {_are}")
