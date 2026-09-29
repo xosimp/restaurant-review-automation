@@ -2749,33 +2749,27 @@ def mobile_delete_device_token(apns_token, current_user):
 # ── Labor ─────────────────────────────────────────────────────────────────
 
 def _staff_constraints_index(restaurant_id):
-    """Fuzzy name → constraint-note lookup (full name, first name, first+
-    last-initial, with/without trailing period) — same indexing
-    hosted_dashboard.py's web Labor tab builds, so "OT allowed" detection
-    matches exactly between web and mobile regardless of how a name is
-    spelled in the shifts CSV vs. the staff note."""
+    """staff_settings.name_key → the person's scheduling notes in force — the
+    one rule every people store is matched by (memory audit 9/29/26,
+    identity). It used to index first names too, so an "OT allowed" note on
+    Maria Garcia suppressed the overtime flag for Maria Lopez; a spelling
+    the POS changed is re-pointed by people.rename_person, never guessed."""
+    import staff_settings as _ss
     from models import get_staff_notes
     index = {}
     try:
         for n in (get_staff_notes(restaurant_id) or []):
-            name = (n.get("employee_name") or "").lower().strip().rstrip(".")
-            if not name:
-                continue
-            index[name] = n.get("notes")
-            parts = name.split()
-            if parts:
-                index[parts[0]] = n.get("notes")
-            if len(parts) >= 2:
-                index[parts[0] + " " + parts[1].rstrip(".")] = n.get("notes")
-                index[parts[0] + " " + parts[1].rstrip(".") + "."] = n.get("notes")
+            key = _ss.name_key(n.get("employee_name"))
+            if key and n.get("notes"):
+                index[key] = n.get("notes")
     except Exception:
         pass
     return index
 
 
 def _has_ot_allowance(employee, constraints_index):
-    key = (employee or "").lower().strip().rstrip(".")
-    note = constraints_index.get(key) or constraints_index.get(key.split(" ")[0], "")
+    import staff_settings as _ss
+    note = constraints_index.get(_ss.name_key(employee), "")
     note_l = (note or "").lower()
     return bool(note) and (
         "overtime" in note_l or "extra hours" in note_l

@@ -32,6 +32,19 @@ def _db(db_path):
     return db_path or DB_PATH
 
 
+def change_source(user) -> str:
+    """change_log's `source` for a change a login made: "admin" for an admin
+    or support login and anyone acting through view-as, "owner" for an
+    account holder, else "manager" (permissions.answer_authority — one rule
+    for whose words and whose changes these are)."""
+    try:
+        import permissions
+        auth_ = permissions.answer_authority(user)
+    except Exception:
+        auth_ = "delegate"
+    return {"admin": "admin", "principal": "owner"}.get(auth_, "manager")
+
+
 def person_key(name) -> str:
     """"Dana K." → "dana-k". Lowercase letters and digits, one dash between
     runs; "" for a name with neither."""

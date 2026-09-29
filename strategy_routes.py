@@ -2340,6 +2340,102 @@ def _do_learned_pattern_set(u):
     return {"ok": True, "key": key, "dismissed": bool(b.get("dismissed", True))}, 200
 
 
+# ── scheduling notes, dated (memory audit 9/29/26, staff_notes) ─────────────
+
+def _staff_note_out(n):
+    """One person's constraints for the clients: M/D/YY for the eye, ISO
+    beside it for a date picker."""
+    return {"id": n["id"], "employee_name": n["employee_name"], "notes": n.get("notes") or "",
+            "noted": n.get("noted"), "noted_on": n.get("noted_on"), "stale": bool(n.get("stale")),
+            "expires_on": n.get("expires_on"),
+            "parts": [{"index": i, "text": p["text"], "noted": p.get("noted_label"), "noted_on": p.get("noted"),
+                       "expires": p.get("expires_label"), "expires_on": p.get("expires"),
+                       "ended": bool(p.get("ended")), "stale": bool(p.get("stale"))}
+                      for i, p in enumerate(n.get("parts") or [])]}
+
+
+def _do_staff_notes_get(u):
+    """Every scheduling note with the day each constraint was noted, its end
+    date and whether it needs the owner's "still true?" — the notes the
+    schedule and the labor read obey, which only an admin could see."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see scheduling notes.")
+    from models import get_staff_notes, STAFF_NOTE_STALE_DAYS
+    notes = [_staff_note_out(n) for n in get_staff_notes(_rid(u), include_expired=True, today=_local_today(u))]
+    return {"ok": True, "notes": notes, "stale_after_days": STAFF_NOTE_STALE_DAYS,
+            "stale": sum(1 for n in notes for p in n["parts"] if p["stale"]), "can_edit": _may_rate(u)}, 200
+
+
+def _note_change(u, name, before, after):
+    try:
+        import change_log
+        import people
+        change_log.record(_rid(u), "staff_note", name, before, after, actor_user_id=u.get("id"),
+                          source=people.change_source(u))
+    except Exception as e:
+        import ops
+        ops.capture(e, job="staff_note_change_log", context=f"restaurant_id={_rid(u)}")
+
+
+def _do_staff_note_add(u):
+    """{employee_name, notes, expires_on?} — a constraint for one person,
+    added to theirs, dated today; `expires_on` (M/D/YY or ISO) or the end its
+    own words give ("out until 6/1") retires it on its own."""
+    if not _may_rate(u):
+        return _forbidden("Your login can view the team but not change their scheduling notes.")
+    from models import save_staff_note, get_staff_notes, _iso_or_none
+    b = _body()
+    name = " ".join(str(b.get("employee_name") or "").split())[:80]
+    text = str(b.get("notes") or "").strip()[:500]
+    if not name or not text:
+        return {"ok": False, "error": "A name and the constraint are both needed."}, 400
+    if b.get("expires_on") not in (None, "") and not _iso_or_none(b.get("expires_on")):
+        return {"ok": False, "error": "That end date isn't a date — use M/D/YY."}, 400
+    before = next((n.get("notes") for n in get_staff_notes(_rid(u))
+                   if n["employee_name"].strip().lower() == name.lower()), None)
+    out = save_staff_note(_rid(u), name, text, expires_on=b.get("expires_on") or None, updated_by=_who(u),
+                          today=_local_today(u))
+    _note_change(u, name, before, out["notes"])
+    note = next((n for n in get_staff_notes(_rid(u), include_expired=True, today=_local_today(u))
+                 if n["id"] == out["id"]), None)
+    return {"ok": True, "appended": out["appended"], "note": _staff_note_out(note) if note else None}, 200
+
+
+def _do_staff_note_update(u, note_id):
+    """{action: confirm | expire | remove, part?, expires_on?} — the owner's
+    answer to one constraint ("still true", "ends on", "gone"). `part` is
+    its index in the note; none means every constraint on it."""
+    if not _may_rate(u):
+        return _forbidden("Your login can view the team but not change their scheduling notes.")
+    from models import update_staff_note_part, _iso_or_none
+    b = _body()
+    action = str(b.get("action") or "").strip().lower()
+    if action not in ("confirm", "expire", "remove"):
+        return {"ok": False, "error": "action is confirm, expire or remove"}, 400
+    part = b.get("part")
+    if part not in (None, ""):
+        try:
+            part = int(part)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "part is a number"}, 400
+    else:
+        part = None
+    if action == "expire" and b.get("expires_on") not in (None, "") and not _iso_or_none(b.get("expires_on")):
+        return {"ok": False, "error": "That end date isn't a date — use M/D/YY."}, 400
+    try:
+        row = update_staff_note_part(_rid(u), int(note_id), part, confirm=(action == "confirm"),
+                                     expires_on=((b.get("expires_on") or "") if action == "expire" else None),
+                                     remove=(action == "remove"), updated_by=_who(u), today=_local_today(u))
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}, 400
+    if row is None:
+        return {"ok": False, "error": "That note isn't on this restaurant."}, 404
+    if action != "confirm":
+        _note_change(u, row.get("employee_name") or f"note {note_id}", action, row.get("notes"))
+    return {"ok": True, "note": _staff_note_out(row) if not row.get("removed") else None,
+            "removed": bool(row.get("removed"))}, 200
+
+
 def _do_recommendation_event(u):
     """The owner accepted or dismissed a recommendation — the ledger that
     decides which kinds keep being shown."""
@@ -4329,6 +4425,9 @@ _ROUTES = [
     ("/labor/shift-requests/<int:request_id>/decide", ["POST"], _do_shift_request_decide, "shift_request_decide"),
     ("/labor/learned-patterns", ["GET"], _do_learned_patterns, "learned_patterns"),
     ("/labor/learned-patterns", ["POST"], _do_learned_pattern_set, "learned_pattern_set"),
+    ("/labor/staff-notes", ["GET"], _do_staff_notes_get, "staff_notes_get"),
+    ("/labor/staff-notes", ["POST"], _do_staff_note_add, "staff_note_add"),
+    ("/labor/staff-notes/<int:note_id>", ["POST"], _do_staff_note_update, "staff_note_update"),
     ("/labor/schedule/recommendation", ["POST"], _do_recommendation_event, "schedule_recommendation_event"),
     ("/labor/standby/ask", ["POST"], _do_standby_ask, "labor_standby_ask"),
     ("/labor/intel", ["GET"], _do_schedule_intel, "schedule_intel"),

@@ -510,14 +510,20 @@ def save_staff_note_route(restaurant_id, current_user):
     """Add a scheduling constraint. A second one for the same person is
     added to the first, never written over it (models.save_staff_note,
     fix round #142). {ok, id, notes (the person's full text), appended}."""
-    from models import save_staff_note
+    from models import save_staff_note, _iso_or_none
     name  = " ".join((request.form.get("employee_name") or "").split())[:80]
     notes = (request.form.get("notes") or "").strip()[:500]
     if not name or not notes:
         return jsonify(ok=False, error="Name and notes required"), 400
     if not get_restaurant(restaurant_id):
         return jsonify(ok=False, error="Restaurant not found"), 404
-    result = save_staff_note(restaurant_id, name, notes)
+    # An optional end date (memory audit 9/29/26): a constraint that says
+    # "until 6/1" in its own words ends then without one.
+    ends = (request.form.get("expires_on") or "").strip()
+    if ends and not _iso_or_none(ends):
+        return jsonify(ok=False, error="That end date isn't a date — use M/D/YY."), 400
+    result = save_staff_note(restaurant_id, name, notes, expires_on=ends or None,
+                             updated_by=(current_user.get("username") or current_user.get("email") or "admin"))
     _record_staff_note(restaurant_id, current_user, "staff_note.saved", name,
                        {"added": notes, "now": result["notes"], "appended": result["appended"]})
     return jsonify(ok=True, **result)

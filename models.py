@@ -5307,59 +5307,315 @@ def get_email_log_for_client(restaurant_id: int, limit: int = 50, db_path: str =
 def init_staff_notes(db_path: str = DB_PATH):
     conn = sqlite3.connect(db_path)
     conn.executescript(STAFF_NOTES_SCHEMA)
+    # Each constraint dated, with an optional end (memory audit 9/29/26,
+    # staff_notes): "Out until 6/1 after surgery" still blocked a cook in
+    # September because the note had no date and no expiry and the prompt
+    # said it outranks every rule. `parts_json` holds the person's
+    # constraints one by one ([{text, noted, expires, confirmed, by}]) —
+    # the row is one per person (UNIQUE), and an end date belongs to ONE
+    # constraint, never to "mornings only" written beside it. `notes` stays
+    # the joined text every older reader and the admin page read.
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(staff_notes)").fetchall()}
+    for col in ("updated_at", "updated_by", "expires_on", "confirmed_at", "parts_json"):
+        if col not in cols:
+            try:
+                conn.execute(f"ALTER TABLE staff_notes ADD COLUMN {col} TEXT")
+            except sqlite3.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
     conn.commit()
     conn.close()
 
+
+# A note nobody has confirmed in this long is shown to the owner as "still
+# true?" (memory audit 9/29/26, staff_notes). It stays in force until they
+# answer: silently dropping a real constraint is worse than asking.
+STAFF_NOTE_STALE_DAYS = 90
+
+import re as _re_staff_notes   # the staff-note date reader below (memory audit 9/29/26)
+
+_NOTE_MONTHS = {m: i for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct",
+                                            "nov", "dec"), start=1)}
+_NOTE_UNTIL_RE = _re_staff_notes.compile(
+    r"\b(?:until|till|til|thru|through|back(?:\s+on)?|returns?(?:\s+on)?|out\s+to|ends?(?:\s+on)?)\s+"
+    r"(?:(?P<m>\d{1,2})/(?P<d>\d{1,2})(?:/(?P<y>\d{2,4}))?"
+    r"|(?P<mon>jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(?P<md>\d{1,2})(?:st|nd|rd|th)?"
+    r"(?:,?\s+(?P<my>\d{4}))?)", _re_staff_notes.I)
+
+
+def staff_note_expiry(text, noted_on=None):
+    """The ISO date a constraint says it ends ("out until 6/1", "back on
+    Oct 3", "through 10/15/26"), or None. A month and day with no year is
+    the first such date on or after the day it was noted — "until 6/1"
+    written in May is this June, written in July is next June."""
+    from datetime import date
+    m = _NOTE_UNTIL_RE.search(str(text or ""))
+    if not m:
+        return None
+    try:
+        base = date.fromisoformat(str(noted_on)[:10]) if noted_on else date.today()
+    except ValueError:
+        base = date.today()
+    try:
+        if m.group("m"):
+            month, day = int(m.group("m")), int(m.group("d"))
+            year = m.group("y")
+        else:
+            month, day = _NOTE_MONTHS[m.group("mon").lower()[:3]], int(m.group("md"))
+            year = m.group("my")
+        if year:
+            y = int(year)
+            y = y + 2000 if y < 100 else y
+            return date(y, month, day).isoformat()
+        end = date(base.year, month, day)
+        if end < base:
+            end = date(base.year + 1, month, day)
+        return end.isoformat()
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def _iso_or_none(value):
+    """An ISO date from ISO or M/D/YY input, or None."""
+    from datetime import date
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw[:10]).isoformat()
+    except ValueError:
+        pass
+    for fmt in ("%m/%d/%Y", "%m/%d/%y"):
+        try:
+            return datetime.strptime(raw, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+def _note_parts(row) -> list:
+    """One person's constraints, each dated: [{"text", "noted", "expires",
+    "confirmed", "by"}]. A note written before parts existed is one part,
+    noted the day its row was written."""
+    keys = row.keys() if hasattr(row, "keys") else row
+    raw = row["parts_json"] if "parts_json" in keys else None
+    try:
+        parts = json.loads(raw) if raw else None
+    except (TypeError, ValueError):
+        parts = None
+    if isinstance(parts, list):
+        out = []
+        for p in parts:
+            if isinstance(p, dict) and str(p.get("text") or "").strip():
+                out.append({"text": str(p["text"]).strip(), "noted": _iso_or_none(p.get("noted")),
+                            "expires": _iso_or_none(p.get("expires")),
+                            "confirmed": _iso_or_none(p.get("confirmed")), "by": p.get("by")})
+        return out
+    text = str(row["notes"] or "").strip()
+    if not text:
+        return []
+    stamp = (row["updated_at"] if "updated_at" in keys else None) or row["created_at"]
+    return [{"text": text, "noted": _iso_or_none(str(stamp or "")[:10]),
+             "expires": _iso_or_none(row["expires_on"] if "expires_on" in keys else None),
+             "confirmed": _iso_or_none(str((row["confirmed_at"] if "confirmed_at" in keys else None) or "")[:10]),
+             "by": None}]
+
+
+def _join_parts(parts) -> str:
+    return "; ".join(p["text"].rstrip(" ;.") if i < len(parts) - 1 else p["text"]
+                     for i, p in enumerate(parts))
+
+
+def _write_parts(conn, note_id, parts, updated_by=None):
+    exp = sorted(p["expires"] for p in parts if p.get("expires"))
+    conn.execute("UPDATE staff_notes SET notes=?, parts_json=?, updated_at=datetime('now'), updated_by=?, "
+                 "expires_on=? WHERE id=?",
+                 (_join_parts(parts), json.dumps(parts), (updated_by or "").strip()[:120] or None,
+                  exp[0] if exp else None, note_id))
+
+
 def save_staff_note(restaurant_id: int, employee_name: str,
-                    notes: str, db_path: str = DB_PATH, replace: bool = False) -> dict:
-    """Add a scheduling constraint for one person; {"id", "notes", "appended"}.
+                    notes: str, db_path: str = DB_PATH, replace: bool = False,
+                    expires_on=None, updated_by: str = None, today=None) -> dict:
+    """Add a scheduling constraint for one person; {"id", "notes", "appended",
+    "expires_on"}.
 
     One row per person (UNIQUE(restaurant_id, employee_name)), so a second
     constraint is ADDED to the first — it used to be written over it: adding
     "no Sundays" for Maria erased "mornings only", the page said Saved, and
     the schedule generator stopped respecting the first (fix round #142).
     The person is matched however their name is cased, as every reader
-    matches it; text already there is not added twice. `replace=True` sets
-    the text outright (the undo of a removal puts back exactly what was)."""
+    matches it; text already there is not added twice (saying it again
+    confirms it). `replace=True` sets the text outright (the undo of a
+    removal puts back exactly what was).
+
+    Each constraint is dated the day it was noted, and ends on `expires_on`
+    (ISO or M/D/YY) or the date its own words give ("out until 6/1") —
+    after which every reader leaves it out (memory audit 9/29/26)."""
+    from datetime import date
     name = (employee_name or "").strip()
     text = (notes or "").strip()
+    noted = (today or date.today()).isoformat() if not isinstance(today, str) else today[:10]
+    ends = _iso_or_none(expires_on) or staff_note_expiry(text, noted)
+    part = {"text": text, "noted": noted, "expires": ends, "confirmed": None,
+            "by": (updated_by or "").strip()[:120] or None}
     conn = get_conn(db_path)
     try:
         conn.execute("BEGIN IMMEDIATE")
-        row = conn.execute("SELECT id, notes FROM staff_notes WHERE restaurant_id=? AND lower(employee_name)=lower(?) "
+        row = conn.execute("SELECT * FROM staff_notes WHERE restaurant_id=? AND lower(employee_name)=lower(?) "
                            "ORDER BY id LIMIT 1", (restaurant_id, name)).fetchone()
         appended = False
         if row is None:
             cur = conn.execute("INSERT INTO staff_notes (restaurant_id, employee_name, notes) VALUES (?,?,?)",
                                (restaurant_id, name, text))
-            note_id, combined = cur.lastrowid, text
+            note_id, parts = cur.lastrowid, [part]
         else:
-            existing = (row["notes"] or "").strip()
-            if replace or not existing:
-                combined = text
-            elif text.lower() in existing.lower():
-                combined = existing
-            else:
-                combined, appended = existing.rstrip(" ;.") + "; " + text, True
-            conn.execute("UPDATE staff_notes SET notes=? WHERE id=?", (combined, row["id"]))
             note_id = row["id"]
+            existing = _note_parts(row)
+            if replace or not existing:
+                parts = [part]
+            else:
+                same = next((p for p in existing if text.lower() in p["text"].lower()), None)
+                if same is not None:
+                    same["confirmed"] = noted          # said again: still true
+                    if ends and not same.get("expires"):
+                        same["expires"] = ends
+                    parts = existing
+                else:
+                    parts, appended = existing + [part], True
+        _write_parts(conn, note_id, parts, updated_by)
         conn.commit()
     except BaseException:
         conn.rollback()
         raise
     finally:
         conn.close()
-    return {"id": note_id, "notes": combined, "appended": appended}
+    return {"id": note_id, "notes": _join_parts(parts), "appended": appended, "expires_on": ends}
 
-def get_staff_notes(restaurant_id: int,
-                    db_path: str = DB_PATH) -> list[dict]:
+
+def get_staff_notes(restaurant_id: int, db_path: str = DB_PATH, include_expired: bool = False,
+                    today=None) -> list[dict]:
+    """Each person's constraints in force, one row per person as before
+    ({id, employee_name, notes, ...}) — `notes` is the constraints that have
+    not ended, joined; a person whose every constraint has ended is left out
+    (memory audit 9/29/26: an ended "out until 6/1" kept blocking a cook in
+    September). Each row also carries `parts` (every constraint with its
+    `noted` / `expires` ISO dates and M/D/YY labels), `noted_on` / `noted`
+    (the newest), `expires_on` (the soonest end still ahead) and `stale`
+    (a constraint nobody has noted or confirmed in STAFF_NOTE_STALE_DAYS).
+    `include_expired=True` (the admin page) keeps ended constraints, marked."""
+    from datetime import date, timedelta
+    from time_utils import mdy as _mdy_n
+    day = today or date.today()
+    day = date.fromisoformat(day[:10]) if isinstance(day, str) else day
+    cut = (day - timedelta(days=STAFF_NOTE_STALE_DAYS)).isoformat()
     conn = get_conn(db_path)
-    rows = conn.execute(
-        "SELECT * FROM staff_notes WHERE restaurant_id=? ORDER BY employee_name",
-        (restaurant_id,)
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        rows = conn.execute("SELECT * FROM staff_notes WHERE restaurant_id=? ORDER BY employee_name",
+                            (restaurant_id,)).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        parts = []
+        for p in _note_parts(r):
+            ended = bool(p.get("expires")) and p["expires"] < day.isoformat()
+            if ended and not include_expired:
+                continue
+            seen = max(x for x in (p.get("noted"), p.get("confirmed")) if x) if (p.get("noted") or p.get("confirmed")) else None
+            parts.append({**p, "ended": ended, "noted_label": _mdy_n(p["noted"]) if p.get("noted") else None,
+                          "expires_label": _mdy_n(p["expires"]) if p.get("expires") else None,
+                          "stale": bool(seen) and seen < cut and not ended})
+        if not parts:
+            continue
+        d = dict(r)
+        live = [p for p in parts if not p["ended"]]
+        d["parts"] = parts
+        d["notes"] = _join_parts(live) if live else ""
+        noted = max((p["noted"] for p in live if p.get("noted")), default=None)
+        d["noted_on"], d["noted"] = noted, (_mdy_n(noted) if noted else None)
+        ahead = sorted(p["expires"] for p in live if p.get("expires"))
+        d["expires_on"] = ahead[0] if ahead else None
+        d["stale"] = any(p["stale"] for p in live)
+        out.append(d)
+    return out
+
+
+def staff_note_line(note: dict) -> str:
+    """"Maria G.: mornings only (noted 5/2/26); out until 6/1 (noted 5/20/26,
+    ends 6/1/26)" — the one way both prompts print a person's constraints,
+    each with the day it was noted (memory audit 9/29/26). Ended ones are
+    never passed here (get_staff_notes leaves them out)."""
+    bits = []
+    for p in note.get("parts") or [{"text": note.get("notes"), "noted_label": note.get("noted")}]:
+        if p.get("ended") or not str(p.get("text") or "").strip():
+            continue
+        when = []
+        if p.get("noted_label"):
+            when.append(f"noted {p['noted_label']}")
+        if p.get("expires_label"):
+            when.append(f"ends {p['expires_label']}")
+        bits.append(str(p["text"]).strip().rstrip(" ;") + (f" ({', '.join(when)})" if when else ""))
+    return f"{note.get('employee_name')}: " + "; ".join(bits)
+
+
+def stale_staff_notes(restaurant_id: int, db_path: str = DB_PATH, today=None) -> list:
+    """The constraints nobody has noted or confirmed in STAFF_NOTE_STALE_DAYS
+    — the owner's "still true?" list: [{id, employee_name, text, noted,
+    part}] (memory audit 9/29/26, staff_notes)."""
+    out = []
+    for n in get_staff_notes(restaurant_id, db_path=db_path, today=today):
+        for i, p in enumerate(n["parts"]):
+            if p.get("stale"):
+                out.append({"id": n["id"], "employee_name": n["employee_name"], "text": p["text"],
+                            "noted": p.get("noted_label"), "noted_on": p.get("noted"), "part": i})
+    return out
+
+
+def update_staff_note_part(restaurant_id: int, note_id: int, part: int = None, *, confirm: bool = False,
+                           expires_on=None, remove: bool = False, updated_by: str = None,
+                           db_path: str = DB_PATH, today=None):
+    """The owner's answer to one constraint: `confirm` (still true — dated
+    today), `expires_on` (ISO or M/D/YY; "" clears it) or `remove`. `part`
+    is its index in the row's parts (None: every part). Returns the row as
+    get_staff_notes shapes it (include_expired), or None when the note is not
+    this restaurant's."""
+    from datetime import date
+    stamp = (today or date.today())
+    stamp = stamp[:10] if isinstance(stamp, str) else stamp.isoformat()
+    conn = get_conn(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT * FROM staff_notes WHERE id=? AND restaurant_id=?",
+                           (note_id, restaurant_id)).fetchone()
+        if row is None:
+            conn.rollback()
+            return None
+        parts = _note_parts(row)
+        idx = range(len(parts)) if part is None else [int(part)] if 0 <= int(part) < len(parts) else []
+        if not idx:
+            conn.rollback()
+            raise ValueError("That constraint isn't on this note.")
+        for i in idx:
+            if confirm:
+                parts[i]["confirmed"] = stamp
+            if expires_on is not None:
+                parts[i]["expires"] = _iso_or_none(expires_on)
+        if remove:
+            parts = [p for i, p in enumerate(parts) if i not in set(idx)]
+        if parts:
+            _write_parts(conn, note_id, parts, updated_by)
+        else:
+            conn.execute("DELETE FROM staff_notes WHERE id=?", (note_id,))
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return next((n for n in get_staff_notes(restaurant_id, db_path=db_path, include_expired=True, today=today)
+                 if n["id"] == note_id), {"id": note_id, "removed": True})
+
 
 def delete_staff_note(note_id: int, db_path: str = DB_PATH, restaurant_id: int = None):
     """Remove one person's constraints and return what was removed
@@ -6575,26 +6831,66 @@ def get_prior_shift_pattern(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     from a stated preference nobody keeps up to date.
     """
     try:
-        from shift_quality import daypart_of
-        from datetime import datetime as _dt
-        out = {}
-        for sh in _cached_shifts(restaurant_id):
-            name = (sh.get("employee") or "").strip()
-            if not name:
-                continue
-            entry = out.setdefault(name, {"days": set(), "dayparts": set()})
-            try:
-                entry["days"].add(_dt.strptime(sh.get("date", ""), "%Y-%m-%d").strftime("%A"))
-            except (ValueError, TypeError):
-                if sh.get("day"):
-                    entry["days"].add(sh["day"])
-            part = daypart_of(sh.get("shift_start", ""))
-            if part != "unknown":
-                entry["dayparts"].add(part)
-        return {n: {"days": sorted(v["days"]), "dayparts": sorted(v["dayparts"])}
-                for n, v in out.items()}
+        return usual_pattern(_cached_shifts(restaurant_id), today=_restaurant_today(restaurant_id))
     except Exception:
         return {}
+
+
+# What "usually works" means (memory audit 9/29/26, staff_notes): the last
+# USUAL_WEEKS weeks only, and a day or daypart counts once it recurs in at
+# least USUAL_MIN_WEEKS of them. The union of every shift ever worked kept a
+# cook who moved to nights in June "usually" on mornings in September.
+USUAL_WEEKS = 12
+USUAL_MIN_WEEKS = 2
+
+
+def _restaurant_today(restaurant_id):
+    from datetime import date as _date_rt
+    try:
+        from time_utils import restaurant_now_by_id
+        return restaurant_now_by_id(restaurant_id, naive=True).date()
+    except Exception:
+        return _date_rt.today()
+
+
+def usual_pattern(shifts, today=None, weeks: int = USUAL_WEEKS, min_weeks: int = USUAL_MIN_WEEKS) -> dict:
+    """{name: {"days": [...], "dayparts": [...], "weeks": n}} from shift rows
+    ({employee, date, shift_start}). Only the `weeks` weeks before `today`
+    are read (a person with no shift in them has no usual pattern), and a
+    weekday or daypart is "usual" when it recurs in `min_weeks` distinct
+    weeks of that window — or in the only week there is, for someone new."""
+    from datetime import date as _date_up, datetime as _dt_up, timedelta as _td_up
+    from shift_quality import daypart_of
+    today = today or _date_up.today()
+    since = (today - _td_up(weeks=weeks)).isoformat()
+    tally = {}
+    for sh in shifts or []:
+        name = (sh.get("employee") or "").strip()
+        day = str(sh.get("date") or "")[:10]
+        if not name:
+            continue
+        if day and day < since:
+            continue
+        try:
+            dt = _dt_up.strptime(day, "%Y-%m-%d")
+            wd, wk = dt.strftime("%A"), dt.strftime("%G-%V")
+        except (ValueError, TypeError):
+            if not sh.get("day"):
+                continue
+            wd, wk = sh["day"], "?"
+        t = tally.setdefault(name, {"weeks": set(), "days": {}, "dayparts": {}})
+        t["weeks"].add(wk)
+        t["days"].setdefault(wd, set()).add(wk)
+        part = daypart_of(sh.get("shift_start", ""))
+        if part != "unknown":
+            t["dayparts"].setdefault(part, set()).add(wk)
+    out = {}
+    for n, t in tally.items():
+        need = min(min_weeks, len(t["weeks"]))
+        out[n] = {"days": sorted(d for d, w in t["days"].items() if len(w) >= need),
+                  "dayparts": sorted(p for p, w in t["dayparts"].items() if len(w) >= need),
+                  "weeks": len(t["weeks"])}
+    return out
 
 
 def sibling_location_shifts(restaurant_id: int, dates: list,

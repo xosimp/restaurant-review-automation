@@ -1976,9 +1976,13 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
     # Staff constraints context
     constraints_context = ""
     if staff_notes:
+        # Each constraint with the day it was noted (memory audit 9/29/26,
+        # staff_notes): the notes reaching here are the ones still in force
+        # (models.get_staff_notes leaves ended ones out).
+        from models import staff_note_line as _snl_read
         constraints_context = "\n- Staff scheduling constraints (MUST be respected and referenced when relevant):\n"
         for note in staff_notes:
-            constraints_context += f"  * {note['employee_name']}: {note['notes']}\n"
+            constraints_context += f"  * {_snl_read(note)}\n"
         constraints_context += "  IMPORTANT: If an employee appears in overtime risk but has a constraint allowing overtime or extra hours, explicitly acknowledge this and do NOT flag it as a problem."
 
     # Everything the analysis knows is incomplete about its own input goes
@@ -3120,12 +3124,17 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         # Priority 1 in the one ranked PRIORITIES list at the top of the
         # prompt. It used to call itself "HIGHEST PRIORITY" while two other
         # blocks each claimed the same rank in their own words.
+        # Each dated, ended ones already left out (models.get_staff_notes;
+        # memory audit 9/29/26): an undated "out until 6/1" outranked every
+        # rule in September.
+        from models import staff_note_line as _snl_sched
         constraints = ("\n\nSTAFF CONSTRAINTS — priority 1 (hard constraints). Each one outranks every requirement, "
                        "target and preference in this prompt, including shift requirements, the hours ceiling, "
                        "server stagger and shift length guidelines. If a constraint conflicts with any of those, "
-                       "the constraint wins:\n")
+                       "the constraint wins. Each is dated the day it was noted; one with an end date no longer "
+                       "applies after it:\n")
         for note in staff_notes:
-            constraints += f"- {note['employee_name']}: {note['notes']}\n"
+            constraints += f"- {_snl_sched(note)}\n"
 
     # Build year-over-year context block (the key intelligence)
     yoy_block = ""

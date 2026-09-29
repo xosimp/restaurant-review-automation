@@ -86,7 +86,7 @@ def _local_midnight_utc(restaurant_id, day_iso, db_path=DB_PATH) -> str:
 # every acceptance figure that could only ever expire "ignored" — a shift
 # request answered in Labor left its episode open (re-audit C7). They are
 # listed, snoozable, and never enter the ledger.
-TASK_KEY_PREFIXES = ("issue:", "shift_request:", "time_off:", "invoice:")
+TASK_KEY_PREFIXES = ("issue:", "shift_request:", "time_off:", "invoice:", "staff_note:")
 
 
 def is_task(key) -> bool:
@@ -419,6 +419,24 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
             add("schedule:next-week", "schedule", "Next week's schedule isn't built",
                 "important", {"label": "Build it", "module": "labor", "nav": "labor/schedule"},
                 module="labor")
+
+    # ── scheduling notes nobody has confirmed in 90 days (memory audit
+    # 9/29/26, staff_notes): each still outranks every rule in the schedule
+    # prompt, so an old one is asked about, never silently dropped.
+    if getattr(restaurant, "module_labor", 0) and _sees(viewer, "labor"):
+        try:
+            from models import stale_staff_notes, STAFF_NOTE_STALE_DAYS
+            stale = stale_staff_notes(restaurant_id, db_path=db_path, today=today)
+        except Exception:
+            stale, STAFF_NOTE_STALE_DAYS = [], 90
+        if stale:
+            names = sorted({s["employee_name"] for s in stale})
+            add("staff_note:stale", "staff_note",
+                f"{len(stale)} scheduling note{'' if len(stale) == 1 else 's'} over "
+                f"{STAFF_NOTE_STALE_DAYS} days old — still true?", "watch",
+                {"label": "Review them", "module": "labor"},
+                detail=", ".join(names[:3]) + (f" and {len(names) - 3} more" if len(names) > 3 else ""),
+                module="labor", count=len(stale))
 
     hidden = _snoozed(restaurant_id, today, db_path)
     rank = {"critical": 0, "important": 1, "watch": 2}

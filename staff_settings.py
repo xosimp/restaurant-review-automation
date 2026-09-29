@@ -442,9 +442,87 @@ def delete_pair(restaurant_id, pair_id, db_path=DB_PATH) -> bool:
 
 # ── reliability, from the shift history ────────────────────────────────────
 
-def reliability(restaurant_id, db_path=DB_PATH, min_shifts=6) -> dict:
+# Attendance is weighted by recency (memory audit 9/29/26, staff_notes): a
+# shift this many days old counts half as much as one today, so three
+# no-shows last winter stop marking someone unreliable after six clean
+# months. Past RELIABILITY_WINDOW_DAYS a shift weighs under a sixteenth and
+# is left out.
+RELIABILITY_HALF_LIFE_DAYS = 90
+RELIABILITY_WINDOW_DAYS = 360
+
+
+def recency_weight(day, today, half_life=RELIABILITY_HALF_LIFE_DAYS) -> float:
+    """0.5 ** (age / half_life) for an ISO date; 0.0 when it cannot be read
+    or is older than RELIABILITY_WINDOW_DAYS. A future date weighs 1, and so
+    does a row with no date at all (the stored history always has one; a
+    caller's hand-built row without one keeps the unweighted count)."""
+    from datetime import date as _date
+    if day in (None, ""):
+        return 1.0
+    try:
+        d = _date.fromisoformat(str(day)[:10])
+    except (TypeError, ValueError):
+        return 0.0
+    age = max(0, (today - d).days)
+    if age > RELIABILITY_WINDOW_DAYS:
+        return 0.0
+    return 0.5 ** (age / float(half_life))
+
+
+def weighted_attendance(events, today=None, min_shifts=6) -> dict:
+    """{name: {...}} from [(name, iso_date, outcome)] where outcome is
+    "worked", "no_show", "short" (and, from attendance_events, "late",
+    "called_out", "left_early", "covered") — the reliability every reader
+    shares. `shifts` / `no_shows` are the raw counts inside the window (what
+    is said: "missed 2 of 9"); `no_show_rate` is the recency-weighted rate
+    smoothed toward the restaurant's own weighted base rate (smoothed_rate);
+    a missed shift is a no-show or a call-out."""
+    from datetime import date as _date
+    from shift_quality import UNRELIABLE_RATE
+    today = today or _date.today()
+    tally = {}
+    for name, day, outcome in events or ():
+        n = " ".join(str(name or "").split())
+        w = recency_weight(day, today)
+        if not n or w <= 0:
+            continue
+        t = tally.setdefault(n, {"shifts": 0, "no_show": 0, "short": 0, "late": 0, "w": 0.0, "w_miss": 0.0,
+                                 "last_miss": None, "first": None, "last": None})
+        miss = outcome in ("no_show", "called_out")
+        t["shifts"] += 1
+        t["w"] += w
+        if miss:
+            t["no_show"] += 1
+            t["w_miss"] += w
+            t["last_miss"] = max(t["last_miss"] or "", str(day)[:10])
+        elif outcome in ("short", "left_early"):
+            t["short"] += 1
+        elif outcome == "late":
+            t["late"] += 1
+        t["first"] = min(t["first"] or str(day)[:10], str(day)[:10])
+        t["last"] = max(t["last"] or "", str(day)[:10])
+    weights = sum(t["w"] for t in tally.values())
+    base = (sum(t["w_miss"] for t in tally.values()) / weights) if weights else 0.0
+    out = {}
+    for n, t in tally.items():
+        if t["shifts"] < min_shifts:
+            continue
+        rate = smoothed_rate(t["w_miss"], t["w"], base)
+        out[n] = {"shifts": t["shifts"], "no_shows": t["no_show"], "late": t["late"],
+                  "no_show_rate": rate,
+                  "raw_no_show_rate": round(t["no_show"] / t["shifts"], 2),
+                  "base_rate": round(base, 3), "no_show_threshold": UNRELIABLE_RATE,
+                  "unreliable": rate >= UNRELIABLE_RATE,
+                  "short_rate": round(t["short"] / t["shifts"], 2),
+                  "last_miss": t["last_miss"], "since": t["first"], "through": t["last"],
+                  "half_life_days": RELIABILITY_HALF_LIFE_DAYS}
+    return out
+
+
+def reliability(restaurant_id, db_path=DB_PATH, min_shifts=6, today=None) -> dict:
     """{employee_name: {"no_show_rate": 0.0-1.0, "short_rate": ..., "shifts": n}}
-    for everyone with enough clocked shifts to say anything.
+    for everyone with enough watched shifts to say anything — weighted by
+    recency (weighted_attendance).
 
     A scheduled shift with actual_hours of zero is a no-show; one worked
     at least an hour and a half short of schedule is a short shift. Only
@@ -454,7 +532,7 @@ def reliability(restaurant_id, db_path=DB_PATH, min_shifts=6) -> dict:
     """
     from models import _cached_shifts
     from labor import _has_actual_hours
-    tally = {}
+    events = []
     for s in _cached_shifts(restaurant_id):
         n = (s.get("employee") or "").strip()
         if not n or not _has_actual_hours(s):
@@ -466,12 +544,8 @@ def reliability(restaurant_id, db_path=DB_PATH, min_shifts=6) -> dict:
             continue
         if sched <= 0:
             continue
-        t = tally.setdefault(n, {"shifts": 0, "no_show": 0, "short": 0})
-        t["shifts"] += 1
-        if actual == 0:
-            t["no_show"] += 1
-        elif sched - actual >= 1.5:
-            t["short"] += 1
+        events.append((n, s.get("date"), "no_show" if actual == 0 else
+                       ("short" if sched - actual >= 1.5 else "worked")))
     # `no_show_rate` is SMOOTHED toward this restaurant's own base rate
     # (a Beta prior worth NO_SHOW_PRIOR_SHIFTS shifts; fix I9, CA1 L14): two
     # misses in six shifts read as a flat 33%, and the engine then treated
@@ -480,17 +554,17 @@ def reliability(restaurant_id, db_path=DB_PATH, min_shifts=6) -> dict:
     # (shift_quality.UNRELIABLE_RATE), so a client colours a row red exactly
     # when the scheduler treats that person as unreliable — the web used 10%
     # against the engine's 20%.
-    from shift_quality import UNRELIABLE_RATE
-    base = no_show_base_rate(tally)
-    return {n: {"shifts": t["shifts"],
-                "no_shows": t["no_show"],
-                "no_show_rate": smoothed_rate(t["no_show"], t["shifts"], base),
-                "raw_no_show_rate": round(t["no_show"] / t["shifts"], 2),
-                "base_rate": round(base, 3),
-                "no_show_threshold": UNRELIABLE_RATE,
-                "unreliable": smoothed_rate(t["no_show"], t["shifts"], base) >= UNRELIABLE_RATE,
-                "short_rate": round(t["short"] / t["shifts"], 2)}
-            for n, t in tally.items() if t["shifts"] >= min_shifts}
+    return weighted_attendance(events, today=today or _today(restaurant_id), min_shifts=min_shifts)
+
+
+def _today(restaurant_id):
+    """The restaurant's own local date (Chicago when it can't be read)."""
+    try:
+        from time_utils import restaurant_now_by_id
+        return restaurant_now_by_id(restaurant_id, naive=True).date()
+    except Exception:
+        from datetime import date as _date
+        return _date.today()
 
 
 # Pseudo-shifts of the restaurant's own base rate every person's no-show

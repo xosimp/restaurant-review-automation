@@ -480,18 +480,12 @@ def index(current_user):
             from models import get_staff_notes as _gsn_dash
             _sn_dash = _gsn_dash(current_user["restaurant_id"])
             if _sn_dash:
-                _sc = {}
-                for _n in _sn_dash:
-                    _name = _n['employee_name'].lower().strip().rstrip('.')
-                    _sc[_name] = _n['notes']
-                    # Also index by first name and first+initial for fuzzy matching
-                    _parts = _name.split()
-                    if _parts:
-                        _sc[_parts[0]] = _n['notes']
-                    if len(_parts) >= 2:
-                        _sc[_parts[0] + ' ' + _parts[1].rstrip('.')] = _n['notes']
-                        _sc[_parts[0] + ' ' + _parts[1].rstrip('.') + '.'] = _n['notes']
-                labor['staff_constraints'] = _sc
+                # One matching rule, staff_settings.name_key — no first-name
+                # fallback (memory audit 9/29/26, identity): Maria Garcia's
+                # "OT allowed" used to cover Maria Lopez too.
+                import staff_settings as _ss_dash
+                labor['staff_constraints'] = {_ss_dash.name_key(_n['employee_name']): _n['notes']
+                                              for _n in _sn_dash if _n.get('employee_name') and _n.get('notes')}
             else:
                 labor['staff_constraints'] = {}
         except Exception:
