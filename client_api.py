@@ -10308,7 +10308,8 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
         finally:
             conn.close()
         import schedule_versions as _sv
-        _sv.append(rid, schedule_id, "published", row["schedule_csv"], saved_by=actor_name)
+        _sv.append(rid, schedule_id, "published", row["schedule_csv"], saved_by=actor_name,
+                   saved_authority=_sv.authority_of(actor))
     except Exception as _px:
         _ops.capture(_px, job="schedule_publish_stamp", context=f"restaurant_id={rid} schedule_id={schedule_id}")
     # The week's sales projection the schedule was built against, frozen
@@ -10428,7 +10429,7 @@ def send_schedule_changes(restaurant_id, schedule_id, actor=None, acknowledge=Fa
                         status=get_schedule_share_status(rid, row["id"]),
                         error="The changes could not be sent. Try again in a few minutes."), 200
         who = (actor.get("username") or actor.get("email") or "automation") if isinstance(actor, dict) else "automation"
-        _sv.append(rid, row["id"], "published", csv_now, saved_by=who)
+        _sv.append(rid, row["id"], "published", csv_now, saved_by=who, saved_authority=_sv.authority_of(actor))
         conn = get_conn()
         try:
             conn.execute("UPDATE schedule_history SET republished_at=datetime('now') WHERE id=? AND restaurant_id=?",

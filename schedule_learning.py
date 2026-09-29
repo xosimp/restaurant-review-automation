@@ -120,6 +120,7 @@ def edited_weeks(restaurant_id, weeks=EDIT_WEEKS, db_path=DB_PATH) -> list:
         hist = conn.execute(
             "SELECT DISTINCT v.history_id, h.week_start FROM schedule_versions v JOIN schedule_history h ON h.id=v.history_id "
             "WHERE v.restaurant_id=? AND h.restaurant_id=? AND v.reason='edited' AND v.created_at >= datetime('now', ?) "
+            "AND COALESCE(v.saved_authority, '') <> 'admin' "
             "ORDER BY v.history_id DESC LIMIT 60",
             (restaurant_id, restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
         newest = {}
@@ -131,9 +132,12 @@ def edited_weeks(restaurant_id, weeks=EDIT_WEEKS, db_path=DB_PATH) -> list:
         if not ids:
             return []
         marks = ",".join("?" for _ in ids)
+        # An admin's saves (view-as) are not the manager's: left out, so
+        # the net diff is what the restaurant's own people settled on.
         versions = conn.execute(
             f"SELECT history_id, version, reason, schedule_csv, saved_by FROM schedule_versions WHERE restaurant_id=? "
-            f"AND history_id IN ({marks}) ORDER BY history_id, version", (restaurant_id, *ids)).fetchall()
+            f"AND history_id IN ({marks}) AND COALESCE(saved_authority, '') <> 'admin' ORDER BY history_id, version",
+            (restaurant_id, *ids)).fetchall()
     finally:
         conn.close()
     by = {}
@@ -574,7 +578,8 @@ def prediction_weeks(restaurant_id, weeks=PREDICT_WEEKS, db_path=DB_PATH) -> lis
         hist = conn.execute(
             "SELECT DISTINCT v.history_id, h.week_start FROM schedule_versions v JOIN schedule_history h ON h.id=v.history_id "
             "WHERE v.restaurant_id=? AND h.restaurant_id=? AND v.reason IN ('edited','published') "
-            "AND v.created_at >= datetime('now', ?) ORDER BY v.history_id DESC LIMIT 80",
+            "AND v.created_at >= datetime('now', ?) AND COALESCE(v.saved_authority, '') <> 'admin' "
+            "ORDER BY v.history_id DESC LIMIT 80",
             (restaurant_id, restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
         newest = {}
         for h in hist:
@@ -588,7 +593,8 @@ def prediction_weeks(restaurant_id, weeks=PREDICT_WEEKS, db_path=DB_PATH) -> lis
         marks = ",".join("?" for _ in ids)
         versions = conn.execute(
             f"SELECT history_id, version, reason, schedule_csv FROM schedule_versions WHERE restaurant_id=? "
-            f"AND history_id IN ({marks}) ORDER BY history_id, version", (restaurant_id, *ids)).fetchall()
+            f"AND history_id IN ({marks}) AND COALESCE(saved_authority, '') <> 'admin' ORDER BY history_id, version",
+            (restaurant_id, *ids)).fetchall()
     finally:
         conn.close()
     by = {}

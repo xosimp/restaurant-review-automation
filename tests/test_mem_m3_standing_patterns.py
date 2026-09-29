@@ -38,9 +38,10 @@ def _csv(tuesday, people):
     return HEAD + "".join(f"{tuesday.isoformat()},Tuesday,{p},Server,5:00pm,10:00pm,5,\n" for p in people)
 
 
-def _week(rid, tuesday, generated, final, editor="dana", age_days=0):
+def _week(rid, tuesday, generated, final, editor="dana", age_days=0, authority=None):
     """One published week: the generated draft, the manager's edit (when the
-    final differs) and the publish — versions dated `age_days` ago."""
+    final differs) and the publish — versions dated `age_days` ago, saved
+    with `authority` (permissions.answer_authority of whoever saved)."""
     conn = models.get_conn()
     ws = tuesday - timedelta(days=1)
     hid = conn.execute("INSERT INTO schedule_history (restaurant_id, week_start, week_end, schedule_csv, "
@@ -49,10 +50,11 @@ def _week(rid, tuesday, generated, final, editor="dana", age_days=0):
                         f"-{age_days} days", f"-{age_days} days")).lastrowid
     conn.commit()
     conn.close()
-    schedule_versions.append(rid, hid, "generated", _csv(tuesday, generated), saved_by="cavnar")
+    schedule_versions.append(rid, hid, "generated", _csv(tuesday, generated), saved_by="cavnar",
+                             saved_authority="system")
     if final != generated:
-        schedule_versions.append(rid, hid, "edited", _csv(tuesday, final), saved_by=editor)
-    schedule_versions.append(rid, hid, "published", _csv(tuesday, final), saved_by=editor)
+        schedule_versions.append(rid, hid, "edited", _csv(tuesday, final), saved_by=editor, saved_authority=authority)
+    schedule_versions.append(rid, hid, "published", _csv(tuesday, final), saved_by=editor, saved_authority=authority)
     conn = models.get_conn()
     conn.execute("UPDATE schedule_versions SET created_at=datetime('now', ?) WHERE history_id=?",
                  (f"-{age_days} days", hid))
@@ -149,3 +151,38 @@ def test_a_demo_restaurant_teaches_its_draft_nothing():
     _week(rid, _tuesday(2), everyone, without_bob, age_days=13)
     out = schedule_versions.refresh_standing_patterns(rid)
     assert out["skipped"] == "not_eligible" and schedule_versions.standing_patterns(rid) == []
+
+
+def test_an_admins_edits_through_view_as_teach_the_draft_nothing():
+    """A support login editing through view-as saves under the owner's name;
+    its authority is "admin", and no learner reads those saves (SHARED_MEM:
+    an admin's answer never trains the owner's preferences)."""
+    rid = _rid()
+    everyone, without_bob = ["Ana", "Bob", "Cy"], ["Ana", "Cy"]
+    view_as = {"id": 3, "username": "owner", "role": "client", "acting_admin_id": 1}
+    assert schedule_versions.authority_of(view_as) == "admin"
+    assert schedule_versions.authority_of({"id": 3, "role": "client"}) == "principal"
+    assert schedule_versions.authority_of(None) == "system"
+    _week(rid, _tuesday(3), everyone, without_bob, editor="owner", age_days=20, authority="admin")
+    _week(rid, _tuesday(2), everyone, without_bob, editor="owner", age_days=13, authority="admin")
+    assert not [p for p in schedule_versions.learned_patterns(rid) if p.get("employee") == "Bob"]
+    assert schedule_versions.refresh_standing_patterns(rid)["learned"] == 0
+    # The same two edits by the owner themself are learned.
+    rid2 = _rid()
+    _week(rid2, _tuesday(3), everyone, without_bob, editor="owner", age_days=20, authority="principal")
+    _week(rid2, _tuesday(2), everyone, without_bob, editor="owner", age_days=13, authority="principal")
+    assert [p for p in schedule_versions.learned_patterns(rid2) if p.get("employee") == "Bob"]
+
+
+def test_a_week_an_admin_published_neither_keeps_nor_reverses_a_standing_pattern():
+    rid = _rid()
+    everyone, without_bob = ["Ana", "Bob", "Cy"], ["Ana", "Cy"]
+    _week(rid, _tuesday(6), everyone, without_bob, age_days=40)
+    _week(rid, _tuesday(5), everyone, without_bob, age_days=33)
+    schedule_versions.refresh_standing_patterns(rid)
+    # Twice an admin, through view-as, puts Bob back: not the manager's word.
+    _week(rid, _tuesday(2), without_bob, everyone, editor="owner", age_days=12, authority="admin")
+    _week(rid, _tuesday(1), without_bob, everyone, editor="owner", age_days=5, authority="admin")
+    schedule_versions.refresh_standing_patterns(rid)
+    row = next(s for s in schedule_versions.standing_patterns(rid) if s["employee"] == "Bob" and s["kind"] == "moved_off")
+    assert row["times_overridden"] == 0 and row["status"] == "active"

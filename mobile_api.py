@@ -7177,7 +7177,8 @@ def mobile_score_schedule(current_user):
             try:
                 conn2.execute("BEGIN IMMEDIATE")
                 _sv.write_on(conn2, rid, hid, "edited", csv_text, saved_by=who, quality=quality,
-                             expected_version=(sent if latest else None))
+                             expected_version=(sent if latest else None),
+                             saved_authority=_sv.authority_of(current_user))
                 conn2.execute("UPDATE schedule_history SET review_json=? WHERE id=? AND restaurant_id=?",
                               (json.dumps(review) if review else None, hid, rid))
                 conn2.commit()

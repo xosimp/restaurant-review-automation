@@ -6342,6 +6342,15 @@ def init_schedule_versions(db_path: str = DB_PATH):
         UNIQUE(history_id, version)
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_versions_hist ON schedule_versions(history_id)")
+    # Whose save each version is (permissions.answer_authority — memory
+    # audit 9/29/26): a support login's edits through view-as are stored
+    # under the owner's name, and must never teach the draft.
+    if "saved_authority" not in {r[1] for r in conn.execute("PRAGMA table_info(schedule_versions)").fetchall()}:
+        try:
+            conn.execute("ALTER TABLE schedule_versions ADD COLUMN saved_authority TEXT")
+        except Exception as e:
+            if "duplicate column" not in str(e).lower():
+                raise
     conn.commit()
     conn.close()
 

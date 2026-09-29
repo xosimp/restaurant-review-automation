@@ -176,7 +176,28 @@ def latest_version(conn, history_id) -> int:
     return int(row["v"] or 0) if row else 0
 
 
-def _insert_version(conn, restaurant_id, history_id, reason, schedule_csv, quality=None, saved_by=None):
+# The learners' filter over schedule_versions: a save made with an
+# admin's authority (a support login, or anyone acting through view-as)
+# never teaches the draft — it is the admin's hand, stored under the
+# owner's name (SHARED_MEM: an admin's answer never trains the owner's
+# preferences).
+LEARNABLE_SQL = "COALESCE(saved_authority, '') <> 'admin'"
+
+
+def authority_of(user) -> str:
+    """permissions.answer_authority for a save: admin | principal |
+    delegate; "system" for none (the generator, a job)."""
+    if not isinstance(user, dict) or not user:
+        return "system"
+    try:
+        import permissions
+        return permissions.answer_authority(user)
+    except Exception:
+        return "delegate"
+
+
+def _insert_version(conn, restaurant_id, history_id, reason, schedule_csv, quality=None, saved_by=None,
+                    saved_authority=None):
     last = conn.execute("SELECT version, schedule_csv FROM schedule_versions WHERE history_id=? "
                         "ORDER BY version DESC LIMIT 1", (history_id,)).fetchone()
     version = (last["version"] + 1) if last else 1
@@ -188,10 +209,10 @@ def _insert_version(conn, restaurant_id, history_id, reason, schedule_csv, quali
     open_recs = _open_recommendations(conn, history_id) if (last and reason == "edited") else []
     cur = conn.execute(
         "INSERT INTO schedule_versions (restaurant_id, history_id, version, reason, schedule_csv, quality_json, "
-        "diff_json, saved_by) VALUES (?,?,?,?,?,?,?,?)",
+        "diff_json, saved_by, saved_authority) VALUES (?,?,?,?,?,?,?,?,?)",
         (restaurant_id, history_id, version, reason, schedule_csv,
          json.dumps(quality) if quality else None, json.dumps(d) if d else None,
-         (saved_by or "").strip()[:120] or None))
+         (saved_by or "").strip()[:120] or None, saved_authority))
     row_id = cur.lastrowid
     if open_recs and d and d.get("changes"):
         _record_implied_acceptance(conn, restaurant_id, open_recs, before_rows, after_rows, saved_by)
@@ -263,11 +284,13 @@ def _record_implied_acceptance(conn, restaurant_id, recs, before_rows, after_row
     return written
 
 
-def append(restaurant_id, history_id, reason, schedule_csv, quality=None, saved_by=None, db_path=DB_PATH) -> int:
+def append(restaurant_id, history_id, reason, schedule_csv, quality=None, saved_by=None, db_path=DB_PATH,
+           saved_authority=None) -> int:
     """Store one more state of a schedule, with its diff against the last."""
     conn = get_conn(db_path)
     try:
-        row_id, _v = _insert_version(conn, restaurant_id, history_id, reason, schedule_csv, quality, saved_by)
+        row_id, _v = _insert_version(conn, restaurant_id, history_id, reason, schedule_csv, quality, saved_by,
+                                     saved_authority)
         conn.commit()
         return row_id
     finally:
@@ -283,7 +306,7 @@ class StaleVersion(Exception):
 
 
 def write_on(conn, restaurant_id, history_id, reason, schedule_csv, saved_by=None, quality=None,
-             expected_version=None) -> int:
+             expected_version=None, saved_authority=None) -> int:
     """Overwrite the stored week AND append its version row, on the caller's
     connection, inside the caller's write transaction (open it with BEGIN
     IMMEDIATE and commit after). The two used to be separate commits, so a
@@ -306,7 +329,8 @@ def write_on(conn, restaurant_id, history_id, reason, schedule_csv, saved_by=Non
          (saved_by or "").strip()[:120] or None, history_id, restaurant_id))
     if cur.rowcount != 1:
         raise LookupError("that schedule is gone")
-    _row_id, version = _insert_version(conn, restaurant_id, history_id, reason, schedule_csv, quality, saved_by)
+    _row_id, version = _insert_version(conn, restaurant_id, history_id, reason, schedule_csv, quality, saved_by,
+                                       saved_authority)
     return version
 
 
@@ -695,8 +719,8 @@ def refresh_standing_patterns(restaurant_id, db_path=DB_PATH) -> dict:
         vers = {}
         if weeks:
             marks = ",".join("?" for _ in weeks)
-            for v in conn.execute(f"SELECT history_id, version, reason, schedule_csv FROM schedule_versions WHERE "
-                                  f"restaurant_id=? AND history_id IN ({marks}) ORDER BY version",
+            for v in conn.execute(f"SELECT history_id, version, reason, schedule_csv, saved_authority FROM "
+                                  f"schedule_versions WHERE restaurant_id=? AND history_id IN ({marks}) ORDER BY version",
                                   (restaurant_id, *[w["id"] for w in weeks])).fetchall():
                 vers.setdefault(v["history_id"], []).append(v)
     finally:
@@ -704,6 +728,9 @@ def refresh_standing_patterns(restaurant_id, db_path=DB_PATH) -> dict:
     updates = {}
     for w in weeks:
         vs = vers.get(w["id"]) or []
+        # A week an admin's hand saved or published (view-as) is not the
+        # manager's word: it neither keeps nor reverses a standing pattern.
+        admin_hand = any((v["saved_authority"] or "") == "admin" for v in vs)
         gen = next((v for v in vs if v["reason"] == "generated"), None)
         pub = next((v for v in reversed(vs) if v["reason"] == "published"), None) or (vs[-1] if vs else None)
         if pub is None:
@@ -717,6 +744,8 @@ def refresh_standing_patterns(restaurant_id, db_path=DB_PATH) -> dict:
             u = updates.setdefault(r["id"], {"applied": 0, "over": 0, "through": int(r["checked_through"] or 0),
                                              "confirmed": None})
             u["through"] = max(u["through"], w["id"])
+            if admin_hand:
+                continue
             kept = _respects(r, final)
             if kept is None:
                 continue

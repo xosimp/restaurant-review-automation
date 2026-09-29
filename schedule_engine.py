@@ -3544,7 +3544,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 print(f"[schedule] experiment arm not recorded: {_arx}")
             try:
                 _versions.append(restaurant_id, _history_id, "generated", result["schedule_csv"],
-                                 quality=result.get("quality"), saved_by="Cavnar AI")
+                                 quality=result.get("quality"), saved_by="Cavnar AI", saved_authority="system")
             except Exception as _vx:
                 print(f"[schedule] version save failed: {_vx}")
             try:
