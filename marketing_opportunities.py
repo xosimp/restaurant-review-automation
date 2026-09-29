@@ -708,6 +708,35 @@ def sees_margins(viewer, restaurant=None) -> bool:
         return False
 
 
+def _learned(restaurant_id, cards, restaurant=None, db_path=DB_PATH):
+    """The cards reordered by what this restaurant's own results say (memory
+    audit 9/29/26, mkt_results): each card's score times rec_learning's
+    weight for its key — the ranker Home, the one-thing pick and the DSR
+    already read. It only reorders (acceptance weighs little, upward lift
+    comes only from measured success), and now that a guest text's result
+    is linked to the card it answered (link_trackers), a slow night whose
+    texts brought guests back rises. `learned_weight` rides on a moved
+    card. Never raises: unread, the fixed scores stand."""
+    try:
+        import rec_learning
+        learned = rec_learning.effectiveness(restaurant_id, db_path=db_path, restaurant=restaurant)
+    except Exception as e:
+        print(f"[mkt_opps] learned weights unavailable for {restaurant_id}: {e}")
+        return cards
+    out = []
+    for c in cards:
+        try:
+            # The recommendation kind is the key's own (slow_day:<Day>), not
+            # the card's display kind (slow_night).
+            w, _why = learned(c["key"])
+        except Exception:
+            w = 1.0
+        if w and abs(float(w) - 1.0) > 1e-9:
+            c = dict(c, score=round(float(c["score"]) * float(w), 2), learned_weight=round(float(w), 3))
+        out.append(c)
+    return out
+
+
 def _visible_cards(cards, answered, margins):
     """What one viewer's feed holds, in order: the cards it may see, the
     answered ones gone, THEN each kind capped (re-audit OPP-11) — the
@@ -738,7 +767,8 @@ def _visible_cards(cards, answered, margins):
     return out
 
 
-_ITEM_KEYS = ("key", "kind", "title", "why", "facts", "stake", "when", "days_away", "action", "score")
+_ITEM_KEYS = ("key", "kind", "title", "why", "facts", "stake", "when", "days_away", "action", "score",
+              "learned_weight")
 
 
 def feed(restaurant_id, user_id=None, db_path=DB_PATH, surface="marketing", user=None, show_all=False) -> dict:
@@ -763,7 +793,7 @@ def feed(restaurant_id, user_id=None, db_path=DB_PATH, surface="marketing", user
     margins = sees_margins(viewer, restaurant)
     cards = [c for c in built["cards"] if margins or not c.get("food")]
     answered = insight_store.answered(restaurant_id, [c["key"] for c in cards], db_path=db_path)
-    cards = _visible_cards(cards, answered, margins)
+    cards = _visible_cards(_learned(restaurant_id, cards, restaurant, db_path), answered, margins)
     ctx = rec_trust.Context(restaurant_id, restaurant=restaurant, db_path=db_path)
     items = []
     for c in cards:
@@ -823,7 +853,7 @@ def context_lines(restaurant_id, db_path=DB_PATH, limit=5) -> list:
         built = cached_build(restaurant_id, db_path=db_path, restaurant=restaurant)
         cards = [c for c in built["cards"] if not c.get("food")]
         answered = insight_store.answered(restaurant_id, [c["key"] for c in cards], db_path=db_path)
-        cards = _visible_cards(cards, answered, False)[:limit]
+        cards = _visible_cards(_learned(restaurant_id, cards, restaurant, db_path), answered, False)[:limit]
         return [{"key": c["key"], "kind": c["kind"], "sources": list(c.get("sources") or ()),
                  "channels": list((c.get("action") or {}).get("channels") or ()),
                  "line": f"{c['title']} — {c['why']}"} for c in cards]

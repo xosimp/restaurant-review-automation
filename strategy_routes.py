@@ -613,6 +613,75 @@ def _do_reprice(u):
                                                                    user_id=u.get("id"))}, 200
 
 
+def _do_review_retag(u, review_id):
+    """Correct how a review was tagged: {categories?, sentiment?, severity?,
+    dishes?} in the analyser's own vocabulary (review_signals.retag; memory
+    audit 9/29/26, uncaptured). The review takes the correction, it is kept
+    with who made it, and the analyser learns this restaurant's tags from
+    the recent ones."""
+    import review_signals
+    out = review_signals.retag(_rid(u), review_id, _body(), user=u)
+    if not out.get("ok"):
+        return out, (404 if out.get("error") == "Review not found." else 400)
+    return out, 200
+
+
+def _do_par_suggestions(u):
+    """Items the close-out 86'd on 2+ nights in 4 weeks, each with a higher
+    par to accept (ordering.par_suggestions; memory audit 9/29/26,
+    food_corrections). Each carries its rec_ledger key ("raise_par:<item>"),
+    is logged as shown, and one already answered is left out — "Not now"
+    answers it through POST /recs/event like any card."""
+    import insight_store
+    import ordering
+    if not _sees_food(u):
+        return {"ok": True, "suggestions": []}, 200
+    sug = ordering.par_suggestions(_rid(u))
+    if not sug:
+        return {"ok": True, "suggestions": []}, 200
+    items = [{"key": s["key"], "text": f"Raise the par on {s['name']} to {s['suggested_par']:g}",
+              "model_written": False, "cavnar_completes": True, "_s": s} for s in sug]
+    kept = insight_store.present_recs(_rid(u), "food", "food", items, user_id=u.get("id"))
+    out = []
+    for it in kept:
+        row = dict(it["_s"])
+        row["rec_id"] = it.get("rec_id")
+        out.append(row)
+    return {"ok": True, "suggestions": out}, 200
+
+
+def _do_par_accept(u, ingredient_id):
+    """Accept a par suggestion: {par?} (default the suggested one). Writes the
+    par (inventory_ledger.update_ingredient), records the change
+    (change_log.record) and marks the recommendation implemented. Only a
+    live suggestion can be accepted — a par is otherwise the owner's to set
+    from their count sheet."""
+    import change_log
+    import inventory_ledger
+    import ordering
+    import rec_ledger
+    if not _sees_food(u):
+        return _forbidden("Food cost is not part of this login's access.")
+    sug = next((s for s in ordering.par_suggestions(_rid(u)) if s["ingredient_id"] == ingredient_id), None)
+    if not sug:
+        return {"ok": False, "error": "There's no par suggestion for that item right now."}, 409
+    try:
+        par = float(_body().get("par") if _body().get("par") not in (None, "") else sug["suggested_par"])
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "The par has to be a number."}, 400
+    if par <= 0 or par > 100000:
+        return {"ok": False, "error": "Pick a par above 0."}, 400
+    if not inventory_ledger.update_ingredient(_rid(u), ingredient_id, par_level=par):
+        return {"ok": False, "error": "Couldn't set that par — check the item."}, 400
+    change_log.record(_rid(u), "ingredient", "par_level", sug["par"], par, actor_user_id=u.get("id"),
+                      source="owner" if _principal(u) else "manager")
+    rec_ledger.implemented(_rid(u), sug["key"], "food", user_id=u.get("id"), role=u.get("role"),
+                           source_ref=f"par:{ingredient_id}:{par:g}",
+                           meta={"module": "food", "par_before": sug["par"], "par_after": par,
+                                 "suggested": sug["suggested_par"]})
+    return {"ok": True, "ingredient_id": ingredient_id, "par": par, "was": sug["par"]}, 200
+
+
 def _do_invoice_scan(u):
     import invoices
     f = request.files.get("file")
@@ -675,7 +744,8 @@ def _do_invoice_apply(u, import_id):
                                          "open it on Food Cost to settle the rest."}, 409
     if not isinstance(sel, list) or not sel:
         return {"ok": False, "error": "Pick at least one line to update."}, 400
-    out = invoices.apply(_rid(u), import_id, sel, user_id=u.get("id"))
+    from permissions import answer_authority
+    out = invoices.apply(_rid(u), import_id, sel, user_id=u.get("id"), authority=answer_authority(u))
     return out, (200 if out.get("ok") else 409)
 
 
@@ -4565,6 +4635,9 @@ _ROUTES = [
     ("/value", ["GET"], _do_value, "value_summary"),
     ("/food-cost/dish-scorecard", ["GET"], _do_dish_scorecard, "dish_scorecard"),
     ("/food-cost/reprice", ["GET"], _do_reprice, "reprice"),
+    ("/food-cost/par-suggestions", ["GET"], _do_par_suggestions, "par_suggestions"),
+    ("/reviews/<int:review_id>/retag", ["POST"], _do_review_retag, "review_retag"),
+    ("/food-cost/par-suggestions/<int:ingredient_id>/accept", ["POST"], _do_par_accept, "par_accept"),
     ("/food-cost/invoices", ["GET"], _do_invoice_list, "invoice_list"),
     ("/food-cost/invoices", ["POST"], _idempotent(_do_invoice_scan, "invoice_scan"), "invoice_scan"),
     ("/food-cost/invoices/<int:import_id>", ["GET"], _do_invoice_get, "invoice_get"),

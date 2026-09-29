@@ -475,6 +475,7 @@ class _Episodes:
     def __init__(self, conn):
         self.conn = conn
         self._snap = {}
+        self._keys = {}
 
     def snapshot(self, rec_id):
         if not rec_id:
@@ -496,6 +497,20 @@ class _Episodes:
         except Exception:
             return None
         return row["rec_id"] if row else None
+
+    def key(self, rec_id):
+        """The recommendation key of an episode (memory audit 9/29/26,
+        link_trackers: a tracker's result is filed under the kind of the
+        recommendation it measures)."""
+        if not rec_id:
+            return None
+        if rec_id not in self._keys:
+            try:
+                row = self.conn.execute("SELECT key FROM rec_instances WHERE rec_id=?", (rec_id,)).fetchone()
+            except Exception:
+                row = None
+            self._keys[rec_id] = row["key"] if row is not None else None
+        return self._keys[rec_id]
 
     def for_tracker(self, tracker_id):
         if tracker_id is None:
@@ -520,7 +535,8 @@ def _tracker_cols(conn):
 
 _TRACKER_READ = ("id", "restaurant_id", "source", "source_key", "status", "verdict", "started_on", "evaluate_on",
                  "created_at", "recheck_verdict", "owner_checkin", "baseline_overlaps_trigger", "concurrent", "metric",
-                 "after_start", "after_end", "baseline_value", "delta", "delta_pct", "noise_sigma", "baseline_kind")
+                 "after_start", "after_end", "baseline_value", "delta", "delta_pct", "noise_sigma", "baseline_kind",
+                 "measures_key")
 
 
 def _changed_trackers(conn, have):
@@ -664,8 +680,14 @@ def sync(db_path=DB_PATH, cohorts: dict = None, labels: dict = None) -> dict:
             # genuine observed:<action>:<month> key its observed: kind.
             if str(r["source_key"] or "").startswith("observed:untaken:"):
                 continue     # advice NOT taken (outcomes.observe_untaken): a comparison, never an answer
-            kind = kind_of(r["source_key"])
-            rec_id = eps.for_tracker(r.get("id")) or eps.at(r["restaurant_id"], r["source_key"], r.get("created_at"))
+            # The recommendation the tracker measures — its linked episode,
+            # else its measures_key (outcomes.record rec_key; memory audit
+            # 9/29/26, link_trackers) — names the kind, so a fill-a-night
+            # text's result is slow_day's, as the restaurant's learner reads
+            # it, never a "campaign" kind no recommendation has.
+            rec_key = r.get("measures_key") or r["source_key"]
+            rec_id = eps.for_tracker(r.get("id")) or eps.at(r["restaurant_id"], rec_key, r.get("created_at"))
+            kind = kind_of(eps.key(rec_id) or rec_key)
             tkey = episode_key(r["source_key"], rec_id) if rec_id else r["source_key"]
             written += put(r["restaurant_id"], kind, tkey, "tracking", event_at=r.get("created_at"),
                            synced_from="recommendation_outcomes", metric=r.get("metric"),
@@ -697,7 +719,7 @@ def sync(db_path=DB_PATH, cohorts: dict = None, labels: dict = None) -> dict:
                 if eff is not None and not tags:
                     try:
                         import rec_ledger
-                        tags = json.dumps(sorted(rec_ledger.tags_for(r["source_key"], kind=kind)))
+                        tags = json.dumps(sorted(rec_ledger.tags_for(rec_key, kind=kind)))
                     except Exception:
                         tags = None
                 try:

@@ -59,7 +59,9 @@ def supplier_trust(restaurant_id, supplier_email, db_path=DB_PATH):
     time. `orders` is every owner-sent order; trusted needs
     ORDER_TRUST_MIN of them unedited and an edit rate at or under
     ORDER_TRUST_EDIT_RATE — the shape auto_approve_trust uses for replies.
-    Rows from before `source` existed count as the owner's. `last_sent_at`
+    Rows from before `source` existed count as the owner's; an admin's send
+    through view-as (authority 'admin') is not (memory audit 9/29/26,
+    "view_as"). `last_sent_at`
     still reads every order — the cadence guard is about what the supplier
     received, whoever sent it."""
     email = (supplier_email or "").strip().lower()
@@ -68,19 +70,27 @@ def supplier_trust(restaurant_id, supplier_email, db_path=DB_PATH):
                 "last_sent_at": None, "trusted": False}
     conn = get_conn(db_path)
     try:
-        try:
-            rows = conn.execute(
-                "SELECT total_cost, sent_at, COALESCE(edited,0) AS edited FROM purchase_orders "
-                "WHERE restaurant_id=? "
-                "AND LOWER(supplier_email)=? AND COALESCE(status,'') NOT IN ('void','voided','cancelled') "
-                "AND COALESCE(source,'owner')='owner' "
-                "ORDER BY id DESC LIMIT 20", (restaurant_id, email)).fetchall()
-        except Exception:
-            # A database from before source/edited existed.
-            rows = conn.execute(
-                "SELECT total_cost, sent_at, 0 AS edited FROM purchase_orders WHERE restaurant_id=? "
-                "AND LOWER(supplier_email)=? AND COALESCE(status,'') NOT IN ('void','voided','cancelled') "
-                "ORDER BY id DESC LIMIT 20", (restaurant_id, email)).fetchall()
+        rows = []
+        # Newest schema first: a database from before `authority`, or from
+        # before source/edited existed, is read with what it has.
+        for sql in ("SELECT total_cost, sent_at, COALESCE(edited,0) AS edited FROM purchase_orders "
+                    "WHERE restaurant_id=? "
+                    "AND LOWER(supplier_email)=? AND COALESCE(status,'') NOT IN ('void','voided','cancelled') "
+                    "AND COALESCE(source,'owner')='owner' AND COALESCE(authority,'') != 'admin' "
+                    "ORDER BY id DESC LIMIT 20",
+                    "SELECT total_cost, sent_at, COALESCE(edited,0) AS edited FROM purchase_orders "
+                    "WHERE restaurant_id=? "
+                    "AND LOWER(supplier_email)=? AND COALESCE(status,'') NOT IN ('void','voided','cancelled') "
+                    "AND COALESCE(source,'owner')='owner' "
+                    "ORDER BY id DESC LIMIT 20",
+                    "SELECT total_cost, sent_at, 0 AS edited FROM purchase_orders WHERE restaurant_id=? "
+                    "AND LOWER(supplier_email)=? AND COALESCE(status,'') NOT IN ('void','voided','cancelled') "
+                    "ORDER BY id DESC LIMIT 20"):
+            try:
+                rows = conn.execute(sql, (restaurant_id, email)).fetchall()
+                break
+            except Exception:
+                continue
         last_row = conn.execute(
             "SELECT sent_at FROM purchase_orders WHERE restaurant_id=? AND LOWER(supplier_email)=? "
             "AND COALESCE(status,'') NOT IN ('void','voided','cancelled') ORDER BY id DESC LIMIT 1",
@@ -313,3 +323,185 @@ def auto_apply_if_trusted(restaurant_id, proposal, user_id=None, db_path=DB_PATH
         except Exception:
             pass
     return proposal
+
+
+# ── what the owner's own orders teach (memory audit 9/29/26, food_corrections)
+#
+# The draft and the sent lines of every owner-sent order are kept
+# (purchase_orders.draft_items_json / items_json) and were reduced to a trust
+# rate; the quantity formula never read them, so an owner who cuts salmon 30%
+# on every order got the same salmon draft forever. Now each ingredient the
+# owner keeps correcting carries a factor: the median of sent ÷ drafted over
+# their recent orders, shrunk toward 1 by ORDER_CORRECTION_SHRINK pseudo-orders,
+# bounded to ORDER_CORRECTION_BOUNDS, used only past ORDER_CORRECTION_MIN_ORDERS
+# orders and a ORDER_CORRECTION_MIN_MOVE change — and shown on the line. The
+# ratio is always against the formula's own quantity (a line's `base_qty`), so
+# a corrected draft the owner then sends unchanged confirms the factor instead
+# of pulling it back to 1.
+ORDER_CORRECTION_MIN_ORDERS = 3
+ORDER_CORRECTION_WINDOW = 8          # the owner's latest orders an ingredient appears in
+ORDER_CORRECTION_SHRINK = 3
+ORDER_CORRECTION_BOUNDS = (0.5, 1.5)
+ORDER_CORRECTION_MIN_MOVE = 0.10
+
+
+def _line_qty(line, *keys):
+    for k in keys:
+        try:
+            v = float(line.get(k))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        return v
+    return None
+
+
+def order_corrections(restaurant_id, db_path=DB_PATH) -> dict:
+    """{ingredient_id: {"factor", "orders", "median", "basis"}} for the
+    ingredients whose draft the owner keeps changing — {} for a restaurant
+    that may not teach a learner (models.learning_eligible). Only orders a
+    person at the restaurant sent (source 'owner', never an admin's through
+    view-as) with their draft kept; a line the owner took off the order is a
+    0. Never raises."""
+    try:
+        if not _models_mod.learning_eligible(restaurant_id):
+            return {}
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT items_json, draft_items_json FROM purchase_orders WHERE restaurant_id=? "
+                "AND COALESCE(source, 'owner')='owner' AND COALESCE(authority, '') != 'admin' "
+                "AND draft_items_json IS NOT NULL "
+                "AND COALESCE(status,'') NOT IN ('void','voided','cancelled') ORDER BY id DESC LIMIT 60",
+                (restaurant_id,)).fetchall()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[ordering] order corrections unreadable for {restaurant_id}: {e}")
+        return {}
+    ratios = {}
+    for r in rows:
+        try:
+            drafted = [i for i in (json.loads(r["draft_items_json"] or "[]") or []) if isinstance(i, dict)]
+            sent = {i.get("ingredient_id"): i for i in (json.loads(r["items_json"] or "[]") or [])
+                    if isinstance(i, dict) and i.get("ingredient_id")}
+        except Exception:
+            continue
+        for d in drafted:
+            ing = d.get("ingredient_id")
+            base = _line_qty(d, "base_qty", "qty")
+            if not ing or not base or base <= 0:
+                continue
+            got = ratios.setdefault(ing, [])
+            if len(got) >= ORDER_CORRECTION_WINDOW:
+                continue
+            s = sent.get(ing)
+            got.append(((_line_qty(s, "qty") or 0.0) if s else 0.0) / base)
+    out = {}
+    for ing, rs in ratios.items():
+        n = len(rs)
+        if n < ORDER_CORRECTION_MIN_ORDERS:
+            continue
+        med = statistics.median(rs)
+        factor = 1.0 + (med - 1.0) * n / (n + ORDER_CORRECTION_SHRINK)
+        lo, hi = ORDER_CORRECTION_BOUNDS
+        factor = round(min(hi, max(lo, factor)), 2)
+        if abs(factor - 1.0) < ORDER_CORRECTION_MIN_MOVE:
+            continue
+        out[ing] = {"factor": factor, "orders": n, "median": round(med, 2),
+                    "basis": (f"your last {n} orders sent about {round(med * 100)}% of what the draft suggested "
+                              f"for this item, so this draft is adjusted to {round(factor * 100)}% of the formula")}
+    return out
+
+
+def apply_order_correction(line, correction):
+    """One order line with the owner's correction applied: `base_qty` keeps
+    the formula's quantity (what the next correction is measured against),
+    `qty` the corrected one, `owner_adjusted` says why. Case-size rounding
+    is kept (the case the formula line was rounded to). Returns the line."""
+    if not correction:
+        return line
+    try:
+        base = int(line.get("qty") or 0)
+    except (TypeError, ValueError):
+        return line
+    if base <= 0:
+        return line
+    qty = max(1, int(round(base * float(correction["factor"]))))
+    unit_cost = float(line.get("unit_cost") or 0)
+    return dict(line, base_qty=base, qty=qty, line_cost=round(qty * unit_cost, 2),
+                owner_adjusted={"factor": correction["factor"], "orders": correction["orders"],
+                                "basis": correction["basis"]})
+
+
+# A suggested par increase after repeated 86s (food_corrections): an item
+# the close-out says ran out on PAR_SUGGEST_86S or more nights in the last
+# PAR_SUGGEST_WINDOW_DAYS gets a higher par offered — never written until the
+# owner accepts it.
+PAR_SUGGEST_86S = 2
+PAR_SUGGEST_WINDOW_DAYS = 28
+PAR_SUGGEST_STEP = 1.25              # a quarter more, or a day's usage, whichever is more
+
+
+def par_suggestions(restaurant_id, db_path=DB_PATH, today=None) -> list:
+    """[{"ingredient_id", "name", "unit", "par", "suggested_par", "times",
+    "last", "key", "basis"}] — items 86'd at close on PAR_SUGGEST_86S or more
+    nights in the last PAR_SUGGEST_WINDOW_DAYS (inventory_ledger recounts to
+    0 with source 'closeout'), most often first. Never raises."""
+    import math
+    try:
+        if today is None:
+            from time_utils import restaurant_now_by_id
+            today = restaurant_now_by_id(restaurant_id).date()
+        since = (today - timedelta(days=PAR_SUGGEST_WINDOW_DAYS)).isoformat()
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT i.id, i.name, i.unit, COALESCE(i.par_level, 0) AS par, COALESCE(i.avg_daily_usage, 0) AS usage, "
+                "COUNT(DISTINCT e.event_date) AS times, MAX(e.event_date) AS last "
+                "FROM ingredient_stock_events e JOIN ingredients i ON i.id=e.ingredient_id AND i.restaurant_id=e.restaurant_id "
+                "WHERE e.restaurant_id=? AND e.event_type='recount' AND e.source='closeout' AND e.event_date >= ? "
+                "AND i.is_active=1 GROUP BY i.id HAVING COUNT(DISTINCT e.event_date) >= ? "
+                "ORDER BY times DESC, last DESC",
+                (restaurant_id, since, PAR_SUGGEST_86S)).fetchall()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[ordering] par suggestions unreadable for {restaurant_id}: {e}")
+        return []
+    from time_utils import mdy
+    import rec_ledger
+    # 86s from before the owner last raised this par (an implemented
+    # raise_par answer) are already answered: they never raise it again.
+    try:
+        conn = get_conn(db_path)
+        try:
+            raised = {r["key"]: str(r["at"])[:10] for r in conn.execute(
+                "SELECT key, MAX(implemented_at) AS at FROM rec_instances WHERE restaurant_id=? "
+                "AND key LIKE 'raise_par:%' AND implemented_at IS NOT NULL GROUP BY key", (restaurant_id,)).fetchall()}
+            recent = {}
+            for r in rows:
+                key = rec_ledger.rec_key("raise_par", r["name"])
+                if key in raised:
+                    recent[r["id"]] = conn.execute(
+                        "SELECT COUNT(DISTINCT event_date) FROM ingredient_stock_events WHERE restaurant_id=? "
+                        "AND ingredient_id=? AND event_type='recount' AND source='closeout' AND event_date > ? "
+                        "AND event_date >= ?", (restaurant_id, r["id"], raised[key], since)).fetchone()[0]
+        finally:
+            conn.close()
+    except Exception:
+        recent = {}
+    out = []
+    for r in rows:
+        if r["id"] in recent and int(recent[r["id"]] or 0) < PAR_SUGGEST_86S:
+            continue
+        par, usage = float(r["par"] or 0), float(r["usage"] or 0)
+        target = max(par * PAR_SUGGEST_STEP, par + usage)
+        suggested = math.ceil(target) if target > 0 else None
+        if not suggested or suggested <= par:
+            continue
+        out.append({"ingredient_id": r["id"], "name": r["name"], "unit": r["unit"] or "", "par": par,
+                    "suggested_par": suggested, "times": int(r["times"]), "last": r["last"],
+                    "key": rec_ledger.rec_key("raise_par", r["name"]),
+                    "basis": (f"86'd at close on {int(r['times'])} nights in the last {PAR_SUGGEST_WINDOW_DAYS} days "
+                              f"(last {mdy(r['last'])}); par {par:g} → {suggested:g}")})
+    return out

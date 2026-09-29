@@ -269,7 +269,7 @@ def test_pinned_approve_all_skips_flagged_drafts(db_path, monkeypatch):
     ok, flagged, urgent = _rv(), _rv(flagged=1), _rv(urgency="high")
     approved = []
     monkeypatch.setattr(client_api, "_do_approve",
-                        lambda i, r, g=None, bulk=False: (approved.append(i) or ({"ok": True}, 200)))
+                        lambda i, r, g=None, bulk=False, **_k: (approved.append(i) or ({"ok": True}, 200)))
     import drafter
     monkeypatch.setattr(drafter, "check_reply", lambda text, *a, **k: (None, text))
     payload, status = client_api._do_approve_all(rid, 25, review_ids=[ok, flagged, urgent])

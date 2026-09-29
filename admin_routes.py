@@ -2236,7 +2236,6 @@ def seed_reviews(restaurant_id, current_user):
 def _draft_reviews_job(restaurant_id, review_ids):
     """Draft replies for these reviews, on the admin pool. Returns counts."""
     from drafter import draft_response, DraftNotReplaced
-    from models import get_approved_examples
     from ai_utils import is_platform_stop
     restaurant = get_restaurant(restaurant_id)
     if not restaurant:
@@ -2248,13 +2247,13 @@ def _draft_reviews_job(restaurant_id, review_ids):
                             f"AND id IN ({marks}) AND deleted_at IS NULL", (restaurant_id, *review_ids)).fetchall()
     finally:
         conn.close()
-    examples = get_approved_examples(restaurant_id, limit=4)
+    # Each draft picks its own examples by star band (memory audit 9/29/26).
     drafted, failed, stopped = 0, 0, None
     for r in rows:
         try:
             draft_response(r["id"], r["rating"], r["text"], r["sentiment"], restaurant.name,
                            voice_notes=restaurant.voice_notes or "", restaurant_id=restaurant_id,
-                           approved_examples=examples, sign_off=restaurant.sign_off_name or restaurant.name,
+                           sign_off=restaurant.sign_off_name or restaurant.name,
                            never_say=restaurant.never_say or "", urgency=r["urgency"] or "normal",
                            language=getattr(restaurant, "response_language", None) or None)
             drafted += 1
@@ -2363,7 +2362,6 @@ def _redraft_job(restaurant_id, actor=None):
     """The redraft, on the admin pool. Returns counts: redrafted, skipped
     (owner-edited, or approved/posted while it ran), failed, and how many
     are left past REDRAFT_MAX."""
-    from models import get_approved_examples
     from analyser import analyse_review
     from drafter import draft_response, DraftNotReplaced
     from ai_utils import is_platform_stop
@@ -2383,7 +2381,7 @@ def _redraft_job(restaurant_id, actor=None):
     edited = [r for r in rows if r["edited"]]
     todo = [r for r in rows if not r["edited"]]
     redrafted, failed, skipped, stopped = 0, 0, 0, None
-    examples = get_approved_examples(restaurant_id, limit=4)
+    # Each draft picks its own examples by star band (memory audit 9/29/26).
     for r in todo[:REDRAFT_MAX]:
         try:
             sentiment, urgency = r["sentiment"], r["urgency"]
@@ -2395,7 +2393,7 @@ def _redraft_job(restaurant_id, actor=None):
                 continue
             draft_response(r["id"], r["rating"], r["text"], sentiment, restaurant.name,
                            voice_notes=restaurant.voice_notes or "", restaurant_id=restaurant_id,
-                           approved_examples=examples, sign_off=restaurant.sign_off_name or restaurant.name,
+                           sign_off=restaurant.sign_off_name or restaurant.name,
                            never_say=restaurant.never_say or "",
                            # Both were missing once: urgency is the serious-issue
                            # escalation, language a non-English restaurant's replies.

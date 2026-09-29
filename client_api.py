@@ -148,7 +148,7 @@ def invalidate_insight_cache(restaurant_id, prefixes=None):
 # without duplicating it.
 
 def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_flagged=False,
-                expected_draft=None):
+                expected_draft=None, user=None):
     """Approve (and post) one drafted reply.
 
     `confirm_flagged`: the person was shown the reply guard's flag on this
@@ -172,7 +172,13 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_
 
     `expected_draft`: the reply text the person approved (the phone sends
     it). When the stored reply is different, nothing is posted and the 409
-    says so (`draft_changed`) — see models.claim_approval."""
+    says so (`draft_changed`) — see models.claim_approval.
+
+    `user`: the login approving (the route's current_user). Who approved is
+    recorded with the approval (models.reply_approver: the login, its
+    answer_authority, normal or view-as — memory audit 9/29/26,
+    reply_voice), so the drafter's examples, its edit note and auto-approve
+    trust learn only the owner's voice."""
     if auto is None:
         try:
             from flask import has_request_context
@@ -183,11 +189,12 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_
     # live, drafted reply, and only once however many approves arrive
     # together (MOD-REV-4, MOD-REV-5). Nothing below — the action label, the
     # webhook, the Google post, the confirmation — happens for a loser.
-    from models import claim_approval
+    from models import claim_approval, reply_approver
     if not isinstance(expected_draft, str):
         expected_draft = None
     if not claim_approval(rid, restaurant_id, publishable_only=bool(bulk),
-                          allow_flagged=bool(confirm_flagged), expected_draft=expected_draft):
+                          allow_flagged=bool(confirm_flagged), expected_draft=expected_draft,
+                          approver=reply_approver(user, auto=bool(auto))):
         _gc = get_conn()
         _cur = _gc.execute("SELECT response_status, deleted_at, draft_needs_review, draft_review_reason, "
                            "draft_response "
@@ -441,7 +448,7 @@ def _do_retry_post(rid, restaurant_id):
     return _post_payload(rid, restaurant_id, auto_posted, post_error), 200
 
 
-def _do_approve_all(restaurant_id, limit=25, review_ids=None):
+def _do_approve_all(restaurant_id, limit=25, review_ids=None, user=None):
     """Publish every drafted reply in one go.
 
     `review_ids`: the replies a confirm card listed (ask_cavnar_tools
@@ -535,7 +542,7 @@ def _do_approve_all(restaurant_id, limit=25, review_ids=None):
     google = {}
     for row in rows:
         try:
-            payload, status = _do_approve(row["id"], restaurant_id, google, bulk=True)
+            payload, status = _do_approve(row["id"], restaurant_id, google, bulk=True, user=user)
             if status == 200 and payload.get("ok"):
                 approved += 1
                 if payload.get("auto_posted"):
@@ -589,7 +596,7 @@ def approve_all_reviews_api(current_user):
     # this route, its mobile twin and Ask's confirm all do it.
     data = request.get_json(silent=True) or {}
     payload, status = _do_approve_all(current_user["restaurant_id"], data.get("limit", 25),
-                                      review_ids=data.get("review_ids"))
+                                      review_ids=data.get("review_ids"), user=current_user)
     return jsonify(**payload), status
 
 
@@ -707,7 +714,7 @@ def _do_retract(rid, restaurant_id):
 def approve(rid, current_user):
     _body = request.get_json(silent=True) or {}
     payload, status = _do_approve(rid, current_user["restaurant_id"],
-                                  confirm_flagged=_body.get("confirm_flagged") is True)
+                                  confirm_flagged=_body.get("confirm_flagged") is True, user=current_user)
     return jsonify(**payload), status
 
 
@@ -3681,6 +3688,14 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
         # Stored with the model's own text, so a later engine version
         # re-validates it rather than serving this verdict (insight_store.get).
         _ist_m.put(rid, "marketing", _fp_m, dict(_checks, insight=insight), raw=_raw_m)
+        # Kept as history, not only overwritten (ai_reads; memory audit
+        # 9/29/26): what the marketing read said, for the next read and Ask.
+        try:
+            import ai_reads
+            ai_reads.record_read(rid, "marketing_read", insight, subject="marketing",
+                                 meta={"fingerprint": _fp_m})
+        except Exception as _are:
+            print(f"[MktInsight] read not kept as history: {_are}")
         return _mkt_insight_out(rid, insight, raw, _checks), 200
     except Exception as e:
         import traceback; traceback.print_exc()
@@ -4209,7 +4224,7 @@ def food_cost_waste_trend(current_user):
     except Exception as e:
         return jsonify(ok=False, weeks=[], error=_safe_err(e)), 500
 
-def _do_generate_content(restaurant_id, content_type, topic, from_calendar=False):
+def _do_generate_content(restaurant_id, content_type, topic, from_calendar=False, user_id=None):
     """Write one marketing post — the one body behind /api/generate-content
     and /mobile/api/marketing/generate-content. The two had drifted: the web
     answered a rate limit with 200 and no `ok`, the phone a failed model call
@@ -4227,7 +4242,7 @@ def _do_generate_content(restaurant_id, content_type, topic, from_calendar=False
         # A calendar idea's angle was written by a model: the post is written
         # from it, but it is never the owner's word for an offer (AI-2).
         result = generate_content(content_type, topic, restaurant_id=restaurant_id,
-                                  topic_is_owner=not from_calendar)
+                                  topic_is_owner=not from_calendar, user_id=user_id)
     except Exception as e:
         # A budget stop says the account is paused, never "try again" (AI-11).
         from ai_utils import AIBudgetExceeded, user_facing_error
@@ -4245,9 +4260,12 @@ def _do_generate_content(restaurant_id, content_type, topic, from_calendar=False
             pass
     from response_validation import validation_of as _rv_gc
     # content_log_id: the generated row, which a publish of this text sends
-    # back so the post completes it by id (MB-8).
+    # back so the post completes it by id (MB-8). draft_ref: the model's
+    # draft kept for measuring the owner's edit (marketing_voice; a save or
+    # a publish may send it back — the content-log id finds it too).
     return {"ok": True, "content": result, "tags": _post_tags_safe(restaurant_id, topic, result),
-            "validation": _rv_gc(result), "content_log_id": getattr(result, "content_log_id", None)}, 200
+            "validation": _rv_gc(result), "content_log_id": getattr(result, "content_log_id", None),
+            "draft_ref": getattr(result, "draft_ref", None)}, 200
 
 
 @client_bp.route("/api/generate-content", methods=["POST"])
@@ -4255,8 +4273,25 @@ def _do_generate_content(restaurant_id, content_type, topic, from_calendar=False
 def gen_content(current_user):
     data = request.get_json(silent=True) or {}
     payload, status = _do_generate_content(current_user["restaurant_id"], data.get("type"),
-                                           data.get("topic"), from_calendar=bool(data.get("from_calendar")))
+                                           data.get("topic"), from_calendar=bool(data.get("from_calendar")),
+                                           user_id=current_user.get("id"))
     return jsonify(**payload), status
+
+
+def _content_log_id_of(data):
+    """The generated content-log row a request names (social_routes._content_log_id)."""
+    from social_routes import _content_log_id
+    return _content_log_id(data)
+
+
+def _draft_ref_of(data):
+    """The model draft a request names (`draft_ref`, from a generate or a
+    Studio draft — marketing_voice.record_draft), or None; never guessed."""
+    try:
+        v = int((data or {}).get("draft_ref") or 0)
+    except (TypeError, ValueError):
+        return None
+    return v if v > 0 else None
 
 
 def _post_tags_safe(rid, topic, body):
@@ -4335,7 +4370,7 @@ def marketing_drafts_api(current_user):
 def marketing_draft_approve(draft_id, current_user):
     import marketing_drafts as _md
     result = _md.approve_draft(draft_id, current_user["restaurant_id"],
-                               user_id=current_user.get("id"), role=current_user.get("role"))
+                               user_id=current_user.get("id"), role=current_user.get("role"), user=current_user)
     return jsonify(**result), (200 if result.get("ok") else 403)
 
 
@@ -4525,7 +4560,7 @@ def _do_post_to_google(current_user, data):
         from marketing import log_content
         log_content(rid, "google_promo", (data.get("topic") or summary)[:80],
                     post_id=result.get("name") or None, post_platform="google", body=summary,
-                    content_log_id=_content_log_id(data))
+                    content_log_id=_content_log_id(data), user=current_user)
     except Exception:
         pass
     if data.get("rec_key"):
@@ -4573,11 +4608,16 @@ def content_calendar(current_user):
                                                 force=force, phone=False)
     return jsonify(**payload), status
 
-def _do_regenerate_draft(review_id, restaurant_id):
+def _do_regenerate_draft(review_id, restaurant_id, user=None):
     """Regenerate AI draft for a review — delegates to drafter.draft_response()
     so a regenerated draft gets the same quality/model/urgency-escalation as
-    the original draft (this used to be a separate, drifted reimplementation)."""
-    from models import get_conn, get_approved_examples
+    the original draft (this used to be a separate, drifted reimplementation).
+
+    The draft being replaced was turned down: an unedited model draft is
+    kept as its hash and signals, never its text, with who asked
+    (models.record_reply_rejection; memory audit 9/29/26, rejected_drafts)
+    — only the regenerate count used to survive."""
+    from models import get_conn
     from drafter import draft_response, DraftNotReplaced
     from ai_utils import ai_rate_limited
     if ai_rate_limited(f"regen:{restaurant_id}", max_calls=10, window_secs=60):
@@ -4597,15 +4637,19 @@ def _do_regenerate_draft(review_id, restaurant_id):
     if r.get("response_status") in ("posted", "approved"):
         return {"ok": False, "error": "This reply has already been sent. Retract it before replacing it.",
                 "response_status": r.get("response_status")}, 409
+    if (r.get("draft_response") or "").strip() and not int(r.get("draft_edited") or 0):
+        from models import record_reply_rejection
+        record_reply_rejection(restaurant_id, review_id, r["draft_response"], rating=r.get("rating"),
+                               how="regenerate", user=user)
     restaurant = get_restaurant(restaurant_id)
     try:
-        examples = get_approved_examples(restaurant_id, limit=4)
+        # Style examples are the drafter's own pick for this review's star
+        # band (memory audit 9/29/26, reply_voice).
         new_draft = draft_response(
             review_id, r.get("rating", 3), r["text"], r.get("sentiment", "neutral"),
             restaurant.name,
             voice_notes=restaurant.voice_notes or "",
             restaurant_id=restaurant_id,
-            approved_examples=examples,
             sign_off=restaurant.sign_off_name or restaurant.name,
             never_say=restaurant.never_say or "",
             language=getattr(restaurant, "response_language", None) or None,
@@ -4650,7 +4694,7 @@ def _same_words(a, b) -> bool:
     return " ".join(str(a or "").split()) == " ".join(str(b or "").split())
 
 
-def _do_save_draft(review_id, restaurant_id, draft_text, by_model=False):
+def _do_save_draft(review_id, restaurant_id, draft_text, by_model=False, user=None):
     """Store the reply text for a review.
 
     What counts as the OWNER's edit (reply_edits, the drafter's style note
@@ -4658,7 +4702,9 @@ def _do_save_draft(review_id, restaurant_id, draft_text, by_model=False):
     only whitespace is not an edit, and a rewrite Ask's model wrote at the
     owner's request (`by_model`, ask_cavnar_tools.edit_review_reply) is a
     fresh model draft — the next edit is measured against it — never the
-    owner's own words (re-audit C11)."""
+    owner's own words (re-audit C11). The unedited model draft it replaces
+    was turned down, and is recorded as such (models.record_reply_rejection,
+    how='rewrite'; memory audit 9/29/26, rejected_drafts)."""
     draft = (draft_text or "").strip()
     if not draft:
         return {"ok": False, "error": "Draft cannot be empty"}, 200
@@ -4700,9 +4746,16 @@ def _do_save_draft(review_id, restaurant_id, draft_text, by_model=False):
         # original_draft keeps the model's text as it stood before the first
         # edit (suggested vs chosen, audit #41); a save that changes nothing
         # but whitespace is not an edit.
-        cur_row = conn.execute("SELECT draft_response FROM reviews WHERE id=? AND restaurant_id=?",
+        cur_row = conn.execute("SELECT draft_response, rating, COALESCE(draft_edited, 0) AS edited, response_status "
+                               "FROM reviews WHERE id=? AND restaurant_id=?",
                                (review_id, restaurant_id)).fetchone()
         edited = 0 if (cur_row is not None and _same_words(cur_row["draft_response"], draft)) else 1
+        if by_model and edited and cur_row is not None and not cur_row["edited"] \
+                and cur_row["response_status"] not in ("posted", "approved") \
+                and (cur_row["draft_response"] or "").strip():
+            from models import record_reply_rejection
+            record_reply_rejection(restaurant_id, review_id, cur_row["draft_response"], rating=cur_row["rating"],
+                                   how="rewrite", user=user)
         if by_model:
             cur = conn.execute(
                 "UPDATE reviews SET original_draft=NULL, draft_edited=0, "
@@ -4734,7 +4787,7 @@ def _do_save_draft(review_id, restaurant_id, draft_text, by_model=False):
 @client_bp.route("/api/regenerate-draft/<int:review_id>", methods=["POST"])
 @login_required
 def regenerate_draft(review_id, current_user):
-    payload, status = _do_regenerate_draft(review_id, current_user["restaurant_id"])
+    payload, status = _do_regenerate_draft(review_id, current_user["restaurant_id"], user=current_user)
     return jsonify(**payload), status
 
 @client_bp.route("/api/save-draft/<int:review_id>", methods=["POST"])
@@ -9443,11 +9496,19 @@ def _send_supplier_orders(rid, restaurant, groups, actor, resend=False, source="
             _drafted = (drafts or {}).get((group.get("supplier_email") or "").lower(), group["items"])
             _key = lambda it: (it.get("ingredient_id") or it.get("item"), round(float(it.get("qty") or 0), 3))  # noqa: E731
             _edited = sorted(map(_key, _drafted), key=str) != sorted(map(_key, group["items"]), key=str)
+            # Whose send it was (permissions.answer_authority): an admin's
+            # through view-as is support at work — never the owner's record
+            # for supplier trust or order corrections (memory audit 9/29/26,
+            # "view_as"). An automatic send has no person.
+            _po_auth = None
+            if source != "automatic" and actor:
+                from permissions import answer_authority as _aa_po
+                _po_auth = _aa_po(actor)
             _pc = get_conn()
-            _pc.execute("UPDATE purchase_orders SET source=?, draft_items_json=?, edited=? "
+            _pc.execute("UPDATE purchase_orders SET source=?, draft_items_json=?, edited=?, authority=? "
                         "WHERE restaurant_id=? AND po_number=?",
                         (source if source in ("owner", "automatic") else "owner", _json_po.dumps(_drafted),
-                         1 if _edited else 0, rid, po_number))
+                         1 if _edited else 0, _po_auth, rid, po_number))
             _pc.commit()
             _pc.close()
         except Exception as _pe:
@@ -9929,11 +9990,21 @@ def track_reprice(rid, user_id=None):
     """
     try:
         import outcomes
-        from datetime import date as _d
-        month = _d.today().strftime("%Y-%m")
-        return outcomes.start(rid, "reprice", f"reprice:{month}",
-                              f"Menu prices changed in {_d.today().strftime('%B')}",
-                              "food_cost_pct", user_id=user_id, module="inventory", gate="metric")
+        import menu_intelligence
+        # The restaurant's own month (re-audit A8's rule for campaign keys).
+        today = outcomes.local_today(rid)
+        month = today.strftime("%Y-%m")
+        started = outcomes.start(rid, "reprice", f"reprice:{month}",
+                                 f"Menu prices changed in {today.strftime('%B')}",
+                                 "food_cost_pct", user_id=user_id, module="inventory", gate="metric")
+        # Every dish repriced this month is measured by this one tracker
+        # (memory audit 9/29/26, link_trackers): each reprice:<Dish> episode
+        # implemented since the month began is linked to it, so "reprice"
+        # builds a track record here; rec_learning counts one result per
+        # tracker, however many dishes it covers.
+        if started.get("ok"):
+            menu_intelligence.link_month_reprices(rid, started["outcome"]["id"], today.replace(day=1))
+        return started
     except Exception as e:
         import ops
         ops.capture(e, job="reprice_outcome", context=f"restaurant_id={rid}")

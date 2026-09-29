@@ -1167,7 +1167,7 @@ def _generate_marketing_content(restaurant_id, content_type="instagram_post", to
     return {"ok": True, "content_type": content_type, "topic": topic, "content": text}
 
 
-def _edit_review_reply(restaurant_id, review_id=None, draft=None):
+def _edit_review_reply(restaurant_id, review_id=None, draft=None, _viewer=None):
     """Replace a drafted reply's text.
 
     Direct: it edits an unpublished draft and posts nothing. Previously the
@@ -1185,7 +1185,10 @@ def _edit_review_reply(restaurant_id, review_id=None, draft=None):
     # The model wrote this text: it is a fresh draft, not the owner's edit
     # (by_model — re-audit C11), so reply-edit learning never mistakes it
     # for the owner's own words.
-    result, status = client_api._do_save_draft(rid, restaurant_id, text, by_model=True)
+    # The login asking: the draft this rewrite replaces was turned down by
+    # them (models.record_reply_rejection; memory audit 9/29/26).
+    user = getattr(_viewer, "_ask_dsr_user", None)
+    result, status = client_api._do_save_draft(rid, restaurant_id, text, by_model=True, user=user)
     return {"ok": status == 200 and result.get("ok", False), "review_id": rid, "result": result}
 
 
@@ -1410,6 +1413,46 @@ def _set_goal(restaurant_id, metric=None, target=None, deadline=None, note=None,
     return {"ok": True, "goal": g, "summary": goals.summarise(g)}
 
 
+# How far back Ask looks for the recommendation a tracked change follows,
+# when the model names none (memory audit 9/29/26, link_trackers).
+TRACK_REC_LOOKBACK_DAYS = 14
+
+
+def track_rec_key(restaurant_id, metric, source_key=None, db_path=None):
+    """The recommendation a change Ask is asked to track follows, or None
+    (memory audit 9/29/26, link_trackers). Ask's tracker is keyed
+    ask:<title>, a key no recommendation carries, so its result reached no
+    episode. Now: the key the model passed, when this restaurant has an
+    episode of it; else the ONE recommendation shown in the last
+    TRACK_REC_LOOKBACK_DAYS, still open or taken and not yet measured,
+    whose own metric (outcomes.metric_for_rec) is this one — two
+    candidates is none (never a guess). Never raises."""
+    import outcomes
+    import rec_ledger
+    kw = {"db_path": db_path} if db_path else {}
+    key = str(source_key or "").strip()[:160]
+    try:
+        conn = rec_ledger.get_conn(db_path) if db_path else rec_ledger.get_conn()
+        try:
+            if key and not key.startswith("ask:") and rec_ledger._latest(conn, restaurant_id, key) is not None:
+                return key
+            rows = conn.execute(
+                "SELECT DISTINCT key FROM rec_instances WHERE restaurant_id=? AND tracker_id IS NULL "
+                "AND status IN ('open','accepted','completed','implemented') "
+                "AND last_event_at >= datetime('now', ?)",
+                (restaurant_id, f"-{int(TRACK_REC_LOOKBACK_DAYS)} days")).fetchall()
+        finally:
+            conn.close()
+        want = outcomes.metrics.normalize(metric) if outcomes.metrics.known(metric) else None
+        if not want:
+            return None
+        hits = [r["key"] for r in rows if outcomes.metric_for_rec(restaurant_id, r["key"], **kw)[0] == want]
+        return hits[0] if len(hits) == 1 else None
+    except Exception as e:
+        print(f"[ask_cavnar_tools] tracked change's recommendation not resolved for {restaurant_id}: {e}")
+        return None
+
+
 def _track_outcome(restaurant_id, title=None, metric=None, source_key=None, _viewer=None):
     import outcomes
     if not metric_visible(_viewer, metric):
@@ -1430,8 +1473,10 @@ def _track_outcome(restaurant_id, title=None, metric=None, source_key=None, _vie
                          "their before/after readings don't overlap. Tell the owner it is "
                          "already being tracked.")}
     try:
+        # The tracker measures the recommendation the change follows, when
+        # there is one (track_rec_key) — linked to its episode at start.
         res = outcomes.start(restaurant_id, "ask", f"ask:{title.lower()[:80]}", title, metric,
-                             gate="metric")
+                             gate="metric", rec_key=track_rec_key(restaurant_id, metric, source_key))
     except ValueError as e:
         return {"error": str(e)}
     if not res["ok"]:
@@ -2465,6 +2510,7 @@ TOOLS = [
         "kind": "action",
         "fn": _edit_review_reply,
         "module": "module_reviews",
+        "wants_viewer": True,
         "spec": {
             "name": "edit_review_reply",
             "description": (
@@ -2634,7 +2680,9 @@ TOOLS = [
                              "additionalProperties": False, "properties": {
                 "title": {"type": "string", "description": "The change, in the owner's words."},
                 "metric": {"type": "string"},
-                "source_key": {"type": "string"}}},
+                "source_key": {"type": "string", "description": (
+                    "The key of the recommendation this change follows, when it follows one Cavnar AI made "
+                    "(e.g. slow_day:Tuesday, trim_day:Monday). Leave it out otherwise.")}}},
         },
     },
 

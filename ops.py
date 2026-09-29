@@ -2148,6 +2148,14 @@ _RETENTION_DAYS = {
     # delegate's per-login silence, a month after it ended.
     "rec_rank_builds":    int(os.getenv("RETAIN_REC_RANK_BUILDS_DAYS", "400")),
     "rec_silences":       int(os.getenv("RETAIN_REC_SILENCES_DAYS", "30")),
+    # Memory audit 9/29/26, workstream M6: a reply draft the owner turned
+    # down, as a hash and signals (never its words) — the drafter's edit
+    # note reads the last 90 days (models.REJECTIONS_KEEP_DAYS).
+    "reply_draft_rejections": int(os.getenv("RETAIN_REPLY_REJECTIONS_DAYS", "90")),
+    # Marketing copy a model drafted (marketing_voice.DRAFTS_KEEP_DAYS): what
+    # went out keeps its original on marketing_edits; the rest is only
+    # needed to see which drafts were regenerated rather than used.
+    "marketing_model_drafts": int(os.getenv("RETAIN_MKT_MODEL_DRAFTS_DAYS", "90")),
 }
 
 # Each table's own timestamp column — they do not agree on a name.
@@ -2169,6 +2177,7 @@ _RETENTION_COLUMN = {
     "alert_storm_caps": "started_at", "login_history": "created_at",
     "ask_memory_archive": "archived_at",
     "rec_rank_builds": "built_at", "rec_silences": "until",
+    "reply_draft_rejections": "created_at", "marketing_model_drafts": "created_at",
 }
 # Rows a table's retention never deletes, whatever their age: the owner's
 # ANSWERS to recommendations are kept for good (memory audit 9/29/26,
@@ -2230,6 +2239,10 @@ _RETENTION_FLOOR_DAYS = {
     # delegate's per-login silence is read only while it holds (M1,
     # who_answered).
     "rec_rank_builds": 365, "rec_silences": 1,
+    # M6: the drafter's edit note reads 90 days of turned-down reply drafts
+    # (models.REJECTIONS_KEEP_DAYS); the marketing voice reads 90 days of
+    # model drafts to see which were regenerated (marketing_voice.DRAFTS_KEEP_DAYS).
+    "reply_draft_rejections": 90, "marketing_model_drafts": 90,
 }
 _RETENTION_ROLLUP = {
     "ai_usage": "ai_utils:rollup_usage",
@@ -2285,6 +2298,9 @@ _RETENTION_READERS = {
     "ask_memory_archive": (("models.get_ask_memory_archive", 365, None),),
     "rec_rank_builds": (("admin_ops.rank_learning", 365, None),),
     "rec_silences": (("rec_ledger.silenced_keys", 1, None), ("rec_ledger.login_silences", 1, None)),
+    "reply_draft_rejections": (("models.get_reply_rejection_signals", "models.REJECTIONS_KEEP_DAYS", None),),
+    "marketing_model_drafts": (("marketing_voice.regenerated", "marketing_voice.DRAFTS_KEEP_DAYS", None),
+                               ("marketing_voice._match_draft", 1, None)),
 }
 # Readers that reach past their table's window today, each with the reason
 # it is left for now — found by the mapped sweep (9/29/26) and listed so
