@@ -492,14 +492,14 @@ def index(current_user):
             labor['staff_constraints'] = {}
         # Staff notes for constraint-aware overtime display
 
-        # Add period-over-period delta
+        # Week on week: the last complete payroll week against the one
+        # before, only when back to back and costed alike (memory audit
+        # 9/29/26, labor_periods) — it compared this window with an
+        # overlapping window saved on an earlier sync.
         try:
-            from models import get_labor_history as _glh_delta
-            _hist = _glh_delta(rid, limit=2)
-            if len(_hist) >= 2:
-                labor['trend_delta'] = round(labor['overall_labor_pct'] - _hist[1]['labor_pct'], 1)
-            else:
-                labor['trend_delta'] = None
+            from models import labor_period_change as _lpc_dash
+            _chg = _lpc_dash(rid)
+            labor['trend_delta'] = _chg.get("delta") if _chg.get("comparable") else None
         except Exception:
             labor['trend_delta'] = None
         # The salaries beside hourly labor (labor.salaried_summary): the owner's

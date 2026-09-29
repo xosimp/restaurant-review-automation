@@ -441,10 +441,12 @@ def save_synced_shifts(restaurant_id, csv_str, source):
     except Exception:
         pass
     try:
-        from labor import analyse_shifts_for_restaurant
-        from models import save_labor_daily_history, save_labor_snapshot
-        # The per-day archive takes the whole synced file; the period
-        # snapshot (what the labor alert reads) is the current window.
+        from models import save_labor_daily_history, refresh_labor_periods
+        # The per-day archive takes the whole synced file; the labor periods
+        # (what the labor alert, Home and the trend read) are the payroll
+        # weeks derived from it — never the current window, which appended
+        # an overlapping "period" on every sync (memory audit 9/29/26,
+        # labor_periods).
         from labor import full_history_by_day
         # Provenance for the days this pull covered (DH1-9): which provider,
         # when, and whether the business day had ENDED when it was read — a
@@ -456,11 +458,7 @@ def save_synced_shifts(restaurant_id, csv_str, source):
                 "window": (dates[0], dates[-1]) if dates else None,
                 "complete_through": ct.isoformat() if ct else None}
         save_labor_daily_history(restaurant_id, full_history_by_day(restaurant_id), provenance=prov)
-        analysis = analyse_shifts_for_restaurant(restaurant_id)
-        dr = analysis.get("date_range", {})
-        if dr.get("start") and dr.get("end"):
-            save_labor_snapshot(restaurant_id, dr["start"], dr["end"], analysis["overall_labor_pct"],
-                                analysis.get("costed_labor", analysis["total_labor_cost"]), analysis["total_sales"])
+        refresh_labor_periods(restaurant_id)
     except Exception as e:
         log.warning(f"[{source} sync] daily history archive error: {e}")
     # The synced figures just changed: the cached Labor read (and Home and

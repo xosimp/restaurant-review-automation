@@ -1208,18 +1208,14 @@ def sync_to_db(restaurant_id: int) -> dict:
             "rpower_last_synced": datetime.utcnow().isoformat(timespec="seconds"),
             "rpower_sync_error": None})
 
-        # Same archival step toast.sync_to_db does: without it the rolling
-        # 60-day CSV is refreshed nightly and labor_daily_history — which is
-        # what year-over-year and the trend charts actually read — never
-        # accumulates for a POS-connected restaurant.
+        # The per-day labor archive (labor_daily_history — what year-over-
+        # year and the trend charts read) and the payroll-week labor periods
+        # were written by pos.save_synced_shifts above, with the pull's
+        # provenance. This used to save the whole file again without it and
+        # then append a rolling-window "period": Simple EJ's 9/1 period was
+        # saved three times on its first day (memory audit 9/29/26,
+        # labor_periods).
         try:
-            from labor import analyse_shifts_for_restaurant
-            from models import save_labor_daily_history, save_labor_snapshot
-            # Whole file for the per-day archive; the current window for
-            # the period snapshot the labor alert reads (re-audit A-12).
-            from labor import full_history_by_day
-            save_labor_daily_history(restaurant_id, full_history_by_day(restaurant_id))
-            analysis = analyse_shifts_for_restaurant(restaurant_id)
             # Same as the Toast sync: keep menu_items current so the dish a
             # post names, the count sheet and recipe drafts have RPOWER's
             # items to match against — not only when Food Cost is open.
@@ -1239,12 +1235,6 @@ def sync_to_db(restaurant_id: int) -> dict:
                     _dsr_backfill.backfill(_r_dsr, days=60)
             except Exception as _menu_e:
                 log.warning("[rpower sync] menu item discovery error for %s: %s", restaurant_id, _menu_e)
-            dr = analysis.get("date_range", {})
-            if dr.get("start") and dr.get("end"):
-                save_labor_snapshot(restaurant_id, dr["start"], dr["end"],
-                                    analysis["overall_labor_pct"],
-                                    analysis.get("costed_labor", analysis["total_labor_cost"]),
-                                    analysis["total_sales"])
         except Exception as e:
             log.warning("[rpower] labor archive failed for %s: %s", restaurant_id, e)
 

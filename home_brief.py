@@ -1542,9 +1542,23 @@ def _build(current_user, present=True):
             # whole-period gap.
             savings = float(labor.get("potential_savings_weekly") or 0)
             dow = labor.get("dow_summary") or {}
-            hist_pcts = [h["labor_pct"] for h in labor_hist[::-1] if h.get("labor_pct") is not None]
-            prev_pct = hist_pcts[-2] if len(hist_pcts) >= 2 else None
-            delta = _pct_delta(pct, prev_pct) if prev_pct is not None else None
+            # Labor by payroll week (memory audit 9/29/26, labor_periods): the
+            # spark is the weeks that have ended, and "vs the week before" is
+            # the last complete week against the one before it — back to back,
+            # costed on the same basis — never this 28-day window against an
+            # overlapping window saved on an earlier sync.
+            _done_weeks = [h for h in labor_hist if h.get("complete")]
+            hist_pcts = [h["labor_pct"] for h in _done_weeks[::-1] if h.get("labor_pct") is not None]
+            try:
+                from models import labor_period_change as _lpc
+                _wk_change = _lpc(rid)
+            except Exception:
+                _wk_change = {"delta": None, "comparable": False, "reason": None}
+            delta = _wk_change.get("delta") if _wk_change.get("comparable") else None
+            _wk_cur = (_wk_change.get("latest") or {}).get("labor_pct")
+            prev_pct = (_wk_change.get("previous") or {}).get("labor_pct") if delta is not None else None
+            _labor_week_key = (f"labor_over:{str(_done_weeks[0].get('period_start') or '')[:10]}"
+                               if _done_weeks and _done_weeks[0].get("period_start") else "labor_over")
             # The analysis's own partial-data flags (CA3 F4): how many of
             # its shift days carry sales is the coverage every labor claim
             # rests on, and each flag weakens the evidence.
@@ -1588,9 +1602,11 @@ def _build(current_user, present=True):
                          # Labor on the days with sales, the pair of total_sales (NS3 H4).
                          evidence=f"${float(labor.get('costed_labor', labor.get('total_labor_cost')) or 0):,.0f} labor on ${float(labor.get('total_sales') or 0):,.0f} sales"
                          + (f" · {_cover_note}" if _cover_note else ""),
-                         # The labor alert's key: its latest period.
-                         rec_key=(f"labor_over:{str(labor_hist[0].get('period_start') or '')[:10]}"
-                                  if labor_hist and labor_hist[0].get("period_start") else "labor_over"),
+                         # The labor alert's key: the calendar payroll week the
+                         # alert is about (notify keys it the same), so a
+                         # window sliding a day no longer opens a new episode
+                         # for the same condition (memory audit 9/29/26).
+                         rec_key=_labor_week_key,
                          ev={"n": _with_sales, "kind": "trading_days", "coverage": _lab_cov, "flags": _lab_flags,
                              "basis": f"{_with_sales} days of shifts with sales"
                                       + (f" of {days}" if _missing else "")},
@@ -1630,10 +1646,10 @@ def _build(current_user, present=True):
                             if_ignored=f"{worst_day}s keep running about {worst_pct - labor_target:.0f} pts over {_labor_tgt_for['label']}",
                             effort="medium")
             if delta is not None and delta >= 1.5:
-                add_change(f"Labor % rose {delta:+.1f} pts vs the previous period ({pct:.1f}%)", "bad", "labor")
+                add_change(f"Labor % rose {delta:+.1f} pts on the week before ({_wk_cur:.1f}% last week)", "bad", "labor")
             elif delta is not None and delta <= -1.5:
-                add_change(f"Labor % fell {delta:+.1f} pts vs the previous period ({pct:.1f}%)", "good", "labor")
-                add_win("labor_improving", f"Labor down {abs(delta):.1f} pts", f"{pct:.1f}% this period vs {prev_pct:.1f}% before.", "labor")
+                add_change(f"Labor % fell {delta:+.1f} pts on the week before ({_wk_cur:.1f}% last week)", "good", "labor")
+                add_win("labor_improving", f"Labor down {abs(delta):.1f} pts", f"{_wk_cur:.1f}% last week vs {prev_pct:.1f}% the week before.", "labor")
             if last_schedule and _ts(last_schedule.get("generated_at")) and _ts(last_schedule["generated_at"]) >= since_dt:
                 hs = float(last_schedule.get("hours_scheduled") or 0); hb = float(last_schedule.get("hours_budget") or 0)
                 add_change(f"New schedule built for {_mdy(last_schedule.get('week_start')) or 'next week'}" + (f" · {int(round(hb - hs))} hrs under budget" if hb and hs and hs < hb else ""), "good", "labor", last_schedule.get("generated_at"))
@@ -1650,12 +1666,12 @@ def _build(current_user, present=True):
             snapshot.append({"key": "labor", "label": "Labor", "status": "available",
                              "value": "—" if _lab_short else f"{pct:.1f}", "unit": "" if _lab_short else "% of sales",
                              "delta": (None if _lab_short else
-                                       ({"value": f"{delta:+.1f} pts", "label": "vs prior period", "good": delta <= 0} if delta is not None else {"value": f"target {labor_target:.0f}%", "label": "", "good": over <= 0})),
+                                       ({"value": f"{delta:+.1f} pts", "label": "vs the week before", "good": delta <= 0} if delta is not None else {"value": f"target {labor_target:.0f}%", "label": "", "good": over <= 0})),
                              "secondary": [{"label": "Target" if _labor_tgt_for["source"] == "set" else "Starting target", "value": f"{labor_target:.0f}%"}, {"label": "Over 40h", "value": str(ot_now["people"] if ot_now else 0)}, {"label": "Recoverable", "value": f"${savings:,.0f}/wk" if savings > 0 else "—"}],
                              "interpretation": _lab_interp,
                              "state": _lab_state,
                              "below_floor": _lab_short, "stale": _lab_stale,
-                             "spark": hist_pcts[-8:], "spark_label": "labor % by period" if len(hist_pcts) > 1 else None,
+                             "spark": hist_pcts[-8:], "spark_label": "labor % by week" if len(hist_pcts) > 1 else None,
                              "attention": (over >= LABOR_OVER_TARGET_PTS and not _lab_short) or bool(ot_now), "sample": False,
                              # The last day the shifts cover, not when a file
                              # was written (CA3 F2).
@@ -2336,7 +2352,9 @@ def _build(current_user, present=True):
 
     charts = {
         "rating": [{"label": _mdy(w.get("label"), (w.get("week_key") or "")[:4]), "avg": w.get("avg_rating") or 0, "pos": w.get("positive") or 0, "neg": w.get("negative") or 0, "total": w.get("total") or 0} for w in sentiment if w.get("total")],
-        "labor": [{"label": _mdy(h.get("period_start")), "pct": h.get("labor_pct")} for h in labor_hist[::-1] if h.get("labor_pct") is not None] if labor_live else [],
+        # One bar per payroll week that has ended (memory audit 9/29/26,
+        # labor_periods) — never overlapping windows, never a partial week.
+        "labor": [{"label": _mdy(h.get("period_start")), "pct": h.get("labor_pct")} for h in labor_hist[::-1] if h.get("labor_pct") is not None and h.get("complete")] if labor_live else [],
         "labor_target": labor_target, "labor_target_label": _labor_tgt_for["label"],
         "labor_days": ([{"day": k[:3], "pct": v} for k, v in (labor.get("dow_summary") or {}).items() if v] if (labor_live and labor) else []),
         "waste": ([{"item": w.get("item"), "cost": float(w.get("waste_cost") or 0)} for w in (inv.get("waste_items") or [])[:5]] if inv_live else []),

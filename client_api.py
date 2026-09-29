@@ -4735,6 +4735,9 @@ def labor_trend_api(current_user):
                 "pct": round(h["labor_pct"], 1),
                 "labor": h["total_labor"],
                 "sales": h["total_sales"],
+                # A payroll week still in progress (memory audit 9/29/26,
+                # labor_periods): drawn as partial, never read as a trend.
+                "complete": bool(h.get("complete")),
             })
         resp = jsonify(weeks=weeks)
         resp.headers['Cache-Control'] = 'no-store'
@@ -5669,19 +5672,16 @@ def _do_upload_data(restaurant_id, data_type, f, current_user, source="upload", 
                     "The upload could not be saved completely, so your previous shift data is still in place. "
                     "Please try again." if _restored else
                     "The upload could not be saved completely. Please upload it again.")), 500
-            # Persist this upload as a labor_history snapshot so trend chart is immediately correct
+            # The labor periods the trend chart, the alert and Home read: the
+            # payroll weeks derived from the per-day archive just written —
+            # never this upload's window, which appended an overlapping
+            # "period" per upload (memory audit 9/29/26, labor_periods).
             try:
-                from models import save_labor_snapshot as _sls
-                _dr = _shift_analysis.get("date_range", {})
-                if _dr.get("start") and _dr.get("end"):
-                    _sls(restaurant_id, _dr["start"], _dr["end"],
-                         _shift_analysis["overall_labor_pct"],
-                         # labor on the days with sales, the pair of total_sales (NS3 H4)
-                         _shift_analysis.get("costed_labor", _shift_analysis["total_labor_cost"]),
-                         _shift_analysis["total_sales"])
+                from models import refresh_labor_periods as _rlp
+                _rlp(restaurant_id)
             except Exception as _snap_e:
-                # The trend chart's snapshot; not what YoY generation reads,
-                # so the upload stands — but it is reported, not printed.
+                # Not what YoY generation reads, so the upload stands — but
+                # it is reported, not printed.
                 import ops as _ops_snap
                 _ops_snap.capture(_snap_e, job="shifts_upload_snapshot", context=f"restaurant_id={restaurant_id}")
             try:

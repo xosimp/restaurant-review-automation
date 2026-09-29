@@ -1833,9 +1833,12 @@ def labor_note(restaurant_id, analysis: dict, **kwargs) -> str:
     for k in [k for k in _NOTE_CACHE if k[0] == restaurant_id]:
         _NOTE_CACHE.pop(k, None)          # one state per restaurant
     # Stored with when the model wrote it, so the Labor tab's "as of" is
-    # the note's own age, not the five-minute route cache's (DH3-2).
+    # the note's own age, not the five-minute route cache's (DH3-2) — and a
+    # read served from insight_store after a deploy keeps the time it was
+    # written there (memory audit 9/29/26, labor_read).
     from datetime import timezone as _tz_note
-    _NOTE_CACHE[key] = (note, datetime.now(_tz_note.utc).replace(tzinfo=None))
+    written = getattr(note, "written_at", None) or datetime.now(_tz_note.utc).replace(tzinfo=None)
+    _NOTE_CACHE[key] = (note, written)
     return note
 
 
@@ -1904,56 +1907,44 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
         except Exception:
             pass
 
-    # Pull labor history for trend awareness
+    # Labor by payroll week, for trend awareness (memory audit 9/29/26,
+    # labor_periods). The history used to be a rolling window appended on
+    # every sync and every note build — this function saved one itself —
+    # so the same 14 days recosted from 31.1% to 29.5% came back three
+    # seconds later as "Labor's down 1.6 points from last upload". A trend
+    # is now only ever the latest COMPLETE week against the week before it,
+    # back to back and costed on the same basis (models.labor_period_change).
     trend_context = ""
     has_trend = False
-    trend_diff = None           # this period's labor % minus the last comparable upload's
+    trend_diff = None           # the last complete week's labor % minus the week before's
     if restaurant_id:
         try:
-            from models import get_labor_history, save_labor_snapshot
-            history = get_labor_history(restaurant_id, limit=3)
-            if history:
-                trend_lines = []
-                for h in history:
-                    # M/D/YY — the model repeats what it is given (A-25).
-                    from time_utils import mdy_range as _mdy_range
-                    trend_lines.append(f"{_mdy_range(h['period_start'], h['period_end'])}: {h['labor_pct']}% labor")
-                trend_context = f"\n- Previous uploads (for trend comparison): {'; '.join(trend_lines)}"
-                # Only call it a trend when the two periods are actually
-                # comparable. Snapshots cover whatever window each upload
-                # happened to carry, so a three-week upload against a
-                # one-day upload used to produce a confident "labor is UP
-                # 8.2 points" that was mostly a difference in window.
-                if len(history) >= 2:
-                    _cur_days = int((analysis.get("date_range") or {}).get("days") or 0)
-                    _prev_days = _period_length_days(history[0])
-                    _comparable = (
-                        _cur_days >= 5 and _prev_days >= 5
-                        and min(_cur_days, _prev_days) / max(_cur_days, _prev_days) >= 0.6
-                    )
-                    if _comparable:
-                        has_trend = True
-                        diff = analysis['overall_labor_pct'] - history[0]['labor_pct']
-                        trend_diff = round(diff, 1)
-                        if abs(diff) >= 1:
-                            direction = "UP" if diff > 0 else "DOWN"
-                            trend_context += f"\n- TREND: Labor % is {direction} {abs(diff):.1f} points from last upload — mention this trend explicitly"
-                    else:
-                        trend_context += (
-                            f"\n- The previous upload covers {_prev_days} days and this one covers {_cur_days}. "
-                            "Those windows are too different to compare — do NOT state a trend, a direction, "
-                            "or a point change between them, and do not write a forecast.")
-            # Save this upload as a new snapshot
-            dr = analysis.get('date_range', {})
-            if dr.get('start') and dr.get('end'):
-                save_labor_snapshot(
-                    restaurant_id, dr['start'], dr['end'],
-                    analysis['overall_labor_pct'],
-                    # The labor on the days with sales: the snapshot's
-                    # labor_pct is that over total_sales (NS3 H4).
-                    analysis.get('costed_labor', analysis['total_labor_cost']),
-                    analysis['total_sales']
-                )
+            from models import get_labor_history, labor_period_change
+            from time_utils import mdy_range as _mdy_range
+            weeks = [h for h in get_labor_history(restaurant_id, limit=4) if h.get("complete")][:3]
+            if weeks:
+                # M/D/YY — the model repeats what it is given (A-25).
+                trend_context = ("\n- Labor by payroll week (for trend comparison): "
+                                 + "; ".join(f"{_mdy_range(h['period_start'], h['period_end'])}: "
+                                             f"{h['labor_pct']}% labor" for h in weeks))
+            change = labor_period_change(restaurant_id)
+            if change.get("comparable") and change.get("delta") is not None:
+                has_trend = True
+                trend_diff = change["delta"]
+                if abs(trend_diff) >= 1:
+                    cur, prev = change["latest"], change["previous"]
+                    trend_context += (f"\n- TREND: Labor % is {'UP' if trend_diff > 0 else 'DOWN'} "
+                                      f"{abs(trend_diff):.1f} points week on week "
+                                      f"({_mdy_range(cur['period_start'], cur['period_end'])} against "
+                                      f"{_mdy_range(prev['period_start'], prev['period_end'])}) — "
+                                      "mention this trend explicitly")
+            elif change.get("reason") == "recosted":
+                trend_context += ("\n- The last two weeks were costed on different pay rates or a different "
+                                  "labor source (recosted, not comparable) — do NOT state a trend, a direction "
+                                  "or a point change between them, and do not write a forecast.")
+            elif change.get("reason") == "gap" and weeks:
+                trend_context += ("\n- The last two weeks with figures are not back to back — do NOT state a "
+                                  "trend, a direction or a point change between them, and do not write a forecast.")
         except Exception as le:
             print(f"[labor trend] {le}")
 
@@ -2105,6 +2096,42 @@ The Recommendations section must start with exactly the word "Recommendations:" 
         _ready_lab = _dh_lab.NOT_APPLICABLE
     prompt = _with_ds_lab(prompt, _ready_lab)
 
+    # The context the read is checked under, and the computed FORECAST line
+    # — both from the figures, neither from the model, so a stored read is
+    # re-validated with exactly what a fresh one would be.
+    ctx = labor_read_context(analysis, prompt, restaurant_id=restaurant_id, industry=_bench, diag=_diag,
+                             now=_local_now, staff_notes=staff_notes,
+                             registry_state=_ready_lab.get("data_state"))
+    fc_line = _labor_forecast_line(analysis, trend_diff) if has_trend else None
+
+    def _finish(raw):
+        return _finish_labor_read(raw, ctx, greeting, fc_line, restaurant_id)
+
+    # One stored read per restaurant and prompt, like the Reviews, Food and
+    # Marketing reads (memory audit 9/29/26, labor_read). The prompt IS the
+    # data — every figure, the answered lines, today's date — so the same
+    # figures give the same words on the web and the phone, and a deploy no
+    # longer pays for a new read with new wording, new insight_labor keys
+    # (superseding every unanswered line) and a reset "as of". The model's
+    # own text is stored beside it, so a new validation engine re-validates
+    # it without a model call. labor._NOTE_CACHE stays a front cache only.
+    _fp = None
+    if restaurant_id:
+        try:
+            import insight_store as _ist_lab
+            _fp = _ist_lab.fingerprint(prompt)
+            stored = _ist_lab.get(restaurant_id, "labor", _fp, revalidate=_finish)
+            if isinstance(stored, str) and stored.strip():
+                try:
+                    _at = _ist_lab.latest(restaurant_id, "labor")[1]
+                    stored.written_at = datetime.strptime(str(_at)[:19], "%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    pass
+                return stored
+        except Exception as _se:
+            print(f"[labor insight store] {_se}")
+            _fp = None
+
     msg = create_with_retry(
         get_client(),
         model=model_for("labor_insight"),
@@ -2114,43 +2141,56 @@ The Recommendations section must start with exactly the word "Recommendations:" 
         action="labor_insight",
         readiness=_ready_lab,
     )
-    # Strip any markdown that slips through
-    import re
-    text = extract_text(msg).strip()
+    raw = extract_text(msg).strip()
     if getattr(msg, "stop_reason", None) == "max_tokens":
         raise ValueError("labor insight was truncated")
-    # A FORECAST line the model wrote anyway is not the forecast (H8): it is
-    # removed before anything is checked, and the computed one stands in.
-    text = re.sub(r'(?im)^\s*forecast:.*$\n?', '', text).strip()
-    text = re.sub('\\*\\*(.+?)\\*\\*', lambda m: m.group(1), text)
-    text = re.sub('\\*(.+?)\\*',   lambda m: m.group(1), text)
-    text = re.sub(r'#{1,6}\s', '', text)
-    text = re.sub(r'^\s*[-•]\s', '', text, flags=re.MULTILINE)
-    # The Response Validation Layer (surface labor_insight) replaces the old
-    # presence check, day/role binding, cause check and name check: the
-    # figures bound to the day, date, role or person they came from; the gap
-    # above target typed as an opportunity (never "saved") over the days it
-    # rests on; the industry band only as the registry's benchmark; the
-    # diagnosis's driver the only cause ("likely"), its alternative an
-    # association; scheduled hours, a partial period and an old window
-    # disclosed when the read leaves them out.
-    ctx = labor_read_context(analysis, prompt, restaurant_id=restaurant_id, industry=_bench, diag=_diag,
-                             now=_local_now, staff_notes=staff_notes,
-                             registry_state=_ready_lab.get("data_state"))
-    out = rv.enforce(text, ctx, marker=False)
-    enforcing = rv.mode_for("labor_insight") == "enforce"
+    out = _finish(raw)
     # The computed forecast is recorded (and later scored) whatever the
-    # read's verdict: it is Python's figure, not the model's.
-    fc_line = _labor_forecast_line(analysis, trend_diff) if has_trend else None
+    # read's verdict: it is Python's figure, not the model's. Once, when the
+    # read is written — a stored read served again records nothing new.
     if fc_line and restaurant_id:
         try:
             import insight_store as _ist_fc
             _ist_fc.record_weekly_forecast(
                 restaurant_id, "labor_week", analysis.get("overall_labor_pct"),
                 basis=f"this period's labor % carried forward ({analysis.get('period_days')} days); "
-                      f"{trend_diff:+.1f} points on the last comparable upload")
+                      f"{trend_diff:+.1f} points on the last comparable week")
         except Exception as _fe:
             print(f"[labor forecast log] {_fe}")
+    if _fp and str(out).strip():
+        try:
+            import insight_store as _ist_put
+            _ist_put.put(restaurant_id, "labor", _fp, out, raw=raw)
+        except Exception as _pe:
+            print(f"[labor insight store] {_pe}")
+    out.written_at = datetime.utcnow().replace(microsecond=0)
+    return out
+
+
+def _finish_labor_read(raw, ctx, greeting, fc_line, restaurant_id):
+    """The model's labor text as the owner is shown it: the FORECAST line it
+    wrote anyway removed (the computed one stands in), markdown stripped,
+    held to the Response Validation Layer (surface labor_insight), and the
+    fixed "couldn't be checked" copy when nothing survives. One body for a
+    fresh read and a stored read re-validated on a new engine version.
+
+    The layer replaces the old presence check, day/role binding, cause check
+    and name check: the figures bound to the day, date, role or person they
+    came from; the gap above target typed as an opportunity (never "saved")
+    over the days it rests on; the industry band only as the registry's
+    benchmark; the diagnosis's driver the only cause ("likely"), its
+    alternative an association; scheduled hours, a partial period and an old
+    window disclosed when the read leaves them out."""
+    import re
+    # A FORECAST line the model wrote anyway is not the forecast (H8): it is
+    # removed before anything is checked, and the computed one stands in.
+    text = re.sub(r'(?im)^\s*forecast:.*$\n?', '', str(raw or "")).strip()
+    text = re.sub('\\*\\*(.+?)\\*\\*', lambda m: m.group(1), text)
+    text = re.sub('\\*(.+?)\\*',   lambda m: m.group(1), text)
+    text = re.sub(r'#{1,6}\s', '', text)
+    text = re.sub(r'^\s*[-•]\s', '', text, flags=re.MULTILINE)
+    out = rv.enforce(text, ctx, marker=False)
+    enforcing = rv.mode_for("labor_insight") == "enforce"
     if not str(out).strip():
         # An AI-quality finding (fix round G #58), not a failing job — and
         # the fixed copy served in its place is recorded as the fallback it
@@ -2450,17 +2490,18 @@ def _drop_note_bullets(bullets, prompt, restaurant_id=None, data_blocks=None, ro
 
 def _labor_forecast_line(analysis: dict, trend_diff) -> str:
     """The note's FORECAST line, computed rather than written (H8): this
-    period's labor % carried forward, with the measured move on the last
-    comparable upload stated beside it — never a trajectory projected into
-    a figure nobody measured. Logged as forecast_log kind labor_week."""
+    period's labor % carried forward, with the measured move between the
+    last two complete, comparable payroll weeks stated beside it
+    (models.labor_period_change) — never a trajectory projected into a
+    figure nobody measured. Logged as forecast_log kind labor_week."""
     try:
         cur = float(analysis.get("overall_labor_pct"))
     except (TypeError, ValueError):
         return None
     if trend_diff is None:
         return None
-    move = (f"{'up' if trend_diff > 0 else 'down'} {abs(trend_diff):.1f} points on the last upload"
-            if abs(trend_diff) >= 1 else "about level with the last upload")
+    move = (f"{'up' if trend_diff > 0 else 'down'} {abs(trend_diff):.1f} points on the week before"
+            if abs(trend_diff) >= 1 else "about level with the week before")
     return (f"FORECAST: Labor ran {cur:g}% this period, {move}; if the schedule doesn't change, expect "
             f"next week near {cur:g}% (a projection, not a measurement).")
 

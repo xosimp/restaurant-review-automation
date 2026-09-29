@@ -932,6 +932,17 @@ def ensure_columns(db_path: str = DB_PATH):
         ("ingredients", "external_ref", "TEXT"),
         ("menu_items", "external_ref", "TEXT"),
         ("labor_daily_history", "total_hours", "REAL"),
+        # The costing basis each day was last costed on (the rates, the
+        # salaried set, where the labor came from), and the labor period
+        # store's own shape: calendar payroll weeks derived from the daily
+        # history, replaced in place, never a rolling window appended on
+        # every sync (memory audit 9/29/26, labor_periods).
+        ("labor_daily_history", "basis", "TEXT"),
+        ("labor_history", "basis", "TEXT"),
+        ("labor_history", "days", "INTEGER"),
+        ("labor_history", "kind", "TEXT"),
+        ("labor_history", "updated_at", "TEXT"),
+        ("labor_history", "recosted_from", "REAL"),
         ("users", "role", "TEXT DEFAULT 'client'"),
         ("users", "google_id", "TEXT"),
         ("users", "apple_user_id", "TEXT"),
@@ -3319,6 +3330,13 @@ def init_db(db_path: str = DB_PATH):
     backfill_seeded_targets(db_path=db_path)
     # After init_dsr: its POS evidence is one of the tables it reads.
     backfill_missing_sales_null(db_path=db_path)
+    # Labor period history as payroll weeks, the legacy rolling windows
+    # marked unread (memory audit 9/29/26, labor_periods) — after
+    # ensure_columns() has added labor_history.kind.
+    try:
+        backfill_labor_periods(db_path=db_path)
+    except Exception as e:
+        print(f"[labor periods] boot backfill skipped: {e}")
     print(f"Database initialised at {db_path}")
 
 
@@ -7331,13 +7349,53 @@ def get_reply_edit_summaries(restaurant_id: int, limit: int = 12, db_path: str =
     return out
 
 
+def labor_rates_key(restaurant_id: int, db_path: str = DB_PATH) -> str:
+    """The costing half of a labor day's basis (memory audit 9/29/26,
+    labor_periods): a short hash of the per-role rates, the restaurant's
+    hourly rate and the salaried set — the inputs that re-cost the same
+    shifts to a different labor figure. The other half is the day's labor
+    source (save_labor_daily_history): POS wages and an upload's rates are
+    different bases too."""
+    import hashlib
+    r = get_restaurant(restaurant_id, db_path)
+    try:
+        rates = get_role_rates(restaurant_id, db_path=db_path) or {}
+    except Exception:
+        rates = {}
+    blob = json.dumps({
+        "rates": sorted((str(k).strip().lower(), round(float(v), 2)) for k, v in rates.items()
+                        if isinstance(v, (int, float)) and v),
+        "hourly": round(float(getattr(r, "hourly_rate", 0) or 0), 2) if r else 0,
+        "salaried": sorted((salaried_name_key(x["name"]), x["annual"]) for x in salaried_staff(r)) if r else [],
+    }, sort_keys=True)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:10]
+
+
+# Labor period rows (labor_history.kind). A PAYROLL_WEEK is derived from
+# labor_daily_history by refresh_labor_periods and is the only kind the
+# product writes now; PERIOD is one a caller stored explicitly; ROLLING_WINDOW
+# marks the legacy rows every sync and every note build used to append —
+# overlapping 14/28-day windows, and recosts of the same one — which no
+# reader reads (memory audit 9/29/26, labor_periods).
+LABOR_PERIOD_WEEK = "payroll_week"
+LABOR_PERIOD_EXPLICIT = "period"
+LABOR_PERIOD_LEGACY = "rolling_window"
+# How far back the weekly periods are kept current: a year and a week, so
+# last year's same week is always there to compare.
+LABOR_PERIOD_WEEKS = 53
+
+
 def save_labor_snapshot(restaurant_id: int, period_start: str, period_end: str,
                          labor_pct: float, total_labor: float, total_sales: float,
-                         db_path: str = DB_PATH):
-    """Save a labor analysis snapshot for trend tracking — once per period.
-    It was written on every insight view, so the second view found "the
-    previous upload" to be the same period and compared it with itself: the
-    trend and forecast lines vanished.
+                         db_path: str = DB_PATH, basis: str = None, days: int = None,
+                         kind: str = LABOR_PERIOD_EXPLICIT):
+    """Store one labor period, REPLACED IN PLACE — never a second row for the
+    same period (memory audit 9/29/26, labor_periods). A recost used to
+    append: the same 14 days read 31.1% then 29.5% three seconds apart, and
+    the labor read told the owner "Labor's down 1.6 points from last upload".
+    A payroll week is keyed by its start (its end grows while it is in
+    progress); an explicit period by its start and end. A row whose basis
+    changed keeps the figure it replaced in `recosted_from`.
 
     Never for a period with no sales: its labor % is a stand-in 0, and a
     (0.0%, $0) row was later handed to the labor note as a "previous upload"
@@ -7347,49 +7405,211 @@ def save_labor_snapshot(restaurant_id: int, period_start: str, period_end: str,
             return
     except (TypeError, ValueError):
         return
+    kind = kind or LABOR_PERIOD_EXPLICIT
     conn = get_conn(db_path)
     try:
-        same = conn.execute("SELECT 1 FROM labor_history WHERE restaurant_id=? AND period_start IS ? AND period_end IS ? "
-                            "AND ABS(COALESCE(labor_pct, 0) - COALESCE(?, 0)) < 0.05 LIMIT 1",
-                            (restaurant_id, period_start, period_end, labor_pct)).fetchone()
-        if same:
-            return
-        conn.execute("""
-            INSERT INTO labor_history (restaurant_id, period_start, period_end, labor_pct, total_labor, total_sales)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (restaurant_id, period_start, period_end, labor_pct, total_labor, total_sales))
+        if kind == LABOR_PERIOD_WEEK:
+            row = conn.execute("SELECT id, labor_pct, basis FROM labor_history WHERE restaurant_id=? AND kind=? "
+                               "AND period_start=? ORDER BY id DESC LIMIT 1",
+                               (restaurant_id, kind, period_start)).fetchone()
+        else:
+            row = conn.execute("SELECT id, labor_pct, basis FROM labor_history WHERE restaurant_id=? "
+                               "AND COALESCE(kind, '') != ? AND period_start IS ? AND period_end IS ? "
+                               "ORDER BY id DESC LIMIT 1",
+                               (restaurant_id, LABOR_PERIOD_LEGACY, period_start, period_end)).fetchone()
+        if row is None:
+            conn.execute("INSERT INTO labor_history (restaurant_id, period_start, period_end, labor_pct, total_labor, "
+                         "total_sales, basis, days, kind, updated_at) VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))",
+                         (restaurant_id, period_start, period_end, labor_pct, total_labor, total_sales,
+                          basis, days, kind))
+        else:
+            recosted = row["labor_pct"] if (basis and row["basis"] and basis != row["basis"]
+                                            and row["labor_pct"] is not None and labor_pct is not None
+                                            and abs(float(row["labor_pct"]) - float(labor_pct)) >= 0.05) else None
+            conn.execute("UPDATE labor_history SET period_end=?, labor_pct=?, total_labor=?, total_sales=?, "
+                         "basis=COALESCE(?, basis), days=COALESCE(?, days), kind=?, updated_at=datetime('now'), "
+                         "recosted_from=COALESCE(?, recosted_from) WHERE id=?",
+                         (period_end, labor_pct, total_labor, total_sales, basis, days, kind, recosted, row["id"]))
         conn.commit()
     finally:
         conn.close()
 
 
+def _week_start_of(day, week_start_day):
+    from datetime import timedelta as _td_w
+    return day - _td_w(days=(day.weekday() - int(week_start_day or 0)) % 7)
+
+
+def refresh_labor_periods(restaurant_id: int, db_path: str = DB_PATH, today=None) -> int:
+    """The restaurant's labor period history as calendar-aligned payroll
+    weeks (restaurants.week_start_day), derived from labor_daily_history's
+    FINAL days and written into labor_history in place (memory audit
+    9/29/26, labor_periods). Called wherever the daily history is saved (a
+    POS sync, an upload); every reader reads the result. A week's labor % is
+    its labor on the days with sales over those days' sales — the analysis's
+    own rule. A week whose days were costed on two bases is `mixed`, and is
+    compared with nothing. A week that has ended runs to its last calendar
+    day; the week in progress to its last day with figures. Returns the
+    weeks written."""
+    from datetime import date as _date_lp, timedelta as _td_lp
+    r = get_restaurant(restaurant_id, db_path)
+    if r is None:
+        return 0
+    wsd = int(getattr(r, "week_start_day", 0) or 0)
+    today = today or _restaurant_today(restaurant_id)
+    since = _week_start_of(today - _td_lp(weeks=LABOR_PERIOD_WEEKS), wsd).isoformat()
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT date, labor_cost, sales, basis FROM labor_daily_history WHERE restaurant_id=? "
+                            "AND date >= ? AND COALESCE(final, 1) = 1 ORDER BY date",
+                            (restaurant_id, since)).fetchall()
+    finally:
+        conn.close()
+    weeks = {}
+    for row in rows:
+        try:
+            d = _date_lp.fromisoformat(str(row["date"])[:10])
+        except ValueError:
+            continue
+        w = weeks.setdefault(_week_start_of(d, wsd), {"labor": 0.0, "sales": 0.0, "days": 0, "bases": set(),
+                                                      "last": d})
+        w["last"] = max(w["last"], d)
+        sales = row["sales"]
+        if sales is None or float(sales) <= 0:
+            continue
+        w["labor"] += float(row["labor_cost"] or 0)
+        w["sales"] += float(sales)
+        w["days"] += 1
+        w["bases"].add(row["basis"] or "unknown")
+    written = 0
+    for start, w in sorted(weeks.items()):
+        if not w["days"] or w["sales"] <= 0:
+            continue
+        week_end = start + _td_lp(days=6)
+        end = week_end if week_end < today else w["last"]
+        basis = next(iter(w["bases"])) if len(w["bases"]) == 1 else "mixed"
+        save_labor_snapshot(restaurant_id, start.isoformat(), end.isoformat(),
+                            round(w["labor"] / w["sales"] * 100, 1), round(w["labor"], 2), round(w["sales"], 2),
+                            db_path=db_path, basis=basis, days=w["days"], kind=LABOR_PERIOD_WEEK)
+        written += 1
+    return written
+
+
 def get_labor_history(restaurant_id: int, limit: int = 4,
                       db_path: str = DB_PATH) -> list:
-    """Return recent labor snapshots for trend awareness.
+    """The restaurant's labor periods, newest first: [{period_start,
+    period_end, labor_pct, total_labor, total_sales, days, basis, kind,
+    complete, comparable, recosted_from}] — calendar payroll weeks
+    (refresh_labor_periods) plus any period a caller stored, never the
+    legacy rolling windows (memory audit 9/29/26, labor_periods). One row
+    per period (the newest), so a chart never stacks two bars on one label.
 
-    save_labor_snapshot() inserts a new row every time an insight is
-    generated, not just on a genuinely new upload — a restaurant whose
-    data hasn't changed can accumulate many rows for the same
-    period_start/period_end. Without dedup, those duplicates share one
-    x-axis label on the client's trend chart, which makes Swift Charts'
-    BarMark treat them as a stacked series (same category = stack) and
-    sum them into one wildly-inflated bar. Keep only the latest snapshot
-    (highest id) per distinct period.
-    """
+    `complete` — the period has ended (a payroll week whose last day is
+    before the restaurant's today). `comparable` — this period can be read
+    against the one listed after it (the period just before it): both
+    complete, adjacent (no gap between them), and costed on the same single
+    basis. A comparison with anything else is "recosted, not comparable" or
+    no comparison at all (labor_period_change)."""
+    from datetime import date as _date_gh, timedelta as _td_gh
     conn = get_conn(db_path)
-    rows = conn.execute("""
-        SELECT h.period_start, h.period_end, h.labor_pct, h.total_labor, h.total_sales
-        FROM labor_history h
-        JOIN (
-            SELECT period_start, MAX(id) AS max_id
-            FROM labor_history
-            WHERE restaurant_id=? AND total_sales > 0
-            GROUP BY period_start
-        ) latest ON h.id = latest.max_id
-        ORDER BY h.period_start DESC LIMIT ?
-    """, (restaurant_id, limit)).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        rows = conn.execute("""
+            SELECT h.period_start, h.period_end, h.labor_pct, h.total_labor, h.total_sales,
+                   h.basis, h.days, h.kind, h.recosted_from
+            FROM labor_history h
+            JOIN (
+                SELECT period_start, MAX(id) AS max_id
+                FROM labor_history
+                WHERE restaurant_id=? AND total_sales > 0 AND COALESCE(kind, '') != ?
+                GROUP BY period_start
+            ) latest ON h.id = latest.max_id
+            ORDER BY h.period_start DESC LIMIT ?
+        """, (restaurant_id, LABOR_PERIOD_LEGACY, int(limit) + 1)).fetchall()
+    finally:
+        conn.close()
+    today = _restaurant_today(restaurant_id).isoformat()
+    out = []
+    for r in rows:
+        d = dict(r)
+        end = str(d.get("period_end") or "")[:10]
+        if d.get("kind") == LABOR_PERIOD_WEEK:
+            try:
+                wk_end = (_date_gh.fromisoformat(str(d["period_start"])[:10]) + _td_gh(days=6)).isoformat()
+            except ValueError:
+                wk_end = end
+            d["complete"] = wk_end < today
+        else:
+            d["complete"] = bool(end) and end < today
+        out.append(d)
+    for i, d in enumerate(out):
+        prev = out[i + 1] if i + 1 < len(out) else None
+        d["comparable"] = bool(prev) and _periods_comparable(d, prev)
+    return out[:int(limit)]
+
+
+def _periods_comparable(cur: dict, prev: dict) -> bool:
+    from datetime import date as _date_pc, timedelta as _td_pc
+    if not (cur.get("complete") and prev.get("complete")):
+        return False
+    if not cur.get("basis") or cur.get("basis") in ("mixed", "unknown") or cur.get("basis") != prev.get("basis"):
+        return False
+    try:
+        return (_date_pc.fromisoformat(str(prev["period_end"])[:10]) + _td_pc(days=1)
+                == _date_pc.fromisoformat(str(cur["period_start"])[:10]))
+    except (TypeError, ValueError, KeyError):
+        return False
+
+
+def labor_period_change(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """The one period-on-period labor comparison every surface states
+    (memory audit 9/29/26, labor_periods): the latest COMPLETE period against
+    the one before it, only when the two are adjacent and costed on the same
+    basis. {latest, previous, delta, comparable, reason} — reason "recosted"
+    when the rates or the labor source differ between them ("recosted, not
+    comparable"), "gap" when they are not back to back, "partial" when fewer
+    than two periods have ended, None when comparable."""
+    hist = [h for h in get_labor_history(restaurant_id, limit=6, db_path=db_path) if h.get("complete")]
+    if len(hist) < 2:
+        return {"latest": hist[0] if hist else None, "previous": None, "delta": None, "comparable": False,
+                "reason": "partial"}
+    cur, prev = hist[0], hist[1]
+    comparable = _periods_comparable(cur, prev)
+    reason = None
+    if not comparable:
+        reason = "recosted" if (cur.get("basis") != prev.get("basis") or cur.get("basis") == "mixed") else "gap"
+    delta = (round(float(cur["labor_pct"]) - float(prev["labor_pct"]), 1)
+             if comparable and cur.get("labor_pct") is not None and prev.get("labor_pct") is not None else None)
+    return {"latest": cur, "previous": prev, "delta": delta, "comparable": comparable, "reason": reason}
+
+
+def backfill_labor_periods(db_path: str = DB_PATH, max_seconds: float = 20.0) -> int:
+    """At boot: the legacy rolling-window rows marked (never read again) and
+    every restaurant's payroll weeks derived once from its daily history, so
+    the first read after this deploy sees weeks, not windows (memory audit
+    9/29/26, labor_periods). Idempotent — marking touches only unmarked rows
+    and refresh_labor_periods replaces in place; bounded by `max_seconds`
+    (whatever it did not reach, the next sync or upload refreshes)."""
+    import time as _time_lp
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE labor_history SET kind=? WHERE kind IS NULL", (LABOR_PERIOD_LEGACY,))
+        conn.commit()
+        rids = [row[0] for row in conn.execute(
+            "SELECT DISTINCT restaurant_id FROM labor_daily_history WHERE restaurant_id NOT IN "
+            "(SELECT restaurant_id FROM labor_history WHERE kind=?)", (LABOR_PERIOD_WEEK,)).fetchall()]
+    finally:
+        conn.close()
+    stop = _time_lp.monotonic() + float(max_seconds)
+    done = 0
+    for rid in rids:
+        if _time_lp.monotonic() > stop:
+            break
+        try:
+            refresh_labor_periods(rid, db_path=db_path)
+            done += 1
+        except Exception as e:
+            print(f"[labor periods] backfill skipped restaurant {rid}: {e}")
+    return done
 
 
 def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
@@ -7833,6 +8053,14 @@ def save_labor_daily_history(restaurant_id: int, by_day: dict,
     day still trading when it was read); days outside keep what they had.
     Without it (an upload) the provenance columns are left as they were."""
     from datetime import datetime as _dt
+    # Every day saved here is re-costed on the restaurant's current rates:
+    # the basis says which rates and which labor source, so two periods
+    # costed differently are never compared as if the labor moved (memory
+    # audit 9/29/26, labor_periods). A day keeps its own source's half.
+    try:
+        rates_key = labor_rates_key(restaurant_id, db_path=db_path)
+    except Exception:
+        rates_key = None
     conn = get_conn(db_path)
     prov = provenance or {}
     win = prov.get("window") or None
@@ -7865,9 +8093,12 @@ def save_labor_daily_history(restaurant_id: int, by_day: dict,
         conn.execute("""
             INSERT INTO labor_daily_history
                 (restaurant_id, date, day_of_week, labor_pct, labor_cost, sales, total_hours,
-                 source, provider, synced_at, final)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 source, provider, synced_at, final, basis)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    CASE WHEN ? IS NULL THEN NULL ELSE ? || ':' || COALESCE(?, 'upload') END)
             ON CONFLICT(restaurant_id, date) DO UPDATE SET
+                basis=CASE WHEN ? IS NULL THEN labor_daily_history.basis
+                           ELSE ? || ':' || COALESCE(excluded.source, labor_daily_history.source, 'upload') END,
                 source=COALESCE(excluded.source, labor_daily_history.source),
                 provider=COALESCE(excluded.provider, labor_daily_history.provider),
                 synced_at=COALESCE(excluded.synced_at, labor_daily_history.synced_at),
@@ -7886,7 +8117,7 @@ def save_labor_daily_history(restaurant_id: int, by_day: dict,
                 total_hours=excluded.total_hours,
                 saved_at=datetime('now')
         """, (restaurant_id, date_str, dow, labor_pct, labor_cost, sales, actual_hours,
-              p_src, p_prov, p_at, p_final))
+              p_src, p_prov, p_at, p_final, rates_key, rates_key, p_src, rates_key, rates_key))
     conn.commit()
     conn.close()
 
