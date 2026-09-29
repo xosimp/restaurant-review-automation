@@ -171,8 +171,10 @@ JOBS = {
     "learning_memory": dict(
         cadence="6am CT daily, after the outcome re-checks", sla_minutes=_D, sends=False, runnable=True,
         label="Learning memory",
-        description="Score Cavnar AI's claims at their horizon and summarise closed quarters of its reads, for "
-                    "every restaurant allowed to teach a learner (bounded, resumable)",
+        description="The nightly learning pass for every restaurant allowed to teach a learner: score Cavnar "
+                    "AI's claims at their horizon, summarise closed quarters of its reads, the what-worked "
+                    "record, trackers for changes made, trigger margins, the learning scorecard and the "
+                    "cross-module links (bounded, resumable)",
         target=("scheduler", "run_learning_memory"), max_minutes=60, retry=True),
     "value_figures": dict(
         cadence="6am CT daily, after outcome evaluations (Intel lane)", sla_minutes=_D, sends=False, runnable=True,
