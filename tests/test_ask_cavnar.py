@@ -370,7 +370,13 @@ def test_intel_context_included_for_full_tier_with_place_id(db_path):
     from models import update_restaurant
     r = _restaurant(db_path, module_reviews=1, module_labor=1, module_inventory=1, module_marketing=1,
                      google_place_id="ChIJtest")
-    update_restaurant(r.id, {"competitor_intel": "Recommendations:\n1. Add a happy hour\n2. Post more photos"}, db_path=db_path)
+    # Dated today: an undated read is never current, so its recommendations
+    # are left out (memory audit 9/29/26, competitor_age —
+    # tests/test_mem_m2_ask_dates.py covers the stale and undated cases).
+    from datetime import datetime as _dt
+    update_restaurant(r.id, {"competitor_intel": "Recommendations:\n1. Add a happy hour\n2. Post more photos",
+                             "competitor_updated_at": _dt.utcnow().strftime("%Y-%m-%d %H:%M:%S")},
+                      db_path=db_path)
     r = get_restaurant(r.id, db_path=db_path)
 
     ctx = build_context(r)

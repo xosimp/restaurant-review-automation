@@ -970,19 +970,35 @@ def _apply_shift(metric, raw, base_ly, win_ly):
 def _seasonal_shift(restaurant_id, metric, base_window, win_window, db_path):
     """(last year's reading over the baseline's weeks, last year's reading
     over the comparison's weeks), or None when last year cannot honestly
-    adjust anything (not enough of it measured)."""
+    adjust anything (not enough of it measured).
+
+    Sales last year come from the POS archive when it covers both windows,
+    else from the ONE last-year reader (metrics.history_sales:
+    canonical_facts.sales_history — the night's report, the owner's
+    imported DSR workbook, the POS sync — both windows on one basis; memory
+    audit 9/29/26, imported_year): an owner who imported a year of
+    workbooks got no seasonal adjustment because the POS archive held 60
+    days."""
+    lys = [(_day(s) - timedelta(days=LY_OFFSET_DAYS), _day(e) - timedelta(days=LY_OFFSET_DAYS))
+           for s, e in (base_window, win_window)]
     out = []
-    for s, e in (base_window, win_window):
-        ls, le = _day(s) - timedelta(days=LY_OFFSET_DAYS), _day(e) - timedelta(days=LY_OFFSET_DAYS)
+    for ls, le in lys:
         # Coverage in TRADING days: a restaurant closed two days a week
         # measured 20 of 28 calendar days and was never adjusted at all.
         cov = metrics.coverage(restaurant_id, metric, ls.isoformat(), le.isoformat(), db_path)
         if cov is not None and (not cov["expected"] or cov["share"] < LY_MIN_COVERAGE):
-            return None
+            out = None
+            break
         v, _ = metrics.measure(restaurant_id, metric, ls.isoformat(), le.isoformat(), db_path)
         if v is None:
-            return None
+            out = None
+            break
         out.append(v)
+    if out is None and metrics.parse(metric)[0] == "sales":
+        got = metrics.history_sales(restaurant_id, lys, db_path=db_path, min_share=LY_MIN_COVERAGE)
+        out = got["values"] if got else None
+    if not out:
+        return None
     return out[0], out[1]
 
 
@@ -1393,8 +1409,10 @@ def _ly_holiday_gaps(a, b):
 def find_concurrent(r, start, end, db_path=DB_PATH, read_windows=None):
     """Every other change that could move this tracker's number:
     [{kind, label, date}] with kind one of tracker | accepted_rec |
-    price_change | event | holiday | closure | sales_move. Any one of them
-    caps the attribution at "associated" (grade).
+    price_change | event | holiday | closure | sales_move, or a change_log
+    kind — menu_add_change, menu_remove_change, roster_add_change,
+    roster_leave_change, pay_change, hours_change, supplier_change … Any
+    one of them caps the attribution at "associated" (grade).
 
     Lasting changes (another tracker, an accepted recommendation, a price)
     count anywhere in [start, end]. One-day ones (an event, a holiday, a
@@ -1471,6 +1489,7 @@ def find_concurrent(r, start, end, db_path=DB_PATH, read_windows=None):
                         "date": _iso(ev["at"])})
         # The reprice tracker IS the price change; every other tracker on a
         # price-moved number sees the prices that moved under it.
+        repriced = set()
         if fam in _PRICE_FAMILIES and not reprice:
             try:
                 for p in conn.execute("SELECT dish, created_at FROM reprice_decisions WHERE restaurant_id=? "
@@ -1478,8 +1497,22 @@ def find_concurrent(r, start, end, db_path=DB_PATH, read_windows=None):
                                       (rid, s, _next_day(e))).fetchall():
                     out.append({"kind": "price_change", "label": f"{p['dish'] or 'A dish'} repriced",
                                 "date": _iso(p["created_at"])})
+                    repriced.add((str(p["dish"] or "").strip().lower(), _iso(p["created_at"])))
             except Exception as ex:
                 print(f"[outcomes] price changes unreadable for {rid}: {ex}")
+        # Every other change on this number from the lasting change log
+        # (memory audit 9/29/26, "change_log"): a price typed on Food Cost
+        # or synced from Back Office, a dish added or taken off, someone
+        # joining or leaving, new pay rates or hours, a supplier. The
+        # reprice tracker's own price moves are its change, not another.
+        try:
+            import change_log as _chlog
+            for c in _chlog.concurrent_changes(rid, fam, s, e, conn=conn, skip_prices=repriced):
+                if reprice and c["kind"] == "price_change":
+                    continue
+                out.append(c)
+        except Exception as ex:
+            print(f"[outcomes] change log unreadable for {rid}: {ex}")
         if fam in _VOLUME_FAMILIES:
             try:
                 for ev in conn.execute("SELECT date, label FROM demand_signals WHERE restaurant_id=? "

@@ -178,6 +178,12 @@ TOOL_SOURCES = {
     "read_demand_forecast": ("sales", "pos", "weather"),
     # The Data Health answer reads every source (DH5 §2.6).
     "read_data_health": tuple(SOURCES),
+    # Ask's reach (memory audit 9/29/26, ask_reach): what is on the books and
+    # the forecasts' scored record rest on these sources' data; the
+    # close-outs are the daily report's.
+    "read_upcoming": ("sales", "labor"),
+    "read_forecast_record": ("sales", "labor", "inventory", "reviews", "marketing", "dsr"),
+    "read_closeouts": ("dsr",),
 }
 
 

@@ -62,6 +62,12 @@ SURFACE_KINDS = {
     "marketing": ("reviews_x_menu", "marketing_x_reviews", "marketing_x_labor"),
 }
 
+# The view a link's line needs (memory_context's viewer check): the most
+# guarded module it quotes — a food cost driver, a labor percentage.
+LINE_MODULE = {"reviews_x_food_cost": "food", "reviews_x_menu": "food", "marketing_x_reviews": "marketing",
+               "marketing_x_labor": "labor", "reviews_x_labor": "labor", "dsr_x_reviews": "labor",
+               "intel_x_reviews": "intel"}
+
 # A link names its modules; a read consulted a module when it read it.
 _MODULE_DATA = {"reviews": "reviews", "labor": "labor", "food_cost": "food_cost", "marketing": "marketing",
                 "intel": "visibility", "dsr": "dsr"}
@@ -459,5 +465,6 @@ def link_lines(req) -> list:
             if d.get("confirm_by"):
                 text += f". Confirm by: {d['confirm_by']}"
         lines.append({"text": text, "date": r.get("last_seen"), "source": "link", "subject": r["link_key"],
-                      "weight": 10.0 - i + (2.0 if m["recurring"] else 0.0), "trusted": False})
+                      "weight": 10.0 - i + (2.0 if m["recurring"] else 0.0), "trusted": False,
+                      "module": LINE_MODULE.get(r["kind"], "food")})
     return lines

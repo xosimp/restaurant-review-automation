@@ -481,6 +481,12 @@ def _remember_own_listing(google_place_id, types, price_level, rating=None, rati
             conn.close()
         for rid in ids:
             _m._invalidate_request_cache(rid)
+        # The rating is overwritten in place; its week-by-week history is
+        # kept (memory audit 9/29/26, public_history).
+        if isinstance(rating, (int, float)) and rating > 0:
+            import event_memory
+            for rid in ids:
+                event_memory.record_own_rating(rid, rating, rating_count, source="places")
     except Exception as e:
         print(f"[competitor] own listing not kept for {google_place_id}: {e}")
 
@@ -1686,6 +1692,15 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
             record_competitor_snapshot(restaurant_id, competitors)
         except Exception as _se:
             print(f"[Competitor] snapshot failed: {_se}")
+        # The market's history, kept forever (memory audit 9/29/26,
+        # public_history): the snapshots are pruned at a year, so openings,
+        # closures and rating moves are kept as events, with a monthly
+        # rating series. Never raises.
+        try:
+            import event_memory
+            event_memory.record_market_snapshot(restaurant_id, competitors)
+        except Exception as _me:
+            print(f"[Competitor] market history not kept: {_me}")
         print(f"[Competitor] Analysis complete for {restaurant.name}")
         try:
             from webhooks import fire_webhook as _fw_intel

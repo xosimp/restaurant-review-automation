@@ -31,6 +31,7 @@ import re
 from datetime import date, datetime, timedelta
 
 from models import DB_PATH
+from canonical_facts import FINAL_SQL      # final days only (memory audit 9/29/26)
 from . import privacy, categories
 
 FEATURE_PREFIX = "staff_per_1k."
@@ -98,7 +99,8 @@ def compute_ratios(restaurant_id: int, today: date = None, db_path: str = DB_PAT
     conn = get_conn(db_path)
     try:
         sales = {str(r["date"])[:10]: float(r["sales"]) for r in conn.execute(
-            "SELECT date, sales FROM labor_daily_history WHERE restaurant_id=? AND sales > 0 AND date >= ? AND date <= ?",
+            "SELECT date, sales FROM labor_daily_history WHERE restaurant_id=? AND sales > 0 AND date >= ? AND date <= ? "
+            f"AND {FINAL_SQL}",
             (restaurant_id, start, today.isoformat())).fetchall()}
     finally:
         conn.close()
@@ -162,7 +164,8 @@ def _own_sales_by_weekday(restaurant_id: int, restaurant=None, db_path: str = DB
     conn = get_conn(db_path)
     try:
         rows = conn.execute("SELECT date, sales FROM labor_daily_history WHERE restaurant_id=? AND sales > 0 "
-                            "AND date >= date('now', ?)", (restaurant_id, f"-{SALES_WEEKS * 7} days")).fetchall()
+                            f"AND date >= date('now', ?) AND {FINAL_SQL}",
+                            (restaurant_id, f"-{SALES_WEEKS * 7} days")).fetchall()
     finally:
         conn.close()
     acc = {}

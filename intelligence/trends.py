@@ -15,7 +15,7 @@ persists each week's point (`persist` → intel_cohort_series), so a trend is
 what was measured then. Every point is rounded as published (the metric's
 coarse step, #47).
 """
-from datetime import date
+from datetime import date, timedelta
 
 import models as _models_mod
 from models import DB_PATH
@@ -148,14 +148,71 @@ def platform_trends(weeks: int = 8, cohorts: dict = None, db_path=DB_PATH) -> li
 
 
 def emerging(limit: int = 6, cohorts: dict = None, db_path=DB_PATH) -> list:
-    return [t for t in platform_trends(cohorts=cohorts, db_path=db_path) if t["relative_per_week"]][:limit]
+    """The steepest movers, read from the FROZEN series (stored_trends —
+    what was measured each week, memory audit PLATFORM-14/16) — never a
+    recomputation of past weeks with tonight's members."""
+    return [t for t in stored_trends(db_path=db_path) if t["relative_per_week"]][:limit]
+
+
+def stored_series(weeks: int = 12, db_path=DB_PATH) -> dict:
+    """{cohort: {metric: [{week, n, p50}]}} from intel_cohort_series, oldest
+    first — each point as it was written the night its week completed."""
+    from .features import iso_week
+    floor = iso_week(date.today() - timedelta(weeks=int(weeks)))
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT cohort, metric, week, n, p50, n_joined, n_left FROM intel_cohort_series "
+                            "WHERE week >= ? ORDER BY week", (floor,)).fetchall()
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+    out = {}
+    for r in rows:
+        out.setdefault(r["cohort"], {}).setdefault(r["metric"], []).append(
+            {"week": r["week"], "n": r["n"], "p50": r["p50"], "n_joined": r["n_joined"], "n_left": r["n_left"]})
+    return out
+
+
+def stored_trends(weeks: int = 12, db_path=DB_PATH) -> list:
+    """platform_trends over the frozen series: the slope of each group's
+    weekly points as they were measured, at MIN_WEEKS_FOR_TREND points."""
+    from .benchmarks import cohort_label
+    out = []
+    for cohort, metrics in stored_series(weeks=weeks, db_path=db_path).items():
+        for metric, pts in metrics.items():
+            if len(pts) < privacy.MIN_WEEKS_FOR_TREND:
+                continue
+            ys = [p["p50"] for p in pts]
+            if any(y is None for y in ys):
+                continue
+            sl = slope(ys)
+            if sl is None:
+                continue
+            base = ys[0] or None
+            out.append(privacy.assert_anonymous({
+                "cohort": cohort,
+                "cohort_label": cohort_label(cohort) if cohort != "platform" else "All restaurants on Cavnar AI",
+                "metric": metric, "weeks": len(pts), "n_latest": pts[-1]["n"], "from": ys[0], "to": ys[-1],
+                "slope_per_week": privacy.round_effect(sl, 4),
+                "relative_per_week": privacy.round_effect(sl / base, 4) if base else None,
+                "n_joined": pts[-1].get("n_joined"), "n_left": pts[-1].get("n_left"),
+                "series": [{"week": p["week"], "n": p["n"], "p50": p["p50"]} for p in pts], "frozen": True}))
+    out.sort(key=lambda t: abs(t["relative_per_week"] or 0), reverse=True)
+    return out
 
 
 def persist(cohorts: dict = None, members: dict = None, db_path=DB_PATH, today: date = None) -> dict:
     """Write the balanced-panel series into intel_cohort_series (the
-    learning pass, nightly): one row per cohort, metric and week, the
-    window's joined/left on each. `members` (jobs.member_info) decides
+    learning pass, nightly): one row per cohort, metric and COMPLETE week,
+    the window's joined/left on it. WRITE-ONCE (memory audit PLATFORM-14):
+    a point is written the first night after its week ends and never again —
+    a point from seven weeks ago used to change as members joined, so what
+    the platform measured then could not be read back. The week still in
+    progress is never written. `members` (jobs.member_info) decides
     eligibility and counts organisations, as for a band (#41)."""
+    from .features import iso_week
+    this_week = iso_week(today or date.today())
     series = panel_series(cohorts=cohorts, db_path=db_path, members=members)
     written = 0
     conn = get_conn(db_path)
@@ -163,13 +220,13 @@ def persist(cohorts: dict = None, members: dict = None, db_path=DB_PATH, today: 
         for cohort, metrics in series.items():
             for metric, s in metrics.items():
                 for p in s["points"]:
-                    conn.execute(
+                    if p["week"] >= this_week:
+                        continue
+                    cur = conn.execute(
                         "INSERT INTO intel_cohort_series (cohort, metric, week, n, p50, n_joined, n_left) "
-                        "VALUES (?,?,?,?,?,?,?) ON CONFLICT(cohort, metric, week) DO UPDATE SET n=excluded.n, "
-                        "p50=excluded.p50, n_joined=excluded.n_joined, n_left=excluded.n_left, "
-                        "computed_at=datetime('now')",
+                        "VALUES (?,?,?,?,?,?,?) ON CONFLICT(cohort, metric, week) DO NOTHING",
                         (cohort, metric, p["week"], p["n"], p["p50"], s["n_joined"], s["n_left"]))
-                    written += 1
+                    written += cur.rowcount or 0
         conn.commit()
     finally:
         conn.close()

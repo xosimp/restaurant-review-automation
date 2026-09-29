@@ -798,6 +798,16 @@ def feed(restaurant_id, user_id=None, db_path=DB_PATH, surface="marketing", user
                           evidence_sources=(["marketing"] + (["food"] if c.get("food") else [])
                                             + [s for s in c.get("sources") or [] if s != "marketing"]),
                           dollar_value=None, expected_metric=card_expected_metric(c)))
+    # Advice pulling against other advice (memory audit 9/29/26,
+    # "conflicts"): promoting a dish whose ingredient is critically low, or
+    # filling a night another surface says to trim — the card carries
+    # `conflict`, or is held when the owner already settled it.
+    try:
+        import lever_conflicts
+        items = lever_conflicts.apply(restaurant_id, items, lever_conflicts.facts(restaurant_id, db_path=db_path),
+                                      db_path=db_path)
+    except Exception as e:
+        print(f"[mkt_opps] lever conflicts unavailable for {restaurant_id}: {e}")
     # Fewer on the first screen while the owner is fatigued
     # (learning_scorecard.volume_limit, memory audit 9/29/26).
     try:
@@ -817,6 +827,7 @@ def feed(restaurant_id, user_id=None, db_path=DB_PATH, surface="marketing", user
         item = {k: c.get(k) for k in _ITEM_KEYS}
         item["rec_id"] = ids.get(c["key"])
         item["confidence"] = c.get("confidence")
+        item["conflict"] = c.get("conflict")
         out.append(item)
     sources = [dict(s) for s in built.get("sources") or [] if margins or s["key"] not in FOOD_SOURCES]
     return {"ok": True, "items": out, "visible": VISIBLE, "sources": sources,

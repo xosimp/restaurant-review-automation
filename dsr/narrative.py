@@ -80,7 +80,7 @@ comparator; a key with "monthly" is a monthly dollar figure.
 """
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from itertools import combinations
 
 import dsr as _dsr
@@ -216,12 +216,31 @@ _OPPORTUNITY_TOKENS = {"recoverable", "opportunity", "opportunities", "potential
 _PLAN_TOKENS = {"budget", "target", "goal", "plan"}
 
 
+# Stored for the record, never a figure to write about: whether the night's
+# forecast rested on the report's own basis (demand.demand_accuracy reads it).
+BOOKKEEPING_FACTS = frozenset({"sales.forecast_same_basis"})
+
+# The Intel block's figures that are not measurements of the night (memory
+# audit 9/29/26, QUALITY-17): the National Weather Service FORECAST for the
+# date (dsr.block_intel says so — the actual weather is its observed_* keys),
+# and what the owner LISTED for it (events, reservations booked). They were
+# typed "measured", so sales plus a forecast cleared the two-measured-blocks
+# floor and Ask could describe "the 6 nights it rained" from probabilities.
+FORECAST_FACT_KEYS = frozenset({"weather_high_f", "weather_low_f", "weather_precip_pct"})
+LISTED_FACT_KEYS = frozenset({"events_listed", "reservations_covers"})
+
+
 def kind_of(key):
     """The money kind of a fact key, from its last part. A `vs_` key is a
     variance — the actual minus its comparator, measured against a plan or a
-    past night — and is measured."""
+    past night — and is measured. The Intel block's forecast weather is a
+    projection and what the owner listed for the date is a plan."""
     last = str(key or "").lower().split(".")[-1]
     toks = set(last.split("_"))
+    if last in FORECAST_FACT_KEYS:
+        return "projection"
+    if last in LISTED_FACT_KEYS:
+        return "plan"
     if last.startswith("vs_"):
         return "measured"
     if toks & _OPPORTUNITY_TOKENS or "at_stake" in last:
@@ -1542,6 +1561,10 @@ def settle_actions(actions, F, ctx, declined, dropped):
         a = dict(s["_a"], rank_score=s["rank_score"])
         if s.get("quiet"):
             a["quiet"] = True
+        # What learning did to its rank, carried to the showing (memory
+        # audit 9/29/26, rank_log; ledger_items passes it to the ledger).
+        if s.get("rank"):
+            a["rank"] = s["rank"]
         # The calibrated dollars beside the model's own figure (F6), the
         # rule Home cards and the one-thing hero follow.
         try:
@@ -1555,13 +1578,46 @@ def settle_actions(actions, F, ctx, declined, dropped):
     # of those presents what that reader was actually shown — on "dsr" and
     # "dsr_email" — through ledger_items() below. The answered check above
     # (silenced keys) is what keeps an answered action out of the report.
+    # Advice pulling against other advice (memory audit 9/29/26,
+    # "conflicts"): an action the owner settled against is dropped, the
+    # weaker of two that conflict carries `conflict`.
+    try:
+        import lever_conflicts
+        _held = []
+        ranked = lever_conflicts.apply(ctx.restaurant_id, ranked,
+                                       lever_conflicts.facts(ctx.restaurant_id, db_path=ctx.db_path),
+                                       db_path=ctx.db_path, held_out=_held)
+        for h in _held:
+            dropped.append({"field": "actions_tomorrow", "text": "", "key": h.get("held_key"),
+                            "why": "the owner chose the other advice when these conflicted"})
+    except Exception as e:
+        _capture(e, ctx.restaurant_id, "lever conflicts")
     # Fewer while the owner is fatigued (learning_scorecard.volume_limit,
-    # memory audit 9/29/26): the top of the ranking only.
+    # memory audit 9/29/26): the top of the ranking only. The ones cut, and
+    # any kind the restaurant's own record holds back (order_recommendations
+    # — "thresholds"), were ranked and not shown: the rank log below counts
+    # them, never the verification's dropped lines.
+    _cut = []
     try:
         import learning_scorecard as _lsc
-        ranked = ranked[:_lsc.volume_limit(ctx.restaurant_id, "dsr_actions", MAX_ACTIONS)]
+        _lim = _lsc.volume_limit(ctx.restaurant_id, "dsr_actions", MAX_ACTIONS)
+        _cut, ranked = ranked[_lim:], ranked[:_lim]
     except Exception as e:
         _capture(e, ctx.restaurant_id, "volume limit")
+    _held_kinds = [{"key": s_["key"]} for s_ in shadow if s_.get("held")]
+    # What learning did to the ranking is logged once per report day
+    # (memory audit 9/29/26, rank_log): every action is shown, so the
+    # alternatives are the ones dropped above for being answered or quiet.
+    try:
+        import rec_ledger
+        not_shown = ([{"key": d.get("key")} for d in (dropped or []) if d.get("key")]
+                     + [dict(a_.get("rank") or {}, key=a_["key"]) for a_ in _cut] + _held_kinds)
+        rec_ledger.log_rank_build(ctx.restaurant_id, "dsr",
+                                  shown=[dict(a.get("rank") or {}, key=a["key"]) for a in ranked],
+                                  not_shown=not_shown[:7],
+                                  version=getattr(learned, "version", None), db_path=ctx.db_path)
+    except Exception as e:
+        _capture(e, ctx.restaurant_id, "rank log")
     return ranked
 
 
@@ -1686,7 +1742,9 @@ def ledger_items(actions) -> list:
                     # An action resting on a figure the Manager DSR never shows
                     # (budget, prime cost, loss lines, the Food block) is never
                     # listed to a manager in the recommendation record either.
-                    "owner_only": any(owner_only_cite(c) for c in cites)})
+                    "owner_only": any(owner_only_cite(c) for c in cites),
+                    # What learning did to its rank (rank_log).
+                    "rank": a.get("rank") if isinstance(a.get("rank"), dict) else None})
     return out
 
 
@@ -1794,11 +1852,16 @@ def _comparisons(blocks):
     return lines
 
 
-def build_prompt(ctx, facts, history=(), issues=(), decisions_text="", declined_keys=(), own=None):
+def build_prompt(ctx, facts, history=(), issues=(), decisions_text="", declined_keys=(), memory_text="",
+                 own=None):
     """(system, user). Compact: every metric by key, the precomputed
     comparisons, what is missing, and — fenced as data — the detail lists,
     the closeout, the earlier summaries, yesterday's priorities and the
-    prediction review (`own`, own_record), open issues and past decisions."""
+    prediction review (`own`, own_record), open issues and past decisions.
+    `memory_text` is memory_context's block for the night (its lines are
+    fenced and dated M/D/YY there): what Cavnar AI remembers — the owner's
+    constraints and goals, its own last read, decisions, and how events,
+    holidays and rain moved sales here — context only, never a figure."""
     from time_utils import mdy
     blocks = _blocks(facts)
     day = ctx.business_date
@@ -1820,7 +1883,7 @@ def build_prompt(ctx, facts, history=(), issues=(), decisions_text="", declined_
             continue
         parts.append(f"[{bname} · {'filed by the manager' if bname == 'closeout' else b.get('source') or 'cavnar'}]")
         for k, v in (b.get("metrics") or {}).items():
-            if _is_number(v):
+            if _is_number(v) and f"{bname}.{k}" not in BOOKKEEPING_FACTS:
                 parts.append(f"{bname}.{k} = {_fmt(v)}{'%' if _is_pct(k) else ''}")
         if bname == "closeout":
             continue                      # its words go in their own fence below
@@ -1863,6 +1926,10 @@ def build_prompt(ctx, facts, history=(), issues=(), decisions_text="", declined_
         parts += ["", "WHAT THE OWNER DECIDED BEFORE", wrap_untrusted(decisions_text.strip())]
     if declined_keys:
         parts += ["", "ALREADY DECLINED (never propose these)"] + [f"- {k}" for k in declined_keys]
+    if memory_text:
+        parts += ["", "WHAT CAVNAR AI REMEMBERS ABOUT THIS RESTAURANT (memory from earlier nights and from the "
+                      "owner — context to explain tonight and to aim tomorrow's priorities; cite no figure from it, "
+                      "only tonight's facts are citable)", memory_text.strip()]
     parts += ["", "Write tomorrow morning's read as the JSON object."]
     return SYSTEM_PROMPT, "\n".join(parts)
 
@@ -1987,6 +2054,64 @@ def _issues(ctx):
     return out
 
 
+# The memory the narrative reads (memory_context, surface "dsr_narrative")
+# is what a MANAGER may read: one narrative renders into the owner's and the
+# manager's report (dsr.access filters it by what each line cites), so owner-
+# only memory must never reach it — the rule decisions.context(sees_loss=
+# False) already follows here.
+NARRATIVE_MEMORY_VIEWER = {"id": None, "role": "manager", "is_admin": 0}
+
+
+def _memory(ctx):
+    """memory_context's block for the night and the next — "" when there is
+    nothing to say or it cannot be read. Never raises."""
+    try:
+        import memory_context
+        day = ctx.business_date
+        block = memory_context.memory_context(
+            ctx.restaurant_id, "dsr_narrative", viewer=NARRATIVE_MEMORY_VIEWER,
+            subjects=[f"date:{day.isoformat()}", f"date:{(day + timedelta(days=1)).isoformat()}",
+                      f"dsr:{day.isoformat()}"],
+            now=datetime.combine(day + timedelta(days=1), datetime.min.time()),
+            db_path=getattr(ctx, "db_path", None))
+        return block.text or ""
+    except Exception as e:
+        _capture(e, getattr(ctx, "restaurant_id", None), "memory_context")
+        return ""
+
+
+def _record_read(ctx, narrative, msg=None):
+    """Keep the night's read as history (ai_reads.record_read, surface
+    "dsr_narrative"): its lead and its priorities, keyed to the night, so a
+    later read can say what this one concluded and a claim can be scored.
+    Never raises."""
+    try:
+        import ai_reads
+        lead = (narrative.get("executive_summary") or {}).get("text") or ""
+        acts = [a.get("text") for a in narrative.get("actions_tomorrow") or [] if isinstance(a, dict) and a.get("text")]
+        text = lead + ("\nTomorrow: " + "; ".join(acts) if acts else "")
+        if not text.strip():
+            return None
+        return ai_reads.record_read(
+            ctx.restaurant_id, "dsr_narrative", text, subject=f"dsr:{ctx.day}",
+            meta={"business_date": ctx.day,
+                  # Each action's own finer number and why (settle_actions:
+                  # expected_metric — "labor_pct_day:Tuesday" for a Tuesday
+                  # cut) and its advice signature, so the claim it becomes
+                  # (ai_reads.dsr_action_claims) is scored on the slice it
+                  # was about, and keyed like the same advice elsewhere.
+                  "actions": [{"key": a.get("key"), "text": a.get("text"), "urgency": a.get("urgency"),
+                               "why": a.get("why"), "expected_metric": a.get("expected_metric"),
+                               "advice_signature": a.get("advice_signature")}
+                              for a in narrative.get("actions_tomorrow") or [] if isinstance(a, dict)],
+                  "verification": {k: (narrative.get("verification") or {}).get(k)
+                                   for k in ("checked", "kept", "measured")}},
+            call_id=getattr(msg, "_cavnar_call_id", None), db_path=getattr(ctx, "db_path", None))
+    except Exception as e:
+        _capture(e, getattr(ctx, "restaurant_id", None), "ai_reads.record_read")
+        return None
+
+
 def _declined_lines(silenced, nfu_keys):
     out = []
     for k in sorted(k for k in (silenced | nfu_keys) if isinstance(k, str) and k.startswith("dsr_action:")):
@@ -2064,8 +2189,9 @@ def _write(ctx, facts):
         own = own_record(ctx, facts)
     except Exception as e:
         _capture(e, rid, "own record")
+    memory_text = _memory(ctx)
     system, user = build_prompt(ctx, facts, history, open_issues, decisions_text,
-                                _declined_lines(declined[0], declined[1]), own=own)
+                                _declined_lines(declined[0], declined[1]), memory_text=memory_text, own=own)
 
     from ai_utils import (AIBudgetExceeded, AIProviderDown, DataNotReady, create_with_retry, extract_text,
                           get_client, is_refusal, model_for, parse_json_reply)
@@ -2167,4 +2293,5 @@ def _write(ctx, facts):
         # The retired slot, null for shipped clients (RETIRED_SINGLES).
         **{k: None for k in RETIRED_SINGLES},
     }
+    _record_read(ctx, narrative, msg)
     return {"ok": True, "narrative": narrative, "reason": None}

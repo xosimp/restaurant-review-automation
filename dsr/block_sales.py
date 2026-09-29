@@ -12,9 +12,12 @@ actually has:
                   weekday last fiscal year,   total is built as the DSR's
                   else 364 back)              net (store.POS_SYNC_SAME_BASIS)
   budget          dsr_budgets, gross and net as the owner entered them
-  forecast        demand.forecast_day — the codebase's one demand forecast
-                  (the median of the last eight same weekdays), used only
-                  where it has enough weeks to exist
+  forecast        demand.forecast_net — the one demand forecast (the median
+                  of the last eight same weekdays, with this restaurant's
+                  measured event effects applied) on the report's OWN basis:
+                  tonight's net is never set beside a forecast built from a
+                  POS total counted another way (memory audit 9/29/26,
+                  net_basis); used only where it has enough weeks to exist
 
 Every comparison is None when its baseline is missing — never 0. A baseline
 of zero is a real night with no sales: its dollar difference is shown, its
@@ -73,13 +76,14 @@ def _baseline_net(ctx, day, provider=None):
 
 
 def _forecast(ctx):
+    """demand.forecast_net for the night — the forecast on the report's own
+    basis — or the unavailable answer with its reason; None on an error."""
     import demand
     try:
-        fc = demand.forecast_day(ctx.restaurant_id, ctx.business_date, db_path=ctx.db_path)
+        return demand.forecast_net(ctx.restaurant_id, ctx.business_date, db_path=ctx.db_path)
     except Exception as e:
         log.warning("dsr sales: forecast unavailable rid=%s: %s", ctx.restaurant_id, e)
         return None
-    return fc if fc and fc.get("available") else None
 
 
 def _service_order(hour):
@@ -265,29 +269,40 @@ def _ready(ctx, data, provider, closed_by):
         metrics[f"vs_{key}_pct"] = _pct(net, base)
         baselines[key] = {"date": other.isoformat() if other else None, "net": base, "source": source}
 
-    fc = _forecast(ctx)
+    fc_any = _forecast(ctx)
+    fc = fc_any if fc_any and fc_any.get("available") else None
     fc_net = float(fc["typical_sales"]) if fc else None
-    # The forecast is built from the nightly POS sync's daily totals
-    # (demand.forecast_day reads labor_daily_history), which are the DSR's
-    # own net only where store.POS_SYNC_SAME_BASIS says so (D1-13): the
-    # basis is recorded beside it, and where it differs the comparison is
-    # said to be across two ways of counting.
-    same_basis = store.pos_sync_same_basis(provider)
+    # Only a forecast on the report's own basis is set beside tonight's net
+    # (demand.forecast_net; memory audit 9/29/26, net_basis): a POS daily
+    # total counted another way — Toast's service charges and refunds — was
+    # told to the owner as "N% below a typical Tuesday" and learned as
+    # forecast bias. `forecast_same_basis` records it on the night, so
+    # demand.demand_accuracy scores only same-basis nights.
     metrics.update({"forecast_net": fc_net, "vs_forecast": _delta(net, fc_net), "vs_forecast_pct": _pct(net, fc_net),
                     # The forecast's own stated range (10th-90th percentile,
                     # None under demand.RANGE_MIN_SAMPLES), stored per night so
                     # demand.demand_accuracy can report how often nights land
                     # inside it (contract K8, CA2 #6).
-                    "forecast_low": (fc or {}).get("low"), "forecast_high": (fc or {}).get("high")})
-    baselines["forecast"] = ({"net": fc_net, "source": "demand.forecast_day", "samples": fc.get("samples"),
-                              "basis": f"median of the last {fc.get('samples')} {fc.get('weekday')}s",
-                              "forecast_basis": "pos_daily_total", "same_basis": same_basis,
-                              "basis_note": None if same_basis else
-                              "Built from the POS's own daily totals, which may count some things (service "
-                              "charges, refunds) differently from tonight's net"}
-                             if fc else {"net": None, "source": None})
+                    "forecast_low": (fc or {}).get("low"), "forecast_high": (fc or {}).get("high"),
+                    "forecast_same_basis": 1.0 if fc else None})
+    if fc:
+        basis = f"median of the last {fc.get('samples')} {fc.get('weekday')}s"
+        if fc.get("effects"):
+            basis += "; " + "; ".join(
+                f"{e.get('display') or e.get('label')} {e['lift_pct']:+.0f}% (measured {e['n']} "
+                f"time{'s' if e['n'] != 1 else ''} here)" for e in fc["effects"])
+        baselines["forecast"] = {"net": fc_net, "source": "demand.forecast_net", "samples": fc.get("samples"),
+                                 "basis": basis, "forecast_basis": fc.get("basis") or "dsr_net", "same_basis": True,
+                                 "base_net": fc.get("base_sales"), "effect_pct": fc.get("effect_pct"),
+                                 "effects": fc.get("effects"), "effect_basis": fc.get("effect_basis"),
+                                 "basis_note": None}
+    else:
+        baselines["forecast"] = {"net": None, "source": None,
+                                 "reason": (fc_any or {}).get("reason") if isinstance(fc_any, dict) else None}
 
-    budget = store.budgets_for(ctx.restaurant_id, day, day, db_path=ctx.db_path).get(day.isoformat()) or {}
+    # The owner's budget for the night, else their goal for nightly sales,
+    # said as a goal (store.night_budget; memory audit 9/29/26).
+    budget = store.night_budget(ctx.restaurant_id, day, db_path=ctx.db_path)
     b_gross, b_net = budget.get("gross"), budget.get("net")
     metrics.update({
         "budget_gross": b_gross, "vs_budget_gross": _delta(gross, b_gross), "vs_budget_gross_pct": _pct(gross, b_gross),
@@ -319,7 +334,8 @@ def _ready(ctx, data, provider, closed_by):
                        "gross_basis": gross_basis, "gross_missing": gross_missing,
                        "net_deductions": data.get("net_deductions") or []},
         "baselines": baselines,
-        "budget": {"gross": b_gross, "net": b_net} if budget else None,
+        "budget": ({"gross": b_gross, "net": b_net, "source": budget.get("source"), "label": budget.get("label"),
+                    "goal_id": budget.get("goal_id")} if budget else None),
         "hourly": hourly,
         "categories": cats,
         "unmapped": unmapped,

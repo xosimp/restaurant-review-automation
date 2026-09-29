@@ -205,3 +205,35 @@ def test_every_surface_names_the_permission_its_reads_fall_under():
     assert set(ai_reads.SURFACE_LABELS) == set(ai_reads.SURFACE_MODULE)
     assert ai_reads.SURFACE_MODULE["monthly_review"] == ai_reads.OWNER_ONLY
     assert set(ai_reads.STORE_SURFACE.values()) <= set(ai_reads.SURFACE_MODULE)
+
+
+def test_ask_serves_a_kept_read_only_to_a_login_that_may_see_its_surface(monkeypatch):
+    """Ask's read_recent_reads scopes every kept read by its surface
+    (ai_reads.SURFACE_MODULE): a manager never reads the owner-level reads
+    (monthly review, digest, brief, Monday plan, nightly report) nor a
+    module read they may not view; the owner reads them all."""
+    import sys
+    import ask_cavnar_tools as tools
+    from models import get_restaurant
+    from tests.test_mem_m2_ask_reach import MANAGER, OWNER
+    real = models.get_conn
+    for mod in list(sys.modules.values()):
+        if mod is not None and getattr(mod, "get_conn", None) is real:
+            monkeypatch.setattr(mod, "get_conn", models.get_conn)
+    rid = create_restaurant(Restaurant(name="Scope Co", owner_email="scope@x.test", timezone="America/Chicago",
+                                       module_reviews=1, module_inventory=1, module_labor=1, module_marketing=1))
+    for surface in ai_reads.SURFACE_MODULE:
+        ai_reads.record_read(rid, surface, f"{surface} said this.")
+
+    def seen(user):
+        view = tools.viewer_restaurant(get_restaurant(rid), user)
+        out = json.loads(tools.run_read_tool("read_recent_reads", rid, {"days": 30}, restaurant=view))
+        return {r["what"] for r in out["reads"]}
+    owner = seen(OWNER)
+    manager = seen(MANAGER)
+    owner_only = {ai_reads.SURFACE_LABELS[s] for s, m in ai_reads.SURFACE_MODULE.items() if m == ai_reads.OWNER_ONLY}
+    assert owner_only <= owner, owner
+    assert not owner_only & manager, "a delegate never reads an owner-level read"
+    assert "the Food Cost read" not in manager and "the food cost diagnosis" not in manager
+    assert {"the Reviews read", "the Marketing read", "the Labor read"} <= manager
+    assert tools._read_surface_allowed("some_new_surface", None, frozenset()) is False, "unknown fails closed"

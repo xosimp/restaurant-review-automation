@@ -113,6 +113,19 @@ SURFACE_MODULE = {
     "dsr_narrative": OWNER_ONLY,
 }
 
+
+
+def line_scope(surface) -> dict:
+    """The memory_context line fields that scope a read or claim of
+    `surface` to the logins who may see it: {"module": <view module>} for a
+    module's read, {"audience": "principals"} for an owner-level one — and
+    for a surface this map does not know (fail closed)."""
+    m = SURFACE_MODULE.get(surface)
+    if not m or m == OWNER_ONLY:
+        return {"audience": "principals"}
+    return {"module": m}
+
+
 # insight_cache kind -> the surface its read is filed under (insight_store.put).
 STORE_SURFACE = {"food": "food_read", "reviews": "review_read", "marketing": "marketing_read",
                  "labor": "labor_read", "mkt_opps": "marketing_feed"}
@@ -1166,8 +1179,9 @@ def claim_lines(req):
                 said += f"; recommended — {r['action']}"
             if r.get("restated_n"):
                 said += f" (restated {r['restated_n']} time{'s' if r['restated_n'] != 1 else ''} since)"
+            scope = line_scope(r["surface"])
             lines.append({"text": said, "date": str(r.get("after_start") or r["created_at"])[:10], "source": "model",
-                          "subject": r.get("rec_key") or r["subject"], "weight": weight, "trusted": False})
+                          "subject": r.get("rec_key") or r["subject"], "weight": weight, "trusted": False, **scope})
             since = []
             state = _live_state(conn, rid, r.get("rec_key"))
             if state:
@@ -1181,7 +1195,7 @@ def claim_lines(req):
                 since.append(so_far or f"to be checked {_mdy(r['horizon_date'])}")
             lines.append({"text": "Since that read: " + "; ".join(s for s in since if s) + ".",
                           "date": None, "source": "system", "subject": r.get("rec_key") or r["subject"],
-                          "weight": weight - 0.5, "trusted": True})
+                          "weight": weight - 0.5, "trusted": True, **scope})
     except Exception as e:
         log.warning("ai_reads: claim lines unavailable rid=%s: %s", rid, e)
         return []

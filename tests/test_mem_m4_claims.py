@@ -184,7 +184,8 @@ def test_the_next_diagnosis_of_the_subject_reads_the_last_claim_and_what_followe
     block = memory_context.memory_context(rid, "review_diagnosis",
                                           subjects=["category:service", "diag_review:service"])
     text = block.text
-    assert "LAST CLAIM:" in text
+    import memory_context
+    assert memory_context.SECTION_TITLES["last_claim"] + ":" in text
     assert "LAST READ on category:service" in text and "Friday dinner runs a server short." in text
     assert ai_guard.UNTRUSTED_OPEN in text, "the model's own words are fenced"
     assert "Since that read: Answered Done" in text and "the expected change held" in text

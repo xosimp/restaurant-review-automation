@@ -19,8 +19,7 @@ import metrics
 from models import get_conn, DB_PATH
 
 
-def set_goal(restaurant_id, metric, target, deadline=None, note=None, user_id=None,
-             db_path=DB_PATH):
+def _checked(metric, target, deadline):
     if not metrics.known(metric):
         raise ValueError(f"unknown metric {metric}")
     try:
@@ -29,6 +28,34 @@ def set_goal(restaurant_id, metric, target, deadline=None, note=None, user_id=No
         raise ValueError("target must be a number")
     if deadline:
         date.fromisoformat(str(deadline)[:10])          # validates, raises on garbage
+    return metric, target
+
+
+def _targets_changed(restaurant_id):
+    """A goal is the target every module judges against (owner_memory.
+    target_for, memory audit 9/29/26 owner_goals): drop its short cache and
+    Ask's snapshot so the new target reads at once."""
+    try:
+        import owner_memory
+        owner_memory.invalidate_targets(restaurant_id)
+        owner_memory.invalidate(restaurant_id)
+    except Exception:
+        pass
+
+
+def set_goal(restaurant_id, metric, target, deadline=None, note=None, user_id=None,
+             db_path=DB_PATH, authority=None, source=None):
+    """Set the ACTIVE goal on a metric, replacing the one before it.
+
+    `authority` is permissions.answer_authority of the login setting it: a
+    goal is the target Labor, Food Cost, the DSR and the alerts judge the
+    figure against, so only an account holder's (or an internal caller's,
+    None) goal takes effect here — a teammate's or an admin's is stored as
+    PROPOSED instead (propose_goal) and an account holder confirms it."""
+    if authority in ("delegate", "admin"):
+        return propose_goal(restaurant_id, metric, target, deadline=deadline, note=note, user_id=user_id,
+                            db_path=db_path, authority=authority, source=source)
+    metric, target = _checked(metric, target, deadline)
     base = metrics.trailing(restaurant_id, metric, db_path=db_path)
     conn = get_conn(db_path)
     try:
@@ -38,14 +65,118 @@ def set_goal(restaurant_id, metric, target, deadline=None, note=None, user_id=No
                      "AND status='active'", (restaurant_id, metric))
         cur = conn.execute(
             "INSERT INTO owner_goals (restaurant_id, metric, target, deadline, baseline_value, "
-            "baseline_detail, note, created_by) VALUES (?,?,?,?,?,?,?,?)",
+            "baseline_detail, note, created_by, authority, source, confirmed_by, confirmed_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
             (restaurant_id, metric, target, str(deadline)[:10] if deadline else None,
-             base["value"], base["detail"], (note or "")[:200] or None, user_id))
+             base["value"], base["detail"], (note or "")[:200] or None, user_id,
+             authority or ("system" if user_id is None else None), (source or "")[:20] or None, user_id))
         conn.commit()
         gid = cur.lastrowid
     finally:
         conn.close()
+    _targets_changed(restaurant_id)
     return next(g for g in progress(restaurant_id, db_path=db_path) if g["id"] == gid)
+
+
+def propose_goal(restaurant_id, metric, target, deadline=None, note=None, user_id=None, db_path=DB_PATH,
+                 authority="delegate", source=None):
+    """A goal that waits for an account holder: stored 'proposed', read by
+    nothing that judges a figure until confirm_goal makes it active. A new
+    proposal on the same metric replaces the one still waiting. Returns the
+    proposal (with "proposed": True and its summary)."""
+    metric, target = _checked(metric, target, deadline)
+    base = metrics.trailing(restaurant_id, metric, db_path=db_path)
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE owner_goals SET status='replaced' WHERE restaurant_id=? AND metric=? "
+                     "AND status='proposed'", (restaurant_id, metric))
+        cur = conn.execute(
+            "INSERT INTO owner_goals (restaurant_id, metric, target, deadline, baseline_value, baseline_detail, "
+            "note, created_by, status, authority, source) VALUES (?,?,?,?,?,?,?,?,'proposed',?,?)",
+            (restaurant_id, metric, target, str(deadline)[:10] if deadline else None, base["value"], base["detail"],
+             (note or "")[:200] or None, user_id, authority, (source or "")[:20] or None))
+        conn.commit()
+        gid = cur.lastrowid
+    finally:
+        conn.close()
+    _targets_changed(restaurant_id)
+    g = next((p for p in proposed(restaurant_id, db_path=db_path) if p["id"] == gid), {"id": gid})
+    return dict(g, proposed=True, summary=describe_target(g) if g.get("metric") else None)
+
+
+def proposed(restaurant_id, db_path=DB_PATH) -> list:
+    """Goals waiting for an account holder to confirm, newest first, each
+    with its label and unit."""
+    conn = get_conn(db_path)
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM owner_goals WHERE restaurant_id=? AND status='proposed' ORDER BY id DESC",
+            (restaurant_id,)).fetchall()]
+    except Exception:
+        rows = []
+    finally:
+        conn.close()
+    for g in rows:
+        try:
+            info = metrics.describe(g["metric"])
+            g.update({"label": info["label"], "unit": info["unit"], "lower_is_better": info["lower_is_better"]})
+        except Exception:
+            g.update({"label": g["metric"], "unit": ""})
+        g["summary"] = describe_target(g)
+    return rows
+
+
+def confirm_goal(restaurant_id, goal_id, user_id=None, db_path=DB_PATH):
+    """An account holder confirms a proposed goal: it becomes the active one
+    on its metric (replacing the one before) and the target from now on.
+    Returns the goal, or None when there is no such proposal here."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT metric FROM owner_goals WHERE id=? AND restaurant_id=? AND status='proposed'",
+                           (goal_id, restaurant_id)).fetchone()
+        if not row:
+            return None
+        conn.execute("UPDATE owner_goals SET status='replaced' WHERE restaurant_id=? AND metric=? "
+                     "AND status='active'", (restaurant_id, row["metric"]))
+        conn.execute("UPDATE owner_goals SET status='active', confirmed_by=?, confirmed_at=datetime('now') "
+                     "WHERE id=? AND restaurant_id=?", (user_id, goal_id, restaurant_id))
+        conn.commit()
+    finally:
+        conn.close()
+    _targets_changed(restaurant_id)
+    return next((g for g in progress(restaurant_id, db_path=db_path) if g["id"] == goal_id), None)
+
+
+def decline_goal(restaurant_id, goal_id, user_id=None, db_path=DB_PATH) -> bool:
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute("UPDATE owner_goals SET status='declined', confirmed_by=?, confirmed_at=datetime('now') "
+                           "WHERE id=? AND restaurant_id=? AND status='proposed'", (user_id, goal_id, restaurant_id))
+        conn.commit()
+        ok = cur.rowcount > 0
+    finally:
+        conn.close()
+    _targets_changed(restaurant_id)
+    return ok
+
+
+def describe_target(g) -> str:
+    """"Labor % 25% by 12/31/26" — a goal's target in a line, M/D/YY."""
+    from time_utils import mdy
+    unit = g.get("unit")
+    if unit is None:
+        try:
+            unit = metrics.describe(g["metric"])["unit"]
+        except Exception:
+            unit = ""
+    label = g.get("label") or g.get("metric")
+    try:
+        t = float(g["target"])
+        shown = f"${t:,.0f}" if unit == "$" else f"{t:g}{unit}"
+    except (TypeError, ValueError, KeyError):
+        shown = str(g.get("target"))
+    by = f" by {mdy(g['deadline'])}" if g.get("deadline") else ""
+    return f"{label} {shown}{by}"
 
 
 def end_goal(restaurant_id, goal_id, db_path=DB_PATH):
@@ -54,9 +185,11 @@ def end_goal(restaurant_id, goal_id, db_path=DB_PATH):
         cur = conn.execute("UPDATE owner_goals SET status='abandoned' WHERE id=? AND restaurant_id=? "
                            "AND status='active'", (goal_id, restaurant_id))
         conn.commit()
-        return cur.rowcount > 0
+        ok = cur.rowcount > 0
     finally:
         conn.close()
+    _targets_changed(restaurant_id)
+    return ok
 
 
 def _met(info, current, target):
@@ -151,6 +284,8 @@ def mark_achieved(restaurant_id, db_path=DB_PATH, today=None):
         finally:
             conn.close()
         closed.append(g)
+    if closed:
+        _targets_changed(restaurant_id)
     return closed
 
 

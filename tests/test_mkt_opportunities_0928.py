@@ -620,7 +620,9 @@ def test_the_answer_says_how_long_a_recurring_card_is_hidden(db):
                                                     "kind": "not_for_us", "module": "marketing",
                                                     "surface": "marketing"}):
         out, st = strategy_routes._do_rec_event(u)
-    assert out["message"] == "Noted — it won’t come back"             # a one-off: for good
+    # A one-off's "not for us" is a year, re-offered after (memory audit
+    # 9/29/26, "silences"): never "won't come back".
+    assert out["message"] == "Noted — Cavnar AI won’t suggest it again for a year"
 
 
 # ── the feed: logging, confidence, sources (OPP-10, OPP-14, OPP-15) ─────────

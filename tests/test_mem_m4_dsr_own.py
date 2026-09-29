@@ -102,3 +102,25 @@ def test_a_broken_ledger_never_takes_the_report_down(monkeypatch, rest, db_path)
     monkeypatch.setattr(ai_reads, "answer_state", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
     own = narrative.own_record(_ctx(rest, db_path, DAY), strong_night())
     assert own["priorities"] and all("status unknown" in line for line in own["priorities"])
+
+
+def test_the_nights_read_keeps_each_actions_finer_number_for_its_claim(rest, db_path):
+    """dsr.narrative._record_read passes each action's expected_metric, why
+    and advice signature, so the claim it becomes is scored on the slice
+    the action was about (a Tuesday cut on Tuesday's labor %)."""
+    import models
+    narrative_ = {"executive_summary": {"text": "Tuesday ran 34.8% labor.", "cites": ["labor.pct"]},
+                  "actions_tomorrow": [
+                      dict(_act("Cut one server from Tuesday lunch.", "Labor ran 34.8% against 26%.",
+                                "control_hours", ["labor.pct", "labor.target_pct"]),
+                           key="dsr_action:control_hours:labor", expected_metric="labor_pct_day:Tuesday",
+                           advice_signature="labor:day:tuesday")]}
+    assert narrative._record_read(_ctx(rest, db_path, DAY), narrative_)
+    conn = models.get_conn(db_path)
+    try:
+        row = conn.execute("SELECT metric, signature, expected FROM ai_claims WHERE restaurant_id=?",
+                           (rest.id,)).fetchone()
+    finally:
+        conn.close()
+    assert row["metric"] == "labor_pct_day:Tuesday" and row["signature"] == "labor:day:tuesday"
+    assert row["expected"] == "Labor ran 34.8% against 26%."

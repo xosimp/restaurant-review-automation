@@ -30,6 +30,7 @@ from datetime import date, timedelta
 import models as _models_mod
 from models import DB_PATH
 from thresholds import LABOR_OVER_TARGET_PTS
+from canonical_facts import FINAL_SQL          # final days only: a margin learns from settled nights
 
 log = logging.getLogger(__name__)
 
@@ -95,7 +96,7 @@ def _day_fit(restaurant_id, today, db_path):
     try:
         rows = conn.execute(
             "SELECT day_of_week, labor_cost, sales FROM labor_daily_history WHERE restaurant_id=? AND date>=? "
-            "AND date<? AND sales IS NOT NULL AND sales > 0 AND labor_cost IS NOT NULL",
+            f"AND date<? AND sales IS NOT NULL AND sales > 0 AND labor_cost IS NOT NULL AND {FINAL_SQL}",
             (restaurant_id, (today - timedelta(days=DAY_HISTORY_DAYS)).isoformat(), today.isoformat())).fetchall()
     finally:
         conn.close()

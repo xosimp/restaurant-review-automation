@@ -145,7 +145,10 @@ def test_18_done_on_a_recommendation_that_carries_a_metric_starts_its_tracker(db
     out = _rec_event(rid, {"key": "trim_day:Monday", "event": "completed", "surface": "home"})
     t = out["tracker"]
     assert t["metric"] == "labor_pct" and t["module"] == "labor"
-    assert out["message"] == f"Done — Cavnar AI won’t suggest it again. Now {t['label_text']}"
+    # What Done holds is said, never "won't suggest it again" (memory audit
+    # 9/29/26, "silences"): a weekday trim comes back if the day does.
+    assert out["message"] == (f"Done — hidden unless it comes back (at most "
+                              f"{rec_ledger.SITUATIONAL_DONE_DAYS} days). Now {t['label_text']}")
     assert t["label_text"] == f"measuring labor % until {mdy(t['evaluate_on'])}"
     row = outcomes.get_outcome(t["id"])
     assert row["title"] == "Trim Monday lunch" and row["baseline_value"] == 30.0
@@ -157,7 +160,7 @@ def test_18_done_without_a_metric_starts_nothing_and_promises_nothing(db_path):
     out = _rec_event(rid, {"key": "insight_review:x", "event": "completed", "surface": "reviews",
                            "module": "reviews"})
     assert "tracker" not in out and "tracker_refused" not in out
-    assert out["message"] == "Done — Cavnar AI won’t suggest it again"
+    assert out["message"] == f"Done — hidden unless it comes back (at most {rec_ledger.SITUATIONAL_DONE_DAYS} days)"
     assert _tracking(db_path, rid) == []
 
 

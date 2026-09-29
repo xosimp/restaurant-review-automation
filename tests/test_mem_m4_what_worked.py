@@ -92,7 +92,8 @@ def test_the_provider_serves_the_surfaces_own_levers_with_measured_counts():
     mk = rec_learning.what_worked_lines(memory_context.MemoryRequest(rid, "marketing"))
     assert any("ignored 4 times and never taken" in ln["text"] for ln in mk)
     block = memory_context.memory_context(rid, "labor_read")
-    assert "WHAT WORKED:" in block.text
+    import memory_context
+    assert memory_context.SECTION_TITLES["what_worked"] + ":" in block.text
 
 
 def test_fewer_than_the_floor_is_never_a_rate():

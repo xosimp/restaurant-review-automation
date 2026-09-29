@@ -218,9 +218,16 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_
             (rid, restaurant_id)
         ).fetchone()
         _ac.close()
+        from permissions import acting_via as _via_approve
         if _row:
             if auto:
                 _action = "auto_approved"
+            elif _via_approve():
+                # Support approving through view-as: not the owner's yes,
+                # not the owner's style (memory audit 9/29/26, view_as) —
+                # left out of trust, style examples and edit learning like
+                # the rule's own approvals.
+                _action = "support_approved"
             elif (_row["regenerate_count"] or 0) > 0:
                 _action = "regenerated"
             elif (_row["draft_edited"] or 0) == 1:
@@ -239,7 +246,7 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_
             # What the owner did to the draft, measured (audit #40) — only a
             # person's approval: the rule's and a bulk publish's are the
             # model's own text.
-            if _action not in ("auto_approved", "bulk_approved"):
+            if _action not in ("auto_approved", "bulk_approved", "support_approved"):
                 from models import record_reply_edit
                 record_reply_edit(rid, restaurant_id)
     except Exception as _ae:
@@ -596,11 +603,15 @@ def _do_skip(rid, restaurant_id):
     conn = get_conn()
     try:
         # skipped_at dates the owner turning a draft down; auto_approve_trust
-        # counts a skipped draft against its band (audit #15).
-        cur = conn.execute("UPDATE reviews SET response_status='skipped', skipped_at=datetime('now') "
+        # counts a skipped draft against its band (audit #15). Support
+        # skipping through view-as is not the owner's "no" (memory audit
+        # 9/29/26, view_as): response_action 'support_skipped', left out.
+        from permissions import acting_via as _via_skip
+        cur = conn.execute("UPDATE reviews SET response_status='skipped', skipped_at=datetime('now'), "
+                           "response_action=CASE WHEN ? THEN 'support_skipped' ELSE response_action END "
                            "WHERE id=? AND restaurant_id=? "
                            "AND COALESCE(response_status, '') NOT IN ('approved', 'posted')",
-                           (rid, restaurant_id))
+                           (1 if _via_skip() else 0, rid, restaurant_id))
         conn.commit()
         if cur.rowcount:
             return {"ok": True}, 200
@@ -2880,7 +2891,7 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversa
         # `user` scopes what the answer may draw on to what this login's role
         # can read — a manager never gets food cost through Ask either.
         answer, truncated, proposals, meta = ask_with_tools(
-            restaurant, question, history=history, user=user, screen=screen,
+            restaurant, question, history=history, user=user, screen=screen, conversation_id=conversation_id,
             **({'brief': True} if brief else {}))
 
         message_id = None
@@ -2892,15 +2903,25 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversa
             _ac_props.record_proposals(restaurant_id, proposals, user_id=user_id)
             conversation_id = save_ask_message(restaurant_id, "user", question, user_id=user_id,
                                                conversation_id=conversation_id)
+            # The turn keeps its tool calls and its meta (memory audit
+            # 9/29/26, conversations / ask_feedback).
             save_ask_message(restaurant_id, "assistant", answer,
                              proposals=proposals or None, user_id=user_id,
-                             conversation_id=conversation_id)
+                             conversation_id=conversation_id, tools=(meta or {}).get("tool_calls"),
+                             meta=_ac_props.turn_record(meta))
             from models import latest_ask_answer_id
             message_id = latest_ask_answer_id(restaurant_id, conversation_id, user_id=user_id)
         except Exception as e:
             # Never fail a good answer because the transcript couldn't be written.
             import ops
             ops.capture(e, job="ask_cavnar_persist", context=f"restaurant_id={restaurant_id}")
+        # Turns that scrolled out of the replayed window go into the chat's
+        # rolling summary (only when enough are new; never fails the answer).
+        try:
+            import ask_conversations
+            ask_conversations.maybe_summarize(restaurant_id, conversation_id, user_id=user_id)
+        except Exception as e:
+            print(f"[ask] conversation summary skipped rid={restaurant_id}: {e}")
         # The answer's own concrete suggestions, keyed and presented on "ask"
         # (#48) — read from its text, no second model call.
         import ask_cavnar as _ac_sug
@@ -2991,7 +3012,7 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
             history = [{"role": h["role"], "content": h["content"]}
                        for h in get_ask_history(rid, conversation_id=cid, viewer_id=uid)]
             answer, truncated, proposals, meta = ask_with_tools(
-                restaurant, question, history=history, user=user, screen=screen,
+                restaurant, question, history=history, user=user, screen=screen, conversation_id=cid,
                 on_progress=lambda label, state: events.put(
                     {"type": "progress", "label": label, "state": state}),
                 **({"brief": True} if brief else {}))
@@ -3001,7 +3022,8 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
                 _ac_props.record_proposals(rid, proposals, user_id=uid)
                 cid = save_ask_message(rid, "user", question, user_id=uid, conversation_id=cid)
                 save_ask_message(rid, "assistant", answer, proposals=proposals or None,
-                                 user_id=uid, conversation_id=cid)
+                                 user_id=uid, conversation_id=cid, tools=(meta or {}).get("tool_calls"),
+                                 meta=_ac_props.turn_record(meta))
                 from models import latest_ask_answer_id
                 mid = latest_ask_answer_id(rid, cid, user_id=uid)
             except Exception as _pe:
@@ -3012,6 +3034,14 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
                         "conversation_id": cid, "message_id": mid,
                         "suggestions": _ac_sug.record_suggestions(rid, answer, meta, user_id=uid),
                         **_ask_meta(meta)})
+            # After the answer is on its way: fold the turns that scrolled out
+            # of the replayed window into the chat's rolling summary (memory
+            # audit 9/29/26, conversations). Only when enough are new.
+            try:
+                import ask_conversations
+                ask_conversations.maybe_summarize(rid, cid, user_id=uid)
+            except Exception as _se:
+                print(f"[ask] conversation summary skipped rid={rid}: {_se}")
         except Exception as e:
             from ai_utils import AIBudgetExceeded, AIRefused, user_facing_error
             msg, _status = user_facing_error(e, "Couldn't get an answer right now — try again.")
@@ -8706,17 +8736,31 @@ def mark_notification_opened(current_user):
     return _m("mobile_mark_notification_opened")(current_user)
 
 
+def _do_notifications_engagement(current_user):
+    """Web and phone, one body. `suggestions`: types this restaurant gets a
+    lot of and never opens — the raw material for one sentence in Account,
+    not an automatic change. `mine`: the same, for THIS login's own phone
+    (memory audit 9/29/26, owner_layers): pushes delivered to their devices
+    and never opened by them — a manager who opens every 5-star push no
+    longer hides that the owner never does. Its action is the login's own
+    mute (POST /account/preferences/mine), never the restaurant's setting."""
+    import notify
+    import preferences
+    rows = notify.engagement_report(current_user["restaurant_id"])
+    for row in rows:
+        row["label"] = _NOTIFICATION_LABELS.get(row["alert_type"], row["alert_type"])
+    mine = preferences.never_opened_for_login(current_user.get("id"), current_user["restaurant_id"])
+    for row in mine:
+        row["label"] = _NOTIFICATION_LABELS.get(row["alert_type"], row["alert_type"])
+    return {"ok": True, "suggestions": rows, "mine": mine}, 200
+
+
 @client_bp.route("/api/notifications/engagement")
 @login_required
 def notifications_engagement(current_user):
-    """Types this restaurant gets a lot of and never opens — the raw material
-    for one sentence in Account, not an automatic change."""
-    import notify
-    from client_api import _NOTIFICATION_LABELS as _labels
-    rows = notify.engagement_report(current_user["restaurant_id"])
-    for row in rows:
-        row["label"] = _labels.get(row["alert_type"], row["alert_type"])
-    return jsonify(ok=True, suggestions=rows)
+    """Twin: /mobile/api/notifications/engagement (_do_notifications_engagement)."""
+    payload, status = _do_notifications_engagement(current_user)
+    return jsonify(**payload), status
 
 
 @client_bp.route("/api/notifications/unread-count")
@@ -9103,11 +9147,21 @@ def _restaurant_profile_payload(rid):
     except Exception:
         review = None
     out = {"ok": True, "profile": _cats.profile_payload(r, review=review)}
+    # The configured targets (the setting's own source and label), and the
+    # owner's goal on each metric when one is what the modules judge against
+    # (memory audit 9/29/26, owner_goals) — {pct, until, label} or None.
+    def _goal(kind):
+        g = _thr.goal_target(r, kind)
+        if not g:
+            return None
+        until = g.get("until")
+        return {"pct": g["value"], "label": g["label"], "goal_id": g.get("goal_id"),
+                "until": until.isoformat() if hasattr(until, "isoformat") else until}
     out["targets"] = {
-        "labor": {"pct": r.labor_target_pct, "source": _thr.target_source(r, "labor"),
-                  "label": _thr.target_label(r, "labor")},
-        "food": {"pct": r.food_cost_target, "source": _thr.target_source(r, "food"),
-                 "label": _thr.target_label(r, "food")},
+        "labor": {"pct": r.labor_target_pct, "source": _thr.target_source(r, "labor", include_goal=False),
+                  "label": _thr.target_label(r, "labor", include_goal=False), "goal": _goal("labor")},
+        "food": {"pct": r.food_cost_target, "source": _thr.target_source(r, "food", include_goal=False),
+                 "label": _thr.target_label(r, "food", include_goal=False), "goal": _goal("food")},
     }
     basis = _thr.labor_cost_basis(r)
     out["labor_cost_basis"] = {"basis": basis, "label": _thr.LABOR_COST_BASIS_LABELS.get(basis)}
@@ -10861,7 +10915,12 @@ def home_dismiss_api(current_user):
         _ep = _rl_undo.episode_for(rid, key[:160])
         if _ep is not None and not _rl_undo.viewer_sees(current_user, _ep):
             return jsonify(ok=False, error="No such recommendation."), 404
-        return jsonify(**home_brief.undismiss(rid, key))
+        # A delegate's (or support's) "Use again" takes back that login's own
+        # answer only, never the owner's (memory audit, who_answered).
+        import rec_ledger as _rl_sub
+        from permissions import answer_authority as _aa_undo
+        return jsonify(**home_brief.undismiss(rid, key, subject_id=_rl_sub.silence_subject(current_user),
+                                              own=_aa_undo(current_user) == "principal"))
     # The owner's one-tap why (rec_ledger.REASON_CODES); an unknown code is
     # refused, never stored as if it were one of the six.
     import rec_ledger as _rl_codes
@@ -10881,10 +10940,16 @@ def home_dismiss_api(current_user):
     elif _rlearn.answerable_episode(current_user, rid, key) is None:
         return jsonify(ok=False, error="No such recommendation."), 404
     kind = (data.get("kind") or "recommendation")[:40]
+    # Whose answer this is (permissions.answer_authority): a delegate's holds
+    # for that login alone, an admin's through view-as trains nothing
+    # (memory audit 9/29/26, who_answered / view_as).
+    from permissions import answer_authority as _aa
+    _authority = _aa(current_user)
     out = home_brief.dismiss(rid, key, kind=kind, user_id=current_user.get("id"),
                              days=data.get("days"), reason=data.get("reason"), title=data.get("title"),
                              surface="home", role=current_user.get("role"), reason_code=reason_code or None,
-                             require_existing=True)
+                             require_existing=True, authority=_authority,
+                             via=_rl_codes.request_via(current_user))
     # "Done" on a recommendation that names a metric is an owner saying
     # they acted. That is exactly what Track this records, so record it:
     # source "observed", baseline now, re-measured when the window closes.
@@ -10893,7 +10958,7 @@ def home_dismiss_api(current_user):
     # card's own (sent by the client, else the one it was presented with),
     # and the start is automatic, so the family gate applies (rec-ROI #18):
     # while anything in its family is measured the reply says so instead.
-    if out.get("ok") and kind == "done":
+    if out.get("ok") and kind == "done" and _authority != "admin":
         try:
             import outcomes
             # The login's own permissions decide which metric it may start
@@ -11359,8 +11424,19 @@ def intel_open_recs(rid, restaurant=None) -> dict:
     parsed = parse_competitor_intel(insight) if insight else {
         "recommendation_items": [], "withheld_recommendations": 0, "nothing_to_act_on": False}
     texts = [it["text"] for it in parsed.get("recommendation_items") or []]
-    keys = [insight_store.line_key("insight_intel", t) for t in texts]
+    # Keyed by what the advice is ABOUT (signature_key), so next week's
+    # reworded line is the same recommendation after a Pass (memory audit
+    # 9/29/26, "signatures"); an answered signature on any surface counts.
+    keys = [insight_store.signature_key("insight_intel", t) for t in texts]
     done = insight_store.answered(rid, keys) if keys else set()
+    try:
+        _ans_sigs = insight_store.answered_signatures(rid)
+    except Exception:
+        _ans_sigs = {}
+    for t, k in zip(texts, keys):
+        _sig = insight_store.advice_signature(k, t)
+        if _sig and _sig in _ans_sigs:
+            done.add(k)
     return {"recs": [t for t, k in zip(texts, keys) if k not in done],
             "competitors": len(blob.get("competitors") or []),
             "withheld": int(parsed.get("withheld_recommendations") or 0),
@@ -11399,9 +11475,18 @@ def intel_recs_payload(rid, user_id=None, surface="intel"):
                                                 "rating": rv.get("rating"), "time": rv.get("time"),
                                                 "date": rv.get("date"),
                                                 "text": (rv.get("text") or "")[:300]}
-    items = [{"key": insight_store.line_key("insight_intel", it["text"]), "text": it["text"],
-              "cites": [refs[cid] for cid in it.get("cites") or [] if cid in refs], "model_written": True}
-             for it in parsed.get("recommendation_items") or []]
+    # Keyed by what the advice is about (signature_key; its words' hash when
+    # it names no single subject), so a reworded line after a Pass is the
+    # same recommendation (memory audit 9/29/26, "signatures"). Two lines
+    # about the same advice are one.
+    items, _seen_keys = [], set()
+    for it in parsed.get("recommendation_items") or []:
+        _k = insight_store.signature_key("insight_intel", it["text"])
+        if _k in _seen_keys:
+            continue
+        _seen_keys.add(_k)
+        items.append({"key": _k, "text": it["text"],
+                      "cites": [refs[cid] for cid in it.get("cites") or [] if cid in refs], "model_written": True})
     # Each line's measured confidence (T1): a model-written line over the
     # competitors the read compared (N_FULL "competitors"), freshness from
     # the competitor data's own date. Snapshotted by the ledger (K3).

@@ -176,6 +176,13 @@ def latest_version(conn, history_id) -> int:
     return int(row["v"] or 0) if row else 0
 
 
+# saved_by on a version support saved through view-as.
+SUPPORT_PREFIX = "support:"
+# The learners' filter: a week any support save touched teaches nothing.
+NOT_SUPPORT_TOUCHED_SQL = ("history_id NOT IN (SELECT sv.history_id FROM schedule_versions sv "
+                           "WHERE sv.saved_by LIKE 'support:%')")
+
+
 def _insert_version(conn, restaurant_id, history_id, reason, schedule_csv, quality=None, saved_by=None):
     last = conn.execute("SELECT version, schedule_csv FROM schedule_versions WHERE history_id=? "
                         "ORDER BY version DESC LIMIT 1", (history_id,)).fetchone()
@@ -186,6 +193,17 @@ def _insert_version(conn, restaurant_id, history_id, reason, schedule_csv, quali
     # The advice the week carried before this save — read before the new
     # version (whose own quality is judged on the edited rows) lands.
     open_recs = _open_recommendations(conn, history_id) if (last and reason == "edited") else []
+    # Support saving through view-as is not the manager's word (memory audit
+    # 9/29/26, view_as): stamped SUPPORT_PREFIX, and the learners leave the
+    # week out (schedule_learning, learned_patterns).
+    try:
+        from permissions import acting_via
+        _via = acting_via()
+    except Exception:
+        _via = None
+    if _via:
+        saved_by = f"{SUPPORT_PREFIX}{_via.get('admin') or _via.get('admin_id')} (as {saved_by or 'the owner'})"
+        open_recs = []                   # nor is it the owner carrying advice out
     cur = conn.execute(
         "INSERT INTO schedule_versions (restaurant_id, history_id, version, reason, schedule_csv, quality_json, "
         "diff_json, saved_by) VALUES (?,?,?,?,?,?,?,?)",
@@ -466,7 +484,8 @@ def acceptance(restaurant_id, weeks=8, db_path=DB_PATH) -> dict:
         if picked:
             marks = ",".join("?" for _ in picked)
             for v in conn.execute(f"SELECT history_id, version, reason, schedule_csv FROM schedule_versions WHERE restaurant_id=? "
-                                  f"AND history_id IN ({marks}) ORDER BY version", (restaurant_id, *[h["id"] for h in picked])).fetchall():
+                                  f"AND history_id IN ({marks}) AND {NOT_SUPPORT_TOUCHED_SQL} ORDER BY version",
+                                  (restaurant_id, *[h["id"] for h in picked])).fetchall():
                 versions.setdefault(v["history_id"], []).append(v)
     finally:
         conn.close()

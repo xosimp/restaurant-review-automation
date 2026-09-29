@@ -884,6 +884,9 @@ MODELS = {
     "email_personalise":   ("CLAUDE_MODEL",           HAIKU),
     "sales_audit_notes":   ("SALES_AUDIT_NOTES_MODEL", SONNET),
     "ask_cavnar":          ("ASK_CAVNAR_MODEL",       SONNET),
+    # The rolling summary of an Ask chat's older turns (ask_conversations,
+    # memory audit 9/29/26): short structured notes, validated per line.
+    "ask_summary":         ("ASK_SUMMARY_MODEL",      HAIKU),
     "dsr_narrative":       ("DSR_NARRATIVE_MODEL",    SONNET),
 }
 

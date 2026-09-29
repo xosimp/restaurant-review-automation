@@ -285,3 +285,68 @@ def last_night(restaurant_id, today, user=None, db_path=None):
             "labor_pct": lm.get("pct") if _num(lm.get("pct")) else None,
             "labor_target_pct": lm.get("target_pct") if _num(lm.get("target_pct")) else None,
             "missing": facts.get("missing") or []}
+
+
+# How many of the report's unanswered priorities the morning brief carries.
+CARRY_ACTIONS = 2
+
+
+def morning_carry(restaurant_id, today, viewer=None, db_path=None):
+    """What last night's report told the owner about TODAY, for the morning
+    brief (memory audit 9/29/26, dsr_to_brief) — None when there is no
+    finished report of last night, the report's Tomorrow is not about
+    `today`, or the viewer has no report view.
+
+    The 11pm report said "Tomorrow: call in a second cook for the 60-cover
+    party; reorder salmon", and the 7am brief — the owner's one read before
+    service — said "Today looks like a typical Saturday", recomputed from the
+    weekday median, with no party, no time-off note and a "one thing" from
+    another ranking. This carries, as `viewer` may read them (dsr.access):
+
+      forecast     the report's forecast for today (its own basis, with the
+                   measured effects it applied) and its confidence %
+      items        the report's Tomorrow items: time off, the rain or heat
+                   forecast, events and reservations, stock critically low
+      predictions  what the report predicted about today (graded tonight)
+      actions      the report's unanswered priorities for today, under the
+                   SAME dsr_action keys the report presented, so an answer
+                   anywhere silences them here (rec_ledger.silenced_keys)
+
+    Every figure is the report's own, as stored; nothing is recomputed."""
+    import models
+    db_path = db_path or models.DB_PATH
+    user = _user(viewer)
+    view = access.view_for(user)
+    if view is None:
+        return None
+    today = today if isinstance(today, date) else date.fromisoformat(str(today)[:10])
+    report = store.get_finished_report(restaurant_id, today - timedelta(days=1), db_path=db_path)
+    if not report:
+        return None
+    stored = report.get("facts") or {}
+    tomorrow = access.tomorrow_for(stored, user, view)
+    if not tomorrow or str(tomorrow.get("date") or "")[:10] != today.isoformat():
+        return None
+    _facts, hidden = access.redact(stored, user)
+    n = access.narrative_for(report.get("narrative"), hidden) or {}
+    silenced = set()
+    try:
+        import rec_ledger
+        silenced = set(rec_ledger.silenced_keys(restaurant_id, db_path=db_path))
+    except Exception:
+        silenced = set()
+    actions = []
+    for a in (n.get("actions_tomorrow") if isinstance(n, dict) else None) or []:
+        if not isinstance(a, dict) or not a.get("text") or not a.get("key") or a["key"] in silenced:
+            continue
+        actions.append({"key": a["key"], "text": _clip(a["text"], 240),
+                        "why": _clip(a["why"], 240) if a.get("why") else None, "urgency": a.get("urgency")})
+        if len(actions) >= CARRY_ACTIONS:
+            break
+    return {"date": today.isoformat(), "report_date": report.get("business_date"),
+            "report_label": day_label(report.get("business_date")),
+            "provisional": bool(report.get("provisional")), "version": report.get("version"),
+            "forecast": tomorrow.get("forecast"), "confidence": tomorrow.get("confidence"),
+            "items": [i for i in tomorrow.get("items") or [] if isinstance(i, dict) and i.get("text")],
+            "predictions": [p for p in tomorrow.get("predictions") or [] if isinstance(p, dict) and p.get("text")],
+            "actions": actions, "view": view}
