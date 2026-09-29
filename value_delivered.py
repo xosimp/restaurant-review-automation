@@ -658,34 +658,91 @@ def compute_total_value_delivered(restaurant_id: int, db_path: str = DB_PATH) ->
         return 0
 
 
-def record_value_snapshot(restaurant_id: int, total_value: int, db_path: str = DB_PATH):
-    """Upserts today's total — the NET monthly figure (headline's
-    net_monthly, re-audit A29) — called opportunistically from the Home
-    endpoints, so the first Home load of each day records that day's figure.
-    No separate scheduled job: a restaurant whose owner never opens the app
-    that day simply doesn't get a data point, which is fine for a "how's
-    this trending" sparkline."""
+def _local_day(restaurant_id, day=None) -> str:
+    """The restaurant's own calendar day (ISO), not the server's: the series
+    was dated by SQLite's date('now') — UTC — so an evening load in Chicago
+    landed on tomorrow (memory audit 9/29/26, "outside")."""
+    if day is not None:
+        return str(day)[:10]
+    from time_utils import restaurant_now_by_id
+    return restaurant_now_by_id(restaurant_id).date().isoformat()
+
+
+def record_value_snapshot(restaurant_id: int, total_value: int, db_path: str = DB_PATH, day=None):
+    """Upserts the day's total — the NET monthly figure (headline's
+    net_monthly, re-audit A29) — dated on the restaurant's local day.
+
+    Written by the nightly pass (run_value_snapshots) for every restaurant
+    in service, and again by the Home endpoints when a restaurant-wide
+    headline is in hand (the same day's point, updated to the newest
+    figure). It was written ONLY from Home, so the series had holes on
+    exactly the days nobody looked (memory audit 9/29/26, "value_nightly").
+    Kept forever: value_snapshots is in no retention registry."""
     conn = models.get_conn(db_path)
-    conn.execute("""
-        INSERT INTO value_snapshots (restaurant_id, snapshot_date, total_value)
-        VALUES (?, date('now'), ?)
-        ON CONFLICT(restaurant_id, snapshot_date) DO UPDATE SET total_value = excluded.total_value
-    """, (restaurant_id, total_value))
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("""
+            INSERT INTO value_snapshots (restaurant_id, snapshot_date, total_value)
+            VALUES (?, ?, ?)
+            ON CONFLICT(restaurant_id, snapshot_date) DO UPDATE SET total_value = excluded.total_value
+        """, (restaurant_id, _local_day(restaurant_id, day), total_value))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_value_history(restaurant_id: int, days: int = 30, db_path: str = DB_PATH) -> list[dict]:
     """Ascending by date — oldest first, matching how a sparkline is drawn
-    left to right."""
+    left to right. The window ends on the restaurant's local day."""
+    from datetime import date as _date, timedelta as _td
+    floor = (_date.fromisoformat(_local_day(restaurant_id)) - _td(days=int(days))).isoformat()
     conn = models.get_conn(db_path)
-    rows = conn.execute(f"""
-        SELECT snapshot_date, total_value FROM value_snapshots
-        WHERE restaurant_id=? AND snapshot_date >= date('now', '-{int(days)} days')
-        ORDER BY snapshot_date ASC
-    """, (restaurant_id,)).fetchall()
-    conn.close()
+    try:
+        rows = conn.execute("""
+            SELECT snapshot_date, total_value FROM value_snapshots
+            WHERE restaurant_id=? AND snapshot_date >= ?
+            ORDER BY snapshot_date ASC
+        """, (restaurant_id, floor)).fetchall()
+    finally:
+        conn.close()
     return [{"date": r["snapshot_date"], "value": r["total_value"]} for r in rows]
+
+
+VALUE_SNAPSHOT_CURSOR = "value_snapshots"
+VALUE_SNAPSHOT_MAX_SECONDS = 20 * 60
+
+
+def run_value_snapshots(db_path: str = None, max_seconds=None) -> dict:
+    """The nightly value point for every restaurant in service (memory audit
+    9/29/26, "value_nightly"): each one's NET measured monthly figure
+    (compute_total_value_delivered — restaurant-wide, never a viewer's
+    filtered one) written as its local day's point. Bounded and resumable
+    — scheduler.resumable_sweep: a wall-clock bound and a cursor in
+    job_cursors, so a long fleet resumes where it stopped. Sends nothing.
+    Returns the standard counts."""
+    import scheduler
+    import ops
+    db_path = db_path or models.DB_PATH
+    conn = models.get_conn(db_path)
+    try:
+        ids = [r["id"] for r in conn.execute(
+            "SELECT id FROM restaurants WHERE " + scheduler._served_client_sql() + " ORDER BY id").fetchall()]
+    finally:
+        conn.close()
+    counts = {"ok": 0, "failed": 0}
+
+    def one(rid):
+        try:
+            record_value_snapshot(rid, compute_total_value_delivered(rid, db_path=db_path), db_path=db_path)
+            counts["ok"] += 1
+        except Exception as e:
+            counts["failed"] += 1
+            ops.capture(e, job="value_snapshots", context=f"restaurant_id={rid}")
+
+    _done, hit = scheduler.resumable_sweep(VALUE_SNAPSHOT_CURSOR, ids, one,
+                                           max_seconds or VALUE_SNAPSHOT_MAX_SECONDS, workers=1,
+                                           job="value_snapshots")
+    return {"attempted": counts["ok"] + counts["failed"], "ok": counts["ok"], "failed": counts["failed"],
+            "skipped": max(0, len(ids) - counts["ok"] - counts["failed"]), "hit_bound": bool(hit)}
 
 
 # ── the ledger: what has been done, since the account began ─────────────────
@@ -721,17 +778,33 @@ def ledger(restaurant_id, db_path=None):
             started = (row[0] or "")[:10] if row else None
         except Exception:
             pass
+        # Lifetime figures read what outlives a prune (memory audit 9/29/26,
+        # "rollups"): alert_log is kept 180 days, so "alerts sent since you
+        # started" fell in month 14 and months_active never passed about 7;
+        # the owner's review retention shrank the reply counts. The monthly
+        # summaries (alert_monthly, review_monthly_stats — history_rollups)
+        # carry what the raw rows no longer hold.
+        import history_rollups as _hr
+        try:
+            alerts = _hr.alerts_lifetime(restaurant_id, conn=conn)
+        except Exception:
+            alerts = {"alerts": one("SELECT COUNT(*) FROM alert_log WHERE restaurant_id=?", restaurant_id),
+                      "months": set()}
+        try:
+            purged = _hr.purged_review_totals(restaurant_id, conn=conn)
+        except Exception:
+            purged = {"reviews": 0, "drafted": 0, "posted": 0}
         out = {
             "started": started,
             "replies_drafted": one("SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
-                                   "AND draft_response IS NOT NULL", restaurant_id),
+                                   "AND draft_response IS NOT NULL", restaurant_id) + purged["drafted"],
             "replies_posted": one("SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
-                                  "AND response_status='posted'", restaurant_id),
+                                  "AND response_status='posted'", restaurant_id) + purged["posted"],
             "reviews_watched": one("SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL",
-                                   restaurant_id),
+                                   restaurant_id) + purged["reviews"],
             "schedules_built": one("SELECT COUNT(DISTINCT week_start) FROM schedule_history "
                                    "WHERE restaurant_id=? AND week_start IS NOT NULL", restaurant_id),
-            "alerts_sent": one("SELECT COUNT(*) FROM alert_log WHERE restaurant_id=?", restaurant_id),
+            "alerts_sent": alerts["alerts"],
             "issues_resolved": one("SELECT COUNT(*) FROM ops_issues WHERE restaurant_id=? AND status='resolved'",
                                    restaurant_id),
             "outcomes_measured": one("SELECT COUNT(*) FROM recommendation_outcomes WHERE restaurant_id=? "
@@ -740,8 +813,8 @@ def ledger(restaurant_id, db_path=None):
             # rose is a win even though nothing here can price it (#49).
             "outcomes_improved": _improved_count(restaurant_id, db_path),
             "milestones": one("SELECT COUNT(*) FROM milestones WHERE restaurant_id=?", restaurant_id),
-            "months_active": one("SELECT COUNT(DISTINCT substr(fired_at,1,7)) FROM alert_log "
-                                 "WHERE restaurant_id=?", restaurant_id),
+            "months_active": len(alerts["months"]) if alerts["months"] else one(
+                "SELECT COUNT(DISTINCT substr(fired_at,1,7)) FROM alert_log WHERE restaurant_id=?", restaurant_id),
         }
     finally:
         conn.close()

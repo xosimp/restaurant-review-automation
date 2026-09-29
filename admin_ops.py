@@ -4564,19 +4564,15 @@ def _ras_block(eps):
 
 
 def _internal_restaurants_sql(conn):
-    """Accounts whose owners' behaviour is not a customer's (#141): demo and
-    test accounts (exclude_from_learning), internal billing, the admin's own
-    home — built from the columns this database has."""
-    cols = _columns(conn, "restaurants")
-    parts = ["COALESCE(is_demo,0)=1"] if "is_demo" in cols else []
-    if "exclude_from_learning" in cols:
-        parts.append("COALESCE(exclude_from_learning,0)=1")
-    if "billing_status" in cols:
-        parts.append("LOWER(COALESCE(billing_status,''))='internal'")
-    if _columns(conn, "users") >= {"restaurant_id", "is_admin"}:
-        parts.append("id IN (SELECT restaurant_id FROM users GROUP BY restaurant_id "
-                     "HAVING MIN(COALESCE(is_admin,0))=1)")
-    return "SELECT id FROM restaurants WHERE " + (" OR ".join(parts) if parts else "0")
+    """Accounts whose owners' behaviour is not a customer's (#141) — the one
+    learning predicate, models.learning_exclusion (memory audit 9/29/26,
+    "eligibility"): demo accounts, test accounts (by an admin's flag or,
+    automatically, by name), internal billing, the admin's own home, with
+    the admin's learning_override. As a SELECT over the ids it rules out."""
+    import models as _m
+    ids = sorted(_m.learning_ineligible_ids(conn=conn))
+    return ("SELECT id FROM restaurants WHERE id IN (" + ",".join(str(int(i)) for i in ids) + ")") if ids \
+        else "SELECT id FROM restaurants WHERE 0"
 
 
 def _episodes(conn, since, restaurant_id=None, include_internal=False):
@@ -4589,7 +4585,10 @@ def _episodes(conn, since, restaurant_id=None, include_internal=False):
         where += " AND i.restaurant_id=?"
         args.append(restaurant_id)
     elif not include_internal:
+        import models as _m
         where += f" AND i.restaurant_id NOT IN ({_internal_restaurants_sql(conn)})"
+        # Nor what a converted demo recorded before its learning_since.
+        where += " AND " + _m.learning_rows_sql("i.restaurant_id", "i.created_at")
     inst = _rows_dict(conn, "SELECT i.*, r.name AS restaurant FROM rec_instances i LEFT JOIN restaurants r ON r.id=i.restaurant_id "
                             f"WHERE {where}", tuple(args))
     if not inst:
@@ -5010,6 +5009,12 @@ def recommendation_calibration(days=365, restaurant_id=None):
         args.append(int(restaurant_id))
     conn = models.get_conn()
     try:
+        if not restaurant_id:
+            # Across the fleet, a demo's, a test account's or Cavnar AI's own
+            # trackers never calibrate the dollars, nor a converted demo's
+            # from before its learning_since (memory audit 9/29/26).
+            where += (f" AND i.restaurant_id NOT IN ({_internal_restaurants_sql(conn)}) AND "
+                      + models.learning_rows_sql("i.restaurant_id", "i.created_at"))
         try:
             rows = None
             # concurrent / baseline_overlaps_trigger: the result rule learning

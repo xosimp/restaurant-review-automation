@@ -278,6 +278,13 @@ def init_guest_marketing(db_path=DB_PATH):
         "AND LOWER(TRIM(g.email)) = LOWER(TRIM(guest_newsletter_recipients.email))) "
         "WHERE email_token IS NULL AND status='sent'",
         "ALTER TABLE guest_newsletter_recipients ADD COLUMN retryable INTEGER",
+        # A newsletter's recorded opens and clicks, stamped on its own row 30
+        # days after it went (history_rollups.stamp_newsletter_results), so
+        # its results outlive email_log's 365 days (memory audit 9/29/26).
+        "ALTER TABLE guest_newsletters ADD COLUMN opens_recorded INTEGER",
+        "ALTER TABLE guest_newsletters ADD COLUMN clicks_recorded INTEGER",
+        "ALTER TABLE guest_newsletters ADD COLUMN tracked_recorded INTEGER",
+        "ALTER TABLE guest_newsletters ADD COLUMN results_stamped_at TEXT",
         "UPDATE guest_newsletter_recipients SET status='skipped' "
         "WHERE status='failed' AND error LIKE 'recipient suppressed%'",
         "UPDATE guest_newsletter_recipients SET retryable = CASE "

@@ -333,11 +333,12 @@ _TARGET_SOURCES = {"labor_target_pct": ("labor", "your labor target"),
 def owner_changes(restaurant_id, db_path=None, since_days=CHANGES_LOOKBACK_DAYS) -> list:
     """The owner's known changes in the last `since_days`, newest per kind:
     [{what, at (ISO date), sources (data_freshness keys it touches, empty =
-    any), kind (a recommendation kind it answers, or None)}] — a published
-    schedule (schedule_history.published_at), a reprice (reprice_decisions),
-    a changed target (activity_log target_change, models.update_restaurant)
-    and a recommendation marked done (rec_events completed/done). Each table
-    is read on its own; one that is missing leaves that kind out. Never
+    any), kind (a recommendation kind it answers, or None), who}] — a
+    published schedule (schedule_history.published_at), a reprice
+    (reprice_decisions), a changed target, price, menu item, team member,
+    pay rate, hours or supplier (change_log, with who made it) and a
+    recommendation marked done (rec_events completed/done). Each table is
+    read on its own; one that is missing leaves that kind out. Never
     raises."""
     import json
     import data_freshness
@@ -365,18 +366,30 @@ def owner_changes(restaurant_id, db_path=None, since_days=CHANGES_LOOKBACK_DAYS)
                 dish = str(r["dish"] or "").strip()
                 out.append({"what": f"repriced {dish}" if dish else "repriced a dish", "at": str(r["at"])[:10],
                             "sources": ("inventory",), "kind": None})
-        seen = set()
-        for r in q("SELECT event_data, created_at AS at FROM activity_log WHERE restaurant_id=? "
-                   "AND event_type='target_change' AND created_at >= ? ORDER BY created_at DESC",
-                   (restaurant_id, since)):
-            try:
-                field = (json.loads(r["event_data"] or "{}") or {}).get("field")
-            except (TypeError, ValueError):
-                field = None
-            if field in _TARGET_SOURCES and field not in seen:
-                seen.add(field)
-                src, label = _TARGET_SOURCES[field]
-                out.append({"what": f"changed {label}", "at": str(r["at"])[:10], "sources": (src,), "kind": None})
+        # Targets, prices, the menu, the roster, pay, hours and suppliers —
+        # from the lasting, attributed change log (memory audit 9/29/26,
+        # "change_log"): a price typed on Food Cost or synced from Back
+        # Office, a dish taken off, someone leaving, now caution the advice
+        # built on data from before them, and say who made the change. The
+        # activity_log read stays as the fallback for a database without
+        # the log.
+        try:
+            import change_log as _chlog
+            out.extend(_chlog.owner_change_entries(restaurant_id, since, conn=conn))
+        except Exception:
+            seen = set()
+            for r in q("SELECT event_data, created_at AS at FROM activity_log WHERE restaurant_id=? "
+                       "AND event_type='target_change' AND created_at >= ? ORDER BY created_at DESC",
+                       (restaurant_id, since)):
+                try:
+                    field = (json.loads(r["event_data"] or "{}") or {}).get("field")
+                except (TypeError, ValueError):
+                    field = None
+                if field in _TARGET_SOURCES and field not in seen:
+                    seen.add(field)
+                    src, label = _TARGET_SOURCES[field]
+                    out.append({"what": f"changed {label}", "at": str(r["at"])[:10], "sources": (src,),
+                                "kind": None})
         for r in q("SELECT key, MAX(at) AS at FROM rec_events WHERE restaurant_id=? AND event='completed' "
                    "AND at >= ? AND meta LIKE '%\"done\"%' GROUP BY key", (restaurant_id, since)):
             if r["at"]:
@@ -415,8 +428,11 @@ def changed_since(ctx, key, states) -> dict:
             return None
         c = max(hits, key=lambda c: c["at"])
         when = ce._mdy(c["at"])
-        return {"what": c["what"], "at": c["at"], "as_of": when,
-                "caution": f"You {c['what']} on {when} — this reads data from before it."}
+        # Who made it (change_log): "A manager changed the Salmon price",
+        # "A sync changed 12 prices" — "You" only for the owner's own.
+        who = c.get("who") or "You"
+        return {"what": c["what"], "at": c["at"], "as_of": when, "who": who,
+                "caution": f"{who} {c['what']} on {when} — this reads data from before it."}
     except Exception as e:
         print(f"[rec_trust] changed_since unavailable for {getattr(ctx, 'rid', None)}/{key}: {e}")
         return None

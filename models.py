@@ -650,6 +650,17 @@ class Restaurant:
     profile_confirmed_at: Optional[str] = None
     # Test and internal accounts: never part of any cross-restaurant figure.
     exclude_from_learning: int = 0
+    # Learning eligibility (memory audit 9/29/26, "eligibility"):
+    # learning_since — rows recorded before it teach no learner, own or
+    # cross-restaurant (stamped when a demo becomes a real account);
+    # learning_override — the admin's word over the automatic test/internal
+    # rule: 'include' | 'exclude' | NULL (automatic). models.learning_eligible.
+    learning_since: Optional[str] = None
+    learning_override: Optional[str] = None
+    # Who set each target stamped 'set' — {<target field>: "principal" |
+    # "delegate" | "admin"}: "your target" is said only for a principal's
+    # (thresholds.target_label; memory audit 9/29/26, "change_log").
+    target_setters_json: Optional[str] = None
     # Where a target came from: set (the owner) | seeded (the published
     # median for a confirmed type) | default (Cavnar's starting target).
     labor_target_source: Optional[str] = None
@@ -853,6 +864,9 @@ def ensure_columns(db_path: str = DB_PATH):
         ("schedule_history", "quality_confidence", "TEXT"),
         ("schedule_history", "what_if_json", "TEXT"),
         ("schedule_history", "republished_at", "TEXT"),
+        # When a superseded draft's detail was thinned to its headline
+        # (ops._thin_drafts; memory audit 9/29/26, "draft_thinning").
+        ("schedule_history", "detail_thinned_at", "TEXT"),
         # email_log.status existed from the start but nothing could write it:
         # log_email() had no status parameter, so a failed send was recorded
         # as 'sent' like every other row.
@@ -1007,6 +1021,10 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "profile_source", "TEXT"),
         ("restaurants", "profile_confirmed_at", "TEXT"),
         ("restaurants", "exclude_from_learning", "INTEGER DEFAULT 0"),
+        # Memory audit 9/29/26: learning eligibility and who set a target.
+        ("restaurants", "learning_since", "TEXT"),
+        ("restaurants", "learning_override", "TEXT"),
+        ("restaurants", "target_setters_json", "TEXT"),
         # gmb.get_valid_token's invalid_grant stamp (fix round C, #44).
         ("restaurants", "gmb_revoked_at", "TEXT"),
         ("restaurants", "labor_target_source", "TEXT"),
@@ -2561,6 +2579,20 @@ def init_db(db_path: str = DB_PATH):
             UNIQUE(restaurant_id, week)
         )""",
         "CREATE INDEX IF NOT EXISTS idx_intel_dna_week ON intel_dna(week, restaurant_id)",
+        # A deleted restaurant's anonymised learning (owner decision, 9/29/26;
+        # memory audit "delete_policy"): its intel_rec_events and
+        # intel_features rows stay, re-keyed to restaurant_id = -id of a row
+        # here, so cohort priors do not forget what a churned restaurant
+        # measured. No name, no ids, no raw rows: the type it was (for its
+        # cohort), whether that type was confirmed, when, and how many rows
+        # were kept. Kept forever. models.delete_restaurant writes it.
+        """CREATE TABLE IF NOT EXISTS learning_tombstones (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            category         TEXT,
+            category_source  TEXT,
+            rows_json        TEXT,
+            tombstoned_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
         # The Benchmark Engine's comparisons, materialised per restaurant by a
         # bounded, resumable nightly pass (BM4-14, Top-50 #46), so a request
         # can be one indexed read (engine.compare(use_cache=True)). The
@@ -3501,6 +3533,16 @@ def init_db(db_path: str = DB_PATH):
     # attribution columns — at boot, never on a call path (fix round G).
     from ai_utils import init_ai_ops
     init_ai_ops(db_path)
+    # The lasting, attributed change history (change_log, kept forever) and
+    # the one-time carry-over of the target and profile changes activity_log
+    # holds — memory audit 9/29/26. At boot, never on a write path.
+    import change_log as _change_log
+    _change_log.init_change_log(db_path)
+    # What outlives a prune — the monthly alert, engagement and review
+    # summaries, the weekly inventory summary and the monthly ingredient
+    # costs (history_rollups), kept forever.
+    import history_rollups as _history_rollups
+    _history_rollups.init_history_rollups(db_path)
     # Runs after ensure_columns() so organization_id exists to write into.
     backfill_organizations(db_path=db_path)
     # A target seeded from a figure the registry no longer seeds from goes
@@ -3508,6 +3550,9 @@ def init_db(db_path: str = DB_PATH):
     backfill_seeded_targets(db_path=db_path)
     # After init_dsr: its POS evidence is one of the tables it reads.
     backfill_missing_sales_null(db_path=db_path)
+    # The demo seed's labor days written before they carried source 'seed'
+    # (memory audit 9/29/26, "eligibility"), once.
+    stamp_seed_provenance(db_path=db_path)
     print(f"Database initialised at {db_path}")
 
 
@@ -3852,6 +3897,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "changelog_seen_at","notifications_seen_at", "category",
         "service_model","concept","bar_led","ownership","opened_year","profile_source","profile_confirmed_at",
         "exclude_from_learning","labor_target_source","food_cost_target_source","hourly_rate_source","google_types","google_price_level",
+        "learning_since","learning_override","target_setters_json",
         "alert_quiet_start","alert_quiet_end","alert_max_per_day",
         "brand_name","brand_color","brand_logo_url",
         "section_count","daypart_split","delivery_pct","role_minimums_json","sched_notes","email_theme",
@@ -3870,6 +3916,12 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
+    # Who is making this change (memory audit 9/29/26, "change_log"):
+    # resolved BEFORE the write transaction opens, from the login the
+    # request's auth decorator resolved (or a change_log.attributed block).
+    import change_log as _chlog
+    _tracked = {k: v for k, v in updates.items() if k in _chlog.RESTAURANT_FIELD_KINDS}
+    _actor = _chlog.actor_context() if (_tracked or any(t in updates for t in TARGET_SOURCE_FIELDS)) else None
     _mark =[(_tf, _sf) for _tf, _sf in TARGET_SOURCE_FIELDS.items()
              if _tf in updates and _sf not in updates and updates[_tf] not in (None, "")]
     if _mark:
@@ -3891,6 +3943,27 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
                     updates[_sf] = "set"
             except (TypeError, ValueError):
                 pass
+    # A target stamped 'set' — by the rule above or by a form that names it
+    # — records WHO set it (target_setters_json: principal | delegate |
+    # admin), so "your target" is said only when an account holder chose it:
+    # Will setting 28% at onboarding read to the owner as "your 28% target"
+    # (thresholds.target_label; memory audit "change_log", PEOPLE-6).
+    _set_now = [t for t, s in TARGET_SOURCE_FIELDS.items() if t in updates and updates.get(s) == "set"]
+    if _set_now and "target_setters_json" not in updates:
+        try:
+            _c1 = get_conn(db_path)
+            try:
+                _row_s = _c1.execute("SELECT target_setters_json FROM restaurants WHERE id=?",
+                                     (restaurant_id,)).fetchone()
+            finally:
+                _c1.close()
+            _setters = json.loads((_row_s["target_setters_json"] if _row_s else None) or "{}") or {}
+        except Exception:
+            _setters = {}
+        _who = (_actor or {}).get("authority") or (_actor or {}).get("source") or "system"
+        for _t in _set_now:
+            _setters[_t] = _who
+        updates["target_setters_json"] = json.dumps(_setters, sort_keys=True)
     _check_numeric_fields(updates)
     # OAuth/POS credentials are encrypted at rest (credentials.py); every
     # reader sees plaintext through get_restaurant.
@@ -3909,6 +3982,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
     _hist = {k: updates[k] for k in BILLING_HISTORY_FIELDS if k in updates}
     _hist_ctx = _billing_history_context(db_path) if _hist else None
     _hist_err = None
+    _chlog_errors = []
     conn = get_conn(db_path)
     try:
         _old_hist = None
@@ -3950,6 +4024,16 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
                 _old_targets = dict(_row_t) if _row_t else None
             except Exception:
                 _old_targets = None
+        # The tracked fields' values as they stand, read inside this
+        # transaction, for the change log written after the UPDATE below.
+        _old_tracked = None
+        if _tracked:
+            try:
+                _row_c = conn.execute(f"SELECT {', '.join(_tracked)} FROM restaurants WHERE id=?",
+                                      (restaurant_id,)).fetchone()
+                _old_tracked = dict(_row_c) if _row_c else None
+            except Exception as _ct_e:
+                _chlog_errors.append(_ct_e)
         if expected_version is None:
             conn.execute(f"UPDATE restaurants SET {set_clause} WHERE id=?",
                          values + [restaurant_id])
@@ -3984,6 +4068,20 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
                                  (restaurant_id, "profile_changed", json.dumps(_changes)))
                 except Exception as _pc_e:
                     print(f"[update_restaurant] profile change not recorded for {restaurant_id}: {_pc_e}")
+        if _old_tracked is not None:
+            # The lasting, attributed record (change_log, kept forever): in
+            # the same transaction as the change, so the two land together.
+            # A target seeded from a published median is 'seeded', a reset
+            # to Cavnar AI's default the system's — not whoever's request
+            # happened to trigger it.
+            _srcs = {}
+            for _tf, _sf in TARGET_SOURCE_FIELDS.items():
+                if updates.get(_sf) == "seeded":
+                    _srcs[_tf] = "seeded"
+                elif updates.get(_sf) == "default":
+                    _srcs[_tf] = "system"
+            _chlog.record_restaurant_changes(conn, restaurant_id, _old_tracked, _tracked, sources=_srcs,
+                                             errors=_chlog_errors)
         if _old_hist is not None:
             # Same transaction as the change itself: a billing move and its
             # history row land together or not at all.
@@ -4006,6 +4104,11 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
             conn.close()
         except Exception:
             pass
+    for _ce in _chlog_errors:
+        # After the commit, as the billing history's: never fails the write
+        # it describes, and never silent.
+        _chlog.report(_ce, restaurant_id, "restaurant", ",".join(_tracked)[:120],
+                      db_path=db_path if db_path != DB_PATH else None)
     if _hist_err is not None:
         # Never fails the billing write it describes, and never silent: after
         # the commit, so the capture's own write is not queued behind ours.
@@ -4107,6 +4210,83 @@ class InternalLoginHome(ValueError):
 # history. Deleting a demo used to erase its own audit rows (#126).
 _KEEP_ON_RESTAURANT_DELETE = frozenset({"admin_events", "offboarding_steps", "billing_status_history"})
 
+# The anonymised learning a deleted restaurant leaves behind (owner decision,
+# Will, 9/29/26 — memory audit "delete_policy"): the restaurant's own data is
+# always deleted, but its rows in these two cross-restaurant tables — ratios,
+# counts, and whether each recommendation was taken and what it measured —
+# are kept under a TOMBSTONED id (restaurant_id = -learning_tombstones.id),
+# with every recommendation key hashed (a key can name a dish or a person),
+# so cohort priors keep what a churned restaurant measured. Only for a
+# restaurant that could teach (models.learning_exclusion) and only rows from
+# its learning_since on; a demo's or a test account's go with it.
+_TOMBSTONE_TABLES = ("intel_rec_events", "intel_features")
+
+
+def _anonymous_key(key) -> str:
+    """A recommendation key with its subject hashed: "overtime_move:Maria
+    G.:2026-09-01#o12" → "overtime_move:~3f9a…#o12" — the kind stays (the
+    kind is what learning counts by), the per-episode suffix stays (so a
+    measured row is still one episode's), the words go."""
+    import hashlib as _hl
+    k = str(key or "")
+    kind = k.split(":", 1)[0] if ":" in k else "key"
+    tail = k[k.index("#o"):] if "#o" in k else ""
+    return f"{kind}:~{_hl.sha256(k.encode('utf-8')).hexdigest()[:16]}{tail}"
+
+
+def _tombstone_learning(conn, rid, restaurant_row) -> dict:
+    """Re-key the restaurant's anonymised learning rows to a new tombstoned
+    id (see _TOMBSTONE_TABLES), on delete_restaurant's connection inside its
+    transaction (foreign keys off). Rows it recorded before its
+    learning_since are left to be deleted. Returns {table: rows kept}."""
+    import json as _json_tb
+    have = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "learning_tombstones" not in have or not restaurant_row:
+        return {}
+    if learning_exclusion(dict(restaurant_row), internal_homes=_internal_home_ids_on(conn)):
+        return {}
+    since = restaurant_row["learning_since"] if "learning_since" in restaurant_row.keys() else None
+    cat = restaurant_row["category"] if "category" in restaurant_row.keys() else None
+    cat_src = restaurant_row["profile_source"] if "profile_source" in restaurant_row.keys() else None
+    tid = conn.execute("INSERT INTO learning_tombstones (category, category_source) VALUES (?,?)",
+                       (cat, cat_src)).lastrowid
+    kept = {}
+    if "intel_rec_events" in have:
+        rows = conn.execute("SELECT id, source_key FROM intel_rec_events WHERE restaurant_id=?"
+                            + (" AND event_at >= ?" if since else ""), (rid, since) if since else (rid,)).fetchall()
+        for r in rows:
+            conn.execute("UPDATE OR IGNORE intel_rec_events SET restaurant_id=?, source_key=? WHERE id=?",
+                         (-tid, _anonymous_key(r[1]), r[0]))
+        kept["intel_rec_events"] = conn.execute("SELECT COUNT(*) FROM intel_rec_events WHERE restaurant_id=?",
+                                                (-tid,)).fetchone()[0]
+    if "intel_features" in have:
+        floor = ""
+        if since:
+            from datetime import date as _d_tb
+            y, w, _ = _d_tb.fromisoformat(str(since)[:10]).isocalendar()
+            floor = f"{y}-W{w:02d}"
+        conn.execute("UPDATE intel_features SET restaurant_id=? WHERE restaurant_id=? AND week >= ?", (-tid, rid, floor))
+        kept["intel_features"] = conn.execute("SELECT COUNT(*) FROM intel_features WHERE restaurant_id=?",
+                                              (-tid,)).fetchone()[0]
+    if not any(kept.values()):
+        conn.execute("DELETE FROM learning_tombstones WHERE id=?", (tid,))
+        return {}
+    conn.execute("UPDATE learning_tombstones SET rows_json=? WHERE id=?", (_json_tb.dumps(kept, sort_keys=True), tid))
+    return kept
+
+
+def _internal_home_ids_on(conn) -> set:
+    """_internal_home_ids on a connection already open (inside a write
+    transaction — no second connection)."""
+    try:
+        ucols = {r[1] for r in conn.execute("PRAGMA table_info(users)")}
+        who = INTERNAL_LOGIN_SQL if "role" in ucols else "COALESCE(is_admin, 0) = 1"
+        return {int(r[0]) for r in conn.execute(
+            f"SELECT restaurant_id FROM users WHERE restaurant_id IS NOT NULL GROUP BY restaurant_id "
+            f"HAVING MIN(CASE WHEN {who} THEN 1 ELSE 0 END) = 1").fetchall()}
+    except Exception:
+        return set()
+
 
 def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     """Remove a restaurant and every row that belongs to it, in one
@@ -4130,6 +4310,10 @@ def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     What stays: the tables in _KEEP_ON_RESTAURANT_DELETE — the audit trail
     and the offboarding record. The account is gone; the record of what was
     done to it (and that it was deleted, by whom) must not go with it (#126).
+    And, for a restaurant that could teach, its anonymised learning in
+    _TOMBSTONE_TABLES, re-keyed to a tombstoned id with no name and every
+    recommendation key hashed (owner decision, 9/29/26; _tombstone_learning,
+    learning_tombstones) — the restaurant's own data always goes.
 
     Never an admin or support login (integration wave): one homed here that
     cannot be re-homed makes the whole delete refuse (InternalLoginHome,
@@ -4163,6 +4347,8 @@ def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         if internal:
             raise InternalLoginHome(f"restaurant {rid} is home to {internal} admin or support login(s); "
                                     f"move them before deleting it")
+        _row_tb = conn.execute("SELECT * FROM restaurants WHERE id=?", (rid,)).fetchone()
+        _tombstoned = _tombstone_learning(conn, rid, _row_tb)
         for t in tables:
             if t in _KEEP_ON_RESTAURANT_DELETE:
                 continue
@@ -4174,10 +4360,18 @@ def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         n = conn.execute("DELETE FROM restaurants WHERE id=?", (rid,)).rowcount
         if n:
             deleted["restaurants"] = n
+        def _tombstone_row(table, rowid):
+            # The anonymised learning kept under a tombstoned (negative) id
+            # points at no restaurant by design.
+            if table not in _TOMBSTONE_TABLES:
+                return False
+            r = conn.execute(f'SELECT restaurant_id FROM "{table}" WHERE rowid=?', (rowid,)).fetchone()
+            return bool(r) and r[0] is not None and int(r[0]) < 0
+
         for _ in range(20):
             orphans = [v for v in conn.execute("PRAGMA foreign_key_check")
                        if tuple(v) not in had_orphans and v[1] is not None
-                       and v[0] not in _KEEP_ON_RESTAURANT_DELETE]
+                       and v[0] not in _KEEP_ON_RESTAURANT_DELETE and not _tombstone_row(v[0], v[1])]
             if not orphans:
                 break
             for table, rowid, _parent, _fk in orphans:
@@ -4471,6 +4665,9 @@ def _restaurant_from_row(row) -> Restaurant:
         profile_source=row["profile_source"] if "profile_source" in row.keys() else None,
         profile_confirmed_at=row["profile_confirmed_at"] if "profile_confirmed_at" in row.keys() else None,
         exclude_from_learning=(row["exclude_from_learning"] or 0) if "exclude_from_learning" in row.keys() else 0,
+        learning_since=row["learning_since"] if "learning_since" in row.keys() else None,
+        learning_override=row["learning_override"] if "learning_override" in row.keys() else None,
+        target_setters_json=row["target_setters_json"] if "target_setters_json" in row.keys() else None,
         labor_target_source=row["labor_target_source"] if "labor_target_source" in row.keys() else None,
         food_cost_target_source=row["food_cost_target_source"] if "food_cost_target_source" in row.keys() else None,
         hourly_rate_source=row["hourly_rate_source"] if "hourly_rate_source" in row.keys() else None,
@@ -7357,6 +7554,10 @@ def get_approved_examples(restaurant_id: int, limit: int = 5,
                            db_path: str = DB_PATH) -> list:
     """Return recent approved review responses as style examples for the AI.
 
+    Never a review the owner's retention setting removed (deleted_at): a
+    two-year-old guest review reached the model as a style example after
+    the owner chose to keep six months (memory audit 9/29/26).
+
     A reply the auto-approve rule published is the model's own text, not
     the owner's style: learning from it would feed the drafter its own
     output (audit #15), so only replies a person approved are examples. A
@@ -7369,6 +7570,7 @@ def get_approved_examples(restaurant_id: int, limit: int = 5,
     rows = conn.execute("""
         SELECT rating, text, draft_response FROM reviews
         WHERE restaurant_id=?
+          AND deleted_at IS NULL
           AND response_status IN ('approved','posted')
           AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved', 'support_approved')
           AND draft_response IS NOT NULL
@@ -7424,7 +7626,8 @@ def get_reply_edit_summaries(restaurant_id: int, limit: int = 12, db_path: str =
     try:
         rows = conn.execute(
             "SELECT edit_distance, edit_category, edit_signals, original_draft, draft_response FROM reviews "
-            "WHERE restaurant_id=? AND edit_category IS NOT NULL AND response_status IN ('approved','posted') "
+            "WHERE restaurant_id=? AND deleted_at IS NULL AND edit_category IS NOT NULL "
+            "AND response_status IN ('approved','posted') "
             "AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved', 'support_approved') "
             "ORDER BY COALESCE(approved_at, '') DESC, id DESC LIMIT ?", (restaurant_id, int(limit))).fetchall()
     except Exception:
@@ -7570,7 +7773,8 @@ def _ensure_history_columns(conn):
                        ("review_json", "TEXT"), ("generation_seconds", "REAL"),
                        ("weather_json", "TEXT"), ("quality_score", "REAL"), ("quality_band", "TEXT"),
                        ("quality_confidence", "TEXT"), ("what_if_json", "TEXT"), ("superseded_by", "INTEGER"),
-                       ("republished_at", "TEXT"), ("publishing_at", "TEXT"), ("economics_json", "TEXT")):
+                       ("republished_at", "TEXT"), ("publishing_at", "TEXT"), ("economics_json", "TEXT"),
+                       ("detail_thinned_at", "TEXT")):
         if name not in have:
             try:
                 conn.execute(f"ALTER TABLE schedule_history ADD COLUMN {name} {decl}")
@@ -8455,28 +8659,246 @@ def in_service(restaurant) -> bool:
     return (status or "").strip().lower() not in BLOCKED_BILLING_STATES
 
 
-def learning_eligible(restaurant) -> bool:
-    """Whether this restaurant may teach any learner — its own or the
-    platform's (memory audit 9/29/26, "eligibility"). Not a demo, not a test
-    account (exclude_from_learning), not internal billing. The admin's own
-    home restaurant is billing 'internal' (or should be: the audit found the
-    internal rid 1 counted as live), which the admin fix round made the rule.
-    Accepts a Restaurant, a row/dict, or an id."""
+SEED_PROVENANCE_MIGRATION = "labor_seed_provenance_v1"
+
+
+def stamp_seed_provenance(db_path=None) -> int:
+    """Once (data_migrations): stamp source 'seed' on the demo seed's daily
+    labor rows written before the seed stamped them — rows of a restaurant
+    that is or was a demo, with no source, holding exactly one of the seed's
+    (sales, hours) pairs for that weekday (demo_seed.SEED_BY_WEEKDAY, or the
+    first seed's SEED_OLD_PAIRS). A real POS day never has a source of NULL
+    and a seed's exact figures both. Returns rows stamped."""
+    import demo_seed as _ds
+    conn = get_conn(db_path) if db_path else get_conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        if conn.execute("SELECT 1 FROM data_migrations WHERE name=?", (SEED_PROVENANCE_MIGRATION,)).fetchone():
+            conn.rollback()
+            return 0
+        rows = conn.execute(
+            "SELECT h.id, h.date, h.sales, h.total_hours FROM labor_daily_history h JOIN restaurants r "
+            "ON r.id = h.restaurant_id WHERE (COALESCE(r.is_demo, 0) = 1 OR r.demo_cleared_at IS NOT NULL) "
+            "AND h.source IS NULL").fetchall()
+        from datetime import date as _d_sp
+        n = 0
+        for row in rows:
+            try:
+                wd = _d_sp.fromisoformat(str(row["date"])[:10]).weekday()
+                pair = (float(row["sales"] or 0), float(row["total_hours"] or 0))
+            except (TypeError, ValueError):
+                continue
+            if pair == tuple(float(x) for x in _ds.SEED_BY_WEEKDAY[wd]) or pair in _ds.SEED_OLD_PAIRS:
+                conn.execute("UPDATE labor_daily_history SET source='seed' WHERE id=?", (row["id"],))
+                n += 1
+        conn.execute("INSERT INTO data_migrations (name, detail) VALUES (?, ?)",
+                     (SEED_PROVENANCE_MIGRATION, f"{n} seeded labor days stamped source 'seed'"))
+        conn.commit()
+        return n
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        print(f"seed provenance stamp failed (will retry at next boot): {e}")
+        return 0
+    finally:
+        conn.close()
+
+
+# ── learning eligibility (memory audit 9/29/26, "eligibility") ─────────────
+#
+# ONE predicate for every learner — the restaurant's own and the platform's
+# — and every admin learning check (the A/B readout, the recommendation
+# calibration): a demo, a test account and Cavnar AI's own account teach
+# nothing. Test and internal accounts used to be excluded only when an admin
+# ticked exclude_from_learning; the internal rid 1 counted as live and the
+# schedule A/B ran on demo weeks. Now an account is excluded automatically
+# when its billing is 'internal', when every login on it is an internal one
+# (the admin's home), or when its name says it is a test ("Preview Test",
+# "QA Tools", "Cavnar AI Admin"); the admin's `learning_override` wins
+# ('include' — a real restaurant the rule caught; 'exclude'). And a demo that
+# becomes a real account keeps its seeded history, but nothing recorded
+# before `learning_since` (stamped at the conversion) teaches any learner:
+# the 90-day quarantine it replaces was shorter than readers that look back
+# 365 days and 72 weeks.
+LEARNING_TEST_NAME_WORDS = frozenset({"test", "tests", "testing", "qa", "demo", "sandbox", "preview", "dummy",
+                                      "fake", "sample", "staging", "admin"})
+LEARNING_TEST_NAME_PHRASES = ("cavnar ai",)
+_INTERNAL_HOMES_TTL = 60.0
+_internal_homes_cache = {}
+
+
+def _learning_get(r, k):
+    if hasattr(r, k):
+        return getattr(r, k)
+    try:
+        return r[k]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
+def learning_test_name(name) -> bool:
+    """Whether a restaurant's name marks it a test or internal account: one
+    of LEARNING_TEST_NAME_WORDS standing as its own word, or a phrase of
+    LEARNING_TEST_NAME_PHRASES. "Testa Pizza" is not; "Preview Test" is."""
+    import re as _re_ln
+    text = " ".join(_re_ln.split(r"[^a-z0-9]+", str(name or "").lower())).strip()
+    if not text:
+        return False
+    return bool(set(text.split()) & LEARNING_TEST_NAME_WORDS) or any(
+        f" {p} " in f" {text} " for p in LEARNING_TEST_NAME_PHRASES)
+
+
+def _internal_home_ids(db_path=None) -> set:
+    """Restaurants every login of which is an internal one (admin or
+    support) — the admin's own home. Cached per database for a minute."""
+    import time as _t_ih
+    key = db_path or DB_PATH
+    hit = _internal_homes_cache.get(key)
+    if hit and _t_ih.monotonic() - hit[0] < _INTERNAL_HOMES_TTL:
+        return hit[1]
+    ids = set()
+    try:
+        conn = get_conn(db_path) if db_path else get_conn()
+        try:
+            ucols = {r[1] for r in conn.execute("PRAGMA table_info(users)")}
+            who = INTERNAL_LOGIN_SQL if "role" in ucols else "COALESCE(is_admin, 0) = 1"
+            ids = {int(r[0]) for r in conn.execute(
+                f"SELECT restaurant_id FROM users WHERE restaurant_id IS NOT NULL GROUP BY restaurant_id "
+                f"HAVING MIN(CASE WHEN {who} THEN 1 ELSE 0 END) = 1").fetchall()}
+        finally:
+            conn.close()
+    except Exception:
+        ids = set()
+    _internal_homes_cache[key] = (_t_ih.monotonic(), ids)
+    return ids
+
+
+def learning_exclusion(restaurant, internal_homes=None, db_path=None):
+    """Why this restaurant teaches no learner, or None when it may:
+    'demo', 'excluded' (by an admin), 'internal' (billing), 'admin_home'
+    (only internal logins), 'test_name'. Accepts a Restaurant, a row/dict or
+    an id. `internal_homes` (a set of ids) spares the lookup in a loop."""
     r = restaurant
     if isinstance(r, int):
-        r = get_restaurant(r)
+        r = get_restaurant(r, db_path or DB_PATH)
     if r is None:
+        return "missing"
+    if _learning_get(r, "is_demo"):
+        return "demo"
+    override = str(_learning_get(r, "learning_override") or "").strip().lower()
+    if override == "exclude" or _learning_get(r, "exclude_from_learning"):
+        return "excluded"
+    if override == "include":
+        return None
+    if str(_learning_get(r, "billing_status") or "").strip().lower() == "internal":
+        return "internal"
+    rid = _learning_get(r, "id")
+    homes = internal_homes if internal_homes is not None else _internal_home_ids(db_path)
+    if rid is not None and int(rid) in homes:
+        return "admin_home"
+    if learning_test_name(_learning_get(r, "name")):
+        return "test_name"
+    return None
+
+
+LEARNING_EXCLUSION_LABELS = {
+    "demo": "a demo account", "excluded": "excluded by an admin", "internal": "an internal account",
+    "admin_home": "Cavnar AI's own account", "test_name": "a test account (by its name)", "missing": "not found",
+}
+
+
+def learning_eligible(restaurant, since=None, db_path=None) -> bool:
+    """Whether this restaurant may teach any learner — its own or the
+    platform's (memory audit 9/29/26, "eligibility"): not a demo, not a
+    test or internal account (learning_exclusion — automatic, with the
+    admin's learning_override). With `since` (the date or stamp of the data
+    a learner would read), also False when that data was recorded before
+    the restaurant's learning_since (its demo era). Accepts a Restaurant, a
+    row/dict, or an id."""
+    r = restaurant
+    if isinstance(r, int):
+        r = get_restaurant(r, db_path or DB_PATH)
+    if r is None or learning_exclusion(r, db_path=db_path):
         return False
-    def _get(k):
-        if hasattr(r, k):
-            return getattr(r, k)
-        try:
-            return r[k]
-        except (KeyError, IndexError, TypeError):
-            return None
-    if _get("is_demo") or _get("exclude_from_learning"):
-        return False
-    return (str(_get("billing_status") or "").strip().lower() != "internal")
+    if since is not None:
+        floor = _learning_get(r, "learning_since")
+        if floor and str(since).replace("T", " ")[:19] < str(floor)[:19]:
+            return False
+    return True
+
+
+def learning_status(restaurant, db_path=None) -> dict:
+    """{eligible, reason, label, automatic, override, since} — what the admin
+    console shows beside the override control."""
+    r = restaurant if not isinstance(restaurant, int) else get_restaurant(restaurant, db_path or DB_PATH)
+    why = learning_exclusion(r, db_path=db_path) if r is not None else "missing"
+    return {"eligible": why is None, "reason": why, "label": LEARNING_EXCLUSION_LABELS.get(why),
+            "automatic": why in ("internal", "admin_home", "test_name"),
+            "override": (_learning_get(r, "learning_override") or None) if r is not None else None,
+            "since": _learning_get(r, "learning_since") if r is not None else None}
+
+
+def learning_ineligible_ids(conn=None, db_path=None) -> set:
+    """Every restaurant id learning_exclusion rules out, in one pass — what
+    the SQL readers filter on (learning_filter_sql)."""
+    own = conn is None
+    c = (get_conn(db_path) if db_path else get_conn()) if own else conn
+    try:
+        cols = {r[1] for r in c.execute("PRAGMA table_info(restaurants)")}
+        want = [k for k in ("id", "name", "is_demo", "exclude_from_learning", "learning_override", "billing_status")
+                if k in cols]
+        rows = [dict(r) for r in c.execute(f"SELECT {', '.join(want)} FROM restaurants").fetchall()]
+        homes = _internal_home_ids_on(c)          # on this connection: no second one
+    finally:
+        if own:
+            c.close()
+    return {int(r["id"]) for r in rows if learning_exclusion(r, internal_homes=homes)}
+
+
+def learning_filter_sql(column="restaurant_id", conn=None, db_path=None) -> str:
+    """A WHERE fragment keeping only rows of restaurants that may teach:
+    "<column> NOT IN (…)" (ids inlined — they are integers), or "1=1". A
+    row of a restaurant no longer in the table (a deleted restaurant's
+    tombstoned learning rows) passes."""
+    ids = learning_ineligible_ids(conn=conn, db_path=db_path)
+    if not ids:
+        return "1=1"
+    return f"{column} NOT IN ({','.join(str(int(i)) for i in sorted(ids))})"
+
+
+def learning_rows_sql(rid_column, time_column) -> str:
+    """A WHERE fragment dropping rows recorded before their restaurant's
+    learning_since (its demo era): correlated on `rid_column`, compared on
+    `time_column` (an ISO date or SQLite stamp)."""
+    return (f"NOT EXISTS (SELECT 1 FROM restaurants _ls WHERE _ls.id = {rid_column} "
+            f"AND _ls.learning_since IS NOT NULL AND {time_column} < _ls.learning_since)")
+
+
+def learning_since_map(conn=None, db_path=None) -> dict:
+    """{restaurant_id: learning_since} for every restaurant that has one."""
+    own = conn is None
+    c = (get_conn(db_path) if db_path else get_conn()) if own else conn
+    try:
+        return {int(r[0]): r[1] for r in c.execute(
+            "SELECT id, learning_since FROM restaurants WHERE learning_since IS NOT NULL").fetchall()}
+    except Exception:
+        return {}
+    finally:
+        if own:
+            c.close()
+
+
+def own_history_sql(alias="") -> str:
+    """For a restaurant's OWN readers of its daily history: a WHERE fragment
+    dropping the demo seed's rows (source 'seed') once the restaurant is no
+    longer a demo — a converted demo's year-over-year, holiday lift and
+    seasonal baselines read synthetic sales forever otherwise. A demo's own
+    screens keep them (they are what the demo shows)."""
+    a = f"{alias}." if alias else ""
+    return (f"NOT (COALESCE({a}source, '') = 'seed' AND EXISTS (SELECT 1 FROM restaurants _oh "
+            f"WHERE _oh.id = {a}restaurant_id AND COALESCE(_oh.is_demo, 0) = 0))")
 
 
 PAYING_BILLING_STATES = {"active", "past_due"}
@@ -10642,6 +11064,9 @@ def prune_operational_logs(db_path: str = DB_PATH) -> dict:
             if column not in cols:
                 problems.append(f"{table}.{column} missing")
                 continue
+            if int(days) < _ops_retention.retention_floor(table):
+                problems.append(f"{table} window {days} days is under its floor")
+                continue          # the one registry's floor holds here too
             cur = conn.execute(
                 f"DELETE FROM {table} WHERE {column} < datetime('now', ?)",
                 (f"-{int(days)} days",))
@@ -10664,11 +11089,14 @@ def prune_operational_logs(db_path: str = DB_PATH) -> dict:
 def purge_expired_reviews(db_path: str = DB_PATH) -> int:
     """Soft-deletes reviews older than each restaurant's data_retention_months
     (0 = keep everything). Soft, not hard — every reviews query already
-    filters deleted_at IS NULL, and a mistaken retention setting shouldn't
-    be unrecoverable. Returns the number of rows touched.
+    filters deleted_at IS NULL (the reply-style readers too, since 9/29/26),
+    and a mistaken retention setting shouldn't be unrecoverable. Before the
+    rows go, their monthly stats are written (history_rollups.purge_reviews,
+    same transaction). Returns the number of rows touched.
 
     Nightly (scheduler.run_nightly_retention), committing per restaurant:
     it ran hourly as one transaction over every restaurant (#81)."""
+    import history_rollups
     conn = get_conn(db_path)
     total = 0
     try:
@@ -10676,14 +11104,16 @@ def purge_expired_reviews(db_path: str = DB_PATH) -> int:
             "SELECT id, data_retention_months FROM restaurants WHERE COALESCE(data_retention_months, 0) > 0"
         ).fetchall()
         for r in rows:
-            months = int(r["data_retention_months"])
-            cur = conn.execute(f"""
-                UPDATE reviews SET deleted_at = datetime('now')
-                WHERE restaurant_id=? AND deleted_at IS NULL
-                  AND COALESCE(NULLIF(review_date,''), fetched_at) < datetime('now', '-{months * 30} days')
-            """, (r["id"],))
-            total += cur.rowcount or 0
-            conn.commit()
+            # What the reviews were — per month, no guest text — goes into
+            # review_monthly_stats in the same transaction as the
+            # soft-delete (memory audit 9/29/26, "review_retention"): the
+            # owner's choice forgets the words, not the record.
+            try:
+                total += history_rollups.purge_reviews(conn, r["id"], int(r["data_retention_months"]))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
     finally:
         conn.close()
     return total

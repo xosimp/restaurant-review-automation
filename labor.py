@@ -1894,13 +1894,19 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
         try:
             from models import get_conn as _gc_l
             _c = _gc_l()
+            # How many labor periods are on file (labor_history keeps one row
+            # per period). It counted client_data rows by a `data_type`
+            # column that table never had, so the query always failed and
+            # the line never reached the read (memory audit 9/29/26,
+            # "dead_memory"); and client_data holds one row per restaurant.
             row = _c.execute(
-                "SELECT COUNT(*) as cnt FROM client_data WHERE restaurant_id=? AND data_type='shifts'",
+                "SELECT COUNT(DISTINCT period_start) AS cnt FROM labor_history WHERE restaurant_id=?",
                 (restaurant_id,)
             ).fetchone()
             _c.close()
             if row and row["cnt"] > 1:
-                upload_context = f"\nThis client has uploaded shift data {row['cnt']} times — they are actively engaged. Acknowledge their consistency and note if numbers are trending better or need more attention."
+                upload_context = (f"\nThis restaurant has {row['cnt']} labor periods on file — say whether the "
+                                  "numbers are trending better or need more attention.")
         except Exception:
             pass
 

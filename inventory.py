@@ -1063,6 +1063,7 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
     forecast_next_week = None
     forecast_monthly = None
     menu_notes = ""
+    inventory_notes = ""
     if restaurant_id:
         # Week over week, from the ISO-week series the trend card already
         # computes — not from "the previous snapshot row".
@@ -1221,6 +1222,15 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
                     + f". If {top_waste_item} appears in multiple dishes, consider whether "
                       "portion sizes or menu placement should change."
                 )
+            # The kitchen's inventory notes from setup (how and when it
+            # counts, who it buys from) were written and never read (memory
+            # audit 9/29/26, "dead_memory"): they reach the read, fenced like
+            # every other thing a person typed.
+            if rest and (getattr(rest, "inventory_notes", None) or "").strip():
+                from ai_guard import wrap_untrusted as _wu_inv
+                inventory_notes = rest.inventory_notes.strip()[:400]
+                menu_context += ("\n- Notes about how this kitchen counts and buys (from setup): "
+                                 + _wu_inv(inventory_notes))
         except Exception:
             pass
 
@@ -1512,7 +1522,8 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
     prompt = _with_ds_food(prompt, _ready_food)
     _ctx = food_read_context(restaurant_id, prompt, analysis,
                              food_insight_validation_facts(analysis, ranked_drivers, _forecasts, cfo_facts),
-                             cause_anchors, alt_anchors, untrusted=[menu_notes] if menu_notes else (),
+                             cause_anchors, alt_anchors,
+                             untrusted=[t for t in (menu_notes, inventory_notes) if t],
                              registry_state=_ready_food.get("data_state"))
 
     # One stored read per restaurant and prompt (audit #22). The prompt IS
