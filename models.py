@@ -9200,18 +9200,30 @@ def last_two_ai_visibility_runs(restaurant_id: int, db_path: str = DB_PATH) -> l
 # `started_at` and email_log stamps `sent_at`. Naming it per table rather than
 # assuming is the difference between pruning and a DELETE that raises, gets
 # swallowed, and silently never runs.
+#
+# THE ONE REGISTRY is ops._RETENTION_DAYS / ops._RETENTION_COLUMN (#72). This
+# dict was a second registry that disagreed with it (job_runs 90 days here,
+# 45 there; push_deliveries 90 here, 30 there) and both ran, so the shorter
+# always won. It is now a view of the tables this module's prune always
+# covered, read FROM the one registry, so the two cannot disagree again.
+# ops imports nothing of models at module level, so this import is safe here.
+import ops as _ops_retention
 _LOG_RETENTION_DAYS = {
-    "ai_usage": (120, "created_at"),
-    "ai_validation_log": (120, "created_at"),
-    "job_runs": (90, "started_at"),
-    "push_deliveries": (90, "created_at"),
-    "email_log": (365, "sent_at"),    # the client-facing "what did you send me" view
-    "activity_log": (180, "created_at"),
+    t: (_ops_retention._RETENTION_DAYS[t], _ops_retention._RETENTION_COLUMN[t])
+    for t in ("ai_usage", "ai_validation_log", "job_runs", "push_deliveries",
+              "email_log",      # the client-facing "what did you send me" view
+              "activity_log")
 }
 
 
 def prune_operational_logs(db_path: str = DB_PATH) -> dict:
     """Delete operational log rows past their retention window.
+
+    No longer scheduled: the nightly ops.prune_ledgers covers these tables
+    (chunked, a commit per chunk, bounded), and this ran hourly inside the
+    daily alert checks as one DELETE per table under the write lock (#81).
+    Kept for its reporting of a missing column; each table now commits on
+    its own. Candidate for future cleanup after additional verification.
 
     Never touches anything a client reads as a record of their own business:
     reviews have their own owner-controlled retention (purge_expired_reviews),
@@ -9238,7 +9250,7 @@ def prune_operational_logs(db_path: str = DB_PATH) -> dict:
                 (f"-{int(days)} days",))
             if cur.rowcount:
                 deleted[table] = cur.rowcount
-        conn.commit()
+            conn.commit()
     finally:
         conn.close()
     if problems:
@@ -9256,7 +9268,10 @@ def purge_expired_reviews(db_path: str = DB_PATH) -> int:
     """Soft-deletes reviews older than each restaurant's data_retention_months
     (0 = keep everything). Soft, not hard — every reviews query already
     filters deleted_at IS NULL, and a mistaken retention setting shouldn't
-    be unrecoverable. Returns the number of rows touched."""
+    be unrecoverable. Returns the number of rows touched.
+
+    Nightly (scheduler.run_nightly_retention), committing per restaurant:
+    it ran hourly as one transaction over every restaurant (#81)."""
     conn = get_conn(db_path)
     total = 0
     try:
@@ -9271,7 +9286,7 @@ def purge_expired_reviews(db_path: str = DB_PATH) -> int:
                   AND COALESCE(NULLIF(review_date,''), fetched_at) < datetime('now', '-{months * 30} days')
             """, (r["id"],))
             total += cur.rowcount or 0
-        conn.commit()
+            conn.commit()
     finally:
         conn.close()
     return total
