@@ -2038,6 +2038,10 @@ def _read_marketing_results(restaurant_id):
             item = {"sent_on": mdy(str(c.get("created_at") or "")[:10]), "segment": c.get("segment_label") or
                     c.get("segment"), "sent": c.get("sent_count"), "clicks": c.get("clicks"),
                     "target_day": c.get("target_day")}
+            if c.get("night_effect"):
+                # The target night's own measured lift — the one campaign
+                # measurement staffing and the forecast read (INT PRED-27).
+                item["target_night"] = c["night_effect"]["text"]
             if c.get("window_closed"):
                 item["came_back"] = c.get("visits_matched")
             else:

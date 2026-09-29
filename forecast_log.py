@@ -466,7 +466,8 @@ def score_due(restaurant_id: int, today=None, db_path: str = DB_PATH) -> dict:
         err, signed = errors(r["predicted"], actual)
         nv = naive_forecasts(restaurant_id, r["kind"], r, db_path=db_path)
         updates.append((round(actual, 2), err, signed, nv["last"], nv["mean"], nv["n"],
-                        explained_by(restaurant_id, r["kind"], r["horizon_end"], db_path=db_path), r["id"]))
+                        explained_by(restaurant_id, r["kind"], r["horizon_end"], db_path=db_path,
+                                     basis=r.get("basis")), r["id"]))
     for r in backfill:
         if r["kind"] not in KINDS:
             continue
@@ -490,12 +491,29 @@ def score_due(restaurant_id: int, today=None, db_path: str = DB_PATH) -> dict:
     return {"scored": scored, "unmeasurable": unmeasurable, "gave_up": gave_up}
 
 
-def explained_by(restaurant_id, kind, horizon_end, db_path=None):
+def _modelled(basis) -> dict:
+    """{date: {label}} — the events whose measured effect the frozen
+    projection already applied (demand.week_projection's `modelled`)."""
+    b = basis
+    if isinstance(b, str):
+        try:
+            b = json.loads(b)
+        except (TypeError, ValueError):
+            return {}
+    if not isinstance(b, dict):
+        return {}
+    return {str(d)[:10]: {str(x) for x in (labels or [])} for d, labels in (b.get("modelled") or {}).items()}
+
+
+def explained_by(restaurant_id, kind, horizon_end, db_path=None, basis=None):
     """The measured event that explains a scored period, in words ("Cubs
     home game on 9/15/26, +22% here"), or None: a night in the period whose
     label's effect here applies (event_memory.night_facts — `applies`, or
-    EFFECT_MIN_N nights) and moves sales by EVENT_EXPLAINS_PCT or more.
-    Sales-driven kinds only. Never raises."""
+    EFFECT_MIN_N nights) and moves sales by EVENT_EXPLAINS_PCT or more — and
+    that the forecast did NOT already carry (`basis`: the frozen forecast's
+    basis; its `modelled` labels were applied to it, so the week's error is
+    the projection's own, not the event's). Sales-driven kinds only. Never
+    raises."""
     if kind not in EVENT_SENSITIVE_KINDS or not restaurant_id:
         return None
     try:
@@ -503,9 +521,12 @@ def explained_by(restaurant_id, kind, horizon_end, db_path=None):
         from time_utils import mdy
         start, end = period_bounds(kind, horizon_end)
         floor = int(getattr(event_memory, "EFFECT_MIN_N", 3) or 3)
+        carried = _modelled(basis)
         d = start
         while d <= end:
             for f in event_memory.night_facts(restaurant_id, d, db_path=db_path) or []:
+                if f.get("label") in carried.get(d.isoformat(), ()):
+                    continue
                 lift = _f(f.get("measured_lift_pct"))
                 applies = f.get("applies") if "applies" in f else int(f.get("n") or 0) >= floor
                 if applies and lift is not None and abs(lift) >= EVENT_EXPLAINS_PCT:

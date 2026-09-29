@@ -217,17 +217,65 @@ def _weekday_medians(restaurant_id, weeks: int = 8, db_path=DB_PATH) -> dict:
     return out
 
 
+def _corrected_by_record(restaurant_id, out, raw, db_path=DB_PATH):
+    """Apply the published weeks' own record (forecast_log kind
+    revenue_week) to `raw` — ONLY for the estimator that record scores:
+    demand.week_projection, frozen at publish (demand.freeze_week_projection).
+    When those projections have leaned one way the figure is corrected by
+    the same factor and the source says so; when the record reads often
+    wide it is said, since the budget still needs a figure. The frozen
+    projection stays raw, so the correction never feeds on itself."""
+    try:
+        import forecast_log
+        rec = forecast_log.shown(restaurant_id, "revenue_week", raw, db_path=db_path)
+        if rec.get("corrected") and rec.get("shown") is not None:
+            out.update(value=round(float(rec["shown"]), 0),
+                       calibration={"factor": rec["factor"], "bias_pct": rec.get("bias_pct"),
+                                    "reading": rec.get("reading")})
+            out["source"] += (f", corrected {'down' if rec['factor'] < 1 else 'up'} "
+                              f"{abs(round((1 - rec['factor']) * 100))}% because the published weeks' "
+                              f"projections here {rec.get('reading')}")
+        elif rec.get("withheld"):
+            out["source"] += "; the published weeks' projections here have often been wide, so treat it as rough"
+    except Exception as e:
+        print(f"[schedule_economics] revenue record unreadable for {restaurant_id}: {e}")
+    return out
+
+
 def projected_weekly_revenue(restaurant_id, weeks: int = 8, db_path=DB_PATH, week_dates=None) -> dict:
-    """{"value", "source", "weeks"} — the week's own budget when the owner
-    has budgeted at least BUDGET_MIN_NIGHTS of `week_dates` in the DSR
-    (budgeted_week_revenue, source "your budget …"); else the median of the
-    last `weeks` complete weeks of daily sales, so the budget follows how
-    this restaurant actually earns rather than a twelfth of a monthly
-    target. None when neither exists (fewer than three complete weeks)."""
+    """{"value", "source", "weeks", "estimator"} — the week's own budget
+    when the owner has budgeted at least BUDGET_MIN_NIGHTS of `week_dates`
+    in the DSR (budgeted_week_revenue, source "your budget …"); else, for a
+    named week every day of which has a forecast, the week's day-by-day
+    projection (demand.week_projection: each weekday's median with the
+    measured events on its dates — the figure frozen at publish and scored
+    when the week closes), corrected by that record when it leans; else the
+    median of the last `weeks` complete weeks of daily sales, raw, so the
+    budget follows how this restaurant actually earns rather than a twelfth
+    of a monthly target. None when none exists (fewer than three complete
+    weeks).
+
+    The revenue_week record corrects only the estimator it measured (PRED-4,
+    memory fix round integration 9/29/26): it used to be applied to the
+    median-week figure, a different estimate whose own lean nobody scored."""
     if week_dates:
         own = budgeted_week_revenue(restaurant_id, week_dates, db_path=db_path)
         if own.get("value"):
-            return {"value": own["value"], "source": own["source"], "weeks": 0, "budget_nights": own["nights"]}
+            return {"value": own["value"], "source": own["source"], "weeks": 0, "budget_nights": own["nights"],
+                    "estimator": "budget"}
+        try:
+            import demand
+            proj = demand.week_projection(restaurant_id, week_dates, db_path=db_path)
+        except Exception as e:
+            print(f"[schedule_economics] week projection unavailable for {restaurant_id}: {e}")
+            proj = {}
+        if proj.get("total") and not proj.get("missing") and len(proj.get("days") or []) == len(week_dates):
+            total = float(proj["total"])
+            out = {"value": round(total, 0), "raw_value": round(total, 0), "calibration": None,
+                   "source": ("the week's day-by-day projection (each weekday's typical night"
+                              + (", with the measured events on its dates" if proj.get("modelled") else "") + ")"),
+                   "weeks": 0, "estimator": "week_projection"}
+            return _corrected_by_record(restaurant_id, out, total, db_path=db_path)
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
@@ -254,30 +302,11 @@ def projected_weekly_revenue(restaurant_id, weeks: int = 8, db_path=DB_PATH, wee
         return {"value": None, "source": "fewer than three complete weeks on file", "weeks": len(complete)}
     vals = sorted(s for _, s in complete)
     med = vals[len(vals) // 2] if len(vals) % 2 else (vals[len(vals) // 2 - 1] + vals[len(vals) // 2]) / 2
-    out = {"value": round(med, 0), "raw_value": round(med, 0), "calibration": None,
-           "source": f"median of the last {len(complete)} complete weeks", "weeks": len(complete)}
-    # The published weeks' own record (forecast_log kind revenue_week, frozen
-    # at publish and scored when the week closes — memory audit 9/29/26,
-    # "forecasts"): when those projections have leaned one way the budget's
-    # revenue is corrected by the same factor, and the source says so; when
-    # the record reads often wide it is said, since the budget still needs a
-    # figure. The frozen projection stays raw (demand.freeze_week_projection),
-    # so the correction never feeds on itself.
-    try:
-        import forecast_log
-        rec = forecast_log.shown(restaurant_id, "revenue_week", med, db_path=db_path)
-        if rec.get("corrected") and rec.get("shown") is not None:
-            out.update(value=round(float(rec["shown"]), 0),
-                       calibration={"factor": rec["factor"], "bias_pct": rec.get("bias_pct"),
-                                    "reading": rec.get("reading")})
-            out["source"] += (f", corrected {'down' if rec['factor'] < 1 else 'up'} "
-                              f"{abs(round((1 - rec['factor']) * 100))}% because the published weeks' "
-                              f"projections here {rec.get('reading')}")
-        elif rec.get("withheld"):
-            out["source"] += "; the published weeks' projections here have often been wide, so treat it as rough"
-    except Exception as e:
-        print(f"[schedule_economics] revenue record unreadable for {restaurant_id}: {e}")
-    return out
+    # Raw: the published weeks' record (revenue_week) scores the day-by-day
+    # projection, not this median, so its lean is never applied here.
+    return {"value": round(med, 0), "raw_value": round(med, 0), "calibration": None,
+            "source": f"median of the last {len(complete)} complete weeks", "weeks": len(complete),
+            "estimator": "median_weeks"}
 
 
 # ── sales per labor hour by daypart ───────────────────────────────────────

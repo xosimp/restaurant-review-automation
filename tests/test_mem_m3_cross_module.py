@@ -75,20 +75,33 @@ def test_a_fill_tuesday_text_is_a_signal_on_tuesday_that_every_reader_sees():
 
 
 def test_the_lift_is_this_restaurants_measured_median_after_three_campaigns():
+    """One measurement (INT PRED-27): the campaign nights' own lift, as
+    event_memory measured each target night against its typical same
+    weekday — not the outcome trackers' multi-week weekday_sales change,
+    which diluted a +30% night to almost nothing."""
     rid = _rid()
     conn = models.get_conn()
-    for i, pct in enumerate((12.0, 20.0, 8.0)):
+    for i, pct in enumerate((0.2, 0.1, 0.3)):             # the trackers' diluted weekday change: never read
         conn.execute("INSERT INTO recommendation_outcomes (restaurant_id, source, source_key, title, metric, status, "
                      "delta_pct, started_on, evaluate_on) VALUES (?,?,?,?,?,?,?,'2026-08-01','2026-08-29')",
                      (rid, "slow_day_campaign", f"campaign:Tuesday:{i}", "t", "weekday_sales:Tuesday", "evaluated", pct))
+    for day, pct in (("2026-09-01", 30.0), ("2026-09-08", 25.0), ("2026-09-15", 35.0)):
+        conn.execute("INSERT INTO event_outcomes (restaurant_id, business_date, weekday, kind, label, raw_label, "
+                     "lift_pct) VALUES (?,?,?,?,?,?,?)", (rid, day, "Tuesday", "campaign", "guest text",
+                                                          "Text to 300 guests to fill Tuesday", pct))
     conn.commit()
     conn.close()
-    assert demand_signals.measured_campaign_lift(rid) == {"lift_pct": 12, "n": 3}
+    got = demand_signals.measured_campaign_lift(rid)
+    assert (got["lift_pct"], got["n"], got["source"]) == (30, 3, "event_memory")
     demand_signals.record_campaign(rid, "Tuesday", 300, today=date(2026, 9, 29))
-    assert _q("SELECT lift_pct FROM demand_signals WHERE restaurant_id=?", (rid,))[0]["lift_pct"] == 12
-    # A demo account's outcomes teach nothing: the assumed path stands.
+    # No figure baked into the row: the schedule reads the one measurement live.
+    assert _q("SELECT lift_pct FROM demand_signals WHERE restaurant_id=?", (rid,))[0]["lift_pct"] is None
+    entry = demand_signals.by_date(rid, ["2026-09-29"])["2026-09-29"]
+    assert entry["lift_pct"] == 30 and entry["lift_source"] == "measured" and not entry.get("assumed")
+    # A demo account's nights teach nothing: the assumed path stands.
     models.update_restaurant(rid, {"is_demo": 1})
     assert demand_signals.measured_campaign_lift(rid) is None
+    assert demand_signals.by_date(rid, ["2026-09-29"])["2026-09-29"].get("assumed") is True
 
 
 def test_a_post_about_a_dish_reaches_the_lineup_and_the_prep_list():

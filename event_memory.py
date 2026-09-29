@@ -362,9 +362,18 @@ def flags_for(restaurant_id, days, db_path=None, known_before=False) -> dict:
             for r in conn.execute(f"SELECT date, kind, label, covers, lift_pct, source FROM demand_signals "
                                   f"WHERE restaurant_id=? AND kind='event' AND date IN ({marks})",
                                   (restaurant_id, *isos)).fetchall():
-                kind = "campaign" if str(r["source"] or "") == "campaign" else "event"
+                if str(r["source"] or "") == "campaign":
+                    # A fill-a-night text (demand_signals.record_campaign) is
+                    # the one campaign label, however its words ran ("Text to
+                    # 412 guests to fill Tuesday"), so every campaign night
+                    # adds to ONE measured campaign effect (campaign_effect —
+                    # INT PRED-27); its lift is never the owner's guess.
+                    out[str(r["date"])[:10]].append({"kind": "campaign", "label": CAMPAIGN_LABEL[0],
+                                                     "raw": r["label"], "source": "demand_signals",
+                                                     "owner_lift_pct": None, "covers": r["covers"]})
+                    continue
                 for lab in split_labels(r["label"]):
-                    out[str(r["date"])[:10]].append({"kind": kind, "label": lab, "raw": r["label"],
+                    out[str(r["date"])[:10]].append({"kind": "event", "label": lab, "raw": r["label"],
                                                      "source": "demand_signals", "owner_lift_pct": r["lift_pct"],
                                                      "covers": r["covers"]})
         except Exception as e:
@@ -670,6 +679,34 @@ def summaries(restaurant_id, limit=12, db_path=None) -> list:
         out.append(dict(r, applies=bool(applies), text=text))
     out.sort(key=lambda x: (not x["applies"], -int(x["n"] or 0)))
     return out[:limit]
+
+
+def campaign_effect(restaurant_id, db_path=None):
+    """THE measured effect of a guest text campaign here (INT PRED-27): the
+    campaign nights' own lift against their typical same weekday
+    (event_outcomes, label CAMPAIGN_LABEL), measured_effect's shape and
+    floor (`applies`). Staffing (demand_signals), the forecast
+    (effects_for_day) and the campaign's own result (campaign_night) all
+    read this one measurement. None before the first measured night."""
+    return measured_effect(restaurant_id, CAMPAIGN_LABEL[0], db_path=db_path)
+
+
+def campaign_night(restaurant_id, day, db_path=None):
+    """{"date", "lift_pct"} — what one campaign's target night measured
+    against its typical same weekday (the recorded event_outcomes row), or
+    None when the night is not recorded yet. Never raises."""
+    try:
+        iso = _as_date(day).isoformat()
+        conn = get_conn(db_path)
+        try:
+            r = conn.execute("SELECT lift_pct FROM event_outcomes WHERE restaurant_id=? AND business_date=? "
+                             "AND kind='campaign' AND lift_pct IS NOT NULL ORDER BY id DESC LIMIT 1",
+                             (restaurant_id, iso)).fetchone()
+        finally:
+            conn.close()
+        return {"date": iso, "lift_pct": round(float(r["lift_pct"]), 1)} if r else None
+    except Exception:
+        return None
 
 
 def effects_for_day(restaurant_id, day, db_path=None, flags=None) -> dict | None:

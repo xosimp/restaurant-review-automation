@@ -414,8 +414,11 @@ def _forecast_skill(restaurant_id, nights, db_path=DB_PATH) -> dict:
 def week_projection(restaurant_id, week_dates, db_path=DB_PATH) -> dict:
     """The week's sales, projected day by day from forecast_day — the
     figure a published schedule is built against. {"total", "days":
-    [dates it covers], "by_day", "missing": [dates with no forecast]}."""
-    by_day, missing = {}, []
+    [dates it covers], "by_day", "missing": [dates with no forecast],
+    "modelled": {date: [event_memory labels whose measured effect the day's
+    forecast already applied]}} — so a scored week's error is never blamed
+    on an event the projection carried (forecast_log.explained_by)."""
+    by_day, missing, modelled = {}, [], {}
     for d in week_dates or []:
         try:
             day = d if isinstance(d, date) else date.fromisoformat(str(d)[:10])
@@ -424,10 +427,13 @@ def week_projection(restaurant_id, week_dates, db_path=DB_PATH) -> dict:
         fc = forecast_day(restaurant_id, day, db_path=db_path)
         if fc.get("available"):
             by_day[day.isoformat()] = fc["typical_sales"]
+            labels = [e.get("label") for e in (fc.get("effects") or []) if e.get("label")]
+            if labels:
+                modelled[day.isoformat()] = labels
         else:
             missing.append(day.isoformat())
     return {"total": round(sum(by_day.values()), 2) if by_day else None,
-            "days": sorted(by_day), "by_day": by_day, "missing": missing}
+            "days": sorted(by_day), "by_day": by_day, "missing": missing, "modelled": modelled}
 
 
 def freeze_week_projection(restaurant_id, week_start, db_path=DB_PATH) -> dict:
@@ -445,7 +451,8 @@ def freeze_week_projection(restaurant_id, week_start, db_path=DB_PATH) -> dict:
             return {"recorded": False, "reason": "no weekday has enough history to project"}
         return forecast_log.record(
             restaurant_id, "revenue_week", proj["total"], period_of=start,
-            basis={"days": proj["days"], "method": "forecast_day median per weekday, frozen at publish"},
+            basis={"days": proj["days"], "method": "forecast_day median per weekday, frozen at publish",
+                   "modelled": proj.get("modelled") or {}},
             db_path=db_path)
     except Exception as e:
         print(f"[demand] week projection not frozen rid={restaurant_id}: {e}")
