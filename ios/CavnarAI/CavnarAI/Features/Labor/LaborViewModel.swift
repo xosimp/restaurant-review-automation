@@ -1169,6 +1169,12 @@ struct LaborStats: Codable {
     var moneyWent: [MoneyWentItem]? = nil
     /// The blended hourly rate the board's "Explain why" divides by.
     var blendedRate: Double? = nil
+    /// What "over target" means for a day here — the margin fitted to this
+    /// restaurant's own swing, never below the stated one — and its basis
+    /// in words (memory round, 9/29/26). Nil on sample data or an older
+    /// server.
+    var overMargin: Double? = nil
+    var overMarginBasis: LenientText? = nil
 
     /// One line naming what is incomplete, or nil when nothing is.
     var caveat: String? {
@@ -1209,6 +1215,18 @@ struct LaborStats: Codable {
         case staffingBoard = "staffing_board"
         case moneyWent = "money_went"
         case blendedRate = "blended_rate"
+        case overMargin = "over_margin"
+        case overMarginBasis = "over_margin_basis"
+    }
+
+    /// "Over target = more than 3.4 points over your target: 1.645× this
+    /// restaurant's own spread …" — nil without a margin.
+    var overMarginLine: String? {
+        guard let m = overMargin, m > 0 else { return nil }
+        let pts = m == m.rounded() ? String(Int(m)) : String(format: "%.1f", m)
+        var s = "Over target = more than \(pts) point\(m == 1 ? "" : "s") over your target"
+        if let basis = overMarginBasis?.value { s += ": " + basis }
+        return s + "."
     }
 }
 
@@ -1497,8 +1515,26 @@ struct GeneratedSchedule: Codable {
     var likelyEditsNote: LenientText? = nil
     var standbyNote: LenientText? = nil
     var demandAccuracy: DemandAccuracy? = nil
+    // Memory round (9/29/26): the soft staffing requirements the draft read
+    // (the reviews diagnosis, a nightly report) and whether the rows
+    // honoured each; pairs two editors pull opposite ways, left out of the
+    // draft; and which labor target the budget was built against — the
+    // owner's goal or the setting. All lenient; absent on an older server.
+    var softRequirements: HomeLenientList<SoftRequirement>? = nil
+    var patternConflicts: HomeLenientList<PatternConflict>? = nil
+    var laborTargetLabel: LenientText? = nil
+    var laborTargetSource: LenientText? = nil
+    /// History detail only: when a replaced draft's per-shift detail was
+    /// trimmed (ops.prune_ledgers, 30 days) — the score, band, schedule and
+    /// economics are kept.
+    var detailThinnedAt: LenientText? = nil
 
     enum CodingKeys: String, CodingKey {
+        case detailThinnedAt = "detail_thinned_at"
+        case softRequirements = "soft_requirements"
+        case patternConflicts = "pattern_conflicts"
+        case laborTargetLabel = "labor_target_label"
+        case laborTargetSource = "labor_target_source"
         case standbyDays = "standby_days"
         case likelyEdits = "likely_edits"
         case overtimeForecast = "overtime_forecast"

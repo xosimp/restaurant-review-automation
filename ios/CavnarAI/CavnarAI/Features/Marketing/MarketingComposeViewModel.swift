@@ -247,11 +247,18 @@ final class MarketingComposeViewModel {
         let topic: String?
         let contentType: String?
         let mediaId: Int?
+        /// The model's draft this text started from (generate-content's
+        /// `draft_ref` / `content_log_id`) — the save is measured against it
+        /// (memory round, 9/29/26). Nil for a text written from scratch.
+        var draftRef: Int? = nil
+        var contentLogId: Int? = nil
 
         enum CodingKeys: String, CodingKey {
             case id, body, topic
             case contentType = "content_type"
             case mediaId = "media_id"
+            case draftRef = "draft_ref"
+            case contentLogId = "content_log_id"
         }
     }
 
@@ -260,7 +267,8 @@ final class MarketingComposeViewModel {
         let drafts: [MarketingDraft]
     }
 
-    func saveDraft(body: String, topic: String, contentType: String?) async {
+    func saveDraft(body: String, topic: String, contentType: String?, draftRef: Int? = nil,
+                   contentLogId: Int? = nil) async {
         isSavingDraft = true
         draftError = nil
         defer { isSavingDraft = false }
@@ -268,7 +276,8 @@ final class MarketingComposeViewModel {
             let response: OKResponse = try await client.send(
                 "/mobile/api/marketing/drafts", method: .post,
                 body: DraftBody(id: savedDraftID, body: body, topic: topic.isEmpty ? nil : topic,
-                                contentType: contentType, mediaId: media?.id)
+                                contentType: contentType, mediaId: media?.id, draftRef: draftRef,
+                                contentLogId: contentLogId)
             )
             if response.ok {
                 Haptic.success()

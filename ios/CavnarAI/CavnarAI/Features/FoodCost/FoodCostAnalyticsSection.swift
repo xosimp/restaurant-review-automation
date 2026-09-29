@@ -70,6 +70,11 @@ struct FoodCostAnalyticsSection: View {
                         repriceSection(viewModel.repriceSuggestions,
                                        assumption: viewModel.reprice?.assumption)
                     }
+                    // Pars the 86s say are too low (memory round) — each
+                    // one raised or declined in place.
+                    if !viewModel.parSuggestions.isEmpty {
+                        parSection(viewModel.parSuggestions)
+                    }
                     // The recoverable gauge that stood here is gone from this
                     // page (density #25): it drew the hero's recoverable
                     // figure a third time against the monthly projection.
@@ -372,8 +377,11 @@ struct FoodCostAnalyticsSection: View {
                     // evidence stays.
                     if let action = dg?.recommendedAction, dg?.answered != true {
                         VStack(alignment: .leading, spacing: 6) {
-                            cfoRow("Do this first", action)
-                            if let key = dg?.recKey {
+                            // An older read's action is what it suggested
+                            // then — no answer controls (memory round).
+                            let held = dg?.showsControls == false && dg?.recKey != nil
+                            cfoRow(held ? "It suggested then" : "Do this first", action, quiet: held)
+                            if dg?.showsControls == true, let key = dg?.recKey {
                                 RecAnswerRow(key: key, surface: "food")
                             }
                         }
@@ -416,6 +424,18 @@ struct FoodCostAnalyticsSection: View {
         return s + "."
     }
 
+    /// "Corrected: near $41,200 (38.9%) — already corrected: earlier
+    /// projections ran 12% high".
+    static func correctionSentence(_ fix: ProjectionCorrection, line: String) -> String {
+        var s = ""
+        if let projected = fix.projectedPrimeCost {
+            s = "Corrected: near $\(projected.commaFormatted)"
+            if let pct = fix.primeCostPct { s += String(format: " (%.1f%%)", pct) }
+            s += " \u{2014} "
+        }
+        return s + line
+    }
+
     private func profitabilityBlock(_ p: FoodCostCFO.Profitability,
                                     prime: Double, projected: Double, record: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -429,6 +449,22 @@ struct FoodCostAnalyticsSection: View {
                 .font(.cavnarBody(12.5))
                 .foregroundStyle(Color.cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
+            // The projection read against its own record (memory round):
+            // when earlier month-ends leaned, the corrected figure and why.
+            if let fix = p.projectionCorrection, let line = fix.line {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: "scope")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Color.cavnarEmber2)
+                    HomeMixedText.make(Self.correctionSentence(fix, line: line), size: 12.5, weight: 600,
+                                       color: .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if let labor = p.laborBasisText {
+                HomeMixedText.make("Labor: " + labor + ".", size: 12, weight: 500, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let basis = p.basis {
                 Text("Projection, not a measurement. \(basis)")
                     .font(.cavnarBody(11))
@@ -925,6 +961,105 @@ struct FoodCostAnalyticsSection: View {
 
     private static func price(_ v: Double) -> String { String(format: "$%.2f", v) }
 
+    /// PARS TO RAISE — an item the close-out ran out of on two or more
+    /// nights in four weeks, with the par that would have covered it.
+    /// Never written until the owner taps Raise par.
+    private func parSection(_ items: [ParSuggestion]) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("PARS TO RAISE")
+                .font(.cavnarBody(14, weight: 700))
+                .tracking(1.2)
+                .foregroundStyle(Color.cavnarEmber2)
+            VStack(spacing: 0) {
+                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                    parRow(item)
+                    if index < items.count - 1 {
+                        Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
+                    }
+                }
+            }
+            Text("From the close-out\u{2019}s 86 list. Raising a par changes what the order draft suggests.")
+                .font(.cavnarBody(11.5))
+                .foregroundStyle(Color.cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func parRow(_ s: ParSuggestion) -> some View {
+        let raised = viewModel.parRaised[s.ingredientId]
+        let dismissed = viewModel.parDismissed.contains(s.ingredientId)
+        let busy = viewModel.parBusy.contains(s.ingredientId)
+        return HStack(alignment: .top, spacing: 14) {
+            Rectangle().fill(Color.cavnarAmber).frame(width: 2.5)
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(s.name)
+                        .font(.cavnarBody(14.5, weight: 600))
+                        .foregroundStyle(Color.cavnarInk)
+                    Spacer(minLength: 8)
+                    (Text(ParSuggestion.qty(s.par)) + Text("  \u{2192}  ") + Text(ParSuggestion.qty(s.suggestedPar))
+                        .foregroundStyle(Color.cavnarInk))
+                        .font(.cavnarNumber(14.5, weight: 700))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .accessibilityLabel("Par now \(ParSuggestion.qty(s.par)), suggested \(ParSuggestion.qty(s.suggestedPar))")
+                }
+                if let why = s.why {
+                    HomeMixedText.make(why, size: 13, color: .cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let raised {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark").font(.system(size: 10, weight: .bold))
+                        (Text("Par set to ") + Text(ParSuggestion.qty(raised)).font(.cavnarNumber(12.5, weight: 600)))
+                            .font(.cavnarBody(12.5, weight: 500))
+                    }
+                    .foregroundStyle(Color.cavnarInk3)
+                    .padding(.top, 4)
+                } else {
+                    HStack(alignment: .center, spacing: 16) {
+                        if !dismissed, s.suggestedPar != nil {
+                            Button {
+                                Haptic.light()
+                                Task { await viewModel.acceptPar(s) }
+                            } label: {
+                                if busy { CavnarShimmerText(text: "Setting\u{2026}") } else { Text("Raise par") }
+                            }
+                            .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: busy))
+                            .disabled(busy)
+                        }
+                        if let key = s.key {
+                            RecAnswerRow(key: key, surface: "food", answers: [.notForUs],
+                                         onAnswered: { _ in viewModel.parDismissed.insert(s.ingredientId) })
+                                .disabled(busy)
+                        }
+                    }
+                    .padding(.top, 6)
+                    if let error = viewModel.parErrors[s.ingredientId] {
+                        Text(error)
+                            .font(.cavnarBody(12.5))
+                            .foregroundStyle(Color.cavnarRed)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 14)
+    }
+
+    /// The one-tap reprice: primary, or secondary under a guard.
+    private struct RepriceButtonStyle: ButtonStyle {
+        let guarded: Bool
+        let isDisabled: Bool
+        @ViewBuilder
+        func makeBody(configuration: Configuration) -> some View {
+            if guarded {
+                CavnarSecondaryButtonStyle(isDisabled: isDisabled).makeBody(configuration: configuration)
+            } else {
+                CavnarPrimaryButtonStyle(isDisabled: isDisabled).makeBody(configuration: configuration)
+            }
+        }
+    }
+
     private func repriceSection(_ items: [RepriceSuggestions.Suggestion], assumption: String?) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("PRICES TO REVISIT")
@@ -988,6 +1123,23 @@ struct FoodCostAnalyticsSection: View {
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                // What this owner usually does with a reprice, and what that
+                // recovers (memory round: owner_ratio / typical_price).
+                if let typical = s.typicalLine {
+                    HomeMixedText.make(typical + ".", size: 13, weight: 500, color: .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                // Guests calling the dish poor value (M1 value_note).
+                if let value = s.valueNote {
+                    HomeMixedText.make(value + ".", size: 13, weight: 500, color: .cavnarAmber)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                // A live link says fix the plate before the price: the
+                // guard's words, and the one-tap button steps down.
+                if let g = s.repriceGuard {
+                    CavnarCaveat(title: "Fix the plate before the price", detail: g.text)
+                        .padding(.top, 2)
+                }
 
                 if let applied {
                     HStack(spacing: 6) {
@@ -1011,12 +1163,27 @@ struct FoodCostAnalyticsSection: View {
                                 if busy {
                                     CavnarShimmerText(text: "Setting\u{2026}")
                                 } else {
-                                    (Text("Set ") + Text(Self.price(suggested)).font(.cavnarNumber(16, weight: 600)))
+                                    (Text(s.repriceGuard == nil ? "Set " : "Set anyway: ")
+                                     + Text(Self.price(suggested)).font(.cavnarNumber(16, weight: 600)))
                                 }
                             }
-                            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: busy))
+                            // Demoted under a guard (memory round, "links").
+                            .buttonStyle(RepriceButtonStyle(guarded: s.repriceGuard != nil, isDisabled: busy))
                             .disabled(busy)
                             .accessibilityHint("Changes \(s.dish)'s menu price")
+                        }
+                        // The owner's usual price, one tap (typical_price).
+                        if let typical = s.typicalPrice, !dismissed, !busy, typical != s.suggestedPrice {
+                            Button {
+                                Haptic.light()
+                                Task { await viewModel.applyReprice(s, price: typical) }
+                            } label: {
+                                (Text("Set ") + Text(Self.price(typical)).font(.cavnarNumber(13.5, weight: 700)))
+                                    .font(.cavnarBody(13.5, weight: 700))
+                                    .foregroundStyle(Color.cavnarEmber2)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityHint("Sets \(s.dish) to the price you usually choose")
                         }
                         if let key = s.recKey {
                             RecAnswerRow(key: key, surface: "food", answers: [.notForUs],

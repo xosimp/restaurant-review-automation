@@ -742,6 +742,9 @@ struct IntelView: View {
             }
             if let movement = viewModel.movement {
                 movementSection(movement)
+                // The market's history and your own rating over time — kept
+                // forever, where the weekly checks above age out.
+                IntelHistorySection(movement: movement)
             }
             // How current the sources behind Intel are, from data health.
             DataHealthModuleBadge(module: "intel")

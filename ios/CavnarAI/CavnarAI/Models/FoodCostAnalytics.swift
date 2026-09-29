@@ -481,6 +481,13 @@ struct FoodCostCFO: Decodable {
         let staleNote: String?
         /// Figures in the cause the server could not trace to the data (M-17).
         let unsupportedFigures: [String]?
+        /// Memory round (9/29/26): an older read keeps its evidence but is
+        /// not answerable (`answerable: false`, and `controls_withheld`
+        /// "stale" where the server says why).
+        var answerable: Bool? = nil
+        var controlsWithheld: String? = nil
+        /// Done / Not for us under the action — keyed, not answered, not held.
+        var showsControls: Bool { recKey != nil && answered != true && answerable != false && controlsWithheld == nil }
 
         struct OperationalEvidence: Decodable, Hashable {
             let module: String
@@ -488,6 +495,8 @@ struct FoodCostCFO: Decodable {
             let value: String
         }
         enum CodingKeys: String, CodingKey {
+            case answerable
+            case controlsWithheld = "controls_withheld"
             case headline, cause, confidence, stale, answered
             case confidenceDetail = "confidence_detail"
             case recKey = "rec_key"
@@ -523,7 +532,15 @@ struct FoodCostCFO: Decodable {
         let direction: String?
         let daysElapsed: Int?
         let basis: String?
+        /// Memory round (9/29/26): the month-end projection corrected by its
+        /// own record ("already corrected: earlier projections ran 12%
+        /// high"), and where its labor came from ("labor measured on 12
+        /// nights by your nightly reports, …"). Nil on an older server.
+        var projectionCorrection: ProjectionCorrection? = nil
+        var laborBasisText: String? = nil
         enum CodingKeys: String, CodingKey {
+            case projectionCorrection = "projection_correction"
+            case laborBasisText = "labor_basis_text"
             case available, reason, direction, basis
             case primeCostPct = "prime_cost_pct"
             case foodCostPct = "food_cost_pct"
@@ -533,6 +550,23 @@ struct FoodCostCFO: Decodable {
             case prevMonthPrimePct = "prev_month_prime_pct"
             case dollarsVsLastMonth = "dollars_vs_last_month"
             case daysElapsed = "days_elapsed"
+        }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            available = (try? c.decode(Bool.self, forKey: .available)) ?? false
+            reason = try? c.decodeIfPresent(String.self, forKey: .reason)
+            primeCostPct = try? c.decodeIfPresent(Double.self, forKey: .primeCostPct)
+            foodCostPct = try? c.decodeIfPresent(Double.self, forKey: .foodCostPct)
+            laborPct = try? c.decodeIfPresent(Double.self, forKey: .laborPct)
+            projectedSales = try? c.decodeIfPresent(Double.self, forKey: .projectedSales)
+            projectedPrimeCost = try? c.decodeIfPresent(Double.self, forKey: .projectedPrimeCost)
+            prevMonthPrimePct = try? c.decodeIfPresent(Double.self, forKey: .prevMonthPrimePct)
+            dollarsVsLastMonth = try? c.decodeIfPresent(Double.self, forKey: .dollarsVsLastMonth)
+            direction = try? c.decodeIfPresent(String.self, forKey: .direction)
+            daysElapsed = try? c.decodeIfPresent(Int.self, forKey: .daysElapsed)
+            basis = try? c.decodeIfPresent(String.self, forKey: .basis)
+            projectionCorrection = (try? c.decodeIfPresent(ProjectionCorrection.self, forKey: .projectionCorrection)) ?? nil
+            laborBasisText = (try? c.decodeIfPresent(String.self, forKey: .laborBasisText)) ?? nil
         }
     }
 
@@ -711,8 +745,27 @@ struct RepriceSuggestions: Decodable {
         let foodCostPctNow: Double?
         let drivers: [Driver]?
         let recKey: String?
+        /// Memory round (9/29/26). The owner's usual choice on a reprice —
+        /// `owner_ratio` {ratio, decisions, basis} — with the price that
+        /// choice gives and the monthly margin it recovers; a live
+        /// cross-module guard (guests naming the dish in complaints: fix the
+        /// plate before the price) that demotes the one-tap button; and what
+        /// guests said about the dish's value. All nil on an older server.
+        var ownerRatio: RepriceOwnerRatio? = nil
+        var typicalPrice: Double? = nil
+        var typicalMonthly: Double? = nil
+        var repriceGuard: RepriceGuard? = nil
+        var valueNote: String? = nil
 
         var id: String { dish }
+
+        /// "You usually raise about half — $22.00 would recover $150/mo".
+        var typicalLine: String? {
+            guard let share = ownerRatio?.share, let price = typicalPrice else { return nil }
+            var s = "You usually raise \(share) of the suggested rise \u{2014} " + String(format: "$%.2f", price)
+            if let monthly = typicalMonthly { s += " would recover $\(monthly.commaFormatted)/mo" }
+            return s
+        }
 
         struct Driver: Decodable, Equatable, Hashable {
             let ingredient: String
@@ -741,6 +794,32 @@ struct RepriceSuggestions: Decodable {
             case foodCostPctBefore = "food_cost_pct_before"
             case foodCostPctNow = "food_cost_pct_now"
             case recKey = "rec_key"
+            case ownerRatio = "owner_ratio"
+            case typicalPrice = "typical_price"
+            case typicalMonthly = "typical_monthly"
+            case repriceGuard = "guard"
+            case valueNote = "value_note"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            dish = try c.decode(String.self, forKey: .dish)
+            menuItemId = try? c.decodeIfPresent(Int.self, forKey: .menuItemId)
+            sellPrice = try? c.decodeIfPresent(Double.self, forKey: .sellPrice)
+            suggestedPrice = try? c.decodeIfPresent(Double.self, forKey: .suggestedPrice)
+            priceChange = try? c.decodeIfPresent(Double.self, forKey: .priceChange)
+            monthlyMarginLost = try? c.decodeIfPresent(Double.self, forKey: .monthlyMarginLost)
+            monthlyBasis = try? c.decodeIfPresent(String.self, forKey: .monthlyBasis)
+            increasePerPlate = try? c.decodeIfPresent(Double.self, forKey: .increasePerPlate)
+            foodCostPctBefore = try? c.decodeIfPresent(Double.self, forKey: .foodCostPctBefore)
+            foodCostPctNow = try? c.decodeIfPresent(Double.self, forKey: .foodCostPctNow)
+            drivers = try? c.decodeIfPresent([Driver].self, forKey: .drivers)
+            recKey = try? c.decodeIfPresent(String.self, forKey: .recKey)
+            ownerRatio = (try? c.decodeIfPresent(RepriceOwnerRatio.self, forKey: .ownerRatio)) ?? nil
+            typicalPrice = (try? c.decodeIfPresent(Double.self, forKey: .typicalPrice)) ?? nil
+            typicalMonthly = (try? c.decodeIfPresent(Double.self, forKey: .typicalMonthly)) ?? nil
+            repriceGuard = (try? c.decodeIfPresent(RepriceGuard.self, forKey: .repriceGuard)) ?? nil
+            valueNote = (try? c.decodeIfPresent(String.self, forKey: .valueNote)) ?? nil
         }
 
         /// "Parmesan +18%" — the ingredient that moved most, or nil.

@@ -68,6 +68,9 @@ struct TeamStrengthSection: View {
                         .foregroundStyle(Color.cavnarRed)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+
+                // Who changed a rating or a target, and when (memory round).
+                CapabilityHistoryBlock()
             }
         }
     }

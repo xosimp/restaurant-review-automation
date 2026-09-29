@@ -26,10 +26,18 @@ struct InvoiceLine: Decodable, Identifiable {
     /// agreed and there was a current cost to compare with. Nil when the
     /// server did not say. Shown on each line, as the web does.
     let verified: Bool?
+    /// How the line found its ingredient (memory round, 9/29/26:
+    /// invoices.propose): "your_match" — the one the owner picked for this
+    /// line before — or "name". Nil when unmatched or on an older server.
+    var matchedBy: String? = nil
 
     var id: Int { index }
 
+    /// "Matched as you did last time" — only for the owner's own match.
+    var matchNote: String? { matchedBy == "your_match" ? "Matched as you did last time" : nil }
+
     enum CodingKeys: String, CodingKey {
+        case matchedBy = "matched_by"
         case index, description, quantity, unit, note, selected, applied, verified
         case unitPrice = "unit_price"
         case lineTotal = "line_total"
@@ -713,6 +721,14 @@ struct InvoiceScanSheet: View {
                         }
                     }
                     HomeMixedText.make(detail(line), size: 12.5, weight: 500, color: .cavnarInk3)
+                    if let match = line.matchNote {
+                        HStack(spacing: 5) {
+                            Image(systemName: "checkmark.circle")
+                                .font(.system(size: 10, weight: .bold))
+                            Text(match).font(.cavnarBody(12.5, weight: 600))
+                        }
+                        .foregroundStyle(Color.cavnarGreen)
+                    }
                     if let note = line.note {
                         Text(note).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarAmber)
                             .fixedSize(horizontal: false, vertical: true)

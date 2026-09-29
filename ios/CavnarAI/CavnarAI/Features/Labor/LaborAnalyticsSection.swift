@@ -17,6 +17,15 @@ struct LaborAnalyticsSection: View {
                 benchmarkBar(stats)
                 LaborRibbonChart(points: ribbonPoints, target: stats.target,
                                  subtitle: viewModel.daily.isEmpty ? "8-week trend" : "last \(viewModel.daily.count) days")
+                // What the dashed line means here (memory round): the margin
+                // fitted to this restaurant's own swing, and a payroll week
+                // still in progress named as partial.
+                ForEach(Self.ribbonNotes(stats: stats, trend: viewModel.daily.isEmpty ? viewModel.trend : []),
+                        id: \.self) { note in
+                    HomeMixedText.make(note, size: 12.5, color: .cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, -10)
+                }
                 WeekRadarChart(dowSummary: stats.dowSummary, target: stats.target,
                                subtitle: [stats.dateRange.start, stats.dateRange.end].compactMap { $0 }.map(Self.shortDate).joined(separator: " – "),
                                positiveAllowed: Self.positiveAllowed(stats))
@@ -45,7 +54,23 @@ struct LaborAnalyticsSection: View {
                 return LaborRibbonChart.Point(id: day.date, label: label, pct: day.laborPct)
             }
         }
-        return viewModel.trend.map { LaborRibbonChart.Point(id: $0.label, label: $0.label, pct: $0.pct) }
+        return viewModel.trend.map {
+            LaborRibbonChart.Point(id: $0.label, label: $0.complete == false ? $0.label + " so far" : $0.label,
+                                   pct: $0.pct)
+        }
+    }
+
+    /// The lines under the ribbon: what "over target" means for a day here
+    /// (the fitted margin), and a week still in progress when the trend is
+    /// what's drawn.
+    static func ribbonNotes(stats: LaborStats, trend: [LaborTrendWeek]) -> [String] {
+        var out: [String] = []
+        if let line = stats.overMarginLine { out.append(line) }
+        if let open = trend.last(where: { $0.complete == false }) {
+            out.append("The week of \(CavnarDate.mdy(open.start)) is still in progress \u{2014} its point is partial, "
+                       + "not part of the trend.")
+        }
+        return out
     }
 
     @ViewBuilder

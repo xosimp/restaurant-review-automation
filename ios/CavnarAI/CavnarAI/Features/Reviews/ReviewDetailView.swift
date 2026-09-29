@@ -10,6 +10,10 @@ struct ReviewDetailView: View {
     @State private var templateName = ""
     @State private var templateNote: String?
     @State private var postedOverlayLabel: String?
+    // "Fix tags" (memory round, 9/29/26): the sheet, and the tags the
+    // server answered with once corrected.
+    @State private var showingRetag = false
+    @State private var retagged: ReviewTags?
     @FocusState private var isDraftFocused: Bool
     var onCompleted: (String) -> Void
     /// Queue mode (friction audit #21): the next reply waiting after this
@@ -179,6 +183,11 @@ struct ReviewDetailView: View {
             await viewModel.loadTemplates()
         }
 
+        .sheet(isPresented: $showingRetag) {
+            ReviewRetagSheet(review: viewModel.review, current: retagged ?? ReviewTags(viewModel.review)) { tags in
+                retagged = tags
+            }
+        }
         .sheet(isPresented: $showingTemplates) {
             TemplatePickerSheet(templates: viewModel.templates, onSelect: { template in
                 viewModel.applyTemplate(template)
@@ -207,7 +216,8 @@ struct ReviewDetailView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This reply \(viewModel.flagReason ?? ReviewDetailViewModel.defaultFlagReason). Cavnar AI can\u{2019}t confirm that.")
+            Text("This reply \(viewModel.flagReason ?? ReviewDetailViewModel.defaultFlagReason). "
+                 + ReviewDetailViewModel.flagFollowUp(viewModel.flagReason))
         }
         .confirmationDialog(
             "Retract this reply from Google?",
@@ -261,12 +271,40 @@ struct ReviewDetailView: View {
                 .foregroundStyle(Color.cavnarInk2)
                 .lineSpacing(6)
             cavnarRead
+            retagRow
             // The web's "Ask about this" on each review card, with the same
             // question and the review as the screen's subject.
             HomeAskLink(
                 question: "About this review: what is the guest really saying, and is my reply right?",
                 screen: AskScreen(panel: "reviews", entityType: "review", entityId: "\(viewModel.review.id)")
             )
+        }
+    }
+
+    /// "Fix tags" — the owner corrects how this review was tagged, and
+    /// the tags as corrected once saved (memory round, 9/29/26).
+    @ViewBuilder
+    private var retagRow: some View {
+        if viewModel.review.isAnalysed {
+            VStack(alignment: .leading, spacing: 4) {
+                if let retagged {
+                    HomeMixedText.make(retagged.line, size: 13, weight: 500, color: .cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Button {
+                    Haptic.light()
+                    showingRetag = true
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "tag").font(.system(size: 11, weight: .bold))
+                        Text(retagged == nil ? "Fix tags" : "Fix tags again")
+                    }
+                    .font(.cavnarBody(13.5, weight: 700))
+                    .foregroundStyle(Color.cavnarEmber2)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Correct the topics, tone, severity and dishes Cavnar AI tagged")
+            }
         }
     }
 

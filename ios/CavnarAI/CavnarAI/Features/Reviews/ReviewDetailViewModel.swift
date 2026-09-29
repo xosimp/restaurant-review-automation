@@ -45,6 +45,16 @@ final class ReviewDetailViewModel {
     /// True while the "Post it anyway?" confirm for a flagged draft is up.
     var needsFlagConfirm = false
     static let defaultFlagReason = "states something Cavnar AI cannot confirm"
+    /// drafter.FIX_REVIEW_REASON — a reply that names a change the owner
+    /// marked done (memory round, 9/29/26). Held so the owner checks the
+    /// wording matches what was done, not because it is unconfirmed.
+    static let fixDoneReason = "mentions a change you marked done in Cavnar AI"
+
+    /// The sentence after the reason in the post-anyway confirm.
+    static func flagFollowUp(_ reason: String?) -> String {
+        reason == fixDoneReason ? "Check it says what you actually changed."
+                                : "Cavnar AI can\u{2019}t confirm that."
+    }
 
     private let client: APIClient
     private var saveDraftTask: Task<Void, Never>?

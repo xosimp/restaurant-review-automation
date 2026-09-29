@@ -227,10 +227,34 @@ struct DemandSignal: Codable, Identifiable, Equatable {
     let covers: Int?
     let liftPct: Double?
     let source: String?
+    /// A listed event's measured record here — "nights like this ran a
+    /// median 14% above a typical same weekday (measured 4 times)"
+    /// (memory round, 9/29/26). Nil for reservations, an event never
+    /// measured, or an older server; an odd shape is nil, never a failed
+    /// list.
+    var measured: EventMeasured? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, date, kind, label, covers, source
+        case id, date, kind, label, covers, source, measured
         case liftPct = "lift_pct"
+    }
+
+    init(id: Int, date: String, kind: String, label: String?, covers: Int?, liftPct: Double?, source: String?,
+         measured: EventMeasured? = nil) {
+        self.id = id; self.date = date; self.kind = kind; self.label = label; self.covers = covers
+        self.liftPct = liftPct; self.source = source; self.measured = measured
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int.self, forKey: .id)
+        date = try c.decode(String.self, forKey: .date)
+        kind = try c.decode(String.self, forKey: .kind)
+        label = try? c.decodeIfPresent(String.self, forKey: .label)
+        covers = try? c.decodeIfPresent(Int.self, forKey: .covers)
+        liftPct = try? c.decodeIfPresent(Double.self, forKey: .liftPct)
+        source = try? c.decodeIfPresent(String.self, forKey: .source)
+        measured = (try? c.decodeIfPresent(EventMeasured.self, forKey: .measured)) ?? nil
     }
 
     var kindLabel: String { kind == "reservations" ? "Reservations" : "Event" }
@@ -581,8 +605,13 @@ struct ScheduleIntel: Codable, Equatable {
     /// K8 — how demand forecasts have held up here, shown beside the
     /// projected revenue. Absent on an older server.
     var demandAccuracy: DemandAccuracy? = nil
+    /// Why each quiet kind is quiet and when it is re-tested (memory round,
+    /// 9/29/26: `{kind: {state, reason, since, review_on, retests}}`).
+    /// Absent on an older server.
+    var recommendationSuppression: SuppressionMap? = nil
 
     enum CodingKeys: String, CodingKey {
+        case recommendationSuppression = "recommendation_suppression"
         case ok, error, outcomes, ledger, behaviour, mentored, splh, revenue, rotation
         case demandAccuracy = "demand_accuracy"
         case editPrediction = "edit_prediction"
@@ -1135,16 +1164,41 @@ final class ScheduleSetupViewModel {
     var canEditPatterns = true
     var patternBusyKey: String?
     var patternError: String?
+    /// What the draft keeps after the manager stopped correcting it — who
+    /// taught it, when it was learned and last kept, and whether it can
+    /// become the person's rule — and the pairs two editors pull opposite
+    /// ways (memory round, 9/29/26: `standing`, `conflicts`). Empty on an
+    /// older server.
+    var standingPatterns: [StandingPattern] = []
+    var patternConflicts: [PatternConflict] = []
+    /// The server's answer to the last "Make it a rule".
+    var patternMessage: String?
 
     private struct PatternsResponse: Decodable {
         let ok: Bool
         let patterns: [LearnedPattern]?
         let canEdit: Bool?
         let error: String?
+        let standing: HomeLenientList<StandingPattern>?
+        let conflicts: HomeLenientList<PatternConflict>?
         enum CodingKeys: String, CodingKey {
-            case ok, patterns, error
+            case ok, patterns, error, standing, conflicts
             case canEdit = "can_edit"
         }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = (try? c.decode(Bool.self, forKey: .ok)) ?? false
+            patterns = try? c.decodeIfPresent([LearnedPattern].self, forKey: .patterns)
+            canEdit = try? c.decodeIfPresent(Bool.self, forKey: .canEdit)
+            error = try? c.decodeIfPresent(String.self, forKey: .error)
+            standing = try? c.decodeIfPresent(HomeLenientList<StandingPattern>.self, forKey: .standing)
+            conflicts = try? c.decodeIfPresent(HomeLenientList<PatternConflict>.self, forKey: .conflicts)
+        }
+    }
+
+    private struct RuleBody: Encodable {
+        let key: String
+        let rule: Bool
     }
 
     private struct PatternBody: Encodable {
@@ -1158,8 +1212,36 @@ final class ScheduleSetupViewModel {
             guard r.ok else { return }
             learnedPatterns = r.patterns ?? []
             canEditPatterns = r.canEdit ?? true
+            standingPatterns = r.standing?.items ?? []
+            patternConflicts = r.conflicts?.items ?? []
         } catch {
             // A secondary list; the roster stands without it.
+        }
+    }
+
+    /// "Make it a rule": the standing pattern becomes the person's own
+    /// availability, with its author (POST {key, rule: true}). Reloads so
+    /// the pattern reads "now a rule".
+    func makeRule(_ pattern: StandingPattern) async {
+        patternBusyKey = pattern.key
+        patternError = nil
+        patternMessage = nil
+        defer { patternBusyKey = nil }
+        do {
+            let r: OKResponse = try await client.send(
+                "/mobile/api/labor/learned-patterns", method: .post,
+                body: RuleBody(key: pattern.key, rule: true), hapticOnError: false, retryTransient: false)
+            if r.ok {
+                Haptic.success()
+                patternMessage = "Now a rule for \(pattern.employee ?? "them") \u{2014} it lives in their availability."
+                await loadLearnedPatterns()
+            } else {
+                patternError = r.error ?? "Couldn\u{2019}t make that a rule."
+            }
+        } catch let error as APIClient.APIError {
+            patternError = error.message
+        } catch {
+            patternError = "Couldn\u{2019}t make that a rule."
         }
     }
 
@@ -1272,7 +1354,24 @@ final class ScheduleSetupViewModel {
         let ok: Bool
         let signals: [DemandSignal]?
         let error: String?
+        /// What the nights taught here — recurring effects, measured, before
+        /// and after (memory round, 9/29/26). Absent on an older server.
+        let whatNightsTeach: HomeLenientList<NightLesson>?
+        enum CodingKeys: String, CodingKey {
+            case ok, signals, error
+            case whatNightsTeach = "what_nights_teach"
+        }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = (try? c.decode(Bool.self, forKey: .ok)) ?? false
+            signals = try? c.decodeIfPresent([DemandSignal].self, forKey: .signals)
+            error = try? c.decodeIfPresent(String.self, forKey: .error)
+            whatNightsTeach = try? c.decodeIfPresent(HomeLenientList<NightLesson>.self, forKey: .whatNightsTeach)
+        }
     }
+
+    /// "What your nights have taught" — the recurring effects on file.
+    var nightLessons: [NightLesson] = []
 
     private struct SignalRow: Encodable {
         let date: String
@@ -1318,6 +1417,7 @@ final class ScheduleSetupViewModel {
                 hapticOnError: false)
             guard r.ok else { signalError = r.error; return }
             signals = (r.signals ?? []).sorted { $0.date < $1.date }
+            nightLessons = r.whatNightsTeach?.items ?? []
             signalError = nil
         } catch is CancellationError {
         } catch let error as APIClient.APIError {

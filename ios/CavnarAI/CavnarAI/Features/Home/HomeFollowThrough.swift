@@ -225,7 +225,11 @@ final class HomeFollowThroughViewModel {
             NeedsAttentionItem(
                 type: Self.linkType(l.recKey ?? "\(i)"), module: l.modules?.first ?? "home",
                 title: l.headline,
-                detail: (l.modules ?? []).map { RecSummaryFormat.moduleLabel($0) }.joined(separator: " + "),
+                // How long it has stood, beside the modules (memory round:
+                // "Found 3 weeks running, since 9/7/26").
+                detail: ([(l.modules ?? []).map { RecSummaryFormat.moduleLabel($0) }.joined(separator: " + ")]
+                         + [l.memory?.line].compactMap { $0 })
+                    .filter { !$0.isEmpty }.joined(separator: " \u{00B7} "),
                 cta: "Evidence", secondary: nil, action: "link_evidence",
                 recKey: l.recKey, dismissable: false, timesHidden: nil, count: nil,
                 evidence: l.evidence?.first, confidence: nil)
@@ -481,12 +485,31 @@ final class HomeFollowThroughViewModel {
             /// (rec-ROI #26). Absent on an older server.
             let recKey: String?
             let answerable: Bool?
+            /// How long the link has stood (memory round, 9/29/26:
+            /// link_memory) — first and last found, weeks running, whether
+            /// it came back after an answer, and the server's sentence.
+            /// Nil on an older server; an unknown `kind` is kept as text.
+            var memory: LinkMemory? = nil
             var id: String { headline }
             enum CodingKeys: String, CodingKey {
-                case kind, headline, modules, evidence, alternative, ask, answerable
+                case kind, headline, modules, evidence, alternative, ask, answerable, memory
                 case confirmBy = "confirm_by"
                 case notACause = "not_a_cause"
                 case recKey = "rec_key"
+            }
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                headline = try c.decode(String.self, forKey: .headline)
+                kind = try? c.decodeIfPresent(String.self, forKey: .kind)
+                modules = try? c.decodeIfPresent([String].self, forKey: .modules)
+                evidence = try? c.decodeIfPresent([String].self, forKey: .evidence)
+                confirmBy = try? c.decodeIfPresent(String.self, forKey: .confirmBy)
+                alternative = try? c.decodeIfPresent(String.self, forKey: .alternative)
+                notACause = try? c.decodeIfPresent(String.self, forKey: .notACause)
+                ask = try? c.decodeIfPresent(String.self, forKey: .ask)
+                recKey = try? c.decodeIfPresent(String.self, forKey: .recKey)
+                answerable = try? c.decodeIfPresent(Bool.self, forKey: .answerable)
+                memory = (try? c.decodeIfPresent(LinkMemory.self, forKey: .memory)) ?? nil
             }
         }
         /// "If you only do one thing" — business_intelligence.pick_one_thing:
@@ -519,6 +542,11 @@ final class HomeFollowThroughViewModel {
             /// What the figure covers (dollars_basis, B4 H7): the whole
             /// schedule's gap, one driver alone …
             var dollarsBasis: String? = nil
+            /// A link found weeks running, or back after an answer, is
+            /// escalated (memory round: `recurring`, `link_memory`); its
+            /// `why` already carries the memory's sentence.
+            var recurring: Bool? = nil
+            var linkMemory: LinkMemory? = nil
             /// The monthly figure the hero states — calibrated when sent.
             var statedDollars: Double? { RecDollarCalibration.figure(raw: dollarsMonthly, adjusted: dollarsAdjusted) }
             var dollarsNote: String? {
@@ -560,6 +588,8 @@ final class HomeFollowThroughViewModel {
                 case calibrationN = "calibration_n"
                 case calibrationNote = "calibration_note"
                 case dollarsBasis = "dollars_basis"
+                case recurring
+                case linkMemory = "link_memory"
             }
             init(from decoder: Decoder) throws {
                 let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -581,6 +611,8 @@ final class HomeFollowThroughViewModel {
                 confidence = try? c.decodeIfPresent(TrustConfidence.self, forKey: .confidence)
                 claimKind = try? c.decodeIfPresent(String.self, forKey: .claimKind)
                 money = try? c.decodeIfPresent(Money.self, forKey: .money)
+                recurring = (try? c.decodeIfPresent(Bool.self, forKey: .recurring)) ?? nil
+                linkMemory = (try? c.decodeIfPresent(LinkMemory.self, forKey: .linkMemory)) ?? nil
             }
             /// The key its answer row posts — rec_key, else the pick's own key.
             var answerKey: String? { recKey ?? key }

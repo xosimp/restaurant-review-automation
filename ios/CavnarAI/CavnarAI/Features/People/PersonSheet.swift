@@ -50,9 +50,21 @@ struct PersonRecord: Decodable, Equatable {
     /// "pay_rate": true, …}`). Nil on an older server: role shown as a field,
     /// pay read only.
     let editable: [String: Bool]?
+    /// What else is known about them (memory round, 9/29/26): roles held
+    /// beyond the shifts worked, their record of taking covers, the guest
+    /// mentions the owner confirmed, and attendance on the shifts somebody
+    /// watched — `{known: false}` reads "Not watched yet", never a clean
+    /// record. All absent on an older server.
+    var rolesHeld: [PersonRole] = []
+    var covers: PersonCovers? = nil
+    var guestMentions: [GuestMention] = []
+    var attendance: PersonAttendance? = nil
 
     enum CodingKeys: String, CodingKey {
         case key, name, role, active, phone, email, hours, availability, rating, certifications, editable
+        case covers, attendance
+        case rolesHeld = "roles_held"
+        case guestMentions = "guest_mentions"
         case pinSet = "pin_set"
         case posId = "pos_id"
         case payRate = "pay_rate"
@@ -112,7 +124,16 @@ struct PersonRecord: Decodable, Equatable {
         editable = try? c.decodeIfPresent([String: Bool].self, forKey: .editable)
         // The flat figure, when the server sends it, is the one to show.
         if let amount = try? c.decodeIfPresent(Double.self, forKey: .payRateAmount) { payRate = amount }
+        rolesHeld = ((try? c.decodeIfPresent(HomeLenientList<PersonRole>.self, forKey: .rolesHeld)) ?? nil)?.items ?? []
+        covers = try? c.decodeIfPresent(PersonCovers.self, forKey: .covers)
+        guestMentions = ((try? c.decodeIfPresent(HomeLenientList<GuestMention>.self, forKey: .guestMentions)) ?? nil)?
+            .items ?? []
+        attendance = try? c.decodeIfPresent(PersonAttendance.self, forKey: .attendance)
     }
+
+    /// Whether the server sent the memory fields at all — an older server
+    /// sends none, and the section is left off rather than shown empty.
+    var hasMemory: Bool { attendance != nil || covers != nil || !rolesHeld.isEmpty || !guestMentions.isEmpty }
 
     /// "$15.00/h · Server's rate" / "$14.00/h · blended rate" — nil when no
     /// rate is set (never "$0").
@@ -270,6 +291,52 @@ final class PersonSheetViewModel {
         return out
     }
 
+    // MARK: Roles held (POST /people/<key>/roles)
+
+    /// A role to add ("bartender"), and whether it becomes their role on
+    /// the roster (a promotion) rather than one they're trained on.
+    var newRole = ""
+    var newRolePrimary = false
+    private(set) var roleBusy = false
+    private(set) var roleMessage: String?
+    private(set) var roleError: String?
+
+    private struct RoleBody: Encodable {
+        let role: String
+        let primary: Bool?
+        let remove: Bool?
+    }
+
+    static func rolesPath(for key: String) -> String { path(for: key) + "/roles" }
+
+    /// Adds (or with `remove`, takes off) one role, then re-reads the
+    /// record so the roster's role and the list agree.
+    func changeRole(_ role: String, primary: Bool = false, remove: Bool = false) async {
+        guard case .loaded(let person) = state else { return }
+        let name = role.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        roleBusy = true
+        roleError = nil
+        roleMessage = nil
+        defer { roleBusy = false }
+        do {
+            let r: APIClient.OKResponse = try await client.send(
+                Self.rolesPath(for: person.key), method: .post,
+                body: RoleBody(role: name, primary: remove ? nil : primary, remove: remove ? true : nil),
+                retryTransient: false)
+            guard r.ok else { roleError = r.error ?? "Couldn\u{2019}t save that role."; return }
+            if !remove { newRole = ""; newRolePrimary = false }
+            roleMessage = remove ? "Removed." : (primary ? "Promoted \u{2014} their role on the roster." : "Added.")
+            Haptic.success()
+            let refreshed: PersonResponse? = try? await client.send(Self.path(for: person.key), hapticOnError: false)
+            if let updated = refreshed?.person { apply(updated) }
+        } catch let error as APIClient.APIError {
+            roleError = error.message
+        } catch {
+            roleError = "Couldn\u{2019}t save that role."
+        }
+    }
+
     func save() async {
         guard case .loaded(let person) = state else { return }
         let body = changes(from: person)
@@ -356,6 +423,8 @@ struct PersonSheet: View {
                                 : (person.certifications ?? []).joined(separator: ", "))
         }
 
+        if person.hasMemory { memorySection(person) }
+
         AccountSection(kicker: "Login") {
             kv("PIN", last: true, person.pinSet == true ? "Set" : "Not set")
         }
@@ -406,6 +475,113 @@ struct PersonSheet: View {
                         Text(message).font(.cavnarBody(14)).foregroundStyle(Color.cavnarGreen)
                     }
                     if let error = viewModel.saveError {
+                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+    }
+
+    /// What Cavnar AI knows about them beyond the settings: attendance on
+    /// watched shifts, covers taken, the roles they hold, and what guests
+    /// said (confirmed by the owner). Each fact says its window.
+    @ViewBuilder
+    private func memorySection(_ person: PersonRecord) -> some View {
+        AccountSection(kicker: "What Cavnar AI knows") {
+            AccountKVRow(label: "Attendance") {
+                HomeMixedText.make((person.attendance ?? PersonAttendance(known: false)).line, size: 14, weight: 600,
+                                   color: person.attendance?.unreliable == true ? .cavnarAmber : .cavnarInk)
+                    .multilineTextAlignment(.trailing)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            AccountKVRow(label: "Covers", showsDivider: !person.rolesHeld.isEmpty || !person.guestMentions.isEmpty) {
+                HomeMixedText.make((person.covers ?? PersonCovers(taken: 0, declined: 0)).line, size: 14, weight: 600)
+                    .multilineTextAlignment(.trailing)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !person.rolesHeld.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Roles held")
+                        .font(.cavnarBody(13, weight: 700))
+                        .foregroundStyle(Color.cavnarInk3)
+                    ForEach(person.rolesHeld) { role in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            HomeMixedText.make(role.line, size: 14, color: .cavnarInk2)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 4)
+                            if person.canEdit != false && !role.primary {
+                                Button {
+                                    Haptic.light()
+                                    Task { await viewModel.changeRole(role.role, remove: true) }
+                                } label: {
+                                    Text("Remove")
+                                        .font(.cavnarBody(12.5, weight: 600))
+                                        .foregroundStyle(Color.cavnarInk3)
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(viewModel.roleBusy)
+                            }
+                        }
+                    }
+                }
+                .padding(.vertical, 10)
+            }
+            if !person.guestMentions.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("What guests said")
+                        .font(.cavnarBody(13, weight: 700))
+                        .foregroundStyle(Color.cavnarInk3)
+                    ForEach(person.guestMentions) { m in
+                        HomeMixedText.make((m.dateLabel.map { $0 + " \u{00B7} " } ?? "")
+                                           + "\u{201C}" + (m.snippet ?? "named in a review") + "\u{201D}",
+                                           size: 13.5, color: m.isComplaint ? .cavnarAmber : .cavnarInk2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(.vertical, 10)
+            }
+        }
+        if person.canEdit != false {
+            AccountSection(kicker: "Add a role") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("A role they can work beyond their shifts so far \u{2014} trained on bar, or a promotion.")
+                        .font(.cavnarBody(13))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                    TextField("Role", text: $viewModel.newRole)
+                        .cavnarTextFieldStyle()
+                        .textInputAutocapitalization(.words)
+                        .autocorrectionDisabled()
+                    Button {
+                        Haptic.selection()
+                        viewModel.newRolePrimary.toggle()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: viewModel.newRolePrimary ? "checkmark.square.fill" : "square")
+                                .foregroundStyle(viewModel.newRolePrimary ? Color.cavnarEmber2 : Color.cavnarInk3)
+                            Text("A promotion \u{2014} make it their role on the roster")
+                                .font(.cavnarBody(14))
+                                .foregroundStyle(Color.cavnarInk2)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    Button {
+                        Haptic.light()
+                        Task { await viewModel.changeRole(viewModel.newRole, primary: viewModel.newRolePrimary) }
+                    } label: {
+                        Group {
+                            if viewModel.roleBusy { CavnarShimmerText(text: "Saving\u{2026}") } else { Text("Add role") }
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: viewModel.roleBusy
+                                                            || viewModel.newRole.trimmingCharacters(in: .whitespaces).isEmpty))
+                    .disabled(viewModel.roleBusy || viewModel.newRole.trimmingCharacters(in: .whitespaces).isEmpty)
+                    if let message = viewModel.roleMessage {
+                        Text(message).font(.cavnarBody(14)).foregroundStyle(Color.cavnarGreen)
+                    }
+                    if let error = viewModel.roleError {
                         Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
                             .fixedSize(horizontal: false, vertical: true)
                     }

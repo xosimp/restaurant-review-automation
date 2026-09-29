@@ -358,7 +358,35 @@ final class GuestTextClubViewModel {
         let ok: Bool
         let message: String?
         let error: String?
+        /// The model's draft, kept so the text that goes out is measured
+        /// against it — sent back on Send (memory round, 9/29/26:
+        /// marketing_voice). And what past texts did per audience.
+        let draftRef: Int?
+        let returnsBySegment: [String: SegmentReturn]?
+        enum CodingKeys: String, CodingKey {
+            case ok, message, error
+            case draftRef = "draft_ref"
+            case returnsBySegment = "returns_by_segment"
+        }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = (try? c.decode(Bool.self, forKey: .ok)) ?? false
+            message = try? c.decodeIfPresent(String.self, forKey: .message)
+            error = try? c.decodeIfPresent(String.self, forKey: .error)
+            draftRef = (try? c.decodeIfPresent(Int.self, forKey: .draftRef)) ?? nil
+            returnsBySegment = (try? c.decodeIfPresent([String: SegmentReturn].self, forKey: .returnsBySegment)) ?? nil
+        }
     }
+
+    /// The drafted text's model draft (`draft_ref`), sent back on Send.
+    private(set) var draftRef: Int?
+    /// Guests who came back per 100 texted, per audience, over campaigns
+    /// whose window closed — measured, before and after (the draft's
+    /// `returns_by_segment`). Empty until an audience clears its floor.
+    private(set) var segmentReturns: [SegmentReturn] = []
+
+    /// The line for the audience picked, else nil.
+    var selectedSegmentReturn: SegmentReturn? { segmentReturns.first { $0.segment == selectedSegment } }
 
     func draftCampaign() async {
         isDrafting = true
@@ -371,6 +399,8 @@ final class GuestTextClubViewModel {
             )
             if response.ok, let message = response.message {
                 draftMessage = message
+                draftRef = response.draftRef
+                segmentReturns = SegmentReturn.list(from: response.returnsBySegment)
             } else {
                 campaignError = response.error ?? "Couldn't draft a message."
             }
@@ -388,10 +418,13 @@ final class GuestTextClubViewModel {
         /// tracked link with it (it read "campaign" for every phone send).
         let type: String
         let linkUrl: String?
+        /// The model draft the text started from, when it did.
+        var draftRef: Int? = nil
 
         enum CodingKeys: String, CodingKey {
             case message, segment, type
             case linkUrl = "link_url"
+            case draftRef = "draft_ref"
         }
     }
 
@@ -418,7 +451,7 @@ final class GuestTextClubViewModel {
             let response: SendResponse = try await client.send(
                 "/mobile/api/guest-campaign/send", method: .post,
                 body: SendBody(message: draftMessage, segment: selectedSegment, type: campaignType,
-                               linkUrl: linkURL.isEmpty ? nil : linkURL)
+                               linkUrl: linkURL.isEmpty ? nil : linkURL, draftRef: draftRef)
             )
             sentCount = response.sent
             // The server now texts in the background and answers at once

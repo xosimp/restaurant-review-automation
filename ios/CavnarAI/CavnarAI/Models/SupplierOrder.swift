@@ -61,6 +61,11 @@ struct SupplierOrderItem: Decodable, Identifiable {
     let ingredientId: Int?
     /// Last week's waste came off this line's quantity.
     let trimmedForWaste: Bool?
+    /// The owner's own habit applied to this line (memory round, 9/29/26:
+    /// ordering.order_corrections) — `{factor, orders, basis}` — and the
+    /// formula's quantity before it (`base_qty`). Nil when unadjusted.
+    var ownerAdjusted: OrderAdjustment? = nil
+    var baseQty: Double? = nil
 
     var id: String { lineKey }
     var isCritical: Bool { urgency == "critical" }
@@ -77,6 +82,8 @@ struct SupplierOrderItem: Decodable, Identifiable {
         case supplierEmail = "supplier_email"
         case ingredientId = "ingredient_id"
         case trimmedForWaste = "trimmed_for_waste"
+        case ownerAdjusted = "owner_adjusted"
+        case baseQty = "base_qty"
     }
 
     init(from decoder: Decoder) throws {
@@ -91,6 +98,14 @@ struct SupplierOrderItem: Decodable, Identifiable {
         supplierEmail = try? c.decodeIfPresent(String.self, forKey: .supplierEmail)
         ingredientId = try? c.decodeIfPresent(Int.self, forKey: .ingredientId)
         trimmedForWaste = try? c.decodeIfPresent(Bool.self, forKey: .trimmedForWaste)
+        ownerAdjusted = (try? c.decodeIfPresent(OrderAdjustment.self, forKey: .ownerAdjusted)) ?? nil
+        baseQty = (try? c.decodeIfPresent(Double.self, forKey: .baseQty)) ?? nil
+    }
+
+    /// "Adjusted to how you order: your last 5 orders sent about 80% of what
+    /// the draft suggested for this item …" — nil when unadjusted.
+    var adjustmentLine: String? {
+        ownerAdjusted.map { $0.line(baseQty: baseQty.map { Int($0.rounded()) }) }
     }
 
     /// "2", "2.5" — never "2.0".

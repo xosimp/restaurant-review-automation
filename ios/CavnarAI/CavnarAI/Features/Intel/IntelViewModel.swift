@@ -288,10 +288,17 @@ struct IntelMovement: Decodable, Equatable {
     /// The earlier of the two weekly checks compared (ISO date); nil until
     /// there are two to compare.
     let comparedFrom: String?
+    /// Kept forever (memory round, 9/29/26: event_memory): the market's
+    /// arrivals, departures and rating moves, newest first, and the
+    /// restaurant's own rating week by week. Empty / nil on an older server.
+    var marketHistory: [MarketEvent] = []
+    var ownRatingHistory: OwnRatingHistory? = nil
 
     enum CodingKeys: String, CodingKey {
         case ok, days, significant, arrived, gone
         case comparedFrom = "compared_from"
+        case marketHistory = "market_history"
+        case ownRatingHistory = "own_rating_history"
     }
 
     init(from decoder: Decoder) throws {
@@ -302,6 +309,9 @@ struct IntelMovement: Decodable, Equatable {
         arrived = (try? c.decodeIfPresent([Place].self, forKey: .arrived)) ?? []
         gone = (try? c.decodeIfPresent([Place].self, forKey: .gone)) ?? []
         comparedFrom = try c.decodeIfPresent(String.self, forKey: .comparedFrom)
+        marketHistory = ((try? c.decodeIfPresent(HomeLenientList<MarketEvent>.self, forKey: .marketHistory)) ?? nil)?
+            .items ?? []
+        ownRatingHistory = (try? c.decodeIfPresent(OwnRatingHistory.self, forKey: .ownRatingHistory)) ?? nil
     }
 
     var hasChanges: Bool { !arrived.isEmpty || !gone.isEmpty || !significant.isEmpty }

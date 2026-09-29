@@ -23,6 +23,16 @@ final class FoodCostAnalyticsViewModel {
     var repriceDismissed: Set<String> = []
     var repriceBusy: Set<String> = []
     var repriceErrors: [String: String] = [:]
+    /// Items the close-out 86'd on 2+ nights in 4 weeks, each with a
+    /// higher par to accept (memory round, 9/29/26: GET
+    /// /food-cost/par-suggestions). Answered in place: Raise par posts to
+    /// its accept route; Not for us goes through /recs/event with its key.
+    var parSuggestions: [ParSuggestion] = []
+    /// Ingredient id → the par the server confirmed it set.
+    var parRaised: [Int: Double] = [:]
+    var parDismissed: Set<Int> = []
+    var parBusy: Set<Int> = []
+    var parErrors: [Int: String] = [:]
     var isLoading = false
     /// Why the last load failed, when it did. `try?` used to swallow the
     /// error and assign nil over previously good data, so a server failure
@@ -122,6 +132,8 @@ final class FoodCostAnalyticsViewModel {
         async let cfoResult: FoodCostCFO? = try? client.send("/mobile/api/food-cost/cfo")
         async let repriceResult: RepriceSuggestions? = try? client.send(
             "/mobile/api/food-cost/reprice", hapticOnError: false)
+        async let parResult: ParSuggestionsResponse? = try? client.send(
+            "/mobile/api/food-cost/par-suggestions", hapticOnError: false)
         var freshBody: Data?
         do {
             let fresh: (value: FoodCostAnalytics, body: Data) = try await client.sendKeepingBody(
@@ -167,6 +179,57 @@ final class FoodCostAnalyticsViewModel {
         repriceTracking = repriceTracking.filter { live.contains($0.key) }
         repriceDismissed = repriceDismissed.intersection(live)
         repriceErrors = [:]
+        if let pars = await parResult, pars.ok {
+            parSuggestions = pars.suggestions
+            let liveItems = Set(pars.suggestions.map(\.ingredientId))
+            parRaised = parRaised.filter { liveItems.contains($0.key) }
+            parDismissed = parDismissed.intersection(liveItems)
+            parErrors = [:]
+        }
+    }
+
+    private struct ParSuggestionsResponse: Decodable {
+        let ok: Bool
+        let suggestions: [ParSuggestion]
+        enum CodingKeys: String, CodingKey { case ok, suggestions }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = (try? c.decode(Bool.self, forKey: .ok)) ?? false
+            suggestions = ((try? c.decodeIfPresent(HomeLenientList<ParSuggestion>.self, forKey: .suggestions)) ?? nil)?
+                .items ?? []
+        }
+    }
+
+    private struct ParAcceptBody: Encodable { let par: Double? }
+    private struct ParAcceptResponse: Decodable {
+        let ok: Bool
+        let error: String?
+        let par: Double?
+    }
+
+    /// Raise par: writes the suggested par (the server records the change
+    /// and marks the recommendation done). Never retried on a guess.
+    func acceptPar(_ s: ParSuggestion) async {
+        guard !parBusy.contains(s.ingredientId) else { return }
+        parBusy.insert(s.ingredientId)
+        parErrors[s.ingredientId] = nil
+        defer { parBusy.remove(s.ingredientId) }
+        do {
+            let r: ParAcceptResponse = try await client.send(
+                "/mobile/api/food-cost/par-suggestions/\(s.ingredientId)/accept", method: .post,
+                body: ParAcceptBody(par: s.suggestedPar), retryTransient: false)
+            if r.ok {
+                Haptic.success()
+                parRaised[s.ingredientId] = r.par ?? s.suggestedPar ?? 0
+            } else {
+                parErrors[s.ingredientId] = r.error ?? "Couldn\u{2019}t set that par."
+            }
+        } catch is CancellationError {
+        } catch let error as APIClient.APIError {
+            parErrors[s.ingredientId] = error.message
+        } catch {
+            parErrors[s.ingredientId] = "Couldn\u{2019}t set that par."
+        }
     }
 
     /// The suggestions to show — empty when unavailable or none.
@@ -187,8 +250,10 @@ final class FoodCostAnalyticsViewModel {
 
     /// One tap: set the dish to its suggested price. Never retried on a
     /// guess — it changes a menu price.
-    func applyReprice(_ s: RepriceSuggestions.Suggestion) async {
-        guard let price = s.suggestedPrice, !repriceBusy.contains(s.dish) else { return }
+    func applyReprice(_ s: RepriceSuggestions.Suggestion, price chosen: Double? = nil) async {
+        // `chosen`: the owner's usual (typical_price) instead of the
+        // suggestion — recorded server-side as suggested vs chosen.
+        guard let price = chosen ?? s.suggestedPrice, !repriceBusy.contains(s.dish) else { return }
         repriceBusy.insert(s.dish)
         repriceErrors[s.dish] = nil
         defer { repriceBusy.remove(s.dish) }

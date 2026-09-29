@@ -428,7 +428,7 @@ struct ShiftQualityPanel: View {
                         decisionButton("checkmark", on: decision == "accepted", tone: .cavnarGreen,
                                        label: "Did it") { onRecommendation?(rec, true, nil) }
                         decisionButton("xmark", on: decision == "dismissed", tone: .cavnarInk3,
-                                       label: "Pass") {
+                                       label: "Not for us") {
                             reasonFor = rec
                             askingReason = true
                         }
