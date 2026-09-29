@@ -144,13 +144,14 @@ def test_a_logins_own_quiet_hours_hold_their_phone_only(monkeypatch):
         preferences.set_login_overrides(owner, rid, {"quiet_start": "25:99"})
 
 
-def test_the_group_owner_can_turn_a_sibling_locations_brief_off():
+def test_the_group_owner_can_turn_a_sibling_locations_brief_off(monkeypatch):
     a, b, _c = _group()
     owner = _user(a, "erik", "owner")
     auth.set_morning_brief_pref(b, owner, False)
     import morning_brief
-    # morning_brief binds DB_PATH at import (a default argument), so a test passes the
-    # database it patched, as every other caller in the suite does.
+    # morning_brief binds get_conn and DB_PATH at import, so whichever test imported it
+    # first fixed its database; point it at this test's (tests/test_fix_d_sweeps.py does too).
+    monkeypatch.setattr(morning_brief, "get_conn", models.get_conn)
     assert owner not in {u["id"] for u in morning_brief.recipients(b, db_path=models.DB_PATH)}
     stranger_rid = create_restaurant(Restaurant(name="Other", owner_email="other@x.test"))
     stranger = _user(stranger_rid, "sam", "owner")
