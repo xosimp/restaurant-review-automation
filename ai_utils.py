@@ -2992,9 +2992,10 @@ def rollup_usage(db_path=None, recent_days=2):
     """Rebuild ai_usage_daily (and ai_validation_daily) from the raw rows for
     the last `recent_days` UTC days plus any day that has raw rows but no
     rollup yet, then prune the AI-operations tables. Idempotent: a day is
-    recomputed whole. Run at boot (init_ai_ops), by the daily housekeeping
-    before any ledger prune (models.prune_operational_logs), and safe to run
-    any time. Returns {"days": n, "validation_days": n, "pruned": {...}}."""
+    recomputed whole. Run at boot (init_ai_ops), by the nightly retention
+    pass before it prunes a raw AI row (ops.prune_ledgers — a failed rollup
+    keeps them), and safe to run any time. Returns {"days": n,
+    "validation_days": n, "pruned": {...}}."""
     from models import get_conn, DB_PATH
     path = db_path or DB_PATH
     conn = get_conn(path)
