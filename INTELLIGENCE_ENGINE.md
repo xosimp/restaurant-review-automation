@@ -1023,7 +1023,7 @@ the 730-day horizon) and `decay=True` (the `*_decayed` figures every prior
 reads); its `half_life_days` / `*_recent` path and `PRIOR_HALF_LIFE_DAYS`
 are superseded by decay and pinned only by a test (a candidate for future
 cleanup after additional verification). When the cohort record lowers
-Historical Accuracy's prior, the basis says so ("— Pizza on Cavnar saw this
+Historical Accuracy's prior, the basis says so ("— Pizza on Cavnar AI saw this
 rarely help (0 of 20), which lowers it"); it never lifts it. A kind this
 restaurant has no record of is RANKED with help from similar restaurants'
 results (`scoring.similar_prior` over the finest rung that clears the
