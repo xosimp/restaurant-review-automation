@@ -465,7 +465,9 @@ def test_loss_sync_treats_an_unsupported_pos_as_normal(db_path, monkeypatch):
     def _unsupported(*a, **k):
         raise pos.POSCapabilityError("no comps here")
     monkeypatch.setattr(pos, "fetch_loss_lines", _unsupported)
-    assert strategy_jobs.run_loss_sync(db_path=db_path) == {"synced": 0, "not_supported": 1}
+    out = strategy_jobs.run_loss_sync(db_path=db_path)
+    # With the standard counts (fix round D #39): nothing attempted, nothing failed.
+    assert (out["synced"], out["not_supported"], out["failed"], out["attempted"]) == (0, 1, 0, 0)
 
 
 # ── campaign outcome tracking ──────────────────────────────────────────────

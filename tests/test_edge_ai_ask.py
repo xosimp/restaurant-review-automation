@@ -378,8 +378,8 @@ def test_a_weekly_plan_that_failed_is_retried_the_same_morning(db_path, monkeypa
                 False, [], {"unverified_figures": []})
     monkeypatch.setattr(ask_cavnar, "ask_with_tools", flaky)
     monkeypatch.setattr(issues, "create_issue", lambda *a, **k: ({}, None))
-    assert strategy_jobs.run_weekly_plan(db_path=db_path) == {"filed": 0}
-    assert strategy_jobs.run_weekly_plan(db_path=db_path) == {"filed": 1}
+    assert strategy_jobs.run_weekly_plan(db_path=db_path)["filed"] == 0
+    assert strategy_jobs.run_weekly_plan(db_path=db_path)["filed"] == 1
 
 
 def test_a_successful_weekly_plan_is_not_filed_twice_in_one_week(db_path, monkeypatch):
@@ -391,8 +391,8 @@ def test_a_successful_weekly_plan_is_not_filed_twice_in_one_week(db_path, monkey
         '[{"title": "Recount the walk-in", "why": "variance 12%", "owner": "kitchen", "due_days": 2}]',
         False, [], {"unverified_figures": []}))
     monkeypatch.setattr(issues, "create_issue", lambda *a, **k: ({}, None))
-    assert strategy_jobs.run_weekly_plan(db_path=db_path) == {"filed": 1}
-    assert strategy_jobs.run_weekly_plan(db_path=db_path) == {"filed": 0}
+    assert strategy_jobs.run_weekly_plan(db_path=db_path)["filed"] == 1
+    assert strategy_jobs.run_weekly_plan(db_path=db_path)["filed"] == 0
 
 
 def test_the_plan_is_parsed_when_the_prose_around_it_contains_brackets():

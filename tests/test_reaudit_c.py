@@ -220,12 +220,13 @@ def test_c2_a_pulse_with_no_deliverable_phone_is_not_sent(db_path, monkeypatch):
         "text": "Letting Ana go saves 2h.", "dollars": 30, "key": "pulse_cut:2026-09-23:ana"})
     fired = []
     monkeypatch.setattr(push, "fire_push", lambda *a, **k: fired.append(k))
-    assert strategy_jobs.run_pre_dinner_pulse(db_path=db_path) == {"sent": 0}
+    # The standard job counts ride beside `sent` now (fix round D #39).
+    assert strategy_jobs.run_pre_dinner_pulse(db_path=db_path)["sent"] == 0
     assert fired == [] and _shown(db_path, rid) == []
     # With a phone: sent, and the staffing move says it can't be answered there.
     _device(db_path, rid, uid)
     monkeypatch.setattr(scheduler, "local_due", lambda *a, **k: True)
-    assert strategy_jobs.run_pre_dinner_pulse(db_path=db_path) == {"sent": 1}
+    assert strategy_jobs.run_pre_dinner_pulse(db_path=db_path)["sent"] == 1
     data = fired[0]["data"]
     assert data["answerable"] is False and "rec_key" not in data
     assert data["staffing_move"]["answerable"] is False and fired[0]["user_ids"] == {uid}
@@ -241,10 +242,10 @@ def test_c2_a_quiet_night_with_no_deliverable_phone_keeps_its_week(db_path, monk
     monkeypatch.setattr(strategy_jobs, "_draft_quiet_night_fill", lambda *a, **k: {})
     fired = []
     monkeypatch.setattr(push, "fire_push", lambda *a, **k: fired.append(k))
-    assert strategy_jobs.run_demand_opportunity(db_path=db_path) == {"sent": 0}
+    assert strategy_jobs.run_demand_opportunity(db_path=db_path)["sent"] == 0
     assert fired == [] and not ops.period_claimed(f"demand_opportunity:{rid}", "2026-W39")
     _device(db_path, rid, uid)
-    assert strategy_jobs.run_demand_opportunity(db_path=db_path) == {"sent": 1}
+    assert strategy_jobs.run_demand_opportunity(db_path=db_path)["sent"] == 1
     assert fired[0]["data"]["answerable"] is False and "rec_key" not in fired[0]["data"]
     assert _shown(db_path, rid) == []
 

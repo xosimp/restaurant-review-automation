@@ -416,4 +416,4 @@ def test_review_diagnoses_run_for_a_restaurant_under_budget(db_path, monkeypatch
     diagnosed = []
     monkeypatch.setattr(review_intelligence, "diagnose", lambda r, *a, **k: diagnosed.append(r) or [{"ok": 1}])
     out = scheduler.run_review_diagnoses()
-    assert diagnosed == [rid] and out == {"diagnosed": 1, "skipped": 0, "failed": 0}
+    assert diagnosed == [rid] and (out["diagnosed"], out["skipped"], out["failed"]) == (1, 0, 0)

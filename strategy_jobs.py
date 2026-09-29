@@ -70,7 +70,8 @@ def run_outcome_evaluations(db_path=DB_PATH):
         except Exception as e:
             ops.capture(e, job="goals_mark_achieved", context=f"restaurant_id={r.id}")
 
-    _bounded_each("outcome_evaluations", _one, db_path)
+    attempted, failed, hit = _bounded_each("outcome_evaluations", _one, db_path)
+    counts.update(_counts(attempted, attempted - failed, failed, hit_bound=hit))
     return counts
 
 
@@ -91,7 +92,8 @@ def run_outcome_rechecks(db_path=DB_PATH):
         counts["rechecked"] += len(outcomes.recheck_due(r.id, db_path=db_path, today=today) or [])
         counts["days_accrued"] += outcomes.accrue_due(r.id, db_path=db_path, today=today)
 
-    _bounded_each("outcome_rechecks", _one, db_path)
+    attempted, failed, hit = _bounded_each("outcome_rechecks", _one, db_path)
+    counts.update(_counts(attempted, attempted - failed, failed, hit_bound=hit))
     return counts
 
 
@@ -126,31 +128,90 @@ def run_outcome_wins(db_path=DB_PATH):
                 fresh.append(dict(row, restaurant_id=r.id))
         told["n"] += _tell_owners_what_worked(fresh, db_path)
 
-    _bounded_each("outcome_wins", _one, db_path)
-    return {"wins_told": told["n"]}
+    attempted, failed, hit = _bounded_each("outcome_wins", _one, db_path)
+    return _counts(attempted, attempted - failed, failed, hit_bound=hit, wins_told=told["n"])
 
 
 RESULTS_MAX_SECONDS = 10 * 60
 
 
+def _counts(attempted=0, ok=0, failed=0, skipped=0, hit_bound=False, **extra):
+    """The standard job result (#39): what ops.run_job judges a run by."""
+    out = {"attempted": int(attempted), "ok": int(ok), "failed": int(failed), "skipped": int(skipped),
+           "hit_bound": bool(hit_bound)}
+    out.update(extra)
+    return out
+
+
 def _bounded_each(job, fn, db_path, max_seconds=RESULTS_MAX_SECONDS):
     """Run `fn(r)` for every live restaurant, bounded by wall clock and
     resumable from a cursor in job_cursors — CLAUDE.md's rule for work that
-    iterates restaurants (run_labor_reminders is the same shape)."""
-    import ops
+    iterates restaurants. Returns (attempted, failed, hit_bound).
+
+    Through scheduler.resumable_sweep (#84): the cursor was written once,
+    from the SUCCESS count, so a pass with failures landed short and re-ran
+    them, and the bound was dropped (`_ran_out`) — no capture, no hit_bound,
+    so a pass that stopped every night read clean."""
     import scheduler as _sched
-    key = f"{job}_cursor"
-    order = sorted(_restaurants(db_path), key=lambda r: r.id)
-    cursor = _read_cursor(key, db_path)
-    order = [r for r in order if r.id > cursor] + [r for r in order if r.id <= cursor]
+    by_id = {r.id: r for r in _restaurants(db_path)}
+    tally = {"attempted": 0, "failed": 0}
+    lock = threading.Lock()
 
-    def _failed(r, e):
-        ops.capture(e, job=job, context=f"restaurant_id={r.id}")
+    def _run(rid):
+        with lock:
+            tally["attempted"] += 1
+        try:
+            fn(by_id[rid])
+        except Exception:
+            with lock:
+                tally["failed"] += 1
+            raise
 
-    done, _ran_out = _sched.bounded_map(order, fn, 1, max_seconds, on_error=_failed)
-    if order:
-        _write_cursor(key, order[min(done, len(order)) - 1].id if done else cursor, db_path)
-    return done
+    _done, ran_out = _sched.resumable_sweep(f"{job}_cursor", sorted(by_id), _run, max_seconds,
+                                            workers=1, job=job)
+    if ran_out:
+        import ops
+        ops.capture(RuntimeError(f"{job} stopped at its {max_seconds}s bound; the rest lead the next pass"),
+                    job=job, context="time_bound")
+    return tally["attempted"], tally["failed"], bool(ran_out)
+
+
+class _BoundedWalk:
+    """The restaurants for one serial job, from after its cursor, until
+    `max_seconds` have passed — the rest lead the next pass — with the
+    cursor saved as each restaurant's turn completes (#84). For loops that
+    walked every restaurant with no bound and no cursor; the loop body is
+    unchanged (`for r in walk:`). `hit_bound` says whether the bound cut
+    the walk short."""
+
+    def __init__(self, job, restaurants, db_path, max_seconds):
+        self.job, self.db_path, self.max_seconds = job, db_path, max_seconds
+        rows = sorted(restaurants, key=lambda r: r.id)
+        cursor = _read_cursor(f"{job}_cursor", db_path)
+        self.order = [r for r in rows if r.id > cursor] + [r for r in rows if r.id <= cursor]
+        self.hit_bound = False
+
+    def __iter__(self):
+        import time as _time
+        started, last = _time.monotonic(), None
+        for r in self.order:
+            if last is not None and _time.monotonic() - started > self.max_seconds:
+                self.hit_bound = True
+                import ops
+                ops.capture(RuntimeError(f"{self.job} stopped at its {self.max_seconds}s bound; "
+                                         "the rest lead the next pass"), job=self.job, context="time_bound")
+                return
+            yield r
+            last = r.id
+            _write_cursor(f"{self.job}_cursor", last, self.db_path)
+
+
+# The walks above, bounded (#84). Each is per-restaurant model or POS work.
+LOSS_SYNC_MAX_SECONDS = 30 * 60
+WEEKLY_PLAN_MAX_SECONDS = 45 * 60
+RECIPE_DRAFTS_MAX_SECONDS = 30 * 60
+ISSUE_SCAN_MAX_SECONDS = 15 * 60
+TRUSTED_ORDERS_MAX_SECONDS = 10 * 60
 
 
 def _tell_owners_what_worked(results, db_path):
@@ -294,14 +355,18 @@ def run_milestones(db_path=DB_PATH):
                 milestones.mark_notified(r.id, m["key"], db_path=db_path)
                 counts["notified"] += 1
 
-    _bounded_each("milestones", _one, db_path)
+    attempted, failed, hit = _bounded_each("milestones", _one, db_path)
+    counts.update(_counts(attempted, attempted - failed, failed, hit_bound=hit))
     return counts
 
 
 def run_loss_sync(db_path=DB_PATH):
+    """Nightly: comps, voids and refunds from POSes that report them.
+    Bounded and resumable (_BoundedWalk, #84)."""
     import loss_detection, ops
     synced = unsupported = failed = 0
-    for r in _restaurants(db_path):
+    walk = _BoundedWalk("loss_sync", _restaurants(db_path), db_path, LOSS_SYNC_MAX_SECONDS)
+    for r in walk:
         try:
             out = loss_detection.sync(r.id, db_path=db_path)
         except Exception as e:
@@ -317,11 +382,9 @@ def run_loss_sync(db_path=DB_PATH):
             # A POS that cannot report comps and voids is a normal state,
             # not a failed sync: nothing is recorded for it.
             unsupported += 1
-    out = {"synced": synced, "not_supported": unsupported}
-    if failed:
-        # The counts job_runs judges a partial or failed night by (DH2-1).
-        out.update(attempted=synced + failed, ok=synced, failed=failed)
-    return out
+    # The counts job_runs judges a partial or failed night by (DH2-1, #39).
+    return _counts(synced + failed, synced, failed, unsupported, walk.hit_bound,
+                   synced=synced, not_supported=unsupported)
 
 
 def _record_loss(restaurant_id, ok, error, provider, db_path):
@@ -663,7 +726,11 @@ def run_weekly_plan(db_path=DB_PATH):
     import ops, issues
     from time_utils import restaurant_now
     filed = 0
-    for r in _restaurants(db_path):
+    tally = {"attempted": 0, "failed": 0}
+    # Bounded and resumable (#84): an Ask-with-tools run per restaurant,
+    # serially, with no bound, inside one Monday tick.
+    walk = _BoundedWalk("weekly_plan", _restaurants(db_path), db_path, WEEKLY_PLAN_MAX_SECONDS)
+    for r in walk:
         if not getattr(r, "weekly_plan_enabled", 0):
             continue
         local = restaurant_now(r, naive=True)
@@ -677,6 +744,7 @@ def run_weekly_plan(db_path=DB_PATH):
         if not any(ops.claim_period(f"weekly_plan_attempt:{r.id}", f"{week}#{n}")
                    for n in range(WEEKLY_PLAN_MAX_ATTEMPTS)):
             continue    # attempts for this week are spent; the claim stays
+        tally["attempted"] += 1
         try:
             from ask_cavnar import ask_with_tools
             # The readiness gate, per module (DH5-2): a module whose data
@@ -723,11 +791,13 @@ def run_weekly_plan(db_path=DB_PATH):
                     severity="normal", source_key=f"plan:{week}:{i}", notify=False, db_path=db_path)
                 filed += 1
         except Exception as e:
+            tally["failed"] += 1
             ops.release_period(f"weekly_plan:{r.id}", week)
             from ai_utils import AIBudgetExceeded
             if not isinstance(e, AIBudgetExceeded):
                 ops.capture(e, job="weekly_plan", context=f"restaurant_id={r.id}")
-    return {"filed": filed}
+    return _counts(tally["attempted"], tally["attempted"] - tally["failed"], tally["failed"],
+                   hit_bound=walk.hit_bound, filed=filed)
 
 
 def run_recipe_drafts(db_path=DB_PATH):
@@ -736,8 +806,9 @@ def run_recipe_drafts(db_path=DB_PATH):
     bounded number per restaurant per week. Only where Food Cost is on."""
     import ops, recipes
     from time_utils import restaurant_now
-    drafted = 0
-    for r in _restaurants(db_path):
+    drafted, attempted, failed = 0, 0, 0
+    walk = _BoundedWalk("recipe_drafts", _restaurants(db_path), db_path, RECIPE_DRAFTS_MAX_SECONDS)
+    for r in walk:
         if not getattr(r, "module_inventory", 0):
             continue
         local = restaurant_now(r, naive=True)
@@ -745,11 +816,13 @@ def run_recipe_drafts(db_path=DB_PATH):
             continue
         if not ops.claim_period(f"recipe_drafts:{r.id}", local.strftime("%G-W%V")):
             continue
+        attempted += 1
         try:
             drafted += recipes.draft_missing(r.id, db_path=db_path).get("drafted", 0)
         except Exception as e:
+            failed += 1
             ops.capture(e, job="recipe_drafts", context=f"restaurant_id={r.id}")
-    return {"drafted": drafted}
+    return _counts(attempted, attempted - failed, failed, hit_bound=walk.hit_bound, drafted=drafted)
 
 
 def run_issue_scan(db_path=DB_PATH, local_hour=None):
@@ -758,18 +831,24 @@ def run_issue_scan(db_path=DB_PATH, local_hour=None):
     (None = no gate, for a direct call)."""
     import issues, ops
     from time_utils import restaurant_now
-    opened = 0
-    for r in _restaurants(db_path):
+    opened, attempted, failed = 0, 0, 0
+    # Bounded and resumable (#84): hourly, over every restaurant, with no bound.
+    walk = _BoundedWalk("issue_scan", _restaurants(db_path), db_path, ISSUE_SCAN_MAX_SECONDS)
+    for r in walk:
+        attempted += 1
+        broke = False
         if getattr(r, "module_reviews", 0):
             try:
                 opened += len(issues.open_from_reviews(r.id, db_path=db_path) or [])
             except Exception as e:
+                broke = True
                 ops.capture(e, job="issue_scan", context=f"restaurant_id={r.id}")
         try:
             # A review issue whose reply has posted is done — close it
             # rather than leave the manager chased about a fixed thing (#18).
             issues.auto_close(r.id, db_path=db_path)
         except Exception as e:
+            broke = True
             ops.capture(e, job="issue_auto_close", context=f"restaurant_id={r.id}")
         try:
             local = restaurant_now(r, naive=True)
@@ -778,7 +857,9 @@ def run_issue_scan(db_path=DB_PATH, local_hour=None):
             # open_from_checklists), and source_key keeps it to one a day.
             opened += len(issues.open_from_checklists(r.id, db_path=db_path, now_local=local) or [])
         except Exception as e:
+            broke = True
             ops.capture(e, job="issue_checklists", context=f"restaurant_id={r.id}")
+        failed += 1 if broke else 0
         if local_hour is not None:
             import scheduler
             if not scheduler.local_due(r, local_hour, claim_key="issue_signals"):
@@ -786,8 +867,10 @@ def run_issue_scan(db_path=DB_PATH, local_hour=None):
         try:
             opened += len(issues.open_from_signals(r.id, db_path=db_path) or [])
         except Exception as e:
+            if not broke:
+                failed += 1
             ops.capture(e, job="issue_signals", context=f"restaurant_id={r.id}")
-    return {"opened": opened}
+    return _counts(attempted, attempted - failed, failed, hit_bound=walk.hit_bound, opened=opened)
 
 
 # A schedule generated this recently counts as "next week is handled" — the
@@ -851,7 +934,11 @@ def run_quality_calibration(db_path=DB_PATH):
         finally:
             conn.close()
         newest = row["w"] if row else None
-        if newest and not _ops_cal.claim_period("quality_calibration", f"{r.id}:{newest}"):
+        # A once-ever marker per (restaurant, published week), in a table
+        # that is never pruned (#157): in the 45-day claims table a
+        # restaurant that stopped publishing got the same suggestion again
+        # every 45 days. Existing claims were carried over at boot.
+        if newest and not _ops_cal.claim_marker("quality_calibration", f"{r.id}:{newest}"):
             return
         # Suggested, never applied: "Apply" is one tap and writes these same
         # numbers (_do_calibration_apply over calibrate_weights).
@@ -860,8 +947,8 @@ def run_quality_calibration(db_path=DB_PATH):
                                  changed_by="Cavnar AI (calibration)")
         changed["n"] += 1
 
-    _bounded_each("quality_calibration", _one, db_path)
-    return {"restaurants_changed": changed["n"]}
+    attempted, failed, hit = _bounded_each("quality_calibration", _one, db_path)
+    return _counts(attempted, attempted - failed, failed, hit_bound=hit, restaurants_changed=changed["n"])
 
 
 def run_auto_draft_schedules(db_path=DB_PATH, now=None):
@@ -904,15 +991,15 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None):
                  else at.astimezone(restaurant_tz(r)).replace(tzinfo=None))
         if now_l.weekday() == auto_draft_weekday(r) and now_l.hour >= AUTO_DRAFT_HOUR:
             local[r.id] = (r, now_l.date().isoformat())
-    order = sorted((v[0] for v in local.values()), key=lambda r: r.id)
-    cursor = _read_cursor(AUTO_DRAFT_CURSOR_KEY, db_path)
-    order = [r for r in order if r.id > cursor] + [r for r in order if r.id <= cursor]
+    by_id = {v[0].id: v[0] for v in local.values()}
+    counts["failed"] = 0
 
     def _bump(key):
         with lock:
             counts[key] += 1
 
-    def _one(r):
+    def _one(rid):
+        r = by_id[rid]
         if (getattr(r, "external_scheduling_tool", None) or "").strip():
             _bump("skipped")
             return
@@ -928,16 +1015,20 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None):
         if not ops.claim_period(f"auto_draft:{r.id}", local[r.id][1]):
             _bump("skipped")               # attempted earlier today — never a second paid try
             return
-        _draft_one(r, db_path, _se, _bump)
+        try:
+            _draft_one(r, db_path, _se, _bump)
+        except Exception:
+            _bump("failed")
+            raise
 
-    def _failed(r, e):
-        ops.capture(e, job="auto_draft_schedule", context=f"restaurant_id={r.id}")
-
-    done, ran_out = _sched.bounded_map(order, _one, AUTO_DRAFT_WORKERS, AUTO_DRAFT_MAX_SECONDS, on_error=_failed)
-    if order:
-        last = order[min(done, len(order)) - 1].id if done else cursor
-        _write_cursor(AUTO_DRAFT_CURSOR_KEY, last, db_path)
-    return {"drafted": counts["drafted"], "skipped": counts["skipped"], "complete": not ran_out}
+    # The longest finished prefix is the cursor (scheduler.resumable_sweep,
+    # #84): it was written from the success count, so with failures it
+    # landed short, and the bound reached job_runs only as `complete`.
+    _done, ran_out = _sched.resumable_sweep(AUTO_DRAFT_CURSOR_KEY, sorted(by_id), _one, AUTO_DRAFT_MAX_SECONDS,
+                                            workers=AUTO_DRAFT_WORKERS, job="auto_draft_schedule")
+    attempted = counts["drafted"] + counts["failed"]
+    return _counts(attempted, counts["drafted"], counts["failed"], counts["skipped"], ran_out,
+                   drafted=counts["drafted"], complete=not ran_out)
 
 
 def _draft_one(r, db_path, _se, _bump):
@@ -1063,16 +1154,18 @@ def run_labor_reminders(db_path=DB_PATH):
     the manager before the next shifts (labor_waiting). Nothing waiting, no
     notice. Runs every hour; each restaurant is claimed once a day at its
     own 9am. Bounded and resumable."""
-    import ops
     import scheduler as _sched
-    order = sorted((r for r in _restaurants(db_path) if getattr(r, "module_labor", 0)), key=lambda r: r.id)
-    cursor = _read_cursor(LABOR_REMINDERS_CURSOR_KEY, db_path)
-    order = [r for r in order if r.id > cursor] + [r for r in order if r.id <= cursor]
+    by_id = {r.id: r for r in _restaurants(db_path) if getattr(r, "module_labor", 0)}
     sent = {"n": 0}
+    tally = {"attempted": 0, "failed": 0}
+    lock = threading.Lock()
 
-    def _one(r):
+    def _one(rid):
+        r = by_id[rid]
         if not _sched.local_due(r, 9, claim_key="labor_reminders"):
             return
+        with lock:
+            tally["attempted"] += 1
         w = labor_waiting(r.id, db_path=db_path, draft=not getattr(r, "auto_publish_schedule", 0))
         if not w["lines"]:
             return
@@ -1083,42 +1176,52 @@ def run_labor_reminders(db_path=DB_PATH):
         if _reach(r.id, "labor_reminder", "Waiting on you in Labor", body, data, db_path, lines=w["lines"]):
             sent["n"] += 1
 
-    def _failed(r, e):
-        ops.capture(e, job="labor_reminders", context=f"restaurant_id={r.id}")
+    def _run(rid):
+        try:
+            _one(rid)
+        except Exception:
+            with lock:
+                tally["failed"] += 1
+            raise
 
-    done, _ran_out = _sched.bounded_map(order, _one, 1, LABOR_REMINDERS_MAX_SECONDS, on_error=_failed)
-    if order:
-        _write_cursor(LABOR_REMINDERS_CURSOR_KEY, order[min(done, len(order)) - 1].id if done else cursor, db_path)
-    return {"reminded": sent["n"]}
+    # resumable_sweep (#84): the prefix cursor, and the bound reported.
+    _done, ran_out = _sched.resumable_sweep(LABOR_REMINDERS_CURSOR_KEY, sorted(by_id), _run,
+                                            LABOR_REMINDERS_MAX_SECONDS, workers=1, job="labor_reminders")
+    return _counts(tally["attempted"], tally["attempted"] - tally["failed"], tally["failed"],
+                   hit_bound=ran_out, reminded=sent["n"])
 
 
 def run_schedule_outcomes(db_path=DB_PATH):
     """Monday: record what each published week actually did, by daypart
     (schedule_intel.record_outcomes), for every Labor restaurant."""
-    import ops
     import schedule_intel
     import scheduler as _sched
     # Bounded and resumable (SCHED-27): a wall-clock bound and a cursor, so a
     # pass that runs out of time is picked up where it stopped instead of
-    # starving the same tail every Monday.
-    order = sorted((r for r in _restaurants(db_path) if getattr(r, "module_labor", 0)), key=lambda r: r.id)
-    cursor = _read_cursor(OUTCOMES_CURSOR_KEY, db_path)
-    order = [r for r in order if r.id > cursor] + [r for r in order if r.id <= cursor]
+    # starving the same tail every Monday. The prefix cursor and the bound
+    # reported (resumable_sweep, #84).
+    by_id = {r.id: r for r in _restaurants(db_path) if getattr(r, "module_labor", 0)}
     written = {"n": 0}
+    tally = {"attempted": 0, "failed": 0}
+    lock = threading.Lock()
 
-    def _one(r):
-        written["n"] += schedule_intel.record_outcomes(r.id, db_path=db_path).get("written", 0)
-        # Then read each accepted recommendation against the night it was
-        # about (rec_ledger outcome), now that the night is recorded.
-        schedule_intel.measure_accepted_recommendations(r.id, db_path=db_path)
+    def _one(rid):
+        with lock:
+            tally["attempted"] += 1
+        try:
+            written["n"] += schedule_intel.record_outcomes(rid, db_path=db_path).get("written", 0)
+            # Then read each accepted recommendation against the night it was
+            # about (rec_ledger outcome), now that the night is recorded.
+            schedule_intel.measure_accepted_recommendations(rid, db_path=db_path)
+        except Exception:
+            with lock:
+                tally["failed"] += 1
+            raise
 
-    def _failed(r, e):
-        ops.capture(e, job="schedule_outcomes", context=f"restaurant_id={r.id}")
-
-    done, _ran_out = _sched.bounded_map(order, _one, 1, OUTCOMES_MAX_SECONDS, on_error=_failed)
-    if order:
-        _write_cursor(OUTCOMES_CURSOR_KEY, order[min(done, len(order)) - 1].id if done else cursor, db_path)
-    return {"rows": written["n"]}
+    _done, ran_out = _sched.resumable_sweep(OUTCOMES_CURSOR_KEY, sorted(by_id), _one, OUTCOMES_MAX_SECONDS,
+                                            workers=1, job="schedule_outcomes")
+    return _counts(tally["attempted"], tally["attempted"] - tally["failed"], tally["failed"],
+                   hit_bound=ran_out, rows=written["n"])
 
 
 OUTCOMES_CURSOR_KEY = "schedule_outcomes_cursor"
@@ -1166,11 +1269,12 @@ def _slot_order(job, restaurants, db_path):
     return [r for r in rows if r.id > cursor] + [r for r in rows if r.id <= cursor]
 
 
-def _slot_iter(job, restaurants=None, db_path=DB_PATH, max_seconds=SLOT_JOB_MAX_SECONDS):
+def _slot_iter(job, restaurants=None, db_path=DB_PATH, max_seconds=SLOT_JOB_MAX_SECONDS, state=None):
     """The slot's restaurants for one serial job, from after its cursor,
     stopping once `max_seconds` have passed (the rest lead the next slot).
     The cursor is saved when the walk ends — finished, cut off by the
-    bound, or abandoned — at the last restaurant whose turn completed."""
+    bound, or abandoned — at the last restaurant whose turn completed.
+    `state`, a dict, is told `hit_bound` so the job can report it (#39)."""
     import time as _time
     order = _slot_order(job, restaurants, db_path)
     started, last = _time.monotonic(), None
@@ -1180,12 +1284,21 @@ def _slot_iter(job, restaurants=None, db_path=DB_PATH, max_seconds=SLOT_JOB_MAX_
                 import ops
                 ops.capture(RuntimeError(f"{job} stopped at its {max_seconds}s bound; the rest lead the next "
                                          "slot"), job=job, context="time_bound")
+                if state is not None:
+                    state["hit_bound"] = True
                 break
             yield r
             last = r.id
     finally:
         if last is not None:
             _write_cursor(f"{job}_cursor", last, db_path)
+
+
+def _slot_counts(st, **extra):
+    """The standard counts for a slot job from its walk state: `attempted`
+    and `failed` the job counted, the bound _slot_iter reported."""
+    attempted, failed = int(st.get("attempted") or 0), int(st.get("failed") or 0)
+    return _counts(attempted, attempted - failed, failed, hit_bound=st.get("hit_bound", False), **extra)
 
 
 def _slot_sweep(job, restaurants, fn, db_path, workers=1, max_seconds=SLOT_JOB_MAX_SECONDS):
@@ -1264,8 +1377,8 @@ def run_intraday_capture(db_path=DB_PATH, restaurants=None):
 
     hit = _slot_sweep("intraday_capture", restaurants, _one, db_path, workers=INTRADAY_WORKERS,
                       max_seconds=INTRADAY_CAPTURE_MAX_SECONDS)
-    return {"captured": c["captured"], "closed": c["closed"], "attempted": c["attempted"],
-            "failed": c["failed"], "hit_bound": hit}
+    return _counts(c["attempted"], c["attempted"] - c["failed"], c["failed"], c["closed"], hit,
+                   captured=c["captured"], closed=c["closed"])
 
 
 def _record_intraday(restaurant_id, ok, provider, db_path):
@@ -1291,11 +1404,13 @@ def run_pre_dinner_pulse(db_path=DB_PATH, restaurants=None):
     import intraday, ops, push, scheduler
     from time_utils import restaurant_now
     sent = 0
-    for r in _slot_iter("pre_dinner_pulse", restaurants, db_path):
+    st = {"attempted": 0, "failed": 0}
+    for r in _slot_iter("pre_dinner_pulse", restaurants, db_path, state=st):
         local = restaurant_now(r, naive=True)
         if not scheduler.local_due(r, PULSE_HOUR, until=PULSE_HOUR + 2,
                                    claim_key="pre_dinner_pulse", now_local=local):
             continue
+        st["attempted"] += 1
         try:
             p = intraday.pulse(r.id, now_local=local, db_path=db_path, restaurant=r)
             if not p.get("available") or not p.get("off"):
@@ -1350,8 +1465,9 @@ def run_pre_dinner_pulse(db_path=DB_PATH, restaurants=None):
                 on_delivered=rec_delivery.when_pushed(r.id, "alert_push", recs, db_path=db_path))
             sent += 1
         except Exception as e:
+            st["failed"] += 1
             ops.capture(e, job="pre_dinner_pulse", context=f"restaurant_id={r.id}")
-    return {"sent": sent}
+    return _slot_counts(st, sent=sent)
 
 
 def _clock(hour, minute=0) -> str:
@@ -1540,7 +1656,8 @@ def run_coverage_check(db_path=DB_PATH, restaurants=None):
     import intraday, issues, ops
     from time_utils import restaurant_now
     opened = 0
-    for r in _slot_iter("coverage_check", restaurants, db_path):
+    st = {"attempted": 0, "failed": 0}
+    for r in _slot_iter("coverage_check", restaurants, db_path, state=st):
         if not getattr(r, "module_labor", 0):
             continue
         local = restaurant_now(r, naive=True)
@@ -1548,6 +1665,7 @@ def run_coverage_check(db_path=DB_PATH, restaurants=None):
             continue
         if "manager" not in issues.get_routing(r.id, db_path):
             continue
+        st["attempted"] += 1
         try:
             gaps = intraday.coverage_gaps(r.id, now_local=local, db_path=db_path, restaurant=r)
             # Everyone on today's schedule is busy; the person missing is the
@@ -1605,8 +1723,9 @@ def run_coverage_check(db_path=DB_PATH, restaurants=None):
                     # open-issues list (GET /issues, strategy_routes) and the
                     # issue page a person acted on (/i/<token>).
         except Exception as e:
+            st["failed"] += 1
             ops.capture(e, job="coverage_check", context=f"restaurant_id={r.id}")
-    return {"opened": opened}
+    return _slot_counts(st, opened=opened)
 
 
 def _metric_permissions(metric):
@@ -1841,8 +1960,9 @@ def run_closing_summary(db_path=DB_PATH, restaurants=None):
     from models import is_in_quiet_hours
     from time_utils import restaurant_now
     sent = 0
+    st = {"attempted": 0, "failed": 0}
     from dsr.deliver import replaces_closing_summary
-    for r in _slot_iter("closing_summary", restaurants, db_path):
+    for r in _slot_iter("closing_summary", restaurants, db_path, state=st):
         if not getattr(r, "morning_brief_enabled", 1):
             continue
         local = restaurant_now(r, naive=True)
@@ -1860,6 +1980,7 @@ def run_closing_summary(db_path=DB_PATH, restaurants=None):
         # It is in tomorrow's brief either way.
         if is_in_quiet_hours(r.id, db_path=db_path):
             continue
+        st["attempted"] += 1
         try:
             # The hourly captures stop at close, so the last one was taken
             # up to an hour before it: one more reading now is the night's
@@ -1880,8 +2001,9 @@ def run_closing_summary(db_path=DB_PATH, restaurants=None):
                       db_path, subject="How tonight went"):
                 sent += 1
         except Exception as e:
+            st["failed"] += 1
             ops.capture(e, job="closing_summary", context=f"restaurant_id={r.id}")
-    return {"sent": sent}
+    return _slot_counts(st, sent=sent)
 
 
 def _closing_text(summary, note):
@@ -1944,7 +2066,8 @@ def run_demand_opportunity(db_path=DB_PATH, restaurants=None):
     import demand, ops, push
     from time_utils import restaurant_now
     sent = 0
-    for r in _slot_iter("demand_opportunity", restaurants, db_path):
+    st = {"attempted": 0, "failed": 0}
+    for r in _slot_iter("demand_opportunity", restaurants, db_path, state=st):
         if not getattr(r, "module_marketing", 0):
             continue
         try:
@@ -1957,6 +2080,7 @@ def run_demand_opportunity(db_path=DB_PATH, restaurants=None):
         week = local.strftime("%G-W%V")
         if ops.period_claimed(f"demand_opportunity:{r.id}", week):
             continue
+        st["attempted"] += 1
         try:
             # The date is checked BEFORE the week is claimed. The job looks
             # two days out, so Monday's run asks about Wednesday; claiming
@@ -2035,8 +2159,9 @@ def run_demand_opportunity(db_path=DB_PATH, restaurants=None):
                 on_delivered=rec_delivery.when_pushed(r.id, "alert_push", [rec], db_path=db_path))
             sent += 1
         except Exception as e:
+            st["failed"] += 1
             ops.capture(e, job="demand_opportunity", context=f"restaurant_id={r.id}")
-    return {"sent": sent}
+    return _slot_counts(st, sent=sent)
 
 
 def quiet_night_declined(restaurant_id, key, title, db_path=DB_PATH) -> bool:
@@ -2199,13 +2324,16 @@ def run_trusted_orders(db_path=DB_PATH):
     from models import auto_order_weekday
     from time_utils import restaurant_now
     import scheduler
-    queued = 0
-    for r in _restaurants(db_path):
+    queued, attempted, failed = 0, 0, 0
+    # Bounded and resumable (#84).
+    walk = _BoundedWalk("trusted_orders", _restaurants(db_path), db_path, TRUSTED_ORDERS_MAX_SECONDS)
+    for r in walk:
         if not getattr(r, "module_inventory", 0) or not getattr(r, "auto_order_trusted", 0):
             continue
         local = restaurant_now(r, naive=True)
         if local.weekday() != auto_order_weekday(r) or not scheduler.local_due(r, 8, claim_key="trusted_orders"):
             continue
+        attempted += 1
         try:
             held = []
             # Stock is the last count minus depletion since: with depletion
@@ -2240,8 +2368,9 @@ def run_trusted_orders(db_path=DB_PATH):
                        subject=f"Supplier order going out at {_local_clock(r, row['execute_at'])} — {r.name}")
                 queued += 1
         except Exception as e:
+            failed += 1
             ops.capture(e, job="trusted_orders", context=f"restaurant_id={r.id}")
-    return {"queued": queued}
+    return _counts(attempted, attempted - failed, failed, hit_bound=walk.hit_bound, queued=queued)
 
 
 def _local_clock(restaurant, utc_stamp) -> str:
@@ -2271,7 +2400,8 @@ def run_preshift_nudge(db_path=DB_PATH, restaurants=None):
     from time_utils import restaurant_now
     import scheduler
     sent = 0
-    for r in _slot_iter("preshift_nudge", restaurants, db_path):
+    st = {"attempted": 0, "failed": 0}
+    for r in _slot_iter("preshift_nudge", restaurants, db_path, state=st):
         hour = int(getattr(r, "preshift_nudge_hour", 0) or 0)
         if not hour:
             continue
@@ -2279,6 +2409,7 @@ def run_preshift_nudge(db_path=DB_PATH, restaurants=None):
         if not scheduler.local_due(r, hour, until=hour + 2, claim_key="preshift_nudge",
                                    now_local=local):
             continue
+        st["attempted"] += 1
         try:
             brief = preshift.build(r.id, day=local.date(), db_path=db_path)
             items = brief.get("items") or []
@@ -2302,8 +2433,9 @@ def run_preshift_nudge(db_path=DB_PATH, restaurants=None):
             if send_sms(manager["phone"], msg[:320], use_case="alert"):
                 sent += 1
         except Exception as e:
+            st["failed"] += 1
             ops.capture(e, job="preshift_nudge", context=f"restaurant_id={r.id}")
-    return {"sent": sent}
+    return _slot_counts(st, sent=sent)
 
 
 
@@ -2446,8 +2578,18 @@ def run_review_request_nudge(db_path=DB_PATH, now_local=None):
     from time_utils import restaurant_now
     by_id = {r.id: r for r in _restaurants(db_path) if getattr(r, "module_reviews", 0)}
     sent = {"n": 0}
+    tally = {"attempted": 0, "failed": 0}
+    lock = threading.Lock()
 
     def _one(rid):
+        try:
+            _nudge(rid)
+        except Exception:
+            with lock:
+                tally["failed"] += 1
+            raise
+
+    def _nudge(rid):
         r = by_id[rid]
         local = now_local or restaurant_now(r, naive=True)
         if local.weekday() != REVIEW_NUDGE_WEEKDAY or not (REVIEW_NUDGE_HOUR <= local.hour < REVIEW_NUDGE_HOUR + 4):
@@ -2455,6 +2597,8 @@ def run_review_request_nudge(db_path=DB_PATH, now_local=None):
         week = local.strftime("%G-W%V")
         if ops.period_claimed(f"review_request_nudge:{rid}", week):
             return
+        with lock:
+            tally["attempted"] += 1
         out = review_request_nudge(r, db_path=db_path)
         if not out:
             return
@@ -2469,6 +2613,7 @@ def run_review_request_nudge(db_path=DB_PATH, now_local=None):
                   subject=title, lines=lines, rec=rec):
             sent["n"] += 1
 
-    scheduler.resumable_sweep(REVIEW_NUDGE_CURSOR_KEY, sorted(by_id), _one, REVIEW_NUDGE_MAX_SECONDS,
-                              job="review_request_nudge")
-    return {"sent": sent["n"]}
+    _done, hit = scheduler.resumable_sweep(REVIEW_NUDGE_CURSOR_KEY, sorted(by_id), _one, REVIEW_NUDGE_MAX_SECONDS,
+                                           job="review_request_nudge")
+    return _counts(tally["attempted"], tally["attempted"] - tally["failed"], tally["failed"],
+                   hit_bound=hit, sent=sent["n"])

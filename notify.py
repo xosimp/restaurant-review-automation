@@ -3433,7 +3433,9 @@ def _rating_unreadable(rid, name, at, db_path=DB_PATH) -> bool:
     import ops
     from time_utils import mdy
     since = mdy(at.date().isoformat()) if at is not None else None
-    if not ops.claim_period(f"rating_unreadable:{rid}", since or "never"):
+    # Once ever per stale reading, in ops_markers (never pruned, #157): the
+    # 45-day claims table sent the same "since 7/1/26" alert every 45 days.
+    if not ops.claim_marker(f"rating_unreadable:{rid}", since or "never"):
         return False
     ok = raise_alert(
         rid, "data_source_down",
@@ -3445,7 +3447,7 @@ def _rating_unreadable(rid, name, at, db_path=DB_PATH) -> bool:
                "Reconnect Google in Account → Connections to resume it."],
         db_path=db_path, recs=[alert_rec("data_source_down", subject="rating")])
     if not ok:
-        ops.release_period(f"rating_unreadable:{rid}", since or "never")
+        ops.release_marker(f"rating_unreadable:{rid}", since or "never")
     return ok
 
 
@@ -4097,7 +4099,10 @@ def check_competitor_alerts(db_path: str = DB_PATH, local_hour: int = None, toda
                 if rec["key"] in quiet:
                     continue
                 level = f"{c['kind']}:{float(c['rating_now'] or 0):.1f}"
-                if not ops.claim_period(f"competitor_move_told:{rid}:{c['place_id']}", level):
+                # Once ever per competitor and level, in ops_markers (never
+                # pruned, #157): in the 45-day claims table the same move
+                # was told again every 45 days.
+                if not ops.claim_marker(f"competitor_move_told:{rid}:{c['place_id']}", level):
                     continue
                 claimed.append((f"competitor_move_told:{rid}:{c['place_id']}", level))
                 changes.append((c, rec))
@@ -4119,7 +4124,7 @@ def check_competitor_alerts(db_path: str = DB_PATH, local_hour: int = None, toda
                 # Held back by quiet hours or the owner's cap: not told, so
                 # the news is not spent — next week's pass can still say it.
                 for job, period in claimed:
-                    ops.release_period(job, period)
+                    ops.release_marker(job, period)
         except Exception as e:
             try:
                 ops.capture(e, job="notify.competitor_move", context=f"rid={rid}", db_path=db_path)
@@ -4159,19 +4164,16 @@ def _source_label(key, s):
 
 def _first_seen_hours(rid, key, now):
     """Hours since this source was first seen connected with no first sync
-    (a claim stamped the first time; job_period_claims.claimed_at is UTC)."""
+    (a marker stamped the first time; ops_markers.created_at is UTC). In
+    ops_markers, never pruned (#157): in the 45-day claims table the
+    first-seen time reset every 45 days and the grace began again."""
     import ops
     job = f"data_source_seen:{rid}:{key}"
-    ops.claim_period(job, "first_sync")
+    ops.claim_marker(job, "first_sync")
     try:
-        conn = models.get_conn()
-        try:
-            row = conn.execute("SELECT claimed_at FROM job_period_claims WHERE job_key=?",
-                               (f"{job}:first_sync",)).fetchone()
-        finally:
-            conn.close()
         from time_utils import parse_stamp
-        at = parse_stamp(row[0]) if row else None
+        stamp = ops.marker_created_at(job, "first_sync")
+        at = parse_stamp(stamp) if stamp else None
     except Exception:
         at = None
     return None if at is None else (now - at).total_seconds() / 3600.0

@@ -82,24 +82,18 @@ def save_toast_credentials(restaurant_id, current_user):
 def sync_toast(restaurant_id, current_user):
     """
     Kick off a background sync so the admin doesn't have to wait ~30s.
-    Returns immediately with ok=True; the sync runs in a daemon thread.
+    Through pos.sync_restaurant on the bounded admin pool
+    (scheduler.start_manual_pos_sync, #65): a direct sync_to_db on a daemon
+    thread skipped the Data Health ledger, so the issue it was pressed to
+    clear never cleared. Returns a job id to poll.
     """
     from toast import is_connected
     if not is_connected(restaurant_id):
         return jsonify(ok=False, error="Toast not connected for this restaurant")
-
-    import threading
-    from toast import sync_to_db
-
-    def _run():
-        try:
-            result = sync_to_db(restaurant_id)
-            print(f"[toast_routes] sync complete for restaurant {restaurant_id}: {result}")
-        except Exception as e:
-            print(f"[toast_routes] sync error for restaurant {restaurant_id}: {e}")
-
-    threading.Thread(target=_run, daemon=True).start()
-    return jsonify(ok=True, message="Sync started — data will appear in the Labor module in ~30 seconds")
+    import scheduler
+    job_id, _joined = scheduler.start_manual_pos_sync(restaurant_id, current_user.get("username") or "admin")
+    return jsonify(ok=True, job_id=job_id,
+                   message="Sync started — data will appear in the Labor module in ~30 seconds")
 
 
 @toast_bp.route("/admin/toast/status/<int:restaurant_id>", methods=["GET"])
@@ -177,17 +171,9 @@ def client_sync_toast(current_user):
     rid = current_user["restaurant_id"]
     if not is_connected(rid):
         return jsonify(ok=False, error="Toast is not connected yet.")
-
-    import threading
-    from toast import sync_to_db
-
-    def _run():
-        try:
-            sync_to_db(rid)
-        except Exception as e:
-            print(f"[toast_routes] client sync error for restaurant {rid}: {e}")
-
-    threading.Thread(target=_run, daemon=True).start()
+    # The same path as the console's button and the nightly sync (#65).
+    import scheduler
+    scheduler.start_manual_pos_sync(rid, current_user.get("username") or "owner")
     return jsonify(ok=True, message="Sync started — labor data refreshes in ~30 seconds")
 
 

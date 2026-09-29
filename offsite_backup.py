@@ -1,0 +1,325 @@
+"""
+offsite_backup.py — the copy of the database that lives somewhere other
+than the database's own volume (#1, decision 7).
+
+Two things here:
+
+1. An S3-compatible object-storage client (Cloudflare R2, AWS S3, Backblaze
+   B2, MinIO), signed with AWS Signature Version 4 over `requests` — no new
+   dependency. Configured by env:
+
+     BACKUP_S3_ENDPOINT          https://<account>.r2.cloudflarestorage.com
+                                 (or https://s3.<region>.amazonaws.com)
+     BACKUP_S3_BUCKET            the bucket
+     BACKUP_S3_ACCESS_KEY_ID     an access key scoped to that bucket
+     BACKUP_S3_SECRET_ACCESS_KEY its secret
+     BACKUP_S3_REGION            "auto" for R2 (the default), e.g. us-east-1
+     BACKUP_S3_PREFIX            optional key prefix (default "cavnar-backups/")
+
+   Objects are addressed path-style (<endpoint>/<bucket>/<key>), which R2 and
+   S3 both accept. Every upload carries the SHA-256 of its body in
+   x-amz-content-sha256, so the store refuses a body that arrived damaged,
+   and in x-amz-meta-sha256 so the drill can prove what it downloads.
+
+2. The credential scrub registry: what is taken out of a snapshot before it
+   leaves the server. The LOCAL snapshot is never scrubbed — it is the
+   restore artifact (docs/ops/RECOVERY.md). The redaction list used to name
+   six restaurants columns by hand, so the POS, reservation and webhook
+   credentials and every staff-portal link rode along in the "stripped"
+   emailed copy (#102). It is built now from credentials.FIELDS plus every
+   column whose name looks like a credential; tests/test_fix_d_backup.py
+   fails when a new credential-looking column is neither scrubbed nor kept
+   on purpose, and at runtime an unclassified one is scrubbed anyway.
+"""
+import datetime as _dt
+import hashlib
+import hmac
+import logging
+import os
+import re
+import urllib.parse
+
+log = logging.getLogger("offsite_backup")
+
+# Connect / read timeouts for the object store (scripts/check_timeouts.py):
+# a snapshot upload is one long body, so the read allowance is generous.
+S3_TIMEOUT = (10, 600)
+# A single PUT carries at most this much (S3's and R2's single-part limit).
+S3_MAX_SINGLE_PUT = 5 * 1024 ** 3
+
+
+# ── configuration ───────────────────────────────────────────────────────────
+
+def s3_config():
+    """The object-store settings, or None when any required one is unset."""
+    cfg = {
+        "endpoint": (os.getenv("BACKUP_S3_ENDPOINT") or "").strip().rstrip("/"),
+        "bucket": (os.getenv("BACKUP_S3_BUCKET") or "").strip(),
+        "access_key": (os.getenv("BACKUP_S3_ACCESS_KEY_ID") or "").strip(),
+        "secret_key": (os.getenv("BACKUP_S3_SECRET_ACCESS_KEY") or "").strip(),
+        "region": (os.getenv("BACKUP_S3_REGION") or "auto").strip() or "auto",
+        "prefix": os.getenv("BACKUP_S3_PREFIX", "cavnar-backups/"),
+    }
+    if not all(cfg[k] for k in ("endpoint", "bucket", "access_key", "secret_key")):
+        return None
+    if not cfg["endpoint"].startswith("https://"):
+        # Credentials and the (encrypted) backup never travel in the clear.
+        log.error("BACKUP_S3_ENDPOINT must be https://")
+        return None
+    return cfg
+
+
+# ── AWS Signature Version 4 ─────────────────────────────────────────────────
+
+def _hmac(key, msg):
+    return hmac.new(key, msg.encode("utf-8"), hashlib.sha256).digest()
+
+
+def signing_key(secret_key, date_stamp, region, service="s3"):
+    k_date = _hmac(("AWS4" + secret_key).encode("utf-8"), date_stamp)
+    k_region = _hmac(k_date, region)
+    k_service = _hmac(k_region, service)
+    return _hmac(k_service, "aws4_request")
+
+
+def _uri_encode(value, slash_safe):
+    """RFC 3986 encoding as SigV4 requires: unreserved characters kept, every
+    other byte %XX (uppercase); "/" kept only in a path."""
+    return urllib.parse.quote(value, safe="/~" if slash_safe else "~")
+
+
+def canonical_query(params):
+    if not params:
+        return ""
+    pairs = sorted((_uri_encode(str(k), False), _uri_encode(str(v), False)) for k, v in params.items())
+    return "&".join(f"{k}={v}" for k, v in pairs)
+
+
+def sign(method, path, headers, payload_hash, access_key, secret_key, region, amz_date,
+         query=None, service="s3"):
+    """The Authorization header value for one request (SigV4, single chunk).
+
+    `path` is the raw object path ("/bucket/key"), encoded here; `headers`
+    are every header to sign (host and x-amz-date included), names in any
+    case; `amz_date` is "YYYYMMDDTHHMMSSZ". Pure — the test vectors from
+    AWS's own documentation pin it (tests/test_fix_d_backup.py)."""
+    canon_headers = {k.lower().strip(): " ".join(str(v).strip().split()) for k, v in headers.items()}
+    names = sorted(canon_headers)
+    signed = ";".join(names)
+    canonical_request = "\n".join([
+        method.upper(),
+        _uri_encode(path, True),
+        canonical_query(query),
+        "".join(f"{n}:{canon_headers[n]}\n" for n in names),
+        signed,
+        payload_hash,
+    ])
+    date_stamp = amz_date[:8]
+    scope = f"{date_stamp}/{region}/{service}/aws4_request"
+    string_to_sign = "\n".join([
+        "AWS4-HMAC-SHA256", amz_date, scope,
+        hashlib.sha256(canonical_request.encode("utf-8")).hexdigest(),
+    ])
+    signature = hmac.new(signing_key(secret_key, date_stamp, region, service),
+                         string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"AWS4-HMAC-SHA256 Credential={access_key}/{scope}, SignedHeaders={signed}, Signature={signature}"
+
+
+def _object_url(cfg, key):
+    path = f"/{cfg['bucket']}/{key.lstrip('/')}"
+    return cfg["endpoint"] + _uri_encode(path, True), path
+
+
+def _signed_headers(cfg, method, path, payload_hash, extra=None, now=None):
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    amz_date = now.strftime("%Y%m%dT%H%M%SZ")
+    host = urllib.parse.urlparse(cfg["endpoint"]).netloc
+    headers = {"host": host, "x-amz-date": amz_date, "x-amz-content-sha256": payload_hash}
+    headers.update({k.lower(): v for k, v in (extra or {}).items()})
+    auth = sign(method, path, headers, payload_hash, cfg["access_key"], cfg["secret_key"], cfg["region"], amz_date)
+    out = {k: v for k, v in headers.items() if k != "host"}
+    out["Authorization"] = auth
+    return out
+
+
+def sha256_file(path, chunk=1024 * 1024):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            block = f.read(chunk)
+            if not block:
+                break
+            h.update(block)
+    return h.hexdigest()
+
+
+class OffsiteError(RuntimeError):
+    """The object store did not take (or give back) the copy."""
+
+
+def upload_file(path, key, cfg=None, sha256_hex=None):
+    """PUT one file to the bucket, streamed (never read whole into memory),
+    with its SHA-256 as the signed payload hash, so the store verifies what
+    arrived. Returns {"target", "sha256", "bytes"}; raises OffsiteError."""
+    import requests
+    cfg = cfg or s3_config()
+    if not cfg:
+        raise OffsiteError("object storage is not configured (BACKUP_S3_*)")
+    size = os.path.getsize(path)
+    if size > S3_MAX_SINGLE_PUT:
+        raise OffsiteError(f"{size} bytes is over the {S3_MAX_SINGLE_PUT}-byte single-PUT limit; "
+                           "the uploader needs multipart before the database is this large")
+    digest = sha256_file(path) if sha256_hex is None else sha256_hex
+    url, obj_path = _object_url(cfg, (cfg.get("prefix") or "") + key)
+    headers = _signed_headers(cfg, "PUT", obj_path, digest, extra={"x-amz-meta-sha256": digest})
+    headers["Content-Type"] = "application/octet-stream"
+    headers["Content-Length"] = str(size)
+    with open(path, "rb") as body:
+        resp = requests.put(url, data=body, headers=headers, timeout=S3_TIMEOUT)
+    if not 200 <= resp.status_code < 300:
+        raise OffsiteError(f"object store refused the upload: HTTP {resp.status_code} {(resp.text or '')[:200]}")
+    return {"target": f"s3://{cfg['bucket']}/{(cfg.get('prefix') or '')}{key}", "sha256": digest, "bytes": size}
+
+
+def download_file(key, dest, cfg=None, full_key=False):
+    """GET one object to `dest`, streamed; returns {"sha256", "meta_sha256",
+    "bytes"}. `full_key` says `key` already carries the prefix."""
+    import requests
+    cfg = cfg or s3_config()
+    if not cfg:
+        raise OffsiteError("object storage is not configured (BACKUP_S3_*)")
+    empty = hashlib.sha256(b"").hexdigest()
+    url, obj_path = _object_url(cfg, key if full_key else (cfg.get("prefix") or "") + key)
+    headers = _signed_headers(cfg, "GET", obj_path, empty)
+    h, n = hashlib.sha256(), 0
+    with requests.get(url, headers=headers, stream=True, timeout=S3_TIMEOUT) as resp:
+        if resp.status_code != 200:
+            raise OffsiteError(f"object store refused the download: HTTP {resp.status_code}")
+        meta = resp.headers.get("x-amz-meta-sha256")
+        with open(dest, "wb") as out:
+            for block in resp.iter_content(chunk_size=1024 * 1024):
+                if block:
+                    out.write(block)
+                    h.update(block)
+                    n += len(block)
+    return {"sha256": h.hexdigest(), "meta_sha256": meta, "bytes": n}
+
+
+# ── the credential scrub registry (#102) ────────────────────────────────────
+
+# Column names that look like a credential. Anything matching is scrubbed
+# from the off-site copy unless it is kept on purpose below.
+CREDENTIAL_NAME = re.compile(r"token|secret|api_?key|password|passcode|private_?key|credential", re.I)
+
+# Whole tables that never leave the server: live access, not data.
+SCRUB_TABLES = {
+    "sessions": "bearer sessions (hashed); a restore never needs live sessions",
+    "two_fa_backup_codes": "2FA recovery codes",
+    "trusted_devices": "remembered 2FA devices",
+    "device_tokens": "APNs device tokens",
+    "login_reports": "one-time 'this wasn't me' links that revoke sessions",
+    "staff_portal_tokens": "bearer links into each restaurant's staff portal",
+    "app_secrets": "this install's own link-signing secrets",
+    "view_as_sessions": "admin view-as sessions",
+}
+
+# Columns nulled in the off-site copy, beyond every credentials.FIELDS
+# column (read at call time, so a field added there is scrubbed here).
+SCRUB_COLUMNS = {
+    ("users", "reset_token"), ("users", "reset_token_expires"), ("users", "recovery_email_code"),
+    ("restaurants", "temp_password"), ("restaurants", "two_fa_device_token"),
+    ("restaurants", "gmb_access_token"), ("restaurants", "gmb_refresh_token"),
+    ("restaurants", "ig_token"), ("restaurants", "fb_page_token"),
+    ("restaurants", "toast_client_secret"), ("restaurants", "toast_access_token"),
+    ("restaurants", "square_access_token"), ("restaurants", "clover_api_token"),
+    ("restaurants", "rpower_token"), ("restaurants", "reservation_api_key"),
+    ("restaurants", "backoffice_api_key"), ("restaurants", "stripe_customer_id"),
+    ("webhooks", "secret"),
+}
+
+# Credential-LOOKING columns that are deliberately kept, and why. A new one
+# that matches CREDENTIAL_NAME must be added to SCRUB_COLUMNS or here —
+# tests/test_fix_d_backup.py fails until it is.
+KEEP_COLUMNS = {
+    ("users", "password_hash"): "a salted hash; dropping it locks every user out of a restored copy",
+    ("users", "password_changed_at"): "a date",
+    ("users", "password_strength"): "a label",
+    ("users", "must_reset_password"): "a flag",
+    ("restaurants", "ig_token_expires"): "a date",
+    ("restaurants", "fb_token_expires"): "a date",
+    ("restaurants", "gmb_token_expires"): "a date",
+    ("restaurants", "toast_token_expires"): "a date",
+    ("issue_links", "token_hash"): "the hash of a one-time link, not the link",
+    ("staff_signups", "token_hash"): "the hash of a one-time link, not the link",
+    ("ai_validation_log", "tokens"): "words from the model's own output, not credentials",
+    ("push_deliveries", "device_token_id"): "an id",
+    ("guest_campaigns", "link_token"): "a public link id printed in a guest text",
+    ("guest_contacts", "email_token"): "a guest's unsubscribe link id",
+    ("guest_newsletter_recipients", "email_token"): "a guest's unsubscribe link id",
+    ("marketing_content_log", "link_token"): "a public tracked-link id in a published post",
+    ("marketing_links", "token"): "a public tracked-link id in a published post",
+    ("marketing_media", "token"): "a public media link id",
+    ("schedule_shares", "token"): "a schedule link staff already hold; the data is in the copy anyway",
+    ("sales_audit_shares", "token"): "an audit share link; the data is in the copy anyway",
+}
+
+
+def credential_columns(conn):
+    """[(table, column)] for every column whose name looks like a credential."""
+    out = []
+    tables = [r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
+    for t in sorted(tables):
+        for r in conn.execute(f'PRAGMA table_info("{t}")'):
+            if CREDENTIAL_NAME.search(r[1]):
+                out.append((t, r[1]))
+    return out
+
+
+def scrub_plan(conn):
+    """(tables to empty, [(table, column)] to null, unclassified) for this
+    database. `unclassified` are credential-looking columns in neither list —
+    scrubbed anyway (fail safe) and reported, so a new one is noticed."""
+    import credentials
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    have = {}
+
+    def _cols(t):
+        if t not in have:
+            have[t] = {r[1] for r in conn.execute(f'PRAGMA table_info("{t}")')} if t in tables else set()
+        return have[t]
+    wipe = sorted(t for t in SCRUB_TABLES if t in tables)
+    wanted = set(SCRUB_COLUMNS) | {("restaurants", f) for f in credentials.FIELDS}
+    unclassified = []
+    for t, c in credential_columns(conn):
+        if t in SCRUB_TABLES or (t, c) in wanted or (t, c) in KEEP_COLUMNS:
+            continue
+        unclassified.append((t, c))
+    null = sorted((t, c) for t, c in wanted | set(unclassified) if t not in SCRUB_TABLES and c in _cols(t))
+    return wipe, null, unclassified
+
+
+def redact(path):
+    """Scrub a COPY of a snapshot before it leaves the server: empty
+    SCRUB_TABLES, null every credential column, VACUUM so the old pages go
+    too. Returns what it did. Never called on the local snapshot."""
+    import sqlite3
+    conn = sqlite3.connect(path)
+    try:
+        wipe, null, unclassified = scrub_plan(conn)
+        if unclassified:
+            log.error(f"off-site backup scrubbed unclassified credential-looking columns: {unclassified}")
+        for t in wipe:
+            conn.execute(f'DELETE FROM "{t}"')
+        notnull = {}
+        for t, c in null:
+            if t not in notnull:
+                notnull[t] = {r[1] for r in conn.execute(f'PRAGMA table_info("{t}")') if r[3]}
+            # A NOT NULL column (webhooks.secret) is blanked rather than nulled.
+            blank = "''" if c in notnull[t] else "NULL"
+            conn.execute(f'UPDATE "{t}" SET "{c}"={blank} WHERE "{c}" IS NOT NULL AND "{c}" != \'\'')
+        conn.commit()
+        conn.execute("VACUUM")
+        return {"tables": wipe, "columns": [f"{t}.{c}" for t, c in null], "unclassified": unclassified}
+    finally:
+        conn.close()

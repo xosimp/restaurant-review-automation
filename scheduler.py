@@ -14,8 +14,9 @@ Jobs:
 import config
 import os, threading, time, logging, html as _html
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from status_manager import record_scheduler_heartbeat, run_health_checks
+from status_manager import record_scheduler_heartbeat, record_running_job, run_health_checks
 import emails as _emails
+import jobs_registry
 import ops as _ops
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo as _ZI_sch
@@ -251,12 +252,18 @@ def resumable_sweep(key, ids, fn, max_seconds, workers=1, job=None):
     raises is captured and counts as covered (a restaurant that always
     raises must not pin the cursor). A BaseException — the process going
     away — is not caught and does not advance the cursor.
+
+    The writes only ever move the cursor forward (#137): each prefix was
+    computed under the lock but written after it, so with several workers
+    a thread holding an older, shorter prefix could write last and leave
+    the cursor behind restaurants already done — the next pass re-fetched
+    them first. Seen as a flaky test on the six-worker review fetch.
     """
     order = _fetch_order(list(ids), key=key)
     if not order:
         return 0, False
-    lock = threading.Lock()
-    finished, state = set(), {"prefix": 0}
+    lock, write_lock = threading.Lock(), threading.Lock()
+    finished, state = set(), {"prefix": 0, "written": 0}
 
     def _covered(rid):
         with lock:
@@ -267,7 +274,12 @@ def resumable_sweep(key, ids, fn, max_seconds, workers=1, job=None):
             advanced = p != state["prefix"]
             state["prefix"] = p
         if advanced:
-            _remember_fetch_cursor(order, p, key=key)
+            # One writer at a time, and never backwards; the SQLite write
+            # stays outside `lock` so workers finishing are not held up.
+            with write_lock:
+                if p > state["written"]:
+                    _remember_fetch_cursor(order, p, key=key)
+                    state["written"] = p
 
     def _run(rid):
         fn(rid)
@@ -394,8 +406,20 @@ def _rating_refresh_due(restaurant, now=None) -> bool:
     return (now - stamp) >= timedelta(hours=RATING_REFRESH_HOURS)
 
 
-def run_daily_fetch():
-    """Fetch reviews for all live clients, analyse, draft, alert on urgent."""
+def run_daily_fetch(restaurant_ids=None):
+    """Fetch reviews for all live clients, analyse, draft, alert on urgent.
+
+    `restaurant_ids` narrows the pass to those restaurants — the console's
+    "Sync now" (admin fetch-reviews), which used to fetch and alert on its
+    own, alerting on UNANALYSED reviews and never recording the sync, so
+    the issue that prompted it never cleared (#65, #120). A narrowed pass
+    runs exactly this code — analyse, then alert, last_fetched_at, the Data
+    Health ledger, the in-service check — and leaves the fleet's cursor
+    alone.
+
+    Returns the standard counts: a restaurant whose fetch reached no
+    provider is a FAILED restaurant, not a success (#39) — a night on which
+    every Google call failed was a green run."""
     try:
         from models import get_conn, get_restaurant, save_reviews
         from models import get_pending_analysis, get_pending_drafts, update_last_fetched
@@ -414,9 +438,13 @@ def run_daily_fetch():
             "AND " + in_service_sql()
         ).fetchall()
         conn.close()
+        if restaurant_ids is not None:
+            wanted = {int(x) for x in restaurant_ids}
+            live = [r for r in live if r["id"] in wanted]
 
         if not live:
-            return
+            return {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False,
+                    "restaurants": 0, "processed": 0}
 
         log.info(f"Daily fetch for {len(live)} live restaurant(s)")
 
@@ -424,7 +452,7 @@ def run_daily_fetch():
             rid = row["id"]
             restaurant = get_restaurant(rid)
             if not restaurant:
-                return
+                return None
 
             # Fetch.
             #
@@ -711,18 +739,11 @@ def run_daily_fetch():
             except Exception as e:
                 log.error(f"Auto-approve error: {e}")
 
-            # Check for urgent reviews fetched in last hour
-            conn = get_conn()
-            urgent = conn.execute("""
-                SELECT * FROM reviews
-                WHERE restaurant_id=?
-                  AND urgency='high'
-                  AND response_status NOT IN ('posted','approved','skipped')
-                  AND fetched_at >= datetime('now', '-2 hours')
-            """, (rid,)).fetchall()
-            conn.close()
-
-            # Email + SMS alerts now handled by notify.fire_review_alerts() at ingest time
+            # Email + SMS alerts are handled by notify.fire_review_alerts() at
+            # ingest time, above. A per-restaurant "urgent reviews fetched in
+            # the last two hours" SELECT whose result nothing read stood here
+            # (#162); removed after the ten-point trace (commit message).
+            return {"fetched_ok": fetched_ok, "new": new_count}
 
         # One restaurant's failure is one restaurant's failure. This loop
         # used to sit bare inside the outer try below, so an unhandled error
@@ -749,26 +770,47 @@ def run_daily_fetch():
         # safe on a worker thread — sqlite3 connections are not thread-safe
         # and this codebase's prevailing get_conn()/close() shape is exactly
         # what keeps that true here.
-        order = _fetch_order([r["id"] for r in live])
         by_id = {r["id"]: r for r in live}
+        counts = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0}
+        lock = threading.Lock()
 
-        failed = {"n": 0}
+        def _one(rid):
+            try:
+                out = _process_restaurant(by_id[rid])
+            except Exception:
+                with lock:
+                    counts["attempted"] += 1
+                    counts["failed"] += 1
+                raise
+            with lock:
+                if out is None:
+                    counts["skipped"] += 1
+                    return
+                counts["attempted"] += 1
+                # A fetch that reached no provider is a failed restaurant:
+                # it was counted ok, so a night on which every Google call
+                # failed read as a clean run (#39, RELIABILITY-9).
+                counts["ok" if out["fetched_ok"] else "failed"] += 1
 
-        def _failed(row, e):
-            failed["n"] += 1
-            log.error(f"Review cycle failed for restaurant {row['id']}: {e}")
-            _ops.capture(e, job="review_fetch", context=f"restaurant_id={row['id']}")
-
-        done, ran_out = bounded_map([by_id[rid] for rid in order], _process_restaurant,
-                                    FETCH_WORKERS, FETCH_MAX_SECONDS, on_error=_failed)
-        # `done` counts SUCCESSES, so a pass with failures leaves the cursor
-        # short of what it attempted and those restaurants lead the next
-        # pass. That is deliberate — a failed fetch should be retried, and
-        # re-fetching is free (save_reviews only appends on a successful
-        # insert against UNIQUE(restaurant_id, platform, external_id)). It
-        # cannot starve the tail: the cursor still advances by the number
-        # that succeeded, which is the whole list when nothing is wrong.
-        _remember_fetch_cursor(order, done)
+        if restaurant_ids is not None:
+            # "Sync now" for named restaurants: the same work, no bound, and
+            # the fleet's cursor left where the scheduled pass put it.
+            ran_out = False
+            for rid in sorted(by_id):
+                try:
+                    _one(rid)
+                except Exception as e:
+                    log.error(f"Review cycle failed for restaurant {rid}: {e}")
+                    _ops.capture(e, job="review_fetch", context=f"restaurant_id={rid}")
+        else:
+            # The cursor is the end of the longest finished PREFIX, saved as
+            # each restaurant finishes (resumable_sweep, #137). It was written
+            # once, after the pass, from the SUCCESS count, so a pass with F
+            # failures landed F places short and re-ran the last F successes,
+            # and a deploy mid-pass lost the whole pass's place.
+            _done, ran_out = resumable_sweep(_FETCH_CURSOR_KEY, sorted(by_id), _one, FETCH_MAX_SECONDS,
+                                             workers=FETCH_WORKERS, job="review_fetch")
+        done = counts["ok"] + counts["failed"]
         if ran_out:
             # Not a failure — a bound working as intended — but the operator
             # needs to know the pass did not cover everyone, because the
@@ -780,8 +822,9 @@ def run_daily_fetch():
                              f"before the {FETCH_MAX_SECONDS}s bound. The rest start "
                              f"the next pass — see _fetch_order."),
                 job="review_fetch", context="time_bound")
-        return {"restaurants": len(live), "processed": done, "hit_time_bound": ran_out,
-                "attempted": done + failed["n"], "ok": done, "failed": failed["n"], "hit_bound": ran_out}
+        return {"restaurants": len(live), "processed": counts["ok"], "hit_time_bound": ran_out,
+                "attempted": counts["attempted"], "ok": counts["ok"], "failed": counts["failed"],
+                "skipped": counts["skipped"], "hit_bound": bool(ran_out)}
 
     except Exception as e:
         # Captured AND re-raised (DH2-1): logged only, a pass that never
@@ -982,16 +1025,28 @@ def run_weekly_digests():
 
 
 def check_stale_inventory():
-    """Alert Will when a client's inventory data is more than 7 days old."""
+    """Alert Will when a client's inventory data is more than 7 days old.
+    Returns the standard counts; a send that failed raises (#39) — it used
+    to be logged and recorded as a clean run."""
     if not _resend_key():
-        return
+        return {"attempted": 0, "ok": 0, "failed": 0, "skipped": 1, "hit_bound": False}
+    stale = find_stale_inventory()
+    if not stale:
+        return {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False, "stale": 0}
+    _send_stale_inventory(stale)
+    return {"attempted": 1, "ok": 1, "failed": 0, "skipped": 0, "hit_bound": False, "stale": len(stale)}
+
+
+def find_stale_inventory():
+    """[(restaurant name, why)] for every Food Cost client whose inventory
+    data is stale — the list the Monday email and the operator's weekly
+    digest (#35) both carry."""
+    stale = []
     try:
         from models import get_all_restaurants
         from datetime import datetime, timedelta
-        import resend as _resend
 
         restaurants = get_all_restaurants()
-        stale = []
         # Both stamps below are SQLite datetime('now') — UTC. They were
         # compared with _chi_now(), Chicago time, which put every age off by
         # five or six hours; and one unparseable stamp raised out of the
@@ -1062,58 +1117,46 @@ def check_stale_inventory():
             except Exception as e:
                 log.error(f"Stale inventory check failed for {r.name}: {e}")
                 _ops.capture(e, job="stale_inventory", context=f"restaurant_id={r.id}")
+    except Exception as e:
+        log.error(f"Stale inventory check error: {e}")
+        _ops.capture(e, job="stale_inventory", context="outer")
+        raise
+    return stale
 
-        if not stale:
-            return
 
-        stale_html = "".join([
-            f'<tr><td style="padding:6px 12px;border-bottom:1px solid #f0ece6"><strong>{name}</strong></td>'            f'<td style="padding:6px 12px;border-bottom:1px solid #f0ece6;color:#c84b2f">{status}</td></tr>'
-            for name, status in stale
-        ])
-
-        _emails.deliver_or_raise(email_type="ops_stale_inventory", payload={
-            "from": _emails.sender("client"),
-            "to": [config.will_email()],
-            "subject": f"⚠ Stale inventory data — {len(stale)} client(s) need updating",
-            "html": _html_doc(f"""
-<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
-<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:white;border-radius:12px;padding:28px 24px;box-sizing:border-box">
-  <div style="border-top:3px solid #c84b2f;padding-top:20px;margin-bottom:20px">
-    <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="150" height="26" alt="Cavnar AI" style="display:block;width:150px;height:26px;border:0;outline:none;margin:0 0 6px">
-    <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">
-      Weekly Inventory Check
-    </p>
-  </div>
-  <p style="font-size:14px;line-height:1.6;margin-bottom:16px">
+def _send_stale_inventory(stale):
+    """The Monday stale-inventory email to Will. Raises when it did not go
+    (#39): a failed send was logged and the run recorded clean."""
+    b = _emails.BRAND
+    stale_html = "".join(
+        f'<tr><td style="padding:6px 12px;border-bottom:1px solid {b["rule"]}"><strong>{_html.escape(str(name))}</strong></td>'
+        f'<td style="padding:6px 12px;border-bottom:1px solid {b["rule"]};color:{b["ember"]}">{_html.escape(str(status))}</td></tr>'
+        for name, status in stale)
+    res = _emails.deliver(email_type="ops_stale_inventory", payload={
+        "from": _emails.sender("client"),
+        "to": [config.will_email()],
+        "subject": f"⚠ Stale inventory data — {len(stale)} client(s) need updating",
+        "html": _emails._branded_email(f"""
+  <p style="font-size:11px;color:{b['muted']};margin:0 0 12px;letter-spacing:1px;text-transform:uppercase">Weekly Inventory Check</p>
+  <p style="font-size:14px;line-height:1.6;margin:0 0 16px;color:{b['body']}">
     The following clients have inventory data that needs updating.
     Follow up to get a fresh CSV export from them this week.
   </p>
-  <table style="width:100%;border-collapse:collapse;font-size:13px;background:white;border:1px solid #e0dbd0;border-radius:6px;overflow:hidden">
-    <thead>
-      <tr style="background:#f7f4ef">
-        <th style="padding:8px 12px;text-align:left;font-size:11px;color:#7a736a;font-weight:600">RESTAURANT</th>
-        <th style="padding:8px 12px;text-align:left;font-size:11px;color:#7a736a;font-weight:600">STATUS</th>
-      </tr>
-    </thead>
+  <table style="width:100%;border-collapse:collapse;font-size:13px;border:1px solid {b['border']}">
+    <thead><tr style="background:{b['paper']}">
+      <th style="padding:8px 12px;text-align:left;font-size:11px;color:{b['muted']};font-weight:600">RESTAURANT</th>
+      <th style="padding:8px 12px;text-align:left;font-size:11px;color:{b['muted']};font-weight:600">STATUS</th>
+    </tr></thead>
     <tbody>{stale_html}</tbody>
   </table>
-  <p style="font-size:12px;color:#7a736a;margin-top:16px">
-    Update inventory data at <a href="https://dashboard.cavnar.ai/admin" style="color:#c84b2f">dashboard.cavnar.ai/admin</a>
-    → client → Manage Data.
-  </p>
-</div>
-</div>"""),
-        })
-        log.info(f"Stale inventory alert sent for {len(stale)} client(s)")
-        try:
-            from models import log_email as _le, get_conn as _gc
-            _c = _gc()
-            _wrow = _c.execute("SELECT r.id FROM restaurants r JOIN users u ON u.restaurant_id=r.id WHERE u.email='will@cavnar.ai' AND u.is_admin=1 LIMIT 1").fetchone()
-            _c.close()
-            if _wrow: _le(_wrow[0], "stale_inventory", "will@cavnar.ai", f"Stale inventory — {len(stale)} client(s)")
-        except Exception: pass
-    except Exception as e:
-        log.error(f"Stale inventory check error: {e}")
+  <p style="font-size:12px;color:{b['muted']};margin-top:16px">
+    Update inventory data at <a href="https://dashboard.cavnar.ai/admin" style="color:{b['ember']}">dashboard.cavnar.ai/admin</a>
+    → client → Manage Data. The same list is in Monday's operator digest.
+  </p>"""),
+    })
+    if not getattr(res, "ok", bool(res)):
+        raise RuntimeError(f"stale inventory email not sent: {getattr(res, 'error', None) or 'not accepted'}")
+    log.info(f"Stale inventory alert sent for {len(stale)} client(s)")
 
 
 def run_toast_sync():
@@ -1138,6 +1181,28 @@ def run_toast_sync():
         log.error(f"run_toast_sync error: {e}")
         _ops.capture(e, job="pos_sync", context="outer")
         raise
+
+
+def run_pos_sync_one(restaurant_id, trigger="manual"):
+    """One restaurant's POS sync through pos.sync_restaurant — the path the
+    nightly sweep takes, so the attempt lands in the Data Health ledger and
+    the data_through date moves (#65). Standard counts."""
+    import pos
+    result = pos.sync_restaurant(restaurant_id, trigger=trigger) or {}
+    ok = bool(result.get("ok"))
+    return {"attempted": 1, "ok": 1 if ok else 0, "failed": 0 if ok else 1, "skipped": 0, "hit_bound": False,
+            "provider": result.get("provider"), "error": None if ok else result.get("error")}
+
+
+def start_manual_pos_sync(restaurant_id, actor="admin"):
+    """The manual "Sync now" for a POS — the console's Toast and RPOWER
+    buttons and the owner's account card (#65, #153): through
+    pos.sync_restaurant on the bounded admin pool, not a direct
+    sync_to_db on an unbounded thread per click, which skipped the Data
+    Health ledger so the issue that prompted the click never cleared.
+    (job_id, joined); the console polls GET /admin/api/tasks/<job_id>."""
+    return _ops.run_admin_task("pos_sync_one", restaurant_id, "pos_sync_one", run_pos_sync_one, restaurant_id,
+                               context=f"restaurant_id={restaurant_id} manual by {actor}")
 
 
 def run_inventory_sync():
@@ -1355,79 +1420,109 @@ def run_daily_depletion_sync():
 TOKEN_REFRESH_ATTEMPTS_PER_DAY = 3
 
 
-def refresh_expiring_tokens():
-    """Refresh Instagram and Facebook tokens expiring within 7 days."""
+def refresh_ig_token(r) -> dict:
+    """Refresh one restaurant's Instagram (and Facebook page) token with
+    Meta: {"ok", "expires", "error"}. The ONE refresh — the nightly job and
+    the console's "Refresh IG token" button both call it (#65). The button
+    had its own copy that pushed the expiry 60 days out even when Meta
+    returned no new token, reintroducing MOD-A6-oauth-5: only a token Meta
+    actually handed back moves the expiry. Never raises; a Meta refusal is
+    captured once here."""
+    import requests as _req
+    from datetime import timedelta
+    from models import update_restaurant
+    from meta_api import graph_url
+    app_id = os.getenv("META_APP_ID", "")
+    app_secret = os.getenv("META_APP_SECRET", "")
+    if not app_id or not app_secret:
+        return {"ok": False, "error": "META_APP_ID / META_APP_SECRET are not set"}
+    if not getattr(r, "ig_token", None):
+        return {"ok": False, "error": "No Instagram token to refresh"}
     try:
-        import requests as _req, os
-        from models import get_all_restaurants, update_restaurant
-        from datetime import datetime, timedelta
+        # Timed (MOD-MKT-2): this runs on the one scheduler thread, and a
+        # black-holed Graph connection stopped every job with it.
+        resp = _req.get(graph_url("oauth/access_token"), params={
+            "grant_type": "fb_exchange_token",
+            "client_id": app_id, "client_secret": app_secret,
+            "fb_exchange_token": r.ig_token,
+        }, timeout=(5, 20))
+        try:
+            new_token = (resp.json() or {}).get("access_token") if resp.status_code == 200 else None
+        except Exception:
+            new_token = None
+        if not new_token:
+            log.warning(f"Token refresh failed for {r.name}: {resp.status_code} {(resp.text or '')[:100]}")
+            _ops.capture(RuntimeError(f"Meta token refresh returned {resp.status_code}"),
+                         job="refresh_tokens", context=f"restaurant_id={r.id}")
+            return {"ok": False, "error": f"Meta returned {resp.status_code} with no new token"}
+        # Only a token Meta actually handed back moves the expiry. A 200
+        # with no access_token used to keep the old token and still push its
+        # expiry 60 days out, so the job stopped trying while the real token
+        # died (MOD-A6-oauth-5).
+        new_expires = (_chi_now() + timedelta(days=60)).strftime("%Y-%m-%d")
+        update_data = {"ig_token": new_token, "ig_token_expires": new_expires}
+        if getattr(r, "fb_page_token", None):
+            resp2 = _req.get(graph_url("oauth/access_token"), params={
+                "grant_type": "fb_exchange_token",
+                "client_id": app_id, "client_secret": app_secret,
+                "fb_exchange_token": r.fb_page_token,
+            }, timeout=(5, 20))
+            try:
+                fb_token = (resp2.json() or {}).get("access_token") if resp2.status_code == 200 else None
+            except Exception:
+                fb_token = None
+            if fb_token:
+                update_data["fb_page_token"] = fb_token
+                update_data["fb_token_expires"] = new_expires
+        update_restaurant(r.id, update_data)
+        log.info(f"Refreshed IG/FB tokens for {r.name}, new expiry {new_expires}")
+        return {"ok": True, "expires": new_expires}
+    except Exception as e:
+        log.error(f"Token refresh error for {r.name}: {e}")
+        _ops.capture(e, job="refresh_tokens", context=f"restaurant_id={r.id}")
+        return {"ok": False, "error": str(e)[:200]}
 
-        from meta_api import graph_url
-        app_id     = os.getenv("META_APP_ID","")
-        app_secret = os.getenv("META_APP_SECRET","")
-        if not app_id or not app_secret:
-            return
 
-        restaurants = get_all_restaurants()
+TOKEN_REFRESH_MAX_SECONDS = int(os.getenv("TOKEN_REFRESH_MAX_SECONDS", str(10 * 60)))
+
+
+def refresh_expiring_tokens():
+    """Refresh Instagram and Facebook tokens expiring within 7 days, one
+    restaurant at a time through refresh_ig_token — bounded and resumable
+    (#84): it looped every restaurant serially with no bound or cursor.
+    Returns the standard counts."""
+    from datetime import timedelta
+    from models import get_all_restaurants
+    if not os.getenv("META_APP_ID", "") or not os.getenv("META_APP_SECRET", ""):
+        return {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
+    try:
         today = _chi_now().date().isoformat()
         soon = (_chi_now() + timedelta(days=7)).strftime("%Y-%m-%d")
-
-        for r in restaurants:
-            if not r.ig_token:
-                continue
-            expires = r.ig_token_expires or "2000-01-01"
-            if expires > soon:
-                continue  # Not expiring soon
-            if not any(_ops.claim_period(f"refresh_tokens_attempt:{r.id}", f"{today}#{n}")
-                       for n in range(TOKEN_REFRESH_ATTEMPTS_PER_DAY)):
-                continue  # tried enough today
-
-            try:
-                # Timed (MOD-MKT-2): this runs on the one scheduler thread, and
-                # a black-holed Graph connection stopped every job with it.
-                resp = _req.get(graph_url("oauth/access_token"), params={
-                    "grant_type": "fb_exchange_token",
-                    "client_id": app_id, "client_secret": app_secret,
-                    "fb_exchange_token": r.ig_token,
-                }, timeout=(5, 20))
-                try:
-                    new_token = (resp.json() or {}).get("access_token") if resp.status_code == 200 else None
-                except Exception:
-                    new_token = None
-                if new_token:
-                    # Only a token Meta actually handed back moves the expiry.
-                    # A 200 with no access_token used to keep the old token and
-                    # still push its expiry 60 days out, so the job stopped
-                    # trying while the real token died (MOD-A6-oauth-5).
-                    new_expires = (_chi_now() + timedelta(days=60)).strftime("%Y-%m-%d")
-                    update_data = {"ig_token": new_token, "ig_token_expires": new_expires}
-                    if r.fb_page_token:
-                        resp2 = _req.get(graph_url("oauth/access_token"), params={
-                            "grant_type": "fb_exchange_token",
-                            "client_id": app_id, "client_secret": app_secret,
-                            "fb_exchange_token": r.fb_page_token,
-                        }, timeout=(5, 20))
-                        try:
-                            fb_token = (resp2.json() or {}).get("access_token") if resp2.status_code == 200 else None
-                        except Exception:
-                            fb_token = None
-                        if fb_token:
-                            update_data["fb_page_token"]    = fb_token
-                            update_data["fb_token_expires"] = new_expires
-                    update_restaurant(r.id, update_data)
-                    log.info(f"Refreshed IG/FB tokens for {r.name}, new expiry {new_expires}")
-                else:
-                    log.warning(f"Token refresh failed for {r.name}: {resp.status_code} {(resp.text or '')[:100]}")
-                    _ops.capture(RuntimeError(f"Meta token refresh returned {resp.status_code}"),
-                                 job="refresh_tokens", context=f"restaurant_id={r.id}")
-            except Exception as e:
-                log.error(f"Token refresh error for {r.name}: {e}")
-                _ops.capture(e, job="refresh_tokens", context=f"restaurant_id={r.id}")
-
+        due = {r.id: r for r in get_all_restaurants()
+               if r.ig_token and (r.ig_token_expires or "2000-01-01") <= soon}
     except Exception as e:
         log.error(f"refresh_expiring_tokens error: {e}")
         _ops.capture(e, job="refresh_tokens", context="outer")
         raise
+    c = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0}
+    lock = threading.Lock()
+
+    def _one(rid):
+        r = due[rid]
+        if not any(_ops.claim_period(f"refresh_tokens_attempt:{r.id}", f"{today}#{n}")
+                   for n in range(TOKEN_REFRESH_ATTEMPTS_PER_DAY)):
+            with lock:
+                c["skipped"] += 1        # tried enough today
+            return
+        out = refresh_ig_token(r)
+        with lock:
+            c["attempted"] += 1
+            c["ok" if out.get("ok") else "failed"] += 1
+
+    _done, ran_out = resumable_sweep("refresh_tokens_cursor", sorted(due), _one, TOKEN_REFRESH_MAX_SECONDS,
+                                     workers=1, job="refresh_tokens")
+    c["hit_bound"] = bool(ran_out)
+    return c
 
 
 # One nightly metrics pass stops taking on restaurants after this long; the
@@ -1515,8 +1610,14 @@ def run_marketing_metrics_sync():
         candidates = {r.id: r for r in get_all_restaurants()
                       if r.module_marketing and (r.ig_token or r.fb_page_token) and in_service(r)}
         if not candidates:
-            return
+            return {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
         log.info(f"Marketing metrics sync for {len(candidates)} restaurant(s)")
+        tally = {"ok": 0, "failed": 0, "partial": 0}
+        lock = threading.Lock()
+
+        def _count(key):
+            with lock:
+                tally[key] += 1
 
         def _one(rid):
             r = candidates[rid]
@@ -1525,6 +1626,7 @@ def run_marketing_metrics_sync():
             except Exception as e:
                 from ai_guard import safe_error as _se
                 record_metrics_sync(rid, False, _se(e))
+                _count("failed")
                 raise
             # The pass is green only when every post it owed was measured
             # (MB-7): it used to stamp success whenever the token was alive,
@@ -1535,10 +1637,16 @@ def run_marketing_metrics_sync():
             if status == "ok":
                 log.info(f"Metrics synced for {r.name} — {len(result.get('posts', []))} posts")
                 record_metrics_sync(rid, True)
+                _count("ok")
             elif status == "partial":
                 log.warning(f"Metrics sync partial for {r.name}: {result.get('error')}")
                 record_metrics_sync(rid, False, result.get("error") or "some posts couldn't be measured")
+                # Recorded not-ok in the restaurant's own ledger above, so it
+                # is a failed restaurant here too; `partial` says how many.
+                _count("failed")
+                _count("partial")
             else:
+                _count("failed")
                 # Was only logged, so marketing figures read current after
                 # the Meta token died (CA3 F15). Stamped per restaurant for
                 # the freshness registry. Not captured again here: the insights
@@ -1554,7 +1662,10 @@ def run_marketing_metrics_sync():
                      "the next pass resumes from there")
             _ops.capture(RuntimeError(f"Marketing metrics sync stopped at its {METRICS_SYNC_SECONDS}s bound "
                                       f"after {done}"), job="marketing_metrics_sync", context="time_bound")
-        return {"attempted": done, "hit_bound": bool(hit_bound)}
+        # Each restaurant's own verdict (#39): a night on which Meta refused
+        # every insights call returned {attempted, hit_bound} and read green.
+        return {"attempted": tally["ok"] + tally["failed"], "ok": tally["ok"], "failed": tally["failed"],
+                "skipped": 0, "partial": tally["partial"], "hit_bound": bool(hit_bound)}
     except Exception as e:
         log.error(f"run_marketing_metrics_sync error: {e}")
         _ops.capture(e, job="marketing_metrics_sync", context="outer")
@@ -1604,11 +1715,29 @@ def local_due(restaurant, hour, until=14, claim_key=None, now_local=None, day=No
     if day is not None and local.day != day:
         return False
     if not (hour <= local.hour < until):
+        if claim_key is not None and local.hour >= until:
+            note_missed_window(claim_key, getattr(restaurant, "id", restaurant), local.date().isoformat())
         return False
     if claim_key is None:
         return True
     return _ops.claim_period(f"{claim_key}:{getattr(restaurant, 'id', restaurant)}",
                              local.date().isoformat())
+
+
+def note_missed_window(job, restaurant_id, local_date):
+    """Record that `job`'s window for this restaurant closed on `local_date`
+    with nothing claimed — the job never got its turn while the window was
+    open (a long pass held the loop, an outage, a deploy). Nothing recorded
+    "window closed, not sent" before (#131); the console and the digest
+    read ops.missed_windows. A read first, so the usual answer — it ran —
+    costs no write. Never raises."""
+    try:
+        if _ops.period_claimed(f"{job}:{restaurant_id}", local_date):
+            return False
+        return _ops.record_missed_window(job, restaurant_id, local_date)
+    except Exception as e:
+        log.warning(f"missed window not noted ({job}, {restaurant_id}): {e}")
+        return False
 
 
 def _due(now, hour, until=24):
@@ -1637,21 +1766,17 @@ OPTIN_INVITE_LATEST_HOUR = 20
 # Backups keep this many days of local snapshots on the Railway volume.
 BACKUP_RETAIN_DAYS = int(os.getenv("BACKUP_RETAIN_DAYS", "7"))
 
-# Tables whose contents must never leave the server in a backup artifact.
-# `sessions` holds live bearer tokens (auth.py stores only their hash now, but
-# a restore never needs live sessions anyway); the rest hold short-lived
-# credentials that are meaningless in a restore and dangerous in an archive.
-_BACKUP_REDACT = {
-    "sessions": "DELETE FROM sessions",
-    "two_fa_backup_codes": "DELETE FROM two_fa_backup_codes",
-    "trusted_devices": "DELETE FROM trusted_devices",
-    "device_tokens": "DELETE FROM device_tokens",
-}
-_BACKUP_SCRUB_COLUMNS = [
-    ("users", ["reset_token", "reset_token_expires", "recovery_email_code"]),
-    ("restaurants", ["temp_password", "gmb_access_token", "gmb_refresh_token",
-                     "ig_token", "fb_page_token", "stripe_customer_id"]),
-]
+# What must never leave the server in a backup artifact is ONE registry now,
+# offsite_backup.SCRUB_TABLES / SCRUB_COLUMNS / KEEP_COLUMNS, built from
+# credentials.FIELDS and every credential-looking column (#102). The six
+# hand-named columns that stood here let the POS, reservation and webhook
+# credentials and every staff-portal link ride in the "stripped" copy.
+
+# A backup needs this many times the database's size free before it starts:
+# the snapshot, the scrubbed copy and its encryption (~1.33x) exist at once
+# (#28). A 2am run that filled the volume would take its own snapshot down
+# and every write with it.
+BACKUP_FREE_SPACE_FACTOR = float(os.getenv("BACKUP_FREE_SPACE_FACTOR", "3.5"))
 
 
 # The emailed copy is skipped, and the skip reported, above this many bytes
@@ -1734,26 +1859,10 @@ def _write_consistent_snapshot(dest_path):
 
 
 def _redact_snapshot(path):
-    """Strip credentials from a snapshot before it leaves the server."""
-    import sqlite3
-    conn = sqlite3.connect(path)
-    try:
-        existing = {r[0] for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-        for table, stmt in _BACKUP_REDACT.items():
-            if table in existing:
-                conn.execute(stmt)
-        for table, columns in _BACKUP_SCRUB_COLUMNS:
-            if table not in existing:
-                continue
-            have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-            for col in columns:
-                if col in have:
-                    conn.execute(f"UPDATE {table} SET {col}=NULL")
-        conn.commit()
-        conn.execute("VACUUM")
-    finally:
-        conn.close()
+    """Strip credentials from a COPY of a snapshot before it leaves the
+    server (offsite_backup.redact, the one scrub registry)."""
+    import offsite_backup
+    return offsite_backup.redact(path)
 
 
 def _prune_old_backups(backup_dir):
@@ -1767,34 +1876,138 @@ def _prune_old_backups(backup_dir):
             pass
 
 
+class BackupFailed(RuntimeError):
+    """The nightly backup did not produce what it must: a good local
+    snapshot AND at least one off-site copy (decision 7)."""
+
+
+def _dir_bytes(path, pattern="cavnar_ai_backup_*.db"):
+    import glob
+    total = 0
+    for p in glob.glob(os.path.join(path, pattern)):
+        try:
+            total += os.path.getsize(p)
+        except OSError:
+            pass
+    return total
+
+
+def _backup_failed(run, message, page=True):
+    """Record the failed run, page Will once a day, tell the external
+    monitor, and raise — the run is a failed job_runs row, not ok=1 (#2)."""
+    import json as _json
+    run["finished_at"] = _now_utc_stamp()
+    run.setdefault("local_ok", 0)
+    run.setdefault("offsite_ok", 0)
+    detail = dict(run.pop("_detail", {}) or {})
+    detail["error"] = str(message)[:300]
+    run["detail_json"] = _json.dumps(detail, default=str)[:2000]
+    _ops.record_backup_run(run)
+    if page:
+        try:
+            _ops.page_operator("backup_failed", "Cavnar AI: last night's backup failed", [str(message)],
+                               cooldown_minutes=12 * 60)
+        except Exception as e:
+            log.error(f"backup page failed: {e}")
+    _ops.ping_healthcheck("fail")
+    raise BackupFailed(message)
+
+
+def _now_utc_stamp():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _email_offsite(enc_path, enc_name, timestamp, size_kb):
+    """The encrypted email copy (the second off-site path). Returns None on
+    success, or why it did not go."""
+    if not _resend_key():
+        return "RESEND_API_KEY is not set"
+    enc_bytes = os.path.getsize(enc_path)
+    if enc_bytes > BACKUP_EMAIL_MAX_BYTES:
+        # Too big to arrive as an attachment, and building it means holding
+        # it in memory. Said out loud rather than attempted.
+        return (f"encrypted backup is {size_kb} KB, over BACKUP_EMAIL_MAX_BYTES ({BACKUP_EMAIL_MAX_BYTES} bytes) — "
+                "too large to email")
+    b = _emails.BRAND
+    res = _emails.deliver(email_type="ops_backup", payload={
+        "from": _emails.sender("ops"),
+        "to": [config.will_email()],
+        "subject": f"Daily DB backup — {timestamp} ({size_kb} KB, encrypted)",
+        "html": _emails._branded_email(f"""
+  <p style="font-size:14px;color:{b['strong']};margin:0 0 12px">Encrypted daily backup attached.</p>
+  <table style="font-size:13px;color:{b['body']};border-collapse:collapse">
+    <tr><td style="padding:3px 12px 3px 0;color:{b['muted']}">Date</td><td>{_html.escape(timestamp)}</td></tr>
+    <tr><td style="padding:3px 12px 3px 0;color:{b['muted']}">File</td><td>{_html.escape(enc_name)}</td></tr>
+    <tr><td style="padding:3px 12px 3px 0;color:{b['muted']}">Size</td><td>{size_kb} KB</td></tr>
+  </table>
+  <p style="font-size:12px;color:{b['muted']};margin-top:16px">
+    Sessions, device tokens, staff-portal links and every API credential and secret are stripped from
+    this copy. Decrypt with BACKUP_ENCRYPTION_KEY, then rename to reviews.db (docs/ops/RECOVERY.md).
+  </p>"""),
+        "attachments": [{"filename": enc_name, "content": _base64_file(enc_path)}],
+    })
+    if not getattr(res, "ok", False):
+        return f"email not sent: {getattr(res, 'error', None) or 'not accepted'}"
+    return None
+
+
 def backup_db():
-    """Daily 2am backup.
+    """Daily 2am backup: a local snapshot, then the off-site copies.
 
-    Two changes from the original, both from the pre-launch audit:
-
-    1. The snapshot is taken with sqlite3's online backup API and
+    1. Free space first (#28): at least BACKUP_FREE_SPACE_FACTOR times the
+       database (and its WAL) must be free, or the run fails before it
+       writes anything.
+    2. The snapshot is taken with sqlite3's online backup API and
        integrity-checked, not shutil.copy2 — see _write_consistent_snapshot.
-    2. The artifact no longer carries credentials, and the emailed copy is
-       encrypted. The old version base64'd the entire live database into an
-       email every night: every restaurant's financials, guest phone numbers,
-       and — because sessions were stored in plaintext — a working bearer
-       token for every logged-in owner. One leaked mailbox was full account
-       takeover for every customer at once.
+       The LOCAL snapshot is NOT redacted: it is the restore artifact.
+    3. Off-site (#1, decision 7): a scrubbed COPY (offsite_backup.redact —
+       every credential out), encrypted with BACKUP_ENCRYPTION_KEY, goes to
+       object storage (BACKUP_S3_*, SigV4, checksummed) and, when it fits,
+       by email. The old version base64'd the entire live database into an
+       email every night: every restaurant's financials, guest phone
+       numbers, and a working bearer token for every logged-in owner.
 
-    The primary backup is now a local snapshot on the Railway volume (kept
-    BACKUP_RETAIN_DAYS days). Email is a secondary copy and requires
-    BACKUP_ENCRYPTION_KEY to be set — without it the local backup still runs
-    and the email is skipped rather than sent in the clear.
+    The run FAILS — raises, so job_runs records it failed, pages Will and
+    pings the external monitor's /fail — when the snapshot fails, when there
+    is not room for it, and when NO off-site copy was made (#1, #2): a
+    missing key used to log a warning and record a clean run, while every
+    snapshot sat on the one volume that could be lost. One backup_runs row
+    per run either way (ops.backup_status reads it), with the database, WAL
+    and backup sizes for the trend (#28). Returns the standard counts over
+    the copies it made.
     """
+    import json as _json
+    import offsite_backup
     from models import DB_PATH
 
-    WILL_EMAIL = config.will_email()
     timestamp = _chi_now().strftime("%Y-%m-%d")
     filename = f"cavnar_ai_backup_{timestamp}.db"
     backup_dir = os.getenv("BACKUP_DIR") or os.path.join(os.path.dirname(os.path.abspath(DB_PATH)) or ".", "backups")
+    run = {"started_at": _now_utc_stamp(), "_detail": {}}
+    try:
+        run["db_bytes"] = os.path.getsize(DB_PATH)
+    except OSError:
+        run["db_bytes"] = None
+    try:
+        run["wal_bytes"] = os.path.getsize(DB_PATH + "-wal")
+    except OSError:
+        run["wal_bytes"] = 0
 
     try:
         os.makedirs(backup_dir, exist_ok=True)
+        import shutil as _sh
+        free = _sh.disk_usage(backup_dir).free
+        run["free_bytes"] = free
+        need = int(BACKUP_FREE_SPACE_FACTOR * ((run["db_bytes"] or 0) + (run["wal_bytes"] or 0)))
+        if free < need:
+            _backup_failed(run, f"not enough free space to back up: {free // (1024 * 1024)} MB free, "
+                                f"{need // (1024 * 1024)} MB needed ({BACKUP_FREE_SPACE_FACTOR:g}x the database)")
+    except BackupFailed:
+        raise
+    except Exception as e:
+        log.warning(f"backup_db: free-space check unavailable: {e}")
+
+    try:
         local_path = os.path.join(backup_dir, filename)
         _write_consistent_snapshot(local_path)
         # The LOCAL snapshot is NOT redacted, deliberately.
@@ -1811,81 +2024,76 @@ def backup_db():
         # about what LEAVES the server, so it now happens on a throwaway
         # copy made for the email and nowhere else. See docs/ops/RECOVERY.md.
         size_kb = round(os.path.getsize(local_path) / 1024, 1)
+        run.update(local_ok=1, integrity_ok=1, local_path=local_path, size_bytes=os.path.getsize(local_path))
         log.info(f"backup_db: local snapshot {local_path} ({size_kb} KB)")
         _prune_old_backups(backup_dir)
+        run["backups_bytes"] = _dir_bytes(backup_dir)
     except Exception as e:
         log.error(f"backup_db: snapshot failed: {e}")
         try:
             _ops.capture(e, job="backup_db", context="snapshot")
         except Exception:
             pass
-        return
+        run.update(local_ok=0, integrity_ok=0 if "integrity" in str(e) else None)
+        _backup_failed(run, f"the snapshot failed: {e}")
 
+    cfg = {"s3": offsite_backup.s3_config() is not None, "email": bool(_resend_key())}
     key = os.getenv("BACKUP_ENCRYPTION_KEY", "").strip()
     if not key:
-        log.warning(
-            "backup_db: BACKUP_ENCRYPTION_KEY not set — local snapshot kept, "
-            "email copy skipped. Generate one with "
-            "`python3 -c \"from cryptography.fernet import Fernet; "
-            "print(Fernet.generate_key().decode())\"` and set it in Railway."
-        )
-        return
-
-    if not _resend_key():
-        log.warning("backup_db: RESEND_API_KEY not set — local snapshot kept, email skipped")
-        return
+        _backup_failed(run, "BACKUP_ENCRYPTION_KEY is not set, so no copy left the server: every snapshot is on "
+                            "the one volume that could be lost. Generate a key with `python3 -c \"from "
+                            "cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\"`, set it "
+                            "in Railway AND keep a copy off Railway, and set BACKUP_S3_* for object storage.")
+    if not cfg.get("s3") and not cfg.get("email"):
+        _backup_failed(run, "no off-site copy is configured: set BACKUP_S3_ENDPOINT, BACKUP_S3_BUCKET, "
+                            "BACKUP_S3_ACCESS_KEY_ID and BACKUP_S3_SECRET_ACCESS_KEY (or RESEND_API_KEY for the "
+                            "emailed copy)")
 
     redacted_path = local_path + ".redacted"
     enc_path = local_path + ".enc"
+    enc_name = filename + ".enc"
+    targets, errors = [], []
     try:
         import shutil as _shutil
-        # Redact a COPY. The email is the artifact that leaves the server;
-        # the local snapshot stays whole so a restore is a restore.
+        # Redact a COPY. The off-site copies are the artifacts that leave the
+        # server; the local snapshot stays whole so a restore is a restore.
         _shutil.copy2(local_path, redacted_path)
-        _redact_snapshot(redacted_path)
+        scrubbed = _redact_snapshot(redacted_path) or {}
+        run["_detail"]["scrubbed_unclassified"] = scrubbed.get("unclassified") or []
         _encrypt_file_chunked(redacted_path, enc_path, key)
-        enc_name = filename + ".enc"
         enc_bytes = os.path.getsize(enc_path)
         size_kb = round(enc_bytes / 1024, 1)
-        if enc_bytes > BACKUP_EMAIL_MAX_BYTES:
-            # Too big to arrive as an attachment, and building it means
-            # holding it in memory. Said out loud rather than attempted: the
-            # local snapshot is intact, but there is no off-volume copy.
-            raise RuntimeError(f"encrypted backup is {size_kb} KB, over BACKUP_EMAIL_MAX_BYTES "
-                               f"({BACKUP_EMAIL_MAX_BYTES} bytes) — email copy skipped, no off-volume copy tonight")
+        digest = offsite_backup.sha256_file(enc_path)
+        run["sha256"] = digest
+        run["_detail"]["encrypted_bytes"] = enc_bytes
 
-        _emails.deliver_or_raise(email_type="ops_backup", payload={
-            "from": _emails.sender("ops"),
-            "to":   [WILL_EMAIL],
-            "subject": f"Daily DB backup — {timestamp} ({size_kb} KB, encrypted)",
-            "html": _html_doc(f"""
-<div style="font-family:-apple-system,sans-serif;max-width:480px;color:#1a1714">
-  <p style="font-size:14px">Encrypted daily backup attached.</p>
-  <table style="font-size:13px;color:#3a3530;border-collapse:collapse">
-    <tr><td style="padding:3px 12px 3px 0;color:#7a736a">Date</td><td>{timestamp}</td></tr>
-    <tr><td style="padding:3px 12px 3px 0;color:#7a736a">File</td><td>{enc_name}</td></tr>
-    <tr><td style="padding:3px 12px 3px 0;color:#7a736a">Size</td><td>{size_kb} KB</td></tr>
-  </table>
-  <p style="font-size:12px;color:#7a736a;margin-top:16px">
-    Sessions, device tokens and API credentials are stripped from this copy.
-    Decrypt with BACKUP_ENCRYPTION_KEY, then rename to reviews.db.
-  </p>
-</div>"""),
-            "attachments": [{
-                "filename": enc_name,
-                "content":  _base64_file(enc_path),
-            }],
-        })
-        log.info(f"backup_db: emailed encrypted {enc_name} ({size_kb} KB) to {WILL_EMAIL}")
+        if cfg.get("s3"):
+            try:
+                up = offsite_backup.upload_file(enc_path, enc_name, sha256_hex=digest)
+                targets.append(up["target"])
+                log.info(f"backup_db: uploaded {up['target']} ({size_kb} KB, sha256 {digest[:12]}…)")
+            except Exception as e:
+                errors.append(f"object storage: {e}")
+                log.error(f"backup_db: object-storage copy failed: {e}")
+                _ops.capture(e, job="backup_db", context="s3")
+        if cfg.get("email"):
+            why = _email_offsite(enc_path, enc_name, timestamp, size_kb)
+            if why is None:
+                targets.append("email")
+                log.info(f"backup_db: emailed encrypted {enc_name} ({size_kb} KB)")
+            else:
+                errors.append(f"email: {why}")
+                log.error(f"backup_db: email copy failed: {why}")
+                _ops.capture(RuntimeError(why), job="backup_db", context="email")
+    except BackupFailed:
+        raise
     except Exception as e:
-        log.error(f"backup_db: email copy failed (local snapshot is intact): {e}")
-        try:
-            _ops.capture(e, job="backup_db", context="email")
-        except Exception:
-            pass
+        errors.append(f"preparing the off-site copy: {e}")
+        log.error(f"backup_db: off-site copy failed (local snapshot is intact): {e}")
+        _ops.capture(e, job="backup_db", context="offsite")
     finally:
-        # The redacted copy exists only to be encrypted and attached. Leaving
-        # it on the volume would double the backup directory's size and put a
+        # The redacted copy exists only to be encrypted and sent. Leaving it
+        # on the volume would double the backup directory's size and put a
         # second, restore-useless file next to every real snapshot.
         for _tmp in (redacted_path, enc_path):
             try:
@@ -1893,6 +2101,18 @@ def backup_db():
                     os.unlink(_tmp)
             except OSError as e:
                 log.warning(f"backup_db: could not remove {_tmp}: {e}")
+
+    run.update(offsite_ok=1 if targets else 0, offsite_target=", ".join(targets) or None,
+               offsite_error="; ".join(errors)[:500] or None)
+    if not targets:
+        _backup_failed(run, "no off-site copy was made tonight — " + ("; ".join(errors) or "unknown"))
+    run["finished_at"] = _now_utc_stamp()
+    run["detail_json"] = _json.dumps(run.pop("_detail", {}), default=str)[:2000]
+    _ops.record_backup_run(run)
+    _ops.ping_healthcheck()
+    attempted = 1 + (1 if cfg.get("s3") else 0) + (1 if cfg.get("email") else 0)
+    return {"attempted": attempted, "ok": 1 + len(targets), "failed": len(errors), "skipped": 0,
+            "hit_bound": False, "offsite": targets, "size_bytes": run.get("size_bytes")}
 
 
 # An owner who has signed in this many times has found their way around.
@@ -2270,24 +2490,26 @@ def check_inactive_clients():
     """
     Alert Will when a client hasn't logged in for 14+ days.
     Runs every Monday at 11am. Only checks active/trial clients.
+    Returns the standard counts; a failed send raises (#39).
     """
-    from datetime import datetime, timedelta
-    from models import get_all_restaurants, get_conn
-
-    RESEND_API_KEY_LOCAL = os.getenv("RESEND_API_KEY", "")
-    WILL_EMAIL_LOCAL     = config.will_email()
-    FROM_EMAIL_LOCAL     = config.from_email()
-
-    if not RESEND_API_KEY_LOCAL:
+    if not os.getenv("RESEND_API_KEY", ""):
         log.warning("check_inactive_clients: no RESEND_API_KEY — skipping")
-        return
+        return {"attempted": 0, "ok": 0, "failed": 0, "skipped": 1, "hit_bound": False}
+    inactive = find_inactive_clients()
+    if not inactive:
+        log.info("check_inactive_clients: no inactive clients this week")
+        return {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False, "inactive": 0}
+    _send_inactive_clients(inactive)
+    return {"attempted": 1, "ok": 1, "failed": 0, "skipped": 0, "hit_bound": False, "inactive": len(inactive)}
 
-    try:
-        restaurants = get_all_restaurants()
-    except Exception as e:
-        log.error(f"check_inactive_clients: could not load restaurants: {e}")
-        return
 
+def find_inactive_clients():
+    """[{name, email, last_login, days}] for trial/active clients nobody has
+    signed in to for 14+ days (or ever, three days after signing up) — the
+    list the Monday email and the operator's weekly digest (#35) carry."""
+    from datetime import timedelta
+    from models import get_all_restaurants, get_conn
+    restaurants = get_all_restaurants()
     inactive = []
     now = _chi_now()
     cutoff = now - timedelta(days=14)
@@ -2326,50 +2548,42 @@ def check_inactive_clients():
                     pass
         except Exception as e:
             log.error(f"check_inactive_clients: error checking {r.name}: {e}")
+            _ops.capture(e, job="inactive_clients", context=f"restaurant_id={r.id}")
+    return inactive
 
-    if not inactive:
-        log.info("check_inactive_clients: no inactive clients this week")
-        return
 
-    rows_html = "".join([
-        f"<tr><td style='padding:6px 12px;border-bottom:1px solid #e0dbd0'><strong>{c['name']}</strong></td>"
-        f"<td style='padding:6px 12px;border-bottom:1px solid #e0dbd0'>{c['email']}</td>"
-        f"<td style='padding:6px 12px;border-bottom:1px solid #e0dbd0;color:#c84b2f'>{c['last_login']}</td>"
-        f"<td style='padding:6px 12px;border-bottom:1px solid #e0dbd0'>{c['days']}d ago</td></tr>"
-        for c in inactive
-    ])
-
-    try:
-        _emails.deliver_or_raise(email_type="ops_inactive_clients", payload={
-            "from": _emails.sender("ops"),
-            "to": [WILL_EMAIL_LOCAL],
-            "subject": f"👋 {len(inactive)} inactive client{'s' if len(inactive)>1 else ''} — check in this week",
-            "html": _html_doc(f"""<div style="font-family:sans-serif;max-width:580px;margin:0 auto">
-                <div style="border-top:3px solid #c84b2f;padding-top:20px;margin-bottom:16px">
-                    <h3 style="color:#0e0c0a;margin:0">Inactive clients</h3>
-                    <p style="font-size:12px;color:#7a736a;margin:4px 0 0">Clients who haven't logged in for 14+ days</p>
-                </div>
-                <table style="width:100%;border-collapse:collapse;font-size:13px">
-                    <thead><tr style="background:#f7f4ef">
-                        <th style="padding:8px 12px;text-align:left">Client</th>
-                        <th style="padding:8px 12px;text-align:left">Email</th>
-                        <th style="padding:8px 12px;text-align:left">Last login</th>
-                        <th style="padding:8px 12px;text-align:left">Gap</th>
-                    </tr></thead>
-                    <tbody>{rows_html}</tbody>
-                </table>
-                <p style="font-size:13px;color:#3a3530;margin-top:16px;line-height:1.6">
-                    Worth a quick personal email or text to each of these — early churn usually shows up as disengagement first.
-                </p>
-                <hr style="border:none;border-top:1px solid #e0dbd0;margin:16px 0"/>
-                <p style="font-size:11px;color:#7a736a">
-                    <a href="https://dashboard.cavnar.ai/admin" style="color:#c84b2f">Manage clients →</a>
-                </p>
-            </div>"""),
-        })
-        log.info(f"Inactive client alert sent — {len(inactive)} client(s)")
-    except Exception as e:
-        log.error(f"check_inactive_clients email failed: {e}")
+def _send_inactive_clients(inactive):
+    """The Monday inactive-clients email to Will. Raises when it did not go."""
+    b = _emails.BRAND
+    rows_html = "".join(
+        f"<tr><td style='padding:6px 12px;border-bottom:1px solid {b['border']}'><strong>{_html.escape(str(c['name']))}</strong></td>"
+        f"<td style='padding:6px 12px;border-bottom:1px solid {b['border']}'>{_html.escape(str(c['email'] or ''))}</td>"
+        f"<td style='padding:6px 12px;border-bottom:1px solid {b['border']};color:{b['ember']}'>{_html.escape(str(c['last_login']))}</td>"
+        f"<td style='padding:6px 12px;border-bottom:1px solid {b['border']}'>{c['days']}d ago</td></tr>"
+        for c in inactive)
+    res = _emails.deliver(email_type="ops_inactive_clients", payload={
+        "from": _emails.sender("ops"),
+        "to": [config.will_email()],
+        "subject": f"👋 {len(inactive)} inactive client{'s' if len(inactive) > 1 else ''} — check in this week",
+        "html": _emails._branded_email(f"""
+  <p style="font-size:16px;font-weight:700;color:{b['strong']};margin:0">Inactive clients</p>
+  <p style="font-size:12px;color:{b['muted']};margin:4px 0 16px">Clients who haven't logged in for 14+ days</p>
+  <table style="width:100%;border-collapse:collapse;font-size:13px">
+    <thead><tr style="background:{b['paper']}">
+      <th style="padding:8px 12px;text-align:left">Client</th><th style="padding:8px 12px;text-align:left">Email</th>
+      <th style="padding:8px 12px;text-align:left">Last login</th><th style="padding:8px 12px;text-align:left">Gap</th>
+    </tr></thead>
+    <tbody>{rows_html}</tbody>
+  </table>
+  <p style="font-size:13px;color:{b['body']};margin-top:16px;line-height:1.6">
+    Worth a quick personal email or text to each of these — early churn usually shows up as disengagement first.
+    The same list is in Monday's operator digest.
+  </p>
+  <p style="font-size:11px;color:{b['muted']}"><a href="https://dashboard.cavnar.ai/admin" style="color:{b['ember']}">Manage clients →</a></p>"""),
+    })
+    if not getattr(res, "ok", bool(res)):
+        raise RuntimeError(f"inactive clients email not sent: {getattr(res, 'error', None) or 'not accepted'}")
+    log.info(f"Inactive client alert sent — {len(inactive)} client(s)")
 
 
 def send_while_away_nudges():
@@ -2385,7 +2599,7 @@ def send_while_away_nudges():
     from datetime import timedelta
     from models import get_all_restaurants, get_conn, DB_PATH
     from strategy_jobs import _reach
-    sent = 0
+    sent = failed = attempted = 0
     now = _chi_now()
     for r in get_all_restaurants():
         if getattr(r, "billing_status", "trial") not in ("trial", "active"):
@@ -2427,6 +2641,7 @@ def send_while_away_nudges():
                 continue
             if not _ops.claim_period(f"while_away:{r.id}", now.strftime("%Y-%m")):
                 continue
+            attempted += 1
             days = (now - last).days
             lines = []
             if arrived:
@@ -2449,8 +2664,10 @@ def send_while_away_nudges():
                       DB_PATH, subject=title, lines=lines, email_type="while_away"):
                 sent += 1
         except Exception as e:
+            failed += 1
             _ops.capture(e, job="while_away", context=f"restaurant_id={r.id}")
-    return {"sent": sent}
+    return {"sent": sent, "attempted": max(attempted, failed), "ok": max(attempted, failed) - failed,
+            "failed": failed, "skipped": 0, "hit_bound": False}
 
 
 # ── Jobs that used to live inline in scheduler_loop ──────────────────────────
@@ -2502,27 +2719,28 @@ def _ok_this_week(restaurant_id, source, week_start):
 def _weekly_sweep(job, cursor_key, restaurants, fn):
     """Run `fn(restaurant)` over `restaurants` under WEEKLY_SWEEP_MAX_SECONDS,
     starting after the cursor; returns (processed, hit_bound). `fn` returns
-    True for a success and False for a handled failure, or raises."""
+    True for a success and False for a handled failure, or raises.
+
+    Through resumable_sweep (#137): the cursor is saved as each restaurant
+    finishes, not once at the end, so a pass a deploy killed and a reclaim
+    re-ran does not start from the old cursor and buy the same Places,
+    Claude and Perplexity calls again. A restaurant whose run failed still
+    advances the cursor: it is retried by the daily retry pass, not first in
+    line forever ahead of the ones never reached."""
     by_id = {r.id: r for r in restaurants}
-    order = _fetch_order(list(by_id), key=cursor_key)
     tally = {"attempted": 0}
+    lock = threading.Lock()
 
     def _one(rid):
-        tally["attempted"] += 1
+        with lock:
+            tally["attempted"] += 1
         fn(by_id[rid])
 
-    def _failed(rid, e):
-        log.error(f"{job} failed for restaurant {rid}: {e}")
-        _ops.capture(e, job=job, context=f"restaurant_id={rid}")
-
-    done, ran_out = bounded_map(order, _one, 1, WEEKLY_SWEEP_MAX_SECONDS, on_error=_failed)
-    # Advance past everything this pass reached, success or failure: a
-    # restaurant whose analysis failed is retried next week, not first in
-    # line forever ahead of the ones never reached.
-    _remember_fetch_cursor(order, tally["attempted"], key=cursor_key)
+    _done, ran_out = resumable_sweep(cursor_key, list(by_id), _one, WEEKLY_SWEEP_MAX_SECONDS,
+                                     workers=1, job=job)
     if ran_out:
         _ops.capture(
-            RuntimeError(f"{job} covered {tally['attempted']} of {len(order)} restaurants before the "
+            RuntimeError(f"{job} covered {tally['attempted']} of {len(by_id)} restaurants before the "
                          f"{WEEKLY_SWEEP_MAX_SECONDS}s bound; the rest lead the next pass."),
             job=job, context="time_bound")
     return tally["attempted"], ran_out
@@ -2572,11 +2790,14 @@ def run_weekly_competitor_analysis(retry_only=False):
     # who has cancelled.
     eligible = [r for r in get_all_restaurants()
                 if r.google_place_id and r.id and is_full_tier(r) and in_service(r)]
-    if retry_only:
-        eligible = [r for r in eligible if not _ok_this_week(r.id, "competitor", week_start)]
+    # Every pass, not only the retry: a restaurant already analysed this
+    # week is not analysed again — a pass re-run after a deploy used to buy
+    # the same Places and Claude calls twice (#137).
+    before = len(eligible)
+    eligible = [r for r in eligible if not _ok_this_week(r.id, "competitor", week_start)]
     _n, hit_bound = _weekly_sweep("competitor_analysis", _COMPETITOR_CURSOR_KEY, eligible, _analyse)
-    if hit_bound:
-        counts["hit_bound"] = True
+    counts.update(attempted=counts["analysed"] + counts["failed"], ok=counts["analysed"],
+                  skipped=before - len(eligible), hit_bound=bool(hit_bound))
     return counts
 
 
@@ -2620,20 +2841,27 @@ def run_weekly_ai_visibility(retry_only=False):
 
     # In service only (MOD-REV-2): no Perplexity spend on a cancelled customer.
     eligible = [r for r in get_all_restaurants() if r.id and is_full_tier(r) and in_service(r)]
-    if retry_only:
-        eligible = [r for r in eligible if not _ok_this_week(r.id, "visibility", week_start)]
+    # Every pass skips a restaurant already checked this week (#137).
+    before = len(eligible)
+    eligible = [r for r in eligible if not _ok_this_week(r.id, "visibility", week_start)]
     _n, hit_bound = _weekly_sweep("ai_visibility", _VISIBILITY_CURSOR_KEY, eligible, _check)
-    if hit_bound:
-        counts["hit_bound"] = True
+    counts.update(attempted=counts["checked"] + counts["failed"], ok=counts["checked"],
+                  skipped=before - len(eligible), hit_bound=bool(hit_bound))
     return counts
 
 
 def run_daily_alert_checks():
-    """Unresponded, trend/threshold/labor, food waste and visibility alerts,
-    then the retention purge. Attempted hourly; each restaurant is served at
-    10am in its own timezone (notify._gated_out), once per local day. A
-    failure in one must not take the rest down with it, which is why each is
-    wrapped separately rather than the whole block sharing one except."""
+    """Unresponded, trend/threshold/labor, food waste and visibility alerts.
+    Attempted hourly; each restaurant is served at 10am in its own timezone
+    (notify._gated_out), once per local day. A failure in one must not take
+    the rest down with it, which is why each is wrapped separately rather
+    than the whole block sharing one except.
+
+    Returns the standard counts over the checks and the batch flush: a
+    check that failed used to come back as {"daily": "failed: …"}, which
+    job_runs recorded as a clean run (#39). The retention purge and log
+    prune that ran here every hour, each one DELETE under the write lock,
+    are the nightly retention job now (run_nightly_retention, #81)."""
     import notify as _notify
     from notify import (check_no_response_alerts, check_daily_alerts, check_extra_daily_alerts,
                         check_competitor_alerts)
@@ -2664,26 +2892,36 @@ def run_daily_alert_checks():
         # collected is an alert that passed every gate, and dropping it
         # because a later, unrelated check failed would be silent loss.
         out["batch"] = _notify.flush_daily_batch()
+        batch_ok = True
     except Exception as e:
         out["batch"] = f"failed: {e}"
+        batch_ok = False
         log.error(f"Daily alert batch flush failed: {e}")
         _ops.capture(e, job="daily_alerts", context="batch flush")
+    checks = [v for k, v in out.items() if k != "batch"]
+    failed = sum(1 for v in checks if v != "ok") + (0 if batch_ok else 1)
+    out.update(attempted=len(checks) + 1, ok=len(checks) + 1 - failed, failed=failed, skipped=0, hit_bound=False)
+    return out
+
+
+def run_nightly_retention():
+    """2am, straight after the backup (so the pruned rows are in it): the one
+    retention registry (ops.prune_ledgers — chunked, a commit per chunk,
+    bounded, then planner statistics) and each owner's own review retention
+    (models.purge_expired_reviews). Both ran hourly inside the daily alert
+    checks, each table one DELETE under the write lock (#81)."""
+    out = _ops.prune_ledgers()
     try:
         from models import purge_expired_reviews
         purged = purge_expired_reviews()
-        out["purged"] = purged
+        out["reviews_purged"] = purged
         if purged:
             log.info(f"Data retention: soft-deleted {purged} expired reviews")
     except Exception as pe:
-        out["purged"] = f"failed: {pe}"
+        out["failed"] = int(out.get("failed") or 0) + 1
+        out["attempted"] = int(out.get("attempted") or 0) + 1
         log.error(f"Retention purge failed: {pe}")
-        _ops.capture(pe, job="daily_alerts", context="retention purge")
-    try:
-        from models import prune_operational_logs
-        out["pruned"] = prune_operational_logs()
-    except Exception as le:
-        out["pruned"] = f"failed: {le}"
-        _ops.capture(le, job="daily_alerts", context="operational log prune")
+        _ops.capture(pe, job="prune_ledgers", context="review retention purge")
     return out
 
 
@@ -2752,7 +2990,7 @@ def run_food_cost_snapshots():
     log.info(f"Food cost snapshots: {written} written, {skipped} skipped, {failed} failed, "
              f"{c['held']} held for depletion, {scored} forecasts scored")
     return {"written": written, "skipped": skipped, "failed": failed, "forecasts_scored": scored,
-            "held": c["held"], "attempted": written + failed, "hit_bound": bool(ran_out)}
+            "held": c["held"], "attempted": written + failed, "ok": written, "hit_bound": bool(ran_out)}
 
 
 DATA_HEALTH_DAILY_CURSOR_KEY = "data_health_daily_cursor"
@@ -2768,7 +3006,7 @@ def run_data_health_daily():
     from models import get_all_restaurants, in_service
     from time_utils import restaurant_now
     rows = {r.id: r for r in get_all_restaurants() if in_service(r)}
-    c = {"attempted": 0, "ok": 0, "failed": 0}
+    c = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0}
     lock = threading.Lock()
 
     def _one(rid):
@@ -2801,7 +3039,7 @@ def run_forecast_scoring():
     resumable like every sweep here."""
     import forecast_log
     ids = forecast_log.restaurants_due()
-    c = {"scored": 0, "restaurants": 0}
+    c = {"scored": 0, "restaurants": 0, "failed": 0}
     lock = threading.Lock()
 
     def _one(rid):
@@ -2811,6 +3049,8 @@ def run_forecast_scoring():
                 c["scored"] += n
                 c["restaurants"] += 1
         except Exception as e:
+            with lock:
+                c["failed"] += 1
             _ops.capture(e, job="forecast_scoring", context=f"restaurant_id={rid}")
 
     _done, ran_out = resumable_sweep(FORECAST_SCORING_CURSOR_KEY, ids, _one, SWEEP_MAX_SECONDS,
@@ -2819,6 +3059,8 @@ def run_forecast_scoring():
         _ops.capture(RuntimeError(f"Forecast scoring stopped at the {SWEEP_MAX_SECONDS}s bound; "
                                   f"the rest lead the next pass"), job="forecast_scoring", context="time_bound")
     log.info(f"Forecast scoring: {c['scored']} scored across {c['restaurants']} restaurants")
+    # The bound reached job_runs only as a capture (#39): it is in the counts now.
+    c.update(attempted=c["restaurants"] + c["failed"], ok=c["restaurants"], skipped=0, hit_bound=bool(ran_out))
     return c
 
 
@@ -2839,19 +3081,22 @@ def run_food_cost_diagnoses():
         "AND COALESCE(billing_status,'trial') IN ('trial','active')"
     ).fetchall()
     conn.close()
-    done, skipped, failed = 0, 0, 0
-    for row in rows:
-        rid = row["id"]
+    c = {"diagnosed": 0, "skipped": 0, "failed": 0}
+    lock = threading.Lock()
+
+    def _one(rid):
         try:
             r = get_restaurant(rid)
             # A restaurant whose AI budget is spent gets no diagnosis rather
             # than a refused call and a captured exception.
             if r and _ai_budget_spent(rid):
-                skipped += 1
-                continue
+                with lock:
+                    c["skipped"] += 1
+                return
             out = fci.diagnose(rid)
             if out and out.get("ok"):
-                done += 1
+                with lock:
+                    c["diagnosed"] += 1
                 # A fresh cause makes every cached food-cost narrative for
                 # this restaurant out of date — it is what the narrative is
                 # now built around.
@@ -2861,13 +3106,33 @@ def run_food_cost_diagnoses():
                 except Exception:
                     pass
             else:
-                skipped += 1
+                with lock:
+                    c["skipped"] += 1
         except Exception as e:
-            failed += 1
+            with lock:
+                c["failed"] += 1
             log.error(f"Food cost diagnosis failed for restaurant {rid}: {e}")
             _ops.capture(e, job="food_cost_diagnoses", context=f"restaurant_id={rid}")
-    log.info(f"Food cost diagnoses: {done} produced, {skipped} skipped, {failed} failed")
-    return {"diagnosed": done, "skipped": skipped, "failed": failed}
+
+    # Bounded and resumable (#84): a Sonnet call per restaurant walked the
+    # whole fleet serially on the loop thread with no bound and no cursor.
+    _done, ran_out = resumable_sweep(FOOD_COST_DIAGNOSES_CURSOR_KEY, [row["id"] for row in rows], _one,
+                                     DIAGNOSES_MAX_SECONDS, workers=1, job="food_cost_diagnoses")
+    if ran_out:
+        _ops.capture(RuntimeError(f"Food cost diagnoses stopped at the {DIAGNOSES_MAX_SECONDS}s bound; "
+                                  "the rest lead the next pass"), job="food_cost_diagnoses", context="time_bound")
+    log.info(f"Food cost diagnoses: {c['diagnosed']} produced, {c['skipped']} skipped, {c['failed']} failed")
+    return {"diagnosed": c["diagnosed"], "skipped": c["skipped"], "failed": c["failed"],
+            "attempted": c["diagnosed"] + c["failed"], "ok": c["diagnosed"], "hit_bound": bool(ran_out)}
+
+
+# The two daily root-cause passes (#84): a Sonnet call per restaurant (per
+# cluster, for reviews), bounded so a large fleet cannot hold the 6am chain
+# past the 7am local briefs that read what they write, and resumable so the
+# tail is reached the next day rather than never.
+DIAGNOSES_MAX_SECONDS = int(os.getenv("DIAGNOSES_MAX_SECONDS", str(40 * 60)))
+REVIEW_DIAGNOSES_CURSOR_KEY = "review_diagnoses_cursor"
+FOOD_COST_DIAGNOSES_CURSOR_KEY = "food_cost_diagnoses_cursor"
 
 
 def _ai_budget_spent(rid):
@@ -2909,20 +3174,25 @@ def run_review_diagnoses():
         "AND COALESCE(billing_status,'trial') IN ('trial','active')"
     ).fetchall()
     conn.close()
-    done, failed, skipped = 0, 0, 0
-    for row in rows:
-        rid = row["id"]
+    c = {"diagnosed": 0, "skipped": 0, "failed": 0, "attempted": 0}
+    lock = threading.Lock()
+
+    def _one(rid):
         try:
             r = get_restaurant(rid)
             # A restaurant whose AI budget is spent gets no diagnosis rather
             # than a failed call per cluster — create_with_retry would refuse
             # each one individually and we would pay three exceptions for it.
             if r and _ai_budget_spent(rid):
-                skipped += 1
-                continue
+                with lock:
+                    c["skipped"] += 1
+                return
+            with lock:
+                c["attempted"] += 1
             produced = ri.diagnose(rid)
             if produced:
-                done += 1
+                with lock:
+                    c["diagnosed"] += 1
                 # A fresh cause makes every cached insight for this
                 # restaurant out of date — it is the thing the insight is now
                 # built around.
@@ -2932,11 +3202,22 @@ def run_review_diagnoses():
                 except Exception:
                     pass
         except Exception as e:
-            failed += 1
+            with lock:
+                c["failed"] += 1
             log.error(f"Review diagnosis failed for restaurant {rid}: {e}")
             _ops.capture(e, job="review_diagnoses", context=f"restaurant_id={rid}")
-    log.info(f"Review diagnoses: {done} produced, {skipped} skipped, {failed} failed")
-    return {"diagnosed": done, "skipped": skipped, "failed": failed}
+
+    # Bounded and resumable (#84), like the food-cost pass above.
+    _done, ran_out = resumable_sweep(REVIEW_DIAGNOSES_CURSOR_KEY, [row["id"] for row in rows], _one,
+                                     DIAGNOSES_MAX_SECONDS, workers=1, job="review_diagnoses")
+    if ran_out:
+        _ops.capture(RuntimeError(f"Review diagnoses stopped at the {DIAGNOSES_MAX_SECONDS}s bound; "
+                                  "the rest lead the next pass"), job="review_diagnoses", context="time_bound")
+    log.info(f"Review diagnoses: {c['diagnosed']} produced, {c['skipped']} skipped, {c['failed']} failed")
+    # A restaurant with nothing new to diagnose (no cluster) is attempted
+    # and fine: `ok` is every attempt that did not fail.
+    return {"diagnosed": c["diagnosed"], "skipped": c["skipped"], "failed": c["failed"],
+            "attempted": c["attempted"], "ok": c["attempted"] - c["failed"], "hit_bound": bool(ran_out)}
 
 
 def _push_month_ready(r):
@@ -3123,7 +3404,7 @@ def run_auto_publish_schedules():
     from models import (get_all_restaurants, get_conn, schedule_publish_trust, SCHEDULE_PUBLISH_TRUST_MIN, DB_PATH,
                         auto_publish_weekday)
     from time_utils import restaurant_now
-    queued = skipped = 0
+    queued = skipped = failed = 0
     for r in get_all_restaurants():
         if not getattr(r, "auto_publish_schedule", 0) or not getattr(r, "module_labor", 0):
             continue
@@ -3221,8 +3502,10 @@ def run_auto_publish_schedules():
                    permissions=[__import__("permissions").SCHEDULE_PUBLISH])
             queued += 1
         except Exception as e:
+            failed += 1
             _ops.capture(e, job="auto_publish_schedule", context=f"restaurant_id={r.id}")
-    return {"queued": queued, "skipped": skipped}
+    return {"queued": queued, "skipped": skipped, "attempted": queued + failed, "ok": queued, "failed": failed,
+            "hit_bound": False}
 
 
 def run_restore_drill():
@@ -3265,8 +3548,12 @@ def run_restore_drill():
 
     _clean()
     shutil.copyfile(newest, scratch)
+    # Fresh (#2): the drill picked the newest snapshot with no age check, so
+    # a backup that had silently stopped weeks ago still "passed".
+    age_hours = round((time.time() - os.path.getmtime(newest)) / 3600.0, 1)
     report = {"snapshot": os.path.basename(newest),
-              "size_mb": round(os.path.getsize(newest) / 1e6, 1), "ok": False}
+              "size_mb": round(os.path.getsize(newest) / 1e6, 1), "ok": False,
+              "age_hours": age_hours, "fresh": age_hours <= _ops.BACKUP_STALE_HOURS}
     try:
         report["integrity"] = _q(scratch, "PRAGMA integrity_check")
         report["restaurants"] = _q(scratch, "SELECT COUNT(*) FROM restaurants")
@@ -3284,13 +3571,22 @@ def run_restore_drill():
         # required — but a snapshot with NONE while production has some is
         # the redaction bug back, and that fails the drill.
         report["tokens_survive"] = not (report["google_tokens_live"] and not report["google_tokens_in_snapshot"])
-        report["ok"] = report["ok"] and report["tokens_survive"]
+        report["ok"] = report["ok"] and report["tokens_survive"] and report["fresh"]
     finally:
         _clean()
 
+    # The off-site copy is proved too, where there is one: downloaded,
+    # checked against the checksum it was uploaded with, decrypted and
+    # integrity-checked — the copy that survives losing the volume (#1).
+    report["offsite"] = _drill_offsite(backup_dir)
+    if report["offsite"].get("checked"):
+        report["ok"] = report["ok"] and bool(report["offsite"].get("ok"))
+
     try:
         import html as _h
-        lines = [f"Snapshot: {report['snapshot']} ({report['size_mb']} MB)",
+        lines = [f"Snapshot: {report['snapshot']} ({report['size_mb']} MB, {report['age_hours']}h old"
+                 + ("" if report["fresh"] else " — STALE") + ")",
+                 "Off-site copy: " + (report["offsite"].get("summary") or "not checked"),
                  f"integrity_check: {report.get('integrity')} → after init_db: {report.get('integrity_after_migrate')}",
                  f"Restaurants: {report.get('restaurants')}",
                  f"Newest review: {report.get('latest_review')} · newest alert: {report.get('latest_alert')}",
@@ -3306,58 +3602,165 @@ def run_restore_drill():
         _ops.capture(e, job="restore_drill_email")
     if not report["ok"]:
         raise RuntimeError(f"restore drill failed: {report}")
+    report.update(attempted=1, failed=0, skipped=0, hit_bound=False)
     return report
+
+
+def _decrypt_file_chunked(src_path, dest_path, key):
+    """Undo _encrypt_file_chunked: one Fernet token per line (a file of one
+    token — the old format — is one line)."""
+    from cryptography.fernet import Fernet
+    fernet = Fernet(key.encode())
+    with open(src_path, "rb") as src, open(dest_path, "wb") as dst:
+        for line in src:
+            line = line.strip()
+            if line:
+                dst.write(fernet.decrypt(line))
+
+
+def _drill_offsite(backup_dir):
+    """Download the newest object-storage copy, check it against the SHA-256
+    it was uploaded with, decrypt it and integrity-check it, in a scratch
+    file beside the snapshots. {"checked", "ok", "summary"}; "checked" is
+    False where no object storage is configured or nothing was uploaded."""
+    import sqlite3
+    import offsite_backup
+    cfg = offsite_backup.s3_config()
+    key = (os.getenv("BACKUP_ENCRYPTION_KEY") or "").strip()
+    if not cfg or not key:
+        return {"checked": False, "summary": "no object storage configured"}
+    from models import get_conn
+    try:
+        conn = get_conn()
+        try:
+            row = conn.execute("SELECT offsite_target, sha256, finished_at FROM backup_runs WHERE offsite_ok=1 "
+                               "AND offsite_target LIKE 's3://%' ORDER BY id DESC LIMIT 1").fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        return {"checked": True, "ok": False, "summary": f"backup ledger unreadable: {e}"}
+    if not row:
+        return {"checked": True, "ok": False, "summary": "no object-storage copy has been recorded"}
+    target = str(row["offsite_target"]).split(",")[0].strip()
+    object_key = target.split("/", 3)[3] if target.count("/") >= 3 else ""
+    enc = os.path.join(backup_dir, "restore_drill_offsite.enc")
+    plain = os.path.join(backup_dir, "restore_drill_offsite.db")
+    try:
+        got = offsite_backup.download_file(object_key, enc, cfg=cfg, full_key=True)
+        if row["sha256"] and got["sha256"] != row["sha256"]:
+            return {"checked": True, "ok": False,
+                    "summary": f"{target}: checksum mismatch ({got['sha256'][:12]}… vs {row['sha256'][:12]}…)"}
+        _decrypt_file_chunked(enc, plain, key)
+        c = sqlite3.connect(plain)
+        try:
+            integrity = c.execute("PRAGMA integrity_check").fetchone()[0]
+            restaurants = c.execute("SELECT COUNT(*) FROM restaurants").fetchone()[0]
+        finally:
+            c.close()
+        ok = integrity == "ok" and restaurants > 0
+        return {"checked": True, "ok": ok,
+                "summary": f"{target} ({round(got['bytes'] / 1e6, 1)} MB, uploaded {row['finished_at']} UTC): "
+                           f"checksum ok, decrypts, integrity {integrity}, {restaurants} restaurants"}
+    except Exception as e:
+        return {"checked": True, "ok": False, "summary": f"{target}: {e}"}
+    finally:
+        for p in (enc, plain, plain + "-wal", plain + "-shm", plain + "-journal"):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+
+def run_prune_login_attempts():
+    """Daily — login-attempt rows older than two days (security.py's own
+    prune), as a job run with the standard counts. It ran outside run_job
+    and wrote no job run (#31)."""
+    import security as _security
+    _security.prune_login_attempts()
+    return {"attempted": 1, "ok": 1, "failed": 0, "skipped": 0, "hit_bound": False}
+
+
+def run_rec_ledger_pass():
+    """8am — the recommendation trail (rec_ledger): answers held by the older
+    ledgers carried in (after 6am's outcome verdicts), and recommendations
+    nobody answered in two weeks closed as ignored. repair_sync_replays
+    first: it undoes what the replaying sync wrote before it attached
+    answers by time (a no-op after that), and the sync then re-carries those
+    answers where they belong. backfill_tags tags episodes from before tags
+    were stored (ROI #17), bounded; it finishes the tail on later nights.
+    Module-level so "Run now" can reach it (it lived inside the loop)."""
+    import rec_ledger as _rl
+    out = {"repaired": _rl.repair_sync_replays(), "synced": _rl.sync_existing(),
+           "expired": _rl.expire_stale(), "tagged": _rl.backfill_tags()}
+    out.update(attempted=4, ok=4, failed=0, skipped=0, hit_bound=False)
+    return out
 
 
 def _minute_duties():
     """The per-tick work that owes the owner minutes, not hours: scheduled
     posts, delayed actions whose undo window closed, issue escalations and
     held notifications, and alerts held through a rush. Each is idempotent
-    and claims its own rows, so running it an extra time is harmless."""
-    try:
+    and claims its own rows, so running it an extra time is harmless.
+
+    Runs as the `minute_duties` job (ops.run_job) — it wrote no job run at
+    all (#31) — and returns the standard counts over its six duties."""
+    c = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
+
+    def _duty(fn, job):
+        c["attempted"] += 1
+        try:
+            out = fn()
+        except Exception as e:
+            c["failed"] += 1
+            _ops.capture(e, job=job)
+            return None
+        c["ok"] += 1
+        return out
+
+    # Not named `_due`: that name is scheduler_loop's hour gate.
+    def _posts():
         from marketing_publish import run_due_posts
-        # Not named `_due`: that name is scheduler_loop's hour gate.
-        _posts = run_due_posts(base_url=config.base_url())
-        if _posts.get("published") or _posts.get("failed"):
-            log.info(f"Scheduled posts: {_posts}")
-    except Exception as e:
-        log.error(f"Scheduled post run failed: {e}")
-    try:
+        return run_due_posts(base_url=config.base_url())
+    posts = _duty(_posts, job="scheduled_posts")
+    if posts and (posts.get("published") or posts.get("failed")):
+        log.info(f"Scheduled posts: {posts}")
+
+    def _delayed_run():
         import delayed as _delayed
-        _dl = _delayed.run_due()
-        if _dl.get("ran") or _dl.get("failed"):
-            log.info(f"Delayed actions: {_dl}")
-    except Exception as e:
-        _ops.capture(e, job="delayed_actions")
-    try:
+        return _delayed.run_due()
+    dl = _duty(_delayed_run, job="delayed_actions")
+    if dl and (dl.get("ran") or dl.get("failed")):
+        log.info(f"Delayed actions: {dl}")
+
+    def _issues_tick():
         import issues as _issues
-        _issues.tick()
-    except Exception as e:
-        _ops.capture(e, job="issues_tick")
-    try:
+        return _issues.tick()
+    _duty(_issues_tick, job="issues_tick")
+
+    def _release():
         import notify as _notify_rel
-        _notify_rel.release_due_alerts()
-    except Exception as e:
-        _ops.capture(e, job="release_held_alerts")
-    try:
-        # The rest of any newsletter the owner sent, in bounded batches
-        # (guest_email.send_newsletter, MOD-EML-3).
+        return _notify_rel.release_due_alerts()
+    _duty(_release, job="release_held_alerts")
+
+    # The rest of any newsletter the owner sent, in bounded batches
+    # (guest_email.send_newsletter, MOD-EML-3).
+    def _newsletters():
         from guest_email import run_newsletter_sends
-        _nl = run_newsletter_sends()
-        if _nl.get("sent") or _nl.get("failed"):
-            log.info(f"Newsletter sends: {_nl}")
-    except Exception as e:
-        _ops.capture(e, job="newsletter_sends")
-    try:
-        # Guest text campaigns still sending, cut off by a deploy, or waiting
-        # on the 8am window, in bounded passes; the queue rows are the cursor
-        # (guest_marketing.run_campaign_sends, MB-10).
+        return run_newsletter_sends()
+    nl = _duty(_newsletters, job="newsletter_sends")
+    if nl and (nl.get("sent") or nl.get("failed")):
+        log.info(f"Newsletter sends: {nl}")
+
+    # Guest text campaigns still sending, cut off by a deploy, or waiting on
+    # the 8am window, in bounded passes; the queue rows are the cursor
+    # (guest_marketing.run_campaign_sends, MB-10).
+    def _campaigns():
         from guest_marketing import run_campaign_sends
-        _gc = run_campaign_sends()
-        if _gc.get("sent") or _gc.get("failed"):
-            log.info(f"Guest campaign sends: {_gc}")
-    except Exception as e:
-        _ops.capture(e, job="guest_campaign_sends")
+        return run_campaign_sends()
+    gc = _duty(_campaigns, job="guest_campaign_sends")
+    if gc and (gc.get("sent") or gc.get("failed")):
+        log.info(f"Guest campaign sends: {gc}")
+    return c
 
 
 def _pulse_interval():
@@ -3368,64 +3771,194 @@ def _pulse_interval():
 
 class _PulsedOps:
     """scheduler_loop's view of ops: every attribute is ops' own, except
-    run_job, which runs the job with a pulse beside it.
+    run_job, which runs the job with a pulse beside it, and claim_period,
+    which remembers what the tick claimed so a failed job can give its
+    period back.
 
     The loop is one thread. A gated job that ran long — the review fetch is
-    bounded at three hours, the weekly sweeps likewise — used to hold up
-    everything after it in the tick (DATA-3 / MOD-PERF-1): an undo-window
-    supplier order or auto-publish, a scheduled post, an issue escalation
-    and a held alert all waited the whole pass out; the heartbeat went
-    stale, so the status page showed an outage; and the lease, renewed only
-    at the top of the loop, went stale too, so a standby process took it
-    and ran the same tick beside the holder (DATA-4).
+    bounded at three hours — used to hold up everything after it in the
+    tick (DATA-3 / MOD-PERF-1): an undo-window supplier order or
+    auto-publish, a scheduled post, an issue escalation and a held alert
+    all waited the whole pass out; the heartbeat went stale, so the status
+    page showed an outage; and the lease, renewed only at the top of the
+    loop, went stale too, so a standby process took it and ran the same
+    tick beside the holder (DATA-4).
 
     The pulse is a short-lived thread that, while one job runs, renews the
     lease, stamps the heartbeat and runs _minute_duties once per
     _pulse_interval(), starting as soon as the job starts if the duties are
     due. Morning briefs stay on the loop thread: the 5-6am diagnoses must
     finish before a 7am local brief reads them.
+
+    The watchdog (#121): the pulse vouches for the loop only while the job
+    is inside its own bound (jobs_registry.max_minutes). Past it, the pulse
+    stops stamping the heartbeat — the platform page then says which job the
+    loop is stuck in — and captures the overrun once. The job it is in is
+    recorded (status_manager.record_running_job) so "the loop has not
+    finished a tick" can tell a long job from a tick failing part-way.
+
+    The external dead-man monitor (HEALTHCHECK_PING_URL, #3) hears from the
+    end of every tick (tick_completed) and, during a long job, from the
+    pulse — on the same terms as the heartbeat: the job is inside its bound
+    AND the loop has been completing its ticks (_keeping_up). Pinged only at
+    the end of a tick, a review fetch or a diagnoses pass inside its bound
+    (40 minutes to over three hours) went silent for longer than any sane
+    monitor grace and paged a healthy platform; pinged from every pulse,
+    a tick failing part-way still pinged from the jobs before its failure.
+
+    Two guards on starting a job:
+      * never one that is already running, here or in another process (a
+        manual run, a run a lease hand-over left going) — skipped and
+        logged, the period kept (#64, #153);
+      * a non-sending daily or weekly job that FAILED (jobs_registry
+        `retry`) gives its period back, and claim_period refuses it until
+        its backoff (RETRY_BACKOFF_MINUTES) has passed, up to that many
+        retries (#56): a failed nightly job used to wait a whole day.
     """
 
     def __init__(self):
         self._lock = threading.Lock()
         self._last = None               # time.monotonic() the duties last ran
+        self._claimed = {}              # claim key -> the period this tick claimed
+        self._retries = {}              # (claim key, period) -> {"attempt", "at"}
+        self._ticks = 0                 # ticks this process has begun
+        self._tick_began = None         # time.monotonic() the current tick began
+        self._completed_at = None       # time.monotonic() a tick last completed
 
     def __getattr__(self, name):
         return getattr(_ops, name)
 
+    def became_runner(self):
+        """Newly the lease holder: its record of completed ticks starts again,
+        so ticks from before a stand-by do not count for or against it; and a
+        job a dead holder was inside is no longer "running" — it would read
+        as wedged until this runner's first job replaced it."""
+        self._ticks = 0
+        self._completed_at = None
+        try:
+            record_running_job(None)
+        except Exception:
+            pass
+
+    def begin_tick(self):
+        self._claimed = {}
+        self._ticks += 1
+        self._tick_began = time.monotonic()
+
+    def tick_completed(self):
+        """The end of a tick: remember it, and tell the external dead-man
+        monitor (#3). ops.ping_healthcheck is short and never raises."""
+        self._completed_at = time.monotonic()
+        _ops.ping_healthcheck()
+
+    def _keeping_up(self):
+        """Whether the loop has been completing its ticks: this is the
+        process's first tick, or the previous one completed no more than a
+        tick interval (and a minute) before this one began. A tick failing
+        part-way never completes, so from the next tick on this is False and
+        the pulse stops pinging — the monitor's silence then pages."""
+        if self._tick_began is None:
+            return False
+        if self._completed_at is None:
+            return self._ticks <= 1
+        return self._tick_began - self._completed_at <= SCHEDULER_TICK_SECONDS + 60
+
+    def claim_period(self, job, period):
+        retry = self._retries.get((job, period))
+        if retry is not None:
+            if time.monotonic() < retry["at"]:
+                return False
+            # Its backoff has passed: the period goes back for one more try.
+            _ops.release_period(job, period)
+        got = _ops.claim_period(job, period)
+        if got:
+            self._claimed[job] = period
+        return got
+
     def duties_due(self):
         return self._last is None or time.monotonic() - self._last >= _pulse_interval()
 
-    def run_duties(self, renew_lease=False):
+    def run_duties(self, renew_lease=False, vouch=True):
         with self._lock:
             if renew_lease and not _ops.acquire_scheduler_lease():
                 log.error("Scheduler lease lost mid-pass — another process now holds it")
-            if renew_lease:
+            if renew_lease and vouch:
                 try:
                     record_scheduler_heartbeat()
                 except Exception:
                     pass
-            _minute_duties()
+            # Its own job run (#31): it wrote no job_runs row at all. Through
+            # ops' run_job, never this class's — a pulse inside a pulse would
+            # wait on this lock forever.
+            _ops.run_job("minute_duties", _minute_duties)
             self._last = time.monotonic()
 
-    def _pulse(self, started, stop):
+    def _pulse(self, name, started, stop):
         started.wait()
+        begun = time.monotonic()
+        bound = jobs_registry.max_minutes(name) * 60.0
+        overrun_told = False
         while not stop.is_set():
             wait = 0.0 if self._last is None else max(0.0, self._last + _pulse_interval() - time.monotonic())
             if stop.wait(wait):
                 return
+            within = time.monotonic() - begun <= bound
+            if not within and not overrun_told:
+                overrun_told = True
+                log.error(f"{name} has run past its {int(bound // 60)}-minute bound — the loop is stuck in it")
+                try:
+                    _ops.capture(RuntimeError(f"{name} has run past its {int(bound // 60)}-minute bound"),
+                                 job=name, context="watchdog")
+                except Exception:
+                    pass
             try:
-                self.run_duties(renew_lease=True)
+                self.run_duties(renew_lease=True, vouch=within)
             except Exception as e:
                 log.error(f"Scheduler pulse failed: {e}")
+            # Outside the duties' lock: a slow monitor never holds them up.
+            if within and self._keeping_up():
+                _ops.ping_healthcheck()
+
+    def _already_running(self, name, claim):
+        for n in {name, claim or name}:
+            if _ops.is_running(n):
+                return {"job": n, "where": "this process"}
+            other = _ops.running_elsewhere(n)
+            if other:
+                return dict(other, where="another run")
+        return None
 
     def run_job(self, name, fn, *args, **kwargs):
+        claim = kwargs.get("claim") or name
+        period = self._claimed.get(claim)
+        busy = self._already_running(name, kwargs.get("claim"))
+        if busy:
+            log.warning(f"{name} not started: a run is still going ({busy.get('where')}, "
+                        f"started {busy.get('started_at', 'now')})")
+            # Its period goes back, so a tick after the live run finishes
+            # starts it (JOBS-12) — never where one claim covers several jobs.
+            if period is not None and len(jobs_registry.jobs_for_claim(claim)) <= 1:
+                _ops.release_period(claim, period)
+                self._claimed.pop(claim, None)
+            return None
+        spec = jobs_registry.spec(name)
+        outcome = {}
         started, stop = threading.Event(), threading.Event()
 
         def body(*a, **k):
             started.set()
-            return fn(*a, **k)
-        pulse = threading.Thread(target=self._pulse, args=(started, stop), daemon=True,
+            try:
+                res = fn(*a, **k)
+            except Exception:
+                outcome["raised"] = True
+                raise
+            outcome["result"] = res
+            return res
+        try:
+            record_running_job(name)
+        except Exception:
+            pass
+        pulse = threading.Thread(target=self._pulse, args=(name, started, stop), daemon=True,
                                  name=f"scheduler-pulse-{name}")
         pulse.start()
         try:
@@ -3434,6 +3967,187 @@ class _PulsedOps:
             stop.set()
             started.set()
             pulse.join()
+            try:
+                record_running_job(None)
+            except Exception:
+                pass
+            self._after(name, claim, period, spec, outcome)
+
+    def _after(self, name, claim, period, spec, outcome):
+        """A failed retryable job gives its period back after a backoff."""
+        if period is None:
+            return
+        key = (claim, period)
+        failed = outcome.get("raised") or (
+            "result" in outcome and _ops.run_outcome(outcome["result"])[0] == _ops.RUN_FAILED)
+        if not failed:
+            self._retries.pop(key, None)
+            return
+        if not spec.get("retry") or spec.get("sends") or len(jobs_registry.jobs_for_claim(claim)) > 1:
+            return
+        attempt = self._retries.get(key, {}).get("attempt", 0)
+        backoff = jobs_registry.RETRY_BACKOFF_MINUTES
+        if attempt >= len(backoff):
+            log.error(f"{name} failed for {period} after {attempt} retries — the period stays spent")
+            self._retries.pop(key, None)
+            return
+        self._retries[key] = {"attempt": attempt + 1, "at": time.monotonic() + backoff[attempt] * 60}
+        log.warning(f"{name} failed for {period}; retry {attempt + 1} in {backoff[attempt]} minutes")
+
+    def run_in_lane(self, lane, name, fn, *args, **kwargs):
+        """Start `name` on its worker lane beside the loop (#98). False when
+        the lane is busy or the job is already running — the caller gives
+        its period back, so a later tick starts it."""
+        if self._already_running(name, kwargs.get("claim")):
+            return False
+        return _LANES[lane].submit(name, fn, *args, **kwargs)
+
+
+class _Lane:
+    """One worker thread beside the loop for a long, network-bound sweep
+    (#98, #131). The weekly Intel sweeps are bounded at three hours each
+    and ran inline, so on a Monday morning briefs, the DSR and intraday
+    captures waited behind them. A lane runs ONE job at a time, only while
+    this process holds the scheduler lease, through ops.run_job (recorded,
+    captured, pulse-stamped), with a pulse that renews the lease while it
+    runs. It never stamps the loop's heartbeat: a live lane must not make a
+    dead loop look alive."""
+
+    def __init__(self, name):
+        self.name = name
+        self._lock = threading.Lock()
+        self._thread = None
+
+    def busy(self):
+        return self._thread is not None and self._thread.is_alive()
+
+    def submit(self, job_name, fn, *args, **kwargs):
+        with self._lock:
+            if self.busy():
+                return False
+            self._thread = threading.Thread(target=self._run, args=(job_name, fn, args, kwargs), daemon=True,
+                                            name=f"scheduler-lane-{self.name}")
+            self._thread.start()
+            return True
+
+    def _run(self, job_name, fn, args, kwargs):
+        if not _ops.acquire_scheduler_lease():
+            log.error(f"lane {self.name}: {job_name} not started — this process no longer holds the lease")
+            return
+        stop = threading.Event()
+
+        def _renew():
+            while not stop.wait(_pulse_interval()):
+                try:
+                    _ops.acquire_scheduler_lease()
+                except Exception:
+                    pass
+        keeper = threading.Thread(target=_renew, daemon=True, name=f"scheduler-lane-{self.name}-lease")
+        keeper.start()
+        try:
+            _ops.run_job(job_name, fn, *args, **kwargs)
+        except Exception as e:
+            log.error(f"lane {self.name}: {job_name} crashed outside run_job: {e}")
+        finally:
+            stop.set()
+
+    def join(self, timeout=None):
+        t = self._thread
+        if t is not None:
+            t.join(timeout)
+
+
+_LANES = {"intel": _Lane("intel")}
+
+
+class _LeaseKeeper:
+    """Renews this process's scheduler lease every ops.LEASE_RENEW_SECONDS,
+    and advertises that it does (`kept`), so when this process dies the
+    next one takes over after ops.LEASE_OWNER_GONE_SECONDS instead of
+    idling out the 30-minute window (#134). It renews only a lease this
+    process already holds, never while shutting down, and stops when the
+    loop is stuck in a job past twice its bound — a wedged runner then
+    loses the lease to a standby instead of holding it forever."""
+
+    def __init__(self):
+        self._stop = threading.Event()
+        self._thread = None
+
+    def start(self):
+        if self._thread is not None and getattr(self._thread, "is_alive", lambda: False)():
+            return
+        self._thread = threading.Thread(target=self._run, daemon=True, name="scheduler-lease-keeper")
+        self._thread.start()
+
+    def _healthy(self):
+        try:
+            import status_manager
+            st = status_manager.scheduler_state()
+        except Exception:
+            return True
+        if st.get("running_job") and st.get("running_minutes") is not None:
+            return st["running_minutes"] <= 2 * (st.get("running_bound_minutes") or jobs_registry.DEFAULT_MAX_MINUTES)
+        return True
+
+    def _run(self):
+        # Advertised only once the keeper really runs: acquire_scheduler_lease
+        # writes kept=1, and the next process may then take over after
+        # LEASE_OWNER_GONE_SECONDS of silence.
+        _ops._lease_kept.set()
+        while not self._stop.wait(_ops.LEASE_RENEW_SECONDS):
+            if _ops._shutting_down.is_set():
+                return
+            try:
+                if self._healthy():
+                    _ops.renew_scheduler_lease()
+            except Exception as e:
+                log.warning(f"lease keeper: {e}")
+
+
+_LEASE_KEEPER = _LeaseKeeper()
+
+
+def _run_manual_requests(pulsed):
+    """Run now, handed over by the console (#153): each request this
+    process takes (ops.take_job_requests — a compare-and-set, so two
+    processes never both run one) is run here, under the lease, through the
+    loop's own run_job — with the pulse, and never beside a live run of the
+    same job. Returns how many ran."""
+    ran = 0
+    for req in _ops.take_job_requests(limit=3):
+        name = req["job"]
+        spec = jobs_registry.spec(name)
+        if not spec or not spec.get("runnable") or not spec.get("target"):
+            _ops.finish_job_request(req["id"], False, "not a runnable job")
+            continue
+        try:
+            import importlib
+            mod, fn_name = spec["target"]
+            fn = getattr(importlib.import_module(mod), fn_name)
+        except Exception as e:
+            _ops.finish_job_request(req["id"], False, f"could not load {spec['target']}: {e}")
+            continue
+        if pulsed._already_running(name, spec.get("claim")):
+            _ops.finish_job_request(req["id"], False, "already running")
+            continue
+        kwargs = jobs_registry.run_kwargs(name, now=_chi_now())
+        outcome = {}
+
+        def body(fn=fn, kwargs=kwargs, outcome=outcome):
+            try:
+                res = fn(**kwargs)
+            except Exception as e:
+                outcome["error"] = str(e)
+                raise
+            outcome["result"] = res
+            return res
+        pulsed.run_job(name, body, context=f"manual by {req.get('requested_by') or 'admin'}",
+                       request_id=req["id"])
+        state = _ops.run_outcome(outcome["result"])[0] if "result" in outcome else _ops.RUN_FAILED
+        _ops.finish_job_request(req["id"], state != _ops.RUN_FAILED,
+                                outcome.get("error") or (None if state != _ops.RUN_FAILED else "the run failed"))
+        ran += 1
+    return ran
 
 
 def scheduler_loop():
@@ -3444,6 +4158,7 @@ def scheduler_loop():
 
 
     _lease_lost_logged = False
+    holding = False
     # Every `_ops.run_job(...)` below runs with a pulse beside it; every
     # other `_ops.` name is ops' own (_PulsedOps).
     _ops = _PulsedOps()
@@ -3454,6 +4169,7 @@ def scheduler_loop():
             # than by gunicorn's worker count. A second process idles here
             # and takes over only if the holder stops heartbeating.
             if not _ops.acquire_scheduler_lease():
+                holding = False
                 if not _lease_lost_logged:
                     holder = _ops.scheduler_lease_holder() or {}
                     log.info(f"Scheduler standing by — lease held by {holder.get('owner')} "
@@ -3464,6 +4180,13 @@ def scheduler_loop():
             if _lease_lost_logged:
                 log.info("Scheduler lease acquired — this process is now the runner")
                 _lease_lost_logged = False
+            if not holding:
+                # Newly the runner: the runs a previous holder left open are
+                # closed as interrupted, not left "stuck" for 45 days (#150).
+                holding = True
+                _ops.became_runner()
+                _ops.close_orphaned_runs()
+            _ops.begin_tick()
             # The heartbeat is stamped only at the END of a tick (DH2-2): a
             # tick that died after stamping it at the top — the 9/19
             # UnboundLocalError — left a fresh heartbeat over a loop that ran
@@ -3471,6 +4194,10 @@ def scheduler_loop():
             # stamps it while the job runs (_PulsedOps).
             now   = _chi_now()
             today = now.date()
+
+            # Run now, from the console: handed to this process, run here
+            # under the lease beside nothing already running (#153, #64).
+            _run_manual_requests(_ops)
 
             # Monday 6am — run competitor analysis for all clients
             # 2am daily — backup DB to email
@@ -3482,31 +4209,40 @@ def scheduler_loop():
                 if today.day == 2 and today.month in (1, 4, 7, 10) and \
                         _ops.claim_period("restore_drill", f"{today}"):
                     _ops.run_job("restore_drill", run_restore_drill)
-                # Straight after the backup, so the pruned rows are in it.
-                _ops.run_job("prune_ledgers", _ops.prune_ledgers)
+                # Straight after the backup, so the pruned rows are in it:
+                # ops.prune_ledgers (the one retention registry) and each
+                # owner's review retention, nightly (#72, #81).
+                _ops.run_job("prune_ledgers", run_nightly_retention)
 
             # Weekly Intel, claimed per ISO WEEK (DH2-10): due from Monday
             # 6am with Monday–Wednesday catch-up, so a lost Monday runs
             # Tuesday instead of next week; after it, a daily retry pass for
-            # restaurants with no success this week.
+            # restaurants with no success this week. On the Intel lane,
+            # beside the loop (#98): each is bounded at three hours and ran
+            # inline, holding briefs, the DSR and intraday behind it. A lane
+            # still busy gives the claim back, so a later tick starts it.
             _iso_week = now.strftime("%G-W%V")
             if _due(now, 6) and now.weekday() <= 2 and _ops.claim_period("competitor_analysis", _iso_week):
                 log.info("Running weekly competitor analysis...")
-                _ops.run_job("competitor_analysis", run_weekly_competitor_analysis)
+                if not _ops.run_in_lane("intel", "competitor_analysis", run_weekly_competitor_analysis):
+                    _ops.release_period("competitor_analysis", _iso_week)
             elif _due(now, 6) and _ops.period_claimed("competitor_analysis", _iso_week) and \
                     _ops.claim_period("competitor_retry", str(today)):
-                _ops.run_job("competitor_analysis", run_weekly_competitor_analysis, retry_only=True,
-                             claim="competitor_retry")
+                if not _ops.run_in_lane("intel", "competitor_analysis", run_weekly_competitor_analysis,
+                                        retry_only=True, claim="competitor_retry"):
+                    _ops.release_period("competitor_retry", str(today))
 
             # An hour after the competitor run, so the two weekly Intel jobs
             # do not compete for the same minute.
             if _due(now, 7) and now.weekday() <= 2 and _ops.claim_period("ai_visibility", _iso_week):
                 log.info("Running weekly AI visibility checks...")
-                _ops.run_job("ai_visibility", run_weekly_ai_visibility)
+                if not _ops.run_in_lane("intel", "ai_visibility", run_weekly_ai_visibility):
+                    _ops.release_period("ai_visibility", _iso_week)
             elif _due(now, 7) and _ops.period_claimed("ai_visibility", _iso_week) and \
                     _ops.claim_period("ai_visibility_retry", str(today)):
-                _ops.run_job("ai_visibility", run_weekly_ai_visibility, retry_only=True,
-                             claim="ai_visibility_retry")
+                if not _ops.run_in_lane("intel", "ai_visibility", run_weekly_ai_visibility,
+                                        retry_only=True, claim="ai_visibility_retry"):
+                    _ops.release_period("ai_visibility_retry", str(today))
 
             if _due(now, 3) and _ops.claim_period("pos_sync", str(today)):
                 log.info("Running nightly Toast POS sync...")
@@ -3589,12 +4325,7 @@ def scheduler_loop():
             # backfill_tags tags episodes from before tags were stored (ROI
             # #17), bounded; it finishes the tail on later nights.
             if _due(now, 8) and _ops.claim_period("rec_ledger", str(today)):
-                import rec_ledger as _rl
-
-                def _rec_ledger_pass():
-                    return {"repaired": _rl.repair_sync_replays(), "synced": _rl.sync_existing(),
-                            "expired": _rl.expire_stale(), "tagged": _rl.backfill_tags()}
-                _ops.run_job("rec_ledger", _rec_ledger_pass)
+                _ops.run_job("rec_ledger", run_rec_ledger_pass)
 
             # 9am local, per restaurant — what is waiting on each manager
             # before the next shifts: requests close to their date, a drafted
@@ -3673,9 +4404,18 @@ def scheduler_loop():
                          f"(now {now.hour}:{now.minute:02d})...")
                 _ops.run_job("review_fetch", run_daily_fetch)
 
-            # 8am daily — operator failure digest (only sends if something failed)
+            # 8am daily — operator failure digest (only sends if something
+            # failed, stuck, is overdue or the backup is unhealthy). A digest
+            # that did not go out gives the day back, up to three more tries
+            # (#33): the claim was spent and the day's failures never mailed.
             if _due(now, 8) and _ops.claim_period("ops_digest", str(today)):
-                _ops.run_job("ops_failure_digest", _ops.send_failure_digest, claim="ops_digest")
+                if _ops.run_job("ops_failure_digest", _ops.send_failure_digest, claim="ops_digest") is None \
+                        and any(_ops.claim_period("ops_digest_retry", f"{today}#{n}") for n in range(3)):
+                    _ops.release_period("ops_digest", str(today))
+
+            # Monday 7am — one operator digest of the week (#35).
+            if _due(now, 7) and now.weekday() == 0 and _ops.claim_period("operator_weekly_digest", str(today)):
+                _ops.run_job("operator_weekly_digest", _ops.send_operator_weekly_digest)
 
             # Attempted hourly: each restaurant is gated on ITS 9am inside
             # (local_due), so one Chicago-timed daily claim would serve only
@@ -3824,30 +4564,27 @@ def scheduler_loop():
                 _ops.run_duties()
 
             # Every tick — morning briefs go at each restaurant's own local
-            # hour and claim themselves per restaurant per day.
-            try:
-                import morning_brief as _mb
-                _mb.run_due()
-            except Exception as e:
-                _ops.capture(e, job="morning_brief")
+            # hour and claim themselves per restaurant per day. A job run of
+            # its own, with the pulse (#31): it wrote none at all.
+            import morning_brief as _mb
+            _ops.run_job("morning_brief", _mb.run_due)
 
             # Daily — drop login-attempt rows older than two days.
             if _ops.claim_period("prune_login_attempts", str(today)):
-                try:
-                    import security as _security
-                    _security.prune_login_attempts()
-                except Exception as e:
-                    _ops.capture(e, job="prune_login_attempts")
+                _ops.run_job("prune_login_attempts", run_prune_login_attempts)
 
             try:
                 run_health_checks()
             except Exception:
                 pass
             # The end of the tick: everything above got the chance to run.
+            # loop_completed stamps the proof that the WHOLE tick ran (#121),
+            # and the external dead-man monitor hears from us (#3).
             try:
-                record_scheduler_heartbeat()
+                record_scheduler_heartbeat(loop_completed=True)
             except Exception:
                 pass
+            _ops.tick_completed()
 
         except Exception as e:
             # Captured, not only logged (DH2-2): an exception here skips the
@@ -3890,19 +4627,33 @@ def scheduling_allowed():
                                        "RAILWAY_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME"))
 
 
+def _run_scheduler_thread():
+    """The scheduler thread's body: the lease keeper — which renews the lease
+    every minute and says so, so the next process takes over within minutes
+    of this one dying rather than 30 (#134) — then the loop."""
+    _LEASE_KEEPER.start()
+    scheduler_loop()
+
+
 def start_scheduler():
     if not scheduling_allowed():
         log.warning("Scheduler NOT started: not on Railway. Set ALLOW_LOCAL_SCHEDULER=1 to run "
                     "jobs locally — they send real email and SMS.")
         print("Scheduler not started (local) — set ALLOW_LOCAL_SCHEDULER=1 to run jobs here")
         return None
-    t = threading.Thread(target=scheduler_loop, daemon=True)
+    # Runs a previous process left open (a deploy SIGKILLed it mid-job) are
+    # closed as interrupted at boot, so "Stuck" and the digest stop
+    # reporting them and Run now is not blocked behind them (#150).
+    _ops.close_orphaned_runs()
+    t = threading.Thread(target=_run_scheduler_thread, daemon=True)
     t.start()
     # A redeploy SIGTERMs this process; gunicorn exits the worker cleanly and
     # atexit runs, so the replacement takes the lease on its next tick rather
-    # than 30 minutes later (ops.release_scheduler_lease).
+    # than 30 minutes later. shutdown_scheduler first marks this process as
+    # exiting, so the loop, a pulse or the lease keeper — daemon threads still
+    # running — cannot take the lease back after it is released (#161).
     import atexit
-    atexit.register(_ops.release_scheduler_lease)
+    atexit.register(_ops.shutdown_scheduler)
     log.info("Scheduler thread started")
     return t
 

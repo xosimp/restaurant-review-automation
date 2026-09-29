@@ -177,7 +177,7 @@ def test_the_outcomes_job_only_visits_labor_restaurants(db, monkeypatch):
     _restaurant(db, name="No Labor", module_labor=0)
     seen = []
     monkeypatch.setattr(si, "record_outcomes", lambda rid, **k: seen.append(rid) or {"written": 1})
-    assert strategy_jobs.run_schedule_outcomes() == {"rows": 1} and seen == [on]
+    assert strategy_jobs.run_schedule_outcomes()["rows"] == 1 and seen == [on]
 
 
 def test_recommendation_events_have_a_retention_window(db):

@@ -24,10 +24,14 @@ def _redirect_db(monkeypatch, db_path):
 
 
 def _stamp_scheduler(db_path, minutes_ago):
+    """The loop's heartbeat, `minutes_ago` old. It lives in its own table now
+    (scheduler_heartbeat, #4): service_status.updated_at was the heartbeat,
+    and every update_service_status — the liveness check's own "outage"
+    write included — reset it."""
     when = (datetime.utcnow() - timedelta(minutes=minutes_ago)).strftime("%Y-%m-%d %H:%M:%S")
     conn = models.get_conn(db_path)
-    conn.execute("UPDATE service_status SET updated_at=?, status='operational' WHERE service_key='scheduler'",
-                 (when,))
+    conn.execute("UPDATE service_status SET status='operational' WHERE service_key='scheduler'")
+    conn.execute("UPDATE scheduler_heartbeat SET beat_at=?, loop_completed_at=? WHERE id=1", (when, when))
     conn.commit()
     conn.close()
 

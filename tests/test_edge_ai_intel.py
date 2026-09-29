@@ -120,7 +120,8 @@ def test_one_restaurants_failure_does_not_stop_the_competitor_sweep(db_path, mon
     monkeypatch.setattr(competitor, "run_competitor_analysis", analyse)
     result = scheduler.run_weekly_competitor_analysis()
     assert sorted(seen) == sorted(ids)
-    assert result == {"analysed": 2, "failed": 1}
+    # And the standard counts job_runs judges it by (fix round D #39).
+    assert (result["analysed"], result["failed"], result["attempted"], result["ok"]) == (2, 1, 3, 2)
 
 
 def test_the_weekly_sweeps_skip_restaurants_that_are_not_full_tier(db_path, monkeypatch):

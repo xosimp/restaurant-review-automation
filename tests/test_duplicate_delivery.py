@@ -140,7 +140,8 @@ def test_the_digest_sends_for_stuck_jobs_even_with_zero_failures(db_path, monkey
         return emails.SendResult(True, message_id="e1", status_code=200, attempts=1)
     monkeypatch.setattr(emails, "deliver", deliver)
 
-    assert ops.send_failure_digest() is True
+    # The digest returns its counts now (fix round D #33), not a bool.
+    assert ops.send_failure_digest()["sent"] is True
     assert "monthly_summary" in sent["html"]
     assert "never finished" in sent["subject"]
 
@@ -148,4 +149,4 @@ def test_the_digest_sends_for_stuck_jobs_even_with_zero_failures(db_path, monkey
 def test_the_digest_still_stays_quiet_when_nothing_is_wrong(db_path, monkeypatch):
     """Silence has to keep meaning something."""
     monkeypatch.setattr(ops, "failures_last_24h", lambda: [])
-    assert ops.send_failure_digest() is False
+    assert ops.send_failure_digest()["sent"] is False

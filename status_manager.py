@@ -20,10 +20,12 @@ SERVICES = [
 ]
 
 # How long the scheduler's heartbeat may go unstamped before the thread is
-# presumed dead. It ticks every SCHEDULER_TICK_SECONDS (300), so three missed
-# ticks plus slack — long enough that a slow nightly job can't trip it, short
-# enough that a scheduled post is not silently hours late.
-SCHEDULER_STALE_MINUTES = 20
+# presumed dead. It ticks every SCHEDULER_TICK_SECONDS (300) and the pulse
+# stamps it every tick's length while a long job runs, so three missed
+# stamps. ONE threshold, shared with ops' platform page and the console
+# (jobs_registry.HEARTBEAT_STALE_MINUTES) — they said 15 and 20 (#4).
+import jobs_registry as _jobs_registry
+SCHEDULER_STALE_MINUTES = _jobs_registry.HEARTBEAT_STALE_MINUTES
 
 
 def _conn():
@@ -134,46 +136,148 @@ def update_incident(incident_id, message, status):
     conn.close()
 
 
-def record_scheduler_heartbeat():
+# ── the scheduler's own liveness (#4, #121) ─────────────────────────────────
+#
+# The heartbeat lives in its own table (scheduler_heartbeat, created at boot
+# by ops.init_ops) and is written ONLY by the scheduler loop. It used to be
+# service_status.updated_at, which every update_service_status call stamps —
+# so check_scheduler_liveness, marking a dead scheduler "outage", reset the
+# clock it had just read (a dead scheduler read as alive after one /health
+# request), and so did the console's status "Change".
+#
+#   beat_at            the loop proved it is alive: the end of a tick, and the
+#                      pulse while a job runs within its own bound
+#   loop_completed_at  the end of a tick only — the proof every job in it got
+#                      its chance; a tick that fails part-way never writes it
+#   running_job/since  the job the loop is inside, for the runtime watchdog
+
+
+def _heartbeat_row():
+    conn = _conn()
+    try:
+        return conn.execute(
+            "SELECT running_job, running_since, beat_at, loop_completed_at, "
+            "(julianday('now') - julianday(COALESCE(beat_at, created_at))) * 1440.0 AS beat_age, "
+            "(julianday('now') - julianday(COALESCE(loop_completed_at, created_at))) * 1440.0 AS loop_age, "
+            "(julianday('now') - julianday(running_since)) * 1440.0 AS running_minutes "
+            "FROM scheduler_heartbeat WHERE id=1").fetchone()
+    finally:
+        conn.close()
+
+
+def record_scheduler_heartbeat(loop_completed=False):
+    """Stamp the heartbeat. Called only by the scheduler: at the end of every
+    tick (loop_completed=True, which also stamps loop_completed_at and
+    clears the running job) and by the pulse while a job runs within its own
+    bound. Also marks the public status page's scheduler row operational."""
+    conn = _conn()
+    try:
+        if loop_completed:
+            cur = conn.execute("UPDATE scheduler_heartbeat SET beat_at=datetime('now'), "
+                               "loop_completed_at=datetime('now'), running_job=NULL, running_since=NULL WHERE id=1")
+        else:
+            cur = conn.execute("UPDATE scheduler_heartbeat SET beat_at=datetime('now') WHERE id=1")
+        if cur.rowcount == 0:
+            conn.execute("INSERT OR IGNORE INTO scheduler_heartbeat (id, beat_at, loop_completed_at) "
+                         "VALUES (1, datetime('now'), CASE WHEN ? THEN datetime('now') END)", (1 if loop_completed else 0,))
+        conn.commit()
+    finally:
+        conn.close()
     update_service_status("scheduler", "operational", None)
 
 
-def scheduler_heartbeat_age_minutes():
-    """Minutes since the scheduler last stamped itself, or None if it never
-    has. Read from a REQUEST thread (see hosted_dashboard's /health) — the
-    scheduler cannot notice its own death, so nothing inside it can be the
-    thing that checks.
-
-    This matters because scheduled posts publish from that thread: if it
-    stops, nothing throws and nothing 500s. Posts just quietly never go out.
-    """
+def record_running_job(name=None):
+    """The job the loop is inside now (None when it left it), with the time
+    it went in — what the per-job runtime watchdog measures (#121). Does not
+    stamp the heartbeat: starting a job is not proof the loop completes."""
     conn = _conn()
     try:
-        row = conn.execute(
-            "SELECT updated_at FROM service_status WHERE service_key='scheduler'"
-        ).fetchone()
+        if name:
+            conn.execute("UPDATE scheduler_heartbeat SET running_job=?, running_since=datetime('now') WHERE id=1",
+                         (str(name)[:100],))
+        else:
+            conn.execute("UPDATE scheduler_heartbeat SET running_job=NULL, running_since=NULL WHERE id=1")
+        conn.commit()
     finally:
         conn.close()
-    if not row or not row["updated_at"]:
-        return None
+
+
+def scheduler_heartbeat_age_minutes():
+    """Minutes since the scheduler loop last proved it was alive — from its
+    own heartbeat, which nothing else writes. A loop that has never stamped
+    counts from when the heartbeat row was created (boot), so a scheduler
+    that never started goes stale instead of reading "unknown" forever.
+    None only when the heartbeat table cannot be read.
+
+    Read from a REQUEST thread (see hosted_dashboard's /health) — the
+    scheduler cannot notice its own death, so nothing inside it can be the
+    thing that checks. This matters because scheduled posts publish from
+    that thread: if it stops, nothing throws and nothing 500s. Posts just
+    quietly never go out.
+    """
     try:
-        stamped = datetime.strptime(str(row["updated_at"])[:19], "%Y-%m-%d %H:%M:%S")
-    except ValueError:
+        row = _heartbeat_row()
+    except Exception:
         return None
-    # service_status stamps with SQLite's datetime('now'), which is UTC.
-    return max(0.0, (datetime.utcnow() - stamped).total_seconds() / 60.0)
+    if not row or row["beat_age"] is None:
+        return None
+    return max(0.0, float(row["beat_age"]))
+
+
+def scheduler_state():
+    """The scheduler's liveness in full, for the platform watchdog and the
+    console: {beat_age_minutes, loop_completed_age_minutes, running_job,
+    running_minutes, running_bound_minutes, wedged, loop_stalled, stale}.
+
+    wedged: the loop has been inside one job past that job's own bound
+    (jobs_registry.max_minutes) — the pulse stops vouching for it then, so
+    the beat goes stale too. loop_stalled: no tick has COMPLETED within the
+    threshold and no job is running to explain it — a tick failing
+    part-way, which a fresh beat from the jobs before the failure hid (#121)."""
+    beat = scheduler_heartbeat_age_minutes()
+    out = {"beat_age_minutes": beat, "loop_completed_age_minutes": None, "running_job": None,
+           "running_minutes": None, "running_bound_minutes": None, "wedged": False, "loop_stalled": False,
+           "stale": beat is not None and beat > SCHEDULER_STALE_MINUTES}
+    try:
+        row = _heartbeat_row()
+    except Exception:
+        row = None
+    if not row:
+        return out
+    out["loop_completed_age_minutes"] = max(0.0, float(row["loop_age"])) if row["loop_age"] is not None else None
+    if row["running_job"]:
+        out["running_job"] = row["running_job"]
+        out["running_minutes"] = max(0.0, float(row["running_minutes"] or 0))
+        out["running_bound_minutes"] = _jobs_registry.max_minutes(row["running_job"])
+        out["wedged"] = out["running_minutes"] > out["running_bound_minutes"]
+    loop_age = out["loop_completed_age_minutes"]
+    out["loop_stalled"] = bool(loop_age is not None and loop_age > SCHEDULER_STALE_MINUTES
+                               and not out["running_job"] and not out["stale"])
+    return out
 
 
 def check_scheduler_liveness():
-    """Mark the scheduler down when its heartbeat has gone stale. Returns the
-    age in minutes (None if it has never run)."""
+    """Mark the scheduler down on the public status page when its heartbeat
+    has gone stale. Returns the age in minutes (None if unreadable).
+
+    Writes only service_status — never the heartbeat — so two checks in a
+    row on a dead scheduler both report it stale (#4); and only when the row
+    is not already saying so, rather than on every /health request."""
     age = scheduler_heartbeat_age_minutes()
     if age is None:
         return None
     if age > SCHEDULER_STALE_MINUTES:
-        update_service_status(
-            "scheduler", "outage",
-            f"No heartbeat for {int(age)} minutes — scheduled posts and nightly syncs are not running")
+        msg = f"No heartbeat for {int(age)} minutes — scheduled posts and nightly syncs are not running"
+        try:
+            conn = _conn()
+            try:
+                row = conn.execute("SELECT status, message FROM service_status WHERE service_key='scheduler'").fetchone()
+            finally:
+                conn.close()
+        except Exception:
+            row = None
+        if not row or row["status"] != "outage" or row["message"] != msg:
+            update_service_status("scheduler", "outage", msg)
     return age
 
 
