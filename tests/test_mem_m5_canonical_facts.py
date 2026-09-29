@@ -415,3 +415,20 @@ def test_accuracy_scores_only_same_basis_nights(monkeypatch):
     conn.close()
     acc = demand.demand_accuracy(rid, today=today)
     assert acc["n_nights"] == 7 and acc["excluded_other_basis"] == 3 and acc["actual_vs_forecast_pct"] == 1.0
+
+
+def test_published_weeks_can_be_read_as_they_stood_on_a_past_day():
+    rid = _rid("Weeks Co")
+    conn = models.get_conn()
+    models._ensure_history_columns(conn)
+    for ws, pub in (("2026-08-31", "2026-08-28 10:00:00"), ("2026-09-07", "2026-09-04 10:00:00"),
+                    ("2026-09-14", "2026-09-11 10:00:00")):
+        conn.execute("INSERT INTO schedule_history (restaurant_id, week_start, week_end, schedule_csv, summary_json, "
+                     "published_at) VALUES (?,?,?,?,?,?)", (rid, ws, ws, "", "[]", pub))
+    conn.commit()
+    conn.close()
+    assert [w["week_start"] for w in cf.published_weeks(rid, "2026-08-01")] == ["2026-08-31", "2026-09-07", "2026-09-14"]
+    # As of 9/8: the week of 9/14 was not published yet, and none starts later.
+    assert [w["week_start"] for w in cf.published_weeks(rid, "2026-08-01", until="2026-09-08")] == \
+        ["2026-08-31", "2026-09-07"]
+    assert [w["week_start"] for w in cf.published_weeks(rid, "2026-08-01", until="2026-09-05")] == ["2026-08-31"]

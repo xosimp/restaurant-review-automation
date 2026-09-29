@@ -305,20 +305,31 @@ def watched_nights(restaurant_id, start, end, db_path=None) -> set:
     return out
 
 
-def published_weeks(restaurant_id, since, db_path=None) -> list:
+def published_weeks(restaurant_id, since, db_path=None, until=None) -> list:
     """[{"week_start", "history_id", "published_at", "adjusted"}] — one per
     distinct week with a published schedule since `since`, its latest
     published version. `adjusted` is True only when a manager saved an
     EDITED version of that week before it was published: a regenerated
     draft is not an adjustment, and a staff swap after publishing is not a
-    manager's edit (QUALITY-20)."""
+    manager's edit (QUALITY-20). `until` (a date) reads the record as it
+    stood at the end of that day — weeks starting by then, versions
+    published by then — for a past week's features."""
+    s = str(since)[:10]
+    bound, args = "", [restaurant_id, s]
+    inner_bound = ""
+    if until:
+        u = str(until)[:10]
+        bound = " AND week_start <= ? AND published_at <= ?"
+        inner_bound = " AND nw.published_at <= ?"
+        args += [u, u + " 23:59:59"]
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
             "SELECT id, week_start, published_at FROM schedule_history h WHERE restaurant_id=? "
-            "AND published_at IS NOT NULL AND week_start >= ? AND NOT EXISTS (SELECT 1 FROM schedule_history nw "
-            "WHERE nw.restaurant_id=h.restaurant_id AND nw.week_start=h.week_start AND nw.published_at IS NOT NULL "
-            "AND nw.id > h.id) ORDER BY week_start", (restaurant_id, str(since)[:10])).fetchall()
+            "AND published_at IS NOT NULL AND week_start >= ?" + bound + " AND NOT EXISTS (SELECT 1 FROM "
+            "schedule_history nw WHERE nw.restaurant_id=h.restaurant_id AND nw.week_start=h.week_start "
+            "AND nw.published_at IS NOT NULL AND nw.id > h.id" + inner_bound + ") ORDER BY week_start",
+            tuple(args + ([str(until)[:10] + " 23:59:59"] if until else []))).fetchall()
         out = []
         for r in rows:
             edited = False

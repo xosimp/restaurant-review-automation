@@ -604,7 +604,8 @@ def _staffing_issues(conn, rid, today, db_path=DB_PATH):
     since = today - timedelta(days=56)
     try:
         rows = conn.execute("SELECT history_id, date, issues, people FROM schedule_outcomes "
-                            "WHERE restaurant_id=? AND date >= ?", (rid, since.isoformat())).fetchall()
+                            "WHERE restaurant_id=? AND date >= ? AND date <= ?",
+                            (rid, since.isoformat(), today.isoformat())).fetchall()
     except Exception:
         return _need(0, "no schedule outcomes")
     watched = _cf.watched_nights(rid, since, today, db_path=db_path)
@@ -664,8 +665,9 @@ def _review_mix(conn, rid, today):
         # Live reviews on the one time axis (QUALITY-16): removed ones kept
         # counting here while every Reviews screen left them out.
         rows = conn.execute(f"SELECT date({_cf.REVIEW_AXIS}) AS at, sentiment, categories FROM reviews "
-                            f"WHERE restaurant_id=? AND {_cf.LIVE_REVIEWS_SQL} AND date({_cf.REVIEW_AXIS}) >= ?",
-                            (rid, (today - timedelta(days=90)).isoformat())).fetchall()
+                            f"WHERE restaurant_id=? AND {_cf.LIVE_REVIEWS_SQL} AND date({_cf.REVIEW_AXIS}) >= ? "
+                            f"AND date({_cf.REVIEW_AXIS}) <= ?",
+                            (rid, (today - timedelta(days=90)).isoformat(), today.isoformat())).fetchall()
     except Exception:
         rows = []
     d30 = (today - timedelta(days=30)).isoformat()
