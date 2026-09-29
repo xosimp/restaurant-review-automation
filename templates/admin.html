@@ -2427,7 +2427,23 @@ function opsJobs(d){
 // A bounce or a complaint is not a delivery (#59); "today" is midnight
 // Central against email_log's UTC stamps (#89); counts are over the full
 // set, never the newest 50 (#160).
-function rateCell(label, r, key, warnPct, critPct){
+
+// One window's delivery (#59), read as a sum: accepted is what Resend took —
+// delivered + in flight + bounced + complaints — and the rates divide by it.
+// In flight (sent or delayed, no outcome reported yet) sits apart from
+// delivered and bounced; failed never reached Resend and is in no rate. A
+// window whose read failed is unknown.
+function deliveryFig(n, word, tip){ return `<span${tip ? ` title="${esc(tip)}"` : ''}><span class="n">${fmtN(n)}</span> <span class="dim">${word}</span></span>`; }
+function deliveryRow(label, w, err){
+  return `<div style="display:grid;grid-template-columns:70px repeat(6,minmax(0,1fr));gap:8px;font-size:12.5px;align-items:baseline"><span class="lbl">${label}</span>${w
+    ? deliveryFig(w.accepted, 'accepted', 'What Resend took — the bounce and complaint rates divide by this') + deliveryFig(w.delivered, 'delivered')
+      + deliveryFig(w.in_flight, 'in flight', 'Resend took it and has not reported delivery, a bounce or a complaint yet — counted as accepted, so the rates can read low until these settle')
+      + deliveryFig(w.bounces, 'bounced') + deliveryFig(w.complaints, w.complaints === 1 ? 'complaint' : 'complaints') + deliveryFig(w.failed, 'failed', 'Never accepted by Resend — in no rate')
+    : `<span style="grid-column:span 6">${err ? unknownV(err) : '—'}</span>`}</div>`;
+}
+function rateCell(label, r, key, warnPct, critPct, err){
+  // A window whose read failed (email_delivery_stats) is unknown, not a dash.
+  if(!r && err) return stripDiv(label, unknownV(err), "couldn't be read");
   const v = r ? r[key + '_rate'] : null, n = r ? r[key === 'bounce' ? 'bounces' : 'complaints'] : null;
   const tone = v == null || !(r && r.enough) ? '' : (v >= critPct ? 'color:var(--red-t)' : v >= warnPct ? 'color:var(--amber-t)' : '');
   return stripDiv(label, v == null ? '—' : v + '<small>%</small>', r ? (r.enough ? `${fmtN(n)} of ${fmtN(r.accepted)} · warn ${warnPct}%, critical ${critPct}%` : `too few sends to judge (${fmtN(r.accepted)})`) : '—', tone);
@@ -2439,6 +2455,7 @@ function opsEmail(d, mh){
   const types = [...new Set(d.rows.map(r => r.email_type))];
   const rows = d.rows.filter(r => _ef === 'all' || (_ef === 'failed' ? ['failed', 'bounced', 'complained'].indexOf(r.status) >= 0 : r.email_type === _ef));
   const t = d.today || {}, rates = d.rates || {}, th = rates.thresholds || {}, r7 = rates['7d'], r30 = rates['30d'];
+  const rE = readErr(d, ['email_delivery_stats']);
   const rw = d.resend_webhook, mx = Math.max(1, ...d.by_type.map(x => x.n));
   const undeliverable = (t.failed || 0) + (t.bounced || 0) + (t.complained || 0);
   const hooks = mhE ? null : (mh.inbound_webhooks || {});
@@ -2453,8 +2470,8 @@ function opsEmail(d, mh){
     <section class="card strip">
       ${stripDiv('Sent today', figOr(d, ['email_log'], fmtN(t.sent)), 'accepted, not bounced · since midnight Central')}
       ${stripDiv('Undeliverable today', figOr(d, ['email_log'], fmtN(undeliverable)), undeliverable ? `${fmtN(t.failed)} failed · ${fmtN(t.bounced)} bounced · ${fmtN(t.complained)} complained` : 'none', undeliverable ? 'color:var(--red-t)' : '')}
-      ${rateCell('Bounce rate · 7 days', r7, 'bounce', th.bounce_warn_pct, th.bounce_crit_pct)}
-      ${rateCell('Complaints · 7 days', r7, 'complaint', th.complaint_warn_pct, th.complaint_crit_pct)}
+      ${rateCell('Bounce rate · 7 days', r7, 'bounce', th.bounce_warn_pct, th.bounce_crit_pct, rE)}
+      ${rateCell('Complaints · 7 days', r7, 'complaint', th.complaint_warn_pct, th.complaint_crit_pct, rE)}
       ${stripDiv('Suppressed', figOr(d, ['email_suppressions'], fmtN(d.suppressed_total)), (d.suppressed_by || []).slice(0, 2).map(s => esc(s.scope) + ' · ' + esc(s.reason) + ' ' + fmtN(s.n)).join(' · ') || 'no address', d.suppressed_total ? 'color:var(--amber-t)' : '')}
       ${stripDiv('Resend webhook', rw && rw.last_verified_at ? ago(rw.last_verified_at) + '<small> ago</small>' : 'never', rw ? (rw.problem ? `<span style="color:var(--red-t)">${fmtN(rw.failures_24h)} signature failures · 24h</span>` : (rw.stale ? 'no verified event in a day while mail went out' : 'last verified event · ' + esc(rw.source || ''))) : 'not recorded', rw && (rw.problem || rw.stale) ? 'color:var(--red-t)' : '')}
     </section>
@@ -2465,7 +2482,8 @@ function opsEmail(d, mh){
     </section>
     <section class="grid g2">
       <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Delivery · 7 and 30 days</h2><span class="muted" style="font-size:12px">a rate needs ${fmtN(th.min_sends)} accepted sends</span></div>
-        ${[['7 days', r7], ['30 days', r30]].map(p => p[1] ? `<div style="display:grid;grid-template-columns:70px repeat(5,minmax(0,1fr));gap:8px;font-size:12.5px;align-items:baseline"><span class="lbl">${p[0]}</span><span><span class="n">${fmtN(p[1].accepted)}</span> <span class="dim">accepted</span></span><span><span class="n">${fmtN(p[1].delivered)}</span> <span class="dim">delivered</span></span><span><span class="n">${fmtN(p[1].failed)}</span> <span class="dim">failed</span></span><span><span class="n">${fmtN(p[1].bounces)}</span> <span class="dim">bounced</span></span><span><span class="n">${fmtN(p[1].complaints)}</span> <span class="dim">complaints</span></span></div>` : '').join('')}</div>
+        ${deliveryRow('7 days', r7, rE)}${deliveryRow('30 days', r30, rE)}
+        <span class="muted" style="font-size:12px">Accepted = delivered + in flight + bounced + complaints, and the rates divide by it. In flight: Resend has it but hasn't reported delivery, a bounce or a complaint yet${r7 && r7.in_flight ? ` — <span class="n">${fmtN(r7.in_flight)}</span> in 7 days, so the 7-day rates may still rise` : ''}. Failed never reached Resend.</span></div>
       <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><h2>Inbound webhooks</h2>
         ${hooks ? (Object.keys(hooks).length ? Object.keys(hooks).map(p => { const hk = hooks[p]; return `<div style="display:flex;justify-content:space-between;gap:10px;font-size:12.5px"><span class="ink2">${esc(HOOK[p] || p)}</span><span>${hk.failing ? pill('bad', fmtN(hk.failed_since_verified) + ' refused since the last good one') : hk.stale ? pill('warn', 'nothing verified in 24h') : pill('good', 'verified ' + agoWord(hk.last_verified_at))}</span></div>${hk.failing && hk.last_failure_reason ? `<span class="dim" style="font-size:12px">${esc(hk.last_failure_reason)}</span>` : ''}`; }).join('') : '<span class="muted" style="font-size:13px">No webhook has called in yet.</span>') : unknownV(mhE)}</div>
     </section>
