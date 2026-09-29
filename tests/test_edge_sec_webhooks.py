@@ -68,12 +68,21 @@ def _redirect(db_path, monkeypatch):
 
 @pytest.fixture
 def sent(monkeypatch):
-    """Stub every email webhook_routes can send; record what would have gone."""
+    """Stub every email the signing flow can send; record what would have gone.
+
+    Fix round H: the post-signing payment link and welcome are owed
+    (billing_jobs.owed_sends) and sent by its drain through the emails
+    module, which only sends where the scheduler may run — so the drain is
+    allowed here and the two senders are stubbed where it calls them."""
+    import billing_jobs
+    import emails
     out = []
     monkeypatch.setattr(webhook_routes, "_resend_key", lambda: "re_test_key")
-    monkeypatch.setattr(webhook_routes, "send_payment_email", lambda **k: out.append(("payment", k)))
-    monkeypatch.setattr(webhook_routes, "send_welcome_email", lambda **k: out.append(("welcome", k)))
-    monkeypatch.setattr(webhook_routes, "log_email", lambda *a, **k: None)
+    monkeypatch.setattr(billing_jobs, "_sending_allowed", lambda: True)
+    monkeypatch.setattr(emails, "send_payment_email",
+                        lambda **k: out.append(("payment", k)) or emails.SendResult(True))
+    monkeypatch.setattr(emails, "send_signed_welcome_email",
+                        lambda **k: out.append(("welcome", k)) or emails.SendResult(True))
     return out
 
 

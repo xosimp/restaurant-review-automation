@@ -59,38 +59,147 @@ def record(source, event_type, restaurant_id=None, customer_id=None, email=None,
         return False
 
 
+def _stripe_amount_cents(t, obj):
+    """The money an event is about: what an invoice collected (paid) or
+    asks for, what a refund returned — amount_refunded, never the charge's
+    full amount (#50: a $5 goodwill refund on a $750 charge read "$750.00
+    refunded") — and what a dispute holds."""
+    if t.startswith("invoice."):
+        return (obj.get("amount_paid") if t == "invoice.paid" else obj.get("amount_due")) or 0
+    if t == "charge.refunded":
+        return obj.get("amount_refunded") or 0
+    if t.startswith("charge."):
+        return obj.get("amount") or 0
+    return None
+
+
 def _stripe_summary(event):
     t = event.get("type", "")
     obj = (event.get("data") or {}).get("object") or {}
     if t.startswith("invoice."):
-        amt = (obj.get("amount_paid") if t == "invoice.paid" else obj.get("amount_due")) or 0
+        amt = _stripe_amount_cents(t, obj)
         return f"{t.split('.', 1)[1].replace('_', ' ')} · ${amt / 100:,.2f}" + (f" · attempt {obj.get('attempt_count')}" if obj.get("attempt_count") else "")
     if t.startswith("customer.subscription."):
         status = obj.get("status") or ""
         return f"subscription {t.rsplit('.', 1)[1]}" + (f" · {status}" if status else "")
     if t.startswith("checkout.session."):
         return f"checkout {t.rsplit('.', 1)[1]}"
+    if t == "charge.refunded":
+        full = obj.get("amount") or 0
+        back = obj.get("amount_refunded") or 0
+        return (f"charge refunded · ${back / 100:,.2f}" + ("" if back >= full > 0 else f" of ${full / 100:,.2f}"))
     if t.startswith("charge."):
-        return f"charge {t.rsplit('.', 1)[1]} · ${(obj.get('amount') or 0) / 100:,.2f}"
+        return f"charge {t.split('.', 1)[1].replace('.', ' ')} · ${(obj.get('amount') or 0) / 100:,.2f}"
     return t
 
 
-def record_stripe(event, db_path=None):
-    """One line per Stripe webhook, whatever it was."""
+def _stripe_restaurant(conn, event):
+    """Which restaurant a Stripe event is about (#50) — the same order the
+    webhook acts in: the restaurant_id Stripe carries back in metadata (set
+    at checkout; survives an owner changing their email), then the
+    subscription the event belongs to (the stripe_subscriptions mirror),
+    then the invoice or charge we already hold, then the stored customer id.
+    An email is the last resort, and only for this ledger's attribution."""
+    import billing_jobs as _bj
     obj = (event.get("data") or {}).get("object") or {}
     t = event.get("type", "")
-    amount = None
+
+    def _valid(rid):
+        try:
+            rid = int(str(rid).strip())
+        except (TypeError, ValueError):
+            return None
+        r = conn.execute("SELECT id FROM restaurants WHERE id=?", (rid,)).fetchone()
+        return r[0] if r else None
+
+    meta = obj.get("metadata") or {}
     if t.startswith("invoice."):
-        amount = ((obj.get("amount_paid") if t == "invoice.paid" else obj.get("amount_due")) or 0) / 100
-    elif t.startswith("charge."):
-        amount = (obj.get("amount") or 0) / 100
-    email = obj.get("customer_email") or (obj.get("customer_details") or {}).get("email")
+        meta = _bj.invoice_metadata(obj) or meta
+    rid = _valid(meta.get("restaurant_id")) if meta.get("restaurant_id") else None
+    if rid:
+        return rid
+    sub_id = obj.get("id") if t.startswith("customer.subscription.") else (
+        _bj.invoice_facts(obj).get("subscription_id") if t.startswith("invoice.") else obj.get("subscription"))
+    if isinstance(sub_id, str) and sub_id:
+        r = conn.execute("SELECT restaurant_id FROM stripe_subscriptions WHERE subscription_id=?",
+                         (sub_id,)).fetchone()
+        if r:
+            return r[0]
+    if t.startswith("charge."):
+        charge_id = obj.get("charge") if t.startswith("charge.dispute.") else obj.get("id")
+        for col, val in (("charge_id", charge_id), ("invoice_id", obj.get("invoice"))):
+            if isinstance(val, str) and val:
+                r = conn.execute(f"SELECT restaurant_id FROM stripe_invoices WHERE {col}=? "
+                                 "AND restaurant_id IS NOT NULL LIMIT 1", (val,)).fetchone()
+                if r:
+                    return r[0]
     customer = obj.get("customer") if isinstance(obj.get("customer"), str) else None
-    return record("stripe", t, customer_id=customer, email=email, amount=amount, summary=_stripe_summary(event),
-                  payload={"id": event.get("id"), "type": t, "status": obj.get("status"), "billing_reason": obj.get("billing_reason"),
-                           "subscription": obj.get("subscription"), "hosted_invoice_url": obj.get("hosted_invoice_url"),
-                           "next_payment_attempt": obj.get("next_payment_attempt"), "cancel_at_period_end": obj.get("cancel_at_period_end")},
-                  db_path=db_path)
+    if customer:
+        r = conn.execute("SELECT id FROM restaurants WHERE stripe_customer_id=? "
+                         "ORDER BY (id IN (SELECT restaurant_id FROM stripe_subscriptions)) DESC, id LIMIT 1",
+                         (customer,)).fetchone()
+        if r:
+            return r[0]
+    email = (obj.get("customer_email") or (obj.get("customer_details") or {}).get("email")
+             or (obj.get("billing_details") or {}).get("email"))
+    return _resolve_restaurant(conn, None, email, None) if email else None
+
+
+def record_stripe(event, restaurant_id=None, db_path=None):
+    """One line per Stripe event, however often Stripe delivers it (#50).
+
+    The webhook calls this after its duplicate check, and the row carries the
+    event id as external_id under a UNIQUE (source, external_id) index — so a
+    redelivery, or the retry after a failed dispatch, never adds a second
+    line. Invoice rows carry the invoice's facts (subtotal, discount, tax,
+    currency, setup vs recurring) for the Billing history. Never raises."""
+    try:
+        from models import get_conn, DB_PATH
+        import billing_jobs as _bj
+        obj = (event.get("data") or {}).get("object") or {}
+        t = event.get("type", "")
+        conn = get_conn(db_path or DB_PATH)
+        try:
+            rid = restaurant_id or _stripe_restaurant(conn, event)
+            cents = _stripe_amount_cents(t, obj)
+            amount = (cents / 100) if cents is not None else None
+            email = obj.get("customer_email") or (obj.get("customer_details") or {}).get("email")
+            customer = obj.get("customer") if isinstance(obj.get("customer"), str) else None
+            payload = {"id": event.get("id"), "type": t, "status": obj.get("status"),
+                       "billing_reason": obj.get("billing_reason"), "subscription": obj.get("subscription"),
+                       "hosted_invoice_url": obj.get("hosted_invoice_url"),
+                       "next_payment_attempt": obj.get("next_payment_attempt"),
+                       "cancel_at_period_end": obj.get("cancel_at_period_end")}
+            if t.startswith("invoice."):
+                f = _bj.invoice_facts(obj)
+                payload.update({k: f.get(k) for k in ("subscription_id", "kind", "currency", "subtotal_cents",
+                                                      "discount_cents", "tax_cents", "total_cents",
+                                                      "setup_cents", "recurring_cents", "attempt_count")})
+            elif t.startswith("customer.subscription."):
+                details = obj.get("cancellation_details") or {}
+                payload.update({"cancellation_reason": details.get("reason"),
+                                "canceled_at": obj.get("canceled_at"), "ended_at": obj.get("ended_at"),
+                                "changed": sorted(((event.get("data") or {}).get("previous_attributes") or {}).keys())})
+            elif t == "charge.refunded":
+                payload.update({"charge_amount": obj.get("amount"), "amount_refunded": obj.get("amount_refunded"),
+                                "full_refund": bool(obj.get("refunded"))})
+            elif t.startswith("charge.dispute."):
+                payload.update({"charge": obj.get("charge"), "reason": obj.get("reason")})
+            try:
+                body = json.dumps(payload, default=str)[:4000]
+            except Exception:
+                body = str(payload)[:4000]
+            conn.execute(
+                "INSERT OR IGNORE INTO admin_events (source, event_type, restaurant_id, customer_id, email, amount, "
+                "summary, payload, external_id) VALUES (?,?,?,?,?,?,?,?,?)",
+                ("stripe", t, rid, customer, email, amount, _stripe_summary(event)[:300], body,
+                 event.get("id") or None))
+            conn.commit()
+        finally:
+            conn.close()
+        return True
+    except Exception:
+        return False
 
 
 def recent(limit=100, restaurant_id=None, db_path=None):

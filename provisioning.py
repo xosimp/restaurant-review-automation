@@ -105,7 +105,9 @@ def _provision(session, meta, details, email, db_path):
                                        owner_name=(details.get("name") or "").strip()[:120] or None),
                             db_path=db_path)
     updates = dict(flags)
-    updates.update({"billing_status": "active"})
+    # A paid checkout is the conversion (#51): stamped once, here.
+    from billing_jobs import _stamp as _bj_stamp
+    updates.update({"billing_status": "active", "converted_at": _bj_stamp()})
     if session.get("customer"):
         updates["stripe_customer_id"] = session["customer"]
     if existing:
@@ -123,18 +125,25 @@ def _provision(session, meta, details, email, db_path):
             pass
         _record(rid, email, f"Added {name} as another location for {email}", keys)
         return rid
-    password = secrets.token_urlsafe(9)
+    # A password nobody is ever shown: the owner sets their own through the
+    # welcome's set-password link (#12). Emailing a temporary password was
+    # a credential in an inbox, and a send that failed left the owner with a
+    # password nobody knew and no way in.
+    password = secrets.token_urlsafe(24)
     username = _username_for(email, db_path)
     try:
-        create_user(restaurant_id=rid, username=username, email=email, password=password, db_path=db_path)
+        uid = create_user(restaurant_id=rid, username=username, email=email, password=password, db_path=db_path)
     except BaseException:
         _drop_restaurant(rid, db_path)
         raise
-    update_restaurant(rid, updates, db_path=db_path)   # the password is emailed once, never stored
+    update_restaurant(rid, updates, db_path=db_path)
+    # Owed, not sent inline: billing_jobs' drain sends it (the Stripe
+    # webhook that got here must answer quickly), marks it from the real
+    # delivery result and retries a failure (#12).
     try:
-        from emails import send_welcome_email
-        send_welcome_email(to_email=email, restaurant_name=name, username=username, password=password,
-                           **{k: v for k, v in flags.items()})
+        import billing_jobs
+        billing_jobs.enqueue("welcome", rid, f"welcome:{uid}", to_email=email, payload={"user_id": uid},
+                             source="checkout", db_path=db_path if db_path != DB_PATH else None)
     except Exception as e:
         import ops
         ops.capture(e, job="provision_welcome", context=f"restaurant_id={rid}")

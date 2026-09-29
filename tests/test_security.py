@@ -264,9 +264,16 @@ def test_freezing_a_restaurant_ends_every_session_and_forces_a_reset(db_path, mo
 
 def test_no_path_persists_a_temporary_password():
     adm = open("admin_routes.py").read(); prov = open("provisioning.py").read(); wh = open("webhook_routes.py").read()
+    bj = open("billing_jobs.py").read()
     assert '"temp_password":   data.get("password","")' not in adm
     assert '"temp_password": password' not in prov
-    assert 'r.get("temp_password")' not in wh and "_rup(r[\"user_id\"], tmp_pw)" in wh
+    assert 'r.get("temp_password")' not in wh
+    # Fix round H (#12): signing no longer mints or emails a password at
+    # all — the welcome carries a set-password link (a reset token minted at
+    # send time), and nothing resets the password first.
+    assert "reset_user_password" not in wh and "tmp_pw" not in wh
+    assert "create_reset_token(" in bj and "reset_user_password" not in bj
+    assert "send_welcome_email(" not in prov
     assert "UPDATE restaurants SET temp_password=NULL" in open("models.py").read()
 
 

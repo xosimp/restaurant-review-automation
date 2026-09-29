@@ -1121,78 +1121,213 @@ def log_activity_route(current_user):
 @admin_bp.route("/admin/resend-contract/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def resend_contract(restaurant_id, current_user):
+    """Re-send the service agreement (#26, #78).
+
+    A contract the client has not signed is re-sent as the SAME envelope,
+    with DocuSign's reminders on — a resend used to mint a new envelope every
+    time. A new envelope goes out only when there is none, when the last one
+    was declined or voided, or when the terms changed (the module list).
+    A SIGNED contract is never reset to 'sent': it is refused, unless the body
+    says {"amendment": true} — then a new envelope goes out and the signed
+    contract stays in force. Body: {amendment?, new_envelope?}."""
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Support accounts are read-only."), 403
     restaurant = get_restaurant(restaurant_id)
     if not restaurant:
-        return jsonify(ok=False, error="Restaurant not found")
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    data = request.get_json(silent=True) or {}
+    module_names = []
+    if restaurant.module_reviews:  module_names.append("Review Intelligence")
+    if restaurant.module_labor:    module_names.append("Labor Optimizer")
+    if restaurant.module_inventory: module_names.append("Food Cost Control")
+    if restaurant.module_marketing: module_names.append("Marketing Autopilot")
+    mods = len(module_names)
+    modules_list = ", ".join(module_names)
+    signed = (restaurant.contract_status or "").lower() == "signed"
+    if signed and not data.get("amendment"):
+        return jsonify(ok=False, signed=True, error=(
+            "This contract is already signed, so it was not re-sent. If the terms changed, send an "
+            "amendment — a new envelope; the signed contract stays in force.")), 409
+    if mods == 0:
+        return jsonify(ok=False, error="No modules are on for this client, so there is nothing to contract for."), 400
+    import models as _mdl
     try:
-        mods = sum([
-            1 if restaurant.module_reviews else 0,
-            1 if restaurant.module_labor else 0,
-            1 if restaurant.module_inventory else 0,
-            1 if restaurant.module_marketing else 0,
-        ])
-        module_names = []
-        if restaurant.module_reviews:  module_names.append("Review Intelligence")
-        if restaurant.module_labor:    module_names.append("Labor Optimizer")
-        if restaurant.module_inventory: module_names.append("Food Cost Control")
-        if restaurant.module_marketing: module_names.append("Marketing Autopilot")
+        env = _latest_envelope(restaurant_id, restaurant.docusign_envelope_id)
+        same_terms = env and (env.get("modules_list") is None or
+                              (env.get("module_count") == mods and env.get("modules_list") == modules_list))
+        if (env and not signed and not data.get("new_envelope") and same_terms
+                and (env.get("status") or "sent") not in ("declined", "voided", "completed")):
+            from docusign_helper import resend_envelope
+            res = resend_envelope(env["envelope_id"], restaurant_id=restaurant_id)
+            if res.get("ok"):
+                conn = get_conn()
+                try:
+                    conn.execute("UPDATE docusign_envelopes SET resend_count=COALESCE(resend_count,0)+1, "
+                                 "last_resent_at=datetime('now') WHERE envelope_id=?", (env["envelope_id"],))
+                    conn.commit()
+                finally:
+                    conn.close()
+                _billing_audit(current_user, "contract.resent", restaurant_id, target=env["envelope_id"],
+                               summary="Contract re-sent (same envelope, reminders on)")
+                return jsonify(ok=True, resent=True, envelope_id=env["envelope_id"])
+            if res.get("status") == "completed":
+                return jsonify(ok=False, error=(
+                    "DocuSign says this envelope is already signed. If the console still shows it unsigned, "
+                    "use Mark signed (offline) after checking it in DocuSign.")), 409
+            # Declined or voided at DocuSign: a new envelope is the only way.
         from docusign_helper import send_contract
         result = send_contract(
             owner_email=restaurant.owner_email,
             owner_name=restaurant.owner_name or restaurant.name,
             restaurant_name=restaurant.name,
             module_count=mods,
-            modules_list=", ".join(module_names),
+            modules_list=modules_list,
+            restaurant_id=restaurant_id,
         )
         envelope_id = result.get("envelope_id")
-        from models import update_restaurant
-        update_restaurant(restaurant_id, {
-            "contract_status": "sent",
-            "docusign_envelope_id": envelope_id,
-        })
-        # Log it
-        try:
-            from models import log_email
-            log_email(restaurant_id, "contract", restaurant.owner_email, f"Service Agreement — {restaurant.name}")
-        except Exception: pass
-        return jsonify(ok=True)
+        updates = {"docusign_envelope_id": envelope_id}
+        if not signed:
+            updates["contract_status"] = "sent"
+        with _mdl.billing_context(source="admin", actor=current_user.get("username"),
+                                  reason="amendment sent" if signed else "contract re-sent (new envelope)"):
+            update_restaurant(restaurant_id, updates)
+        if envelope_id:
+            conn = get_conn()
+            try:
+                conn.execute("UPDATE docusign_envelopes SET module_count=?, modules_list=?, status='sent', "
+                             "status_at=datetime('now') WHERE envelope_id=?", (mods, modules_list, envelope_id))
+                conn.commit()
+            finally:
+                conn.close()
+        # No email_log row: DocuSign sends that email itself, and a row
+        # marked 'sent' here recorded a send nobody here made (#109).
+        _billing_audit(current_user, "contract.amendment_sent" if signed else "contract.new_envelope",
+                       restaurant_id, target=envelope_id,
+                       summary=("Amendment sent" if signed else "New contract envelope sent") + f": {modules_list}")
+        return jsonify(ok=True, resent=False, new_envelope=True, envelope_id=envelope_id, amendment=signed)
     except Exception as e:
         print(f"Resend contract error: {e}")
-        return jsonify(ok=False, error=_safe_err(e))
+        return jsonify(ok=False, error=_safe_err(e)), 502
+
+
+def _latest_envelope(restaurant_id, current_envelope_id=None):
+    """The envelope a resend should reuse: the restaurant's current one."""
+    conn = get_conn()
+    try:
+        row = None
+        if current_envelope_id:
+            row = conn.execute("SELECT * FROM docusign_envelopes WHERE envelope_id=?",
+                               (current_envelope_id,)).fetchone()
+            if not row:
+                return {"envelope_id": current_envelope_id}
+        if not row:
+            row = conn.execute("SELECT * FROM docusign_envelopes WHERE restaurant_id=? ORDER BY sent_at DESC, "
+                               "rowid DESC LIMIT 1", (restaurant_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def _billing_audit(current_user, action, restaurant_id, target=None, before=None, after=None,
+                   result="ok", summary=None):
+    """One audited row per billing action. B2's record_admin_action (fix
+    round contract) when it exists, else the ledger's plain record."""
+    import admin_events as _ae
+    actor = (current_user or {}).get("username")
+    try:
+        rec = getattr(_ae, "record_admin_action", None)
+        if rec is not None:
+            return rec(actor, f"billing.{action}", restaurant_id=restaurant_id, target=target,
+                       before=before, after=after, result=result, summary=summary)
+    except Exception:
+        pass
+    try:
+        return _ae.record("admin", f"billing.{action}", restaurant_id=restaurant_id,
+                          summary=f"{actor}: {summary or action}"[:300],
+                          payload={"target": target, "before": before, "after": after, "result": result,
+                                   "actor": actor})
+    except Exception:
+        return False
+
+
+def _send_owed_now(owed_id):
+    """Send one owed billing email now and report what really happened:
+    (http_status, payload). A failure is a 502 with a sentence (#109)."""
+    import billing_jobs
+    if not owed_id:
+        return 500, {"ok": False, "error": "Nothing was queued."}
+    out = billing_jobs.drain_owed_sends(ids=[owed_id])
+    res = (out.get("results") or [{}])[0]
+    state = res.get("state")
+    if state in ("sent", "sent_unverified"):
+        return 200, {"ok": True, "sent": True, "owed_send": owed_id, "state": state}
+    if state == "held":
+        return 409, {"ok": False, "sent": False, "owed_send": owed_id, "error": (
+            "Not sent: this server does not send client email (it is not the production server). "
+            "It stays queued here and is never sent from this machine.")}
+    if state == "skipped":
+        return 409, {"ok": False, "sent": False, "owed_send": owed_id,
+                     "error": f"Not sent: {(res.get('error') or 'it no longer applies')}."}
+    if state == "retry":
+        return 502, {"ok": False, "sent": False, "owed_send": owed_id, "retrying": True, "error": (
+            f"Not delivered yet: {res.get('error') or 'the email service did not accept it'}. "
+            "It will retry on its own; the console shows when it goes.")}
+    if not state:
+        return 409, {"ok": False, "sent": False, "owed_send": owed_id,
+                     "error": "It is already being sent — check again in a minute."}
+    return 502, {"ok": False, "sent": False, "owed_send": owed_id,
+                 "error": f"Not delivered: {res.get('error') or 'the send failed'}."}
+
 
 @admin_bp.route("/admin/resend-payment/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def resend_payment(restaurant_id, current_user):
+    """Send the client the link that moves them forward, and say what really
+    happened (#6, #109). A past-due client gets the card-update link — the
+    setup-fee email answered them "You're all set" — a paying or covered
+    client gets nothing (and is told why), and anyone else gets the payment
+    link. The send is owed first and marked from the real delivery result;
+    no email_log row is written here (the send writes the real one)."""
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Support accounts are read-only."), 403
+    import billing_jobs
+    import models as _mdl
     restaurant = get_restaurant(restaurant_id)
     if not restaurant:
-        return jsonify(ok=False, error="Restaurant not found")
-    try:
-        # The module KEYS, not just the count — they ride in the checkout
-        # metadata so the paid subscription can grant exactly what was bought
-        # instead of leaving entitlement to whatever an admin last typed.
-        module_keys = [k for k, on in (
-            ("reviews",   restaurant.module_reviews),
-            ("labor",     restaurant.module_labor),
-            ("inventory", restaurant.module_inventory),
-            ("marketing", restaurant.module_marketing),
-        ) if on]
-        mods = len(module_keys)
-        if mods == 0:
-            return jsonify(ok=False, error="No modules active for this client")
-        send_payment_email(
-            to_email=restaurant.owner_email,
-            restaurant_name=restaurant.name,
-            module_count=mods,
-            restaurant_id=restaurant_id,
-            modules=module_keys,
-        )
-        try:
-            log_email(restaurant_id, "payment", restaurant.owner_email, f"Payment link — {restaurant.name}")
-        except Exception: pass
-        return jsonify(ok=True)
-    except Exception as e:
-        print(f"Resend payment error: {e}")
-        return jsonify(ok=False, error=_safe_err(e))
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    lock = _mdl.billing_hold(restaurant)
+    if lock:
+        return jsonify(ok=False, error=f"This account is on hold ({lock}). Lift the hold before sending "
+                                       "billing links."), 409
+    payer = billing_jobs.billed_by(restaurant_id)
+    status = (restaurant.billing_status or "").lower()
+    if payer and payer != restaurant_id and status != "past_due":
+        p = get_restaurant(payer)
+        return jsonify(ok=False, covered=True, billed_by=payer, error=(
+            f"{restaurant.name} is covered by {getattr(p, 'name', 'another location')}'s subscription — "
+            "there is nothing for it to pay.")), 409
+    if status == "past_due":
+        kind, key = "card_update", f"card_update:{restaurant_id}:admin:{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+        target = get_restaurant(payer) if payer and payer != restaurant_id else restaurant
+    elif status in ("active", "internal") or billing_jobs.live_subscription(restaurant_id):
+        return jsonify(ok=False, paying=True, error=(
+            f"{restaurant.name} is already paying — no payment link was sent. Use Send card-update link "
+            "to have them change the card.")), 409
+    else:
+        if not any((restaurant.module_reviews, restaurant.module_labor, restaurant.module_inventory,
+                    restaurant.module_marketing)):
+            return jsonify(ok=False, error="No modules active for this client"), 400
+        kind, key = "payment_link", f"payment_link:{restaurant_id}:admin:{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+        target = restaurant
+    owed_id, _made = billing_jobs.enqueue(kind, target.id, key, to_email=target.owner_email,
+                                          source="admin", actor=current_user.get("username"))
+    code, payload = _send_owed_now(owed_id)
+    _billing_audit(current_user, f"{kind}.sent" if payload.get("ok") else f"{kind}.failed", restaurant_id,
+                   target=str(owed_id), result="ok" if payload.get("ok") else "error",
+                   summary=("Payment link" if kind == "payment_link" else "Card-update link")
+                   + (" sent" if payload.get("ok") else f" not sent: {payload.get('error')}"))
+    payload["kind"] = kind
+    return jsonify(**payload), code
 
 @admin_bp.route("/admin/seed-reviews/<int:restaurant_id>", methods=["POST"])
 @admin_required
@@ -3144,3 +3279,409 @@ def admin_api_create_support_login(current_user):
                         target={"user_id": uid, "username": username}, after={"role": "support"},
                         summary=f"{current_user.get('username')} added support login {username}")
     return jsonify(ok=True, user_id=uid, reset_link_sent=sent, note=note)
+
+
+# ── Fix round H ──────────────────────────────────────────────────────────────
+# The billing lifecycle's console endpoints (workstream H). Every write here
+# is audited (_billing_audit) and records who moved what in
+# billing_status_history (models.billing_context). Anything that emails a
+# client, or changes a live Stripe subscription, only happens where the
+# scheduler may run (billing_jobs._sending_allowed): a local backend holds
+# production's keys and must never act on a real client.
+
+_PRORATIONS = ("create_prorations", "none", "always_invoice")
+_PLAN_MODULES = ("reviews", "labor", "inventory", "marketing")
+
+
+def _live_actions_refused():
+    import billing_jobs
+    if billing_jobs._sending_allowed():
+        return None
+    return jsonify(ok=False, error=(
+        "Refused: this server is not the production server, so it does not email clients or change "
+        "live Stripe subscriptions.")), 409
+
+
+def _billing_detail(restaurant_id):
+    import billing_jobs
+    import models as _mdl
+    r = get_restaurant(restaurant_id)
+    if not r:
+        return None
+    payer = billing_jobs.billed_by(restaurant_id)
+    mirror = billing_jobs.mirror_row(restaurant_id)
+    if mirror:
+        mirror["billed_mrr"] = billing_jobs.billed_mrr(mirror)
+        try:
+            mirror["module_mismatch"] = json.loads(mirror["module_mismatch"]) if mirror.get("module_mismatch") else None
+        except Exception:
+            pass
+    conn = get_conn()
+    try:
+        envs = [dict(e) for e in conn.execute(
+            "SELECT * FROM docusign_envelopes WHERE restaurant_id=? ORDER BY sent_at DESC LIMIT 10",
+            (restaurant_id,))]
+        rec = conn.execute("SELECT * FROM billing_reconcile WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+    finally:
+        conn.close()
+    rec = dict(rec) if rec else None
+    if rec and rec.get("mismatches"):
+        try:
+            rec["mismatches"] = json.loads(rec["mismatches"])
+        except Exception:
+            pass
+    open_inv = billing_jobs.latest_open_invoice(restaurant_id)
+    return {
+        "restaurant_id": restaurant_id, "name": r.name,
+        "billing_status": r.billing_status, "pause_reason": r.pause_reason,
+        "pause_lock": _mdl.pause_lock(r), "hold": _mdl.billing_hold(r), "paused_until": r.paused_until,
+        "converted_at": r.converted_at, "contract_status": r.contract_status,
+        "contract_signed_at": r.contract_signed_at, "stripe_customer_id": r.stripe_customer_id,
+        "modules": [k for k in _PLAN_MODULES if getattr(r, f"module_{k}", 0)],
+        # Owner decision 1: which location's subscription pays for this one.
+        "billed_by": ({"restaurant_id": payer, "name": getattr(get_restaurant(payer), "name", None)}
+                      if payer else None),
+        "covers": billing_jobs.subscription_scope(restaurant_id) if payer == restaurant_id else [],
+        "subscription": mirror,
+        "open_invoice": ({k: open_inv.get(k) for k in ("invoice_id", "hosted_invoice_url", "amount_due_cents",
+                                                       "amount_remaining_cents", "attempt_count",
+                                                       "next_payment_attempt", "last_failed_at")}
+                         if open_inv else None),
+        "invoices": billing_jobs.invoices_for(restaurant_id),
+        "history": billing_jobs.billing_history(restaurant_id),
+        "owed_sends": billing_jobs.owed_sends_for(restaurant_id),
+        "envelopes": envs,
+        "reconcile": rec,
+    }
+
+
+@admin_bp.route("/admin/api/billing/<int:restaurant_id>")
+@admin_required
+def admin_api_billing_detail(restaurant_id, current_user):
+    """One client's billing record: the Stripe mirror (billed MRR, interval,
+    discount, trial end), invoices with their hosted links, the status and
+    module history, owed billing mail and its real outcome, envelopes, the
+    last reconcile's findings, and who pays for the location."""
+    detail = _billing_detail(restaurant_id)
+    if detail is None:
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    return jsonify(ok=True, **detail)
+
+
+@admin_bp.route("/admin/api/billing/health")
+@admin_required
+def admin_api_billing_health(current_user):
+    """The fleet's billing plumbing: each inbound webhook's last verified
+    event and failures since (#74), the nightly reconcile's mismatches
+    (#115), owed billing mail that failed for good (#12), and the
+    signed-but-unpaid pipeline (#26)."""
+    import billing_jobs
+    conn = get_conn()
+    try:
+        hooks = [dict(r) for r in conn.execute("SELECT * FROM webhook_verifications ORDER BY provider")]
+        failed = [dict(r) for r in conn.execute(
+            "SELECT o.id, o.restaurant_id, r.name, o.kind, o.to_email, o.attempts, o.last_error, o.updated_at "
+            "FROM owed_sends o LEFT JOIN restaurants r ON r.id=o.restaurant_id "
+            "WHERE o.status='failed' AND o.updated_at >= datetime('now', '-30 days') ORDER BY o.id DESC LIMIT 100")]
+        pending = conn.execute("SELECT COUNT(*) AS n, MIN(created_at) AS oldest FROM owed_sends "
+                               "WHERE status IN ('pending','sending')").fetchone()
+    finally:
+        conn.close()
+    return jsonify(ok=True, webhooks=hooks, reconcile=billing_jobs.reconcile_findings(),
+                   failed_sends=failed, owed_pending={"count": pending["n"], "oldest": pending["oldest"]},
+                   pipeline=billing_jobs.contract_pipeline())
+
+
+@admin_bp.route("/admin/api/billing/<int:restaurant_id>/card-update-link", methods=["POST"])
+@admin_required
+def admin_api_billing_card_link(restaurant_id, current_user):
+    """Send card-update link (#6): the Billing Portal, plus the open invoice
+    when something is owed, to the owner. Reports the real delivery."""
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Support accounts are read-only."), 403
+    refused = _live_actions_refused()
+    if refused:
+        return refused
+    import billing_jobs
+    r = get_restaurant(restaurant_id)
+    if not r:
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    payer = billing_jobs.billed_by(restaurant_id)
+    target = get_restaurant(payer) if payer and payer != restaurant_id else r
+    if not (target.stripe_customer_id or "").strip():
+        return jsonify(ok=False, error=f"{target.name} has no Stripe customer, so there is no card to update. "
+                                       "Attach the Stripe customer first."), 409
+    key = f"card_update:{target.id}:admin:{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+    owed_id, _made = billing_jobs.enqueue("card_update", target.id, key, to_email=target.owner_email,
+                                          source="admin", actor=current_user.get("username"))
+    code, payload = _send_owed_now(owed_id)
+    _billing_audit(current_user, "card_update.sent" if payload.get("ok") else "card_update.failed", restaurant_id,
+                   target=str(owed_id), result="ok" if payload.get("ok") else "error",
+                   summary="Card-update link " + ("sent" if payload.get("ok") else f"not sent: {payload.get('error')}"))
+    return jsonify(**payload), code
+
+
+@admin_bp.route("/admin/api/billing/<int:restaurant_id>/change-plan", methods=["POST"])
+@admin_required
+def admin_api_billing_change_plan(restaurant_id, current_user):
+    """Change plan (#106): the Stripe subscription's price and module_keys
+    first, then the local module flags — one audited action, so a console
+    module change reaches what Stripe bills and the next subscription event
+    no longer reverts it. Body: {modules: [...], proration:
+    create_prorations | none | always_invoice}. With no live subscription
+    (not paying yet) only the local flags change, and the next payment link
+    quotes the new plan."""
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Support accounts are read-only."), 403
+    import billing_jobs
+    import models as _mdl
+    data = request.get_json(silent=True) or {}
+    modules = sorted({str(m).strip().lower() for m in (data.get("modules") or [])} & set(_PLAN_MODULES))
+    if not modules:
+        return jsonify(ok=False, error="Pick at least one module."), 400
+    proration = data.get("proration") or "create_prorations"
+    if proration not in _PRORATIONS:
+        return jsonify(ok=False, error=f"proration must be one of {', '.join(_PRORATIONS)}"), 400
+    r = get_restaurant(restaurant_id)
+    if not r:
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    payer = billing_jobs.billed_by(restaurant_id)
+    if payer and payer != restaurant_id:
+        return jsonify(ok=False, error=(f"{r.name} is billed with {getattr(get_restaurant(payer), 'name', 'another location')} "
+                                        "— change the plan on the paying location.")), 409
+    before = [k for k in _PLAN_MODULES if getattr(r, f"module_{k}", 0)]
+    flags = {f"module_{k}": (1 if k in modules else 0) for k in _PLAN_MODULES}
+    mirror = billing_jobs.live_subscription(restaurant_id)
+    stripe_after = None
+    if mirror:
+        refused = _live_actions_refused()
+        if refused:
+            return refused
+        key = os.getenv("STRIPE_SECRET_KEY", "")
+        if not key:
+            return jsonify(ok=False, error="Stripe is not configured on this server — nothing changed."), 409
+        try:
+            import pricing
+            stripe_mod = config.stripe_api(key)
+            sub = stripe_mod.Subscription.retrieve(mirror["subscription_id"])
+            items = billing_jobs._list(billing_jobs._g(sub, "items"))
+            item = next((it for it in items if billing_jobs._recurring(billing_jobs._price(it))), None)
+            if item is None:
+                return jsonify(ok=False, error="That subscription has no recurring price to change."), 409
+            interval = billing_jobs._g(billing_jobs._recurring(billing_jobs._price(item)), "interval") or "month"
+            price_id = pricing.retainer_price_id(stripe_mod, len(modules), interval)
+            meta = dict(billing_jobs._g(sub, "metadata") or {})
+            meta.update({"module_keys": ",".join(modules), "modules": str(len(modules))})
+            updated = stripe_mod.Subscription.modify(
+                mirror["subscription_id"], items=[{"id": billing_jobs._g(item, "id"), "price": price_id}],
+                proration_behavior=proration, metadata=meta)
+            stripe_after = billing_jobs.subscription_facts(updated if billing_jobs._g(updated, "id") else sub)
+        except Exception as e:
+            _billing_audit(current_user, "change_plan.failed", restaurant_id, before={"modules": before},
+                           after={"modules": modules}, result="error", summary=f"Stripe refused: {_safe_err(e)}")
+            return jsonify(ok=False, error=f"Stripe did not accept the change — nothing changed. ({_safe_err(e)})"), 502
+    with _mdl.billing_context(source="admin", actor=current_user.get("username"),
+                              reason=f"change plan: {','.join(modules)} ({proration})"):
+        update_restaurant(restaurant_id, flags)
+    if stripe_after:
+        billing_jobs.upsert_subscription(restaurant_id, facts=stripe_after,
+                                         subscription_id=mirror["subscription_id"])
+        billing_jobs.record_module_mismatch(restaurant_id, ",".join(modules))
+    _billing_audit(current_user, "change_plan", restaurant_id, target=(mirror or {}).get("subscription_id"),
+                   before={"modules": before}, after={"modules": modules, "proration": proration},
+                   summary=f"Plan {','.join(before) or 'none'} → {','.join(modules)}"
+                           + ("" if mirror else " (no live subscription: local only)"))
+    return jsonify(ok=True, modules=modules, stripe_updated=bool(mirror),
+                   subscription=billing_jobs.mirror_row(restaurant_id))
+
+
+def _parse_day(value):
+    """YYYY-MM-DD or M/D/YY → a UTC stamp at noon (a day, not a moment)."""
+    from datetime import datetime as _dt
+    v = (value or "").strip()
+    for fmt in ("%Y-%m-%d", "%m/%d/%y", "%m/%d/%Y"):
+        try:
+            return _dt.strptime(v, fmt).strftime("%Y-%m-%d 12:00:00")
+        except ValueError:
+            continue
+    return None
+
+
+@admin_bp.route("/admin/api/billing/<int:restaurant_id>/mark-signed", methods=["POST"])
+@admin_required
+def admin_api_billing_mark_signed(restaurant_id, current_user):
+    """Mark signed (offline) (#78): a contract signed on paper or outside
+    DocuSign. Audited, with a required note; starts the pay-link reminders
+    from the signing date. Body: {note, signed_on?, send_payment_link?,
+    send_welcome?} — the two sends are owed and sent like a DocuSign
+    completion's."""
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Support accounts are read-only."), 403
+    import billing_jobs
+    import models as _mdl
+    data = request.get_json(silent=True) or {}
+    note = (data.get("note") or "").strip()[:300]
+    if not note:
+        return jsonify(ok=False, error="Say how it was signed (the note is the record)."), 400
+    r = get_restaurant(restaurant_id)
+    if not r:
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    if (r.contract_status or "").lower() == "signed":
+        return jsonify(ok=False, error="The contract is already marked signed."), 409
+    signed_at = _parse_day(data.get("signed_on")) if data.get("signed_on") else billing_jobs._stamp()
+    if not signed_at:
+        return jsonify(ok=False, error="signed_on must be a date (M/D/YY or YYYY-MM-DD)."), 400
+    before = r.contract_status
+    with _mdl.billing_context(source="admin", actor=current_user.get("username"),
+                              reason=f"marked signed offline: {note}"):
+        update_restaurant(restaurant_id, {"contract_status": "signed", "contract_signed_at": signed_at})
+    owed = []
+    if data.get("send_payment_link") or data.get("send_welcome"):
+        refused = _live_actions_refused()
+        if refused:
+            return refused
+        if data.get("send_payment_link"):
+            oid, _m = billing_jobs.enqueue("payment_link", restaurant_id, f"payment_link:{restaurant_id}:offline",
+                                           to_email=r.owner_email, source="admin", actor=current_user.get("username"))
+            owed.append(oid)
+        login = billing_jobs.principal_login(restaurant_id)
+        if data.get("send_welcome") and login and not login.get("last_login"):
+            oid, _m = billing_jobs.enqueue("welcome", restaurant_id, f"welcome:{login['id']}",
+                                           to_email=login.get("email") or r.owner_email,
+                                           payload={"user_id": login["id"]}, source="admin",
+                                           actor=current_user.get("username"))
+            owed.append(oid)
+    results = billing_jobs.drain_owed_sends(ids=[o for o in owed if o]).get("results", []) if owed else []
+    _billing_audit(current_user, "contract.marked_signed", restaurant_id, before={"contract_status": before},
+                   after={"contract_status": "signed", "signed_at": signed_at}, summary=f"Marked signed (offline): {note}")
+    return jsonify(ok=True, contract_status="signed", contract_signed_at=signed_at, sends=results)
+
+
+@admin_bp.route("/admin/api/billing/<int:restaurant_id>/attach-stripe-customer", methods=["POST"])
+@admin_required
+def admin_api_billing_attach_customer(restaurant_id, current_user):
+    """Attach Stripe customer (#78): link a restaurant to a customer that
+    exists in Stripe (a checkout that could not be matched, a client billed
+    by hand). Verified with Stripe (read-only), refused when another
+    restaurant outside this group holds the customer, and never silently
+    replaces a stored customer — {replace: true} says so. The mirror is
+    filled from the customer's subscriptions and the reconcile's checks run
+    at once. Body: {customer_id, replace?}."""
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Support accounts are read-only."), 403
+    import billing_jobs
+    import models as _mdl
+    data = request.get_json(silent=True) or {}
+    cid = (data.get("customer_id") or "").strip()
+    if not cid.startswith("cus_") or len(cid) > 64 or not all(ch.isalnum() or ch == "_" for ch in cid):
+        return jsonify(ok=False, error="That is not a Stripe customer id (cus_…)."), 400
+    r = get_restaurant(restaurant_id)
+    if not r:
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    stored = (r.stripe_customer_id or "").strip()
+    if stored == cid:
+        return jsonify(ok=False, error="That customer is already attached."), 409
+    if stored and not data.get("replace"):
+        return jsonify(ok=False, stored=stored, error=(
+            f"{r.name} is already attached to {stored}. Replacing it changes where its payments are "
+            "matched — confirm with replace.")), 409
+    group = set(billing_jobs.billing_group_ids(restaurant_id))
+    conn = get_conn()
+    try:
+        other = conn.execute("SELECT id, name FROM restaurants WHERE stripe_customer_id=? AND id<>?",
+                             (cid, restaurant_id)).fetchall()
+    finally:
+        conn.close()
+    strangers = [o for o in other if o["id"] not in group]
+    if strangers:
+        return jsonify(ok=False, error=f"{cid} is attached to {strangers[0]['name']} (#{strangers[0]['id']}), "
+                                       "which is not in this client's group."), 409
+    key = os.getenv("STRIPE_SECRET_KEY", "")
+    if not key:
+        return jsonify(ok=False, error="Stripe is not configured on this server, so the customer can't be "
+                                       "verified — nothing changed."), 409
+    stripe_mod = config.stripe_api(key)
+    try:
+        cust = stripe_mod.Customer.retrieve(cid)
+        if billing_jobs._g(cust, "deleted"):
+            return jsonify(ok=False, error=f"{cid} is deleted in Stripe."), 400
+    except Exception as e:
+        return jsonify(ok=False, error=f"Stripe could not find {cid}: {_safe_err(e)}"), 400
+    with _mdl.billing_context(source="admin", actor=current_user.get("username"),
+                              reason="attach Stripe customer" + (f" (replaced {stored})" if stored else "")):
+        update_restaurant(restaurant_id, {"stripe_customer_id": cid})
+    try:
+        found = billing_jobs.reconcile_one(restaurant_id, stripe_mod)
+    except Exception as e:
+        found = {"error": _safe_err(e)}
+    _billing_audit(current_user, "stripe_customer.attached", restaurant_id, target=cid,
+                   before={"stripe_customer_id": stored or None}, after={"stripe_customer_id": cid},
+                   summary=f"Attached Stripe customer {cid}" + (f" (was {stored})" if stored else ""))
+    return jsonify(ok=True, customer_id=cid, subscription=billing_jobs.mirror_row(restaurant_id),
+                   mismatches=found.get("mismatches"), error=found.get("error"))
+
+
+@admin_bp.route("/admin/api/billing/<int:restaurant_id>/lift-hold", methods=["POST"])
+@admin_required
+def admin_api_billing_lift_hold(restaurant_id, current_user):
+    """Lift a dispute, refund or admin hold (lead default 5) — the only way
+    one is lifted. Every location held for the same reason in the group is
+    released together (a dispute paused the whole group). The status goes
+    back to what Stripe's subscription says (active / past_due), or failing
+    that what it was before the hold. Body: {note, status?}."""
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Support accounts are read-only."), 403
+    import billing_jobs
+    import models as _mdl
+    data = request.get_json(silent=True) or {}
+    note = (data.get("note") or "").strip()[:300]
+    if not note:
+        return jsonify(ok=False, error="Say why the hold is lifted (the note is the record)."), 400
+    r = get_restaurant(restaurant_id)
+    if not r:
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    reason = _mdl.billing_hold(r)
+    if not reason:
+        return jsonify(ok=False, error="There is no hold on this account."), 409
+    wanted = (data.get("status") or "").strip().lower() or None
+    if wanted and wanted not in ("active", "past_due", "trial"):
+        return jsonify(ok=False, error="status must be active, past_due or trial."), 400
+    lifted = []
+    for rid in billing_jobs.billing_group_ids(restaurant_id):
+        other = get_restaurant(rid)
+        if other is None or _mdl.billing_hold(other) != reason:
+            continue
+        cur = (other.billing_status or "").lower()
+        with _mdl.billing_context(source="admin", actor=current_user.get("username"),
+                                  reason=f"{reason} hold lifted: {note}"):
+            if cur in ("churned", "canceled", "cancelled") and not billing_jobs.billed_by(rid):
+                # Churned with nothing paying for it: the hold goes, the
+                # churn stays. A client who has paid again (a live
+                # subscription covers it) is restored below.
+                update_restaurant(rid, {"pause_reason": None})
+            else:
+                update_restaurant(rid, {"billing_status": wanted or _restored_status(rid),
+                                        "pause_reason": None, "paused_until": None})
+        lifted.append(rid)
+    _billing_audit(current_user, "hold.lifted", restaurant_id, target=reason,
+                   before={"pause_reason": reason}, after={"lifted": lifted}, summary=f"{reason} hold lifted: {note}")
+    return jsonify(ok=True, lifted=lifted, reason=reason)
+
+
+def _restored_status(restaurant_id):
+    """What a location returns to when its hold is lifted: its subscription's
+    state in Stripe (as the mirror holds it), else its status before the
+    hold, else trial."""
+    import billing_jobs
+    payer = billing_jobs.billed_by(restaurant_id)
+    row = billing_jobs.mirror_row(payer) if payer else None
+    st = ((row or {}).get("status") or "").lower()
+    if row and billing_jobs.is_live_status(st):
+        return "past_due" if st in ("past_due", "paused") else "active"
+    for h in billing_jobs.billing_history(restaurant_id, limit=50):
+        if h.get("field") == "billing_status" and (h.get("new_value") or "") == "paused":
+            prior = (h.get("old_value") or "").lower()
+            if prior and prior != "paused":
+                return prior
+            break
+    return "trial"

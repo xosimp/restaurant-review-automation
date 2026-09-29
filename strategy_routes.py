@@ -3011,9 +3011,14 @@ def _do_pause(u):
         import ops
         ops.capture(e, job="pause_subscription", context=f"restaurant_id={rid}")
         return {"ok": False, "error": "Stripe isn't reachable from this server — nothing changed. Reply to Will."}, 502
-    if stripe_mod and r.stripe_customer_id:
+    # A location covered by its group's subscription pauses THAT
+    # subscription: the paying location's Stripe customer, not its own
+    # (which it usually does not have — the group was paused locally while
+    # Stripe kept billing).
+    customer_id = _billing_customer(rid, r)
+    if stripe_mod and customer_id:
         try:
-            sub = _active_subscription(stripe_mod, r.stripe_customer_id)
+            sub = _active_subscription(stripe_mod, customer_id)
             if not sub:
                 return {"ok": False, "error": "No active subscription to pause — reply to Will."}, 409
             stripe_mod.Subscription.modify(
@@ -3026,15 +3031,16 @@ def _do_pause(u):
         # No Stripe on this account (a trial, or a manually billed client):
         # the product pauses; there is no collection to stop.
         pass
-    # Every location billed together pauses together, the way the webhook
-    # moves siblings — one owner, one subscription, one state.
-    try:
-        from webhook_routes import _sibling_restaurant_ids
-        rids = _sibling_restaurant_ids(rid)
-    except Exception:
-        rids = [rid]
-    for _r in rids:
-        update_restaurant(_r, {"billing_status": "paused", "paused_until": resumes.date().isoformat()})
+    # Every location the subscription covers pauses with it (owner decision
+    # 1: one subscription per group) — and only those: a location billed on
+    # its own subscription is not paused by another location's pause. The
+    # reason 'self' is what lets the owner resume it (#114).
+    import models as _models_p
+    for _r in _pause_scope(rid):
+        with _models_p.billing_context(source="owner", actor=(u or {}).get("username"),
+                                       reason=f"self-serve pause, {days} days"):
+            update_restaurant(_r, {"billing_status": "paused", "pause_reason": "self",
+                                   "paused_until": resumes.date().isoformat()})
     log_account_event(rid, "subscription_paused", current_user=u, detail=f"{days} days, resumes {resumes.date().isoformat()}")
     try:
         import emails as _emails
@@ -3050,46 +3056,118 @@ def _do_pause(u):
     return {"ok": True, "paused_until": resumes.date().isoformat(), "days": days}, 200
 
 
+def _billing_customer(rid, r):
+    """The Stripe customer that bills this location: its own, or the paying
+    location's when its group's subscription covers it (owner decision 1)."""
+    try:
+        import billing_jobs
+        from models import get_restaurant
+        payer = billing_jobs.billed_by(rid)
+        if payer and payer != rid:
+            p = get_restaurant(payer)
+            if p is not None and p.stripe_customer_id:
+                return p.stripe_customer_id
+    except Exception:
+        pass
+    return getattr(r, "stripe_customer_id", None)
+
+
+def _pause_scope(rid):
+    """The locations a self-serve pause or resume moves: the ones the
+    subscription covers (billing_jobs.subscription_scope). Falls back to the
+    one restaurant rather than failing the owner's action."""
+    try:
+        import billing_jobs
+        payer = billing_jobs.billed_by(rid) or rid
+        return billing_jobs.subscription_scope(payer)
+    except Exception:
+        return [rid]
+
+
+# What the owner is told when a pause is not theirs to lift (#114).
+_LOCK_MESSAGES = {
+    "dispute": "This account is on hold while a payment dispute is open. Only Cavnar AI can lift it — reply to will@cavnar.ai.",
+    "refund": "This account is on hold after a refund. Only Cavnar AI can lift it — reply to will@cavnar.ai.",
+    "admin": "This account was paused by Cavnar AI. Only Cavnar AI can lift it — reply to will@cavnar.ai.",
+}
+
+
+def _status_before_pause(rid):
+    """The billing status a restaurant had before it was paused, from its
+    billing history — so resuming a trial does not turn it into a paying
+    account. 'active' when the history has nothing (a pause from before
+    the history existed)."""
+    try:
+        import billing_jobs
+        for h in billing_jobs.billing_history(rid, limit=50):
+            if h.get("field") == "billing_status" and (h.get("new_value") or "") == "paused":
+                prior = (h.get("old_value") or "").lower()
+                if prior and prior != "paused":
+                    return prior
+                break
+    except Exception:
+        pass
+    return "active"
+
+
 def _do_resume(u):
     if not _principal(u):
         return _forbidden("Only the account owner can resume the subscription.")
-    from models import get_restaurant, update_restaurant
+    from models import get_restaurant, update_restaurant, pause_lock
     from client_api import log_account_event
     rid = _rid(u)
     r = get_restaurant(rid)
     if not r or (r.billing_status or "").lower() != "paused":
         return {"ok": False, "error": "Not paused."}, 409
+    lock = pause_lock(r)
+    if lock:
+        # A chargeback, a full refund or an admin hold is lifted by an admin
+        # only (lead default 5) — this button used to undo any of them.
+        return {"ok": False, "locked": True, "pause_reason": lock,
+                "error": _LOCK_MESSAGES.get(lock, _LOCK_MESSAGES["admin"])}, 409
     try:
         stripe_mod = _stripe_client()
     except Exception as e:
         import ops
         ops.capture(e, job="resume_subscription", context=f"restaurant_id={rid}")
         return {"ok": False, "error": "Stripe isn't reachable from this server — reply to Will."}, 502
-    if stripe_mod and r.stripe_customer_id:
+    customer_id = _billing_customer(rid, r)
+    if stripe_mod and customer_id:
         try:
-            sub = _active_subscription(stripe_mod, r.stripe_customer_id)
+            sub = _active_subscription(stripe_mod, customer_id)
             if sub:
                 stripe_mod.Subscription.modify(sub.id, pause_collection="")
         except Exception as e:
             import ops
             ops.capture(e, job="resume_subscription", context=f"restaurant_id={rid}")
             return {"ok": False, "error": "Stripe did not accept the resume — reply to Will."}, 502
-    try:
-        from webhook_routes import _sibling_restaurant_ids
-        rids = _sibling_restaurant_ids(rid)
-    except Exception:
-        rids = [rid]
-    for _r in rids:
-        update_restaurant(_r, {"billing_status": "active", "paused_until": None})
+    import models as _models_r
+    restored = _status_before_pause(rid)
+    for _r in _pause_scope(rid):
+        other = get_restaurant(_r)
+        if other is None or pause_lock(other) or (other.billing_status or "").lower() != "paused":
+            continue           # another location's own lock, or not paused
+        with _models_r.billing_context(source="owner", actor=(u or {}).get("username"),
+                                       reason="self-serve resume"):
+            update_restaurant(_r, {"billing_status": restored, "paused_until": None, "pause_reason": None})
     log_account_event(rid, "subscription_resumed", current_user=u)
     return {"ok": True}, 200
 
 
 def _do_pause_status(u):
-    from models import get_restaurant
+    from models import get_restaurant, pause_lock
     r = get_restaurant(_rid(u))
-    return {"ok": True, "paused": (getattr(r, "billing_status", "") or "").lower() == "paused",
+    paused = (getattr(r, "billing_status", "") or "").lower() == "paused"
+    lock = pause_lock(r) if r is not None else None
+    # pause_reason / locked / can_resume let both clients show the right
+    # thing for a hold only Cavnar AI can lift (#138): its reason, and no
+    # Resume button.
+    return {"ok": True, "paused": paused,
             "paused_until": getattr(r, "paused_until", None), "days": list(PAUSE_DAYS),
+            "pause_reason": (lock or ("self" if paused else None)),
+            "locked": bool(lock),
+            "lock_message": _LOCK_MESSAGES.get(lock) if lock else None,
+            "can_resume": bool(paused and not lock and _principal(u)),
             "can_pause": _principal(u)}, 200
 
 

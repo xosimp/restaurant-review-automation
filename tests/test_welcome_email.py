@@ -53,10 +53,10 @@ def test_the_first_look_speaks_miles_and_american_english():
 
 
 def test_the_signing_webhook_reads_the_place_id_and_owner_name():
-    src = open(os.path.join(ROOT, "webhook_routes.py"), encoding="utf-8").read()
-    sel = src[src.index('"""SELECT r.id, r.name, r.owner_email'):]
-    sel = sel[:sel.index("FROM restaurants r")]
-    assert "r.google_place_id" in sel and "r.owner_name" in sel
-    call = src[src.index("send_welcome_email(\n", src.index("A fresh temporary password")):]
-    call = call[:call.index(")\n")]
-    assert "google_place_id=r.get(\"google_place_id\")" in call and "owner_name=r.get(\"owner_name\")" in call
+    """Fix round H (#12): the post-signing welcome is owed by the DocuSign
+    webhook and sent by billing_jobs' outbox, from the restaurant row itself
+    — so the first look's Place ID and the owner's name come with it."""
+    src = open(os.path.join(ROOT, "billing_jobs.py"), encoding="utf-8").read()
+    call = src[src.index("_emails.send_signed_welcome_email("):]
+    call = call[:call.index("link_hours=")]
+    assert "google_place_id=r.google_place_id" in call and "owner_name=r.owner_name" in call

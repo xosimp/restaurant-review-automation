@@ -502,7 +502,9 @@ def test_pause_moves_the_account_to_paused_with_a_resume_date(db_path, monkeypat
 
 def test_resume_clears_the_pause(db_path, monkeypatch):
     sr, _ = _pause_env(monkeypatch, db_path)
-    rid = _restaurant(db_path)
+    # A paying account (fix round H: resume restores the status the account
+    # had before its pause — a trial resumes as a trial, never as 'active').
+    rid = _restaurant(db_path, billing_status="active")
     monkeypatch.setattr(sr, "_body", lambda: {"days": 14})
     sr._do_pause(_owner(rid))
     payload, status = sr._do_resume(_owner(rid))
@@ -556,7 +558,9 @@ def test_pause_tells_stripe_to_stop_collecting_and_nothing_changes_if_stripe_ref
     _Subscription.refuse = False
     stripe = type("S", (), {"Subscription": _Subscription})
     sr, _ = _pause_env(monkeypatch, db_path, stripe=stripe)
-    rid = _restaurant(db_path, stripe_customer_id="cus_1")
+    # An account with a live subscription is 'active' (resume restores the
+    # pre-pause status — fix round H).
+    rid = _restaurant(db_path, stripe_customer_id="cus_1", billing_status="active")
     monkeypatch.setattr(sr, "_body", lambda: {"days": 60})
     assert sr._do_pause(_owner(rid))[1] == 200
     sub_id, kw = calls[-1]
@@ -650,6 +654,8 @@ def _stripe_app(monkeypatch, event):
     fake = types.ModuleType("stripe")
     fake.Webhook = type("W", (), {"construct_event": staticmethod(lambda *a, **k: event)})
     monkeypatch.setitem(sys.modules, "stripe", fake)
+    # The webhook refuses every request without a signing secret (#145).
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_fixture")
     monkeypatch.setattr(wr, "send_alert", lambda *a, **k: None, raising=False)
     app = Flask(__name__)
     app.register_blueprint(wr.webhook_bp)

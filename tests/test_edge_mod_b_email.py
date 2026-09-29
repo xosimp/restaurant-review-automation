@@ -626,16 +626,23 @@ def test_the_urgent_review_alert_is_in_email_history(db_path, sdk, monkeypatch):
 
 def _paid_invoice(db_path, monkeypatch, web, email_addr="pay@x.test"):
     import types
+    import billing_jobs
     rid = _rid(db_path, owner_email=email_addr, billing_status="trial", stripe_customer_id="cus_pay")
     create_user(rid, "payer", email_addr, "pw-payer-1", db_path=db_path)
     fake = types.ModuleType("stripe")
     event = {"id": "evt_paid", "type": "invoice.paid", "data": {"object": {
-        "customer": "cus_pay", "customer_email": email_addr, "amount_paid": 75000,
+        "id": "in_paid", "customer": "cus_pay", "customer_email": email_addr, "amount_paid": 75000,
         "billing_reason": "subscription_create"}}}
     fake.Webhook = type("W", (), {"construct_event": staticmethod(lambda *a, **k: event)})
     monkeypatch.setitem(sys.modules, "stripe", fake)
     monkeypatch.setattr(webhook_routes, "_resend_key", lambda: "k")
+    # The webhook refuses every request without a signing secret (#145).
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_fixture")
     web.test_client().post("/stripe-webhook", data=b"{}", headers={"Stripe-Signature": "t"})
+    # Fix round H (#155): one receipt per paid invoice id, owed by the
+    # webhook and sent by the outbox's drain (where the scheduler may run).
+    monkeypatch.setattr(billing_jobs, "_sending_allowed", lambda: True)
+    billing_jobs.run_owed_sends()
     return rid
 
 

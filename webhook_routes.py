@@ -9,7 +9,6 @@ import emails as _emails
 from datetime import datetime
 
 from models import get_conn, get_restaurant, update_restaurant, log_email
-from emails import send_payment_email, send_welcome_email
 
 # Exception text handed to a client, with credentials stripped — a requests
 # error carries the failing URL, and a Places URL carries key= in its query
@@ -56,9 +55,9 @@ def _claim_docusign_event(envelope_id: str, status: str) -> bool:
 
     DocuSign Connect retries any non-2xx and can deliver the same
     notification more than once. Without this, a repeat of a single
-    "completed" callback re-sends the payment link AND the welcome email
-    containing the client's temporary password — to a client who already got
-    both, at the least confusing moment possible.
+    "completed" callback re-sends the payment link AND the welcome email —
+    to a client who already got both, at the least confusing moment
+    possible.
 
     Deliberately the same shape as _claim_stripe_event above: the primary-key
     insert is the claim, and it fails open, because a bookkeeping outage must
@@ -84,10 +83,6 @@ def _claim_docusign_event(envelope_id: str, status: str) -> bool:
         return True
 
 
-class _AlreadyOnboarded(Exception):
-    """The owner has signed in before; no welcome email or new password."""
-
-
 def _release_claim(table, column, key):
     """Undo a claim whose processing failed, so the provider's retry is
     processed rather than skipped as a duplicate. Only "database is locked"
@@ -110,8 +105,66 @@ def _release_claim(table, column, key):
         print(f"release of {table} claim {key} failed: {e}")
 
 
+# ── inbound webhook health (#74) ─────────────────────────────────────────────
+# A rotated signing secret used to fail every delivery with a print and a
+# 4xx: billing sync or contract signing stopped and nothing anywhere said so.
+# Every verdict is now counted per provider (webhook_verifications), and a
+# failure reaches ops.capture — the failure digest and the console — at most
+# once an hour per provider.
+_WEBHOOK_CAPTURE_MINUTES = 60
+
+
+def _webhook_seen(provider, ok, event=None, error=None):
+    """Record one inbound request's signature verdict. Never raises."""
+    capture = False
+    row = None
+    try:
+        conn = get_conn()
+        try:
+            if ok:
+                conn.execute(
+                    "INSERT INTO webhook_verifications (provider, last_verified_at, last_verified_event, "
+                    "failures_since_verified, updated_at) VALUES (?, datetime('now'), ?, 0, datetime('now')) "
+                    "ON CONFLICT(provider) DO UPDATE SET last_verified_at=excluded.last_verified_at, "
+                    "last_verified_event=excluded.last_verified_event, failures_since_verified=0, "
+                    "updated_at=excluded.updated_at", (provider, (event or "")[:120]))
+                conn.commit()
+                return
+            conn.execute(
+                "INSERT INTO webhook_verifications (provider, last_failure_at, last_failure_error, failures_total, "
+                "failures_since_verified, updated_at) VALUES (?, datetime('now'), ?, 1, 1, datetime('now')) "
+                "ON CONFLICT(provider) DO UPDATE SET last_failure_at=excluded.last_failure_at, "
+                "last_failure_error=excluded.last_failure_error, "
+                "failures_total=webhook_verifications.failures_total+1, "
+                "failures_since_verified=webhook_verifications.failures_since_verified+1, "
+                "updated_at=excluded.updated_at", (provider, (error or "")[:300]))
+            cur = conn.execute(
+                "UPDATE webhook_verifications SET last_captured_at=datetime('now') WHERE provider=? "
+                "AND (last_captured_at IS NULL OR last_captured_at < datetime('now', ?))",
+                (provider, f"-{_WEBHOOK_CAPTURE_MINUTES} minutes"))
+            conn.commit()
+            capture = cur.rowcount == 1
+            row = conn.execute("SELECT failures_since_verified, last_verified_at FROM webhook_verifications "
+                               "WHERE provider=?", (provider,)).fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"_webhook_seen({provider}) not recorded: {e}")
+        capture = not ok
+    if capture:
+        try:
+            import ops
+            n = row["failures_since_verified"] if row else "?"
+            last = (row["last_verified_at"] if row else None) or "never"
+            ops.capture(RuntimeError(f"{provider} webhook refused a request ({error}); {n} refused since the "
+                                     f"last verified event ({last})"),
+                        job=f"{provider}_webhook_signature", context="inbound webhook verification")
+        except Exception:
+            pass
+
+
 def _restaurant_for_stripe(customer_id: str = "", email: str = ""):
-    """Resolve a Stripe event to a restaurant id.
+    """Resolve a Stripe CHECKOUT to a restaurant id.
 
     Matching used to be `WHERE u.email = customer_email LIMIT 1`, which broke
     in two ways the audit caught: an owner who changed their email in the app
@@ -121,6 +174,8 @@ def _restaurant_for_stripe(customer_id: str = "", email: str = ""):
 
     stripe_customer_id is the stable key and is tried first; email is the
     fallback for the very first payment, before we have a customer id stored.
+    Only checkout.session.completed still uses the email: every lifecycle
+    event after it resolves by the ids we hold (_resolve_stripe_event, #115).
     """
     if not customer_id and not email:
         return None
@@ -156,6 +211,22 @@ def _restaurant_for_stripe(customer_id: str = "", email: str = ""):
     except Exception as e:
         print(f"_restaurant_for_stripe lookup failed: {e}")
     return None
+
+
+def _restaurant_for_customer(customer_id):
+    """The restaurant a Stripe customer pays for: the one holding a
+    subscription when several locations share the customer id."""
+    if not customer_id or not isinstance(customer_id, str):
+        return None
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT id FROM restaurants WHERE stripe_customer_id=? "
+            "ORDER BY (id IN (SELECT restaurant_id FROM stripe_subscriptions)) DESC, id ASC LIMIT 1",
+            (customer_id,)).fetchone()
+        return row["id"] if row else None
+    finally:
+        conn.close()
 
 
 def _restaurant_from_metadata(meta) -> int:
@@ -208,16 +279,83 @@ def _apply_module_entitlement(restaurant_id: int, module_keys: str) -> dict:
     return updates
 
 
+# ── billing state, applied (fix round H) ─────────────────────────────────────
+# One writer for every billing-state move a Stripe event makes. It raises on
+# a failed write (#7): _set_billing_status used to catch the error and
+# return False, every caller ignored the False, the event was acknowledged
+# and Stripe never retried — a client whose cancellation hit a locked
+# database kept access for good. It also respects the locks only an admin
+# lifts (#114): a later "active" from Stripe no longer undoes a chargeback
+# pause, and a failed card no longer lifts one.
+
+_KEEP = object()
+_BLOCKED = ("paused", "churned", "canceled", "cancelled")
+
+
+def _apply_state(rids, status, pause_reason=_KEEP, paused_until=_KEEP, override_locks=False,
+                 skip_from=()):
+    """Move each restaurant in `rids` to `status`. Returns (moved, held):
+    the ids written and the ids a lock (or `skip_from`) kept where they are."""
+    import models as _m
+    moved, held = [], []
+    for rid in rids:
+        r = get_restaurant(rid)
+        if not r:
+            continue
+        cur = (r.billing_status or "").lower()
+        lock = _m.billing_hold(r)
+        if (lock and not override_locks) or cur in skip_from:
+            held.append(rid)
+            continue
+        updates = {"billing_status": status}
+        if pause_reason is not _KEEP:
+            updates["pause_reason"] = pause_reason
+        if paused_until is not _KEEP:
+            updates["paused_until"] = paused_until
+        if status == "churned" and (r.pause_reason or "") == "self":
+            # A self-serve pause means nothing once the subscription is over;
+            # a dispute or refund lock is kept for the day they come back.
+            updates["pause_reason"] = None
+            updates["paused_until"] = None
+        update_restaurant(rid, updates)
+        moved.append(rid)
+    return moved, held
+
+
 def _set_billing_status(restaurant_id: int, status: str, reason: str = ""):
-    """Move a restaurant and every location it is billed with to one status."""
-    try:
-        for _rid in _sibling_restaurant_ids(restaurant_id):
-            update_restaurant(_rid, {"billing_status": status})
-        print(f"billing_status={status} for {_sibling_restaurant_ids(restaurant_id)} ({reason})")
-        return True
-    except Exception as e:
-        print(f"Failed to set billing_status={status} for {restaurant_id}: {e}")
-        return False
+    """Move a restaurant and every location its subscription covers to one
+    status. Raises when a write fails, so the webhook answers 5xx and Stripe
+    redelivers (#7); a lock only an admin lifts is left in place."""
+    import billing_jobs as _bj
+    moved, held = _apply_state(_bj.subscription_scope(restaurant_id), status)
+    print(f"billing_status={status} for {moved} ({reason})" + (f"; held by a lock: {held}" if held else ""))
+    return True
+
+
+_LOCK_RANK = {"admin": 1, "refund": 2, "dispute": 3}
+
+
+def _lock_accounts(rids, reason):
+    """Hold each restaurant paused with `reason` until an admin lifts it
+    (lead default 5). A stronger lock is never downgraded (a dispute outranks
+    a refund), and a churned account keeps its status but records the lock,
+    so a returning client's new checkout meets it."""
+    import models as _m
+    locked = []
+    for rid in rids:
+        r = get_restaurant(rid)
+        if not r:
+            continue
+        cur = _m.pause_lock(r)
+        if cur and _LOCK_RANK.get(cur, 0) >= _LOCK_RANK.get(reason, 0):
+            locked.append(rid)
+            continue
+        if (r.billing_status or "").lower() in ("churned", "canceled", "cancelled"):
+            update_restaurant(rid, {"pause_reason": reason})
+        else:
+            update_restaurant(rid, {"billing_status": "paused", "pause_reason": reason, "paused_until": None})
+        locked.append(rid)
+    return locked
 
 
 def _paused_until(sub) -> str:
@@ -241,9 +379,12 @@ def _paused_until(sub) -> str:
 def _sibling_restaurant_ids(restaurant_id: int):
     """Every location that shares this restaurant's location_group.
 
-    A multi-location owner pays once for the group, so billing state has to
-    land on all of their locations — not just whichever one the paying user
-    row happened to point at.
+    A multi-location owner pays once for the group (owner decision 1: one
+    subscription per group), so this is the GROUP. What a subscription event
+    moves is narrower — the locations that subscription covers,
+    billing_jobs.subscription_scope — so a location billed on its own
+    subscription is never moved by another location's card or cancellation.
+    A dispute is the one event that locks the whole group.
     """
     try:
         conn = get_conn()
@@ -294,26 +435,75 @@ from emails import _resend_key
 
 FROM_EMAIL            = config.from_email()
 WILL_EMAIL            = config.will_email()
-STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+# An override for tests only. The live secret is read from the environment on
+# every request (#145): it was read once at import, so a rotated secret did
+# nothing until a restart, and an unset one was handed to construct_event.
+STRIPE_WEBHOOK_SECRET = ""
+
+
+def _stripe_webhook_secret() -> str:
+    return STRIPE_WEBHOOK_SECRET or os.getenv("STRIPE_WEBHOOK_SECRET", "")
+
+
+_PAY_PAGE = ("<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+             "<title>Cavnar AI</title><div style=\"font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,"
+             "sans-serif;max-width:480px;margin:12vh auto;padding:24px;color:#0e0c0a\"><h2>%s</h2><p>%s</p></div>")
+
 
 @webhook_bp.route("/pay/<token>/<period>")
 def pay_link_route(token, period):
-    """Where a payment email's buttons go. Mints a fresh Checkout Session on
-    every click, so the email's link never expires (MOD-BIL-5). Public: the
-    signed token names one restaurant and nothing else."""
+    """Where every billing email's buttons go. The signed token names one
+    restaurant; the link never expires, because what it opens is decided at
+    click time (MOD-BIL-5):
+
+      monthly / annual  a fresh Checkout Session for a client who has not paid;
+      card              a Stripe Billing Portal session (update the card);
+      invoice           the open invoice's hosted page (pay what failed).
+
+    A past-due client is sent to fix the card, never told "You're all set"
+    (#6); a location covered by its group's subscription is told who pays
+    for it instead of being offered a second checkout (owner decision 1); a
+    paused one is never sent to a new checkout (COMMS-27)."""
     from emails import read_pay_token, create_stripe_checkout
     from markupsafe import escape as _esc_pay
-    page = ("<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
-            "<title>Cavnar AI</title><div style=\"font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,"
-            "sans-serif;max-width:480px;margin:12vh auto;padding:24px;color:#0e0c0a\"><h2>%s</h2><p>%s</p></div>")
+    import billing_jobs as _bj
+    import models as _m
+    page = _PAY_PAGE
     rid = read_pay_token(token)
-    if not rid or period not in ("monthly", "annual"):
+    if not rid or period not in ("monthly", "annual", "card", "invoice"):
         return page % ("That link isn't right", "Reply to your payment email or write to will@cavnar.ai."), 404
     r = get_restaurant(rid)
     if not r:
         return page % ("That link isn't right", "Reply to your payment email or write to will@cavnar.ai."), 404
-    if (r.billing_status or "").lower() in ("active", "past_due"):
-        return page % ("You're all set", f"{_esc_pay(r.name)} is already paid for. Nothing more to do."), 200
+    name = _esc_pay(r.name)
+    status = (r.billing_status or "").lower()
+    if _m.billing_hold(r):
+        return page % ("Your account is on hold",
+                       f"{name}'s account is paused while a billing question is sorted out. "
+                       "Reply to Will at will@cavnar.ai and he'll help."), 200
+    payer = _bj.billed_by(rid)
+    if payer and payer != rid:
+        p = get_restaurant(payer)
+        if status == "past_due" or (p and (p.billing_status or "").lower() == "past_due"):
+            url = _bj.fix_payment_url(p, prefer_invoice=(period != "card"))
+            if url:
+                return redirect(url)
+        return page % ("Already covered",
+                       f"{name} is billed together with {_esc_pay(p.name if p else 'your group')} — "
+                       "one subscription covers the group, so there is nothing to pay here."), 200
+    if status == "past_due" or period in ("card", "invoice"):
+        url = _bj.fix_payment_url(r, prefer_invoice=(period != "card"))
+        if url:
+            return redirect(url)
+        if not r.stripe_customer_id:
+            return page % ("No card on file yet",
+                           "There is no payment method to update. Reply to Will at will@cavnar.ai."), 404
+        return page % ("We couldn't open billing", "Try again in a minute, or write to will@cavnar.ai."), 503
+    if status == "paused":
+        return page % ("Paused", f"{name} is paused. Resume any time from Account → Billing in Cavnar AI, "
+                                 "or reply to Will at will@cavnar.ai."), 200
+    if status in ("active", "internal") or _bj.live_subscription(rid):
+        return page % ("You're all set", f"{name} is already paid for. Nothing more to do."), 200
     modules = [k for k in ("reviews", "labor", "inventory", "marketing") if getattr(r, f"module_{k}", 0)]
     url = create_stripe_checkout(max(1, len(modules)), r.owner_email, r.name, period,
                                  restaurant_id=rid, modules=modules)
@@ -324,25 +514,25 @@ def pay_link_route(token, period):
 
 @webhook_bp.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
+    secret = _stripe_webhook_secret()
+    if not secret:
+        # Fail closed (#145), as the DocuSign webhook does: without a secret
+        # there is nothing to verify against, and a forged invoice.paid could
+        # activate or re-entitle an account.
+        _webhook_seen("stripe", False, error="STRIPE_WEBHOOK_SECRET is not set")
+        return jsonify(error="Unauthorized"), 401
     import stripe
     payload = request.get_data()
     sig_header = request.headers.get("Stripe-Signature","")
 
     try:
         event = stripe.Webhook.construct_event(
-            payload, sig_header, STRIPE_WEBHOOK_SECRET
+            payload, sig_header, secret
         )
     except Exception as e:
-        print(f"Webhook error: {e}")
+        _webhook_seen("stripe", False, error=_safe_err(e)[:200])
         return jsonify(error=_safe_err(e)), 400
-
-    # Every verified event is kept — the admin console's Billing page reads
-    # this as payment history (see admin_events.py).
-    try:
-        import admin_events as _ae
-        _ae.record_stripe(event)
-    except Exception:
-        pass
+    _webhook_seen("stripe", True, event=f"{event.get('type')} {event.get('id')}")
 
     # Stripe retries on any non-2xx and can deliver the same event twice.
     # Everything below this line sends email or changes billing state, so it
@@ -351,7 +541,12 @@ def stripe_webhook():
         print(f"Stripe event {event.get('id')} already handled — skipping duplicate")
         return jsonify(received=True, duplicate=True)
     try:
-        return _stripe_dispatch(event)
+        import models as _m
+        # Every billing-status, pause and module change this event makes is
+        # recorded against it (billing_status_history, #11).
+        with _m.billing_context(source="stripe", actor="stripe", stripe_event_id=event.get("id"),
+                                reason=event.get("type")):
+            return _stripe_dispatch(event)
     except Exception as e:
         # The claim is released and Stripe is told to retry. Answering 200
         # here marked a payment handled that never activated anything.
@@ -365,46 +560,133 @@ def stripe_webhook():
 
 
 _BILLING_STATE_EVENTS = {
-    "customer.subscription.updated", "customer.subscription.deleted", "invoice.paid",
-    "invoice.payment_failed", "charge.refunded", "charge.dispute.created",
+    "customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted",
+    "invoice.paid", "invoice.payment_failed", "charge.refunded", "charge.dispute.created",
 }
 
 
-def _second_subscription(rid, sub_id, session_id) -> bool:
+def _second_subscription(rid, sub_id, session_id, customer_id=None) -> bool:
     """Record the restaurant's subscription; True when it already has a
-    different one."""
-    conn = get_conn()
-    try:
-        row = conn.execute("SELECT subscription_id FROM stripe_subscriptions WHERE restaurant_id=?", (rid,)).fetchone()
-        if row and row["subscription_id"] != sub_id:
-            return True
-        if not row:
-            conn.execute("INSERT INTO stripe_subscriptions (restaurant_id, subscription_id, session_id) VALUES (?,?,?)",
-                         (rid, sub_id, session_id))
-            conn.commit()
-        return False
-    finally:
-        conn.close()
+    DIFFERENT subscription that is still live.
+
+    Any stored row used to count as live, and rows were cleared only by a
+    matched cancellation — so a client whose last subscription ended "unpaid"
+    had their new one auto-cancelled as a second checkout (#115). A row whose
+    status is over is replaced; one from before the mirror had a status is
+    checked with Stripe, then against the local state."""
+    import billing_jobs as _bj
+    row = _bj.mirror_row(rid)
+    if row and row.get("subscription_id") != sub_id and _subscription_still_live(rid, row):
+        return True
+    if not row or row.get("subscription_id") != sub_id:
+        _bj.upsert_subscription(rid, subscription_id=sub_id, session_id=session_id,
+                                facts={"customer_id": customer_id, "status": None})
+    return False
+
+
+def _subscription_still_live(rid, row) -> bool:
+    import billing_jobs as _bj
+    status = row.get("status")
+    if status:
+        return _bj.is_live_status(status)
+    key = os.getenv("STRIPE_SECRET_KEY", "")
+    if key:
+        try:
+            s = config.stripe_api(key).Subscription.retrieve(row["subscription_id"])
+            st = _bj._g(s, "status")
+            if st:
+                _bj.upsert_subscription(rid, sub=s)
+                return _bj.is_live_status(st)
+        except Exception as e:
+            print(f"subscription {row.get('subscription_id')} could not be checked with Stripe: {_safe_err(e)}")
+    r = get_restaurant(rid)
+    return (getattr(r, "billing_status", "") or "").lower() not in ("churned", "canceled", "cancelled")
+
+
+def _retrieve_charge(charge_id):
+    """A dispute carries only its charge id. Raises on a Stripe error, so the
+    webhook answers 5xx and Stripe redelivers the dispute."""
+    key = os.getenv("STRIPE_SECRET_KEY", "")
+    if not key or not charge_id:
+        return None
+    return config.stripe_api(key).Charge.retrieve(charge_id)
+
+
+def _resolve_stripe_event(event):
+    """(restaurant_id, how) for a Stripe event, by the ids we hold — never by
+    email (#115). The subscription id first (the stripe_subscriptions
+    mirror), then the restaurant_id Stripe carries back in metadata, then the
+    invoice or charge we recorded, then the stored customer id. `how` is
+    subscription | metadata | invoice | customer | duplicate (the event is
+    about a second checkout's subscription, cancelled against the first)."""
+    import billing_jobs as _bj
+    etype = event.get("type") or ""
+    obj = (event.get("data") or {}).get("object") or {}
+    sub_id = None
+    if etype.startswith("customer.subscription."):
+        sub_id = obj.get("id")
+    elif etype.startswith("invoice."):
+        sub_id = _bj.invoice_facts(obj).get("subscription_id")
+    elif etype.startswith("checkout.session."):
+        sub_id = obj.get("subscription")
+    if sub_id:
+        rid = _bj.restaurant_for_subscription(sub_id)
+        if rid:
+            return rid, "subscription"
+        dup = _bj.duplicate_subscription(sub_id)
+        if dup:
+            return dup.get("restaurant_id"), "duplicate"
+    meta = obj.get("metadata") or {}
+    if etype.startswith("invoice."):
+        meta = _bj.invoice_metadata(obj) or meta
+    rid = _restaurant_from_metadata(meta)
+    if rid:
+        return rid, "metadata"
+    customer = obj.get("customer") if isinstance(obj.get("customer"), str) else None
+    if etype.startswith("charge."):
+        dispute = etype.startswith("charge.dispute.")
+        charge_id = obj.get("charge") if dispute else obj.get("id")
+        if not isinstance(charge_id, str):
+            charge_id = (charge_id or {}).get("id") if isinstance(charge_id, dict) else None
+        inv_id = obj.get("invoice") if isinstance(obj.get("invoice"), str) else None
+        pi = obj.get("payment_intent") if isinstance(obj.get("payment_intent"), str) else None
+        rid, _sub = _bj.restaurant_for_charge(charge_id, inv_id, pi)
+        if rid:
+            if _sub and _bj.duplicate_subscription(_sub):
+                return rid, "duplicate"
+            return rid, "invoice"
+        if dispute and not customer and charge_id:
+            ch = _retrieve_charge(charge_id)
+            if ch is not None:
+                customer = _bj._g(ch, "customer")
+                customer = customer if isinstance(customer, str) else _bj._g(customer, "id")
+                ch_inv = _bj._g(ch, "invoice")
+                ch_inv = ch_inv if isinstance(ch_inv, str) else _bj._g(ch_inv, "id")
+                rid, _sub = _bj.restaurant_for_charge(None, ch_inv, None)
+                if rid:
+                    return rid, ("duplicate" if _sub and _bj.duplicate_subscription(_sub) else "invoice")
+    if customer:
+        rid = _restaurant_for_customer(customer)
+        if rid:
+            return rid, "customer"
+        dup = _bj.duplicate_subscription(customer_id=customer)
+        if dup:
+            return dup.get("restaurant_id"), "duplicate"
+    return None, None
 
 
 def _event_restaurant(event):
-    obj = (event.get("data") or {}).get("object") or {}
-    rid = _restaurant_from_metadata(obj.get("metadata") or {})
-    if rid:
-        return rid
-    email = (obj.get("customer_email") or (obj.get("customer_details") or {}).get("email")
-             or (obj.get("billing_details") or {}).get("email") or obj.get("receipt_email") or "")
-    return _restaurant_for_stripe(obj.get("customer", "") or "", email)
+    return _resolve_stripe_event(event)[0]
 
 
-def _stale_billing_event(event) -> bool:
+def _stale_billing_event(event, rid=None) -> bool:
     """True when a newer event has already been applied to this restaurant's
     billing state; otherwise records this one as the newest. An event with
     no timestamp or no restaurant is never called stale."""
     created = event.get("created")
     if event.get("type") not in _BILLING_STATE_EVENTS or not created:
         return False
-    rid = _event_restaurant(event)
+    rid = rid or _event_restaurant(event)
     if not rid:
         return False
     conn = get_conn()
@@ -423,446 +705,549 @@ def _stale_billing_event(event) -> bool:
         conn.close()
 
 
+def _send_alert(subject, body):
+    """Operator alert to Will. Never raises: the billing work it reports on
+    has already been written, and an alert failure must not undo it."""
+    if not _resend_key():
+        print(f"ALERT: {subject}\n{body}")
+        return
+    try:
+        _emails.deliver_or_raise(email_type="ops_payment_alert", payload={
+            "from": _emails.sender("ops"),
+            "to": [WILL_EMAIL],
+            "subject": subject,
+            "html": _html_doc(f"""<div style="font-family:sans-serif;max-width:500px;margin:0 auto">
+                <div style="border-top:3px solid #c84b2f;padding-top:20px;margin-bottom:20px">
+                    <h3 style="color:#0e0c0a;margin:0">Cavnar AI — Payment Alert</h3>
+                </div>
+                <p style="font-size:15px;line-height:1.6">{body}</p>
+                <hr style="border:none;border-top:1px solid #e0dbd0;margin:20px 0"/>
+                <p style="font-size:11px;color:#7a736a">
+                    Manage clients at
+                    <a href="https://dashboard.cavnar.ai/admin" style="color:#c84b2f">
+                        dashboard.cavnar.ai/admin
+                    </a>
+                </p>
+            </div>"""),
+        })
+    except Exception as e:
+        print(f"Alert email failed: {e}")
+
+
+def _names(rids):
+    out = []
+    for rid in rids:
+        r = get_restaurant(rid)
+        out.append(f"{_emails.esc(r.name)} (#{rid})" if r else f"#{rid}")
+    return ", ".join(out) or "none"
+
+
+def _mdy_ts(ts):
+    from time_utils import mdy
+    try:
+        return mdy(datetime.fromtimestamp(int(ts)))
+    except (TypeError, ValueError, OSError):
+        return ""
+
+
 def _stripe_dispatch(event):
     """Everything a verified, first-time Stripe event does. Raises on any
     state write that fails, so stripe_webhook can release the claim and
-    answer 5xx; email failures are the only ones swallowed."""
-    if _stale_billing_event(event):
+    answer 5xx; email failures are the only ones swallowed — and billing
+    email to a client is owed (billing_jobs.owed_sends) before it is sent,
+    so a send that fails is retried, not lost."""
+    etype = event.get("type") or ""
+    obj = (event.get("data") or {}).get("object") or {}
+    rid, how = _resolve_stripe_event(event) if etype != "checkout.session.completed" else (None, None)
+    # The ledger, after the duplicate check and once per event id (#50).
+    try:
+        import admin_events as _ae
+        _ae.record_stripe(event, restaurant_id=rid)
+    except Exception:
+        pass
+    # A duplicate checkout's events are about a subscription the restaurant
+    # does not use: they never move its clock, or a real event created
+    # earlier but delivered later would be dropped as stale.
+    if rid and how != "duplicate" and _stale_billing_event(event, rid):
         # Older than what this restaurant's billing state already reflects:
         # recorded, not applied (MOD-BIL-1).
-        print(f"Stripe {event.get('type')} {event.get('id')} is older than the last applied event — ignored")
+        print(f"Stripe {etype} {event.get('id')} is older than the last applied event — ignored")
         return jsonify(ok=True, stale=True)
-
-    def send_alert(subject, body):
-        """Send alert email to Will."""
-        if not _resend_key():
-            print(f"ALERT: {subject}\n{body}")
-            return
-        try:
-            _emails.deliver_or_raise(email_type="ops_payment_alert", payload={
-                "from": _emails.sender("ops"),
-                "to": [WILL_EMAIL],
-                "subject": subject,
-                "html": _html_doc(f"""<div style="font-family:sans-serif;max-width:500px;margin:0 auto">
-                    <div style="border-top:3px solid #c84b2f;padding-top:20px;margin-bottom:20px">
-                        <h3 style="color:#0e0c0a;margin:0">Cavnar AI — Payment Alert</h3>
-                    </div>
-                    <p style="font-size:15px;line-height:1.6">{body}</p>
-                    <hr style="border:none;border-top:1px solid #e0dbd0;margin:20px 0"/>
-                    <p style="font-size:11px;color:#7a736a">
-                        Manage clients at
-                        <a href="https://dashboard.cavnar.ai/admin" style="color:#c84b2f">
-                            dashboard.cavnar.ai/admin
-                        </a>
-                    </p>
-                </div>"""),
-            })
-        except Exception as e:
-            print(f"Alert email failed: {e}")
-
-    # ── Handle events ──────────────────────────────────────────────────────
-    if event["type"] == "checkout.session.completed":
-        # The event that actually knows who paid and what for. Before this
-        # existed, nothing ran until the first invoice.paid — so the Stripe
-        # customer id was unknown in between, and the module count sitting in
-        # metadata was never read by anything at all.
-        sess        = event["data"]["object"]
-        meta        = sess.get("metadata") or {}
-        customer_id = sess.get("customer", "") or ""
-        sub_id      = sess.get("subscription", "") or ""
-        email       = (sess.get("customer_details") or {}).get("email") or sess.get("customer_email") or ""
-        rid = _restaurant_from_metadata(meta) or _restaurant_for_stripe(customer_id, email)
-        if rid and sub_id and _second_subscription(rid, sub_id, sess.get("id")):
-            # Paid in both the monthly and the annual tab: the first
-            # subscription stands, this one is cancelled and Will is told to
-            # refund its setup fee (MOD-BIL-5).
-            try:
-                import stripe as _stripe_dup
-                _stripe_dup.api_key = os.getenv("STRIPE_SECRET_KEY", "")
-                _stripe_dup.Subscription.cancel(sub_id)
-                _dup_note = "The second subscription was cancelled."
-            except Exception as _de:
-                _dup_note = f"Cancelling it failed ({_safe_err(_de)}); cancel {sub_id} in Stripe."
-            send_alert(f"⚠ Second checkout for the same restaurant — {meta.get('restaurant') or email}",
-                       f"Restaurant {rid} completed a second checkout (subscription {sub_id}). {_dup_note} "
-                       "Refund the second setup fee in Stripe.")
-            return jsonify(ok=True, duplicate_subscription=True)
-        if rid:
-            updates = {"billing_status": "active"}
-            if customer_id:
-                updates["stripe_customer_id"] = customer_id
-            try:
-                update_restaurant(rid, updates)
-                for _sib in _sibling_restaurant_ids(rid):
-                    if _sib != rid:
-                        update_restaurant(_sib, {"billing_status": "active"})
-            except Exception as e:
-                print(f"checkout.session.completed: failed to activate {rid}: {e}")
-                raise
-            granted = _apply_module_entitlement(rid, meta.get("module_keys", ""))
-            send_alert(
-                f"✅ Checkout completed — {meta.get('restaurant') or email}",
-                f"""Checkout completed and access provisioned.<br><br>
-                <strong>Restaurant:</strong> {meta.get('restaurant') or '(unknown)'} (id {rid})<br>
-                <strong>Stripe customer:</strong> {customer_id or '(none)'}<br>
-                <strong>Subscription:</strong> {sub_id or '(none)'}<br>
-                <strong>Modules granted:</strong> """ + (
-                    ", ".join(sorted(k.replace("module_", "") for k, v in granted.items() if v))
-                    if granted else "none in metadata — entitlement left as it was, set it in admin")
-            )
-        else:
-            # Nothing matched: do what the admin form would do, from the
-            # fields the session carries, and tell Will what happened rather
-            # than what to do (provisioning.py). Falls through to the old
-            # alert when it would have to guess.
-            # A provisioning failure is raised, not printed: the webhook then
-            # releases its claim and answers 500, so Stripe's retry provisions
-            # the paid customer instead of being dropped as a duplicate while
-            # they have no login (DATA-54).
-            import provisioning
-            _new = provisioning.provision_from_checkout(sess)
-            if _new:
-                _granted = _apply_module_entitlement(_new, meta.get("module_keys", ""))
-                send_alert(
-                    f"✅ Provisioned from checkout — {meta.get('restaurant') or email}",
-                    f"""No restaurant matched this checkout, so one was created from it.<br><br>
-                    <strong>Restaurant id:</strong> {_new}<br>
-                    <strong>Owner:</strong> {email}<br>
-                    <strong>Stripe customer:</strong> {customer_id or '(none)'}<br>
-                    <strong>Modules:</strong> {', '.join(sorted(k.replace('module_', '') for k, v in (_granted or {}).items() if v)) or 'reviews'}<br><br>
-                    The welcome email with a temporary password went to the owner. Add the Google
-                    Place ID and the contract at
-                    <a href="https://dashboard.cavnar.ai/admin">dashboard.cavnar.ai/admin</a>."""
-                )
-                return jsonify(ok=True, provisioned=_new), 200
-            send_alert(
-                "⚠ Checkout completed but no restaurant matched",
-                f"""A checkout completed and could not be reconciled.<br><br>
-                <strong>Customer:</strong> {customer_id}<br>
-                <strong>Email:</strong> {email}<br>
-                <strong>Metadata:</strong> {meta}<br><br>
-                Nothing was provisioned. Set this up by hand at
-                <a href="https://dashboard.cavnar.ai/admin">dashboard.cavnar.ai/admin</a>."""
-            )
-
-    elif event["type"] == "customer.subscription.updated":
-        # Upgrades and downgrades. Without this a plan change in Stripe never
-        # reached the module flags, so a client could pay for one module and
-        # keep four, or pay for four and keep one, indefinitely.
-        sub  = event["data"]["object"]
-        meta = sub.get("metadata") or {}
-        rid  = _restaurant_from_metadata(meta) or _restaurant_for_stripe(sub.get("customer", ""), "")
-        status = (sub.get("status") or "").lower()
-        if rid:
-            granted = _apply_module_entitlement(rid, meta.get("module_keys", ""))
-            # Stripe's own subscription status is authoritative for access.
-            paused_until = _paused_until(sub)
-            try:
-                _prev = (get_restaurant(rid).billing_status or "").lower()
-            except Exception:
-                _prev = ""
-            if paused_until:
-                # A pause (self-serve, or set in the Stripe dashboard) leaves
-                # status "active" with pause_collection set. This event fires
-                # for the pause itself, so reading status alone would undo a
-                # pause seconds after it was made. When Stripe reaches
-                # resumes_at it clears pause_collection and fires again, and
-                # the branch below brings the account back on its own.
-                for _rid in _sibling_restaurant_ids(rid):
-                    update_restaurant(_rid, {"billing_status": "paused", "paused_until": paused_until})
-                print(f"billing_status=paused until {paused_until} for {rid} (subscription.updated)")
-                # One account history whoever pressed the button: a pause
-                # set in the Stripe dashboard reads exactly like a self-serve
-                # one in Account → Security → Activity.
-                if _prev != "paused":
-                    from client_api import log_account_event
-                    log_account_event(rid, "subscription_paused",
-                                      detail=f"set in Stripe, resumes {paused_until}")
-            elif status in ("active", "trialing"):
-                _set_billing_status(rid, "active", "subscription.updated")
-                for _rid in _sibling_restaurant_ids(rid):
-                    update_restaurant(_rid, {"paused_until": None})
-                if _prev == "paused":
-                    from client_api import log_account_event
-                    log_account_event(rid, "subscription_resumed",
-                                      detail="Stripe reached the resume date, or the pause was cleared in Stripe")
-            elif status == "past_due":
-                _set_billing_status(rid, "past_due", "subscription.updated")
-            elif status in ("canceled", "unpaid", "incomplete_expired"):
-                _set_billing_status(rid, "churned", f"subscription.updated status={status}")
-            if granted or status not in ("active", "trialing"):
-                send_alert(
-                    f"🔁 Subscription changed — {meta.get('restaurant') or rid}",
-                    f"""Subscription status is now <strong>{status}</strong>.<br><br>
-                    <strong>Restaurant id:</strong> {rid}<br>
-                    <strong>Modules:</strong> """ + (
-                        ", ".join(sorted(k.replace("module_", "") for k, v in granted.items() if v))
-                        if granted else "unchanged (no module_keys in metadata)")
-                )
-        else:
-            print(f"subscription.updated for unmatched customer {sub.get('customer','')}")
-
-    elif event["type"] in ("charge.refunded", "charge.dispute.created"):
-        # Money came back. Nothing here used to react at all, so a refunded or
-        # disputed customer kept the whole product indefinitely.
-        obj         = event["data"]["object"]
-        customer_id = obj.get("customer", "") or ""
-        email       = obj.get("billing_details", {}).get("email") or obj.get("receipt_email") or ""
-        disputed    = event["type"] == "charge.dispute.created"
-        amount      = (obj.get("amount_refunded") or obj.get("amount") or 0) / 100
-        rid = _restaurant_for_stripe(customer_id, email)
-        # A chargeback, or a charge refunded in full, pauses access. A partial
-        # refund — a $5 goodwill credit on a $750 charge — paused every
-        # location billed to the customer (MOD-BIL-2); it now only tells Will.
-        full_refund = bool(obj.get("refunded")) or (
-            (obj.get("amount_refunded") or 0) >= (obj.get("amount") or 0) > 0)
-        acted = _set_billing_status(rid, "paused", event["type"]) if rid and (disputed or full_refund) else False
-        send_alert(
-            ("⛔ Chargeback opened — " if disputed else "↩ Refund issued — ") + (email or customer_id),
-            f"""{'A customer has disputed a charge.' if disputed else 'A charge was refunded.'}<br><br>
-            <strong>Amount:</strong> ${amount:,.2f}<br>
-            <strong>Customer:</strong> {customer_id or '(none)'}<br>
-            <strong>Email:</strong> {email or '(none)'}<br>
-            <strong>Access:</strong> """ + (
-                f"paused for restaurant {rid} and every location billed with it. "
-                "Reactivate in admin if this was expected."
-                if acted else
-                ("left on — a partial refund does not pause the account." if rid else
-                 "NOT changed — no restaurant matched. Handle this by hand at "
-                 "<a href=\"https://dashboard.cavnar.ai/admin\">dashboard.cavnar.ai/admin</a>."))
-        )
-
-    elif event["type"] == "invoice.payment_action_required":
+    if etype == "checkout.session.completed":
+        return _on_checkout_completed(event, obj)
+    if etype in ("customer.subscription.created", "customer.subscription.updated"):
+        return _on_subscription_changed(event, obj, rid, how)
+    if etype == "customer.subscription.deleted":
+        return _on_subscription_deleted(event, obj, rid, how)
+    if etype in ("charge.refunded", "charge.dispute.created"):
+        return _on_money_returned(event, obj, rid, how)
+    if etype == "charge.dispute.closed":
+        return _on_dispute_closed(event, obj, rid, how)
+    if etype == "invoice.payment_action_required":
         # 3-D Secure. The client has to authenticate or the payment never
         # lands; silence here looked exactly like a successful renewal.
-        inv   = event["data"]["object"]
-        email = inv.get("customer_email", "unknown")
-        send_alert(
+        email = obj.get("customer_email", "unknown")
+        _send_alert(
             f"🔐 Payment needs authentication — {email}",
             f"""Stripe needs the client to confirm this payment (3-D Secure).<br><br>
-            <strong>Customer:</strong> {email}<br>
-            <strong>Amount:</strong> ${(inv.get('amount_due', 0) / 100):.2f}<br><br>
+            <strong>Restaurant:</strong> {_names([rid]) if rid else '(no restaurant matched)'}<br>
+            <strong>Customer:</strong> {_emails.esc(email)}<br>
+            <strong>Amount:</strong> ${(obj.get('amount_due', 0) / 100):.2f}<br><br>
             They should have an email from Stripe. Access is unchanged for now."""
         )
+        return jsonify(ok=True)
+    if etype == "invoice.payment_failed":
+        return _on_payment_failed(event, obj, rid, how)
+    if etype == "invoice.paid":
+        return _on_invoice_paid(event, obj, rid, how)
+    return jsonify(ok=True)
 
-    elif event["type"] == "invoice.payment_failed":
-        inv     = event["data"]["object"]
-        email   = inv.get("customer_email","unknown")
-        amount  = inv.get("amount_due", 0) / 100
-        attempt = inv.get("attempt_count", 1)
-        next_attempt = inv.get("next_payment_attempt")
-        next_str = ""
-        if next_attempt:
-            from datetime import datetime
-            next_str = f" Stripe will retry on {datetime.fromtimestamp(next_attempt).strftime('%B %d')}."
 
-        # past_due is in ACTIVE_BILLING_STATES, so this is a warning state and
-        # not a lockout — access continues while Stripe retries, which is the
-        # right direction. What it changes is that the state was in the
-        # allowlist and nothing ever wrote it: a failing client stayed
-        # "active" through the whole retry schedule and then dropped to
-        # churned with no step in between, invisible to you and to them.
-        _failed_rid = _restaurant_for_stripe(inv.get("customer", "") or "", email)
-        if _failed_rid:
-            # past_due is an allowed state; a restaurant paused for a
-            # chargeback must not get access back because its card then
-            # failed (MOD-BIL-2).
-            _cur_bs = (getattr(get_restaurant(_failed_rid), "billing_status", "") or "").lower()
-            if _cur_bs not in ("paused", "churned", "cancelled", "canceled"):
-                _set_billing_status(_failed_rid, "past_due", "invoice.payment_failed")
+def _fill_mirror_from_stripe(rid, sub_id, event_id=None):
+    """Checkout carries only the subscription id; its amount, interval, trial
+    end and metadata come from Stripe. Best effort — the next subscription
+    event or the nightly reconcile fills anything this misses."""
+    import billing_jobs as _bj
+    key = os.getenv("STRIPE_SECRET_KEY", "")
+    if not key or not sub_id:
+        return
+    try:
+        s = config.stripe_api(key).Subscription.retrieve(sub_id)
+        if _bj._g(s, "id") == sub_id:
+            _bj.upsert_subscription(rid, sub=s, event_id=event_id)
+            _bj.record_module_mismatch(rid)
+    except Exception as e:
+        print(f"mirror of {sub_id} not filled at checkout: {_safe_err(e)}")
 
-        send_alert(
-            f"⚠ Payment failed — {email}",
-            f"""A client payment has failed and needs your attention.<br><br>
-            <strong>Customer:</strong> {email}<br>
-            <strong>Amount:</strong> ${amount:.2f}<br>
-            <strong>Attempt:</strong> #{attempt}<br>
-            <strong>Action needed:</strong> Contact the client to update their payment method.{next_str}<br><br>
-            If payment doesn't resolve within 3 days, consider pausing their dashboard access."""
-        )
 
-        # The client themselves previously never found out their card was
-        # declined except by Will personally reaching out — only on the
-        # FIRST attempt, so Stripe's own retry schedule doesn't turn into a
-        # repeated-email spam for the same underlying decline.
-        if attempt == 1 and email and email != "unknown" and _resend_key():
-            try:
-                conn = get_conn()
-                row = conn.execute(
-                    "SELECT r.name, r.owner_name FROM restaurants r JOIN users u ON u.restaurant_id=r.id WHERE u.email=? LIMIT 1",
-                    (email,)
-                ).fetchone()
-                conn.close()
-                if row:
-                    from emails import send_payment_failed_client_email
-                    send_payment_failed_client_email(email, row["name"] or "your restaurant", amount, row["owner_name"])
-            except Exception as ce:
-                print(f"Client payment-failed email failed: {ce}")
-
-    elif event["type"] == "customer.subscription.deleted":
-        sub   = event["data"]["object"]
-        email = sub.get("customer_email","unknown") if "customer_email" in sub else "unknown"
-        # Try to get customer email from customer ID
-        customer_id = sub.get("customer","")
-        reason = sub.get("cancellation_details",{}).get("reason","unknown")
-
-        # Actually revoke access. This used to send Will an email asking him
-        # to go deactivate the account by hand, which meant a cancelled
-        # customer kept the full dashboard, the iOS app and every AI feature
-        # until someone read that email — indefinitely, at Cavnar's API cost.
-        # auth.login_required/mobile_login_required read billing_status.
-        revoked_rid = _restaurant_for_stripe(customer_id, email)
-        if revoked_rid and sub.get("id"):
-            # The ended subscription no longer counts as the restaurant's one
-            # live subscription; a later re-subscribe is a first checkout.
-            _c_sub = get_conn()
-            try:
-                _c_sub.execute("DELETE FROM stripe_subscriptions WHERE restaurant_id=? AND subscription_id=?",
-                               (revoked_rid, sub["id"]))
-                _c_sub.commit()
-            finally:
-                _c_sub.close()
-        if revoked_rid:
-            try:
-                for _rid in _sibling_restaurant_ids(revoked_rid):
-                    update_restaurant(_rid, {"billing_status": "churned"})
-                print(f"Subscription cancelled — billing_status=churned for {_sibling_restaurant_ids(revoked_rid)}")
-            except Exception as _re:
-                print(f"Failed to mark restaurant {revoked_rid} churned: {_re}")
+def _on_checkout_completed(event, sess):
+    # The event that actually knows who paid and what for. Before this
+    # existed, nothing ran until the first invoice.paid — so the Stripe
+    # customer id was unknown in between, and the module count sitting in
+    # metadata was never read by anything at all.
+    import billing_jobs as _bj
+    import models as _m
+    meta        = sess.get("metadata") or {}
+    customer_id = sess.get("customer", "") or ""
+    sub_id      = sess.get("subscription", "") or ""
+    email       = (sess.get("customer_details") or {}).get("email") or sess.get("customer_email") or ""
+    rid = _restaurant_from_metadata(meta)
+    how = "metadata" if rid else None
+    if not rid:
+        rid = _restaurant_for_customer(customer_id) if customer_id else None
+        how = "customer" if rid else None
+    if not rid:
+        rid = _restaurant_for_stripe("", email)
+        how = "email" if rid else None
+    if rid and sub_id and _second_subscription(rid, sub_id, sess.get("id"), customer_id):
+        # Paid in both the monthly and the annual tab: the first
+        # subscription stands, this one is cancelled and Will is told to
+        # refund its setup fee (MOD-BIL-5). It is remembered as a duplicate,
+        # so that refund, its cancellation and its invoices never pause,
+        # churn or re-key the paying account (COMMS-19).
+        cancelled = False
+        try:
+            key = os.getenv("STRIPE_SECRET_KEY", "")
+            config.stripe_api(key).Subscription.cancel(sub_id)
+            cancelled = True
+            _dup_note = "The second subscription was cancelled."
+        except Exception as _de:
+            _dup_note = f"Cancelling it failed ({_safe_err(_de)}); cancel {sub_id} in Stripe."
+        _bj.record_duplicate_subscription(sub_id, rid, customer_id, sess.get("id"), cancelled=cancelled)
+        _send_alert(f"⚠ Second checkout for the same restaurant — {_emails.esc(meta.get('restaurant') or email)}",
+                    f"Restaurant {rid} completed a second checkout (subscription {sub_id}). {_dup_note} "
+                    "Refund the second setup fee in Stripe — that refund will not pause the account.")
+        return jsonify(ok=True, duplicate_subscription=True)
+    if rid:
+        r = get_restaurant(rid)
+        lock = _m.billing_hold(r)
+        updates = {}
+        notes = []
+        if lock:
+            notes.append(f"Access NOT turned on: the account is held for a {lock} until an admin lifts it "
+                         "(console → Billing → Lift hold).")
         else:
-            print(f"Subscription cancelled but no restaurant matched customer {customer_id} / {email}")
+            updates.update({"billing_status": "active", "pause_reason": None, "paused_until": None})
+        stored = (getattr(r, "stripe_customer_id", "") or "").strip()
+        if customer_id and (not stored or (how == "metadata" and stored != customer_id)):
+            # Metadata names this restaurant, so a new customer (a returning
+            # client's new checkout) replaces the old one — recorded in the
+            # billing history. An email match never overwrites (#115).
+            updates["stripe_customer_id"] = customer_id
+        elif customer_id and stored and stored != customer_id:
+            notes.append(f"This checkout's customer {customer_id} differs from the stored {stored}; "
+                         "the stored one was kept.")
+        if not getattr(r, "converted_at", None) and (sess.get("payment_status") or "paid") != "unpaid":
+            updates["converted_at"] = _bj._stamp()
+        try:
+            if updates:
+                update_restaurant(rid, updates)
+            moved = [rid] if not lock else []
+            if not lock:
+                _m2, held = _apply_state([s for s in _bj.subscription_scope(rid, sub_id) if s != rid], "active",
+                                         pause_reason=None, paused_until=None)
+                moved += _m2
+        except Exception as e:
+            print(f"checkout.session.completed: failed to activate {rid}: {e}")
+            raise
+        if sub_id:
+            _bj.upsert_subscription(rid, subscription_id=sub_id, session_id=sess.get("id"),
+                                    facts={"customer_id": customer_id or None}, event_id=event.get("id"))
+            _fill_mirror_from_stripe(rid, sub_id, event.get("id"))
+        granted = _apply_module_entitlement(rid, meta.get("module_keys", ""))
+        if sub_id:
+            _bj.record_module_mismatch(rid, meta.get("module_keys"))
+        _send_alert(
+            f"✅ Checkout completed — {_emails.esc(meta.get('restaurant') or email)}",
+            f"""Checkout completed{'' if lock else ' and access provisioned'}.<br><br>
+            <strong>Restaurant:</strong> {_emails.esc(meta.get('restaurant') or '(unknown)')} (id {rid})<br>
+            <strong>Locations on this subscription:</strong> {_names(moved) if not lock else '—'}<br>
+            <strong>Stripe customer:</strong> {customer_id or '(none)'}<br>
+            <strong>Subscription:</strong> {sub_id or '(none)'}<br>
+            <strong>Modules granted:</strong> """ + (
+                ", ".join(sorted(k.replace("module_", "") for k, v in granted.items() if v))
+                if granted else "none in metadata — entitlement left as it was, set it in admin")
+            + ("<br><br>" + "<br>".join(notes) if notes else "")
+        )
+    else:
+        # Nothing matched: do what the admin form would do, from the
+        # fields the session carries, and tell Will what happened rather
+        # than what to do (provisioning.py). Falls through to the old
+        # alert when it would have to guess.
+        # A provisioning failure is raised, not printed: the webhook then
+        # releases its claim and answers 500, so Stripe's retry provisions
+        # the paid customer instead of being dropped as a duplicate while
+        # they have no login (DATA-54).
+        import provisioning
+        _new = provisioning.provision_from_checkout(sess)
+        if _new:
+            _granted = _apply_module_entitlement(_new, meta.get("module_keys", ""))
+            if sub_id:
+                _bj.upsert_subscription(_new, subscription_id=sub_id, session_id=sess.get("id"),
+                                        facts={"customer_id": customer_id or None}, event_id=event.get("id"))
+                _fill_mirror_from_stripe(_new, sub_id, event.get("id"))
+            _send_alert(
+                f"✅ Provisioned from checkout — {_emails.esc(meta.get('restaurant') or email)}",
+                f"""No restaurant matched this checkout, so one was created from it.<br><br>
+                <strong>Restaurant id:</strong> {_new}<br>
+                <strong>Owner:</strong> {_emails.esc(email)}<br>
+                <strong>Stripe customer:</strong> {customer_id or '(none)'}<br>
+                <strong>Modules:</strong> {', '.join(sorted(k.replace('module_', '') for k, v in (_granted or {}).items() if v)) or 'reviews'}<br><br>
+                The welcome email with a set-password link is owed to the owner (it retries until it
+                is delivered). Add the Google Place ID and the contract at
+                <a href="https://dashboard.cavnar.ai/admin">dashboard.cavnar.ai/admin</a>."""
+            )
+            return jsonify(ok=True, provisioned=_new), 200
+        _send_alert(
+            "⚠ Checkout completed but no restaurant matched",
+            f"""A checkout completed and could not be reconciled.<br><br>
+            <strong>Customer:</strong> {customer_id}<br>
+            <strong>Email:</strong> {_emails.esc(email)}<br>
+            <strong>Metadata:</strong> {_emails.esc(meta)}<br><br>
+            Nothing was provisioned. Set this up by hand at
+            <a href="https://dashboard.cavnar.ai/admin">dashboard.cavnar.ai/admin</a>."""
+        )
+    return jsonify(ok=True)
 
-        send_alert(
+
+def _on_subscription_changed(event, sub, rid, how):
+    """customer.subscription.created / .updated — the mirror first, then state.
+
+    Module flags follow Stripe only when Stripe's plan actually changed
+    (previous_attributes names metadata or items, or the subscription is
+    new). Every update used to re-apply checkout's module_keys, so a module
+    the console added was silently revoked at the next renewal (#106); a
+    disagreement is now recorded on the mirror for the console to raise."""
+    import billing_jobs as _bj
+    from client_api import log_account_event
+    etype = event.get("type") or ""
+    sub_id = sub.get("id")
+    meta = sub.get("metadata") or {}
+    status = (sub.get("status") or "").lower()
+    if not rid:
+        print(f"{etype} for unmatched customer {sub.get('customer','')}")
+        return jsonify(ok=True, unmatched=True)
+    if how == "duplicate" or _bj.duplicate_subscription(sub_id):
+        return jsonify(ok=True, duplicate_subscription=True)
+    mirror = _bj.mirror_row(rid)
+    if mirror and mirror.get("subscription_id") != sub_id and status in _bj.LIVE_SUB_STATES \
+            and _subscription_still_live(rid, mirror):
+        # The restaurant is billed on another live subscription; this one
+        # must not move its state. Two live subscriptions is Will's call.
+        _send_alert(f"⚠ Second live subscription — {_names([rid])}",
+                    f"Stripe reports subscription {sub_id} ({status}) for restaurant {rid}, which is billed "
+                    f"on {mirror.get('subscription_id')}. Nothing was changed; cancel whichever is wrong in Stripe.")
+        return jsonify(ok=True, untracked_subscription=True)
+    if mirror and mirror.get("subscription_id") != sub_id and status not in _bj.LIVE_SUB_STATES:
+        return jsonify(ok=True, ignored="an old subscription")
+    _bj.upsert_subscription(rid, sub=sub, event_id=event.get("id"))
+    prev_attrs = (event.get("data") or {}).get("previous_attributes") or {}
+    plan_changed = etype == "customer.subscription.created" or "metadata" in prev_attrs or "items" in prev_attrs
+    granted = _apply_module_entitlement(rid, meta.get("module_keys", "")) if plan_changed else {}
+    mm = _bj.record_module_mismatch(rid, meta.get("module_keys"))
+    r = get_restaurant(rid)
+    _prev = (getattr(r, "billing_status", "") or "").lower()
+    scope = _bj.subscription_scope(rid, sub_id)
+    paused_until = _paused_until(sub)
+    held = []
+    if paused_until and status in _bj.LIVE_SUB_STATES:
+        # A pause (self-serve, or set in the Stripe dashboard) leaves
+        # status "active" with pause_collection set. This event fires
+        # for the pause itself, so reading status alone would undo a
+        # pause seconds after it was made. When Stripe reaches
+        # resumes_at it clears pause_collection and fires again, and
+        # the branch below brings the account back on its own.
+        _moved, held = _apply_state(scope, "paused", pause_reason="self", paused_until=paused_until)
+        print(f"billing_status=paused until {paused_until} for {_moved} ({etype})")
+        # One account history whoever pressed the button: a pause
+        # set in the Stripe dashboard reads exactly like a self-serve
+        # one in Account → Security → Activity.
+        if _prev != "paused" and _moved:
+            log_account_event(rid, "subscription_paused", detail=f"set in Stripe, resumes {paused_until}")
+    elif status in ("active", "trialing"):
+        _moved, held = _apply_state(scope, "active", pause_reason=None, paused_until=None)
+        if _prev == "paused" and rid in _moved:
+            log_account_event(rid, "subscription_resumed",
+                              detail="Stripe reached the resume date, or the pause was cleared in Stripe")
+    elif status in ("past_due", "paused"):
+        _moved, held = _apply_state(scope, "past_due", pause_reason=None, paused_until=None,
+                                    skip_from=("churned", "canceled", "cancelled"))
+    elif status in _bj.ENDED_SUB_STATES:
+        _moved, held = _apply_state(scope, "churned", override_locks=True)
+    if granted or mm or held or status not in ("active", "trialing"):
+        _send_alert(
+            f"🔁 Subscription changed — {_emails.esc(meta.get('restaurant') or rid)}",
+            f"""Subscription status is now <strong>{_emails.esc(status)}</strong>.<br><br>
+            <strong>Restaurant id:</strong> {rid}<br>
+            <strong>Modules:</strong> """ + (
+                ", ".join(sorted(k.replace("module_", "") for k, v in granted.items() if v))
+                if granted else "unchanged")
+            + (f"<br><strong>Stripe bills</strong> {', '.join(mm['stripe'])} but the account has "
+               f"{', '.join(mm['local']) or 'none'} — use Change plan in the console to line them up." if mm else "")
+            + (f"<br><strong>Held by a lock (not changed):</strong> {_names(held)}" if held else "")
+        )
+    return jsonify(ok=True)
+
+
+def _on_subscription_deleted(event, sub, rid, how):
+    """The subscription is over: every location it covered is churned —
+    and ONLY the locations it covered, and only when it is the restaurant's
+    current subscription (#115). An old or duplicate subscription ending
+    changes nothing."""
+    import billing_jobs as _bj
+    sub_id = sub.get("id")
+    customer_id = sub.get("customer", "")
+    details = sub.get("cancellation_details") or {}
+    reason = details.get("reason") or "unknown"
+    if how == "duplicate" or _bj.duplicate_subscription(sub_id):
+        _bj.record_duplicate_subscription(sub_id, rid, customer_id if isinstance(customer_id, str) else None,
+                                          cancelled=True)
+        print(f"Duplicate subscription {sub_id} ended — nothing to revoke")
+        return jsonify(ok=True, duplicate_subscription=True)
+    if not rid:
+        print(f"Subscription cancelled but no restaurant matched customer {customer_id}")
+        _send_alert(
             f"📋 Subscription cancelled — {customer_id}",
             f"""A client subscription has been cancelled.<br><br>
             <strong>Customer ID:</strong> {customer_id}<br>
-            <strong>Reason:</strong> {reason}<br>
-            <strong>Access:</strong> """ + (
-                f"automatically revoked (restaurant {revoked_rid} set to churned)."
-                if revoked_rid else
-                "NOT revoked — no restaurant matched this Stripe customer. "
-                "Deactivate manually at <a href=\"https://dashboard.cavnar.ai/admin\">dashboard.cavnar.ai/admin</a>."
-            ) + """<br>
-            <strong>Action needed:</strong> If this was unintentional, restore their
-            billing status at <a href="https://dashboard.cavnar.ai/admin">dashboard.cavnar.ai/admin</a>."""
+            <strong>Subscription:</strong> {sub_id}<br>
+            <strong>Reason:</strong> {_emails.esc(reason)}<br>
+            <strong>Access:</strong> NOT revoked — no restaurant is billed on this subscription or customer.
+            Check it at <a href="https://dashboard.cavnar.ai/admin">dashboard.cavnar.ai/admin</a>."""
         )
+        return jsonify(ok=True, unmatched=True)
+    mirror = _bj.mirror_row(rid)
+    if mirror and mirror.get("subscription_id") != sub_id and _bj.is_live_status(mirror.get("status")):
+        print(f"Subscription {sub_id} ended; restaurant {rid} is billed on {mirror.get('subscription_id')} — no change")
+        return jsonify(ok=True, ignored="not the current subscription")
+    facts = _bj.subscription_facts(sub)
+    facts["status"] = facts.get("status") or "canceled"
+    _bj.upsert_subscription(rid, facts=facts, subscription_id=sub_id, event_id=event.get("id"))
+    scope = _bj.subscription_scope(rid, sub_id)
+    # Raises on a failed write: the alert below then never claims a
+    # revocation that did not happen, and Stripe redelivers (#7).
+    moved, _held = _apply_state(scope, "churned", override_locks=True)
+    print(f"Subscription cancelled — billing_status=churned for {moved}")
+    _send_alert(
+        f"📋 Subscription cancelled — {customer_id}",
+        f"""A client subscription has been cancelled.<br><br>
+        <strong>Customer ID:</strong> {customer_id}<br>
+        <strong>Reason:</strong> {_emails.esc(reason)}{(' · ' + _emails.esc(details.get('feedback'))) if details.get('feedback') else ''}<br>
+        <strong>Access:</strong> revoked — set to churned: {_names(moved)}.<br>
+        <strong>Action needed:</strong> If this was unintentional, restore their
+        billing status at <a href="https://dashboard.cavnar.ai/admin">dashboard.cavnar.ai/admin</a>."""
+    )
+    return jsonify(ok=True)
 
-    elif event["type"] == "invoice.paid":
-        inv         = event["data"]["object"]
-        customer_id = inv.get("customer","")
-        email       = inv.get("customer_email","unknown")
-        amount      = inv.get("amount_paid", 0) / 100
-        billing_reason = inv.get("billing_reason","")  # subscription_create, subscription_cycle, etc.
-        print(f"Payment received: {email} — ${amount:.2f} ({billing_reason})")
-        if customer_id or email:
-            try:
-                _rid = _restaurant_for_stripe(customer_id, email)
-                row = None
-                if _rid:
-                    conn = get_conn()
-                    row = conn.execute(
-                        "SELECT id, billing_status FROM restaurants WHERE id=?", (_rid,)
-                    ).fetchone()
-                    conn.close()
-                if row:
-                    updates = {"stripe_customer_id": customer_id}
-                    # Auto-activate billing status on first real payment
-                    # (subscription_cycle = recurring charge, subscription_create = first charge after trial)
-                    first_payment = (
-                        billing_reason in ("subscription_cycle", "subscription_create")
-                        and dict(row)["billing_status"] != "active"
-                    )
-                    if first_payment:
-                        updates["billing_status"] = "active"
-                        print(f"Auto-activated billing_status for {email}")
-                    elif (dict(row)["billing_status"] or "").lower() == "past_due":
-                        # A retry succeeded. Clear the dunning state even when
-                        # billing_reason isn't one of the two above, or a
-                        # recovered client would sit in past_due forever.
-                        updates["billing_status"] = "active"
-                        print(f"Payment recovered — cleared past_due for {email}")
-                    # A paid invoice reactivates every location in the group —
-                    # the same set cancellation churns — so a customer who
-                    # pays after lapsing regains access everywhere at once.
-                    for _sib in _sibling_restaurant_ids(dict(row)["id"]):
-                        update_restaurant(_sib, dict(updates) if _sib == dict(row)["id"]
-                                          else {k: v for k, v in updates.items() if k != "stripe_customer_id"})
-                    print(f"Saved Stripe customer {customer_id} for {email}")
 
-                    # Notify Will when a client converts from trial to paid
-                    if first_payment and _resend_key():
-                        try:
-                            # Get restaurant name
-                            conn2 = get_conn()
-                            rname_row = conn2.execute(
-                                "SELECT name FROM restaurants WHERE id=?", (dict(row)["id"],)
-                            ).fetchone()
-                            conn2.close()
-                            rname = rname_row["name"] if rname_row else email
-                            # Through emails.deliver: suppression, retry and
-                            # email_log (MOD-EML-4).
-                            _emails.deliver_or_raise(email_type="Admin Alert", restaurant_id=dict(row)["id"], payload={
-                                "from": _emails.sender("ops"),
-                                "to": [WILL_EMAIL],
-                                "subject": f"💳 New paying client — {rname}",
-                                "html": _html_doc(f"""<div style="font-family:sans-serif;max-width:500px;margin:0 auto">
-                                    <div style="border-top:3px solid #2d6a4f;padding-top:20px;margin-bottom:16px">
-                                        <h3 style="color:#0e0c0a;margin:0">New paying client</h3>
-                                    </div>
-                                    <p style="font-size:15px;line-height:1.6">
-                                        <strong>{rname}</strong> just converted from trial to paid.<br><br>
-                                        <strong>Email:</strong> {email}<br>
-                                        <strong>Amount:</strong> ${amount:.2f}<br>
-                                        <strong>Billing:</strong> {billing_reason.replace('_',' ').title()}
-                                    </p>
-                                    <hr style="border:none;border-top:1px solid #e0dbd0;margin:16px 0"/>
-                                    <p style="font-size:11px;color:#7a736a">
-                                        <a href="https://dashboard.cavnar.ai/admin" style="color:#c84b2f">View in admin →</a>
-                                    </p>
-                                </div>"""),
-                            })
+def _on_money_returned(event, obj, rid, how):
+    """charge.refunded / charge.dispute.created (lead default 5).
 
-                            # Send branded receipt to the client
-                            try:
-                                from datetime import datetime as _dt
-                                from time_utils import mdy as _mdy
-                                receipt_date = _mdy(_dt.now())  # M/D/YY, the owner-facing date form
-                                _emails.deliver_or_raise(email_type="Payment Receipt", restaurant_id=dict(row)["id"], payload={
-                                    "from": _emails.sender("client"),
-                                    "to": [email],
-                                    "subject": f"Payment confirmed — Cavnar AI",
-                                    "html": _html_doc(f"""<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
-                                    <div style="font-family:'DM Sans',sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:white;border-radius:12px;box-sizing:border-box">
-                                      <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="150" height="26" alt="Cavnar AI" style="display:block;width:150px;height:26px;border:0;outline:none;margin-bottom:24px">
-                                      <h2 style="font-size:18px;font-weight:600;margin-bottom:8px;color:#0e0c0a">Payment confirmed ✓</h2>
-                                      <p style="font-size:14px;color:#4a4540;line-height:1.6;margin-bottom:20px">
-                                        Thank you — your payment of <strong>${amount:.2f}</strong> has been received for <strong>{rname}</strong>.
-                                      </p>
-                                      <div style="background:#f5f3f0;border-radius:8px;padding:16px 20px;margin-bottom:20px">
-                                        <div style="font-size:12px;color:#7a736a;margin-bottom:4px">Date</div>
-                                        <div style="font-size:14px;font-weight:500;color:#0e0c0a;margin-bottom:12px">{receipt_date}</div>
-                                        <div style="font-size:12px;color:#7a736a;margin-bottom:4px">Amount</div>
-                                        <div style="font-size:14px;font-weight:500;color:#0e0c0a;margin-bottom:12px">${amount:.2f}</div>
-                                        <div style="font-size:12px;color:#7a736a;margin-bottom:4px">Restaurant</div>
-                                        <div style="font-size:14px;font-weight:500;color:#0e0c0a">{rname}</div>
-                                      </div>
-                                      <p style="font-size:13px;color:#4a4540;line-height:1.6;margin-bottom:20px">
-                                        Your dashboard is active and all modules are running. Questions? Reply to this email or reach me at will@cavnar.ai.
-                                      </p>
-                                      <a href="https://dashboard.cavnar.ai" style="display:inline-block;background:#c84b2f;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">Go to dashboard →</a>
-                                      <hr style="border:none;border-top:1px solid #e5e0db;margin:24px 0">
-                                      <p style="font-size:11px;color:#9ca3af">Cavnar AI · will@cavnar.ai · cavnar.ai</p>
-                                    </div>
-                                    </div>"""),
-                                })
-                            except Exception as re_err:
-                                print(f"Receipt email failed: {re_err}")
-                        except Exception as ne:
-                            print(f"First payment notification failed: {ne}")
-            except Exception as e:
-                print(f"Failed to save Stripe customer ID: {e}")
-                raise
+    A dispute locks the whole group, reason 'dispute'. A FULL refund locks
+    only the restaurant that paid, reason 'refund'. A partial refund — a $5
+    goodwill credit on a $750 charge — changes nothing (MOD-BIL-2). Only an
+    admin lifts either lock; the owner's Resume button and later Stripe
+    events no longer can (#114). The duplicate checkout's refund, which the
+    duplicate alert tells Will to issue, locks nobody (COMMS-19)."""
+    import billing_jobs as _bj
+    etype = event.get("type") or ""
+    disputed = etype == "charge.dispute.created"
+    customer_id = obj.get("customer", "") or ""
+    email = (obj.get("billing_details") or {}).get("email") or obj.get("receipt_email") or ""
+    if disputed:
+        amount = (obj.get("amount") or 0) / 100
+        full_refund = False
+    else:
+        amount = (obj.get("amount_refunded") or 0) / 100
+        full_refund = bool(obj.get("refunded")) or (
+            (obj.get("amount_refunded") or 0) >= (obj.get("amount") or 0) > 0)
+    locked = []
+    if how == "duplicate":
+        access = "unchanged — this charge was the duplicate checkout's, cancelled against the paying one."
+    elif rid and disputed:
+        locked = _lock_accounts(_sibling_restaurant_ids(rid), "dispute")
+        access = (f"paused for a dispute: {_names(locked)}. Only an admin can lift it — "
+                  "Billing → Lift hold in the console.")
+    elif rid and full_refund:
+        locked = _lock_accounts([rid], "refund")
+        access = (f"paused for a full refund: {_names(locked)} (only the location that paid). "
+                  "Lift it in the console if the refund was a goodwill gesture.")
+    elif rid:
+        access = "left on — a partial refund does not pause the account."
+    else:
+        access = ("NOT changed — no restaurant matched this charge. Handle it by hand at "
+                  "<a href=\"https://dashboard.cavnar.ai/admin\">dashboard.cavnar.ai/admin</a>.")
+    _send_alert(
+        ("⛔ Chargeback opened — " if disputed else "↩ Refund issued — ") + _emails.esc(email or customer_id),
+        f"""{'A customer has disputed a charge.' if disputed else 'A charge was refunded.'}<br><br>
+        <strong>Amount:</strong> ${amount:,.2f}{'' if disputed or full_refund else ' (partial)'}<br>
+        <strong>Customer:</strong> {customer_id or '(none)'}<br>
+        <strong>Email:</strong> {_emails.esc(email) or '(none)'}<br>
+        <strong>Access:</strong> {access}"""
+    )
+    return jsonify(ok=True)
 
+
+def _on_dispute_closed(event, obj, rid, how):
+    """A dispute's outcome. Nothing is lifted on its own: whether a client
+    who disputed a charge keeps the product is Will's decision."""
+    status = obj.get("status") or "closed"
+    _send_alert(
+        f"⚖ Dispute closed ({_emails.esc(status)}) — {_names([rid]) if rid else obj.get('charge')}",
+        f"""A dispute has closed with status <strong>{_emails.esc(status)}</strong>.<br><br>
+        The account stays on hold until an admin lifts it (console → Billing → Lift hold)."""
+    )
+    return jsonify(ok=True)
+
+
+def _on_payment_failed(event, inv, rid, how):
+    """A charge failed: past_due (still in service) for the locations the
+    subscription covers, and a dunning email owed to the owner and every
+    principal login on attempts 1, 2 and 3, with a link that fixes the card
+    (#25). The dunning stops when the invoice is paid."""
+    import billing_jobs as _bj
+    email   = inv.get("customer_email", "unknown")
+    amount  = inv.get("amount_due", 0) / 100
+    attempt = int(inv.get("attempt_count") or 1)
+    next_attempt = inv.get("next_payment_attempt")
+    next_str = f" Stripe will retry on {_mdy_ts(next_attempt)}." if next_attempt else " Stripe will not retry again."
+    facts = _bj.record_invoice(inv, rid if how != "duplicate" else None, event.get("id"), failed=True)
+    owed = []
+    if rid and how != "duplicate":
+        # past_due is in ACTIVE_BILLING_STATES, so this is a warning state
+        # and not a lockout — access continues while Stripe retries. A
+        # paused (locked or self-paused) or churned account is never moved
+        # back into service by its card failing (MOD-BIL-2).
+        _apply_state(_bj.subscription_scope(rid, facts.get("subscription_id")), "past_due",
+                     skip_from=("paused", "churned", "canceled", "cancelled"))
+        # Dunning says "your dashboard keeps running": owed only to an
+        # account that is past due now — never to one on hold or churned.
+        if (getattr(get_restaurant(rid), "billing_status", "") or "").lower() == "past_due":
+            owed, _made = _bj.enqueue_dunning(rid, facts.get("invoice_id"), attempt,
+                                              facts.get("amount_remaining_cents") or facts.get("amount_due_cents"),
+                                              facts.get("next_payment_attempt"))
+    client_note = (f"the client is owed a dunning email ({len(owed)} recipient(s)); it goes out within minutes."
+                   if owed else ("no client email for this attempt (only attempts 1–3 are emailed)."
+                                 if rid and attempt > 3 else
+                                 ("no client email — the account is on hold or not in service."
+                                  if rid and how != "duplicate" else "no client email — no restaurant matched.")))
+    _send_alert(
+        f"⚠ Payment failed — {_emails.esc(email)}",
+        f"""A client payment has failed.<br><br>
+        <strong>Restaurant:</strong> {_names([rid]) if rid and how != 'duplicate' else '(no restaurant matched)'}<br>
+        <strong>Customer:</strong> {_emails.esc(email)}<br>
+        <strong>Amount:</strong> ${amount:.2f}<br>
+        <strong>Attempt:</strong> #{attempt}.{next_str}<br>
+        <strong>Client:</strong> {client_note}<br><br>
+        The console's "Send card-update link" re-sends the fix-your-card link on demand."""
+    )
+    return jsonify(ok=True)
+
+
+def _on_invoice_paid(event, inv, rid, how):
+    """A paid invoice: one receipt per invoice id (#155), dunning for it
+    stood down (#25), past-due cleared, and — on the first paid invoice
+    with a non-zero retainer charge — the "New paying client" alert. None of
+    it depends on the order Stripe delivers checkout and invoice events in
+    any more: the receipt used to go only when the account was not already
+    active, which checkout had almost always made it."""
+    import billing_jobs as _bj
+    import ops
+    customer_id = inv.get("customer", "") if isinstance(inv.get("customer"), str) else ""
+    email = inv.get("customer_email", "unknown")
+    facts = _bj.record_invoice(inv, rid if how != "duplicate" else None, event.get("id"), paid=True)
+    inv_id = facts.get("invoice_id")
+    amount_paid = int(facts.get("amount_paid_cents") or 0)
+    billing_reason = inv.get("billing_reason", "")
+    sub_id = facts.get("subscription_id")
+    print(f"Payment received: {inv_id} — ${amount_paid / 100:.2f} ({billing_reason})")
+    if inv_id:
+        _bj.cancel_owed(kind="dunning", key_prefix=f"dunning:{inv_id}:", reason="invoice paid")
+    if how == "duplicate":
+        return jsonify(ok=True, duplicate_subscription=True)
+    if not rid:
+        _send_alert(f"💳 Payment received — no restaurant matched ({_emails.esc(email)})",
+                    f"Invoice {inv_id} (${amount_paid / 100:,.2f}) was paid by customer {customer_id or '(none)'}, "
+                    "which no restaurant is billed to. Nothing was changed.")
+        return jsonify(ok=True, unmatched=True)
+    r = get_restaurant(rid)
+    updates = {}
+    stored = (getattr(r, "stripe_customer_id", "") or "").strip()
+    if customer_id and not stored and how in ("subscription", "metadata"):
+        updates["stripe_customer_id"] = customer_id
+    if amount_paid > 0 and not getattr(r, "converted_at", None):
+        updates["converted_at"] = _bj._stamp()
+    if updates:
+        update_restaurant(rid, updates)
+    mirror = _bj.mirror_row(rid)
+    if sub_id and (not mirror or not _bj.is_live_status(mirror.get("status"))):
+        # A paid invoice for a subscription the mirror did not hold (its
+        # created event missed, or a returning client): it is the current one.
+        _bj.upsert_subscription(rid, subscription_id=sub_id, facts={"customer_id": customer_id or None,
+                                                                    "status": None}, event_id=event.get("id"))
+        mirror = _bj.mirror_row(rid)
+    current = bool(sub_id and mirror and mirror.get("subscription_id") == sub_id)
+    cur = (getattr(r, "billing_status", "") or "").lower()
+    if current and (cur == "past_due" or (cur in ("", "trial", "pending", "churned", "canceled", "cancelled")
+                                          and billing_reason in ("subscription_create", "subscription_cycle",
+                                                                 "subscription_update"))):
+        # A retry succeeded, or the retainer (or the first invoice) was paid:
+        # every location the subscription covers is in service. A lock only
+        # an admin lifts stays where it is.
+        _apply_state(_bj.subscription_scope(rid, sub_id), "active", pause_reason=None, paused_until=None)
+    if amount_paid > 0 and inv_id:
+        _bj.enqueue("receipt", rid, f"receipt:{inv_id}", to_email=(r.owner_email or None) or
+                    (email if email and email != "unknown" else None),
+                    payload={"invoice_id": inv_id, "amount_cents": amount_paid, "kind": facts.get("kind")},
+                    source="stripe")
+    if int(facts.get("recurring_cents") or 0) > 0 and amount_paid > 0 and _bj.first_paid_retainer(rid, inv_id) \
+            and ops.claim_period("conversion_alert", str(rid)):
+        _send_alert(
+            f"💳 New paying client — {_emails.esc(r.name)}",
+            f"""<strong>{_emails.esc(r.name)}</strong> just paid its first retainer invoice.<br><br>
+            <strong>Amount:</strong> ${amount_paid / 100:,.2f}<br>
+            <strong>Invoice:</strong> {inv_id} ({_emails.esc(billing_reason.replace('_', ' '))})"""
+        )
     return jsonify(ok=True)
 
 @webhook_bp.route("/docusign/callback")
@@ -890,6 +1275,29 @@ def docusign_callback():
         </div>"""
     return redirect("/admin")
 
+
+# DocuSign Connect names an envelope's state two ways (legacy "status" and
+# the JSON SIM "event"); both map here. A recipient-level decline is the
+# client refusing the agreement.
+_DOCUSIGN_STATES = {
+    "completed": "completed", "envelope-completed": "completed",
+    "declined": "declined", "envelope-declined": "declined", "recipient-declined": "declined",
+    "voided": "voided", "envelope-voided": "voided",
+    "delivered": "delivered", "envelope-delivered": "delivered", "recipient-delivered": "delivered",
+}
+
+
+def _docusign_reason(data, state):
+    summ = (data.get("data") or {}).get("envelopeSummary") or {}
+    if state == "voided":
+        return (summ.get("voidedReason") or data.get("voidedReason") or "")[:300]
+    if state == "declined":
+        for s in ((summ.get("recipients") or {}).get("signers") or []):
+            if s.get("declinedReason"):
+                return str(s["declinedReason"])[:300]
+    return ""
+
+
 @webhook_bp.route("/docusign/webhook", methods=["POST"])
 def docusign_webhook():
     """Receive DocuSign connect notifications when envelope status changes."""
@@ -903,28 +1311,20 @@ def docusign_webhook():
         # unsigned "completed" marked a contract signed and could replace the
         # owner's password (SEC-11, MOD-BIL-7). A missing variable now stops
         # every delivery, loudly, instead of trusting every caller.
-        try:
-            import ops
-            ops.capture(RuntimeError("DOCUSIGN_WEBHOOK_SECRET is not set; DocuSign webhook refused"),
-                        job="docusign_webhook", context="missing secret")
-        except Exception:
-            pass
+        _webhook_seen("docusign", False, error="DOCUSIGN_WEBHOOK_SECRET is not set")
         return jsonify(error="Unauthorized"), 401
-    if ds_secret:
-        import hmac as _hmac_ds, hashlib as _hashlib_ds, base64 as _b64_ds
-        auth_header = request.headers.get("X-DocuSign-Signature-1", "")
-        raw_bytes = request.get_data()
-        expected = _b64_ds.b64encode(
-            _hmac_ds.new(ds_secret.encode(), raw_bytes, _hashlib_ds.sha256).digest()
-        ).decode()
-        if not auth_header or not _hmac_ds.compare_digest(auth_header, expected):
-            return jsonify(error="Unauthorized"), 401
+    import hmac as _hmac_ds, hashlib as _hashlib_ds, base64 as _b64_ds
+    auth_header = request.headers.get("X-DocuSign-Signature-1", "")
+    raw_bytes = request.get_data()
+    expected = _b64_ds.b64encode(
+        _hmac_ds.new(ds_secret.encode(), raw_bytes, _hashlib_ds.sha256).digest()
+    ).decode()
+    if not auth_header or not _hmac_ds.compare_digest(auth_header, expected):
+        _webhook_seen("docusign", False, error="signature mismatch" if auth_header else "no signature header")
+        return jsonify(error="Unauthorized"), 401
     claimed_key = None
     try:
-        raw = request.get_data(as_text=True)
-        print(f"DocuSign webhook received: {raw[:500]}")
         data = request.get_json(force=True) or {}
-        print(f"DocuSign webhook parsed keys: {list(data.keys())}")
         # Try multiple envelope ID locations
         envelope_id = (
             data.get("envelopeId") or
@@ -932,133 +1332,39 @@ def docusign_webhook():
             data.get("data",{}).get("envelopeSummary",{}).get("envelopeId","")
         )
         # Try multiple status locations
-        status = (
+        raw_status = (
             data.get("status") or
             data.get("event") or
             data.get("data",{}).get("envelopeSummary",{}).get("status","") or
             data.get("data",{}).get("status","")
         )
-        print(f"DocuSign webhook envelope_id={envelope_id} status={status}")
-
-        if envelope_id and status in ("completed", "envelope-completed"):
-            if not _claim_docusign_event(envelope_id, "completed"):
-                print(f"DocuSign envelope {envelope_id} already processed — ignoring repeat delivery")
-                return jsonify(ok=True, duplicate=True), 200
-            claimed_key = f"{envelope_id}:completed"
-            # Mark contract as signed
-            conn = get_conn()
-            row = conn.execute(
-                """SELECT r.id, r.name, r.owner_email, r.owner_name, r.google_place_id, u.id AS user_id,
-                          r.module_reviews, r.module_labor, r.module_inventory, r.module_marketing,
-                          u.username, u.last_login
-                   FROM restaurants r
-                   JOIN users u ON u.restaurant_id = r.id AND u.is_admin = 0
-                   WHERE r.docusign_envelope_id = ?
-                      OR r.id = (SELECT restaurant_id FROM docusign_envelopes WHERE envelope_id = ?)
-                   ORDER BY (r.docusign_envelope_id = ?) DESC LIMIT 1""",
-                (envelope_id, envelope_id, envelope_id)
-            ).fetchone()
-            # A superseded envelope (the contract was re-sent, then the client
-            # signed the first email) still marks its restaurant signed.
-            conn.execute(
-                "UPDATE restaurants SET contract_status='signed' WHERE docusign_envelope_id=? "
-                "OR id = (SELECT restaurant_id FROM docusign_envelopes WHERE envelope_id = ?)",
-                (envelope_id, envelope_id)
-            )
-            conn.commit()
-            conn.close()
-            import models as _models_inv
-            _models_inv._invalidate_request_cache()
-            print(f"Contract signed: {envelope_id}")
+        state = _DOCUSIGN_STATES.get(str(raw_status or "").strip().lower())
+        # The envelope id and its status, never the payload: it carries the
+        # signers' names and addresses (COMMS-24).
+        print(f"DocuSign webhook envelope_id={envelope_id} status={raw_status}")
+        _webhook_seen("docusign", True, event=f"{envelope_id}:{raw_status}")
+        if not envelope_id or not state:
+            return jsonify(ok=True)
+        if not _claim_docusign_event(envelope_id, state):
+            print(f"DocuSign envelope {envelope_id} already processed ({state}) — ignoring repeat delivery")
+            return jsonify(ok=True, duplicate=True), 200
+        claimed_key = f"{envelope_id}:{state}"
+        if state == "completed":
+            owed = _docusign_completed(envelope_id)
+        else:
+            _docusign_state(envelope_id, state, _docusign_reason(data, state))
+            owed = []
+        # From here on only emails are sent; a failure in them must not
+        # release the claim (that would re-send on DocuSign's retry). They
+        # are owed first (billing_jobs.owed_sends), so a send that fails
+        # here is retried by the drain rather than lost (#12).
+        claimed_key = None
+        if owed:
             try:
-                import admin_events as _ae
-                _ae.record("docusign", "contract.signed", restaurant_id=(row["id"] if row else None),
-                           email=(row["owner_email"] if row else None), summary="Contract signed", envelope_id=envelope_id)
-            except Exception:
-                pass
-
-            if not row:
-                print(f"WARNING: No restaurant found for envelope {envelope_id} - emails not sent")
-            elif not _resend_key():
-                print(f"WARNING: No RESEND_API_KEY - emails not sent")
-
-            # From here on only emails are sent; a failure in them must not
-            # release the claim (that would re-send on DocuSign's retry).
-            claimed_key = None
-            # A re-sent contract signed by a client who is already paying is a
-            # contract update, not onboarding: no second setup-fee link and
-            # no welcome email (MOD-BIL-6).
-            if row and (getattr(get_restaurant(row["id"]), "billing_status", "") or "").lower() in ("active", "past_due"):
-                print(f"Envelope {envelope_id} signed by an already-paying client — no payment or welcome email")
-                row = None
-            if row and _resend_key():
-                r = dict(row)
-                mods = sum([
-                    1 if r.get("module_reviews") else 0,
-                    1 if r.get("module_labor") else 0,
-                    1 if r.get("module_inventory") else 0,
-                    1 if r.get("module_marketing") else 0,
-                ])
-                _module_keys = [k for k, on in (
-                    ("reviews",   r.get("module_reviews")),
-                    ("labor",     r.get("module_labor")),
-                    ("inventory", r.get("module_inventory")),
-                    ("marketing", r.get("module_marketing")),
-                ) if on]
-
-                # Send payment email
-                try:
-                    send_payment_email(
-                        to_email=r["owner_email"],
-                        restaurant_name=r["name"],
-                        module_count=mods,
-                        restaurant_id=r["id"],
-                        modules=_module_keys,
-                    )
-                    print(f"Payment email sent to {r['owner_email']} after signing")
-                    try:
-                        log_email(r["id"], "payment", r["owner_email"], f"Payment link — {r['name']}")
-                    except Exception: pass
-                except Exception as e:
-                    print(f"Payment email failed after signing: {e}")
-
-                # Send welcome email with credentials — only to an owner who
-                # has never signed in. Every completion used to mint and email
-                # a new temporary password, so a repeat or forged completion
-                # replaced the password of an owner already using the product
-                # (SEC-11).
-                try:
-                    if r.get("last_login"):
-                        raise _AlreadyOnboarded()
-                    # A fresh temporary password, minted here and emailed once.
-                    # It used to be read back from restaurants.temp_password,
-                    # which meant a plaintext login credential sat in the
-                    # database from client creation until this email went.
-                    import secrets as _sec_pw
-                    from models import reset_user_password as _rup
-                    tmp_pw = _sec_pw.token_urlsafe(9)
-                    _rup(r["user_id"], tmp_pw)
-                    send_welcome_email(
-                        to_email=r["owner_email"],
-                        restaurant_name=r["name"],
-                        username=r["username"],
-                        password=tmp_pw,
-                        module_reviews=int(r.get("module_reviews") or 0),
-                        module_labor=int(r.get("module_labor") or 0),
-                        module_inventory=int(r.get("module_inventory") or 0),
-                        module_marketing=int(r.get("module_marketing") or 0),
-                        google_place_id=r.get("google_place_id"),
-                        owner_name=r.get("owner_name"),
-                    )
-                    print(f"Welcome email sent to {r['owner_email']} after signing")
-                    try:
-                        log_email(r["id"], "welcome", r["owner_email"], f"Welcome — {r['name']}")
-                    except Exception: pass
-                except _AlreadyOnboarded:
-                    print(f"Owner of {r['name']} has already signed in — no new temporary password")
-                except Exception as e:
-                    print(f"Welcome email failed after signing: {e}")
-
+                import billing_jobs as _bj
+                _bj.drain_owed_sends(ids=owed)
+            except Exception as e:
+                print(f"post-signing send attempt failed; the outbox retries it: {e}")
         return jsonify(ok=True)
     except Exception as e:
         print(f"DocuSign webhook error: {e}")
@@ -1074,6 +1380,110 @@ def docusign_webhook():
             return jsonify(error="processing failed; will retry"), 500
         return jsonify(ok=True)
 
+
+def _envelope_restaurants(envelope_id):
+    """Every restaurant this envelope belongs to: the one it is current for,
+    and the one it was sent to if it has since been superseded (MOD-BIL-6)."""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT id, docusign_envelope_id FROM restaurants WHERE docusign_envelope_id=? "
+            "OR id = (SELECT restaurant_id FROM docusign_envelopes WHERE envelope_id=?) "
+            "ORDER BY (docusign_envelope_id = ?) DESC, id",
+            (envelope_id, envelope_id, envelope_id)).fetchall()
+        return [(r["id"], r["docusign_envelope_id"] == envelope_id) for r in rows]
+    finally:
+        conn.close()
+
+
+def _record_envelope_state(envelope_id, state, reason=""):
+    conn = get_conn()
+    try:
+        conn.execute("UPDATE docusign_envelopes SET status=?, status_at=datetime('now'), status_reason=? "
+                     "WHERE envelope_id=?", (state, reason or None, envelope_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _docusign_state(envelope_id, state, reason=""):
+    """declined / voided / delivered (#144): recorded on the envelope and the
+    ledger, and — when it is the restaurant's current envelope and the
+    contract is not already signed — on contract_status, which the console
+    raises. A superseded envelope being voided changes nothing current."""
+    import admin_events as _ae
+    import models as _m
+    _record_envelope_state(envelope_id, state, reason)
+    rids = _envelope_restaurants(envelope_id)
+    for rid, current in rids:
+        r = get_restaurant(rid)
+        if not r:
+            continue
+        cs = (r.contract_status or "pending").lower()
+        if current and cs != "signed" and (state != "delivered" or cs in ("sent", "pending")):
+            with _m.billing_context(source="docusign", actor="docusign", reason=f"envelope {state}"):
+                update_restaurant(rid, {"contract_status": state})
+        try:
+            _ae.record("docusign", f"contract.{state}", restaurant_id=rid, envelope_id=envelope_id,
+                       summary=f"Contract {state}" + (f": {reason}" if reason else "")
+                       + ("" if current else " (a superseded envelope)"))
+        except Exception:
+            pass
+
+
+def _docusign_completed(envelope_id):
+    """A signed contract. The restaurant is marked signed (with when), and —
+    for a client who is not already paying — the payment link and the
+    welcome are OWED before anything is sent (#12): written here, in the
+    step the claim protects, drained right after and retried with backoff
+    until delivered, marked from the real delivery result. No password is
+    reset: the welcome carries a set-password link, only to an owner who
+    has never signed in (SEC-11). Returns the owed_sends ids to send now."""
+    import admin_events as _ae
+    import billing_jobs as _bj
+    import models as _m
+    rids = _envelope_restaurants(envelope_id)
+    now = _bj._stamp()
+    with _m.billing_context(source="docusign", actor="docusign", reason="contract signed"):
+        for rid, _current in rids:
+            r = get_restaurant(rid)
+            updates = {"contract_status": "signed"}
+            if r is not None and not getattr(r, "contract_signed_at", None):
+                updates["contract_signed_at"] = now
+            update_restaurant(rid, updates)
+    _record_envelope_state(envelope_id, "completed")
+    _m._invalidate_request_cache()
+    print(f"Contract signed: {envelope_id}")
+    primary = rids[0][0] if rids else None
+    try:
+        r0 = get_restaurant(primary) if primary else None
+        _ae.record("docusign", "contract.signed", restaurant_id=primary,
+                   email=(r0.owner_email if r0 else None), summary="Contract signed", envelope_id=envelope_id)
+    except Exception:
+        pass
+    if not primary:
+        print(f"WARNING: No restaurant found for envelope {envelope_id} - emails not owed")
+        return []
+    r = get_restaurant(primary)
+    # A re-sent contract signed by a client who is already paying (or whose
+    # group's subscription covers it) is a contract update, not onboarding:
+    # no second setup-fee link and no welcome email (MOD-BIL-6).
+    if (r.billing_status or "").lower() in ("active", "past_due") or _bj.billed_by(primary):
+        print(f"Envelope {envelope_id} signed by an already-paying client — no payment or welcome email")
+        return []
+    owed = []
+    pid, _made = _bj.enqueue("payment_link", primary, f"payment_link:{primary}:{envelope_id}",
+                             to_email=r.owner_email, source="docusign")
+    owed.append(pid)
+    login = _bj.principal_login(primary)
+    if login and not login.get("last_login"):
+        wid, _made = _bj.enqueue("welcome", primary, f"welcome:{login['id']}",
+                                 to_email=login.get("email") or r.owner_email,
+                                 payload={"user_id": login["id"]}, source="docusign")
+        owed.append(wid)
+    elif login:
+        print(f"Owner of {r.name} has already signed in — no welcome and no new password")
+    return [i for i in owed if i]
 
 
 # ── Inbound SMS (Twilio) ────────────────────────────────────────────────────

@@ -414,6 +414,19 @@ class Restaurant:
     # Set by a self-serve pause: the day Stripe resumes collection, so the
     # product can say "paused until" rather than "lapsed".
     paused_until: str                    = None
+    # Why a 'paused' account is paused (fix round H, #114/#138): 'self' (the
+    # owner's own pause; the owner may resume it), or 'dispute' / 'refund' /
+    # 'admin' — locks only an admin lifts. NULL on rows that predate it;
+    # models.pause_lock reads those.
+    pause_reason: Optional[str]           = None
+    # When this restaurant became a paying client (#51): its first paid
+    # checkout (the setup fee), or failing that its first non-zero retainer
+    # invoice. Set once, never overwritten. 'trial' alone cannot say it.
+    converted_at: Optional[str]           = None
+    # When the service agreement was signed (DocuSign completion, or an
+    # admin's audited "Mark signed (offline)") — the clock the pay-link
+    # reminders and the "signed, never paid" issue run on (#26).
+    contract_signed_at: Optional[str]     = None
     auto_draft_schedule: int             = 0
     # The weekday (0 = Monday) the draft is made, restaurant-local; the
     # auto-publish goes the day after (auto_draft_weekday / auto_publish_weekday).
@@ -1178,6 +1191,51 @@ def ensure_columns(db_path: str = DB_PATH):
         ("close_outs", "shift_notes", "TEXT"),
         ("close_outs", "general_notes", "TEXT"),
         ("close_outs", "influence", "TEXT"),
+        # Billing lifecycle (fix round H). Why an account is paused, when it
+        # converted and when its contract was signed — the three facts
+        # billing_status alone could not carry (#114, #51, #26).
+        ("restaurants", "pause_reason", "TEXT"),
+        ("restaurants", "converted_at", "TEXT"),
+        ("restaurants", "contract_signed_at", "TEXT"),
+        # The local mirror of each restaurant's Stripe subscription (#15,
+        # #115), kept current from webhook events and billing_jobs'
+        # nightly reconcile_stripe. Amounts in cents; times UTC text.
+        ("stripe_subscriptions", "customer_id", "TEXT"),
+        ("stripe_subscriptions", "status", "TEXT"),
+        ("stripe_subscriptions", "interval", "TEXT"),
+        ("stripe_subscriptions", "interval_count", "INTEGER"),
+        ("stripe_subscriptions", "amount_cents", "INTEGER"),
+        ("stripe_subscriptions", "currency", "TEXT"),
+        ("stripe_subscriptions", "quantity", "INTEGER"),
+        ("stripe_subscriptions", "discount_pct", "REAL"),
+        ("stripe_subscriptions", "trial_end", "TEXT"),
+        ("stripe_subscriptions", "current_period_end", "TEXT"),
+        ("stripe_subscriptions", "cancel_at_period_end", "INTEGER"),
+        ("stripe_subscriptions", "canceled_at", "TEXT"),
+        ("stripe_subscriptions", "ended_at", "TEXT"),
+        ("stripe_subscriptions", "cancellation_reason", "TEXT"),
+        ("stripe_subscriptions", "updated_at", "TEXT"),
+        # What Stripe bills (the subscription's module_keys metadata and
+        # recurring price) and, when the local module flags disagree with
+        # it, that disagreement (#106) — for the console to raise.
+        ("stripe_subscriptions", "module_keys", "TEXT"),
+        ("stripe_subscriptions", "price_id", "TEXT"),
+        ("stripe_subscriptions", "module_mismatch", "TEXT"),
+        ("stripe_subscriptions", "last_event_id", "TEXT"),
+        # Each envelope's own terms and fate (#26, #144): what it was sent
+        # for, reminders, and declined / voided / delivered / completed.
+        ("docusign_envelopes", "status", "TEXT"),
+        ("docusign_envelopes", "status_at", "TEXT"),
+        ("docusign_envelopes", "status_reason", "TEXT"),
+        ("docusign_envelopes", "module_count", "INTEGER"),
+        ("docusign_envelopes", "modules_list", "TEXT"),
+        ("docusign_envelopes", "resend_count", "INTEGER DEFAULT 0"),
+        ("docusign_envelopes", "last_resent_at", "TEXT"),
+        # A provider's own id for an event, so the Stripe ledger keeps one
+        # row per event however often it is redelivered (#50). The partial
+        # UNIQUE index on (source, external_id) is created by
+        # billing_jobs.init_billing, after this column exists.
+        ("admin_events", "external_id", "TEXT"),
     ]
     try:
         for table, col, col_type in columns_to_add:
@@ -1652,6 +1710,23 @@ def init_db(db_path: str = DB_PATH):
             envelope_id TEXT,
             status      TEXT,
             seen_at     TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
+        # One row per inbound webhook provider (stripe, docusign, and the
+        # Resend / Twilio receivers): when a request last passed its
+        # signature check and how many have failed it since (#74). A
+        # rotated secret used to fail every delivery with a print and a
+        # 400, so billing sync or bounce handling stopped with nothing to
+        # see. Written by webhook_routes._webhook_seen, read by the console.
+        """CREATE TABLE IF NOT EXISTS webhook_verifications (
+            provider                TEXT PRIMARY KEY,
+            last_verified_at        TEXT,
+            last_verified_event     TEXT,
+            last_failure_at         TEXT,
+            last_failure_error      TEXT,
+            failures_total          INTEGER NOT NULL DEFAULT 0,
+            failures_since_verified INTEGER NOT NULL DEFAULT 0,
+            last_captured_at        TEXT,
+            updated_at              TEXT NOT NULL DEFAULT (datetime('now'))
         )""",
         # Durable login throttling (security.py): keyed by IP and by account,
         # so a deploy no longer resets the counter and one worker is no
@@ -3095,6 +3170,12 @@ def init_db(db_path: str = DB_PATH):
     # boot, not on each claim (DATA-6).
     import ops as _ops
     _ops.init_ops(db_path)
+    # The billing lifecycle's own tables (billing_jobs: the owed-sends
+    # outbox, Stripe invoices, billing-status history, reconcile findings)
+    # and the Stripe ledger's de-duplication index — at boot, after
+    # ensure_columns() has added admin_events.external_id.
+    from billing_jobs import init_billing
+    init_billing(db_path)
     # Runs after ensure_columns() so organization_id exists to write into.
     backfill_organizations(db_path=db_path)
     # A target seeded from a figure the registry no longer seeds from goes
@@ -3443,6 +3524,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "alert_hold_during_service", "preshift_nudge_hour",
         "morning_brief_enabled", "morning_brief_hour", "briefing_level", "paused_until",
         "auto_draft_schedule", "external_scheduling_tool", "auto_draft_weekday", "auto_order_weekday",
+        "pause_reason", "converted_at", "contract_signed_at",
     }
     if "weekly_revenue_target" in fields:
         # The weekly figure is the owner's; the monthly follows from it (see
@@ -3483,8 +3565,24 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
     # cannot be skipped by an early return and cannot race a reader.
     set_clause += ", row_version=COALESCE(row_version,0)+1"
     values = list(updates.values())
+    # Billing-status, pause and module changes are history, not just state
+    # (#11): who moved them, why and on which Stripe event. The context is
+    # resolved BEFORE the write transaction opens — resolving a request's
+    # actor reads sessions, and a read on a second connection while this one
+    # holds the write lock is a lock wait, not a read.
+    _hist = {k: updates[k] for k in BILLING_HISTORY_FIELDS if k in updates}
+    _hist_ctx = _billing_history_context(db_path) if _hist else None
+    _hist_err = None
     conn = get_conn(db_path)
     try:
+        _old_hist = None
+        if _hist:
+            try:
+                _row_h = conn.execute(f"SELECT {', '.join(_hist)} FROM restaurants WHERE id=?",
+                                      (restaurant_id,)).fetchone()
+                _old_hist = dict(_row_h) if _row_h else None
+            except Exception as _oh_e:
+                _hist_err = _oh_e
         if updates.get("docusign_envelope_id"):
             # Keep every envelope ever sent, so signing an older one still
             # counts (MOD-BIL-6). Best-effort: a missing table never blocks
@@ -3550,10 +3648,36 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
                                  (restaurant_id, "profile_changed", json.dumps(_changes)))
                 except Exception as _pc_e:
                     print(f"[update_restaurant] profile change not recorded for {restaurant_id}: {_pc_e}")
+        if _old_hist is not None:
+            # Same transaction as the change itself: a billing move and its
+            # history row land together or not at all.
+            for _k, _v in _hist.items():
+                _was = _history_value(_old_hist.get(_k))
+                _now = _history_value(_v)
+                if _was == _now:
+                    continue
+                try:
+                    conn.execute(
+                        "INSERT INTO billing_status_history (restaurant_id, field, old_value, new_value, "
+                        "source, actor, stripe_event_id, reason) VALUES (?,?,?,?,?,?,?,?)",
+                        (restaurant_id, _k, _was, _now, _hist_ctx.get("source"), _hist_ctx.get("actor"),
+                         _hist_ctx.get("stripe_event_id"), _hist_ctx.get("reason")))
+                except Exception as _bh_e:
+                    _hist_err = _bh_e
         conn.commit()
     finally:
         try:
             conn.close()
+        except Exception:
+            pass
+    if _hist_err is not None:
+        # Never fails the billing write it describes, and never silent: after
+        # the commit, so the capture's own write is not queued behind ours.
+        print(f"[update_restaurant] billing history not recorded for {restaurant_id}: {_hist_err}")
+        try:
+            import ops as _ops_bh
+            _ops_bh.capture(_hist_err, job="billing_history", context=f"restaurant_id={restaurant_id}",
+                            db_path=db_path if db_path != DB_PATH else None)
         except Exception:
             pass
     # get_restaurant is memoised for the life of a request, so a settings POST
@@ -4003,6 +4127,9 @@ def _restaurant_from_row(row) -> Restaurant:
         briefing_level=(row["briefing_level"] if "briefing_level" in row.keys()
                         and row["briefing_level"] else "normal"),
         paused_until=(row["paused_until"] if "paused_until" in row.keys() else None),
+        pause_reason=(row["pause_reason"] if "pause_reason" in row.keys() else None),
+        converted_at=(row["converted_at"] if "converted_at" in row.keys() else None),
+        contract_signed_at=(row["contract_signed_at"] if "contract_signed_at" in row.keys() else None),
         auto_draft_schedule=(row["auto_draft_schedule"] if "auto_draft_schedule" in row.keys()
                              and row["auto_draft_schedule"] is not None else 0),
         auto_draft_weekday=(row["auto_draft_weekday"] if "auto_draft_weekday" in row.keys()
@@ -6337,17 +6464,26 @@ def _hash_reset_token(token: str) -> str:
     return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
 
 
-def create_reset_token(email: str, db_path: str = DB_PATH) -> str | None:
-    """Create a password reset token for the user with this email. Returns token or None if not found."""
+def create_reset_token(email: str, db_path: str = DB_PATH, ttl_hours: float = 1,
+                       user_id: int = None) -> str | None:
+    """Create a password reset token for the user with this email. Returns token or None if not found.
+
+    `user_id` names the login exactly (an email can in principle sit on more
+    than one); `ttl_hours` is 1 for a reset. The post-signing welcome's
+    set-password link (billing_jobs, fix round H #12) asks for longer: it is
+    the owner's first way in, read whenever they open the email."""
     import secrets
     from datetime import datetime, timezone, timedelta
     conn = get_conn(db_path)
-    user = conn.execute("SELECT id FROM users WHERE email=? AND is_active=1", (email,)).fetchone()
+    if user_id is not None:
+        user = conn.execute("SELECT id FROM users WHERE id=? AND is_active=1", (int(user_id),)).fetchone()
+    else:
+        user = conn.execute("SELECT id FROM users WHERE email=? AND is_active=1", (email,)).fetchone()
     if not user:
         conn.close()
         return None
     token = secrets.token_urlsafe(32)
-    expires = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    expires = (datetime.now(timezone.utc) + timedelta(hours=float(ttl_hours or 1))).isoformat()
     # Only the hash is stored (security audit A2) — the same rule as
     # sessions. A database read yields nothing that opens an account.
     conn.execute("UPDATE users SET reset_token=?, reset_token_expires=? WHERE id=?",
@@ -7315,6 +7451,137 @@ def update_last_fetched(restaurant_id: int, db_path: str = DB_PATH):
 # serving one who cancelled, and the audit flagged both directions.
 ACTIVE_BILLING_STATES = {"trial", "active", "internal", "past_due", "pending", ""}
 BLOCKED_BILLING_STATES = {"churned", "paused", "canceled", "cancelled"}
+
+# Why a restaurant is paused (fix round H, #114). The owner may lift only
+# their own pause; a chargeback, a full refund or an admin's hold is lifted
+# by an admin and by nothing else — not the owner's Resume button, and not
+# a later Stripe event that happens to say "active".
+PAUSE_REASONS = ("self", "dispute", "refund", "admin")
+LOCKED_PAUSE_REASONS = ("dispute", "refund", "admin")
+
+
+def pause_lock(restaurant):
+    """The lock holding this restaurant paused ('dispute' | 'refund' |
+    'admin'), or None when it is not paused or only paused by its owner.
+
+    Rows paused before pause_reason existed carry NULL. A self-serve pause
+    (from the app or the Stripe dashboard) always set paused_until; a
+    chargeback, a refund or an admin's hand-set 'paused' never did. So NULL
+    with a date is the owner's own pause, and NULL without one is read as an
+    admin lock — the safe reading for a pause nobody can explain."""
+    if restaurant is None:
+        return None
+    get = (restaurant.get if isinstance(restaurant, dict)
+           else (lambda k, d=None: getattr(restaurant, k, d)))
+    if (get("billing_status") or "").strip().lower() != "paused":
+        return None
+    reason = (get("pause_reason") or "").strip().lower()
+    if reason == "self":
+        return None
+    if reason in LOCKED_PAUSE_REASONS:
+        return reason
+    if reason:
+        return "admin"
+    return None if get("paused_until") else "admin"
+
+
+def billing_hold(restaurant):
+    """pause_lock, and also a hold recorded on an account that has since
+    churned — a client who disputed a charge and then cancelled keeps the
+    hold, so a new checkout or a paid invoice meets it instead of quietly
+    turning the account back on. Only an admin lifts either."""
+    lock = pause_lock(restaurant)
+    if lock or restaurant is None:
+        return lock
+    get = (restaurant.get if isinstance(restaurant, dict)
+           else (lambda k, d=None: getattr(restaurant, k, d)))
+    reason = (get("pause_reason") or "").strip().lower()
+    return reason if reason in LOCKED_PAUSE_REASONS else None
+
+
+# The restaurant fields whose every change is kept in billing_status_history
+# (#11), written inside update_restaurant in the same transaction.
+BILLING_HISTORY_FIELDS = ("billing_status", "pause_reason", "paused_until", "contract_status",
+                          "stripe_customer_id", "service_tier", "module_reviews", "module_labor",
+                          "module_inventory", "module_marketing")
+
+import contextlib as _contextlib
+import contextvars as _contextvars
+
+_BILLING_CTX = _contextvars.ContextVar("cavnar_billing_ctx", default=None)
+
+
+@_contextlib.contextmanager
+def billing_context(source=None, actor=None, stripe_event_id=None, reason=None):
+    """Attribute every billing-history row written inside the block.
+
+        with models.billing_context(source="stripe", actor="stripe",
+                                    stripe_event_id=evt["id"], reason=evt["type"]):
+            update_restaurant(rid, {"billing_status": "past_due"})
+
+    Nested blocks inherit what they do not set. A context variable rather
+    than a parameter, so the sibling fan-outs and helpers between a webhook
+    and update_restaurant need not thread it through."""
+    outer = _BILLING_CTX.get() or {}
+    merged = dict(outer)
+    for k, v in (("source", source), ("actor", actor), ("stripe_event_id", stripe_event_id),
+                 ("reason", reason)):
+        if v is not None:
+            merged[k] = v
+    token = _BILLING_CTX.set(merged)
+    try:
+        yield merged
+    finally:
+        _BILLING_CTX.reset(token)
+
+
+def _history_value(value):
+    """One comparable, storable text form: None and '' are both absent, a
+    bool is its 0/1, and a date or number is its str()."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return str(int(value))
+    return str(value)
+
+
+def _billing_history_context(db_path=None) -> dict:
+    """source / actor / stripe_event_id / reason for a history row.
+
+    An explicit billing_context wins. Otherwise a request names itself
+    ("request:<endpoint>") and its signed-in user, read straight from the
+    sessions table (never auth.get_session_user, which writes); outside a
+    request the source is 'system'. Never raises."""
+    ctx = dict(_BILLING_CTX.get() or {})
+    try:
+        from flask import has_request_context, request
+        in_request = has_request_context()
+    except Exception:
+        in_request = False
+    if not ctx.get("source"):
+        ctx["source"] = (("request:" + (request.endpoint or request.path or "?"))[:120]
+                         if in_request else "system")
+    if not ctx.get("actor") and in_request:
+        try:
+            token = request.cookies.get("session_token") or ""
+            auth_h = request.headers.get("Authorization", "")
+            if not token and auth_h.startswith("Bearer "):
+                token = auth_h[7:].strip()
+            if token:
+                from auth import hash_session_token
+                conn = get_conn(db_path)
+                try:
+                    row = conn.execute(
+                        "SELECT u.username, s.device_type FROM sessions s JOIN users u ON u.id = s.user_id "
+                        "WHERE s.token=?", (hash_session_token(token),)).fetchone()
+                finally:
+                    conn.close()
+                if row:
+                    ctx["actor"] = (row["username"] or "") + (
+                        " (view-as)" if (row["device_type"] or "") == "admin-view-as" else "")
+        except Exception:
+            pass
+    return ctx
 
 
 def in_service(restaurant) -> bool:

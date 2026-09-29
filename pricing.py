@@ -97,6 +97,43 @@ def billing_amount_label(amount, interval, interval_count=1) -> str:
     return base + ("/" + suf if n == 1 else " every %d %ss" % (n, str(interval).lower()))
 
 
+def retainer_product_name(module_count: int, period: str = "monthly") -> str:
+    """The Stripe Product a retainer Price hangs off — the exact name
+    emails.create_stripe_checkout creates, so a plan change reuses the
+    Prices checkout made instead of minting parallel ones."""
+    n = max(1, min(int(module_count or 1), 4))
+    label = "Annual" if period == "annual" else "Monthly"
+    return f"Cavnar AI Retainer {label} — {n} Module{'s' if n > 1 else ''}"
+
+
+def price_lookup_key(product_id: str, unit_amount: int, interval: str = None) -> str:
+    """checkout's lookup_key scheme (MOD-BIL-10): one Price per product,
+    amount and interval, found again instead of created again."""
+    return f"cavnar-{product_id}-{int(unit_amount)}-{interval or 'once'}"
+
+
+def retainer_price_id(stripe_mod, module_count: int, interval: str = "month") -> str:
+    """The recurring Price for `module_count` modules at `interval`
+    ('month' | 'year'), created once and reused (the admin console's Change
+    plan, #106). Amounts from TIERS, the one price list."""
+    period = "annual" if interval == "year" else "monthly"
+    plan = plan_for(module_count)
+    amount = int((plan["annual"] if period == "annual" else plan["monthly"]) * 100)
+    name = retainer_product_name(plan["modules"], period)
+    found = stripe_mod.Product.search(query=f'name:"{name}"', limit=1)
+    data = getattr(found, "data", None) or []
+    product_id = data[0].id if data else stripe_mod.Product.create(name=name).id
+    key = price_lookup_key(product_id, amount, interval)
+    try:
+        prices = stripe_mod.Price.list(lookup_keys=[key], active=True, limit=1)
+        if getattr(prices, "data", None):
+            return prices.data[0].id
+    except Exception:
+        pass
+    return stripe_mod.Price.create(product=product_id, unit_amount=amount, currency="usd",
+                                   lookup_key=key, recurring={"interval": interval}).id
+
+
 def subscription_interval(sub):
     """(interval, interval_count) of a Stripe subscription's first recurring
     item, or (None, 1)."""

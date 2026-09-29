@@ -152,7 +152,10 @@ def stripe_fake(monkeypatch):
 
 
 @pytest.fixture
-def hook(stripe_fake):
+def hook(stripe_fake, monkeypatch):
+    # A signing secret must be configured: the webhook refuses every
+    # request without one (#145). The fake construct_event ignores it.
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_fixture")
     app = Flask(__name__)
     app.register_blueprint(webhook_routes.webhook_bp)
     client = app.test_client()
@@ -339,13 +342,20 @@ def test_an_existing_owner_buying_a_second_location_gets_it_provisioned(db_path,
 
 @pytest.fixture
 def ds(monkeypatch):
+    import billing_jobs
     app = Flask(__name__)
     app.register_blueprint(webhook_routes.webhook_bp)
     client = app.test_client()
     mail = {"payment": [], "welcome": []}
     monkeypatch.setattr(webhook_routes, "_resend_key", lambda: "k")
-    monkeypatch.setattr(webhook_routes, "send_payment_email", lambda **k: mail["payment"].append(k["to_email"]))
-    monkeypatch.setattr(webhook_routes, "send_welcome_email", lambda **k: mail["welcome"].append(k["to_email"]))
+    # The post-signing sends are owed (billing_jobs.owed_sends) and drained
+    # right after the claim; the senders are the emails module's, and the
+    # drain only sends where the scheduler may (production).
+    monkeypatch.setattr(billing_jobs, "_sending_allowed", lambda: True)
+    monkeypatch.setattr(emails, "send_payment_email",
+                        lambda **k: mail["payment"].append(k["to_email"]) or emails.SendResult(True))
+    monkeypatch.setattr(emails, "send_signed_welcome_email",
+                        lambda **k: mail["welcome"].append(k["to_email"]) or emails.SendResult(True))
     # Signed like DocuSign Connect signs them: the webhook refuses anything
     # unsigned (SEC-11), so an unsigned fixture would only ever test the 401.
     monkeypatch.setenv("DOCUSIGN_WEBHOOK_SECRET", "fixture-secret")
@@ -381,8 +391,10 @@ def test_the_docusign_webhook_refuses_an_unsigned_body_when_no_secret_is_configu
 
 def test_a_signed_contract_sends_the_payment_link_and_the_welcome_once(db_path, ds, monkeypatch):
     """A10 #31 — the whole completion through the real route: contract
-    marked signed, one payment email, one welcome with a fresh password, and
-    a repeat delivery changes nothing."""
+    marked signed, one payment email, one welcome, and a repeat delivery
+    changes nothing. Fix round H (#12): the welcome carries a set-password
+    link, so the owner's password is NOT reset — this test used to assert
+    the reset, which ran before a send whose failure was never noticed."""
     monkeypatch.setenv("DOCUSIGN_WEBHOOK_SECRET", "s3cret")
     import base64
     import hashlib
@@ -402,8 +414,10 @@ def test_a_signed_contract_sends_the_payment_link_and_the_welcome_once(db_path, 
         assert resp.status_code == 200
     assert get_restaurant(rid, db_path).contract_status == "signed"
     assert ds.mail["payment"] == ["o@x.test"]
-    assert ds.mail["welcome"] == ["o@x.test"]
-    assert _password_hash(db_path, uid) != before
+    # The welcome goes to the owner LOGIN's address (the one the link sets a
+    # password for).
+    assert ds.mail["welcome"] == ["owner@x.test"]
+    assert _password_hash(db_path, uid) == before
 
 
 def test_a_second_envelope_for_an_active_client_neither_resets_the_password_nor_rebills(db_path, ds):
