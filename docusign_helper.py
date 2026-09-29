@@ -95,17 +95,98 @@ def get_access_token() -> str:
     return resp.json()["access_token"]
 
 
+# DocuSign's own reminders (#26): the first two days after sending, then
+# every three, until the client signs or the envelope expires. Set on every
+# envelope we create and re-applied when one is resent, so "Contract still
+# unsigned" is no longer a manual chase.
+REMINDER_DELAY_DAYS = 2
+REMINDER_FREQUENCY_DAYS = 3
+EXPIRE_AFTER_DAYS = 120
+
+
+def _notification() -> dict:
+    return {
+        "useAccountDefaults": "false",
+        "reminders": {"reminderEnabled": "true", "reminderDelay": str(REMINDER_DELAY_DAYS),
+                      "reminderFrequency": str(REMINDER_FREQUENCY_DAYS)},
+        "expirations": {"expireEnabled": "true", "expireAfter": str(EXPIRE_AFTER_DAYS), "expireWarn": "0"},
+    }
+
+
+def _capture(exc, what, restaurant_id=None):
+    """A failed send used to be a print and a line in the admin modal
+    (#144); it reaches the console's failures now."""
+    try:
+        import ops
+        ops.capture(exc, job=f"docusign_{what}",
+                    context=(f"restaurant_id={restaurant_id}" if restaurant_id else "docusign"))
+    except Exception:
+        pass
+
+
 def send_contract(
     owner_email: str,
     owner_name: str,
     restaurant_name: str,
     module_count: int,
     modules_list: str,
+    restaurant_id: int = None,
 ) -> dict:
     """
     Send a service agreement via DocuSign to a new client.
-    Returns dict with status and envelope_id.
+    Returns dict with status and envelope_id. Raises on failure, after
+    recording it (ops.capture) so it reaches the console, not only the
+    modal that asked.
     """
+    try:
+        return _send_contract(owner_email, owner_name, restaurant_name, module_count, modules_list)
+    except Exception as e:
+        _capture(e, "send", restaurant_id)
+        raise
+
+
+def _api():
+    """The account's REST base and auth headers, on a fresh JWT token."""
+    return (f"{BASE_URL}/restapi/v2.1/accounts/{ACCOUNT_ID}",
+            {"Authorization": f"Bearer {get_access_token()}", "Content-Type": "application/json"})
+
+
+def resend_envelope(envelope_id: str, restaurant_id: int = None) -> dict:
+    """Re-send an envelope the client has not signed yet — the same envelope,
+    never a new one (#26: every resend used to mint a new envelope, so a
+    client could end up with three contracts in their inbox) — with the
+    reminders turned on. {ok, status, resendable}; resendable False for an
+    envelope that is completed, declined or voided (those need a new one)."""
+    import requests
+    try:
+        base, headers = _api()
+        resp = requests.get(f"{base}/envelopes/{envelope_id}", headers=headers, timeout=DOCUSIGN_TIMEOUT)
+        if resp.status_code != 200:
+            raise Exception(f"DocuSign envelope lookup failed: {resp.status_code} {resp.text[:300]}")
+        status = ((resp.json() or {}).get("status") or "").lower()
+        if status in ("completed", "declined", "voided"):
+            return {"ok": False, "status": status, "resendable": False}
+        r1 = requests.put(f"{base}/envelopes/{envelope_id}/notification", headers=headers,
+                          json=_notification(), timeout=DOCUSIGN_TIMEOUT)
+        if r1.status_code not in (200, 201):
+            raise Exception(f"DocuSign reminder update failed: {r1.status_code} {r1.text[:300]}")
+        r2 = requests.put(f"{base}/envelopes/{envelope_id}", headers=headers,
+                          params={"resend_envelope": "true"}, json={}, timeout=DOCUSIGN_TIMEOUT)
+        if r2.status_code not in (200, 201):
+            raise Exception(f"DocuSign resend failed: {r2.status_code} {r2.text[:300]}")
+        return {"ok": True, "status": status, "resendable": True}
+    except Exception as e:
+        _capture(e, "resend", restaurant_id)
+        raise
+
+
+def _send_contract(
+    owner_email: str,
+    owner_name: str,
+    restaurant_name: str,
+    module_count: int,
+    modules_list: str,
+) -> dict:
     if not all([INTEGRATION_KEY, USER_ID, ACCOUNT_ID, TEMPLATE_ID, PRIVATE_KEY]):
         missing = [k for k, v in {
             "INTEGRATION_KEY": INTEGRATION_KEY,
@@ -135,6 +216,8 @@ def send_contract(
     envelope = {
         "templateId": TEMPLATE_ID,
         "status": "sent",
+        # DocuSign reminds the client on its own (#26).
+        "notification": _notification(),
         "emailSubject": f"Your Cavnar AI Service Agreement — {restaurant_name}",
         "emailBlurb": (
             f"Hi {owner_name} — please review and sign the attached service agreement "

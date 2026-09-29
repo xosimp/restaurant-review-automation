@@ -438,15 +438,24 @@ def test_a_signature_on_an_earlier_envelope_still_completes_onboarding(app, monk
     envelopes = iter(["env-first", "env-second"])
     monkeypatch.setattr(docusign_helper, "send_contract",
                         lambda **k: {"envelope_id": next(envelopes)})
+    resent = []
+    monkeypatch.setattr(docusign_helper, "resend_envelope",
+                        lambda envelope_id, restaurant_id=None: resent.append(envelope_id)
+                        or {"ok": True, "status": "sent", "resendable": True})
     rid = _restaurant("Simple EJ's", owner_email="erik@ej.test")
     create_user(rid, "erik", "erik@ej.test", "client-pass-1")
     admin = _admin_client(app)
 
-    # The admin double-clicks Resend contract.
+    # The admin double-clicks Resend contract. Fix round H (#26): that is one
+    # envelope, re-sent — a resend no longer mints a second envelope.
     for _ in range(2):
         assert admin.post(f"/admin/resend-contract/{rid}").get_json()["ok"] is True
+    assert resent == ["env-first"]
+    # A deliberate new envelope (the terms changed) supersedes the first...
+    assert admin.post(f"/admin/resend-contract/{rid}", json={"new_envelope": True}).get_json()["ok"] is True
+    assert get_restaurant(rid).docusign_envelope_id == "env-second"
 
-    # The client opens the first email and signs that envelope.
+    # ...and the client opens the first email and signs that envelope.
     body = _json.dumps({"envelopeId": "env-first", "status": "completed"}).encode()
     sig = base64.b64encode(hmac.new(b"edge-secret", body, hashlib.sha256).digest()).decode()
     resp = app.test_client().post("/docusign/webhook", data=body,
@@ -506,8 +515,12 @@ def _fake_stripe(monkeypatch):
 
 
 def test_resend_payment_reuses_the_open_checkout_session(app, monkeypatch):
+    import billing_jobs
     created, expired = _fake_stripe(monkeypatch)
     monkeypatch.setattr(emails, "_resend_key", lambda: "re_test_edge")
+    # Fix round H: an admin send is owed and drained, and only drained where
+    # the scheduler may run (a laptop never mails a real client).
+    monkeypatch.setattr(billing_jobs, "_sending_allowed", lambda: True)
     sent = []
     monkeypatch.setattr(emails, "deliver", lambda **k: sent.append(k))
     rid = _restaurant("Simple EJ's", owner_email="erik@ej.test")
