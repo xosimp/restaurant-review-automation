@@ -1877,6 +1877,19 @@ def _capture(exc, rid, where):
         print(f"[dsr.narrative] capture failed: {e}")
 
 
+def _quality(kind, rid, detail, n=1, codes=None):
+    """What the model wrote could not be used — refused, cut off, the wrong
+    shape, a lead the figures don't support, lines dropped. An AI-quality
+    finding on the AI page (fix round G #58), never a failing job: a code or
+    provider failure still goes to _capture."""
+    try:
+        import ai_utils
+        ai_utils.record_quality_event(PURPOSE, kind, restaurant_id=rid, action=PURPOSE, detail=detail, n=n,
+                                      codes=codes)
+    except Exception as e:           # the reporter must never be the failure
+        print(f"[dsr.narrative] quality event not recorded: {e}")
+
+
 def write(ctx, facts):
     """The night's narrative: {"ok": True, "narrative": {...}, "reason":
     None}, or {"ok": False, "narrative": None, "reason": owner-facing
@@ -1947,18 +1960,22 @@ def _write(ctx, facts):
         _capture(e, rid, "model call")
         return _refused("The summary couldn't be written tonight — the AI service didn't answer.")
     if is_refusal(msg):
+        # Was returned with no trace at all (AIOPS-13).
+        _quality("model_refused", rid, "the model declined to write tonight's narrative")
         return _refused("The summary couldn't be written tonight.")
     if getattr(msg, "stop_reason", None) == "max_tokens":
-        _capture(RuntimeError("dsr narrative truncated at max_tokens"), rid, "truncated")
+        _quality("truncated", rid, "dsr narrative truncated at max_tokens")
         return _refused("The summary couldn't be written tonight — it came back incomplete.")
     try:
-        raw = parse_json_reply(extract_text(msg), expect=dict)
+        raw = parse_json_reply(extract_text(msg), expect=dict, message=msg)
     except ValueError as e:
-        _capture(e, rid, "parse")
+        _quality("unparseable", rid, f"dsr narrative did not parse: {e}")
         return _refused("The summary couldn't be written tonight — it came back in the wrong shape.")
     clean, err = validate(raw)
     if err:
-        _capture(RuntimeError(f"dsr narrative failed validation: {err}"), rid, "validate")
+        from ai_utils import mark_outcome
+        mark_outcome(msg, "unparseable", reason="failed the narrative's shape check")
+        _quality("output_rejected", rid, f"dsr narrative failed validation: {err}")
         return _refused("The summary couldn't be written tonight — it came back in the wrong shape.")
 
     # Only the stale sources: tonight's figures are the night's own, so the
@@ -1967,16 +1984,17 @@ def _write(ctx, facts):
               data_state={k: v for k, v in (_ready.get("data_state") or {}).items() if k == "stale_sources"})
     body, dropped, lead_why = verify(clean, F)
     if lead_why:
-        _capture(RuntimeError(f"dsr narrative lead refused: {lead_why} — {clean['executive_summary']['text'][:200]}"),
-                 rid, "lead")
+        _quality("validation_refused", rid,
+                 f"dsr narrative lead refused: {lead_why} — {clean['executive_summary']['text'][:160]}")
         return _refused("The summary was held back — its opening stated something tonight's figures don't support.")
     n_failed_check = len(dropped)          # verify's drops: a line that failed its check
     body["actions_tomorrow"] = settle_actions(body["actions_tomorrow"], F, ctx, declined, dropped)
     if dropped:
-        # A model that starts inventing figures shows up as a rate in the
-        # failure digest, not as one owner's complaint (ai_guard.verify_figures).
-        _capture(RuntimeError(f"dsr narrative dropped {len(dropped)} item(s): "
-                              + "; ".join(f"{d['field']}: {d['why']}" for d in dropped)[:900]), rid, "dropped")
+        # A model that starts inventing figures shows up as a rate on the AI
+        # page, not as one owner's complaint (ai_guard.verify_figures) — and
+        # not as a failing job (#58).
+        _quality("item_dropped", rid, f"dsr narrative dropped {len(dropped)} item(s): "
+                 + "; ".join(f"{d['field']}: {d['why']}" for d in dropped)[:240], n=len(dropped))
     checked = (1 + (1 if clean.get(OPS_SUMMARY) else 0) + sum(len(clean[f]) for f in ITEM_LISTS)
                + sum(1 for f in ITEM_SINGLES if clean[f])
                + len(clean["actions_tomorrow"]))

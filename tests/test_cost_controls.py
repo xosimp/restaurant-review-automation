@@ -7,6 +7,8 @@ minute per restaurant. Alongside that: the global pool was a flat number that
 shrank in usefulness with every client won, and the ledger the budget check
 reads on every call had no index and nothing pruning it.
 """
+import os
+
 import pytest
 
 import ai_utils
@@ -66,16 +68,22 @@ def test_a_places_request_lands_in_the_ledger(db_path):
     assert rows[0]["cost_usd"] == pytest.approx(ai_utils._PER_CALL_PRICING["google-places-details"])
 
 
-def test_non_claude_spend_counts_against_the_same_ceiling(db_path):
-    """The whole point: one budget covering every paid dependency, not just
-    the vendor that happened to report token counts."""
+def test_every_paid_dependency_answers_to_a_ceiling(db_path):
+    """The whole point of audit #7: every paid dependency has a ceiling, not
+    just the vendor that happened to report token counts. Since owner
+    decision 2 (fix round G, 9/29/26) Google Places has its OWN ceiling and
+    no longer draws down the AI budget (#122) — Perplexity still does."""
     rid = _restaurant(db_path)
     assert ai_utils.ai_budget_exceeded(rid, db_path) is None
-    for _ in range(int(ai_utils.AI_DAILY_BUDGET_USD / ai_utils._PER_CALL_PRICING["google-places-nearby"]) + 2):
+    for _ in range(int(ai_utils.AI_PLACES_DAILY_BUDGET_USD / ai_utils._PER_CALL_PRICING["google-places-nearby"]) + 2):
         ai_utils.log_api_call(rid, "competitor_intel", "google-places-nearby", calls=1, db_path=db_path)
     ai_utils._budget_cache.clear()
-    assert ai_utils.ai_budget_exceeded(rid, db_path) is not None, \
-        "Places spend still cannot trip the ceiling"
+    assert ai_utils.places_budget_exceeded(rid, db_path) is not None, "Places spend cannot trip its ceiling"
+    assert ai_utils.ai_budget_exceeded(rid, db_path) is None, "Places spend still draws down the AI ceiling"
+    for _ in range(int(ai_utils.AI_DAILY_BUDGET_USD / ai_utils._PER_CALL_PRICING["perplexity-search"]) + 2):
+        ai_utils.log_api_call(rid, "ai_visibility", "perplexity-search", calls=1, db_path=db_path)
+    ai_utils._budget_cache.clear()
+    assert ai_utils.ai_budget_exceeded(rid, db_path) is not None, "Perplexity spend cannot trip the AI ceiling"
 
 
 def test_a_failed_call_is_recorded_but_not_charged(db_path):
@@ -86,14 +94,25 @@ def test_a_failed_call_is_recorded_but_not_charged(db_path):
     assert len(rows) == 1 and rows[0]["cost_usd"] == 0.0
 
 
-def test_every_places_caller_meters(db_path):
-    """A new Places call site is easy to add and easy to forget."""
+def test_every_places_caller_goes_through_the_metered_helper(db_path):
+    """A new Places call site is easy to add and easy to forget. Since fix
+    round G (#123) every Places request goes through ai_utils.places_request
+    — metered as it is made and refused before it is sent at the Places
+    ceiling — so no module but ai_utils may name the Places endpoint, and
+    each Places caller calls the helper."""
+    import glob
     import inspect
-    import competitor, fetcher, weather
-    for mod in (competitor, fetcher, weather):
-        src = inspect.getsource(mod)
-        assert "maps.googleapis.com" in src
-        assert "_meter_places(" in src, f"{mod.__name__} calls Places without metering it"
+    import competitor, fetcher, first_look, weather
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for path in glob.glob(os.path.join(root, "*.py")):
+        if os.path.basename(path) == "ai_utils.py":
+            continue
+        src = open(path, encoding="utf-8").read()
+        assert "maps.googleapis.com" not in src, f"{os.path.basename(path)} calls Places around places_request"
+    for mod in (competitor, fetcher, weather, first_look):
+        assert "places_request" in inspect.getsource(mod), f"{mod.__name__} no longer uses places_request"
+    import client_api
+    assert "places_request" in inspect.getsource(client_api._city_from_place_id)
 
 
 # ── AI visibility is cached ────────────────────────────────────────────────

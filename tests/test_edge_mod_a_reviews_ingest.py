@@ -40,8 +40,12 @@ def _redirect(db_path, monkeypatch):
     import webhooks
     monkeypatch.setattr(webhooks, "get_conn", fake, raising=False)
     monkeypatch.setattr(webhooks, "fire_webhook", lambda *a, **k: None)
-    # A review fetch meters itself; the meter must not be what a test sees.
-    monkeypatch.setattr(fetcher, "_meter_places", lambda *a, **k: None)
+    # A review fetch meters itself (ai_utils.places_request); the meter must
+    # not be what a test sees. A configured key: without one the helper
+    # refuses before sending (fix round G #151).
+    import ai_utils
+    monkeypatch.setattr(ai_utils, "meter_places", lambda *a, **k: None)
+    monkeypatch.setattr(fetcher, "GOOGLE_API_KEY", "test-key")
     yield
 
 

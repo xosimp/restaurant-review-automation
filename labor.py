@@ -2148,13 +2148,16 @@ The Recommendations section must start with exactly the word "Recommendations:" 
         except Exception as _fe:
             print(f"[labor forecast log] {_fe}")
     if not str(out).strip():
-        try:
-            import ops
-            codes = out.verdict.codes if out.verdict else []
-            ops.capture(RuntimeError(f"labor read refused by validation: {', '.join(codes)}"),
-                        job="labor_insight", context=f"restaurant_id={restaurant_id}")
-        except Exception:
-            pass
+        # An AI-quality finding (fix round G #58), not a failing job — and
+        # the fixed copy served in its place is recorded as the fallback it
+        # is (#140).
+        import ai_utils as _ai_q
+        codes = out.verdict.codes if out.verdict else []
+        _ai_q.record_quality_event("labor_insight", "validation_refused", restaurant_id=restaurant_id,
+                                   action="labor_insight", codes=codes,
+                                   detail=f"labor read refused by validation: {', '.join(codes)}")
+        _ai_q.record_quality_event("labor_insight", "fallback", restaurant_id=restaurant_id,
+                                   action="labor_insight", detail="served the fixed unchecked-read copy")
         return rv.Validated(f"{greeting} " + LABOR_READ_UNCHECKED, validation=out.validation, verdict=out.verdict)
     shown = str(out)
     # The FORECAST line is computed, not written by the model, so it is added
@@ -2432,12 +2435,10 @@ def _drop_note_bullets(bullets, prompt, restaurant_id=None, data_blocks=None, ro
     for b in bullets:
         text, why = _note_verdict(b, prompt, ctx, role_floors, role_minimums)
         if why:
-            try:
-                import ops
-                ops.capture(RuntimeError(f"schedule note bullet dropped: {why}"), job="schedule_note",
-                            context=f"restaurant_id={restaurant_id}")
-            except Exception:
-                pass
+            # An AI-quality finding (fix round G #58), not a failing job.
+            import ai_utils as _ai_q
+            _ai_q.record_quality_event("schedule_note", "line_dropped", restaurant_id=restaurant_id,
+                                       action="labor_schedule", detail=f"schedule note bullet dropped: {why}")
             continue
         kept.append(text)
     return kept
@@ -3801,6 +3802,13 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
         # the CSV text contract instead, once, rather than no schedule.
         _msg = str(_e).lower()
         if structured and ("output_config" in _msg or "json_schema" in _msg or "format" in _msg):
+            # The structured contract was refused; the CSV contract runs
+            # instead. A degraded path, so it leaves a trace (#140) beyond
+            # the failed call's error row.
+            import ai_utils as _ai_q
+            _ai_q.record_quality_event("labor_schedule", "fallback", restaurant_id=restaurant_id,
+                                       action="labor_schedule",
+                                       detail="structured output refused by the API; the CSV contract was used")
             return generate_optimized_schedule(**dict(_call_args, structured=False))
         raise
     _seconds = round(time.time() - _t0, 1)

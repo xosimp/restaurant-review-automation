@@ -129,7 +129,9 @@ def test_a_places_review_with_no_usable_rating_is_skipped(monkeypatch):
                 {"time": 1757000001, "text": "No rating", "author_name": "B"},
             ]}}
     monkeypatch.setattr(fetcher.requests, "get", lambda *a, **kw: _Resp())
-    monkeypatch.setattr(fetcher, "_meter_places", lambda *a, **kw: None)
+    import ai_utils
+    monkeypatch.setattr(ai_utils, "meter_places", lambda *a, **kw: None)
+    monkeypatch.setattr(fetcher, "GOOGLE_API_KEY", "test-key")   # fail fast without one (#151)
     out = fetcher.fetch_google("place", 1)
     assert [r.rating for r in out] == [5]
 
@@ -148,7 +150,9 @@ def test_two_anonymous_reviewers_in_one_second_do_not_collide(monkeypatch):
                  "author_url": "https://maps.google.com/u/2"},
             ]}}
     monkeypatch.setattr(fetcher.requests, "get", lambda *a, **kw: _Resp())
-    monkeypatch.setattr(fetcher, "_meter_places", lambda *a, **kw: None)
+    import ai_utils
+    monkeypatch.setattr(ai_utils, "meter_places", lambda *a, **kw: None)
+    monkeypatch.setattr(fetcher, "GOOGLE_API_KEY", "test-key")   # fail fast without one (#151)
     out = fetcher.fetch_google("place", 1)
     assert len({r.external_id for r in out}) == 2
 

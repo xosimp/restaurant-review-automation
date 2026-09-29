@@ -1084,12 +1084,14 @@ def record_safety_disagreement(hits, restaurant_id=None, review_id=None) -> None
     is why the keyword list is only a fallback), but the disagreement is the
     only evidence of how often Haiku misses one, and a review in it is kept
     out of auto-approve (models.auto_approve_candidates). No guest text is
-    logged — only which keywords, and where."""
+    logged — only which keywords, and where. An AI-quality event since fix
+    round G (#58): it was a job_failures row, read as a failing job."""
     try:
-        import ops
-        ops.capture(RuntimeError(f"health keywords {list(hits)[:4]} on a review the analyser rated normal urgency"),
-                    job=SAFETY_DISAGREEMENT_JOB,
-                    context=f"restaurant_id={restaurant_id} review_id={review_id}")
+        import ai_utils
+        ai_utils.record_quality_event(
+            SAFETY_DISAGREEMENT_JOB, "safety_disagreement", restaurant_id=restaurant_id,
+            action="review_analysis",
+            detail=f"health keywords {list(hits)[:4]} on review {review_id}, which the analyser rated normal urgency")
     except Exception as e:
         print(f"[notify] safety disagreement not logged: {e}")
 
@@ -1098,14 +1100,10 @@ def safety_disagreements(days: int = 30, db_path=None) -> int:
     """How many keyword/model disagreements were logged in `days` — the
     counter beside record_safety_disagreement. 0 when unreadable."""
     try:
-        from models import get_conn as _gc_sd
-        conn = _gc_sd(db_path) if db_path else _gc_sd()
-        try:
-            row = conn.execute("SELECT COUNT(*) AS n FROM job_failures WHERE job=? AND created_at >= datetime('now', ?)",
-                               (SAFETY_DISAGREEMENT_JOB, f"-{int(days)} days")).fetchone()
-        finally:
-            conn.close()
-        return int(row["n"] or 0) if row else 0
+        import ai_utils
+        counts = ai_utils.quality_counts(days=days, surface=SAFETY_DISAGREEMENT_JOB,
+                                         kind="safety_disagreement", db_path=db_path)
+        return int(sum(counts.values()))
     except Exception:
         return 0
 

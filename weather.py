@@ -26,7 +26,11 @@ import requests
 from models import DB_PATH, update_restaurant
 
 
-from ai_utils import meter_places as _meter_places
+# The geocode goes through ai_utils.places_request (#123) — metered as it is
+# made and refused before it is sent when the key is missing, the Places
+# breaker is open or the restaurant's Places ceiling is spent. The 570-call
+# loop below would now stop at that ceiling on its first day.
+from ai_utils import places_request as _places_request
 
 _GOOGLE_KEY = config.google_places_key()
 _USER_AGENT = "CavnarAI/1.0 (will@cavnar.ai)"  # NWS asks for an identifying UA, not a key
@@ -91,10 +95,10 @@ def _geocode(restaurant, db_path=DB_PATH):
     if _backing_off(("geocode", db_path, getattr(restaurant, "id", None), restaurant.google_place_id)):
         return None, None
     try:
-        resp = requests.get(
-            "https://maps.googleapis.com/maps/api/place/details/json",
-            params={"place_id": restaurant.google_place_id, "fields": "geometry", "key": _GOOGLE_KEY},
-            timeout=10,
+        resp = _places_request(
+            "details",
+            {"place_id": restaurant.google_place_id, "fields": "geometry", "key": _GOOGLE_KEY},
+            restaurant_id=getattr(restaurant, "id", None), action="weather_geocode", timeout=10,
         )
     except Exception:
         # A timeout or a dropped connection says nothing about the place_id.
@@ -108,8 +112,7 @@ def _geocode(restaurant, db_path=DB_PATH):
             return None, None
         resp.raise_for_status()
         # Geocoding a restaurant once is cheap, but it is still a billed
-        # Places request and belongs in the same ledger as the rest.
-        _meter_places(getattr(restaurant, "id", None), "weather_geocode", "details")
+        # Places request — metered by places_request with the rest.
         loc = resp.json().get("result", {}).get("geometry", {}).get("location", {})
         lat, lon = loc.get("lat"), loc.get("lng")
         if lat is None or lon is None:

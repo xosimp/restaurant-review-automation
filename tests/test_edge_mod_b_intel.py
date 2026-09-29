@@ -211,10 +211,15 @@ def test_a_run_that_widens_the_radius_meters_every_nearby_search(db, monkeypatch
     """MOD-INT-6 — keyword search, broad search and widened search are three
     billed Places requests; the ledger must see three."""
     metered = []
-    monkeypatch.setattr(competitor, "_meter_places", lambda rid, action, kind="details", **k: metered.append(kind))
+    import ai_utils
+    # Every request is metered where it is made (ai_utils.places_request,
+    # fix round G #123), against this restaurant.
+    monkeypatch.setattr(ai_utils, "meter_places",
+                        lambda rid_, action, kind="details", **k: metered.append((rid_, kind)))
     rid = _analysis_ready(monkeypatch, db, _places_get([_place("Only One", "p1")]))
     competitor.run_competitor_analysis(rid)
-    assert metered.count("nearby") == 3
+    assert [k for r, k in metered].count("nearby") == 3
+    assert {r for r, _k in metered} == {rid}
 
 
 def _record_calls(monkeypatch, target, attr, result):

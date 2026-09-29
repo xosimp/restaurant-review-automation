@@ -2358,17 +2358,27 @@ def _do_review_insight(rid, viewer=None):
             readiness=_ready_ri,
         )
         _raw_ri = extract_text(msg).strip()
-        payload = _ri_payload(_raw_ri)
+        # A model refusal or a cut-off reply is its own outcome (#52): it
+        # used to reach the validation layer as text and be filed as "refused
+        # by the response validation layer".
+        _why_ri = ("the model declined" if getattr(msg, "stop_reason", None) == "refusal" else
+                   "the reply was cut off at max_tokens" if getattr(msg, "stop_reason", None) == "max_tokens" else
+                   "the reply was empty" if not _raw_ri else None)
+        payload = _ri_payload(_raw_ri) if _why_ri is None else None
         if payload is None:
             # Refused whole: the last read Cavnar stood behind, marked stale,
             # else fixed copy — never the refused text. Held in memory for the
-            # cache window only, so the next open tries again.
-            try:
-                import ops as _ops_rf
-                _ops_rf.capture(RuntimeError("review_insight refused by the response validation layer"),
-                                job="review_insight", context=f"restaurant_id={rid}")
-            except Exception:
-                pass
+            # cache window only, so the next open tries again. Filed as an
+            # AI-quality finding (#58), not a failing job.
+            import ai_utils as _ai_q
+            _ai_q.record_quality_event(
+                "review_insight",
+                ("model_refused" if _why_ri == "the model declined" else "truncated" if _why_ri and "cut off" in _why_ri
+                 else "unparseable" if _why_ri else "validation_refused"),
+                restaurant_id=rid, action="review_insight",
+                detail=_why_ri or "refused whole by the response validation layer")
+            if _why_ri == "the reply was empty":
+                _ai_q.mark_outcome(msg, "unparseable", reason="empty reply")
             _prev_ri, _prev_at = _ist_ri.latest(rid, "reviews")
             if isinstance(_prev_ri, dict) and _prev_ri.get("insight"):
                 from ai_guard import freshness as _fresh_rf
@@ -2382,6 +2392,9 @@ def _do_review_insight(rid, viewer=None):
                         "diagnosis": _diags[0] if _diags else None, "stale": False,
                         "generated_at": datetime.utcnow().isoformat(timespec="seconds")}
             _cache_set(_ck, held)
+            _ai_q.record_quality_event("review_insight", "fallback", restaurant_id=rid, action="review_insight",
+                                       detail=("served the last stored read, marked stale" if held.get("stale")
+                                               else "served the fixed held-back copy"))
             return _review_insight_recs(rid, dict(held)), 200
         if _rating_next is not None:
             try:
@@ -2405,6 +2418,11 @@ def _do_review_insight(rid, viewer=None):
     except Exception as _re:
         import traceback
         print(f"[review-insight ERROR] {_re}\n{traceback.format_exc()}")
+        # Degraded mode leaves a trace (#140): a code failure after the
+        # call is captured, and serving an old read is an outcome with its
+        # reason. A budget stop, an outage or a readiness hold is already a
+        # ledger row and is not a code failure.
+        _record_insight_fallback("review_insight", rid, _re)
         stale = _insight_cache.get(_ck)
         if not stale:
             # The stored read survives a deploy; the in-memory one does not.
@@ -2434,6 +2452,23 @@ def _do_review_insight(rid, viewer=None):
         from ai_utils import insight_error as _insight_err_ri
         _msg_ri, _status_ri = _insight_err_ri(_re)
         return {"insight": _msg_ri, "error": _msg_ri}, _status_ri
+
+def _record_insight_fallback(surface, rid, exc):
+    """An insight route fell back after an exception (#140). A code failure
+    is captured (it used to be printed to stdout only); every fallback is an
+    AI-quality event with its reason. A platform stop (budget, breaker) or a
+    readiness hold is not a code failure and is already in the ledger."""
+    import ai_utils as _ai_q
+    stop = _ai_q.is_platform_stop(exc) or isinstance(exc, _ai_q.AIRefused)
+    if not stop:
+        try:
+            import ops as _ops_fb
+            _ops_fb.capture(exc, job=surface, context=f"restaurant_id={rid}")
+        except Exception:
+            pass
+    _ai_q.record_quality_event(surface, "fallback", restaurant_id=rid, action=surface,
+                               detail=f"{type(exc).__name__}: a stale read or the error copy was served")
+
 
 def _do_recent_topics(rid):
     """The last few things this restaurant generated, folded by topic, with
@@ -3567,15 +3602,27 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
         )
         _raw_m = extract_text(msg).strip()
         _read_m, _checked_m = _mkt_read(_raw_m)
+        if getattr(msg, "stop_reason", None) in ("refusal", "max_tokens"):
+            # A declined or cut-off brief is not a brief (#52), whatever the
+            # validation layer made of the partial text.
+            _read_m = None
         if _read_m is None:
             # Refused whole: fixed copy, never the refused text, held for the
-            # cache window only so the next open tries again.
-            try:
-                import ops as _ops_mf
-                _ops_mf.capture(RuntimeError("marketing_insight refused by the response validation layer"),
-                                job="marketing_insight", context=f"restaurant_id={rid}")
-            except Exception:
-                pass
+            # cache window only so the next open tries again. An AI-quality
+            # finding (#58) with the model's own stop reason when it has one
+            # (#52), and the fixed copy it served (#140).
+            import ai_utils as _ai_q
+            _stop_m = getattr(msg, "stop_reason", None)
+            _ai_q.record_quality_event(
+                "marketing_insight",
+                "model_refused" if _stop_m == "refusal" else "truncated" if _stop_m == "max_tokens"
+                else "validation_refused",
+                restaurant_id=rid, action="marketing_insight",
+                detail=("the model declined" if _stop_m == "refusal" else "the reply was cut off at max_tokens"
+                        if _stop_m == "max_tokens" else "refused whole by the response validation layer"),
+                codes=getattr(getattr(_checked_m, "verdict", None), "codes", None))
+            _ai_q.record_quality_event("marketing_insight", "fallback", restaurant_id=rid,
+                                       action="marketing_insight", detail="served the fixed held-back copy")
             _held_m = {"insight": "Cavnar AI held this week's marketing brief back: it said things your data doesn't "
                                   "support. It tries again the next time this opens.",
                        "withheld": True, "figures_verified": True, "unsupported_figures": [],
@@ -3605,6 +3652,7 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
     except Exception as e:
         import traceback; traceback.print_exc()
         print(f"[MktInsight] ERROR: {str(e)}")
+        _record_insight_fallback("marketing_insight", rid, e)
         stale = _insight_cache.get(cache_key)
         if stale:
             _sv = stale[1]
@@ -6417,9 +6465,13 @@ def ai_visibility(current_user):
 def _do_ai_visibility(rid, force=False):
     """Shared by the web route above and mobile_api.py's own ai-visibility.
     force=True runs the queries live (the owner asked); the rate limit and
-    the budget ceiling still apply."""
+    the budget ceiling still apply. Every Perplexity query and Places lookup
+    in one run shares one correlation id and is billed to `rid` (#148)."""
+    import ai_utils as _ai_ctx
     try:
-        payload, status = _do_ai_visibility_inner(rid, force=force)
+        with _ai_ctx.ai_context(restaurant_id=rid, action="ai_visibility",
+                                correlation_id=_ai_ctx.new_correlation_id("aivis")):
+            payload, status = _do_ai_visibility_inner(rid, force=force)
     except Exception as e:
         return {"ok": False, "error": _safe_err(e)}, 200
     # Applied on the way out as well as at build time, so a payload served
@@ -6559,12 +6611,14 @@ def _city_from_place_id(place_id: str) -> str:
     city = ""
     settled = False     # an answer worth remembering, found or not
     try:
-        import requests as _req
         key = config.google_places_key()
         if key:
-            resp = _req.get("https://maps.googleapis.com/maps/api/place/details/json",
-                            params={"place_id": place_id, "fields": "address_component",
-                                    "key": key}, timeout=8)
+            # Metered and ceiling-checked like every Places request (#123),
+            # billed to the restaurant whose visibility run this is
+            # (ai_context in _do_ai_visibility_inner).
+            from ai_utils import places_request as _places_request
+            resp = _places_request("details", {"place_id": place_id, "fields": "address_component",
+                                               "key": key}, action="aivis_city", timeout=8)
             data = resp.json()
             status = data.get("status")
             if status == "OK":
@@ -6933,8 +6987,24 @@ def _do_ai_visibility_inner(rid, force=False):
     # Perplexity is a paid dependency like any other, so it answers to the
     # same ceiling. It used to be exempt purely because it wasn't Claude.
     _over = ai_budget_exceeded(rid)
+    import ai_utils as _ai_ops
     if _over:
+        _ai_ops.log_blocked(rid, "ai_visibility", AIVIS_MODEL, "budget", detail=_over, vendor="perplexity")
         return {"ok": False, "error": f"AI visibility is paused — {_over} reached."}, 200
+    # Fail fast (#151): with no key every query was still sent — each one
+    # paced 1.3s and retried once, on the owner's request thread — to come
+    # back 401. And while the Perplexity breaker is open nothing is sent.
+    if not (os.getenv("PERPLEXITY_API_KEY") or "").strip():
+        _ai_ops.log_blocked(rid, "ai_visibility", AIVIS_MODEL, "no_key", detail="PERPLEXITY_API_KEY is not set",
+                            vendor="perplexity")
+        return {"ok": False, "error": "AI visibility checks aren't available right now."}, 200
+    try:
+        _ai_ops._breaker_check("perplexity")
+    except _ai_ops.AIProviderDown:
+        _ai_ops.log_blocked(rid, "ai_visibility", AIVIS_MODEL, "breaker", detail="the Perplexity breaker is open",
+                            vendor="perplexity")
+        return {"ok": False, "error": "AI visibility checks are paused — the AI search service isn't answering. "
+                                      "Try again in a few minutes."}, 200
 
     name        = r.name or ""
     neighborhood = r.neighborhood or ""
@@ -7171,94 +7241,125 @@ def _do_ai_visibility_inner(rid, force=False):
     # not for send order — _pplx_wait_turn() below is what actually keeps
     # this key under its 50 RPM ceiling, across every worker and every
     # restaurant in the process, not just the queries in this one run.
-    def _run_query(spec, _retry=True):
+    def _run_query(spec):
         q = spec["q"] if isinstance(spec, dict) else spec
         kind = spec.get("kind", "discovery") if isinstance(spec, dict) else "discovery"
-        try:
-            _pplx_wait_turn()
-            resp = _pplx_req.post(
-                "https://api.perplexity.ai/chat/completions",
-                headers={"Authorization": f"Bearer {_pplx_key}", "Content-Type": "application/json"},
-                json={
-                    "model": AIVIS_MODEL,
-                    # Citations are no longer suppressed. Perplexity's whole
-                    # value here is that its claims are grounded, and the old
-                    # prompt asked it to strip exactly that — leaving an
-                    # unverifiable assertion stored against the restaurant.
-                    # The inline [n] markers are still cleaned out of the
-                    # display text; the URLs come back separately below.
-                    "messages": [
-                        {"role": "system", "content": "Answer in under 80 words. Recommend specific restaurants by name, and include the city or neighbourhood each one is in. Do not use markdown formatting."},
-                        {"role": "user", "content": q},
-                    ],
-                    "max_tokens": 300,
-                },
-                timeout=10
-            )
-            body = resp.json() if resp.status_code == 200 else {}
-            answer = body.get("choices", [{}])[0].get("message", {}).get("content", "") if body else ""
-            sources = [c for c in (body.get("citations") or []) if isinstance(c, str)][:6]
-
-            # Meter it. Perplexity used to sit entirely outside the ledger and
-            # the budget — the $10/day and $1,500/month ceilings bound Claude
-            # only, so nine sonar queries a minute per restaurant were both
-            # unbounded and invisible. Same table, same budget, same admin view.
+        _failed = {"query": q, "kind": kind, "answer": "Could not fetch answer.",
+                   "appeared": False, "ok": False, "sources": [], "competitors_named": []}
+        answer, sources, err, reason = "", [], None, None
+        sends, tin, tout = 0, 0, 0
+        _started = _pplx_time.time()
+        # One logical query = one ledger row (AIOPS-15): up to two sends, the
+        # second one only after a failure, recorded as its attempts with the
+        # whole wait as its latency — each retry used to be its own row.
+        for _attempt in (1, 2):
+            if _ai_ops.breaker_state("perplexity")[0] == "open":
+                # A key Perplexity rejected, or a run of failures: the rest of
+                # the run fails fast rather than pacing and retrying (#151).
+                reason = reason or "breaker"
+                err = err or "the Perplexity breaker is open"
+                break
+            sends += 1
             try:
-                from ai_utils import log_api_call as _lac
-                _u = (body.get("usage") or {}) if isinstance(body, dict) else {}
-                _lac(rid, "ai_visibility", "perplexity-search",
-                     calls=1,
-                     input_tokens=int(_u.get("prompt_tokens") or 0),
-                     output_tokens=int(_u.get("completion_tokens") or 0),
-                     status="ok" if answer else "error",
-                     error=None if answer else f"HTTP {resp.status_code}, no answer")
-            except Exception:
-                pass
-            if not answer and _retry:
-                # _pplx_wait_turn() already keeps sends under the 50 RPM
-                # ceiling, so a 429 here means Perplexity's own window
-                # hasn't cleared yet — honor its Retry-After when it sends
-                # one instead of guessing a flat delay.
-                _delay = 2.0
-                if resp.status_code == 429:
-                    try:
-                        _delay = max(_delay, float(resp.headers.get("Retry-After", _delay)))
-                    except (TypeError, ValueError):
-                        pass
-                _pplx_time.sleep(_delay)
-                return _run_query(spec, _retry=False)
-            if not answer:
-                # Perplexity did not answer. That is an outage on our side,
-                # not evidence the restaurant is invisible — scoring it zero
-                # is how a rate limit became a permanent dip in the owner's
-                # visibility trend.
-                return {"query": q, "kind": kind, "answer": "Could not fetch answer.",
-                        "appeared": False, "ok": False, "sources": [],
-                        "competitors_named": []}
-            appeared = _mentions_this_restaurant(answer, branded=(kind == "branded"))
-            # Was answer[:400] — the system prompt already asks for "under
-            # 80 words" (~440 chars including spaces), so a 400-char cap
-            # sat BELOW what a compliant response typically needs and was
-            # cutting real content off before iOS's own press-and-hold
-            # "read the full answer" feature ever saw it. max_tokens: 300
-            # on the API call above already bounds the raw response size —
-            # this extra truncation was redundant on top of that, not a
-            # real safety net.
-            # The answers ARE ranked lists of restaurants, and the
-            # competitor set is already validated with Place IDs two modules
-            # away. Nothing cross-referenced them, so the one comparison an
-            # owner most wants — did my competitors come up instead of me —
-            # was a pass over data already in memory that nobody made.
-            return {"query": q, "kind": kind, "answer": _clean_ai_answer(answer),
-                    "appeared": appeared, "ok": True, "sources": sources,
-                    "competitors_named": _competitors_in(answer)}
+                _pplx_wait_turn()
+                resp = _pplx_req.post(
+                    "https://api.perplexity.ai/chat/completions",
+                    headers={"Authorization": f"Bearer {_pplx_key}", "Content-Type": "application/json"},
+                    json={
+                        "model": AIVIS_MODEL,
+                        # Citations are no longer suppressed. Perplexity's whole
+                        # value here is that its claims are grounded, and the old
+                        # prompt asked it to strip exactly that — leaving an
+                        # unverifiable assertion stored against the restaurant.
+                        # The inline [n] markers are still cleaned out of the
+                        # display text; the URLs come back separately below.
+                        "messages": [
+                            {"role": "system", "content": "Answer in under 80 words. Recommend specific restaurants by name, and include the city or neighbourhood each one is in. Do not use markdown formatting."},
+                            {"role": "user", "content": q},
+                        ],
+                        "max_tokens": 300,
+                    },
+                    timeout=10
+                )
+                body = resp.json() if resp.status_code == 200 else {}
+                answer = body.get("choices", [{}])[0].get("message", {}).get("content", "") if body else ""
+                sources = [c for c in (body.get("citations") or []) if isinstance(c, str)][:6]
+                if answer:
+                    _u = (body.get("usage") or {}) if isinstance(body, dict) else {}
+                    tin = int(_u.get("prompt_tokens") or 0)
+                    tout = int(_u.get("completion_tokens") or 0)
+                    break
+                err = f"HTTP {resp.status_code}, no answer"
+                reason = ({401: "auth", 403: "permission", 429: "rate_limit"}.get(resp.status_code)
+                          or ("server" if resp.status_code >= 500 else "no_answer"))
+                if resp.status_code in (401, 403):
+                    break       # a rejected key is not fixed in two seconds
+                if _attempt == 1:
+                    # _pplx_wait_turn() already keeps sends under the 50 RPM
+                    # ceiling, so a 429 here means Perplexity's own window
+                    # hasn't cleared yet — honor its Retry-After when it sends
+                    # one instead of guessing a flat delay.
+                    _delay = 2.0
+                    if resp.status_code == 429:
+                        try:
+                            _delay = max(_delay, float(resp.headers.get("Retry-After", _delay)))
+                        except (TypeError, ValueError, AttributeError):
+                            pass
+                    _pplx_time.sleep(_delay)
+            except Exception as _qe:
+                err = type(_qe).__name__
+                reason = "timeout" if "timeout" in err.lower() else "connection"
+                if _attempt == 1:
+                    _pplx_time.sleep(2)
+        _latency = int((_pplx_time.time() - _started) * 1000)
+        # Meter it. Perplexity used to sit entirely outside the ledger and
+        # the budget — the $10/day and $1,500/month ceilings bound Claude
+        # only, so nine sonar queries a minute per restaurant were both
+        # unbounded and invisible. Same table, same budget, same admin view;
+        # the model asked (AI_VISIBILITY_MODEL) is what the tokens are priced
+        # by (#68), the search fee by the SKU.
+        try:
+            if sends:
+                _ai_ops.log_api_call(rid, "ai_visibility", "perplexity-search", model=AIVIS_MODEL, calls=1,
+                                     input_tokens=tin, output_tokens=tout,
+                                     status="ok" if answer else "error",
+                                     error=None if answer else err, reason=None if answer else reason,
+                                     attempts=sends, latency_ms=_latency)
+            else:
+                _ai_ops.log_blocked(rid, "ai_visibility", AIVIS_MODEL, "breaker",
+                                    detail="the Perplexity breaker is open", vendor="perplexity")
         except Exception:
-            if _retry:
-                _pplx_time.sleep(2)
-                return _run_query(spec, _retry=False)
-            return {"query": q, "kind": kind, "answer": "Could not fetch answer.",
-                    "appeared": False, "ok": False, "sources": [],
-                    "competitors_named": []}
+            pass
+        if answer:
+            _ai_ops._breaker_record("perplexity", True)
+        elif reason in ("auth", "permission"):
+            _ai_ops._note_provider_error("perplexity", "auth", RuntimeError(err or "rejected"))
+            _ai_ops.trip_breaker("perplexity", reason)
+        elif reason and reason != "breaker":
+            _ai_ops._breaker_record("perplexity", False, reason=reason)
+        if not answer:
+            # Perplexity did not answer. That is an outage on our side,
+            # not evidence the restaurant is invisible — scoring it zero
+            # is how a rate limit became a permanent dip in the owner's
+            # visibility trend.
+            return _failed
+        appeared = _mentions_this_restaurant(answer, branded=(kind == "branded"))
+        # Was answer[:400] — the system prompt already asks for "under
+        # 80 words" (~440 chars including spaces), so a 400-char cap
+        # sat BELOW what a compliant response typically needs and was
+        # cutting real content off before iOS's own press-and-hold
+        # "read the full answer" feature ever saw it. max_tokens: 300
+        # on the API call above already bounds the raw response size —
+        # this extra truncation was redundant on top of that, not a
+        # real safety net.
+        # The answers ARE ranked lists of restaurants, and the
+        # competitor set is already validated with Place IDs two modules
+        # away. Nothing cross-referenced them, so the one comparison an
+        # owner most wants — did my competitors come up instead of me —
+        # was a pass over data already in memory that nobody made.
+        return {"query": q, "kind": kind, "answer": _clean_ai_answer(answer),
+                "appeared": appeared, "ok": True, "sources": sources,
+                "competitors_named": _competitors_in(answer)}
 
     # Submit all queries at once — up to 3 run concurrently for latency,
     # but each one blocks on _pplx_wait_turn() before it actually sends,
@@ -7267,7 +7368,7 @@ def _do_ai_visibility_inner(rid, force=False):
     # this here; it's gone now that the real gate lives in _run_query.
     query_results = [None] * len(queries)
     with ThreadPoolExecutor(max_workers=3) as _pool:
-        _futures = {_pool.submit(_run_query, _q): _i for _i, _q in enumerate(queries)}
+        _futures = {_pool.submit(_ai_ops.context_runner(_run_query), _q): _i for _i, _q in enumerate(queries)}
         for _fut in as_completed(_futures):
             i = _futures[_fut]
             try:

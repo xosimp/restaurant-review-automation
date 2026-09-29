@@ -1803,8 +1803,49 @@ def snapshot_sources(restaurant) -> tuple:
         return ()
 
 
+# The keys of an answer's meta kept on its traced call (ai_calls.meta_json):
+# what the owner was shown beside the answer, so a disputed answer can be
+# traced to its rounds, tools, depth, confidence and verdict (#117). It used
+# to go to the client and nowhere else.
+_TRACE_META_KEYS = ("tools_used", "modules_consulted", "depth", "confidence", "unverified_figures",
+                    "unsupported_causes", "unsupported_names")
+
+
+def _ai_turn(fn):
+    """The AI-operations envelope around ask_with_tools (fix round G): every
+    round of one answer is logged under its `action` ("ask_cavnar", or
+    "weekly_plan" for the Monday plan, #148) with one correlation id — the
+    caller's run id when it set one, else a new turn id — and the answer's
+    meta is kept on its final traced call. The meta returned carries
+    `call_id` and `turn_id`. A decorator so ask_with_tools keeps its own
+    name and body (the adoption tests read both)."""
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(restaurant, question, *args, **kwargs):
+        import ai_utils
+        action = kwargs.get("action") or "ask_cavnar"
+        outer = (ai_utils._CTX.get() or {}).get("correlation_id")
+        turn_id = outer or ai_utils.new_correlation_id("ask" if action == "ask_cavnar" else action)
+        with ai_utils.ai_context(correlation_id=turn_id):
+            answer, truncated, proposals, meta = fn(restaurant, question, *args, **kwargs)
+        try:
+            call_id = ai_utils.last_call_id(getattr(restaurant, "id", None), action=action)
+            if call_id and isinstance(meta, dict):
+                ai_utils.annotate_call(call_id, {
+                    **{k: meta.get(k) for k in _TRACE_META_KEYS if k in meta},
+                    "validation": {k: (meta.get("validation") or {}).get(k) for k in ("verdict", "codes", "version")},
+                    "turn_id": turn_id, "truncated": bool(truncated), "proposals": len(proposals or [])})
+                meta = dict(meta, call_id=call_id, turn_id=turn_id)
+        except Exception as e:
+            print(f"[ask_cavnar] trace meta not kept: {e}")
+        return answer, truncated, proposals, meta
+    return wrapper
+
+
+@_ai_turn
 def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=False, user=None,
-                   read_only=False, delivery="interactive", screen=None):
+                   read_only=False, delivery="interactive", screen=None, action="ask_cavnar"):
     """Ask Cavnar, with the ability to look things up and to propose actions.
 
     Returns (answer_text, truncated, proposals, meta).
@@ -1949,7 +1990,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
             messages=messages,
             tools=tool_specs,
             restaurant_id=restaurant.id,
-            action="ask_cavnar",
+            action=action,
             readiness=_ready_ask,
         )
         truncated = getattr(message, "stop_reason", None) == "max_tokens"
@@ -2077,7 +2118,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
                 get_client(), model=model, max_tokens=max_tokens,
                 system=system_blocks, messages=messages,
                 tools=tool_specs, tool_choice={"type": "none"},
-                restaurant_id=restaurant.id, action="ask_cavnar", readiness=_ready_ask,
+                restaurant_id=restaurant.id, action=action, readiness=_ready_ask,
             )
             answer, meta = _finish(_answer_of(final), seen_corpus, tools_used, consulted, depth, restaurant.id,
                                    actions_done=actions_done, snapshot_keys=_snapshot_keys, viewer=restaurant)
@@ -2089,7 +2130,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
         get_client(), model=model, max_tokens=max_tokens,
         system=system_blocks, messages=messages,
         tools=tool_specs, tool_choice={"type": "none"},
-        restaurant_id=restaurant.id, action="ask_cavnar", readiness=_ready_ask,
+        restaurant_id=restaurant.id, action=action, readiness=_ready_ask,
     )
     answer, meta = _finish(_answer_of(final), seen_corpus, tools_used, consulted, depth, restaurant.id,
                            actions_done=actions_done, snapshot_keys=_snapshot_keys, viewer=restaurant)

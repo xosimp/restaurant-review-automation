@@ -9,7 +9,7 @@ def get_conn(db_path=None):
     bare get_conn() calls in this module and they opened ./reviews.db."""
     return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 from ai_utils import (AIRefused, create_with_retry, extract_text, get_client, is_platform_stop,
-                      is_refusal, model_for)
+                      is_refusal, mark_outcome, model_for)
 from ai_guard import UNTRUSTED_NOTE, wrap_untrusted
 
 
@@ -455,6 +455,8 @@ Write ONLY the response. No preamble, no labels, no quotation marks around the r
         raise AIRefused("the model declined to draft a reply to this review")
     draft = extract_text(message).strip()
     if not draft:
+        # Billed, and unusable: filed as such in the ledger (#52).
+        mark_outcome(message, "unparseable", reason="empty draft")
         raise ValueError("the model returned an empty draft")
     if getattr(message, "stop_reason", None) == "max_tokens":
         # A reply cut off mid-sentence is worse published than absent, and

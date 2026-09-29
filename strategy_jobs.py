@@ -688,8 +688,14 @@ def run_weekly_plan(db_path=DB_PATH):
                 question += ("\n\nHELD THIS WEEK — the data behind these isn't current, so propose no action "
                              "about them: " + "; ".join(f"{m.replace('_', ' ')} ({why})" for m, why in holds.items())
                              + ".")
-            answer, _trunc, _props, _meta = ask_with_tools(r, question, history=[], user=None,
-                                                           read_only=True, delivery="unattended")
+            # Its own ledger action and one correlation id per run (#148):
+            # the Monday plan was filed as "ask_cavnar", so its spend could
+            # not be told apart from the owner's questions.
+            import ai_utils as _ai_wp
+            with _ai_wp.ai_context(trigger="scheduler", correlation_id=f"weekly_plan:{r.id}:{week}"):
+                answer, _trunc, _props, _meta = ask_with_tools(r, question, history=[], user=None,
+                                                               read_only=True, delivery="unattended",
+                                                               action="weekly_plan")
             # The FULL list (R6, B5 #6): unverified_figures is cut to five for
             # the screen, and the sixth invented figure was filed unattended.
             unverified = (_meta or {}).get("unverified_all")
@@ -707,8 +713,9 @@ def run_weekly_plan(db_path=DB_PATH):
                 why_not = (f"it is about {held.replace('_', ' ')}, whose data isn't current ({holds[held]})"
                            if held else _plan_item_problem(item, unverified, ctx, unsupported_names=names))
                 if why_not:
-                    ops.capture(RuntimeError(f"weekly plan item not filed: {why_not}"),
-                                job="weekly_plan", context=f"restaurant_id={r.id}")
+                    # An AI-quality finding (fix round G #58), not a failing job.
+                    _ai_wp.record_quality_event("weekly_plan", "item_dropped", restaurant_id=r.id,
+                                                action="weekly_plan", detail=f"weekly plan item not filed: {why_not}")
                     continue
                 issues.create_issue(
                     r.id, "plan", item["title"],

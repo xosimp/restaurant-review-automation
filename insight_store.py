@@ -53,11 +53,28 @@ def init_insight_store(db_path: str = DB_PATH):
             fingerprint    TEXT NOT NULL,
             payload        TEXT NOT NULL,
             created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+            call_id        TEXT,
             PRIMARY KEY (restaurant_id, kind)
         )""")
+        # The model call a stored read came from (ai_calls, fix round G #117):
+        # the read here is overwritten by the next one, but the call's trace
+        # keeps each one's text for AI_TRACE_DAYS.
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(insight_cache)").fetchall()}
+        if "call_id" not in cols:
+            try:
+                conn.execute("ALTER TABLE insight_cache ADD COLUMN call_id TEXT")
+            except Exception as e:
+                if "duplicate column" not in str(e).lower():    # another process added it first
+                    raise
         conn.commit()
     finally:
         conn.close()
+
+
+# The ledger action each stored kind's model call logs under — so a read is
+# linked to the call that wrote it and not to an unrelated one.
+_KIND_ACTIONS = {"reviews": "review_insight", "food": "inventory_insight", "marketing": "marketing_insight",
+                 "labor": "labor_insight"}
 
 
 def fingerprint(*parts) -> str:
@@ -181,22 +198,40 @@ def _row(restaurant_id, kind, db_path):
         conn.close()
 
 
-def put(restaurant_id, kind, fp, payload, db_path=DB_PATH, raw=None) -> bool:
+def put(restaurant_id, kind, fp, payload, db_path=DB_PATH, raw=None, call_id=None) -> bool:
     """Store the read. Never raises: a cache write must not fail a page.
     With `raw` (the model's text before validation), the read is stored
     with the validation engine's version, so a later version re-validates
-    it from `raw` instead of serving the old verdict (see get)."""
+    it from `raw` instead of serving the old verdict (see get). The model
+    call that wrote it is linked (`call_id`, else the last call of this
+    kind's action in this context — ai_utils.last_call_id)."""
     if raw is not None:
         payload = _wrap(raw, payload)
+    if call_id is None and kind in _KIND_ACTIONS:
+        try:
+            import ai_utils
+            call_id = ai_utils.last_call_id(restaurant_id, action=_KIND_ACTIONS[kind])
+        except Exception:
+            call_id = None
     try:
         conn = get_conn(db_path)
     except Exception:
         return False
     try:
-        conn.execute("INSERT INTO insight_cache (restaurant_id, kind, fingerprint, payload, created_at) "
-                     "VALUES (?,?,?,?,datetime('now')) ON CONFLICT(restaurant_id, kind) DO UPDATE SET "
-                     "fingerprint=excluded.fingerprint, payload=excluded.payload, created_at=excluded.created_at",
-                     (restaurant_id, kind, fp, json.dumps(payload, default=str)))
+        try:
+            conn.execute("INSERT INTO insight_cache (restaurant_id, kind, fingerprint, payload, created_at, call_id) "
+                         "VALUES (?,?,?,?,datetime('now'),?) ON CONFLICT(restaurant_id, kind) DO UPDATE SET "
+                         "fingerprint=excluded.fingerprint, payload=excluded.payload, created_at=excluded.created_at, "
+                         "call_id=excluded.call_id",
+                         (restaurant_id, kind, fp, json.dumps(payload, default=str), call_id))
+        except Exception as e:
+            if "call_id" not in str(e):
+                raise
+            # A database booted before the column (init_insight_store adds it).
+            conn.execute("INSERT INTO insight_cache (restaurant_id, kind, fingerprint, payload, created_at) "
+                         "VALUES (?,?,?,?,datetime('now')) ON CONFLICT(restaurant_id, kind) DO UPDATE SET "
+                         "fingerprint=excluded.fingerprint, payload=excluded.payload, created_at=excluded.created_at",
+                         (restaurant_id, kind, fp, json.dumps(payload, default=str)))
         conn.commit()
         return True
     except Exception as e:

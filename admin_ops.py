@@ -2789,58 +2789,365 @@ def integrations():
             "webhooks_inbound": inbound, **_payload_meta(meta, bucket)}
 
 
+def _utc_since(days):
+    """A UTC 'YYYY-MM-DD HH:MM:SS' `days` back — the zone ai_usage and every
+    AI table stamp in (SQLite's datetime('now')). ai_ops read these windows
+    in server-local time, so "today" on the AI page and the budget's own UTC
+    day disagreed wherever the server was not on UTC (AIOPS-20)."""
+    from datetime import timezone
+    return (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _utc_today():
+    from datetime import timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _utc_month():
+    from datetime import timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-01")
+
+
+# A row's outcome, for rows written before the column existed (their status
+# was ok or error).
+_OUTCOME_SQL = ("COALESCE(outcome, CASE WHEN COALESCE(status,'ok')='ok' THEN 'ok' "
+                "WHEN status='blocked' THEN 'blocked' ELSE 'error' END)")
+_VENDOR_SQL = ("COALESCE(vendor, CASE WHEN COALESCE(model,'') LIKE 'google-places%' THEN 'google_places' "
+               "WHEN COALESCE(model,'') LIKE 'perplexity%' OR COALESCE(model,'') LIKE 'sonar%' THEN 'perplexity' "
+               "ELSE 'anthropic' END)")
+# A blocked row stands for every refusal coalesced into it (attempts).
+_WEIGHT_SQL = f"(CASE WHEN {_OUTCOME_SQL}='blocked' THEN COALESCE(attempts,1) ELSE 1 END)"
+_PROVIDER_LABELS = {"anthropic": "Claude", "perplexity": "Perplexity", "google_places": "Google Places"}
+_OUTCOME_KEYS = ("ok", "error", "refused", "truncated", "unparseable", "blocked")
+
+
+def _latency_by(conn, since, restaurant_id=None):
+    """{(action, model): (p50, p95)} over calls that reached a provider."""
+    from ai_utils import _percentile
+    sql = (f"SELECT action, model, latency_ms FROM ai_usage WHERE created_at >= ? AND latency_ms IS NOT NULL "
+           f"AND {_OUTCOME_SQL} <> 'blocked'")
+    args = [since]
+    if restaurant_id is not None:
+        sql += " AND restaurant_id=?"
+        args.append(restaurant_id)
+    by = {}
+    for r in _rows_dict(conn, sql, args):
+        by.setdefault((r["action"], r["model"]), []).append(r["latency_ms"])
+    return {k: (_percentile(v, 50), _percentile(v, 95)) for k, v in by.items()}
+
+
+def _by_action(conn, since, restaurant_id=None):
+    """Spend, calls, outcomes and p50/p95 latency by action and model —
+    calls are calls that reached a provider; refused-before-sending ones are
+    `blocked`, counted apart."""
+    where, args = "WHERE created_at >= ?", [since]
+    if restaurant_id is not None:
+        where += " AND restaurant_id=?"
+        args.append(restaurant_id)
+    outcome_cols = ", ".join(
+        "SUM(CASE WHEN %s='%s' THEN %s ELSE 0 END) AS n_%s"
+        % (_OUTCOME_SQL, o, "COALESCE(attempts,1)" if o == "blocked" else "1", o) for o in _OUTCOME_KEYS)
+    rows = _rows_dict(conn, f"""
+        SELECT action, model, {_VENDOR_SQL} AS vendor,
+               SUM(CASE WHEN {_OUTCOME_SQL} <> 'blocked' THEN 1 ELSE 0 END) AS calls,
+               {outcome_cols},
+               ROUND(COALESCE(SUM(cost_usd),0), 4) AS cost,
+               ROUND(COALESCE(SUM(CASE WHEN "trigger"='admin' THEN cost_usd ELSE 0 END),0), 4) AS admin_cost,
+               ROUND(AVG(CASE WHEN {_OUTCOME_SQL} <> 'blocked' THEN input_tokens + output_tokens END)) AS avg_tokens,
+               MAX(created_at) AS last_at
+        FROM ai_usage {where} GROUP BY action, model ORDER BY cost DESC""", args)
+    lat = _latency_by(conn, since, restaurant_id)
+    for r in rows:
+        r["outcomes"] = {o: int(r.pop(f"n_{o}") or 0) for o in _OUTCOME_KEYS}
+        r["p50_ms"], r["p95_ms"] = lat.get((r["action"], r["model"]), (None, None))
+    return rows
+
+
+def _budget_limits():
+    import ai_utils as _ai
+    return {"paid": {"day": _ai.AI_DAILY_BUDGET_USD, "month": _ai.AI_MONTHLY_BUDGET_USD},
+            "trial": {"day": _ai.AI_TRIAL_DAILY_BUDGET_USD, "month": _ai.AI_TRIAL_MONTHLY_BUDGET_USD},
+            "unpaid": {"day": _ai.AI_UNPAID_DAILY_BUDGET_USD, "month": _ai.AI_UNPAID_MONTHLY_BUDGET_USD},
+            "places": {"day": _ai.AI_PLACES_DAILY_BUDGET_USD, "month": _ai.AI_PLACES_MONTHLY_BUDGET_USD},
+            "global_month": _ai.global_monthly_budget(), "warn_pct": _ai.AI_BUDGET_WARN_PCT}
+
+
+def budget_watch(conn=None):
+    """Every restaurant at or past AI_BUDGET_WARN_PCT of one of its own
+    ceilings today or this month — AI (by its tier) or Google Places — in
+    one grouped read, never a per-restaurant loop (#122). Each row: {restaurant_id,
+    name, tier, scope (ai_day | ai_month | places_day | places_month),
+    spend, budget, pct, over}. The console's "warn at 80%"."""
+    import ai_utils as _ai
+    own = conn is None
+    conn = conn or get_conn()
+    try:
+        today, month = _utc_today() + " 00:00:00", _utc_month() + " 00:00:00"
+        rows = _rows_dict(conn, f"""
+            SELECT a.restaurant_id, r.name, r.billing_status, COALESCE(r.is_demo, 0) AS is_demo,
+                   SUM(CASE WHEN a.created_at >= ? AND {_ai._AI_ROW_SQL.replace('vendor', 'a.vendor').replace('model', 'a.model')}
+                            AND COALESCE(a."trigger",'') <> 'admin' THEN a.cost_usd ELSE 0 END) AS ai_day,
+                   SUM(CASE WHEN {_ai._AI_ROW_SQL.replace('vendor', 'a.vendor').replace('model', 'a.model')}
+                            AND COALESCE(a."trigger",'') <> 'admin' THEN a.cost_usd ELSE 0 END) AS ai_month,
+                   SUM(CASE WHEN a.created_at >= ? AND {_ai._PLACES_ROW_SQL.replace('vendor', 'a.vendor').replace('model', 'a.model')}
+                            THEN a.cost_usd ELSE 0 END) AS places_day,
+                   SUM(CASE WHEN {_ai._PLACES_ROW_SQL.replace('vendor', 'a.vendor').replace('model', 'a.model')}
+                            THEN a.cost_usd ELSE 0 END) AS places_month
+            FROM ai_usage a JOIN restaurants r ON r.id = a.restaurant_id
+            WHERE a.created_at >= ? GROUP BY a.restaurant_id""", (today, today, month))
+    finally:
+        if own:
+            conn.close()
+    out = []
+    for r in rows:
+        status = (r.get("billing_status") or "").strip().lower()
+        tier = ("paid" if status in _ai._PAID_BILLING_STATES else
+                "trial" if status in _ai._TRIAL_BILLING_STATES and not r.get("is_demo") else "unpaid")
+        daily, monthly = _ai._tier_budgets(tier)
+        for scope, spend, budget in (("ai_day", r["ai_day"], daily), ("ai_month", r["ai_month"], monthly),
+                                     ("places_day", r["places_day"], _ai.AI_PLACES_DAILY_BUDGET_USD),
+                                     ("places_month", r["places_month"], _ai.AI_PLACES_MONTHLY_BUDGET_USD)):
+            if not budget:
+                continue
+            pct = round(100.0 * float(spend or 0) / budget, 1)
+            if pct >= _ai.AI_BUDGET_WARN_PCT:
+                out.append({"restaurant_id": r["restaurant_id"], "name": r["name"], "tier": tier, "scope": scope,
+                            "spend": round(float(spend or 0), 4), "budget": budget, "pct": pct,
+                            "over": pct >= 100})
+    out.sort(key=lambda x: -x["pct"])
+    return out
+
+
+# Anomaly thresholds (#140). A cost anomaly: a restaurant's day against the
+# median of its own previous 14 days. A rate anomaly: one action's calls in a
+# day against that action's own 14-day median for the restaurant. The 570
+# geocodes a month (about 19 a day, from a baseline of zero) tripped neither
+# of the old count rules.
+ANOMALY_BASELINE_DAYS = 14
+ANOMALY_COST_MULTIPLE = 3.0
+ANOMALY_COST_FLOOR_USD = 1.0
+ANOMALY_RATE_MULTIPLE = 4.0
+ANOMALY_RATE_FLOOR = 15
+
+
+def ai_anomalies(days=7, conn=None):
+    """[{kind, restaurant_id, restaurant, detail, day, ...}] over the last
+    `days` UTC days: `spike` (a week 4x the one before), `loop` (200+ calls
+    of one action in a day), `cost` (a day over ANOMALY_COST_MULTIPLE x the
+    restaurant's own trailing median and over the floor) and `rate` (an
+    action's day over ANOMALY_RATE_MULTIPLE x its own trailing median and
+    over the floor)."""
+    from statistics import median
+    own = conn is None
+    conn = conn or get_conn()
+    try:
+        since = _utc_since(days + ANOMALY_BASELINE_DAYS)
+        daily_cost = _rows_dict(conn, "SELECT restaurant_id, substr(created_at,1,10) AS day, SUM(cost_usd) AS cost "
+                                      "FROM ai_usage WHERE created_at >= ? AND restaurant_id IS NOT NULL "
+                                      "GROUP BY restaurant_id, day", (since,))
+        daily_rate = _rows_dict(conn, f"SELECT restaurant_id, action, substr(created_at,1,10) AS day, COUNT(*) AS n "
+                                      f"FROM ai_usage WHERE created_at >= ? AND restaurant_id IS NOT NULL "
+                                      f"AND {_OUTCOME_SQL} <> 'blocked' GROUP BY restaurant_id, action, day", (since,))
+        week, prev = _utc_since(7), _utc_since(14)
+        wk = {r["restaurant_id"]: r["n"] for r in _rows_dict(conn, "SELECT restaurant_id, COUNT(*) AS n FROM ai_usage WHERE created_at >= ? GROUP BY restaurant_id", (week,))}
+        pv = {r["restaurant_id"]: r["n"] for r in _rows_dict(conn, "SELECT restaurant_id, COUNT(*) AS n FROM ai_usage WHERE created_at >= ? AND created_at < ? GROUP BY restaurant_id", (prev, week))}
+        names = {r["id"]: r["name"] for r in _rows_dict(conn, "SELECT id, name FROM restaurants")}
+    finally:
+        if own:
+            conn.close()
+    from datetime import timezone
+    first_day = (datetime.now(timezone.utc) - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+    out = [{"kind": "spike", "restaurant_id": rid, "restaurant": names.get(rid),
+            "detail": f"{n} calls this week vs {pv.get(rid, 0)} the week before"}
+           for rid, n in wk.items() if rid is not None and n >= 40 and pv.get(rid, 0) and n > 4 * pv.get(rid, 0)]
+
+    def _series(rows, key, value):
+        by = {}
+        for r in rows:
+            by.setdefault(key(r), {})[r["day"]] = float(r[value] or 0)
+        return by
+
+    for rid, series in _series(daily_cost, lambda r: r["restaurant_id"], "cost").items():
+        days_sorted = sorted(series)
+        for day in [d for d in days_sorted if d >= first_day]:
+            base_days = [d for d in days_sorted if d < day][-ANOMALY_BASELINE_DAYS:]
+            base = median([series[d] for d in base_days]) if base_days else 0.0
+            cost = series[day]
+            if cost > ANOMALY_COST_FLOOR_USD and cost > ANOMALY_COST_MULTIPLE * base:
+                out.append({"kind": "cost", "restaurant_id": rid, "restaurant": names.get(rid), "day": day,
+                            "cost": round(cost, 2), "baseline": round(base, 2),
+                            "detail": f"${cost:.2f} of AI and data-API spend on {day} against a "
+                                      f"${base:.2f}/day median"})
+    for (rid, action), series in _series(daily_rate, lambda r: (r["restaurant_id"], r["action"]), "n").items():
+        days_sorted = sorted(series)
+        for day in [d for d in days_sorted if d >= first_day]:
+            base_days = [d for d in days_sorted if d < day][-ANOMALY_BASELINE_DAYS:]
+            # A day with no calls is a zero in the baseline, not a gap.
+            span = max(1, min(ANOMALY_BASELINE_DAYS, len(base_days)))
+            base = median([series[d] for d in base_days] + [0.0] * (span - len(base_days))) if base_days else 0.0
+            n = series[day]
+            if n >= 200:
+                out.append({"kind": "loop", "restaurant_id": rid, "restaurant": names.get(rid), "day": day,
+                            "action": action, "calls": int(n), "detail": f"{action} ran {int(n)}× on {day}"})
+            elif n >= ANOMALY_RATE_FLOOR and n > ANOMALY_RATE_MULTIPLE * base:
+                out.append({"kind": "rate", "restaurant_id": rid, "restaurant": names.get(rid), "day": day,
+                            "action": action, "calls": int(n), "baseline": base,
+                            "detail": f"{action} ran {int(n)}× on {day} against a median of {base:g} a day"})
+    return out
+
+
+_BUDGET_SCOPE_WORDS = {"ai_day": "today's AI budget", "ai_month": "this month's AI budget",
+                       "places_day": "today's Google Places budget",
+                       "places_month": "this month's Google Places budget"}
+
+
+def ai_budget_issues(watch=None):
+    """budget_watch as issue rows in _issues_for's shape (key, title,
+    severity, detail, action), for the client page and Overview (#122): a
+    warning at AI_BUDGET_WARN_PCT of a ceiling, critical once it is reached
+    (the client's AI or Google lookups are paused until it resets). Keys are
+    "<rid>:ai_budget:<scope>". The integration wave splices these into
+    _issues_for in place of the old "$25 in 30 days" rule."""
+    out = []
+    for w in (budget_watch() if watch is None else watch):
+        over = w["over"]
+        words = _BUDGET_SCOPE_WORDS.get(w["scope"], w["scope"])
+        out.append({"key": f"{w['restaurant_id']}:ai_budget:{w['scope']}", "restaurant_id": w["restaurant_id"],
+                    "title": (f"Paused: {words} is spent" if over else f"{int(w['pct'])}% of {words} used"),
+                    "detail": f"${w['spend']:.2f} of ${w['budget']:.2f} ({w['tier']} ceiling)",
+                    "severity": "critical" if over else "warning", "severity_rank": 2 if over else 1,
+                    "action": "Open AI ops", "action_route": None})
+    return out
+
+
+def ai_anomaly_issues(anomalies=None):
+    """ai_anomalies as platform issue rows for Overview (#140): cost and
+    rate anomalies and loops are warnings, keyed by kind, restaurant, action
+    and day so a new occurrence is a new issue."""
+    out = []
+    for a in (ai_anomalies(days=2) if anomalies is None else anomalies):
+        if a["kind"] not in ("cost", "rate", "loop"):
+            continue
+        out.append({"key": f"ai_anomaly:{a['kind']}:{a['restaurant_id']}:{a.get('action') or ''}:{a.get('day') or ''}",
+                    "restaurant_id": a["restaurant_id"], "restaurant": a.get("restaurant"),
+                    "title": {"cost": "AI spend well above its usual day", "rate": "An AI action running far more "
+                              "often than usual", "loop": "An AI action is looping"}[a["kind"]],
+                    "detail": a["detail"], "severity": "critical" if a["kind"] == "loop" else "warning",
+                    "severity_rank": 2 if a["kind"] == "loop" else 1, "action": "Open AI ops", "action_route": None})
+    return out
+
+
 def ai_ops(days=30):
+    """The AI page (Operations → AI): spend, calls and every outcome by
+    vendor, action and client; blocked calls by reason; p50/p95 latency by
+    workflow; the ceilings (AI by tier, Places, global) and who is near
+    one; the breakers and the last hour's error rate; anomalies; the
+    quality summary. Windows are UTC, the zone the ledger and the budget
+    ceilings use (AIOPS-20)."""
+    import ai_utils as _ai
     conn = get_conn()
-    now = datetime.now()
-    since = _stamp(now - timedelta(days=days))
-    today = now.strftime("%Y-%m-%d")
-    month = now.strftime("%Y-%m-01")
-    totals = _one_dict(conn, "SELECT COUNT(*) AS calls, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost, COALESCE(SUM(input_tokens),0) AS tin, COALESCE(SUM(output_tokens),0) AS tout FROM ai_usage WHERE created_at >= ?", (since,)) or {}
-    t_today = _one_dict(conn, "SELECT COUNT(*) AS calls, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost FROM ai_usage WHERE created_at >= ?", (today,)) or {}
-    t_month = _one_dict(conn, "SELECT COUNT(*) AS calls, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost FROM ai_usage WHERE created_at >= ?", (month,)) or {}
-    by_action = _rows_dict(conn, "SELECT action, model, COUNT(*) AS calls, ROUND(SUM(cost_usd),4) AS cost, ROUND(AVG(input_tokens+output_tokens)) AS avg_tokens FROM ai_usage WHERE created_at >= ? GROUP BY action, model ORDER BY cost DESC", (since,))
-    by_client = _rows_dict(conn, "SELECT a.restaurant_id, r.name, r.location_group, COUNT(*) AS calls, ROUND(SUM(a.cost_usd),4) AS cost FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE a.created_at >= ? GROUP BY a.restaurant_id ORDER BY cost DESC", (since,))
-    daily = _rows_dict(conn, "SELECT substr(created_at,1,10) AS day, COUNT(*) AS calls, ROUND(SUM(cost_usd),4) AS cost FROM ai_usage WHERE created_at >= ? GROUP BY day ORDER BY day", (since,))
-    by_provider = _rows_dict(conn, "SELECT CASE WHEN model LIKE '%perplexity%' OR model LIKE 'sonar%' OR action LIKE '%visibility%' THEN 'Perplexity' ELSE 'Claude' END AS provider, COUNT(*) AS calls, ROUND(SUM(cost_usd),4) AS cost FROM ai_usage WHERE created_at >= ? GROUP BY provider", (since,))
-    failures = _rows_dict(conn, "SELECT action AS job, model, COUNT(*) AS n, MAX(created_at) AS last_at, MAX(error) AS sample FROM ai_usage WHERE created_at >= ? AND COALESCE(status,'ok')='error' GROUP BY action, model ORDER BY n DESC", (since,))
-    failed_total = _one_dict(conn, "SELECT COUNT(*) AS n, SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS n_24h FROM ai_usage WHERE created_at >= ? AND COALESCE(status,'ok')='error'", (_stamp(now - timedelta(days=1)), since)) or {}
-    recent = _rows_dict(conn, "SELECT a.id, a.restaurant_id, r.name, a.action, a.model, a.input_tokens, a.output_tokens, a.cost_usd, a.created_at, COALESCE(a.status,'ok') AS status, a.error FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id ORDER BY a.id DESC LIMIT 80")
-    recent_failed = _rows_dict(conn, "SELECT a.id, a.restaurant_id, r.name, a.action, a.model, a.created_at, a.error FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE COALESCE(a.status,'ok')='error' ORDER BY a.id DESC LIMIT 40")
-    # Anomalies: a client whose last 7 days is >4x its previous 7, or any
-    # action that ran >200 times in a day for one restaurant (a loop).
-    week = _stamp(now - timedelta(days=7)); prev = _stamp(now - timedelta(days=14))
-    wk = {r["restaurant_id"]: r["n"] for r in _rows_dict(conn, "SELECT restaurant_id, COUNT(*) AS n FROM ai_usage WHERE created_at >= ? GROUP BY restaurant_id", (week,))}
-    pv = {r["restaurant_id"]: r["n"] for r in _rows_dict(conn, "SELECT restaurant_id, COUNT(*) AS n FROM ai_usage WHERE created_at >= ? AND created_at < ? GROUP BY restaurant_id", (prev, week))}
-    loops = _rows_dict(conn, "SELECT a.restaurant_id, r.name, a.action, substr(a.created_at,1,10) AS day, COUNT(*) AS n FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE a.created_at >= ? GROUP BY a.restaurant_id, a.action, day HAVING n >= 200 ORDER BY n DESC", (since,))
+    since = _utc_since(days)
+    today = _utc_today()
+    month = _utc_month()
+    calls_sql = f"SUM(CASE WHEN {_OUTCOME_SQL} <> 'blocked' THEN 1 ELSE 0 END)"
+    totals = _one_dict(conn, f"SELECT {calls_sql} AS calls, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost, COALESCE(SUM(input_tokens),0) AS tin, COALESCE(SUM(output_tokens),0) AS tout, "
+                             f"ROUND(COALESCE(SUM(CASE WHEN {_VENDOR_SQL}='google_places' THEN cost_usd ELSE 0 END),0),2) AS data_api_cost, "
+                             f"ROUND(COALESCE(SUM(CASE WHEN {_VENDOR_SQL}<>'google_places' THEN cost_usd ELSE 0 END),0),2) AS ai_cost, "
+                             f"SUM(CASE WHEN {_OUTCOME_SQL}='blocked' THEN COALESCE(attempts,1) ELSE 0 END) AS blocked "
+                             f"FROM ai_usage WHERE created_at >= ?", (since,)) or {}
+    t_today = _one_dict(conn, f"SELECT {calls_sql} AS calls, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost FROM ai_usage WHERE created_at >= ?", (today,)) or {}
+    t_month = _one_dict(conn, f"SELECT {calls_sql} AS calls, ROUND(COALESCE(SUM(cost_usd),0),2) AS cost FROM ai_usage WHERE created_at >= ?", (month,)) or {}
+    by_action = _by_action(conn, since)
+    by_client = _rows_dict(conn, f"SELECT a.restaurant_id, r.name, r.location_group, SUM(CASE WHEN {_OUTCOME_SQL} <> 'blocked' THEN 1 ELSE 0 END) AS calls, "
+                                 f"ROUND(SUM(a.cost_usd),4) AS cost, "
+                                 f"ROUND(SUM(CASE WHEN {_VENDOR_SQL}='google_places' THEN a.cost_usd ELSE 0 END),4) AS data_api_cost, "
+                                 f"SUM(CASE WHEN {_OUTCOME_SQL} NOT IN ('ok','blocked') THEN 1 ELSE 0 END) AS not_ok "
+                                 f"FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE a.created_at >= ? GROUP BY a.restaurant_id ORDER BY cost DESC", (since,))
+    daily = _rows_dict(conn, f"SELECT substr(created_at,1,10) AS day, {calls_sql} AS calls, ROUND(SUM(cost_usd),4) AS cost, "
+                             f"ROUND(SUM(CASE WHEN {_VENDOR_SQL}='google_places' THEN cost_usd ELSE 0 END),4) AS data_api_cost "
+                             f"FROM ai_usage WHERE created_at >= ? GROUP BY day ORDER BY day", (since,))
+    by_vendor = _rows_dict(conn, f"SELECT {_VENDOR_SQL} AS vendor, {calls_sql} AS calls, ROUND(COALESCE(SUM(cost_usd),0),4) AS cost, "
+                                 f"SUM(CASE WHEN {_OUTCOME_SQL}='error' THEN 1 ELSE 0 END) AS errors, "
+                                 f"SUM(CASE WHEN {_OUTCOME_SQL}='blocked' THEN COALESCE(attempts,1) ELSE 0 END) AS blocked "
+                                 f"FROM ai_usage WHERE created_at >= ? GROUP BY 1 ORDER BY cost DESC", (since,))
+    outcomes = {o: 0 for o in _OUTCOME_KEYS}
+    for r in _rows_dict(conn, f"SELECT {_OUTCOME_SQL} AS outcome, SUM({_WEIGHT_SQL}) AS n FROM ai_usage WHERE created_at >= ? GROUP BY 1", (since,)):
+        outcomes[r["outcome"] if r["outcome"] in outcomes else "error"] += int(r["n"] or 0)
+    blocked = _rows_dict(conn, f"SELECT COALESCE(reason,'unknown') AS reason, {_VENDOR_SQL} AS vendor, SUM(COALESCE(attempts,1)) AS n, "
+                               f"MAX(created_at) AS last_at FROM ai_usage WHERE created_at >= ? AND {_OUTCOME_SQL}='blocked' "
+                               f"GROUP BY 1, 2 ORDER BY n DESC", (since,))
+    rate_hits = _rows_dict(conn, "SELECT bucket, SUM(hits) AS hits FROM ai_rate_hits WHERE day >= date(?) GROUP BY bucket ORDER BY hits DESC", (since,))
+    # The latest error per group, not the alphabetically greatest (AIOPS-20).
+    failures = _rows_dict(conn, f"""SELECT g.job, g.model, g.outcome, g.n, g.last_at, b.error AS sample FROM (
+                                       SELECT action AS job, model, {_OUTCOME_SQL} AS outcome, COUNT(*) AS n,
+                                              MAX(created_at) AS last_at, MAX(id) AS last_id
+                                       FROM ai_usage WHERE created_at >= ? AND {_OUTCOME_SQL} NOT IN ('ok','blocked')
+                                       GROUP BY action, model, outcome) g
+                                   JOIN ai_usage b ON b.id = g.last_id ORDER BY g.n DESC""", (since,))
+    failed_total = _one_dict(conn, f"SELECT COUNT(*) AS n, SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS n_24h FROM ai_usage WHERE created_at >= ? AND {_OUTCOME_SQL}='error'", (_utc_since(1), since)) or {}
+    recent = _rows_dict(conn, f"SELECT a.id, a.restaurant_id, r.name, a.action, a.model, {_VENDOR_SQL} AS vendor, a.input_tokens, a.output_tokens, a.cost_usd, a.created_at, "
+                              f"COALESCE(a.status,'ok') AS status, {_OUTCOME_SQL} AS outcome, a.stop_reason, a.reason, a.attempts, a.latency_ms, a.\"trigger\" AS \"trigger\", a.call_id, a.correlation_id, a.error "
+                              f"FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id ORDER BY a.id DESC LIMIT 80")
+    recent_failed = _rows_dict(conn, f"SELECT a.id, a.restaurant_id, r.name, a.action, a.model, a.created_at, {_OUTCOME_SQL} AS outcome, a.reason, a.error, a.call_id "
+                                     f"FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE {_OUTCOME_SQL} NOT IN ('ok','blocked') ORDER BY a.id DESC LIMIT 40")
+    watch = budget_watch(conn)
+    anomalies = ai_anomalies(days=min(days, 14), conn=conn)
+    quality = _rows_dict(conn, "SELECT surface, kind, SUM(n) AS n, MAX(created_at) AS last_at FROM ai_quality_events "
+                               "WHERE created_at >= ? GROUP BY surface, kind ORDER BY n DESC", (since,))
     conn.close()
-    names = {c["restaurant_id"]: c["name"] for c in by_client}
-    anomalies = [{"kind": "spike", "restaurant_id": rid, "restaurant": names.get(rid), "detail": f"{n} calls this week vs {pv.get(rid, 0)} the week before"}
-                 for rid, n in wk.items() if n >= 40 and pv.get(rid, 0) and n > 4 * pv.get(rid, 0)]
-    anomalies += [{"kind": "loop", "restaurant_id": l["restaurant_id"], "restaurant": l["name"], "detail": f"{l['action']} ran {l['n']}× on {l['day']}"} for l in loops]
+    by_provider = [{"provider": _PROVIDER_LABELS.get(v["vendor"], v["vendor"]), "calls": v["calls"], "cost": v["cost"]}
+                   for v in by_vendor]
+    for v in by_vendor:
+        v["label"] = _ai.VENDOR_LABELS.get(v["vendor"], v["vendor"])
+        v["kind"] = "data" if v["vendor"] == "google_places" else "ai"
     # Spend against the ceilings that actually stop calls (ai_utils), so the
     # page shows how close the account is rather than only what it has spent.
     try:
-        import ai_utils as _ai
         budget = _ai.ai_budget_status()
+        budget["places_month"] = _ai.places_budget_status()["month"]
+        budget["limits"] = _budget_limits()
     except Exception:
         budget = {}
-    return {"ok": True, "days": days, "totals": {**totals, "today": t_today, "month": t_month}, "by_action": by_action,
-            "by_client": by_client, "daily": daily, "by_provider": by_provider, "failures": failures, "recent": recent, "anomalies": anomalies,
-            "budget": budget,
-            "failed": {"n": failed_total.get("n") or 0, "n_24h": failed_total.get("n_24h") or 0}, "recent_failed": recent_failed}
+    try:
+        health = _ai.ai_health()
+    except Exception:
+        health = {}
+    return {"ok": True, "days": days, "window_tz": "UTC",
+            "labels": {"cost_card": "AI & data APIs"},
+            "totals": {**totals, "today": t_today, "month": t_month}, "by_action": by_action,
+            "by_client": by_client, "daily": daily, "by_provider": by_provider, "by_vendor": by_vendor,
+            "outcomes": outcomes, "blocked": blocked, "rate_limit_hits": rate_hits,
+            "failures": failures, "recent": recent, "anomalies": anomalies,
+            "budget": budget, "budget_watch": watch, "health": health, "quality": quality,
+            "failed": {"n": failed_total.get("n") or 0, "n_24h": failed_total.get("n_24h") or 0},
+            "recent_failed": recent_failed}
 
 
 def validation_rates(days=30):
     """Response Validation Layer catch rates (internal only): per surface
     the outputs validated and their verdicts, and per surface × rule how
     many outputs the rule fired on and that share of the surface's outputs.
-    Reads ai_validation_log only — no answer text is stored to read."""
+    Reads ai_validation_log only — no answer text is stored to read. Also
+    each surface's mode NOW, including surfaces with no rows (a surface
+    left in shadow is visible, #69), and a daily verdict trend (from the
+    rollup past the raw rows' 120 days)."""
     import response_validation as _rv
     conn = get_conn()
-    since = _stamp(datetime.now() - timedelta(days=days))
+    since = _utc_since(days)
     try:
         rows = _rows_dict(conn, "SELECT surface, verdict, rules, mode FROM ai_validation_log WHERE created_at >= ?",
                           (since,))
+        trend = _rows_dict(conn, "SELECT substr(created_at,1,10) AS day, surface, verdict, COUNT(*) AS n "
+                                 "FROM ai_validation_log WHERE created_at >= ? GROUP BY day, surface, verdict "
+                                 "ORDER BY day", (since,))
+        if days > 120:
+            first_raw = (_one_dict(conn, "SELECT MIN(substr(created_at,1,10)) AS d FROM ai_validation_log") or {}).get("d")
+            for r in _rows_dict(conn, "SELECT day, surface, SUM(n_pass) AS p, SUM(n_caveat) AS c, SUM(n_withhold) AS w, "
+                                      "SUM(n_refuse) AS x FROM ai_validation_daily WHERE day >= date(?) AND (? IS NULL OR day < ?) "
+                                      "GROUP BY day, surface", (since, first_raw, first_raw)):
+                for verdict, key in (("pass", "p"), ("caveat", "c"), ("withhold", "w"), ("refuse", "x")):
+                    if r[key]:
+                        trend.append({"day": r["day"], "surface": r["surface"], "verdict": verdict, "n": r[key]})
     finally:
         conn.close()
     surfaces = {}
@@ -2864,7 +3171,205 @@ def validation_rates(days=30):
                     "rules": [{"rule": k, "label": _rv.RULES.get(k, k), "n": v, "pct": round(100.0 * v / n, 1)}
                               for k, v in sorted(s["rules"].items(), key=lambda kv: -kv[1])],
                     "mode_now": _rv.mode_for(s["surface"])})
-    return {"ok": True, "days": days, "total": len(rows), "surfaces": out, "version": _rv.VERSION}
+    modes = [{"surface": sf, "mode": _rv.mode_for(sf)} for sf in _rv.SURFACES]
+    return {"ok": True, "days": days, "total": len(rows), "surfaces": out, "version": _rv.VERSION,
+            "modes": modes, "shadow": [m["surface"] for m in modes if m["mode"] == "shadow"], "trend": trend}
+
+
+def ai_quality(days=30, restaurant_id=None):
+    """The AI Quality panel (#69): the validation verdict mix and top rules
+    by surface with a trend and each surface's mode; the model in force per
+    purpose; reply drafts flagged for review and how owners edit them; Ask's
+    helpful rate; safety disagreements as a share of reviews analysed; the
+    guard and validation findings and fallbacks (ai_quality_events) by
+    surface and kind, with a trend; refusals, truncations and unparseable
+    replies by action. No answer, draft or guest text is returned."""
+    import ai_utils as _ai
+    since = _utc_since(days)
+    rid_sql, rid_args = ("", []) if restaurant_id is None else (" AND restaurant_id=?", [restaurant_id])
+    conn = get_conn()
+    try:
+        events = _rows_dict(conn, f"SELECT surface, kind, SUM(n) AS n, COUNT(*) AS events, MAX(created_at) AS last_at "
+                                  f"FROM ai_quality_events WHERE created_at >= ?{rid_sql} GROUP BY surface, kind "
+                                  f"ORDER BY n DESC", [since] + rid_args)
+        event_trend = _rows_dict(conn, f"SELECT substr(created_at,1,10) AS day, surface, SUM(n) AS n FROM ai_quality_events "
+                                       f"WHERE created_at >= ?{rid_sql} GROUP BY day, surface ORDER BY day",
+                                 [since] + rid_args)
+        recent_events = _rows_dict(conn, f"SELECT e.id, e.created_at, e.restaurant_id, r.name AS restaurant, e.surface, e.kind, "
+                                         f"e.action, e.detail, e.codes, e.n, e.call_id FROM ai_quality_events e "
+                                         f"LEFT JOIN restaurants r ON r.id=e.restaurant_id WHERE e.created_at >= ?"
+                                         f"{rid_sql.replace('restaurant_id', 'e.restaurant_id')} ORDER BY e.id DESC LIMIT 50",
+                                   [since] + rid_args)
+        unusable = _rows_dict(conn, f"SELECT action, {_OUTCOME_SQL} AS outcome, COUNT(*) AS n, "
+                                    f"SUM(CASE WHEN {_OUTCOME_SQL} <> 'blocked' THEN 1 ELSE 0 END) AS provider_calls "
+                                    f"FROM ai_usage WHERE created_at >= ?{rid_sql} "
+                                    f"AND {_OUTCOME_SQL} IN ('refused','truncated','unparseable') GROUP BY 1, 2 ORDER BY n DESC",
+                              [since] + rid_args)
+        calls_by_action = {r["action"]: r["n"] for r in _rows_dict(
+            conn, f"SELECT action, COUNT(*) AS n FROM ai_usage WHERE created_at >= ?{rid_sql} AND {_OUTCOME_SQL} <> 'blocked' "
+                  f"GROUP BY action", [since] + rid_args)}
+        drafts = _one_dict(conn, f"SELECT COUNT(*) AS drafted, SUM(COALESCE(draft_needs_review,0)) AS needs_review, "
+                                 f"SUM(COALESCE(regenerate_count,0)) AS regenerations FROM reviews "
+                                 f"WHERE deleted_at IS NULL AND draft_response IS NOT NULL AND fetched_at >= ?{rid_sql}",
+                           [since] + rid_args) or {}
+        reasons = _rows_dict(conn, f"SELECT draft_review_reason AS reason, COUNT(*) AS n FROM reviews WHERE deleted_at IS NULL "
+                                   f"AND COALESCE(draft_needs_review,0)=1 AND fetched_at >= ?{rid_sql} "
+                                   f"GROUP BY draft_review_reason ORDER BY n DESC LIMIT 10", [since] + rid_args)
+        edits = _rows_dict(conn, f"SELECT COALESCE(edit_category,'unrecorded') AS category, COUNT(*) AS n, "
+                                 f"ROUND(AVG(edit_distance), 3) AS avg_distance FROM reviews WHERE deleted_at IS NULL "
+                                 f"AND approved_at >= ?{rid_sql} GROUP BY 1", [since] + rid_args)
+        draft_clients = [] if restaurant_id is not None else _rows_dict(conn, """
+            SELECT r.restaurant_id, x.name, COUNT(*) AS drafted,
+                   SUM(COALESCE(r.draft_needs_review,0)) AS needs_review,
+                   SUM(CASE WHEN r.approved_at >= ? AND r.edit_category IN ('light','heavy','rewrite') THEN 1 ELSE 0 END) AS edited,
+                   SUM(CASE WHEN r.approved_at >= ? AND r.edit_category IN ('heavy','rewrite') THEN 1 ELSE 0 END) AS heavy
+            FROM reviews r LEFT JOIN restaurants x ON x.id = r.restaurant_id
+            WHERE r.deleted_at IS NULL AND r.draft_response IS NOT NULL AND r.fetched_at >= ?
+            GROUP BY r.restaurant_id ORDER BY drafted DESC LIMIT 50""", (since, since, since))
+        ask = _one_dict(conn, f"SELECT COUNT(*) AS rated, SUM(helpful) AS helpful, "
+                              f"SUM(CASE WHEN COALESCE(note,'') <> '' THEN 1 ELSE 0 END) AS notes "
+                              f"FROM ask_feedback WHERE created_at >= ?{rid_sql}", [since] + rid_args) or {}
+        analysed = (_one_dict(conn, f"SELECT COUNT(*) AS n FROM ai_usage WHERE created_at >= ? AND action='review_analysis' "
+                                    f"AND {_OUTCOME_SQL}='ok'{rid_sql}", [since] + rid_args) or {}).get("n") or 0
+    finally:
+        conn.close()
+    disagreements = sum(int(e["n"] or 0) for e in events if e["kind"] == "safety_disagreement")
+    # Findings as a RATE (#58): per 100 provider calls of the surface's own
+    # ledger action, where the surface has one.
+    for e in events:
+        actions = {e["surface"]} | set(_ai._SURFACE_ACTIONS.get(e["surface"], ()))
+        if e["surface"] == "safety_disagreement":
+            actions = {"review_analysis"}
+        calls = sum(int(calls_by_action.get(a) or 0) for a in actions)
+        e["calls"] = calls
+        e["per_100_calls"] = round(100.0 * int(e["n"] or 0) / calls, 1) if calls else None
+    drafted = int(drafts.get("drafted") or 0)
+    rated = int(ask.get("rated") or 0)
+    for u in unusable:
+        total = calls_by_action.get(u["action"]) or 0
+        u["pct_of_calls"] = round(100.0 * u["n"] / total, 1) if total else None
+    models = [{"purpose": p, "env": env, "default": default, "model": _ai.model_for(p),
+               "overridden": bool(os.getenv(env)) and os.getenv(env) != default}
+              for p, (env, default) in _ai.MODELS.items()]
+    val = validation_rates(days) if restaurant_id is None else _client_validation(restaurant_id, since)
+    return {"ok": True, "days": days, "window_tz": "UTC", "restaurant_id": restaurant_id,
+            "validation": val, "models": models,
+            "drafts": {"drafted": drafted, "needs_review": int(drafts.get("needs_review") or 0),
+                       "needs_review_pct": round(100.0 * int(drafts.get("needs_review") or 0) / drafted, 1) if drafted else None,
+                       "regenerations": int(drafts.get("regenerations") or 0), "review_reasons": reasons,
+                       "edit_categories": edits, "by_restaurant": draft_clients},
+            "ask": {"rated": rated, "helpful": int(ask.get("helpful") or 0), "notes": int(ask.get("notes") or 0),
+                    "helpful_pct": round(100.0 * int(ask.get("helpful") or 0) / rated, 1) if rated else None},
+            "safety": {"disagreements": disagreements, "reviews_analysed": int(analysed),
+                       "rate_pct": round(100.0 * disagreements / analysed, 2) if analysed else None},
+            "events": events, "event_trend": event_trend, "recent_events": recent_events,
+            "unusable_outputs": unusable}
+
+
+def _client_validation(restaurant_id, since):
+    conn = get_conn()
+    try:
+        rows = _rows_dict(conn, "SELECT surface, verdict, COUNT(*) AS n FROM ai_validation_log "
+                                "WHERE created_at >= ? AND restaurant_id=? GROUP BY surface, verdict", (since, restaurant_id))
+    finally:
+        conn.close()
+    out = {}
+    for r in rows:
+        out.setdefault(r["surface"], {})[r["verdict"]] = r["n"]
+    return {"by_surface": out}
+
+
+def ai_client(rid, days=30):
+    """One client's AI (#48, #122, #124): spend against its own ceilings
+    (AI by tier, and Google Places) with pct, warn and when a pause lifts;
+    usage by action with every outcome and p50/p95 latency; blocked calls
+    by reason; its recent traced calls; its AI-quality findings; stalled
+    reviews and whether the Retry AI action has anything to do."""
+    import ai_utils as _ai
+    import models as _m
+    since = _utc_since(days)
+    try:
+        ai_budget = _ai.ai_budget_status(rid)
+        places_budget = _ai.places_budget_status(rid)
+    except Exception:
+        ai_budget, places_budget = {}, {}
+    conn = get_conn()
+    try:
+        by_action = _by_action(conn, since, rid)
+        blocked = _rows_dict(conn, f"SELECT COALESCE(reason,'unknown') AS reason, {_VENDOR_SQL} AS vendor, "
+                                   f"SUM(COALESCE(attempts,1)) AS n, MAX(created_at) AS last_at, MAX(error) AS detail "
+                                   f"FROM ai_usage WHERE restaurant_id=? AND created_at >= ? AND {_OUTCOME_SQL}='blocked' "
+                                   f"GROUP BY 1, 2 ORDER BY n DESC", (rid, since))
+        daily = _rows_dict(conn, f"SELECT substr(created_at,1,10) AS day, SUM(CASE WHEN {_OUTCOME_SQL} <> 'blocked' THEN 1 ELSE 0 END) AS calls, "
+                                 f"ROUND(SUM(cost_usd),4) AS cost, "
+                                 f"ROUND(SUM(CASE WHEN {_VENDOR_SQL}='google_places' THEN cost_usd ELSE 0 END),4) AS data_api_cost "
+                                 f"FROM ai_usage WHERE restaurant_id=? AND created_at >= ? GROUP BY day ORDER BY day", (rid, since))
+        calls = _rows_dict(conn, "SELECT call_id, created_at, action, model, \"trigger\" AS \"trigger\", correlation_id, "
+                                 "outcome, stop_reason, latency_ms, attempts, input_tokens, output_tokens, "
+                                 "prompt_z IS NOT NULL AS text_kept FROM ai_calls WHERE restaurant_id=? "
+                                 "ORDER BY created_at DESC, rowid DESC LIMIT 25", (rid,))
+    finally:
+        conn.close()
+    try:
+        stalled = _m.count_stalled_reviews(rid)
+    except Exception:
+        stalled = {"unanalysed": 0, "undrafted": 0}
+    warn = [dict(scope=f"{kind}_{scope}", **{k: v for k, v in (b.get(scope) or {}).items()})
+            for kind, b in (("ai", ai_budget), ("places", places_budget)) for scope in ("day", "month")
+            if (b.get(scope) or {}).get("warn")]
+    return {"ok": True, "restaurant_id": rid, "days": days, "window_tz": "UTC",
+            "budget": {"ai": ai_budget, "places": places_budget, "tier": ai_budget.get("tier"), "warnings": warn},
+            "by_action": by_action, "blocked": blocked, "daily": daily, "recent_calls": calls,
+            "quality": ai_quality(days, restaurant_id=rid),
+            "stalled_reviews": stalled, "stalled_total": int(stalled.get("unanalysed") or 0) + int(stalled.get("undrafted") or 0)}
+
+
+def ai_calls(restaurant_id=None, action=None, correlation_id=None, limit=50):
+    """Traced calls, newest first (#117) — ids, hashes, outcome and timing;
+    no prompt or output text (ai_call_detail has that)."""
+    where, args = [], []
+    for col, val in (("restaurant_id", restaurant_id), ("action", action), ("correlation_id", correlation_id)):
+        if val is not None and val != "":
+            where.append(f"c.{col}=?")
+            args.append(val)
+    sql = ("SELECT c.call_id, c.created_at, c.restaurant_id, r.name AS restaurant, c.action, c.vendor, c.model, "
+           "c.\"trigger\" AS \"trigger\", c.actor_user_id, c.correlation_id, c.caller, c.template_hash, c.prompt_hash, "
+           "c.request_id, c.stop_reason, c.outcome, c.output_hash, c.input_tokens, c.output_tokens, c.latency_ms, "
+           "c.attempts, c.prompt_z IS NOT NULL AS text_kept FROM ai_calls c LEFT JOIN restaurants r ON r.id=c.restaurant_id"
+           + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY c.created_at DESC, c.rowid DESC LIMIT ?")
+    conn = get_conn()
+    try:
+        rows = _rows_dict(conn, sql, args + [max(1, min(int(limit or 50), 500))])
+    finally:
+        conn.close()
+    return {"ok": True, "calls": rows}
+
+
+def ai_call_detail(call_id):
+    """One traced call: its prompt and output (guest contact details and
+    names redacted, kept for the newest calls only), the ledger row, the
+    validation verdicts and quality findings linked to it, and the other
+    calls in the same unit of work (an Ask turn's rounds, a run's queries)."""
+    import ai_utils as _ai
+    call = _ai.read_call(call_id)
+    if not call:
+        return {"ok": False, "error": "Not found"}
+    conn = get_conn()
+    try:
+        usage = _rows_dict(conn, "SELECT id, created_at, restaurant_id, action, model, vendor, outcome, status, stop_reason, "
+                                 "reason, attempts, latency_ms, input_tokens, output_tokens, cache_write_tokens, "
+                                 "cache_read_tokens, cost_usd, price_version, request_id, \"trigger\" AS \"trigger\", "
+                                 "actor_user_id, correlation_id, error FROM ai_usage WHERE call_id=?", (call_id,))
+        validation = _rows_dict(conn, "SELECT id, created_at, surface, verdict, rules, tokens, n_rewrites, n_drops, n_caveats, "
+                                      "mode, version FROM ai_validation_log WHERE call_id=?", (call_id,))
+        quality = _rows_dict(conn, "SELECT id, created_at, surface, kind, detail, codes, n FROM ai_quality_events "
+                                   "WHERE call_id=?", (call_id,))
+        related = _rows_dict(conn, "SELECT call_id, created_at, action, outcome, stop_reason, latency_ms FROM ai_calls "
+                                   "WHERE correlation_id=? AND call_id<>? ORDER BY created_at", (call.get("correlation_id"), call_id)) \
+            if call.get("correlation_id") else []
+    finally:
+        conn.close()
+    return {"ok": True, "call": call, "usage": usage, "validation": validation, "quality": quality, "related": related}
 
 
 def emails(limit=200):

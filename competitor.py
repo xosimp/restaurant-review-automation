@@ -7,8 +7,13 @@ import os, json, requests
 from ai_utils import create_with_retry, extract_text, get_client, model_for
 from ai_guard import UNTRUSTED_NOTE, wrap_untrusted
 
-
-from ai_utils import meter_places as _meter_places
+# Every Google Places request goes through ai_utils.places_request (#123):
+# metered as it is made, refused before it is sent when the key is missing,
+# the Places breaker is open or the restaurant's Places ceiling is spent.
+# The per-run `usage` tally and the meter loop in run_competitor_analysis are
+# gone — they metered after the fact, guessed at the request count, and
+# never saw an owner-added competitor's details or reviews.
+from ai_utils import places_request as _places_request, PlacesUnavailable
 
 PLACES_API_KEY = config.google_places_key()  # either variable name; used to read only GOOGLE_PLACES_API_KEY
 ANTHROPIC_KEY  = os.getenv("ANTHROPIC_API_KEY", "")
@@ -24,12 +29,11 @@ def fetch_menu_notes_from_places(google_place_id: str, restaurant_id: int = None
     if not PLACES_API_KEY or not google_place_id:
         return ""
     try:
-        details_url = "https://maps.googleapis.com/maps/api/place/details/json"
-        r = requests.get(details_url, params={
+        r = _places_request("details", {
             "place_id": google_place_id,
             "fields": "name,types,price_level,editorial_summary,menu_url,website,serves_breakfast,serves_brunch,serves_lunch,serves_dinner,serves_beer,serves_wine,serves_cocktails,serves_vegetarian_food",
             "key": PLACES_API_KEY,
-        }, timeout=8)
+        }, restaurant_id=restaurant_id, action="menu_notes", timeout=8)
         data = r.json()
         if data.get("status") != "OK":
             return ""
@@ -415,10 +419,9 @@ def search_places_near(query: str, lat: float = None, lng: float = None, max_res
         if lat is not None and lng is not None:
             params["location"] = f"{lat},{lng}"
             params["radius"] = 8000
-        r = requests.get(
-            "https://maps.googleapis.com/maps/api/place/textsearch/json",
-            params=params, timeout=8,
-        )
+        # Billed to the owner's restaurant (the request's session, or
+        # ai_context), and against its Places ceiling.
+        r = _places_request("textsearch", params, action="competitor_search", timeout=8)
         data = r.json()
         if data.get("status") not in ("OK", "ZERO_RESULTS"):
             return []
@@ -497,10 +500,9 @@ def refresh_own_rating(restaurant_id: int, background: bool = True) -> None:
             pid = getattr(r, "google_place_id", None) if r else None
             if not pid or getattr(r, "gbp_rating", None):
                 return
-            resp = requests.get("https://maps.googleapis.com/maps/api/place/details/json", params={
+            resp = _places_request("details", {
                 "place_id": pid, "fields": "rating,user_ratings_total,types,price_level", "key": PLACES_API_KEY,
-            }, timeout=8)
-            _meter_places(restaurant_id, "own_rating", "details")
+            }, restaurant_id=restaurant_id, action="own_rating", timeout=8)
             data = resp.json()
             if data.get("status") != "OK":
                 return
@@ -523,7 +525,13 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
     `usage`, when given, is filled with the billed Places requests this made
     by kind ({"details": n, "nearby": n}). A run can make up to three nearby
     searches (keyword, broad, widened radius) and the caller metered one
-    (MOD-INT-6), so two thirds of the spend never reached the budget."""
+    (MOD-INT-6), so two thirds of the spend never reached the budget. Each
+    request is metered by places_request itself now (restaurant and action
+    from ai_context); the tally is kept for callers that read it.
+
+    A refused lookup is never an empty market: a Places error or a request
+    refused before it was sent (PlacesUnavailable) is raised, not turned
+    into [] (the Intel invariant)."""
     if not PLACES_API_KEY or not google_place_id:
         return []
     if usage is None:
@@ -533,8 +541,7 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
         usage[kind] = usage.get(kind, 0) + 1
     try:
         # First get the restaurant's coordinates and types from its place ID
-        details_url = "https://maps.googleapis.com/maps/api/place/details/json"
-        r = requests.get(details_url, params={
+        r = _places_request("details", {
             "place_id": google_place_id,
             "fields": "geometry,name,vicinity,types,price_level,rating,user_ratings_total",
             "key": PLACES_API_KEY,
@@ -574,7 +581,6 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
             meal_keyword = specific_types[0]
 
         # Search for nearby similar restaurants — wider radius for suburban areas
-        nearby_url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
         params = {
             "location": f"{lat},{lng}",
             "radius": radius_meters,
@@ -585,7 +591,7 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
         if meal_keyword:
             params["keyword"] = meal_keyword
 
-        r2 = requests.get(nearby_url, params=params, timeout=8)
+        r2 = _places_request("nearbysearch", params, timeout=8)
         _billed("nearby")
         r2_data = r2.json()
         if _pe(r2_data):
@@ -596,7 +602,7 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
         # If keyword search returns too few, fall back to broader search
         if len(places) < 3:
             params.pop("keyword", None)
-            r2 = requests.get(nearby_url, params=params, timeout=8)
+            r2 = _places_request("nearbysearch", params, timeout=8)
             _billed("nearby")
             r2_data = r2.json()
             if _pe(r2_data):
@@ -681,7 +687,7 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
         # happened to be narrow.
         if len(competitors) < 3:
             try:
-                wider = requests.get(nearby_url, params={
+                wider = _places_request("nearbysearch", {
                     "location": f"{lat},{lng}",
                     "radius": min(radius_meters * 2, 8000),
                     "type": "restaurant",
@@ -706,7 +712,7 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
         return competitors
     except Exception as e:
         from ai_utils import PlacesError as _PlacesError
-        if isinstance(e, _PlacesError):
+        if isinstance(e, (_PlacesError, PlacesUnavailable)):
             raise
         print(f"[Competitor] get_nearby_competitors error: {e}")
         return []
@@ -717,12 +723,11 @@ def get_competitor_reviews(place_id: str, max_reviews: int = 5) -> list:
     if not PLACES_API_KEY:
         return []
     try:
-        url = "https://maps.googleapis.com/maps/api/place/details/json"
         # Newest first (owner, 9/26/26): Google's default is its "most
         # relevant" five, which cited a months-old review as what a
         # neighbour is doing now. The review's own date travels with it
         # (`date`, ISO) so it is shown as M/D/YY, not "3 months ago".
-        r = requests.get(url, params={
+        r = _places_request("details", {
             "place_id": place_id,
             "fields": "name,rating,reviews",
             "reviews_sort": "newest",
@@ -996,7 +1001,12 @@ Tone: sharp, direct, trusted business advisor. Every line is a single punchy sen
             readiness=_ready_ci,
         )
         if getattr(msg, "stop_reason", None) == "max_tokens":
-            raise ValueError("competitor insight was truncated")
+            # An output problem, filed as one (ledger outcome 'truncated',
+            # and an AI-quality event) — not a failing job (#58).
+            import ai_utils as _ai_q
+            _ai_q.record_quality_event("competitor_insight", "truncated", restaurant_id=restaurant_id,
+                                       detail="competitor insight was truncated at max_tokens; no read stored")
+            return ""
         text = extract_text(msg).strip()
         return finish_competitor_insight(text, prompt, competitors, restaurant_name,
                                          own_price_level=(restaurant_profile or {}).get("price_level"),
@@ -1084,9 +1094,9 @@ def finish_competitor_insight(raw, prompt, competitors, restaurant_name="", own_
     # A recommendation stands only on reviews it cites that exist. One
     # citing nothing, or an id that was never handed over, is dropped,
     # and if none survive the section says so honestly (audit #31).
-    text = _validate_recommendation_citations(raw or "", competitors)
+    text = _validate_recommendation_citations(raw or "", competitors, restaurant_id=restaurant_id)
     # Strengths and weaknesses are cite-checked the same way (H11).
-    text = _validate_bullets(text, competitors)
+    text = _validate_bullets(text, competitors, restaurant_id=restaurant_id)
     import response_validation as rv
     import re as _re_fc
     if registry_state and not _re_fc.search(r"\b(?:weather|rain\w*|snow\w*|storm\w*|forecast|patio|heat|cold)\b",
@@ -1298,7 +1308,7 @@ def _cites_support(line, cites, competitors) -> bool:
     return bool(claim & cited)
 
 
-def _validate_bullets(text, competitors):
+def _validate_bullets(text, competitors, restaurant_id=None):
     """The DOING WELL / DOING POORLY bullets, cite-checked (H11). Each bullet
     must name a competitor and end with the ids of that competitor's reviews
     it rests on; one that cites nothing, an id never handed over, or another
@@ -1339,13 +1349,12 @@ def _validate_bullets(text, competitors):
             continue
         out.append(line)
     if dropped:
-        try:
-            import ops
-            ops.capture(RuntimeError(f"competitor insight: {dropped} strength/weakness bullet(s) without a valid "
-                                     f"citation to the named competitor dropped"),
-                        job="competitor_insight", context="bullet citations")
-        except Exception:
-            pass
+        # An AI-quality finding (rate on the AI page), not a failing job (#58).
+        import ai_utils as _ai_q
+        _ai_q.record_quality_event(
+            "competitor_insight", "citation_dropped", n=dropped,
+            restaurant_id=restaurant_id if restaurant_id is not None else _ai_q._context_restaurant(),
+            detail=f"{dropped} strength/weakness bullet(s) without a valid citation to the named competitor dropped")
     return "\n".join(out)
 
 
@@ -1442,7 +1451,7 @@ def spot_check_menu(summary, source_text) -> str:
     return " ".join(out_parts) if kept_total else ""
 
 
-def _validate_recommendation_citations(text, competitors):
+def _validate_recommendation_citations(text, competitors, restaurant_id=None):
     """Rewrite the Recommendations section keeping only lines whose
     citations all resolve to a review the model was given — and, when the
     line names a competitor, to THAT competitor's reviews (H11). Nothing
@@ -1477,12 +1486,12 @@ def _validate_recommendation_citations(text, competitors):
         in_list = False
         rest.append(line)
     if dropped:
-        try:
-            import ops
-            ops.capture(RuntimeError(f"competitor insight: {dropped} recommendation(s) without a valid review citation dropped"),
-                        job="competitor_insight", context="citations")
-        except Exception:
-            pass
+        # An AI-quality finding (rate on the AI page), not a failing job (#58).
+        import ai_utils as _ai_q
+        _ai_q.record_quality_event(
+            "competitor_insight", "citation_dropped", n=dropped,
+            restaurant_id=restaurant_id if restaurant_id is not None else _ai_q._context_restaurant(),
+            detail=f"{dropped} recommendation(s) without a valid review citation dropped")
     lines = [f"{i}. {k}" for i, k in enumerate(kept[:3], 1)] or [NOTHING_TO_ACT_ON]
     out = head.rstrip() + "\n" + "\n".join(lines)
     if rest:
@@ -1502,6 +1511,24 @@ def _previous_competitor(restaurant, place_id):
     return None
 
 
+def _intel_run(fn):
+    """Every Places request and the model call inside one analysis run are
+    attributed to its restaurant and to one correlation id for the run
+    (ai_utils.ai_context, fix round G #148), whether the weekly job, the
+    owner's refresh or an admin started it. A decorator, so the run keeps
+    its own name and body."""
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(restaurant_id, *args, **kwargs):
+        import ai_utils as _ai_ctx
+        with _ai_ctx.ai_context(restaurant_id=restaurant_id, action="competitor_intel",
+                                correlation_id=_ai_ctx.new_correlation_id("intel")):
+            return fn(restaurant_id, *args, **kwargs)
+    return wrapper
+
+
+@_intel_run
 def run_competitor_analysis(restaurant_id: int) -> dict:
     """Full pipeline: fetch competitors, get reviews, generate insight."""
     try:
@@ -1514,27 +1541,20 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
         _usage = {}
         try:
             competitors = get_nearby_competitors(restaurant.google_place_id, usage=_usage)
+        except PlacesUnavailable as pu:
+            # Refused before it was sent (no key, the Places breaker, this
+            # restaurant's Places ceiling) — already a blocked ledger row.
+            return {"ok": False, "error": pu.owner_message, "places_status": pu.reason}
         except _PlacesError as pe:
-            _meter_places(restaurant_id, "competitor_intel", "nearby", status="error", error=str(pe)[:200])
             try:
                 import ops
                 ops.capture(pe, job="competitor_intel", context=f"restaurant_id={restaurant_id}")
             except Exception:
                 pass
             return {"ok": False, "error": pe.owner_message, "places_status": pe.status}
-        # One nearby search, then a details lookup per candidate it kept.
-        # Google Places is billed per request and was invisible to the budget
-        # entirely, which for a weekly job across every full-tier client is
-        # real money no ceiling could see.
-        # Every billed search the lookup made — own details, then one to
-        # three nearby searches (MOD-INT-6) — then a details lookup per
-        # candidate it kept.
-        for _ in range(_usage.get("details", 0)):
-            _meter_places(restaurant_id, "competitor_intel", "details")
-        for _ in range(max(1, _usage.get("nearby", 0))):
-            _meter_places(restaurant_id, "competitor_intel", "nearby")
-        for _ in competitors or []:
-            _meter_places(restaurant_id, "competitor_intel", "details")
+        # Every Places request this run makes — own details, one to three
+        # nearby searches, a details per competitor, the owner-added ones —
+        # is metered by places_request as it is made (#123).
 
         # Add any manually specified competitor Place IDs
         _closed_custom = []
@@ -1544,9 +1564,7 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
             for pid in custom_ids:
                 if pid not in existing_ids:
                     try:
-                        details_url = "https://maps.googleapis.com/maps/api/place/details/json"
-                        import requests as _req
-                        r = _req.get(details_url, params={
+                        r = _places_request("details", {
                             "place_id": pid,
                             "fields": "name,rating,user_ratings_total,types,vicinity,"
                                       "business_status,price_level",
@@ -1597,8 +1615,12 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
 
         # Enrich with reviews in parallel — 5 sequential calls → 1 parallel batch
         from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
+        from ai_utils import context_runner as _ctx_runner
         with ThreadPoolExecutor(max_workers=5) as _pool:
-            _futs = {_pool.submit(get_competitor_reviews, c["place_id"]): i for i, c in enumerate(competitors)}
+            # Each worker runs in a copy of this run's ai_context, so every
+            # review lookup is metered to this restaurant and this run.
+            _futs = {_pool.submit(_ctx_runner(get_competitor_reviews), c["place_id"]): i
+                     for i, c in enumerate(competitors)}
             for _fut in _as_completed(_futs):
                 competitors[_futs[_fut]]["reviews"] = _fut.result()
 

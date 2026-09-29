@@ -261,9 +261,12 @@ def test_a_refusal_is_still_recorded_in_the_ledger(db_path):
     ai_utils.create_with_retry(client, model="claude-sonnet-5", max_tokens=10,
                                restaurant_id=1, action="edge_refusal")
     conn = models.get_conn(db_path)
-    row = conn.execute("SELECT status FROM ai_usage WHERE action='edge_refusal'").fetchone()
+    row = conn.execute("SELECT status, outcome, stop_reason FROM ai_usage WHERE action='edge_refusal'").fetchone()
     conn.close()
-    assert row and row["status"] == "ok"
+    # Recorded — and, since fix round G (#52), recorded as the refusal it
+    # was, not as a successful call.
+    assert row and row["outcome"] == "refused" and row["stop_reason"] == "refusal"
+    assert row["status"] == "error"
 
 
 # ── AI-33: Stripe calls are bounded ─────────────────────────────────────────
