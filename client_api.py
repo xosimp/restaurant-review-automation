@@ -2213,7 +2213,9 @@ def _do_review_insight(rid, viewer=None):
         # (review_intelligence.rating_forecast; withheld while its scored
         # record has no skill over last week or the 8-week mean), logged to
         # forecast_log once per ISO week so it is scored when the week closes.
-        _rating_next = _ri.rating_forecast(rid, _trend) if has_trend else None
+        _rating_fc = _ri.rating_forecast_detail(rid, _trend) if has_trend else None
+        _rating_next = _rating_fc["shown"] if _rating_fc else None      # what the read shows
+        _rating_raw = _rating_fc["raw"] if _rating_fc else None         # what the record is kept on
         forecast_line = ""
         why_line = (
             "\n\U0001f50d Why: [1-2 sentences naming the most likely OPERATIONAL cause from the "
@@ -2338,7 +2340,9 @@ def _do_review_insight(rid, viewer=None):
             if _rating_next is not None:
                 insight = (insight.rstrip() + f"\n\U0001f52e Next week: if nothing changes, the weekly rating heads "
                            f"toward about {_rating_next}★ — a projection from {_trend['weeks_above_floor']} weeks "
-                           f"of the trend, not a measurement.")
+                           f"of the trend"
+                           + (f", {_rating_fc['note']}" if _rating_fc and _rating_fc.get("note") else "")
+                           + ", not a measurement.")
             if flags["unsupported_names"]:
                 # A name the model wrote that was never in its input — the most
                 # damaging thing this passage can get wrong, because the whole
@@ -2443,11 +2447,11 @@ def _do_review_insight(rid, viewer=None):
                                        detail=("served the last stored read, marked stale" if held.get("stale")
                                                else "served the fixed held-back copy"))
             return _review_insight_recs(rid, dict(held)), 200
-        if _rating_next is not None:
+        if _rating_raw is not None:
             try:
                 import insight_store as _ist_fc
                 _ist_fc.record_weekly_forecast(
-                    rid, "review_rating_week", _rating_next,
+                    rid, "review_rating_week", _rating_raw,
                     basis=(f"latest week {_trend['latest']} + fitted slope {_trend.get('slope')} a week, "
                            f"{_trend['weeks_above_floor']} weeks at {_trend['min_reviews_per_week']}+ reviews"))
             except Exception as _fce:
@@ -3335,18 +3339,37 @@ def _mkt_drop_performance(text) -> str:
     return body
 
 
-def _mkt_forecast(reach_vals, diff_pct):
+def _mkt_forecast(reach_vals, diff_pct, rid=None, week_sum=None):
     """(FORECAST line, predicted) for next week's average reach per post,
     computed here rather than written by the model (H8): last full week's
     level, carried forward — the measured trend is stated beside it, never
-    extrapolated into a figure nobody measured. (None, None) with no trend."""
+    extrapolated into a figure nobody measured. (None, None) with no trend.
+
+    It reads its own record (forecast_log.shown on marketing_reach_week,
+    memory audit 9/29/26): no line while the reach forecasts here read
+    "often wide", and a per-post figure corrected by the record's lean —
+    and saying so — when they have leaned one way. The kind is scored on
+    the week's SUMMED reach (`week_sum`); the lean is a ratio, so it applies
+    to the per-post figure alike. The raw sum is what is recorded."""
     if not reach_vals or diff_pct is None:
         return None, None
     last = int(round(float(reach_vals[-1])))
+    shown_last, note = last, None
+    if rid and week_sum:
+        try:
+            import forecast_log as _flog_mkt
+            rec = _flog_mkt.shown(rid, "marketing_reach_week", week_sum)
+            if rec.get("withheld"):
+                return None, None
+            if rec.get("corrected"):
+                shown_last, note = int(round(last * float(rec.get("factor") or 1.0))), rec.get("note")
+        except Exception as e:
+            print(f"[MktInsight] forecast record unreadable: {e}")
     line = (f"FORECAST: Average reach per post moved {'up' if diff_pct > 0 else 'down'} "
             f"{abs(int(diff_pct))}% across {len(reach_vals)} weeks; if posting keeps its current pace, "
-            f"expect about {last:,} per post next week (last week's level; a projection, not a measurement).")
-    return line, last
+            f"expect about {shown_last:,} per post next week (last week's level"
+            + (f", {note}" if note else "") + "; a projection, not a measurement).")
+    return line, shown_last
 
 
 def _do_mkt_insight(rid, raw=False):
@@ -3598,7 +3621,11 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
         # cards (_missing_m, M2).
         import response_validation as _rv
         # No reach projection from figures the sync has stopped refreshing.
-        _fc_line, _fc_pred = (None, None) if _mkt_unreliable else _mkt_forecast(_mkt_reach_vals, _mkt_diff)
+        _fc_line, _fc_pred = (None, None) if _mkt_unreliable else _mkt_forecast(
+            _mkt_reach_vals, _mkt_diff, rid=rid, week_sum=(round(_mkt_week_sums[-1]) if _mkt_week_sums else None))
+        # The raw week is recorded whenever a forecast exists, shown or
+        # withheld, so a withheld record can recover (the waste pattern).
+        _fc_raw = (not _mkt_unreliable and bool(_mkt_reach_vals) and _mkt_diff is not None)
         _F = _rv.Fact
         _mkt_facts = [_F("posts.measured", len(_mkt_perf_seen), "count", "measured")]
         for _i, _r in enumerate(_mkt_perf_seen):
@@ -3703,7 +3730,7 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
             return _mkt_insight_out(rid, _held_m["insight"], raw, _mkt_checks(_held_m)), 200
         insight = _read_m.pop("insight")
         _checks = _read_m
-        if _fc_line:
+        if _fc_raw:
             try:
                 # Logged in the scorer's unit — the week's SUMMED reach
                 # (last week's, carried forward) — never the per-post

@@ -183,24 +183,43 @@ def rating_next_week(values):
 
 
 def rating_forecast(restaurant_id, trend, db_path: str = DB_PATH):
-    """The review_rating_week forecast the review insight states and logs,
-    or None: only with a direction called at high or medium, from
-    rating_next_week, and withheld while this restaurant's scored record of
-    it reads no better than the naive baselines or often wide
-    (forecast_log.accuracy `withheld`, re-audit B2 #11). One decimal."""
+    """The review_rating_week forecast the review insight SHOWS, or None:
+    only with a direction called at high or medium, from rating_next_week,
+    and withheld while this restaurant's scored record of it reads no
+    better than the naive baselines or often wide (forecast_log.accuracy
+    `withheld`, re-audit B2 #11). One decimal. See rating_forecast_detail
+    for the raw figure the record is kept on."""
+    d = rating_forecast_detail(restaurant_id, trend, db_path=db_path)
+    return d["shown"] if d else None
+
+
+def rating_forecast_detail(restaurant_id, trend, db_path: str = DB_PATH):
+    """{"raw", "shown", "note"} for next week's rating, or None with no
+    forecast (no direction at high or medium). `raw` is what is recorded and
+    scored — every week there is one, withheld or not, so a withheld record
+    can recover; `shown` is None while the record reads often wide or no
+    better than the naive forecasts, else the raw corrected by the record's
+    consistent lean with `note` saying so (forecast_log.shown, memory audit
+    9/29/26 "forecasts" — the waste pattern)."""
     t = trend or {}
     if t.get("direction") not in ("improving", "declining") or t.get("confidence") not in ("high", "medium"):
         return None
     nxt = t.get("next_week")
     if nxt is None:
         return None
+    raw = round(float(nxt), 1)
+    out = {"raw": raw, "shown": raw, "note": None}
     try:
         import forecast_log
-        if forecast_log.accuracy(restaurant_id, "review_rating_week", db_path=db_path).get("withheld"):
-            return None
+        rec = forecast_log.shown(restaurant_id, "review_rating_week", raw, db_path=db_path)
+        if rec.get("withheld"):
+            out["shown"] = None
+        elif rec.get("corrected") and rec.get("shown") is not None:
+            out["shown"] = round(min(5.0, max(1.0, float(rec["shown"]))), 1)
+            out["note"] = rec.get("note")
     except Exception as e:
         print(f"[review_intelligence] rating forecast record unreadable for {restaurant_id}: {e}")
-    return round(float(nxt), 1)
+    return out
 
 
 def rating_trend(restaurant_id: int, weeks: int = 8, db_path: str = DB_PATH) -> dict:

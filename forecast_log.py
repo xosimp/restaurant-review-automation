@@ -648,6 +648,47 @@ def calibrated(restaurant_id: int, kind: str, predicted, db_path: str = DB_PATH)
     return round(float(predicted) * cal["factor"], 2), cal
 
 
+# ── showing a forecast: the waste pattern, for every kind ───────────────────
+#
+# Memory audit 9/29/26 ("forecasts"): six kinds were scored and only the
+# waste forecast corrected itself. Every producer now goes through here:
+# the forecast is withheld while this restaurant's own record of the kind
+# reads "often wide" (or no better than the naive forecasts); otherwise the
+# figure SHOWN is corrected by the record's consistent lean and says so;
+# and the RAW figure is what the caller records and scores, so a
+# correction never feeds on itself.
+
+def shown(restaurant_id, kind, predicted, db_path: str = DB_PATH) -> dict:
+    """{"raw", "shown", "withheld", "reason", "corrected", "factor",
+    "bias_pct", "reading", "note", "accuracy"} for one forecast of `kind`:
+    `shown` None when withheld; `shown` = raw × the calibration factor when
+    the record leans one way (CALIBRATION_MIN_SCORED+ periods by
+    CALIBRATION_MIN_BIAS_PCT+), with `note` saying so in the owner's words.
+    Record `raw`, show `shown`. Never raises."""
+    raw = _f(predicted)
+    out = {"raw": raw, "shown": raw, "withheld": False, "reason": None, "corrected": False, "factor": 1.0,
+           "bias_pct": None, "reading": None, "note": None, "accuracy": None}
+    if raw is None or not restaurant_id:
+        return out
+    try:
+        acc = accuracy(restaurant_id, kind, db_path=db_path)
+    except Exception:
+        acc = {}
+    out["accuracy"] = acc
+    if acc.get("withheld"):
+        out.update(shown=None, withheld=True, reason=acc.get("reason"))
+        return out
+    try:
+        corrected, cal = calibrated(restaurant_id, kind, raw, db_path=db_path)
+    except Exception:
+        corrected, cal = raw, {}
+    if cal.get("available") and cal.get("factor", 1.0) != 1.0 and corrected is not None:
+        out.update(shown=corrected, corrected=True, factor=cal["factor"], bias_pct=cal.get("bias_pct"),
+                   reading=cal.get("reading"),
+                   note=f"already corrected because earlier forecasts here {cal.get('reading')}")
+    return out
+
+
 # ── the waste forecast itself ───────────────────────────────────────────────
 
 # Weeks averaged for next week's waste. Probe W (CA2 #5, replayed in

@@ -1086,9 +1086,30 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
         # difference in how busy the two months were.
         delta_dollars = round((prime_pct - prev_pct) / 100.0 * projected_sales)
 
+    # The projection read against its own record (forecast_log.shown,
+    # memory audit 9/29/26 "forecasts" — the waste pattern): when this
+    # restaurant's frozen mid-month projections have leaned one way, the
+    # month-end projection is ALSO given corrected, and says so. The
+    # month-to-date figures stay as measured, and the raw is what the
+    # nightly freeze records (withhold=False), so a correction never feeds
+    # on itself.
+    correction = None
+    if withhold:
+        try:
+            import forecast_log as _flog_pp
+            rec = _flog_pp.shown(restaurant_id, "profitability_month", prime_pct, db_path=db_path)
+            if rec.get("corrected") and rec.get("shown") is not None:
+                correction = {"factor": rec["factor"], "bias_pct": rec.get("bias_pct"), "note": rec.get("note"),
+                              "prime_cost_pct": round(float(rec["shown"]), 1),
+                              "projected_prime_cost": round(projected_prime * float(rec["factor"]))}
+        except Exception as e:
+            print(f"[food_cost_intelligence] projection record unreadable for {restaurant_id}: {e}")
     return {
         "available": True,
         "claim_kind": "forecast",
+        # The month-end projection corrected by its own record, or None
+        # when the record shows no consistent lean.
+        "projection_correction": correction,
         "days_elapsed": days_elapsed, "days_in_month": days_in_month,
         "net_sales_mtd": round(net_sales, 2),
         "cogs_mtd": round(cogs_mtd, 2),

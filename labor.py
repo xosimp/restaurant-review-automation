@@ -2137,8 +2137,12 @@ The Recommendations section must start with exactly the word "Recommendations:" 
     enforcing = rv.mode_for("labor_insight") == "enforce"
     # The computed forecast is recorded (and later scored) whatever the
     # read's verdict: it is Python's figure, not the model's.
-    fc_line = _labor_forecast_line(analysis, trend_diff) if has_trend else None
-    if fc_line and restaurant_id:
+    fc_line = _labor_forecast_line(analysis, trend_diff, restaurant_id=restaurant_id) if has_trend else None
+    # The RAW figure is recorded whether or not the line is shown (memory
+    # audit 9/29/26, "forecasts" — the waste pattern): a withheld forecast
+    # keeps being scored so its record can recover, and a shown one is
+    # corrected on top of the raw, never recorded corrected.
+    if has_trend and trend_diff is not None and restaurant_id:
         try:
             import insight_store as _ist_fc
             _ist_fc.record_weekly_forecast(
@@ -2444,21 +2448,37 @@ def _drop_note_bullets(bullets, prompt, restaurant_id=None, data_blocks=None, ro
     return kept
 
 
-def _labor_forecast_line(analysis: dict, trend_diff) -> str:
+def _labor_forecast_line(analysis: dict, trend_diff, restaurant_id=None) -> str:
     """The note's FORECAST line, computed rather than written (H8): this
     period's labor % carried forward, with the measured move on the last
     comparable upload stated beside it — never a trajectory projected into
-    a figure nobody measured. Logged as forecast_log kind labor_week."""
+    a figure nobody measured. Logged as forecast_log kind labor_week.
+
+    It reads its own record (forecast_log.shown, memory audit 9/29/26):
+    no line while this restaurant's labor forecasts read "often wide" or no
+    better than the naive ones, and a figure corrected — and saying so —
+    when they have leaned one way."""
     try:
         cur = float(analysis.get("overall_labor_pct"))
     except (TypeError, ValueError):
         return None
     if trend_diff is None:
         return None
+    expect, note = cur, None
+    if restaurant_id:
+        try:
+            import forecast_log as _flog_lab
+            rec = _flog_lab.shown(restaurant_id, "labor_week", cur)
+            if rec.get("withheld"):
+                return None
+            if rec.get("corrected") and rec.get("shown") is not None:
+                expect, note = round(float(rec["shown"]), 1), rec.get("note")
+        except Exception as e:
+            print(f"[labor forecast record] {e}")
     move = (f"{'up' if trend_diff > 0 else 'down'} {abs(trend_diff):.1f} points on the last upload"
             if abs(trend_diff) >= 1 else "about level with the last upload")
     return (f"FORECAST: Labor ran {cur:g}% this period, {move}; if the schedule doesn't change, expect "
-            f"next week near {cur:g}% (a projection, not a measurement).")
+            f"next week near {expect:g}%" + (f", {note}" if note else "") + " (a projection, not a measurement).")
 
 
 # Superseded by the registry (one freshness rule, DH1-10 / DH5-3): whether
