@@ -30,14 +30,6 @@ def db(db_path, monkeypatch):
     return db_path
 
 
-def _stamp_heartbeat(db_path, minutes_ago):
-    conn = sqlite3.connect(db_path)
-    conn.execute("UPDATE service_status SET updated_at=datetime('now', ?) WHERE service_key='scheduler'",
-                 (f"-{int(minutes_ago)} minutes",))
-    conn.commit()
-    conn.close()
-
-
 def _body(payload):
     app = Flask(__name__)
     with app.app_context():
@@ -50,8 +42,8 @@ def _ok_disk(monkeypatch):
 
 # ── read-only (#94, RELIABILITY-4) ───────────────────────────────────────────
 
-def test_health_never_writes_or_pages_and_a_dead_scheduler_stays_stale(db, monkeypatch):
-    _stamp_heartbeat(db, 60)
+def test_health_never_writes_or_pages_and_a_dead_scheduler_stays_stale(db, scheduler_heartbeat, monkeypatch):
+    scheduler_heartbeat(60)
     _ok_disk(monkeypatch)
     monkeypatch.setattr(sm, "update_service_status", lambda *a, **k: pytest.fail("/health wrote the status page"))
     monkeypatch.setattr(ops, "alert_will", lambda *a, **k: pytest.fail("/health paged"))
@@ -77,8 +69,8 @@ def test_an_unopenable_database_is_a_500_with_a_code_not_the_exception_text(db, 
 
 # ── the keyword (#3) ─────────────────────────────────────────────────────────
 
-def test_the_monitor_keyword_appears_exactly_when_the_platform_is_ok(db, monkeypatch):
-    _stamp_heartbeat(db, 1)
+def test_the_monitor_keyword_appears_exactly_when_the_platform_is_ok(db, scheduler_heartbeat, monkeypatch):
+    scheduler_heartbeat(1)
     _ok_disk(monkeypatch)
     payload, status = sm.health_snapshot(db)
     assert status == 200 and payload["status"] == "ok" and payload["problems"] == []
@@ -92,8 +84,8 @@ def test_the_monitor_keyword_appears_exactly_when_the_platform_is_ok(db, monkeyp
     assert '"status":"ok"' not in _body(payload), "no nested key may carry the keyword"
 
 
-def test_the_body_carries_backup_age_disk_and_the_heartbeat(db, monkeypatch):
-    _stamp_heartbeat(db, 3)
+def test_the_body_carries_backup_age_disk_and_the_heartbeat(db, scheduler_heartbeat, monkeypatch):
+    scheduler_heartbeat(3)
     _ok_disk(monkeypatch)
     now = datetime.now(timezone.utc)
     monkeypatch.setattr(ops, "backup_status", lambda db_path=None: {
@@ -110,8 +102,8 @@ def test_the_body_carries_backup_age_disk_and_the_heartbeat(db, monkeypatch):
     assert 2.5 <= payload["scheduler_heartbeat_age_minutes"] <= 3.5
 
 
-def test_a_stale_backup_and_a_stale_offsite_copy_are_problems(db, monkeypatch):
-    _stamp_heartbeat(db, 1)
+def test_a_stale_backup_and_a_stale_offsite_copy_are_problems(db, scheduler_heartbeat, monkeypatch):
+    scheduler_heartbeat(1)
     _ok_disk(monkeypatch)
     old = (datetime.now(timezone.utc) - timedelta(hours=40)).strftime("%Y-%m-%d %H:%M:%S")
     monkeypatch.setattr(ops, "backup_status", lambda db_path=None: {
@@ -127,8 +119,8 @@ def test_a_stale_backup_and_a_stale_offsite_copy_are_problems(db, monkeypatch):
     assert payload["backup"]["offsite"] == "unconfigured" and payload["status"] == "ok"
 
 
-def test_without_the_backup_ledger_the_backup_block_says_unknown(db, monkeypatch):
-    _stamp_heartbeat(db, 1)
+def test_without_the_backup_ledger_the_backup_block_says_unknown(db, scheduler_heartbeat, monkeypatch):
+    scheduler_heartbeat(1)
     _ok_disk(monkeypatch)
     payload, _ = sm.health_snapshot(db)
     assert payload["backup"]["state"] == "unknown" and payload["status"] == "ok"
@@ -136,8 +128,8 @@ def test_without_the_backup_ledger_the_backup_block_says_unknown(db, monkeypatch
 
 # ── the write probe (#105) ───────────────────────────────────────────────────
 
-def test_a_held_write_lock_reads_busy_and_degraded_not_down(db, monkeypatch):
-    _stamp_heartbeat(db, 1)
+def test_a_held_write_lock_reads_busy_and_degraded_not_down(db, scheduler_heartbeat, monkeypatch):
+    scheduler_heartbeat(1)
     _ok_disk(monkeypatch)
     monkeypatch.setattr(sm, "WRITE_PROBE_TIMEOUT_MS", 100)
     holder = sqlite3.connect(db, timeout=1)
@@ -205,11 +197,11 @@ def test_the_probe_never_touches_a_callers_open_transaction(db):
         conn.close()
 
 
-def test_a_database_not_in_wal_mode_is_degraded(db, monkeypatch):
+def test_a_database_not_in_wal_mode_is_degraded(db, scheduler_heartbeat, monkeypatch):
     """get_conn asks for WAL on every connection, and SQLite answers with
     the mode it is actually in when it cannot switch (a read-only volume
     that cannot create the -wal file): that answer is what is reported."""
-    _stamp_heartbeat(db, 1)
+    scheduler_heartbeat(1)
     _ok_disk(monkeypatch)
     conn = sqlite3.connect(db)
     conn.execute("PRAGMA journal_mode=DELETE")
@@ -245,11 +237,11 @@ def test_disk_thresholds_scale_with_the_database(db, monkeypatch):
 
 # ── schema check: cached, but never across a schema change (#134) ───────────
 
-def test_a_clean_schema_is_not_rechecked_on_every_hit_but_a_change_is_seen(db, monkeypatch):
+def test_a_clean_schema_is_not_rechecked_on_every_hit_but_a_change_is_seen(db, scheduler_heartbeat, monkeypatch):
     calls = []
     real = sm._schema_gaps
     monkeypatch.setattr(sm, "_schema_gaps", lambda conn: calls.append(1) or real(conn))
-    _stamp_heartbeat(db, 1)
+    scheduler_heartbeat(1)
     sm.health_snapshot(db)
     sm.health_snapshot(db)
     assert len(calls) == 1
@@ -273,10 +265,10 @@ def _client_restaurant(db_path):
     return models.create_restaurant(models.Restaurant(name="Real Client", owner_email="c@x.test"), db_path=db_path)
 
 
-def test_the_volume_marker_turns_an_emptied_database_into_a_500(db, monkeypatch):
+def test_the_volume_marker_turns_an_emptied_database_into_a_500(db, scheduler_heartbeat, monkeypatch):
     vol = os.path.dirname(db)
     monkeypatch.setenv("RAILWAY_VOLUME_MOUNT_PATH", vol)
-    _stamp_heartbeat(db, 1)
+    scheduler_heartbeat(1)
     _ok_disk(monkeypatch)
     assert sm.record_volume_marker(db) is None, "no client restaurant yet, nothing to record"
     rid = _client_restaurant(db)

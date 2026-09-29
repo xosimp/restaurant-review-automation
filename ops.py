@@ -1394,18 +1394,20 @@ def write_probe(db_path=None, timeout=2.0):
     """(ok, error): can the database take a write right now? BEGIN
     IMMEDIATE takes the write lock without writing anything, then ROLLBACK.
     A full, locked or read-only database answered SELECT 1 perfectly well
-    and passed /health (#105)."""
+    and passed /health (#105).
+
+    One implementation: status_manager.db_write_probe, which /health and the
+    system card use too. Its "busy" (the lock held past `timeout`) is not ok
+    here — the SLA check reports a database that would not take a write
+    when it looked."""
     try:
-        from models import DB_PATH
-        conn = sqlite3.connect(db_path or DB_PATH, timeout=float(timeout))
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            conn.execute("ROLLBACK")
-            return True, None
-        finally:
-            conn.close()
+        import status_manager
+        st = status_manager.db_write_probe(db_path=db_path, timeout_ms=int(float(timeout) * 1000))
     except Exception as e:
         return False, str(e)[:200]
+    if st.get("state") == "ok":
+        return True, None
+    return False, (st.get("error") or st.get("state") or "write probe failed")[:200]
 
 
 def _dsr_missing(db_path=None):
@@ -1444,7 +1446,7 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
            "disk": None, "write_ok": None, "backup": None, "dsr_missing": [], "problems": [], "alerted": False}
     try:
         import status_manager
-        state = status_manager.scheduler_state()
+        state = status_manager.scheduler_state(db_path)
         out["heartbeat_minutes"] = state.get("beat_age_minutes")
         out["loop_minutes"] = state.get("loop_completed_age_minutes")
         out["running_job"] = state.get("running_job")

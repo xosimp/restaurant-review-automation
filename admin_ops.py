@@ -66,6 +66,13 @@ def get_conn(db_path=None):
     return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 
 
+def _current_db_path():
+    """The database get_conn() opens right now: the caller's override, else
+    models.DB_PATH at call time — for readers that take a path, not a
+    connection (status_manager's heartbeat)."""
+    return getattr(_db_override, "path", None) or _models_mod.DB_PATH
+
+
 @contextmanager
 def _using_db(db_path):
     prev = getattr(_db_override, "path", None)
@@ -2364,18 +2371,33 @@ def _platform_issues(recs, d):
             "critical", since=j["last_ok_at"], zone="UTC", occurrence=j["last_ok_at"], occurrence_zone="UTC",
             detail=f"Expected within {j['max_hours']}h. Last success: {j['last_ok_at'] or 'never'}.",
             action="Open jobs", action_kind="link", action_href="#operations/jobs")
-    from status_manager import scheduler_heartbeat_age_minutes
+    # The loop's own heartbeat (status_manager.scheduler_state, the one
+    # reading /health, the SLA page and the status page share), from the
+    # database this build reads: stale, wedged past a job's own bound, or
+    # ticks failing part-way (#4, #121).
+    import status_manager as _sm_hb
     try:
-        hb = scheduler_heartbeat_age_minutes()
+        sched = _sm_hb.scheduler_state(_current_db_path())
     except Exception as e:
-        hb = None
+        sched = {"state": "unknown", "beat_age_minutes": None}
         _note_failure("scheduler_heartbeat", e)
+    hb = sched.get("beat_age_minutes")
     facts["heartbeat"] = hb
-    if hb is None or hb > 15:
-        add("scheduler", "Scheduler heartbeat is stale" if hb is not None else "Scheduler has never stamped a heartbeat",
-            "critical", detail=f"{int(hb)} minutes" if hb else None, resolvable=False, action="Check Railway",
-            action_kind="link", action_href="#engineering")
-        out[-1]["since"] = f"{int(hb)}m" if hb else "—"
+    facts["scheduler_state"] = sched.get("state")
+    if sched.get("state") in ("unknown", "stale", "wedged", "stalled"):
+        if sched["state"] == "wedged":
+            title = (f"Scheduler stuck in `{sched.get('running_job')}` for {int(sched.get('running_minutes') or 0)} "
+                     f"minutes (bound {sched.get('running_bound_minutes')})")
+        elif sched["state"] == "stalled":
+            title = (f"Scheduler has not completed a tick in {int(sched.get('loop_completed_age_minutes') or 0)} "
+                     "minutes")
+        elif hb is not None:
+            title = "Scheduler heartbeat is stale"
+        else:
+            title = "Scheduler heartbeat is unreadable"
+        add("scheduler", title, "critical", detail=f"{int(hb)} minutes since the last beat" if hb is not None else None,
+            resolvable=False, action="Check Railway", action_kind="link", action_href="#engineering")
+        out[-1]["since"] = f"{int(hb)}m" if hb is not None else "—"
     # Latency and error rate. Rolling, in-process, reset on deploy — see
     # http_layer.request_metrics for why it is not a table.
     try:
@@ -3789,13 +3811,10 @@ def jobs():
     conn.close()
     import status_manager
     try:
-        hb = status_manager.scheduler_heartbeat_age_minutes()
+        heartbeat = status_manager.scheduler_state(_current_db_path())
     except Exception:
-        hb = None
-    try:
-        heartbeat = status_manager.scheduler_state()
-    except Exception:
-        heartbeat = {"beat_age_minutes": hb}
+        heartbeat = {"beat_age_minutes": None, "state": "unknown"}
+    hb = heartbeat.get("beat_age_minutes")
     heartbeat["stale_after_minutes"] = _jobs_registry.HEARTBEAT_STALE_MINUTES
     # In-flight async jobs. These used to be read out of two module-level
     # dicts, so the page only ever showed the jobs belonging to whichever

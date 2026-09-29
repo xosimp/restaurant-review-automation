@@ -501,6 +501,9 @@ class PlatformSupervisor:
         paged only when something requested /health, and nothing did (#3).
         It runs here, off the request path and outside the scheduler it is
         watching;
+      * every tick, the public status page's scheduler row
+        (status_manager.check_scheduler_liveness): outage while the loop's
+        heartbeat is stale. /health only reads;
       * the request rollups and 5xx samples http_layer buffers, flushed to
         the database every tick, kept for the next tick when the write
         fails;
@@ -596,10 +599,21 @@ class PlatformSupervisor:
         except Exception as e:
             log.error("platform SLA check failed: %s", e)
 
+    def _check_liveness(self):
+        """Flip the public status page's scheduler row to outage when the
+        loop's heartbeat has gone stale. Safe here now that the heartbeat is
+        its own table (#4): check_scheduler_liveness writes service_status
+        only, never the heartbeat it measures. /health stays read-only."""
+        try:
+            _sm.check_scheduler_liveness(self.db_path)
+        except Exception as e:
+            log.warning("scheduler liveness check failed: %s", e)
+
     def tick(self, now=None):
         now = self.clock() if now is None else now
         self.flush()
         self._watch_scheduler(now)
+        self._check_liveness()
         if now - self._last["sla"] >= self.sla_every:
             self._last["sla"] = now
             self._run_sla()
@@ -807,9 +821,10 @@ def system_report(db_path=None) -> dict:
         lease = {"error": str(e)[:120]}
     report["lease"] = lease
     try:
-        report["heartbeat_minutes"] = _sm.scheduler_heartbeat_age_minutes()
+        report["scheduler"] = _sm.scheduler_state(path)
+        report["heartbeat_minutes"] = report["scheduler"].get("beat_age_minutes")
     except Exception:
-        report["heartbeat_minutes"] = None
+        report["scheduler"], report["heartbeat_minutes"] = None, None
     report["ai"] = _ai_health()
     report["supervisor"] = SUPERVISOR.state() if SUPERVISOR is not None else None
 

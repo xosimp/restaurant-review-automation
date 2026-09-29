@@ -261,6 +261,43 @@ def db_path(tmp_path):
     return path
 
 
+def stamp_scheduler_heartbeat(db_path, minutes_ago, loop_minutes_ago=None, running=None, running_minutes=None):
+    """Make the scheduler loop's heartbeat `minutes_ago` old in `db_path`.
+
+    It lives in its own table, scheduler_heartbeat (fix round D, #4), written
+    only by the loop — the one source /health, the platform SLA check, the
+    public status page and the console read. It used to be
+    service_status.updated_at, which every status write reset; stamping that
+    column now changes nothing, which is how a /health test and a console
+    test kept passing against a heartbeat nobody read. `loop_minutes_ago` is
+    the last COMPLETED tick (defaults to the beat); `running` /
+    `running_minutes` put the loop inside a job for the watchdog (#121)."""
+    import sqlite3
+    loop = minutes_ago if loop_minutes_ago is None else loop_minutes_ago
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("INSERT OR IGNORE INTO scheduler_heartbeat (id) VALUES (1)")
+        conn.execute("UPDATE scheduler_heartbeat SET beat_at=datetime('now', ?), loop_completed_at=datetime('now', ?), "
+                     "running_job=?, running_since=CASE WHEN ? IS NULL THEN NULL ELSE datetime('now', ?) END "
+                     "WHERE id=1",
+                     (f"-{float(minutes_ago)} minutes", f"-{float(loop)} minutes", running, running,
+                      f"-{float(running_minutes or 0)} minutes"))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@pytest.fixture
+def scheduler_heartbeat(db_path):
+    """stamp_scheduler_heartbeat bound to this test's database:
+    `scheduler_heartbeat(60)` is a scheduler that died an hour ago;
+    pass db_path= to stamp another file."""
+    def _stamp(minutes_ago, loop_minutes_ago=None, running=None, running_minutes=None, db_path=db_path):
+        stamp_scheduler_heartbeat(db_path, minutes_ago, loop_minutes_ago=loop_minutes_ago, running=running,
+                                  running_minutes=running_minutes)
+    return _stamp
+
+
 @pytest.fixture
 def two_restaurants(db_path):
     """Two restaurants with one review each — the minimum world in which
