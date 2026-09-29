@@ -176,3 +176,34 @@ def test_the_weekly_digest_reads_churn_risk_and_the_next_onboarding_step(db, mon
     assert "Risky Grill" in sent["html"] and "no logins in 20 days" in sent["html"]
     assert "New Bistro" in sent["html"] and "Connect Google" in sent["html"]
     assert "Demo Co" not in sent["html"]
+
+
+# ── a text goes out even when its ledger row cannot be written (D meets E #14) ──
+
+def test_a_page_by_text_is_not_held_up_by_a_locked_database(db, monkeypatch):
+    import time
+    import requests
+    import notify
+
+    class _Resp:
+        status_code = 201
+
+        def json(self):
+            return {"sid": "SM1", "status": "queued"}
+    monkeypatch.setattr(notify, "TWILIO_SID", "AC1")
+    monkeypatch.setattr(notify, "TWILIO_TOKEN", "tok")
+    monkeypatch.setattr(notify, "TWILIO_FROM", "+15550001111")
+    monkeypatch.setattr(requests, "post", lambda *a, **k: _Resp())
+    holder = sqlite3.connect(db, timeout=0)
+    holder.execute("BEGIN IMMEDIATE")           # the write lock, held
+    try:
+        started = time.monotonic()
+        assert notify.send_sms("+15125550123", "Cavnar AI: the platform needs you", use_case="alert") is True
+        assert time.monotonic() - started < notify.SMS_LOG_BUSY_MS / 1000.0 + 2
+    finally:
+        holder.rollback()
+        holder.close()
+    # And a database that cannot be opened at all still lets the text go.
+    monkeypatch.setattr(models, "get_conn", lambda *a, **k: (_ for _ in ()).throw(sqlite3.OperationalError("disk I/O error")))
+    assert notify.send_sms("+15125550124", "Cavnar AI: still paging", use_case="alert") is True
+
