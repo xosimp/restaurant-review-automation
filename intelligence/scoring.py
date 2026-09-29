@@ -222,7 +222,9 @@ def _topic(kind, key=None):
 
 def kind_family(kind, key=None) -> str:
     """'format' | 'labor' | 'food' — the metric family a recommendation
-    kind's partition is read in."""
+    kind's partition is read in. By the KIND (a row is stamped, and a prior
+    read, per kind): a DSR action or a link, whose topic varies by key, is
+    read by service model alone unless a key is passed."""
     return _TOPIC_FAMILY.get(_topic(kind, key), "format")
 
 

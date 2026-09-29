@@ -146,7 +146,7 @@ def record(restaurant_id, rec_kind, source_key, action, outcome=None, days_to_ef
             print(f"[intelligence.feedback] labels unavailable for {restaurant_id}: {e}")
             lab = {}
         key = episode_key(source_key, rec_id) if rec_id and action != "measured" else source_key
-        fam = scoring.kind_family(rec_kind, base_key(key))
+        fam = scoring.kind_family(rec_kind)
         inserted = _record_on(conn, restaurant_id, rec_kind, key, action, outcome=outcome,
                               days_to_effect=days_to_effect, confidence_at=confidence_at, event_at=event_at,
                               cohort=cohort if cohort is not None else lab.get("cohort"), synced_from=synced_from,
@@ -605,7 +605,10 @@ def sync(db_path=DB_PATH, cohorts: dict = None, labels: dict = None) -> dict:
 
         def put(rid, kind, key, action, **kw):
             lab = labels.get(rid) or {}
-            fam = scoring.kind_family(kind, base_key(key))
+            # The family is the KIND's (the prior reads by kind): a DSR
+            # action or a link, whose own family varies by key, is read by
+            # service model — the coarsest confirmed partition.
+            fam = scoring.kind_family(kind)
             return _record_on(conn, rid, kind, key, action, cohort=lab.get("cohort"),
                               partition_key=(lab.get("partitions") or {}).get(fam),
                               google_data=bool(lab.get("google")), **kw)
@@ -824,7 +827,7 @@ def _stamp_labels(conn, labels, provenance):
                     rd = 1 if provenance.review_derived(r["source_key"], kind=r["rec_kind"], metric=r["metric"]) else 0
                     sets.append("review_derived=?"); args.append(rd)
                 if parts is not None:
-                    pk = parts.get(scoring.kind_family(r["rec_kind"], base_key(r["source_key"])))
+                    pk = parts.get(scoring.kind_family(r["rec_kind"]))
                     if pk != r["partition_key"]:
                         sets.append("partition_key=?"); args.append(pk)
                 if google is not None:
