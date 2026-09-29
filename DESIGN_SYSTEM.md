@@ -1209,6 +1209,14 @@ never with text: the rebuild cut the visible text across its screens by 69%
 - **Actions menu** (`.menu`, `menuToggle`) — a client's 25 actions in one
   searchable menu, grouped, the danger zone red and last; every action still
   confirms.
+- **Honest reads (fix round, 9/29/26).** A figure whose read failed is the
+  dimmed word "unknown" (`unknownV`, `figOr(d, tables, html)` — the failure
+  names the table), never 0 or "all clear"; a payload with failed reads gets
+  the amber line (`errBanner`) and every fleet header its age (`asOf`). A
+  platform system whose read failed is a grey ring segment, never green; the
+  others are green / amber / red by their own thresholds. The rail polls the
+  slim badges read; when a poll fails it keeps the last counts, dimmed
+  (`.rail.stale`), and the heartbeat says "unknown" with when it last read.
 - **Cmd-K / `/`** opens one palette: every page and action, and the fleet
   search.
 - **A page's reads belong to the visit that asked** (`api()` and `_seq`): a

@@ -82,6 +82,16 @@ svg.i.s{width:15px;height:15px}svg.i.xs{width:13px;height:13px}
 .me form{margin:0 0 0 auto}
 .me .signout-btn{width:30px;height:30px;border-radius:9px;border:0;background:transparent;color:var(--ink4);cursor:pointer;display:flex;align-items:center;justify-content:center}
 .me .signout-btn:hover{background:rgba(255,255,255,.05);color:var(--ink)}
+/* fix round (UI-1, 9/29/26): a rail whose last poll failed is dimmed and says
+   so; an unknown figure is grey, never green; pagers; in-panel failures */
+.rail.stale .nav .cnt,.rail.stale .hbeat{opacity:.5}
+.heart.unk{background:var(--ink4)}.heart.unk:after{display:none}
+.bars i.z{background:rgba(255,255,255,.07)}
+.pager{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 18px;border-top:1px solid var(--line);font-size:12.5px;color:var(--ink4)}
+.pager > span:last-child{display:flex;gap:6px}
+.meter{display:flex;flex-direction:column;gap:6px;flex:1;min-width:170px;padding:14px 16px;border-radius:12px;background:var(--strip);border:1px solid var(--line)}
+.meter .n{font-size:18px;font-weight:600}
+.pre{white-space:pre-wrap;word-break:break-word}
 .main{min-width:0}
 .content{padding:34px 44px 72px;max-width:1440px;margin:0 auto;display:flex;flex-direction:column;gap:22px}
 .content.enter{animation:enter .36s var(--ease) both}
@@ -400,7 +410,7 @@ body.role-support .w{display:none!important}
 </div></div>
 <div class="mo" id="m-resolve"><div class="mb" style="max-width:440px">
   <div class="mh"><h2>Mark resolved</h2><button class="x" onclick="closeModal('m-resolve')" aria-label="Close">✕</button></div>
-  <div class="fl"><div class="sub" id="r-title"></div><label>Note (optional)</label><input id="r-note" placeholder="What you did"><div style="display:flex;gap:8px"><button class="btn p" onclick="resolveSubmit()">Resolve</button><button class="btn" onclick="closeModal('m-resolve')">Cancel</button></div></div>
+  <div class="fl"><div class="sub" id="r-title"></div><div class="dim" id="r-scope"></div><label>Note (optional)</label><input id="r-note" placeholder="What you did"><div style="display:flex;gap:8px"><button class="btn p w" onclick="resolveSubmit()">Resolve</button><button class="btn" onclick="closeModal('m-resolve')">Cancel</button></div></div>
 </div></div>
 <div class="mo" id="m-cap"><div class="mb" style="max-width:440px">
   <div class="mh"><h2>Cap daily alerts</h2><button class="x" onclick="closeModal('m-cap')" aria-label="Close">✕</button></div>
@@ -589,7 +599,9 @@ const modchip = (m) => `<span class="chip ${MOD[m.state]}" title="${esc(m.label)
 // current | aging | stale | error, age_days) beside the connect state (G3).
 const intchip = (i) => i.in_use||i.key==='google_business' ? `<span class="chip ${INT[i.state]}" title="${esc(i.label)}: ${i.state}${i.sync_state?' · sync '+esc(i.sync_state)+(i.age_days!=null?' ('+i.age_days+'d)':''):''}${i.error?' — '+esc(i.error):''}${i.last_success?' · '+ago(i.last_success):''}">${esc(i.label.replace(' POS','').replace(' & Facebook','').replace('Google Business','GBP').replace('Outbound webhook','Webhook'))}</span>` : '';
 const clientLink = (id, label) => `<a href="#client/${id}" onclick="event.stopPropagation()">${esc(label)}</a>`;
-function bars(vals, key, badKey){ const max = Math.max(1, ...vals.map(v=>+v[key]||0)); return `<div class="bars">${vals.map(v=>`<i style="height:${Math.max(3, 56*(+v[key]||0)/max)}px" class="${badKey&&v[badKey]?'bad':''}" title="${esc(v.day||'')}: ${fmtN(v[key])}${badKey&&v[badKey]?' · '+v[badKey]+' failed':''}"></i>`).join('')}</div>`; }
+// Daily bars scaled to the data; a day with nothing is an empty slot (a faint
+// baseline), never a small bar and never skipped (#158) — the server zero-fills.
+function bars(vals, key, badKey){ const max = Math.max(1, ...vals.map(v=>+v[key]||0)); return `<div class="bars">${vals.map(v=>{ const n = +v[key]||0; return `<i style="height:${n ? Math.max(3, 56*n/max) : 2}px" class="${n ? (badKey&&v[badKey]?'bad':'') : 'z'}" title="${esc(/^\d{4}-\d{2}-\d{2}/.test(v.day||'') ? mdy(dayOf(String(v.day).slice(0,10))) : (v.day||''))}: ${fmtN(v[key])}${badKey&&v[badKey]?' · '+v[badKey]+' failed':''}"></i>`; }).join('')}</div>`; }
 function table(cols, rows, opts){
   opts = opts||{}; const id = opts.id || ('t'+Math.random().toString(36).slice(2,7));
   window._tables = window._tables||{}; window._tables[id] = {cols, rows, opts, key: opts.sort||null, dir: opts.dir||'desc'};
@@ -682,22 +694,47 @@ window.addEventListener('hashchange', route);
 // into the body (V() points at it until the next route).
 function areaShell(html){ $('view').innerHTML = html + '<div class="area-body" id="area-body"></div>'; _tgt = $('area-body'); }
 
-// nav badges from the overview, refreshed in the background
-let _ovk = null;
+// The rail: its counts and the scheduler heartbeat come from the slim
+// /admin/api/badges (fix round C, #36), every two minutes while the tab is
+// visible — never a whole overview build. A poll that fails leaves the last
+// counts up, dimmed and stamped with when they were read, and the heartbeat
+// says "unknown" — never a blank "all clear" (#128).
+let _ovk = null, _railAt = null;
 async function badges(){
   if (document.hidden) return;   // a background tab skips the poll; it refreshes when looked at again (CLIENT-37)
-  let d; try{ d = await api('/admin/api/overview'); }catch(e){ return; } if(!d.ok) return; applyBadges(d);
+  // A method, so a poll that lands after the admin moved on is still drawn.
+  let d = null; try{ d = await api('/admin/api/badges', {method:'GET'}); }catch(e){ d = {ok:false, error:String((e && e.message) || e)}; }
+  if(!d || d.ok === false || d._status >= 400){ railStale(d && d.error); return; }
+  applyBadges(d);
 }
-// The rail's counts and the heartbeat, from any overview payload (Overview
-// already holds one, so its first paint never waits on the poll).
+function railStale(why){
+  const rail = document.querySelector('.rail'); if(rail) rail.classList.add('stale');
+  const p = $('hb-pill'); if(!p) return;
+  p.title = "The rail couldn't refresh" + (why ? ' (' + why + ')' : '') + '.' + (_railAt ? ' These counts were read ' + fmtDT(_railAt) + '.' : '');
+  p.innerHTML = '<span class="heart unk"></span>Scheduler<span class="t">unknown</span>';
+}
+// The rail from a badges payload ({counts, kpis}) or an overview payload
+// ({issue_counts, kpis}) — Overview and Operations already hold one, so their
+// first paint never waits on the poll. Internal accounts never count (#141).
 function applyBadges(d){
-  const k = d.kpis; _ovk = k;
-  const set = (id, n, cls) => { const el = $(id); if(!el) return; el.textContent = n; el.hidden = !n; el.className = 'cnt' + (cls ? ' ' + cls : ''); };
-  const cust = (d.issues||[]).filter(i=>i.restaurant_id).length;
-  const opsDown = (k.job_failures_24h||k.jobs_overdue?1:0) + (k.email_failures_today?1:0) + (k.push_failures_today?1:0) + (k.ai_failures_24h?1:0) + (k.integrations_failing?1:0);
-  set('n-attn', k.critical, 'bad'); set('n-ops', opsDown, 'warn'); set('n-cust', cust, '');
-  const m = k.scheduler_heartbeat_minutes; const bad = m == null || m > 15;
-  $('hb-pill').innerHTML = `<span class="heart ${bad?'bad':''}"></span>Scheduler<span class="t">${m==null?'never':(m<1?'just now':Math.round(m)+'m ago')}</span>`;
+  if(!d) return;
+  const k = d.kpis || {}, c = d.counts || d.issue_counts || null;
+  _ovk = Object.assign({}, _ovk || {}, k, c ? {attention: c.attention, critical: c.critical} : {});
+  _railAt = d.generated_at || new Date().toISOString();
+  const rail = document.querySelector('.rail'); if(rail) rail.classList.remove('stale');
+  const set = (id, n, cls, title) => { const el = $(id); if(!el) return; el.textContent = n; el.hidden = !n; el.className = 'cnt' + (cls ? ' ' + cls : ''); el.title = title || ''; };
+  if(c){
+    const cu = c.customer || {}, pl = c.platform || {};
+    set('n-attn', c.critical || 0, 'bad', (c.critical || 0) + ' critical');
+    set('n-ops', pl.total || 0, pl.critical ? 'bad' : 'warn', (pl.total || 0) + ' platform issue' + (pl.total === 1 ? '' : 's'));
+    set('n-cust', cu.total || 0, cu.critical ? 'bad' : '', (cu.total || 0) + ' customer issue' + (cu.total === 1 ? '' : 's'));
+  }
+  const m = k.scheduler_heartbeat_minutes;
+  // null is "never beat" only when the heartbeat was read; a failed read is unknown.
+  const unread = m == null && [].concat(d.errors || [], d.query_errors || []).some(e => e && /heartbeat/.test(e.query || ''));
+  const bad = !unread && (m == null || m > 15);
+  $('hb-pill').title = 'Scheduler heartbeat' + (d.generated_at ? ' · read ' + fmtDT(d.generated_at) + (d.cached ? ' (cached)' : '') : '');
+  $('hb-pill').innerHTML = `<span class="heart ${unread?'unk':(bad?'bad':'')}"></span>Scheduler<span class="t">${unread?'unknown':(m==null?'never':(m<1?'just now':Math.round(m)+'m ago'))}</span>`;
 }
 
 // ── ⌘K: jump anywhere, or search the fleet ─────────────────────────────────
@@ -705,6 +742,7 @@ const PAGES = [
   ['Overview','#overview','Page'], ['Needs you','#overview','Page'],
   ['Operations · Jobs','#operations/jobs','Page'], ['Operations · Email','#operations/email','Page'], ['Operations · Push & alerts','#operations/push','Page'], ['Operations · AI','#operations/ai','Page'], ['Operations · Integrations','#operations/integrations','Page'],
   ['Customers · Restaurants','#customers/restaurants','Page'], ['Customers · Billing','#customers/billing','Page'], ['Customers · Onboarding','#customers/onboarding','Page'], ['Customers · Support queue','#customers/support','Page'],
+  ['Customers · Bug reports','#customers/support?view=bugs','Page'], ['Customers · Deletion requests','#customers/support?view=deletions','Page'], ['Customers · Resolved issues','#customers/support?view=resolved','Page'],
   ['Engineering','#engineering','Page'], ['Engineering · Experiments','#engineering/experiments','Page'],
   ['Analytics','#analytics','Page'], ['Analytics · Recommendations','#analytics/recommendations','Page'], ['Analytics · Intelligence','#analytics/intelligence','Page'],
   ['New client','fn:newClient','Action'], ['Post an incident','fn:incidentOpen','Action'],
@@ -716,14 +754,16 @@ function palClose(){ const p = $('pal'); if(p) p.classList.remove('on'); }
 function palRender(results){
   const q = $('q').value.trim().toLowerCase();
   const pages = PAGES.filter(p => !q || p[0].toLowerCase().indexOf(q) >= 0).slice(0, q ? 6 : 12);
-  const rows = results.map(r => ({href: r.type==='brand' ? '#locations?brand='+encodeURIComponent(r.title) : (r.id ? '#client/'+r.id : '#customers'), t: r.type, title: r.title, d: r.sub||''}))
-    .concat(pages.map(p => ({href: p[1], t: p[2], title: p[0], d: ''})));
+  // Each fleet result says what it matched — a phone number, a Place ID, a
+  // Stripe or DocuSign id, a POS store (#63).
+  const rows = results.map(r => ({href: r.type==='brand' ? '#locations?brand='+encodeURIComponent(r.title) : (r.id ? '#client/'+r.id : '#customers'), t: r.type, title: r.title, d: r.sub||'', m: r.match||''}))
+    .concat(pages.map(p => ({href: p[1], t: p[2], title: p[0], d: '', m: ''})));
   _palSel = Math.min(_palSel, Math.max(0, rows.length-1));
   $('q-res').innerHTML = rows.length ? rows.map((r,i)=>{ const fn = r.href.indexOf('fn:') === 0 ? r.href.slice(3) : null;
-    return `<a href="${fn ? '#' : esc(r.href)}" class="${i===_palSel?'act':''}" onclick="palClose();${fn ? fn + '();return false' : ''}"><span class="t">${esc(r.t)}</span><b>${esc(r.title)}</b><span class="d">${esc(r.d)}</span></a>`; }).join('') : '<div class="empty">No matches.</div>';
+    return `<a href="${fn ? '#' : esc(r.href)}" class="${i===_palSel?'act':''}" onclick="palClose();${fn ? fn + '();return false' : ''}"><span class="t">${esc(r.t)}</span><b>${esc(r.title)}</b>${r.m?`<span class="chip" title="What this result matched">${esc(r.m)}</span>`:''}<span class="d">${esc(r.d)}</span></a>`; }).join('') : '<div class="empty">No matches.</div>';
 }
 $('q').addEventListener('input', () => { clearTimeout(_qt); _palSel = 0; const q = $('q').value.trim(); if(q.length<2){ palRender([]); return; } _qt = setTimeout(async () => {
-  let d; try{ d = await api('/admin/api/search?q='+encodeURIComponent(q)); }catch(e){ return; } palRender(d.ok ? d.results : []);
+  let d; try{ d = await api('/admin/api/search?q='+encodeURIComponent(q)); }catch(e){ return; } palRender(d.ok !== false && d.results ? d.results : []);
 }, 200); });
 $('q').addEventListener('keydown', e => {
   const links = $('q-res').querySelectorAll('a'); if(!links.length) return;
@@ -737,67 +777,143 @@ function menuFilter(inp){ const q = inp.value.trim().toLowerCase(); inp.closest(
 
 // ── Overview ────────────────────────────────────────────────────────────────
 // What needs me, what changed, what is growing — ranked: four hero figures,
-// a six-cell status strip, then the five things to act on. The sentence at
+// a status strip, a watch list, then the things to act on. The sentence at
 // the top is written by rules from the same payload (no model on load).
-let _ov = null, _ovTab = 'all';
-function realAccounts(list){ return (list||[]).filter(r => !r.is_demo && !r.is_admin_home && r.billing.status !== 'internal'); }
+// Every figure is the server's (fix round C): MRR from the Stripe mirror with
+// its source, the charts computed and zero-filled on the server (no browser
+// back-cast), issue counts per segment — an internal account (demo, test,
+// the admin's own home) never inflates attention or critical (#141). A figure
+// whose read failed is "unknown", never 0 or "all clear" (#47, #128).
+let _ov = null, _ovTab = 'all', _ovMsg, _fresh = false;
+function realAccounts(list){ return (list||[]).filter(r => r.segment ? r.segment === 'customer' : (!r.is_demo && !r.is_admin_home && r.billing.status !== 'internal')); }
 function weekStarts(n){ const out = [], d = new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate() - ((d.getDay()+6)%7)); for(let i=n-1;i>=0;i--){ const w = new Date(d); w.setDate(d.getDate()-7*i); out.push(w); } return out; }
-// Six named systems, so "4/6" is countable rather than a score.
-function platformSystems(k){
-  const hbm = k.scheduler_heartbeat_minutes;
-  return [
-    ['Scheduler', hbm != null && hbm <= 15, hbm == null ? 'never beat' : 'beat ' + Math.round(hbm) + 'm ago'],
-    ['Jobs', !k.job_failures_24h && !k.jobs_overdue, k.jobs_overdue ? k.jobs_overdue + ' overdue' : (k.job_failures_24h ? k.jobs_failing + ' failing' : 'on schedule')],
-    ['API', k.server_error_rate == null || k.server_error_rate < 5, k.server_error_rate == null ? 'no traffic yet' : k.server_error_rate + '% 5xx'],
-    ['AI', !k.ai_failures_24h, k.ai_failures_24h ? k.ai_failures_24h + ' failed · 24h' : 'no failures'],
-    ['Push', !k.push_failures_today, k.push_failures_today ? k.push_failures_today + ' failed today' : 'delivering'],
-    ['Email', !k.email_failures_today, k.email_failures_today ? k.email_failures_today + ' failed today' : 'delivering']];
+// A calendar day or month the server sends as text ("2026-09-22", "2026-09"):
+// built in local time, so it never slides a day west of UTC.
+function dayOf(s){ const p = String(s || '').split('-'); return p.length >= 2 ? new Date(+p[0], (+p[1] || 1) - 1, +(p[2] || 1)) : null; }
+// Which of a payload's failed reads touch these tables — fix round C labels
+// each failure with the table it read — so the figure built on them is
+// unknown rather than a confident zero.
+function readFailed(d, tables){
+  const errs = [].concat((d && d.errors) || [], (d && d.query_errors) || []);
+  const hit = errs.find(e => e && typeof e === 'object' && tables.indexOf(e.query) >= 0);
+  return hit ? (hit.query + ': ' + (hit.error || 'failed')) : null;
+}
+function figOr(d, tables, html){ const f = readFailed(d, tables); return f ? unknownV(f) : html; }
+// Seven named systems, so "5/7" is countable rather than a score. Each is ok,
+// warn or bad by its own threshold — a card can turn red (#158) — or unknown
+// (grey, never green) when its read failed (#128). SMS is the seventh (#14),
+// read from messaging health after the first paint.
+const SYS_COLOR = {ok:'var(--green)', warn:'var(--amber)', bad:'var(--red)', unk:'rgba(255,255,255,.2)', neu:'rgba(255,255,255,.2)'};
+const SYS_TEXT = {ok:'var(--green-t)', warn:'var(--amber-t)', bad:'var(--red-t)', unk:'var(--ink4)', neu:'var(--ink4)'};
+function platformSystems(d, mh){
+  const k = (d && d.kpis) || {}, hbm = k.scheduler_heartbeat_minutes, f = t => readFailed(d, t), sys = [];
+  const hbErr = f(['scheduler_heartbeat']);
+  sys.push(['Scheduler', hbErr ? 'unk' : (hbm == null ? 'bad' : hbm <= 15 ? 'ok' : hbm <= 60 ? 'warn' : 'bad'), hbErr ? "unknown — the heartbeat couldn't be read" : (hbm == null ? 'never beat' : 'beat ' + Math.round(hbm) + 'm ago')]);
+  const jErr = f(['job_failures', 'jobs_overdue']);
+  sys.push(['Jobs', jErr ? 'unk' : (k.jobs_overdue ? 'bad' : (k.job_failures_24h ? 'warn' : 'ok')), jErr ? 'unknown' : (k.jobs_overdue ? k.jobs_overdue + ' overdue' : (k.job_failures_24h ? (k.jobs_failing || 1) + ' failing · 24h' : 'on schedule'))]);
+  const er = k.server_error_rate, win = k.api_window_label || 'last 5 minutes';
+  sys.push(['API', er == null ? 'neu' : (er >= 5 ? 'bad' : er >= 1 ? 'warn' : 'ok'), er == null ? 'no traffic · ' + win : er + '% 5xx · ' + win]);
+  const aErr = f(['ai_usage']), af = k.ai_failures_24h || 0;
+  sys.push(['AI', aErr ? 'unk' : (af >= 10 ? 'bad' : af ? 'warn' : 'ok'), aErr ? 'unknown' : (af ? af + ' failed · 24h' : 'no failures · 24h')]);
+  const pErr = f(['push_deliveries']);
+  sys.push(['Push', pErr ? 'unk' : (k.push_failures_today ? 'warn' : 'ok'), pErr ? 'unknown' : (k.push_failures_today ? k.push_failures_today + ' failed today' : 'delivering')]);
+  const eErr = f(['email_log']), rates = k.email_rates || {}, r7 = rates['7d'] || {}, th = rates.thresholds || {};
+  let et = k.email_failures_today ? 'warn' : 'ok', es = k.email_failures_today ? k.email_failures_today + ' undeliverable today' : 'delivering';
+  if(r7.enough){
+    const b = r7.bounce_rate, c = r7.complaint_rate;
+    if((b != null && b >= (th.bounce_crit_pct || 8)) || (c != null && c >= (th.complaint_crit_pct || .3))){ et = 'bad'; es = 'bounce ' + b + '% · complaints ' + c + '% · 7d'; }
+    else if((b != null && b >= (th.bounce_warn_pct || 4)) || (c != null && c >= (th.complaint_warn_pct || .1))){ et = 'warn'; es = 'bounce ' + b + '% · complaints ' + c + '% · 7d'; }
+  }
+  sys.push(['Email', eErr ? 'unk' : et, eErr ? 'unknown' : es]);
+  if(mh === undefined) sys.push(['SMS', 'unk', 'reading…']);
+  else if(!mh || mh.ok === false || mh._status >= 400) sys.push(['SMS', 'unk', "unknown — messaging health couldn't be read"]);
+  else {
+    const s = mh.sms || {}, by = s.by_status || {}, failed = (by.failed || 0) + (by.undelivered || 0);
+    sys.push(['SMS', s.account_errors ? 'bad' : (failed ? 'warn' : 'ok'), s.account_errors ? s.account_errors + ' account-level error' + (s.account_errors === 1 ? '' : 's') + ' · 24h' : (failed ? failed + ' failed · 24h' : (s.attempted ? s.attempted + ' sent · 24h' : 'none sent · 24h'))]);
+  }
+  return sys;
 }
 function healthRing(sys){
-  const n = sys.length, ok = sys.filter(s=>s[1]).length, r = 46, c = 2*Math.PI*r, seg = c/n;
-  const arcs = sys.map((s,i)=>`<circle cx="59" cy="59" r="${r}" fill="none" stroke="${s[1]?'var(--green)':'var(--amber)'}" stroke-width="9" stroke-dasharray="${(seg-4).toFixed(2)} ${(c-seg+4).toFixed(2)}" stroke-dashoffset="${(-seg*i).toFixed(2)}"><title>${esc(s[0])}: ${esc(s[2])}</title></circle>`).join('');
+  const n = sys.length, ok = sys.filter(s=>s[1]==='ok' || s[1]==='neu').length, r = 46, c = 2*Math.PI*r, seg = c/n;
+  const arcs = sys.map((s,i)=>`<circle cx="59" cy="59" r="${r}" fill="none" stroke="${SYS_COLOR[s[1]]||SYS_COLOR.unk}" stroke-width="9" stroke-dasharray="${(seg-4).toFixed(2)} ${(c-seg+4).toFixed(2)}" stroke-dashoffset="${(-seg*i).toFixed(2)}"><title>${esc(s[0])}: ${esc(s[2])}</title></circle>`).join('');
   return `<svg width="118" height="118" viewBox="0 0 118 118" role="img" aria-label="${ok} of ${n} systems healthy" style="flex-shrink:0"><g transform="rotate(-90 59 59)"><circle cx="59" cy="59" r="${r}" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="9"/>${arcs}</g><text x="59" y="58" text-anchor="middle" fill="var(--ink)" style="font-family:var(--num);font-size:26px;font-weight:600">${ok}/${n}</text><text x="59" y="77" text-anchor="middle" fill="var(--ink4)" style="font-family:var(--sans);font-size:10.5px;font-weight:700;letter-spacing:.1em">HEALTHY</text></svg>`;
 }
-function growthChart(real){
-  const weeks = weekStarts(12), w = 470, h = 176, pl = 26, pb = 26, top = 10, cw = (w-pl-8)/weeks.length;
-  const signups = weeks.map((ws,i) => { const we = new Date(ws); we.setDate(ws.getDate()+7); return real.filter(r => { const d = parseTs(r.created_at); return d && d >= ws && d < we; }).length; });
-  const cum = weeks.map(ws => { const we = new Date(ws); we.setDate(ws.getDate()+7); return real.filter(r => { const d = parseTs(r.created_at); return d && d < we && ['churned','canceled'].indexOf(r.billing.status) < 0; }).length; });
-  const ymax = Math.max(4, Math.ceil(Math.max(...cum, ...signups) * 1.15)), y = v => top + (1 - v/ymax) * (h-pb-top);
+function healthCard(d, mh){
+  const sys = platformSystems(d, mh), down = sys.filter(s => s[1] === 'bad' || s[1] === 'warn'), unk = sys.filter(s => s[1] === 'unk' && s[2] !== 'reading…');
+  const said = down.length ? down.map(s=>s[0]).join(' and ') + (down.some(s=>s[1]==='bad') ? ' failing' : ' degraded') : (unk.length ? unk.map(s=>s[0]).join(' and ') + ' unknown' : 'All systems healthy');
+  const show = (down.length ? down : (unk.length ? unk : sys.slice(0,2))).slice(0,3);
+  return `${healthRing(sys)}
+    <div style="display:flex;flex-direction:column;gap:8px;min-width:0"><span class="lbl">Platform health</span>
+    <span style="font-size:15px;font-weight:700;line-height:1.3">${esc(said)}</span>
+    <span style="display:flex;flex-direction:column;gap:4px;font-size:12px" class="muted">${show.map(s=>`<span><span style="color:${SYS_TEXT[s[1]]||SYS_TEXT.unk}">●</span> ${esc(s[0])} · ${esc(s[2])}</span>`).join('')}</span></div>`;
+}
+// Accounts by week (paying, from the daily snapshots — or labelled as a
+// reconstruction) and signups by week, both from overview.series. An empty
+// week is an empty slot, never skipped (#158); the axis scales to the data.
+function growthChart(s){
+  const acc = (s && s.accounts) || [], sg = (s && s.signups) || [], n = Math.max(acc.length, sg.length);
+  if(!n) return '<div class="empty">No history yet.</div>';
+  const w = 470, h = 176, pl = 26, pb = 26, top = 10, cw = (w-pl-8)/n;
+  const paying = acc.map(a => a.paying == null ? null : +a.paying), signups = sg.map(x => +x.n || 0);
+  const peak = Math.max.apply(null, [0].concat(paying.filter(v => v != null), signups));
+  const ymax = Math.max(4, Math.ceil(peak * 1.15)), y = v => top + (1 - v/ymax) * (h-pb-top);
   const ticks = [0, Math.round(ymax/2), ymax];
   const grid = ticks.map(v=>`<line x1="${pl}" x2="${w-4}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="rgba(255,255,255,.05)"/><text x="${pl-8}" y="${(y(v)+4).toFixed(1)}" text-anchor="end" fill="var(--ink4)" style="font-family:var(--num);font-size:10.5px">${v}</text>`).join('');
-  const bars = signups.map((s,i)=>{ const x = pl + i*cw + cw*.28, bh = s ? Math.max(4, (h-pb-top) * s / ymax) : 2; return `<rect x="${x.toFixed(1)}" y="${(h-pb-bh).toFixed(1)}" width="${(cw*.44).toFixed(1)}" height="${bh.toFixed(1)}" rx="3" fill="${s?'var(--ember2)':'rgba(255,255,255,.1)'}" fill-opacity="${s?'.85':'1'}"><title>Week of ${mdy(weeks[i])}: ${s} new</title></rect>`; }).join('');
-  const pts = cum.map((v,i)=>[pl + i*cw + cw/2, y(v)]);
-  const line = pts.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ');
-  const area = 'M'+pts[0][0].toFixed(1)+','+(h-pb)+' L'+pts.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' L')+' L'+pts[pts.length-1][0].toFixed(1)+','+(h-pb)+' Z';
-  const labels = [0, 4, 8, 11].map(i=>`<text x="${(pl + i*cw + cw/2).toFixed(1)}" y="${h-7}" text-anchor="middle" fill="var(--ink4)" style="font-family:var(--num);font-size:10.5px">${mdy(weeks[i]).replace(/\/\d+$/,'')}</text>`).join('');
-  const e = pts[pts.length-1];
-  return `<svg width="100%" viewBox="0 0 ${w} ${h}" role="img" aria-label="Accounts by week and new signups, 12 weeks"><defs><linearGradient id="ga" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4ead7a" stop-opacity=".22"/><stop offset="1" stop-color="#4ead7a" stop-opacity="0"/></linearGradient></defs>${grid}<path d="${area}" fill="url(#ga)"/>${bars}<polyline points="${line}" fill="none" stroke="var(--green-t)" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/><circle cx="${e[0].toFixed(1)}" cy="${e[1].toFixed(1)}" r="7" fill="#5cc28c" fill-opacity=".18"/><circle cx="${e[0].toFixed(1)}" cy="${e[1].toFixed(1)}" r="3.5" fill="#5cc28c"/>${labels}</svg>`;
+  const wk = i => { const x = sg[i] || acc[i] || {}; return dayOf(x.week_start); };
+  const bars = signups.map((v,i)=>{ const x = pl + i*cw + cw*.28, bh = v ? Math.max(4, (h-pb-top) * v / ymax) : 2; return `<rect x="${x.toFixed(1)}" y="${(h-pb-bh).toFixed(1)}" width="${(cw*.44).toFixed(1)}" height="${bh.toFixed(1)}" rx="3" fill="${v?'var(--ember2)':'rgba(255,255,255,.1)'}" fill-opacity="${v?'.85':'1'}"><title>Week of ${mdy(wk(i))}: ${v} new</title></rect>`; }).join('');
+  const pts = paying.map((v,i) => v == null ? null : [pl + i*cw + cw/2, y(v)]).filter(Boolean);
+  let line = '', area = '', dot = '';
+  if(pts.length){
+    line = `<polyline points="${pts.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ')}" fill="none" stroke="var(--green-t)" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    area = `<path d="M${pts[0][0].toFixed(1)},${h-pb} L${pts.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' L')} L${pts[pts.length-1][0].toFixed(1)},${h-pb} Z" fill="url(#ga)"/>`;
+    const e = pts[pts.length-1];
+    dot = `<circle cx="${e[0].toFixed(1)}" cy="${e[1].toFixed(1)}" r="7" fill="var(--green-t)" fill-opacity=".18"/><circle cx="${e[0].toFixed(1)}" cy="${e[1].toFixed(1)}" r="3.5" fill="var(--green-t)"/>`;
+  }
+  const idx = n > 3 ? [0, Math.round((n-1)/3), Math.round(2*(n-1)/3), n-1] : sg.map((_x,i)=>i);
+  const labels = idx.map(i=>`<text x="${(pl + i*cw + cw/2).toFixed(1)}" y="${h-7}" text-anchor="middle" fill="var(--ink4)" style="font-family:var(--num);font-size:10.5px">${esc(mdy(wk(i)).replace(/\/\d+$/,''))}</text>`).join('');
+  return `<svg width="100%" viewBox="0 0 ${w} ${h}" role="img" aria-label="Paying accounts by week and new signups, ${n} weeks"><defs><linearGradient id="ga" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--green)" stop-opacity=".22"/><stop offset="1" stop-color="var(--green)" stop-opacity="0"/></linearGradient></defs>${grid}${area}${bars}${line}${dot}${labels}</svg>`;
 }
-// MRR at list price by the month each paying account started — a lower bound
-// on history (an account that left before today is not in it), labelled so.
-function mrrSeries(real){
-  const now = new Date(), out = [];
-  for(let i=5;i>=0;i--){ const end = new Date(now.getFullYear(), now.getMonth()-i+1, 1); out.push([end, real.filter(r => r.billing.status==='active' && (parseTs(r.created_at)||0) < end).reduce((n,r)=>n + (r.billing.monthly||0), 0)]); }
-  return out;
+// Issue categories from the server's own category (the key's kind).
+const ISSUE_CAT = {billing:'Billing', canceled:'Billing', contract:'Billing', signed_unpaid:'Billing', paused:'Billing', modules_mismatch:'Billing', stripe_mismatch:'Billing',
+  int:'Integration', source:'Data', stale:'Data', nodata:'Data', unconf:'Setup', fetch_behind:'Data', urgent:'Reviews', stalled_reviews:'AI', stalled:'AI',
+  email:'Messages', suppressed:'Messages', push:'Messages', posts:'Messages', onboarding:'Onboarding', inactive:'Account', churn_risk:'Account', dup:'Account',
+  ai_spike:'AI', ai_cost:'AI', ai_failures:'AI', ai_budget:'AI', ai_anomaly:'AI', deletion:'Offboarding', job:'Platform', job_overdue:'Platform', scheduler:'Platform', platform:'Platform',
+  webhook:'Platform', webhook_stale:'Platform', metrics:'Platform'};
+function issueCat(i){ const c = i.category; if(c && ISSUE_CAT[c]) return ISSUE_CAT[c]; const k = i.key||''; return /billing|canceled|contract/.test(k)?'Billing':/int:/.test(k)?'Integration':/stale|nodata|unconf/.test(k)?'Data':/email|push|posts/.test(k)?'Messages':/^job|^scheduler|^fleet|^platform/.test(k)?'Platform':/onboarding/.test(k)?'Onboarding':/urgent|review/.test(k)?'Reviews':'Account'; }
+// The action an issue carries, as the server says to do it (#62): POST its
+// route (with its payload), follow a link, or open a templated email.
+function issueActBtn(i, cls){
+  if(!i.action) return '';
+  const kind = i.action_kind || (i.action_route ? 'post' : (i.action_href ? 'link' : null));
+  if(kind === 'post' && i.action_route) return `<button class="btn s w ${cls||''}" onclick="event.stopPropagation();issueAction('${jsq(i.action_route)}','${jsq(i.action)}','${jsq(i.restaurant||'')}','${i.action_payload?jsq(JSON.stringify(i.action_payload)):''}')">${esc(i.action)}</button>`;
+  const href = i.action_href || i.action_route;
+  if(!href) return '';
+  return `<a class="btn s ${cls||''}" href="${esc(href)}" onclick="event.stopPropagation()"${kind === 'mailto' ? ' title="Opens a templated email to the owner"' : ''}>${esc(i.action)}</a>`;
 }
-function issueCat(i){ const k = i.key||''; return /billing|canceled|contract/.test(k)?'Billing':/int:/.test(k)?'Integration':/stale|nodata|unconf/.test(k)?'Data':/email|push|posts/.test(k)?'Messages':/^job|^scheduler|^fleet|^platform/.test(k)?'Platform':/onboarding/.test(k)?'Onboarding':/urgent|review/.test(k)?'Reviews':'Account'; }
-function needRow(i, idx){
-  const where = i.restaurant_id ? `${esc(i.restaurant)}${i.location_name?' · '+esc(i.location_name):''}` : 'Platform';
-  const act = i.action_route ? `<button class="btn s" onclick="event.stopPropagation();issueAction('${jsq(i.action_route)}','${jsq(i.action)}')">${esc(i.action)}</button>`
-    : (i.action==='Open jobs' ? `<a class="btn s" href="#operations/jobs" onclick="event.stopPropagation()">Open jobs</a>` : (i.restaurant_id ? `<a class="btn s" href="#client/${i.restaurant_id}" onclick="event.stopPropagation()">Open</a>` : ''));
+function needRow(i){
+  const plat = !i.restaurant_id;
+  const where = plat ? 'Platform' : `${esc(i.restaurant||'')}${i.location_name?' · '+esc(i.location_name):''}`;
+  const tags = (i.reopened ? ` <span class="chip warn" title="${esc(i.reopened.label||'')}">reopened</span>` : '') + (i.segment === 'internal' ? ' <span class="chip">internal</span>' : '');
+  const act = issueActBtn(i) || (plat ? '' : `<a class="btn s" href="#client/${i.restaurant_id}" onclick="event.stopPropagation()">Open</a>`);
+  const resolve = i.resolvable === false
+    ? '<span class="dim" title="It clears itself, or closes another way (withdraw the request, finish the offboarding)">clears itself</span>'
+    : `<button class="btn s g w" onclick="resolveOpen('${jsq(i.key)}','${jsq(i.title)}','${jsq(i.occurrence_at||'')}')">Resolve</button>`;
+  const reo = i.reopened ? `<span class="ink2" style="font-size:12.5px">Reopened — ${esc(i.reopened.label || 'it happened again')} ${esc(i.reopened.resolved_by || 'Someone')} resolved it on ${fmtD(i.reopened.resolved_at)}${i.reopened.note ? ' (“' + esc(i.reopened.note) + '”)' : ''}.</span>` : '';
   return `<div class="li click" onclick="toggleRow(this)"><span style="width:78px;flex-shrink:0">${pill(TONE[i.severity]||'warn', i.severity==='critical'?'Critical':'Warning')}</span>
-    <div class="tt"><b>${esc(i.title)}</b><span>${where} · ${issueCat(i)}</span></div><span class="age">${esc(i.since||'')}</span>${act}<span class="chev">${ico('chev','s')}</span></div>
-    <div class="lx"><div class="box">${i.detail?`<span class="ink2" style="font-size:13px">${esc(i.detail)}</span>`:''}<span style="display:flex;gap:8px;flex-wrap:wrap">${i.restaurant_id?`<a class="btn s" href="#client/${i.restaurant_id}">Open client</a><a class="btn s g" href="/admin/view-as/${i.restaurant_id}">View as client</a>`:''}<button class="btn s g" onclick="resolveOpen('${jsq(i.key)}','${jsq(i.title)}')">Resolve</button></span></div></div>`;
+    <div class="tt"><b>${esc(i.title)}${tags}</b><span>${where} · ${esc(issueCat(i))}</span></div><span class="age">${esc(i.since||'')}</span>${act}<span class="chev">${ico('chev','s')}</span></div>
+    <div class="lx"><div class="box">${i.detail?`<span class="ink2" style="font-size:13px">${esc(i.detail)}</span>`:''}${reo}<span style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${plat?'':`<a class="btn s" href="#client/${i.restaurant_id}">Open client</a><a class="btn s g" href="/admin/view-as/${i.restaurant_id}">View as client</a>`}${resolve}${i.occurrence_at?`<span class="dim">occurred ${fmtDT(i.occurrence_at)}</span>`:''}</span></div></div>`;
 }
 function needsList(){
-  const d = _ov, all = d.issues;
-  const pick = _ovTab === 'customers' ? all.filter(i=>i.restaurant_id) : _ovTab === 'platform' ? all.filter(i=>!i.restaurant_id) : all;
-  const cust = all.filter(i=>i.restaurant_id).length, plat = all.length - cust;
-  const segs = [['all','All',all.length],['customers','Customers',cust],['platform','Platform',plat]];
-  return `<div class="ch" style="padding-bottom:14px"><div style="display:flex;align-items:center;gap:10px"><h2>Needs you</h2>${d.kpis.critical?`<span class="cnt bad">${d.kpis.critical}</span>`:''}</div>
-    <div class="seg">${segs.map(s=>`<button class="${_ovTab===s[0]?'on':''}" onclick="_ovTab='${s[0]}';$('ov-needs').innerHTML=needsList()">${s[1]} <b>${s[2]}</b></button>`).join('')}</div></div>
-    <div class="lst" style="border-top:1px solid var(--line)">${pick.slice(0,5).map(needRow).join('') || '<div class="empty">Nothing needs you. Everything is running.</div>'}</div>
-    ${pick.length > 5 ? `<a class="more" href="#customers/support">Open the support queue · <span class="n">${pick.length}</span> ${ico('chev','xs')}</a>` : ''}`;
+  const d = _ov, ic = d.issue_counts || {}, all = d.issues || [], internal = d.internal_issues || [];
+  const cust = all.filter(i=>i.segment==='customer' || (i.restaurant_id && i.segment!=='platform')), plat = all.filter(i=>!i.restaurant_id || i.segment==='platform');
+  const pick = _ovTab === 'customers' ? cust : _ovTab === 'platform' ? plat : _ovTab === 'internal' ? internal : all;
+  const cnt = (o, fb) => (o && o.total != null) ? o.total : fb;
+  const segs = [['all','All', ic.attention != null ? ic.attention : all.length],['customers','Customers', cnt(ic.customer, cust.length)],['platform','Platform', cnt(ic.platform, plat.length)],['internal','Internal', cnt(ic.internal, internal.length)]];
+  const total = _ovTab === 'all' ? (d.issues_total != null ? d.issues_total : all.length) : segs.find(s=>s[0]===_ovTab)[2];
+  return `<div class="ch" style="padding-bottom:14px"><div style="display:flex;align-items:center;gap:10px"><h2>Needs you</h2>${ic.critical?`<span class="cnt bad" title="Critical, customers and platform">${ic.critical}</span>`:''}</div>
+    <div class="seg">${segs.map(s=>`<button class="${_ovTab===s[0]?'on':''}" onclick="_ovTab='${s[0]}';$('ov-needs').innerHTML=needsList()"${s[0]==='internal'?' title="Demo, test and internal accounts: never counted in attention or critical"':''}>${s[1]} <b>${s[2]}</b></button>`).join('')}</div></div>
+    <div class="lst" style="border-top:1px solid var(--line)">${pick.slice(0,5).map(needRow).join('') || `<div class="empty">${readFailed(d, ['restaurants']) ? "The issue list couldn't be read — see the warning above." : (_ovTab === 'internal' ? 'No issues on internal accounts.' : 'Nothing needs you. Everything is running.')}</div>`}</div>
+    ${total > 5 ? `<a class="more" href="#customers/support${_ovTab==='internal'?'?segment=internal':''}">Open the support queue · <span class="n">${total}</span> ${ico('chev','xs')}</a>` : ''}`;
 }
 function changesList(events){
   const today = mdy(new Date()), y = new Date(); y.setDate(y.getDate()-1); const yest = mdy(y);
@@ -812,62 +928,86 @@ function changesList(events){
 function stripCell(href, icn, tone, label, value, sub){
   return `<a href="${href}"><span class="hd"><span class="ico ${tone}">${ico(icn)}</span><span class="lbl">${label}</span></span><span class="v">${value}</span><span class="s">${sub}</span></a>`;
 }
+// A watch-list figure that links where it is acted on.
+function watchKpi(href, v, l, cls, title){ return `<a class="kpi ${cls||''}" href="${href}"${title?` title="${esc(title)}"`:''}><div class="v">${v}</div><div class="l">${esc(l)}</div></a>`; }
+const MRR_SRC = {mirror:'billed', list:'list price', mixed:'billed + list price'};
 async function overview(){
-  const [d, c] = await Promise.all([api('/admin/api/overview'), api('/admin/api/clients')]);
-  if(!d.ok) throw new Error(d.error||'overview failed');
-  if(c.ok) _clients = c.clients;
-  _ov = d; applyBadges(d); const k = d.kpis, real = realAccounts(c.ok ? c.clients : []);
-  const crit = d.issues.filter(i=>i.severity==='critical'), sys = platformSystems(k), down = sys.filter(s=>!s[1]);
-  const mrr = mrrSeries(real), mrrNew = real.filter(r=>r.billing.status==='active' && (parseTs(r.created_at)||0) >= new Date(new Date().getFullYear(), new Date().getMonth(), 1)).reduce((n,r)=>n+(r.billing.monthly||0),0);
-  const trial = real.filter(r=>r.billing.status==='trial').length, pd = real.filter(r=>r.billing.status==='past_due').length;
-  const weeks = weekStarts(12), wk = weeks.map(ws=>{ const we=new Date(ws); we.setDate(ws.getDate()+7); return real.filter(r=>{ const t=parseTs(r.created_at); return t && t>=ws && t<we; }).length; });
+  const q = _fresh ? '?fresh=1' : ''; _fresh = false;
+  const d = await api('/admin/api/overview' + q);
+  if(!d || d.ok === false || d._status >= 400) throw new Error((d && d.error) || "The overview couldn't be read");
+  _ov = d; _ovMsg = undefined; applyBadges(d);
+  const k = d.kpis || {}, ic = d.issue_counts || {}, s = d.series || {}, issues = d.issues || [];
+  const fleetErr = readFailed(d, ['restaurants']), money = t => figOr(d, ['restaurants', 'stripe_subscriptions'], t);
+  const crit = issues.filter(i=>i.severity==='critical');
+  const mrr = (s.mrr || []).map(m => +m.mrr || 0), months = (s.mrr || []).map(m => dayOf(m.month));
+  // "Up this month" only from real snapshots — a reconstruction can't say it.
+  let mrrMove = null;
+  if(s.source === 'snapshots' && mrr.length >= 2){ mrrMove = Math.round((mrr[mrr.length-1] - mrr[mrr.length-2]) * 100) / 100; }
   const hr = new Date().getHours(), hello = hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
   const u0 = {{ (current_user.username or '')|tojson }}, who = u0 ? u0.charAt(0).toUpperCase() + u0.slice(1) : '';
-  const sentence = (d.issues.length ? `<b>${d.issues.length} thing${d.issues.length===1?' needs':'s need'} you</b>${crit.length?' — '+crit.length+' critical':''}.` : '<b>Nothing needs you.</b>')
-    + (mrrNew ? ` MRR is up <span class="n">${fmtUSD(mrrNew)}</span> this month.` : '') + (down.length ? ` ${down.map(s=>s[0]).join(' and ')} ${down.length===1?'is':'are'} degraded.` : ' Every system is healthy.');
-  const older48 = d.issues.filter(i=>i.restaurant_id && tsMs(i.since_at) && (Date.now()-tsMs(i.since_at)) > 48*36e5).length;
-  const custQ = d.issues.filter(i=>i.restaurant_id).length;
+  const att = ic.attention != null ? ic.attention : issues.length;
+  const sentence = (fleetErr ? "<b>The fleet couldn't be read</b> — what needs you is unknown."
+      : (att ? `<b>${att} thing${att===1?' needs':'s need'} you</b>${ic.critical?' — '+ic.critical+' critical':''}.` : '<b>Nothing needs you.</b>'))
+    + (mrrMove ? ` MRR is ${mrrMove > 0 ? 'up' : 'down'} <span class="n">${fmtUSD(Math.abs(mrrMove))}</span> on last month.` : '')
+    + ((ic.internal || {}).total ? ` <span class="dim">${ic.internal.total} on internal accounts, kept apart.</span>` : '');
+  const cu = ic.customer || {}, older48 = issues.filter(i=>i.restaurant_id && tsMs(i.since_at) && (Date.now()-tsMs(i.since_at)) > 48*36e5).length;
   const emTot = (k.emails_today||0) + (k.email_failures_today||0), emPct = emTot ? Math.round((k.emails_today||0)/emTot*1000)/10 : null;
+  const tc = k.trial_conversion || {}, r7 = ((k.email_rates || {})['7d']) || {};
+  const sgv = (s.signups || []).map(x => +x.n || 0), sgMax = Math.max.apply(null, [1].concat(sgv));
+  const paid = [[k.active,'var(--green)','paying'],[k.trial,'var(--blue)','trial'],[k.past_due,'var(--red)','past due'],[k.paused,'var(--amber)','paused']];
+  const srcNote = s.source === 'reconstructed' ? `<span class="chip warn" title="${esc(s.note||'')}">reconstructed</span>` : (s.source === 'snapshots' ? `<span class="chip" title="${esc(s.note||'')}">daily snapshots</span>` : '');
   $('view').innerHTML = `
-    ${head('Executive overview', `${hello}${who?', '+esc(who):''}.`, sentence, `<span class="n muted" style="font-size:12.5px">Updated ${fmtT(new Date())}</span><button class="btn g ic" title="Refresh" aria-label="Refresh" onclick="route();badges()">${ico('refresh','s')}</button>`)}
+    ${head('Executive overview', `${hello}${who?', '+esc(who):''}.`, sentence, `${asOf(d)}<button class="btn g ic" title="Refresh (a fresh build)" aria-label="Refresh" onclick="_fresh=true;route();badges()">${ico('refresh','s')}</button>`)}
+    ${errBanner(d)}
     <section style="display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px">
-      <a class="card kc glow" href="#customers/billing" style="grid-column:span 4;padding-bottom:14px">
-        <span class="lbl">MRR · list price</span>
-        <span style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap"><span class="big">${fmtUSD(k.mrr)}</span>${mrrNew?pill('good','+'+fmtUSD(mrrNew)+' this month',false):''}</span>
-        <div style="margin-top:6px">${spark(mrr.map(m=>m[1]), 440, 88, '#e8956a', 'mrrg')}</div>
-        <div class="n muted" style="display:flex;justify-content:space-between;font-size:10.5px;padding:0 4px">${mrr.map(m=>{ const d0 = new Date(m[0]); d0.setMonth(d0.getMonth()-1); return '<span>'+d0.toLocaleString(undefined,{month:'short'})+'</span>'; }).join('')}</div>
+      <a class="card kc glow" href="#customers/billing" style="grid-column:span 4;padding-bottom:14px" title="${esc(k.mrr_source==='list'?'No Stripe subscription mirror yet — list price, once per billing group.':'Stripe subscription mirror: amount ÷ interval, once per subscription, after discount.')}">
+        <span class="lbl">MRR · ${esc(MRR_SRC[k.mrr_source] || 'list price')}</span>
+        <span style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap"><span class="big">${money(fmtUSD(k.mrr))}</span>${k.mrr_committed?pill('neu','+'+fmtUSD(k.mrr_committed)+' committed',false):''}</span>
+        <span class="s" style="display:flex;gap:10px;flex-wrap:wrap">${k.mrr_past_due?`<span style="color:var(--red-t)"><span class="n">${fmtUSD(k.mrr_past_due)}</span> past due</span>`:''}${k.mrr_list!=null&&k.mrr_source!=='list'?`<span>list <span class="n">${fmtUSD(k.mrr_list)}</span></span>`:''}${k.mrr_mismatches?`<span style="color:var(--amber-t)"><span class="n">${k.mrr_mismatches}</span> billed ≠ list</span>`:''}${k.mrr_fallback_accounts?`<span style="color:var(--amber-t)" title="These have no Stripe mirror row yet"><span class="n">${k.mrr_fallback_accounts}</span> at list price</span>`:''}</span>
+        <div style="margin-top:4px">${mrr.length ? spark(mrr, 440, 76, 'var(--ember2)', 'mrrg') : '<div class="dim" style="height:76px;display:flex;align-items:center">No MRR history yet.</div>'}</div>
+        <div class="n muted" style="display:flex;justify-content:space-between;align-items:center;font-size:10.5px;padding:0 4px">${months.map(m=>'<span>'+(m?esc(m.toLocaleString(undefined,{month:'short'})):'')+'</span>').join('')}${srcNote}</div>
       </a>
       <a class="card kc" href="#customers/restaurants" style="grid-column:span 2">
-        <span class="lbl">Active restaurants</span><span class="big">${fmtN(k.active)}</span><span class="s">of <span class="n">${real.length}</span> accounts</span>
-        <div style="margin-top:auto;display:flex;flex-direction:column;gap:8px;padding-top:10px"><div style="display:flex;gap:3px;height:8px">${[[k.active,'var(--green)'],[trial,'var(--blue)'],[pd,'var(--amber)']].filter(x=>x[0]).map(x=>`<i style="flex:${x[0]};background:${x[1]};border-radius:4px"></i>`).join('')||'<i style="flex:1;background:rgba(255,255,255,.07);border-radius:4px"></i>'}</div>
-        <span class="s" style="font-size:11.5px;display:flex;gap:10px;flex-wrap:wrap"><span>● <span class="n">${k.active}</span> paying</span>${trial?`<span style="color:var(--blue)">● <span class="n">${trial}</span> trial</span>`:''}${pd?`<span style="color:var(--amber-t)">● <span class="n">${pd}</span> past due</span>`:''}</span></div>
+        <span class="lbl">Paying restaurants</span><span class="big">${money(fmtN(k.active))}</span><span class="s">of <span class="n">${fmtN(k.clients)}</span> accounts</span>
+        <div style="margin-top:auto;display:flex;flex-direction:column;gap:8px;padding-top:10px"><div style="display:flex;gap:3px;height:8px">${paid.filter(x=>x[0]).map(x=>`<i style="flex:${x[0]};background:${x[1]};border-radius:4px" title="${x[0]} ${x[2]}"></i>`).join('')||'<i style="flex:1;background:rgba(255,255,255,.07);border-radius:4px"></i>'}</div>
+        <span class="s" style="font-size:11.5px;display:flex;gap:10px;flex-wrap:wrap">${paid.filter(x=>x[0]).map(x=>`<span style="color:${x[1]}">● <span class="n">${x[0]}</span> ${x[2]}</span>`).join('')}</span>
+        <span class="s" style="font-size:11.5px">${k.covered_locations?`<span class="n">${k.covered_locations}</span> covered by a group's subscription · `:''}<span class="n">${fmtN(k.internal_accounts||0)}</span> internal, kept apart</span></div>
       </a>
       <a class="card kc" href="#customers/onboarding" style="grid-column:span 2">
-        <span class="lbl">New signups</span><span class="big">${fmtN(k.new_this_month)}</span><span class="s">this month</span>
-        <div style="margin-top:auto;padding-top:10px"><span style="display:flex;align-items:flex-end;gap:4px;height:34px">${wk.map(v=>`<i style="display:block;flex:1;max-width:9px;height:${Math.max(3, Math.min(34, v*16))}px;border-radius:2px;background:${v?'var(--ember2)':'rgba(255,255,255,.09)'}"></i>`).join('')}</span><span class="s" style="font-size:11.5px">last <span class="n">12</span> weeks</span></div>
+        <span class="lbl">New signups</span><span class="big">${money(fmtN(k.new_this_month))}</span><span class="s">this month</span>
+        <div style="margin-top:auto;padding-top:10px"><span style="display:flex;align-items:flex-end;gap:4px;height:34px">${sgv.map((v,i)=>`<i style="display:block;flex:1;max-width:9px;height:${v ? Math.max(4, Math.round(34*v/sgMax)) : 2}px;border-radius:2px;background:${v?'var(--ember2)':'rgba(255,255,255,.09)'}" title="Week of ${esc(mdy(dayOf((s.signups[i]||{}).week_start)))}: ${v}"></i>`).join('')}</span><span class="s" style="font-size:11.5px">last <span class="n">${sgv.length}</span> weeks</span>
+        <span class="s" style="font-size:11.5px;display:block;margin-top:4px">${tc.available ? `Trial → paid: <span class="n">${tc.rate_pct==null?'—':tc.rate_pct+'%'}</span> of ${fmtN(tc.started)} in ${tc.window_days||90}d${tc.median_days_to_convert!=null?' · median '+tc.median_days_to_convert+'d':''}` : `<span title="${esc(tc.reason||'')}">Trial conversion: not measurable yet</span>`}</span></div>
       </a>
-      <a class="card kc" href="#operations" style="grid-column:span 4;flex-direction:row;align-items:center;gap:20px">
-        ${healthRing(sys)}
-        <div style="display:flex;flex-direction:column;gap:8px;min-width:0"><span class="lbl">Platform health</span>
-        <span style="font-size:15px;font-weight:700;line-height:1.3">${down.length ? down.map(s=>s[0]).join(' and ') + ' degraded' : 'All systems healthy'}</span>
-        <span style="display:flex;flex-direction:column;gap:4px;font-size:12px" class="muted">${(down.length?down:sys.slice(0,2)).slice(0,3).map(s=>`<span><span style="color:${s[1]?'var(--green-t)':'var(--amber-t)'}">●</span> ${esc(s[0])} · ${esc(s[2])}</span>`).join('')}</span></div>
-      </a>
+      <a class="card kc" href="#operations" style="grid-column:span 4;flex-direction:row;align-items:center;gap:20px" id="ov-health">${healthCard(d, undefined)}</a>
     </section>
     <section class="card strip">
-      ${stripCell('#overview', 'alert', k.critical?'bad':'good', 'Critical', fmtN(k.critical), crit[0] ? esc(crit[0].restaurant||'Platform') : 'none open')}
-      ${stripCell('#customers/support', 'inbox', custQ?'warn':'good', 'Support queue', fmtN(custQ), older48 ? older48 + ' older than 48h' : 'nothing aging')}
-      ${stripCell('#operations/jobs', 'clock', k.job_failures_24h||k.jobs_overdue?'warn':'good', 'Failed jobs', fmtN(k.job_failures_24h), k.jobs_overdue ? k.jobs_overdue + ' overdue' : (k.jobs_failing ? k.jobs_failing + ' job' + (k.jobs_failing===1?'':'s') + ' · 24h' : 'all on schedule · 24h'))}
-      ${stripCell('#operations/ai', 'spark', k.ai_failures_24h?'warn':'neu', 'AI activity', fmtN(k.ai_calls_today), `<span class="n">${fmtUSD(k.ai_cost_today,2)}</span> today · ${fmtN(k.ai_failures_24h)} failed`)}
-      ${stripCell('#engineering', 'gauge', k.server_error_rate==null?'neu':(k.server_error_rate>=5?'bad':'good'), 'API health', k.p95_ms==null?'—':`${fmtN(Math.round(k.p95_ms))}<small> ms</small>`, k.server_error_rate==null ? 'no traffic since deploy' : `p95 · <span class="n">${k.server_error_rate}%</span> 5xx`)}
-      ${stripCell('#operations/messages', 'mail', k.email_failures_today?'warn':'good', 'Email delivery', emPct==null?'—':`${emPct}<small>%</small>`, emTot ? `<span class="n">${fmtN(k.email_failures_today)}</span> of <span class="n">${fmtN(emTot)}</span> failed` : 'none sent today')}
+      ${stripCell('#overview', 'alert', fleetErr?'neu':(ic.critical?'bad':'good'), 'Critical', fleetErr?unknownV(fleetErr):fmtN(ic.critical||0), crit[0] ? esc(crit[0].restaurant||'Platform') : 'none open')}
+      ${stripCell('#customers/support', 'inbox', fleetErr?'neu':(cu.total?'warn':'good'), 'Support queue', fleetErr?unknownV(fleetErr):fmtN(cu.total||0), older48 ? older48 + (d.issues_truncated?'+':'') + ' older than 48h' : 'nothing aging')}
+      ${stripCell('#operations/jobs', 'clock', readFailed(d,['job_failures'])?'neu':(k.job_failures_24h||k.jobs_overdue?'warn':'good'), 'Failed jobs', figOr(d, ['job_failures'], fmtN(k.job_failures_24h||0)), k.jobs_overdue ? k.jobs_overdue + ' overdue' : (k.jobs_failing ? k.jobs_failing + ' job' + (k.jobs_failing===1?'':'s') + ' · 24h' : 'all on schedule · 24h'))}
+      ${stripCell('#operations/ai', 'spark', readFailed(d,['ai_usage'])?'neu':(k.ai_failures_24h?'warn':'neu'), 'AI activity', figOr(d, ['ai_usage'], fmtN(k.ai_calls_today)), `<span class="n">${fmtUSD(k.ai_cost_today,2)}</span> today · ${fmtN(k.ai_failures_24h)} failed${k.ai_quality_24h?' · '+fmtN(k.ai_quality_24h)+' quality':''}`)}
+      ${stripCell('#engineering', 'gauge', k.server_error_rate==null?'neu':(k.server_error_rate>=5?'bad':'good'), 'API health', k.p95_ms==null?'—':`${fmtN(Math.round(k.p95_ms))}<small> ms</small>`, k.server_error_rate==null ? 'no traffic · ' + esc(k.api_window_label||'last 5 minutes') : `p95 · <span class="n">${k.server_error_rate}%</span> 5xx · ${esc(k.api_window_label||'last 5 minutes')}`)}
+      ${stripCell('#operations/email', 'mail', readFailed(d,['email_log'])?'neu':(k.email_failures_today?'warn':'good'), 'Email delivery', figOr(d, ['email_log'], emPct==null?'—':`${emPct}<small>%</small>`), emTot ? `<span class="n">${fmtN(k.email_bounced_today||0)}</span> bounced · <span class="n">${fmtN(k.email_complained_today||0)}</span> complaints today` : 'none sent today')}
+    </section>
+    <section class="grid g8">
+      ${watchKpi('#customers/billing', money(fmtN(k.paused||0)), 'Paused', k.paused?'warn':'')}
+      ${watchKpi('#customers/support?view=deletions', figOr(d, ['restaurants'], fmtN(k.deletion_requests||0)), 'Closing', k.deletion_requests?'bad':'', 'Deletion requests: accounts that asked to close — 30 days to finish')}
+      ${watchKpi('#operations/ai', figOr(d, ['reviews'], fmtN(k.stalled_reviews||0)), 'AI stalled', k.stalled_reviews?'warn':'', 'Stalled reviews: the AI gave up on them after repeated failures')}
+      ${watchKpi('#operations/jobs', figOr(d, ['restaurants'], fmtN(k.fetch_behind||0)), 'Fetch behind', k.fetch_behind?'warn':'', 'Restaurants whose review fetch missed two or more slots')}
+      ${watchKpi('#engineering', fmtN(k.request_errors_24h||0), 'Req. errors', k.request_errors_24h?'warn':'', 'Request errors in 24 hours — console and request failures, apart from failed jobs')}
+      ${watchKpi('#operations/ai', figOr(d, ['ai_quality_events'], fmtN(k.ai_quality_24h||0)), 'AI quality', '', 'AI quality findings in 24 hours — guard and validation, apart from failed jobs')}
+      ${watchKpi('#operations/email', figOr(d, ['email_log'], r7.enough && r7.bounce_rate != null ? r7.bounce_rate + '<small>%</small>' : '—'), 'Bounce 7d', r7.enough && r7.bounce_rate >= (((k.email_rates||{}).thresholds||{}).bounce_warn_pct||4) ? 'warn' : '', r7.enough ? r7.bounces + ' of ' + r7.accepted + ' accepted sends' : 'Too few sends to call a rate yet')}
+      ${watchKpi('#operations/email', figOr(d, ['email_log'], r7.enough && r7.complaint_rate != null ? r7.complaint_rate + '<small>%</small>' : '—'), 'Spam 7d', r7.enough && r7.complaint_rate >= (((k.email_rates||{}).thresholds||{}).complaint_warn_pct||.1) ? 'warn' : '', r7.enough ? r7.complaints + ' of ' + r7.accepted + ' accepted sends' : 'Too few sends to call a rate yet')}
     </section>
     <section class="split">
       <div class="card" style="overflow:hidden" id="ov-needs">${needsList()}</div>
       <div class="stack">
-        <div class="card" style="padding:18px 18px 12px"><div style="display:flex;align-items:center;justify-content:space-between;gap:10px"><h2>Growth</h2><span class="muted" style="font-size:12px;display:flex;gap:12px"><span><span style="color:var(--green-t)">━</span> accounts</span><span><span style="color:var(--ember2)">▮</span> signups</span></span></div><div style="margin-top:12px">${growthChart(real)}</div></div>
-        <div class="card" style="padding:4px 18px 14px"><div style="display:flex;align-items:center;justify-content:space-between;padding-top:14px"><h2>What changed</h2><span class="muted" style="font-size:12px">14 days</span></div><div id="ov-chg">${changesList(d.activity.slice(0,8))}</div>${d.activity.length>8?`<button class="lnk" style="margin-top:8px" onclick="this.remove();$('ov-chg').innerHTML=changesList(_ov.activity)">Show all ${d.activity.length}</button>`:''}</div>
+        <div class="card" style="padding:18px 18px 12px"><div style="display:flex;align-items:center;justify-content:space-between;gap:10px"><h2>Growth</h2><span class="muted" style="font-size:12px;display:flex;gap:12px;align-items:center"><span><span style="color:var(--green-t)">━</span> paying</span><span><span style="color:var(--ember2)">▮</span> signups</span>${srcNote}</span></div><div style="margin-top:12px">${growthChart(s)}</div>${s.source==='reconstructed'?`<div class="dim" style="font-size:11.5px;margin-top:6px">${esc(s.note||'')}</div>`:''}</div>
+        <div class="card" style="padding:4px 18px 14px"><div style="display:flex;align-items:center;justify-content:space-between;padding-top:14px"><h2>What changed</h2><span class="muted" style="font-size:12px">14 days</span></div><div id="ov-chg">${changesList((d.activity||[]).slice(0,8))}</div>${(d.activity||[]).length>8?`<button class="lnk" style="margin-top:8px" onclick="this.remove();$('ov-chg').innerHTML=changesList(_ov.activity)">Show all ${d.activity.length}</button>`:''}</div>
       </div>
     </section>`;
+  // SMS joins the ring once messaging health answers; its failure is its own.
+  api('/admin/api/messaging/health').then(mh => { _ovMsg = mh; if(_ov === d && $('ov-health')) $('ov-health').innerHTML = healthCard(d, mh); })
+    .catch(e => { if(e && e.message === STALE) return; _ovMsg = null; if(_ov === d && $('ov-health')) $('ov-health').innerHTML = healthCard(d, null); });
 }
 
 // ── shared pieces ───────────────────────────────────────────────────────────
@@ -878,26 +1018,39 @@ function issuesTable(issues, opts){
     {h:'Client · location', key:'restaurant', cell:i=>i.restaurant_id?`${clientLink(i.restaurant_id, i.restaurant)}${i.location_name?' <span class="dim">· '+esc(i.location_name)+'</span>':''}${i.brand&&i.brand!==i.restaurant?' <span class="dim">('+esc(i.brand)+')</span>':''}`:`<span class="b info nodot">Platform</span>`},
     {h:'Issue', key:'title', wrap:true, cell:i=>`<span class="name">${esc(i.title)}</span>${i.detail?'<div class="dim">'+esc(i.detail)+'</div>':''}`},
     {h:'For', key:'since_at', w:'60px', cell:i=>`<span class="num">${esc(i.since)}</span>`},
-    {h:'', cell:i=>`${i.action_route?`<button class="btn s" onclick="event.stopPropagation();issueAction('${jsq(i.action_route)}','${jsq(i.action)}')">${esc(i.action)}</button>`:(i.action?`<span class="dim">${esc(i.action)}</span>`:'')} <button class="btn s" onclick="event.stopPropagation();resolveOpen('${jsq(i.key)}','${jsq(i.title)}')">Resolve</button>`}
+    {h:'', cell:i=>`${issueActBtn(i) || (i.action?`<span class="dim">${esc(i.action)}</span>`:'')} ${i.resolvable===false?'<span class="dim">clears itself</span>':`<button class="btn s w" onclick="event.stopPropagation();resolveOpen('${jsq(i.key)}','${jsq(i.title)}','${jsq(i.occurrence_at||'')}')">Resolve</button>`}`}
   ], issues, {id: opts.id||'issues-t', sort:'severity_rank', empty: 'Nothing needs attention.'});
 }
-async function issueAction(path, label){
+// An issue's POST action (#62): the confirm names the client (and the address
+// a payload carries, e.g. a suppression to reinstate), and the toast is the
+// server's own answer — its error on any non-2xx (#109).
+async function issueAction(path, label, where, payload){
   if(path.startsWith('/admin/view-as/') || path.startsWith('/admin/client-settings/')){ location.href = path; return; }
-  if(!confirm(label + '?')) return; const d = await post(path); toast(d.ok ? (label + ' — done') : (d.error||'Failed'), d.ok?'good':'bad'); if(d.ok) route(); }
-let _resolveKey = null;
-function resolveOpen(key, title){ _resolveKey = key; $('r-title').textContent = title; $('r-note').value=''; openModal('m-resolve'); }
+  let body = {}; if(payload){ try{ body = JSON.parse(payload) || {}; }catch(e){ body = {}; } }
+  if(!confirm(label + (where ? ' — ' + where : '') + (body.email ? ' (' + body.email + ')' : '') + '?')) return;
+  const d = await post(path, body);
+  if(say(d, label + ' — done')){ _clients = null; route(); badges(); } }
+// Resolve holds for the occurrence the console saw (#24): a newer one reopens
+// the issue. Without an occurrence (a platform view that didn't carry one)
+// the server resolves the one open now.
+let _resolve = null;
+function resolveOpen(key, title, occurrenceAt){ _resolve = {key: key, occurrence_at: occurrenceAt || null}; $('r-title').textContent = title; $('r-note').value='';
+  $('r-scope').textContent = occurrenceAt ? 'For this occurrence (' + fmtDT(occurrenceAt) + ') — it reopens if it happens again.' : 'For as long as this condition lasts — it reopens once it clears and comes back.'; openModal('m-resolve'); }
 let _capRid = null;
 function capOpen(rid, name, current){ _capRid = rid; $('cap-name').textContent = name || ('#'+rid); $('cap-n').value = current||0; openModal('m-cap'); $('cap-n').focus(); }
 async function capSubmit(){ const n = parseInt($('cap-n').value,10); if(isNaN(n)||n<0){ toast('Enter 0 or a positive number','bad'); return; }
-  const d = await post('/admin/api/client/'+_capRid+'/alert-cap', {max_per_day:n}); closeModal('m-cap'); toast(d.ok?(n?'Capped at '+n+' alerts/day':'Cap removed'):(d.error||'Failed'), d.ok?'good':'bad'); if(d.ok){ _clients=null; route(); } }
+  const d = await post('/admin/api/client/'+_capRid+'/alert-cap', {max_per_day:n}); if(say(d, n?'Capped at '+n+' alerts a day':'Cap removed')){ closeModal('m-cap'); _clients=null; route(); } }
 async function runJob(job, sends){
   const warn = sends ? '\n\nThis job sends real emails or texts to clients. Run it anyway?' : '';
   if(!confirm('Run '+job+' now on this server?'+warn)) return;
   const d = await post('/admin/api/jobs/'+encodeURIComponent(job)+'/run'); toast(d.ok?job+' started — refresh in a moment to see the run':(d.error||'Failed'), d.ok?'good':'bad');
   if(d.ok) setTimeout(()=>{ if(location.hash.replace('#','')==='jobs') route(); }, 2500); }
-async function capSet(rid, n){ const d = await post('/admin/api/client/'+rid+'/alert-cap', {max_per_day:n}); toast(d.ok?(n?'Capped at '+n+'/day':'Cap removed'):(d.error||'Failed'), d.ok?'good':'bad'); if(d.ok){ _clients=null; route(); } }
-async function resolveSubmit(){ const d = await post('/admin/api/issues/resolve', {key:_resolveKey, note:$('r-note').value}); closeModal('m-resolve'); toast(d.ok?'Marked resolved':'Failed', d.ok?'good':'bad'); route(); badges(); }
-async function unresolve(key){ const d = await post('/admin/api/issues/resolve', {key, undo:true}); toast(d.ok?'Reopened':'Failed', d.ok?'good':'bad'); route(); badges(); }
+async function capSet(rid, n, name){ if(!n && !confirm('Remove the daily alert cap' + (name ? ' for ' + name : '') + '? Every alert sends again.')) return; const d = await post('/admin/api/client/'+rid+'/alert-cap', {max_per_day:n}); if(say(d, n?'Capped at '+n+' alerts a day':'Cap removed')){ _clients=null; route(); } }
+async function resolveSubmit(){ if(!_resolve) return; const d = await post('/admin/api/issues/resolve', {key:_resolve.key, note:$('r-note').value, occurrence_at:_resolve.occurrence_at}); closeModal('m-resolve');
+  // 409: this one can't be resolved — it clears itself, or closes another way.
+  if(d && (d._status === 409 || d.resolvable === false)){ toast(d.error || "This issue can't be marked resolved — it clears itself.", 'bad'); return; }
+  if(say(d, d && d.scope === 'condition' ? 'Resolved while the condition lasts' : 'Resolved for this occurrence')){ route(); badges(); } }
+async function unresolve(key){ if(!confirm('Reopen “' + key + '”? It shows as open again at once.')) return; const d = await post('/admin/api/issues/resolve', {key, undo:true}); if(say(d, 'Reopened')){ route(); badges(); } }
 function activityList(events){
   if(!events.length) return '<div class="empty">Quiet.</div>';
   const tone = {good:'ok', bad:'bad', warn:'warn', neutral:'off'};
@@ -906,6 +1059,104 @@ function activityList(events){
 function evBadge(r){ const t=r.event_type||''; const bad=/failed|deleted|canceled|past_due|unpaid/.test(t); const good=/paid|succeeded|signed|created|active/.test(t); return `<span class="b ${bad?'bad':good?'ok':'info'} nodot">${esc(t)}</span>`; }
 function aiStatus(r){ return r.status==='error' ? `<span class="b bad nodot" title="${esc(r.error||'')}">failed</span>` : '<span class="b ok nodot">ok</span>'; }
 function kpi(v, l, cls, small){ return `<div class="kpi ${cls||''}"><div class="v">${v}${small?' <small>'+esc(small)+'</small>':''}</div><div class="l">${esc(l)}</div></div>`; }
+// A write's answer, said truthfully (fix round, #109): it worked only when the
+// server said ok AND the status is 2xx — a 409 or a 502 with ok missing is a
+// failure, and its own sentence is what the admin reads.
+function okRes(d){ return !!d && d.ok !== false && !(d._status >= 400); }
+function errText(d, fallback){ return (d && d.error) || ((fallback || 'That didn\'t work') + (d && d._status ? ' (HTTP ' + d._status + ')' : '') + '.'); }
+function say(d, okMsg){ const ok = okRes(d); toast(ok ? ((d && d.message) || okMsg || 'Done') : errText(d), ok ? 'good' : 'bad'); return ok; }
+// An admin job (#153): the action answers {job_id} at once and the work runs
+// on the server's bounded pool; its poll URL answers {status: pending} until
+// the result is in. Polled every 2 s, five minutes at most. A poll carries a
+// method, so it is never dropped when the admin moves to another page.
+async function pollJob(url, onTick){
+  const t0 = Date.now();
+  for(;;){
+    let d; try{ d = await api(url, {method:'GET'}); }catch(e){ d = {ok:false, error:String((e && e.message) || e)}; }
+    if(!d || d.status !== 'pending') return d || {ok:false, error:'No answer from the server.'};
+    if(Date.now() - t0 > 300000) return {ok:false, error:'Still running after five minutes — check back later.'};
+    if(onTick) onTick(d);
+    await new Promise(r => setTimeout(r, 2000));
+  }
+}
+function jobUrl(id){ return '/admin/api/admin-jobs/' + encodeURIComponent(id); }
+// A finished job, said: its message or error, and a value it hands over once
+// (the review account's new password, #127) in the Shown-once box.
+function jobSaid(r, label){
+  if(r && r.password_once){
+    $('pw-title').textContent = label || 'Shown once'; $('pw-sub').textContent = 'The new password — copy it now, it is not shown again.';
+    $('pw-out').textContent = r.password_once; $('pw-log').hidden = !r.output; $('pw-log').textContent = r.output || ''; openModal('m-password');
+  }
+  return say(r, (label || 'Done') + ' — finished');
+}
+// A panel that reads its own data after the page is drawn: the page never
+// waits for it, and a failure is said inside the panel, not over the page.
+function skel(n){ let h = ''; for(let i = 0; i < (n || 2); i++) h += '<div class="sk" style="width:' + (38 + 17*i) + '%"></div>'; return h; }
+function lazy(id, fn){
+  Promise.resolve().then(fn).then(html => { const el = $(id); if(el && html != null) el.innerHTML = html; })
+    .catch(e => { if(e && e.message === STALE) return; const el = $(id); if(el) el.innerHTML = `<div class="warnline" role="status">${ico('alert','xs')} This panel couldn't load — ${esc((e && e.message) || e)}</div>`; console.error(e); });
+}
+// A read for a panel: throws the server's sentence so lazy() can say it.
+async function need(path){ const d = await api(path); if(!d || d.ok === false || d._status >= 400) throw new Error((d && d.error) || ('HTTP ' + (d && d._status))); return d; }
+// Page N of M with Previous / Next (the server pages; #79).
+function pager(page, pages, total, fn, noun){
+  page = page || 1; pages = pages || 1;
+  return `<div class="pager"><span><span class="n">${fmtN(total)}</span> ${esc(noun || 'rows')} · page <span class="n">${page}</span> of <span class="n">${pages}</span></span><span>${page > 1 ? `<button class="btn s" onclick="${fn}(${page-1})">Previous</button>` : ''}${page < pages ? `<button class="btn s" onclick="${fn}(${page+1})">Next</button>` : ''}</span></div>`;
+}
+// A form an action needs, in one modal (m-form): each field is
+// {id, label, type: text|textarea|select|checkbox|checks, value, options:[[v, label]], placeholder, hint}.
+// submit(values) returns the server's answer; a refusal keeps the modal open
+// with the server's sentence.
+let _form = null;
+function formOpen(spec){
+  _form = spec;
+  $('f-title').textContent = spec.title; $('f-sub').innerHTML = spec.sub || ''; $('f-status').textContent = ''; $('f-status').style.color = '';
+  $('f-go').textContent = spec.go || 'Save'; $('f-go').className = 'btn w ' + (spec.danger ? 'd' : 'p'); $('f-go').disabled = false;
+  $('f-body').innerHTML = (spec.fields || []).map(f => {
+    const id = 'ff-' + f.id, hint = f.hint ? `<div class="dim">${esc(f.hint)}</div>` : '';
+    if(f.type === 'checkbox') return `<label style="display:flex;gap:8px;align-items:center;font-size:13px;color:var(--ink2)"><input type="checkbox" id="${id}" ${f.value?'checked':''}> ${esc(f.label)}</label>${hint}`;
+    if(f.type === 'checks') return `<label>${esc(f.label)}</label><div style="display:flex;gap:14px;flex-wrap:wrap;font-size:13px">${(f.options||[]).map(o=>`<label><input type="checkbox" name="${id}" value="${esc(o[0])}" ${(f.value||[]).indexOf(o[0])>=0?'checked':''}> ${esc(o[1])}</label>`).join('')}</div>${hint}`;
+    if(f.type === 'select') return `<label for="${id}">${esc(f.label)}</label><select id="${id}">${(f.options||[]).map(o=>`<option value="${esc(o[0])}" ${String(o[0])===String(f.value==null?'':f.value)?'selected':''}>${esc(o[1])}</option>`).join('')}</select>${hint}`;
+    if(f.type === 'textarea') return `<label for="${id}">${esc(f.label)}</label><textarea id="${id}" rows="${f.rows||3}" placeholder="${esc(f.placeholder||'')}">${esc(f.value||'')}</textarea>${hint}`;
+    return `<label for="${id}">${esc(f.label)}</label><input id="${id}" value="${esc(f.value==null?'':f.value)}" placeholder="${esc(f.placeholder||'')}" autocomplete="off">${hint}`;
+  }).join('');
+  openModal('m-form');
+  const first = $('f-body').querySelector('input:not([type=checkbox]),textarea,select'); if(first) setTimeout(() => first.focus(), 30);
+}
+async function formSubmit(){
+  if(!_form) return;
+  const vals = {};
+  (_form.fields || []).forEach(f => {
+    const id = 'ff-' + f.id;
+    if(f.type === 'checkbox') vals[f.id] = !!($(id) && $(id).checked);
+    else if(f.type === 'checks') vals[f.id] = Array.prototype.slice.call(document.querySelectorAll('input[name="' + id + '"]:checked')).map(x => x.value);
+    else vals[f.id] = (($(id) || {}).value || '').trim();
+  });
+  const btn = $('f-go'); btn.disabled = true; $('f-status').style.color = ''; $('f-status').textContent = 'Working…';
+  let d; try{ d = await _form.submit(vals); }catch(e){ d = {ok:false, error:String((e && e.message) || e)}; }
+  btn.disabled = false;
+  if(d === false){ $('f-status').textContent = ''; return; }
+  if(okRes(d)){ closeModal('m-form'); toast((d && d.message) || _form.done || 'Done', 'good'); if(_form.after) _form.after(d); else route(); }
+  else { $('f-status').textContent = errText(d); $('f-status').style.color = 'var(--red-t)'; }
+}
+// The zones the product offers — time_utils.COMMON_TIMEZONES with the
+// settings page's labels (admin_routes._TZ_LABELS); a test keeps them equal.
+const TZ_CHOICES = [['America/New_York','Eastern (New York)'],['America/Chicago','Central (Chicago)'],['America/Denver','Mountain (Denver)'],['America/Phoenix','Arizona (Phoenix)'],['America/Los_Angeles','Pacific (Los Angeles)'],['America/Anchorage','Alaska (Anchorage)'],['Pacific/Honolulu','Hawaii (Honolulu)']];
+function tzOptions(sel, first){ return (first ? `<option value="">${esc(first)}</option>` : '') + TZ_CHOICES.map(z=>`<option value="${z[0]}" ${z[0]===sel?'selected':''}>${esc(z[1])}</option>`).join(''); }
+// The roles a restaurant login can hold, as the owner's own team screen names them (#60).
+const ROLE_LABEL = {client:'Co-owner', owner:'Owner', manager:'Manager', member:'Teammate'};
+// Contract states, including the ones DocuSign now reports (#144).
+const CONTRACT = {signed:['ok','signed'], completed:['ok','signed'], sent:['warn','sent, not signed'], delivered:['info','opened, not signed'], declined:['bad','declined'], voided:['bad','voided'], pending:['off','not sent']};
+function contractPill(st){ const x = CONTRACT[st || 'pending'] || ['off', st]; return `<span class="b ${x[0]} nodot">contract ${esc(x[1])}</span>`; }
+const PAUSE_LABEL = {self:'paused by the owner', dispute:'chargeback hold', refund:'refund hold', admin:'admin hold'};
+const MODULE_KEYS = [['reviews','Reviews'],['labor','Labor'],['inventory','Food Cost'],['marketing','Marketing']];
+// Sales audits for a picker (#66): non-archived, newest first.
+async function auditOptions(selId){
+  const sel = $(selId); if(!sel) return;
+  let d; try{ d = await api('/admin/api/audits', {method:'GET'}); }catch(e){ d = null; }
+  const rows = (d && d.audits) || [];
+  sel.innerHTML = '<option value="">None</option>' + rows.map(a => `<option value="${a.id}">${esc(a.restaurant_name || 'Untitled audit')}${a.audit_date ? ' — ' + esc(mdy(dayOf(a.audit_date))) : ''}${a.status ? ' · ' + esc(a.status) : ''}</option>`).join('');
+}
 
 
 
