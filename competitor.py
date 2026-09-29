@@ -1669,6 +1669,14 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
         conn.close()
         import models as _models_inv
         _models_inv._invalidate_request_cache(restaurant_id)
+        # The read as history (ai_reads, memory audit 9/29/26): the blob is
+        # overwritten every Monday, so what last week's read said was gone.
+        try:
+            import ai_reads
+            ai_reads.record_read(restaurant_id, "competitor_read", str(insight),
+                                 meta={"kind": "competitor", "verdict": ai_reads.verdict_of(insight)})
+        except Exception as _re:
+            print(f"[Competitor] read history not kept: {_re}")
         # One JSON blob overwritten every Monday was the entire record, so
         # nothing could show that a competitor's rating fell, that a new one
         # opened, or that a complaint theme appeared. A snapshot per run is

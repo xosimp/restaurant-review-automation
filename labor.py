@@ -1845,6 +1845,7 @@ def labor_note(restaurant_id, analysis: dict, **kwargs) -> str:
     if hit is not None:
         return hit[0]
     note = get_claude_insights(analysis, restaurant_id=restaurant_id, **kwargs)
+    _keep_note(restaurant_id, note, key[1])
     if len(_NOTE_CACHE) >= _NOTE_CACHE_MAX:
         _NOTE_CACHE.pop(next(iter(_NOTE_CACHE)), None)
     for k in [k for k in _NOTE_CACHE if k[0] == restaurant_id]:
@@ -1854,6 +1855,21 @@ def labor_note(restaurant_id, analysis: dict, **kwargs) -> str:
     from datetime import timezone as _tz_note
     _NOTE_CACHE[key] = (note, datetime.now(_tz_note.utc).replace(tzinfo=None))
     return note
+
+
+def _keep_note(restaurant_id, note, fingerprint):
+    """The note as history (ai_reads, memory audit 9/29/26): it lived only
+    in this process's cache, gone on a restart, with nothing left to check
+    its causes against later. Only a model-written read that went through
+    validation — the fixed no-data copies and the refused-read fallback are
+    not reads. Never raises."""
+    try:
+        if not restaurant_id or getattr(note, "verdict", None) is None or LABOR_READ_UNCHECKED in str(note):
+            return
+        import ai_reads
+        ai_reads.record_store_read(restaurant_id, "labor", fingerprint, note)
+    except Exception as e:
+        print(f"[labor note] not kept as history rid={restaurant_id}: {e}")
 
 
 def _note_local_day(restaurant_id) -> str:

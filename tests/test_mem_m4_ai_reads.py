@@ -157,3 +157,42 @@ def test_the_raw_reads_are_registered_for_retention_and_summaries_are_not():
     import ops
     assert ops._RETENTION_DAYS["ai_reads"] == ops._RETENTION_DAYS["ai_claims"] == ai_reads.RAW_KEEP_DAYS
     assert "ai_read_summaries" not in ops._RETENTION_DAYS
+
+
+def test_the_labor_note_is_kept_as_history_not_only_in_process_memory(monkeypatch):
+    import labor
+    import response_validation as rv
+    rid = _rid("Labor Co")
+    labor._NOTE_CACHE.clear()
+    written = rv.Validated("1. Trim Tuesday dinner by one server.\n2. Move the Friday prep shift earlier.",
+                           validation={"verdict": "pass"}, verdict=object())
+    monkeypatch.setattr(labor, "get_claude_insights", lambda analysis, **kw: written)
+    assert labor.labor_note(rid, {"period": "week"}) == written
+    row = _rows("SELECT * FROM ai_reads WHERE restaurant_id=? AND surface='labor_read'", (rid,))[0]
+    assert "Trim Tuesday dinner" in row["shown_text"] and row["kind"] == "labor"
+    assert len(json.loads(row["rec_keys"])) == 2, "each numbered line's insight_labor key"
+    # The fixed copies are not reads: a no-data greeting, the refused-read fallback.
+    labor._NOTE_CACHE.clear()
+    monkeypatch.setattr(labor, "get_claude_insights", lambda analysis, **kw: "Hi. There's no shift data on file yet.")
+    labor.labor_note(rid, {"period": "other"})
+    labor._NOTE_CACHE.clear()
+    monkeypatch.setattr(labor, "get_claude_insights", lambda analysis, **kw: rv.Validated(
+        "Hi " + labor.LABOR_READ_UNCHECKED, verdict=object()))
+    labor.labor_note(rid, {"period": "third"})
+    assert len(_rows("SELECT id FROM ai_reads WHERE restaurant_id=? AND surface='labor_read'", (rid,))) == 1
+    labor._NOTE_CACHE.clear()
+
+
+def test_the_competitor_read_is_kept_as_history(monkeypatch):
+    import competitor
+    r = Restaurant(name="Rival Co", owner_email="rival@x.test", google_place_id="ChIJrival", timezone="America/Chicago")
+    rid = create_restaurant(r)
+    monkeypatch.setattr(competitor, "get_nearby_competitors", lambda place_id, usage=None: [
+        {"place_id": "p1", "name": "Taco Place", "rating": 4.4, "user_ratings_total": 210}])
+    monkeypatch.setattr(competitor, "get_competitor_reviews", lambda pid: [])
+    monkeypatch.setattr(competitor, "generate_competitor_insight", lambda *a, **k: "Taco Place undercuts you at lunch.")
+    import webhooks
+    monkeypatch.setattr(webhooks, "fire_webhook", lambda *a, **k: None)
+    assert competitor.run_competitor_analysis(rid)["ok"] is True
+    row = _rows("SELECT * FROM ai_reads WHERE restaurant_id=? AND surface='competitor_read'", (rid,))[0]
+    assert row["shown_text"] == "Taco Place undercuts you at lunch."
