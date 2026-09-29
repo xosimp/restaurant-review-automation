@@ -1148,7 +1148,7 @@ def rec_controls_html(key, surface, module):
     track = (b + 'data-rec-event="accepted" title="Cavnar AI checks this number before and after you act, and tells you whether it moved">Measure it</button>') if (module or surface) in REC_TRACK_METRICS else ''
     return ('<span class="rec-ans">'
             + b + 'data-rec-event="completed">Done</button>'
-            + b + 'data-rec-event="dismissed" data-rec-kind="not_for_us">Pass</button>'
+            + b + 'data-rec-event="dismissed" data-rec-kind="not_for_us">Not for us</button>'
             + track
             + '</span>')
 
@@ -2838,6 +2838,12 @@ def _ask_meta(meta):
         "unsupported_names": meta.get("unsupported_names") or [],
         "validation": meta.get("validation"),
         "depth": meta.get("depth") or "standard",
+        # Advice in the answer the owner already said "not for us" to on
+        # some surface, caveated in the prose too ([{text, signature,
+        # declined_on (M/D/YY)}] — decisions.annotate_declined, memory audit
+        # 9/29/26 "relevance"). It stopped at the meta and never reached a
+        # client until the UI wave.
+        "declined_repeats": meta.get("declined_repeats") or [],
     }
 
 

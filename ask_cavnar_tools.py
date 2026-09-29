@@ -4024,13 +4024,22 @@ def _public_copy_refusal(name, args, restaurant_id, owner_words=""):
     return None
 
 
+_ISO_DAY_RE = _re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
 def _shown(v) -> str:
     if isinstance(v, bool):
         return "On" if v else "Off"
     if isinstance(v, (list, tuple)):
-        return ", ".join(str(x) for x in v)
+        return ", ".join(_shown(x) for x in v)
     if isinstance(v, dict):
         return json.dumps(v, default=str)
+    # A date the card shows reads M/D/YY (DESIGN_SYSTEM "Dates and times"):
+    # the closure card said "Closed on: 2026-10-05". The body keeps ISO —
+    # only the words change.
+    if isinstance(v, str) and _ISO_DAY_RE.match(v):
+        from time_utils import mdy
+        return mdy(v) or v
     return str(v)
 
 

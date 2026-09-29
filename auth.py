@@ -473,6 +473,11 @@ def init_auth(db_path: str = DB_PATH):
         # the restaurant-wide switch.
         "ALTER TABLE users ADD COLUMN two_fa_enabled INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE users ADD COLUMN two_fa_method TEXT",
+        # The Privacy Policy / Terms change this login dismissed the
+        # dashboard notice for (policy_notice.POLICY_UPDATED_ON, ISO) — per
+        # login, so one tap holds on every device and location, and a later
+        # policy change (a new date) is shown again.
+        "ALTER TABLE users ADD COLUMN policy_notice_dismissed TEXT",
     ]:
         try:
             import sqlite3 as _sql
