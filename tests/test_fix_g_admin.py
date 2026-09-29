@@ -190,6 +190,10 @@ def test_the_quality_panel_shows_modes_models_and_rates(client, monkeypatch, db_
     assert out["validation"]["surfaces"][0]["surface"] == "labor_insight"
     assert any(m["purpose"] == "drafter" for m in out["models"])
     assert out["events"][0]["surface"] == "weekly_digest" and out["events"][0]["kind"] == "line_dropped"
+    ai_utils.log_ai_usage(rid, "weekly_digest", "claude-sonnet-5", 10, 10)
+    ai_utils.log_ai_usage(rid, "weekly_digest", "claude-sonnet-5", 10, 10)
+    again = client.get("/admin/api/ai/quality?days=7").get_json()
+    assert again["events"][0]["per_100_calls"] == 50.0, "findings read as a rate of the surface's calls"
     assert set(out) >= {"drafts", "ask", "safety", "event_trend", "unusable_outputs"}
 
 

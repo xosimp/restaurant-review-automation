@@ -1486,6 +1486,15 @@ def ai_quality(days=30, restaurant_id=None):
     finally:
         conn.close()
     disagreements = sum(int(e["n"] or 0) for e in events if e["kind"] == "safety_disagreement")
+    # Findings as a RATE (#58): per 100 provider calls of the surface's own
+    # ledger action, where the surface has one.
+    for e in events:
+        actions = {e["surface"]} | set(_ai._SURFACE_ACTIONS.get(e["surface"], ()))
+        if e["surface"] == "safety_disagreement":
+            actions = {"review_analysis"}
+        calls = sum(int(calls_by_action.get(a) or 0) for a in actions)
+        e["calls"] = calls
+        e["per_100_calls"] = round(100.0 * int(e["n"] or 0) / calls, 1) if calls else None
     drafted = int(drafts.get("drafted") or 0)
     rated = int(ask.get("rated") or 0)
     for u in unusable:

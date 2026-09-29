@@ -2309,7 +2309,11 @@ def init_ai_ops(db_path=None):
         # ai_validation_log (models.init_db's table) gains the call it checked.
         cols = {r[1] for r in conn.execute("PRAGMA table_info(ai_validation_log)").fetchall()}
         if cols and "call_id" not in cols:
-            conn.execute("ALTER TABLE ai_validation_log ADD COLUMN call_id TEXT")
+            try:
+                conn.execute("ALTER TABLE ai_validation_log ADD COLUMN call_id TEXT")
+            except sqlite3.OperationalError as e:
+                if "duplicate column" not in str(e).lower():    # another process added it first
+                    raise
         conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_usage_action ON ai_usage(action, model)")
         conn.commit()
     finally:

@@ -61,7 +61,11 @@ def init_insight_store(db_path: str = DB_PATH):
         # keeps each one's text for AI_TRACE_DAYS.
         cols = {r[1] for r in conn.execute("PRAGMA table_info(insight_cache)").fetchall()}
         if "call_id" not in cols:
-            conn.execute("ALTER TABLE insight_cache ADD COLUMN call_id TEXT")
+            try:
+                conn.execute("ALTER TABLE insight_cache ADD COLUMN call_id TEXT")
+            except Exception as e:
+                if "duplicate column" not in str(e).lower():    # another process added it first
+                    raise
         conn.commit()
     finally:
         conn.close()
