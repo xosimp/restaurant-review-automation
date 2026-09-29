@@ -1386,8 +1386,9 @@ def present_many(restaurant_id, items: list, surface: str, user_id=None, db_path
                 # rec_learning.rank_meta. 288 shown events carried no weight.
                 rank = it.get("rank")
                 if isinstance(rank, dict) and rank:
-                    meta["rank"] = {k: rank.get(k) for k in ("base", "score", "weight", "why", "rung", "version")
-                                    if rank.get(k) not in (None, [], "")}
+                    meta["rank"] = {k: rank.get(k) for k in ("base", "score", "weight", "why", "prior_rung", "rung",
+                                                             "version")
+                                    if rank.get(k) not in (None, [], "", {})}
                 _add_event(conn, rec_id, restaurant_id, key, "shown", surface=surface, user_id=user_id,
                            dedupe=f"shown:{surface}:{day}", meta=meta)
         kinds = [str(k) for k in (replaces or ()) if k]

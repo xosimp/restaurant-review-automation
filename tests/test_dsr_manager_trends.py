@@ -160,7 +160,11 @@ def test_predictions_are_written_once_and_graded_by_what_was_measured(db):
     r = _rest(db)
     fc = {"available": True, "typical_sales": 9000.0, "low": 8200.0, "high": 9800.0, "samples": 12,
           "weekday": "Saturday"}
-    preds = predictions.build(fc, budget_net=8500.0, weather={"precip_pct": 70}, weekday="Saturday")
+    # Rain is predicted only in the direction this restaurant's own rain
+    # nights measured (memory audit 9/29/26, event_memory): here, below.
+    rain_here = {"applies": True, "direction": "down", "median_lift_pct": -12.0, "n": 4}
+    preds = predictions.build(fc, budget_net=8500.0, weather={"precip_pct": 70}, weekday="Saturday",
+                              effects={"rain": rain_here})
     assert [p["key"] for p in preds] == ["sales_range", "sales_budget", "rain"]
     assert preds[1]["text"] == "Sales expected above budget ($8,500)"
     assert predictions.record(r.id, SAT - timedelta(days=1), SAT, preds) == 3
@@ -234,8 +238,10 @@ def test_tomorrow_lists_the_prep_and_a_confidence_it_can_back(db, monkeypatch):
     assert conf["based_on"] == ["8 Sundays of sales history"]
     assert "the weather forecast" in conf["watch"] and "your events and reservations" in conf["watch"]
     assert "a confidence % shows at 10" in conf["track"]
-    # Rain outranks the event for a prediction; both are gradable claims.
-    assert [p["key"] for p in t["_preds"]] == ["sales_range", "rain"]
+    # Rain and the event are predicted only in the direction this
+    # restaurant's own nights measured (memory audit 9/29/26, event_memory):
+    # nothing is measured here yet, so neither is asserted.
+    assert [p["key"] for p in t["_preds"]] == ["sales_range"]
 
 
 def test_the_confidence_is_the_forecasts_measured_record_not_its_inputs():

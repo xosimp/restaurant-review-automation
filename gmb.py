@@ -720,6 +720,13 @@ def fetch_location_rating(restaurant_id: int, access_token: str, location_id: st
             if count is not None:
                 update_fields["gbp_review_count"] = int(count)
             update_restaurant(restaurant_id, update_fields)
+            # Overwritten in place on the restaurant; the week's reading is
+            # kept (memory audit 9/29/26, public_history).
+            try:
+                import event_memory
+                event_memory.record_own_rating(restaurant_id, float(rating), count, source="business_profile")
+            except Exception as _oe:
+                print(f"[GMB] rating history not kept for {restaurant_id}: {_oe}")
             print(f"[GMB] GBP rating for restaurant {restaurant_id}: {rating} ({count} reviews)")
             return {"ok": True, "rating": float(rating), "count": count}
         return {"ok": False, "error": "No rating in response"}

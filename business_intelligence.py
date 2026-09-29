@@ -1226,8 +1226,11 @@ def pick_one_thing(restaurant_id, candidates, db_path=DB_PATH, learned=None, ctx
             w, why = info["weight"], info["why"]
             if w != 1.0:
                 c["score"] = round(float(c.get("score") or 0) * w, 2)
-                c["learned"] = {"weight": w, "why": why[:3]}
-            # What learning did to its rank (memory audit 9/29/26, rank_log).
+                # The weight, why, and the prior rung and model version it
+                # rested on (rec_learning.learned_note, PLATFORM-1/3).
+                c["learned"] = _rl_rank.learned_note(learned, c["key"], w, why)
+            # What learning did to its rank, logged with the showing
+            # (memory audit 9/29/26, rank_log).
             c["rank"] = _rl_rank.rank_meta(c, base, info)
             run.append(c)
         flush()

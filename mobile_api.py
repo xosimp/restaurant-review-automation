@@ -1910,11 +1910,9 @@ def notification_open_surface(data) -> str:
 @mobile_bp.route("/notifications/engagement")
 @mobile_login_required
 def mobile_notifications_engagement(current_user):
-    import notify
-    rows = notify.engagement_report(current_user["restaurant_id"])
-    for row in rows:
-        row["label"] = _capi._NOTIFICATION_LABELS.get(row["alert_type"], row["alert_type"])
-    return jsonify(ok=True, suggestions=rows)
+    """Twin of /api/notifications/engagement — one body (per login too)."""
+    payload, status = _capi._do_notifications_engagement(current_user)
+    return jsonify(**payload), status
 
 
 @mobile_bp.route("/notifications/unread-count")
@@ -5019,6 +5017,9 @@ def mobile_remove_task_template(current_user):
     return jsonify(ok=True), 200
 
 
+MARKET_HISTORY_MAX = 30          # market events a movement payload carries, newest first
+
+
 @mobile_bp.route("/intel/movement")
 @mobile_login_required
 def mobile_intel_movement(current_user):
@@ -5037,9 +5038,15 @@ def mobile_intel_movement(current_user):
     try:
         moves = competitor_movement(rid, days=days)
         changes = competitor_roster_changes(rid)
+        # The market's history and the restaurant's own rating over time,
+        # kept forever (event_memory, memory audit 9/29/26 public_history):
+        # the snapshots above are pruned at a year and read over `days`.
+        import event_memory
         return jsonify(
             ok=True,
             days=days,
+            market_history=event_memory.market_history(rid)[:MARKET_HISTORY_MAX],
+            own_rating_history=event_memory.own_rating_trajectory(rid),
             movement=moves,
             # Only the moves that clear the noise floor, for a client that
             # wants the short list rather than everything.
@@ -5051,7 +5058,8 @@ def mobile_intel_movement(current_user):
             # A rating move is only meaningful against the volume behind it.
             # confidence_z is how far past that noise floor each one sits.
             claim_kinds={"movement": "measured", "significant": "measured",
-                         "arrived": "measured", "gone": "measured"},
+                         "arrived": "measured", "gone": "measured", "market_history": "measured",
+                         "own_rating_history": "measured"},
         )
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e), movement=[], significant=[],
@@ -7508,12 +7516,14 @@ def mobile_capability_changes(current_user):
         return jsonify(ok=False, error=_safe_err(e), changes=[]), 500
 
 
-def _ask_feedback_tally(rid):
+def _ask_feedback_tally(rid, user_id=None):
     """{"rated", "helpful"} for the Ask opening — the notes stay out of it
-    (they are for the assistant's context, not the opening screen)."""
+    (they are for the assistant's context, not the opening screen). THIS
+    login's ratings: a teammate's are theirs (memory audit 9/29/26,
+    ask_feedback)."""
     try:
         from models import ask_feedback_summary
-        fb = ask_feedback_summary(rid)
+        fb = ask_feedback_summary(rid, user_id=user_id)
         return {"rated": fb["rated"], "helpful": fb["helpful"], "days": fb.get("days", 90)}
     except Exception:
         return {"rated": 0, "helpful": 0, "days": 90}
@@ -7560,7 +7570,7 @@ def mobile_ask_opening(current_user):
                 ok=True,
                 # How the owner has rated answers so far (ask_feedback) —
                 # aggregate only, read with no model call (#48).
-                feedback=_ask_feedback_tally(rid),
+                feedback=_ask_feedback_tally(rid, current_user.get("id")),
                 briefing=[{"severity": _tone.get(l["tone"], "watch"), "title": l["text"],
                            "detail": None, "module": None, "ask": l.get("ask")}
                           for l in _lines[:5]],
@@ -7605,7 +7615,7 @@ def mobile_ask_opening(current_user):
         changes = payload.get("changes") or {}
         return jsonify(
             ok=True,
-            feedback=_ask_feedback_tally(rid),
+            feedback=_ask_feedback_tally(rid, current_user.get("id")),
             briefing=briefing,
             suggestions=suggestions[:5],
             headline=_opening_headline(payload, briefing),

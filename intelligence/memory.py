@@ -8,6 +8,7 @@ from datetime import date, timedelta
 
 import models as _models_mod
 from models import DB_PATH
+import canonical_facts as _cf
 from . import features as _features, feedback, scoring
 from .stats import slope, mean
 
@@ -29,8 +30,8 @@ def busiest_days(restaurant_id, days=84, db_path=DB_PATH) -> dict:
     floor = (date.today() - timedelta(days=days)).isoformat()
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT date, sales, labor_pct FROM labor_daily_history WHERE restaurant_id=? AND date >= ? AND sales > 0",
-                            (restaurant_id, floor)).fetchall()
+        rows = conn.execute("SELECT date, sales, labor_pct FROM labor_daily_history WHERE restaurant_id=? AND date >= ? "
+                            f"AND sales > 0 AND {_cf.FINAL_SQL}", (restaurant_id, floor)).fetchall()
     finally:
         conn.close()
     if len(rows) < 28:
@@ -56,16 +57,30 @@ def busiest_days(restaurant_id, days=84, db_path=DB_PATH) -> dict:
 
 def seasonality(restaurant_id, db_path=DB_PATH) -> dict:
     """Month index of sales against the restaurant's own annual mean. Needs
-    twelve distinct months, otherwise says so."""
-    conn = get_conn(db_path)
-    try:
-        rows = conn.execute("SELECT substr(date,1,7) AS ym, SUM(sales) AS s, COUNT(*) AS n FROM labor_daily_history "
-                            "WHERE restaurant_id=? AND sales > 0 GROUP BY ym ORDER BY ym", (restaurant_id,)).fetchall()
-    finally:
-        conn.close()
-    months = {r["ym"]: float(r["s"]) / max(1, int(r["n"])) for r in rows if int(r["n"]) >= 10}
+    twelve distinct months, otherwise says so.
+
+    Reads the ONE sales history in the nightly report's baseline order
+    (canonical_facts.sales_history: the night's report, the owner's imported
+    DSR workbooks, the POS sync's final nights — memory audit 9/29/26,
+    imported_year). It read the POS archive alone, so an owner who imported
+    a year of DSR workbooks but had 60 days of POS history got "2 full months
+    on file" with last year sitting in the database. Each month is read on
+    one basis (the report's own net where the month has enough of it), and
+    `sources` names what the index rests on."""
+    series = _cf.sales_history(restaurant_id, "2000-01-01", (date.today() + timedelta(days=1)).isoformat(),
+                               db_path=db_path)
+    by_month = {}
+    for d, x in series.items():
+        by_month.setdefault(d[:7], {}).setdefault(x.get("basis") or _cf.BASIS_DSR, []).append(float(x["net"]))
+    months = {}
+    for ym, bases in by_month.items():
+        dsr_days = bases.get(_cf.BASIS_DSR) or []
+        vals = dsr_days if len(dsr_days) >= 10 else max(bases.values(), key=len)
+        if len(vals) >= 10:
+            months[ym] = sum(vals) / len(vals)
     if len(months) < 12:
-        return {"available": False, "reason": f"{len(months)} full months on file; twelve are needed for a seasonal read"}
+        return {"available": False, "sources": _cf.sources_said(series),
+                "reason": f"{len(months)} full months on file; twelve are needed for a seasonal read"}
     by_m = {}
     for ym, per_day in months.items():
         by_m.setdefault(int(ym[5:7]), []).append(per_day)
@@ -73,7 +88,8 @@ def seasonality(restaurant_id, db_path=DB_PATH) -> dict:
     base = mean(idx.values())
     index = {_MONTHS[m - 1]: round(v / base, 2) for m, v in sorted(idx.items())}
     ranked = sorted(index.items(), key=lambda kv: kv[1], reverse=True)
-    return {"available": True, "index": index, "peak": [m for m, _ in ranked[:2]], "trough": [m for m, _ in ranked[-2:]]}
+    return {"available": True, "index": index, "peak": [m for m, _ in ranked[:2]], "trough": [m for m, _ in ranked[-2:]],
+            "sources": _cf.sources_said(series)}
 
 
 def own_record(restaurant_id, db_path=DB_PATH) -> dict:
@@ -86,17 +102,35 @@ def own_record(restaurant_id, db_path=DB_PATH) -> dict:
     Wilson interval — one improvement beside four that got worse used to
     read "measurably improved things here". `worked_detail` carries each
     one's "k of n", and a kind's `success_rate` is None below the floor
-    (its counts stay), so nothing downstream can quote 100% from one."""
+    (its counts stay), so nothing downstream can quote 100% from one.
+
+    One window rule (memory audit 9/29/26, PLATFORM-11): the same horizon
+    the rankers and Historical Accuracy read (rec_learning.
+    DECAY_HORIZON_DAYS — Ask counted all time while they read a year), and
+    "worked" is ranked on the results weighed by their age (rec_learning.
+    decay_weight); the "k of n" quoted stays the plain counts."""
     import rec_learning
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    since = (now - timedelta(days=rec_learning.DECAY_HORIZON_DAYS)).strftime("%Y-%m-%d")
     conn = get_conn(db_path)
     try:
-        kinds = [r["rec_kind"] for r in conn.execute("SELECT DISTINCT rec_kind FROM intel_rec_events WHERE restaurant_id=?",
-                                                       (restaurant_id,)).fetchall()]
+        kinds = [r["rec_kind"] for r in conn.execute("SELECT DISTINCT rec_kind FROM intel_rec_events WHERE restaurant_id=? "
+                                                       "AND event_at >= ?", (restaurant_id, since)).fetchall()]
+        results = conn.execute("SELECT rec_kind, source_key, outcome, event_at FROM intel_rec_events WHERE restaurant_id=? "
+                               "AND action='measured' AND outcome IN ('improved','worsened','no_clear_change') "
+                               "AND event_at >= ?", (restaurant_id, since)).fetchall()
     finally:
         conn.close()
+    weighted = {}
+    for r in results:
+        w = rec_learning.decay_weight(r["rec_kind"], r["event_at"], now, key=r["source_key"])
+        n, k = weighted.get(r["rec_kind"], (0.0, 0.0))
+        weighted[r["rec_kind"]] = (n + w, k + (w if r["outcome"] == "improved" else 0.0))
     out = {}
     for k in kinds:
-        s = dict(scoring.kind_stats(k, restaurant_id=restaurant_id, db_path=db_path))
+        s = dict(scoring.kind_stats(k, restaurant_id=restaurant_id, db_path=db_path,
+                                    window_days=rec_learning.DECAY_HORIZON_DAYS))
         if (s.get("measured") or 0) < rec_learning.MIN_MEASURED_FOR_RATE:
             s["success_rate"] = None
         out[k] = s
@@ -105,7 +139,10 @@ def own_record(restaurant_id, db_path=DB_PATH) -> dict:
         n, imp = int(s.get("measured") or 0), int(s.get("improved") or 0)
         if n < rec_learning.MIN_MEASURED_FOR_RATE or imp / n < 0.5:
             continue
-        lo, _ = rec_learning.wilson(imp, n)
+        nw, kw = weighted.get(k, (float(n), float(imp)))
+        lo, _ = rec_learning.wilson(kw, nw) if nw else (None, None)
+        if lo is None:
+            continue
         ranked.append((lo, n, k, imp))
     ranked.sort(key=lambda x: (-x[0], -x[1], x[2]))
     worked_detail = [{"kind": k, "improved": imp, "measured": n} for _lo, n, k, imp in ranked[:5]]
@@ -174,7 +211,9 @@ def lines(mem: dict) -> list:
         out.append(f"Busiest days by sales: {', '.join(bd['busiest'])}; quietest: {', '.join(bd['quietest'])}.")
     se = mem.get("seasonality") or {}
     if se.get("available"):
-        out.append(f"Seasonal peak months: {', '.join(se['peak'])}; trough: {', '.join(se['trough'])} (index vs own annual mean).")
+        src = f"; from {se['sources']}" if se.get("sources") else ""
+        out.append(f"Seasonal peak months: {', '.join(se['peak'])}; trough: {', '.join(se['trough'])} "
+                   f"(index vs own annual mean{src}).")
     rec = mem.get("record") or {}
     detail = rec.get("worked_detail")
     if detail:

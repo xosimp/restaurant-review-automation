@@ -260,14 +260,125 @@ def _dsr_yesterday_line(night):
             "source": "dsr", "dsr_date": night["date"]}
 
 
+BRIEF_MEMORY_LINES = 2
+
+
+def _memory_lines(restaurant_id, today, viewer, lines, db_path=DB_PATH):
+    """Brief lines from memory_context's "brief" block: a constraint the owner
+    set that is dated today ("Your note for today: …"), and the measured
+    effect of what is listed for today when the today line carries none
+    ("Remembered: …"). At most BRIEF_MEMORY_LINES; [] when memory has
+    nothing dated today."""
+    import memory_context
+    block = memory_context.memory_context(restaurant_id, "brief", viewer=viewer,
+                                          now=datetime.combine(today, datetime.min.time()), db_path=db_path)
+    out = []
+
+    def _is_today(v):
+        try:
+            return str(v)[:10] == today.isoformat() or (hasattr(v, "isoformat") and v.isoformat()[:10] == today.isoformat())
+        except Exception:
+            return False
+    for ln in (block.sections or {}).get("constraints") or []:
+        if _is_today(ln.get("date")) and ln.get("text"):
+            out.append({"key": "memory:constraint", "tone": "action", "source": "memory", "claim_kind": "owner",
+                        "text": f"Your note for today: {' '.join(str(ln['text']).split())}",
+                        "ask": "What should I keep in mind today?"})
+            break
+    has_effects = any(l.get("key") == "today" and "measured" in (l.get("text") or "") for l in lines)
+    if not has_effects:
+        for ln in (block.sections or {}).get("events") or []:
+            if _is_today(ln.get("date")) and ln.get("text"):
+                out.append({"key": "memory:event", "tone": "neutral", "source": "memory", "claim_kind": "measured",
+                            "text": "Remembered: " + " ".join(str(ln["text"]).split()),
+                            "ask": "How have nights like today gone here?"})
+                break
+    return out[:BRIEF_MEMORY_LINES]
+
+
+def _record_read(restaurant_id, brief, view=None, db_path=DB_PATH):
+    """Keep the brief a person was sent as history (ai_reads.record_read,
+    surface "brief", memory audit 9/29/26) — once per view per day. Never
+    raises."""
+    try:
+        import ai_reads
+        text = "\n".join(l.get("text") or "" for l in brief.get("lines") or [] if l.get("text"))
+        if not text.strip():
+            return None
+        return ai_reads.record_read(restaurant_id, "brief", text, subject=f"brief:{brief.get('date')}",
+                                    meta={"date": brief.get("date"), "view": view,
+                                          "lines": [l.get("key") for l in brief.get("lines") or []],
+                                          "recs": [l.get("rec") for l in brief.get("lines") or [] if l.get("rec")]},
+                                    db_path=None if db_path == DB_PATH else db_path)
+    except Exception as e:
+        log.warning("morning_brief: read not recorded rid=%s: %s", restaurant_id, e)
+        return None
+
+
+def _holiday_today(day):
+    """The dining holiday on `day` from the calendar, or None."""
+    try:
+        from marketing import get_upcoming_holidays
+        stamp = day.strftime("(%b %d)")
+        upcoming = get_upcoming_holidays(datetime.combine(day, datetime.min.time())) or ""
+        todays = [h.replace(stamp, "").strip() for h in upcoming.split(", ") if stamp in h]
+        return todays[0].split(" — ")[0] if todays else None
+    except Exception:
+        return None
+
+
+def _carry_today_line(carry, today, show_forecast=True):
+    """The "today" line from last night's report (dsr.memory.morning_carry):
+    the report's own forecast for today — with the measured effects it
+    applied and its confidence % — its Tomorrow items (time off, rain or
+    heat, events and reservations, critically low stock) and what it
+    predicted, as stored. None when the report said nothing about today."""
+    fc = carry.get("forecast") if show_forecast else None
+    conf = carry.get("confidence") if show_forecast else None
+    items = [i["text"] for i in carry.get("items") or []][:4]
+    if not fc and not items:
+        return None
+    text = "Today, from last night's report"
+    if fc and fc.get("typical") is not None:
+        text += f": about {_money(fc['typical'])}"
+        if fc.get("low") is not None and fc.get("high") is not None:
+            text += f" ({_money(fc['low'])}–{_money(fc['high'])})"
+        effects = [e for e in fc.get("effects") or [] if isinstance(e, dict) and e.get("lift_pct") is not None]
+        if effects:
+            text += ", with " + ", ".join(
+                f"{e.get('display') or e.get('label')} {e['lift_pct']:+.0f}% (measured {e['n']} "
+                f"time{'s' if e.get('n') != 1 else ''} here)" for e in effects)
+        if conf and conf.get("pct") is not None:
+            text += f"; its range has held {conf['pct']}% of the time"
+    if items:
+        text += (". " if fc else ": ") + " · ".join(items)
+    hol = _holiday_today(today)
+    if hol:
+        text += f" · {hol}"
+    text += "."
+    if carry.get("provisional"):
+        text += " From a provisional report."
+    preds = [p["text"] for p in carry.get("predictions") or []] if show_forecast else []
+    return {"key": "today", "tone": "neutral", "source": "dsr", "dsr_date": carry.get("report_date"),
+            "forecast": bool(fc), "claim_kind": "forecast" if fc else None, "outside": bool(items or hol),
+            "confidence_pct": (conf or {}).get("pct"), "predictions": preds,
+            "text": text, "ask": "What should I focus on before service today?"}
+
+
 def _prime_stamp(pp, health):
     """" (sales through 9/23/26; labor share from 9/1/26 to 9/14/26)" — what
-    the prime-cost run rate rests on, dated (#12, DH1-3)."""
+    the prime-cost run rate rests on, dated (#12, DH1-3). Where the nightly
+    report measured labor dollars, that is said instead: "labor measured on
+    12 nights by your nightly reports, …" (memory audit 9/29/26, prime_cost)
+    — the report's own nightly prime cost and this month-to-date figure name
+    their bases, so the two can be told apart."""
     bits = []
     sales = ((health or {}).get("states") or {}).get("sales") or {}
     if sales.get("as_of"):
         bits.append(f"sales through {sales['as_of']}")
-    if pp.get("labor_period"):
+    if pp.get("labor_basis") in ("measured", "mixed") and pp.get("labor_basis_text"):
+        bits.append(pp["labor_basis_text"])
+    elif pp.get("labor_period"):
         bits.append(f"labor share from {pp['labor_period']}")
     elif pp.get("labor_from"):
         bits.append(pp['labor_from'])
@@ -317,6 +428,20 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
         # why (#12).
         held.append("yesterday")
         y = None
+    # ── what last night's report said about today ── (memory audit 9/29/26,
+    # dsr_to_brief): its unanswered priorities under the report's own
+    # dsr_action keys (an answer anywhere silences them), and — below, in
+    # the "today" line — its forecast, confidence, Tomorrow items and
+    # predictions, instead of recomputing today without them. Only for the
+    # date the report named.
+    carry = (_safe(dsr_memory.morning_carry, restaurant_id, today, viewer, db_path)
+             if getattr(restaurant, "dsr_enabled", 1) else None)
+    for a in ((carry or {}).get("actions") or [])[:1]:
+        lines.append({"key": "dsr_action", "tone": "action", "rec": a["key"], "source": "dsr",
+                      "dsr_date": carry.get("report_date"), "claim_kind": "inferred",
+                      "text": f"From last night's report: {a['text'].rstrip('.')}.",
+                      "why": a.get("why"),
+                      "ask": f"Walk me through this from last night's report: {a['text']}"})
     if y and y.get("available"):
         # "Typical" rests on this restaurant's own same-weekday median, and
         # how many nights it is said (NS4 L5: three samples, unshown).
@@ -559,7 +684,11 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
             lines.append(line)
 
     # ── today ──
-    fc = _safe(demand.forecast_day, restaurant_id, today, db_path=db_path) if "labor" not in denied else None
+    carried = _carry_today_line(carry, today, show_forecast="labor" not in denied) if carry else None
+    if carried:
+        lines.append(carried)
+    fc = (_safe(demand.forecast_day, restaurant_id, today, db_path=db_path)
+          if "labor" not in denied and not carried else None)
     # `outside` marks a line carrying the weather or the calendar — public
     # facts, not the restaurant's own data — so the email's footer does not
     # claim they were measured (_email_html).
@@ -572,12 +701,22 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
         rng = (f"usually {_money(fc['low'])}-{_money(fc['high'])}, over {fc['samples']} weeks"
                if fc.get("low") is not None and fc.get("high") is not None
                else f"from {fc['samples']} past {fc['weekday']}s; range not yet measurable")
+        effects = [e for e in fc.get("effects") or [] if isinstance(e, dict) and e.get("lift_pct") is not None]
+        if effects and fc.get("base_sales") is not None:
+            # What is listed for today moved this restaurant's sales before
+            # (event_memory, measured behind its floor): the day is said as
+            # the typical weekday AND the measured effect, never as "typical".
+            said = ", ".join(f"{e.get('display') or e.get('label')} {e['lift_pct']:+.0f}% (measured {e['n']} "
+                             f"time{'s' if e.get('n') != 1 else ''} here)" for e in effects)
+            text = (f"Today: about {_money(fc['typical_sales'])} — a typical {fc['weekday']} is "
+                    f"{_money(fc['base_sales'])}, with {said} ({rng})" + context + ".")
+        else:
+            text = (f"Today looks like a typical {fc['weekday']}: about {_money(fc['typical_sales'])} "
+                    f"({rng})" + context + ".")
         lines.append({"key": "today", "tone": "neutral", "outside": bool(context), "forecast": True,
-                      "claim_kind": "forecast",
-                      "text": (f"Today looks like a typical {fc['weekday']}: about {_money(fc['typical_sales'])} "
-                               f"({rng})" + context + "."),
+                      "claim_kind": "forecast", "text": text,
                       "ask": "What should I focus on before service today?"})
-    elif restaurant is not None:
+    elif restaurant is not None and not carried:
         # No forecast yet, but the weather and the calendar are still worth
         # knowing — and they are the only "today" the first weeks have.
         context = _day_context(restaurant, today)
@@ -585,6 +724,14 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
             lines.append({"key": "today", "tone": "neutral", "outside": True,
                           "text": "Today" + context + ".",
                           "ask": "What should I focus on before service today?"})
+
+    # ── what Cavnar AI remembers about today ── memory_context (surface
+    # "brief", memory audit 9/29/26): the owner's own time-bound notes for
+    # today, in their words, and a measured event effect the today line did
+    # not already carry. Deterministic — the brief shows memory, it asks no
+    # model.
+    for ml in (_safe(_memory_lines, restaurant_id, today, viewer, lines, db_path) or []):
+        lines.append(ml)
 
     # ── one thing the reviews alone can say ──
     # A reviews-only brief had three possible lines and the retention audit
@@ -829,7 +976,8 @@ def shown_on_home(line) -> bool:
     key = (line or {}).get("key")
     if key in HOME_SKIPS:
         return False
-    return not (key == "yesterday" and (line or {}).get("source") == "dsr")
+    # The report's own priorities are on Home's Last night card already.
+    return not (key in ("yesterday", "dsr_action") and (line or {}).get("source") == "dsr")
 
 
 def present_on_home(restaurant_id, brief, user_id=None, db_path=DB_PATH) -> dict:
@@ -849,7 +997,7 @@ def present_on_home(restaurant_id, brief, user_id=None, db_path=DB_PATH) -> dict
 
 # The slow night is Marketing's (one owner — outcomes.KIND_MODULE, the feed).
 _LINE_MODULE = {"reviews": "reviews", "stock": "food", "schedule": "labor", "slow_day": "marketing",
-                "money": "home", "fix_first": "home", "loss": "ops"}
+                "money": "home", "fix_first": "home", "loss": "ops", "dsr_action": "ops"}
 
 
 _UNLOCK = {
@@ -1053,7 +1201,8 @@ def _ask_url(prompt, rec=None, rid=None):
 _NOT_MEASURED = {"forecast": "a projection", "opportunity": "an estimate", "computed": "an estimate",
                  "estimate": "an estimate", "inferred": "an inference"}
 _FOOTER_NAMES = {"today": "today's forecast", "prime_cost": "the prime-cost projection",
-                 "money": "the dollar opportunity", "fix_first": "the one thing"}
+                 "money": "the dollar opportunity", "fix_first": "the one thing",
+                 "dsr_action": "last night's report's priority"}
 
 
 def footer_source(lines, data_as_of=None, stale=None) -> str:
@@ -1418,6 +1567,7 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
     holds = _safe(_notify_h.dropped_holds, restaurant_id, db_path) or []
     folded = False
     built, pushed, emailed, empty, failed, retry = {}, 0, 0, 0, 0, False
+    sent_views = set()
     for u in people:
         done = _ledger_get(restaurant_id, u["id"], brief_date, db_path)
         if done and done["status"] in ("sent", "queued"):
@@ -1497,12 +1647,14 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
             if queued:
                 pushed += 1
                 folded = folded or bool(held)
+                sent_views.add(key)
                 continue
         if u.get("email"):
             result = _email_brief(restaurant_id, u, brief, name, today, db_path)
             if result.ok:
                 emailed += 1
                 folded = folded or bool(held)
+                sent_views.add(key)
                 _ledger_set(restaurant_id, u["id"], brief_date, "email", "sent", db_path=db_path)
             else:
                 failed += 1
@@ -1514,6 +1666,8 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
                         "the push could not be queued and there is no email on file", db_path=db_path)
     if folded:
         _notify_h.mark_holds_folded([h["id"] for h in holds], db_path)
+    for k in sent_views:
+        _record_read(restaurant_id, built[k], view=k[2], db_path=db_path)
     return {"sent": pushed + emailed, "push": pushed, "email": emailed, "failed": failed, "empty": empty,
             "retry": retry, "recipients": len(people)}
 

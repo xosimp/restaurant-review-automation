@@ -5,9 +5,12 @@ it was measured.
 
 Sources (no model call):
   weather      weather.forecast_for_day — the National Weather Service
-               FORECAST for the date (the daytime period, else "Tonight").
-               Cavnar has no source for observed weather, so this is always
-               labelled a forecast, never presented as what happened.
+               FORECAST for the date (the daytime period, else "Tonight"),
+               always labelled a forecast (its weather_* metrics are
+               projections, dsr.narrative.kind_of). What the weather DID is
+               kept by event_memory (weather_daily, NWS station
+               observations) after the night, and shown beside it when the
+               report is read (dsr.access._live_weather).
                `summary` is the short line for Erik's column ("Chance Rain ·
                84°"); the numbers ride alongside.
   events       demand_signals — what the owner entered for the date (events,
@@ -50,7 +53,8 @@ def _weather(ctx):
     use = day or night
     if not use:
         return None, {"basis": "forecast", "summary": None,
-                      "note": "No forecast on file for this date — Cavnar AI has no observed weather to fall back on."}
+                      "note": "No forecast on file for this date — the observed weather is added once the "
+                              "nearest station's observations are in."}
     temp = use.get("high_f") if day else use.get("low_f")
     bits = [str(use.get("short_forecast") or "").strip()]
     if temp is not None:
@@ -66,7 +70,8 @@ def _weather(ctx):
         "high_f": day.get("high_f") if day else None,
         "low_f": night.get("low_f") if night else None,
         "precip_pct": use.get("precip_pct"),
-        "note": "Forecast, not observed — Cavnar AI has no source for the weather that actually happened.",
+        "note": "Forecast, not observed — the weather that happened is added once the nearest station's "
+                "observations are in.",
     }
 
 

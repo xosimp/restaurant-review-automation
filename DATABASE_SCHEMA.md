@@ -359,6 +359,7 @@ All created at boot (`init_db` and the `init_*` it calls, or the boot block for 
 | `morning_brief_deliveries` | 90 | `created_at` |
 | `alert_storm_caps` | 365 | `started_at` |
 | `login_history` | 90 | `created_at` |
+| `ask_memory_archive` | 400 | `archived_at` |
 | `rec_rank_builds` | 400 | `built_at` |
 | `rec_silences` | 30 days past | `until` |
 

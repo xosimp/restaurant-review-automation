@@ -11,10 +11,24 @@ reservation book. Two kinds of signal, both dated:
 
 No live reservation integration exists yet; the row says `source` so a
 future sync writes the same table and the schedule does not change.
+
+What an event DID is measured afterwards (event_memory, memory audit
+9/29/26): a listed event with no figure takes its label's measured median
+lift here once EFFECT_MIN_N past nights carry it ("measured 3 times"), and
+an owner's own figure stands with the measured record said beside it — the
+owner's "Homecoming +30%" used to be the only number there ever was.
 """
 from datetime import date, timedelta
 
-from models import get_conn, DB_PATH
+import models as _models_mod
+from models import DB_PATH
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time (CLAUDE.md, bound imports)."""
+    if db_path is None or db_path == DB_PATH:
+        return _models_mod.get_conn()
+    return _models_mod.get_conn(db_path)
 
 KINDS = ("event", "reservations")
 MAX_ROWS = 200
@@ -149,11 +163,29 @@ def typical_covers(restaurant_id, db_path=DB_PATH, weeks=8, before=None) -> dict
     return out
 
 
+def _measured(restaurant_id, label, db_path=DB_PATH):
+    """event_memory.measured_effect for an event's label (the first of its
+    labels with a record), or None. Never raises."""
+    try:
+        import event_memory
+        for lab in event_memory.split_labels(label):
+            got = event_memory.measured_effect(restaurant_id, lab, db_path=db_path)
+            if got:
+                return got
+    except Exception:
+        return None
+    return None
+
+
 def by_date(restaurant_id, dates, db_path=DB_PATH) -> dict:
     """{date: {"lift_pct": int, "covers": int|None, "labels": [..]}} for the
     dates asked for. The lift is the strongest signal on the date: an
     explicit lift, else booked covers against that weekday's typical
-    covers (when known), else nothing."""
+    covers (when known), else the event's MEASURED lift here once it has
+    event_memory.EFFECT_MIN_N nights (`lift_source` "measured",
+    `measured_n`), else nothing — an event with no figure and no record is
+    `assumed`. Every event with a record carries it in `measured` so an
+    owner's own figure is said beside what was measured."""
     if not dates:
         return {}
     signals = upcoming(restaurant_id, min(dates), max(dates), db_path=db_path)
@@ -164,11 +196,24 @@ def by_date(restaurant_id, dates, db_path=DB_PATH) -> dict:
         if d not in dates:
             continue
         entry = out.setdefault(d, {"lift_pct": None, "covers": None, "labels": []})
-        entry["labels"].append(s["label"] + (f" ({s['covers']} covers)" if s.get("covers") else ""))
+        label = s["label"] + (f" ({s['covers']} covers)" if s.get("covers") else "")
         lift = s.get("lift_pct")
+        measured = _measured(restaurant_id, s["label"], db_path=db_path) if s.get("kind") == "event" else None
+        if measured:
+            entry.setdefault("measured", []).append({
+                "label": s["label"], "median_lift_pct": measured["median_lift_pct"], "n": measured["n"],
+                "last": measured["last"].isoformat(), "applies": measured["applies"],
+                "owner_lift_pct": lift})
         if s.get("kind") == "event" and lift is None and not s.get("covers"):
-            entry["assumed"] = True
-            entry["assumed_lift_pct"] = ASSUMED_EVENT_LIFT_PCT
+            if measured and measured["applies"]:
+                lift = int(round(measured["median_lift_pct"]))
+                entry["lift_source"] = "measured"
+                entry["measured_n"] = max(entry.get("measured_n") or 0, measured["n"])
+                label += f" (measured {measured['n']} times here)"
+            else:
+                entry["assumed"] = True
+                entry["assumed_lift_pct"] = ASSUMED_EVENT_LIFT_PCT
+        entry["labels"].append(label)
         if lift is None and s.get("covers"):
             try:
                 day = date.fromisoformat(d).strftime("%A")
@@ -202,6 +247,15 @@ def prompt_block(signals_by_date: dict, week_dates: list) -> str:
             tail = (f" — expect about {lift}% more than a typical {day}" if lift > 0
                     else f" — expect about {abs(lift)}% less than a typical {day}" if lift < 0
                     else " — about a typical day")
+            if e.get("lift_source") == "measured":
+                tail += (f" (this restaurant's own measured median over {e.get('measured_n')} past nights like it — "
+                         "before and after, not proof)")
+            else:
+                seen = [m for m in e.get("measured") or [] if m.get("owner_lift_pct") is not None]
+                if seen:
+                    m = seen[0]
+                    tail += (f"; the same kind of night measured {m['median_lift_pct']:+.0f}% here over "
+                             f"{m['n']} past night{'s' if m['n'] != 1 else ''}")
         elif e.get("covers"):
             tail = f" — {e['covers']} covers booked"
         elif e.get("assumed"):

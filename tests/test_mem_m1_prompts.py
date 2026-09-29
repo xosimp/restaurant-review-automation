@@ -180,7 +180,7 @@ def test_memory_context_serves_the_decisions_section_on_every_surface_that_needs
     rl.present(rid, "trim_day:Friday", "labor", "home", title="Trim Friday", db_path=db_path)
     rl.record(rid, "trim_day:Friday", "dismissed", meta={"kind": "not_for_us", "reason": "no"}, db_path=db_path)
     block = mc.memory_context(rid, "competitor_read")
-    assert "DECISIONS" in block.text and "decisions" in block.sections
+    assert "decisions" in block.sections and "not for us" in block.text
     assert not re.search(r"\d{4}-\d{2}-\d{2}", block.text)
 
 
