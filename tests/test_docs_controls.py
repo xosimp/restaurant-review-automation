@@ -415,6 +415,31 @@ def test_the_scrub_empties_the_tables_the_doc_names():
     assert all(f"`{t}`" in schema for t in offsite_backup.SCRUB_TABLES)
 
 
+def test_the_documented_retention_table_is_the_registry():
+    """DATABASE_SCHEMA.md's *Retention* table, row by row, against
+    ops._RETENTION_DAYS / _RETENTION_COLUMN: every registered table named
+    once, with its days and its column (the integration wave added eight)."""
+    import ops
+    text = _read("DATABASE_SCHEMA.md")
+    sec = text[text.index("## Retention — the one registry"):]
+    sec = sec[:sec.index("\n## ", 5)]
+    seen = {}
+    for line in sec.splitlines():
+        if not line.startswith("| `"):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        tables = re.findall(r"`([a-z0-9_]+)`", cells[0])
+        days = int(re.match(r"\d+", cells[1]).group(0))
+        cols = re.findall(r"`([a-z0-9_]+)`", cells[2])
+        for i, t in enumerate(tables):
+            assert t not in seen, t
+            seen[t] = (days, cols[min(i, len(cols) - 1)])
+    assert set(seen) == set(ops._RETENTION_DAYS)
+    for t, (days, col) in seen.items():
+        assert ops._RETENTION_DAYS[t] == days, t
+        assert ops._RETENTION_COLUMN.get(t, "created_at") == col, t
+
+
 def test_an_unclassified_credential_column_is_scrubbed_anyway():
     import offsite_backup
     conn = sqlite3.connect(":memory:")
