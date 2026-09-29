@@ -1281,6 +1281,24 @@ never with text: the rebuild cut the visible text across its screens by 69%
   on the axis (an hour when every thread was busy). Used for latency, with
   customer and console traffic as separate lines, and for the business day
   by day from the snapshots.
+- **The learning data (memory round UI wave, 9/29/26).** What the platform
+  learned is drawn in the patterns above, extended three ways:
+  - A **learning curve** (the client's Messages & AI → AI tab,
+    `learningCurveHtml`) is one row per curve: a small line over the
+    months (`curveSpark`) where a month under that curve's own sample
+    floor is a gap, never a zero; the line takes the server's flag on
+    the newest month — red worsening, amber flat, ember otherwise; then
+    the newest figure with its n and which way is better. Fatigue is one
+    sentence that says what it cuts.
+  - **One square a period** (`.sq`, a job's runs) also draws an
+    experiment's stored weekly verdict and a pattern's weekly record, each
+    square in its state (green / amber / red / empty). An ISO week reads
+    "week of 9/21/26" (`isoWeekDay`, `weekLabel`) and a month "Aug 2026"
+    (`monLabel`), never "2026-W39" or "2026-08".
+  - **A rate with its 90% range** reuses `.calbar` without the prediction
+    tick (the ranking's taken rate by weight bucket), dimmed under the
+    floor; a bar with rows written later from raw history shows that
+    share in grey under the ember (`featureWeekBars`).
 - **Reads go three at a time** (`apiAll(paths, 3)`) — four request threads
   serve the whole platform — and an area's reads are shared across its tabs
   for a minute; Refresh reads them again with `?fresh=1`.
