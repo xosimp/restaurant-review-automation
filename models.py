@@ -993,6 +993,10 @@ def ensure_columns(db_path: str = DB_PATH):
         # cached figures (UTC). waste_last_week is only as current as this;
         # "waste this week" is read from dated events (DH1-1).
         ("ingredients", "rollup_at", "TEXT"),
+        # When par_level last CHANGED, by any path (a hand edit, a suggestion
+        # accepted, a sync): 86s before it were measured against another par
+        # (ordering.par_suggestions).
+        ("ingredients", "par_changed_at", "TEXT"),
         # When is_demo was turned off (admin). The seeded history stays in
         # place — never hard-deleted — and the restaurant is kept out of
         # cross-restaurant learning until every feature window has rolled

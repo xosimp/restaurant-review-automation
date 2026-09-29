@@ -296,7 +296,70 @@ def test_86s_from_before_the_par_was_raised_never_raise_it_again(db_path):
     assert ordering.par_suggestions(rid, today=date.today()) == []
     _eighty_six(db_path, rid, salmon, 2)
     _eighty_six(db_path, rid, salmon, 1)
-    assert [s["times"] for s in ordering.par_suggestions(rid, today=date.today())] == [4]
+    [s] = ordering.par_suggestions(rid, today=date.today())
+    assert s["times"] == 2 and "since the par was last set" in s["basis"]     # only the nights since it was raised
+
+
+# ── the par's own change is the cutoff, however it changed (lead fix 9/29/26) ──
+
+def _set_par_changed(db_path, iid, days_ago):
+    """Pin the stamp to a clear past day: the cutoff is the restaurant's local
+    day of the change, and a test must not straddle a timezone's midnight."""
+    c = _conn(db_path)
+    c.execute("UPDATE ingredients SET par_changed_at=datetime('now', ?) WHERE id=?", (f"-{days_ago} days", iid))
+    c.commit()
+    c.close()
+
+
+def _par_changed_at(db_path, iid):
+    c = _conn(db_path)
+    v = c.execute("SELECT par_changed_at FROM ingredients WHERE id=?", (iid,)).fetchone()[0]
+    c.close()
+    return v
+
+
+def test_a_par_raised_by_hand_ends_the_old_86s(db_path):
+    """No raise_par answer exists — the owner (or an admin through view-as,
+    whose implement M1 records with no implemented_at) raised the par on the
+    ingredient itself. The 86s measured against the old par stop counting."""
+    rid = _rid(db_path)
+    salmon = _ingredient(db_path, rid, "Salmon", par=20, usage=3)
+    _eighty_six(db_path, rid, salmon, 10)
+    _eighty_six(db_path, rid, salmon, 8)
+    assert [s["ingredient_id"] for s in ordering.par_suggestions(rid, today=date.today())] == [salmon]
+    assert _par_changed_at(db_path, salmon) is None
+    assert inventory_ledger.update_ingredient(rid, salmon, par_level=26)
+    assert _par_changed_at(db_path, salmon) is not None                        # the edit stamped it
+    _set_par_changed(db_path, salmon, 6)
+    assert ordering.par_suggestions(rid, today=date.today()) == []             # both 86s predate the new par
+    _eighty_six(db_path, rid, salmon, 4)
+    _eighty_six(db_path, rid, salmon, 2)
+    [s] = ordering.par_suggestions(rid, today=date.today())                    # two new ones at the new par
+    assert s["times"] == 2 and s["par"] == 26 and "since the par was last set" in s["basis"]
+
+
+def test_saving_the_same_par_is_not_a_change(db_path):
+    rid = _rid(db_path)
+    salmon = _ingredient(db_path, rid, "Salmon", par=20, usage=3)
+    assert inventory_ledger.update_ingredient(rid, salmon, par_level=20, unit_cost=4.5)
+    assert _par_changed_at(db_path, salmon) is None
+    assert inventory_ledger.update_ingredient(rid, salmon, unit_cost=4.8)       # par not in the edit at all
+    assert _par_changed_at(db_path, salmon) is None
+
+
+def test_a_par_changed_by_the_inventory_sync_ends_the_old_86s(db_path, monkeypatch):
+    import inventory_sync
+    rid = _rid(db_path)
+    salmon = _ingredient(db_path, rid, "Salmon", par=20, usage=3)
+    _eighty_six(db_path, rid, salmon, 10)
+    _eighty_six(db_path, rid, salmon, 8)
+    monkeypatch.setattr(inventory_sync, "get_conn", models.get_conn, raising=False)
+    inventory_sync.apply_inventory(rid, "test", {"items": [{"name": "Salmon", "par_level": 20}]})
+    assert _par_changed_at(db_path, salmon) is None                             # same par: no change
+    inventory_sync.apply_inventory(rid, "test", {"items": [{"name": "Salmon", "par_level": 30}]})
+    assert _par_changed_at(db_path, salmon) is not None
+    _set_par_changed(db_path, salmon, 6)
+    assert ordering.par_suggestions(rid, today=date.today()) == []
 
 
 def test_an_admins_apply_through_view_as_teaches_no_match(db_path):

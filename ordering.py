@@ -468,40 +468,60 @@ def par_suggestions(restaurant_id, db_path=DB_PATH, today=None) -> list:
     except Exception as e:
         print(f"[ordering] par suggestions unreadable for {restaurant_id}: {e}")
         return []
-    from time_utils import mdy
+    from time_utils import mdy, parse_stamp, restaurant_now_by_id
     import rec_ledger
-    # 86s from before the owner last raised this par (an implemented
-    # raise_par answer) are already answered: they never raise it again.
+    # 86s count only after the par was last SET. Nights before it were
+    # measured against another par, whoever changed it: a hand edit, an
+    # admin's accept through view-as (which M1 records with no
+    # implemented_at), a sync, or an implemented raise_par answer. The
+    # par's own stamp (ingredients.par_changed_at, local day) is the cutoff,
+    # and the answer's date backs it for a par set before the stamp existed.
+    tz = restaurant_now_by_id(restaurant_id).tzinfo
+    def _local_day(stamp):
+        at = parse_stamp(stamp) if stamp else None
+        return at.astimezone(tz).date().isoformat() if at and tz else (str(stamp)[:10] if stamp else None)
+    recent = {}
     try:
         conn = get_conn(db_path)
         try:
             raised = {r["key"]: str(r["at"])[:10] for r in conn.execute(
                 "SELECT key, MAX(implemented_at) AS at FROM rec_instances WHERE restaurant_id=? "
                 "AND key LIKE 'raise_par:%' AND implemented_at IS NOT NULL GROUP BY key", (restaurant_id,)).fetchall()}
-            recent = {}
+            try:
+                changed = {r["id"]: _local_day(r["par_changed_at"]) for r in conn.execute(
+                    "SELECT id, par_changed_at FROM ingredients WHERE restaurant_id=? AND par_changed_at IS NOT NULL",
+                    (restaurant_id,)).fetchall()}
+            except Exception:
+                changed = {}
             for r in rows:
-                key = rec_ledger.rec_key("raise_par", r["name"])
-                if key in raised:
-                    recent[r["id"]] = conn.execute(
-                        "SELECT COUNT(DISTINCT event_date) FROM ingredient_stock_events WHERE restaurant_id=? "
-                        "AND ingredient_id=? AND event_type='recount' AND source='closeout' AND event_date > ? "
-                        "AND event_date >= ?", (restaurant_id, r["id"], raised[key], since)).fetchone()[0]
+                cutoff = max([d for d in (raised.get(rec_ledger.rec_key("raise_par", r["name"])),
+                                          changed.get(r["id"])) if d] or [""])
+                if cutoff:
+                    after = conn.execute(
+                        "SELECT COUNT(DISTINCT event_date) AS n, MAX(event_date) AS last FROM ingredient_stock_events "
+                        "WHERE restaurant_id=? AND ingredient_id=? AND event_type='recount' AND source='closeout' "
+                        "AND event_date > ? AND event_date >= ?", (restaurant_id, r["id"], cutoff, since)).fetchone()
+                    recent[r["id"]] = (int(after["n"] or 0), after["last"])
         finally:
             conn.close()
-    except Exception:
-        recent = {}
+    except Exception as e:
+        print(f"[ordering] par-change cutoffs unreadable for {restaurant_id}: {e}")
     out = []
     for r in rows:
-        if r["id"] in recent and int(recent[r["id"]] or 0) < PAR_SUGGEST_86S:
-            continue
+        times, last = int(r["times"]), r["last"]
+        if r["id"] in recent:
+            times, last = recent[r["id"]]
+            if times < PAR_SUGGEST_86S:
+                continue
         par, usage = float(r["par"] or 0), float(r["usage"] or 0)
         target = max(par * PAR_SUGGEST_STEP, par + usage)
         suggested = math.ceil(target) if target > 0 else None
         if not suggested or suggested <= par:
             continue
         out.append({"ingredient_id": r["id"], "name": r["name"], "unit": r["unit"] or "", "par": par,
-                    "suggested_par": suggested, "times": int(r["times"]), "last": r["last"],
+                    "suggested_par": suggested, "times": times, "last": last,
                     "key": rec_ledger.rec_key("raise_par", r["name"]),
-                    "basis": (f"86'd at close on {int(r['times'])} nights in the last {PAR_SUGGEST_WINDOW_DAYS} days "
-                              f"(last {mdy(r['last'])}); par {par:g} → {suggested:g}")})
+                    "basis": (f"86'd at close on {times} nights in the last {PAR_SUGGEST_WINDOW_DAYS} days "
+                              + ("since the par was last set " if r["id"] in recent else "")
+                              + f"(last {mdy(last)}); par {par:g} → {suggested:g}")})
     return out
