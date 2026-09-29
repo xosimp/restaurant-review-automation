@@ -1831,11 +1831,12 @@ function cMessages(c, d){
       <div class="stack"><div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><h2>Send</h2><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn s w" onclick="testSend('digest',${c.id},'${n}','${em}')">Test digest…</button><button class="btn s w" onclick="testSend('urgent',${c.id},'${n}','${em}')">Test urgent alert…</button><button class="btn s w" onclick="resendWelcome(${c.id},'${n}','${jsq((c.owner||{}).email||c.owner_email||'')}')">Resend welcome…</button><button class="btn s w" onclick="valueRecap(${c.id},'${n}','${em}')">Value recap…</button></div><span class="dim">A test goes to the owner, or to you — you choose each time.</span></div>
         <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px" id="cm-sup"><h2>Suppressed addresses</h2>${skel(2)}</div></div></section>`,
     after: () => lazy('cm-sup', () => suppressionsHtml(c))};
-  if(_cmsg === 'sms') return {html: seg + `<div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h2>Texts</h2><button class="btn s w" onclick="testText(${c.id},'${n}')">Send a test text to the alert contacts…</button></div><div id="cm-test"></div><div id="cm-sms">${skel(3)}</div></div>`,
+  if(_cmsg === 'sms') return {html: seg + `<div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h2>Texts</h2><button class="btn s w" onclick="testText(${c.id},'${n}')">Send a test text to the alert contacts…</button></div><div id="cm-test"></div><div id="cm-sms">${skel(3)}</div></div>
+      <section class="card" style="overflow:hidden">${issueTextsHtml(d.issue_texts, readErr(d, ['ops_issues']), false)}</section>`,
     after: () => lazy('cm-sms', () => smsHtml(c))};
   if(_cmsg === 'push') return {html: seg + `<section class="split">
       <div class="stack"><div class="lbl">Push deliveries</div>${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Type',key:'alert_type'},{h:'Status',cell:r=>r.ok?'<span class="b ok nodot">delivered</span>':`<span class="b bad nodot">${esc(r.status||'failed')}</span>`},{h:'Error',key:'error',wrap:true,cell:r=>esc(r.error||'')}], d.pushes, {id:'cpush-t', limit:15, empty:'No pushes yet.'})}
-        <div class="lbl">Alerts fired</div>${table([{h:'When',key:'fired_at',cell:r=>`<span class="num">${fmtDT(r.fired_at)}</span>`},{h:'Type',key:'alert_type'},{h:'Review',key:'review_id',cell:r=>r.review_id?'#'+r.review_id:''}], d.alerts, {id:'cal-t', limit:15, empty:'No alerts yet.'})}</div>
+        <div class="lbl">Alerts fired</div>${table([{h:'When',key:'fired_at',cell:r=>`<span class="num">${fmtDT(r.fired_at)}</span>`},{h:'Type',key:'alert_type'},{h:'Went out on',key:'channels',cell:r=>chanCell(r.channels)},{h:'Review',key:'review_id',cell:r=>r.review_id?'#'+r.review_id:''}], d.alerts, {id:'cal-t', limit:15, empty:'No alerts yet.'})}</div>
       <div class="stack"><div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Daily alert cap</h2>${c.alert_cap?pill('good','capped · '+c.alert_cap+'/day'):pill('neu','off',false)}</div><span class="muted" style="font-size:13px">${c.alert_cap?`At most <span class="n">${c.alert_cap}</span> alerts a day reach this client; the rest are logged. <span class="n">${fmtN(c.alerts_7d)}</span> fired in 7 days.`:`Every alert sends. <span class="n">${fmtN(c.alerts_7d)}</span> fired in 7 days.`}</span><div style="display:flex;gap:8px"><button class="btn s w" onclick="capOpen(${c.id},'${jsq(c.name||'')}',${c.alert_cap||0})">${c.alert_cap?'Change cap':'Cap alerts'}</button>${c.alert_cap?`<button class="btn s g w" onclick="capSet(${c.id},0,'${n}')">Remove cap</button>`:''}</div></div>
         <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px" id="cm-storm"><h2>Storm cap</h2>${skel(1)}</div>
         <div class="lbl">Devices</div>${table([{h:'User',key:'user_id',cell:r=>esc(loginName(c, r.user_id))},{h:'Env',key:'environment'},{h:'Registered',key:'created_at',cell:r=>`<span class="num">${fmtD(r.created_at)}</span>`},{h:'Last success',key:'last_success_at',cell:r=>`<span class="num">${ago(r.last_success_at)}</span>`},{h:'State',cell:r=>r.disabled_reason?`<span class="b bad nodot">${esc(r.disabled_reason)}</span>`:'<span class="b ok nodot">live</span>'}], d.devices, {id:'cdev-t', empty:'No devices — notifications not allowed on the app yet.'})}
@@ -2503,9 +2504,43 @@ async function supReinstate(email, scope){
   await opsWrite('/admin/api/suppressions/reinstate', {email: email, reason: reason}, null, () => { supLoad(); }, 'Reinstated ' + email + ' — mail to it resumes');
 }
 
+// Which channels an alert really went out on (#14) — alert_log.channels,
+// "sms,email,push" as they went (push = queued to the phones; each delivery
+// is in the push log) or "none". Blank on a row from before it was recorded,
+// or from a path that doesn't record it (a sign-in alert, the morning batch):
+// a dash, never a guess. Used by Push & alerts and the client page.
+const CHAN_LABEL = {sms:'text', email:'email', push:'push'};
+function chanCell(ch){
+  if(ch == null || ch === '') return '<span class="dim" title="Not recorded for this alert">—</span>';
+  if(ch === 'none') return '<span class="chip warn" title="Raised, but it went out on no channel: every channel was off or had nobody to reach">none</span>';
+  return String(ch).split(',').filter(Boolean).map(c => `<span class="chip"${c === 'push' ? ' title="Queued to the phones — each delivery is in the push log"' : ''}>${esc(CHAN_LABEL[c] || c)}</span>`).join('');
+}
+// Issue texts (#91): the text that tells an issue's assignee. Tried up to four
+// times (5, 15 and 45 minutes apart); on a permanent error or the fourth
+// failure it is given up on and the owner gets a push and an email about the
+// issue instead. A given-up text is red with its reason; a read that failed
+// is unknown, never "none given up". `fleet` adds each row's client. Used by
+// Push & alerts (notifications.issue_texts) and the client page's Texts
+// (client_detail.issue_texts).
+function issueTextsHtml(it, err, fleet){
+  const hd = right => `<div class="ch" style="padding-bottom:12px;flex-wrap:wrap"><div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;min-width:0"><h2>Issue texts</h2><span class="muted" style="font-size:12.5px">to an issue's assignee · tried up to 4 times, then the owner is told by push and email</span></div><span style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">${right}</span></div>`;
+  if(err) return hd(unknownV(err)) + `<div class="cb"><span class="muted" style="font-size:13px">Couldn't read what happened to the issue texts — unknown, not none.</span></div>`;
+  if(!it) return hd('') + `<div class="cb"><span class="muted" style="font-size:13px">Not recorded on this database yet.</span></div>`;
+  const rows = it.recent || [];
+  const told = '<span title="When a text is given up on, the owner gets a push and an email about the issue instead">' + pill('neu', 'owner told instead', false) + '</span>';
+  const row = r => `<div class="li"><span class="ico bad">${ico('alert')}</span><div class="tt"><b>${esc(r.title || ('Issue #' + r.id))}</b><span>${fleet && r.restaurant_id ? clientLink(r.restaurant_id, r.restaurant || ('#' + r.restaurant_id)) + ' · ' : ''}to ${esc(r.assignee_name || 'the assigned manager')} · <span class="n">${fmtN(r.notify_attempts || 0)}</span> ${r.notify_attempts === 1 ? 'try' : 'tries'} · given up ${fmtDT(r.notify_failed_at)}${r.status === 'resolved' ? ' · the issue is resolved now' : ''}</span><span style="color:var(--red-t)">${esc(r.notify_error || 'No reason was recorded')}</span></div>${told}</div>`;
+  const pills = pill(it.failed_7d ? 'bad' : 'good', fmtN(it.failed_7d) + ' given up · 7 days')
+    + pill(it.retrying ? 'warn' : 'neu', fmtN(it.retrying) + ' retrying now', !!it.retrying)
+    + (it.not_texted_open ? `<span title="Open issues filed without a text, by choice">${pill('neu', fmtN(it.not_texted_open) + ' open, not texted', false)}</span>` : '');
+  if(!rows.length) return hd(pills) + `<div class="cb"><span class="muted" style="font-size:13px">No issue text has been given up on${it.retrying ? ' — ' + fmtN(it.retrying) + ' waiting to try again' : ''}.</span></div>`;
+  return hd(pills) + `<div class="lst" style="border-top:1px solid var(--line)">${rows.slice(0, 5).map(row).join('')}</div>`
+    + (rows.length > 5 ? `<details class="more-d"><summary>${fmtN(rows.length - 5)} more given up · newest ${fmtN(rows.length)}</summary><div class="lst">${rows.slice(5).map(row).join('')}</div></details>` : '');
+}
+
 // Push & alerts: delivery, devices, storm caps — the manual ones and the
 // automatic ones that expire at the client's midnight (#92) — and whether
-// anyone opens them: opens ÷ pushes DELIVERED of that type (#160).
+// anyone opens them: opens ÷ pushes DELIVERED of that type (#160); the texts
+// that tell an issue's assignee (#91); each alert's channels (#14).
 function opsPush(d, mh){
   const err = readErr(d);
   if(err){ V().innerHTML = `<div class="err">Couldn't load notifications — ${esc(err)}. Refresh to try again.</div>`; return; }
@@ -2516,6 +2551,7 @@ function opsPush(d, mh){
   // (auto_caps_supported false) messaging health lists alert_storm_caps.
   const auto = d.auto_caps_supported ? (d.auto_caps || []) : (mhE ? null : (mh.storm_caps || []));
   const pE = readErr(d, ['push_deliveries']), dE = readErr(d, ['device_tokens']), aE = readErr(d, ['alert_log']), poE = readErr(d, ['marketing_scheduled_posts']);
+  const itE = readErr(d, ['ops_issues']);
   const ob = mhE ? null : (mh.push_outbox || null);
   V().innerHTML = `
     ${errBanner(d)}
@@ -2539,11 +2575,12 @@ function opsPush(d, mh){
       <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div class="lbl" title="${esc(d.engagement_basis || 'opens ÷ pushes delivered, per device, last 30 days')}">Opened · 30 days · of delivered pushes</div>${(d.engagement || []).slice(0, 6).map(x => `<div style="display:flex;justify-content:space-between;font-size:12.5px"><span class="ink2">${esc(x.alert_type)}</span><span class="n">${fmtN(x.opened)}/${fmtN(x.delivered)}${x.open_rate !== null ? ' · ' + x.open_rate + '%' : ' · none delivered'}</span></div>`).join('') || '<span class="muted">—</span>'}
         ${(d.ignored || []).length ? `<div class="lbl" style="margin-top:6px;color:var(--amber-t)" title="20+ delivered in 30 days, none opened — a candidate for the morning brief instead of a push">Nobody opens these</div>${d.ignored.map(x => `<div style="display:flex;justify-content:space-between;font-size:12.5px"><span class="ink2">${esc(x.alert_type)}</span><span class="n">${fmtN(x.delivered)} delivered</span></div>`).join('')}` : ''}</div>
     </section>
+    <section class="card" style="overflow:hidden">${issueTextsHtml(d.issue_texts, itE, true)}</section>
     <div class="seg"><button class="${_nf === 'all' ? 'on' : ''}" onclick="_nf='all';opsRender()">All deliveries <b>${d.pushes.length}</b></button><button class="${_nf === 'failed' ? 'on' : ''}" onclick="_nf='failed';opsRender()">Failed <b>${d.pushes.filter(p => !p.ok).length}</b></button></div>
     ${table([{h:'When', key:'created_at', cell:r => `<span class="num">${fmtDT(r.created_at)}</span>`}, {h:'Client', key:'restaurant', cell:r => r.restaurant_id ? clientLink(r.restaurant_id, r.restaurant) : '—'}, {h:'User', key:'username'}, {h:'Type', key:'alert_type'}, {h:'Status', key:'ok', cell:r => r.ok ? '<span class="b ok nodot">delivered</span>' : `<span class="b bad nodot">${esc(r.status || 'failed')}</span>`}, {h:'Attempts', key:'attempts', r:true}, {h:'Error', key:'error', wrap:true, cell:r => r.error ? `<span style="color:var(--red-t)">${esc(r.error)}</span>` : ''}], pushes, {id:'push-t', sort:'created_at', limit:15, empty:'No push deliveries recorded yet.'})}
     <details class="card"><summary>Devices · <span class="n">${fmtN(d.devices_total)}</span></summary><div class="cb">${table([{h:'Client', key:'restaurant', cell:r => r.restaurant_id ? clientLink(r.restaurant_id, r.restaurant) : '—'}, {h:'User', key:'username'}, {h:'Env', key:'environment'}, {h:'Registered', key:'created_at', cell:r => `<span class="num">${fmtD(r.created_at)}</span>`}, {h:'Last success', key:'last_success_at', cell:r => `<span class="num">${ago(r.last_success_at)}</span>`}, {h:'Fails', key:'consecutive_failures', r:true, cell:r => `<span class="num">${r.consecutive_failures || 0}</span>`}, {h:'State', key:'disabled_reason', cell:r => r.disabled_reason ? `<span class="b bad nodot">${esc(r.disabled_reason)}</span>` : '<span class="b ok nodot">live</span>'}], d.devices, {id:'dev-t', limit:20, empty:'No devices registered.'})}</div></details>
     <details class="card"><summary>Scheduled posts · <span class="n">${d.scheduled_posts.length}</span> newest</summary><div class="cb">${table([{h:'Client', key:'restaurant', cell:r => r.restaurant_id ? clientLink(r.restaurant_id, r.restaurant) : '—'}, {h:'Platform', key:'platform'}, {h:'Topic', key:'topic', wrap:true, cell:r => esc(r.topic || r.content_type)}, {h:'Scheduled', key:'scheduled_for', cell:r => `<span class="num">${fmtDT(r.scheduled_for)}</span>`}, {h:'Status', key:'status', cell:r => `<span class="b ${r.status === 'posted' ? 'ok' : r.status === 'failed' ? 'bad' : 'info'} nodot">${esc(r.status)}</span>`}, {h:'Error', key:'error', wrap:true, cell:r => r.error ? `<span style="color:var(--red-t)">${esc(r.error)}</span>` : ''}], d.scheduled_posts, {id:'sp-t', sort:'scheduled_for', limit:20, empty:'Nothing scheduled.'})}</div></details>
-    <details class="card"><summary>Recent alerts · <span class="n">${Math.min(60, d.alerts.length)}</span></summary><div class="cb">${table([{h:'When', key:'fired_at', cell:r => `<span class="num">${fmtDT(r.fired_at)}</span>`}, {h:'Client', key:'restaurant', cell:r => r.restaurant_id ? clientLink(r.restaurant_id, r.restaurant) : '—'}, {h:'Type', key:'alert_type'}, {h:'Review', key:'review_id', cell:r => r.review_id ? '#' + r.review_id : ''}], d.alerts.slice(0, 60), {id:'al-t', sort:'fired_at', limit:20})}</div></details>`;
+    <details class="card"><summary>Recent alerts · <span class="n">${Math.min(60, d.alerts.length)}</span></summary><div class="cb">${table([{h:'When', key:'fired_at', cell:r => `<span class="num">${fmtDT(r.fired_at)}</span>`}, {h:'Client', key:'restaurant', cell:r => r.restaurant_id ? clientLink(r.restaurant_id, r.restaurant) : '—'}, {h:'Type', key:'alert_type'}, {h:'Went out on', key:'channels', cell:r => chanCell(r.channels)}, {h:'Review', key:'review_id', cell:r => r.review_id ? '#' + r.review_id : ''}], d.alerts.slice(0, 60), {id:'al-t', sort:'fired_at', limit:20})}</div></details>`;
 }
 
 // AI: every call in ai_usage — the vendors (Claude, Perplexity, Google
