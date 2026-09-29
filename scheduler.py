@@ -2463,16 +2463,12 @@ def run_onboarding_nudges(local_hour: int = None):
     """One nudge per missing setup step (#41). At most one email per
     restaurant per day; each step's nudge at most once (onboarding_emails
     key "nudge_<step>"), marked only when Resend accepted it (#16). Returns
-    {"attempted", "ok", "failed", "skipped"}."""
+    the standard counts; raises when the restaurants cannot be read (#39)."""
     from models import get_all_restaurants, get_onboarding_sent, mark_onboarding_sent, owner_got_onboarding_step
     from emails import send_onboarding_nudge
     from time_utils import restaurant_now as _rnow
-    out = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0}
-    try:
-        restaurants = get_all_restaurants()
-    except Exception as e:
-        log.error(f"run_onboarding_nudges: could not load restaurants: {e}")
-        return out
+    out = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
+    restaurants = get_all_restaurants()
     for r in restaurants:
         ok, _why = onboarding_eligible(r)
         if not ok or getattr(r, "marketing_emails_opt_out", 0):
@@ -3720,11 +3716,12 @@ def run_rec_ledger_pass():
 def _minute_duties():
     """The per-tick work that owes the owner minutes, not hours: scheduled
     posts, delayed actions whose undo window closed, issue escalations and
-    held notifications, and alerts held through a rush. Each is idempotent
-    and claims its own rows, so running it an extra time is harmless.
+    held notifications, alerts held through a rush, newsletter and campaign
+    batches, and the push and webhook outboxes. Each is idempotent and
+    claims its own rows, so running it an extra time is harmless.
 
     Runs as the `minute_duties` job (ops.run_job) — it wrote no job run at
-    all (#31) — and returns the standard counts over its six duties."""
+    all (#31) — and returns the standard counts over its eight duties."""
     c = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
 
     def _duty(fn, job):
@@ -3781,6 +3778,23 @@ def _minute_duties():
     gc = _duty(_campaigns, job="guest_campaign_sends")
     if gc and (gc.get("sent") or gc.get("failed")):
         log.info(f"Guest campaign sends: {gc}")
+
+    # The push and webhook outboxes (#75): rows a restart or a full pool
+    # left queued or half-delivered go back to the pool; rows too old to
+    # matter expire, recorded as not sent.
+    def _push_outbox():
+        import push as _push
+        return _push.reap_push_outbox()
+    po = _duty(_push_outbox, job="push_outbox_reaper")
+    if po and (po.get("submitted") or po.get("expired")):
+        log.info(f"Push outbox: {po}")
+
+    def _webhook_outbox():
+        import webhooks as _webhooks
+        return _webhooks.reap_webhook_outbox()
+    wo = _duty(_webhook_outbox, job="webhook_outbox_reaper")
+    if wo and (wo.get("submitted") or wo.get("expired")):
+        log.info(f"Webhook outbox: {wo}")
     return c
 
 
@@ -4280,6 +4294,14 @@ def scheduler_loop():
                 from strategy_jobs import run_loss_sync
                 _ops.run_job("loss_sync", run_loss_sync)
 
+            # 3:30am — refresh the Stripe subscription mirror and record
+            # where Stripe and the local billing state disagree
+            # (billing_jobs.reconcile_stripe: bounded, resumable, reads
+            # Stripe only — it never changes a billing status).
+            if (now.hour, now.minute) >= (3, 30) and _ops.claim_period("stripe_reconcile", str(today)):
+                from billing_jobs import reconcile_stripe
+                _ops.run_job("stripe_reconcile", reconcile_stripe)
+
             if _due(now, 5) and _ops.claim_period("inventory_depletion", str(today)):
                 log.info("Running nightly ingredient depletion sync...")
                 _ops.run_job("inventory_depletion", run_daily_depletion_sync)
@@ -4325,6 +4347,16 @@ def scheduler_loop():
             if _due(now, 6) and _ops.claim_period("outcome_rechecks", str(today)):
                 from strategy_jobs import run_outcome_rechecks
                 _ops.run_job("outcome_rechecks", run_outcome_rechecks)
+
+            # 6am+, after the outcome evaluations — each restaurant's four
+            # value figures into value_figures_daily, which the admin
+            # Intelligence page sums (intelligence.dashboard, #57). On the
+            # Intel lane: a bounded sweep of up to 45 minutes must not hold
+            # the morning briefs; a busy lane gives the claim back.
+            if _due(now, 6) and _ops.claim_period("value_figures", str(today)):
+                from intelligence.dashboard import snapshot_value_figures
+                if not _ops.run_in_lane("intel", "value_figures", snapshot_value_figures):
+                    _ops.release_period("value_figures", str(today))
 
             # Hourly: each restaurant is told about a result or a milestone
             # at ITS OWN 9am (strategy_jobs.WIN_HOUR, local_due inside),
@@ -4425,6 +4457,26 @@ def scheduler_loop():
                          f"(now {now.hour}:{now.minute:02d})...")
                 _ops.run_job("review_fetch", run_daily_fetch)
 
+            # Hourly — one authenticated, non-sending call per provider; a
+            # provider that starts failing pages Will once (provider_health,
+            # #29). Pages only where scheduling is allowed.
+            if _ops.claim_period("provider_probes", f"{today}-{now.hour}"):
+                import provider_health as _provider_health
+                _ops.run_job("provider_probes", _provider_health.run_probes)
+
+            # Hourly — dunning's safety net: owe the email for a failed
+            # invoice attempt the webhook could not, stand down dunning for
+            # invoices since paid, then send (billing_jobs.run_dunning, #25).
+            if _ops.claim_period("dunning", f"{today}-{now.hour}"):
+                from billing_jobs import run_dunning
+                _ops.run_job("dunning", run_dunning)
+
+            # 10am daily — the pay link again on days 2, 5 and 9 after
+            # signing to a client who has not paid (#26; trials never expire).
+            if _due(now, 10) and _ops.claim_period("contract_chase", str(today)):
+                from billing_jobs import run_contract_chase
+                _ops.run_job("contract_chase", run_contract_chase)
+
             # 8am daily — operator failure digest (only sends if something
             # failed, stuck, is overdue or the backup is unhealthy). A digest
             # that did not go out gives the day back, up to three more tries
@@ -4471,6 +4523,11 @@ def scheduler_loop():
                 # 10am daily — onboarding email sequence
                 log.info("Running onboarding sequence check...")
                 _ops.run_job("onboarding_emails", run_onboarding_sequence, local_hour=10, claim="onboarding")
+
+            # Hourly, each restaurant at ITS 11am (local_due inside) — one
+            # nudge per missing setup step, each step once (#41).
+            if _ops.claim_period("onboarding_nudges", f"{today}-{now.hour}"):
+                _ops.run_job("onboarding_nudges", run_onboarding_nudges, local_hour=11)
 
             if _due(now, 11) and now.weekday() == 0 and _ops.claim_period("inactive_clients", str(today)):
                 # Monday 11am — inactive client check
@@ -4583,6 +4640,24 @@ def scheduler_loop():
             # when a job's pulse ran them within the last interval.
             if _ops.duties_due():
                 _ops.run_duties()
+
+            # Every tick — the billing mail a signing or a Stripe event owes
+            # (receipts, dunning, the set-password welcome, pay reminders):
+            # each owed_sends row is claimed before its send and retried with
+            # backoff (billing_jobs, #12). Stripe-originated mail is sent only
+            # from here.
+            from billing_jobs import run_owed_sends
+            _ops.run_job("owed_sends", run_owed_sends)
+
+            # 11:50pm CT — the day's business metrics (business_metrics_daily,
+            # never pruned) and each account's churn-risk state (#18, #83).
+            # Idempotent. A night the loop missed, or a failed run's retry,
+            # is taken before 6am for the day it belongs to.
+            _metrics_day = today if (now.hour, now.minute) >= (23, 50) else (
+                today - timedelta(days=1) if now.hour < 6 else None)
+            if _metrics_day is not None and _ops.claim_period("business_metrics", str(_metrics_day)):
+                from admin_ops import snapshot_business_metrics
+                _ops.run_job("business_metrics", snapshot_business_metrics, day=str(_metrics_day))
 
             # Every tick — morning briefs go at each restaurant's own local
             # hour and claim themselves per restaurant per day. A job run of

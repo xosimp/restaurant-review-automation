@@ -180,7 +180,8 @@ def _fixture_logins_skip_the_password_policy(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_real_email_or_sms(monkeypatch):
-    """The suite must never reach Resend, Twilio, Stripe or DocuSign.
+    """The suite must never reach Resend, Twilio, Stripe, DocuSign, Anthropic,
+    Google Places or Perplexity.
 
     It did: the full run sent ~75 real 2FA and notification emails to the
     tests' fake addresses through the production Resend key and exhausted
@@ -194,7 +195,12 @@ def _no_real_email_or_sms(monkeypatch):
     monkeypatch.setenv("TWILIO_AUTH_TOKEN", "")
     monkeypatch.setenv("STRIPE_SECRET_KEY", "")
     monkeypatch.setattr(emails, "_resend_key", lambda: "")
-    blocked = ("api.resend.com", "api.twilio.com", "api.stripe.com", "docusign.net", "docusign.com")
+    # Anthropic, Places and Perplexity too: the hourly provider probes
+    # (provider_health.run_probes, a registered job the registry test runs)
+    # call them whenever a key is in the environment — and scheduler.py
+    # loads the checkout's .env at import.
+    blocked = ("api.resend.com", "api.twilio.com", "api.stripe.com", "docusign.net", "docusign.com",
+               "api.anthropic.com", "maps.googleapis.com", "places.googleapis.com", "api.perplexity.ai")
     real_post, real_request = requests.post, requests.request
 
     def guard(fn):

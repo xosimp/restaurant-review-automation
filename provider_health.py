@@ -362,7 +362,7 @@ def latest(db_path=None) -> dict:
 def run_probes(db_path=None, alert=True) -> dict:
     """Probe every provider, record the answers, and page Will on a provider
     that has just started failing. {attempted, ok, failed, skipped,
-    results}. `failed` counts failing and unreachable providers, so a night
+    hit_bound, results}. `failed` counts failing and unreachable providers, so a night
     of them shows on the job's run like any other partial pass."""
     from models import get_conn, DB_PATH
     skip = _skipped()
@@ -392,6 +392,7 @@ def run_probes(db_path=None, alert=True) -> dict:
             "ok": sum(1 for r in counted if r["state"] == "ok"),
             "failed": sum(1 for r in counted if r["state"] in ("failing", "error")),
             "skipped": len(results) - len(counted) + len(skip & set(PROVIDERS)),
+            "hit_bound": False,
             "results": {k: v["state"] for k, v in results.items()}}
 
 
