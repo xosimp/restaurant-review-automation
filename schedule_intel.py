@@ -1076,7 +1076,45 @@ def init_schedule_intel(db_path: str = DB_PATH):
         if "duplicate column" not in str(e).lower():
             raise
     conn.commit()
-    conn.close()
+    try:
+        _normalise_tenure_dates(conn)
+    finally:
+        conn.close()
+
+
+_ISO_GLOB = "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]"
+
+
+def _normalise_tenure_dates(conn) -> int:
+    """Every first_seen / last_seen as ISO, once, at boot (memory audit
+    9/29/26, tenure_date). A legacy "09/01/2026" sorts before every ISO date,
+    so it won first_seen=MIN(...) forever and passed dna's "180 days of
+    history" string comparison. Only malformed rows are read, so on a clean
+    table this is one indexed-free scan of a small table. A date that cannot
+    be read at all falls back to the other column (or updated_at's date):
+    first_seen is NOT NULL and a guess from the same row beats a sort-order
+    accident. Returns the rows rewritten."""
+    from labor import _iso_date
+    rows = conn.execute(
+        f"SELECT restaurant_id, employee_name, first_seen, last_seen, updated_at FROM staff_first_seen "
+        f"WHERE first_seen NOT GLOB '{_ISO_GLOB}' OR length(first_seen) != 10 "
+        f"OR (last_seen IS NOT NULL AND (last_seen NOT GLOB '{_ISO_GLOB}' OR length(last_seen) != 10))").fetchall()
+    fixed = 0
+    for r in rows:
+        first = _iso_date(r["first_seen"])
+        last = _iso_date(r["last_seen"]) if r["last_seen"] else None
+        fallback = last or _iso_date(str(r["updated_at"] or "")[:10])
+        first = first or fallback
+        if not first:
+            continue
+        if last and last < first:
+            first, last = last, first
+        conn.execute("UPDATE staff_first_seen SET first_seen=?, last_seen=? WHERE restaurant_id=? AND employee_name=?",
+                     (first, last, r["restaurant_id"], r["employee_name"]))
+        fixed += 1
+    if fixed:
+        conn.commit()
+    return fixed
 
 
 def remember_tenure(restaurant_id, shifts: list, db_path=DB_PATH) -> None:
@@ -1086,10 +1124,13 @@ def remember_tenure(restaurant_id, shifts: list, db_path=DB_PATH) -> None:
     older upload re-sent never makes a current employee look departed."""
     if not shifts:
         return
+    from labor import _iso_date
     first, last, count = {}, {}, {}
     for s in shifts:
         n = (s.get("employee") or "").strip()
-        d = (s.get("date") or "")[:10]
+        # ISO or nothing (tenure_date): a "09/01/2026" that reached this
+        # table was MIN'd as text and won against every real date forever.
+        d = _iso_date(s.get("date")) or ""
         if not n or len(d) != 10:
             continue
         count[n] = count.get(n, 0) + 1
