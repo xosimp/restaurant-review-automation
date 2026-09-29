@@ -130,7 +130,7 @@ A laptop holds production's Resend, Twilio, Stripe and DocuSign keys and a copy 
 
 - `/admin/freeze/<restaurant_id>` (`security.freeze_restaurant`; step-up): every session and trusted device of the restaurant's logins — including members homed elsewhere and sessions switched into it — is revoked, and each must reset its password before signing in. Logged for the owner (`account_frozen`) and in `admin_events`.
 - `/admin/send-reset-link/<user_id>` (step-up) emails a one-hour reset link, and answers 502 with a sentence when the email did not go; nobody sets a password by hand.
-- Per login (Customers → the client → Access): deactivate (ends its sessions and trusted devices; step-up), sign one session or all sessions out, reset its 2FA (a restaurant-scope reset turns 2FA off for everyone at that restaurant), clear a lockout — each step-up and audited. Reactivate revives nothing and emails the login only if it is an account holder whose billing allows access.
+- Per login (Customers → the client → Access & activity → Logins): deactivate (ends its sessions and trusted devices; step-up), sign one session or all sessions out, reset its 2FA (a restaurant-scope reset turns 2FA off for everyone at that restaurant), clear a lockout — each step-up and audited. Reactivate revives nothing and emails the login only if it is an account holder whose billing allows access.
 
 ## Break-glass
 
