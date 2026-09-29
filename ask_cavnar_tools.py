@@ -1355,9 +1355,17 @@ def _read_open_issues(restaurant_id, _viewer=None):
 
 
 def _read_goals(restaurant_id, _viewer=None):
+    """The active goals with where each stands, and the goals waiting for
+    the owner to confirm (a teammate's, or the sales audit's — memory audit
+    9/29/26, owner_goals): a proposed goal judges nothing until confirmed."""
     import goals
     return {"goals": [{**g, "summary": goals.summarise(g)} for g in goals.progress(restaurant_id)
-                      if metric_visible(_viewer, g.get("metric"))]}
+                      if metric_visible(_viewer, g.get("metric"))],
+            "waiting_for_the_owner": [{"metric": g.get("metric"), "summary": g.get("summary"),
+                                       "source": g.get("source")}
+                                      for g in goals.proposed(restaurant_id) if metric_visible(_viewer, g.get("metric"))],
+            "note": ("An active goal is the target the modules judge its figure against. A goal waiting for the "
+                     "owner judges nothing until they confirm it in Goals.")}
 
 
 def _read_outcomes(restaurant_id, _viewer=None):

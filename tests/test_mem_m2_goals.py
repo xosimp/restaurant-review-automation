@@ -212,3 +212,11 @@ def test_the_schedules_week_revenue_is_the_owners_dsr_budget_when_most_nights_ar
     out = econ.projected_weekly_revenue(rid, db_path=db_path, week_dates=week)
     assert out["value"] == 4 * 5000 + 2 * 9000
     assert out["source"].startswith("your budget (6 of 7 nights budgeted")
+
+
+def test_the_food_drivers_judge_dishes_against_the_owners_goal():
+    import food_cost_intelligence
+    rid = _rid(food=30.0)
+    assert food_cost_intelligence._food_cost_target(rid) == 30.0
+    goals.set_goal(rid, "food_cost_pct", 28, deadline=_deadline(), user_id=1, authority="principal")
+    assert food_cost_intelligence._food_cost_target(rid) == 28.0

@@ -331,11 +331,15 @@ def build(restaurant_id, restaurant=None, db_path=DB_PATH, denied=frozenset()):
                 memory.append({"module": "outcomes", "kind": "tracker",
                                "text": f"Still measuring “{o['title']}”."})
         try:
-            from models import get_ask_memory
-            for m in (get_ask_memory(restaurant_id, db_path=db_path) or [])[:2]:
-                if (m.get("kind") or "") in ("followup", "goal"):
-                    memory.append({"module": "ask", "kind": m["kind"],
-                                   "text": f"Remembering: {m['fact']}"})
+            # The newest follow-ups and aims THIS login may read (owner_memory
+            # scopes by audience: a note private to the account holders, or a
+            # teammate's own reminder, is not someone else's feed line —
+            # memory audit 9/29/26, owner_lanes).
+            import owner_memory
+            for m in owner_memory.facts_for(restaurant_id, viewer=restaurant, kinds=["followup", "goal"],
+                                            db_path=None if db_path == DB_PATH else db_path)[:2]:
+                memory.append({"module": "ask", "kind": m.get("kind") or "followup",
+                               "text": f"Remembering: {m['fact']}"})
         except Exception:
             pass
 

@@ -310,3 +310,17 @@ def test_a_teammate_cannot_forget_the_owners_fact_through_account(client, db_pat
     r = client.post("/mobile/api/account/memory/forget", headers=h, json={"fact": "Never cut the host"})
     assert r.status_code == 403
     assert models.get_ask_memory(rid)
+
+
+def test_the_activity_feed_shows_only_the_followups_this_login_may_read():
+    import activity
+    rid = _rid()
+    soon = (date.today() + timedelta(days=2)).isoformat()
+    owner_memory.remember(rid, "Call the landlord about the patio lease", kind="followup", due_on=soon,
+                          audience="principals", user=_owner(rid))
+    owner_memory.remember(rid, "Check Friday's comps", kind="followup", due_on=soon, audience="team",
+                          user=_owner(rid))
+    view = tools.viewer_restaurant(get_restaurant(rid), _manager(rid))
+    texts = [m["text"] for m in activity.build(rid, restaurant=view)["memory"]]
+    assert "Remembering: Check Friday's comps" in texts
+    assert not any("landlord" in t for t in texts)
