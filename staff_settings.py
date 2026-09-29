@@ -264,7 +264,43 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
         conn.close()
     if active is not None:
         _sync_portal_access(restaurant_id, name, _flag(active), db_path)
+    _log_roster_changes(restaurant_id, name, current, new, given, db_path=db_path)
     return _row(row)
+
+
+# How each staff_settings field is named in the change history.
+_ROSTER_FIELDS = {"employment_type": "employment type", "min_hours": "minimum hours", "max_hours": "maximum hours",
+                  "daypart_availability": "availability", "is_minor": "minor", "time_windows": "time windows",
+                  "certifications": "certifications", "preferred_dayparts": "preferred dayparts",
+                  "desired_hours": "desired hours", "experienced": "experienced", "minor_age_band": "minor age band"}
+
+
+def _log_roster_changes(restaurant_id, name, current, new, given, db_path=DB_PATH):
+    """Every field this save changed, into the change history with
+    subject= the person (memory audit 9/29/26, change_log — M7's owed
+    roster caller): taking someone off the roster is "left" (roster_leave),
+    putting them back "added" (roster_add), anything else a roster change.
+    Whose change it is comes from the request or an attributed() block
+    (change_log.actor_context). Never raises."""
+    try:
+        import change_log
+        db = None if db_path == DB_PATH else db_path
+        for field, v in given.items():
+            if v is None:
+                continue
+            before, after = current.get(field), new.get(field)
+            if field == "active":
+                was, now = bool(before), bool(after)
+                if was != now:
+                    change_log.record(restaurant_id, "roster", "left" if was else "added", was, now, subject=name,
+                                      db_path=db)
+                continue
+            if field in ("is_minor", "experienced"):
+                before, after = bool(before), bool(after)
+            change_log.record(restaurant_id, "roster", _ROSTER_FIELDS.get(field, field), before, after, subject=name,
+                              db_path=db)
+    except Exception as e:
+        print(f"[staff_settings] change history not recorded rid={restaurant_id}: {e!r}")
 
 
 def _sync_portal_access(restaurant_id, name, active, db_path=DB_PATH):
@@ -334,12 +370,22 @@ def roster(restaurant_id, db_path=DB_PATH, include_inactive=False) -> list:
     except Exception:
         pass
     settings = {name_key(n): st for n, st in get_all(restaurant_id, db_path=db_path).items()}
+    # A promotion the owner recorded (people.add_role, primary) is the
+    # person's role from its date — before, a role came only from the shifts
+    # someone had already worked (memory audit 9/29/26, uncaptured).
+    try:
+        import people as _people
+        primary = {r["key"]: r["role"] for r in _people.held_roles(restaurant_id) if r["primary"]}
+    except Exception:
+        primary = {}
     out = []
     for k, e in seen.items():
         st = settings.get(k) or {}
         active = st.get("active", True)
         if not active and not include_inactive:
             continue
+        if primary.get(k):
+            e = {**e, "role": primary[k]}
         out.append({**e, "active": bool(active), "settings": st})
     out.sort(key=lambda e: (not e["active"], e["name"].lower()))
     return out
@@ -361,6 +407,14 @@ def roles_for(restaurant_id, name, db_path=DB_PATH) -> set:
         for m in get_manual_team_members(restaurant_id, db_path=db_path):
             if (m.get("name") or "").strip().lower() == low and (m.get("role") or "").strip():
                 out.add(m["role"].strip().lower())
+    except Exception:
+        pass
+    # Roles they were trained for or promoted into (people.person_roles):
+    # a server trained on bar is a bartender candidate before her first
+    # bar shift (memory audit 9/29/26, uncaptured).
+    try:
+        import people as _people
+        out |= {r["role"].strip().lower() for r in _people.held_roles(restaurant_id, name) if r["role"].strip()}
     except Exception:
         pass
     return out
@@ -442,9 +496,87 @@ def delete_pair(restaurant_id, pair_id, db_path=DB_PATH) -> bool:
 
 # ── reliability, from the shift history ────────────────────────────────────
 
-def reliability(restaurant_id, db_path=DB_PATH, min_shifts=6) -> dict:
+# Attendance is weighted by recency (memory audit 9/29/26, staff_notes): a
+# shift this many days old counts half as much as one today, so three
+# no-shows last winter stop marking someone unreliable after six clean
+# months. Past RELIABILITY_WINDOW_DAYS a shift weighs under a sixteenth and
+# is left out.
+RELIABILITY_HALF_LIFE_DAYS = 90
+RELIABILITY_WINDOW_DAYS = 360
+
+
+def recency_weight(day, today, half_life=RELIABILITY_HALF_LIFE_DAYS) -> float:
+    """0.5 ** (age / half_life) for an ISO date; 0.0 when it cannot be read
+    or is older than RELIABILITY_WINDOW_DAYS. A future date weighs 1, and so
+    does a row with no date at all (the stored history always has one; a
+    caller's hand-built row without one keeps the unweighted count)."""
+    from datetime import date as _date
+    if day in (None, ""):
+        return 1.0
+    try:
+        d = _date.fromisoformat(str(day)[:10])
+    except (TypeError, ValueError):
+        return 0.0
+    age = max(0, (today - d).days)
+    if age > RELIABILITY_WINDOW_DAYS:
+        return 0.0
+    return 0.5 ** (age / float(half_life))
+
+
+def weighted_attendance(events, today=None, min_shifts=6) -> dict:
+    """{name: {...}} from [(name, iso_date, outcome)] where outcome is
+    "worked", "no_show", "short" (and, from attendance_events, "late",
+    "called_out", "left_early", "covered") — the reliability every reader
+    shares. `shifts` / `no_shows` are the raw counts inside the window (what
+    is said: "missed 2 of 9"); `no_show_rate` is the recency-weighted rate
+    smoothed toward the restaurant's own weighted base rate (smoothed_rate);
+    a missed shift is a no-show or a call-out."""
+    from datetime import date as _date
+    from shift_quality import UNRELIABLE_RATE
+    today = today or _date.today()
+    tally = {}
+    for name, day, outcome in events or ():
+        n = " ".join(str(name or "").split())
+        w = recency_weight(day, today)
+        if not n or w <= 0:
+            continue
+        t = tally.setdefault(n, {"shifts": 0, "no_show": 0, "short": 0, "late": 0, "w": 0.0, "w_miss": 0.0,
+                                 "last_miss": None, "first": None, "last": None})
+        miss = outcome in ("no_show", "called_out")
+        t["shifts"] += 1
+        t["w"] += w
+        if miss:
+            t["no_show"] += 1
+            t["w_miss"] += w
+            t["last_miss"] = max(t["last_miss"] or "", str(day)[:10])
+        elif outcome in ("short", "left_early"):
+            t["short"] += 1
+        elif outcome == "late":
+            t["late"] += 1
+        t["first"] = min(t["first"] or str(day)[:10], str(day)[:10])
+        t["last"] = max(t["last"] or "", str(day)[:10])
+    weights = sum(t["w"] for t in tally.values())
+    base = (sum(t["w_miss"] for t in tally.values()) / weights) if weights else 0.0
+    out = {}
+    for n, t in tally.items():
+        if t["shifts"] < min_shifts:
+            continue
+        rate = smoothed_rate(t["w_miss"], t["w"], base)
+        out[n] = {"shifts": t["shifts"], "no_shows": t["no_show"], "late": t["late"],
+                  "no_show_rate": rate,
+                  "raw_no_show_rate": round(t["no_show"] / t["shifts"], 2),
+                  "base_rate": round(base, 3), "no_show_threshold": UNRELIABLE_RATE,
+                  "unreliable": rate >= UNRELIABLE_RATE,
+                  "short_rate": round(t["short"] / t["shifts"], 2),
+                  "last_miss": t["last_miss"], "since": t["first"], "through": t["last"],
+                  "half_life_days": RELIABILITY_HALF_LIFE_DAYS}
+    return out
+
+
+def reliability(restaurant_id, db_path=DB_PATH, min_shifts=6, today=None) -> dict:
     """{employee_name: {"no_show_rate": 0.0-1.0, "short_rate": ..., "shifts": n}}
-    for everyone with enough clocked shifts to say anything.
+    for everyone with enough watched shifts to say anything — weighted by
+    recency (weighted_attendance).
 
     A scheduled shift with actual_hours of zero is a no-show; one worked
     at least an hour and a half short of schedule is a short shift. Only
@@ -452,26 +584,17 @@ def reliability(restaurant_id, db_path=DB_PATH, min_shifts=6) -> dict:
     says nothing about attendance (the same rule labor.py's no-show block
     applies).
     """
-    from models import _cached_shifts
-    from labor import _has_actual_hours
-    tally = {}
-    for s in _cached_shifts(restaurant_id):
-        n = (s.get("employee") or "").strip()
-        if not n or not _has_actual_hours(s):
-            continue
-        try:
-            sched = float(s.get("scheduled_hours") or s.get("hours") or 0)
-            actual = float(s.get("actual_hours") or 0)
-        except (TypeError, ValueError):
-            continue
-        if sched <= 0:
-            continue
-        t = tally.setdefault(n, {"shifts": 0, "no_show": 0, "short": 0})
-        t["shifts"] += 1
-        if actual == 0:
-            t["no_show"] += 1
-        elif sched - actual >= 1.5:
-            t["short"] += 1
+    # Every shift somebody WATCHED (attendance.reliability_events — memory
+    # audit 9/29/26): the outcomes the live check, the close-out and the
+    # nightly published-week-vs-punches join recorded, and the shifts from a
+    # source with a real schedule. A POS row whose "scheduled" hours were its
+    # actual hours copied (RPOWER, Square, Clover, Toast without a schedule)
+    # can never show a no-show, and reading it made everyone "reliable".
+    import attendance
+    today = today or _today(restaurant_id)
+    from datetime import timedelta as _td_rel
+    events = attendance.reliability_events(restaurant_id, since=(today - _td_rel(days=RELIABILITY_WINDOW_DAYS)).isoformat(),
+                                           db_path=None if db_path == DB_PATH else db_path)
     # `no_show_rate` is SMOOTHED toward this restaurant's own base rate
     # (a Beta prior worth NO_SHOW_PRIOR_SHIFTS shifts; fix I9, CA1 L14): two
     # misses in six shifts read as a flat 33%, and the engine then treated
@@ -480,17 +603,17 @@ def reliability(restaurant_id, db_path=DB_PATH, min_shifts=6) -> dict:
     # (shift_quality.UNRELIABLE_RATE), so a client colours a row red exactly
     # when the scheduler treats that person as unreliable — the web used 10%
     # against the engine's 20%.
-    from shift_quality import UNRELIABLE_RATE
-    base = no_show_base_rate(tally)
-    return {n: {"shifts": t["shifts"],
-                "no_shows": t["no_show"],
-                "no_show_rate": smoothed_rate(t["no_show"], t["shifts"], base),
-                "raw_no_show_rate": round(t["no_show"] / t["shifts"], 2),
-                "base_rate": round(base, 3),
-                "no_show_threshold": UNRELIABLE_RATE,
-                "unreliable": smoothed_rate(t["no_show"], t["shifts"], base) >= UNRELIABLE_RATE,
-                "short_rate": round(t["short"] / t["shifts"], 2)}
-            for n, t in tally.items() if t["shifts"] >= min_shifts}
+    return weighted_attendance(events, today=today, min_shifts=min_shifts)
+
+
+def _today(restaurant_id):
+    """The restaurant's own local date (Chicago when it can't be read)."""
+    try:
+        from time_utils import restaurant_now_by_id
+        return restaurant_now_by_id(restaurant_id, naive=True).date()
+    except Exception:
+        from datetime import date as _date
+        return _date.today()
 
 
 # Pseudo-shifts of the restaurant's own base rate every person's no-show

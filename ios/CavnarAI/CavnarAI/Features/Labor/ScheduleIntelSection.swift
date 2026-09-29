@@ -64,7 +64,11 @@ struct ScheduleIntelSection: View {
                     if let behaviour = intel.behaviour, !behaviour.isEmpty { behaviourBlock(behaviour) }
                     if let could = intel.couldHold, !could.isEmpty { trainedUpBlock(could) }
                     if let pairs = intel.suggestedPairs, !pairs.isEmpty { pairsBlock(pairs) }
-                    if let hidden = intel.suppressedRecommendationKinds, !hidden.isEmpty { hiddenKindsLine(hidden) }
+                    if let quiet = intel.recommendationSuppression?.items, !quiet.isEmpty {
+                        quietKindsBlock(quiet)
+                    } else if let hidden = intel.suppressedRecommendationKinds, !hidden.isEmpty {
+                        hiddenKindsLine(hidden)
+                    }
                     Text("Measured from published weeks and the shift ledger — not written by the model.")
                         .font(.cavnarBody(12.5))
                         .foregroundStyle(Color.cavnarInk3)
@@ -612,6 +616,21 @@ struct ScheduleIntelSection: View {
                 } onIgnore: {
                     viewModel.ignoreSuggestion(pair)
                 }
+            }
+        }
+    }
+
+    /// Each quiet kind with why and when it is re-tested — "Trim day —
+    /// quiet since 9/1/26: … Re-tested on 10/1/26." (memory round).
+    private func quietKindsBlock(_ quiet: [SuppressionState]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HomeMixedText.make("\(quiet.count) recommendation \(quiet.count == 1 ? "kind is" : "kinds are") quiet \u{2014} "
+                               + "you set them aside. Each is tried again on its date; Show again on the schedule "
+                               + "review brings one back now.", size: 12.5, color: .cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(quiet) { q in
+                HomeMixedText.make("\u{00B7} " + q.line, size: 12.5, weight: 500, color: .cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

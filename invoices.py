@@ -215,6 +215,53 @@ def match_ingredient(description, ingredients):
     return hits[0][1]
 
 
+# ── the owner's own matches (memory audit 9/29/26, food_corrections) ──────────
+#
+# match_ingredient works from ingredient names alone, so an owner who picks
+# "Chicken Breast" for "CHKN BRST BNLS" on every weekly invoice picked it
+# every week: the choice was stored in applied_json and never read. Now each
+# line the owner applies writes an alias for its supplier and description,
+# and propose reads the aliases first.
+
+def alias_key(text) -> str:
+    """A supplier name or a line description, normalised for matching:
+    lowercase letters and digits, single spaces."""
+    return " ".join(re.findall(r"[a-z0-9]+", str(text or "").lower()))[:200]
+
+
+def _aliases(conn, restaurant_id, supplier):
+    try:
+        return {r["description_key"]: r["ingredient_id"] for r in conn.execute(
+            "SELECT description_key, ingredient_id FROM invoice_aliases WHERE restaurant_id=? AND supplier_key=?",
+            (restaurant_id, alias_key(supplier))).fetchall()}
+    except Exception as e:           # a database from before the table
+        log.warning("invoice aliases unreadable for %s: %s", restaurant_id, e)
+        return {}
+
+
+def remember_matches(conn, restaurant_id, supplier, lines, applied, user_id=None) -> int:
+    """Write (or strengthen) an alias for each line the OWNER applied: its
+    description on this supplier's invoice → the ingredient they chose. On
+    the caller's connection and transaction. Returns how many."""
+    by_index = {ln.get("index"): ln for ln in (lines or []) if isinstance(ln, dict)}
+    n = 0
+    for a in applied or []:
+        if a.get("by") != "owner":
+            continue
+        ln = by_index.get(a.get("index"))
+        desc = alias_key((ln or {}).get("description"))
+        if not desc or not a.get("ingredient_id"):
+            continue
+        conn.execute(
+            "INSERT INTO invoice_aliases (restaurant_id, supplier_key, description_key, ingredient_id, created_by) "
+            "VALUES (?,?,?,?,?) ON CONFLICT(restaurant_id, supplier_key, description_key) DO UPDATE SET "
+            "times_used=CASE WHEN ingredient_id=excluded.ingredient_id THEN times_used + 1 ELSE 1 END, "
+            "ingredient_id=excluded.ingredient_id, last_used_at=datetime('now')",
+            (restaurant_id, alias_key(supplier), desc, int(a["ingredient_id"]), user_id))
+        n += 1
+    return n
+
+
 def _adds_up(line):
     q, p, t = line.get("quantity"), line.get("unit_price"), line.get("line_total")
     if q is None or p is None or t is None:
@@ -231,8 +278,11 @@ def propose(restaurant_id, extracted, db_path=DB_PATH):
         ingredients = [dict(r) for r in conn.execute(
             "SELECT id, name, unit, unit_cost, case_size FROM ingredients "
             "WHERE restaurant_id=? AND is_active=1", (restaurant_id,)).fetchall()]
+        # The owner's own matches for this supplier come first (food_corrections).
+        aliases = _aliases(conn, restaurant_id, extracted.get("supplier"))
     finally:
         conn.close()
+    by_id = {x["id"]: x for x in ingredients}
 
     lines = []
     for i, raw in enumerate(extracted.get("lines") or []):
@@ -241,9 +291,14 @@ def propose(restaurant_id, extracted, db_path=DB_PATH):
                 "unit_price": raw.get("unit_price"), "line_total": raw.get("line_total"),
                 "ingredient_id": None, "ingredient_name": None, "current_cost": None,
                 "proposed_cost": None, "change_pct": None, "selected": False, "note": None,
-                "verified": False}
+                "verified": False, "matched_by": None}
         ok = _adds_up(raw)
-        ing = match_ingredient(line["description"], ingredients)
+        ing = by_id.get(aliases.get(alias_key(line["description"])))
+        if ing:
+            line["matched_by"] = "your_match"       # the ingredient the owner picked for this line before
+        else:
+            ing = match_ingredient(line["description"], ingredients)
+            line["matched_by"] = "name" if ing else None
         if ing:
             line.update(ingredient_id=ing["id"], ingredient_name=ing["name"],
                         current_cost=ing["unit_cost"])
@@ -445,7 +500,7 @@ def pending_imports(restaurant_id, db_path=DB_PATH):
 
 # ── 3. apply ──────────────────────────────────────────────────────────────────
 
-def apply(restaurant_id, import_id, selections, user_id=None, db_path=DB_PATH, auto=False):
+def apply(restaurant_id, import_id, selections, user_id=None, db_path=DB_PATH, auto=False, authority=None):
     """Write the confirmed costs. selections: [{"index", "ingredient_id",
     "unit_cost"}] — the owner's choices, which may differ from the proposal
     (a different ingredient, a corrected cost). Returns {"ok", "updated"}.
@@ -461,8 +516,8 @@ def apply(restaurant_id, import_id, selections, user_id=None, db_path=DB_PATH, a
     """
     conn = get_conn(db_path)
     try:
-        row = conn.execute("SELECT applied_at, applied_json FROM invoice_imports WHERE id=? AND restaurant_id=?",
-                           (import_id, restaurant_id)).fetchone()
+        row = conn.execute("SELECT applied_at, applied_json, supplier, lines_json FROM invoice_imports "
+                           "WHERE id=? AND restaurant_id=?", (import_id, restaurant_id)).fetchone()
         if not row:
             return {"ok": False, "error": "Invoice not found."}
         prior_json = row["applied_json"]
@@ -514,6 +569,16 @@ def apply(restaurant_id, import_id, selections, user_id=None, db_path=DB_PATH, a
         if cur.rowcount != 1:
             conn.rollback()
             return {"ok": False, "error": "This invoice has already been applied."}
+        # What the owner chose for each line is remembered for this supplier
+        # (food_corrections) — in the same transaction as the writes. An
+        # admin's apply (support, view-as: `authority` 'admin') teaches
+        # nothing, as its answers never train the owner's.
+        if authority != "admin":
+            try:
+                lines = (json.loads(row["lines_json"] or "{}") or {}).get("lines") or []
+                remember_matches(conn, restaurant_id, row["supplier"], lines, applied, user_id=user_id)
+            except Exception as e:
+                log.warning("invoice matches not remembered for %s: %s", restaurant_id, e)
         conn.commit()
     finally:
         conn.close()

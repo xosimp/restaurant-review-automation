@@ -687,7 +687,10 @@ def test_cs19_sql_segments_match_the_python_filter_everywhere(db_path):
     now = time_utils.restaurant_now_by_id(rid, naive=True)
     rnd = random.Random(94)
     stamps = [None, "", "garbage", (now - timedelta(days=30)).isoformat(),
-              (now - timedelta(days=30, seconds=-2)).isoformat(),
+              # just inside the 30-day line, by a margin wider than the test's own
+              # run time: at 2 seconds a loaded run crossed the line between the
+              # SQL count and the Python filter, and nine contacts changed side
+              (now - timedelta(days=30, minutes=-10)).isoformat(),
               (now - timedelta(days=60, hours=1)).strftime("%Y-%m-%d %H:%M:%S"),
               (now - timedelta(days=45)).strftime("%Y-%m-%d"),
               (now - timedelta(days=3, minutes=1)).isoformat(), (now - timedelta(days=2)).isoformat()]

@@ -498,6 +498,12 @@ struct DailyReportView: View {
                                     HomeMixedText.make(why, size: 13.5, color: .cavnarInk3)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
+                                // What another module knows against it (a
+                                // trim on a night guests complained about
+                                // service — M3's trim guard).
+                                if let caution = action.caution {
+                                    RecCautionLine(text: caution)
+                                }
                                 let chips = [action.urgencyLabel, action.effortLabel].compactMap { $0 }
                                 if !chips.isEmpty {
                                     AccountFlowLayout(spacing: 6) {
@@ -531,6 +537,15 @@ struct DailyReportView: View {
                                 // (rec-ROI #9). An answered action keeps its
                                 // line — the report is a record — and drops
                                 // the controls.
+                                // Advice it pulls against, settled once
+                                // (memory round 9/29/26, lever_conflicts).
+                                // The report is a stored record, so the
+                                // choice shapes the next one; this one
+                                // keeps its line and shows the server's
+                                // sentence in place of the buttons.
+                                if let conflict = action.conflict, action.answered != true {
+                                    RecConflictPanel(conflict: conflict)
+                                }
                                 if action.showsAnswers, let key = action.answerKey {
                                     RecAnswerRow(key: key, surface: "dsr", module: action.answerModule)
                                         .padding(.top, 2)
@@ -662,7 +677,12 @@ struct DSRBlockBody: View {
                 ]) {
                     HomeMixedText.make(line, size: 13.5, color: .cavnarInk3)
                 }
-                if let budget = joined([
+                // The night's target is the owner's nightly-sales goal when
+                // no budget was entered — said as their goal (M5).
+                if let goal = block.budgetGoalLabel {
+                    HomeMixedText.make(goal, size: 13.5, color: .cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if let budget = joined([
                     block.has("budget_net") ? "\(DSRFormat.money(m("budget_net"))) net" : nil,
                     block.has("budget_gross") ? "\(DSRFormat.money(m("budget_gross"))) gross" : nil,
                 ]) {
@@ -690,6 +710,15 @@ struct DSRBlockBody: View {
                         if i < comparisons.count - 1 { AccountRowDivider() }
                     }
                 }
+            }
+            // What the forecast rested on, each measured effect named — or
+            // why there is no forecast comparison tonight (M5).
+            if let basis = block.forecastBasis {
+                HomeMixedText.make("Forecast: " + basis, size: 12.5, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if let reason = block.forecastMissingReason {
+                HomeMixedText.make("No forecast comparison: " + reason, size: 12.5, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             let cats = block.categories
@@ -1005,6 +1034,14 @@ struct DSRBlockBody: View {
                 DSRStatTile(label: "Rain", value: DSRFormat.pct(m("weather_precip_pct"))),
                 DSRStatTile(label: "Covers booked", value: DSRFormat.count(m("reservations_covers"))),
             ])
+            // The weather that happened, beside the forecast above (the
+            // nearest National Weather Service station — M5).
+            if let observed = block.weatherObservedSummary {
+                DSRTileRow(tiles: [
+                    DSRStatTile(label: "Weather (actual)", value: observed, detail: block.weatherObservedBasis,
+                                valueIsText: true),
+                ])
+            }
             if let events = block.eventsSummary {
                 HomeMixedText.make("Events: \(events)", size: 14, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)

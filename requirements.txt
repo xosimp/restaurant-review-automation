@@ -9,6 +9,11 @@
 # To change a version: edit requirements.in, then, under Python 3.12,
 #   pip install pip-tools && pip-compile --output-file=requirements.txt requirements.in
 # and review the diff (put this header back).
+#
+# 9/29/26 security bumps (pip-audit): cryptography 48.0.0 -> 50.0.1, pypdf 5.9.0 ->
+# 6.19.0, pillow 12.2.0 -> 12.3.0 — resolved with only those three upgraded
+# (every other pin held); the app uses Fernet, PdfReader page text and
+# Image/ImageOps, all unchanged across these versions.
 annotated-types==0.8.0
     # via pydantic
 anthropic==0.125.0
@@ -25,7 +30,7 @@ charset-normalizer==3.5.1
     # via reportlab, requests
 click==8.5.0
     # via flask
-cryptography==48.0.0
+cryptography==50.0.1
     # via -r requirements.in
 distro==1.9.0
     # via anthropic
@@ -59,7 +64,7 @@ markupsafe==3.0.3
     # via flask, jinja2, sentry-sdk, werkzeug
 packaging==26.3
     # via gunicorn
-pillow==12.2.0
+pillow==12.3.0
     # via -r requirements.in, qrcode, reportlab
 pycparser==3.0
     # via cffi
@@ -69,7 +74,7 @@ pydantic-core==2.46.5
     # via pydantic
 pyjwt==2.15.1
     # via -r requirements.in
-pypdf==5.9.0
+pypdf==6.19.0
     # via -r requirements.in
 python-dotenv==1.2.2
     # via -r requirements.in

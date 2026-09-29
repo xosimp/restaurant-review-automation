@@ -650,6 +650,17 @@ class Restaurant:
     profile_confirmed_at: Optional[str] = None
     # Test and internal accounts: never part of any cross-restaurant figure.
     exclude_from_learning: int = 0
+    # Learning eligibility (memory audit 9/29/26, "eligibility"):
+    # learning_since — rows recorded before it teach no learner, own or
+    # cross-restaurant (stamped when a demo becomes a real account);
+    # learning_override — the admin's word over the automatic test/internal
+    # rule: 'include' | 'exclude' | NULL (automatic). models.learning_eligible.
+    learning_since: Optional[str] = None
+    learning_override: Optional[str] = None
+    # Who set each target stamped 'set' — {<target field>: "principal" |
+    # "delegate" | "admin"}: "your target" is said only for a principal's
+    # (thresholds.target_label; memory audit 9/29/26, "change_log").
+    target_setters_json: Optional[str] = None
     # Where a target came from: set (the owner) | seeded (the published
     # median for a confirmed type) | default (Cavnar's starting target).
     labor_target_source: Optional[str] = None
@@ -853,6 +864,9 @@ def ensure_columns(db_path: str = DB_PATH):
         ("schedule_history", "quality_confidence", "TEXT"),
         ("schedule_history", "what_if_json", "TEXT"),
         ("schedule_history", "republished_at", "TEXT"),
+        # When a superseded draft's detail was thinned to its headline
+        # (ops._thin_drafts; memory audit 9/29/26, "draft_thinning").
+        ("schedule_history", "detail_thinned_at", "TEXT"),
         # email_log.status existed from the start but nothing could write it:
         # log_email() had no status parameter, so a failed send was recorded
         # as 'sent' like every other row.
@@ -932,6 +946,17 @@ def ensure_columns(db_path: str = DB_PATH):
         ("ingredients", "external_ref", "TEXT"),
         ("menu_items", "external_ref", "TEXT"),
         ("labor_daily_history", "total_hours", "REAL"),
+        # The costing basis each day was last costed on (the rates, the
+        # salaried set, where the labor came from), and the labor period
+        # store's own shape: calendar payroll weeks derived from the daily
+        # history, replaced in place, never a rolling window appended on
+        # every sync (memory audit 9/29/26, labor_periods).
+        ("labor_daily_history", "basis", "TEXT"),
+        ("labor_history", "basis", "TEXT"),
+        ("labor_history", "days", "INTEGER"),
+        ("labor_history", "kind", "TEXT"),
+        ("labor_history", "updated_at", "TEXT"),
+        ("labor_history", "recosted_from", "REAL"),
         ("users", "role", "TEXT DEFAULT 'client'"),
         ("users", "google_id", "TEXT"),
         ("users", "apple_user_id", "TEXT"),
@@ -979,6 +1004,10 @@ def ensure_columns(db_path: str = DB_PATH):
         # cached figures (UTC). waste_last_week is only as current as this;
         # "waste this week" is read from dated events (DH1-1).
         ("ingredients", "rollup_at", "TEXT"),
+        # When par_level last CHANGED, by any path (a hand edit, a suggestion
+        # accepted, a sync): 86s before it were measured against another par
+        # (ordering.par_suggestions).
+        ("ingredients", "par_changed_at", "TEXT"),
         # When is_demo was turned off (admin). The seeded history stays in
         # place — never hard-deleted — and the restaurant is kept out of
         # cross-restaurant learning until every feature window has rolled
@@ -1007,6 +1036,10 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "profile_source", "TEXT"),
         ("restaurants", "profile_confirmed_at", "TEXT"),
         ("restaurants", "exclude_from_learning", "INTEGER DEFAULT 0"),
+        # Memory audit 9/29/26: learning eligibility and who set a target.
+        ("restaurants", "learning_since", "TEXT"),
+        ("restaurants", "learning_override", "TEXT"),
+        ("restaurants", "target_setters_json", "TEXT"),
         # gmb.get_valid_token's invalid_grant stamp (fix round C, #44).
         ("restaurants", "gmb_revoked_at", "TEXT"),
         ("restaurants", "labor_target_source", "TEXT"),
@@ -1097,6 +1130,41 @@ def ensure_columns(db_path: str = DB_PATH):
         # When a drafted reply was skipped: a skip is the owner declining the
         # draft, so it counts against auto-approve trust (audit #15).
         ("reviews", "skipped_at", "TEXT"),
+        # Who approved a reply (memory audit 9/29/26, reply_voice), set by
+        # claim_approval in the statement that approves it: the login
+        # (view-as: the admin behind it), its answer_authority (principal |
+        # delegate | admin, 'rule' for the auto-approve rule) and how
+        # (normal | view_as | rule). NULL on replies approved before the
+        # capture existed. The style examples, the OWNER'S EDITS note and
+        # auto-approve trust read only the owner's voice from them.
+        ("reviews", "approved_by", "INTEGER"),
+        ("reviews", "approved_role", "TEXT"),
+        ("reviews", "approved_via", "TEXT"),
+        # How the draft's edit was made (INT #16, memory audit 9/29/26
+        # view_as): 'view_as' once an admin or support login acting through
+        # view-as changed the draft since the model wrote it — the owner who
+        # later approves it approved support's words, not their own edit —
+        # else 'normal'; NULL until a person edits. Reset with each fresh
+        # model draft. reply_voice_sql leaves a 'view_as' edit out of the
+        # style examples, the OWNER'S EDITS note and auto-approve trust.
+        ("reviews", "draft_edited_via", "TEXT"),
+        # The model's first text on a saved marketing draft, kept when the
+        # owner edits it (memory audit 9/29/26, mkt_edits): an edit used to
+        # overwrite `body` and the original was gone.
+        ("marketing_drafts", "original_body", "TEXT"),
+        # The review a review request produced, matched by the guest's name
+        # (review_signals.match_review_requests; memory audit 9/29/26,
+        # uncaptured): requests were counted and never matched to a review.
+        ("review_requests", "review_id", "INTEGER"),
+        ("review_requests", "matched_at", "TEXT"),
+        # Whose choice a reprice or a supplier order was (permissions.
+        # answer_authority; memory audit 9/29/26, "view_as"): an admin's work
+        # through view-as is support at work, never the owner's habit, so
+        # the reprice ratio (menu_intelligence.reprice_acceptance) and the
+        # order corrections (ordering.order_corrections) leave it out.
+        # NULL on rows from before = a person at the restaurant.
+        ("reprice_decisions", "authority", "TEXT"),
+        ("purchase_orders", "authority", "TEXT"),
         # Recipe provenance (audit #35): 'owner' (typed or imported by a
         # person), 'draft_accepted' (a Cavnar draft accepted unedited) or
         # 'draft_edited' (a draft line the owner changed before accepting).
@@ -1129,6 +1197,12 @@ def ensure_columns(db_path: str = DB_PATH):
         # outcomes later and never feeds anything on its own (H1, K6).
         ("review_diagnoses", "model_confidence", "TEXT"),
         ("food_cost_diagnoses", "model_confidence", "TEXT"),
+        # A food diagnosis whose lead driver is no longer ranked (or no
+        # driver clears the floor) is retired, not deleted: stamped and kept
+        # as history, and no surface serves it as the current cause
+        # (memory audit 9/29/26, "stale_diagnoses").
+        ("food_cost_diagnoses", "retired_at", "TEXT"),
+        ("food_cost_diagnoses", "retired_reason", "TEXT"),
         # 'owner' | 'job' | 'marker' — so "pieces this month" counts content
         # a person made or published, not calendar markers and job drafts.
         ("marketing_content_log", "origin", "TEXT"),
@@ -1300,6 +1374,46 @@ def _apply_migration(conn, sql, also_tolerate=()):
         if any(s in msg for s in _MIGRATION_ALREADY_APPLIED + tuple(also_tolerate)):
             return False
         raise
+
+
+# The tracker columns the learning sync reads (intelligence.feedback.sync):
+# a change to any of them re-stamps the row's changed_at, and only stamped
+# rows are re-read (memory audit 9/29/26, PLATFORM-18). A write that touches
+# none of them — the daily value accrual's accrued_through, the dollars —
+# is not a change the learning cares about.
+TRACKER_LEARNING_COLUMNS = ("status", "verdict", "source_key", "metric", "started_on", "evaluate_on",
+                            "after_start", "after_end", "recheck_verdict", "owner_checkin",
+                            "baseline_overlaps_trigger", "concurrent", "delta", "delta_pct", "baseline_value",
+                            "noise_sigma", "baseline_kind")
+
+
+def ensure_tracker_change_stamps(db_path: str = DB_PATH):
+    """recommendation_outcomes.changed_at and the two triggers that keep it:
+    set on insert, and on an update that changes a TRACKER_LEARNING_COLUMNS
+    value. Boot only (models.init_db, after outcomes.init_outcomes has added
+    its columns). The update trigger is re-created each boot from the
+    columns that exist, so a column added later is watched too. Millisecond
+    stamps; the sync's cursor is (changed_at, id)."""
+    conn = sqlite3.connect(db_path)
+    try:
+        have = {r[1] for r in conn.execute("PRAGMA table_info(recommendation_outcomes)").fetchall()}
+        if not have:
+            return
+        if "changed_at" not in have:
+            _apply_migration(conn, "ALTER TABLE recommendation_outcomes ADD COLUMN changed_at TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_outcomes_changed ON recommendation_outcomes(changed_at, id)")
+        stamp = "strftime('%Y-%m-%d %H:%M:%f','now')"
+        conn.execute("DROP TRIGGER IF EXISTS trg_outcomes_changed_ins")
+        conn.execute(f"CREATE TRIGGER trg_outcomes_changed_ins AFTER INSERT ON recommendation_outcomes "
+                     f"BEGIN UPDATE recommendation_outcomes SET changed_at={stamp} WHERE id=NEW.id; END")
+        watched = [c for c in TRACKER_LEARNING_COLUMNS if c in have]
+        when = " OR ".join(f"NEW.{c} IS NOT OLD.{c}" for c in watched)
+        conn.execute("DROP TRIGGER IF EXISTS trg_outcomes_changed_upd")
+        conn.execute(f"CREATE TRIGGER trg_outcomes_changed_upd AFTER UPDATE ON recommendation_outcomes "
+                     f"WHEN {when} BEGIN UPDATE recommendation_outcomes SET changed_at={stamp} WHERE id=NEW.id; END")
+        conn.commit()
+    finally:
+        conn.close()
 
 def _reviews_unique_is_global(conn) -> bool:
     """True while `reviews` still carries the old UNIQUE(platform, external_id)."""
@@ -2119,6 +2233,109 @@ def init_db(db_path: str = DB_PATH):
         )""",
         "CREATE INDEX IF NOT EXISTS idx_mkt_drafts_restaurant ON marketing_drafts(restaurant_id, updated_at)",
 
+        # ── Memory audit 9/29/26, workstream M6 ────────────────────────────
+        # A reply draft the owner turned down by asking for another (a
+        # regenerate, or Ask rewriting it) — kept as its hash and its
+        # closed-vocabulary signals (reply_edits.draft_signals), NEVER its
+        # text, for 90 days (ops._RETENTION_DAYS), so the drafter's edit
+        # note can say what the drafts this owner regenerated had in common
+        # (rejected_drafts). Only the count used to survive.
+        """CREATE TABLE IF NOT EXISTS reply_draft_rejections (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id  INTEGER NOT NULL,
+            review_id      INTEGER,
+            rating         INTEGER,
+            draft_hash     TEXT    NOT NULL,
+            words          INTEGER,
+            signals        TEXT,
+            how            TEXT    NOT NULL DEFAULT 'regenerate',
+            user_id        INTEGER,
+            authority      TEXT,
+            created_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_reply_rejections_rid ON reply_draft_rejections(restaurant_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_reply_rejections_created ON reply_draft_rejections(created_at)",
+        # Every piece of marketing copy a model drafted for a person — the
+        # post composer, the Campaign Studio's text and email (marketing_
+        # voice.record_draft) — kept 90 days (ops._RETENTION_DAYS): long
+        # enough to match what went out to what was drafted, and to see
+        # which drafts were regenerated rather than used (mkt_edits).
+        """CREATE TABLE IF NOT EXISTS marketing_model_drafts (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL,
+            channel         TEXT    NOT NULL,
+            source          TEXT,
+            body            TEXT    NOT NULL,
+            content_log_id  INTEGER,
+            user_id         INTEGER,
+            used_at         TEXT,
+            created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_model_drafts_rid ON marketing_model_drafts(restaurant_id, channel, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_model_drafts_created ON marketing_model_drafts(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_model_drafts_log ON marketing_model_drafts(content_log_id)",
+        # One row per marketing piece that went out — a post published or
+        # approved, a guest text or an email sent — with the model's
+        # original beside the final text, the edit measured and who sent it
+        # (marketing_voice.record_final). The owner's voice record: kept.
+        """CREATE TABLE IF NOT EXISTS marketing_edits (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL,
+            channel         TEXT    NOT NULL,
+            source          TEXT    NOT NULL,
+            ref_id          INTEGER,
+            draft_id        INTEGER,
+            original_body   TEXT,
+            final_body      TEXT    NOT NULL,
+            edit_distance   REAL,
+            edit_category   TEXT,
+            edit_signals    TEXT,
+            words_before    INTEGER,
+            words_after     INTEGER,
+            user_id         INTEGER,
+            authority       TEXT,
+            via             TEXT,
+            created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(restaurant_id, source, ref_id)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_edits_rid ON marketing_edits(restaurant_id, channel, id)",
+        # The owner's own invoice matches, per supplier (food_corrections):
+        # "CHKN BRST BNLS" on Sysco's invoice is Chicken Breast because the
+        # owner picked it — written at invoices.apply, read first by
+        # invoices.propose. One row per supplier + line description; kept
+        # (a correction the owner made, bounded by what their suppliers print).
+        """CREATE TABLE IF NOT EXISTS invoice_aliases (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id    INTEGER NOT NULL,
+            supplier_key     TEXT    NOT NULL DEFAULT '',
+            description_key  TEXT    NOT NULL,
+            ingredient_id    INTEGER NOT NULL,
+            times_used       INTEGER NOT NULL DEFAULT 1,
+            created_by       INTEGER,
+            created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+            last_used_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(restaurant_id, supplier_key, description_key)
+        )""",
+        # An owner's (or a manager's) correction to how a review was tagged —
+        # category, sentiment, severity or dish (review_signals.retag;
+        # uncaptured). The review row takes the correction; this keeps what
+        # it was, what it became and who changed it, and the analyser reads
+        # the recent ones as this restaurant's examples. Kept: a correction
+        # the owner made, one row per changed field.
+        """CREATE TABLE IF NOT EXISTS review_retags (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id  INTEGER NOT NULL,
+            review_id      INTEGER NOT NULL,
+            field          TEXT    NOT NULL,
+            before_json    TEXT,
+            after_json     TEXT,
+            user_id        INTEGER,
+            authority      TEXT,
+            created_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_review_retags_rid ON review_retags(restaurant_id, id)",
+        "CREATE INDEX IF NOT EXISTS idx_review_retags_review ON review_retags(review_id)",
+
         # Nothing this module published was measurable once it left the
         # platform. A short link is the only way to know a text drove a
         # click, and SMS in particular carried no links at all.
@@ -2322,6 +2539,19 @@ def init_db(db_path: str = DB_PATH):
             UNIQUE(restaurant_id, week)
         )""",
         "CREATE INDEX IF NOT EXISTS idx_intel_features_week ON intel_features(week, restaurant_id)",
+        # The definition a feature row was computed under (memory audit
+        # 9/29/26, PLATFORM-5): readers take only rows of the current
+        # features.FEATURES_VERSION, so a week measured under an older
+        # definition never mixes into "your normal", a slope, a band or a
+        # prospective pair; the bounded backfill re-derives it. NULL = a row
+        # from before versioning (its definition is not known); a row
+        # written without one is stamped the current version at insert
+        # (features.init_feature_versions). `backfilled` marks a row
+        # computed for a PAST week from the raw tables
+        # (jobs.run_features_backfill), not by that week's nightly pass.
+        "ALTER TABLE intel_features ADD COLUMN version INTEGER",
+        "ALTER TABLE intel_features ADD COLUMN backfilled INTEGER NOT NULL DEFAULT 0",
+        "CREATE INDEX IF NOT EXISTS idx_intel_features_version ON intel_features(restaurant_id, version, week)",
         # Every recommendation's life: presented, answered, measured.
         """CREATE TABLE IF NOT EXISTS intel_rec_events (
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2437,6 +2667,61 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE intel_rec_events ADD COLUMN tags_json TEXT",
         # jobs.log_confidence reads the last 365 days, not the whole table.
         "CREATE INDEX IF NOT EXISTS idx_intel_rec_events_at ON intel_rec_events(event_at)",
+        # Memory audit 9/29/26 (workstream M8). `partition_key`: the
+        # restaurant's confirmed peer partition for the row's metric family,
+        # beside `cohort` (the concept) — the prior ladder's second rung.
+        # `rec_id`: the episode an answer belongs to (rows are per episode,
+        # "<key>#e<rec_id>"). `review_derived`: the row rests on review data
+        # (a review kind, or a result on a review metric). `google_data`: a
+        # review-derived row of a restaurant whose reviews come through the
+        # owner's Google connection — Google user data, never read by a
+        # pooled reader (intelligence.provenance). `trust_version`: the
+        # meaning of the % confidence_at was read from.
+        # provenance.google_connected_ids asks which restaurants hold a
+        # Business Profile review; a partial index keeps that one read small.
+        "CREATE INDEX IF NOT EXISTS idx_reviews_gbp_name ON reviews(restaurant_id) "
+        "WHERE COALESCE(review_name,'') != ''",
+        "ALTER TABLE intel_rec_events ADD COLUMN partition_key TEXT",
+        "ALTER TABLE intel_rec_events ADD COLUMN rec_id TEXT",
+        "ALTER TABLE intel_rec_events ADD COLUMN review_derived INTEGER",
+        "ALTER TABLE intel_rec_events ADD COLUMN google_data INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE intel_rec_events ADD COLUMN trust_version INTEGER",
+        # The bounded confidence fill reads only recently derived rows.
+        "CREATE INDEX IF NOT EXISTS idx_intel_rec_events_created ON intel_rec_events(created_at)",
+        # The confidence log per trust version (only support-score
+        # snapshots are averaged) and the organisations behind each figure.
+        "ALTER TABLE intel_confidence_log ADD COLUMN trust_version INTEGER",
+        "ALTER TABLE intel_confidence_log ADD COLUMN orgs INTEGER",
+        # What the platform believed, week by week (PLATFORM-14): one row
+        # per pattern per ISO week per status it reached — written once,
+        # never re-figured (the trigger refuses an UPDATE), so "this
+        # association has held for 20 weeks at 0.3★" and a retired
+        # pattern's past can be read. Aggregates only, never an id; kept
+        # forever (one row per group × hypothesis × week).
+        """CREATE TABLE IF NOT EXISTS intel_pattern_history (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            week           TEXT    NOT NULL,
+            key            TEXT    NOT NULL,
+            cohort         TEXT    NOT NULL,
+            hypothesis     TEXT    NOT NULL,
+            status         TEXT    NOT NULL,
+            n_with         INTEGER,
+            n_without      INTEGER,
+            effect         REAL,
+            effect_unit    TEXT,
+            cohen_d        REAL,
+            p_value        REAL,
+            q_value        REAL,
+            prospective    INTEGER NOT NULL DEFAULT 0,
+            recorded_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(week, key, status)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_intel_pattern_history_key ON intel_pattern_history(key, week)",
+        """CREATE TRIGGER IF NOT EXISTS intel_pattern_history_append_only
+        BEFORE UPDATE ON intel_pattern_history
+        BEGIN
+            SELECT RAISE(ABORT, 'intel_pattern_history is append-only');
+        END""",
         # Restaurant DNA, level 1 (intelligence/dna.py, BM4 §5): one row per
         # restaurant-week of its operational profile — {dim: {raw, z, n,
         # basis, norm}} over ratios, rates and bands only, never dollars
@@ -2453,6 +2738,20 @@ def init_db(db_path: str = DB_PATH):
             UNIQUE(restaurant_id, week)
         )""",
         "CREATE INDEX IF NOT EXISTS idx_intel_dna_week ON intel_dna(week, restaurant_id)",
+        # A deleted restaurant's anonymised learning (owner decision, 9/29/26;
+        # memory audit "delete_policy"): its intel_rec_events and
+        # intel_features rows stay, re-keyed to restaurant_id = -id of a row
+        # here, so cohort priors do not forget what a churned restaurant
+        # measured. No name, no ids, no raw rows: the type it was (for its
+        # cohort), whether that type was confirmed, when, and how many rows
+        # were kept. Kept forever. models.delete_restaurant writes it.
+        """CREATE TABLE IF NOT EXISTS learning_tombstones (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            category         TEXT,
+            category_source  TEXT,
+            rows_json        TEXT,
+            tombstoned_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
         # The Benchmark Engine's comparisons, materialised per restaurant by a
         # bounded, resumable nightly pass (BM4-14, Top-50 #46), so a request
         # can be one indexed read (engine.compare(use_cache=True)). The
@@ -2679,6 +2978,35 @@ def init_db(db_path: str = DB_PATH):
         "ON ask_cavnar_conversations(restaurant_id, updated_at)",
         "ALTER TABLE ask_cavnar_messages ADD COLUMN conversation_id INTEGER",
         "CREATE INDEX IF NOT EXISTS idx_ask_cavnar_conversation ON ask_cavnar_messages(conversation_id, id)",
+        # A chat's rolling summary of the turns that scrolled out of the
+        # replayed window — decisions, figures read, proposals, open
+        # questions — validated like any output and replayed as the first
+        # context block (ask_conversations, memory audit 9/29/26
+        # conversations); and the modules the chat has touched.
+        "ALTER TABLE ask_cavnar_conversations ADD COLUMN summary_json TEXT",
+        "ALTER TABLE ask_cavnar_conversations ADD COLUMN summary_through_id INTEGER",
+        "ALTER TABLE ask_cavnar_conversations ADD COLUMN summary_at TEXT",
+        "ALTER TABLE ask_cavnar_conversations ADD COLUMN topics TEXT",
+        "CREATE INDEX IF NOT EXISTS idx_ask_conversations_user ON ask_cavnar_conversations(restaurant_id, user_id, updated_at)",
+        # What each chat was about, written when the chat itself is evicted
+        # by the per-login cap — kept forever: one small row per chat, the
+        # plainest record of what this owner keeps asking (read by the
+        # "questions you often ask" line and read_past_conversations).
+        """CREATE TABLE IF NOT EXISTS ask_topics (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            user_id         INTEGER,
+            conversation_id INTEGER,
+            title           TEXT,
+            summary_json    TEXT,
+            topics          TEXT,
+            tools           TEXT,
+            message_count   INTEGER,
+            started_at      TEXT,
+            ended_at        TEXT,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_ask_topics_user ON ask_topics(restaurant_id, user_id, created_at)",
         # "Was this useful?" on an Ask answer (ROI audit #48): one row per
         # answer and login, changed in place if they change their mind. The
         # message can be trimmed from the transcript later; the rating is
@@ -2696,6 +3024,27 @@ def init_db(db_path: str = DB_PATH):
             UNIQUE(restaurant_id, message_id, user_id)
         )""",
         "CREATE INDEX IF NOT EXISTS idx_ask_feedback_restaurant ON ask_feedback(restaurant_id, created_at)",
+        # What each rating was ABOUT (memory audit 9/29/26, ask_feedback): a
+        # count of "helpful" taught nothing specific. Copied from the rated
+        # answer's own meta (ask_cavnar_messages.meta_json) when it is rated:
+        # the depth contract, the tools and modules it read, the Response
+        # Validation verdict, its confidence and a topic.
+        "ALTER TABLE ask_feedback ADD COLUMN depth TEXT",
+        "ALTER TABLE ask_feedback ADD COLUMN tools TEXT",
+        "ALTER TABLE ask_feedback ADD COLUMN modules TEXT",
+        "ALTER TABLE ask_feedback ADD COLUMN verdict TEXT",
+        "ALTER TABLE ask_feedback ADD COLUMN topic TEXT",
+        "ALTER TABLE ask_feedback ADD COLUMN confidence_pct INTEGER",
+        # Whose rating it is (permissions.answer_authority): an admin's — a
+        # view-as session is the owner's login — is kept for the record and
+        # never read as the owner's preference or record.
+        "ALTER TABLE ask_feedback ADD COLUMN authority TEXT",
+        # Each assistant turn keeps the tool calls it made (names and
+        # arguments) and its meta, so a follow-up can re-read the same data
+        # and a rating knows what it rated (memory audit 9/29/26,
+        # conversations / ask_feedback). User turns leave both empty.
+        "ALTER TABLE ask_cavnar_messages ADD COLUMN tools_json TEXT",
+        "ALTER TABLE ask_cavnar_messages ADD COLUMN meta_json TEXT",
         """CREATE TABLE IF NOT EXISTS ask_cavnar_actions (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
             restaurant_id INTEGER NOT NULL REFERENCES restaurants(id),
@@ -2929,6 +3278,15 @@ def init_db(db_path: str = DB_PATH):
             achieved_at     TEXT
         )""",
         "CREATE INDEX IF NOT EXISTS idx_goals_restaurant ON owner_goals(restaurant_id, status)",
+        # Who set a goal and with what authority, and who confirmed it (memory
+        # audit 9/29/26, owner_goals): a goal is the target every module
+        # judges its figure against (owner_memory.target_for), so a
+        # teammate's (or an admin's) goal is 'proposed' until an account
+        # holder confirms it — it no longer silently replaces the owner's.
+        "ALTER TABLE owner_goals ADD COLUMN authority TEXT",
+        "ALTER TABLE owner_goals ADD COLUMN source TEXT",
+        "ALTER TABLE owner_goals ADD COLUMN confirmed_by INTEGER",
+        "ALTER TABLE owner_goals ADD COLUMN confirmed_at TEXT",
 
         # Moments worth marking, each fired at most once ever. The UNIQUE
         # index IS the once-only guarantee: milestones.fire() does an INSERT
@@ -3219,6 +3577,10 @@ def init_db(db_path: str = DB_PATH):
         # Set when a closed period's actual still could not be measured
         # forecast_log.UNSCORABLE_AFTER_DAYS later: never retried (B6 #11).
         "ALTER TABLE forecast_log ADD COLUMN unscorable_at TEXT",
+        # The measured event a scored period's miss is explained by (memory
+        # audit 9/29/26, "forecasts": event_memory.night_facts), so the bias
+        # correction does not learn an event week as the forecast's lean.
+        "ALTER TABLE forecast_log ADD COLUMN explained_by TEXT",
     ]
     try:
         for m in migrations:
@@ -3264,19 +3626,58 @@ def init_db(db_path: str = DB_PATH):
     # One identity and event trail for every recommendation (rec_ledger).
     from rec_ledger import init_rec_ledger
     init_rec_ledger(db_path)
+    # The monthly what-worked snapshots (rec_learning, memory audit 9/29/26).
+    from rec_learning import init_rec_learning
+    init_rec_learning(db_path)
+    # The trigger margins fitted to each restaurant's own noise
+    # (restaurant_thresholds, memory audit 9/29/26).
+    from restaurant_thresholds import init_restaurant_thresholds
+    init_restaurant_thresholds(db_path)
+    # The monthly learning scorecard (learning_scorecard, memory audit 9/29/26).
+    from learning_scorecard import init_learning_scorecard
+    init_learning_scorecard(db_path)
+    # When each automation earned trust and when it lapsed (memory audit
+    # 9/29/26, trust_ledger).
+    from automation_trust import init_automation_trust
+    init_automation_trust(db_path)
     # The rec-ROI columns on trackers written before them (module from the
     # recommendation's own rec_instances row, so after the ledger exists).
     from outcomes import init_outcomes
     init_outcomes(db_path)
+    # A change stamp on every tracker, so the nightly learning sync re-reads
+    # only the trackers that changed (memory audit PLATFORM-18) — after
+    # init_outcomes, so every column the stamp watches exists.
+    ensure_tracker_change_stamps(db_path)
+    # A feature row written without a definition version is stamped the
+    # current one (memory audit PLATFORM-5).
+    from intelligence.features import init_feature_versions
+    init_feature_versions(db_path)
     # The nightly Daily Sales Report: reports, searchable metrics, budgets,
     # the POS-department → DSR-category map (dsr/).
     from dsr import init_dsr
     init_dsr(db_path)
+    # What each night teaches and the restaurant's public history
+    # (event_memory: event_outcomes, event_effects, weather_daily,
+    # own_rating_history, market_events, competitor_rating_monthly) — memory
+    # audit 9/29/26.
+    from event_memory import init_event_memory
+    init_event_memory(db_path)
     # One stored AI read per restaurant and data fingerprint, shared by web
     # and iOS (insight_store), and the reprice decisions record
     # (menu_intelligence) — audit #22 / #26 / #41.
     from insight_store import init_insight_store
     init_insight_store(db_path)
+    # Cavnar AI's history of its own reads, their checkable claims and the
+    # quarterly summaries that outlive them (ai_reads, memory audit 9/29/26).
+    from ai_reads import init_ai_reads
+    init_ai_reads(db_path)
+    # The cross-module links, kept (memory audit 9/29/26, "links").
+    from link_memory import init_link_memory
+    init_link_memory(db_path)
+    # Who a setting belongs to: a login's own, the location's, or the whole
+    # organisation's (preferences — memory audit 9/29/26, owner_layers).
+    from preferences import init_preferences
+    init_preferences(db_path)
     from menu_intelligence import init_menu_intelligence
     init_menu_intelligence(db_path)
     # Job claims, runs, failures, async jobs and the scheduler lease — at
@@ -3312,6 +3713,26 @@ def init_db(db_path: str = DB_PATH):
     # attribution columns — at boot, never on a call path (fix round G).
     from ai_utils import init_ai_ops
     init_ai_ops(db_path)
+    # The lasting, attributed change history (change_log, kept forever) and
+    # the one-time carry-over of the target and profile changes activity_log
+    # holds — memory audit 9/29/26. At boot, never on a write path.
+    import change_log as _change_log
+    _change_log.init_change_log(db_path)
+    # What outlives a prune — the monthly alert, engagement and review
+    # summaries, the weekly inventory summary and the monthly ingredient
+    # costs (history_rollups), kept forever.
+    import history_rollups as _history_rollups
+    _history_rollups.init_history_rollups(db_path)
+    # People: one identity per employee, their aliases (POS ids and
+    # spellings), the owner's same-person questions, and a person_id on
+    # every name-keyed store — after every store's own init above (memory
+    # audit 9/29/26, identity).
+    from shift_facts import init_shift_facts
+    init_shift_facts(db_path)
+    from attendance import init_attendance
+    init_attendance(db_path)
+    import people as _people_boot
+    _people_boot.init_people(db_path)
     # Runs after ensure_columns() so organization_id exists to write into.
     backfill_organizations(db_path=db_path)
     # A target seeded from a figure the registry no longer seeds from goes
@@ -3319,6 +3740,26 @@ def init_db(db_path: str = DB_PATH):
     backfill_seeded_targets(db_path=db_path)
     # After init_dsr: its POS evidence is one of the tables it reads.
     backfill_missing_sales_null(db_path=db_path)
+    # The demo seed's labor days written before they carried source 'seed'
+    # (memory audit 9/29/26, "eligibility"), once.
+    stamp_seed_provenance(db_path=db_path)
+    # Labor period history as payroll weeks, the legacy rolling windows
+    # marked unread (memory audit 9/29/26, labor_periods) — after
+    # ensure_columns() has added labor_history.kind, and after the seed's
+    # days carry their provenance.
+    try:
+        backfill_labor_periods(db_path=db_path)
+    except Exception as e:
+        print(f"[labor periods] boot backfill skipped: {e}")
+    # Every restaurant with staff gets its people once — from its shift
+    # history's names and every store — bounded; the nightly people job
+    # reaches whatever this did not (memory audit 9/29/26, identity).
+    try:
+        _people_boot.backfill_people(db_path=db_path, max_seconds=15)
+        import shift_facts as _sf_boot
+        _sf_boot.backfill_from_csv(db_path=db_path, max_seconds=15)
+    except Exception as e:
+        print(f"[people] boot backfill skipped: {e}")
     print(f"Database initialised at {db_path}")
 
 
@@ -3663,6 +4104,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "changelog_seen_at","notifications_seen_at", "category",
         "service_model","concept","bar_led","ownership","opened_year","profile_source","profile_confirmed_at",
         "exclude_from_learning","labor_target_source","food_cost_target_source","hourly_rate_source","google_types","google_price_level",
+        "learning_since","learning_override","target_setters_json",
         "alert_quiet_start","alert_quiet_end","alert_max_per_day",
         "brand_name","brand_color","brand_logo_url",
         "section_count","daypart_split","delivery_pct","role_minimums_json","sched_notes","email_theme",
@@ -3681,6 +4123,12 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
+    # Who is making this change (memory audit 9/29/26, "change_log"):
+    # resolved BEFORE the write transaction opens, from the login the
+    # request's auth decorator resolved (or a change_log.attributed block).
+    import change_log as _chlog
+    _tracked = {k: v for k, v in updates.items() if k in _chlog.RESTAURANT_FIELD_KINDS}
+    _actor = _chlog.actor_context() if (_tracked or any(t in updates for t in TARGET_SOURCE_FIELDS)) else None
     _mark =[(_tf, _sf) for _tf, _sf in TARGET_SOURCE_FIELDS.items()
              if _tf in updates and _sf not in updates and updates[_tf] not in (None, "")]
     if _mark:
@@ -3702,6 +4150,27 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
                     updates[_sf] = "set"
             except (TypeError, ValueError):
                 pass
+    # A target stamped 'set' — by the rule above or by a form that names it
+    # — records WHO set it (target_setters_json: principal | delegate |
+    # admin), so "your target" is said only when an account holder chose it:
+    # Will setting 28% at onboarding read to the owner as "your 28% target"
+    # (thresholds.target_label; memory audit "change_log", PEOPLE-6).
+    _set_now = [t for t, s in TARGET_SOURCE_FIELDS.items() if t in updates and updates.get(s) == "set"]
+    if _set_now and "target_setters_json" not in updates:
+        try:
+            _c1 = get_conn(db_path)
+            try:
+                _row_s = _c1.execute("SELECT target_setters_json FROM restaurants WHERE id=?",
+                                     (restaurant_id,)).fetchone()
+            finally:
+                _c1.close()
+            _setters = json.loads((_row_s["target_setters_json"] if _row_s else None) or "{}") or {}
+        except Exception:
+            _setters = {}
+        _who = (_actor or {}).get("authority") or (_actor or {}).get("source") or "system"
+        for _t in _set_now:
+            _setters[_t] = _who
+        updates["target_setters_json"] = json.dumps(_setters, sort_keys=True)
     _check_numeric_fields(updates)
     # OAuth/POS credentials are encrypted at rest (credentials.py); every
     # reader sees plaintext through get_restaurant.
@@ -3720,6 +4189,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
     _hist = {k: updates[k] for k in BILLING_HISTORY_FIELDS if k in updates}
     _hist_ctx = _billing_history_context(db_path) if _hist else None
     _hist_err = None
+    _chlog_errors = []
     conn = get_conn(db_path)
     try:
         _old_hist = None
@@ -3761,6 +4231,16 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
                 _old_targets = dict(_row_t) if _row_t else None
             except Exception:
                 _old_targets = None
+        # The tracked fields' values as they stand, read inside this
+        # transaction, for the change log written after the UPDATE below.
+        _old_tracked = None
+        if _tracked:
+            try:
+                _row_c = conn.execute(f"SELECT {', '.join(_tracked)} FROM restaurants WHERE id=?",
+                                      (restaurant_id,)).fetchone()
+                _old_tracked = dict(_row_c) if _row_c else None
+            except Exception as _ct_e:
+                _chlog_errors.append(_ct_e)
         if expected_version is None:
             conn.execute(f"UPDATE restaurants SET {set_clause} WHERE id=?",
                          values + [restaurant_id])
@@ -3795,6 +4275,20 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
                                  (restaurant_id, "profile_changed", json.dumps(_changes)))
                 except Exception as _pc_e:
                     print(f"[update_restaurant] profile change not recorded for {restaurant_id}: {_pc_e}")
+        if _old_tracked is not None:
+            # The lasting, attributed record (change_log, kept forever): in
+            # the same transaction as the change, so the two land together.
+            # A target seeded from a published median is 'seeded', a reset
+            # to Cavnar AI's default the system's — not whoever's request
+            # happened to trigger it.
+            _srcs = {}
+            for _tf, _sf in TARGET_SOURCE_FIELDS.items():
+                if updates.get(_sf) == "seeded":
+                    _srcs[_tf] = "seeded"
+                elif updates.get(_sf) == "default":
+                    _srcs[_tf] = "system"
+            _chlog.record_restaurant_changes(conn, restaurant_id, _old_tracked, _tracked, sources=_srcs,
+                                             errors=_chlog_errors)
         if _old_hist is not None:
             # Same transaction as the change itself: a billing move and its
             # history row land together or not at all.
@@ -3817,6 +4311,11 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
             conn.close()
         except Exception:
             pass
+    for _ce in _chlog_errors:
+        # After the commit, as the billing history's: never fails the write
+        # it describes, and never silent.
+        _chlog.report(_ce, restaurant_id, "restaurant", ",".join(_tracked)[:120],
+                      db_path=db_path if db_path != DB_PATH else None)
     if _hist_err is not None:
         # Never fails the billing write it describes, and never silent: after
         # the commit, so the capture's own write is not queued behind ours.
@@ -3840,6 +4339,14 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
     if "location_group" in updates or "owner_email" in updates:
         try:
             _sync_restaurant_organization(restaurant_id, db_path=db_path)
+        except Exception:
+            pass
+        # A location joining a group takes the organisation's defaults on the
+        # settings it has not made its own (preferences, memory audit 9/29/26
+        # owner_layers). A deliberate function-scope L1 -> L2 import.
+        try:
+            import preferences as _prefs
+            _prefs.inherit_org_defaults(restaurant_id, db_path=db_path)
         except Exception:
             pass
 
@@ -3910,6 +4417,83 @@ class InternalLoginHome(ValueError):
 # history. Deleting a demo used to erase its own audit rows (#126).
 _KEEP_ON_RESTAURANT_DELETE = frozenset({"admin_events", "offboarding_steps", "billing_status_history"})
 
+# The anonymised learning a deleted restaurant leaves behind (owner decision,
+# Will, 9/29/26 — memory audit "delete_policy"): the restaurant's own data is
+# always deleted, but its rows in these two cross-restaurant tables — ratios,
+# counts, and whether each recommendation was taken and what it measured —
+# are kept under a TOMBSTONED id (restaurant_id = -learning_tombstones.id),
+# with every recommendation key hashed (a key can name a dish or a person),
+# so cohort priors keep what a churned restaurant measured. Only for a
+# restaurant that could teach (models.learning_exclusion) and only rows from
+# its learning_since on; a demo's or a test account's go with it.
+_TOMBSTONE_TABLES = ("intel_rec_events", "intel_features")
+
+
+def _anonymous_key(key) -> str:
+    """A recommendation key with its subject hashed: "overtime_move:Maria
+    G.:2026-09-01#o12" → "overtime_move:~3f9a…#o12" — the kind stays (the
+    kind is what learning counts by), the per-episode suffix stays (so a
+    measured row is still one episode's), the words go."""
+    import hashlib as _hl
+    k = str(key or "")
+    kind = k.split(":", 1)[0] if ":" in k else "key"
+    tail = k[k.index("#o"):] if "#o" in k else ""
+    return f"{kind}:~{_hl.sha256(k.encode('utf-8')).hexdigest()[:16]}{tail}"
+
+
+def _tombstone_learning(conn, rid, restaurant_row) -> dict:
+    """Re-key the restaurant's anonymised learning rows to a new tombstoned
+    id (see _TOMBSTONE_TABLES), on delete_restaurant's connection inside its
+    transaction (foreign keys off). Rows it recorded before its
+    learning_since are left to be deleted. Returns {table: rows kept}."""
+    import json as _json_tb
+    have = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "learning_tombstones" not in have or not restaurant_row:
+        return {}
+    if learning_exclusion(dict(restaurant_row), internal_homes=_internal_home_ids_on(conn)):
+        return {}
+    since = restaurant_row["learning_since"] if "learning_since" in restaurant_row.keys() else None
+    cat = restaurant_row["category"] if "category" in restaurant_row.keys() else None
+    cat_src = restaurant_row["profile_source"] if "profile_source" in restaurant_row.keys() else None
+    tid = conn.execute("INSERT INTO learning_tombstones (category, category_source) VALUES (?,?)",
+                       (cat, cat_src)).lastrowid
+    kept = {}
+    if "intel_rec_events" in have:
+        rows = conn.execute("SELECT id, source_key FROM intel_rec_events WHERE restaurant_id=?"
+                            + (" AND event_at >= ?" if since else ""), (rid, since) if since else (rid,)).fetchall()
+        for r in rows:
+            conn.execute("UPDATE OR IGNORE intel_rec_events SET restaurant_id=?, source_key=? WHERE id=?",
+                         (-tid, _anonymous_key(r[1]), r[0]))
+        kept["intel_rec_events"] = conn.execute("SELECT COUNT(*) FROM intel_rec_events WHERE restaurant_id=?",
+                                                (-tid,)).fetchone()[0]
+    if "intel_features" in have:
+        floor = ""
+        if since:
+            from datetime import date as _d_tb
+            y, w, _ = _d_tb.fromisoformat(str(since)[:10]).isocalendar()
+            floor = f"{y}-W{w:02d}"
+        conn.execute("UPDATE intel_features SET restaurant_id=? WHERE restaurant_id=? AND week >= ?", (-tid, rid, floor))
+        kept["intel_features"] = conn.execute("SELECT COUNT(*) FROM intel_features WHERE restaurant_id=?",
+                                              (-tid,)).fetchone()[0]
+    if not any(kept.values()):
+        conn.execute("DELETE FROM learning_tombstones WHERE id=?", (tid,))
+        return {}
+    conn.execute("UPDATE learning_tombstones SET rows_json=? WHERE id=?", (_json_tb.dumps(kept, sort_keys=True), tid))
+    return kept
+
+
+def _internal_home_ids_on(conn) -> set:
+    """_internal_home_ids on a connection already open (inside a write
+    transaction — no second connection)."""
+    try:
+        ucols = {r[1] for r in conn.execute("PRAGMA table_info(users)")}
+        who = INTERNAL_LOGIN_SQL if "role" in ucols else "COALESCE(is_admin, 0) = 1"
+        return {int(r[0]) for r in conn.execute(
+            f"SELECT restaurant_id FROM users WHERE restaurant_id IS NOT NULL GROUP BY restaurant_id "
+            f"HAVING MIN(CASE WHEN {who} THEN 1 ELSE 0 END) = 1").fetchall()}
+    except Exception:
+        return set()
+
 
 def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     """Remove a restaurant and every row that belongs to it, in one
@@ -3933,6 +4517,10 @@ def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     What stays: the tables in _KEEP_ON_RESTAURANT_DELETE — the audit trail
     and the offboarding record. The account is gone; the record of what was
     done to it (and that it was deleted, by whom) must not go with it (#126).
+    And, for a restaurant that could teach, its anonymised learning in
+    _TOMBSTONE_TABLES, re-keyed to a tombstoned id with no name and every
+    recommendation key hashed (owner decision, 9/29/26; _tombstone_learning,
+    learning_tombstones) — the restaurant's own data always goes.
 
     Never an admin or support login (integration wave): one homed here that
     cannot be re-homed makes the whole delete refuse (InternalLoginHome,
@@ -3966,6 +4554,8 @@ def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         if internal:
             raise InternalLoginHome(f"restaurant {rid} is home to {internal} admin or support login(s); "
                                     f"move them before deleting it")
+        _row_tb = conn.execute("SELECT * FROM restaurants WHERE id=?", (rid,)).fetchone()
+        _tombstoned = _tombstone_learning(conn, rid, _row_tb)
         for t in tables:
             if t in _KEEP_ON_RESTAURANT_DELETE:
                 continue
@@ -3974,13 +4564,28 @@ def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
                 n = conn.execute(f'DELETE FROM "{t}" WHERE restaurant_id=?', (rid,)).rowcount
                 if n:
                     deleted[t] = n
+        # preferences keys its scope by text, not restaurant_id: a location's
+        # rows are scope_id "<rid>", a login's "<user_id>:<rid>" (preferences.py).
+        if "preferences" in tables:
+            n = conn.execute("DELETE FROM preferences WHERE (scope='location' AND scope_id=?) "
+                             "OR (scope='login' AND scope_id LIKE ?)", (str(rid), f"%:{rid}")).rowcount
+            if n:
+                deleted["preferences"] = n
         n = conn.execute("DELETE FROM restaurants WHERE id=?", (rid,)).rowcount
         if n:
             deleted["restaurants"] = n
+        def _tombstone_row(table, rowid):
+            # The anonymised learning kept under a tombstoned (negative) id
+            # points at no restaurant by design.
+            if table not in _TOMBSTONE_TABLES:
+                return False
+            r = conn.execute(f'SELECT restaurant_id FROM "{table}" WHERE rowid=?', (rowid,)).fetchone()
+            return bool(r) and r[0] is not None and int(r[0]) < 0
+
         for _ in range(20):
             orphans = [v for v in conn.execute("PRAGMA foreign_key_check")
                        if tuple(v) not in had_orphans and v[1] is not None
-                       and v[0] not in _KEEP_ON_RESTAURANT_DELETE]
+                       and v[0] not in _KEEP_ON_RESTAURANT_DELETE and not _tombstone_row(v[0], v[1])]
             if not orphans:
                 break
             for table, rowid, _parent, _fk in orphans:
@@ -4274,6 +4879,9 @@ def _restaurant_from_row(row) -> Restaurant:
         profile_source=row["profile_source"] if "profile_source" in row.keys() else None,
         profile_confirmed_at=row["profile_confirmed_at"] if "profile_confirmed_at" in row.keys() else None,
         exclude_from_learning=(row["exclude_from_learning"] or 0) if "exclude_from_learning" in row.keys() else 0,
+        learning_since=row["learning_since"] if "learning_since" in row.keys() else None,
+        learning_override=row["learning_override"] if "learning_override" in row.keys() else None,
+        target_setters_json=row["target_setters_json"] if "target_setters_json" in row.keys() else None,
         labor_target_source=row["labor_target_source"] if "labor_target_source" in row.keys() else None,
         food_cost_target_source=row["food_cost_target_source"] if "food_cost_target_source" in row.keys() else None,
         hourly_rate_source=row["hourly_rate_source"] if "hourly_rate_source" in row.keys() else None,
@@ -4880,9 +5488,39 @@ def reply_queue_counts(restaurant_id: int, db_path: str = DB_PATH) -> dict:
             "older": int((row and row["older"]) or 0)}
 
 
+def reply_approver(user=None, auto=False) -> dict:
+    """Who is approving a reply, for claim_approval to record beside the
+    approval (memory audit 9/29/26, reply_voice): {"user_id", "role", "via"}.
+
+    `role` is permissions.answer_authority — 'principal' (an account
+    holder), 'delegate' (a manager or teammate login) or 'admin' (an admin
+    or support login, or anyone acting through view-as) — and 'rule' for the
+    auto-approve rule. `via` is 'normal', 'view_as' or 'rule'. A view-as
+    session is minted for the owner's own user row, so the approver recorded
+    is the admin behind it (acting_admin_id), never the owner. A person in a
+    request whose login the caller did not pass is recorded as unknown
+    (role None) unless the request is a view-as one (flask.g.view_as)."""
+    if auto:
+        return {"user_id": None, "role": "rule", "via": "rule"}
+    if not user:
+        try:
+            from flask import g, has_request_context
+            va = getattr(g, "view_as", None) if has_request_context() else None
+        except Exception:
+            va = None
+        if va:
+            return {"user_id": va.get("acting_admin_id"), "role": "admin", "via": "view_as"}
+        return {"user_id": None, "role": None, "via": None}
+    from permissions import answer_authority
+    view_as = bool(user.get("acting_admin_id") or user.get("acting_admin_role")
+                   or (user.get("device_type") or "") == "admin-view-as")
+    uid = user.get("acting_admin_id") if (view_as and user.get("acting_admin_id")) else user.get("id")
+    return {"user_id": uid, "role": answer_authority(user), "via": "view_as" if view_as else "normal"}
+
+
 def claim_approval(review_id: int, restaurant_id: int, db_path: str = DB_PATH,
                    publishable_only: bool = False, allow_flagged: bool = True,
-                   expected_draft: str = None) -> bool:
+                   expected_draft: str = None, approver: dict = None) -> bool:
     """Approve a drafted reply as a compare-and-set. True only for the one
     caller that moved THIS restaurant's live, drafted, non-empty reply to
     'approved'; everyone else gets False and nothing changes.
@@ -4907,26 +5545,35 @@ def claim_approval(review_id: int, restaurant_id: int, db_path: str = DB_PATH,
     made (the phone's offline queue) never posts a different reply than the
     one on the owner's screen — an edit that failed to save, a regenerate
     from another device. Compared as sent and stripped: a save stores the
-    text stripped, a model draft as written."""
+    text stripped, a model draft as written.
+
+    `approver` (reply_approver) is recorded in the same statement: who
+    approved, their authority and how (memory audit 9/29/26, reply_voice) —
+    the style examples, the edit note and auto-approve trust learn only the
+    owner's voice from it."""
+    ap = approver or {}
+    who = (ap.get("user_id"), ap.get("role"), ap.get("via"))
     conn = get_conn(db_path)
     try:
         if publishable_only:
             cur = conn.execute(
-                "UPDATE reviews SET response_status='approved', approved_at=datetime('now') "
+                "UPDATE reviews SET response_status='approved', approved_at=datetime('now'), "
+                "approved_by=?, approved_role=?, approved_via=? "
                 f"WHERE id=? AND restaurant_id=? AND {BULK_PUBLISHABLE_SQL}",
-                (review_id, restaurant_id, bulk_publish_window()))
+                who + (review_id, restaurant_id, bulk_publish_window()))
             conn.commit()
             return cur.rowcount == 1
         cur = conn.execute("""
             UPDATE reviews
-            SET response_status='approved', approved_at=datetime('now')
+            SET response_status='approved', approved_at=datetime('now'),
+                approved_by=?, approved_role=?, approved_via=?
             WHERE id=? AND restaurant_id=? AND response_status IN ('drafted','pending')
               AND deleted_at IS NULL
               AND draft_response IS NOT NULL AND TRIM(draft_response) != ''
         """ + ("" if allow_flagged else " AND COALESCE(draft_needs_review, 0) = 0")
             + ("" if expected_draft is None else " AND draft_response IN (?, ?)"),
-            (review_id, restaurant_id) + (() if expected_draft is None
-                                          else (expected_draft, expected_draft.strip())))
+            who + (review_id, restaurant_id) + (() if expected_draft is None
+                                                else (expected_draft, expected_draft.strip())))
         conn.commit()
         return cur.rowcount == 1
     finally:
@@ -4953,7 +5600,8 @@ def revert_to_drafted(review_id: int, restaurant_id: int, db_path: str = DB_PATH
     conn = get_conn(db_path)
     conn.execute("""
         UPDATE reviews
-        SET response_status='drafted', approved_at=NULL, posted_at=NULL
+        SET response_status='drafted', approved_at=NULL, posted_at=NULL,
+            approved_by=NULL, approved_role=NULL, approved_via=NULL
         WHERE id=? AND restaurant_id=?
     """, (review_id, restaurant_id))
     conn.commit()
@@ -5307,59 +5955,315 @@ def get_email_log_for_client(restaurant_id: int, limit: int = 50, db_path: str =
 def init_staff_notes(db_path: str = DB_PATH):
     conn = sqlite3.connect(db_path)
     conn.executescript(STAFF_NOTES_SCHEMA)
+    # Each constraint dated, with an optional end (memory audit 9/29/26,
+    # staff_notes): "Out until 6/1 after surgery" still blocked a cook in
+    # September because the note had no date and no expiry and the prompt
+    # said it outranks every rule. `parts_json` holds the person's
+    # constraints one by one ([{text, noted, expires, confirmed, by}]) —
+    # the row is one per person (UNIQUE), and an end date belongs to ONE
+    # constraint, never to "mornings only" written beside it. `notes` stays
+    # the joined text every older reader and the admin page read.
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(staff_notes)").fetchall()}
+    for col in ("updated_at", "updated_by", "expires_on", "confirmed_at", "parts_json"):
+        if col not in cols:
+            try:
+                conn.execute(f"ALTER TABLE staff_notes ADD COLUMN {col} TEXT")
+            except sqlite3.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
     conn.commit()
     conn.close()
 
+
+# A note nobody has confirmed in this long is shown to the owner as "still
+# true?" (memory audit 9/29/26, staff_notes). It stays in force until they
+# answer: silently dropping a real constraint is worse than asking.
+STAFF_NOTE_STALE_DAYS = 90
+
+import re as _re_staff_notes   # the staff-note date reader below (memory audit 9/29/26)
+
+_NOTE_MONTHS = {m: i for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct",
+                                            "nov", "dec"), start=1)}
+_NOTE_UNTIL_RE = _re_staff_notes.compile(
+    r"\b(?:until|till|til|thru|through|back(?:\s+on)?|returns?(?:\s+on)?|out\s+to|ends?(?:\s+on)?)\s+"
+    r"(?:(?P<m>\d{1,2})/(?P<d>\d{1,2})(?:/(?P<y>\d{2,4}))?"
+    r"|(?P<mon>jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(?P<md>\d{1,2})(?:st|nd|rd|th)?"
+    r"(?:,?\s+(?P<my>\d{4}))?)", _re_staff_notes.I)
+
+
+def staff_note_expiry(text, noted_on=None):
+    """The ISO date a constraint says it ends ("out until 6/1", "back on
+    Oct 3", "through 10/15/26"), or None. A month and day with no year is
+    the first such date on or after the day it was noted — "until 6/1"
+    written in May is this June, written in July is next June."""
+    from datetime import date
+    m = _NOTE_UNTIL_RE.search(str(text or ""))
+    if not m:
+        return None
+    try:
+        base = date.fromisoformat(str(noted_on)[:10]) if noted_on else date.today()
+    except ValueError:
+        base = date.today()
+    try:
+        if m.group("m"):
+            month, day = int(m.group("m")), int(m.group("d"))
+            year = m.group("y")
+        else:
+            month, day = _NOTE_MONTHS[m.group("mon").lower()[:3]], int(m.group("md"))
+            year = m.group("my")
+        if year:
+            y = int(year)
+            y = y + 2000 if y < 100 else y
+            return date(y, month, day).isoformat()
+        end = date(base.year, month, day)
+        if end < base:
+            end = date(base.year + 1, month, day)
+        return end.isoformat()
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def _iso_or_none(value):
+    """An ISO date from ISO or M/D/YY input, or None."""
+    from datetime import date
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw[:10]).isoformat()
+    except ValueError:
+        pass
+    for fmt in ("%m/%d/%Y", "%m/%d/%y"):
+        try:
+            return datetime.strptime(raw, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+def _note_parts(row) -> list:
+    """One person's constraints, each dated: [{"text", "noted", "expires",
+    "confirmed", "by"}]. A note written before parts existed is one part,
+    noted the day its row was written."""
+    keys = row.keys() if hasattr(row, "keys") else row
+    raw = row["parts_json"] if "parts_json" in keys else None
+    try:
+        parts = json.loads(raw) if raw else None
+    except (TypeError, ValueError):
+        parts = None
+    if isinstance(parts, list):
+        out = []
+        for p in parts:
+            if isinstance(p, dict) and str(p.get("text") or "").strip():
+                out.append({"text": str(p["text"]).strip(), "noted": _iso_or_none(p.get("noted")),
+                            "expires": _iso_or_none(p.get("expires")),
+                            "confirmed": _iso_or_none(p.get("confirmed")), "by": p.get("by")})
+        return out
+    text = str(row["notes"] or "").strip()
+    if not text:
+        return []
+    stamp = (row["updated_at"] if "updated_at" in keys else None) or row["created_at"]
+    return [{"text": text, "noted": _iso_or_none(str(stamp or "")[:10]),
+             "expires": _iso_or_none(row["expires_on"] if "expires_on" in keys else None),
+             "confirmed": _iso_or_none(str((row["confirmed_at"] if "confirmed_at" in keys else None) or "")[:10]),
+             "by": None}]
+
+
+def _join_parts(parts) -> str:
+    return "; ".join(p["text"].rstrip(" ;.") if i < len(parts) - 1 else p["text"]
+                     for i, p in enumerate(parts))
+
+
+def _write_parts(conn, note_id, parts, updated_by=None):
+    exp = sorted(p["expires"] for p in parts if p.get("expires"))
+    conn.execute("UPDATE staff_notes SET notes=?, parts_json=?, updated_at=datetime('now'), updated_by=?, "
+                 "expires_on=? WHERE id=?",
+                 (_join_parts(parts), json.dumps(parts), (updated_by or "").strip()[:120] or None,
+                  exp[0] if exp else None, note_id))
+
+
 def save_staff_note(restaurant_id: int, employee_name: str,
-                    notes: str, db_path: str = DB_PATH, replace: bool = False) -> dict:
-    """Add a scheduling constraint for one person; {"id", "notes", "appended"}.
+                    notes: str, db_path: str = DB_PATH, replace: bool = False,
+                    expires_on=None, updated_by: str = None, today=None) -> dict:
+    """Add a scheduling constraint for one person; {"id", "notes", "appended",
+    "expires_on"}.
 
     One row per person (UNIQUE(restaurant_id, employee_name)), so a second
     constraint is ADDED to the first — it used to be written over it: adding
     "no Sundays" for Maria erased "mornings only", the page said Saved, and
     the schedule generator stopped respecting the first (fix round #142).
     The person is matched however their name is cased, as every reader
-    matches it; text already there is not added twice. `replace=True` sets
-    the text outright (the undo of a removal puts back exactly what was)."""
+    matches it; text already there is not added twice (saying it again
+    confirms it). `replace=True` sets the text outright (the undo of a
+    removal puts back exactly what was).
+
+    Each constraint is dated the day it was noted, and ends on `expires_on`
+    (ISO or M/D/YY) or the date its own words give ("out until 6/1") —
+    after which every reader leaves it out (memory audit 9/29/26)."""
+    from datetime import date
     name = (employee_name or "").strip()
     text = (notes or "").strip()
+    noted = (today or date.today()).isoformat() if not isinstance(today, str) else today[:10]
+    ends = _iso_or_none(expires_on) or staff_note_expiry(text, noted)
+    part = {"text": text, "noted": noted, "expires": ends, "confirmed": None,
+            "by": (updated_by or "").strip()[:120] or None}
     conn = get_conn(db_path)
     try:
         conn.execute("BEGIN IMMEDIATE")
-        row = conn.execute("SELECT id, notes FROM staff_notes WHERE restaurant_id=? AND lower(employee_name)=lower(?) "
+        row = conn.execute("SELECT * FROM staff_notes WHERE restaurant_id=? AND lower(employee_name)=lower(?) "
                            "ORDER BY id LIMIT 1", (restaurant_id, name)).fetchone()
         appended = False
         if row is None:
             cur = conn.execute("INSERT INTO staff_notes (restaurant_id, employee_name, notes) VALUES (?,?,?)",
                                (restaurant_id, name, text))
-            note_id, combined = cur.lastrowid, text
+            note_id, parts = cur.lastrowid, [part]
         else:
-            existing = (row["notes"] or "").strip()
-            if replace or not existing:
-                combined = text
-            elif text.lower() in existing.lower():
-                combined = existing
-            else:
-                combined, appended = existing.rstrip(" ;.") + "; " + text, True
-            conn.execute("UPDATE staff_notes SET notes=? WHERE id=?", (combined, row["id"]))
             note_id = row["id"]
+            existing = _note_parts(row)
+            if replace or not existing:
+                parts = [part]
+            else:
+                same = next((p for p in existing if text.lower() in p["text"].lower()), None)
+                if same is not None:
+                    same["confirmed"] = noted          # said again: still true
+                    if ends and not same.get("expires"):
+                        same["expires"] = ends
+                    parts = existing
+                else:
+                    parts, appended = existing + [part], True
+        _write_parts(conn, note_id, parts, updated_by)
         conn.commit()
     except BaseException:
         conn.rollback()
         raise
     finally:
         conn.close()
-    return {"id": note_id, "notes": combined, "appended": appended}
+    return {"id": note_id, "notes": _join_parts(parts), "appended": appended, "expires_on": ends}
 
-def get_staff_notes(restaurant_id: int,
-                    db_path: str = DB_PATH) -> list[dict]:
+
+def get_staff_notes(restaurant_id: int, db_path: str = DB_PATH, include_expired: bool = False,
+                    today=None) -> list[dict]:
+    """Each person's constraints in force, one row per person as before
+    ({id, employee_name, notes, ...}) — `notes` is the constraints that have
+    not ended, joined; a person whose every constraint has ended is left out
+    (memory audit 9/29/26: an ended "out until 6/1" kept blocking a cook in
+    September). Each row also carries `parts` (every constraint with its
+    `noted` / `expires` ISO dates and M/D/YY labels), `noted_on` / `noted`
+    (the newest), `expires_on` (the soonest end still ahead) and `stale`
+    (a constraint nobody has noted or confirmed in STAFF_NOTE_STALE_DAYS).
+    `include_expired=True` (the admin page) keeps ended constraints, marked."""
+    from datetime import date, timedelta
+    from time_utils import mdy as _mdy_n
+    day = today or date.today()
+    day = date.fromisoformat(day[:10]) if isinstance(day, str) else day
+    cut = (day - timedelta(days=STAFF_NOTE_STALE_DAYS)).isoformat()
     conn = get_conn(db_path)
-    rows = conn.execute(
-        "SELECT * FROM staff_notes WHERE restaurant_id=? ORDER BY employee_name",
-        (restaurant_id,)
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        rows = conn.execute("SELECT * FROM staff_notes WHERE restaurant_id=? ORDER BY employee_name",
+                            (restaurant_id,)).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        parts = []
+        for p in _note_parts(r):
+            ended = bool(p.get("expires")) and p["expires"] < day.isoformat()
+            if ended and not include_expired:
+                continue
+            seen = max(x for x in (p.get("noted"), p.get("confirmed")) if x) if (p.get("noted") or p.get("confirmed")) else None
+            parts.append({**p, "ended": ended, "noted_label": _mdy_n(p["noted"]) if p.get("noted") else None,
+                          "expires_label": _mdy_n(p["expires"]) if p.get("expires") else None,
+                          "stale": bool(seen) and seen < cut and not ended})
+        if not parts:
+            continue
+        d = dict(r)
+        live = [p for p in parts if not p["ended"]]
+        d["parts"] = parts
+        d["notes"] = _join_parts(live) if live else ""
+        noted = max((p["noted"] for p in live if p.get("noted")), default=None)
+        d["noted_on"], d["noted"] = noted, (_mdy_n(noted) if noted else None)
+        ahead = sorted(p["expires"] for p in live if p.get("expires"))
+        d["expires_on"] = ahead[0] if ahead else None
+        d["stale"] = any(p["stale"] for p in live)
+        out.append(d)
+    return out
+
+
+def staff_note_line(note: dict) -> str:
+    """"Maria G.: mornings only (noted 5/2/26); out until 6/1 (noted 5/20/26,
+    ends 6/1/26)" — the one way both prompts print a person's constraints,
+    each with the day it was noted (memory audit 9/29/26). Ended ones are
+    never passed here (get_staff_notes leaves them out)."""
+    bits = []
+    for p in note.get("parts") or [{"text": note.get("notes"), "noted_label": note.get("noted")}]:
+        if p.get("ended") or not str(p.get("text") or "").strip():
+            continue
+        when = []
+        if p.get("noted_label"):
+            when.append(f"noted {p['noted_label']}")
+        if p.get("expires_label"):
+            when.append(f"ends {p['expires_label']}")
+        bits.append(str(p["text"]).strip().rstrip(" ;") + (f" ({', '.join(when)})" if when else ""))
+    return f"{note.get('employee_name')}: " + "; ".join(bits)
+
+
+def stale_staff_notes(restaurant_id: int, db_path: str = DB_PATH, today=None) -> list:
+    """The constraints nobody has noted or confirmed in STAFF_NOTE_STALE_DAYS
+    — the owner's "still true?" list: [{id, employee_name, text, noted,
+    part}] (memory audit 9/29/26, staff_notes)."""
+    out = []
+    for n in get_staff_notes(restaurant_id, db_path=db_path, today=today):
+        for i, p in enumerate(n["parts"]):
+            if p.get("stale"):
+                out.append({"id": n["id"], "employee_name": n["employee_name"], "text": p["text"],
+                            "noted": p.get("noted_label"), "noted_on": p.get("noted"), "part": i})
+    return out
+
+
+def update_staff_note_part(restaurant_id: int, note_id: int, part: int = None, *, confirm: bool = False,
+                           expires_on=None, remove: bool = False, updated_by: str = None,
+                           db_path: str = DB_PATH, today=None):
+    """The owner's answer to one constraint: `confirm` (still true — dated
+    today), `expires_on` (ISO or M/D/YY; "" clears it) or `remove`. `part`
+    is its index in the row's parts (None: every part). Returns the row as
+    get_staff_notes shapes it (include_expired), or None when the note is not
+    this restaurant's."""
+    from datetime import date
+    stamp = (today or date.today())
+    stamp = stamp[:10] if isinstance(stamp, str) else stamp.isoformat()
+    conn = get_conn(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT * FROM staff_notes WHERE id=? AND restaurant_id=?",
+                           (note_id, restaurant_id)).fetchone()
+        if row is None:
+            conn.rollback()
+            return None
+        parts = _note_parts(row)
+        idx = range(len(parts)) if part is None else [int(part)] if 0 <= int(part) < len(parts) else []
+        if not idx:
+            conn.rollback()
+            raise ValueError("That constraint isn't on this note.")
+        for i in idx:
+            if confirm:
+                parts[i]["confirmed"] = stamp
+            if expires_on is not None:
+                parts[i]["expires"] = _iso_or_none(expires_on)
+        if remove:
+            parts = [p for i, p in enumerate(parts) if i not in set(idx)]
+        if parts:
+            _write_parts(conn, note_id, parts, updated_by)
+        else:
+            conn.execute("DELETE FROM staff_notes WHERE id=?", (note_id,))
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return next((n for n in get_staff_notes(restaurant_id, db_path=db_path, include_expired=True, today=today)
+                 if n["id"] == note_id), {"id": note_id, "removed": True})
+
 
 def delete_staff_note(note_id: int, db_path: str = DB_PATH, restaurant_id: int = None):
     """Remove one person's constraints and return what was removed
@@ -6015,6 +6919,17 @@ def init_demand_signals(db_path: str = DB_PATH):
         UNIQUE(restaurant_id, date, kind, label)
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_demand_signals_date ON demand_signals(restaurant_id, date)")
+    # What a marketing signal came from and what it promotes (memory audit
+    # 9/29/26, mkt_to_staffing): "campaign:45" / "post:12", and the dish a
+    # post is about, so the prep list can name it.
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(demand_signals)").fetchall()}
+    for col, typ in (("ref", "TEXT"), ("menu_item_id", "INTEGER")):
+        if col not in cols:
+            try:
+                conn.execute(f"ALTER TABLE demand_signals ADD COLUMN {col} {typ}")
+            except sqlite3.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
     conn.commit()
     conn.close()
 
@@ -6038,6 +6953,15 @@ def init_schedule_versions(db_path: str = DB_PATH):
         UNIQUE(history_id, version)
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_versions_hist ON schedule_versions(history_id)")
+    # Whose save each version is (permissions.answer_authority — memory
+    # audit 9/29/26): a support login's edits through view-as are stored
+    # under the owner's name, and must never teach the draft.
+    if "saved_authority" not in {r[1] for r in conn.execute("PRAGMA table_info(schedule_versions)").fetchall()}:
+        try:
+            conn.execute("ALTER TABLE schedule_versions ADD COLUMN saved_authority TEXT")
+        except Exception as e:
+            if "duplicate column" not in str(e).lower():
+                raise
     conn.commit()
     conn.close()
 
@@ -6114,6 +7038,8 @@ def add_manual_team_member(restaurant_id: int, employee_name: str, role: str = N
     clean_role = (role or "").strip()[:60] or None
     conn = get_conn(db_path)
     try:
+        had = conn.execute("SELECT role FROM manual_team_members WHERE restaurant_id=? AND employee_name=?",
+                           (restaurant_id, name)).fetchone()
         conn.execute("""
             INSERT INTO manual_team_members (restaurant_id, employee_name, role, added_by, created_at)
             VALUES (?,?,?,?,datetime('now'))
@@ -6123,6 +7049,18 @@ def add_manual_team_member(restaurant_id: int, employee_name: str, role: str = N
         conn.commit()
     finally:
         conn.close()
+    # The change history (memory audit 9/29/26, change_log): someone added
+    # to the team by hand, or their role changed; subject= the person.
+    try:
+        import change_log
+        if had is None:
+            change_log.record(restaurant_id, "roster", "added", None, {"role": clean_role}, subject=name,
+                              db_path=None if db_path == DB_PATH else db_path)
+        else:
+            change_log.record(restaurant_id, "roster", "role", had["role"], clean_role, subject=name,
+                              db_path=None if db_path == DB_PATH else db_path)
+    except Exception as e:
+        print(f"[roster] change history not recorded rid={restaurant_id}: {e!r}")
     return {"employee_name": name, "role": clean_role}
 
 
@@ -6138,9 +7076,17 @@ def remove_manual_team_member(restaurant_id: int, employee_name: str, db_path: s
             "DELETE FROM manual_team_members WHERE restaurant_id=? AND employee_name=?",
             (restaurant_id, name))
         conn.commit()
-        return cur.rowcount > 0
+        removed = cur.rowcount > 0
     finally:
         conn.close()
+    if removed:
+        try:
+            import change_log
+            change_log.record(restaurant_id, "roster", "removed", True, False, subject=name,
+                              db_path=None if db_path == DB_PATH else db_path)
+        except Exception as e:
+            print(f"[roster] change history not recorded rid={restaurant_id}: {e!r}")
+    return removed
 
 
 def get_manual_team_members(restaurant_id: int, db_path: str = DB_PATH) -> list:
@@ -6248,11 +7194,46 @@ def init_shift_profiles(db_path: str = DB_PATH):
 # two bartenders and want labor down had to say it again on Wednesday, which
 # is exactly the "stop making me explain my restaurant" problem.
 #
-# Deliberately small and deliberately written rather than inferred. The model
-# calls a tool to record a fact; nothing is harvested automatically, because a
-# memory that fills itself becomes a second prompt nobody reviewed.
-ASK_MEMORY_LIMIT = 12
+# Deliberately written rather than inferred. The model calls a tool to record
+# a fact (or the owner types one in Account); nothing is harvested from
+# behaviour, because a memory that fills itself becomes a second prompt
+# nobody reviewed. The one derived fact — an answer-length preference read
+# off the owner's own ratings (owner_memory.derive_rating_preferences) — is
+# labelled as such, visible in Account and forgettable like any other.
+#
+# LANES, not one pool (memory audit 9/29/26, owner_lanes). It was one 12-slot
+# FIFO shared by every kind and every login, and Home's "Not doing X: reason"
+# answers were copied into it — so a busy week of Home passes evicted "we want
+# labor under 26%" and "football season starts next month", unattributed and
+# without trace. Now each kind has its own budget (ASK_MEMORY_CAPS): a write
+# past one evicts the oldest fact OF THAT KIND, into ask_memory_archive with
+# its reason, where Account shows it. Constraints, context and preferences
+# stay until someone retracts them; a time-bound fact ends at valid_until; a
+# follow-up expires 7 days after its due date (owner_memory.expire). Home's
+# decline reasons are not copied here any more — they live on the answer in
+# rec_events (decisions.history reads them there). Measurable goals belong in
+# owner_goals (goals.set_goal); the "goal" kind is for aims no metric reads.
+ASK_MEMORY_KINDS = ("constraint", "context", "preference", "goal", "followup")
+ASK_MEMORY_CAPS = {"constraint": 30, "context": 30, "preference": 30, "goal": 10, "followup": 20}
+# The most facts of ONE kind (the context lane) — kept as a name older
+# readers and tests use; the budget is per kind (ASK_MEMORY_CAPS).
+ASK_MEMORY_LIMIT = ASK_MEMORY_CAPS["context"]
 ASK_MEMORY_MAX_LENGTH = 240
+ASK_MEMORY_AUDIENCES = ("team", "principals", "author")
+# The modules a fact can be about — the generators that read it
+# (owner_memory.SURFACE_MODULES). rec_ledger.MODULES' working vocabulary.
+ASK_MEMORY_MODULES = ("reviews", "labor", "schedule", "food", "marketing", "intel", "guests", "ops")
+_ASK_MEMORY_COLUMNS = (
+    ("modules", "TEXT"),          # comma list of ASK_MEMORY_MODULES; empty = every generator
+    ("subject", "TEXT"),          # a ledger tag or advice signature ("day:sunday", "person:maria")
+    ("audience", "TEXT"),         # team | principals | author — who may read it
+    ("author_label", "TEXT"),     # "Erik, owner" — who said it, as the prompt and Account show it
+    ("authority", "TEXT"),        # permissions.answer_authority at write time: principal | delegate | admin
+    ("valid_until", "TEXT"),      # YYYY-MM-DD: a time-bound fact ends after this day
+    ("due_on", "TEXT"),           # YYYY-MM-DD: a follow-up's due date (expires 7 days after)
+    ("origin", "TEXT"),           # ask | account | audit | ratings | home (legacy)
+    ("updated_at", "TEXT"),
+)
 
 
 def init_ask_memory(db_path: str = DB_PATH):
@@ -6262,62 +7243,230 @@ def init_ask_memory(db_path: str = DB_PATH):
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
             restaurant_id INTEGER NOT NULL REFERENCES restaurants(id),
             fact          TEXT    NOT NULL,
-            kind          TEXT,             -- goal | context | preference | followup
+            kind          TEXT,             -- constraint | context | preference | goal | followup
             source        TEXT,             -- where it came from, for the owner to judge
-            user_id       INTEGER,
+            user_id       INTEGER,          -- who said it (the login), NULL for a seeded fact
             created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
             UNIQUE(restaurant_id, fact)
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ask_memory_rest "
                  "ON ask_memory(restaurant_id, created_at)")
+    have = {r[1] for r in conn.execute("PRAGMA table_info(ask_memory)").fetchall()}
+    for col, decl in _ASK_MEMORY_COLUMNS:
+        if col not in have:
+            try:
+                conn.execute(f"ALTER TABLE ask_memory ADD COLUMN {col} {decl}")
+            except Exception as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
+    # What left the memory without the owner asking — a lane's budget full,
+    # a date passed, a "Use again" that retracted it — kept so forgetting is
+    # visible (Account lists it) and reversible (restore puts it back).
+    # Pruned at ops._RETENTION_DAYS["ask_memory_archive"].
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS ask_memory_archive (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL,
+            fact          TEXT    NOT NULL,
+            kind          TEXT,
+            source        TEXT,
+            user_id       INTEGER,
+            author_label  TEXT,
+            modules       TEXT,
+            subject       TEXT,
+            audience      TEXT,
+            valid_until   TEXT,
+            due_on        TEXT,
+            origin        TEXT,
+            created_at    TEXT,
+            archived_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+            reason        TEXT    NOT NULL,     -- evicted | expired | retracted | forgotten (a derived fact)
+            archived_by   INTEGER
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ask_memory_archive_rest "
+                 "ON ask_memory_archive(restaurant_id, archived_at)")
+    # The retention delete's own index (ops prune_ledgers ranges on it).
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ask_memory_archive_at ON ask_memory_archive(archived_at)")
     conn.commit()
     conn.close()
 
 
+_ASK_ARCHIVE_COLS = ("restaurant_id", "fact", "kind", "source", "user_id", "author_label", "modules", "subject",
+                     "audience", "valid_until", "due_on", "origin", "created_at")
+
+
+def _archive_ask_rows(conn, restaurant_id, ids, reason, archived_by=None) -> int:
+    """Move these ask_memory rows to ask_memory_archive, on the caller's
+    connection (uncommitted)."""
+    ids = [int(i) for i in ids or () if i is not None]
+    if not ids:
+        return 0
+    marks = ",".join("?" for _ in ids)
+    cols = ", ".join(_ASK_ARCHIVE_COLS)
+    conn.execute(
+        f"INSERT INTO ask_memory_archive ({cols}, reason, archived_by) "
+        f"SELECT {cols}, ?, ? FROM ask_memory WHERE restaurant_id=? AND id IN ({marks})",
+        (str(reason)[:20], archived_by, restaurant_id, *ids))
+    return conn.execute(f"DELETE FROM ask_memory WHERE restaurant_id=? AND id IN ({marks})",
+                        (restaurant_id, *ids)).rowcount
+
+
+def archive_ask_facts(restaurant_id: int, ids, reason: str, archived_by: int = None,
+                      db_path: str = DB_PATH) -> int:
+    """Archive facts by id (a date passed, an answer retracted). Returns how
+    many moved."""
+    conn = get_conn(db_path)
+    try:
+        n = _archive_ask_rows(conn, restaurant_id, ids, reason, archived_by)
+        conn.commit()
+        return n
+    finally:
+        conn.close()
+
+
 def remember_ask_fact(restaurant_id: int, fact: str, kind: str = "context",
                       source: str = None, user_id: int = None,
-                      db_path: str = DB_PATH) -> dict:
-    """Record one durable fact about this owner. Idempotent on the text.
+                      db_path: str = DB_PATH, modules=None, subject: str = None,
+                      audience: str = None, author_label: str = None, authority: str = None,
+                      valid_until: str = None, due_on: str = None, origin: str = None) -> dict:
+    """Record one durable fact. Idempotent on the text (a repeat updates the
+    fact's type and stamps it again).
 
-    Oldest facts fall off past ASK_MEMORY_LIMIT rather than growing without
-    bound — a memory that only ever accumulates ends up costing every
-    subsequent question more and telling the model less.
-    """
+    The owner-facing path is owner_memory.remember, which types the fact and
+    stamps its author; this is the storage write and its one invariant: each
+    kind keeps at most ASK_MEMORY_CAPS[kind] facts, and one past that evicts
+    the OLDEST fact OF THAT KIND into ask_memory_archive — never a fact of
+    another kind, and never silently."""
     text = (fact or "").strip()[:ASK_MEMORY_MAX_LENGTH]
     if not text:
         raise ValueError("a fact needs some text")
+    kind = kind if kind in ASK_MEMORY_KINDS else "context"
+    if isinstance(modules, (list, tuple, set)):
+        mods = [str(m).strip().lower() for m in modules if str(m).strip().lower() in ASK_MEMORY_MODULES]
+        modules = ",".join(dict.fromkeys(mods)) or None
+    elif modules:
+        mods = [m.strip().lower() for m in str(modules).split(",") if m.strip().lower() in ASK_MEMORY_MODULES]
+        modules = ",".join(dict.fromkeys(mods)) or None
+    else:
+        modules = None
+    audience = audience if audience in ASK_MEMORY_AUDIENCES else "team"
     conn = get_conn(db_path)
+    evicted = 0
     try:
         conn.execute(
-            "INSERT INTO ask_memory (restaurant_id, fact, kind, source, user_id) "
-            "VALUES (?,?,?,?,?) ON CONFLICT(restaurant_id, fact) DO UPDATE SET "
-            "kind=excluded.kind, source=excluded.source, created_at=datetime('now')",
-            (restaurant_id, text, (kind or "context")[:20], (source or "")[:160] or None, user_id))
-        conn.execute(
-            "DELETE FROM ask_memory WHERE restaurant_id=? AND id NOT IN "
-            "(SELECT id FROM ask_memory WHERE restaurant_id=? ORDER BY created_at DESC, id DESC LIMIT ?)",
-            (restaurant_id, restaurant_id, ASK_MEMORY_LIMIT))
+            "INSERT INTO ask_memory (restaurant_id, fact, kind, source, user_id, modules, subject, audience, "
+            "author_label, authority, valid_until, due_on, origin, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now')) ON CONFLICT(restaurant_id, fact) DO UPDATE SET "
+            "kind=excluded.kind, source=excluded.source, user_id=COALESCE(excluded.user_id, ask_memory.user_id), "
+            "modules=excluded.modules, subject=excluded.subject, audience=excluded.audience, "
+            "author_label=COALESCE(excluded.author_label, ask_memory.author_label), "
+            "authority=COALESCE(excluded.authority, ask_memory.authority), valid_until=excluded.valid_until, "
+            "due_on=excluded.due_on, origin=COALESCE(excluded.origin, ask_memory.origin), "
+            "created_at=datetime('now'), updated_at=datetime('now')",
+            (restaurant_id, text, kind, (source or "")[:160] or None, user_id, modules,
+             (str(subject).strip()[:120] or None) if subject else None, audience,
+             (str(author_label).strip()[:80] or None) if author_label else None,
+             (str(authority)[:20] or None) if authority else None,
+             (str(valid_until)[:10] or None) if valid_until else None,
+             (str(due_on)[:10] or None) if due_on else None,
+             (str(origin)[:20] or None) if origin else None))
+        cap = ASK_MEMORY_CAPS.get(kind, ASK_MEMORY_LIMIT)
+        over = [r["id"] for r in conn.execute(
+            "SELECT id FROM ask_memory WHERE restaurant_id=? AND COALESCE(kind, 'context')=? "
+            "ORDER BY created_at DESC, id DESC LIMIT -1 OFFSET ?", (restaurant_id, kind, cap)).fetchall()]
+        evicted = _archive_ask_rows(conn, restaurant_id, over, "evicted")
         conn.commit()
     finally:
         conn.close()
-    return {"fact": text, "kind": kind or "context"}
+    return {"fact": text, "kind": kind, "evicted": evicted}
 
 
-def get_ask_memory(restaurant_id: int, db_path: str = DB_PATH) -> list:
+def get_ask_memory(restaurant_id: int, db_path: str = DB_PATH, kinds=None) -> list:
+    """Every live fact, newest first, with who wrote it and its type. The
+    lanes bound it (ASK_MEMORY_CAPS); what a model reads of it is chosen and
+    budgeted by memory_context, and what a login may read by owner_memory."""
     try:
         conn = get_conn(db_path)
-        rows = conn.execute(
-            "SELECT fact, kind, source, created_at FROM ask_memory WHERE restaurant_id=? "
-            "ORDER BY created_at DESC, id DESC LIMIT ?",
-            (restaurant_id, ASK_MEMORY_LIMIT)).fetchall()
-        conn.close()
+        try:
+            args = [restaurant_id]
+            where = ""
+            if kinds:
+                kinds = [k for k in kinds if k in ASK_MEMORY_KINDS]
+                where = f" AND COALESCE(kind, 'context') IN ({','.join('?' for _ in kinds)})"
+                args += kinds
+            rows = conn.execute(
+                "SELECT id, fact, kind, source, user_id, created_at, modules, subject, audience, author_label, "
+                "authority, valid_until, due_on, origin, updated_at FROM ask_memory WHERE restaurant_id=?"
+                + where + " ORDER BY created_at DESC, id DESC", args).fetchall()
+        finally:
+            conn.close()
         return [dict(r) for r in rows]
     except Exception:
         return []
 
 
+def get_ask_memory_archive(restaurant_id: int, limit: int = 30, db_path: str = DB_PATH) -> list:
+    """What left the memory without the owner asking, newest first."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT id, fact, kind, source, user_id, author_label, modules, subject, audience, valid_until, "
+                "due_on, origin, created_at, archived_at, reason FROM ask_memory_archive WHERE restaurant_id=? "
+                "ORDER BY archived_at DESC, id DESC LIMIT ?", (restaurant_id, int(limit))).fetchall()
+        finally:
+            conn.close()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
+def restore_ask_fact(restaurant_id: int, archive_id: int, db_path: str = DB_PATH):
+    """Put an archived fact back (it keeps its author and type). Returns the
+    fact, or None when there is no such archived row for this restaurant."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT * FROM ask_memory_archive WHERE id=? AND restaurant_id=?",
+                           (int(archive_id), restaurant_id)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    r = dict(row)
+    remember_ask_fact(restaurant_id, r["fact"], kind=r.get("kind") or "context", source=r.get("source"),
+                      user_id=r.get("user_id"), db_path=db_path, modules=r.get("modules"),
+                      subject=r.get("subject"), audience=r.get("audience"), author_label=r.get("author_label"),
+                      valid_until=r.get("valid_until"), due_on=r.get("due_on"), origin=r.get("origin"))
+    conn = get_conn(db_path)
+    try:
+        conn.execute("DELETE FROM ask_memory_archive WHERE id=? AND restaurant_id=?", (int(archive_id), restaurant_id))
+        conn.commit()
+    finally:
+        conn.close()
+    return r["fact"]
+
+
+def delete_ask_facts(restaurant_id: int, ids, db_path: str = DB_PATH) -> int:
+    """Delete facts by id — a derived fact being replaced by its newer
+    reading (owner_memory.derive_rating_preferences). Not archived."""
+    ids = [int(i) for i in ids or () if i is not None]
+    if not ids:
+        return 0
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute(f"DELETE FROM ask_memory WHERE restaurant_id=? AND id IN ({','.join('?' for _ in ids)})",
+                         (restaurant_id, *ids)).rowcount
+        conn.commit()
+        return n
+    finally:
+        conn.close()
+
+
 def forget_ask_fact(restaurant_id: int, fact: str, db_path: str = DB_PATH) -> bool:
+    """Delete one fact by its exact text. An owner's "forget that" is a
+    deletion — not archived, unlike what the lanes and dates remove."""
     conn = get_conn(db_path)
     try:
         cur = conn.execute("DELETE FROM ask_memory WHERE restaurant_id=? AND fact=?",
@@ -6362,6 +7511,15 @@ def record_capability_change(restaurant_id: int, kind: str, subject: str = None,
     """Append one change. Never raises — an audit row failing to write must
     not stop an owner setting a target."""
     import json as _j
+    # Support changing a rating or target through view-as is attributed to
+    # support, never read as the owner's (memory audit 9/29/26, view_as).
+    try:
+        from permissions import acting_via
+        _via = acting_via()
+    except Exception:
+        _via = None
+    if _via:
+        changed_by = f"support:{_via.get('admin') or _via.get('admin_id')} (as {changed_by or 'the owner'})"
     try:
         conn = get_conn(db_path)
         conn.execute(
@@ -6536,13 +7694,24 @@ def get_employee_tenure(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     """
     try:
         out = {}
-        for sh in _cached_shifts(restaurant_id):
-            name = (sh.get("employee") or "").strip()
-            if name:
-                out[name] = out.get(name, 0) + 1
-        # The upload is a rolling window; staff_first_seen remembers the
-        # earliest date and the most shifts ever counted for each name, so
-        # a person here since March is not "still new" in October.
+        # Every shift they have ever worked here (shift_facts — memory audit
+        # 9/29/26): the stored file was a rolling window, and an upload
+        # replaced it, so a 3-year employee read as a dozen shifts.
+        try:
+            import shift_facts as _sf
+            facts = _sf.tenure(restaurant_id)
+        except Exception:
+            facts = {}
+        if facts:
+            out = {n: v["shifts"] for n, v in facts.items()}
+        else:
+            for sh in _cached_shifts(restaurant_id):
+                name = (sh.get("employee") or "").strip()
+                if name:
+                    out[name] = out.get(name, 0) + 1
+        # staff_first_seen remembers the earliest date and the most shifts
+        # ever counted for each name from before the facts began, so a
+        # person here since March is not "still new" in October.
         try:
             import schedule_intel as _si
             out = _si.tenure(restaurant_id, out, db_path=db_path)
@@ -6575,26 +7744,73 @@ def get_prior_shift_pattern(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     from a stated preference nobody keeps up to date.
     """
     try:
-        from shift_quality import daypart_of
-        from datetime import datetime as _dt
-        out = {}
-        for sh in _cached_shifts(restaurant_id):
-            name = (sh.get("employee") or "").strip()
-            if not name:
-                continue
-            entry = out.setdefault(name, {"days": set(), "dayparts": set()})
-            try:
-                entry["days"].add(_dt.strptime(sh.get("date", ""), "%Y-%m-%d").strftime("%A"))
-            except (ValueError, TypeError):
-                if sh.get("day"):
-                    entry["days"].add(sh["day"])
-            part = daypart_of(sh.get("shift_start", ""))
-            if part != "unknown":
-                entry["dayparts"].add(part)
-        return {n: {"days": sorted(v["days"]), "dayparts": sorted(v["dayparts"])}
-                for n, v in out.items()}
+        from datetime import timedelta as _td_pp
+        import shift_facts as _sf
+        today = _restaurant_today(restaurant_id)
+        # The last USUAL_WEEKS weeks of the per-shift history (memory audit
+        # 9/29/26): what they work now, from every source, whatever an
+        # upload's window was.
+        rows = _sf.person_rows(restaurant_id, since=(today - _td_pp(weeks=USUAL_WEEKS)).isoformat())
+        return usual_pattern(rows, today=today)
     except Exception:
         return {}
+
+
+# What "usually works" means (memory audit 9/29/26, staff_notes): the last
+# USUAL_WEEKS weeks only, and a day or daypart counts once it recurs in at
+# least USUAL_MIN_WEEKS of them. The union of every shift ever worked kept a
+# cook who moved to nights in June "usually" on mornings in September.
+USUAL_WEEKS = 12
+USUAL_MIN_WEEKS = 2
+
+
+def _restaurant_today(restaurant_id):
+    from datetime import date as _date_rt
+    try:
+        from time_utils import restaurant_now_by_id
+        return restaurant_now_by_id(restaurant_id, naive=True).date()
+    except Exception:
+        return _date_rt.today()
+
+
+def usual_pattern(shifts, today=None, weeks: int = USUAL_WEEKS, min_weeks: int = USUAL_MIN_WEEKS) -> dict:
+    """{name: {"days": [...], "dayparts": [...], "weeks": n}} from shift rows
+    ({employee, date, shift_start}). Only the `weeks` weeks before `today`
+    are read (a person with no shift in them has no usual pattern), and a
+    weekday or daypart is "usual" when it recurs in `min_weeks` distinct
+    weeks of that window — or in the only week there is, for someone new."""
+    from datetime import date as _date_up, datetime as _dt_up, timedelta as _td_up
+    from shift_quality import daypart_of
+    today = today or _date_up.today()
+    since = (today - _td_up(weeks=weeks)).isoformat()
+    tally = {}
+    for sh in shifts or []:
+        name = (sh.get("employee") or "").strip()
+        day = str(sh.get("date") or "")[:10]
+        if not name:
+            continue
+        if day and day < since:
+            continue
+        try:
+            dt = _dt_up.strptime(day, "%Y-%m-%d")
+            wd, wk = dt.strftime("%A"), dt.strftime("%G-%V")
+        except (ValueError, TypeError):
+            if not sh.get("day"):
+                continue
+            wd, wk = sh["day"], "?"
+        t = tally.setdefault(name, {"weeks": set(), "days": {}, "dayparts": {}})
+        t["weeks"].add(wk)
+        t["days"].setdefault(wd, set()).add(wk)
+        part = daypart_of(sh.get("shift_start", ""))
+        if part != "unknown":
+            t["dayparts"].setdefault(part, set()).add(wk)
+    out = {}
+    for n, t in tally.items():
+        need = min(min_weeks, len(t["weeks"]))
+        out[n] = {"days": sorted(d for d, w in t["days"].items() if len(w) >= need),
+                  "dayparts": sorted(p for p, w in t["dayparts"].items() if len(w) >= need),
+                  "weeks": len(t["weeks"])}
+    return out
 
 
 def sibling_location_shifts(restaurant_id: int, dates: list,
@@ -6944,31 +8160,129 @@ def consume_reset_token(token: str, new_password: str, db_path: str = DB_PATH) -
     return True
 
 
+# ── the owner's reply voice (memory audit 9/29/26, reply_voice) ────────────
+#
+# A reply teaches the drafter only when someone who writes in the owner's
+# voice approved it: the account holder (answer_authority 'principal'), or a
+# login the owner marked "Writes replies in our voice" (the grant
+# permissions.REVIEWS_VOICE, read at the time of use, so revoking it takes
+# their approvals back out). Never an admin or a view-as session, never the
+# auto-approve rule, never a bulk publish. A reply approved before the
+# approver was recorded (approved_role NULL) is unknown and still counts, as
+# it always did, behind every reply whose approver is known — it ages out of
+# the 30-day trust window within a month.
+#
+# Examples and the edit note are banded by the star rating of the review
+# being answered (REPLY_BANDS): a 1-star food-safety reply was drafted with
+# four 5-star thank-yous as "the owner's voice" and a "replies run about 28
+# words" note beside the 60-80-word rule. A band short of examples borrows
+# only from the 3-star band beside it, never across it.
+REPLY_BANDS = ((1, 2), (3,), (4, 5))
+_BAND_NEIGHBOURS = {(1, 2): ((3,),), (3,): ((1, 2), (4, 5)), (4, 5): ((3,),)}
+REPLY_VOICE_GRANT = "reviews.voice"      # permissions.REVIEWS_VOICE
+EXAMPLES_PREFER_DAYS = 365               # the last 12 months come first
+EXAMPLES_POOL = 200                      # newest approvals read per call
+EDITED_CATEGORIES = ("light", "heavy", "rewrite")
+
+
+def reply_band(rating):
+    """The REPLY_BANDS band a star rating falls in, or None."""
+    try:
+        r = int(rating)
+    except (TypeError, ValueError):
+        return None
+    return next((b for b in REPLY_BANDS if r in b), None)
+
+
+def band_label(band) -> str:
+    """"1-2★" / "3★" / "4-5★" — how a note names the band it was measured on."""
+    if not band:
+        return ""
+    return f"{band[0]}-{band[-1]}★" if len(band) > 1 else f"{band[0]}★"
+
+
+def _has_table(conn, name) -> bool:
+    try:
+        return bool(conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone())
+    except Exception:
+        return False
+
+
+def reply_voice_sql(conn, trust=False) -> str:
+    """The reviews predicate for "approved in the owner's voice".
+
+    trust=True is auto-approve trust's narrower rule: the account holder's
+    own approvals (and replies approved before the approver was recorded) —
+    a login marked as writing in the owner's voice shapes the drafts, but
+    publishing unread under the owner's name rests on the owner's record
+    alone."""
+    who = "approved_role IS NULL OR approved_role='principal'"
+    if not trust and _has_table(conn, "permission_grants"):
+        who += (" OR (approved_role='delegate' AND approved_by IN (SELECT g.user_id FROM permission_grants g "
+                f"WHERE g.restaurant_id=reviews.restaurant_id AND g.permission='{REPLY_VOICE_GRANT}'))")
+    # A draft support edited through view-as is support's words, whoever
+    # approved it after (draft_edited_via, INT #16).
+    return (f"(COALESCE(approved_via, '') != 'view_as' AND COALESCE(draft_edited_via, '') != 'view_as' "
+            f"AND ({who}))")
+
+
 def get_approved_examples(restaurant_id: int, limit: int = 5,
-                           db_path: str = DB_PATH) -> list:
-    """Return recent approved review responses as style examples for the AI.
+                           db_path: str = DB_PATH, rating: int = None) -> list:
+    """Approved replies as style examples for the drafter: [{"rating",
+    "review", "response", "edited"}].
+
+    Never a review the owner's retention setting removed (deleted_at): a
+    two-year-old guest review reached the model as a style example after
+    the owner chose to keep six months (memory audit 9/29/26).
 
     A reply the auto-approve rule published is the model's own text, not
     the owner's style: learning from it would feed the drafter its own
     output (audit #15), so only replies a person approved are examples. A
     bulk publish (response_action='bulk_approved') posted drafts nobody read
-    one by one — the model's text again, not the owner's choice (M-3)."""
+    one by one — the model's text again, not the owner's choice (M-3).
+
+    Memory audit 9/29/26 (reply_voice): only approvals in the owner's voice
+    (reply_voice_sql), never a removed review; once the owner has edited any
+    reply, only edited replies are examples — an unedited approval is the
+    model's own text; `rating` picks the band of the review being answered
+    (in band first, then the 3-star band beside it, never across it); the
+    last 12 months first, then a known approver before an unknown one, then
+    newest. rating=None reads every band."""
     conn = get_conn(db_path)
-    # A reply the owner EDITED before approving comes first: it is their
-    # own words, where one approved as written is the model's (audit #40).
-    # Most recent within each group; deterministic for a fixed table.
-    rows = conn.execute("""
-        SELECT rating, text, draft_response FROM reviews
-        WHERE restaurant_id=?
-          AND response_status IN ('approved','posted')
-          AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved')
-          AND draft_response IS NOT NULL
-          AND draft_response != ''
-        ORDER BY CASE WHEN edit_category IN ('light', 'heavy', 'rewrite') THEN 0 ELSE 1 END, id DESC
-        LIMIT ?
-    """, (restaurant_id, limit)).fetchall()
-    conn.close()
-    return [{"rating": r["rating"], "review": r["text"][:120], "response": r["draft_response"]} for r in rows]
+    try:
+        rows = conn.execute(f"""
+            SELECT id, rating, text, draft_response, edit_category, approved_role,
+                   CASE WHEN COALESCE(approved_at, posted_at, fetched_at) >= datetime('now', ?) THEN 1 ELSE 0 END
+                       AS recent
+            FROM reviews
+            WHERE restaurant_id=? AND deleted_at IS NULL
+              AND response_status IN ('approved','posted')
+              AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved', 'support_approved')
+              AND draft_response IS NOT NULL AND TRIM(draft_response) != ''
+              AND {reply_voice_sql(conn)}
+            ORDER BY id DESC LIMIT ?
+        """, (f"-{int(EXAMPLES_PREFER_DAYS)} days", restaurant_id, EXAMPLES_POOL)).fetchall()
+    finally:
+        conn.close()
+    pool = [dict(r) for r in rows]
+    edited = [r for r in pool if r["edit_category"] in EDITED_CATEGORIES]
+    if edited:
+        pool = edited
+
+    def rank(r):
+        return (0 if r["recent"] else 1, 0 if r["approved_role"] else 1, -int(r["id"]))
+    band = reply_band(rating)
+    if band is None:
+        chosen = sorted(pool, key=rank)[:limit]
+    else:
+        chosen = []
+        for tier in (band,) + _BAND_NEIGHBOURS.get(band, ()):
+            chosen += sorted((r for r in pool if reply_band(r["rating"]) == tier), key=rank)
+            if len(chosen) >= limit:
+                break
+        chosen = chosen[:limit]
+    return [{"rating": r["rating"], "review": (r["text"] or "")[:120], "response": r["draft_response"],
+             "edited": r["edit_category"] in EDITED_CATEGORIES} for r in chosen]
 
 
 def record_reply_edit(review_id: int, restaurant_id: int, db_path: str = DB_PATH):
@@ -7006,17 +8320,26 @@ def record_reply_edit(review_id: int, restaurant_id: int, db_path: str = DB_PATH
         return None
 
 
-def get_reply_edit_summaries(restaurant_id: int, limit: int = 12, db_path: str = DB_PATH) -> list:
+def get_reply_edit_summaries(restaurant_id: int, limit: int = 12, db_path: str = DB_PATH,
+                             rating: int = None) -> list:
     """The most recent approved replies' edit summaries, newest first —
     what drafter.draft_response turns into its OWNER'S EDITS note. Only a
-    person's approvals (not the auto-approve rule's or a bulk publish's)."""
+    person's approvals (not the auto-approve rule's or a bulk publish's), in
+    the owner's voice (reply_voice_sql), on reviews still up; `rating`
+    reads only the band of the review being answered (memory audit
+    9/29/26, reply_voice) — a 1-star reply's length never comes from the
+    owner's 5-star edits."""
     import json as _json
     conn = get_conn(db_path)
     try:
+        band = reply_band(rating)
+        band_sql = f" AND rating IN ({','.join(str(int(x)) for x in band)})" if band else ""
         rows = conn.execute(
-            "SELECT edit_distance, edit_category, edit_signals, original_draft, draft_response FROM reviews "
-            "WHERE restaurant_id=? AND edit_category IS NOT NULL AND response_status IN ('approved','posted') "
-            "AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved') "
+            "SELECT rating, edit_distance, edit_category, edit_signals, original_draft, draft_response FROM reviews "
+            "WHERE restaurant_id=? AND deleted_at IS NULL AND edit_category IS NOT NULL "
+            "AND response_status IN ('approved','posted') "
+            "AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved', 'support_approved') "
+            f"AND {reply_voice_sql(conn)}{band_sql} "
             "ORDER BY COALESCE(approved_at, '') DESC, id DESC LIMIT ?", (restaurant_id, int(limit))).fetchall()
     except Exception:
         return []
@@ -7031,17 +8354,138 @@ def get_reply_edit_summaries(restaurant_id: int, limit: int = 12, db_path: str =
         words = len((r["draft_response"] or "").split())
         before = len((r["original_draft"] or r["draft_response"] or "").split())
         out.append({"distance": r["edit_distance"], "category": r["edit_category"], "signals": signals,
-                    "words_after": words, "words_before": before})
+                    "words_after": words, "words_before": before, "rating": r["rating"]})
     return out
+
+
+REJECTIONS_KEEP_DAYS = 90       # ops._RETENTION_DAYS["reply_draft_rejections"]
+
+
+def record_reply_rejection(restaurant_id: int, review_id: int, text: str, rating=None, how: str = "regenerate",
+                           user=None, db_path: str = DB_PATH):
+    """A model draft the owner turned down by asking for another (memory
+    audit 9/29/26, rejected_drafts): its sha256 and its closed-vocabulary
+    signals (reply_edits.draft_signals) — never its words — with who turned
+    it down. Returns the row id or None; never raises."""
+    import hashlib
+    import json as _json
+    import reply_edits
+    text = str(text or "").strip()
+    if not restaurant_id or not text:
+        return None
+    try:
+        from permissions import answer_authority
+        authority = answer_authority(user) if user else None
+        uid = (user or {}).get("acting_admin_id") or (user or {}).get("id")
+        conn = get_conn(db_path)
+        try:
+            cur = conn.execute(
+                "INSERT INTO reply_draft_rejections (restaurant_id, review_id, rating, draft_hash, words, signals, "
+                "how, user_id, authority) VALUES (?,?,?,?,?,?,?,?,?)",
+                (restaurant_id, review_id, rating, hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                 len(text.split()), _json.dumps(reply_edits.draft_signals(text, rating)), how, uid, authority))
+            conn.commit()
+            return cur.lastrowid
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[reply_edits] rejection not recorded for review {review_id}: {e}")
+        return None
+
+
+def get_reply_rejection_signals(restaurant_id: int, rating=None, days: int = REJECTIONS_KEEP_DAYS,
+                                db_path: str = DB_PATH) -> dict:
+    """{"rejected": [signals...], "approved": [signals...]} for the band of
+    `rating` over the last `days`: what the drafts this owner regenerated
+    were like, and what the replies they approved in their own voice were
+    like, for reply_edits.rejection_note. Whose "no" counts is the voice
+    rule the examples follow: the account holder, a login marked as
+    writing in their voice, or an unrecorded one — never an admin, a
+    view-as session or another delegate. Never raises."""
+    import json as _json
+    import reply_edits
+    out = {"rejected": [], "approved": []}
+    band = reply_band(rating)
+    if not restaurant_id or band is None:
+        return out
+    marks = ",".join(str(int(x)) for x in band)
+    try:
+        conn = get_conn(db_path)
+        try:
+            who = "authority IS NULL OR authority='principal'"
+            if _has_table(conn, "permission_grants"):
+                who += (" OR (authority='delegate' AND user_id IN (SELECT g.user_id FROM permission_grants g "
+                        f"WHERE g.restaurant_id=reply_draft_rejections.restaurant_id "
+                        f"AND g.permission='{REPLY_VOICE_GRANT}'))")
+            for r in conn.execute(
+                    f"SELECT signals FROM reply_draft_rejections WHERE restaurant_id=? AND rating IN ({marks}) "
+                    f"AND ({who}) AND created_at >= datetime('now', ?) "
+                    "ORDER BY id DESC LIMIT 50", (restaurant_id, f"-{int(days)} days")).fetchall():
+                try:
+                    out["rejected"].append(_json.loads(r["signals"] or "[]"))
+                except Exception:
+                    continue
+            for r in conn.execute(
+                    f"SELECT rating, draft_response FROM reviews WHERE restaurant_id=? AND rating IN ({marks}) "
+                    "AND deleted_at IS NULL AND response_status IN ('approved','posted') "
+                    "AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved', 'support_approved') "
+                    f"AND {reply_voice_sql(conn)} AND COALESCE(approved_at, fetched_at) >= datetime('now', ?) "
+                    "ORDER BY id DESC LIMIT 50", (restaurant_id, f"-{int(days)} days")).fetchall():
+                out["approved"].append(reply_edits.draft_signals(r["draft_response"], r["rating"]))
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[reply_edits] rejections unreadable for {restaurant_id}: {e}")
+    return out
+
+
+def labor_rates_key(restaurant_id: int, db_path: str = DB_PATH) -> str:
+    """The costing half of a labor day's basis (memory audit 9/29/26,
+    labor_periods): a short hash of the per-role rates, the restaurant's
+    hourly rate and the salaried set — the inputs that re-cost the same
+    shifts to a different labor figure. The other half is the day's labor
+    source (save_labor_daily_history): POS wages and an upload's rates are
+    different bases too."""
+    import hashlib
+    r = get_restaurant(restaurant_id, db_path)
+    try:
+        rates = get_role_rates(restaurant_id, db_path=db_path) or {}
+    except Exception:
+        rates = {}
+    blob = json.dumps({
+        "rates": sorted((str(k).strip().lower(), round(float(v), 2)) for k, v in rates.items()
+                        if isinstance(v, (int, float)) and v),
+        "hourly": round(float(getattr(r, "hourly_rate", 0) or 0), 2) if r else 0,
+        "salaried": sorted((salaried_name_key(x["name"]), x["annual"]) for x in salaried_staff(r)) if r else [],
+    }, sort_keys=True)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:10]
+
+
+# Labor period rows (labor_history.kind). A PAYROLL_WEEK is derived from
+# labor_daily_history by refresh_labor_periods and is the only kind the
+# product writes now; PERIOD is one a caller stored explicitly; ROLLING_WINDOW
+# marks the legacy rows every sync and every note build used to append —
+# overlapping 14/28-day windows, and recosts of the same one — which no
+# reader reads (memory audit 9/29/26, labor_periods).
+LABOR_PERIOD_WEEK = "payroll_week"
+LABOR_PERIOD_EXPLICIT = "period"
+LABOR_PERIOD_LEGACY = "rolling_window"
+# How far back the weekly periods are kept current: a year and a week, so
+# last year's same week is always there to compare.
+LABOR_PERIOD_WEEKS = 53
 
 
 def save_labor_snapshot(restaurant_id: int, period_start: str, period_end: str,
                          labor_pct: float, total_labor: float, total_sales: float,
-                         db_path: str = DB_PATH):
-    """Save a labor analysis snapshot for trend tracking — once per period.
-    It was written on every insight view, so the second view found "the
-    previous upload" to be the same period and compared it with itself: the
-    trend and forecast lines vanished.
+                         db_path: str = DB_PATH, basis: str = None, days: int = None,
+                         kind: str = LABOR_PERIOD_EXPLICIT):
+    """Store one labor period, REPLACED IN PLACE — never a second row for the
+    same period (memory audit 9/29/26, labor_periods). A recost used to
+    append: the same 14 days read 31.1% then 29.5% three seconds apart, and
+    the labor read told the owner "Labor's down 1.6 points from last upload".
+    A payroll week is keyed by its start (its end grows while it is in
+    progress); an explicit period by its start and end. A row whose basis
+    changed keeps the figure it replaced in `recosted_from`.
 
     Never for a period with no sales: its labor % is a stand-in 0, and a
     (0.0%, $0) row was later handed to the labor note as a "previous upload"
@@ -7051,49 +8495,215 @@ def save_labor_snapshot(restaurant_id: int, period_start: str, period_end: str,
             return
     except (TypeError, ValueError):
         return
+    kind = kind or LABOR_PERIOD_EXPLICIT
     conn = get_conn(db_path)
     try:
-        same = conn.execute("SELECT 1 FROM labor_history WHERE restaurant_id=? AND period_start IS ? AND period_end IS ? "
-                            "AND ABS(COALESCE(labor_pct, 0) - COALESCE(?, 0)) < 0.05 LIMIT 1",
-                            (restaurant_id, period_start, period_end, labor_pct)).fetchone()
-        if same:
-            return
-        conn.execute("""
-            INSERT INTO labor_history (restaurant_id, period_start, period_end, labor_pct, total_labor, total_sales)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (restaurant_id, period_start, period_end, labor_pct, total_labor, total_sales))
+        if kind == LABOR_PERIOD_WEEK:
+            row = conn.execute("SELECT id, labor_pct, basis FROM labor_history WHERE restaurant_id=? AND kind=? "
+                               "AND period_start=? ORDER BY id DESC LIMIT 1",
+                               (restaurant_id, kind, period_start)).fetchone()
+        else:
+            row = conn.execute("SELECT id, labor_pct, basis FROM labor_history WHERE restaurant_id=? "
+                               "AND COALESCE(kind, '') != ? AND period_start IS ? AND period_end IS ? "
+                               "ORDER BY id DESC LIMIT 1",
+                               (restaurant_id, LABOR_PERIOD_LEGACY, period_start, period_end)).fetchone()
+        if row is None:
+            conn.execute("INSERT INTO labor_history (restaurant_id, period_start, period_end, labor_pct, total_labor, "
+                         "total_sales, basis, days, kind, updated_at) VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))",
+                         (restaurant_id, period_start, period_end, labor_pct, total_labor, total_sales,
+                          basis, days, kind))
+        else:
+            recosted = row["labor_pct"] if (basis and row["basis"] and basis != row["basis"]
+                                            and row["labor_pct"] is not None and labor_pct is not None
+                                            and abs(float(row["labor_pct"]) - float(labor_pct)) >= 0.05) else None
+            conn.execute("UPDATE labor_history SET period_end=?, labor_pct=?, total_labor=?, total_sales=?, "
+                         "basis=COALESCE(?, basis), days=COALESCE(?, days), kind=?, updated_at=datetime('now'), "
+                         "recosted_from=COALESCE(?, recosted_from) WHERE id=?",
+                         (period_end, labor_pct, total_labor, total_sales, basis, days, kind, recosted, row["id"]))
         conn.commit()
     finally:
         conn.close()
 
 
+def _week_start_of(day, week_start_day):
+    from datetime import timedelta as _td_w
+    return day - _td_w(days=(day.weekday() - int(week_start_day or 0)) % 7)
+
+
+def refresh_labor_periods(restaurant_id: int, db_path: str = DB_PATH, today=None) -> int:
+    """The restaurant's labor period history as calendar-aligned payroll
+    weeks (restaurants.week_start_day), derived from labor_daily_history's
+    FINAL days and written into labor_history in place (memory audit
+    9/29/26, labor_periods). Called wherever the daily history is saved (a
+    POS sync, an upload); every reader reads the result. A week's labor % is
+    its labor on the days with sales over those days' sales — the analysis's
+    own rule. A week whose days were costed on two bases is `mixed`, and is
+    compared with nothing. A week that has ended runs to its last calendar
+    day; the week in progress to its last day with figures. Returns the
+    weeks written."""
+    from datetime import date as _date_lp, timedelta as _td_lp
+    r = get_restaurant(restaurant_id, db_path)
+    if r is None:
+        return 0
+    wsd = int(getattr(r, "week_start_day", 0) or 0)
+    today = today or _restaurant_today(restaurant_id)
+    since = _week_start_of(today - _td_lp(weeks=LABOR_PERIOD_WEEKS), wsd).isoformat()
+    conn = get_conn(db_path)
+    try:
+        # Final days only (canonical_facts.FINAL_SQL — the one rule every
+        # daily-history learner reads), and a converted demo's own history
+        # without the seed's synthetic days (own_history_sql).
+        from canonical_facts import FINAL_SQL as _FINAL_LP
+        rows = conn.execute("SELECT date, labor_cost, sales, basis FROM labor_daily_history WHERE restaurant_id=? "
+                            f"AND date >= ? AND {_FINAL_LP} AND {own_history_sql()} ORDER BY date",
+                            (restaurant_id, since)).fetchall()
+    finally:
+        conn.close()
+    weeks = {}
+    for row in rows:
+        try:
+            d = _date_lp.fromisoformat(str(row["date"])[:10])
+        except ValueError:
+            continue
+        w = weeks.setdefault(_week_start_of(d, wsd), {"labor": 0.0, "sales": 0.0, "days": 0, "bases": set(),
+                                                      "last": d})
+        w["last"] = max(w["last"], d)
+        sales = row["sales"]
+        if sales is None or float(sales) <= 0:
+            continue
+        w["labor"] += float(row["labor_cost"] or 0)
+        w["sales"] += float(sales)
+        w["days"] += 1
+        w["bases"].add(row["basis"] or "unknown")
+    written = 0
+    for start, w in sorted(weeks.items()):
+        if not w["days"] or w["sales"] <= 0:
+            continue
+        week_end = start + _td_lp(days=6)
+        end = week_end if week_end < today else w["last"]
+        basis = next(iter(w["bases"])) if len(w["bases"]) == 1 else "mixed"
+        save_labor_snapshot(restaurant_id, start.isoformat(), end.isoformat(),
+                            round(w["labor"] / w["sales"] * 100, 1), round(w["labor"], 2), round(w["sales"], 2),
+                            db_path=db_path, basis=basis, days=w["days"], kind=LABOR_PERIOD_WEEK)
+        written += 1
+    return written
+
+
 def get_labor_history(restaurant_id: int, limit: int = 4,
                       db_path: str = DB_PATH) -> list:
-    """Return recent labor snapshots for trend awareness.
+    """The restaurant's labor periods, newest first: [{period_start,
+    period_end, labor_pct, total_labor, total_sales, days, basis, kind,
+    complete, comparable, recosted_from}] — calendar payroll weeks
+    (refresh_labor_periods) plus any period a caller stored, never the
+    legacy rolling windows (memory audit 9/29/26, labor_periods). One row
+    per period (the newest), so a chart never stacks two bars on one label.
 
-    save_labor_snapshot() inserts a new row every time an insight is
-    generated, not just on a genuinely new upload — a restaurant whose
-    data hasn't changed can accumulate many rows for the same
-    period_start/period_end. Without dedup, those duplicates share one
-    x-axis label on the client's trend chart, which makes Swift Charts'
-    BarMark treat them as a stacked series (same category = stack) and
-    sum them into one wildly-inflated bar. Keep only the latest snapshot
-    (highest id) per distinct period.
-    """
+    `complete` — the period has ended (a payroll week whose last day is
+    before the restaurant's today). `comparable` — this period can be read
+    against the one listed after it (the period just before it): both
+    complete, adjacent (no gap between them), and costed on the same single
+    basis. A comparison with anything else is "recosted, not comparable" or
+    no comparison at all (labor_period_change)."""
+    from datetime import date as _date_gh, timedelta as _td_gh
     conn = get_conn(db_path)
-    rows = conn.execute("""
-        SELECT h.period_start, h.period_end, h.labor_pct, h.total_labor, h.total_sales
-        FROM labor_history h
-        JOIN (
-            SELECT period_start, MAX(id) AS max_id
-            FROM labor_history
-            WHERE restaurant_id=? AND total_sales > 0
-            GROUP BY period_start
-        ) latest ON h.id = latest.max_id
-        ORDER BY h.period_start DESC LIMIT ?
-    """, (restaurant_id, limit)).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        rows = conn.execute("""
+            SELECT h.period_start, h.period_end, h.labor_pct, h.total_labor, h.total_sales,
+                   h.basis, h.days, h.kind, h.recosted_from
+            FROM labor_history h
+            JOIN (
+                SELECT period_start, MAX(id) AS max_id
+                FROM labor_history
+                WHERE restaurant_id=? AND total_sales > 0 AND COALESCE(kind, '') != ?
+                GROUP BY period_start
+            ) latest ON h.id = latest.max_id
+            ORDER BY h.period_start DESC LIMIT ?
+        """, (restaurant_id, LABOR_PERIOD_LEGACY, int(limit) + 1)).fetchall()
+    finally:
+        conn.close()
+    today = _restaurant_today(restaurant_id).isoformat()
+    out = []
+    for r in rows:
+        d = dict(r)
+        end = str(d.get("period_end") or "")[:10]
+        if d.get("kind") == LABOR_PERIOD_WEEK:
+            try:
+                wk_end = (_date_gh.fromisoformat(str(d["period_start"])[:10]) + _td_gh(days=6)).isoformat()
+            except ValueError:
+                wk_end = end
+            d["complete"] = wk_end < today
+        else:
+            d["complete"] = bool(end) and end < today
+        out.append(d)
+    for i, d in enumerate(out):
+        prev = out[i + 1] if i + 1 < len(out) else None
+        d["comparable"] = bool(prev) and _periods_comparable(d, prev)
+    return out[:int(limit)]
+
+
+def _periods_comparable(cur: dict, prev: dict) -> bool:
+    from datetime import date as _date_pc, timedelta as _td_pc
+    if not (cur.get("complete") and prev.get("complete")):
+        return False
+    if not cur.get("basis") or cur.get("basis") in ("mixed", "unknown") or cur.get("basis") != prev.get("basis"):
+        return False
+    try:
+        return (_date_pc.fromisoformat(str(prev["period_end"])[:10]) + _td_pc(days=1)
+                == _date_pc.fromisoformat(str(cur["period_start"])[:10]))
+    except (TypeError, ValueError, KeyError):
+        return False
+
+
+def labor_period_change(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """The one period-on-period labor comparison every surface states
+    (memory audit 9/29/26, labor_periods): the latest COMPLETE period against
+    the one before it, only when the two are adjacent and costed on the same
+    basis. {latest, previous, delta, comparable, reason} — reason "recosted"
+    when the rates or the labor source differ between them ("recosted, not
+    comparable"), "gap" when they are not back to back, "partial" when fewer
+    than two periods have ended, None when comparable."""
+    hist = [h for h in get_labor_history(restaurant_id, limit=6, db_path=db_path) if h.get("complete")]
+    if len(hist) < 2:
+        return {"latest": hist[0] if hist else None, "previous": None, "delta": None, "comparable": False,
+                "reason": "partial"}
+    cur, prev = hist[0], hist[1]
+    comparable = _periods_comparable(cur, prev)
+    reason = None
+    if not comparable:
+        reason = "recosted" if (cur.get("basis") != prev.get("basis") or cur.get("basis") == "mixed") else "gap"
+    delta = (round(float(cur["labor_pct"]) - float(prev["labor_pct"]), 1)
+             if comparable and cur.get("labor_pct") is not None and prev.get("labor_pct") is not None else None)
+    return {"latest": cur, "previous": prev, "delta": delta, "comparable": comparable, "reason": reason}
+
+
+def backfill_labor_periods(db_path: str = DB_PATH, max_seconds: float = 20.0) -> int:
+    """At boot: the legacy rolling-window rows marked (never read again) and
+    every restaurant's payroll weeks derived once from its daily history, so
+    the first read after this deploy sees weeks, not windows (memory audit
+    9/29/26, labor_periods). Idempotent — marking touches only unmarked rows
+    and refresh_labor_periods replaces in place; bounded by `max_seconds`
+    (whatever it did not reach, the next sync or upload refreshes)."""
+    import time as _time_lp
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE labor_history SET kind=? WHERE kind IS NULL", (LABOR_PERIOD_LEGACY,))
+        conn.commit()
+        rids = [row[0] for row in conn.execute(
+            "SELECT DISTINCT restaurant_id FROM labor_daily_history WHERE restaurant_id NOT IN "
+            "(SELECT restaurant_id FROM labor_history WHERE kind=?)", (LABOR_PERIOD_WEEK,)).fetchall()]
+    finally:
+        conn.close()
+    stop = _time_lp.monotonic() + float(max_seconds)
+    done = 0
+    for rid in rids:
+        if _time_lp.monotonic() > stop:
+            break
+        try:
+            refresh_labor_periods(rid, db_path=db_path)
+            done += 1
+        except Exception as e:
+            print(f"[labor periods] backfill skipped restaurant {rid}: {e}")
+    return done
 
 
 def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
@@ -7161,7 +8771,8 @@ def _ensure_history_columns(conn):
                        ("review_json", "TEXT"), ("generation_seconds", "REAL"),
                        ("weather_json", "TEXT"), ("quality_score", "REAL"), ("quality_band", "TEXT"),
                        ("quality_confidence", "TEXT"), ("what_if_json", "TEXT"), ("superseded_by", "INTEGER"),
-                       ("republished_at", "TEXT"), ("publishing_at", "TEXT"), ("economics_json", "TEXT")):
+                       ("republished_at", "TEXT"), ("publishing_at", "TEXT"), ("economics_json", "TEXT"),
+                       ("detail_thinned_at", "TEXT")):
         if name not in have:
             try:
                 conn.execute(f"ALTER TABLE schedule_history ADD COLUMN {name} {decl}")
@@ -7537,6 +9148,14 @@ def save_labor_daily_history(restaurant_id: int, by_day: dict,
     day still trading when it was read); days outside keep what they had.
     Without it (an upload) the provenance columns are left as they were."""
     from datetime import datetime as _dt
+    # Every day saved here is re-costed on the restaurant's current rates:
+    # the basis says which rates and which labor source, so two periods
+    # costed differently are never compared as if the labor moved (memory
+    # audit 9/29/26, labor_periods). A day keeps its own source's half.
+    try:
+        rates_key = labor_rates_key(restaurant_id, db_path=db_path)
+    except Exception:
+        rates_key = None
     conn = get_conn(db_path)
     prov = provenance or {}
     win = prov.get("window") or None
@@ -7569,9 +9188,12 @@ def save_labor_daily_history(restaurant_id: int, by_day: dict,
         conn.execute("""
             INSERT INTO labor_daily_history
                 (restaurant_id, date, day_of_week, labor_pct, labor_cost, sales, total_hours,
-                 source, provider, synced_at, final)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 source, provider, synced_at, final, basis)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    CASE WHEN ? IS NULL THEN NULL ELSE ? || ':' || COALESCE(?, 'upload') END)
             ON CONFLICT(restaurant_id, date) DO UPDATE SET
+                basis=CASE WHEN ? IS NULL THEN labor_daily_history.basis
+                           ELSE ? || ':' || COALESCE(excluded.source, labor_daily_history.source, 'upload') END,
                 source=COALESCE(excluded.source, labor_daily_history.source),
                 provider=COALESCE(excluded.provider, labor_daily_history.provider),
                 synced_at=COALESCE(excluded.synced_at, labor_daily_history.synced_at),
@@ -7590,7 +9212,7 @@ def save_labor_daily_history(restaurant_id: int, by_day: dict,
                 total_hours=excluded.total_hours,
                 saved_at=datetime('now')
         """, (restaurant_id, date_str, dow, labor_pct, labor_cost, sales, actual_hours,
-              p_src, p_prov, p_at, p_final))
+              p_src, p_prov, p_at, p_final, rates_key, rates_key, p_src, rates_key, rates_key))
     conn.commit()
     conn.close()
 
@@ -7600,8 +9222,17 @@ def get_yoy_schedule_context(restaurant_id: int, next_week_dates: list,
     """
     For each date in next_week_dates, find the same calendar day last year
     (52 weeks back = same weekday). Returns a list of dicts with YoY data.
+
+    Last year's SALES come from the one last-year reader
+    (canonical_facts.sales_history — the night's report, then the owner's
+    imported DSR workbook, then the POS sync's final day; memory audit
+    9/29/26, imported_year) and `yoy_source` names which: a client who
+    imported a year of workbooks but has 60 days of POS history had no
+    year-over-year context at all. Labor %, labor cost and hours come only
+    from the synced day (the import carries none) and are None when absent.
     """
     from datetime import datetime as _dt, timedelta as _td
+    import canonical_facts as _cf
     conn = get_conn(db_path)
 
     # Every candidate date across every requested date, fetched once.
@@ -7620,37 +9251,40 @@ def get_yoy_schedule_context(restaurant_id: int, next_week_dates: list,
             wanted.add((yoy_dt + _td(days=offset)).strftime("%Y-%m-%d"))
 
     by_date = {}
+    canon = {}
     if wanted:
         marks = ",".join("?" * len(wanted))
         for row in conn.execute(
-            f"SELECT * FROM labor_daily_history WHERE restaurant_id=? AND date IN ({marks})",
+            f"SELECT * FROM labor_daily_history WHERE restaurant_id=? AND date IN ({marks}) "
+            f"AND {_cf.FINAL_SQL}",
             (restaurant_id, *sorted(wanted))
         ).fetchall():
             by_date[row["date"]] = dict(row)
+        canon = _cf.net_series(restaurant_id, db_path=db_path, dates=sorted(wanted), pos=_cf.POS_ALL)
 
     rows_out = []
     for date_str in next_week_dates:
         try:
             dt = _dt.strptime(date_str, "%Y-%m-%d")
             yoy_dt = dt - _td(weeks=52)
-            # Same ±3 day window, still walked in offset order so the
-            # fallback below keeps picking the earliest date with data.
-            candidates = [
-                by_date[d] for d in
-                ((yoy_dt + _td(days=o)).strftime("%Y-%m-%d") for o in range(-3, 4))
-                if d in by_date
-            ]
-            # Prefer exact 52-week match, fall back to closest with data
-            exact = next((c for c in candidates if c["date"] == yoy_dt.strftime("%Y-%m-%d")), None)
-            best = exact or (candidates[0] if candidates else None)
+            order = [(yoy_dt + _td(days=o)).strftime("%Y-%m-%d") for o in range(-3, 4)]
+            # Prefer exact 52-week match, fall back to closest with data —
+            # walked in offset order, so the earliest date with data wins a
+            # tie, as before.
+            exact = yoy_dt.strftime("%Y-%m-%d")
+            pick = exact if exact in canon else next((d for d in order if d in canon), None)
+            sales = canon.get(pick) if pick else None
+            labor = by_date.get(pick) if pick else None
             rows_out.append({
                 "next_week_date": date_str,
                 "next_week_dow": dt.strftime("%A"),
-                "yoy_date": best["date"] if best else None,
-                "yoy_sales": best["sales"] if best else None,
-                "yoy_labor_pct": best["labor_pct"] if best else None,
-                "yoy_labor_cost": best["labor_cost"] if best else None,
-                "yoy_hours": best["total_hours"] if best else None,
+                "yoy_date": pick,
+                "yoy_sales": sales["net"] if sales else None,
+                "yoy_source": sales["source"] if sales else None,
+                "yoy_basis": sales["basis"] if sales else None,
+                "yoy_labor_pct": labor["labor_pct"] if labor else None,
+                "yoy_labor_cost": labor["labor_cost"] if labor else None,
+                "yoy_hours": labor["total_hours"] if labor else None,
             })
         except Exception:
             rows_out.append({"next_week_date": date_str, "yoy_date": None})
@@ -8032,6 +9666,248 @@ def in_service(restaurant) -> bool:
         except (KeyError, IndexError, TypeError):
             status = None
     return (status or "").strip().lower() not in BLOCKED_BILLING_STATES
+
+
+SEED_PROVENANCE_MIGRATION = "labor_seed_provenance_v1"
+
+
+def stamp_seed_provenance(db_path=None) -> int:
+    """Once (data_migrations): stamp source 'seed' on the demo seed's daily
+    labor rows written before the seed stamped them — rows of a restaurant
+    that is or was a demo, with no source, holding exactly one of the seed's
+    (sales, hours) pairs for that weekday (demo_seed.SEED_BY_WEEKDAY, or the
+    first seed's SEED_OLD_PAIRS). A real POS day never has a source of NULL
+    and a seed's exact figures both. Returns rows stamped."""
+    import demo_seed as _ds
+    conn = get_conn(db_path) if db_path else get_conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        if conn.execute("SELECT 1 FROM data_migrations WHERE name=?", (SEED_PROVENANCE_MIGRATION,)).fetchone():
+            conn.rollback()
+            return 0
+        rows = conn.execute(
+            "SELECT h.id, h.date, h.sales, h.total_hours FROM labor_daily_history h JOIN restaurants r "
+            "ON r.id = h.restaurant_id WHERE (COALESCE(r.is_demo, 0) = 1 OR r.demo_cleared_at IS NOT NULL) "
+            "AND h.source IS NULL").fetchall()
+        from datetime import date as _d_sp
+        n = 0
+        for row in rows:
+            try:
+                wd = _d_sp.fromisoformat(str(row["date"])[:10]).weekday()
+                pair = (float(row["sales"] or 0), float(row["total_hours"] or 0))
+            except (TypeError, ValueError):
+                continue
+            if pair == tuple(float(x) for x in _ds.SEED_BY_WEEKDAY[wd]) or pair in _ds.SEED_OLD_PAIRS:
+                conn.execute("UPDATE labor_daily_history SET source='seed' WHERE id=?", (row["id"],))
+                n += 1
+        conn.execute("INSERT INTO data_migrations (name, detail) VALUES (?, ?)",
+                     (SEED_PROVENANCE_MIGRATION, f"{n} seeded labor days stamped source 'seed'"))
+        conn.commit()
+        return n
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        print(f"seed provenance stamp failed (will retry at next boot): {e}")
+        return 0
+    finally:
+        conn.close()
+
+
+# ── learning eligibility (memory audit 9/29/26, "eligibility") ─────────────
+#
+# ONE predicate for every learner — the restaurant's own and the platform's
+# — and every admin learning check (the A/B readout, the recommendation
+# calibration): a demo, a test account and Cavnar AI's own account teach
+# nothing. Test and internal accounts used to be excluded only when an admin
+# ticked exclude_from_learning; the internal rid 1 counted as live and the
+# schedule A/B ran on demo weeks. Now an account is excluded automatically
+# when its billing is 'internal', when every login on it is an internal one
+# (the admin's home), or when its name says it is a test ("Preview Test",
+# "QA Tools", "Cavnar AI Admin"); the admin's `learning_override` wins
+# ('include' — a real restaurant the rule caught; 'exclude'). And a demo that
+# becomes a real account keeps its seeded history, but nothing recorded
+# before `learning_since` (stamped at the conversion) teaches any learner:
+# the 90-day quarantine it replaces was shorter than readers that look back
+# 365 days and 72 weeks.
+LEARNING_TEST_NAME_WORDS = frozenset({"test", "tests", "testing", "qa", "demo", "sandbox", "preview", "dummy",
+                                      "fake", "sample", "staging", "admin"})
+LEARNING_TEST_NAME_PHRASES = ("cavnar ai",)
+_INTERNAL_HOMES_TTL = 60.0
+_internal_homes_cache = {}
+
+
+def _learning_get(r, k):
+    if hasattr(r, k):
+        return getattr(r, k)
+    try:
+        return r[k]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
+def learning_test_name(name) -> bool:
+    """Whether a restaurant's name marks it a test or internal account: one
+    of LEARNING_TEST_NAME_WORDS standing as its own word, or a phrase of
+    LEARNING_TEST_NAME_PHRASES. "Testa Pizza" is not; "Preview Test" is."""
+    import re as _re_ln
+    text = " ".join(_re_ln.split(r"[^a-z0-9]+", str(name or "").lower())).strip()
+    if not text:
+        return False
+    return bool(set(text.split()) & LEARNING_TEST_NAME_WORDS) or any(
+        f" {p} " in f" {text} " for p in LEARNING_TEST_NAME_PHRASES)
+
+
+def _internal_home_ids(db_path=None) -> set:
+    """Restaurants every login of which is an internal one (admin or
+    support) — the admin's own home. Cached per database for a minute."""
+    import time as _t_ih
+    key = db_path or DB_PATH
+    hit = _internal_homes_cache.get(key)
+    if hit and _t_ih.monotonic() - hit[0] < _INTERNAL_HOMES_TTL:
+        return hit[1]
+    ids = set()
+    try:
+        conn = get_conn(db_path) if db_path else get_conn()
+        try:
+            ucols = {r[1] for r in conn.execute("PRAGMA table_info(users)")}
+            who = INTERNAL_LOGIN_SQL if "role" in ucols else "COALESCE(is_admin, 0) = 1"
+            ids = {int(r[0]) for r in conn.execute(
+                f"SELECT restaurant_id FROM users WHERE restaurant_id IS NOT NULL GROUP BY restaurant_id "
+                f"HAVING MIN(CASE WHEN {who} THEN 1 ELSE 0 END) = 1").fetchall()}
+        finally:
+            conn.close()
+    except Exception:
+        ids = set()
+    _internal_homes_cache[key] = (_t_ih.monotonic(), ids)
+    return ids
+
+
+def learning_exclusion(restaurant, internal_homes=None, db_path=None):
+    """Why this restaurant teaches no learner, or None when it may:
+    'demo', 'excluded' (by an admin), 'internal' (billing), 'admin_home'
+    (only internal logins), 'test_name'. Accepts a Restaurant, a row/dict or
+    an id. `internal_homes` (a set of ids) spares the lookup in a loop."""
+    r = restaurant
+    if isinstance(r, int):
+        r = get_restaurant(r, db_path or DB_PATH)
+    if r is None:
+        return "missing"
+    if _learning_get(r, "is_demo"):
+        return "demo"
+    override = str(_learning_get(r, "learning_override") or "").strip().lower()
+    if override == "exclude" or _learning_get(r, "exclude_from_learning"):
+        return "excluded"
+    if override == "include":
+        return None
+    if str(_learning_get(r, "billing_status") or "").strip().lower() == "internal":
+        return "internal"
+    rid = _learning_get(r, "id")
+    homes = internal_homes if internal_homes is not None else _internal_home_ids(db_path)
+    if rid is not None and int(rid) in homes:
+        return "admin_home"
+    if learning_test_name(_learning_get(r, "name")):
+        return "test_name"
+    return None
+
+
+LEARNING_EXCLUSION_LABELS = {
+    "demo": "a demo account", "excluded": "excluded by an admin", "internal": "an internal account",
+    "admin_home": "Cavnar AI's own account", "test_name": "a test account (by its name)", "missing": "not found",
+}
+
+
+def learning_eligible(restaurant, since=None, db_path=None) -> bool:
+    """Whether this restaurant may teach any learner — its own or the
+    platform's (memory audit 9/29/26, "eligibility"): not a demo, not a
+    test or internal account (learning_exclusion — automatic, with the
+    admin's learning_override). With `since` (the date or stamp of the data
+    a learner would read), also False when that data was recorded before
+    the restaurant's learning_since (its demo era). Accepts a Restaurant, a
+    row/dict, or an id."""
+    r = restaurant
+    if isinstance(r, int):
+        r = get_restaurant(r, db_path or DB_PATH)
+    if r is None or learning_exclusion(r, db_path=db_path):
+        return False
+    if since is not None:
+        floor = _learning_get(r, "learning_since")
+        if floor and str(since).replace("T", " ")[:19] < str(floor)[:19]:
+            return False
+    return True
+
+
+def learning_status(restaurant, db_path=None) -> dict:
+    """{eligible, reason, label, automatic, override, since} — what the admin
+    console shows beside the override control."""
+    r = restaurant if not isinstance(restaurant, int) else get_restaurant(restaurant, db_path or DB_PATH)
+    why = learning_exclusion(r, db_path=db_path) if r is not None else "missing"
+    return {"eligible": why is None, "reason": why, "label": LEARNING_EXCLUSION_LABELS.get(why),
+            "automatic": why in ("internal", "admin_home", "test_name"),
+            "override": (_learning_get(r, "learning_override") or None) if r is not None else None,
+            "since": _learning_get(r, "learning_since") if r is not None else None}
+
+
+def learning_ineligible_ids(conn=None, db_path=None) -> set:
+    """Every restaurant id learning_exclusion rules out, in one pass — what
+    the SQL readers filter on (learning_filter_sql)."""
+    own = conn is None
+    c = (get_conn(db_path) if db_path else get_conn()) if own else conn
+    try:
+        cols = {r[1] for r in c.execute("PRAGMA table_info(restaurants)")}
+        want = [k for k in ("id", "name", "is_demo", "exclude_from_learning", "learning_override", "billing_status")
+                if k in cols]
+        rows = [dict(r) for r in c.execute(f"SELECT {', '.join(want)} FROM restaurants").fetchall()]
+        homes = _internal_home_ids_on(c)          # on this connection: no second one
+    finally:
+        if own:
+            c.close()
+    return {int(r["id"]) for r in rows if learning_exclusion(r, internal_homes=homes)}
+
+
+def learning_filter_sql(column="restaurant_id", conn=None, db_path=None) -> str:
+    """A WHERE fragment keeping only rows of restaurants that may teach:
+    "<column> NOT IN (…)" (ids inlined — they are integers), or "1=1". A
+    row of a restaurant no longer in the table (a deleted restaurant's
+    tombstoned learning rows) passes."""
+    ids = learning_ineligible_ids(conn=conn, db_path=db_path)
+    if not ids:
+        return "1=1"
+    return f"{column} NOT IN ({','.join(str(int(i)) for i in sorted(ids))})"
+
+
+def learning_rows_sql(rid_column, time_column) -> str:
+    """A WHERE fragment dropping rows recorded before their restaurant's
+    learning_since (its demo era): correlated on `rid_column`, compared on
+    `time_column` (an ISO date or SQLite stamp)."""
+    return (f"NOT EXISTS (SELECT 1 FROM restaurants _ls WHERE _ls.id = {rid_column} "
+            f"AND _ls.learning_since IS NOT NULL AND {time_column} < _ls.learning_since)")
+
+
+def learning_since_map(conn=None, db_path=None) -> dict:
+    """{restaurant_id: learning_since} for every restaurant that has one."""
+    own = conn is None
+    c = (get_conn(db_path) if db_path else get_conn()) if own else conn
+    try:
+        return {int(r[0]): r[1] for r in c.execute(
+            "SELECT id, learning_since FROM restaurants WHERE learning_since IS NOT NULL").fetchall()}
+    except Exception:
+        return {}
+    finally:
+        if own:
+            c.close()
+
+
+def own_history_sql(alias="") -> str:
+    """For a restaurant's OWN readers of its daily history: a WHERE fragment
+    dropping the demo seed's rows (source 'seed') once the restaurant is no
+    longer a demo — a converted demo's year-over-year, holiday lift and
+    seasonal baselines read synthetic sales forever otherwise. A demo's own
+    screens keep them (they are what the demo shows)."""
+    a = f"{alias}." if alias else ""
+    return (f"NOT (COALESCE({a}source, '') = 'seed' AND EXISTS (SELECT 1 FROM restaurants _oh "
+            f"WHERE _oh.id = {a}restaurant_id AND COALESCE(_oh.is_demo, 0) = 0))")
 
 
 PAYING_BILLING_STATES = {"active", "past_due"}
@@ -9563,7 +11439,9 @@ def onboarding_started_at(restaurant_id: int, db_path: str = DB_PATH):
         conn.close()
 
 def get_review_request_stats(restaurant_id: int, db_path: str = DB_PATH) -> dict:
-    """Return count of review requests sent this month."""
+    """Return count of review requests sent this month — and how many of the
+    requests whose window has passed produced a review (`conversion`,
+    review_signals.request_conversion; memory audit 9/29/26, uncaptured)."""
     conn = get_conn(db_path)
     row = conn.execute("""
         SELECT
@@ -9572,9 +11450,15 @@ def get_review_request_stats(restaurant_id: int, db_path: str = DB_PATH) -> dict
         FROM review_requests WHERE restaurant_id=?
     """, (restaurant_id,)).fetchone()
     conn.close()
+    try:
+        import review_signals
+        conversion = review_signals.request_conversion(restaurant_id, db_path=None if db_path == DB_PATH else db_path)
+    except Exception:
+        conversion = None
     return {
         "total_sent":      row["total_sent"]      or 0,
         "sent_this_month": row["sent_this_month"] or 0,
+        "conversion":      conversion,
     }
 
 
@@ -9604,6 +11488,9 @@ ACCOUNT_EVENT_TYPES = (
     # POS failing 2+ days running (pos.note_sync_failure) and reviews Google
     # counted that a Places fetch never returned (scheduler._record_places_gap).
     "pos_sync_failing", "review_fetch_gap",
+    # A group owner made this location's settings every location's
+    # (preferences.apply_to_all_locations, memory audit 9/29/26).
+    "preferences_applied",
 )
 
 ACCOUNT_EVENT_LABELS = {
@@ -9635,6 +11522,7 @@ ACCOUNT_EVENT_LABELS = {
     "supplier_order_sent": "Supplier order sent",
     "schedule_published": "Schedule sent to staff",
     "memory_added": "Fact added to what Cavnar AI remembers",
+    "preferences_applied": "Settings applied to every location",
     "memory_forgotten": "Fact removed from what Cavnar AI remembers",
     "time_off_decided": "Time-off request answered",
     "covers_imported": "Cover counts entered",
@@ -10193,6 +12081,9 @@ def prune_operational_logs(db_path: str = DB_PATH) -> dict:
             if column not in cols:
                 problems.append(f"{table}.{column} missing")
                 continue
+            if int(days) < _ops_retention.retention_floor(table):
+                problems.append(f"{table} window {days} days is under its floor")
+                continue          # the one registry's floor holds here too
             cur = conn.execute(
                 f"DELETE FROM {table} WHERE {column} < datetime('now', ?)",
                 (f"-{int(days)} days",))
@@ -10215,11 +12106,14 @@ def prune_operational_logs(db_path: str = DB_PATH) -> dict:
 def purge_expired_reviews(db_path: str = DB_PATH) -> int:
     """Soft-deletes reviews older than each restaurant's data_retention_months
     (0 = keep everything). Soft, not hard — every reviews query already
-    filters deleted_at IS NULL, and a mistaken retention setting shouldn't
-    be unrecoverable. Returns the number of rows touched.
+    filters deleted_at IS NULL (the reply-style readers too, since 9/29/26),
+    and a mistaken retention setting shouldn't be unrecoverable. Before the
+    rows go, their monthly stats are written (history_rollups.purge_reviews,
+    same transaction). Returns the number of rows touched.
 
     Nightly (scheduler.run_nightly_retention), committing per restaurant:
     it ran hourly as one transaction over every restaurant (#81)."""
+    import history_rollups
     conn = get_conn(db_path)
     total = 0
     try:
@@ -10227,14 +12121,16 @@ def purge_expired_reviews(db_path: str = DB_PATH) -> int:
             "SELECT id, data_retention_months FROM restaurants WHERE COALESCE(data_retention_months, 0) > 0"
         ).fetchall()
         for r in rows:
-            months = int(r["data_retention_months"])
-            cur = conn.execute(f"""
-                UPDATE reviews SET deleted_at = datetime('now')
-                WHERE restaurant_id=? AND deleted_at IS NULL
-                  AND COALESCE(NULLIF(review_date,''), fetched_at) < datetime('now', '-{months * 30} days')
-            """, (r["id"],))
-            total += cur.rowcount or 0
-            conn.commit()
+            # What the reviews were — per month, no guest text — goes into
+            # review_monthly_stats in the same transaction as the
+            # soft-delete (memory audit 9/29/26, "review_retention"): the
+            # owner's choice forgets the words, not the record.
+            try:
+                total += history_rollups.purge_reviews(conn, r["id"], int(r["data_retention_months"]))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
     finally:
         conn.close()
     return total
@@ -10306,7 +12202,14 @@ def auto_approve_trust(restaurant_id: int, db_path: str = DB_PATH, days: int = 3
     were shown, like an edit; and a bulk publish (response_action=
     'bulk_approved') read no single draft, so it is not evidence either way.
     Ten 3-star replies each regenerated three times used to read as
-    edit_rate 0.0 and trusted."""
+    edit_rate 0.0 and trusted.
+
+    And only the owner's own approvals (memory audit 9/29/26, reply_voice):
+    a manager who approved thirty 5-star drafts unedited earned the band
+    trust, and replies then went out unread under the owner's name. A
+    delegate's, an admin's or a view-as approval is no evidence here
+    (reply_voice_sql(trust=True)); one approved before the approver was
+    recorded counts as it always did, until it leaves the window."""
     conn = get_conn(db_path)
     since = f"-{int(days)} days"
     try:
@@ -10315,13 +12218,15 @@ def auto_approve_trust(restaurant_id: int, db_path: str = DB_PATH, days: int = 3
             "SUM(CASE WHEN COALESCE(draft_edited, 0) = 1 OR COALESCE(regenerate_count, 0) > 0 "
             "    OR response_action IN ('edited', 'regenerated') THEN 1 ELSE 0 END) AS edited FROM reviews "
             "WHERE restaurant_id=? AND deleted_at IS NULL AND response_status IN ('approved','posted') "
-            "AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved') "
+            "AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved', 'support_approved') "
+            f"AND {reply_voice_sql(conn, trust=True)} "
             "AND approved_at >= datetime('now', ?) AND rating IN (3,4,5) GROUP BY rating",
             (restaurant_id, since)).fetchall()
         try:
             skipped = conn.execute(
                 "SELECT rating, COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
                 "AND response_status='skipped' AND draft_response IS NOT NULL AND TRIM(draft_response) != '' "
+                "AND COALESCE(response_action, '') != 'support_skipped' "
                 "AND skipped_at >= datetime('now', ?) AND rating IN (3,4,5) GROUP BY rating",
                 (restaurant_id, since)).fetchall()
         except Exception:
@@ -10330,17 +12235,53 @@ def auto_approve_trust(restaurant_id: int, db_path: str = DB_PATH, days: int = 3
         conn.close()
     by = {int(r["rating"]): (int(r["n"] or 0), int(r["edited"] or 0)) for r in rows}
     sk = {int(r["rating"]): int(r["n"] or 0) for r in skipped}
+    # The trust ledger (memory audit 9/29/26, "trust_ledger"): a band held
+    # earned is KEPT on weak evidence too — its own auto-posts the owner left
+    # standing, unedited, a week on (automation_trust.WEAK_CREDIT_WEIGHT of
+    # a person's approval) — and a retracted auto-post counts against it.
+    # Earning still needs a person's approvals alone (audit #15). A band that
+    # lapses says so (`lapsed`), never silently.
+    try:
+        import automation_trust as _at
+        held = _at.states(restaurant_id, "reply_band", db_path=db_path)
+        auto = _at.clean_autoposts(restaurant_id, days=days, db_path=db_path)
+    except Exception as e:
+        print(f"[auto_approve_trust] trust ledger unavailable for {restaurant_id}: {e}")
+        _at, held, auto = None, {}, {}
     out = {}
     for star in AUTO_APPROVE_EARNABLE:
         n, e = by.get(star, (0, 0))
         s_n = sk.get(star, 0)
-        answered = n + s_n
-        rejected = e + s_n
+        clean, retracted = auto.get(star, (0, 0))
+        earned = (held.get(str(star)) or {}).get("state") == "earned"
+        weak = (_at.WEAK_CREDIT_WEIGHT * clean) if (earned and _at is not None) else 0.0
+        answered = n + s_n + retracted
+        rejected = e + s_n + retracted
         rate = (rejected / answered) if answered else None
-        out[star] = {"approved": n, "edited": e, "skipped": s_n, "edit_rate": rate,
-                     "trusted": bool(n >= AUTO_APPROVE_TRUST_MIN and rate is not None
-                                     and rate <= AUTO_APPROVE_TRUST_EDIT_RATE),
-                     "needed": max(0, AUTO_APPROVE_TRUST_MIN - n)}
+        earns = bool(n >= AUTO_APPROVE_TRUST_MIN and rate is not None and rate <= AUTO_APPROVE_TRUST_EDIT_RATE)
+        keeps = bool(earned and (n + weak) >= AUTO_APPROVE_TRUST_MIN
+                     and (rate is None or rate <= AUTO_APPROVE_TRUST_EDIT_RATE))
+        trusted = earns or keeps
+        entry = {"approved": n, "edited": e, "skipped": s_n, "edit_rate": rate, "trusted": trusted,
+                 "needed": max(0, AUTO_APPROVE_TRUST_MIN - n), "autoposted_clean": clean,
+                 "retracted": retracted, "weak_credit": round(weak, 1)}
+        st = held.get(str(star)) or {}
+        if _at is not None and (earned or trusted):
+            why = None
+            if not trusted:
+                why = (f"{retracted} auto-posted {'reply' if retracted == 1 else 'replies'} retracted"
+                       if retracted else ("too many edited or skipped" if rate is not None
+                                          and rate > AUTO_APPROVE_TRUST_EDIT_RATE
+                                          else f"fewer than {AUTO_APPROVE_TRUST_MIN} approvals in {days} days"))
+            st = _at.transition(restaurant_id, "reply_band", star, trusted,
+                                basis={"approved": n, "edited": e, "skipped": s_n, "weak": round(weak, 1)},
+                                reason=why, db_path=db_path) or st
+        if trusted and st.get("earned_at"):
+            entry["earned_at"] = st["earned_at"]
+        if not trusted and st.get("state") == "lapsed":
+            # Re-asked, never dropped silently (trust_ledger).
+            entry["lapsed"] = {"at": st.get("lapsed_at"), "reason": st.get("lapse_reason")}
+        out[star] = entry
     return out
 
 
@@ -10402,16 +12343,28 @@ def schedule_publish_trust(restaurant_id: int, db_path: str = DB_PATH) -> int:
         import schedule_intel as _si
     except Exception:
         return 0
+    # An owner's undo of the auto-publish counts against it (memory audit
+    # 9/29/26, "undo"): only weeks published after the latest undo count, so
+    # SCHEDULE_PUBLISH_TRUST_MIN clean runs are needed again after one. The
+    # owner who undid it two weeks running used to see it queue a third.
+    try:
+        import delayed as _dl
+        undone_at = _dl.last_undo(restaurant_id, "schedule_publish", db_path=db_path)
+    except Exception:
+        undone_at = None
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
-            "SELECT h.id, h.edited_at, h.week_start, h.week_end FROM schedule_history h WHERE h.restaurant_id=? "
+            "SELECT h.id, h.edited_at, h.week_start, h.week_end, h.published_at FROM schedule_history h "
+            "WHERE h.restaurant_id=? "
             "AND h.published_at IS NOT NULL AND h.superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=h.restaurant_id AND nw.week_start=h.week_start AND nw.published_at IS NOT NULL AND nw.id > h.id) "
             "ORDER BY h.id DESC LIMIT 10", (restaurant_id,)).fetchall()
         n = 0
         for r in rows:
             if r["edited_at"]:
                 break
+            if undone_at and str(r["published_at"] or "").replace("T", " ")[:19] <= undone_at:
+                break                      # published before the owner's last undo
             if r["week_start"] and r["week_end"]:
                 try:
                     trouble = conn.execute(
@@ -10479,28 +12432,23 @@ def auto_approve_candidates(restaurant_id: int, db_path: str = DB_PATH, ratings=
 
 
 def build_labor_export_csv(restaurant_id: int, db_path: str = DB_PATH) -> str:
+    """The owner's labor history export: one row per labor period, newest
+    first — the calendar payroll weeks (refresh_labor_periods) and any
+    period a caller stored, each once, never the legacy rolling windows
+    that overlapped one another (memory audit 9/29/26, labor_periods). It
+    read columns labor_history never had (week_start, hours_scheduled,
+    labor_cost), so every row but its percentage was blank."""
     import io
-    conn = get_conn(db_path)
     out = io.StringIO()
     w = safe_csv_writer(out)
-    w.writerow(["week_start", "hours_scheduled", "labor_cost", "labor_pct", "generated_at"])
+    w.writerow(["week_start", "week_end", "labor_pct", "labor_cost", "sales", "days_with_sales", "complete"])
     try:
-        rows = conn.execute("""
-            SELECT * FROM labor_history WHERE restaurant_id=? ORDER BY created_at DESC LIMIT 520
-        """, (restaurant_id,)).fetchall()
-        for r in rows:
-            k = r.keys()
-            w.writerow([
-                r["week_start"] if "week_start" in k else "",
-                r["hours_scheduled"] if "hours_scheduled" in k else "",
-                r["labor_cost"] if "labor_cost" in k else "",
-                r["labor_pct"] if "labor_pct" in k else "",
-                r["created_at"] if "created_at" in k else "",
-            ])
+        for r in get_labor_history(restaurant_id, limit=520, db_path=db_path):
+            w.writerow([str(r.get("period_start") or "")[:10], str(r.get("period_end") or "")[:10],
+                        r.get("labor_pct"), r.get("total_labor"), r.get("total_sales"), r.get("days") or "",
+                        "yes" if r.get("complete") else "no"])
     except Exception as e:
         w.writerow([f"labor history unavailable: {e}"])
-    finally:
-        conn.close()
     return out.getvalue()
 
 
@@ -11639,10 +13587,14 @@ _ASK_HISTORY_LIMIT = 40
 
 # Transcripts are conveniences, not records — the action audit in
 # ask_cavnar_actions is the part that must survive, and it is never pruned.
-# Both caps are per restaurant: turns kept within one chat, and chats kept
-# in the history list (oldest chats fall off, with their messages).
+# Turns are kept per chat; chats are kept PER LOGIN (memory audit 9/29/26,
+# conversations): the cap was 50 per restaurant across every login, so a
+# manager who chatted daily pushed the owner's history out within about
+# seven weeks. A restaurant-wide ceiling still bounds the table. What an
+# evicted chat was about is kept in ask_topics first (_topic_row), forever.
 _ASK_TRANSCRIPT_KEEP = 200
 _ASK_CONVERSATIONS_KEEP = 50
+_ASK_CONVERSATIONS_KEEP_RESTAURANT = 250
 _ASK_TITLE_MAX = 80
 
 
@@ -11684,6 +13636,48 @@ def _ask_title(question: str) -> str:
     return text
 
 
+def _topic_row(conn, conversation_id) -> bool:
+    """Keep what an evicted chat was about in ask_topics: its title, its
+    rolling summary (if one was written), the modules it touched, the tools
+    it ran, how many turns and when. Nothing a model writes here — it is
+    copied from the chat's own rows. On the caller's connection."""
+    import json as _json
+    c = conn.execute("SELECT id, restaurant_id, user_id, title, created_at, updated_at, summary_json, topics "
+                     "FROM ask_cavnar_conversations WHERE id=?", (conversation_id,)).fetchone()
+    if not c:
+        return False
+    rows = conn.execute("SELECT tools_json FROM ask_cavnar_messages WHERE conversation_id=? AND role='assistant' "
+                        "AND tools_json IS NOT NULL", (conversation_id,)).fetchall()
+    tools = []
+    for r in rows:
+        try:
+            for t in _json.loads(r["tools_json"] or "[]") or []:
+                name = (t or {}).get("name") if isinstance(t, dict) else None
+                if name and name not in tools:
+                    tools.append(name)
+        except (TypeError, ValueError):
+            continue
+    n = conn.execute("SELECT COUNT(*) FROM ask_cavnar_messages WHERE conversation_id=?",
+                     (conversation_id,)).fetchone()[0]
+    if not n:
+        return False                    # an empty chat said nothing worth keeping
+    conn.execute("INSERT INTO ask_topics (restaurant_id, user_id, conversation_id, title, summary_json, topics, tools, "
+                 "message_count, started_at, ended_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                 (c["restaurant_id"], c["user_id"], c["id"], c["title"], c["summary_json"], c["topics"],
+                  ",".join(tools[:20]) or None, int(n), c["created_at"], c["updated_at"]))
+    return True
+
+
+def _evict_ask_conversations(conn, ids):
+    for cid in ids:
+        try:
+            _topic_row(conn, cid)
+        except Exception as e:
+            print(f"[ask] topic row for chat {cid} not kept: {e}")
+        conn.execute("DELETE FROM ask_cavnar_messages WHERE conversation_id=?", (cid,))
+        conn.execute("DELETE FROM ask_cavnar_conversations WHERE id=?", (cid,))
+
+
 def create_ask_conversation(restaurant_id, user_id=None, db_path: str = DB_PATH) -> int:
     conn = get_conn(db_path)
     try:
@@ -11691,16 +13685,20 @@ def create_ask_conversation(restaurant_id, user_id=None, db_path: str = DB_PATH)
             "INSERT INTO ask_cavnar_conversations (restaurant_id, user_id) VALUES (?,?)",
             (restaurant_id, user_id)
         )
-        # Keep the history list bounded — the oldest chats fall off with
-        # their messages. The action audit is untouched.
-        stale = conn.execute(
+        # Keep the history list bounded — THIS login's oldest chats fall off
+        # past _ASK_CONVERSATIONS_KEEP (and anyone's past the restaurant
+        # ceiling), each first written to ask_topics. The action audit is
+        # untouched.
+        mine = conn.execute(
+            "SELECT id FROM ask_cavnar_conversations WHERE restaurant_id=? AND user_id IS ? "
+            "ORDER BY updated_at DESC, id DESC LIMIT -1 OFFSET ?",
+            (restaurant_id, user_id, _ASK_CONVERSATIONS_KEEP)).fetchall()
+        _evict_ask_conversations(conn, [s["id"] for s in mine])
+        everyone = conn.execute(
             "SELECT id FROM ask_cavnar_conversations WHERE restaurant_id=? "
             "ORDER BY updated_at DESC, id DESC LIMIT -1 OFFSET ?",
-            (restaurant_id, _ASK_CONVERSATIONS_KEEP)
-        ).fetchall()
-        for s in stale:
-            conn.execute("DELETE FROM ask_cavnar_messages WHERE conversation_id=?", (s["id"],))
-            conn.execute("DELETE FROM ask_cavnar_conversations WHERE id=?", (s["id"],))
+            (restaurant_id, _ASK_CONVERSATIONS_KEEP_RESTAURANT)).fetchall()
+        _evict_ask_conversations(conn, [s["id"] for s in everyone])
         conn.commit()
         return cur.lastrowid
     finally:
@@ -11830,59 +13828,132 @@ def latest_ask_answer_id(restaurant_id, conversation_id, user_id=None, db_path: 
     return int(row[0]) if row and row[0] else None
 
 
-def record_ask_feedback(restaurant_id, message_id, helpful, note=None, user_id=None, db_path: str = DB_PATH):
+def record_ask_feedback(restaurant_id, message_id, helpful, note=None, user_id=None, db_path: str = DB_PATH,
+                        authority=None):
     """Rate one Ask answer: `helpful` true/false, an optional note. The
     message must be an ASSISTANT turn of THIS restaurant, given to this
     login (or to nobody in particular) — a rating of another restaurant's,
     or another login's, answer is refused (None), never written. Rating the
     same answer again replaces the rating. Returns the stored row."""
+    import json as _json
     conn = get_conn(db_path)
     try:
         msg = conn.execute(
-            "SELECT id, conversation_id, user_id FROM ask_cavnar_messages WHERE id=? AND restaurant_id=? "
+            "SELECT id, conversation_id, user_id, meta_json FROM ask_cavnar_messages WHERE id=? AND restaurant_id=? "
             "AND role='assistant'", (int(message_id), restaurant_id)).fetchone()
         if not msg or (msg["user_id"] is not None and user_id is not None and msg["user_id"] != user_id):
             return None
         note = (str(note).strip()[:500] or None) if note else None
+        # What the rated answer was (its meta, stored with the turn): the
+        # depth contract, the tools and modules it read, the validation
+        # verdict, its confidence and a topic (memory audit 9/29/26,
+        # ask_feedback). An older turn has none; the rating still counts.
+        try:
+            meta = _json.loads(msg["meta_json"] or "{}") or {}
+        except (TypeError, ValueError):
+            meta = {}
         conn.execute(
-            "INSERT INTO ask_feedback (restaurant_id, user_id, message_id, conversation_id, helpful, note) "
-            "VALUES (?,?,?,?,?,?) ON CONFLICT(restaurant_id, message_id, user_id) DO UPDATE SET "
-            "helpful=excluded.helpful, note=excluded.note, updated_at=datetime('now')",
-            (restaurant_id, user_id, int(message_id), msg["conversation_id"], 1 if helpful else 0, note))
+            "INSERT INTO ask_feedback (restaurant_id, user_id, message_id, conversation_id, helpful, note, depth, "
+            "tools, modules, verdict, topic, confidence_pct, authority) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(restaurant_id, message_id, user_id) DO UPDATE SET "
+            "helpful=excluded.helpful, note=excluded.note, depth=excluded.depth, tools=excluded.tools, "
+            "modules=excluded.modules, verdict=excluded.verdict, topic=excluded.topic, "
+            "confidence_pct=excluded.confidence_pct, authority=excluded.authority, updated_at=datetime('now')",
+            (restaurant_id, user_id, int(message_id), msg["conversation_id"], 1 if helpful else 0, note,
+             (str(meta.get("depth"))[:20] if meta.get("depth") else None),
+             _json.dumps(list(meta.get("tools_used") or [])[:12]) if meta.get("tools_used") else None,
+             _json.dumps(list(meta.get("modules_consulted") or [])[:12]) if meta.get("modules_consulted") else None,
+             (str(meta.get("verdict"))[:20] if meta.get("verdict") else None),
+             (str(meta.get("topic"))[:40] if meta.get("topic") else None),
+             (int(meta["confidence_pct"]) if isinstance(meta.get("confidence_pct"), (int, float)) else None),
+             (str(authority)[:20] if authority else None)))
         conn.commit()
-        row = conn.execute("SELECT message_id, conversation_id, helpful, note, updated_at FROM ask_feedback "
-                           "WHERE restaurant_id=? AND message_id=? AND user_id IS ?",
+        row = conn.execute("SELECT message_id, conversation_id, helpful, note, updated_at, depth, topic "
+                           "FROM ask_feedback WHERE restaurant_id=? AND message_id=? AND user_id IS ?",
                            (restaurant_id, int(message_id), user_id)).fetchone()
     finally:
         conn.close()
     return ({"message_id": row["message_id"], "conversation_id": row["conversation_id"],
-             "helpful": bool(row["helpful"]), "note": row["note"], "rated_at": row["updated_at"]} if row else None)
+             "helpful": bool(row["helpful"]), "note": row["note"], "rated_at": row["updated_at"],
+             "depth": row["depth"], "topic": row["topic"]} if row else None)
 
 
-def ask_feedback_summary(restaurant_id, days: int = 90, db_path: str = DB_PATH) -> dict:
-    """How this restaurant has rated Ask's answers: {"rated", "helpful",
-    "not_helpful", "notes"} over the last `days` — notes are the most recent
-    "not helpful" notes (at most two), for the assistant's context. Pure
-    SQL; read by the Ask opening and the context snapshot, never a model."""
+def ask_feedback_summary(restaurant_id, days: int = 90, db_path: str = DB_PATH, user_id=None) -> dict:
+    """How Ask's answers have been rated: {"rated", "helpful",
+    "not_helpful", "notes", "by_depth", "by_topic", "days"} over the last
+    `days` — notes are the most recent "not helpful" notes (at most two),
+    for the assistant's context. `user_id` reads ONE login's ratings: a
+    teammate's "not helpful" is theirs, never the owner's (memory audit
+    9/29/26, ask_feedback). Pure SQL; read by the Ask opening, the context
+    snapshot and the depth choice, never a model."""
     conn = get_conn(db_path)
+    since = f"-{int(days)} days"
+    # An admin's rating (view-as included) is never the owner's.
+    who = (" AND user_id=?" if user_id is not None else "") + " AND COALESCE(authority, '') != 'admin'"
+    args = (restaurant_id, since) + ((user_id,) if user_id is not None else ())
     try:
         row = conn.execute("SELECT COUNT(*) AS n, COALESCE(SUM(helpful), 0) AS yes FROM ask_feedback "
-                           "WHERE restaurant_id=? AND updated_at >= datetime('now', ?)",
-                           (restaurant_id, f"-{int(days)} days")).fetchone()
+                           "WHERE restaurant_id=? AND updated_at >= datetime('now', ?)" + who, args).fetchone()
         notes = [r["note"] for r in conn.execute(
             "SELECT note FROM ask_feedback WHERE restaurant_id=? AND helpful=0 AND note IS NOT NULL "
-            "AND updated_at >= datetime('now', ?) ORDER BY updated_at DESC, id DESC LIMIT 2",
-            (restaurant_id, f"-{int(days)} days")).fetchall()]
+            "AND updated_at >= datetime('now', ?)" + who + " ORDER BY updated_at DESC, id DESC LIMIT 2",
+            args).fetchall()]
+        try:
+            by_depth = [{"depth": r["depth"], "rated": int(r["n"]), "helpful": int(r["yes"] or 0),
+                         "not_helpful": int(r["n"]) - int(r["yes"] or 0)} for r in conn.execute(
+                "SELECT depth, COUNT(*) AS n, COALESCE(SUM(helpful), 0) AS yes FROM ask_feedback "
+                "WHERE restaurant_id=? AND updated_at >= datetime('now', ?)" + who +
+                " AND depth IS NOT NULL GROUP BY depth ORDER BY n DESC", args).fetchall()]
+            by_topic = [{"topic": r["topic"], "rated": int(r["n"]), "helpful": int(r["yes"] or 0),
+                         "not_helpful": int(r["n"]) - int(r["yes"] or 0)} for r in conn.execute(
+                "SELECT topic, COUNT(*) AS n, COALESCE(SUM(helpful), 0) AS yes FROM ask_feedback "
+                "WHERE restaurant_id=? AND updated_at >= datetime('now', ?)" + who +
+                " AND topic IS NOT NULL GROUP BY topic ORDER BY n DESC", args).fetchall()]
+        except Exception:
+            by_depth, by_topic = [], []
     except Exception:
-        return {"rated": 0, "helpful": 0, "not_helpful": 0, "notes": []}
+        return {"rated": 0, "helpful": 0, "not_helpful": 0, "notes": [], "by_depth": [], "by_topic": [],
+                "days": int(days)}
     finally:
         conn.close()
     n, yes = int(row["n"] or 0), int(row["yes"] or 0)
-    return {"rated": n, "helpful": yes, "not_helpful": n - yes, "notes": notes, "days": int(days)}
+    return {"rated": n, "helpful": yes, "not_helpful": n - yes, "notes": notes, "days": int(days),
+            "by_depth": by_depth, "by_topic": by_topic}
+
+
+def ask_feedback_rows(restaurant_id, user_id=None, days: int = 180, db_path: str = DB_PATH) -> list:
+    """The ratings themselves, newest first: [{helpful, note, depth, topic,
+    tools, modules, verdict, confidence_pct, updated_at, user_id}] — what the
+    derived preferences and the answer's own accuracy are read from."""
+    import json as _json
+    # An admin's rating (view-as included) is never the owner's.
+    who = (" AND user_id=?" if user_id is not None else "") + " AND COALESCE(authority, '') != 'admin'"
+    args = (restaurant_id, f"-{int(days)} days") + ((user_id,) if user_id is not None else ())
+    try:
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT helpful, note, depth, topic, tools, modules, verdict, confidence_pct, updated_at, user_id "
+                "FROM ask_feedback WHERE restaurant_id=? AND updated_at >= datetime('now', ?)" + who +
+                " ORDER BY updated_at DESC, id DESC LIMIT 500", args).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return []
+    out = []
+    for r in rows:
+        d = dict(r)
+        for k in ("tools", "modules"):
+            try:
+                d[k] = _json.loads(d[k]) if d.get(k) else []
+            except (TypeError, ValueError):
+                d[k] = []
+        out.append(d)
+    return out
 
 
 def save_ask_message(restaurant_id, role, content, proposals=None, user_id=None,
-                     conversation_id=None, db_path: str = DB_PATH) -> int:
+                     conversation_id=None, db_path: str = DB_PATH, tools=None, meta=None) -> int:
     """Appends a turn and returns the conversation it landed in.
 
     With no conversation_id, the turn goes into THIS login's current chat
@@ -11900,14 +13971,39 @@ def save_ask_message(restaurant_id, role, content, proposals=None, user_id=None,
         conversation_id = current_ask_conversation_id(restaurant_id, db_path=db_path, viewer_id=user_id)
     if conversation_id is None:
         conversation_id = create_ask_conversation(restaurant_id, user_id=user_id, db_path=db_path)
+    # An assistant turn keeps the tool calls it made (names and arguments,
+    # so a follow-up can re-read the same data) and its meta (depth, tools,
+    # modules, verdict, confidence, topic — what a rating of it is about).
+    tools_json = meta_json = None
+    if role == "assistant":
+        try:
+            if tools:
+                tools_json = _json.dumps([{"name": str((t or {}).get("name") or "")[:60],
+                                           "input": (t or {}).get("input") or {}}
+                                          for t in tools if isinstance(t, dict)][:20], default=str)[:6000]
+            if meta:
+                meta_json = _json.dumps(meta, default=str)[:4000]
+        except (TypeError, ValueError):
+            tools_json = meta_json = None
     conn = get_conn(db_path)
     try:
         conn.execute(
-            "INSERT INTO ask_cavnar_messages (restaurant_id, user_id, role, content, proposals, conversation_id) "
-            "VALUES (?,?,?,?,?,?)",
+            "INSERT INTO ask_cavnar_messages (restaurant_id, user_id, role, content, proposals, conversation_id, "
+            "tools_json, meta_json) VALUES (?,?,?,?,?,?,?,?)",
             (restaurant_id, user_id, role, content,
-             _json.dumps(proposals) if proposals else None, conversation_id)
+             _json.dumps(proposals) if proposals else None, conversation_id, tools_json, meta_json)
         )
+        # The modules this chat has touched (ask_topics keeps them when the
+        # chat itself is evicted).
+        if role == "assistant" and meta and meta.get("modules_consulted"):
+            row = conn.execute("SELECT topics FROM ask_cavnar_conversations WHERE id=?", (conversation_id,)).fetchone()
+            have = [t for t in str((row["topics"] if row else "") or "").split(",") if t]
+            for m in meta.get("modules_consulted") or []:
+                m = str(m).strip()[:40]
+                if m and m not in have:
+                    have.append(m)
+            conn.execute("UPDATE ask_cavnar_conversations SET topics=? WHERE id=?",
+                         (",".join(have[:12]) or None, conversation_id))
         # The first real question names the chat; later turns only bump it
         # to the top of the history list.
         if role == "user":
@@ -11933,7 +14029,7 @@ def save_ask_message(restaurant_id, role, content, proposals=None, user_id=None,
 
 
 def get_ask_history(restaurant_id, limit: int = _ASK_HISTORY_LIMIT, conversation_id=None, viewer_id=None,
-                    db_path: str = DB_PATH) -> list:
+                    db_path: str = DB_PATH, with_tools: bool = False) -> list:
     """Oldest-first, so it can be handed straight to the model. Without a
     conversation_id this is the restaurant's current chat; a specific id
     must belong to this restaurant (anything else reads as empty)."""
@@ -11945,7 +14041,7 @@ def get_ask_history(restaurant_id, limit: int = _ASK_HISTORY_LIMIT, conversation
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
-            "SELECT id, role, content, proposals, created_at FROM ask_cavnar_messages "
+            "SELECT id, role, content, proposals, created_at, tools_json FROM ask_cavnar_messages "
             "WHERE restaurant_id=? AND conversation_id=?" + _viewer_clause(viewer_id)[0] +
             " ORDER BY id DESC LIMIT ?",
             [restaurant_id, conversation_id, *_viewer_clause(viewer_id)[1], limit]
@@ -11960,6 +14056,14 @@ def get_ask_history(restaurant_id, limit: int = _ASK_HISTORY_LIMIT, conversation
                 d["proposals"] = _json.loads(d["proposals"])
             except Exception:
                 d["proposals"] = None
+        # The tool calls an assistant turn made (conversations): read by the
+        # replay (`with_tools`), never part of what a client is sent.
+        raw_tools = d.pop("tools_json", None)
+        if raw_tools and with_tools:
+            try:
+                d["tools"] = _json.loads(raw_tools) or []
+            except Exception:
+                pass
         out.append(d)
     return out
 
@@ -12045,12 +14149,23 @@ def get_ask_proposal(restaurant_id, proposal_id, db_path: str = DB_PATH):
 
 
 def get_ask_actions(restaurant_id, limit: int = 50, db_path: str = DB_PATH) -> list:
+    """The newest Ask action rows. `surface` (ask | command) and `user_id`
+    ride along so a reader can apply the action queue's rule (a command
+    preview is never "still open") and the viewer's (memory audit 9/29/26,
+    "proposed")."""
     conn = get_conn(db_path)
     try:
-        rows = conn.execute(
-            "SELECT id, action, summary, outcome, proposal_id, reason, created_at FROM ask_cavnar_actions "
-            "WHERE restaurant_id=? ORDER BY id DESC LIMIT ?", (restaurant_id, limit)
-        ).fetchall()
+        try:
+            rows = conn.execute(
+                "SELECT id, action, summary, outcome, proposal_id, reason, created_at, surface, user_id "
+                "FROM ask_cavnar_actions WHERE restaurant_id=? ORDER BY id DESC LIMIT ?", (restaurant_id, limit)
+            ).fetchall()
+        except Exception:
+            # A database from before surface existed.
+            rows = conn.execute(
+                "SELECT id, action, summary, outcome, proposal_id, reason, created_at FROM ask_cavnar_actions "
+                "WHERE restaurant_id=? ORDER BY id DESC LIMIT ?", (restaurant_id, limit)
+            ).fetchall()
     finally:
         conn.close()
     return [dict(r) for r in rows]

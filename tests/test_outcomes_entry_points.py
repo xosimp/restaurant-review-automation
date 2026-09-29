@@ -145,7 +145,10 @@ def test_18_done_on_a_recommendation_that_carries_a_metric_starts_its_tracker(db
     out = _rec_event(rid, {"key": "trim_day:Monday", "event": "completed", "surface": "home"})
     t = out["tracker"]
     assert t["metric"] == "labor_pct" and t["module"] == "labor"
-    assert out["message"] == f"Done — Cavnar AI won’t suggest it again. Now {t['label_text']}"
+    # What Done holds is said, never "won't suggest it again" (memory audit
+    # 9/29/26, "silences"): a weekday trim comes back if the day does.
+    assert out["message"] == (f"Done — hidden unless it comes back (at most "
+                              f"{rec_ledger.SITUATIONAL_DONE_DAYS} days). Now {t['label_text']}")
     assert t["label_text"] == f"measuring labor % until {mdy(t['evaluate_on'])}"
     row = outcomes.get_outcome(t["id"])
     assert row["title"] == "Trim Monday lunch" and row["baseline_value"] == 30.0
@@ -157,7 +160,7 @@ def test_18_done_without_a_metric_starts_nothing_and_promises_nothing(db_path):
     out = _rec_event(rid, {"key": "insight_review:x", "event": "completed", "surface": "reviews",
                            "module": "reviews"})
     assert "tracker" not in out and "tracker_refused" not in out
-    assert out["message"] == "Done — Cavnar AI won’t suggest it again"
+    assert out["message"] == f"Done — hidden unless it comes back (at most {rec_ledger.SITUATIONAL_DONE_DAYS} days)"
     assert _tracking(db_path, rid) == []
 
 
@@ -297,17 +300,16 @@ def test_3_a_second_campaign_on_the_same_weekday_is_refused(db_path):
                     "weekday_sales:Tuesday", today=TODAY - timedelta(days=3))
     got = client_api._track_campaign_outcome(rid, {"target_day": "tuesday"}, {"ok": True, "sent": 12}, 1)
     assert got["tracker_refused"]["code"] == "in_flight"
-    # A campaign is an automatic start, so the FAMILY gate (re-audit A18):
-    # another weekday's sales is the same sales money while Tuesdays are
-    # measured, and the family rule would count only one of the two anyway.
-    wed = client_api._track_campaign_outcome(rid, {"target_day": "wednesday"}, {"ok": True, "sent": 12}, 1)
-    assert wed["tracker_refused"]["code"] == "in_flight"
-    conn = get_conn(db_path)
-    conn.execute("UPDATE recommendation_outcomes SET status='abandoned' WHERE restaurant_id=?", (rid,))
-    conn.commit()
-    conn.close()
+    # A campaign is an automatic start, so the family gate — which since the
+    # memory audit (9/29/26, "positive_volume") reads the metric's SLICE:
+    # Wednesdays' sales are other nights' data than Tuesdays', so the two
+    # run side by side (the value ledger still counts one per family and
+    # day), while the whole week's sales would collide with both.
     wed = client_api._track_campaign_outcome(rid, {"target_day": "wednesday"}, {"ok": True, "sent": 12}, 1)
     assert wed["tracker"]["metric"] == "weekday_sales:Wednesday" and wed["tracker"]["module"] == "marketing"
+    # The same weekday again the same day is the same tracker, never a second.
+    again = client_api._track_campaign_outcome(rid, {"target_day": "wednesday"}, {"ok": True, "sent": 9}, 1)
+    assert again["tracker"]["id"] == wed["tracker"]["id"]
 
 
 def test_3_ask_is_told_it_is_already_measured(db_path):

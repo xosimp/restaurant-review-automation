@@ -376,7 +376,16 @@ def dish_margins(restaurant_id, db_path=DB_PATH, praise=None, mentions=None):
     days = _sales_days(restaurant_id, db_path)
     praised = {str(p.get("name") or "").strip().lower(): int(p.get("positive_reviews") or 0) for p in praise or []}
     out = Found()
-    promote = sorted((d for d in usable if d.get("action") == "promote"), key=lambda d: -float(d["margin"]))
+    # Marketing's do-not-promote list (memory audit 9/29/26, "links"): a
+    # dish guests name in complaints while Food Cost ranks it as a driver
+    # (a live reviews_x_menu link) is never put in front of guests.
+    try:
+        import link_memory
+        _dnp = link_memory.do_not_promote(restaurant_id, db_path=db_path)
+    except Exception:
+        _dnp = {}
+    promote = sorted((d for d in usable if d.get("action") == "promote"
+                      and not link_memory_names(_dnp, d.get("name"))), key=lambda d: -float(d["margin"]))
     for i, d in enumerate(promote):
         name = d["name"]
         pos = praised.get(name.strip().lower(), 0)
@@ -390,6 +399,17 @@ def dish_margins(restaurant_id, db_path=DB_PATH, praise=None, mentions=None):
             evidence={"n": days, "kind": "trading_days", "basis": f"{days} days of item sales"},
             sources=("pos", "sales"), score=62 + (4 if pos >= 2 else 0) - i * 0.1, food=True))
     return out
+
+
+def link_memory_names(listed, name):
+    """Whether the do-not-promote list names this menu dish (never raises)."""
+    if not listed:
+        return False
+    try:
+        import link_memory
+        return bool(link_memory.names_dish(listed, name))
+    except Exception:
+        return False
 
 
 def dish_praise_cards(restaurant_id, db_path=DB_PATH, praise=None):
@@ -708,6 +728,35 @@ def sees_margins(viewer, restaurant=None) -> bool:
         return False
 
 
+def _learned(restaurant_id, cards, restaurant=None, db_path=DB_PATH):
+    """The cards reordered by what this restaurant's own results say (memory
+    audit 9/29/26, mkt_results): each card's score times rec_learning's
+    weight for its key — the ranker Home, the one-thing pick and the DSR
+    already read. It only reorders (acceptance weighs little, upward lift
+    comes only from measured success), and now that a guest text's result
+    is linked to the card it answered (link_trackers), a slow night whose
+    texts brought guests back rises. `learned_weight` rides on a moved
+    card. Never raises: unread, the fixed scores stand."""
+    try:
+        import rec_learning
+        learned = rec_learning.effectiveness(restaurant_id, db_path=db_path, restaurant=restaurant)
+    except Exception as e:
+        print(f"[mkt_opps] learned weights unavailable for {restaurant_id}: {e}")
+        return cards
+    out = []
+    for c in cards:
+        try:
+            # The recommendation kind is the key's own (slow_day:<Day>), not
+            # the card's display kind (slow_night).
+            w, _why = learned(c["key"])
+        except Exception:
+            w = 1.0
+        if w and abs(float(w) - 1.0) > 1e-9:
+            c = dict(c, score=round(float(c["score"]) * float(w), 2), learned_weight=round(float(w), 3))
+        out.append(c)
+    return out
+
+
 def _visible_cards(cards, answered, margins):
     """What one viewer's feed holds, in order: the cards it may see, the
     answered ones gone, THEN each kind capped (re-audit OPP-11) — the
@@ -738,7 +787,8 @@ def _visible_cards(cards, answered, margins):
     return out
 
 
-_ITEM_KEYS = ("key", "kind", "title", "why", "facts", "stake", "when", "days_away", "action", "score")
+_ITEM_KEYS = ("key", "kind", "title", "why", "facts", "stake", "when", "days_away", "action", "score",
+              "learned_weight")
 
 
 def feed(restaurant_id, user_id=None, db_path=DB_PATH, surface="marketing", user=None, show_all=False) -> dict:
@@ -763,7 +813,7 @@ def feed(restaurant_id, user_id=None, db_path=DB_PATH, surface="marketing", user
     margins = sees_margins(viewer, restaurant)
     cards = [c for c in built["cards"] if margins or not c.get("food")]
     answered = insight_store.answered(restaurant_id, [c["key"] for c in cards], db_path=db_path)
-    cards = _visible_cards(cards, answered, margins)
+    cards = _visible_cards(_learned(restaurant_id, cards, restaurant, db_path), answered, margins)
     ctx = rec_trust.Context(restaurant_id, restaurant=restaurant, db_path=db_path)
     items = []
     for c in cards:
@@ -777,8 +827,25 @@ def feed(restaurant_id, user_id=None, db_path=DB_PATH, surface="marketing", user
         items.append(dict(c, text=c["title"], module="marketing", model_written=False, confidence=conf,
                           evidence_sources=(["marketing"] + (["food"] if c.get("food") else [])
                                             + [s for s in c.get("sources") or [] if s != "marketing"]),
-                          dollar_value=None))
-    on_screen = items if show_all else items[:VISIBLE]
+                          dollar_value=None, expected_metric=card_expected_metric(c)))
+    # Advice pulling against other advice (memory audit 9/29/26,
+    # "conflicts"): promoting a dish whose ingredient is critically low, or
+    # filling a night another surface says to trim — the card carries
+    # `conflict`, or is held when the owner already settled it.
+    try:
+        import lever_conflicts
+        items = lever_conflicts.apply(restaurant_id, items, lever_conflicts.facts(restaurant_id, db_path=db_path),
+                                      db_path=db_path)
+    except Exception as e:
+        print(f"[mkt_opps] lever conflicts unavailable for {restaurant_id}: {e}")
+    # Fewer on the first screen while the owner is fatigued
+    # (learning_scorecard.volume_limit, memory audit 9/29/26).
+    try:
+        import learning_scorecard as _lsc
+        _visible = _lsc.volume_limit(restaurant_id, "feed_cards", VISIBLE)
+    except Exception:
+        _visible = VISIBLE
+    on_screen = items if show_all else items[:_visible]
     shown = insight_store.present_recs(restaurant_id, "marketing", surface, on_screen, user_id=uid,
                                        db_path=db_path)
     ids = {s["key"]: s.get("rec_id") for s in shown}
@@ -790,10 +857,31 @@ def feed(restaurant_id, user_id=None, db_path=DB_PATH, surface="marketing", user
         item = {k: c.get(k) for k in _ITEM_KEYS}
         item["rec_id"] = ids.get(c["key"])
         item["confidence"] = c.get("confidence")
+        item["conflict"] = c.get("conflict")
         out.append(item)
     sources = [dict(s) for s in built.get("sources") or [] if margins or s["key"] not in FOOD_SOURCES]
     return {"ok": True, "items": out, "visible": VISIBLE, "sources": sources,
             "checked": [s["label"] for s in sources if s["state"] == "checked"]}
+
+
+def card_expected_metric(card):
+    """The number a feed card is measured on (memory audit 9/29/26,
+    "positive_volume"): its kind's own number (a slow weekday's sales), or
+    — for a card aimed at one weekday — that weekday's sales. A post, a
+    promotion or a dish mention has no honest number of its own (every
+    unrelated thing that moves sales would read as the post working): None."""
+    try:
+        import outcomes
+        key = str((card or {}).get("key") or "")
+        carried = outcomes._rec_metric(key, None)
+        if carried:
+            return carried
+        day = outcomes._named_weekday(f"{key} {(card or {}).get('title') or ''}")
+        if day and str((card or {}).get("kind") or key.split(":", 1)[0]) in ("slow_day", "quiet_night"):
+            return f"weekday_sales:{day}"
+    except Exception:
+        pass
+    return None
 
 
 # ── what the other Marketing surfaces are told ──────────────────────────────
@@ -812,7 +900,7 @@ def context_lines(restaurant_id, db_path=DB_PATH, limit=5) -> list:
         built = cached_build(restaurant_id, db_path=db_path, restaurant=restaurant)
         cards = [c for c in built["cards"] if not c.get("food")]
         answered = insight_store.answered(restaurant_id, [c["key"] for c in cards], db_path=db_path)
-        cards = _visible_cards(cards, answered, False)[:limit]
+        cards = _visible_cards(_learned(restaurant_id, cards, restaurant, db_path), answered, False)[:limit]
         return [{"key": c["key"], "kind": c["kind"], "sources": list(c.get("sources") or ()),
                  "channels": list((c.get("action") or {}).get("channels") or ()),
                  "line": f"{c['title']} — {c['why']}"} for c in cards]

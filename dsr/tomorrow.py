@@ -20,9 +20,11 @@ record, and only that (D1-6): the share of recent nights whose net landed
 inside the range the forecast stated for them (demand.demand_accuracy's
 inside_range_pct — out of sample, each night's range built only from the
 nights before it). The forecast is the median of the same weekday's recent
-nights; tonight's sales, the schedule, events and the weather are not in it,
-so they are listed as things to watch (`watch`), never counted as
-confidence. With no range yet (fewer than FULL_HISTORY_FOR_RANGE weekdays)
+nights on the report's own basis (demand.forecast_net), with this
+restaurant's MEASURED effects of what is listed for the date applied
+(event_memory, behind its sample floor — `forecast.effects` names them);
+tonight's sales, the schedule and the weather are not in it, so they are
+listed as things to watch (`watch`), never counted as confidence. With no range yet (fewer than FULL_HISTORY_FOR_RANGE weekdays)
 or fewer than TRACK_MIN ranged nights scored, there is no % — "—" and the
 count it is waiting for. No forecast → None.
 """
@@ -88,11 +90,36 @@ def _weather(restaurant, day, db_path):
 
 
 def _forecast(rid, day, db_path):
+    """demand.forecast_net — the forecast on the report's own basis, with
+    this restaurant's measured event effects applied: tomorrow's report
+    grades the predictions built on it against its own net (memory audit
+    9/29/26, net_basis)."""
     try:
         import demand
-        return demand.forecast_day(rid, day, db_path=db_path) if db_path else demand.forecast_day(rid, day)
+        return demand.forecast_net(rid, day, db_path=db_path) if db_path else demand.forecast_net(rid, day)
     except Exception:
         return None
+
+
+def _measured(rid, events, db_path):
+    """This restaurant's measured effects for what a prediction may name:
+    {"rain": effect|None, "events": {label: effect}} (event_memory
+    .measured_effect) — predictions state a rain or event effect only in the
+    direction measured here (memory audit 9/29/26, event_memory)."""
+    out = {"rain": None, "events": {}}
+    try:
+        import event_memory
+        out["rain"] = event_memory.measured_effect(rid, event_memory.RAIN_LABEL, db_path=db_path)
+        for e in events or []:
+            if e.get("kind") == "event" and e.get("label"):
+                for lab in event_memory.split_labels(e["label"]):
+                    eff = event_memory.measured_effect(rid, lab, db_path=db_path)
+                    if eff:
+                        out["events"][str(e["label"])] = eff
+                        break
+    except Exception:
+        pass
+    return out
 
 
 def _scheduled(rid, day, db_path):
@@ -118,10 +145,12 @@ def _track(rid, tmr, db_path):
 
 
 def _budget(rid, day, db_path):
+    """The night's net target: the owner's budget, else their nightly-sales
+    goal (store.night_budget)."""
     try:
         from dsr import store
-        b = store.budgets_for(rid, day, day, db_path=db_path) if db_path else store.budgets_for(rid, day, day)
-        return (b.get(day.isoformat()) or {}).get("net")
+        b = store.night_budget(rid, day, db_path=db_path) if db_path else store.night_budget(rid, day)
+        return b.get("net")
     except Exception:
         return None
 
@@ -231,14 +260,22 @@ def build(restaurant, business_date, facts=None, db_path=None) -> dict:
     fc = _forecast(rid, tmr, db_path)
     forecast = None
     if fc and fc.get("available"):
+        basis = f"the median of the last {fc.get('samples')} {wd}s"
+        if fc.get("effects"):
+            basis += ", " + ", ".join(
+                f"{e.get('display') or e.get('label')} {e['lift_pct']:+.0f}% (measured {e['n']} "
+                f"time{'s' if e['n'] != 1 else ''} here)" for e in fc["effects"])
         forecast = {"typical": fc.get("typical_sales"), "low": fc.get("low"), "high": fc.get("high"),
                     "samples": fc.get("samples"), "weekday": wd,
+                    "base": fc.get("base_sales"), "effect_pct": fc.get("effect_pct"),
+                    "effects": fc.get("effects") or [],
                     "text": (f"{_money(fc['low'])}–{_money(fc['high'])}" if fc.get("low") is not None
                              and fc.get("high") is not None else _money(fc["typical_sales"])),
-                    "basis": f"the median of the last {fc.get('samples')} {wd}s"}
+                    "basis": basis}
     conf = confidence(fc, _track(rid, tmr, db_path), wx=wx, scheduled=scheduled,
                       keeps_events=_keeps_events(rid, db_path))
-    preds = predictions.build(fc, budget_net=_budget(rid, tmr, db_path), weather=wx, events=events, weekday=wd)
+    preds = predictions.build(fc, budget_net=_budget(rid, tmr, db_path), weather=wx, events=events, weekday=wd,
+                              effects=_measured(rid, events, db_path))
     return {"date": tmr.isoformat(), "weekday": wd, "items": items, "scheduled": scheduled,
             "forecast": forecast, "confidence": conf,
             "predictions": [{"key": p["key"], "text": p["text"]} for p in preds], "_preds": preds}

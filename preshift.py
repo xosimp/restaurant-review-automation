@@ -108,6 +108,24 @@ def build(restaurant_id, day=None, db_path=DB_PATH):
     if todays:
         items.append({"kind": "event", "text": f"Today: {todays[0]}."})
 
+    # ── what the owner is doing about tonight (memory audit 9/29/26,
+    # mkt_to_staffing): an event or a party on file, a text sent to fill the
+    # night, a post about a dish — the floor learned about them from the
+    # guests. Staff-safe: the label only; no money, no guest counts from the
+    # text list, no individuals.
+    import demand_signals
+    for sig in (_safe(demand_signals.upcoming, restaurant_id, day.isoformat(), day.isoformat()) or []):
+        label = str(sig.get("label") or "").strip()
+        if not label or sig.get("kind") == "reservations":
+            continue
+        if sig.get("source") == "campaign":
+            text = "Guests were texted an invitation for tonight — expect some to mention it."
+        elif sig.get("source") == "post":
+            text = f"Promoted today: {label.split(': ', 1)[-1]}. Guests may ask for it."
+        else:
+            text = f"On the books tonight: {label}" + (f" ({sig['covers']} covers)" if sig.get("covers") else "") + "."
+        items.append({"kind": "promotion" if sig.get("source") in ("campaign", "post") else "event", "text": text})
+
     if r:
         import weather
         wx = _safe(weather.get_forecast_for_week, r, [day.isoformat()])

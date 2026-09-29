@@ -406,7 +406,12 @@ body.role-support .w{display:none!important}
   <label><input type="checkbox" id="b-bar"> Bar-led (alcohol is about 40% or more of sales)</label>
   <label>Ownership</label><select id="b-own"><option value="">Not set</option><option value="independent">Independent</option><option value="franchise">Franchise</option><option value="corporate">Corporate / chain-owned</option></select>
   <label>Year opened</label><input id="b-opened" inputmode="numeric" placeholder="2019">
-  <label>Cross-restaurant learning</label><select id="b-excl"><option value="0">Include in benchmarks and patterns</option><option value="1">Test or internal account — leave out of every cross-restaurant figure</option></select>
+  <label>Account type</label><select id="b-excl" onchange="brandLearnHint()"><option value="0">A real restaurant</option><option value="1">Test or internal account — out of every learner, counted as internal</option></select>
+  <div class="lbl" style="margin-top:10px">Teaches Cavnar AI's learning</div>
+  <div class="sub" id="b-learn"></div>
+  <label for="b-lov">Learning</label><select id="b-lov" onchange="brandLearnHint()"><option value="">Automatic — the rule decides</option><option value="include">Include — a real restaurant the rule caught</option><option value="exclude">Exclude — teaches no learner</option></select>
+  <label id="b-lhist-l" hidden><input type="checkbox" id="b-lhist"> Its history before today teaches too</label>
+  <div class="dim" id="b-lhint"></div>
   <div style="display:flex;gap:8px;margin-top:6px;align-items:center"><button class="btn p w" id="b-save" onclick="brandSave()">Save</button><span class="sub" id="b-status"></span></div></div>
 </div></div>
 <!-- Review import (#149): the platform's own columns, into THIS client -->
@@ -836,6 +841,26 @@ function weekStarts(n){ const out = [], d = new Date(); d.setHours(0,0,0,0); d.s
 // A calendar day or month the server sends as text ("2026-09-22", "2026-09"):
 // built in local time, so it never slides a day west of UTC.
 function dayOf(s){ const p = String(s || '').split('-'); return p.length >= 2 ? new Date(+p[0], (+p[1] || 1) - 1, +(p[2] || 1)) : null; }
+// An ISO week the server sends as "2026-W39" (intelligence.features.iso_week,
+// the experiment verdicts, the pattern history) as its Monday, in local time;
+// a plain "2026-09-21" is read as that day. dayOf() alone read every ISO
+// week as January 1st.
+function isoWeekDay(s){
+  const m = /^(\d{4})-W(\d{1,2})$/.exec(String(s || '').trim());
+  if(!m) return /^\d{4}-\d{2}-\d{2}/.test(String(s || '')) ? dayOf(String(s).slice(0, 10)) : null;
+  const y = +m[1], jan4 = new Date(y, 0, 4), dow = (jan4.getDay() + 6) % 7;
+  return new Date(y, 0, 4 - dow + (+m[2] - 1) * 7);
+}
+// The ISO week of a local date: "2026-W39" (its Thursday's year).
+function isoWeekKey(d){
+  const t = new Date(d.getFullYear(), d.getMonth(), d.getDate()); t.setDate(t.getDate() - ((t.getDay() + 6) % 7) + 3);
+  const y = t.getFullYear(), jan4 = new Date(y, 0, 4), thu1 = new Date(y, 0, 4 - ((jan4.getDay() + 6) % 7) + 3);
+  const w = 1 + Math.round((t - thu1) / 6048e5);
+  return y + '-W' + (w < 10 ? '0' : '') + w;
+}
+function weekLabel(s){ const d = isoWeekDay(s); return d ? 'week of ' + mdy(d) : String(s || ''); }
+// "2026-08" as "Aug 2026" — a month, never read as the 26th of August.
+function monLabel(s){ const x = dayOf(s); return x ? x.toLocaleString('en-US', {month:'short'}) + ' ' + x.getFullYear() : String(s || ''); }
 // Which of a payload's failed reads touch these tables — fix round C labels
 // each failure with the table it read — so the figure built on them is
 // unknown rather than a confident zero.
@@ -924,7 +949,7 @@ const ISSUE_CAT = {billing:'Billing', canceled:'Billing', contract:'Billing', si
   int:'Integration', source:'Data', stale:'Data', nodata:'Data', unconf:'Setup', fetch_behind:'Data', urgent:'Reviews', stalled_reviews:'AI', stalled:'AI',
   email:'Messages', suppressed:'Messages', push:'Messages', posts:'Messages', onboarding:'Onboarding', inactive:'Account', churn_risk:'Account', dup:'Account',
   ai_spike:'AI', ai_cost:'AI', ai_failures:'AI', ai_budget:'AI', ai_anomaly:'AI', deletion:'Offboarding', job:'Platform', job_overdue:'Platform', scheduler:'Platform', platform:'Platform',
-  webhook:'Platform', webhook_stale:'Platform', metrics:'Platform'};
+  webhook:'Platform', webhook_stale:'Platform', metrics:'Platform', learning:'AI'};
 function issueCat(i){ const c = i.category; if(c && ISSUE_CAT[c]) return ISSUE_CAT[c]; const k = i.key||''; return /billing|canceled|contract/.test(k)?'Billing':/int:/.test(k)?'Integration':/stale|nodata|unconf/.test(k)?'Data':/email|push|posts/.test(k)?'Messages':/^job|^scheduler|^fleet|^platform/.test(k)?'Platform':/onboarding/.test(k)?'Onboarding':/urgent|review/.test(k)?'Reviews':'Account'; }
 // The action an issue carries, as the server says to do it (#62): POST its
 // route (with its payload), follow a link, or open a templated email.
@@ -1988,6 +2013,68 @@ function meter(label, w){
   return `<div class="meter"><span class="lbl">${esc(label)}</span><span class="n">${fmtUSD(w.spend,2)} <span class="muted" style="font-size:12.5px">of ${w.budget?fmtUSD(w.budget,2):'no ceiling'}</span></span><span class="bar"><i style="width:${pct}%;background:${col}"></i></span><span class="muted" style="font-size:12px">${w.budget?(+w.pct||0)+'%':''}${w.over?' · <span style="color:var(--red-t)">stopped until '+fmtDT(w.resets_at)+'</span>':(w.warn?' · <span style="color:var(--amber-t)">past the warning line</span>':'')}${!w.over&&w.resets_at?' · resets '+fmtD(w.resets_at):''}</span></div>`;
 }
 const TIER_LABEL = {paid:'Paid ceiling', trial:'Trial ceiling', unpaid:'Unpaid ceiling'};
+// ── is Cavnar AI getting better here (learning_scorecard, memory audit 9/29/26) ──
+// ai_client.learning is the stored months, oldest first: {month, metrics:
+// {curve: {value, n}}, fatigue: {share, n, fatigued}, flags, fatigued}; the
+// flags ride on the newest month. learning_curves says what each curve is:
+// its label, which way is better, and the sample under which a month is not
+// read (min_n) — such a month is a gap in the line, never a zero.
+const CURVE_TONE = {worsening:['bad', 'var(--red)', 'Worsening'], flat:['warn', 'var(--amber)', 'Flat']};
+function curveFig(v, unit){ if(v == null || !isFinite(+v)) return '—'; return unit === 'pct' ? (Math.round(+v * 10) / 10) + '% miss' : Math.round(+v * 100) + '%'; }
+// A small line over the months: a null is a gap (the line lifts), the last
+// read month glows. Same glowLine language as spark(), without its zeros.
+function curveSpark(vals, color, id){
+  const w = 150, h = 34, pad = 5, n = vals.length, got = vals.filter(v => v != null);
+  if(!got.length) return `<svg width="${w}" height="${h}" aria-hidden="true"><line x1="${pad}" x2="${w - pad}" y1="${h / 2}" y2="${h / 2}" stroke="var(--line)" stroke-dasharray="3 4"/></svg>`;
+  const lo = Math.min.apply(null, got), hi = Math.max.apply(null, got), rng = (hi - lo) || 1;
+  const x = i => pad + (n <= 1 ? (w - 2 * pad) / 2 : i * (w - 2 * pad) / (n - 1)), y = v => h - pad - (v - lo) / rng * (h - 2 * pad);
+  let d = '', on = false, lastI = -1;
+  vals.forEach((v, i) => { if(v == null){ on = false; return; } d += (on ? ' L' : ' M') + x(i).toFixed(1) + ',' + y(v).toFixed(1); on = true; lastI = i; });
+  const dots = vals.map((v, i) => v == null || i === lastI ? '' : `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="1.8" fill="${color}"/>`).join('');
+  const ex = x(lastI).toFixed(1), ey = y(vals[lastI]).toFixed(1);
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true" style="display:block;overflow:visible" data-id="${esc(id)}"><path d="${d.trim()}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>${dots}<circle cx="${ex}" cy="${ey}" r="6" fill="${color}" fill-opacity=".18"/><circle cx="${ex}" cy="${ey}" r="3" fill="${color}"/></svg>`;
+}
+function learningCurveHtml(rows, meta){
+  rows = Array.isArray(rows) ? rows : [];
+  const curves = (meta && meta.curves) || {};
+  if(!rows.length) return `<span class="muted" style="font-size:13px">No month scored yet — the 6am learning pass writes this month's row, then refreshes it nightly.</span>`;
+  const last = rows[rows.length - 1], flags = {};
+  (last.flags || []).forEach(f => { if(f && f.curve) flags[f.curve] = f; });
+  const names = Object.keys(curves).length ? Object.keys(curves) : Object.keys(last.metrics || {});
+  const line = name => {
+    const spec = curves[name] || {label: name, better: 'up', min_n: 1, unit: 'share'}, floor = +spec.min_n || 1;
+    const pts = rows.map(r => { const m = (r.metrics || {})[name] || {}; return (m.value != null && (+m.n || 0) >= floor) ? +m.value : null; });
+    const lm = (last.metrics || {})[name] || {}, read = lm.value != null && (+lm.n || 0) >= floor;
+    const f = flags[name], tone = f ? CURVE_TONE[f.state] : null;
+    const why = f ? `<span style="color:${tone ? tone[1] : 'var(--ink3)'};font-size:12px">${esc(curveFig(f.latest, spec.unit))} against ${esc(curveFig(f.before, spec.unit))} the two months before</span>` : '';
+    return `<div style="display:grid;grid-template-columns:minmax(0,1fr) 150px 96px 92px;gap:12px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)">
+      <span style="display:flex;flex-direction:column;gap:2px"><b style="font-size:13px">${esc(spec.label)}</b><span class="dim" style="font-size:11.5px">${spec.better === 'down' ? 'lower is better' : 'higher is better'} · read at <span class="n">${fmtN(floor)}</span>+ a month</span>${why}</span>
+      ${curveSpark(pts, tone ? tone[1] : 'var(--ember2)', 'lc-' + name)}
+      <span style="text-align:right;display:flex;flex-direction:column"><span class="n" style="font-size:17px;font-weight:600">${read ? esc(curveFig(lm.value, spec.unit)) : '—'}</span><span class="dim" style="font-size:11.5px">${lm.n != null ? 'n=' + fmtN(lm.n) : 'not measured'}${!read && lm.n != null ? ' · under ' + fmtN(floor) : ''}</span></span>
+      <span style="text-align:right">${tone ? pill(tone[0], tone[2]) : (read ? pill('neu', 'Holding', false) : '<span class="dim" style="font-size:12px">too few</span>')}</span></div>`;
+  };
+  const fat = last.fatigue || null;
+  const fatLine = !fat || fat.share == null ? '<span class="muted" style="font-size:12.5px">Fatigue: nothing settled this month yet.</span>'
+    : `<span style="font-size:12.5px;${fat.fatigued ? 'color:var(--amber-t)' : ''}">${fat.fatigued ? '<b>Fatigued</b> — ' : 'Fatigue: '}<span class="n">${Math.round(fat.share * 100)}%</span> of <span class="n">${fmtN(fat.n)}</span> settled this month went dismissed or ignored${fat.fatigued ? '. Home, the nightly report and the feed show fewer until it recovers.' : ` <span class="dim">(fatigued at ${Math.round(((meta && meta.fatigue_share) || .75) * 100)}% of ${fmtN((meta && meta.fatigue_min_n) || 20)}+)</span>`}</span>`;
+  return `<div style="display:flex;justify-content:space-between;gap:10px;font-size:11.5px" class="dim"><span>${esc(monLabel(rows[0].month))}</span><span>${rows.length} month${rows.length === 1 ? '' : 's'} · the newest refreshed nightly</span><span>${esc(monLabel(last.month))}</span></div>
+    <div style="border-top:1px solid var(--line)">${names.map(line).join('')}</div>${fatLine}`;
+}
+// The model's own confidence against what was measured (memory audit
+// 9/29/26, "claims"; ai_reads.confidence_calibration): of the claims whose
+// advice was taken and scored in a year, how often one the model called
+// high / medium / low held — and by the capped band the owner was shown.
+// A band with fewer than MC_MIN scored is dimmed, not read; the order check
+// is the server's (`ordered`: a lower band must not hold more often).
+const MC_MIN = 5;
+function modelConfHtml(mc){
+  if(!mc) return `<span class="muted" style="font-size:13px">${unknownV('the claims ledger could not be read')} — the model's confidence check is unavailable.</span>`;
+  if(!mc.scored) return '<span class="muted" style="font-size:13px">No claim scored yet — a claim is scored once its advice was taken and its check window has passed.</span>';
+  const row = s => { const low = (+s.scored || 0) < MC_MIN, p = s.rate == null ? null : Math.round(s.rate * 100);
+    return `<div style="display:grid;grid-template-columns:70px minmax(0,1fr) 116px;gap:10px;align-items:center;font-size:12.5px${low ? ';opacity:.5' : ''}"><span class="ink2">${esc(s.band)}</span><span class="bar" style="height:8px"><i style="width:${low || p == null ? 0 : p}%;background:linear-gradient(90deg,var(--ember),var(--ember2))"></i></span><span class="n" style="text-align:right">${low || p == null ? 'n&lt;' + MC_MIN : p + '%'} <span class="dim">${fmtN(s.held)} of ${fmtN(s.scored)}</span></span></div>`; };
+  const col = (title, list) => `<div style="display:flex;flex-direction:column;gap:6px"><span class="lbl">${esc(title)}</span>${(list || []).map(row).join('') || '<span class="dim">—</span>'}</div>`;
+  return `<span style="font-size:12.5px">Held, by the confidence the model gave: ${_ordVerdict(mc)} <span class="dim">· <span class="n">${fmtN(mc.scored)}</span> scored claims · ${fmtN(mc.days || 365)} days</span></span>
+    <div class="grid g2" style="gap:14px">${col("The model's band", mc.by_model_band)}${col('The band the owner saw', mc.by_capped_band)}</div>`;
+}
 async function aiClientHtml(c){
   const d = await need('/admin/api/ai/client/' + c.id + '?days=30');
   const bud = d.budget || {}, ai = bud.ai || {}, pl = bud.places || {}, q = d.quality || {}, st = d.stalled_reviews || {};
@@ -2004,7 +2091,10 @@ async function aiClientHtml(c){
       <div class="kv"><span class="k">Drafts</span><span>${fmtN(dr.drafted||0)} written${dr.needs_review_pct!=null?' · '+dr.needs_review_pct+'% flagged for review':''}${dr.regenerations?' · '+dr.regenerations+' regenerated':''}</span>
       <span class="k">Ask Cavnar AI</span><span>${ask.helpful_pct!=null?ask.helpful_pct+'% helpful of '+ask.rated+' rated':'no ratings yet'}</span>
       <span class="k">Safety checks</span><span>${saf.rate_pct!=null?saf.rate_pct+'% of '+saf.reviews_analysed+' reviews disagreed':'nothing analysed yet'}</span></div>
-      ${(q.events||[]).length ? `<div style="display:flex;gap:6px;flex-wrap:wrap">${q.events.map(e=>`<span class="chip" title="${e.per_100_calls!=null?e.per_100_calls+' per 100 calls':''}">${esc(e.surface)} · ${esc((e.kind||'').replace(/_/g,' '))} · ${e.n}</span>`).join('')}</div>` : '<span class="muted" style="font-size:13px">No guard or validation findings.</span>'}</section>`;
+      ${(q.events||[]).length ? `<div style="display:flex;gap:6px;flex-wrap:wrap">${q.events.map(e=>`<span class="chip" title="${e.per_100_calls!=null?e.per_100_calls+' per 100 calls':''}">${esc(e.surface)} · ${esc((e.kind||'').replace(/_/g,' '))} · ${e.n}</span>`).join('')}</div>` : '<span class="muted" style="font-size:13px">No guard or validation findings.</span>'}
+      <div class="lbl" style="margin-top:6px">The model's own confidence · a year of scored claims</div>${modelConfHtml(q.model_confidence)}</section>
+    <section class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap"><h2>Learning curve</h2><span class="muted" style="font-size:12.5px">is Cavnar AI getting better here · month by month</span></div>
+      ${learningCurveHtml(d.learning, d.learning_curves)}</section>`;
 }
 async function retryAi(id, name, n){
   if(!confirm('Put ' + n + ' stalled review' + (n===1?'':'s') + ' for ' + name + ' back in the AI queue? The next review cycle (8am, noon, 4pm or 8pm Central) picks them up.')) return;
@@ -2418,20 +2508,51 @@ function runBtn(j, d, primary){
   if(j.sends && d.local_sends_refused) return `<button class="btn s w" disabled title="${esc(d.local_sends_refused_reason || 'Refused on this server')}">Run now</button>`;
   return `<button class="btn s w${primary ? ' p' : ' reveal'}" onclick="event.stopPropagation();runJob('${jsq(j.job)}',${j.sends ? 'true' : 'false'},'${jsq(j.label || j.job)}')">Run now</button>`;
 }
+// What a job's newest finished run held back (memory audit 9/29/26), from
+// its stored counts: prune_ledgers' `refused` (a window under its floor —
+// nothing deleted from that table) and `capped` (tables the per-pass cap
+// stopped; the rest go on the next nights). `<key>_n` is how many there were
+// when the column budget cut the list.
+function runHeld(j){
+  const last = (j.history || []).filter(r => r.finished_at)[0];
+  if(!last || !last.result_json) return null;
+  let res; try{ res = JSON.parse(last.result_json); }catch(e){ return null; }
+  const refused = Array.isArray(res.refused) ? res.refused : [], capped = Array.isArray(res.capped) ? res.capped : [];
+  const rn = Math.max(refused.length, +res.refused_n || 0), cn = Math.max(capped.length, +res.capped_n || 0);
+  return rn || cn ? {refused: refused, capped: capped, refused_n: rn, capped_n: cn, at: last.started_at} : null;
+}
+function heldLines(h){
+  if(!h) return '';
+  const more = (n, list) => n > list.length ? ` · +${fmtN(n - list.length)} more` : '';
+  return (h.refused_n ? `<span style="color:var(--red-t);font-size:13px">Refused on ${fmtDT(h.at)} — a window under its floor, nothing deleted: ${h.refused.map(r => `<span class="mono">${esc(r.table)}</span> <span class="n">${fmtN(r.days)}</span> days (floor <span class="n">${fmtN(r.floor)}</span>)`).join(' · ')}${more(h.refused_n, h.refused)}</span>` : '')
+    + (h.capped_n ? `<span style="color:var(--amber-t);font-size:13px">Capped on ${fmtDT(h.at)} — more rows past their window than one pass deletes; the rest go on the next nights: ${h.capped.map(t => `<span class="mono">${esc(t)}</span>`).join(', ')}${more(h.capped_n, h.capped)}</span>` : '');
+}
+// The retention windows under their floor right now (admin_ops.jobs →
+// retention, from ops.retention_refusals): tonight's prune refuses each one
+// until its RETAIN_* variable is fixed. null is a failed read (said so);
+// a server without the field says nothing.
+function retentionNow(r){
+  if(r === undefined) return '';
+  if(r === null) return `<div class="warnline" role="status">${ico('alert','xs')} The retention windows couldn't be read — whether tonight's prune refuses any table is unknown.</div>`;
+  const list = r.refused || [];
+  if(!list.length) return '';
+  return `<div class="err"><b>Retention refused ${list.length === 1 ? 'a window' : list.length + ' windows'} under ${list.length === 1 ? 'its' : 'their'} floor</b> — nothing is deleted from ${list.length === 1 ? 'this table' : 'these tables'} until the RETAIN_* variable in Railway is fixed: ${list.map(x => `<span class="mono">${esc(x.table)}</span> <span class="n">${fmtN(x.days)}</span> days (floor <span class="n">${fmtN(x.floor)}</span>)`).join(' · ')}.</div>`;
+}
 function jobRow(j, d){
   const bad = ['failed', 'stuck', 'overdue'].indexOf(j.state) >= 0;
+  const held = runHeld(j);
   const live = j.state === 'running' || j.state === 'stuck';
   const last = live ? 'running · ' + ago(j.running_since) : (j.last_ok_at ? agoWord(j.last_ok_at) : 'never ran clean');
   const sid = 'jr-' + String(j.job).replace(/[^A-Za-z0-9_-]/g, '_');
   const facts = [j.sla_minutes ? `SLA ${fmtN(Math.round(j.sla_minutes / 60 * 10) / 10)}h between successes` : 'no SLA', `stuck after ${fmtN(j.stuck_after_minutes)}m`, j.lane ? esc(j.lane) + ' lane' : '', j.retry ? 'retried after a failure' : '', `7 days: ${fmtN(j.runs_7d)} runs · ${fmtN(j.failed_7d)} failed · ${fmtN(j.partial_7d)} partial`].filter(Boolean).join(' · ');
   const od = j.overdue ? `<span style="color:var(--red-t);font-size:13px">Overdue: <span class="n">${fmtN(j.overdue.hours_since)}h</span> since its last success (SLA <span class="n">${fmtN(j.overdue.max_hours)}h</span>) · last success ${j.overdue.last_ok_at ? fmtDT(j.overdue.last_ok_at) : 'never'}</span>` : '';
   return `<div class="li click" onclick="toggleRow(this)"><i style="display:block;width:9px;height:9px;border-radius:50%;background:${JOB_TONE[j.state] || 'var(--ink5)'};box-shadow:0 0 0 4px var(--hover);flex-shrink:0"></i>
-    <div class="tt"><b>${esc(j.label || j.job)}${j.sends ? ' <span class="pill emb nd" style="height:18px;font-size:10.5px;margin-left:6px"><i></i>sends</span>' : ''}</b><span><span class="mono">${esc(j.job)}</span> · ${esc(j.cadence || '')}${j.what ? ' · ' + esc(j.what) : ''}</span></div>
+    <div class="tt"><b>${esc(j.label || j.job)}${j.sends ? ' <span class="pill emb nd" style="height:18px;font-size:10.5px;margin-left:6px"><i></i>sends</span>' : ''}${held && held.refused_n ? ` <span class="chip bad" title="The newest run refused a window under its floor">${fmtN(held.refused_n)} refused</span>` : ''}${held && held.capped_n ? ` <span class="chip warn" title="The newest run hit the per-pass cap">${fmtN(held.capped_n)} capped</span>` : ''}</b><span><span class="mono">${esc(j.job)}</span> · ${esc(j.cadence || '')}${j.what ? ' · ' + esc(j.what) : ''}</span></div>
     ${pill(JOB_PILL[j.state] || 'neu', JOB_WORD[j.state] || esc(j.state), j.state !== 'never')}
     ${histSquares(j.history)}
     <span style="width:118px;text-align:right;display:flex;flex-direction:column"><span class="n" style="font-size:12.5px;color:${bad ? 'var(--red-t)' : 'var(--ink2)'}">${last}</span><span class="n muted" style="font-size:11.5px">${j.avg_ms != null ? 'avg ' + fmtN(j.avg_ms) + 'ms' : ''}</span></span>
     ${runBtn(j, d, bad)}<span class="chev">${ico('chev','s')}</span></div>
-    <div class="lx"><div class="box">${od}<span class="muted" style="font-size:12.5px">${facts}</span>
+    <div class="lx"><div class="box">${od}${heldLines(held)}<span class="muted" style="font-size:12.5px">${facts}</span>
       ${j.sends && d.local_sends_refused ? `<span class="warn" style="font-size:12.5px;padding:8px 10px;border-radius:9px">Run now is off here: ${esc(d.local_sends_refused_reason || '')}</span>` : ''}
       ${(j.history || []).length ? `<div class="list">${j.history.slice(0, 5).map(r => `<div class="it"><span class="when">${fmtDT(r.started_at)}</span><span>${pill(JOB_PILL[r.state] || 'bad', JOB_WORD[r.state] || esc(r.state))} <span class="n muted">${r.duration_ms != null ? fmtN(r.duration_ms) + 'ms' : ''}</span>${r.error ? ' <span style="color:var(--red-t)">' + esc(String(r.error).slice(0, 160)) + '</span>' : ''}${/manual by /.test(r.context || '') ? ' <span class="chip">' + esc(r.context) + '</span>' : ''}</span><span></span></div>`).join('')}</div>` : '<span class="muted">No run recorded in 45 days.</span>'}
       <div id="${sid}"></div>
@@ -2478,6 +2599,7 @@ function opsJobs(d){
     ${h.wedged ? `<div class="err"><b>Wedged:</b> ${esc(h.running_job)} has run ${fmtN(Math.round(h.running_minutes))} minutes, past its ${fmtN(h.running_bound_minutes)}-minute bound. The heartbeat stops vouching for it; check Railway's logs.</div>` : ''}
     ${h.loop_stalled ? `<div class="err"><b>Loop stalled:</b> no scheduler tick has finished in ${fmtN(Math.round(h.loop_completed_age_minutes))} minutes and no job is running to explain it.</div>` : ''}
     ${d.local_sends_refused ? `<div class="warnbox"><b>Jobs that email, text or push are off on this server.</b> ${esc(d.local_sends_refused_reason || '')}</div>` : ''}
+    ${retentionNow(d.retention)}
     ${missed.length || dsr.length ? `<div class="warnbox"><b>Missed:</b> ${missed.slice(0, 4).map(m => `${esc(m.job)} for ${m.restaurant_id ? clientLink(m.restaurant_id, m.restaurant || '#' + m.restaurant_id) : 'the platform'} on ${mdy(dayOf(m.local_date))}${m.detail ? ' (' + esc(m.detail) + ')' : ''}`).join(' · ')}${missed.length > 4 ? ` · +${missed.length - 4} more` : ''}${dsr.length ? `${missed.length ? ' · ' : ''}Daily Sales Report not delivered for ${dsr.slice(0, 4).map(x => `${clientLink(x.restaurant_id, x.restaurant || '#' + x.restaurant_id)} (${mdy(dayOf(x.business_date))})`).join(', ')}${dsr.length > 4 ? ' +' + (dsr.length - 4) : ''}` : ''}</div>` : ''}
     <section class="split wide">
       <div class="card" style="overflow:hidden">
@@ -2780,6 +2902,7 @@ function aiQuality(q){
       ${(dr.edit_categories || []).length ? `<div class="lbl">How owners edited approved drafts</div><div style="display:flex;gap:12px;flex-wrap:wrap;font-size:12.5px">${dr.edit_categories.map(c => `<span><span class="n">${fmtN(c.n)}</span> <span class="dim">${esc(c.category)}</span></span>`).join('')}</div>` : ''}
       <div class="lbl">Quality findings · per 100 calls of the surface</div>${ev.slice(0, 8).map(e => `<div style="display:flex;justify-content:space-between;gap:10px;font-size:12.5px"><span class="ink2">${esc(e.surface)} <span class="dim">${esc(e.kind)}</span></span><span class="n">${fmtN(e.n)}${e.per_100_calls != null ? ' · ' + e.per_100_calls + ' per 100' : ''} · ${agoWord(e.last_at)}</span></div>`).join('') || '<span class="muted" style="font-size:13px">No finding in this window.</span>'}
       ${un.length ? `<div class="lbl">Refused, truncated or unparseable</div>${un.slice(0, 6).map(u => `<div style="display:flex;justify-content:space-between;font-size:12.5px"><span class="ink2">${esc(u.action)} <span class="chip">${esc(u.outcome)}</span></span><span class="n">${fmtN(u.n)}${u.pct_of_calls != null ? ' · ' + u.pct_of_calls + '% of calls' : ''}</span></div>`).join('')}` : ''}
+      <div class="lbl">The model's own confidence · a year of scored claims</div>${modelConfHtml(q.model_confidence)}
       ${(q.models || []).length ? `<details class="more-d" style="margin:0 -18px"><summary>Models in force</summary><div style="padding:0 18px 12px">${q.models.map(m => `<div style="display:flex;justify-content:space-between;gap:10px;font-size:12.5px"><span class="ink2">${esc(m.purpose)}</span><span class="mono">${esc(m.model)}${m.overridden ? ' <span class="chip warn">' + esc(m.env) + '</span>' : ''}</span></div>`).join('')}</div></details>` : ''}
     </div></div>`;
 }
@@ -3342,8 +3465,11 @@ async function intelligence(){
   const d = await api('/admin/api/intelligence'); if(!d.ok) throw new Error('intelligence failed');
   const L = d.learning, R = d.recommendations.totals, pct = v => v==null ? '—' : Math.round(v*100)+'%', sv = d.savings || {};
   // Weeks with no feature row are drawn as empty slots, not skipped (#158).
+  // intel_features keys a row by its ISO week ("2026-W39"), walked Monday to
+  // Monday; each bar carries how many of its rows were backfilled later
+  // from raw history (features.store's flag, memory audit 9/29/26).
   const wk = {}; (L.weeks || []).forEach(w => { wk[w.week] = w; });
-  const weeks = []; if((L.weeks || []).length){ const end = dayOf(L.weeks[L.weeks.length-1].week); for(let x = dayOf(L.weeks[0].week); x && end && x <= end; x.setDate(x.getDate()+7)){ const k = x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); weeks.push({day:k, n:(wk[k]||{}).n || 0}); } }
+  const weeks = []; if((L.weeks || []).length){ const end = isoWeekDay(L.weeks[L.weeks.length-1].week); for(let x = isoWeekDay(L.weeks[0].week); x && end && x <= end && weeks.length < 60; x.setDate(x.getDate()+7)){ const k = isoWeekKey(x), w = wk[k] || {}; weeks.push({week:k, n:w.n || 0, backfilled:w.backfilled || 0}); } }
   const catRows = Object.entries(L.cohorts).map(([c,n]) => ({cohort:c, label: L.cohort_labels[c]||(c==='uncategorised'?'Uncategorised':c), n, at_floor: L.cohorts_at_floor.includes(c)}));
   const kindRows = d.recommendations.by_kind;
   V().innerHTML = `
@@ -3353,7 +3479,7 @@ async function intelligence(){
     ${!L.cohorts_at_floor.length && L.restaurants < d.floor ? `<div class="warnbox" style="margin-bottom:12px"><b>Below the floor.</b> ${L.restaurants} active restaurant${L.restaurants===1?'':'s'}; cross-restaurant patterns and benchmarks appear once ${d.floor} are live. Level 1 (each restaurant's own memory) is already learning.</div>` : ''}
     <div class="grid g3" style="margin-bottom:14px">
       <div class="card"><div class="ch"><h2>Strongest patterns</h2><span class="sub" title="${esc((d.top_insights[0]||{}).strength_basis||'effect size, significance and sample combined for ordering — not the chance the pattern is right')}">pattern strength, not the chance a pattern is right</span></div><div class="cb">${d.top_insights.length ? d.top_insights.map(p=>`<div style="padding:6px 0;border-bottom:1px solid var(--paper3)"><b class="num">${patStrength(p)}</b> <span class="dim">${esc(p.strength_label||'pattern strength')} ·</span> <span class="dim">${esc(p.cohort==='platform'?'platform':p.cohort)}</span><div style="white-space:normal">${esc(p.sentence)}</div><div class="dim">n=${p.n_with}+${p.n_without} · d=${p.cohen_d} · p=${p.p_value} · q=${p.q_value}</div></div>`).join('') : '<div class="empty">No pattern has cleared the bar yet (each side ≥5 restaurants, |d| ≥ 0.3, p ≤ .05, q ≤ .10).</div>'}</div></div>
-      <div class="card"><div class="ch"><h2>Emerging trends</h2></div><div class="cb">${d.emerging.length ? d.emerging.map(t=>`<div style="padding:6px 0;border-bottom:1px solid var(--paper3)"><b>${esc(t.cohort_label)}</b> · ${esc(t.metric)}<div class="dim">${t.from} → ${t.to} over ${t.weeks} weeks (${t.relative_per_week>0?'+':''}${Math.round(t.relative_per_week*1000)/10}%/wk, n=${t.n_latest})</div></div>`).join('') : '<div class="empty">A trend needs six weekly points over a cohort at the floor.</div>'}</div></div>
+      <div class="card"><div class="ch"><h2>Emerging trends</h2><span class="sub" title="Each point is the week as it was measured when that week completed — never recomputed with tonight's members (trends.stored_trends)">as measured each week</span></div><div class="cb">${d.emerging.length ? d.emerging.map(t=>`<div style="padding:6px 0;border-bottom:1px solid var(--paper3)"><b>${esc(t.cohort_label)}</b> · ${esc(t.metric)}<div class="dim">${t.from} → ${t.to} over ${t.weeks} weeks (${t.relative_per_week>0?'+':''}${Math.round(t.relative_per_week*1000)/10}%/wk, n=${t.n_latest})${t.n_joined || t.n_left ? ` · the latest week <span class="num">+${fmtN(t.n_joined || 0)}</span> joined, <span class="num">${fmtN(t.n_left || 0)}</span> left` : ''}</div></div>`).join('') : '<div class="empty">A trend needs six complete weeks, each written the night it completed, over a cohort at the floor.</div>'}</div></div>
       <div class="card"><div class="ch"><h2>Money by kind · never added</h2><span class="sub">${sv.source ? (sv.source === 'nightly' ? 'nightly figures' : 'computed live') + (sv.as_of ? ' · as of ' + esc(mdy(dayOf(sv.as_of))) : '') : 'not computed yet'}</span></div><div class="cb">${['delivered','avoided','surfaced','opportunity'].map(k=>`<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0"><span>${k} <span class="dim">${esc((sv.periods||{})[k]||'')}</span></span><span class="num">${sv[k]==null ? unknownV(sv.note || 'not computed yet') : fmtUSD(sv[k],0)}</span></div>`).join('')}<div class="dim" style="white-space:normal;margin-top:6px">${esc(sv.note || '')} ${fmtN(sv.restaurants_counted)}${sv.restaurants_active != null ? ' of ' + fmtN(sv.restaurants_active) : ''} restaurants counted.</div></div></div>
     </div>
     <div class="grid g2" style="margin-bottom:14px">
@@ -3362,12 +3488,54 @@ async function intelligence(){
     </div>
     <div class="grid g2" style="margin-bottom:14px">
       <div><div class="k" style="margin-bottom:6px">Cavnar AI cohorts (latest week, rounded as published)</div>${d.benchmarks.length ? table([{h:'Cohort',key:'cohort_label'},{h:'Measure',key:'label'},{h:'n',key:'n',r:true,cell:r=>`<span class="num">${r.n}</span>`},{h:'Owners',key:'orgs',r:true,cell:r=>`<span class="num">${r.orgs==null?'—':r.orgs}</span>`},{h:'p25',key:'p25',r:true,cell:r=>`<span class="num">${r.p25}</span>`},{h:'Median',key:'p50',r:true,cell:r=>`<span class="num">${r.p50}</span>`},{h:'p75',key:'p75',r:true,cell:r=>`<span class="num">${r.p75}</span>`}], d.benchmarks, {id:'int-bench', sort:'cohort'}) : '<div class="empty">Benchmarks publish once a cohort clears the floor.</div>'}</div>
-      <div><div class="k" style="margin-bottom:6px">Learning over time</div><div class="card"><div class="cb">${weeks.length ? bars(weeks,'n') : '<div class="empty">No feature rows yet — the 3am pass writes one per restaurant per week.</div>'}<div class="dim" style="margin-top:4px">restaurants with a feature row, by week · completeness ${L.weeks.length?Math.round((L.weeks[L.weeks.length-1].completeness||0)*100)+'%':'—'}</div></div></div>
-      <div class="k" style="margin:10px 0 6px">Model confidence over time</div>${d.confidence_over_time.length ? table([{h:'Week',key:'week'},{h:'Kind',key:'rec_kind'},{h:'n',key:'n',r:true,cell:r=>`<span class="num">${r.n}</span>`},{h:'Mean confidence',key:'mean_confidence',r:true,cell:r=>`<span class="num">${r.mean_confidence==null?'—':pct(r.mean_confidence)}</span>`},{h:'Accepted',key:'acceptance_rate',r:true,cell:r=>`<span class="num">${pct(r.acceptance_rate)}</span>`},{h:'Improved',key:'success_rate',r:true,cell:r=>`<span class="num">${pct(r.success_rate)}</span>`}], d.confidence_over_time, {id:'int-conf', sort:'week'}) : '<div class="empty">Logged weekly by the learning pass once a kind clears the floor.</div>'}</div>
+      <div><div class="k" style="margin-bottom:6px">Learning over time</div><div class="card"><div class="cb">${weeks.length ? featureWeekBars(weeks) : '<div class="empty">No feature rows yet — the 3am pass writes one per restaurant per week.</div>'}<div class="dim" style="margin-top:4px">restaurants with a feature row, by week${weeks.some(w => w.backfilled) ? ' · <span style="color:var(--ink3)">grey</span> backfilled later from raw history' : ''} · completeness ${L.weeks.length?Math.round((L.weeks[L.weeks.length-1].completeness||0)*100)+'%':'—'}</div></div></div>
+      <div class="k" style="margin:10px 0 6px">Model confidence over time</div>${d.confidence_over_time.length ? table([{h:'Week',key:'week',cell:r=>`<span class="num">${esc(weekLabel(r.week))}</span>`},{h:'Kind',key:'rec_kind'},{h:'n',key:'n',r:true,cell:r=>`<span class="num">${r.n}</span>`},{h:'Owners',key:'orgs',r:true,cell:r=>`<span class="num">${r.orgs==null?'—':fmtN(r.orgs)}</span>`},{h:'Meaning',key:'trust_version',cell:r=>r.trust_version==null?'<span class="dim" title="Logged before the version was recorded">—</span>':`<span class="chip" title="The version of what the % means; one version is averaged per row">v${esc(r.trust_version)}</span>`},{h:'Mean confidence',key:'mean_confidence',r:true,cell:r=>`<span class="num">${r.mean_confidence==null?'—':pct(r.mean_confidence)}</span>`},{h:'Accepted',key:'acceptance_rate',r:true,cell:r=>`<span class="num">${pct(r.acceptance_rate)}</span>`},{h:'Improved',key:'success_rate',r:true,cell:r=>`<span class="num">${pct(r.success_rate)}</span>`}], d.confidence_over_time, {id:'int-conf', sort:'week'}) : '<div class="empty">Logged weekly by the learning pass once a kind clears the floor.</div>'}</div>
     </div>
     <details class="card"><summary>All patterns · ${d.patterns.rows.length}</summary><div class="cb">
-    ${d.patterns.rows.length ? table([{h:'Status',key:'status',cell:r=>`<span style="color:${r.status==='active'?'var(--green)':'var(--ink4)'}">${esc(r.status)}</span>`},{h:'Cohort',key:'cohort'},{h:'Pattern',key:'sentence',wrap:true,cell:r=>esc(r.sentence)},{h:'Effect',key:'effect',r:true,cell:r=>`<span class="num">${r.effect} ${esc(r.effect_unit||'')}</span>`},{h:'Strength',key:'strength_pct',r:true,cell:r=>`<span class="num" title="${esc(r.strength_basis||'')}">${patStrength(r)}</span>`},{h:'First seen',key:'first_seen',cell:r=>`<span class="num">${fmtD(r.first_seen)}</span>`}], d.patterns.rows, {id:'int-pat', sort:'strength_pct'}) : '<div class="empty">Nothing discovered yet.</div>'}</div></details>
+    ${d.patterns.rows.length ? table([{h:'Status',key:'status',cell:r=>`<span style="color:${r.status==='active'?'var(--green)':'var(--ink4)'}">${esc(r.status)}</span>`},{h:'Cohort',key:'cohort'},{h:'Pattern',key:'sentence',wrap:true,cell:r=>esc(r.sentence)},{h:'Effect',key:'effect',r:true,cell:r=>`<span class="num">${r.effect} ${esc(r.effect_unit||'')}</span>`},{h:'Strength',key:'strength_pct',r:true,cell:r=>`<span class="num" title="${esc(r.strength_basis||'')}">${patStrength(r)}</span>`},{h:'First seen',key:'first_seen',cell:r=>`<span class="num">${/^\d{4}-\d{2}-\d{2}$/.test(String(r.first_seen||'')) ? mdy(dayOf(r.first_seen)) : fmtD(r.first_seen)}</span>`},{h:'Weeks held',key:'weeks_held',r:true,cell:r=>`<span class="num" title="ISO weeks it was active, from the weekly record">${r.weeks_held==null?'—':fmtN(r.weeks_held)}</span>`},{h:'',cell:r=>r.key?`<button class="cbtn btn s g" onclick="patHistory('${jsq(r.key)}')">History</button>`:''}], d.patterns.rows, {id:'int-pat', sort:'strength_pct'}) : '<div class="empty">Nothing discovered yet.</div>'}
+    <div id="int-ph"></div></div></details>
     <div class="dim" style="margin-top:10px">Nightly: features at 3am (bounded, resumable), learning at 4am. ${d.jobs.length ? d.jobs.map(j=>esc(j.job)+' '+ago(j.started_at)+(j.ok?'':' <span style="color:var(--red)">failed</span>')).join(' · ') : 'No runs yet.'}</div>`;
+}
+
+// Restaurants with a feature row, week by week: an empty week is a faint
+// slot (#158); the share of a bar backfilled later from raw history
+// (intel_features.backfilled) is grey under the ember of the rows the
+// nightly pass wrote in their own week.
+function featureWeekBars(weeks){
+  const max = Math.max(1, ...weeks.map(w => +w.n || 0));
+  return `<div class="bars">${weeks.map(w => { const n = +w.n || 0, bf = Math.min(n, +w.backfilled || 0), share = n ? Math.round(bf / n * 100) : 0;
+    return `<i style="height:${n ? Math.max(3, 56 * n / max) : 2}px${bf ? `;background:linear-gradient(0deg,var(--ink4) ${share}%,var(--ember2) ${share}%)` : ''}" class="${n ? '' : 'z'}" title="${esc(weekLabel(w.week))}: ${fmtN(n)} restaurant${n === 1 ? '' : 's'}${bf ? ' · ' + fmtN(bf) + ' backfilled' : ''}"></i>`; }).join('')}</div>`;
+}
+// One pattern's weekly record (patterns.history, memory audit 9/29/26):
+// what the platform believed about it each ISO week it was tested —
+// active, retired, or below the floor — with that week's n, effect, d, p
+// and q, from the append-only intel_pattern_history. One square a week in
+// its state (active green, below the floor amber, retired red), then the
+// rows. A second click on the same pattern closes it.
+const PH_SQ = {active:'', below_floor:'p', retired:'x'};
+let _phKey = null;
+function patHistory(key){
+  const el = $('int-ph'); if(!el) return;
+  if(_phKey === key && el.innerHTML){ el.innerHTML = ''; _phKey = null; return; }
+  _phKey = key;
+  el.innerHTML = `<div class="card" style="margin-top:12px"><div class="ch"><h2>Week by week</h2><span class="sub mono">${esc(key)}</span></div><div class="cb" id="int-ph-b">${skel(3)}</div></div>`;
+  lazy('int-ph-b', () => patHistoryHtml(key));
+}
+async function patHistoryHtml(key){
+  const d = await need('/admin/api/intelligence/pattern-history?key=' + encodeURIComponent(key));
+  const rows = d.rows || [];
+  if(!rows.length) return '<div class="empty">No weekly record yet — it starts with the first weekly discovery pass after this pattern was found.</div>';
+  const held = rows.filter(r => r.status === 'active').map(r => r.week).filter((w, i, a) => a.indexOf(w) === i).length;
+  const sq = `<span class="sq" aria-label="the last 26 weeks tested">${rows.slice(-26).map(r => `<i class="${PH_SQ[r.status] == null ? 'e' : PH_SQ[r.status]}" title="${esc(weekLabel(r.week))} · ${esc(String(r.status || '').replace('_', ' '))}"></i>`).join('')}</span>`;
+  const num = v => v == null ? '—' : esc(v);
+  return `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">${sq}<span style="font-size:13px">Held <span class="n">${fmtN(held)}</span> week${held === 1 ? '' : 's'} of <span class="n">${fmtN(rows.length)}</span> on record, since ${esc(weekLabel(rows[0].week))}</span></div>`
+    + table([{h:'Week', key:'week', cell:r => `<span class="num">${esc(weekLabel(r.week))}</span>`},
+      {h:'Status', key:'status', cell:r => pill(r.status === 'active' ? 'good' : (r.status === 'retired' ? 'bad' : 'warn'), esc(String(r.status || '').replace('_', ' ')), false) + (r.prospective ? ' <span class="chip" title="Behaviour measured before the outcome">prospective</span>' : '')},
+      {h:'n', key:'n_with', r:true, cell:r => `<span class="num">${num(r.n_with)}+${num(r.n_without)}</span>`},
+      {h:'Effect', key:'effect', r:true, cell:r => `<span class="num">${num(r.effect)} ${esc(r.effect_unit || '')}</span>`},
+      {h:'d', key:'cohen_d', r:true, cell:r => `<span class="num">${num(r.cohen_d)}</span>`},
+      {h:'p', key:'p_value', r:true, cell:r => `<span class="num">${num(r.p_value)}</span>`},
+      {h:'q', key:'q_value', r:true, cell:r => `<span class="num">${num(r.q_value)}</span>`}], rows.slice().reverse(), {id:'int-ph-t', limit:12});
 }
 
 // ── Recommendation acceptance (internal only) ──────────────────────────────
@@ -3414,6 +3582,7 @@ async function recommendations(arg){
         ${d.fatigue.length ? d.fatigue.map(r=>`<div style="display:flex;justify-content:space-between;padding:3px 0"><a href="#recommendations/${r.restaurant_id}">${esc(r.group)}</a><span class="num">${pct(r.dismiss_rate + r.ignore_rate)} of ${fmtN(r.n)}</span></div>`).join('') : '<div class="empty">No restaurant is tuning it out.</div>'}
       </div></div>
     </div>
+    <div class="card" style="margin-bottom:14px"><div class="ch"><h2 style="white-space:nowrap">Did the ranking learn? · 90d</h2><span class="sub">by the model's version and the weight it gave on first showing · taken, then improved</span></div><div class="cb" id="rec-rank">${skel(3)}</div></div>
     <details class="card"><summary>Breakdowns · dollars, who prepares it, cross-module, model-written, confidence, surface, module, who answered, kind</summary><div class="cb stack"><div class="grid g2">
       ${cmp('With a dollar figure vs without', d.by_dollars, 'rec-dollars')}
       ${cmp('Cavnar AI prepares it vs the owner does it', d.by_cavnar_completes, 'rec-cavnar')}
@@ -3445,6 +3614,51 @@ async function recommendations(arg){
           {h:'Detail',key:'detail',wrap:true,cell:r=>esc(r.detail||'')}], miss.rows, {id:'rec-miss', sort:'detected_at'}) : '<div class="empty">Every problem that surfaced had a recommendation before it.</div>'}
       </div></div>
     </div>`;
+  lazy('rec-rank', () => rankLearningHtml(rid));
+}
+
+// ── What the effectiveness model did to the rankings (memory audit 9/29/26,
+// rank_log; admin_ops.rank_learning) ──
+// Every shown recommendation is grouped by the model version and the weight
+// bucket its first ranked showing carried — lowered, about even, raised —
+// with how often the owner took it (90% range, the .calbar of the
+// calibration table) and how often what was taken improved. A group under
+// min_n settled is dimmed, not read; the sentence compares raised against
+// lowered only when both clear it. Before and after, not proof.
+const RANK_BUCKET_ORDER = ['raised (over 1.1x)', 'about even (0.9-1.1x)', 'lowered (under 0.9x)', 'no weight logged'];
+function rankBar(r){
+  const p = r.accept_rate == null ? null : Math.round(r.accept_rate * 100), ci = r.accept_ci90;
+  if(p == null) return '<span class="dim">—</span>';
+  const lo = ci ? Math.round(ci[0] * 100) : null, hi = ci ? Math.round(ci[1] * 100) : null;
+  return `<span class="calbar${r.enough ? ' ok' : ' off'}" title="Taken ${p}%${lo != null ? ' (90%: ' + lo + '–' + hi + '%)' : ''} of ${fmtN(r.settled)} settled">${lo != null ? `<i class="rg" style="left:${lo}%;width:${Math.max(1, hi - lo)}%"></i>` : ''}<i class="ob" style="left:${p}%"></i></span>`;
+}
+function rankSentence(d){
+  const g = d.groups || [], vs = g.map(r => r.version).filter(v => v != null).map(String).sort();
+  const ver = vs.length ? vs[vs.length - 1] : null;
+  const pick = b => g.filter(r => String(r.version) === String(ver) && r.bucket === b && r.enough)[0];
+  const up = pick(RANK_BUCKET_ORDER[0]), down = pick(RANK_BUCKET_ORDER[2]), pc = v => Math.round(v * 100) + '%';
+  if(!ver) return `No shown recommendation carried a logged rank in ${fmtN(d.days)} days yet.`;
+  if(!up || !down) return `Version <span class="mono">${esc(ver)}</span>: not enough settled in both a raised and a lowered group to compare yet (${fmtN(d.min_n)} each).`;
+  return `Version <span class="mono">${esc(ver)}</span>: what the model raised was taken <span class="n">${pc(up.accept_rate)}</span> of the time, what it lowered <span class="n">${pc(down.accept_rate)}</span>` + (up.outcome_rate != null && down.outcome_rate != null ? `; of what was taken and measured, <span class="n">${pc(up.outcome_rate)}</span> against <span class="n">${pc(down.outcome_rate)}</span> improved.` : '.');
+}
+async function rankLearningHtml(rid){
+  const d = await need('/admin/api/recommendations/learning?days=90' + (rid ? '&restaurant_id=' + rid : ''));
+  const rows = (d.groups || []).slice().sort((a, b) => String(b.version).localeCompare(String(a.version)) || (RANK_BUCKET_ORDER.indexOf(a.bucket) - RANK_BUCKET_ORDER.indexOf(b.bucket)));
+  const un = d.unshown_by_surface || {}, pc = v => v == null ? '—' : Math.round(v * 100) + '%';
+  const dim = r => r.enough ? '' : ' dim';
+  const cols = [
+    {h:'Model', key:'version', cell:r => r.version == null ? '<span class="dim">none logged</span>' : `<span class="mono">${esc(r.version)}</span>`},
+    {h:'Weight', key:'bucket', cell:r => esc(r.bucket)},
+    {h:'Shown', key:'shown', r:true, cell:r => `<span class="num">${fmtN(r.shown)}</span>`},
+    {h:'Settled', key:'settled', r:true, cell:r => `<span class="num${dim(r)}">${fmtN(r.settled)}</span>`},
+    {h:'Taken', key:'accept_rate', r:true, cell:r => r.enough ? `<span class="num">${pc(r.accept_rate)}</span>${r.accept_ci90 ? ` <span class="dim num">${pc(r.accept_ci90[0])}–${pc(r.accept_ci90[1])}</span>` : ''}` : `<span class="dim">n&lt;${fmtN(d.min_n)}</span>`},
+    {h:'', key:'bar', cell:rankBar},
+    {h:'Improved', key:'outcome_rate', r:true, cell:r => r.measured ? `<span class="num${dim(r)}">${pc(r.outcome_rate)}</span> <span class="dim">of ${fmtN(r.measured)}</span>` : '<span class="dim">not measured</span>'}];
+  const surfaces = Object.keys(un).sort();
+  return `<div style="font-size:13px;margin-bottom:10px">${rankSentence(d)}</div>
+    ${table(cols, rows, {id:'rec-rank-t', empty:'No shown recommendation carried a rank yet.'})}
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px"><span class="lbl">Ranked but not shown</span>${surfaces.length ? surfaces.map(s => `<span class="chip" title="${fmtN(un[s].builds)} builds">${esc(s)}&nbsp;·&nbsp;<span class="n">${fmtN(un[s].unshown)}</span>&nbsp;left out over&nbsp;<span class="n">${fmtN(un[s].builds)}</span>&nbsp;builds</span>`).join('') : '<span class="dim">no build logged yet</span>'}</div>
+    <div class="dim" style="margin-top:6px;white-space:normal">${esc(d.note || '')} A group needs ${fmtN(d.min_n)}+ settled to be read.</div>`;
 }
 
 // ── Confidence calibration (K7, J14) ───────────────────────────────────────
@@ -3541,7 +3755,9 @@ async function experiments(){
   const pct = v => v==null ? '—' : Math.round(v*1000)/10+'%';
   const one = v => v==null ? '—' : (Math.round(v*10)/10).toString();
   const ci = (c, f) => c && c.ci90 ? ` <span class="dim">${f(c.ci90[0])}–${f(c.ci90[1])}</span>` : '';
-  const dlt = (x, f) => !x ? '<span class="dim">—</span>' : `<span class="num">${x.diff>0?'+':''}${f(x.diff)}</span> <span class="dim">${f(x.ci90[0])} to ${f(x.ci90[1])}</span>`;
+  // A difference against the control, its 90% interval clustered by
+  // restaurant (cluster_diff), and how many restaurants (clusters) are behind it.
+  const dlt = (x, f) => !x ? '<span class="dim">—</span>' : `<span class="num">${x.diff>0?'+':''}${f(x.diff)}</span> <span class="dim">${f(x.ci90[0])} to ${f(x.ci90[1])}</span>${x.clusters!=null?` <span class="dim" title="Restaurants behind the interval — each counts once, however many weeks it has">· <span class="num">${fmtN(x.clusters)}</span> rest.</span>`:''}`;
   const state = {winner:'ok', insufficient:'warn', conflicting:'bad', no_difference:'', retired:''};
   const block = (e) => {
     const cols = [
@@ -3559,7 +3775,7 @@ async function experiments(){
       ? `<div style="margin-bottom:10px"><span class="b ok nodot">promoted</span> ${esc(pr.arm)} is every restaurant's arm — by ${esc(pr.promoted_by||'admin')} on ${fmtD(pr.promoted_at)}${pr.note?' · '+esc(pr.note):''} <button class="cbtn btn s w" onclick="expRevert('${jsq(e.key)}')">Revert</button></div>`
       : (v.state==='winner' && v.call ? `<div style="margin-bottom:10px"><button class="cbtn btn s w" onclick="expPromote('${jsq(e.key)}','${jsq(v.call)}')">Promote ${esc(v.call)} to every restaurant</button> <span class="dim">A reviewed step: recorded with your name, reversible.</span></div>` : '');
     return `<div class="card" style="margin-bottom:14px"><div class="ch"><h2>${esc(e.key)}</h2><span class="sub">${esc(e.question)}${e.started?' · since '+fmtD(e.started):''}${e.active?'':' · not running'}</span></div>
-      <div class="cb"><div style="margin-bottom:10px"><span class="b ${state[v.state]||''} nodot">${esc(v.state||'')}</span> ${esc(v.text||'')}</div>${promo}
+      <div class="cb"><div style="margin-bottom:10px"><span class="b ${state[v.state]||''} nodot">${esc(v.state||'')}</span> ${esc(v.text||'')}</div>${verdictHistory(e.verdict_history, state)}${promo}
       ${table(cols, e.arms, {id:'exp-'+e.key, sort:'generated', empty:'No weeks recorded yet.'})}</div></div>`;
   };
   const pinCols = [
@@ -3572,12 +3788,27 @@ async function experiments(){
   V().innerHTML = `
     <div class="head"><div><div class="k ember">Operations · internal only</div><h1>Schedule experiments</h1>
       <div class="sub">Each generated week is in one arm, by a hash of the restaurant and the week, so a regeneration keeps it. Accepted unedited is the share of the draft's rows that went out untouched. ${esc(d.rule)}</div></div></div>
+    ${d.method || d.max_weeks_per_restaurant ? `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:12px" title="${esc(d.rule || '')}"><span class="lbl">How a winner is called</span>${d.method ? `<span class="chip" title="How the verdict is reached: intervals clustered by restaurant (CR1), t on restaurants − 1 degrees of freedom">method ${esc(d.method)}</span>` : ''}${d.max_weeks_per_restaurant ? `<span class="chip">at most&nbsp;<span class="num">${fmtN(d.max_weeks_per_restaurant)}</span>&nbsp;weeks per restaurant per arm</span>` : ''}<span class="chip">demo and test accounts left out</span><span class="chip">pinned weeks not counted</span></div>` : ''}
     ${d.error?`<div class="err" style="margin-bottom:12px">${esc(d.error)}</div>`:''}
     ${d.env_pin?`<div class="err" style="margin-bottom:12px"><b>Every restaurant is pinned</b> by SCHEDULE_EXPERIMENT_PIN=${esc(d.env_pin)} — new weeks are not randomised.</div>`:''}
     ${d.experiments.length ? d.experiments.map(block).join('') : '<div class="empty">No experiment has recorded a week yet.</div>'}
     <div class="card"><div class="ch"><h2>Pins</h2><span class="sub">A pinned restaurant gets that arm every week and its weeks leave the comparison. Off is the control.</span></div><div class="cb">
       <div class="filters"><input id="exp-rid" placeholder="Restaurant ID" style="min-width:120px"><select id="exp-arm">${arms.map(a=>`<option value="${esc(a[0])}|${esc(a[1])}">${esc(a[2])}</option>`).join('')}${d.experiments.filter(e=>e.active).map(e=>`<option value="${esc(e.key)}|off">${esc(e.key)} · off</option>`).join('')}</select><button class="cbtn btn s w" onclick="expPinForm()">Pin</button></div>
       ${table(pinCols, d.pins, {id:'exp-pins', sort:'created_at', empty:'No restaurant is pinned.'})}</div></div>`;
+}
+// The weekly stored verdict (schedule_experiment_verdicts, memory audit
+// 9/29/26): the first reading of each ISO week stands, oldest on the left,
+// one square a week in its state — winner green, insufficient amber,
+// conflicting red, no difference grey — so a call that flips week to week
+// shows as flipping. A week read by an older method is marked.
+function verdictHistory(list, state){
+  list = Array.isArray(list) ? list.slice() : [];
+  if(!list.length) return '<div class="dim" style="margin-bottom:10px">No weekly verdict stored yet — the Monday 5am job writes the first.</div>';
+  list.sort((a, b) => String(a.week).localeCompare(String(b.week)));
+  const SQ = {ok:'', warn:'p', bad:'x'}, cur = list[list.length - 1].method;
+  const cells = list.map(v => { const t = state[v.state]; return `<i class="${t && SQ[t] != null ? SQ[t] : 'e'}" title="${esc(weekLabel(v.week))} · ${esc(v.state || '')}${v.call ? ' · ' + esc(v.call) : ''}${v.method && v.method !== cur ? ' · read by ' + esc(v.method) : ''}${v.text ? ' — ' + esc(v.text) : ''}"></i>`; });
+  const flips = list.filter((v, i) => i && v.call !== list[i - 1].call).length;
+  return `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px"><span class="lbl">Week by week</span><span class="sq" aria-label="stored weekly verdicts">${cells.join('')}</span><span class="dim" style="font-size:12px">${esc(weekLabel(list[0].week))} → ${esc(weekLabel(list[list.length - 1].week))}${flips ? ` · the call changed <span class="num">${fmtN(flips)}</span> time${flips === 1 ? '' : 's'}` : ' · the call held'}</span></div>`;
 }
 // Pins, promotions and reverts change which schedule a restaurant's next
 // weeks are drafted with: each asks first, names what it changes, and says
@@ -3851,14 +4082,43 @@ async function rpowerDisconnect(){ if(!confirm('Disconnect RPOWER for ' + (_rpNa
 let _bRid=null, _b0=null;
 const BRAND_FIELDS = [['b-name','brand_name'],['b-color','brand_color'],['b-logo','brand_logo_url']];
 const PROFILE_FIELDS = [['b-sm','service_model'],['b-concept','concept'],['b-own','ownership'],['b-opened','opened_year']];
-function brandReset(){ BRAND_FIELDS.concat(PROFILE_FIELDS).forEach(f=>{ $(f[0]).value=''; }); $('b-bar').checked=false; $('b-excl').value='0'; $('b-status').textContent=''; $('b-load').textContent=''; _b0=null; }
+function brandReset(){ BRAND_FIELDS.concat(PROFILE_FIELDS).forEach(f=>{ $(f[0]).value=''; }); $('b-bar').checked=false; $('b-excl').value='0'; $('b-lov').value=''; $('b-lhist').checked=false; $('b-lhist-l').hidden=true; $('b-learn').innerHTML=''; $('b-lhint').textContent=''; $('b-status').textContent=''; $('b-load').textContent=''; _b0=null; }
 function brandFill(p){
   _b0 = p;
   BRAND_FIELDS.forEach(f=>{ $(f[0]).value = p[f[1]] || ''; });
   const pr = p.profile || {};
   PROFILE_FIELDS.forEach(f=>{ $(f[0]).value = pr[f[1]] == null ? '' : String(pr[f[1]]); });
   $('b-bar').checked = !!pr.bar_led; $('b-excl').value = p.exclude_from_learning ? '1' : '0';
+  $('b-lov').value = (p.learning && p.learning.override) || ''; $('b-lhist').checked = false;
+  $('b-learn').innerHTML = learnStatus(p.learning);
+  brandLearnHint();
   $('b-load').textContent = pr.profile_source === 'set' ? 'Peer profile confirmed' + (pr.profile_confirmed_at ? ' ' + fmtD(pr.profile_confirmed_at) : '') + '.' : 'Peer profile not confirmed yet.';
+}
+// Whether this account teaches Cavnar AI's learning (models.learning_status,
+// memory audit 9/29/26): {eligible, reason, label, automatic, override,
+// since}. The automatic rule leaves out demos, internal billing, accounts
+// only internal logins use and test-looking names; the admin's override is
+// the word over it — except a demo, which never teaches, and the account
+// type above, which keeps a test or internal account out whatever this says.
+function learnStatus(l){
+  if(!l) return `<span class="dim">${unknownV('learning status unavailable')} — whether it teaches couldn't be read.</span>`;
+  const since = l.since ? ` · rows from ${fmtD(l.since)} on` : '';
+  if(l.eligible) return `<span><b style="color:var(--green-t)">Yes</b> — its data may teach its own learning and the platform's${since}${l.override === 'include' ? ' <span class="chip">included by an admin</span>' : ''}.</span>`;
+  const inc = l.automatic ? ` <button class="cbtn btn s g w" type="button" onclick="brandLearnInclude()">Include it</button>` : '';
+  return `<span><b style="color:var(--amber-t)">No</b> — ${esc(l.label || l.reason || 'left out')}${l.automatic ? ' (the automatic rule)' : ''}.${inc}</span>`;
+}
+function brandLearnInclude(){ $('b-lov').value = 'include'; brandLearnHint(); }
+function brandLearnHint(){
+  if(!_b0) return;
+  const l = _b0.learning || {}, v = $('b-lov').value, was = l.override || '', changed = v !== was;
+  $('b-lhist-l').hidden = !(v === 'include' && changed);
+  let h = '';
+  if(v === 'include' && l.reason === 'demo') h = 'A demo never teaches, whatever this says — turning it into a real account does.';
+  else if(v === 'include' && $('b-excl').value === '1') h = 'The account type above says test or internal, which keeps it out whatever this says.';
+  else if(v === 'include' && changed) h = 'Save starts its teaching today; tick the box to let its history before today teach too.';
+  else if(v === 'exclude' && changed) h = 'Save stops it teaching any learner, its own included.';
+  else if(v === '' && changed) h = 'Save hands it back to the automatic rule.';
+  $('b-lhint').textContent = h;
 }
 async function brandOpen(rid, name){
   _bRid=rid; brandReset(); $('b-title').textContent = 'Branding & peer profile — ' + name; $('b-save').disabled = true; $('b-load').textContent = 'Loading what is stored…'; openModal('m-brand');
@@ -3876,6 +4136,11 @@ async function brandSave(){
   const profChanged = ['service_model','concept','ownership','opened_year'].some(k=>String(prof[k]||'') !== String(pr[k]==null?'':pr[k])) || (!!prof.bar_led) !== (!!pr.bar_led);
   if(profChanged){ if(!prof.service_model){ $('b-status').textContent = '✕ Choose a service model — the peer profile needs one.'; return; } Object.assign(body, prof); }
   const excl = $('b-excl').value === '1' ? 1 : 0; if(excl !== (_b0.exclude_from_learning ? 1 : 0)) body.exclude_from_learning = excl;
+  // The override only when it changed: the server starts an include's
+  // teaching on the save that sets it (learning_since), unless the history
+  // box says its past teaches too.
+  const lov = $('b-lov').value, lov0 = (_b0.learning && _b0.learning.override) || '';
+  if(lov !== lov0){ body.learning_override = lov; if(lov === 'include' && $('b-lhist').checked) body.learning_history = true; }
   if(clear.length) body.clear = clear;
   if(Object.keys(body).length === 1){ $('b-status').textContent = 'Nothing changed.'; return; }
   const d = await post('/admin/api/brand/'+_bRid, body);

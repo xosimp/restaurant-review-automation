@@ -379,7 +379,33 @@ final class MarketingViewModel {
         let content: String?
         let error: String?
         let tags: PostTags?
+        /// The generated row a publish of this text completes by id (MB-8),
+        /// and the model's draft kept so the owner's edit is measured
+        /// against it (memory round, 9/29/26: marketing_voice). Sent back on
+        /// Save and on every post. Nil on an older server.
+        let contentLogId: Int?
+        let draftRef: Int?
+        enum CodingKeys: String, CodingKey {
+            case ok, content, error, tags
+            case contentLogId = "content_log_id"
+            case draftRef = "draft_ref"
+        }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = (try? c.decode(Bool.self, forKey: .ok)) ?? false
+            content = try? c.decodeIfPresent(String.self, forKey: .content)
+            error = try? c.decodeIfPresent(String.self, forKey: .error)
+            tags = try? c.decodeIfPresent(PostTags.self, forKey: .tags)
+            contentLogId = (try? c.decodeIfPresent(Int.self, forKey: .contentLogId)) ?? nil
+            draftRef = (try? c.decodeIfPresent(Int.self, forKey: .draftRef)) ?? nil
+        }
     }
+
+    /// The generated piece on screen, as the server keyed it — what Save and
+    /// every post send back so what went out is measured against what the
+    /// model wrote (memory round: the owner's edits teach their voice).
+    private(set) var contentLogId: Int?
+    private(set) var draftRef: Int?
 
     /// What the generated post is about (marketing_tags.infer) — shown as a
     /// chip under the draft so the owner knows which dish and occasion its
@@ -404,6 +430,8 @@ final class MarketingViewModel {
         postError = nil
         draft = ""
         hasDraft = false
+        contentLogId = nil
+        draftRef = nil
         defer { isGenerating = false }
         let requestedTopic = topic
         do {
@@ -419,6 +447,8 @@ final class MarketingViewModel {
                 draft = content
                 hasDraft = true
                 draftTags = response.tags
+                contentLogId = response.contentLogId
+                draftRef = response.draftRef
                 lastGeneratedTopic = requestedTopic
             } else {
                 generateError = response.error ?? "Couldn't generate content."
@@ -510,11 +540,15 @@ final class MarketingViewModel {
         let caption: String
         let imageUrl: String?
         let topic: String
+        var contentLogId: Int? = nil
+        var draftRef: Int? = nil
 
         enum CodingKeys: String, CodingKey {
             case caption
             case imageUrl = "image_url"
             case topic
+            case contentLogId = "content_log_id"
+            case draftRef = "draft_ref"
         }
     }
 
@@ -565,14 +599,16 @@ final class MarketingViewModel {
             return
         }
         await publish("/mobile/api/marketing/post-to-instagram",
-                      body: PostBody(caption: draft, imageUrl: url, topic: lastGeneratedTopic),
+                      body: PostBody(caption: draft, imageUrl: url, topic: lastGeneratedTopic,
+                                     contentLogId: contentLogId, draftRef: draftRef),
                       platform: "Instagram")
     }
 
     func postToFacebook() async {
         guard hasDraft else { return }
         await publish("/mobile/api/marketing/post-to-facebook",
-                      body: PostBody(caption: draft, imageUrl: nil, topic: lastGeneratedTopic),
+                      body: PostBody(caption: draft, imageUrl: nil, topic: lastGeneratedTopic,
+                                     contentLogId: contentLogId, draftRef: draftRef),
                       platform: "Facebook")
     }
 
@@ -629,11 +665,15 @@ final class MarketingViewModel {
         let summary: String
         let ctaType: String
         let ctaUrl: String
+        var contentLogId: Int? = nil
+        var draftRef: Int? = nil
 
         enum CodingKeys: String, CodingKey {
             case summary
             case ctaType = "cta_type"
             case ctaUrl = "cta_url"
+            case contentLogId = "content_log_id"
+            case draftRef = "draft_ref"
         }
     }
 
@@ -653,7 +693,8 @@ final class MarketingViewModel {
         }
         await publish("/mobile/api/marketing/google-post",
                       body: GooglePostBody(summary: draft, ctaType: googleCTA.rawValue,
-                                           ctaUrl: googleCTA.needsLink ? link : ""),
+                                           ctaUrl: googleCTA.needsLink ? link : "",
+                                           contentLogId: contentLogId, draftRef: draftRef),
                       platform: "Google")
     }
 }

@@ -800,6 +800,10 @@ def normalise_entries(time_entries: list, sales_by_date: dict, tz=None) -> list:
     for entry in time_entries:
         try:
             employee = _toast_name(entry.get("employee") or {}) or "Unknown"
+            # The employee's Toast GUID (memory audit 9/29/26, identity): the
+            # id the person keeps however their name is spelled.
+            emp_guid = (str((entry.get("employee") or {}).get("guid") or "").strip()
+                        or str((entry.get("employeeReference") or {}).get("guid") or "").strip())
 
             # Role / job
             job_ref = entry.get("jobReference", {}) or {}
@@ -841,13 +845,17 @@ def normalise_entries(time_entries: list, sales_by_date: dict, tz=None) -> list:
                 actual_hours = ""
 
             # Scheduled hours — use declared schedule if present, else actual
+            # (and say which: a copied actual is no schedule, and no
+            # attendance reader may read a no-show out of it).
             sched_in  = _parse_toast_time(entry.get("scheduledInDate"))
             sched_out = _parse_toast_time(entry.get("scheduledOutDate"))
             if sched_in and sched_out:
                 delta_s = (sched_out - sched_in).total_seconds() / 3600
                 scheduled_hours = round(max(0, delta_s), 2)
+                schedule_known = "1"
             else:
                 scheduled_hours = actual_hours
+                schedule_known = "0"
 
             shift_start = in_dt.strftime("%H:%M") if in_dt else ""
             shift_end   = out_dt.strftime("%H:%M") if out_dt else ""
@@ -867,6 +875,9 @@ def normalise_entries(time_entries: list, sales_by_date: dict, tz=None) -> list:
                 "actual_hours":     actual_hours,
                 "sales":            sales,
                 "notes":            "Toast POS",
+                "employee_ext_id":  emp_guid,
+                "employee_named":   "1" if employee != "Unknown" else "0",
+                "schedule_known":   schedule_known,
             })
         except Exception as e:
             print(f"[toast] normalise_entries: skipping entry — {e}")
@@ -893,9 +904,10 @@ def build_shifts_csv(restaurant_id: int, days: int = 60) -> str:
         return ""
 
     fieldnames = ["date","day","employee","role","shift_start","shift_end",
-                  "scheduled_hours","actual_hours","sales","notes"]
+                  "scheduled_hours","actual_hours","sales","notes",
+                  "employee_ext_id","employee_named","schedule_known"]
     buf = io.StringIO()
-    writer = csv.DictWriter(buf, fieldnames=fieldnames)
+    writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
     writer.writerows(rows)
     return buf.getvalue()
@@ -1054,5 +1066,11 @@ def fetch_clock_ins_today(restaurant_id: int, business_date: date) -> list:
             continue
         rows.append({"employee": name,
                      "role": (entry.get("jobReference") or {}).get("name", "Staff"),
-                     "clocked_in_at": entry.get("inDate")})
+                     "clocked_in_at": entry.get("inDate"),
+                     # The GUID the person is keyed on (people.resolve_rows),
+                     # so a clock-in matches the scheduled person whatever
+                     # spelling either side carries (memory audit 9/29/26).
+                     "external_id": (str((entry.get("employee") or {}).get("guid") or "").strip()
+                                     or str((entry.get("employeeReference") or {}).get("guid") or "").strip()
+                                     or None)})
     return rows

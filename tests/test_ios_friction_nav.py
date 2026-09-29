@@ -35,7 +35,10 @@ def test_one_router_opens_every_nav_path():
 def test_a_pending_send_opens_its_undo_sheet():
     assert "PendingActionSheet(actionId: ref.id)" in _src("RootView.swift")
     sheet = _src("Features/Notifications/PendingActionSheet.swift")
-    assert "/mobile/api/actions/\\(action.id)/cancel" in sheet
+    # The undo goes through the one shared helper (memory round 9/29/26),
+    # which posts the cancel and reads its message and ask_why.
+    assert "client.undoQueuedAction(action.id)" in sheet
+    assert '"/mobile/api/actions/\\(id)/cancel"' in _src("DesignSystem/RecMemoryViews.swift")
 
 
 def test_module_screens_receive_their_focus():

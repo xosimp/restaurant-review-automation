@@ -110,6 +110,16 @@ struct HomeSummary: Codable {
     /// counts them in the brief and draws no list of its own, so neither
     /// does the phone.
     var wins: HomeLenientList<HomeWin>? = nil
+    /// Kinds Cavnar AI stopped suggesting because this restaurant's own
+    /// measured results say they did no better than doing nothing — each
+    /// asked as "Keep suggesting …?" (M4, home_brief.kind_holds).
+    var kindHolds: HomeLenientList<HomeKindHold>? = nil
+    /// The 30-day notice of an updated Privacy Policy and Terms, for an
+    /// account holder who has not dismissed it (policy_notice).
+    /// Read through a box that never throws: a malformed notice is no
+    /// notice, never a Home (and its offline cache) that fails to decode.
+    var policyNoticeBox: HomeLenientValue<HomePolicyNotice>? = nil
+    var policyNotice: HomePolicyNotice? { policyNoticeBox?.value }
 
     var freshnessUnavailable: Bool { freshnessUnavailableFlag?.value == true }
 
@@ -160,6 +170,8 @@ struct HomeSummary: Codable {
         case brief
         case quickActions = "quick_actions"
         case changes, charts, dismissed, wins
+        case kindHolds = "kind_holds"
+        case policyNoticeBox = "policy_notice"
     }
 
     /// "9/22/26" — `data_as_of` in the owner's format whether the server
@@ -379,7 +391,27 @@ struct HomeMonitoring: Codable, Hashable {
 struct HomeQuietKind: Codable, Hashable, Identifiable {
     let kind: String
     let label: String
+    /// When the kind gets its re-test (decisions.quiet_state, M1
+    /// "quiet_kinds"), already M/D/YY. Nil from an older server.
+    var reviewOn: String? = nil
     var id: String { kind }
+
+    enum CodingKeys: String, CodingKey {
+        case kind, label
+        case reviewOn = "review_on"
+    }
+
+    init(kind: String, label: String, reviewOn: String? = nil) {
+        self.kind = kind; self.label = label; self.reviewOn = reviewOn
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try c.decode(String.self, forKey: .kind)
+        label = try c.decode(String.self, forKey: .label)
+        let r = (try? c.decodeIfPresent(String.self, forKey: .reviewOn)) ?? nil
+        reviewOn = (r?.isEmpty ?? true) ? nil : r
+    }
 }
 
 struct HomeAssignee: Codable, Hashable, Identifiable {
@@ -452,10 +484,23 @@ struct HomeRecommendation: Codable, Identifiable, Hashable {
     /// when the server sends one — it picks the chip's word
     /// (OwnerCopy.kindWord). Absent on an older server: "at stake".
     var dollarsKind: String? = nil
+    /// What was said before about this advice (memory round 9/29/26, M1):
+    /// the owner's own earlier answer, a delegate's decline, a re-test of a
+    /// kind that had gone quiet, a conflict with other advice to settle,
+    /// and a caution from another module (M3's trim guard). All absent on
+    /// an older server.
+    var previousAnswer: RecPreviousAnswer? = nil
+    var delegateAnswer: RecDelegateAnswer? = nil
+    var retest: Bool? = nil
+    var conflict: RecConflict? = nil
+    var caution: String? = nil
     var id: String { key }
 
     enum CodingKeys: String, CodingKey {
         case key, title, why, evidence, module, metric, confidence, timeframe, impact, strength, alternative, action
+        case retest, conflict, caution
+        case previousAnswer = "previous_answer"
+        case delegateAnswer = "delegate_answer"
         case dollarsMonthly = "dollars_monthly"
         case dollarsBasis = "dollars_basis"
         case dollarsKind = "dollars_kind"
@@ -501,6 +546,13 @@ extension HomeRecommendation {
         calibrationNote = try? c.decodeIfPresent(String.self, forKey: .calibrationNote)
         dollarsBasis = RecDollarCalibration.basis((try? c.decodeIfPresent(String.self, forKey: .dollarsBasis)) ?? nil)
         dollarsKind = (try? c.decodeIfPresent(String.self, forKey: .dollarsKind)) ?? nil
+        previousAnswer = (try? c.decodeIfPresent(RecPreviousAnswer.self, forKey: .previousAnswer)) ?? nil
+        delegateAnswer = (try? c.decodeIfPresent(RecDelegateAnswer.self, forKey: .delegateAnswer)) ?? nil
+        retest = (try? c.decodeIfPresent(Bool.self, forKey: .retest)) ?? nil
+        conflict = (try? c.decodeIfPresent(RecConflict.self, forKey: .conflict)) ?? nil
+        let cau = ((try? c.decodeIfPresent(String.self, forKey: .caution)) ?? nil)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        caution = (cau?.isEmpty ?? true) ? nil : cau
     }
 }
 
@@ -834,6 +886,12 @@ struct NeedsAttentionItem: Codable, Identifiable {
     /// about — "reviews?filter=urgent", "labor/overtime" — rather than the
     /// module's top (friction audit #3). Nil from an older server.
     var nav: String? = nil
+    /// The memory round's lines (9/29/26, M1): the owner's earlier answer,
+    /// a delegate's decline, and a conflict with other advice. Carried by
+    /// mobile_api's attention remap; absent on an older server.
+    var previousAnswer: RecPreviousAnswer? = nil
+    var delegateAnswer: RecDelegateAnswer? = nil
+    var conflict: RecConflict? = nil
 
     var id: String { type }
 
@@ -853,7 +911,9 @@ struct NeedsAttentionItem: Codable, Identifiable {
         case recKey = "rec_key"
         case timesHidden = "times_hidden"
         case dollarsBasis = "dollars_basis"
-        case nav
+        case nav, conflict
+        case previousAnswer = "previous_answer"
+        case delegateAnswer = "delegate_answer"
     }
 }
 
@@ -880,5 +940,8 @@ extension NeedsAttentionItem {
         dollarsBasis = RecDollarCalibration.basis((try? c.decodeIfPresent(String.self, forKey: .dollarsBasis)) ?? nil)
         let navRaw = (try? c.decodeIfPresent(String.self, forKey: .nav)) ?? nil
         nav = (navRaw?.isEmpty ?? true) ? nil : navRaw
+        previousAnswer = (try? c.decodeIfPresent(RecPreviousAnswer.self, forKey: .previousAnswer)) ?? nil
+        delegateAnswer = (try? c.decodeIfPresent(RecDelegateAnswer.self, forKey: .delegateAnswer)) ?? nil
+        conflict = (try? c.decodeIfPresent(RecConflict.self, forKey: .conflict)) ?? nil
     }
 }

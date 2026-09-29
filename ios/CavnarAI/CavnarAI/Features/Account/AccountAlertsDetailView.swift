@@ -76,6 +76,12 @@ struct AccountAlertsDetailView: View {
                     )
                 }
 
+                // This login's own choices (push, muted types, quiet hours,
+                // its brief) and, in a group, where each shared setting
+                // comes from — memory round 9/29/26 (M2 owner_layers). Any
+                // login may change its own.
+                AccountMyNotifications()
+
                 // The one dial for "too much" or "too little" (the web's
                 // How much to hear from Cavnar AI, density audit #38) —
                 // briefing_level on the same /morning-brief/settings twin.

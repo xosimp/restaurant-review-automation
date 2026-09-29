@@ -46,15 +46,24 @@ struct TrustConfidence: Codable, Hashable, Sendable {
         /// ("pizza restaurants on Cavnar") — never a generic "other
         /// restaurants" (Benchmarking #40, BM1-22).
         var cohortLabel: String?
+        /// Accuracy only (memory round 9/29/26, M8 prior ladder):
+        /// "confirm_profile" when confirming the restaurant profile would
+        /// let Cavnar AI compare with restaurants like this one, and the
+        /// rung the comparison group came from ("concept", "partition").
+        var priorUnlock: String? = nil
+        var priorRung: String? = nil
 
         enum CodingKeys: String, CodingKey {
-            case pct, basis, n, improved, source, low, high, stalest
+            case pct, basis, n, improved, source, low, high, stalest, prior
             case asOf = "as_of"
             case asOfISO = "as_of_iso"
             case nFull = "n_full"
             case beatsLabel = "beats_label"
             case cohortLabel = "cohort_label"
+            case priorUnlock = "prior_unlock"
+            case priorRung = "prior_rung"
         }
+        private enum PriorKeys: String, CodingKey { case rung }
 
         init(pct: Int? = nil, basis: String? = nil, n: Int? = nil, improved: Int? = nil,
              source: String? = nil, low: Int? = nil, high: Int? = nil,
@@ -81,6 +90,12 @@ struct TrustConfidence: Codable, Hashable, Sendable {
             nFull = TrustConfidence.integer(c, .nFull)
             beatsLabel = TrustConfidence.text(c, .beatsLabel)
             cohortLabel = TrustConfidence.text(c, .cohortLabel)
+            priorUnlock = TrustConfidence.text(c, .priorUnlock)
+            // `prior_rung` beside the basis, else `prior.rung` (the measured
+            // read carries it inside its prior).
+            priorRung = TrustConfidence.text(c, .priorRung)
+                ?? ((try? c.nestedContainer(keyedBy: PriorKeys.self, forKey: .prior))
+                    .flatMap { (try? $0.decodeIfPresent(String.self, forKey: .rung)) ?? nil })
         }
 
         func encode(to encoder: Encoder) throws {
@@ -98,7 +113,13 @@ struct TrustConfidence: Codable, Hashable, Sendable {
             try c.encodeIfPresent(nFull, forKey: .nFull)
             try c.encodeIfPresent(beatsLabel, forKey: .beatsLabel)
             try c.encodeIfPresent(cohortLabel, forKey: .cohortLabel)
+            try c.encodeIfPresent(priorUnlock, forKey: .priorUnlock)
+            try c.encodeIfPresent(priorRung, forKey: .priorRung)
         }
+
+        /// Confirming the restaurant profile would unlock a comparison with
+        /// restaurants like this one.
+        var unlocksWithProfile: Bool { priorUnlock == "confirm_profile" }
 
         /// Sample or demo data: evidence scored 0 with nothing counted
         /// (confidence_engine.evidence(sample=True)).
@@ -344,6 +365,13 @@ struct ConfidenceDisplay: Equatable {
     /// What the figure means — the Why? sheet's first line (group P). The
     /// engine's words when an older server sent none.
     let meaning: String?
+    /// Historical accuracy would compare with restaurants like this one
+    /// once the owner confirms the restaurant profile (M8): the Why? sheet
+    /// offers the way there.
+    var profileUnlock: Bool = false
+
+    /// The line under Historical accuracy that says so.
+    static let profileUnlockNote = "Confirm your restaurant profile to compare with restaurants like yours."
 
     static let engineMeaning = "How well supported this is \u{2014} not the chance it works"
 
@@ -448,6 +476,7 @@ struct ConfidenceDisplay: Equatable {
             return
         }
         showsWhy = true
+        profileUnlock = dims.accuracy?.unlocksWithProfile ?? false
         rows = [Self.evidenceRow(dims.evidence, at: at, sample: sample), Self.accuracyRow(dims.accuracy, at: at),
                 Self.freshnessRow(dims.freshness, at: at)]
         footer = Self.footer(dims: dims, caps: c.caps, applied: c.capsApplied ?? [])
@@ -502,10 +531,11 @@ struct ConfidenceDisplay: Equatable {
     static func accuracyRow(_ d: TrustConfidence.Dimension?, at: TrustConfidence.Thresholds = .engine) -> Row {
         let title = "Historical accuracy"
         guard let d else { return notMeasured(title) }
+        let unlock = d.unlocksWithProfile ? profileUnlockNote : nil
         guard let pct = d.pct else {
             return Row(title: title, value: "\u{2014}", tone: .warn,
                        basis: d.basis ?? "Not enough history yet (\(d.n ?? 0) measured, needs 5)",
-                       detail: nil, meterFraction: nil)
+                       detail: nil, meterFraction: nil, note: unlock)
         }
         // The lift against doing nothing (group P): the basis is the lift
         // sentence ("improved 4 of 6 times vs 1 of 6 when not acted on"),
@@ -522,7 +552,7 @@ struct ConfidenceDisplay: Equatable {
             detail = "From " + label + " \u{00B7} " + detail
         }
         return Row(title: title, value: percentText(pct), tone: tone(pct: pct, at: at),
-                   basis: d.basis ?? "", detail: detail, meterFraction: fraction(pct))
+                   basis: d.basis ?? "", detail: detail, meterFraction: fraction(pct), note: unlock)
     }
 
     static func freshnessRow(_ d: TrustConfidence.Dimension?, at: TrustConfidence.Thresholds = .engine) -> Row {

@@ -224,6 +224,76 @@ def _round_up(value, step=PRICE_ROUNDING):
     return round(math.ceil(value / step - 1e-9) * step, 2)
 
 
+# How far this owner actually goes when they take a reprice suggestion
+# (memory audit 9/29/26, food_corrections): the chosen rise over the
+# suggested rise, per decision (reprice_decisions), the median shrunk toward 1
+# by REPRICE_RATIO_SHRINK pseudo-decisions and bounded to REPRICE_RATIO_BOUNDS,
+# used from REPRICE_RATIO_MIN decisions. An owner who raises prices about half
+# as much as suggested saw the full price and its full dollars on every card;
+# each suggestion now also carries what their usual choice would be and
+# recover. The suggested price itself still restores the previous food cost %
+# (it is also what the ratio is measured against, so the ratio never feeds on
+# itself).
+REPRICE_RATIO_MIN = 3
+REPRICE_RATIO_SHRINK = 3
+REPRICE_RATIO_BOUNDS = (0.25, 1.5)
+
+
+def reprice_acceptance(restaurant_id, db_path=DB_PATH) -> dict:
+    """{"ratio", "decisions", "median", "basis"} once REPRICE_RATIO_MIN
+    decisions exist, else {"ratio": None, "decisions": n}. Never raises; a
+    restaurant that may not teach a learner (models.learning_eligible) has
+    none."""
+    try:
+        import models as _m
+        if not _m.learning_eligible(restaurant_id):
+            return {"ratio": None, "decisions": 0}
+        conn = _conn(db_path)
+        try:
+            # An admin's reprice through view-as is support at work, not the
+            # owner's habit (memory audit 9/29/26, "view_as").
+            rows = conn.execute("SELECT old_price, suggested_price, chosen_price FROM reprice_decisions "
+                                "WHERE restaurant_id=? AND old_price > 0 AND suggested_price > old_price "
+                                "AND chosen_price IS NOT NULL AND COALESCE(authority, '') != 'admin' "
+                                "ORDER BY id DESC LIMIT 20",
+                                (restaurant_id,)).fetchall()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[menu_intelligence] reprice acceptance unreadable for {restaurant_id}: {e}")
+        return {"ratio": None, "decisions": 0}
+    ratios = [(float(r["chosen_price"]) - float(r["old_price"])) / (float(r["suggested_price"]) - float(r["old_price"]))
+              for r in rows]
+    n = len(ratios)
+    if n < REPRICE_RATIO_MIN:
+        return {"ratio": None, "decisions": n}
+    import statistics
+    med = statistics.median(ratios)
+    ratio = 1.0 + (med - 1.0) * n / (n + REPRICE_RATIO_SHRINK)
+    lo, hi = REPRICE_RATIO_BOUNDS
+    ratio = round(min(hi, max(lo, ratio)), 2)
+    return {"ratio": ratio, "decisions": n, "median": round(med, 2),
+            "basis": f"on your last {n} reprices you raised the price about {round(med * 100)}% of the suggested rise"}
+
+
+def apply_owner_ratio(suggestions, acc) -> list:
+    """Each suggestion with this owner's usual choice beside it: `owner_ratio`
+    (reprice_acceptance, or None below its floor), `typical_price` (the
+    current price plus the suggested rise times the ratio, on a quarter) and
+    `typical_monthly` (the monthly margin that choice recovers — never more
+    than was lost). The suggested price and monthly_margin_lost are left as
+    they are. Mutates and returns `suggestions`."""
+    ratio = (acc or {}).get("ratio")
+    for d in suggestions or []:
+        d["owner_ratio"] = acc if ratio is not None else None
+        if ratio is not None and d.get("suggested_price") and d.get("sell_price"):
+            rise = float(d["suggested_price"]) - float(d["sell_price"])
+            d["typical_price"] = _round_up(float(d["sell_price"]) + rise * ratio)
+            d["typical_monthly"] = (round(d["monthly_margin_lost"] * min(1.0, ratio), 2)
+                                    if d.get("monthly_margin_lost") is not None else None)
+    return suggestions
+
+
 def reprice_suggestions(restaurant_id, db_path=DB_PATH):
     """For every ingredient whose price has risen, the dishes it hit, the
     monthly margin they lost, and the price that restores their food cost %.
@@ -343,10 +413,45 @@ def reprice_suggestions(restaurant_id, db_path=DB_PATH):
                               "no sales mix yet — per-plate figure only"),
         })
         out.append(d)
+    # What guests say about the dish's VALUE (memory audit 9/29/26,
+    # "conflicts"): reprice read ingredient prices only, so it asked to
+    # raise the price of a dish the scorecard said guests call poor value.
+    # The count and a sample ride on the suggestion; every surface that
+    # rates it caps its confidence and says why (value_note).
+    if out:
+        try:
+            import lever_conflicts
+            value = lever_conflicts.facts(restaurant_id, db_path=db_path, critical_low=[])["value"]
+        except Exception as e:
+            print(f"[menu_intelligence] value complaints unavailable for {restaurant_id}: {e}")
+            value = {}
+        for d in out:
+            v = value.get(lever_conflicts._norm(d["dish"])) if value else None
+            d["value_complaints"] = int(v["n"]) if v else 0
+            d["value_note"] = (f"Guests called it poor value in {v['n']} review{'s' if v['n'] != 1 else ''} "
+                               f"in the last {SENTIMENT_WINDOW_DAYS} days" if v else None)
+    # What this owner's usual choice would be and recover (food_corrections).
+    apply_owner_ratio(out, reprice_acceptance(restaurant_id, db_path=db_path) if out else {"ratio": None})
     # Dollars a month first; per-plate-only rows (no sales mix) after them —
     # the two are different units and must not be sorted against each other.
     out.sort(key=lambda d: (d["monthly_margin_lost"] is None,
                             -(d["monthly_margin_lost"] or d["increase_per_plate"])))
+    # The reprice guard (memory audit 9/29/26, "links"): a dish guests are
+    # naming in complaints while Food Cost ranks it as a driver — a live
+    # reviews_x_menu link — carries `guard`, and the one-tap cards (Home,
+    # the action queue) do not offer it: fix the plate before the price,
+    # _verdict's own rule for a dish drawing complaints. The suggestion
+    # itself stays, with the guard's words, for the owner to decide.
+    try:
+        import link_memory
+        listed = link_memory.do_not_promote(restaurant_id, db_path=db_path)
+        if listed:
+            for d in out:
+                g = link_memory.dish_guard(restaurant_id, d["dish"], listed=listed)
+                if g:
+                    d["guard"] = g
+    except Exception as e:
+        print(f"[menu_intelligence] reprice guard unavailable for {restaurant_id}: {e}")
     return {
         "available": True,
         "suggestions": out,
@@ -391,7 +496,8 @@ def init_menu_intelligence(db_path: str = DB_PATH):
             chosen_price     REAL,
             source           TEXT,          -- 'one_tap' | 'manual'
             user_id          INTEGER,
-            created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+            created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+            authority        TEXT           -- permissions.answer_authority; 'admin' = view-as
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_reprice_decisions_rid "
                      "ON reprice_decisions(restaurant_id, created_at)")
@@ -445,12 +551,16 @@ def presented_suggestions(restaurant_id, surface="food", user_id=None, db_path=D
 
 
 def record_price_change(restaurant_id, menu_item_id, old_price, new_price, user_id=None,
-                        source="manual", suggestion=None, db_path=DB_PATH):
+                        source="manual", suggestion=None, db_path=DB_PATH, authority=None):
     """A dish's price changed. When the new price FOLLOWS a live suggestion —
     there is one for this dish, the dish already had a price, and the new
     one is higher — record suggested vs chosen and answer the
     recommendation. Returns the suggestion followed, or None (a first price,
-    a clear-to-nothing, a cut, or no suggestion: nothing is recorded)."""
+    a clear-to-nothing, a cut, or no suggestion: nothing is recorded).
+
+    `authority` is whose choice it was (permissions.answer_authority); with
+    none given, a view-as request is an admin's (permissions.acting_via) —
+    kept, and left out of the owner's reprice ratio."""
     try:
         old = float(old_price) if old_price not in (None, "") else None
         new = float(new_price) if new_price not in (None, "") else None
@@ -461,13 +571,19 @@ def record_price_change(restaurant_id, menu_item_id, old_price, new_price, user_
     s = suggestion or suggestion_for(restaurant_id, menu_item_id=menu_item_id, db_path=db_path)
     if not s:
         return None
+    if authority is None:
+        try:
+            from permissions import acting_via
+            authority = "admin" if acting_via() else None
+        except Exception:
+            authority = None
     try:
         conn = _conn(db_path)
         try:
             conn.execute("INSERT INTO reprice_decisions (restaurant_id, menu_item_id, dish, old_price, "
-                         "suggested_price, chosen_price, source, user_id) VALUES (?,?,?,?,?,?,?,?)",
+                         "suggested_price, chosen_price, source, user_id, authority) VALUES (?,?,?,?,?,?,?,?,?)",
                          (restaurant_id, menu_item_id, s.get("dish"), old, s.get("suggested_price"),
-                          round(new, 2), source, user_id))
+                          round(new, 2), source, user_id, authority))
             conn.commit()
         finally:
             conn.close()
@@ -488,6 +604,27 @@ def record_price_change(restaurant_id, menu_item_id, old_price, new_price, user_
     except Exception as e:
         print(f"[menu_intelligence] reprice answer not recorded: {e}")
     return s
+
+
+def link_month_reprices(restaurant_id, tracker_id, since, db_path=DB_PATH) -> int:
+    """Link every reprice:<Dish> episode implemented on or after `since`
+    (the month's first day) and not yet measured to the month's reprice
+    tracker (memory audit 9/29/26, link_trackers). Returns how many were
+    linked; never raises."""
+    try:
+        import rec_ledger
+        conn = _conn(db_path)
+        try:
+            keys = [r["key"] for r in conn.execute(
+                "SELECT DISTINCT key FROM rec_instances WHERE restaurant_id=? AND key LIKE 'reprice:%' "
+                "AND implemented_at IS NOT NULL AND implemented_at >= ? AND tracker_id IS NULL",
+                (restaurant_id, str(since)[:10])).fetchall()]
+        finally:
+            conn.close()
+        return sum(1 for k in keys if rec_ledger.link_tracker(restaurant_id, k, tracker_id, db_path=db_path))
+    except Exception as e:
+        print(f"[menu_intelligence] reprices not linked to tracker {tracker_id}: {e}")
+        return 0
 
 
 def reprice_decisions(restaurant_id, limit=50, db_path=DB_PATH) -> list:

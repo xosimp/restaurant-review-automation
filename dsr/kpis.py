@@ -233,7 +233,26 @@ def _peers(key, restaurant, db_path):
             "why_not": (p.get("why_not") or "No fair comparison yet")}
 
 
+def _prime_goal(restaurant):
+    """The owner's prime-cost goal as the KPI's target (owner_memory
+    .target_for "prime_cost_pct" — memory audit 9/29/26): said as their
+    goal. None without one: Cavnar AI keeps no prime-cost target of its own."""
+    try:
+        import owner_memory
+        from time_utils import mdy
+        t = owner_memory.target_for(restaurant.id, "prime_cost_pct")
+    except Exception:
+        return None
+    if not t or not _num(t.get("value")):
+        return None
+    until = f" by {mdy(t['until'])}" if t.get("until") else ""
+    return {"value": float(t["value"]), "value_text": f"{float(t['value']):g}%", "label": f"Your goal{until}",
+            "source": "goal", "goal_id": t.get("goal_id")}
+
+
 def _target(key, restaurant):
+    if key == "prime_pct" and restaurant is not None:
+        return _prime_goal(restaurant)
     kind = TARGET_KIND.get(key)
     if not kind or restaurant is None:
         return None
@@ -406,8 +425,10 @@ def shift_verdict(m, detail) -> dict | None:
     pct = m.get("pct")
     if not _num(pct):
         return None
-    starting = (detail or {}).get("target_source") != "set"
-    word = "starting target" if starting else "target"
+    # The owner's own target or goal (owner_goals, memory audit 9/29/26) is
+    # never a starting target.
+    starting = (detail or {}).get("target_source") not in ("set", "goal")
+    word = "starting target" if starting else ("goal" if (detail or {}).get("target_source") == "goal" else "target")
     pts = m.get("vs_target_pts")
     text, tone = f"Labor {pct:.1f}%", None
     if _num(pts) and _num(m.get("target_pct")):

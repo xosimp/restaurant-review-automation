@@ -225,6 +225,16 @@ struct DataHealthSheet: View {
 
     @ViewBuilder
     private func content(_ snap: DataHealthSnapshot) -> some View {
+        // What the owner said they don't trust leads: until it is
+        // re-verified, every card resting on it is held at low confidence
+        // (memory round 9/29/26, M1).
+        if !snap.distrusted.isEmpty {
+            AccountSection(kicker: "Data you said you don\u{2019}t trust") {
+                ForEach(Array(snap.distrusted.enumerated()), id: \.element.id) { i, d in
+                    DataHealthDistrustRow(item: d, store: store, showsDivider: i < snap.distrusted.count - 1)
+                }
+            }
+        }
         if !snap.sources.isEmpty {
             AccountSection(kicker: "Sources") {
                 ForEach(Array(snap.sources.enumerated()), id: \.element.id) { i, s in
@@ -405,5 +415,83 @@ struct DataHealthModuleBadge: View {
         }
         .task { await store.load() }
         .sheet(isPresented: $showingSheet) { DataHealthSheet() }
+    }
+}
+
+/// One distrusted source, the server's sentence, and "Re-verified" — the
+/// owner has checked it, so the cap lifts and the answers held for it are
+/// released (POST /data-health/verify {source}). The server's own sentence
+/// replaces the button; a refusal (only the owner may re-verify) is said.
+struct DataHealthDistrustRow: View {
+    let item: DataHealthDistrust
+    let store: DataHealthStore
+    var showsDivider: Bool = true
+    @State private var busy = false
+    @State private var done: String?
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Circle().fill(Color.cavnarAmber).frame(width: 7, height: 7)
+                    Text(item.label ?? item.source.capitalized)
+                        .font(.cavnarBody(15.5, weight: 700))
+                        .foregroundStyle(Color.cavnarInk)
+                }
+                HomeMixedText.make(item.text, size: 14, weight: 500, color: .cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let done {
+                    Label(done, systemImage: "checkmark")
+                        .font(.cavnarBody(13.5, weight: 600))
+                        .foregroundStyle(Color.cavnarGreen)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Button {
+                        Haptic.light()
+                        Task { await verify() }
+                    } label: {
+                        Text("Re-verified")
+                            .font(.cavnarBody(14, weight: 700))
+                            .foregroundStyle(Color.cavnarEmber2)
+                            .frame(minHeight: 36)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(busy)
+                    .accessibilityHint("Tells Cavnar AI you checked this data, so recommendations resting on it return to full confidence")
+                    if busy { CavnarSkeletonBar(height: 3) }
+                }
+                if let error {
+                    Text(error).font(.cavnarBody(13)).foregroundStyle(Color.cavnarRed)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.vertical, 11)
+            if showsDivider { AccountRowDivider() }
+        }
+    }
+
+    private struct VerifyBody: Encodable { let source: String }
+    private struct Resp: Decodable { let ok: Bool; let message: String?; let error: String? }
+
+    @MainActor
+    private func verify() async {
+        guard !busy else { return }
+        busy = true
+        error = nil
+        defer { busy = false }
+        do {
+            let r: Resp = try await APIClient.shared.send(item.verifyPath, method: .post,
+                                                          body: VerifyBody(source: item.source), retryTransient: false)
+            guard r.ok else { error = r.error ?? "Couldn\u{2019}t save that."; return }
+            Haptic.success()
+            done = r.message ?? "Thanks \u{2014} recommendations resting on it are back at full confidence"
+            await store.load(force: true)
+        } catch let e as APIClient.APIError {
+            error = e.message
+        } catch {
+            self.error = "Couldn\u{2019}t save that."
+        }
     }
 }

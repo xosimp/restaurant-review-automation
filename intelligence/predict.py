@@ -151,15 +151,21 @@ def _cap_factors(counts):
 
 
 def _orgs(db_path):
-    """{restaurant_id: organisation key} by privacy.org_key — the one rule
-    bands, patterns and priors count organisations by (R4-22). The whole row
-    goes in, so the key sees every column its fallback reads."""
+    """{restaurant_id: organisation key} — privacy.org_map's organisation
+    (shared owner logins and the Stripe customer joined), the one rule bands
+    and priors count organisations by (R4-22; memory audit PLATFORM-19),
+    else each row's own privacy.org_key."""
     conn = get_conn(db_path)
     try:
         rows = conn.execute("SELECT * FROM restaurants").fetchall()
     finally:
         conn.close()
-    return {int(r["id"]): privacy.org_key(dict(r)) for r in rows}
+    out = {int(r["id"]): privacy.org_key(dict(r)) for r in rows}
+    try:
+        out.update(privacy.org_map(db_path=None if db_path == DB_PATH else db_path))
+    except Exception as e:
+        print(f"[intelligence.predict] organisation map unavailable, each row's own key: {e}")
+    return out
 
 
 def _target_dim(metric):
@@ -183,7 +189,8 @@ def neighbours(restaurant_id, metric=None, db_path=DB_PATH, dnas=None, orgs=None
     viewer must have the target metric's baseline measured; whether each
     neighbour started where the viewer is is judged per result, at the time
     it took the advice (_started_near)."""
-    from . import dna
+    from . import dna, provenance
+    from .jobs import excluded_learning_ids
     dnas = dnas if dnas is not None else dna.latest_by_restaurant(db_path=db_path)
     orgs = orgs if orgs is not None else _orgs(db_path)
     norms = norms if norms is not None else dna.platform_norms(db_path=db_path)
@@ -196,9 +203,17 @@ def neighbours(restaurant_id, metric=None, db_path=DB_PATH, dnas=None, orgs=None
     my_type = (mine.get("service_type") or {}).get("raw")
     if target and dna.z_of(target, (mine.get(target) or {}).get("raw"), norms) is None:
         return []
+    # Who may stand as a neighbour: a restaurant that may teach (models.
+    # learning_eligible) — and, for a review metric, none whose reviews come
+    # through the owner's Google connection: its results, its untaken
+    # results and its baseline on that metric are Google user data
+    # (intelligence.provenance).
+    barred = set(excluded_learning_ids(db_path=db_path))
+    if provenance.review_metric(metric) or (target in provenance.REVIEW_DNA_DIMS):
+        barred |= provenance.google_connected_ids(db_path=db_path)
     cands = []
     for rid, dims in dnas.items():
-        if rid == restaurant_id or orgs.get(rid, f"r{rid}") == my_org:
+        if rid == restaurant_id or orgs.get(rid, f"r{rid}") == my_org or rid in barred:
             continue
         if my_type is not None and (dims.get("service_type") or {}).get("raw") != my_type:
             continue
@@ -258,13 +273,21 @@ def _taken(conn, rids, rec_kind, metric, tags, since):
         return []
     marks = ",".join("?" for _ in rids)
     rows = conn.execute(
-        f"SELECT restaurant_id, source_key, effect_pct, tags_json, after_end FROM intel_rec_events "
-        f"WHERE action='measured' "
+        f"SELECT restaurant_id, source_key, effect_pct, tags_json, after_end, event_at FROM intel_rec_events "
+        f"WHERE action='measured' AND COALESCE(google_data, 0) = 0 "
         f"AND rec_kind=? AND metric=? AND effect_pct IS NOT NULL AND outcome IN ('improved','worsened',"
         f"'no_clear_change') AND event_at >= ? AND restaurant_id IN ({marks})",
         (rec_kind, metric, since, *rids)).fetchall()
+    # A neighbour's demo era teaches nothing (INT #20: jobs.before_learning).
+    from .jobs import before_learning, learning_since_by_id
+    # The same database the rows came from (a bare call read the module's
+    # default path, so a test or a restore read the wrong file).
+    _db = next((r[2] for r in conn.execute("PRAGMA database_list") if r[1] == "main"), None)
+    learning_since = learning_since_by_id(_db) if _db else learning_since_by_id()
     out = []
     for r in rows:
+        if before_learning(r["restaurant_id"], r["event_at"], learning_since):
+            continue
         if tags:
             try:
                 have = set(json.loads(r["tags_json"] or "[]"))
@@ -536,8 +559,8 @@ def run_weekly(db_path=DB_PATH, today: date = None, wall_seconds=WALL_SECONDS) -
     conn = get_conn(db_path)
     try:
         best = conn.execute("SELECT MAX(n) FROM (SELECT COUNT(DISTINCT restaurant_id) AS n FROM intel_rec_events "
-                            "WHERE action='measured' AND effect_pct IS NOT NULL GROUP BY rec_kind, metric)"
-                            ).fetchone()[0] or 0
+                            "WHERE action='measured' AND effect_pct IS NOT NULL AND COALESCE(google_data, 0) = 0 "
+                            "GROUP BY rec_kind, metric)").fetchone()[0] or 0
         row = conn.execute("SELECT value FROM job_cursors WHERE key=?", (CURSOR_KEY,)).fetchone()
     finally:
         conn.close()

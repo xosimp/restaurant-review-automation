@@ -510,14 +510,20 @@ def save_staff_note_route(restaurant_id, current_user):
     """Add a scheduling constraint. A second one for the same person is
     added to the first, never written over it (models.save_staff_note,
     fix round #142). {ok, id, notes (the person's full text), appended}."""
-    from models import save_staff_note
+    from models import save_staff_note, _iso_or_none
     name  = " ".join((request.form.get("employee_name") or "").split())[:80]
     notes = (request.form.get("notes") or "").strip()[:500]
     if not name or not notes:
         return jsonify(ok=False, error="Name and notes required"), 400
     if not get_restaurant(restaurant_id):
         return jsonify(ok=False, error="Restaurant not found"), 404
-    result = save_staff_note(restaurant_id, name, notes)
+    # An optional end date (memory audit 9/29/26): a constraint that says
+    # "until 6/1" in its own words ends then without one.
+    ends = (request.form.get("expires_on") or "").strip()
+    if ends and not _iso_or_none(ends):
+        return jsonify(ok=False, error="That end date isn't a date — use M/D/YY."), 400
+    result = save_staff_note(restaurant_id, name, notes, expires_on=ends or None,
+                             updated_by=(current_user.get("username") or current_user.get("email") or "admin"))
     _record_staff_note(restaurant_id, current_user, "staff_note.saved", name,
                        {"added": notes, "now": result["notes"], "appended": result["appended"]})
     return jsonify(ok=True, **result)
@@ -2236,7 +2242,6 @@ def seed_reviews(restaurant_id, current_user):
 def _draft_reviews_job(restaurant_id, review_ids):
     """Draft replies for these reviews, on the admin pool. Returns counts."""
     from drafter import draft_response, DraftNotReplaced
-    from models import get_approved_examples
     from ai_utils import is_platform_stop
     restaurant = get_restaurant(restaurant_id)
     if not restaurant:
@@ -2248,13 +2253,13 @@ def _draft_reviews_job(restaurant_id, review_ids):
                             f"AND id IN ({marks}) AND deleted_at IS NULL", (restaurant_id, *review_ids)).fetchall()
     finally:
         conn.close()
-    examples = get_approved_examples(restaurant_id, limit=4)
+    # Each draft picks its own examples by star band (memory audit 9/29/26).
     drafted, failed, stopped = 0, 0, None
     for r in rows:
         try:
             draft_response(r["id"], r["rating"], r["text"], r["sentiment"], restaurant.name,
                            voice_notes=restaurant.voice_notes or "", restaurant_id=restaurant_id,
-                           approved_examples=examples, sign_off=restaurant.sign_off_name or restaurant.name,
+                           sign_off=restaurant.sign_off_name or restaurant.name,
                            never_say=restaurant.never_say or "", urgency=r["urgency"] or "normal",
                            language=getattr(restaurant, "response_language", None) or None)
             drafted += 1
@@ -2363,7 +2368,6 @@ def _redraft_job(restaurant_id, actor=None):
     """The redraft, on the admin pool. Returns counts: redrafted, skipped
     (owner-edited, or approved/posted while it ran), failed, and how many
     are left past REDRAFT_MAX."""
-    from models import get_approved_examples
     from analyser import analyse_review
     from drafter import draft_response, DraftNotReplaced
     from ai_utils import is_platform_stop
@@ -2383,7 +2387,7 @@ def _redraft_job(restaurant_id, actor=None):
     edited = [r for r in rows if r["edited"]]
     todo = [r for r in rows if not r["edited"]]
     redrafted, failed, skipped, stopped = 0, 0, 0, None
-    examples = get_approved_examples(restaurant_id, limit=4)
+    # Each draft picks its own examples by star band (memory audit 9/29/26).
     for r in todo[:REDRAFT_MAX]:
         try:
             sentiment, urgency = r["sentiment"], r["urgency"]
@@ -2395,7 +2399,7 @@ def _redraft_job(restaurant_id, actor=None):
                 continue
             draft_response(r["id"], r["rating"], r["text"], sentiment, restaurant.name,
                            voice_notes=restaurant.voice_notes or "", restaurant_id=restaurant_id,
-                           approved_examples=examples, sign_off=restaurant.sign_off_name or restaurant.name,
+                           sign_off=restaurant.sign_off_name or restaurant.name,
                            never_say=restaurant.never_say or "",
                            # Both were missing once: urgency is the serious-issue
                            # escalation, language a non-English restaurant's replies.
@@ -3459,8 +3463,19 @@ def _brand_payload(restaurant_id):
             "brand_name": r.brand_name, "brand_color": r.brand_color, "brand_logo_url": r.brand_logo_url,
             "category": getattr(r, "category", None),
             "exclude_from_learning": int(getattr(r, "exclude_from_learning", 0) or 0),
+            # Whether this account teaches any learner, why not, and the
+            # admin's word over the automatic rule (memory audit 9/29/26).
+            "learning": _models_learning_status(r),
             "profile": {k: getattr(r, k, None) for k in ("service_model", "concept", "bar_led", "ownership",
                                                         "opened_year", "profile_source", "profile_confirmed_at")}}
+
+
+def _models_learning_status(r):
+    import models as _m_ls
+    try:
+        return _m_ls.learning_status(r)
+    except Exception:
+        return None
 
 
 @admin_bp.route("/admin/api/brand/<int:restaurant_id>", methods=["GET"])
@@ -3524,6 +3539,22 @@ def admin_set_brand(restaurant_id, current_user):
         updates.update(prof)
     if "exclude_from_learning" in data and data.get("exclude_from_learning") not in (None, ""):
         updates["exclude_from_learning"] = 1 if data.get("exclude_from_learning") in (1, True, "1", "true", "on") else 0
+    if "learning_override" in data:
+        # The admin's word over the automatic test/internal rule (memory
+        # audit 9/29/26): 'include' (a real restaurant the rule caught),
+        # 'exclude', or '' for automatic. Including an account starts its
+        # teaching now unless `learning_history` says its history counts.
+        ov = str(data.get("learning_override") or "").strip().lower()
+        if ov not in ("", "include", "exclude"):
+            return jsonify(ok=False, error="learning_override is include, exclude or blank"), 400
+        updates["learning_override"] = ov or None
+        # Only a change TO include starts the clock: a save that re-sends
+        # the override already stored must not move learning_since forward
+        # and drop the history it has been teaching from since.
+        already = str(getattr(stored, "learning_override", "") or "").strip().lower() == "include"
+        if ov == "include" and not already and not data.get("learning_history"):
+            from time_utils import utc_stamp as _us_lo
+            updates["learning_since"] = _us_lo()
     if not updates:
         return jsonify(ok=False, error="Nothing to save: every field was blank, and a blank field leaves "
                                        "what is stored alone."), 400
@@ -3569,6 +3600,24 @@ def admin_api_intelligence(current_user):
         return jsonify(ok=False, error="Cavnar AI admins only."), 403
     from intelligence import dashboard as _dash
     return jsonify(**_dash.build())
+
+
+@admin_bp.route("/admin/api/intelligence/pattern-history")
+@admin_required
+def admin_api_pattern_history(current_user):
+    """One pattern's weekly record (memory audit 9/29/26, platform_history):
+    what the platform believed about it each ISO week it was tested — its
+    status, n, effect, d, p and q that week — from the append-only
+    intel_pattern_history (patterns.history, asserted anonymous). The
+    Intelligence page's history drawer. ?key=<pattern key>. is_admin only,
+    like the page."""
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Cavnar AI admins only."), 403
+    key = (request.args.get("key") or "").strip()
+    if not key:
+        return jsonify(ok=False, error="Which pattern? Send its key."), 400
+    from intelligence import patterns as _pat
+    return jsonify(ok=True, key=key, rows=_pat.history(key))
 
 
 @admin_bp.route("/admin/api/recommendations")
@@ -3670,6 +3719,18 @@ def admin_api_confidence_calibration(current_user):
     import admin_ops
     days, rid = _admin_days_rid(365)
     return jsonify(**admin_ops.confidence_calibration(days=days, restaurant_id=rid))
+
+
+@admin_bp.route("/admin/api/recommendations/learning")
+@admin_required
+def admin_api_rank_learning(current_user):
+    """What the effectiveness model did to the rankings (memory audit
+    9/29/26, rank_log): acceptance and measured outcome by model version and
+    weight bucket, and the candidates builds left unshown. Internal only.
+    ?days=90&restaurant_id=N."""
+    import admin_ops
+    days, rid = _admin_days_rid(90)
+    return jsonify(**admin_ops.rank_learning(days=days, restaurant_id=rid))
 
 
 @admin_bp.route("/admin/api/recommendations/missed")
@@ -3822,14 +3883,16 @@ def admin_api_set_demo(restaurant_id, current_user):
     fields = {"is_demo": on}
     if not on and int(getattr(current, "is_demo", 0) or 0) == 1:
         # Turning demo OFF leaves the seeded rows (rr_% reviews, seeded
-        # shifts, ingredients, labor history) in place — never hard-deleted
-        # here — and TAGS the restaurant: demo_cleared_at keeps it out of
-        # cross-restaurant learning until every feature window has rolled
-        # past the seeded history (intelligence.jobs.real_restaurant_ids,
-        # CA3 F7). Synthetic history must not become a real baseline for
-        # everyone else.
+        # shifts, ingredients, labor history — stamped source 'seed') in
+        # place — never hard-deleted here — and TAGS the restaurant:
+        # learning_since is the moment it became real. Nothing it recorded
+        # before then teaches any learner, its own or the platform's, and
+        # its own daily-history readers drop the seed's rows
+        # (models.learning_rows_sql / own_history_sql — memory audit 9/29/26,
+        # "eligibility"; it replaced a 90-day quarantine that was shorter
+        # than the readers' windows). demo_cleared_at records the same moment.
         from time_utils import utc_stamp
-        fields["demo_cleared_at"] = utc_stamp()
+        fields["demo_cleared_at"] = fields["learning_since"] = utc_stamp()
     update_restaurant(restaurant_id, fields)
     import admin_events
     admin_events.record_admin_action(current_user, "demo_flag.set", restaurant_id=restaurant_id,

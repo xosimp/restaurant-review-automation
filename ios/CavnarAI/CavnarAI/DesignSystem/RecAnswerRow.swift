@@ -43,7 +43,10 @@ enum RecAnswer: String, CaseIterable, Sendable {
     var label: String {
         switch self {
         case .completed: return "Done"
-        case .notForUs:  return "Pass"
+        // "Not for us" everywhere (memory round 9/29/26, M1 "silences"):
+        // "Pass" read as "skip it for now", and the answer silences the
+        // advice for a year.
+        case .notForUs:  return "Not for us"
         case .accepted:  return "Measure it"
         }
     }
@@ -220,6 +223,13 @@ struct RecAnswerRow: View {
     /// names several items): the same answer is recorded for each, after
     /// the row's own key succeeds.
     var alsoKeys: [String] = []
+    /// The server's own words for an answer, when a question names them
+    /// ("Keep suggesting it" / "Stop suggesting it" on a kind hold, M4) —
+    /// the answer sent is the same.
+    var labels: [RecAnswer: String] = [:]
+    /// False where "Not for us" IS the whole answer (a kind hold's "Stop
+    /// suggesting it"): it goes at once, without the reason picker.
+    var asksReason: Bool = true
     var client: APIClient = .shared
 
     /// Keyed by the rec key, not just "answered": a row inside a ForEach
@@ -273,13 +283,13 @@ struct RecAnswerRow: View {
                     ForEach(shownAnswers, id: \.self) { answer in
                         Button {
                             Haptic.light()
-                            if answer == .notForUs {
+                            if answer == .notForUs && asksReason {
                                 askingReason = true
                             } else {
                                 Task { await submit(answer) }
                             }
                         } label: {
-                            Text(answer.label)
+                            Text(labels[answer] ?? answer.label)
                                 .font(.cavnarBody(12.5, weight: answer == .accepted ? 700 : 600))
                                 .foregroundStyle(answer == .accepted ? Color.cavnarEmber2 : Color.cavnarInk3)
                                 .padding(.vertical, 4)
@@ -330,7 +340,7 @@ struct RecAnswerRow: View {
         } catch is CancellationError {
             // The screen went away mid-send — nothing to say.
         } catch let error as APIClient.APIError where error.isRetryable && !error.mayHaveReachedServer {
-            // Never left the phone (a walk-in, a basement): Done and Pass
+            // Never left the phone (a walk-in, a basement): Done and Not for us
             // wait in the offline queue and go when the signal does. Measure
             // it does not — its answer is the tracker's own sentence
             // (QueuedWrite.recAnswer).

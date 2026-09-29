@@ -15,6 +15,7 @@ external dead-man ping), and the backup ledger.
 """
 import collections.abc
 import contextlib
+import json
 import logging
 import re
 import sqlite3
@@ -265,7 +266,43 @@ def run_outcome(result):
         blob = _json.dumps(blob_counts, default=str)[:500]
     except (TypeError, ValueError):
         blob = None
-    return state, blob
+    return state, _with_held_back(blob, blob_counts, result)
+
+
+# What a run held back, kept beside its counts (memory audit 9/29/26):
+# prune_ledgers returns `refused` (windows under their floor — nothing
+# deleted) and `capped` (tables the per-pass cap stopped). The Jobs page
+# reads a run from its stored counts alone, so without them it could not
+# say which tables a partial prune left.
+_HELD_BACK_KEYS = ("refused", "capped")
+
+
+def _with_held_back(blob, blob_counts, result):
+    """`blob` with each non-empty _HELD_BACK_KEYS list added, as valid JSON
+    within the 500-character column budget: a list that would not fit is
+    cut, and `<key>_n` says how many there were."""
+    import json as _json
+    held = {k: result.get(k) for k in _HELD_BACK_KEYS if isinstance(result.get(k), list) and result.get(k)}
+    if not held or blob is None or len(blob) >= 500:
+        return blob
+    body = dict(blob_counts)
+    for k, items in held.items():
+        body[k + "_n"] = len(items)
+        body[k] = []
+        for it in items:
+            body[k].append(it)
+            try:
+                if len(_json.dumps(body, default=str)) > 500:
+                    body[k].pop()
+                    break
+            except (TypeError, ValueError):
+                body[k].pop()
+                break
+    try:
+        out = _json.dumps(body, default=str)
+    except (TypeError, ValueError):
+        return blob
+    return out if len(out) <= 500 else blob
 
 
 def _record_run_start(name, context="", db_path=None, claim=None, restaurant_id=None, request_id=None):
@@ -927,11 +964,13 @@ _ASYNC_JOB_TTL_HOURS = 6
 
 
 def _async_conn():
+    """A connection for the async job store. No DDL here (memory audit
+    9/29/26, "outside"): it ran CREATE TABLE IF NOT EXISTS async_jobs and a
+    commit on every job read and write — a write-lock take on every poll —
+    while init_ops has created the table at boot all along (CLAUDE.md:
+    never schema DDL on a request or per-call path)."""
     from models import get_conn
-    conn = get_conn()
-    conn.execute(_ASYNC_JOB_SQL)
-    conn.commit()
-    return conn
+    return get_conn()
 
 
 # The longest a generation can plausibly run: a very large roster is written
@@ -2132,8 +2171,47 @@ _RETENTION_DAYS = {
     # auth.AUTH_INDEXES' idx_login_history_created (INT-2), made at boot with
     # the table — after this module's own boot init, so it is not made here.
     "login_history":      int(os.getenv("RETAIN_LOGIN_HISTORY_DAYS", "90")),
+    # People memory (memory audit 9/29/26). Every shift every person worked
+    # for three years, then their per-quarter summary in person_quarters,
+    # kept forever — shift_facts.rollup_quarters writes each quarter while
+    # all of it is still here, and never rewrites one from what is left.
+    # Attendance outcomes and the signals about a person (covers taken,
+    # guests naming them) for two years, their quarterly counts the same
+    # way (shift_facts.roll_all_quarters, the rollup declared below).
+    # people, person_aliases, person_questions, person_merges, person_roles,
+    # person_quarters and schedule_standing_patterns are kept forever.
+    "shift_facts":        int(os.getenv("RETAIN_SHIFT_FACTS_DAYS", "1095")),
+    "attendance_events":  int(os.getenv("RETAIN_ATTENDANCE_DAYS", "730")),
+    "person_signals":     int(os.getenv("RETAIN_PERSON_SIGNALS_DAYS", "730")),
+    # Cavnar AI's own reads and their claims (ai_reads, memory audit
+    # 9/29/26): the raw text 13 months. Each closed quarter is summarised
+    # into ai_read_summaries (never pruned) by the nightly learning job
+    # long before its rows reach this — "what we said, what was done, what
+    # happened" outlives the words. The claims' Historical Accuracy reads a
+    # year (ai_reads.claims_record), inside this.
+    "ai_reads":           int(os.getenv("RETAIN_AI_READS_DAYS", "400")),
+    "ai_claims":          int(os.getenv("RETAIN_AI_CLAIMS_DAYS", "400")),
     # view_as_sessions is not here: auth.record_view_as_session deletes its
     # rows past two days whenever a view-as opens, and one pruner per table.
+    # What left the owner's memory without the owner asking (a lane's budget,
+    # a date passed, a retraction — models.ask_memory_archive, memory audit
+    # 9/29/26 owner_lanes): shown in Account and restorable for a year and a
+    # month. The live facts themselves are bounded by their lanes, not dates.
+    "ask_memory_archive": int(os.getenv("RETAIN_ASK_MEMORY_ARCHIVE_DAYS", "400")),
+    # The memory audit's recommendation ledgers (9/29/26, M1): one compact
+    # row per restaurant, surface and day of what a ranking did (a year and
+    # a month, so a model version can be compared with last year's); a
+    # delegate's per-login silence, a month after it ended.
+    "rec_rank_builds":    int(os.getenv("RETAIN_REC_RANK_BUILDS_DAYS", "400")),
+    "rec_silences":       int(os.getenv("RETAIN_REC_SILENCES_DAYS", "30")),
+    # Memory audit 9/29/26, workstream M6: a reply draft the owner turned
+    # down, as a hash and signals (never its words) — the drafter's edit
+    # note reads the last 90 days (models.REJECTIONS_KEEP_DAYS).
+    "reply_draft_rejections": int(os.getenv("RETAIN_REPLY_REJECTIONS_DAYS", "90")),
+    # Marketing copy a model drafted (marketing_voice.DRAFTS_KEEP_DAYS): what
+    # went out keeps its original on marketing_edits; the rest is only
+    # needed to see which drafts were regenerated rather than used.
+    "marketing_model_drafts": int(os.getenv("RETAIN_MKT_MODEL_DRAFTS_DAYS", "90")),
 }
 
 # Each table's own timestamp column — they do not agree on a name.
@@ -2153,11 +2231,193 @@ _RETENTION_COLUMN = {
     "value_figures_daily": "date", "admin_issue_resolution_history": "created_at", "sms_log": "created_at",
     "push_outbox": "created_at", "webhook_outbox": "created_at", "morning_brief_deliveries": "created_at",
     "alert_storm_caps": "started_at", "login_history": "created_at",
+    "shift_facts": "business_date", "attendance_events": "business_date", "person_signals": "signal_date",
+    "ai_reads": "created_at", "ai_claims": "created_at",
+    "ask_memory_archive": "archived_at",
+    "rec_rank_builds": "built_at", "rec_silences": "until",
+    "reply_draft_rejections": "created_at", "marketing_model_drafts": "created_at",
+}
+# Rows a table's retention never deletes, whatever their age: the owner's
+# ANSWERS to recommendations are kept for good (memory audit 9/29/26,
+# "silences": "keep every answer forever; only the silence changes") —
+# rec_events' showings, opens and lifecycle rows go at their age.
+_RETENTION_ONLY = {
+    "rec_events": "event IN ('shown', 'opened', 'evidence_viewed', 'superseded', 'expired')",
 }
 # Every table above has an index on its column, created where the table is
 # or at boot here (_ensure_retention_indexes, DATA-40): these deletes run
 # under the write lock, and a full scan of a year of email_log there stalls
 # every request that writes. tests/test_edge_data_claims_and_lease.py pins it.
+
+# ── the rest of each table's declaration (memory audit 9/29/26) ────────────
+#
+# The days and the stamp column above are two of five fields. A window was
+# whatever a RETAIN_* variable said, so RETAIN_ALERT_LOG_DAYS=18 — one typo
+# — would have deleted every restaurant's alert history overnight, gone for
+# good once the 14-day backups rolled over; and two readers reached past
+# their table's window (inventory_history under the seasonal food-cost
+# re-check, alert_log under "since you started"). So each table also has:
+#
+#   _RETENTION_FLOOR_DAYS  the least its window may be set to. A RETAIN_*
+#                          value below it is REFUSED: the table is not
+#                          pruned that night, the run is partial, and the
+#                          operator is paged (retention_state / prune_ledgers).
+#                          0 still disables a table's prune (keep forever).
+#   _RETENTION_ROLLUP      the summary written before its rows are deleted
+#                          ("module:function"); a rollup that fails keeps
+#                          that night's rows.
+#   _RETENTION_READERS     its readers and the longest window each reads —
+#                          days, "module.CONSTANT", or None for a lifetime
+#                          reader, which must read the rollup table named
+#                          beside it. tests/test_mem_m7_retention.py fails
+#                          when a window does not fit inside the floor, or
+#                          a registered table has no floor.
+#
+# and every pass deletes at most RETENTION_PASS_MAX_ROWS rows per table: a
+# table that has more past its window is finished on the following nights
+# (reported, not paged) — a wrong clock or a mis-stamped column cannot
+# empty a table in one night.
+RETENTION_FLOOR_DEFAULT_DAYS = 30
+# Each floor is at least the longest window any declared reader reads
+# (_RETENTION_READERS, checked by the test); where the default IS the
+# floor, the window may be raised, never lowered.
+_RETENTION_FLOOR_DAYS = {
+    "ai_usage": 90, "ai_validation_log": 90, "activity_log": 90, "job_runs": 45, "job_failures": 30,
+    "push_deliveries": 30, "webhook_deliveries": 14, "alert_log": 90, "email_log": 180,
+    "ai_visibility_query_runs": 90, "competitor_snapshots": 365, "ai_visibility_runs": 180,
+    "schedule_recommendation_events": 180, "job_period_claims": 35, "alert_holds": 7,
+    "marketing_link_taps": 1, "notification_opens": 60, "admin_events": 400, "data_health_daily": 30,
+    "stripe_events_seen": 7, "sessions": 1, "rec_events": 731, "operator_alerts": 30, "backup_runs": 60,
+    "job_run_requests": 7, "missed_windows": 30, "value_figures_daily": 7,
+    "admin_issue_resolution_history": 90, "sms_log": 30, "push_outbox": 7, "webhook_outbox": 7,
+    "morning_brief_deliveries": 30, "alert_storm_caps": 60, "login_history": 60,
+    # Account -> Memory offers a year to restore a forgotten fact (M2's archive).
+    "ask_memory_archive": 365,
+    # The admin's rank-learning read compares up to a year (M1, rank_log); a
+    # delegate's per-login silence is read only while it holds (M1,
+    # who_answered).
+    "rec_rank_builds": 365, "rec_silences": 1,
+    # The people memory (M3): the overtime metric's seasonal re-check reads
+    # the same weeks last year (392 days), mentoring a year, reliability
+    # 360 days, a person's record its guest mentions a year; tenure reads
+    # person_quarters for the rest.
+    "shift_facts": 400, "attendance_events": 400, "person_signals": 400,
+    # M6: the drafter's edit note reads 90 days of turned-down reply drafts
+    # (models.REJECTIONS_KEEP_DAYS); the marketing voice reads 90 days of
+    # model drafts to see which were regenerated (marketing_voice.DRAFTS_KEEP_DAYS).
+    "reply_draft_rejections": 90, "marketing_model_drafts": 90,
+
+
+    # Cavnar AI's own reads and claims (M4, ai_reads): the claims' record and
+    # the model-confidence check read a year; Ask reads up to 180 days of
+    # reads. Every closed quarter is summarised first (the rollup below).
+    "ai_reads": 365, "ai_claims": 365,
+}
+_RETENTION_ROLLUP = {
+    "ai_usage": "ai_utils:rollup_usage",
+    "ai_validation_log": "ai_utils:rollup_usage",
+    "alert_log": "history_rollups:roll_alerts",
+    "notification_opens": "history_rollups:roll_engagement",
+    "login_history": "history_rollups:roll_engagement",
+    "email_log": "history_rollups:stamp_newsletter_results",
+    # Each person's quarter (shifts, hours, roles, dayparts, attendance
+    # outcomes, covers taken, guest mentions) into person_quarters, kept
+    # forever, while the quarter's rows are all still here (M3).
+    "shift_facts": "shift_facts:roll_all_quarters",
+    "attendance_events": "shift_facts:roll_all_quarters",
+    "person_signals": "shift_facts:roll_all_quarters",
+    # "What we said, what was done, what happened" per closed quarter
+    # (ai_read_summaries, kept forever) before any raw read or claim goes.
+    "ai_reads": "ai_reads:rollup_quarters",
+    "ai_claims": "ai_reads:rollup_quarters",
+}
+# (reader, window, what a lifetime reader reads instead). A window is days,
+# or "module.CONSTANT" (the reader's own constant, read by the test), or
+# None for a lifetime reader, which must name what it calls for the history
+# the raw rows no longer hold (the name is checked in its source). The binding readers only — the
+# longest windows and every lifetime reader (a mapped sweep, 9/29/26).
+_RETENTION_READERS = {
+    "ai_usage": (("ai_utils._spend_since", 31, None), ("admin_ops.ai_ops", 90, None)),
+    "ai_validation_log": (("admin_ops.validation_rates", 90, None),),
+    "activity_log": (("rec_trust.owner_changes", "rec_trust.CHANGES_LOOKBACK_DAYS", None),
+                     ("admin_ops.adoption", 90, None), ("home_brief._build", 90, None)),
+    "job_runs": (("admin_ops._job_rows", 45, None), ("ops._reclaim_dead_run", 31, None)),
+    "job_failures": (("admin_ops.activity", 14, None), ("ops.failures_since", "ops.DIGEST_MAX_LOOKBACK_DAYS", None)),
+    "push_deliveries": (("admin_ops.notifications", 30, None),),
+    "alert_log": (("value_delivered.ledger", None, "alerts_lifetime"),
+                  ("ask_cavnar_tools._read_alerts", 90, None),
+                  ("notify.engagement_report", "notify.ENGAGEMENT_WINDOW_DAYS", None),
+                  ("models.money_surfaced", 30, None)),
+    "email_log": (("guest_email.newsletter_history", None, "results_stamped_at"),
+                  ("models.onboarding_started_at", 180, None), ("guest_email.opens_tracked", 90, None)),
+    "ai_visibility_query_runs": (("models.ai_visibility_query_history", 56, None),),
+    "competitor_snapshots": (("models.competitor_movement", 365, None),),
+    "ai_visibility_runs": (("models.get_ai_visibility_history", 70, None),),
+    "schedule_recommendation_events": (
+        ("schedule_intel.measure_accepted_recommendations", "schedule_intel.REC_ACCEPTED_LOOKBACK_DAYS", None),
+        ("rec_ledger.sync_existing", 120, None),
+        # A suppression is durable state now (rec_kind_states, memory audit
+        # quiet_kinds): the log is read only for the re-test window.
+        ("schedule_intel.suppression_state", "schedule_intel.SUPPRESS_REVIEW_DAYS", None)),
+    "job_period_claims": (("ops.claim_period", 31, None),),
+    "notification_opens": (("notify.engagement_report", "notify.ENGAGEMENT_WINDOW_DAYS", None),),
+    "admin_events": (("admin_ops._load_with", 400, None),),
+    "data_health_daily": (("admin_ops._load_with", 14, None),),
+    "rec_events": (("admin_ops.confidence_calibration", 730, None),
+                   ("rec_learning.effectiveness", "rec_learning.EFFECT_WINDOW_DAYS", None)),
+    "backup_runs": (("ops.storage_trend", 60, None),),
+    "sms_log": (("admin_ops._load_with", 30, None),),
+    "login_history": (("home_brief._build", 60, None),),
+    "inventory_history": (("food_cost_intelligence.seasonal_baseline", 392, None),
+                          ("cogs.build_food_cost_pct", 375, None),
+                          # every food-cost reader's loader — the seasonal re-check
+                          # (outcomes.expected_for → metrics → cogs) included
+                          ("waste_trend.load_waste_history", None, "inventory_summary_weeks")),
+    "schedule_versions": (("schedule_learning.edited_weeks", 56, None),),
+    "ask_memory_archive": (("models.get_ask_memory_archive", 365, None),),
+    "rec_rank_builds": (("admin_ops.rank_learning", 365, None),),
+    "rec_silences": (("rec_ledger.silenced_keys", 1, None), ("rec_ledger.login_silences", 1, None)),
+    # The people memory (M3). Every per-person reader names its window; the
+    # one lifetime reader, tenure, reads the quarterly summaries.
+    "shift_facts": (("metrics._overtime_hours", 392, None),              # same weeks last year (outcomes)
+                    ("schedule_intel.mentoring", "schedule_intel.MENTOR_WINDOW_DAYS", None),
+                    ("staff_settings.reliability", "staff_settings.RELIABILITY_WINDOW_DAYS", None),
+                    ("shift_facts.tenure", None, "person_quarters")),
+    "attendance_events": (("staff_settings.reliability", "staff_settings.RELIABILITY_WINDOW_DAYS", None),
+                          ("schedule_learning._attendance_tally", "staff_settings.RELIABILITY_WINDOW_DAYS", None),
+                          ("attendance.summary_lines", 84, None)),
+    "person_signals": (("people.cover_record", 180, None),
+                       ("people.get_person", "people.PERSON_MENTION_DAYS", None),
+                       ("people.memory_lines", "people.MEMORY_MENTION_DAYS", None)),
+    "reply_draft_rejections": (("models.get_reply_rejection_signals", "models.REJECTIONS_KEEP_DAYS", None),),
+    "marketing_model_drafts": (("marketing_voice.regenerated", "marketing_voice.DRAFTS_KEEP_DAYS", None),
+                               ("marketing_voice._match_draft", 1, None)),
+
+
+    "ai_reads": (("ask_cavnar_tools._read_recent_reads", 180, None),
+                 ("ai_reads.recent_reads", 30, None)),
+    "ai_claims": (("ai_reads.claims_record", 365, None), ("ai_reads.confidence_calibration", 365, None),
+                  ("ai_reads.claim_lines", "ai_reads.CLAIM_LOOKBACK_DAYS", None)),
+}
+# Readers that reach past their table's window today, each with the reason
+# it is left for now — found by the mapped sweep (9/29/26) and listed so
+# they are seen, not silently wrong. The test fails on any other; this list
+# may only shrink.
+_RETENTION_KNOWN_GAPS = {
+    ("ai_usage", "admin_ops.ai_quality"): "the 365-day console range reads raw rows kept 120 days; "
+                                          "ai_usage_daily holds the counts it needs",
+    ("ai_usage", "admin_ops.vendor_costs"): "months past 120 days read raw AI cost; ai_usage_daily holds it",
+    ("ai_usage", "ai_utils.usage_summary"): "/admin/ai-usage takes an uncapped ?days=",
+    ("ai_validation_log", "admin_ops._client_validation"): "the 365-day range reads raw rows kept 120 days",
+    ("sms_log", "admin_ops.vendor_costs"): "SMS cost past sms_log's 90 days is not on file",
+    ("job_runs", "platform_monitor._last_run"): "the quarterly restore drill's last run is pruned at 45 days",
+    ("alert_log", "scheduler.send_while_away_nudges"): "reads everything since the owner's last sign-in, uncapped",
+    ("email_log", "client_api._do_upload_data"): "the 'first upload ever' check re-fires after 365 days",
+    ("login_history", "admin_ops._load_with"): "owner sign-ins and team last-seen read all rows kept 90 days; "
+                                               "engagement_monthly holds the months before",
+}
+# Past this many rows in one table in one pass, the rest waits a night.
+RETENTION_PASS_MAX_ROWS = int(os.getenv("RETENTION_PASS_MAX_ROWS", "200000"))
 
 # Deleted in chunks of this many rows, one commit each, and the whole pass
 # stops taking on tables after RETENTION_MAX_SECONDS (#72, #81): one DELETE
@@ -2170,6 +2430,88 @@ RETENTION_MAX_SECONDS = int(os.getenv("RETENTION_MAX_SECONDS", str(10 * 60)))
 # were never published or shared.
 SCHEDULE_VERSIONS_KEEP_DAYS = int(os.getenv("RETAIN_SCHEDULE_VERSIONS_DAYS", "180"))
 SUPERSEDED_DRAFTS_KEEP_DAYS = int(os.getenv("RETAIN_SUPERSEDED_DRAFTS_DAYS", "365"))
+# Draft detail (memory audit 9/29/26, "draft_thinning"): a superseded,
+# never-published draft keeps its whole Shift Quality evaluation, review and
+# what-if (about 130 KB for a 55-person week) though nobody reads them once
+# a later draft replaced it — and that growth is what would push the backup
+# past the emailed copy's 25 MB. Past these many days the detail is thinned
+# to its headline (score, band, confidence, the top reasons); the CSV, the
+# economics and the row stay. An intermediate version's evaluation is
+# thinned the same way; the generated, published and final ones never are.
+DRAFT_DETAIL_KEEP_DAYS = int(os.getenv("RETAIN_DRAFT_DETAIL_DAYS", "30"))
+VERSION_DETAIL_KEEP_DAYS = int(os.getenv("RETAIN_VERSION_DETAIL_DAYS", "90"))
+
+# The prunes that are not one table's rows by one stamp, with the same
+# floor rule: {name: (current days, floor)}. The schedule learner reads the
+# last 8 weeks of edits (schedule_learning.EDIT_WEEKS); the waste trend,
+# price trends and food cost % bucket inventory by ISO week; the seasonal
+# baseline reads 392 days back (food_cost_intelligence.seasonal_baseline)
+# and the seasonal re-check further, from the weekly summary.
+def _special_retention():
+    return {
+        "inventory_history": (INVENTORY_HISTORY_DAYS, 395),
+        "inventory_daily_detail": (INVENTORY_DAILY_DAYS, 28),
+        "schedule_versions": (SCHEDULE_VERSIONS_KEEP_DAYS, 60),
+        "superseded_drafts": (SUPERSEDED_DRAFTS_KEEP_DAYS, 90),
+        "draft_detail": (DRAFT_DETAIL_KEEP_DAYS, 14),
+        "version_detail": (VERSION_DETAIL_KEEP_DAYS, 60),
+    }
+
+
+def retention_floor(table) -> int:
+    """The least `table`'s window may be set to (see above). A table no one
+    has given a floor keeps whatever it is set to (never refused) until it
+    is given one — the test fails first."""
+    if table in _RETENTION_FLOOR_DAYS:
+        return int(_RETENTION_FLOOR_DAYS[table])
+    special = _special_retention().get(table)
+    if special:
+        return int(special[1])
+    days = _RETENTION_DAYS.get(table)
+    return min(RETENTION_FLOOR_DEFAULT_DAYS, int(days)) if days else 0
+
+
+def retention_state(table) -> dict:
+    """{table, days, floor, column, rollup, state}: state 'ok' (pruned at
+    `days`), 'disabled' (0 — kept forever) or 'below_floor' (refused: the
+    configured window is under the floor, so nothing is pruned)."""
+    special = _special_retention().get(table)
+    days = int(special[0]) if special else int(_RETENTION_DAYS.get(table, 0) or 0)
+    floor = retention_floor(table)
+    state = "disabled" if days <= 0 else ("below_floor" if days < floor else "ok")
+    return {"table": table, "days": days, "floor": floor, "state": state,
+            "column": _RETENTION_COLUMN.get(table, "created_at") if not special else None,
+            "rollup": _RETENTION_ROLLUP.get(table)}
+
+
+def retention_days(table):
+    """The window a pruner applies to `table`: its days when its state is
+    'ok', else None (disabled or refused — prune nothing)."""
+    st = retention_state(table)
+    return st["days"] if st["state"] == "ok" else None
+
+
+def retention_refusals() -> list:
+    """Every table whose configured window is under its floor — the
+    console's and the pass's list of what is not being pruned, and why."""
+    names = list(_RETENTION_DAYS) + list(_special_retention())
+    return [st for st in (retention_state(t) for t in names) if st["state"] == "below_floor"]
+
+
+def _page_refusals(refused, db_path=None):
+    """One page (hourly cooldown) and one captured failure for windows set
+    under their floor. Never raises."""
+    if not refused:
+        return
+    lines = [f"{r['table']}: RETAIN window {r['days']} days is under its floor of {r['floor']} — not pruned"
+             for r in refused]
+    capture(RuntimeError("retention refused: " + "; ".join(lines)),
+            job="prune_ledgers", context="retention window under its floor", db_path=db_path)
+    try:
+        page_operator("retention_floor", "Retention refused a window under its floor",
+                      lines + ["Fix the RETAIN_* variable in Railway; nothing was deleted from these tables."])
+    except Exception as e:
+        log.error(f"retention floor page failed: {e}")
 
 
 def _ensure_retention_indexes(conn):
@@ -2210,18 +2552,35 @@ INVENTORY_DAILY_DAYS = int(os.getenv("RETAIN_INVENTORY_DAILY_DAYS", "56"))
 INVENTORY_HISTORY_DAYS = int(os.getenv("RETAIN_INVENTORY_HISTORY_DAYS", "395"))
 
 
-def _prune_inventory_history(conn):
+def _prune_inventory_history(conn, deadline=None, refused=None):
     """Thin inventory_history to weekly past INVENTORY_DAILY_DAYS and drop it
     past INVENTORY_HISTORY_DAYS. Dated by week_end — the day the snapshot
-    describes — not saved_at, which a backfill sets to today. Returns rows
+    describes — not saved_at, which a backfill sets to today. Before any row
+    is dropped its week is summarised (history_rollups.summarise_inventory:
+    the week's value, waste, COGS and food cost %, and the month's unit cost
+    per ingredient, kept forever), and waste_trend's loader reads the
+    summary for the weeks that are gone — the seasonal food-cost re-check
+    reaches past 395 days (memory audit 9/29/26, "seasonal_food"). A window
+    under its floor is refused (appended to `refused`). Returns rows
     deleted."""
     n = 0
-    if INVENTORY_HISTORY_DAYS > 0:
-        cur = conn.execute("DELETE FROM inventory_history WHERE week_end < date('now', ?)",
-                           (f"-{INVENTORY_HISTORY_DAYS} days",))
+    history_days = retention_days("inventory_history")
+    if history_days:
+        cutoff = conn.execute("SELECT date('now', ?)", (f"-{history_days} days",)).fetchone()[0]
+        import history_rollups
+        history_rollups.summarise_inventory(conn, cutoff, deadline=deadline)
+        # Only weeks that now have their summary go: a summary cut short by
+        # the time bound leaves the rest for tomorrow.
+        cur = conn.execute(
+            "DELETE FROM inventory_history WHERE week_end < ? AND EXISTS (SELECT 1 FROM inventory_weekly_summary s "
+            "WHERE s.restaurant_id = inventory_history.restaurant_id "
+            "AND s.week = date(inventory_history.week_end, 'weekday 0', '-6 days'))", (cutoff,))
         n += max(0, cur.rowcount or 0)
         conn.commit()
-    if INVENTORY_DAILY_DAYS > 0:
+    elif refused is not None and retention_state("inventory_history")["state"] == "below_floor":
+        refused.append(retention_state("inventory_history"))
+    daily_days = retention_days("inventory_daily_detail")
+    if daily_days:
         # The week's figure is its latest snapshot (waste_trend.load_waste_history).
         cur = conn.execute(
             "DELETE FROM inventory_history WHERE week_end < date('now', ?) AND id NOT IN ("
@@ -2230,51 +2589,173 @@ def _prune_inventory_history(conn):
             "          ORDER BY h2.week_end DESC, h2.id DESC LIMIT 1)"
             "  FROM inventory_history h WHERE h.week_end < date('now', ?)"
             "  GROUP BY h.restaurant_id, date(h.week_end, 'weekday 0', '-6 days'))",
-            (f"-{INVENTORY_DAILY_DAYS} days", f"-{INVENTORY_DAILY_DAYS} days"))
+            (f"-{daily_days} days", f"-{daily_days} days"))
         n += max(0, cur.rowcount or 0)
+    elif refused is not None and retention_state("inventory_daily_detail")["state"] == "below_floor":
+        refused.append(retention_state("inventory_daily_detail"))
     conn.commit()
     return n
 
 
-def _chunked_delete(conn, table, where, args, deadline):
+def _chunked_delete(conn, table, where, args, deadline, max_rows=None):
     """DELETE ... WHERE `where` in RETENTION_CHUNK_ROWS batches, committing
-    each, until done or `deadline` (time.monotonic()). Returns rows deleted."""
+    each, until done, `deadline` (time.monotonic()) or `max_rows` (the
+    per-pass cap). Returns rows deleted — `max_rows` or more means the cap
+    stopped it."""
     total = 0
     while True:
+        chunk = int(RETENTION_CHUNK_ROWS)
+        if max_rows is not None:
+            chunk = max(0, min(chunk, int(max_rows) - total))
+            if chunk == 0:
+                return total
         cur = conn.execute(f"DELETE FROM {table} WHERE rowid IN "
-                           f"(SELECT rowid FROM {table} WHERE {where} LIMIT {int(RETENTION_CHUNK_ROWS)})",
+                           f"(SELECT rowid FROM {table} WHERE {where} LIMIT {chunk})",
                            tuple(args))
         n = max(0, cur.rowcount or 0)
         conn.commit()
         total += n
-        if n < RETENTION_CHUNK_ROWS or time.monotonic() > deadline:
+        if n < chunk or time.monotonic() > deadline:
             return total
 
 
-def _prune_schedules(conn, deadline):
+# What thinned detail keeps of a Shift Quality evaluation: the headline the
+# history list and its one-line summary read (models.get_schedule_history,
+# _history_summary_line), and when it was thinned.
+_THIN_QUALITY_KEYS = ("checked", "score", "band")
+
+
+def _thin_quality(raw, today):
+    try:
+        q = json.loads(raw) if raw else None
+    except (TypeError, ValueError):
+        q = None
+    if not isinstance(q, dict):
+        return None
+    out = {k: q.get(k) for k in _THIN_QUALITY_KEYS if k in q}
+    conf = q.get("confidence")
+    if isinstance(conf, dict) and conf.get("level"):
+        out["confidence"] = {"level": conf.get("level")}
+    for k in ("weaknesses", "strengths"):
+        if isinstance(q.get(k), list):
+            out[k] = [str(x)[:200] for x in q[k][:2]]
+    out["thinned_at"] = today
+    return json.dumps(out)
+
+
+def _thin_review(raw, today):
+    try:
+        r = json.loads(raw) if raw else None
+    except (TypeError, ValueError):
+        r = None
+    if not isinstance(r, dict):
+        return None
+    out = {k: r[k] for k in ("hard", "soft", "ok") if k in r}
+    out["thinned_at"] = today
+    return json.dumps(out)
+
+
+def _thin_drafts(conn, deadline):
+    """Superseded, never-published, never-shared drafts past
+    DRAFT_DETAIL_KEEP_DAYS whose week is over: their Shift Quality
+    evaluation, review and what-if are thinned to the headline (score,
+    band, confidence, the top reasons, the breach counts); the CSV, the
+    economics and the row stay, and detail_thinned_at says when. A draft
+    with change requests or outcomes was used after all: kept whole. Then
+    the intermediate versions past VERSION_DETAIL_KEEP_DAYS — never the
+    generated, the published or a week's newest — keep only their headline
+    too (memory audit 9/29/26, "draft_thinning"). Returns {name: rows}."""
+    out = {}
+    today = conn.execute("SELECT date('now')").fetchone()[0]
+    draft_days = retention_days("draft_detail")
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_history)")}
+    if draft_days and {"superseded_by", "published_at", "detail_thinned_at", "quality_json"} <= cols:
+        have = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        used = " ".join(f"AND NOT EXISTS (SELECT 1 FROM {t} x WHERE x.history_id = h.id)"
+                        for t in ("shift_change_requests", "schedule_outcomes") if t in have)
+        shared = ("AND NOT EXISTS (SELECT 1 FROM schedule_shares sh WHERE sh.schedule_id = h.id)"
+                  if "schedule_shares" in have else "")
+        rows = conn.execute(
+            "SELECT h.id, h.quality_json, h.review_json FROM schedule_history h "
+            "WHERE h.superseded_by IS NOT NULL AND h.published_at IS NULL AND h.detail_thinned_at IS NULL "
+            "AND h.generated_at < datetime('now', ?) AND COALESCE(h.week_end, h.week_start) < date('now') "
+            f"{shared} {used} LIMIT ?", (f"-{draft_days} days", int(RETENTION_CHUNK_ROWS))).fetchall()
+        n = 0
+        for r in rows:
+            if time.monotonic() > deadline:
+                break
+            conn.execute("UPDATE schedule_history SET quality_json=?, review_json=?, what_if_json=NULL, "
+                         "detail_thinned_at=datetime('now') WHERE id=?",
+                         (_thin_quality(r["quality_json"], today), _thin_review(r["review_json"], today), r["id"]))
+            n += 1
+            if n % 200 == 0:
+                conn.commit()
+        conn.commit()
+        if n:
+            out["schedule_history_thinned"] = n
+    version_days = retention_days("version_detail")
+    vcols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_versions)")}
+    if version_days and time.monotonic() < deadline and "quality_json" in vcols:
+        rows = conn.execute(
+            "SELECT id, quality_json FROM schedule_versions v WHERE created_at < datetime('now', ?) "
+            "AND COALESCE(reason, '') NOT IN ('generated', 'published') AND quality_json IS NOT NULL "
+            "AND quality_json NOT LIKE '%\"thinned_at\"%' "
+            "AND version < (SELECT MAX(v2.version) FROM schedule_versions v2 WHERE v2.history_id = v.history_id) "
+            "LIMIT ?", (f"-{version_days} days", int(RETENTION_CHUNK_ROWS))).fetchall()
+        n = 0
+        for r in rows:
+            if time.monotonic() > deadline:
+                break
+            conn.execute("UPDATE schedule_versions SET quality_json=? WHERE id=?",
+                         (_thin_quality(r["quality_json"], today), r["id"]))
+            n += 1
+        conn.commit()
+        if n:
+            out["schedule_versions_thinned"] = n
+    return out
+
+
+def _prune_schedules(conn, deadline, refused=None):
     """Old schedule states, never a published week (#72): intermediate saves
     of weeks past SCHEDULE_VERSIONS_KEEP_DAYS (each week keeps its newest
-    version and every published one), and drafts a later regeneration
-    superseded, never published or shared, past SUPERSEDED_DRAFTS_KEEP_DAYS.
-    Returns {table: rows}."""
+    version, every published one and its generated draft — the diff the
+    schedule learner reads), and drafts a later regeneration superseded,
+    never published or shared, past SUPERSEDED_DRAFTS_KEEP_DAYS. First, the
+    detail of superseded drafts and old intermediate versions is thinned
+    (_thin_drafts). A window under its floor is refused (appended to
+    `refused`). Returns {table: rows}."""
     out = {}
-    if SCHEDULE_VERSIONS_KEEP_DAYS > 0:
+    try:
+        out.update(_thin_drafts(conn, deadline))
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        log.warning(f"draft thinning skipped: {e}")
+    for name in ("schedule_versions", "superseded_drafts", "draft_detail", "version_detail"):
+        st = retention_state(name)
+        if refused is not None and st["state"] == "below_floor":
+            refused.append(st)
+    versions_days = retention_days("schedule_versions")
+    if versions_days:
         n = _chunked_delete(
             conn, "schedule_versions",
-            "created_at < datetime('now', ?) AND reason != 'published' "
+            "created_at < datetime('now', ?) AND reason NOT IN ('published', 'generated') "
             "AND version < (SELECT MAX(v2.version) FROM schedule_versions v2 "
             "               WHERE v2.history_id = schedule_versions.history_id)",
-            (f"-{SCHEDULE_VERSIONS_KEEP_DAYS} days",), deadline)
+            (f"-{versions_days} days",), deadline)
         if n:
             out["schedule_versions"] = n
-    if SUPERSEDED_DRAFTS_KEEP_DAYS > 0 and time.monotonic() < deadline:
+    drafts_days = retention_days("superseded_drafts")
+    if drafts_days and time.monotonic() < deadline:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_history)")}
         if {"superseded_by", "published_at"} <= cols:
             ids = [r[0] for r in conn.execute(
                 "SELECT h.id FROM schedule_history h WHERE h.superseded_by IS NOT NULL AND h.published_at IS NULL "
                 "AND h.generated_at < datetime('now', ?) "
                 "AND NOT EXISTS (SELECT 1 FROM schedule_shares s WHERE s.schedule_id = h.id) "
-                "LIMIT ?", (f"-{SUPERSEDED_DRAFTS_KEEP_DAYS} days", int(RETENTION_CHUNK_ROWS))).fetchall()]
+                "LIMIT ?", (f"-{drafts_days} days", int(RETENTION_CHUNK_ROWS))).fetchall()]
             dependents = [t for t in ("schedule_versions", "schedule_experiment_weeks",
                                       "shift_change_requests", "schedule_outcomes")
                           if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
@@ -2315,17 +2796,42 @@ def _optimize(conn):
         return False
 
 
+def _run_rollups(db_path):
+    """Every summary a table declares (_RETENTION_ROLLUP), once each, in
+    declaration order — the AI usage rollup first. Returns {"module:function":
+    ok}. A rollup that raised is captured; its tables keep tonight's rows."""
+    import importlib
+    done = {}
+    for target in dict.fromkeys(_RETENTION_ROLLUP.values()):
+        mod, fn = target.split(":", 1)
+        try:
+            getattr(importlib.import_module(mod), fn)(db_path)
+            done[target] = True
+        except Exception as e:
+            done[target] = False
+            log.error(f"prune_ledgers: the rollup {target} failed, so its tables are kept tonight: {e}")
+            capture(e, job="prune_ledgers", context=target, db_path=db_path)
+    return done
+
+
 def prune_ledgers(db_path=None):
-    """Delete rows past their retention window. Returns {table: rows_deleted}.
+    """Delete rows past their retention window. Returns {table: rows_deleted}
+    with the standard counts, `refused` (windows under their floor) and
+    `capped` (tables the per-pass cap stopped).
 
     Deliberately tolerant: a table that does not exist yet, or whose stamp
     column is named something else on an older database, is skipped rather
     than taking the whole sweep down with it. Nightly, straight after the
-    backup (so the pruned rows are in it), chunked with a commit per chunk
-    and a wall-clock bound, then planner statistics (#72, #81)."""
+    backup (so the pruned rows are in it): first every table's rollup
+    (_RETENTION_ROLLUP — a failed one keeps its tables' rows tonight), then
+    each table chunked with a commit per chunk, at most
+    RETENTION_PASS_MAX_ROWS rows per table and a wall-clock bound, then
+    planner statistics (#72, #81). A window set under its floor is refused,
+    counted failed and paged (memory audit 9/29/26)."""
     from models import get_conn, DB_PATH
     deleted = {}
     counts = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
+    refused, capped = [], []
     try:
         conn = get_conn(db_path or DB_PATH)
     except Exception as e:
@@ -2337,35 +2843,42 @@ def prune_ledgers(db_path=None):
         text = str(err).lower()
         return "no such table" in text or "no such column" in text
 
-    # The AI ledger's daily rollup first (fix round G, #70): ai_usage_daily
-    # and ai_validation_daily are never pruned, so what the raw rows said
-    # outlives them. models.prune_operational_logs ran it, and is no longer
-    # scheduled. A rollup that failed keeps tonight's raw AI rows.
-    rolled = True
-    try:
-        import ai_utils
-        ai_utils.rollup_usage(db_path)
-    except Exception as e:
-        rolled = False
-        log.error(f"prune_ledgers: the AI usage rollup failed, so the AI ledgers are kept tonight: {e}")
-        capture(e, job="prune_ledgers", context="ai_utils.rollup_usage", db_path=db_path)
+    # The rollups first (fix round G, #70; memory audit 9/29/26): the AI
+    # daily rollup, the monthly alert and engagement summaries, the
+    # newsletter results — never pruned, so what the raw rows said
+    # outlives them.
+    rolled = _run_rollups(db_path)
 
     try:
-        for table, days in _RETENTION_DAYS.items():
-            if days <= 0:
+        for table in list(_RETENTION_DAYS):
+            st = retention_state(table)
+            if st["state"] == "disabled":
                 continue            # 0 disables retention for that table
+            if st["state"] == "below_floor":
+                refused.append(st)
+                counts["attempted"] += 1
+                counts["failed"] += 1
+                continue
             if time.monotonic() > deadline:
                 counts["hit_bound"] = True
                 break
-            if not rolled and table in ("ai_usage", "ai_validation_log"):
+            target = _RETENTION_ROLLUP.get(table)
+            if target and not rolled.get(target, True):
                 counts["skipped"] += 1
                 continue
-            col = _RETENTION_COLUMN.get(table, "created_at")
+            days, col = st["days"], st["column"]
             counts["attempted"] += 1
             try:
-                n = _chunked_delete(conn, table, f"{col} < datetime('now', ?)", (f"-{days} days",), deadline)
+                # A table may keep some rows for good whatever their age
+                # (_RETENTION_ONLY: rec_events keeps every answer).
+                only = _RETENTION_ONLY.get(table)
+                n = _chunked_delete(conn, table, f"{col} < datetime('now', ?)" + (f" AND {only}" if only else ""),
+                                    (f"-{days} days",), deadline, max_rows=RETENTION_PASS_MAX_ROWS)
                 if n:
                     deleted[table] = n
+                if n >= RETENTION_PASS_MAX_ROWS:
+                    capped.append(table)
+                    counts["hit_bound"] = True
                 counts["ok"] += 1
             except Exception as e:
                 try:
@@ -2381,13 +2894,17 @@ def prune_ledgers(db_path=None):
                     counts["failed"] += 1
                     log.error(f"prune_ledgers could not prune {table}: {e}")
         try:
-            n = _prune_inventory_history(conn)
+            n = _prune_inventory_history(conn, deadline=deadline, refused=refused)
             if n:
                 deleted["inventory_history"] = n
         except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
             log.debug(f"prune_ledgers skipped inventory_history: {e}")
         try:
-            deleted.update(_prune_schedules(conn, deadline))
+            deleted.update(_prune_schedules(conn, deadline, refused=refused))
         except Exception as e:
             try:
                 conn.rollback()
@@ -2399,7 +2916,19 @@ def prune_ledgers(db_path=None):
         conn.close()
     if deleted:
         log.info(f"Pruned old rows: {deleted}")
+    special_refused = [r for r in refused if r["table"] not in _RETENTION_DAYS]
+    if special_refused:
+        counts["attempted"] += len(special_refused)
+        counts["failed"] += len(special_refused)
+    if refused:
+        _page_refusals(refused, db_path=db_path)
+    if capped:
+        capture(RuntimeError(f"retention cap: {', '.join(capped)} had more than {RETENTION_PASS_MAX_ROWS} rows "
+                             f"past their window; the rest go on the next nights"),
+                job="prune_ledgers", context="per-pass cap", db_path=db_path)
     deleted.update(counts)
+    deleted["refused"] = [{"table": r["table"], "days": r["days"], "floor": r["floor"]} for r in refused]
+    deleted["capped"] = capped
     return deleted
 
 

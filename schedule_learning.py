@@ -120,6 +120,12 @@ def edited_weeks(restaurant_id, weeks=EDIT_WEEKS, db_path=DB_PATH) -> list:
         hist = conn.execute(
             "SELECT DISTINCT v.history_id, h.week_start FROM schedule_versions v JOIN schedule_history h ON h.id=v.history_id "
             "WHERE v.restaurant_id=? AND h.restaurant_id=? AND v.reason='edited' AND v.created_at >= datetime('now', ?) "
+            # A week support edited through view-as, or any admin's save in
+            # it, teaches nothing (memory audit 9/29/26, view_as: M1's
+            # SUPPORT_PREFIX, M3's saved_authority).
+            "AND COALESCE(v.saved_authority, '') <> 'admin' "
+            "AND v.history_id NOT IN (SELECT sv.history_id FROM schedule_versions sv WHERE sv.saved_by LIKE 'support:%' "
+            "OR sv.saved_authority = 'admin') "
             "ORDER BY v.history_id DESC LIMIT 60",
             (restaurant_id, restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
         newest = {}
@@ -131,9 +137,12 @@ def edited_weeks(restaurant_id, weeks=EDIT_WEEKS, db_path=DB_PATH) -> list:
         if not ids:
             return []
         marks = ",".join("?" for _ in ids)
+        # An admin's saves (view-as) are not the manager's: left out, so
+        # the net diff is what the restaurant's own people settled on.
         versions = conn.execute(
-            f"SELECT history_id, version, reason, schedule_csv FROM schedule_versions WHERE restaurant_id=? "
-            f"AND history_id IN ({marks}) ORDER BY history_id, version", (restaurant_id, *ids)).fetchall()
+            f"SELECT history_id, version, reason, schedule_csv, saved_by FROM schedule_versions WHERE restaurant_id=? "
+            f"AND history_id IN ({marks}) AND COALESCE(saved_authority, '') <> 'admin' ORDER BY history_id, version",
+            (restaurant_id, *ids)).fetchall()
     finally:
         conn.close()
     by = {}
@@ -153,7 +162,11 @@ def edited_weeks(restaurant_id, weeks=EDIT_WEEKS, db_path=DB_PATH) -> list:
         if final["version"] <= base["version"]:
             continue
         b, f = rows_from_csv(base["schedule_csv"]), rows_from_csv(final["schedule_csv"])
-        out.append({"history_id": hid, "base": b, "final": f, "diff": diff(b, f)})
+        # Who settled on it (memory audit 9/29/26, standing_patterns): two
+        # GMs with opposite habits on alternate weeks blended into one
+        # "manager". The editor of the week's last manager save.
+        editor = (str(final["saved_by"] or "").strip() if "saved_by" in final.keys() else "") or None
+        out.append({"history_id": hid, "base": b, "final": f, "diff": diff(b, f), "editor": editor})
     return out
 
 
@@ -570,7 +583,10 @@ def prediction_weeks(restaurant_id, weeks=PREDICT_WEEKS, db_path=DB_PATH) -> lis
         hist = conn.execute(
             "SELECT DISTINCT v.history_id, h.week_start FROM schedule_versions v JOIN schedule_history h ON h.id=v.history_id "
             "WHERE v.restaurant_id=? AND h.restaurant_id=? AND v.reason IN ('edited','published') "
-            "AND v.created_at >= datetime('now', ?) ORDER BY v.history_id DESC LIMIT 80",
+            "AND v.created_at >= datetime('now', ?) AND COALESCE(v.saved_authority, '') <> 'admin' "
+            "AND v.history_id NOT IN (SELECT sv.history_id FROM schedule_versions sv WHERE sv.saved_by LIKE 'support:%' "
+            "OR sv.saved_authority = 'admin') "
+            "ORDER BY v.history_id DESC LIMIT 80",
             (restaurant_id, restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
         newest = {}
         for h in hist:
@@ -584,7 +600,8 @@ def prediction_weeks(restaurant_id, weeks=PREDICT_WEEKS, db_path=DB_PATH) -> lis
         marks = ",".join("?" for _ in ids)
         versions = conn.execute(
             f"SELECT history_id, version, reason, schedule_csv FROM schedule_versions WHERE restaurant_id=? "
-            f"AND history_id IN ({marks}) ORDER BY history_id, version", (restaurant_id, *ids)).fetchall()
+            f"AND history_id IN ({marks}) AND COALESCE(saved_authority, '') <> 'admin' ORDER BY history_id, version",
+            (restaurant_id, *ids)).fetchall()
     finally:
         conn.close()
     by = {}
@@ -887,8 +904,17 @@ def _calibration_samples(restaurant_id, db_path):
     restaurant cannot be watched at all)."""
     conn = get_conn(db_path)
     try:
-        outs = conn.execute("SELECT history_id, date, daypart, issues, review_rating, labor_pct FROM schedule_outcomes "
-                            "WHERE restaurant_id=?", (restaurant_id,)).fetchall()
+        # The review rating a shift is judged on is only the reviews that
+        # named its meal and were posted within two days of it
+        # (review_rating_attributed — memory audit 9/29/26,
+        # reviews_to_labor): a dinner complaint posted on Sunday used to be
+        # scored against Sunday lunch, and the calibration learned from noise.
+        try:
+            outs = conn.execute("SELECT history_id, date, daypart, issues, review_rating_attributed AS review_rating, "
+                                "labor_pct FROM schedule_outcomes WHERE restaurant_id=?", (restaurant_id,)).fetchall()
+        except Exception:
+            outs = conn.execute("SELECT history_id, date, daypart, issues, NULL AS review_rating, labor_pct "
+                                "FROM schedule_outcomes WHERE restaurant_id=?", (restaurant_id,)).fetchall()
         ids = sorted({o["history_id"] for o in outs})
         hist = {}
         for i in range(0, len(ids), 200):
@@ -1062,27 +1088,21 @@ def _calibration_explanation(key, now, weight, nudge, ev, driver, contrib, pairs
 
 def _attendance_tally(restaurant_id) -> dict:
     """{name: {"all": [shifts, no_shows], weekday: [shifts, no_shows]}} from
-    clocked shifts — the same rows and rule staff_settings.reliability uses
-    (a scheduled shift with actual_hours of zero is a no-show)."""
-    from models import _cached_shifts
-    from labor import _has_actual_hours
+    the shifts somebody WATCHED — the same events staff_settings.reliability
+    reads (attendance.reliability_events; memory audit 9/29/26): recorded
+    outcomes, and shifts from a source with a real schedule. A no-show or a
+    call-out is a miss. A person nobody watched is absent (unknown)."""
+    import attendance
+    from datetime import date as _date_at, timedelta as _td_at
+    from staff_settings import RELIABILITY_WINDOW_DAYS
+    since = (_date_at.today() - _td_at(days=RELIABILITY_WINDOW_DAYS)).isoformat()
     tally = {}
-    for s in _cached_shifts(restaurant_id) or []:
-        n = (s.get("employee") or "").strip()
-        if not n or not _has_actual_hours(s):
-            continue
-        try:
-            sched = float(s.get("scheduled_hours") or s.get("hours") or 0)
-            actual = float(s.get("actual_hours") or 0)
-        except (TypeError, ValueError):
-            continue
-        if sched <= 0:
-            continue
-        wd = _weekday(s.get("date"))
-        if not wd:
+    for n, day, outcome in attendance.reliability_events(restaurant_id, since=since):
+        wd = _weekday(day)
+        if not n or not wd:
             continue
         t = tally.setdefault(n, {"all": [0, 0]})
-        miss = 1 if actual == 0 else 0
+        miss = 1 if outcome in attendance.MISSES else 0
         for k in ("all", wd):
             e = t.setdefault(k, [0, 0])
             e[0] += 1

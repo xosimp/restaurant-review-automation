@@ -253,8 +253,11 @@ def test_s5_future_stamps_read_unknown_never_current(db):
 
 
 def test_s5_a_sync_drops_future_rows():
+    # The sync goes through the one ingest (memory audit 9/29/26,
+    # shift_facts), which drops them for every source.
     src = inspect.getsource(__import__("pos").save_synced_shifts)
-    assert "drop_future_shifts(" in src
+    assert "shift_facts.ingest(" in src
+    assert "drop_future_shifts(" in inspect.getsource(__import__("shift_facts").ingest)
 
 
 # ── S6: marketing — never synced is an error, an unreadable expiry unknown ─

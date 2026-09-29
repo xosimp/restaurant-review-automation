@@ -803,10 +803,15 @@ def _home_pulse(key, kpi, rstats, labor, restaurant, inv, inv_live=False):
     if key == "labor":
         from notify import labor_target_for as _labor_target_for
         from thresholds import LABOR_OVER_TARGET_PTS
+        import restaurant_thresholds as _rthr_pulse
         target = _labor_target_for(restaurant)
         pct = (labor or {}).get("overall_labor_pct", 0) or 0
         on_track = pct <= target
-        tone = "good" if on_track else ("bad" if pct - target >= LABOR_OVER_TARGET_PTS else "warn")
+        # The margin fitted to this restaurant's own swing, never below the
+        # stated one (restaurant_thresholds, memory audit 9/29/26).
+        _over = _rthr_pulse.margin(getattr(restaurant, "id", None), "labor_over_period",
+                                   stated=LABOR_OVER_TARGET_PTS)
+        tone = "good" if on_track else ("bad" if pct - target >= _over else "warn")
         return {"value": value, "label": "labor · on target" if on_track else f"labor · over {int(target)}%",
                 "tone": tone}
     if key == "inventory":
@@ -1371,6 +1376,14 @@ def _do_mobile_home(current_user):
                 # critical item (home_brief.attention_answerable).
                 "answerable": bool(a.get("answerable")),
                 "times_hidden": int(a.get("times_hidden") or 0),
+                # What was said before about the item (memory round
+                # 9/29/26, M1): the owner's own earlier answer, a
+                # delegate's decline, and a conflict with other advice —
+                # web Home reads them off the same item. The remap dropped
+                # them, so the phone could not say them.
+                "previous_answer": a.get("previous_answer"),
+                "delegate_answer": a.get("delegate_answer"),
+                "conflict": a.get("conflict"),
             } for a in _attn]
             # home_brief's payload key is "recommendations". This read
             # "recs" — a key that has never existed in it — so the mobile
@@ -1639,7 +1652,7 @@ def mobile_approve_review(review_id, current_user):
     _body = request.get_json(silent=True) or {}
     payload, status = _capi._do_approve(review_id, current_user["restaurant_id"],
                                         confirm_flagged=_body.get("confirm_flagged") is True,
-                                        expected_draft=_body.get("expected_draft"))
+                                        expected_draft=_body.get("expected_draft"), user=current_user)
     return jsonify(**payload), status
 
 
@@ -1651,7 +1664,7 @@ def mobile_approve_all_reviews(current_user):
     Ask Cavnar's proposal all run the identical bulk-approve path."""
     data = request.get_json(silent=True) or {}
     payload, status = _capi._do_approve_all(current_user["restaurant_id"], data.get("limit", 25),
-                                            review_ids=data.get("review_ids"))
+                                            review_ids=data.get("review_ids"), user=current_user)
     return jsonify(**payload), status
 
 
@@ -1679,7 +1692,7 @@ def mobile_retract_review(review_id, current_user):
 @mobile_bp.route("/reviews/<int:review_id>/regenerate-draft", methods=["POST"])
 @mobile_login_required
 def mobile_regenerate_draft(review_id, current_user):
-    payload, status = _capi._do_regenerate_draft(review_id, current_user["restaurant_id"])
+    payload, status = _capi._do_regenerate_draft(review_id, current_user["restaurant_id"], user=current_user)
     return jsonify(**payload), status
 
 
@@ -1687,7 +1700,8 @@ def mobile_regenerate_draft(review_id, current_user):
 @mobile_login_required
 def mobile_save_draft(review_id, current_user):
     data = request.get_json() or {}
-    payload, status = _capi._do_save_draft(review_id, current_user["restaurant_id"], data.get("draft", ""))
+    payload, status = _capi._do_save_draft(review_id, current_user["restaurant_id"], data.get("draft", ""),
+                                           user=current_user)
     return jsonify(**payload), status
 
 
@@ -1910,11 +1924,9 @@ def notification_open_surface(data) -> str:
 @mobile_bp.route("/notifications/engagement")
 @mobile_login_required
 def mobile_notifications_engagement(current_user):
-    import notify
-    rows = notify.engagement_report(current_user["restaurant_id"])
-    for row in rows:
-        row["label"] = _capi._NOTIFICATION_LABELS.get(row["alert_type"], row["alert_type"])
-    return jsonify(ok=True, suggestions=rows)
+    """Twin of /api/notifications/engagement — one body (per login too)."""
+    payload, status = _capi._do_notifications_engagement(current_user)
+    return jsonify(**payload), status
 
 
 @mobile_bp.route("/notifications/unread-count")
@@ -2361,8 +2373,18 @@ def mobile_food_cost_cfo(current_user):
         # The diagnosis's recommended action is a recommendation like any
         # other (audit #21): keyed, logged as shown, and answerable.
         _dg = _fci.get_diagnosis(rid, include_stale=True)
+        # A diagnosis too old to lean on (rec_trust.diagnosis_anchor_strength
+        # None) keeps its evidence and its "as of" but is not presented or
+        # answerable — the Reviews read's rule (memory audit 9/29/26,
+        # stale_diagnoses), so both clients label it an older read.
+        import rec_trust as _rt_fd
+        _dg_live = bool(_dg) and _rt_fd.diagnosis_anchor_strength(_dg) is not None
         _dg = (_capi.present_diagnoses(rid, [_dg], "diag_food", "food", "food",
-                                       user_id=current_user.get("id")) or [None])[0] if _dg else None
+                                       user_id=current_user.get("id"), shown=1 if _dg_live else 0)
+               or [None])[0] if _dg else None
+        if _dg and not _dg_live:
+            _dg["answerable"] = False
+            _dg["controls_withheld"] = "stale"
         _drivers = _fci.cost_drivers(rid)
         # Each driver names where it is acted on (friction audit U4-9): a
         # price or sourcing driver opens the order, a portion driver its
@@ -2749,33 +2771,27 @@ def mobile_delete_device_token(apns_token, current_user):
 # ── Labor ─────────────────────────────────────────────────────────────────
 
 def _staff_constraints_index(restaurant_id):
-    """Fuzzy name → constraint-note lookup (full name, first name, first+
-    last-initial, with/without trailing period) — same indexing
-    hosted_dashboard.py's web Labor tab builds, so "OT allowed" detection
-    matches exactly between web and mobile regardless of how a name is
-    spelled in the shifts CSV vs. the staff note."""
+    """staff_settings.name_key → the person's scheduling notes in force — the
+    one rule every people store is matched by (memory audit 9/29/26,
+    identity). It used to index first names too, so an "OT allowed" note on
+    Maria Garcia suppressed the overtime flag for Maria Lopez; a spelling
+    the POS changed is re-pointed by people.rename_person, never guessed."""
+    import staff_settings as _ss
     from models import get_staff_notes
     index = {}
     try:
         for n in (get_staff_notes(restaurant_id) or []):
-            name = (n.get("employee_name") or "").lower().strip().rstrip(".")
-            if not name:
-                continue
-            index[name] = n.get("notes")
-            parts = name.split()
-            if parts:
-                index[parts[0]] = n.get("notes")
-            if len(parts) >= 2:
-                index[parts[0] + " " + parts[1].rstrip(".")] = n.get("notes")
-                index[parts[0] + " " + parts[1].rstrip(".") + "."] = n.get("notes")
+            key = _ss.name_key(n.get("employee_name"))
+            if key and n.get("notes"):
+                index[key] = n.get("notes")
     except Exception:
         pass
     return index
 
 
 def _has_ot_allowance(employee, constraints_index):
-    key = (employee or "").lower().strip().rstrip(".")
-    note = constraints_index.get(key) or constraints_index.get(key.split(" ")[0], "")
+    import staff_settings as _ss
+    note = constraints_index.get(_ss.name_key(employee), "")
     note_l = (note or "").lower()
     return bool(note) and (
         "overtime" in note_l or "extra hours" in note_l
@@ -2992,6 +3008,12 @@ def _do_mobile_labor(restaurant_id):
         "money_went": (analysis.get("money_went") or []) if analysis.get("is_live") else [],
         # The rate the board's "Explain why" divides by (hours to trim).
         "blended_rate": analysis.get("blended_rate"),
+        # What "over target" means for a day here: the margin fitted to this
+        # restaurant's own daily swing, never below the stated one, and its
+        # basis in words (restaurant_thresholds; memory audit 9/29/26,
+        # "thresholds"). The phone says it under the ribbon. Live only.
+        "over_margin": analysis.get("over_margin") if analysis.get("is_live") else None,
+        "over_margin_basis": analysis.get("over_margin_basis") if analysis.get("is_live") else None,
     }, 200
 
 
@@ -3025,6 +3047,11 @@ def mobile_labor_trend(current_user):
                 "sales": h["total_sales"],
                 "start": h["period_start"],
                 "end": h["period_end"],
+                # A payroll week still in progress (memory audit 9/29/26,
+                # labor_periods): drawn as partial, never read as a trend.
+                "complete": bool(h.get("complete")),
+                "comparable": bool(h.get("comparable")),
+                "basis": h.get("basis"),
             })
         return jsonify(ok=True, weeks=weeks)
     except Exception as e:
@@ -3151,7 +3178,7 @@ def mobile_labor_insight(current_user):
         stale = _capi.labor_stale_read(rid)
         if stale:
             _an = _capi.labor_analysis_safe(rid)
-            _recs = _capi.labor_insight_items(rid, stale["text"], user_id=uid, analysis=_an)
+            _recs = _capi.labor_insight_items(rid, stale["text"], user_id=uid, analysis=_an, stale=True)
             return jsonify(ok=True, insight=stale["text"], diagnosis=_capi._labor_diagnosis_safe(rid, _an, user_id=uid),
                            rec_items=_recs, validation=_rv_of(stale["text"]),
                            **stale["state"], **_insight_json(stale["text"], _recs))
@@ -3275,7 +3302,9 @@ def mobile_schedule_history_detail(history_id, current_user):
     # A stored week reopened puts its verdict back on screen (web reload,
     # iOS Labor): its recommendations are shown by this response.
     from schedule_engine import present_quality
-    present_quality(current_user["restaurant_id"], detail.get("quality"), user_id=current_user.get("id"))
+    from permissions import answer_authority as _aa_pq
+    present_quality(current_user["restaurant_id"], detail.get("quality"), user_id=current_user.get("id"),
+                    authority=_aa_pq(current_user))
     # What the draft was written against, and its rows priced as they stand
     # now (edits and all), so a reopened week states its labor % and
     # overtime the way a fresh one does (Schedule Studio, 9/26/26).
@@ -3661,7 +3690,7 @@ def mobile_generate_content(current_user):
     data = request.get_json() or {}
     payload, status = _capi._do_generate_content(
         current_user["restaurant_id"], data.get("type"), data.get("topic"),
-        from_calendar=bool(data.get("from_calendar")),
+        from_calendar=bool(data.get("from_calendar")), user_id=current_user.get("id"),
     )
     return jsonify(**payload), status
 
@@ -3721,6 +3750,15 @@ def mobile_mark_guest_visit(contact_id, current_user):
     return jsonify(ok=True)
 
 
+def _gm_returns(rid) -> dict:
+    """guest_marketing.segment_returns, never failing a draft."""
+    try:
+        import guest_marketing as _gm_r
+        return _gm_r.segment_returns(rid)
+    except Exception:
+        return {}
+
+
 @mobile_bp.route("/guest-campaign/draft", methods=["POST"])
 @mobile_login_required
 def mobile_guest_campaign_draft(current_user):
@@ -3740,7 +3778,16 @@ def mobile_guest_campaign_draft(current_user):
         plan = plan_campaign(prompt) if prompt else None
         ctype = data.get("type") or (plan["type"] if plan else "general")
         message = draft_campaign_message(restaurant, campaign_type=ctype, topic=data.get("topic") or "", goal=prompt)
-        out = dict(ok=True, message=message, validation=_rv_of(message), type=ctype)
+        # The model's text is kept, so the text that goes out is measured
+        # against it (marketing_voice; memory audit 9/29/26, mkt_edits): the
+        # send route takes `draft_ref` back.
+        import marketing_voice as _mv
+        out = dict(ok=True, message=message, validation=_rv_of(message), type=ctype,
+                   draft_ref=_mv.record_draft(rid, "text", str(message), "campaign_draft",
+                                              user_id=current_user.get("id")),
+                   # What past texts did here per audience (mkt_results): the
+                   # Studio shows it beside the audience it suggests.
+                   returns_by_segment=_gm_returns(rid))
         if plan:
             out.update(segment=plan["segment"], goal=plan["goal"], target_day=plan["target_day"])
         return jsonify(**out)
@@ -3792,7 +3839,7 @@ def mobile_guest_winback_send(current_user, draft_id):
     import guest_marketing as _gm
     data = request.get_json(silent=True) or {}
     out = _gm.send_winback(rid, draft_id, message=data.get("message"), user_id=current_user.get("id"),
-                           hold=bool(data.get("hold")))
+                           hold=bool(data.get("hold")), user=current_user)
     return jsonify(**out), (202 if out.get("queued") else (200 if out.get("ok") else 400))
 
 
@@ -3861,6 +3908,12 @@ def mobile_guest_campaign_send(current_user):
                                     target_day=data.get("target_day") if isinstance(data.get("target_day"), str) else None,
                                     user_id=current_user.get("id"), hold=bool(data.get("hold")),
                                     rec_key=data.get("rec_key") if isinstance(data.get("rec_key"), str) else None)
+        if result.get("ok"):
+            # The text that went out, measured against the model's draft
+            # (marketing_voice; memory audit 9/29/26, mkt_edits).
+            import marketing_voice as _mv
+            _mv.record_final(rid, "text", message, "campaign", ref_id=result.get("campaign_id"),
+                             user=current_user, draft_id=_capi._draft_ref_of(data))
         status = 202 if result.get("queued") else (200 if result.get("ok") or result.get("blocked") == "quiet_hours" else 400)
         return jsonify(**result), status
     except Exception as e:
@@ -4050,7 +4103,8 @@ def mobile_drafts(current_user):
     data = request.get_json() or {}
     result = _md.save_draft(rid, data.get("body"), content_type=data.get("content_type"),
                             topic=data.get("topic"), media_id=data.get("media_id"),
-                            draft_id=data.get("id"), user_id=current_user.get("id"))
+                            draft_id=data.get("id"), user_id=current_user.get("id"),
+                            content_log_id=_capi._content_log_id_of(data), draft_ref=_capi._draft_ref_of(data))
     return jsonify(**result), (200 if result.get("ok") else 400)
 
 
@@ -4060,7 +4114,7 @@ def mobile_approve_draft(draft_id, current_user):
     import marketing_drafts as _md
     result = _md.approve_draft(draft_id, current_user["restaurant_id"],
                                user_id=current_user.get("id"),
-                               role=current_user.get("role"))
+                               role=current_user.get("role"), user=current_user)
     return jsonify(**result), (200 if result.get("ok") else 403)
 
 
@@ -4248,6 +4302,12 @@ def mobile_guest_newsletter(current_user):
                                  mailing_address=data.get("mailing_address"),
                                  design=data.get("design") if isinstance(data.get("design"), dict) else None,
                                  segment=data.get("segment"))
+    if result.get("ok"):
+        # The letter that went out, measured against the model's draft
+        # (marketing_voice; memory audit 9/29/26, mkt_edits).
+        import marketing_voice as _mv
+        _mv.record_final(rid, "email", data.get("body") or "", "newsletter", ref_id=result.get("newsletter_id"),
+                         user=current_user, draft_id=_capi._draft_ref_of(data))
     if result.get("ok") and data.get("rec_key"):
         # Began on an Opportunity Feed card: that card was acted on (OPP-10).
         import marketing_opportunities
@@ -4312,6 +4372,11 @@ def mobile_guest_newsletter_draft(current_user):
     import guest_email as _ge
     try:
         draft = _ge.draft_newsletter(get_restaurant(rid), goal=prompt, topic=topic)
+        # The model's letter is kept, so what goes out is measured against it
+        # (marketing_voice; mkt_edits): the send takes `draft_ref` back.
+        import marketing_voice as _mv
+        draft["draft_ref"] = _mv.record_draft(rid, "email", draft.get("body") or "", "newsletter_draft",
+                                              user_id=current_user.get("id"))
     except ValueError as e:
         if str(e).startswith("newsletter copy rejected: "):
             return jsonify(ok=False, error="Cavnar AI didn't use that draft — "
@@ -4401,7 +4466,8 @@ def mobile_post_to_instagram(current_user):
         return jsonify(ok=False, error=CANNOT_PUBLISH), 403
     data = request.get_json() or {}
     payload, status = _do_post_to_instagram(
-        current_user["restaurant_id"], data.get("caption", ""), data.get("image_url", ""), data.get("topic", "")
+        current_user["restaurant_id"], data.get("caption", ""), data.get("image_url", ""), data.get("topic", ""),
+        content_log_id=_capi._content_log_id_of(data), user=current_user,
     )
     if payload.get("ok") and data.get("rec_key"):
         import marketing_opportunities   # began on a feed card (OPP-10)
@@ -4419,7 +4485,8 @@ def mobile_post_to_facebook(current_user):
         return jsonify(ok=False, error=CANNOT_PUBLISH), 403
     data = request.get_json() or {}
     payload, status = _do_post_to_facebook(
-        current_user["restaurant_id"], data.get("caption", ""), data.get("topic", "")
+        current_user["restaurant_id"], data.get("caption", ""), data.get("topic", ""),
+        content_log_id=_capi._content_log_id_of(data), user=current_user,
     )
     if payload.get("ok") and data.get("rec_key"):
         import marketing_opportunities   # began on a feed card (OPP-10)
@@ -5017,6 +5084,9 @@ def mobile_remove_task_template(current_user):
     return jsonify(ok=True), 200
 
 
+MARKET_HISTORY_MAX = 30          # market events a movement payload carries, newest first
+
+
 @mobile_bp.route("/intel/movement")
 @mobile_login_required
 def mobile_intel_movement(current_user):
@@ -5035,9 +5105,15 @@ def mobile_intel_movement(current_user):
     try:
         moves = competitor_movement(rid, days=days)
         changes = competitor_roster_changes(rid)
+        # The market's history and the restaurant's own rating over time,
+        # kept forever (event_memory, memory audit 9/29/26 public_history):
+        # the snapshots above are pruned at a year and read over `days`.
+        import event_memory
         return jsonify(
             ok=True,
             days=days,
+            market_history=event_memory.market_history(rid)[:MARKET_HISTORY_MAX],
+            own_rating_history=event_memory.own_rating_trajectory(rid),
             movement=moves,
             # Only the moves that clear the noise floor, for a client that
             # wants the short list rather than everything.
@@ -5049,7 +5125,8 @@ def mobile_intel_movement(current_user):
             # A rating move is only meaningful against the volume behind it.
             # confidence_z is how far past that noise floor each one sits.
             claim_kinds={"movement": "measured", "significant": "measured",
-                         "arrived": "measured", "gone": "measured"},
+                         "arrived": "measured", "gone": "measured", "market_history": "measured",
+                         "own_rating_history": "measured"},
         )
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e), movement=[], significant=[],
@@ -6720,7 +6797,15 @@ def mobile_account_activity(current_user):
     """Account-level events (password/email/2FA/team/export/etc.) — the
     user-facing slice of activity_log. Sign-ins are in /account/login-history."""
     from models import get_account_activity
-    return jsonify(ok=True, events=get_account_activity(current_user["restaurant_id"]))
+    # `changes`: the lasting, attributed change history — targets, settings,
+    # never-say, hours, prices, menu, roster — who and when (change_log;
+    # memory audit 9/29/26). The web route serves this same body.
+    try:
+        import change_log as _chlog_aa
+        changes = _chlog_aa.for_viewer(current_user["restaurant_id"], current_user)
+    except Exception:
+        changes = []
+    return jsonify(ok=True, events=get_account_activity(current_user["restaurant_id"]), changes=changes)
 
 
 @mobile_bp.route("/account/2fa/trusted-devices")
@@ -7180,7 +7265,8 @@ def mobile_score_schedule(current_user):
             try:
                 conn2.execute("BEGIN IMMEDIATE")
                 _sv.write_on(conn2, rid, hid, "edited", csv_text, saved_by=who, quality=quality,
-                             expected_version=(sent if latest else None))
+                             expected_version=(sent if latest else None),
+                             saved_authority=_sv.authority_of(current_user))
                 conn2.execute("UPDATE schedule_history SET review_json=? WHERE id=? AND restaurant_id=?",
                               (json.dumps(review) if review else None, hid, rid))
                 conn2.commit()
@@ -7226,7 +7312,8 @@ def mobile_score_schedule(current_user):
         # The rescored verdict is on the manager's screen: its
         # recommendations are shown now (re-audit C1).
         from schedule_engine import present_quality
-        present_quality(rid, quality, user_id=current_user.get("id"))
+        from permissions import answer_authority as _aa_pq2
+        present_quality(rid, quality, user_id=current_user.get("id"), authority=_aa_pq2(current_user))
         from models import capability_version
         return jsonify(ok=True, quality=quality, what_if=what_if, saved=bool(saved),
                        violations=violations or [], review=review,
@@ -7505,12 +7592,14 @@ def mobile_capability_changes(current_user):
         return jsonify(ok=False, error=_safe_err(e), changes=[]), 500
 
 
-def _ask_feedback_tally(rid):
+def _ask_feedback_tally(rid, user_id=None):
     """{"rated", "helpful"} for the Ask opening — the notes stay out of it
-    (they are for the assistant's context, not the opening screen)."""
+    (they are for the assistant's context, not the opening screen). THIS
+    login's ratings: a teammate's are theirs (memory audit 9/29/26,
+    ask_feedback)."""
     try:
         from models import ask_feedback_summary
-        fb = ask_feedback_summary(rid)
+        fb = ask_feedback_summary(rid, user_id=user_id)
         return {"rated": fb["rated"], "helpful": fb["helpful"], "days": fb.get("days", 90)}
     except Exception:
         return {"rated": 0, "helpful": 0, "days": 90}
@@ -7557,7 +7646,7 @@ def mobile_ask_opening(current_user):
                 ok=True,
                 # How the owner has rated answers so far (ask_feedback) —
                 # aggregate only, read with no model call (#48).
-                feedback=_ask_feedback_tally(rid),
+                feedback=_ask_feedback_tally(rid, current_user.get("id")),
                 briefing=[{"severity": _tone.get(l["tone"], "watch"), "title": l["text"],
                            "detail": None, "module": None, "ask": l.get("ask")}
                           for l in _lines[:5]],
@@ -7602,7 +7691,7 @@ def mobile_ask_opening(current_user):
         changes = payload.get("changes") or {}
         return jsonify(
             ok=True,
-            feedback=_ask_feedback_tally(rid),
+            feedback=_ask_feedback_tally(rid, current_user.get("id")),
             briefing=briefing,
             suggestions=suggestions[:5],
             headline=_opening_headline(payload, briefing),

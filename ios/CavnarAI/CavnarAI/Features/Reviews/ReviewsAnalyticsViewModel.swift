@@ -225,6 +225,17 @@ struct ReviewDiagnosis: Decodable, Sendable, Equatable {
     let staleNote: String?
     /// Figures in the cause the server could not trace to the data (M-17).
     let unsupportedFigures: [String]?
+    /// Memory round (9/29/26): a diagnosis too old to lean on keeps its
+    /// evidence but is not answerable — `answerable: false` with
+    /// `controls_withheld: "stale"`. Absent on an older server.
+    var answerable: Bool? = nil
+    var controlsWithheld: String? = nil
+
+    /// An older read: its evidence stands, its action is not a live
+    /// recommendation.
+    var isOlderRead: Bool { controlsWithheld == "stale" }
+    /// Done / Not for us under the action — keyed, not answered, not held.
+    var showsControls: Bool { recKey != nil && answered != true && answerable != false && controlsWithheld == nil }
 
     struct OperationalEvidence: Decodable, Sendable, Equatable {
         let module: String
@@ -233,6 +244,8 @@ struct ReviewDiagnosis: Decodable, Sendable, Equatable {
     }
 
     enum CodingKeys: String, CodingKey {
+        case answerable
+        case controlsWithheld = "controls_withheld"
         case category, cause, confidence, stale, answered
         case confidenceDetail = "confidence_detail"
         case recKey = "rec_key"

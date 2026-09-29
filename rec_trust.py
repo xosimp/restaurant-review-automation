@@ -59,6 +59,7 @@ class Context:
         self._records = {}
         self._sources = {}
         self._distrust = None
+        self._distrust_sources = None
         self._row = None
         self._confs = {}
         self._changes = None
@@ -119,9 +120,24 @@ class Context:
         return data_freshness.states(self.row(), keys, db_path=self.db_path, now=self.now,
                                      context=self.freshness_context, cache=self._sources)
 
+    def distrusted_sources(self):
+        """{source: {since, reports, kinds, ...}} — the data sources the owner
+        said they don't trust and has not re-verified (rec_ledger.
+        rec_distrust, memory audit 9/29/26 "reasons"): held until verified,
+        not for DISTRUST_DAYS."""
+        if self._distrust_sources is None:
+            try:
+                import rec_ledger
+                self._distrust_sources = rec_ledger.distrusted_sources(self.rid, db_path=self.db_path)
+            except Exception as e:
+                print(f"[rec_trust] distrusted sources unreadable for {self.rid}: {e}")
+                self._distrust_sources = {}
+        return self._distrust_sources
+
     def distrusted(self):
         """{kind: latest ISO date} of the owner's "don't trust the data"
-        answers in the last DISTRUST_DAYS."""
+        answers in the last DISTRUST_DAYS — and, however old, every kind
+        answered that way on a source still not re-verified."""
         if self._distrust is None:
             self._distrust = {}
             try:
@@ -146,6 +162,9 @@ class Context:
                     self._distrust[k] = max(self._distrust.get(k, ""), str(r["at"])[:10])
             except Exception as e:
                 print(f"[rec_trust] distrust answers unreadable for {self.rid}: {e}")
+            for src in (self.distrusted_sources() or {}).values():
+                for k in src.get("kinds") or ():
+                    self._distrust[k] = max(self._distrust.get(k, ""), str(src.get("last") or src.get("since"))[:10])
         return self._distrust
 
 
@@ -314,11 +333,12 @@ _TARGET_SOURCES = {"labor_target_pct": ("labor", "your labor target"),
 def owner_changes(restaurant_id, db_path=None, since_days=CHANGES_LOOKBACK_DAYS) -> list:
     """The owner's known changes in the last `since_days`, newest per kind:
     [{what, at (ISO date), sources (data_freshness keys it touches, empty =
-    any), kind (a recommendation kind it answers, or None)}] — a published
-    schedule (schedule_history.published_at), a reprice (reprice_decisions),
-    a changed target (activity_log target_change, models.update_restaurant)
-    and a recommendation marked done (rec_events completed/done). Each table
-    is read on its own; one that is missing leaves that kind out. Never
+    any), kind (a recommendation kind it answers, or None), who}] — a
+    published schedule (schedule_history.published_at), a reprice
+    (reprice_decisions), a changed target, price, menu item, team member,
+    pay rate, hours or supplier (change_log, with who made it) and a
+    recommendation marked done (rec_events completed/done). Each table is
+    read on its own; one that is missing leaves that kind out. Never
     raises."""
     import json
     import data_freshness
@@ -346,18 +366,30 @@ def owner_changes(restaurant_id, db_path=None, since_days=CHANGES_LOOKBACK_DAYS)
                 dish = str(r["dish"] or "").strip()
                 out.append({"what": f"repriced {dish}" if dish else "repriced a dish", "at": str(r["at"])[:10],
                             "sources": ("inventory",), "kind": None})
-        seen = set()
-        for r in q("SELECT event_data, created_at AS at FROM activity_log WHERE restaurant_id=? "
-                   "AND event_type='target_change' AND created_at >= ? ORDER BY created_at DESC",
-                   (restaurant_id, since)):
-            try:
-                field = (json.loads(r["event_data"] or "{}") or {}).get("field")
-            except (TypeError, ValueError):
-                field = None
-            if field in _TARGET_SOURCES and field not in seen:
-                seen.add(field)
-                src, label = _TARGET_SOURCES[field]
-                out.append({"what": f"changed {label}", "at": str(r["at"])[:10], "sources": (src,), "kind": None})
+        # Targets, prices, the menu, the roster, pay, hours and suppliers —
+        # from the lasting, attributed change log (memory audit 9/29/26,
+        # "change_log"): a price typed on Food Cost or synced from Back
+        # Office, a dish taken off, someone leaving, now caution the advice
+        # built on data from before them, and say who made the change. The
+        # activity_log read stays as the fallback for a database without
+        # the log.
+        try:
+            import change_log as _chlog
+            out.extend(_chlog.owner_change_entries(restaurant_id, since, conn=conn))
+        except Exception:
+            seen = set()
+            for r in q("SELECT event_data, created_at AS at FROM activity_log WHERE restaurant_id=? "
+                       "AND event_type='target_change' AND created_at >= ? ORDER BY created_at DESC",
+                       (restaurant_id, since)):
+                try:
+                    field = (json.loads(r["event_data"] or "{}") or {}).get("field")
+                except (TypeError, ValueError):
+                    field = None
+                if field in _TARGET_SOURCES and field not in seen:
+                    seen.add(field)
+                    src, label = _TARGET_SOURCES[field]
+                    out.append({"what": f"changed {label}", "at": str(r["at"])[:10], "sources": (src,),
+                                "kind": None})
         for r in q("SELECT key, MAX(at) AS at FROM rec_events WHERE restaurant_id=? AND event='completed' "
                    "AND at >= ? AND meta LIKE '%\"done\"%' GROUP BY key", (restaurant_id, since)):
             if r["at"]:
@@ -396,8 +428,11 @@ def changed_since(ctx, key, states) -> dict:
             return None
         c = max(hits, key=lambda c: c["at"])
         when = ce._mdy(c["at"])
-        return {"what": c["what"], "at": c["at"], "as_of": when,
-                "caution": f"You {c['what']} on {when} — this reads data from before it."}
+        # Who made it (change_log): "A manager changed the Salmon price",
+        # "A sync changed 12 prices" — "You" only for the owner's own.
+        who = c.get("who") or "You"
+        return {"what": c["what"], "at": c["at"], "as_of": when, "who": who,
+                "caution": f"{who} {c['what']} on {when} — this reads data from before it."}
     except Exception as e:
         print(f"[rec_trust] changed_since unavailable for {getattr(ctx, 'rid', None)}/{key}: {e}")
         return None
@@ -432,6 +467,22 @@ def assess(restaurant_id, key, evidence=None, sources=None, restaurant=None, db_
         if seen and not ev_in.get("sample"):
             ev_in["cap"] = min(ev_in.get("cap", 100), DISTRUST_CAP)
             ev_in["cap_reason"] = f"you said you don't trust the data behind this ({ce._mdy(seen)})"
+        # ...and every card resting on a SOURCE the owner said they don't
+        # trust, whatever its kind, until that source is re-verified (memory
+        # audit 9/29/26, "reasons": a distrusted shift feed left labor_over
+        # and insight_labor cards at full evidence).
+        if not ev_in.get("sample"):
+            bad = {k: v for k, v in (ctx.distrusted_sources() or {}).items() if k in tuple(sources or ())}
+            if bad:
+                src, info = sorted(bad.items())[0]
+                try:
+                    import data_freshness as _df_lbl
+                    label = _df_lbl.SOURCES.get(src, {}).get("label", src)
+                except Exception:
+                    label = src
+                ev_in["cap"] = min(ev_in.get("cap", 100), DISTRUST_CAP)
+                ev_in["cap_reason"] = (f"you said you don't trust the {label.lower()} data "
+                                       f"({ce._mdy(str(info.get('since'))[:10])}) — until it's re-verified")
         # A stored read's own age (diagnosis_evidence): a pseudo-source in
         # the freshness minimum, never evidence (DH3-1).
         has_read_age = "read_age_days" in ev_in

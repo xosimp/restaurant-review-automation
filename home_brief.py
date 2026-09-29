@@ -142,7 +142,8 @@ def times_hidden(conn, rid):
 
 
 def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=None, title=None,
-            surface="home", role=None, _card=True, reason_code=None, require_existing=False):
+            surface="home", role=None, _card=True, reason_code=None, require_existing=False, authority=None,
+            via=None):
     """Hide one recommendation for this restaurant. Keys carry their subject
     ("trim_day:Monday", "cut_waste:Salmon Fillet"), so a different day or
     item is a new recommendation and comes through.
@@ -172,15 +173,36 @@ def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=Non
     except (TypeError, ValueError):
         days = _DISMISS_DAYS_BY_KIND[kind]
     days = max(1, min(days, 3650))
-    conn = get_conn()
-    prior = conn.execute("SELECT COALESCE(times, 1) AS n FROM home_dismissals WHERE restaurant_id=? AND key=?",
-                         (rid, key)).fetchone()
-    times = (int(prior["n"]) + 1) if prior else 1
-    conn.execute("INSERT INTO home_dismissals (restaurant_id, key, kind, dismissed_by, expires_at, times) "
-                 "VALUES (?,?,?,?, datetime('now', ?), ?)", (rid, key, kind, user_id, f"+{int(days)} days", times))
-    conn.commit(); conn.close()
-    invalidate(rid)
     reason = (reason or "").strip()[:200]
+    # What an answer holds is the ledger's rule (rec_ledger.answer_silence,
+    # memory audit 9/29/26): Home's own row used to hold Done and "not for
+    # us" 3,650 days whatever the kind or the reason — the running-out card
+    # included — and silenced_keys reads this row too.
+    try:
+        import rec_ledger as _rl_pol
+        if kind != "snooze" and key not in HOME_SETUP_KEYS:
+            _pol, _rule = _rl_pol.answer_silence(key, "completed" if kind == "done" else "dismissed",
+                                                 kind=_LEDGER_KIND.get(kind), reason_code=reason_code, reason=reason)
+            if _pol:
+                days = max(1, min(days, int(_pol)))
+        elif kind == "snooze" and _rl_pol.kind_of(key) in _rl_pol.SAFETY_KINDS:
+            days = max(1, min(days, _rl_pol.SAFETY_CYCLE_DAYS))
+    except Exception as e:
+        print(f"[home] answer policy unavailable for {key}: {e}")
+    # A manager's (delegate's) answer, or support's through view-as, holds
+    # for that login alone (rec_ledger keeps it per login): Home's own row
+    # is restaurant-wide, so it is not written, and their reason is not the
+    # owner's preference ("who_answered", "view_as").
+    own = authority in (None, "principal") and not via
+    if own:
+        conn = get_conn()
+        prior = conn.execute("SELECT COALESCE(times, 1) AS n FROM home_dismissals WHERE restaurant_id=? AND key=?",
+                             (rid, key)).fetchone()
+        times = (int(prior["n"]) + 1) if prior else 1
+        conn.execute("INSERT INTO home_dismissals (restaurant_id, key, kind, dismissed_by, expires_at, times) "
+                     "VALUES (?,?,?,?, datetime('now', ?), ?)", (rid, key, kind, user_id, f"+{int(days)} days", times))
+        conn.commit(); conn.close()
+    invalidate(rid)
     try:
         import rec_ledger
         from datetime import datetime as _dtl
@@ -192,62 +214,108 @@ def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=Non
             smeta = {"until": until, "days": days}
             if code:
                 smeta["reason_code"] = code
+            if reason:
+                # The owner's own why stays with the answer (it is no longer
+                # copied into ask_memory — owner_lanes).
+                smeta["reason"] = reason
             rec_ledger.record(rid, key, "snoozed", surface=surface, user_id=user_id, role=role,
-                              meta=smeta, snooze_until=until, require_existing=require_existing)
+                              meta=smeta, snooze_until=until, require_existing=require_existing,
+                              authority=authority, via=via)
         else:
             meta = {"kind": _LEDGER_KIND[kind]}
             if reason:
                 meta["reason"] = reason
+            if title:
+                # The card's own words, kept with the answer: decisions.history
+                # names the decision by them when the episode has no title of
+                # its own (they used to ride in on the ask_memory copy).
+                meta["title"] = str(title)[:200]
             if code:
                 meta["reason_code"] = code
             rec_ledger.record(rid, key, "completed" if kind == "done" else "dismissed", surface=surface,
                               user_id=user_id, role=role, meta=meta, silence_days=days,
-                              require_existing=require_existing)
+                              require_existing=require_existing, authority=authority, via=via)
     except Exception as e:
         print(f"[home] dismissal not recorded in the ledger: {e}")
     # The critically-low card lists every unanswered item under the first
-    # one's key; an answer to the card is an answer to each item on it.
+    # one's key; an answer to the card is an answer to each item on it —
+    # for THIS stock-out only: the ledger holds a stock answer until the
+    # item's next count or delivery (rec_ledger.silenced_keys), so "Done —
+    # ordered already" never silences the next time it runs out.
     if _card and key.startswith("stock_low:"):
         quiet = _stock_quiet(rid)
         for k in _current_stock_keys(rid):
             if k != key and k not in quiet:
                 dismiss(rid, k, kind=kind, user_id=user_id, days=days, surface=surface, role=role, _card=False,
-                        reason_code=reason_code)
-    # The why, remembered: "not doing X: the patio closes in October" is a
-    # preference the assistant reads back in every future answer.
-    if reason:
-        try:
-            from models import remember_ask_fact
-            remember_ask_fact(rid, f"Not doing \u201c{(title or key)[:80]}\u201d: {reason}", kind="preference",
-                              source="Home", user_id=user_id)
-        except Exception:
-            pass
-    return {"ok": True, "key": key, "kind": kind, "days": int(days), "remembered": bool(reason)}
+                        reason_code=reason_code, authority=authority, via=via)
+    # The why is kept WITH the answer (rec_events meta.reason above), where
+    # decisions.history, the decline filters and Ask's decisions section read
+    # it. It used to be copied into ask_memory as "Not doing X: reason" too,
+    # where a busy week of Home passes evicted the owner's own facts ("labor
+    # under 26%", "football season starts next month") from a shared
+    # 12-slot pool, and outlived a "Use again" (memory audit 9/29/26,
+    # owner_lanes). `remembered` still says the reason was recorded.
+    out = {"ok": True, "key": key, "kind": kind, "days": int(days), "remembered": bool(reason)}
+    # What the answer holds, said (rec_ledger.silence_message — memory audit
+    # 9/29/26, silences): a delegate's (or support's) answer holds for that
+    # login alone (who_answered, view_as).
+    try:
+        import rec_ledger as _rl_msg
+        if not own and kind != "snooze":
+            out["message"] = "Noted \u2014 hidden for you; the owner still sees it"
+        elif kind != "snooze" and key not in HOME_SETUP_KEYS:
+            msg = _rl_msg.silence_message(key, "completed" if kind == "done" else "dismissed",
+                                          kind=_LEDGER_KIND.get(kind), reason_code=reason_code, reason=reason)
+            if msg:
+                out["message"] = msg
+    except Exception:
+        pass
+    return out
 
 
-def undismiss(rid, key, _card=True):
+def undismiss(rid, key, _card=True, subject_id=None, own=True):
     """"Use again": the Home row goes, and so does the ledger's silence, so
     the key can be said on every surface again. The critically-low card is
     answered for every item on it (dismiss), so "Use again" on the card
-    restores every item it answered, not only the first."""
+    restores every item it answered, not only the first. A delegate's (or
+    support's) "Use again" (own=False) takes back only that login's own
+    answer — never the owner's."""
     if _card and (key or "").startswith("stock_low:"):
         try:
             quiet = _stock_quiet(rid)
             for k in _current_stock_keys(rid):
                 if k != key and k in quiet:
-                    undismiss(rid, k, _card=False)
+                    undismiss(rid, k, _card=False, subject_id=subject_id, own=own)
         except Exception as e:
             print(f"[home] stock card restore incomplete: {e}")
+    if not own:
+        try:
+            import rec_ledger
+            n = 1 if rec_ledger.unsilence_login(rid, (key or "").strip()[:160], subject_id) else 0
+        except Exception as e:
+            print(f"[home] login unsilence failed: {e}")
+            n = 0
+        invalidate(rid)
+        return {"ok": True, "restored": n}
     conn = get_conn()
     n = conn.execute("DELETE FROM home_dismissals WHERE restaurant_id=? AND key IN (?, ?)",
                      (rid, (key or "").strip()[:160], (key or "").strip()[:120])).rowcount
     conn.commit(); conn.close()
     try:
         import rec_ledger
-        if rec_ledger.unsilence(rid, (key or "").strip()[:160]):
+        if rec_ledger.unsilence(rid, (key or "").strip()[:160], subject_id=subject_id):
             n = n or 1
     except Exception as e:
         print(f"[home] ledger unsilence failed: {e}")
+    # A remembered "Not doing X" about this card is retracted with it — the
+    # owner just asked for X again, and Ask kept steering away from it
+    # (memory audit 9/29/26, owner_lanes). Archived, not deleted: Account
+    # shows it and can put it back.
+    try:
+        import owner_memory
+        owner_memory.retract_for_keys(rid, [(key or "").strip()[:160]])
+    except Exception as e:
+        print(f"[home] remembered answer not retracted: {e}")
     invalidate(rid)
     return {"ok": True, "restored": n}
 
@@ -532,26 +600,106 @@ def order_recommendations(recs, quiet_kinds=(), learned=None):
     (rec_learning.effectiveness — callable key -> (weight, why)): what it
     learned from this restaurant's own answers and measured results moves
     each card's rank by a bounded weight (0.6–1.25×; ROI audit #24, #47,
-    #29). It reorders only — nothing is dropped — and a card with
-    `critical` severity is never weighed down."""
+    #29). The weight only reorders, and a card with `critical` severity is
+    never weighed down. The one thing dropped is a kind this restaurant's
+    own record says to stop proposing (held, below) — never a critical
+    card — and the owner is asked about it instead (kind_holds)."""
+    # A kind this restaurant's own record says to STOP proposing (it did no
+    # better than doing nothing, or kept making things worse, over 5+
+    # measured results — rec_learning.Effectiveness.held, memory audit
+    # 9/29/26 "thresholds") is taken out, never a critical item; the caller
+    # asks the owner instead (rec_learning.hold_ask) from learned.held_seen.
+    held = []
+    if learned is not None and hasattr(learned, "held"):
+        import rec_ledger
+        for r in recs:
+            if r.get("severity") == "critical":
+                continue
+            try:
+                h = learned.held(rec_ledger.kind_of(str(r.get("key") or "")))
+            except Exception as e:
+                print(f"[home] hold check failed for {r.get('key')}: {e}")
+                h = None
+            if h:
+                r["held"] = h
+                held.append(h)
+        if held:
+            seen = dict(getattr(learned, "held_seen", None) or {})
+            seen.update({h["kind"]: h for h in held})
+            try:
+                learned.held_seen = seen
+            except Exception:
+                pass
+            recs = [r for r in recs if not r.get("held")]
+    import rec_learning as _rl_rank
     for r in recs:
         r["rank_score"] = rank_score(r)
+        # A card another module's evidence argues against (a trim beside a
+        # service complaint cluster on its night — staffing_signals.
+        # trim_guard) keeps its place in the list but ranks lower. Applied
+        # before learning, so rank_log's "base" is the score learning met.
+        if r.get("rank_penalty") and r.get("severity") != "critical":
+            r["rank_score"] = round(r["rank_score"] * (1.0 - min(0.9, float(r["rank_penalty"]))), 2)
+        base = r["rank_score"]
+        info = None
         if learned is not None and r.get("severity") != "critical":
-            try:
-                w, why = learned(r["key"])
-            except Exception as e:
-                print(f"[home] learned weight unavailable for {r.get('key')}: {e}")
-                w, why = 1.0, []
+            # A model line's words name its advice signature, so what was
+            # learned about "Tuesday staffing" reaches a hashed line too.
+            info = _rl_rank.weigh(learned, r["key"], title=r.get("title"))
+            w, why = info["weight"], info["why"]
             if w != 1.0:
                 r["rank_score"] = round(r["rank_score"] * w, 2)
-                r["learned"] = {"weight": w, "why": why[:3]}
+                # The weight, why, and the prior rung and model version it
+                # rested on (rec_learning.learned_note, PLATFORM-1/3).
+                r["learned"] = _rl_rank.learned_note(learned, r["key"], w, why)
+        # What learning did to this ranking, kept with the showing
+        # (rank_log): the ledger stores it on the shown event.
+        r["rank"] = _rl_rank.rank_meta(r, base, info)
     ranked = sorted(recs, key=lambda r: -r["rank_score"])
     quiet = set(quiet_kinds or ())
+    retest = set()
+    if isinstance(quiet_kinds, dict):
+        # decisions.quiet_state: a quiet kind due its re-test, or one whose
+        # figure has since doubled, is shown again, labelled a re-test
+        # (memory audit, "quiet_kinds").
+        for r in ranked:
+            k = r["key"].split(":", 1)[0]
+            st = quiet_kinds.get(k)
+            if not st:
+                continue
+            if st.get("retest") or (st.get("last_dollars") and r.get("dollars_monthly")
+                                   and float(r["dollars_monthly"]) >= 2 * float(st["last_dollars"])):
+                retest.add(k)
+        quiet = {k for k in quiet_kinds if k not in retest}
     loud = [r for r in ranked if r["key"].split(":", 1)[0] not in quiet]
     soft = [r for r in ranked if r["key"].split(":", 1)[0] in quiet]
     for r in soft:
         r["quiet"] = True
+    for r in loud:
+        if r["key"].split(":", 1)[0] in retest:
+            r["retest"] = True
     return loud[:3] + soft + loud[3:]
+
+
+def _kind_hold_asks(rid, learned, present=True, user_id=None) -> list:
+    """rec_learning.hold_ask for every kind order_recommendations held back
+    this build, presented on "home" (so the answer routes accept them) —
+    or [] with none. Never raises."""
+    seen = getattr(learned, "held_seen", None) if learned is not None else None
+    if not seen:
+        return []
+    try:
+        import rec_learning
+        import rec_ledger
+        asks = [rec_learning.hold_ask(h) for h in seen.values()]
+        if present:
+            got = rec_ledger.present_many(rid, [{"key": a["key"], "module": "home", "title": a["title"],
+                                                 "model_written": False} for a in asks], "home", user_id=user_id)
+            asks = [dict(a, rec_key=a["key"], answerable=True) for a in asks if got.get(a["key"]) is not None]
+        return asks
+    except Exception as e:
+        print(f"[home] kind holds unavailable for {rid}: {e}")
+        return []
 
 
 def at_stake_monthly(drivers) -> float:
@@ -659,6 +807,11 @@ def attention_answerable(a) -> bool:
 # HomeActionDeck/HomeRecommendations): at most this many of each.
 HOME_ATTENTION_SHOWN = 4
 HOME_RECS_SHOWN = 3
+# The Evidence Strength a reprice card is held to while guests call the dish
+# poor value (memory audit 9/29/26, "conflicts").
+REPRICE_VALUE_CAP = 49
+# How many ranked-but-not-shown cards each build logs (rank_log).
+RANK_LOG_UNSHOWN = 7
 
 # Where each attention item's button lands (nav.py). "Reply now" used to
 # open the whole inbox unfiltered and "See the list" the top of Food Cost
@@ -872,10 +1025,10 @@ def stock_key(item) -> str:
     return rec_ledger.rec_key("stock_low", str(item or "?"))
 
 
-def _stock_quiet(rid) -> set:
+def _stock_quiet(rid, viewer=None) -> set:
     try:
         import rec_ledger
-        return rec_ledger.silenced_keys(rid)
+        return rec_ledger.silenced_keys(rid, viewer=viewer)
     except Exception:
         return set()
 
@@ -1436,8 +1589,13 @@ def _build(current_user, present=True):
                 dg = None
                 try:
                     import review_intelligence as _ri_hb
+                    import rec_trust as _rt_hbr
+                    # Not one too old to lean on (rec_trust.
+                    # diagnosis_anchor_strength, memory audit 9/29/26): the
+                    # card then says what the data supports and nothing more.
                     dg = next((d for d in _ri_hb.get_diagnoses(rid, include_stale=True)
-                               if d.get("category") == cat and d.get("recommended_action")), None)
+                               if d.get("category") == cat and d.get("recommended_action")
+                               and _rt_hbr.diagnosis_anchor_strength(d)), None)
                 except Exception:
                     dg = None
                 if dg:
@@ -1533,6 +1691,10 @@ def _build(current_user, present=True):
                              "setup": {"label": "Add your shifts", "module": "labor"}})
         else:
             from thresholds import LABOR_OVER_TARGET_PTS
+            # The margin fitted to this restaurant's own spread of labor % (never
+            # below the stated one — restaurant_thresholds, memory audit 9/29/26).
+            import restaurant_thresholds as _rthr_lab
+            _over_margin = _rthr_lab.margin(rid, "labor_over_period", stated=LABOR_OVER_TARGET_PTS)
             pct = float(labor.get("overall_labor_pct") or 0)
             over = pct - labor_target
             days = int((labor.get("date_range") or {}).get("days") or 0)
@@ -1542,9 +1704,23 @@ def _build(current_user, present=True):
             # whole-period gap.
             savings = float(labor.get("potential_savings_weekly") or 0)
             dow = labor.get("dow_summary") or {}
-            hist_pcts = [h["labor_pct"] for h in labor_hist[::-1] if h.get("labor_pct") is not None]
-            prev_pct = hist_pcts[-2] if len(hist_pcts) >= 2 else None
-            delta = _pct_delta(pct, prev_pct) if prev_pct is not None else None
+            # Labor by payroll week (memory audit 9/29/26, labor_periods): the
+            # spark is the weeks that have ended, and "vs the week before" is
+            # the last complete week against the one before it — back to back,
+            # costed on the same basis — never this 28-day window against an
+            # overlapping window saved on an earlier sync.
+            _done_weeks = [h for h in labor_hist if h.get("complete")]
+            hist_pcts = [h["labor_pct"] for h in _done_weeks[::-1] if h.get("labor_pct") is not None]
+            try:
+                from models import labor_period_change as _lpc
+                _wk_change = _lpc(rid)
+            except Exception:
+                _wk_change = {"delta": None, "comparable": False, "reason": None}
+            delta = _wk_change.get("delta") if _wk_change.get("comparable") else None
+            _wk_cur = (_wk_change.get("latest") or {}).get("labor_pct")
+            prev_pct = (_wk_change.get("previous") or {}).get("labor_pct") if delta is not None else None
+            _labor_week_key = (f"labor_over:{str(_done_weeks[0].get('period_start') or '')[:10]}"
+                               if _done_weeks and _done_weeks[0].get("period_start") else "labor_over")
             # The analysis's own partial-data flags (CA3 F4): how many of
             # its shift days carry sales is the coverage every labor claim
             # rests on, and each flag weakens the evidence.
@@ -1572,7 +1748,7 @@ def _build(current_user, present=True):
             _lab_short = period_days < _MIN_DAYS
             _lab_stale = _lab_fr.get("pct") is not None and _lab_fr["pct"] < _ce_lab.STALE_BELOW
             _lab_readable = not _lab_short and not _lab_stale
-            if over >= LABOR_OVER_TARGET_PTS and period_days >= _MIN_DAYS:
+            if over >= _over_margin and period_days >= _MIN_DAYS:
                 # Never from a cold start: one day of shifts is not "labor
                 # over target" (CA3 F5) — labor.MIN_DAYS_TO_EXTRAPOLATE.
                 add_attn("labor_over", ("watch" if not _labor_tgt_for["alerts_allowed"]
@@ -1588,9 +1764,11 @@ def _build(current_user, present=True):
                          # Labor on the days with sales, the pair of total_sales (NS3 H4).
                          evidence=f"${float(labor.get('costed_labor', labor.get('total_labor_cost')) or 0):,.0f} labor on ${float(labor.get('total_sales') or 0):,.0f} sales"
                          + (f" · {_cover_note}" if _cover_note else ""),
-                         # The labor alert's key: its latest period.
-                         rec_key=(f"labor_over:{str(labor_hist[0].get('period_start') or '')[:10]}"
-                                  if labor_hist and labor_hist[0].get("period_start") else "labor_over"),
+                         # The labor alert's key: the calendar payroll week the
+                         # alert is about (notify keys it the same), so a
+                         # window sliding a day no longer opens a new episode
+                         # for the same condition (memory audit 9/29/26).
+                         rec_key=_labor_week_key,
                          ev={"n": _with_sales, "kind": "trading_days", "coverage": _lab_cov, "flags": _lab_flags,
                              "basis": f"{_with_sales} days of shifts with sales"
                                       + (f" of {days}" if _missing else "")},
@@ -1612,6 +1790,22 @@ def _build(current_user, present=True):
             # day-of-week recommendation
             if len(dow) >= 4:
                 trim = trim_day_read(dow, labor.get("by_day") or {}, labor_target, period_days)
+                # What the rest of the product knows about that night comes
+                # first (memory audit 9/29/26, reviews_to_labor and
+                # mkt_to_staffing): a live campaign to fill it suppresses the
+                # trim and says why; a service complaint cluster on it keeps
+                # the trim but says so and ranks it lower.
+                _guard = {}
+                if trim:
+                    try:
+                        import staffing_signals as _stsig
+                        _guard = _stsig.trim_guard(rid, trim["day"], daypart="night")
+                    except Exception as _ge:
+                        print(f"[home] trim guard unavailable for {rid}: {_ge}")
+                        _guard = {}
+                    if _guard.get("suppress"):
+                        add_change(_guard["why"], "neutral", "labor")
+                        trim = None
                 if trim:
                     worst_day, worst_pct, mean = trim["day"], trim["pct"], trim["others_mean"]
                     n_days = trim["n_days"]
@@ -1629,11 +1823,14 @@ def _build(current_user, present=True):
                                 "basis": f"{_plural(n_days, worst_day)} with sales in your shift data"},
                             if_ignored=f"{worst_day}s keep running about {worst_pct - labor_target:.0f} pts over {_labor_tgt_for['label']}",
                             effort="medium")
+                    if _guard.get("caution") and recs and recs[-1]["key"] == f"trim_day:{worst_day}":
+                        recs[-1]["caution"] = _guard["caution"]
+                        recs[-1]["rank_penalty"] = _guard["rank_penalty"]
             if delta is not None and delta >= 1.5:
-                add_change(f"Labor % rose {delta:+.1f} pts vs the previous period ({pct:.1f}%)", "bad", "labor")
+                add_change(f"Labor % rose {delta:+.1f} pts on the week before ({_wk_cur:.1f}% last week)", "bad", "labor")
             elif delta is not None and delta <= -1.5:
-                add_change(f"Labor % fell {delta:+.1f} pts vs the previous period ({pct:.1f}%)", "good", "labor")
-                add_win("labor_improving", f"Labor down {abs(delta):.1f} pts", f"{pct:.1f}% this period vs {prev_pct:.1f}% before.", "labor")
+                add_change(f"Labor % fell {delta:+.1f} pts on the week before ({_wk_cur:.1f}% last week)", "good", "labor")
+                add_win("labor_improving", f"Labor down {abs(delta):.1f} pts", f"{_wk_cur:.1f}% last week vs {prev_pct:.1f}% the week before.", "labor")
             if last_schedule and _ts(last_schedule.get("generated_at")) and _ts(last_schedule["generated_at"]) >= since_dt:
                 hs = float(last_schedule.get("hours_scheduled") or 0); hb = float(last_schedule.get("hours_budget") or 0)
                 add_change(f"New schedule built for {_mdy(last_schedule.get('week_start')) or 'next week'}" + (f" · {int(round(hb - hs))} hrs under budget" if hb and hs and hs < hb else ""), "good", "labor", last_schedule.get("generated_at"))
@@ -1650,13 +1847,13 @@ def _build(current_user, present=True):
             snapshot.append({"key": "labor", "label": "Labor", "status": "available",
                              "value": "—" if _lab_short else f"{pct:.1f}", "unit": "" if _lab_short else "% of sales",
                              "delta": (None if _lab_short else
-                                       ({"value": f"{delta:+.1f} pts", "label": "vs prior period", "good": delta <= 0} if delta is not None else {"value": f"target {labor_target:.0f}%", "label": "", "good": over <= 0})),
-                             "secondary": [{"label": "Target" if _labor_tgt_for["source"] == "set" else "Starting target", "value": f"{labor_target:.0f}%"}, {"label": "Over 40h", "value": str(ot_now["people"] if ot_now else 0)}, {"label": "Recoverable", "value": f"${savings:,.0f}/wk" if savings > 0 else "—"}],
+                                       ({"value": f"{delta:+.1f} pts", "label": "vs the week before", "good": delta <= 0} if delta is not None else {"value": f"target {labor_target:.0f}%", "label": "", "good": over <= 0})),
+                             "secondary": [{"label": {"set": "Target", "goal": "Your goal"}.get(_labor_tgt_for["source"], "Starting target"), "value": f"{labor_target:.0f}%"}, {"label": "Over 40h", "value": str(ot_now["people"] if ot_now else 0)}, {"label": "Recoverable", "value": f"${savings:,.0f}/wk" if savings > 0 else "—"}],
                              "interpretation": _lab_interp,
                              "state": _lab_state,
                              "below_floor": _lab_short, "stale": _lab_stale,
-                             "spark": hist_pcts[-8:], "spark_label": "labor % by period" if len(hist_pcts) > 1 else None,
-                             "attention": (over >= LABOR_OVER_TARGET_PTS and not _lab_short) or bool(ot_now), "sample": False,
+                             "spark": hist_pcts[-8:], "spark_label": "labor % by week" if len(hist_pcts) > 1 else None,
+                             "attention": (over >= _over_margin and not _lab_short) or bool(ot_now), "sample": False,
                              # The last day the shifts cover, not when a file
                              # was written (CA3 F2).
                              "last_data": (labor.get("date_range") or {}).get("end") or client_data.get("updated_at"),
@@ -1668,7 +1865,7 @@ def _build(current_user, present=True):
                 brief_lines.append({"text": f"Labor {pct:.1f}% as of {_lab_fr.get('as_of') or 'the last upload'} — "
                                             "the data under it is out of date.", "tone": "neutral", "module": "labor"})
             else:
-                brief_lines.append({"text": f"Labor {pct:.1f}% against " + (f"a {labor_target:.0f}% target" if _thr_tgt.target_source(r, "labor") == "set" else _labor_tgt) + (f", {delta:+.1f} pts vs last period" if delta is not None else "") + ".", "tone": "bad" if over >= LABOR_OVER_TARGET_PTS else ("good" if over <= 0 else "neutral"), "module": "labor"})
+                brief_lines.append({"text": f"Labor {pct:.1f}% against " + (f"a {labor_target:.0f}% target" if _thr_tgt.target_source(r, "labor") == "set" else _labor_tgt) + (f", {delta:+.1f} pts vs last period" if delta is not None else "") + ".", "tone": "bad" if over >= _over_margin else ("good" if over <= 0 else "neutral"), "module": "labor"})
             ask.append("Why is labor over target?" if over > 0 else "Where can I save on labor next week?")
             if last_schedule and last_schedule.get("week_end"):
                 upcoming.append({"label": f"Schedule through {last_schedule['week_end']}", "when": last_schedule.get("week_end"), "module": "labor", "kind": "schedule"})
@@ -1703,7 +1900,7 @@ def _build(current_user, present=True):
             # first item alone, answering the salmon alert hid "Salmon,
             # Chicken critically low" entirely.
             if crit:
-                _sq = _stock_quiet(rid)
+                _sq = _stock_quiet(rid, viewer=current_user)
                 crit = [c for c in crit if stock_key(c.get("item")) not in _sq]
             if crit:
                 add_attn("critical_low", "important", f"{_plural(len(crit), 'item')} critically low",
@@ -1730,12 +1927,19 @@ def _build(current_user, present=True):
                     fc_pct, fc_target, fc_label = _fc["pct"], _fc.get("target"), _fc.get("label")
                 drivers = (_ev["drivers"].get("drivers") or [])
                 _dg = _fci_hb.get_diagnosis(rid, include_stale=True)
-                if _dg and _dg.get("cause"):
+                # The CFO "why" leans on the stored cause only as far as its
+                # age allows (rec_trust.diagnosis_anchor_strength, memory
+                # audit 9/29/26): past STALE_ANCHOR_MAX_DAYS it is no "why"
+                # at all; a retired read is never served (get_diagnosis).
+                import rec_trust as _rt_hb
+                _why_strength = _rt_hb.diagnosis_anchor_strength(_dg)
+                if _dg and _dg.get("cause") and _why_strength:
                     # The measured band (K6), not the one the model gave
                     # itself (E3); the object rides beside it.
                     _dgc = _dg.get("confidence_detail") if isinstance(_dg.get("confidence_detail"), dict) else {}
                     cfo_why = {"cause": _dg["cause"], "confidence": _dgc.get("band") or _dg.get("confidence"),
-                               "confidence_detail": _dgc or None, "stale": _dg.get("stale")}
+                               "confidence_detail": _dgc or None, "stale": _dg.get("stale"),
+                               "strength": _why_strength, "as_of": _dg.get("as_of")}
             except Exception:
                 pass
 
@@ -1802,8 +2006,11 @@ def _build(current_user, present=True):
             # by POST /api/food-cost/reprice/apply {dish, price}.
             try:
                 import menu_intelligence as _mi_hb
+                # A guarded dish (guests naming it in complaints — the
+                # reprice guard, link_memory) is not a one-tap reprice.
                 _sg = [x for x in ((_mi_hb.reprice_suggestions(rid) or {}).get("suggestions") or [])
-                       if (x.get("monthly_margin_lost") or 0) >= 25 and x.get("suggested_price")]
+                       if (x.get("monthly_margin_lost") or 0) >= 25 and x.get("suggested_price")
+                       and not x.get("guard")]
             except Exception:
                 _sg = []
             _named = str((drivers[0].get("item") if drivers else "") or "").lower()
@@ -1818,10 +2025,16 @@ def _build(current_user, present=True):
                         "Food cost · margin", "inventory", "This week", "See the price",
                         metric="food_cost_pct", dollars=x["monthly_margin_lost"],
                         dollars_basis=x.get("monthly_basis"),
-                        ev={"n": max((int(dv.get("weeks") or 1) for dv in (x.get("drivers") or [{}])), default=1),
-                            "kind": "price_weeks",
-                            "flags": () if x.get("units_sold_30d") else ("no_sales_mix",),
-                            "basis": f"ingredient price history and {x.get('monthly_basis') or 'the sales mix'}"},
+                        ev=dict({"n": max((int(dv.get("weeks") or 1) for dv in (x.get("drivers") or [{}])),
+                                          default=1),
+                                 "kind": "price_weeks",
+                                 "flags": () if x.get("units_sold_30d") else ("no_sales_mix",),
+                                 "basis": f"ingredient price history and {x.get('monthly_basis') or 'the sales mix'}"},
+                                # Guests calling the dish poor value lower
+                                # the confidence of raising its price
+                                # (memory audit, conflicts).
+                                **({"cap": REPRICE_VALUE_CAP, "cap_reason": x["value_note"].lower()}
+                                   if x.get("value_complaints") else {})),
                         if_ignored="every plate keeps selling at the thinner margin", effort="low",
                         action={"kind": "reprice", "dish": x["dish"], "price": x["suggested_price"],
                                 "label": f"Reprice to ${x['suggested_price']:.2f}"})
@@ -2045,9 +2258,34 @@ def _build(current_user, present=True):
     import rec_ledger
     import decisions
     try:
-        silenced = rec_ledger.silenced_keys(rid)
+        # This login's own answers too: a manager's decline holds for that
+        # manager alone (memory audit, who_answered).
+        silenced = rec_ledger.silenced_keys(rid, viewer=current_user)
     except Exception:
         silenced = set()
+    # An answer holds only while it still fits (memory audit, silences): a
+    # situational Done re-arms once its trigger has cleared and fires
+    # again, and any answered key reopens when its figure has doubled.
+    # Home is the build that evaluates its own situational kinds in full.
+    try:
+        _evaluated = set()
+        if labor_live:
+            _evaluated |= {"trim_day", "labor_over", "overtime"}
+        if inv_live:
+            _evaluated |= {"cut_waste", "food_cost_driver", "diag_food"}
+        if "reviews" in active_keys and rstats.get("total"):
+            _evaluated |= {"top_issue", "diag_review"}
+        _cands = ([{"key": a.get("rec_key") or ledger_key(a["key"])} for a in attention]
+                  + [{"key": r["key"], "dollar_value": r.get("dollars_monthly"),
+                      "target": ((r.get("action") or {}).get("price")
+                                 if (r.get("action") or {}).get("kind") == "reprice" else None)} for r in recs])
+        _lifted = rec_ledger.reconsider(rid, _cands, evaluated_kinds=_evaluated, write=present)
+        if _lifted:
+            silenced -= _lifted
+            for _k in _lifted:
+                dismissed.pop(_k, None)
+    except Exception as e:
+        print(f"[home] reconsider unavailable for {rid}: {e}")
     answered = set(dismissed) | silenced
     # ...and a "not for us" to the same ADVICE on any surface (H16): the
     # nightly report's "cut Tuesday's hours" or the Reviews "Do today" line
@@ -2182,18 +2420,41 @@ def _build(current_user, present=True):
     # Ordered by urgency x dollars x ease (#24), and a kind the owner has let
     # expire unanswered four times running goes quieter (#45).
     try:
-        quiet = decisions.quiet_kinds(rid)
+        # With its review dates (memory audit, quiet_kinds): a quiet kind is
+        # re-tested after RETEST_AFTER_DAYS, or at once when its figure has
+        # doubled, labelled a re-test on the card (`retest`).
+        quiet = decisions.quiet_state(rid, write=present)
     except Exception:
         quiet = set()
     # ...and what this restaurant's own answers and results taught the
     # ledger weighs each card, within bounds (rec_learning, ROI #24/#47).
     try:
         import rec_learning
-        learned = rec_learning.effectiveness(rid, restaurant=restaurant)
+        # Learned from this login's side: a manager's declines never rank
+        # the owner's Home, and the owner's answers outrank a manager's on
+        # theirs (memory audit, who_answered).
+        learned = rec_learning.effectiveness(rid, restaurant=restaurant,
+                                             perspective=rec_learning.perspective_of(current_user))
     except Exception as e:
         print(f"[home] effectiveness model unavailable for {rid}: {e}")
         learned = None
     recs = order_recommendations(recs, quiet, learned=learned)
+    # Advice that pulls against other advice (memory audit 9/29/26,
+    # "conflicts"): "Trim Tuesday" beside "Fill Tuesday" on any surface, a
+    # reprice on a dish guests call poor value, a promotion of a dish whose
+    # ingredient is critically low. The weaker card carries `conflict` for
+    # the owner to settle; one the owner already settled against is held.
+    try:
+        import lever_conflicts
+        _fx = lever_conflicts.facts(rid, critical_low=(inv.get("critical_low") if inv_live else []))
+        _held = []
+        recs = lever_conflicts.apply(rid, recs, _fx, held_out=_held)
+    except Exception as e:
+        print(f"[home] lever conflicts unavailable for {rid}: {e}")
+    # The kinds held back above, as one question each (memory audit 9/29/26,
+    # "thresholds"): presented so Done ("keep suggesting it") or Not for us
+    # ("stop") can answer them.
+    kind_holds = _kind_hold_asks(rid, learned, present=present, user_id=current_user.get("id"))
     # The dollars a card is shown with, corrected by this restaurant's own
     # measured results of the kind once there are enough of them (F6):
     # `dollars_adjusted` / `calibration_n` / `calibration_note` beside the
@@ -2208,7 +2469,11 @@ def _build(current_user, present=True):
     for _r in recs:
         _k = _r["key"].split(":", 1)[0]
         if _r.get("quiet") and _k not in [q["kind"] for q in quieter]:
-            quieter.append({"kind": _k, "label": decisions.kind_label(_k)})
+            # When it gets its second chance (memory audit, quiet_kinds).
+            _qs = quiet.get(_k) if isinstance(quiet, dict) else None
+            quieter.append({"kind": _k, "label": decisions.kind_label(_k),
+                            "review_on": (_mdy((_qs or {}).get("review_on")) if (_qs or {}).get("review_on")
+                                          else None)})
 
     # Only what the clients render is logged as shown — and later counted as
     # ignored. Web shows the focus card plus three attention rows ("+N
@@ -2216,7 +2481,19 @@ def _build(current_user, present=True):
     # with the first); iOS a deck of the first four attention items and
     # three cards. The payload keeps every attention item (web's "+N more"
     # counts them) and exactly the cards both clients show.
-    recs = recs[:HOME_RECS_SHOWN]
+    # Fewer while the owner is fatigued — most of what they were shown went
+    # dismissed or ignored (learning_scorecard.volume_limit, memory audit
+    # 9/29/26 "scorecard"): the strongest cards only, until they recover.
+    try:
+        import learning_scorecard as _lsc
+        _home_n = _lsc.volume_limit(rid, "home_recs", HOME_RECS_SHOWN)
+    except Exception:
+        _home_n = HOME_RECS_SHOWN
+    # The candidates ranked but not shown, kept for the build's rank log
+    # (rank_log): acceptance can only be corrected for exposure if what was
+    # NOT shown is known too — a card the fatigue limit held back included.
+    _unshown = recs[_home_n:_home_n + RANK_LOG_UNSHOWN]
+    recs = recs[:_home_n]
     import rec_delivery
     for r in recs:
         r["answerable"] = rec_delivery.answerable(r["key"])
@@ -2256,7 +2533,9 @@ def _build(current_user, present=True):
                # The price it asks for: a new one is a new recommendation
                # (rec_ledger supersedes the open episode, ROI #37).
                "target": ((r.get("action") or {}).get("price") if (r.get("action") or {}).get("kind") == "reprice"
-                          else None)}
+                          else None),
+               # What learning did to its rank (rank_log).
+               "rank": r.get("rank")}
               for i, r in enumerate(recs) if r["answerable"])])
         batch = [it for it in batch if it["key"] not in done]
         if not batch:
@@ -2277,6 +2556,34 @@ def _build(current_user, present=True):
         recs = [r for r in recs if not r["answerable"] or shown.get(r["key"], True) is not None]
         if [a["rec_key"] for a in attention[:HOME_ATTENTION_SHOWN]] == before:
             break
+
+    if present:
+        try:
+            rec_ledger.log_rank_build(rid, "home", shown=[dict(r.get("rank") or {}, key=r["key"]) for r in recs],
+                                      not_shown=[dict(r.get("rank") or {}, key=r["key"]) for r in _unshown],
+                                      version=getattr(learned, "version", None))
+        except Exception as e:
+            print(f"[home] rank log unavailable for {rid}: {e}")
+
+    # What was said before about what is on screen now (memory audit
+    # 9/29/26): a card re-offered after the owner answered it names that
+    # answer ("You passed on this on 3/12/26 ($120/mo then)" — silences,
+    # rec_ledger.previous_answers), and a card a manager passed on names
+    # them to the owner ("Dana passed on this: already doing it" —
+    # who_answered, rec_ledger.delegate_answers). None when neither.
+    try:
+        _on_screen = [a["rec_key"] for a in attention[:HOME_ATTENTION_SHOWN]] + [r["key"] for r in recs]
+        _prev = rec_ledger.previous_answers(rid, _on_screen)
+        from permissions import answer_authority as _aa_home
+        _deleg = rec_ledger.delegate_answers(rid, _on_screen) if _aa_home(current_user) == "principal" else {}
+        for a in attention:
+            a["previous_answer"] = _prev.get(a["rec_key"])
+            a["delegate_answer"] = _deleg.get(a["rec_key"])
+        for r in recs:
+            r["previous_answer"] = _prev.get(r["key"])
+            r["delegate_answer"] = _deleg.get(r["key"])
+    except Exception as e:
+        print(f"[home] answer history unavailable for {rid}: {e}")
 
     # ── quick actions ──────────────────────────────────────────────────────
     quick = []
@@ -2336,7 +2643,9 @@ def _build(current_user, present=True):
 
     charts = {
         "rating": [{"label": _mdy(w.get("label"), (w.get("week_key") or "")[:4]), "avg": w.get("avg_rating") or 0, "pos": w.get("positive") or 0, "neg": w.get("negative") or 0, "total": w.get("total") or 0} for w in sentiment if w.get("total")],
-        "labor": [{"label": _mdy(h.get("period_start")), "pct": h.get("labor_pct")} for h in labor_hist[::-1] if h.get("labor_pct") is not None] if labor_live else [],
+        # One bar per payroll week that has ended (memory audit 9/29/26,
+        # labor_periods) — never overlapping windows, never a partial week.
+        "labor": [{"label": _mdy(h.get("period_start")), "pct": h.get("labor_pct")} for h in labor_hist[::-1] if h.get("labor_pct") is not None and h.get("complete")] if labor_live else [],
         "labor_target": labor_target, "labor_target_label": _labor_tgt_for["label"],
         "labor_days": ([{"day": k[:3], "pct": v} for k, v in (labor.get("dow_summary") or {}).items() if v] if (labor_live and labor) else []),
         "waste": ([{"item": w.get("item"), "cost": float(w.get("waste_cost") or 0)} for w in (inv.get("waste_items") or [])[:5]] if inv_live else []),
@@ -2380,6 +2689,10 @@ def _build(current_user, present=True):
         # Kinds gone quieter because the last four went unanswered, with the
         # way back (POST /api/home/dismiss {restore_kind}).
         "quieter": quieter,
+        # Kinds Cavnar AI stopped suggesting because this restaurant's own
+        # measured results say they did no better than doing nothing (or
+        # made things worse), each asked as "keep suggesting it?".
+        "kind_holds": kind_holds,
         # Who a card can be handed to — consented alert contacts, and only
         # for a login that may open issues (#43).
         "assignees": (assignees(rid) if _may_assign(current_user) else []),
@@ -2402,8 +2715,25 @@ def _build(current_user, present=True):
         "quiet_hours_active": is_in_quiet_hours(rid),
         "alert_quiet_end": r.get("alert_quiet_end"),
         "empty_state": empty_state,
+        # The 30-day notice a material Privacy Policy / Terms change owes an
+        # account holder (policy_notice), per login — the cache is keyed by
+        # (rid, uid), and a dismissal drops this login's cached Homes.
+        "policy_notice": _policy_notice(current_user, local_now),
     }
     return payload, 200
+
+
+def _policy_notice(current_user, local_now=None, restaurant=None):
+    """policy_notice.notice_for on the restaurant's own day. Never raises."""
+    try:
+        import policy_notice
+        if local_now is None:
+            from time_utils import restaurant_now
+            local_now = restaurant_now(restaurant)
+        return policy_notice.notice_for(current_user, today=local_now.date())
+    except Exception as e:
+        print(f"[home] policy notice unavailable: {e}")
+        return None
 
 
 # ── consolidated view: every location in the owner's group ─────────────────
@@ -2470,12 +2800,14 @@ def _location_record(conn, r, now):
     if sig["top_issue"]:
         issues.append({"severity": sig["health"] if sig["health"] != "healthy" else "watch", "text": sig["top_issue"], "module": "reviews"})
     from thresholds import LABOR_OVER_TARGET_PTS
+    import restaurant_thresholds as _rthr_loc
     from labor import MIN_DAYS_TO_EXTRAPOLATE as _MIN_DAYS_G
     # The location Home's own floors (re-audit B4 M5): labor over target
     # needs MIN_DAYS_TO_EXTRAPOLATE days of shifts, and a rating move needs
     # REVIEW_MOVE_MIN_N reviews on BOTH sides and RATING_MOVE_STARS — the
     # group view flagged what the location's Home suppressed.
-    if labor and labor["over"] >= LABOR_OVER_TARGET_PTS and labor.get("period_days", 0) >= _MIN_DAYS_G:
+    if labor and labor["over"] >= _rthr_loc.margin(rid, "labor_over_period", stated=LABOR_OVER_TARGET_PTS) \
+            and labor.get("period_days", 0) >= _MIN_DAYS_G:
         # Against Cavnar's starting target (nobody set it) the issue says
         # so and is a watch, never "critical" — the location's own issue
         # list opens nothing on it (re-audit #10, R4-26).
@@ -2700,6 +3032,8 @@ def build_group_brief(current_user, fresh=False):
                       "biggest_issue": ({"location": attention[0]["location"], "id": attention[0]["restaurant_id"], "issue": attention[0]["text"]} if attention else None),
                       "last_night": group_last_night(locs)},
         "summary_line": group_summary_line(locs),
+        # The policy notice follows the owner to the group Home (per login).
+        "policy_notice": _policy_notice(current_user, restaurant=base),
     }
     # Location to location on the engine's `location` kind (#19): each
     # location against its own normal, then against the others, a gap

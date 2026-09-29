@@ -11,10 +11,24 @@ reservation book. Two kinds of signal, both dated:
 
 No live reservation integration exists yet; the row says `source` so a
 future sync writes the same table and the schedule does not change.
+
+What an event DID is measured afterwards (event_memory, memory audit
+9/29/26): a listed event with no figure takes its label's measured median
+lift here once EFFECT_MIN_N past nights carry it ("measured 3 times"), and
+an owner's own figure stands with the measured record said beside it — the
+owner's "Homecoming +30%" used to be the only number there ever was.
 """
 from datetime import date, timedelta
 
-from models import get_conn, DB_PATH
+import models as _models_mod
+from models import DB_PATH
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time (CLAUDE.md, bound imports)."""
+    if db_path is None or db_path == DB_PATH:
+        return _models_mod.get_conn()
+    return _models_mod.get_conn(db_path)
 
 KINDS = ("event", "reservations")
 MAX_ROWS = 200
@@ -89,6 +103,122 @@ def save(restaurant_id, rows, source="manual", created_by=None, db_path=DB_PATH)
     return {"written": written, "skipped": skipped, "errors": errors[:10]}
 
 
+# ── marketing's own signals (memory audit 9/29/26, mkt_to_staffing) ─────────
+#
+# The owner texted 412 guests to fill Tuesday; the auto-draft staffed a slow
+# Tuesday, Home kept saying "Trim Tuesday staffing", the DSR's Tomorrow and
+# the lineup never mentioned it and the kitchen prepped a normal Tuesday —
+# because no marketing module wrote here. A campaign with a target day, or a
+# post tagged with an occasion or a dish, is now one row (source "campaign" /
+# "post"), and every reader of this table sees it. Its lift is this
+# restaurant's MEASURED median campaign lift once CAMPAIGN_LIFT_MIN_CLOSED
+# campaigns have closed their measurement windows; before that it is NULL —
+# the existing assumed path, which never raises a demand level.
+CAMPAIGN_LIFT_MIN_CLOSED = 3
+MARKETING_OCCASIONS = ("game_day", "holiday", "event", "offer")
+
+
+def measured_campaign_lift(restaurant_id, db_path=DB_PATH):
+    """{lift_pct, n, source, basis} — THE measured effect of a guest text
+    campaign here: the campaign nights' own lift against their typical same
+    weekday (event_memory.campaign_effect), once it clears event_memory's
+    floor (`applies`); else None, and the assumed path stands. Before and
+    after, not proof.
+
+    One measurement (INT PRED-27, memory fix round 9/29/26): this read the
+    campaign outcome trackers' weekday_sales change over their multi-week
+    windows, which diluted a +30% campaign night to +0.2% — while the
+    forecast read event_memory's measurement of the night itself. Staffing,
+    the forecast and the campaign's own result now read the one figure. A
+    demo, test or internal restaurant's nights teach nothing
+    (models.learning_eligible)."""
+    try:
+        import models as _m_elig
+        if not _m_elig.learning_eligible(_m_elig.get_restaurant(restaurant_id, db_path)):
+            return None
+    except Exception:
+        return None
+    try:
+        import event_memory
+        e = event_memory.campaign_effect(restaurant_id, db_path=db_path)
+    except Exception:
+        return None
+    if not e or not e.get("applies"):
+        return None
+    return {"lift_pct": int(round(float(e["median_lift_pct"]))), "n": int(e["n"]), "source": "event_memory",
+            "basis": e.get("basis")}
+
+
+def record_marketing(restaurant_id, day, label, source, ref=None, menu_item_id=None, db_path=DB_PATH) -> bool:
+    """One marketing signal for a date: `source` "campaign" (a fill-a-night
+    text that went out) or "post" (a scheduled post about an occasion or a
+    dish). Idempotent per (date, label); the lift is measured or NULL."""
+    if source not in ("campaign", "post"):
+        raise ValueError(f"record_marketing: {source!r}")
+    try:
+        d = _d(day)
+    except (TypeError, ValueError, AttributeError):
+        return False
+    label = " ".join(str(label or "").split())[:120]
+    if not label:
+        return False
+    # No figure is baked into the row: a campaign night's lift is read live
+    # from the one measurement (measured_campaign_lift, by_date), so it
+    # follows every night event_memory measures after this one.
+    lift = None
+    conn = get_conn(db_path)
+    try:
+        conn.execute("INSERT INTO demand_signals (restaurant_id, date, kind, label, covers, lift_pct, source, "
+                     "created_by, ref, menu_item_id) VALUES (?,?,?,?,?,?,?,?,?,?) "
+                     "ON CONFLICT(restaurant_id, date, kind, label) DO UPDATE SET lift_pct=excluded.lift_pct, "
+                     "source=excluded.source, ref=excluded.ref, menu_item_id=excluded.menu_item_id",
+                     (restaurant_id, d, "event", label, None, (lift or {}).get("lift_pct"), source,
+                      "Cavnar AI (marketing)", (str(ref)[:60] if ref else None), menu_item_id))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def record_campaign(restaurant_id, target_day, sent, campaign_id=None, today=None, db_path=DB_PATH) -> bool:
+    """A fill-a-night campaign whose texts went out: a signal on the next
+    `target_day` (a weekday name) — "Text to 412 guests to fill Tuesday"."""
+    wd = str(target_day or "").strip().capitalize()
+    days = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+    if wd not in days or not int(sent or 0):
+        return False
+    if today is None:
+        try:
+            from time_utils import restaurant_now_by_id
+            today = restaurant_now_by_id(restaurant_id, naive=True).date()
+        except Exception:
+            today = date.today()
+    night = today + timedelta(days=(days.index(wd) - today.weekday()) % 7)
+    return record_marketing(restaurant_id, night, f"Text to {int(sent)} guests to fill {wd}", "campaign",
+                            ref=f"campaign:{campaign_id}" if campaign_id else None, db_path=db_path)
+
+
+def record_post(restaurant_id, scheduled_for, topic, body=None, platform=None, post_id=None, db_path=DB_PATH) -> bool:
+    """A scheduled post tagged with an occasion or a dish (marketing_tags.
+    infer): a signal on the post's date. A post about nothing in particular
+    writes nothing."""
+    try:
+        import marketing_tags
+        tags = marketing_tags.infer(restaurant_id, topic, body, db_path=db_path)
+    except Exception:
+        return False
+    occ, dish = tags.get("occasion"), tags.get("menu_item_name")
+    if occ not in MARKETING_OCCASIONS and not dish:
+        return False
+    what = dish or (marketing_tags.OCCASION_LABELS.get(occ) or occ)
+    where = f" on {platform.title()}" if platform else ""
+    label = f"Post{where}: {what}" + (f" ({str(topic).strip()[:50]})" if topic and str(topic).strip() and
+                                      str(topic).strip().lower() != str(what).lower() else "")
+    return record_marketing(restaurant_id, str(scheduled_for)[:10], label, "post",
+                            ref=f"post:{post_id}" if post_id else None, menu_item_id=tags.get("menu_item_id"),
+                            db_path=db_path)
+
+
 def parse_reservations_csv(text):
     """'date,covers' lines → rows of kind reservations. Header skipped."""
     rows = []
@@ -149,11 +279,42 @@ def typical_covers(restaurant_id, db_path=DB_PATH, weeks=8, before=None) -> dict
     return out
 
 
+def _measured(restaurant_id, label, db_path=DB_PATH):
+    """event_memory.measured_effect for an event's label (the first of its
+    labels with a record), or None. Never raises."""
+    try:
+        import event_memory
+        for lab in event_memory.split_labels(label):
+            got = event_memory.measured_effect(restaurant_id, lab, db_path=db_path)
+            if got:
+                return got
+    except Exception:
+        return None
+    return None
+
+
+def _campaign_measured(restaurant_id, db_path=DB_PATH):
+    """event_memory.campaign_effect in _measured's shape, gated like
+    measured_campaign_lift (a learning-eligible restaurant only), or None."""
+    try:
+        import models as _m_elig
+        if not _m_elig.learning_eligible(_m_elig.get_restaurant(restaurant_id, db_path)):
+            return None
+        import event_memory
+        return event_memory.campaign_effect(restaurant_id, db_path=db_path)
+    except Exception:
+        return None
+
+
 def by_date(restaurant_id, dates, db_path=DB_PATH) -> dict:
     """{date: {"lift_pct": int, "covers": int|None, "labels": [..]}} for the
     dates asked for. The lift is the strongest signal on the date: an
     explicit lift, else booked covers against that weekday's typical
-    covers (when known), else nothing."""
+    covers (when known), else the event's MEASURED lift here once it has
+    event_memory.EFFECT_MIN_N nights (`lift_source` "measured",
+    `measured_n`), else nothing — an event with no figure and no record is
+    `assumed`. Every event with a record carries it in `measured` so an
+    owner's own figure is said beside what was measured."""
     if not dates:
         return {}
     signals = upcoming(restaurant_id, min(dates), max(dates), db_path=db_path)
@@ -164,11 +325,28 @@ def by_date(restaurant_id, dates, db_path=DB_PATH) -> dict:
         if d not in dates:
             continue
         entry = out.setdefault(d, {"lift_pct": None, "covers": None, "labels": []})
-        entry["labels"].append(s["label"] + (f" ({s['covers']} covers)" if s.get("covers") else ""))
+        label = s["label"] + (f" ({s['covers']} covers)" if s.get("covers") else "")
         lift = s.get("lift_pct")
+        if s.get("kind") == "event" and str(s.get("source") or "") == "campaign":
+            # A fill-a-night text: the one campaign measurement (INT PRED-27).
+            measured = _campaign_measured(restaurant_id, db_path=db_path)
+        else:
+            measured = _measured(restaurant_id, s["label"], db_path=db_path) if s.get("kind") == "event" else None
+        if measured:
+            entry.setdefault("measured", []).append({
+                "label": s["label"], "median_lift_pct": measured["median_lift_pct"], "n": measured["n"],
+                "last": measured["last"].isoformat(), "applies": measured["applies"],
+                "owner_lift_pct": lift})
         if s.get("kind") == "event" and lift is None and not s.get("covers"):
-            entry["assumed"] = True
-            entry["assumed_lift_pct"] = ASSUMED_EVENT_LIFT_PCT
+            if measured and measured["applies"]:
+                lift = int(round(measured["median_lift_pct"]))
+                entry["lift_source"] = "measured"
+                entry["measured_n"] = max(entry.get("measured_n") or 0, measured["n"])
+                label += f" (measured {measured['n']} times here)"
+            else:
+                entry["assumed"] = True
+                entry["assumed_lift_pct"] = ASSUMED_EVENT_LIFT_PCT
+        entry["labels"].append(label)
         if lift is None and s.get("covers"):
             try:
                 day = date.fromisoformat(d).strftime("%A")
@@ -202,15 +380,29 @@ def prompt_block(signals_by_date: dict, week_dates: list) -> str:
             tail = (f" — expect about {lift}% more than a typical {day}" if lift > 0
                     else f" — expect about {abs(lift)}% less than a typical {day}" if lift < 0
                     else " — about a typical day")
+            if e.get("lift_source") == "measured":
+                tail += (f" (this restaurant's own measured median over {e.get('measured_n')} past nights like it — "
+                         "before and after, not proof)")
+            else:
+                seen = [m for m in e.get("measured") or [] if m.get("owner_lift_pct") is not None]
+                if seen:
+                    m = seen[0]
+                    tail += (f"; the same kind of night measured {m['median_lift_pct']:+.0f}% here over "
+                             f"{m['n']} past night{'s' if m['n'] != 1 else ''}")
         elif e.get("covers"):
             tail = f" — {e['covers']} covers booked"
         elif e.get("assumed"):
             tail = (f" — no covers or lift given; ASSUMED busier (about {e.get('assumed_lift_pct')}% is an "
                     f"assumption, not a figure) — staff it as a normal busy {day}, not above it")
-        lines.append(f"  {day} {d}: {what}{tail}")
+        # The labels are the owner's words (an event they named, a post's
+        # dish) and the date is M/D/YY (memory reaching a prompt, 9/29/26).
+        import ai_guard
+        from time_utils import mdy
+        lines.append(f"  {day} {mdy(d)}: {ai_guard.wrap_untrusted(what)}{tail}")
     if not lines:
         return ""
-    return ("\n\nWHAT THE OWNER KNOWS ABOUT SPECIFIC DATES (events and reservations, entered by them — "
+    return ("\n\nWHAT THE OWNER KNOWS ABOUT SPECIFIC DATES (events and reservations they entered, and the "
+            "texts or posts they sent to fill a night — "
             "a stronger signal than the weekday averages above for the date it names; scale that day's "
             "headcount by roughly the lift stated, proportionally across roles, and say so in the summary):\n"
             + "\n".join(lines))

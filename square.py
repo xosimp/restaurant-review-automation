@@ -262,13 +262,19 @@ def build_shifts_csv(restaurant_id: int, days: int = 60) -> Optional[str]:
             "actual_hours":     hours,
             "sales":            daily_sale,
             "notes":            "",
+            # The team member's Square id (memory audit 9/29/26, identity);
+            # Square's timecards carry no schedule.
+            "employee_ext_id":  tid,
+            "employee_named":   "1" if tid in team else "0",
+            "schedule_known":   "0",
         })
 
     if not rows:
         return None
 
     out = io.StringIO()
-    w = csv.DictWriter(out, fieldnames=["date","day","employee","role","shift_start","shift_end","scheduled_hours","actual_hours","sales","notes"])
+    w = csv.DictWriter(out, fieldnames=["date","day","employee","role","shift_start","shift_end","scheduled_hours","actual_hours","sales","notes",
+                                        "employee_ext_id","employee_named","schedule_known"])
     w.writeheader()
     w.writerows(rows)
     return out.getvalue()

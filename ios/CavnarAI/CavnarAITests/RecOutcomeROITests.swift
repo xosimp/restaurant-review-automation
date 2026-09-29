@@ -64,8 +64,10 @@ final class RecOutcomeROITests: XCTestCase {
             {"type": "labor_overtime", "module": "labor", "title": "Overtime this week", "detail": "2 people",
              "rec_key": "labor_overtime:2026-09-21", "dismissable": true, "times_hidden": 1}
             """)
-        let ok = await vm.answerAttention(item, kind: "not_for_us", reasonCode: RecReason.alreadyDoing.code)
-        XCTAssertTrue(ok)
+        // The line to show once the server has it (its `message`, else the
+        // local words); nil only when it did not save.
+        let said = await vm.answerAttention(item, kind: "not_for_us", reasonCode: RecReason.alreadyDoing.code)
+        XCTAssertNotNil(said)
         XCTAssertEqual(captured.value?["key"] as? String, "labor_overtime:2026-09-21")
         XCTAssertEqual(captured.value?["kind"] as? String, "not_for_us")
         XCTAssertEqual(captured.value?["reason_code"] as? String, "already_doing")
@@ -428,7 +430,7 @@ final class RecOutcomeROITests: XCTestCase {
         XCTAssertEqual(page.items[0].answerLabel, "Made the change")
         XCTAssertTrue(page.items[0].wasTaken)
         XCTAssertEqual(page.items[0].trackerId, 7)
-        XCTAssertEqual(page.items[1].answerLabel, "Passed")
+        XCTAssertEqual(page.items[1].answerLabel, "Not for us")
         XCTAssertEqual(page.items[1].reasonLine, "Too costly \u{2014} tried it in spring")
         XCTAssertFalse(page.items[1].wasTaken)
         XCTAssertEqual(page.items[2].answerLabel, "Went unanswered")

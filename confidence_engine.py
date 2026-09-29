@@ -461,11 +461,20 @@ def accuracy(record) -> dict:
     r = record or {}
     measured, improved = int(r.get("measured") or 0), int(r.get("improved") or 0)
     improved = max(0, min(improved, measured))
+    # Below its own floor a kind may stand on the results of every kind
+    # pulling the same lever here (rec_learning kind_record `pooled`, memory
+    # audit 9/29/26): the same Beta read, the same shrinkage, said as pooled.
+    pool = r.get("pooled") if isinstance(r.get("pooled"), dict) else None
+    pooled = bool(measured < MIN_MEASURED and pool and int(pool.get("measured") or 0) >= MIN_MEASURED)
+    own_m, own_i = measured, improved
+    if pooled:
+        measured = int(pool["measured"])
+        improved = max(0, min(int(pool.get("improved") or 0), measured))
     dn = do_nothing(r)
     centre = dn["rate"]
     c_centre, pm, pi = _cohort_centre(r, dn["rate"])
-    if measured < MIN_MEASURED or r.get("source") not in ("own", "cohort") or \
-            (r.get("source") == "cohort" and measured < MIN_MEASURED):
+    if not pooled and (measured < MIN_MEASURED or r.get("source") not in ("own", "cohort") or
+                       (r.get("source") == "cohort" and measured < MIN_MEASURED)):
         basis = f"Not enough history yet — {measured} measured, needs {MIN_MEASURED}"
         if c_centre is not None:
             basis += f" ({r.get('prior_label') or 'other restaurants on Cavnar AI'}: {pi} of {pm} improved — not counted until your own are in)"
@@ -475,14 +484,32 @@ def accuracy(record) -> dict:
         return {"pct": None, "basis": basis, "n": measured, "improved": improved,
                 "source": "cohort" if c_centre is not None else "none", "low": None, "high": None,
                 "lift": None, "prior": None,
-                "cohort_label": (r.get("prior_label") or None) if c_centre is not None else None}
+                "cohort_label": (r.get("prior_label") or None) if c_centre is not None else None,
+                # The prior ladder (memory audit PLATFORM-1): which named group
+                # the cohort figure came from, and "confirm_profile" when
+                # confirming the restaurant profile would unlock a finer one.
+                "prior_rung": r.get("prior_rung") if c_centre is not None else None,
+                "prior_unlock": r.get("prior_unlock")}
     prior_source = "do_nothing"
     if c_centre is not None and c_centre < centre:
         # Peers saw this kind do WORSE than chance: the prior may sit lower.
         # Never higher — a peer's success is not this restaurant's.
         centre, prior_source = c_centre, "cohort"
-    at = centre * SHRINK_K + improved
-    bt = (1.0 - centre) * SHRINK_K + (measured - improved)
+    # Each result counts by its age (rec_learning.decay_weight — memory
+    # audit 9/29/26, PLATFORM-11): the record's measured_eff / improved_eff
+    # when it carries them, else the plain counts. A weight is at most 1, so
+    # decay only ever weakens the evidence — it never re-inflates a short
+    # recent run. The floor and the words stay on the plain counts.
+    me, ie = float(measured), float(improved)
+    try:
+        m_eff, i_eff = r.get("measured_eff"), r.get("improved_eff")
+        if m_eff is not None and i_eff is not None and float(m_eff) > 0:
+            me = min(float(m_eff), float(measured))
+            ie = max(0.0, min(float(i_eff), me))
+    except (TypeError, ValueError):
+        me, ie = float(measured), float(improved)
+    at = centre * SHRINK_K + ie
+    bt = (1.0 - centre) * SHRINK_K + (me - ie)
     p = p_greater(at, bt, dn["alpha"], dn["beta"])
     pct = int(max(ACCURACY_BOUNDS[0], min(ACCURACY_BOUNDS[1], round(100.0 * p))))
     lo, hi = wilson(improved, measured)
@@ -491,20 +518,25 @@ def accuracy(record) -> dict:
     else:
         vs = f"vs about {int(round(100 * dn['rate']))}% by chance"
     basis = f"improved {improved} of {measured} times {vs}"
+    if pooled:
+        basis = (f"improved {improved} of {measured} times across your {pool.get('label') or 'related'} advice "
+                 f"here {vs} (this kind alone: {own_i} of {own_m})")
     if prior_source == "cohort":
         # The one time peers move the figure — only ever DOWN — the owner is
         # told why (BM3-12, Top-50 #32).
         basis += (f" — {r.get('prior_label') or 'other restaurants on Cavnar AI'} saw this rarely help "
                   f"({pi} of {pm}), which lowers it")
-    return {"pct": pct, "basis": basis, "n": measured, "improved": improved, "source": "own",
+    return {"pct": pct, "basis": basis, "n": measured, "improved": improved, "source": "pooled" if pooled else "own",
             "low": int(round(lo * 100)), "high": int(round(hi * 100)),
             "p_beats": round(p, 4), "beats_label": f"{pct}% likely to beat doing nothing",
             "lift": {"improved": improved, "n": measured, "rate": round(improved / float(measured), 3),
                      "untaken_improved": dn["untaken_improved"], "untaken_n": dn["untaken_n"],
                      "do_nothing_rate": round(dn["rate"], 3), "source": dn["source"]},
             "prior": {"source": prior_source, "centre": round(centre, 3), "weight": SHRINK_K,
-                      "cohort_measured": pm or None, "cohort_improved": pi if pm else None},
-            "cohort_label": (r.get("prior_label") or None) if prior_source == "cohort" else None}
+                      "cohort_measured": pm or None, "cohort_improved": pi if pm else None,
+                      "rung": r.get("prior_rung") if pm else None},
+            "cohort_label": (r.get("prior_label") or None) if prior_source == "cohort" else None,
+            "prior_unlock": r.get("prior_unlock")}
 
 
 def recency(lag_days, grace_days, horizon_days):

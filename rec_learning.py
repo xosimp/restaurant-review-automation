@@ -68,8 +68,44 @@ CLEAR_VERDICTS = ("improved", "worsened", "no_clear_change")
 INFORMATIONAL_PREFIX = "observed:alert_"
 INFORMATIONAL_PREFIXES = (INFORMATIONAL_PREFIX, "observed:supplier_order_sent:", "observed:untaken:")
 
-# The effectiveness model (see the module docstring).
-EFFECT_WINDOW_DAYS = 365
+# ── one window rule, with decay (memory audit 9/29/26, PLATFORM-11) ────────
+# A hard 365-day window dropped everything the model knew about once-a-year
+# advice just as it came back, and counted three years of results the same
+# as one. Every learner — the rankers (Effectiveness), Historical Accuracy
+# (kind_record → confidence_engine), the cross-restaurant priors (scoring,
+# `decay`) and Ask's memory (intelligence.memory) — now reads ONE window,
+# DECAY_HORIZON_DAYS, and weighs each episode by decay_weight: an
+# exponential half-life per kind (by what it pulls on), same-season
+# weighting for a seasonal kind (last December's holiday result counts
+# almost fully this December), tapering to nothing at the horizon so no
+# result falls off a cliff. The horizon sits inside the ledger's retention
+# (ops._RETENTION_DAYS["rec_events"], 800 days — a test holds it): the
+# answers behind an older episode are pruned, so it could not be read.
+DECAY_HORIZON_DAYS = 730
+DECAY_TAPER_DAYS = 120
+DEFAULT_HALF_LIFE_DAYS = 365
+# Marketing and guest-facing tactics wear out faster than how a restaurant
+# staffs, prices or orders (rec_ledger.KIND_TOPIC's topics).
+TOPIC_HALF_LIFE_DAYS = {"posting": 180, "marketing": 180, "guest_outreach": 180, "replies": 180, "sales": 180,
+                        "competition": 180, "visibility": 180, "guest_experience": 270}
+# Advice tied to a time of year: a result from the same season a year back
+# weighs SEASONAL_YEAR_WEIGHT (per year); out of season, the kind's decay.
+SEASONAL_KINDS = ("holiday_promo",)
+SEASON_WINDOW_DAYS = 35
+SEASONAL_YEAR_WEIGHT = 0.85
+# What the model counts under: bump with any change to how it weighs. It is
+# logged with every ranking it moves (rec_ledger's shown meta and
+# rec_rank_builds — memory audit 9/29/26, "rank_log"), so "did the model
+# raise acceptance?" can be read per version.
+# 2: decay instead of the 365-day cutoff, and the prior ladder (9/29/26).
+# 3: the owner's reasons as bounded penalties (too costly, doesn't fit),
+#    answers read per side (a delegate's never the owner's; an admin's
+#    view-as nobody's), and the advice signature's "sig:" bucket (9/29/26).
+EFFECTIVENESS_VERSION = 3
+
+# The effectiveness model (see the module docstring). The load window is the
+# decay horizon (kept under this name for rec_trust.Context).
+EFFECT_WINDOW_DAYS = DECAY_HORIZON_DAYS
 SHRINK_K = 5                   # pseudo-observations pulling a rate to its prior
 # How much a point of each moves the weight. Acceptance is what the owner
 # LIKES, and rank decides exposure, which drives acceptance: a loop (CA2
@@ -81,9 +117,9 @@ MIN_WEIGHT, MAX_WEIGHT = 0.75, 1.25
 # A kind with no record here may be ranked with help from similar
 # restaurants' results, within these bounds only (BM3-12, Top-50 #32).
 COLD_PRIOR_BOUNDS = (0.9, 1.1)
-# The cohort record a prior reads: the last PRIOR_WINDOW_DAYS only
+# The cohort record a prior reads: the same horizon, decayed
 # (intelligence.scoring.PRIOR_WINDOW_DAYS; a test holds them in step).
-PRIOR_WINDOW_DAYS = 365
+PRIOR_WINDOW_DAYS = DECAY_HORIZON_DAYS
 # The upward ceiling scales with the LOWER end of the 90% Wilson interval of
 # this restaurant's own measured success for the kind (or its best subject
 # tag) above the prior: 3 of 3 (lower bound 0.53) allows about 1.01, 30 of
@@ -119,9 +155,67 @@ BASE_RATE_BOUNDS = (0.02, 0.5)
 # ADDITIONAL figure (kind_record `rate_recent`); `rate` is unchanged.
 RECENT_HALF_LIFE_DAYS = 90
 
+# What the owner's reasons teach the ranker (memory audit 9/29/26,
+# "reasons"): "too costly" is a bounded, decaying ease penalty on the KIND,
+# "doesn't fit us" a bounded, decaying decline weight on the subject's TAGS
+# (topic, focus) — so five "too costly" answers no longer leave the costly
+# cards ranked first. Each answer takes REASON_STEP off, at most REASON_CAP,
+# halving every REASON_HALF_LIFE_DAYS. Only the viewer's own side counts: a
+# principal's for the owner's ranking; a delegate's for the delegate's.
+REASON_STEP, REASON_CAP = 0.05, 0.15
+REASON_HALF_LIFE_DAYS = 90
+# The states an episode can be in that count in no rate: replaced, still
+# live, snoozed, put off for timing ("bad timing"), or answered only by a
+# delegate the owner has not answered (from the owner's side).
+UNSETTLED_STATES = ("superseded", "open", "snoozed", "deferred", "delegated")
+
 
 def _stamp(d):
     return d.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def half_life_days(kind, key=None) -> float:
+    """The decay half-life of a recommendation kind (by its topic)."""
+    try:
+        topic = rec_ledger._topic_of(str(kind or ""), str(key or kind or ""))
+    except Exception:
+        topic = None
+    return float(TOPIC_HALF_LIFE_DAYS.get(topic, DEFAULT_HALF_LIFE_DAYS))
+
+
+def _age(at, now):
+    t = rec_ledger._stamp(at)
+    if not t:
+        return None
+    try:
+        return max(0.0, (now - datetime.strptime(t, "%Y-%m-%d %H:%M:%S")).total_seconds() / 86400.0)
+    except (TypeError, ValueError):
+        return None
+
+
+def decay_weight(kind, at, now=None, key=None) -> float:
+    """How much one episode or result of `kind` dated `at` counts now, 0–1
+    (module constants above): the kind's half-life; for a SEASONAL_KINDS
+    kind within SEASON_WINDOW_DAYS of the same date a year back,
+    SEASONAL_YEAR_WEIGHT per year instead; tapered to 0 over the last
+    DECAY_TAPER_DAYS before DECAY_HORIZON_DAYS. An undated one counts
+    fully (the old window's reading of it). Pure."""
+    now = now or datetime.utcnow()
+    age = _age(at, now)
+    if age is None:
+        return 1.0
+    if age >= DECAY_HORIZON_DAYS:
+        return 0.0
+    k = str(kind or "").split(":", 1)[0]
+    years = int(round(age / 365.25))
+    if k in SEASONAL_KINDS and years >= 1 and abs(age - years * 365.25) <= SEASON_WINDOW_DAYS:
+        w = SEASONAL_YEAR_WEIGHT ** years
+    else:
+        w = 0.5 ** (age / half_life_days(kind, key))
+    edge = DECAY_HORIZON_DAYS - DECAY_TAPER_DAYS
+    if age > edge:
+        w *= max(0.0, (DECAY_HORIZON_DAYS - age) / float(DECAY_TAPER_DAYS))
+    return round(w, 6)
 
 
 def wilson(k, n, z=_Z90):
@@ -228,6 +322,9 @@ def viewer_sees(viewer, row) -> bool:
 
 # ── episodes, as the readers below need them ────────────────────────────────
 
+# rec_events columns the readers fold in; `authority` (memory audit
+# 9/29/26) says whose answer each is.
+_EVENT_COLS = "rec_id, event, surface, meta, at, authority"
 _TRACKER_COLS = ("id, status, verdict, dollars_monthly, evaluate_on, started_on, metric, after_start, "
                  "after_end, recheck_verdict, owner_checkin, source_key")
 # outcomes._ADDED_COLUMNS the learning reads (CA2 #1): a result measured
@@ -262,14 +359,19 @@ def _tracker_rows(conn, rid, tids):
     return out
 
 
-def _load(conn, rid, since=None, before=None, limit=None, order_desc=False, rec_ids=None, lean=False):
+def _load(conn, rid, since=None, before=None, limit=None, order_desc=False, rec_ids=None, lean=False,
+          perspective="principal"):
     """Episodes of this restaurant (bookkeeping keys excluded) with their
     events folded in. `before` is a (created_at, rec_id) cursor.
 
     `lean` is for the effectiveness model, which reads a year of episodes
     on every Home build: the `shown` rows — most of the trail, one per
     surface per day — are not loaded, only whether each episode has one
-    (re-audit B18); `surfaces` is then empty."""
+    (re-audit B18); `surfaces` is then empty.
+
+    `perspective` is whose answers decide each episode's state (_state):
+    "principal" (the owner's view — the default) or "delegate" (a manager's
+    own view). An admin's view-as answer decides nothing either way."""
     where, args = ["restaurant_id=?"], [rid]
     if since:
         where.append("created_at >= ?")
@@ -297,14 +399,14 @@ def _load(conn, rid, since=None, before=None, limit=None, order_desc=False, rec_
         chunk = ids[i:i + 400]
         marks = ",".join("?" for _ in chunk)
         if lean:
-            for e in conn.execute(f"SELECT rec_id, event, surface, meta, at FROM rec_events WHERE rec_id IN ({marks}) "
+            for e in conn.execute(f"SELECT {_EVENT_COLS} FROM rec_events WHERE rec_id IN ({marks}) "
                                   f"AND event != 'shown' ORDER BY at, id", chunk).fetchall():
                 evs.setdefault(e["rec_id"], []).append(dict(e))
             for e in conn.execute(f"SELECT DISTINCT rec_id FROM rec_events WHERE rec_id IN ({marks}) "
                                   f"AND event = 'shown'", chunk).fetchall():
                 shown.add(e["rec_id"])
         else:
-            for e in conn.execute(f"SELECT rec_id, event, surface, meta, at FROM rec_events WHERE rec_id IN "
+            for e in conn.execute(f"SELECT {_EVENT_COLS} FROM rec_events WHERE rec_id IN "
                                   f"({marks}) ORDER BY at, id", chunk).fetchall():
                 evs.setdefault(e["rec_id"], []).append(dict(e))
     trackers = {}
@@ -321,7 +423,7 @@ def _load(conn, rid, since=None, before=None, limit=None, order_desc=False, rec_
         r["shown"] = (r["rec_id"] in shown) if lean else any(e["event"] == "shown" for e in es)
         r["surfaces"] = sorted({e["surface"] for e in es if e["event"] == "shown" and e["surface"]})
         r["tag_list"] = rec_ledger.episode_tags(r)
-        r["state"] = _state(r, now)
+        r["state"] = _state(r, now, perspective)
         r["verdict"], r["verdict_at"] = _verdict(r, es, trackers.get(r.get("tracker_id")))
         r["tracker"] = trackers.get(r.get("tracker_id"))
     return rows
@@ -334,23 +436,52 @@ def _meta(e):
         return {}
 
 
-def _state(r, now):
+def _authority(e) -> str:
+    """Whose answer an event is: principal (also every answer from before
+    authority was recorded — production's were all a co-owner's), delegate
+    or admin."""
+    a = (e or {}).get("authority")
+    return a if a in ("delegate", "admin") else "principal"
+
+
+def _delegate_declined(r) -> bool:
+    return any(e["event"] in ("dismissed", "snoozed") and _authority(e) == "delegate" for e in r.get("events") or ())
+
+
+def _state(r, now, perspective="principal"):
     """accepted | completed | implemented | dismissed | ignored | superseded |
-    snoozed | open — what the episode amounts to now. A taken episode whose
-    change was actually made reads implemented whichever answer took it (a
-    reprice is answered and applied in one step)."""
+    snoozed | deferred | delegated | open — what the episode amounts to now.
+    A taken episode whose change was actually made reads implemented
+    whichever answer took it (a reprice is answered and applied in one
+    step).
+
+    deferred   a "bad timing" answer (silence_rule bad_timing): put off,
+               in no denominator (memory audit, "reasons").
+    delegated  from the owner's side, an episode only a delegate answered
+               (their decline held for them alone): the owner did not
+               ignore it — they left it with the manager — so it counts in
+               no rate of theirs. From the delegate's side it is their
+               dismissal ("who_answered")."""
     st = r["status"]
     if st in rec_ledger.TAKEN_STATUSES and r.get("implemented_at"):
         return "implemented"
+    if st == "dismissed" and str(r.get("silence_rule") or "") == "bad_timing":
+        return "deferred"
     if st in ("accepted", "completed", "implemented", "dismissed", "superseded"):
         return st
     if st == "expired":
-        return "ignored"
-    if r.get("snoozed_until") and r["snoozed_until"] > _stamp(now):
-        return "snoozed"
-    if rec_ledger.is_stale(r, now=now):
-        return "ignored"
-    return "open"
+        base = "ignored"
+    elif r.get("snoozed_until") and r["snoozed_until"] > _stamp(now):
+        base = "snoozed"
+    elif rec_ledger.is_stale(r, now=now):
+        base = "ignored"
+    else:
+        base = "open"
+    if base in ("ignored", "open") and _delegate_declined(r):
+        if perspective == "delegate":
+            return "dismissed"
+        return "delegated" if base == "ignored" else base
+    return base
 
 
 def _confounded(tr) -> bool:
@@ -636,12 +767,14 @@ def _cursor(before):
 
 def _answer_event(r):
     """The event that gave the episode its state, or None."""
-    want = {"accepted": ("accepted",), "completed": ("completed",), "implemented": ("implemented", "accepted"),
-            "dismissed": ("dismissed",), "snoozed": ("snoozed",)}.get(r["state"])
+    want = {"accepted": ("accepted",), "completed": ("completed", "dismissed"),
+            "implemented": ("implemented", "accepted"), "dismissed": ("dismissed",), "deferred": ("dismissed",),
+            "snoozed": ("snoozed",)}.get(r["state"])
     if not want:
         return None
     for e in reversed(r["events"]):
-        if e["event"] in want:
+        # An admin's view-as answer never decided an episode (view_as).
+        if e["event"] in want and _authority(e) != "admin":
             return e
     return None
 
@@ -712,32 +845,78 @@ def timeline(restaurant_id, limit=30, before=None, viewer=None, db_path=DB_PATH)
 class Effectiveness:
     """This restaurant's learned weight for a recommendation — see the
     module docstring. `weight(key)` returns (weight, why); 1.0 and no
-    reasons when nothing has been learned."""
+    reasons when nothing has been learned.
 
-    def __init__(self, restaurant_id, episodes, cohort=None, db_path=DB_PATH, now=None, base_rates=None):
+    Every episode inside DECAY_HORIZON_DAYS counts, weighed by
+    decay_weight (the `*_w` sums; the plain counts stay for the words), and
+    the prior a kind is weighed against comes from the finest rung of the
+    prior ladder that clears the floors (prior_rungs; memory audit
+    PLATFORM-1): the confirmed concept, then the confirmed partition of the
+    kind's metric family, then — a behaviour kind only, and only as a
+    ranking weight — every restaurant on Cavnar AI. prior_rung(kind) says
+    which rung was read; weight_detail(key) carries it for the shown log.
+
+    `perspective` is whose answers it learns from (memory audit 9/29/26,
+    who_answered): "principal" — the owner's own; a manager's decline is
+    never the owner's rejection — or "delegate", a manager's view where the
+    principal's answer still outranks theirs. The owner's reasons move it
+    too: "too costly" and "doesn't fit us" are bounded, decaying penalties
+    (reason_penalties)."""
+
+    def __init__(self, restaurant_id, episodes, cohort=None, db_path=DB_PATH, now=None, base_rates=None,
+                 profile=None, perspective="principal"):
         self.rid = restaurant_id
         self.cohort = cohort
+        self.profile = profile
         self.db_path = db_path
         self.now = now or datetime.utcnow()
+        self.perspective = perspective
+        self.version = EFFECTIVENESS_VERSION
         self._priors = {}
         self._cold = {}
+        self._rungs = {}
         self._base_rates = base_rates
         self.kinds, self.tags = {}, {}
         self.worse_keys, self.worse_kinds = {}, {}
         self.calibration = {}
         self.calibration_realised = {}
+        # The owner's reasons (REASON_*): ages of "too costly" answers by
+        # kind, of "doesn't fit us" answers by topic / focus tag.
+        self.costly_kinds, self.unfit_tags = {}, {}
+        sides = ("principal", "delegate") if perspective == "delegate" else ("principal",)
         clear_eps = {}
         for e in episodes:
-            if not e["shown"] or e["state"] in ("superseded", "open", "snoozed"):
+            for ev in e.get("events") or ():
+                if ev["event"] != "dismissed" or _authority(ev) not in sides:
+                    continue
+                code = _meta(ev).get("reason_code")
+                age = self._age_days(ev.get("at"))
+                if code == "too_costly":
+                    self.costly_kinds.setdefault(e["kind"] or rec_ledger.kind_of(e["key"]), []).append(age)
+                elif code == "doesnt_fit":
+                    for t in e["tag_list"]:
+                        if t.startswith(("topic:", "focus:")):
+                            self.unfit_tags.setdefault(t, []).append(age)
+            if not e["shown"] or e["state"] in UNSETTLED_STATES:
                 continue
             kind = e["kind"] or rec_ledger.kind_of(e["key"])
+            w = decay_weight(kind, e.get("closed_at") or e.get("last_event_at") or e.get("created_at"), self.now,
+                             key=e.get("key"))
+            if w <= 0:
+                continue
             for bucket, name in ((self.kinds, kind),
                                  *((self.tags, t) for t in e["tag_list"] if t.startswith(
-                                     ("topic:", "focus:", "category:", "dish:", "item:", "daypart:")))):
-                s = bucket.setdefault(name, {"taken": 0, "settled": 0, "improved": 0, "measured": 0})
+                                     ("topic:", "focus:", "category:", "dish:", "item:", "daypart:", "sig:")))):
+                # `worsened` (a count, like measured and improved) is what
+                # held() reads (memory audit 9/29/26, "thresholds").
+                s = bucket.setdefault(name, {"taken": 0, "settled": 0, "improved": 0, "measured": 0,
+                                             "worsened": 0,
+                                             "taken_w": 0.0, "settled_w": 0.0, "improved_w": 0.0, "measured_w": 0.0})
                 s["settled"] += 1
+                s["settled_w"] += w
                 if _taken(e):
                     s["taken"] += 1
+                    s["taken_w"] += w
                     if e["verdict"] in CLEAR_VERDICTS:
                         clear_eps.setdefault((id(bucket), name), (s, []))[1].append(e)
         # One result per change (re-audit B2 #7): the measured results of a
@@ -748,6 +927,11 @@ class Effectiveness:
             kept = [e for e in _one_per_window(eps) if e["verdict"] in CLEAR_VERDICTS]
             s["measured"] = len(kept)
             s["improved"] = sum(1 for e in kept if e["verdict"] == "improved")
+            s["worsened"] = sum(1 for e in kept if e["verdict"] == "worsened")
+            ws = [(decay_weight(e["kind"] or rec_ledger.kind_of(e["key"]), e.get("verdict_at") or e.get("created_at"),
+                                self.now, key=e.get("key")), e) for e in kept]
+            s["measured_w"] = sum(w for w, _e in ws)
+            s["improved_w"] = sum(w for w, e in ws if e["verdict"] == "improved")
             if bid != id(self.kinds):
                 continue
             for e in kept:
@@ -761,6 +945,36 @@ class Effectiveness:
                     if tr.get("dollars_monthly") is not None or e["verdict"] == "no_clear_change":
                         self.calibration.setdefault(name, []).append(realised / float(e["dollar_value"]))
                         self.calibration_realised.setdefault(name, []).append(realised)
+
+    # ── stop proposing and ask (memory audit 9/29/26, "thresholds") ─────────
+    kept_kinds = frozenset()
+
+    def held(self, kind):
+        """{"kind", "measured", "improved", "worsened", "upper", "harm_low",
+        "do_nothing", "why"} when this restaurant's own record says to STOP
+        proposing the kind and ask the owner instead — at least
+        MIN_MEASURED_FOR_RATE measured results, and either the upper end of
+        its 90% interval of success sits below the do-nothing rate, or the
+        lower end of its interval of HARM sits above it (it keeps making
+        things worse). None otherwise, or when the owner said to keep it
+        (kept_kinds, KIND_HOLD_KEEP_DAYS)."""
+        ks = self.kinds.get(kind)
+        if not ks or ks.get("measured", 0) < MIN_MEASURED_FOR_RATE or kind in self.kept_kinds:
+            return None
+        n = ks["measured"]
+        _lo, up = wilson(ks["improved"], n)
+        harm_lo, _hi = wilson(ks.get("worsened", 0), n)
+        dn = self.base_rate(kind)
+        if up is not None and up < dn:
+            why = f"improved {ks['improved']} of {n} measured here — no better than doing nothing"
+        elif harm_lo is not None and harm_lo > dn:
+            why = f"measured worse {ks.get('worsened', 0)} of {n} times here"
+        else:
+            return None
+        return {"kind": kind, "measured": n, "improved": ks["improved"], "worsened": ks.get("worsened", 0),
+                "upper": round(up, 3) if up is not None else None,
+                "harm_low": round(harm_lo, 3) if harm_lo is not None else None,
+                "do_nothing": round(dn, 3), "why": why}
 
     def _age_days(self, at):
         t = rec_ledger._stamp(at)
@@ -780,71 +994,107 @@ class Effectiveness:
         return base_rate_from(self._base_rates, kind)["rate"]
 
     def prior(self, kind):
-        """(acceptance prior, success prior) for a kind: the cohort's rates
-        when the cohort clears MIN_COHORT (asserted anonymous) — its success
-        rate over the capped counts (no one restaurant above scoring.
-        MAX_RESTAURANT_SHARE of it) shrunk toward this kind's base rate —
-        else even acceptance and the BASE RATE for success (re-audit B2 #7:
-        a success prior of 0.5 ranked a never-measured kind above one that
-        measurably worked)."""
+        """(acceptance prior, success prior) for a kind: each from the finest
+        rung of prior_rungs whose OWN population clears the floors — the
+        acceptance rate over MIN_COHORT answering restaurants from MIN_ORGS
+        organisations, the success rate over MIN_COHORT measuring
+        restaurants from MIN_ORGS organisations AND PRIOR_MIN_MEASURED
+        capped results (asserted anonymous) — its decayed success over the
+        capped counts (no one organisation above scoring.MAX_RESTAURANT_SHARE
+        of it) shrunk toward this kind's base rate; else even acceptance
+        and the BASE RATE for success (re-audit B2 #7: a success prior of
+        0.5 ranked a never-measured kind above one that measurably worked).
+        The rung each came from is prior_rung(kind)."""
         if kind in self._priors:
             return self._priors[kind]
-        acc = 0.5
-        suc = self.base_rate(kind)
-        if self.cohort:
+        acc, suc = 0.5, self.base_rate(kind)
+        used = {"acceptance": None, "success": None, "label": None}
+        for rung, kw, label in prior_rungs(kind, self.cohort, self.profile):
+            if used["acceptance"] and used["success"]:
+                break
             try:
                 import intelligence
                 from intelligence import privacy
-                # The cohort WITHOUT this restaurant — its own record is
-                # weighed against the prior, never counted inside it — and
-                # each rate only over the restaurants that contributed to it:
-                # five restaurants that let one card expire are no floor for a
-                # success rate one restaurant measured (re-audit B3).
-                s = intelligence.recommendation_success(kind, cohort=self.cohort, db_path=self.db_path,
-                                                        exclude_restaurant_id=self.rid,
-                                                        window_days=PRIOR_WINDOW_DAYS)
+                # The group WITHOUT this restaurant's organisation — its own
+                # record is weighed against the prior, never counted inside
+                # it — and each rate only over the restaurants that
+                # contributed to it (re-audit B3).
+                s = intelligence.recommendation_success(kind, db_path=self.db_path, exclude_restaurant_id=self.rid,
+                                                        window_days=PRIOR_WINDOW_DAYS, decay=True, **kw)
                 privacy.assert_anonymous(s)
-                if s.get("answered") and s.get("acceptance_available"):
-                    acc = float(s.get("acceptance_rate_shrunk") or 0.5)
-                if s.get("measured") and s.get("success_available"):
-                    pm = float(s.get("measured_capped", s.get("measured")) or 0.0)
-                    pi = float(s.get("improved_capped", s.get("improved")) or 0.0)
-                    suc = _shrink(pi / pm if pm else None, pm, suc)
             except Exception as e:
-                print(f"[rec_learning] cohort prior unavailable for {kind}: {e}")
+                print(f"[rec_learning] {rung} prior unavailable for {kind}: {e}")
+                continue
+            if used["acceptance"] is None and s.get("answered") and s.get("acceptance_available"):
+                a = s.get("acceptance_rate_decayed_shrunk")
+                acc = float(a if a is not None else (s.get("acceptance_rate_shrunk") or 0.5))
+                used["acceptance"] = rung
+                used["label"] = used["label"] or label
+            capped = float(s.get("measured_capped", s.get("measured")) or 0.0)
+            if (used["success"] is None and s.get("measured") and s.get("success_available")
+                    and capped >= PRIOR_MIN_MEASURED):
+                pm = s.get("measured_decayed")
+                pi = s.get("improved_decayed")
+                if pm is None:
+                    pm, pi = capped, float(s.get("improved_capped", s.get("improved")) or 0.0)
+                pm, pi = float(pm or 0.0), float(pi or 0.0)
+                suc = _shrink(pi / pm if pm else None, pm, suc)
+                used["success"] = rung
+                used["label"] = label
         self._priors[kind] = (acc, suc)
+        self._rungs[kind] = used
         return acc, suc
 
+    def prior_rung(self, kind) -> dict:
+        """{acceptance, success, label, cold} — the prior ladder rung each
+        figure of this kind's prior was read from (concept | partition |
+        platform, or None: even acceptance, the base rate), and the rung a
+        cold-start ranking borrowed from. What the shown log records beside
+        the weight (PLATFORM-1/3)."""
+        if kind not in self._rungs:
+            self.prior(kind)
+        out = dict(self._rungs.get(kind) or {})
+        cold = self._cold.get(kind)
+        out["cold"] = (cold or {}).get("rung")
+        out["unlock"] = None if (self.profile or {}).get("confirmed") else "confirm_profile"
+        return out
+
     def cold_prior(self, kind):
-        """{weight, restaurants, rate} for a kind this restaurant has no
-        record of, from intelligence.scoring.similar_prior (the cohort's
-        other restaurants, weighted by DNA similarity and recency, capped
-        per restaurant, over the privacy floors) — or None. The weight is
+        """{weight, restaurants, rate, rung} for a kind this restaurant has
+        no record of, from intelligence.scoring.similar_prior over the
+        finest rung of prior_rungs that clears the floors (DNA similarity ×
+        decay, capped per organisation) — or None. The weight is
         1 + W_SUCCESS × (shrunk rate − this kind's do-nothing rate), held
         to COLD_PRIOR_BOUNDS: peers can nudge the order of a new kind's
         cards, never decide it."""
         if kind in self._cold:
             return self._cold[kind]
         out = None
-        if self.cohort:
+        from intelligence import scoring as _scoring
+        for rung, kw, label in prior_rungs(kind, self.cohort, self.profile):
             try:
-                from intelligence import scoring as _scoring
-                sp = _scoring.similar_prior(kind, self.rid, self.cohort, db_path=self.db_path, now=self.now)
-                if sp.get("available") and sp.get("rate") is not None:
-                    base = self.base_rate(kind)
-                    rate = _shrink(sp["rate"], sp.get("weighted") or 0.0, base)
-                    w = 1.0 + W_SUCCESS * (rate - base)
-                    out = {"weight": round(min(COLD_PRIOR_BOUNDS[1], max(COLD_PRIOR_BOUNDS[0], w)), 3),
-                           "restaurants": int(sp["restaurants"]), "rate": round(rate, 3)}
+                sp = _scoring.similar_prior(kind, self.rid, db_path=self.db_path, now=self.now,
+                                            platform=(rung == "platform"), **kw)
             except Exception as e:
                 print(f"[rec_learning] similar-restaurant prior unavailable for {kind}: {e}")
+                continue
+            if sp.get("available") and sp.get("rate") is not None:
+                base = self.base_rate(kind)
+                rate = _shrink(sp["rate"], sp.get("weighted") or 0.0, base)
+                w = 1.0 + W_SUCCESS * (rate - base)
+                out = {"weight": round(min(COLD_PRIOR_BOUNDS[1], max(COLD_PRIOR_BOUNDS[0], w)), 3),
+                       "restaurants": int(sp["restaurants"]), "rate": round(rate, 3), "rung": rung,
+                       "label": label}
+                break
         self._cold[kind] = out
         return out
 
     def _delta(self, s, prior):
         acc_p, suc_p = prior
-        acc = _shrink(s["taken"] / s["settled"] if s["settled"] else None, s["settled"], acc_p)
-        suc = _shrink(s["improved"] / s["measured"] if s["measured"] else None, s["measured"], suc_p)
+        tw, sw = s.get("taken_w", s["taken"]), s.get("settled_w", s["settled"])
+        iw, mw = s.get("improved_w", s["improved"]), s.get("measured_w", s["measured"])
+        acc = _shrink(tw / sw if sw else None, sw, acc_p)
+        suc = _shrink(iw / mw if mw else None, mw, suc_p)
         return W_ACCEPT * (acc - acc_p) + W_SUCCESS * (suc - suc_p)
 
     def weight(self, key, kind=None, tags=None):
@@ -856,7 +1106,7 @@ class Effectiveness:
         learned = ([ks] if ks else []) + [self.tags[t] for t in tags if self.tags.get(t)]
         deltas = []
         if learned:
-            # The cohort prior is read only when there is something of this
+            # The prior is read only when there is something of this
             # restaurant's own to weigh against it.
             prior = self.prior(kind)
             deltas = [self._delta(s, prior) for s in learned]
@@ -868,11 +1118,15 @@ class Effectiveness:
         if not learned:
             # No record of its own: ranked with help from similar
             # restaurants' results (BM3-12, Top-50 #32), bounded to
-            # COLD_PRIOR_BOUNDS and said. Ranking only — never a %.
+            # COLD_PRIOR_BOUNDS and said. Ranking only — never a %, and
+            # the all-types rung never with a count (PLATFORM-1).
             cold = self.cold_prior(kind)
             if cold is not None:
                 w = cold["weight"]
-                why.append(f"ranked with help from {cold['restaurants']} similar restaurants' results")
+                if cold.get("rung") == "platform":
+                    why.append("ranked with help from restaurants of every type on Cavnar AI")
+                else:
+                    why.append(f"ranked with help from {cold['restaurants']} similar restaurants' results")
         ratio, _n_cal = self.calibration_ratio(kind)
         if ratio is not None:
             w *= ratio
@@ -885,19 +1139,69 @@ class Effectiveness:
         if key_pen or kind_pen:
             w *= (1 - key_pen) * (1 - kind_pen)
             why.append("a result got worse after it here" if key_pen else f"a {kind} result got worse here")
+        costly, unfit = self.reason_penalties(kind, tags)
+        if costly:
+            w *= (1 - costly)
+            why.append(f"you said {len(self.costly_kinds.get(kind, []))} like this cost too much")
+        if unfit:
+            w *= (1 - unfit)
+            why.append("you said advice like this doesn't fit you")
         w = round(max(FLOOR_WEIGHT, min(MAX_WEIGHT, w)), 3)
         return w, why
+
+    def reason_penalties(self, kind, tags):
+        """(too_costly penalty on the kind, doesn't-fit penalty on its
+        topic/focus tags): REASON_STEP per answer, decaying with
+        REASON_HALF_LIFE_DAYS, each at most REASON_CAP."""
+        def pen(ages):
+            return min(REASON_CAP, sum(REASON_STEP * 0.5 ** (a / REASON_HALF_LIFE_DAYS) for a in ages or ()))
+        costly = pen(self.costly_kinds.get(kind))
+        unfit = max((pen(self.unfit_tags.get(t)) for t in tags or () if t in self.unfit_tags), default=0.0)
+        return round(costly, 4), round(unfit, 4)
+
+    def weight_detail(self, key, kind=None, tags=None) -> dict:
+        """{weight, why, prior_rung, version} — weight() with the prior
+        ladder rung it read and EFFECTIVENESS_VERSION, for the log a shown
+        recommendation carries (PLATFORM-1/3)."""
+        kind = kind or rec_ledger.kind_of(str(key or ""))
+        w, why = self.weight(key, kind=kind, tags=tags)
+        return {"weight": w, "why": why, "prior_rung": self.prior_rung(kind), "version": EFFECTIVENESS_VERSION}
+
+    def explain(self, key, kind=None, tags=None, title=None) -> dict:
+        """weight_detail for one key — what rank_log stores beside a shown
+        card (memory audit 9/29/26) — plus `rung`, the compact form of the
+        prior it stood on: "own/<the success rung, or base_rate>" when this
+        restaurant has its own record of the kind or its tags,
+        "cold/<rung>" when similar restaurants' results ranked it, else
+        "none". `title` lets a model line's words name its advice signature
+        (its sig: tag), which its hash key cannot."""
+        kind = kind or rec_ledger.kind_of(str(key or ""))
+        if tags is None:
+            tags = rec_ledger.tags_for(str(key or ""), kind=kind)
+            if title:
+                tags = rec_ledger.with_signature_tag(tags, rec_ledger.signature_for(key, title))
+        d = self.weight_detail(key, kind=kind, tags=tags)
+        pr = d.get("prior_rung") or {}
+        if self.kinds.get(kind) or any(self.tags.get(t) for t in tags):
+            rung = f"own/{pr.get('success') or 'base_rate'}"
+        elif pr.get("cold"):
+            rung = f"cold/{pr['cold']}"
+        else:
+            rung = "none"
+        return {"weight": d["weight"], "why": list((d.get("why") or [])[:3]), "prior_rung": pr, "rung": rung,
+                "version": d.get("version")}
 
     def ceiling(self, learned, kind=None):
         """The highest this weight may reach: 1.0 plus MAX_WEIGHT's headroom,
         scaled by how far the Wilson lower bound of measured success (the
-        best of the kind's and its tags' own records) sits above the prior."""
+        best of the kind's and its tags' own records, decay-weighted) sits
+        above the prior."""
         best = 0.0
         prior = self.prior(kind)[1] if (learned and kind) else 0.5
         for s in learned or []:
             if not s.get("measured"):
                 continue
-            lo, _ = wilson(s["improved"], s["measured"])
+            lo, _ = wilson(s.get("improved_w", s["improved"]), s.get("measured_w", s["measured"]))
             if lo is not None and prior < 1.0:
                 best = max(best, (lo - prior) / (1.0 - prior))
         return 1.0 + (MAX_WEIGHT - 1.0) * min(1.0, max(0.0, best))
@@ -953,8 +1257,114 @@ class Effectiveness:
         out["note"] = f"adjusted from {n} measured result{'s' if n != 1 else ''}"
         return out
 
-    def __call__(self, key, kind=None, tags=None):
+    def __call__(self, key, kind=None, tags=None, title=None):
+        if tags is None and title:
+            kind = kind or rec_ledger.kind_of(str(key or ""))
+            tags = rec_ledger.with_signature_tag(rec_ledger.tags_for(str(key or ""), kind=kind),
+                                                 rec_ledger.signature_for(key, title))
         return self.weight(key, kind=kind, tags=tags)
+
+
+# The owner's answer to "keep suggesting this kind?" (kind_hold:<kind>): a
+# yes (Done / Track) keeps the kind proposed for this long; a "not for us"
+# leaves it stopped.
+KIND_HOLD_PREFIX = "kind_hold"
+KIND_HOLD_KEEP_DAYS = 180
+
+
+def kept_hold_kinds(restaurant_id, db_path=DB_PATH, now=None) -> set:
+    """The kinds the owner said to KEEP proposing despite their record, in
+    the last KIND_HOLD_KEEP_DAYS. Never raises."""
+    now = now or datetime.utcnow()
+    try:
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT key FROM rec_instances WHERE restaurant_id=? AND key LIKE ? "
+                "AND status IN ('accepted','completed','implemented') AND last_event_at >= ?",
+                (restaurant_id, f"{KIND_HOLD_PREFIX}:%",
+                 _stamp(now - timedelta(days=KIND_HOLD_KEEP_DAYS)))).fetchall()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[rec_learning] kept kinds unreadable for {restaurant_id}: {e}")
+        return set()
+    return {str(r["key"]).split(":", 1)[1] for r in rows if ":" in str(r["key"])}
+
+
+def hold_ask(hold) -> dict:
+    """The ask Home shows in place of a held kind's cards: key
+    kind_hold:<kind>, the question and what it rests on. Done / Track on it
+    keeps the kind proposed (KIND_HOLD_KEEP_DAYS); Not for us leaves it
+    stopped."""
+    kind = hold["kind"]
+    label = _kind_label(kind)
+    return {"key": f"{KIND_HOLD_PREFIX}:{kind}", "kind": kind,
+            "title": f"Keep suggesting {label}?",
+            "why": f"{hold['why'][:1].upper()}{hold['why'][1:]} (before and after, not proof). Cavnar AI has "
+                   f"stopped suggesting it until you say otherwise.",
+            "measured": hold["measured"], "improved": hold["improved"], "worsened": hold["worsened"],
+            "do_nothing_pct": int(round(100 * hold["do_nothing"])),
+            "answers": {"completed": "Keep suggesting it", "not_for_us": "Stop suggesting it"}}
+
+
+# ── the prior ladder (memory audit 9/29/26, PLATFORM-1) ─────────────────────
+# A prior used to exist only for an owner-confirmed concept: of 40
+# restaurants with measured trim_day results, 3 pizzerias left a new
+# pizzeria at exactly 1.0, and an owner who never confirmed a type never had
+# one however large the platform grew. The ladder mirrors
+# categories.partition_ladder: the concept, then the confirmed partition of
+# the kind's metric family (finest first — with the bar-led split, then
+# without), then every restaurant on Cavnar AI for a BEHAVIOUR kind only
+# (scoring.kind_comparability), where a type difference cannot pass as an
+# effect. Each rung must clear the floors on its own population; a reader
+# takes the finest that does. The platform rung is a ranking weight or a
+# prior centre only — never an owner-facing figure (kind_record reads the
+# named rungs only).
+_PLATFORM_LABEL = "restaurants of every type on Cavnar AI"
+
+
+def prior_rungs(kind, cohort=None, profile=None, owner_facing=False, key=None) -> list:
+    """[(rung, recommendation_success kwargs, group label)] finest first:
+    ("concept", {cohort}), ("partition", {partition}) per rung of the
+    profile's partition ladder for the kind's family, then ("platform", {})
+    for a behaviour kind unless `owner_facing`. [] with no confirmed type,
+    no confirmed partition and a kind that is not behaviour."""
+    from intelligence import categories as _cats, scoring as _sc
+    out = []
+    if cohort:
+        try:
+            from intelligence import benchmarks as _bm
+            label = _bm.cohort_label(cohort)
+        except Exception:
+            label = f"{_cats.label(cohort)} on Cavnar AI"
+        out.append(("concept", {"cohort": cohort}, label))
+    if profile and profile.get("confirmed"):
+        fam = _sc.kind_family(kind, key)
+        for pk in _cats.partition_ladder(profile, fam):
+            out.append(("partition", {"partition": pk}, _cats.partition_label(pk)))
+    if not owner_facing and _sc.kind_comparability(kind, key) == "behaviour":
+        out.append(("platform", {}, _PLATFORM_LABEL))
+    return out
+
+
+def learned_note(learned, key, weight, why) -> dict:
+    """The `learned` block a ranked recommendation carries (home_brief.
+    order_recommendations, business_intelligence.pick_one_thing): the weight
+    and its reasons, plus — from an Effectiveness model — the prior ladder
+    rung its prior was read from and EFFECTIVENESS_VERSION, so the log of
+    what was shown can say what the ranking rested on (memory audit
+    PLATFORM-1/3). A plain callable (a test's) gives weight and why only.
+    Never raises."""
+    out = {"weight": weight, "why": list(why or [])[:3]}
+    fn = getattr(learned, "prior_rung", None)
+    if callable(fn):
+        try:
+            out["prior_rung"] = fn(rec_ledger.kind_of(str(key or "")))
+            out["version"] = EFFECTIVENESS_VERSION
+        except Exception as e:
+            print(f"[rec_learning] prior rung unavailable for {key}: {e}")
+    return out
 
 
 def attach_dollar_calibration(item, learned, key=None, dollars_field="dollars_monthly") -> dict:
@@ -995,32 +1405,126 @@ def attach_dollar_calibration(item, learned, key=None, dollars_field="dollars_mo
     return item
 
 
-def effectiveness(restaurant_id, db_path=DB_PATH, restaurant=None, now=None) -> Effectiveness:
-    """The model for one restaurant from its last EFFECT_WINDOW_DAYS of
-    episodes. Never raises: with the ledger unreadable it is the neutral
-    model (every weight 1.0)."""
+def effectiveness(restaurant_id, db_path=DB_PATH, restaurant=None, now=None, perspective="principal") -> Effectiveness:
+    """The model for one restaurant from its episodes inside
+    DECAY_HORIZON_DAYS, each weighed by decay_weight. Never raises: with the
+    ledger unreadable it is the neutral model (every weight 1.0).
+    `perspective` is whose answers it learns from (_state): "principal" —
+    the owner's own (a manager's decline never counts as the owner's
+    rejection) — or "delegate", a manager's view, where the principal's
+    answer still outranks theirs. An admin's view-as answer teaches neither
+    (memory audit 9/29/26, who_answered / view_as). A demo, test or internal
+    account (models.learning_eligible) ranks on the neutral model."""
     now = now or datetime.utcnow()
-    cohort = None
+    cohort, profile = None, None
     try:
         if restaurant is None:
             restaurant = _models_mod.get_restaurant(restaurant_id, db_path=db_path)
         if restaurant is not None:
-            # Only a type the owner SET: a guessed type reads no group's
-            # record (Benchmarking re-audit R2-7, #14, #20).
+            # No demo, test or internal account teaches a learner, its own
+            # included (models.learning_eligible, memory audit 9/29/26):
+            # its ranking is the neutral model.
+            if hasattr(_models_mod, "learning_eligible") and not _models_mod.learning_eligible(restaurant):
+                return Effectiveness(restaurant_id, [], cohort=None, db_path=db_path, now=now,
+                                     perspective=perspective)
+            # Only a type and a partition the owner SET: a guess reads no
+            # group's record (Benchmarking re-audit R2-7, #14, #20).
             from intelligence import categories as _cats
             cohort = _cats.confirmed_type(restaurant)
+            profile = _cats.profile_for(restaurant)
     except Exception as e:
         print(f"[rec_learning] cohort unresolved for {restaurant_id}: {e}")
     try:
         conn = get_conn(db_path)
         try:
-            eps = _load(conn, restaurant_id, since=_stamp(now - timedelta(days=EFFECT_WINDOW_DAYS)), lean=True)
+            eps = _load(conn, restaurant_id,
+                        since=_learning_floor(restaurant, _stamp(now - timedelta(days=EFFECT_WINDOW_DAYS))),
+                        lean=True, perspective=perspective)
         finally:
             conn.close()
     except Exception as e:
         print(f"[rec_learning] effectiveness unavailable for {restaurant_id}: {e}")
         eps = []
-    return Effectiveness(restaurant_id, eps, cohort=cohort, db_path=db_path, now=now)
+    model = Effectiveness(restaurant_id, eps, cohort=cohort, db_path=db_path, now=now, profile=profile,
+                          perspective=perspective)
+    # The kinds the owner said to keep proposing despite their record
+    # (kind_hold:<kind> answered Done / Track — memory audit 9/29/26,
+    # "thresholds"): held() never stops those.
+    model.kept_kinds = frozenset(kept_hold_kinds(restaurant_id, db_path=db_path, now=now))
+    return model
+
+
+def _learning_floor(restaurant, since):
+    """The later of `since` and the restaurant's learning_since: a converted
+    demo's own model never learns from its demo era (memory audit 9/29/26,
+    "eligibility"; models.learning_eligible; M7's patch, applied by the
+    integration wave, INT #22)."""
+    floor = getattr(restaurant, "learning_since", None) if restaurant is not None else None
+    if floor is None and isinstance(restaurant, dict):
+        floor = restaurant.get("learning_since")
+    if floor and str(floor)[:19] > str(since or "")[:19]:
+        return str(floor)[:19]
+    return since
+
+
+def _learning_since_of(restaurant_id, restaurant, db_path):
+    """The restaurant's learning_since, from the row a caller passed or one
+    light read. None for a restaurant that was never a demo."""
+    if restaurant is not None:
+        got = getattr(restaurant, "learning_since", None)
+        if got is None and isinstance(restaurant, dict):
+            got = restaurant.get("learning_since")
+        return got
+    try:
+        conn = get_conn(db_path)
+        try:
+            r = conn.execute("SELECT learning_since FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+        finally:
+            conn.close()
+        return r[0] if r else None
+    except Exception:
+        return None
+
+
+def weigh(learned, key, title=None) -> dict:
+    """{weight, why, prior_rung, rung, version} from any ranker's `learned`
+    — the model itself (explain: M8's prior ladder rung and
+    EFFECTIVENESS_VERSION too) or a plain callable key -> (weight, why).
+    Never raises: a failure is the neutral weight."""
+    try:
+        if isinstance(learned, Effectiveness):
+            return learned.explain(key, title=title)
+        w, why = learned(key)
+        return {"weight": w, "why": list((why or [])[:3]), "prior_rung": None, "rung": None, "version": None}
+    except Exception as e:
+        print(f"[rec_learning] weight unavailable for {key}: {e}")
+        return {"weight": 1.0, "why": [], "prior_rung": None, "rung": None, "version": None}
+
+
+def rank_meta(item, base_score, learned_info) -> dict:
+    """The compact ranking record rank_log keeps for one candidate (memory
+    audit 9/29/26, "rank_log"): the score before and after learning, the
+    weight and why, the prior it stood on — `prior_rung` as prior_rung()
+    reads it ({acceptance, success, cold}: the same rung learned_note puts
+    on the card) and `rung`, its compact form — and EFFECTIVENESS_VERSION."""
+    li = learned_info or {}
+    pr = li.get("prior_rung") if isinstance(li.get("prior_rung"), dict) else None
+    return {"base": round(float(base_score or 0), 2), "score": round(float(item.get("rank_score")
+                                                                           or item.get("score") or 0), 2),
+            "weight": li.get("weight", 1.0), "why": list(li.get("why") or [])[:2],
+            "prior_rung": ({k: pr.get(k) for k in ("acceptance", "success", "cold")} if pr else None),
+            "rung": li.get("rung"), "version": li.get("version")}
+
+
+def perspective_of(user) -> str:
+    """The effectiveness perspective for a login: "delegate" for a manager
+    or employee, else "principal" (an owner, and an admin viewing the
+    owner's ranking)."""
+    try:
+        from permissions import answer_authority
+        return "delegate" if answer_authority(user) == "delegate" else "principal"
+    except Exception:
+        return "principal"
 
 
 def kind_record(restaurant_id, kind, db_path=DB_PATH, restaurant=None, now=None, episodes=None) -> dict:
@@ -1052,6 +1556,16 @@ def kind_record(restaurant_id, kind, db_path=DB_PATH, restaurant=None, now=None,
     the same floor; `rate_recent_n_eff` is the summed weight. `base_rate` is
     what doing nothing gives for this kind here (base_rate) — the value a
     success rate should be shrunk toward, never 0.5.
+
+    One window rule (memory audit PLATFORM-11): every episode inside
+    DECAY_HORIZON_DAYS; `measured` / `improved` are the counts the owner is
+    told, `measured_eff` / `improved_eff` the same results weighed by
+    decay_weight, which the Beta read counts (confidence_engine.accuracy).
+    The prior's group is the finest NAMED rung of the ladder (prior_rungs,
+    owner_facing — the concept, then the confirmed partition; never the
+    all-types rung, whose counts are never an owner-facing figure):
+    `prior_rung`, and `prior_unlock` "confirm_profile" when the profile is
+    unconfirmed (what would unlock a finer group).
     Never raises. `episodes` lets a caller that already loaded the ledger
     (Home) pass it in."""
     kind = str(kind or "")
@@ -1060,24 +1574,63 @@ def kind_record(restaurant_id, kind, db_path=DB_PATH, restaurant=None, now=None,
            "source": "none", "prior_measured": 0, "prior_improved": 0, "prior_restaurants": 0,
            "rate_recent": None, "rate_recent_n_eff": None, "recent_half_life_days": RECENT_HALF_LIFE_DAYS,
            "base_rate": BASE_RATE_STATED, "base_rate_source": "stated", "base_rate_n": 0,
-           "base_rate_basis": None}
+           "base_rate_basis": None, "measured_eff": 0.0, "improved_eff": 0.0, "prior_rung": None,
+           "prior_unlock": None, "window_days": DECAY_HORIZON_DAYS}
     try:
+        # A converted demo's record starts at its learning_since (INT #22):
+        # its demo era is never its own measured record, loaded here or
+        # handed in by a caller that loaded the ledger itself.
+        since_learning = _learning_since_of(restaurant_id, restaurant, db_path)
         if episodes is None:
             conn = get_conn(db_path)
             try:
-                episodes = _load(conn, restaurant_id, since=_stamp(now - timedelta(days=EFFECT_WINDOW_DAYS)),
-                                 lean=True)
+                episodes = _load(conn, restaurant_id, lean=True,
+                                 since=_learning_floor({"learning_since": since_learning},
+                                                       _stamp(now - timedelta(days=EFFECT_WINDOW_DAYS))))
             finally:
                 conn.close()
+        elif since_learning:
+            episodes = [e for e in episodes
+                        if not e.get("created_at") or str(e["created_at"])[:19] >= str(since_learning)[:19]]
         mine = [e for e in episodes
                 if e.get("shown") and _taken(e)
                 and (e.get("kind") or rec_ledger.kind_of(e["key"])) == kind]
         measured = [e for e in _one_per_window(mine) if e["verdict"] in CLEAR_VERDICTS]
+        measured = [e for e in measured if decay_weight(kind, e.get("verdict_at") or e.get("created_at"), now,
+                                                        key=e.get("key")) > 0]
         out["measured"] = len(measured)
         out["improved"] = sum(1 for e in measured if e["verdict"] == "improved")
+        ws = [(decay_weight(kind, e.get("verdict_at") or e.get("created_at"), now, key=e.get("key")), e)
+              for e in measured]
+        out["measured_eff"] = round(sum(w for w, _e in ws), 3)
+        out["improved_eff"] = round(sum(w for w, e in ws if e["verdict"] == "improved"), 3)
     except Exception as e:
         print(f"[rec_learning] kind_record unavailable for {restaurant_id}/{kind}: {e}")
         return out
+    # A diagnosis's or a nightly report's own claim, scored at its horizon
+    # (ai_reads.score_due, memory audit 9/29/26 "claims"): advice that was
+    # TAKEN and then measured over its own window — never one whose advice
+    # was tracked (its tracker is the result above) or never taken
+    # (untested, not a failure). The verdicts feed Historical Accuracy as
+    # the code always promised; `claims` carries their own counts.
+    claims = _claim_results(restaurant_id, kind, db_path)
+    if claims:
+        out["claims"] = {k: claims[k] for k in ("measured", "improved", "worsened", "no_clear_change",
+                                                 "untested", "unmeasurable")}
+        out["measured"] += claims["measured"]
+        out["improved"] += claims["improved"]
+        measured = list(measured) + list(claims.get("results") or [])
+    # Pooled by lever (memory audit 9/29/26, "positive_volume"): below its
+    # own floor a kind borrows the measured results of every kind that pulls
+    # the same lever here (the topic tag — trim_day, a nightly report's
+    # adjust_staffing and a labor read's cut are all "staffing"), so one
+    # kind's five results no longer have to come from that kind alone. The
+    # confidence engine reads it with the same shrinkage toward doing
+    # nothing, and says it is pooled.
+    if out["measured"] < MIN_MEASURED_FOR_RATE:
+        pool = _lever_pool(episodes, kind)
+        if pool and pool["measured"] >= MIN_MEASURED_FOR_RATE:
+            out["pooled"] = pool
     out["untaken"] = untaken_comparison(restaurant_id, kind, taken_measured=out["measured"],
                                         taken_improved=out["improved"], db_path=db_path)
     try:
@@ -1104,10 +1657,12 @@ def kind_record(restaurant_id, kind, db_path=DB_PATH, restaurant=None, now=None,
             restaurant = _models_mod.get_restaurant(restaurant_id, db_path=db_path)
         from intelligence import categories as _cats
         cohort = _cats.confirmed_type(restaurant)
-        if cohort:
-            s = intelligence.recommendation_success(kind, cohort=cohort, db_path=db_path,
-                                                    exclude_restaurant_id=restaurant_id,
-                                                    window_days=PRIOR_WINDOW_DAYS)
+        profile = _cats.profile_for(restaurant) if restaurant is not None else None
+        if not (profile or {}).get("confirmed"):
+            out["prior_unlock"] = "confirm_profile"
+        for rung, kw, label in prior_rungs(kind, cohort, profile, owner_facing=True):
+            s = intelligence.recommendation_success(kind, db_path=db_path, exclude_restaurant_id=restaurant_id,
+                                                    window_days=PRIOR_WINDOW_DAYS, **kw)
             privacy.assert_anonymous(s)
             # The capped counts (scoring.MAX_RESTAURANT_SHARE): one peer's
             # eight results among twelve no longer stand as the cohort.
@@ -1119,20 +1674,57 @@ def kind_record(restaurant_id, kind, db_path=DB_PATH, restaurant=None, now=None,
             # one organisation's share recoverable (R1-02).
             if pm >= PRIOR_MIN_MEASURED and s.get("success_available"):
                 out.update(prior_measured=int(round(pm)), prior_improved=int(round(pi)),
-                           prior_restaurants=int(s.get("measured_restaurants") or 0))
-                # The label of the cohort ACTUALLY read (NS4 H4): never "like
-                # yours" when it is the whole platform.
-                try:
-                    from intelligence import benchmarks as _bm
-                    out["prior_label"] = _bm.cohort_label(cohort)
-                except Exception:
-                    out["prior_label"] = "other restaurants on Cavnar AI"
+                           prior_restaurants=int(s.get("measured_restaurants") or 0), prior_rung=rung)
+                # The label of the group ACTUALLY read (NS4 H4): never "like
+                # yours" when it is a wider one.
+                out["prior_label"] = label or "other restaurants on Cavnar AI"
                 if not own:
                     out.update(rate=pi / pm, source="cohort")
                     out["low"], out["high"] = wilson(pi, pm)
+                break
     except Exception as e:
         print(f"[rec_learning] cohort record unavailable for {kind}: {e}")
     return out
+
+
+def _lever_pool(episodes, kind):
+    """{"topic", "label", "measured", "improved", "kinds"}: the measured
+    results of every kind sharing `kind`'s lever (its commonest topic tag
+    here, else the ledger's topic for the kind), taken and shown, one per
+    change (_one_per_window) — or None with no lever. Pure over the
+    episodes it is handed."""
+    mine = [e for e in episodes or [] if (e.get("kind") or rec_ledger.kind_of(e.get("key"))) == kind]
+    counts = {}
+    for e in mine:
+        for t in e.get("tag_list") or []:
+            if str(t).startswith("topic:"):
+                counts[t] = counts.get(t, 0) + 1
+    topic = max(counts.items(), key=lambda kv: (kv[1], kv[0]))[0] if counts else None
+    if topic is None:
+        t = rec_ledger._topic_of(kind, f"{kind}:")
+        topic = f"topic:{t}" if t else None
+    if topic is None:
+        return None
+    pool = [e for e in episodes or [] if e.get("shown") and _taken(e) and topic in (e.get("tag_list") or [])]
+    measured = [e for e in _one_per_window(pool) if e.get("verdict") in CLEAR_VERDICTS]
+    return {"topic": topic.split(":", 1)[1], "label": rec_ledger.tag_label(topic).lower(),
+            "measured": len(measured), "improved": sum(1 for e in measured if e["verdict"] == "improved"),
+            "kinds": sorted({e.get("kind") or rec_ledger.kind_of(e.get("key")) for e in measured})}
+
+
+def _claim_results(restaurant_id, kind, db_path=DB_PATH):
+    """ai_reads.claims_record for a kind that makes claims (ai_reads.
+    CLAIM_KINDS), or None. Never raises."""
+    try:
+        import ai_reads
+        if kind not in ai_reads.CLAIM_KINDS:
+            return None
+        rec = ai_reads.claims_record(restaurant_id, kind, days=EFFECT_WINDOW_DAYS,
+                                     db_path=None if db_path == DB_PATH else db_path)
+        return rec if (rec.get("measured") or rec.get("untested") or rec.get("unmeasurable")) else None
+    except Exception as e:
+        print(f"[rec_learning] claim record unavailable for {restaurant_id}/{kind}: {e}")
+        return None
 
 
 def recency_weighted_rate(measured, now=None, half_life_days=RECENT_HALF_LIFE_DAYS):
@@ -1348,3 +1940,317 @@ def answerable_episode(viewer, restaurant_id, key, db_path=DB_PATH):
     if ep is None or not ep.get("shown") or not viewer_sees(viewer, ep):
         return None
     return ep
+
+
+# ── what has worked HERE (memory audit 9/29/26, "what_worked") ──────────────
+#
+# The effectiveness model only ever reordered cards; no text generator knew
+# that two measured trims of Tuesday dinner improved labor % and coincided
+# with a rating drop, or that the owner had ignored a kind of advice six
+# times. what_worked(rid) is the per-restaurant record by kind and by
+# subject tag — acceptance, measured results (one per change) and how often
+# it was left unanswered — and what_worked_lines serves it to every model
+# call through memory_context. The nightly learning pass snapshots it by
+# month (rec_learning_summaries, kept forever), so how a restaurant's record
+# moved is never lost to the 365-day window.
+
+WORKED_TAG_PREFIXES = ("topic:", "focus:", "category:", "dish:", "item:", "daypart:", "day:")
+IGNORED_LINE_MIN = 3            # left unanswered this often, never taken → said
+WORKED_LINES_MAX = 6
+# The modules whose kinds and the lever topics whose tags each surface reads.
+SURFACE_SCOPE = {
+    "labor_read": (("labor", "schedule"), ("staffing", "hours", "overtime")),
+    "schedule": (("labor", "schedule"), ("staffing", "hours", "overtime")),
+    "food_read": (("food",), ("waste", "ordering", "purchasing", "pricing", "food_cost")),
+    "food_diagnosis": (("food",), ("waste", "ordering", "purchasing", "pricing", "food_cost")),
+    "review_read": (("reviews",), ("guest_experience", "replies")),
+    "review_diagnosis": (("reviews",), ("guest_experience", "replies", "staffing")),
+    "marketing": (("marketing", "guests"), ("posting", "marketing", "guest_outreach", "sales")),
+}
+
+
+def init_rec_learning(db_path: str = DB_PATH):
+    """Boot DDL (models.init_db): the monthly what-worked snapshots."""
+    conn = get_conn(db_path)
+    try:
+        conn.execute("""CREATE TABLE IF NOT EXISTS rec_learning_summaries (
+            restaurant_id   INTEGER NOT NULL,
+            month           TEXT    NOT NULL,
+            scope           TEXT    NOT NULL,
+            name            TEXT    NOT NULL,
+            module          TEXT,
+            shown           INTEGER NOT NULL DEFAULT 0,
+            settled         INTEGER NOT NULL DEFAULT 0,
+            taken           INTEGER NOT NULL DEFAULT 0,
+            dismissed       INTEGER NOT NULL DEFAULT 0,
+            ignored         INTEGER NOT NULL DEFAULT 0,
+            measured        INTEGER NOT NULL DEFAULT 0,
+            improved        INTEGER NOT NULL DEFAULT 0,
+            worsened        INTEGER NOT NULL DEFAULT 0,
+            no_clear_change INTEGER NOT NULL DEFAULT 0,
+            computed_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (restaurant_id, month, scope, name)
+        )""")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _worked_bucket():
+    return {"shown": 0, "settled": 0, "taken": 0, "dismissed": 0, "ignored": 0, "measured": 0, "improved": 0,
+            "worsened": 0, "no_clear_change": 0, "modules": {}}
+
+
+def what_worked(restaurant_id, db_path=DB_PATH, now=None, episodes=None) -> dict:
+    """{"kinds": {kind: stats}, "tags": {tag: stats}} over the last
+    EFFECT_WINDOW_DAYS — stats {shown, settled, taken, dismissed, ignored,
+    measured, improved, worsened, no_clear_change, module}. Counted the
+    way kind_record and the owner's record count: shown episodes, read
+    through learned_verdict, one result per change (_one_per_window).
+    Never raises."""
+    now = now or datetime.utcnow()
+    out = {"kinds": {}, "tags": {}}
+    try:
+        if episodes is None:
+            conn = get_conn(db_path)
+            try:
+                episodes = _load(conn, restaurant_id, since=_stamp(now - timedelta(days=EFFECT_WINDOW_DAYS)),
+                                 lean=True)
+            finally:
+                conn.close()
+    except Exception as e:
+        print(f"[rec_learning] what-worked record unavailable for {restaurant_id}: {e}")
+        return out
+    groups = {}
+    for e in episodes or []:
+        if not e.get("shown") or e.get("state") == "superseded":
+            continue
+        kind = e.get("kind") or rec_ledger.kind_of(e["key"])
+        names = [("kinds", kind)] + [("tags", t) for t in e.get("tag_list") or []
+                                     if str(t).startswith(WORKED_TAG_PREFIXES)]
+        for scope, name in names:
+            b = out[scope].setdefault(name, _worked_bucket())
+            b["shown"] += 1
+            m = e.get("module") or "home"
+            b["modules"][m] = b["modules"].get(m, 0) + 1
+            st = e.get("state")
+            if _settled(e):
+                b["settled"] += 1
+            if _taken(e):
+                b["taken"] += 1
+                if e.get("verdict"):
+                    groups.setdefault((scope, name), []).append(e)
+            elif st == "dismissed":
+                b["dismissed"] += 1
+            elif st == "ignored":
+                b["ignored"] += 1
+    for (scope, name), eps in groups.items():
+        b = out[scope][name]
+        for e in _one_per_window(eps):
+            if e["verdict"] in CLEAR_VERDICTS:
+                b["measured"] += 1
+                b[e["verdict"]] += 1
+    for scope in ("kinds", "tags"):
+        for b in out[scope].values():
+            mods = b.pop("modules")
+            b["module"] = sorted(mods.items(), key=lambda kv: (-kv[1], kv[0]))[0][0] if mods else None
+    return out
+
+
+def snapshot_what_worked(restaurant_id, db_path=DB_PATH, now=None) -> int:
+    """Write this month's what-worked rows (rec_learning_summaries), one per
+    kind and tag, replacing earlier writes of the same month — the nightly
+    learning pass. A past month's rows are never touched again: the history
+    of the record is kept forever. Returns rows written. Never raises."""
+    now = now or datetime.utcnow()
+    month = now.strftime("%Y-%m")
+    rec = what_worked(restaurant_id, db_path=db_path, now=now)
+    rows = [(restaurant_id, month, scope[:-1], name, b.get("module"), b["shown"], b["settled"], b["taken"],
+             b["dismissed"], b["ignored"], b["measured"], b["improved"], b["worsened"], b["no_clear_change"])
+            for scope in ("kinds", "tags") for name, b in rec[scope].items()]
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return 0
+    try:
+        conn.execute("DELETE FROM rec_learning_summaries WHERE restaurant_id=? AND month=?", (restaurant_id, month))
+        conn.executemany(
+            "INSERT INTO rec_learning_summaries (restaurant_id, month, scope, name, module, shown, settled, taken, "
+            "dismissed, ignored, measured, improved, worsened, no_clear_change) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            rows)
+        conn.commit()
+        return len(rows)
+    except Exception as e:
+        print(f"[rec_learning] what-worked snapshot failed for {restaurant_id}: {e}")
+        return 0
+    finally:
+        conn.close()
+
+
+def _stored_what_worked(restaurant_id, db_path=DB_PATH):
+    """The latest month's snapshot as what_worked's shape, or None."""
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return None
+    try:
+        row = conn.execute("SELECT MAX(month) AS m FROM rec_learning_summaries WHERE restaurant_id=?",
+                           (restaurant_id,)).fetchone()
+        if not row or not row["m"]:
+            return None
+        out = {"kinds": {}, "tags": {}}
+        for r in conn.execute("SELECT * FROM rec_learning_summaries WHERE restaurant_id=? AND month=?",
+                              (restaurant_id, row["m"])).fetchall():
+            d = dict(r)
+            out["kinds" if d["scope"] == "kind" else "tags"][d["name"]] = d
+        return out
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
+def _kind_label(kind) -> str:
+    k = str(kind or "")
+    if k.startswith("insight_"):
+        return f"the {k[len('insight_'):]} read's suggestions"
+    if k.startswith("diag_"):
+        return f"the {k[len('diag_'):]} diagnosis's action"
+    return k.replace("_", " ")
+
+
+def _worked_sentence(label, b) -> str:
+    """One line of the record: taken of settled, the measured results when
+    they clear the floor, how often it was left unanswered."""
+    bits = []
+    if b.get("settled"):
+        bits.append(f"taken {b['taken']} of {b['settled']} times it was answered or left")
+    if b.get("measured", 0) >= MIN_MEASURED_FOR_RATE:
+        bits.append(f"improved {b['improved']} of {b['measured']} measured results"
+                    + (f", {b['worsened']} worse" if b.get("worsened") else "")
+                    + " (before and after, not proof)")
+    elif b.get("measured"):
+        bits.append(f"{b['measured']} measured so far — too few to say")
+    if b.get("ignored", 0) >= IGNORED_LINE_MIN and not b.get("taken"):
+        bits.append(f"ignored {b['ignored']} times and never taken")
+    return f"{label}: " + "; ".join(bits) if bits else ""
+
+
+def what_worked_lines(req):
+    """memory_context provider: "WHAT HAS WORKED HERE" — per kind and per
+    subject tag of this restaurant's advice: how often it was taken, how
+    often a taken one measurably improved ("k of n (before and after)",
+    only at MIN_MEASURED_FOR_RATE results), and how often it was ignored.
+    Scoped to the surface's modules and levers (SURFACE_SCOPE); with
+    subjects ("day:friday", "labor:day:friday", "category:service"), the
+    tags that match them first. Computed by Cavnar AI: trusted lines.
+    Reads the nightly snapshot, else computes it."""
+    rid = getattr(req, "restaurant_id", None)
+    if not rid:
+        return []
+    db_path = getattr(req, "db_path", None) or DB_PATH
+    rec = _stored_what_worked(rid, db_path=db_path) or what_worked(rid, db_path=db_path)
+    modules, topics = SURFACE_SCOPE.get(getattr(req, "surface", None), (None, None))
+    subjects = [str(s).lower() for s in (getattr(req, "subjects", None) or ()) if s]
+    wanted_tags = set()
+    for s in subjects:
+        parts = s.split(":")
+        for i in range(len(parts) - 1):
+            wanted_tags.add(f"{parts[i]}:{parts[i + 1]}")
+    cand = []
+    for kind, b in (rec.get("kinds") or {}).items():
+        if modules and (b.get("module") or "home") not in modules:
+            continue
+        cand.append(("kind", kind, b))
+    for tag, b in (rec.get("tags") or {}).items():
+        head, _, val = tag.partition(":")
+        if topics and head == "topic" and val not in topics:
+            continue
+        if topics and head == "focus" and not any(val.endswith("_" + t) for t in topics):
+            continue
+        if modules and head not in ("topic", "focus") and (b.get("module") or "home") not in modules \
+                and tag not in wanted_tags:
+            continue
+        cand.append(("tag", tag, b))
+    lines = []
+    for scope, name, b in cand:
+        informative = (b.get("measured", 0) >= MIN_MEASURED_FOR_RATE
+                       or (b.get("ignored", 0) >= IGNORED_LINE_MIN and not b.get("taken"))
+                       or b.get("measured"))
+        if not informative:
+            continue
+        label = rec_ledger.tag_label(name) if scope == "tag" else _kind_label(name)
+        text = _worked_sentence(label, b)
+        if not text:
+            continue
+        weight = (3.0 if name in wanted_tags else 0.0) + (2.0 if b.get("measured", 0) >= MIN_MEASURED_FOR_RATE
+                                                          else 1.0 if b.get("ignored", 0) >= IGNORED_LINE_MIN
+                                                          else 0.5) + min(1.0, b.get("measured", 0) / 20.0)
+        line = {"text": text, "date": None, "source": "system", "subject": name, "weight": weight,
+                "trusted": True}
+        if b.get("module") and b["module"] != "home":
+            # Scoped to the logins who may see that module (the assembler's
+            # viewer check): a manager without Food Cost never reads what
+            # food advice did here.
+            line["module"] = b["module"]
+        lines.append(line)
+    lines.sort(key=lambda ln: -ln["weight"])
+    return lines[:WORKED_LINES_MAX]
+
+
+# Advice that takes hours or people OUT of a day. Adding coverage is also
+# "staffing", and its result says nothing about a trim.
+_CUT_KINDS = ("trim_day", "pulse_cut", "labor_over")
+_CUT_WORDS = None
+
+
+def _is_cut(e) -> bool:
+    global _CUT_WORDS
+    import re
+    if _CUT_WORDS is None:
+        _CUT_WORDS = re.compile(r"\b(cut|cuts|trim\w*|reduc\w*|fewer|drop|shorten\w*|send\s+\w+\s+home|"
+                                r"take\s+\w+\s+off)\b", re.I)
+    kind = e.get("kind") or rec_ledger.kind_of(e.get("key"))
+    if kind in _CUT_KINDS:
+        return True
+    if kind == "dsr_action" and ":control_hours:" in f"{e.get('key')}:":
+        return True
+    return bool(_CUT_WORDS.search(str(e.get("title") or "")))
+
+
+def worsened_levers(restaurant_id, db_path=DB_PATH, now=None, episodes=None) -> dict:
+    """{weekday: {"worsened", "measured", "label"}} — weekdays where advice
+    that CUT staffing or hours (topic staffing / hours, a day tag) was taken
+    and measured worse at least once, one result per change. What the
+    schedule optimizer reads to hold back a trim of the same day (memory
+    audit 9/29/26, "what_worked"). Never raises."""
+    now = now or datetime.utcnow()
+    try:
+        if episodes is None:
+            conn = get_conn(db_path)
+            try:
+                episodes = _load(conn, restaurant_id, since=_stamp(now - timedelta(days=EFFECT_WINDOW_DAYS)),
+                                 lean=True)
+            finally:
+                conn.close()
+    except Exception as e:
+        print(f"[rec_learning] worsened levers unavailable for {restaurant_id}: {e}")
+        return {}
+    by_day = {}
+    for e in episodes or []:
+        if not (e.get("shown") and _taken(e) and e.get("verdict")):
+            continue
+        tags = e.get("tag_list") or []
+        if not any(t in ("topic:staffing", "topic:hours") for t in tags) or not _is_cut(e):
+            continue
+        for t in tags:
+            if t.startswith("day:"):
+                by_day.setdefault(t[4:], []).append(e)
+    out = {}
+    for day, eps in by_day.items():
+        kept = [e for e in _one_per_window(eps) if e["verdict"] in CLEAR_VERDICTS]
+        worse = sum(1 for e in kept if e["verdict"] == "worsened")
+        if worse:
+            out[day] = {"worsened": worse, "measured": len(kept),
+                        "label": f"staffing cuts on {day.capitalize()}s"}
+    return out

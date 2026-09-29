@@ -171,6 +171,16 @@ def _act_on(restaurant_id, day, values, restaurant, db_path=DB_PATH):
         issues.create_issue(restaurant_id, "callout", f"Callout at close: {callouts[:70]}",
                             detail=f"From tonight's close-out: {callouts}." + fits,
                             severity="normal", source_key=f"callout:{day}", db_path=db_path)
+        # The person's own record (memory audit 9/29/26, attendance): each
+        # name that is exactly someone on tonight's published schedule is a
+        # call-out on their attendance — a closer's word, never a guess from
+        # a first name. It opened an issue and taught the next draft nothing.
+        try:
+            import attendance
+            attendance.from_closeout(restaurant_id, day, callouts, db_path=db_path)
+        except Exception as e:
+            import ops
+            ops.capture(e, job="closeout_attendance", context=f"restaurant_id={restaurant_id}")
 
 
 def _phrases(text):

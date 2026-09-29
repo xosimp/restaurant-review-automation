@@ -227,14 +227,17 @@ def test_an_old_labor_window_is_never_this_week(monkeypatch):
 
 def test_the_computed_forecast_is_added_after_validation_and_the_marker_stays_last(db_path, monkeypatch):
     rid = _rid(db_path, module_labor=1)
-    monkeypatch.setattr("models.get_labor_history", lambda r, limit=3: [
-        {"labor_pct": 31.0, "period_start": "2026-08-24", "period_end": "2026-09-06"},
-        {"labor_pct": 30.0, "period_start": "2026-08-10", "period_end": "2026-08-23"}])
-    monkeypatch.setattr("models.save_labor_snapshot", lambda *a, **k: None)
+    # The measured move: the last two complete, comparable payroll weeks
+    # (memory audit 9/29/26, labor_periods).
+    _weeks = [{"labor_pct": 34.0, "period_start": "2026-09-07", "period_end": "2026-09-13", "complete": True},
+              {"labor_pct": 31.0, "period_start": "2026-08-31", "period_end": "2026-09-06", "complete": True}]
+    monkeypatch.setattr("models.get_labor_history", lambda r, limit=3, **k: _weeks)
+    monkeypatch.setattr("models.labor_period_change", lambda r, **k: {
+        "latest": _weeks[0], "previous": _weeks[1], "delta": 3.0, "comparable": True, "reason": None})
     _stub_labor(monkeypatch, "Sam, labor ran 34% because the new hire is slow." + _REC)
     out = labor.get_claude_insights(_labor_analysis(), restaurant_name="R", owner_name="Sam", restaurant_id=rid)
     fc = next(ln for ln in out.split("\n") if ln.startswith("FORECAST:"))
-    assert fc == ("FORECAST: Labor ran 34% this period, up 3.0 points on the last upload; if the schedule "
+    assert fc == ("FORECAST: Labor ran 34% this period, up 3.0 points on the week before; if the schedule "
                   "doesn't change, expect next week near 34% (a projection, not a measurement).")
     assert out.index("FORECAST:") < out.index("UNVERIFIED:")
     assert "cause" in out.split("UNVERIFIED:")[1]

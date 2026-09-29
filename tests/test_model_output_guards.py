@@ -411,16 +411,19 @@ def test_h7_a_plan_item_needs_a_verified_figure_and_no_residue_or_echo():
 def test_h8_labor_forecast_is_computed_logged_once_and_the_top_pick_is_python_s(db_path, monkeypatch):
     import labor
     rid = _rid(db_path, module_labor=1)
-    monkeypatch.setattr("models.get_labor_history", lambda r, limit=3: [
-        {"labor_pct": 31.0, "period_start": "2026-08-24", "period_end": "2026-09-06"},
-        {"labor_pct": 30.0, "period_start": "2026-08-10", "period_end": "2026-08-23"}])
-    monkeypatch.setattr("models.save_labor_snapshot", lambda *a, **k: None)
+    # The measured move is the last two complete, comparable payroll weeks
+    # (models.labor_period_change; memory audit 9/29/26, labor_periods).
+    _weeks = [{"labor_pct": 34.0, "period_start": "2026-09-07", "period_end": "2026-09-13", "complete": True},
+              {"labor_pct": 31.0, "period_start": "2026-08-31", "period_end": "2026-09-06", "complete": True}]
+    monkeypatch.setattr("models.get_labor_history", lambda r, limit=3, **k: _weeks)
+    monkeypatch.setattr("models.labor_period_change", lambda r, **k: {
+        "latest": _weeks[0], "previous": _weeks[1], "delta": 3.0, "comparable": True, "reason": None})
     seen = {}
     _stub_labor(monkeypatch, "Hi, labor ran 34%.\n\nRecommendations:\n1. Trim Wednesday.\n2. Check Friday.\n"
                              "3. Hold.\nFORECAST: Labor will hit 40% next week.", seen)
     text = labor.get_claude_insights(_labor_analysis(), restaurant_name="R", owner_name="Sam", restaurant_id=rid)
     assert "40%" not in text, "the model's own forecast is removed"
-    assert "FORECAST: Labor ran 34% this period, up 3.0 points" in text
+    assert "FORECAST: Labor ran 34% this period, up 3.0 points on the week before" in text
     assert "THE SINGLE BIGGEST OPPORTUNITY" in seen["prompt"] and "Wednesdays run 38.0%" in seen["prompt"]
     assert 'add one final line starting with exactly "FORECAST:"' not in seen["prompt"]
     labor._NOTE_CACHE.clear()
@@ -701,7 +704,10 @@ def test_h16_every_insight_path_runs_the_cause_and_binding_checks():
     # ranked drivers) and figure bindings (F2, labor_insight_facts /
     # food_insight_facts as typed facts) are the Response Validation Layer's.
     lsrc = inspect.getsource(labor.get_claude_insights)
-    assert "rv.enforce(" in lsrc and "labor_read_context(" in lsrc
+    # One finisher for a fresh read and a stored read re-validated (memory
+    # audit 9/29/26, labor_read) — the Food read's shape.
+    assert "_finish_labor_read(" in lsrc and "labor_read_context(" in lsrc
+    assert "rv.enforce(" in inspect.getsource(labor._finish_labor_read)
     lctx = inspect.getsource(labor.labor_read_context)
     assert "labor_insight_facts(" in lctx and "rv.entity_facts(" in lctx and "cause_anchors=anchors" in lctx
     fsrc = inspect.getsource(inventory.get_claude_insights)

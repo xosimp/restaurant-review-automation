@@ -278,6 +278,13 @@ def init_guest_marketing(db_path=DB_PATH):
         "AND LOWER(TRIM(g.email)) = LOWER(TRIM(guest_newsletter_recipients.email))) "
         "WHERE email_token IS NULL AND status='sent'",
         "ALTER TABLE guest_newsletter_recipients ADD COLUMN retryable INTEGER",
+        # A newsletter's recorded opens and clicks, stamped on its own row 30
+        # days after it went (history_rollups.stamp_newsletter_results), so
+        # its results outlive email_log's 365 days (memory audit 9/29/26).
+        "ALTER TABLE guest_newsletters ADD COLUMN opens_recorded INTEGER",
+        "ALTER TABLE guest_newsletters ADD COLUMN clicks_recorded INTEGER",
+        "ALTER TABLE guest_newsletters ADD COLUMN tracked_recorded INTEGER",
+        "ALTER TABLE guest_newsletters ADD COLUMN results_stamped_at TEXT",
         "UPDATE guest_newsletter_recipients SET status='skipped' "
         "WHERE status='failed' AND error LIKE 'recipient suppressed%'",
         "UPDATE guest_newsletter_recipients SET retryable = CASE "
@@ -1721,10 +1728,20 @@ def draft_campaign_message(restaurant, campaign_type="general", topic="", goal="
     menu_clause = f" Menu & current specials: {p['menu_notes']}. Reference something specific when it fits naturally." if p.get("menu_notes") else ""
     topic_clause = f" Topic/specifics to include: {topic}." if topic else ""
     goal_clause = f" What the owner wants this text to do, in their words: {goal}." if goal else ""
+    # The owner's voice on guest texts (what they change before a text goes
+    # out, three they sent in their own words, what their regenerated drafts
+    # had in common — marketing_voice; memory audit 9/29/26, mkt_edits) and
+    # what Cavnar AI remembers (memory_context, surface 'marketing').
+    import marketing_voice
+    from marketing import marketing_memory_block
+    voice = marketing_voice.voice_block(restaurant.id, "text")
+    memory = marketing_memory_block(restaurant.id)
+    # What past texts measurably did here, by audience (mkt_results).
+    returns = returns_block(restaurant.id)
 
     prompt = (
         f"Write {intent} for {p['name']}, a {p['vibe']} in {p['neighborhood']}. "
-        f"Brand voice: {p['voice']}.{never_clause}{menu_clause}{topic_clause}{goal_clause}\n\n"
+        f"Brand voice: {p['voice']}.{never_clause}{menu_clause}{topic_clause}{goal_clause}{voice}{returns}{memory}\n\n"
         f"Rules: under {budget} characters total (this is a real text message, not an email). "
         # A guest text is refused on any stated cause ("because of you",
         # "thanks to our new chef"): the guard can't tell warmth from a claim.
@@ -2256,6 +2273,15 @@ def track_campaign_outcome(restaurant_id, target_day, result, user_id=None, rec_
             ops.capture(e, job="campaign_card_implemented", context=f"restaurant_id={restaurant_id}")
     if day not in _WEEKDAY_TITLES:
         return None
+    # The night it is aimed at, where staffing and the kitchen can see it
+    # (memory audit 9/29/26, mkt_to_staffing): one demand_signals row the
+    # schedule, the DSR's Tomorrow, the pre-shift and every trim read.
+    try:
+        import demand_signals
+        demand_signals.record_campaign(restaurant_id, day, res.get("sent"))
+    except Exception as e:
+        import ops
+        ops.capture(e, job="campaign_demand_signal", context=f"restaurant_id={restaurant_id}")
     # The texts went out: "text your list before a slow <day>" was
     # implemented (ROI #27) — recorded only if it was ever shown, and once:
     # not again when the feed card that named it was just recorded (OPP-10).
@@ -2272,15 +2298,25 @@ def track_campaign_outcome(restaurant_id, target_day, result, user_id=None, rec_
         ops.capture(e, job="campaign_implemented", context=f"restaurant_id={restaurant_id}")
     try:
         import outcomes
+        import rec_ledger
         # Credited to Marketing (the campaign is marketing's recommendation,
         # rec-ROI #5), and refused while that weekday is already measured
         # (#3) — a second campaign on the same Tuesdays would read the same
         # lift twice. A refusal is an answer, not a failure. The
         # restaurant's own date in the key, not the server's (re-audit A8).
-        return outcomes.start(restaurant_id, "slow_day_campaign",
-                              f"campaign:{day}:{outcomes.local_today(restaurant_id).isoformat()}",
-                              f"Guest text to lift {day}s", f"weekday_sales:{day}", user_id=user_id,
-                              module="marketing", gate="metric")
+        # The tracker measures the recommendation the text answered (memory
+        # audit 9/29/26, link_trackers): the feed card it began on, else
+        # "text your list before a slow <day>" — it was keyed only by its
+        # campaign, so three "Fill Tuesday" texts never gave slow_day a
+        # track record. Both episodes the send implemented are linked.
+        slow_key = rec_ledger.rec_key("slow_day", day)
+        started = outcomes.start(restaurant_id, "slow_day_campaign",
+                                 f"campaign:{day}:{outcomes.local_today(restaurant_id).isoformat()}",
+                                 f"Guest text to lift {day}s", f"weekday_sales:{day}", user_id=user_id,
+                                 module="marketing", gate="metric", rec_key=(rec_key or slow_key))
+        if started.get("ok") and rec_key and rec_key != slow_key:
+            rec_ledger.link_tracker(restaurant_id, slow_key, started["outcome"]["id"])
+        return started
     except Exception as e:
         import ops
         ops.capture(e, job="campaign_outcome", context=f"restaurant_id={restaurant_id}")
@@ -2520,8 +2556,35 @@ def campaign_history(restaurant_id, limit=20, db_path=DB_PATH) -> list:
         # yet (CS-8): only once attribution has read its whole window.
         item["window_closed"] = _window_closed(item)
         item["waiting_until"] = _hour_label(GUEST_SMS_EARLIEST_HOUR) if item["status"] == "waiting" else None
+        item["night_effect"] = _campaign_night_effect(restaurant_id, item, db_path=db_path)
         out.append(item)
     return out
+
+
+def _campaign_night_effect(restaurant_id, c, db_path=DB_PATH):
+    """What a fill-a-night campaign's own target night measured against a
+    typical same weekday — {"date", "lift_pct", "text"} from
+    event_memory.campaign_night, the one campaign measurement staffing and
+    the forecast read too (INT PRED-27) — or None before that night is
+    recorded (or for a campaign aimed at no weekday). Never raises."""
+    day = str(c.get("target_day") or "").strip().capitalize()
+    if day not in _WEEKDAY_TITLES or not int(c.get("sent_count") or 0):
+        return None
+    try:
+        from datetime import date as _date
+        from time_utils import mdy
+        import event_memory
+        sent = _date.fromisoformat(str(c.get("completed_at") or c.get("created_at") or "")[:10])
+        night = sent + timedelta(days=(_WEEKDAY_TITLES.index(day) - sent.weekday()) % 7)
+        got = event_memory.campaign_night(restaurant_id, night,
+                                          db_path=None if db_path == DB_PATH else db_path)
+        if not got:
+            return None
+        got["text"] = (f"{day} {mdy(night)} ran {got['lift_pct']:+.0f}% against a typical {day} here "
+                       "(before and after, not proof)")
+        return got
+    except Exception:
+        return None
 
 
 def _window_closed(c) -> bool:
@@ -2709,6 +2772,38 @@ def winback_return(restaurant_id, db_path=DB_PATH) -> dict:
                      f"the last went out {_mdy(last.get('created_at'))}.")}
 
 
+def _last_sent_winback(restaurant_id, db_path=DB_PATH, days=180):
+    """The last win-back text the account holder sent from a draft here
+    (guest_campaign_drafts.sent_message — written at every send and, until
+    the memory audit of 9/29/26, read by nothing), within `days`, or None.
+    The fallback for texts sent before marketing_voice kept them; a
+    teammate's send is not the owner's words. A send marketing_voice did
+    record is read there, with who sent it — never here: a view-as session
+    answers as the owner's own login, so this table cannot tell an admin's
+    send from the owner's."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT d.sent_message, u.role, COALESCE(u.is_admin, 0) AS is_admin FROM guest_campaign_drafts d "
+                "LEFT JOIN users u ON u.id = d.answered_by WHERE d.restaurant_id=? AND d.kind='winback' "
+                "AND d.status='sent' AND TRIM(COALESCE(d.sent_message, '')) != '' "
+                "AND d.answered_at >= datetime('now', ?) "
+                "AND NOT EXISTS (SELECT 1 FROM marketing_edits e WHERE e.restaurant_id = d.restaurant_id "
+                "                AND e.source = 'winback' AND e.ref_id = d.id) "
+                "ORDER BY d.id DESC LIMIT 5",
+                (restaurant_id, f"-{int(days)} days")).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return None
+    from permissions import is_principal
+    for r in rows:
+        if not r["is_admin"] and r["role"] is not None and is_principal({"role": r["role"]}):
+            return r["sent_message"]
+    return None
+
+
 def winback_suggestion(restaurant_id, restaurant_name=None, surface="marketing", user_id=None,
                        db_path=DB_PATH) -> dict:
     """The pending win-back draft for Marketing, creating one when a lapsed
@@ -2751,12 +2846,22 @@ def winback_suggestion(restaurant_id, restaurant_name=None, surface="marketing",
                 restaurant_name = _r.name if _r else None
             except Exception:
                 restaurant_name = None
+        # The owner's own last win-back text, when they sent one lately, is
+        # the draft — their words, not the fixed copy they rewrote last time
+        # (memory audit 9/29/26, mkt_edits: every rewrite used to be thrown
+        # away and the next draft repeated the original).
+        try:
+            import marketing_voice
+            own = marketing_voice.last_sent(restaurant_id, "text", "winback", db_path=db_path)
+        except Exception:
+            own = None
+        message = ((own or _last_sent_winback(restaurant_id, db_path) or "").strip()[:CAMPAIGN_MAX_CHARS]
+                   or _winback_message(restaurant_name))
         conn = get_conn(db_path)
         try:
             cur = conn.execute("INSERT INTO guest_campaign_drafts (restaurant_id, kind, segment, segment_size, "
                                "message, rec_key) VALUES (?,?,?,?,?,?)",
-                               (restaurant_id, "winback", seg, size, _winback_message(restaurant_name),
-                                winback_key(seg)))
+                               (restaurant_id, "winback", seg, size, message, winback_key(seg)))
             conn.commit()
             draft = dict(conn.execute("SELECT * FROM guest_campaign_drafts WHERE id=?", (cur.lastrowid,)).fetchone())
         finally:
@@ -2791,7 +2896,8 @@ def _answer_winback(restaurant_id, draft_id, status, user_id=None, sent_message=
         conn.close()
 
 
-def send_winback(restaurant_id, draft_id, message=None, user_id=None, hold=False, db_path=DB_PATH) -> dict:
+def send_winback(restaurant_id, draft_id, message=None, user_id=None, hold=False, db_path=DB_PATH,
+                 user=None) -> dict:
     """The owner's send of a win-back draft — through start_campaign, so
     consent, quiet hours (`hold`: queue it for 8:00 AM), the frequency cap
     and the length with the restaurant's name all apply. The draft is
@@ -2838,6 +2944,20 @@ def send_winback(restaurant_id, draft_id, message=None, user_id=None, hold=False
         return result
     _answer_winback(restaurant_id, draft_id, "sent", user_id, sent_message=text, total=result.get("total"),
                     db_path=db_path)
+    # What the owner actually sent, measured against the draft (memory audit
+    # 9/29/26, mkt_edits — sent_message was written and read by nothing). A
+    # draft that already WAS the owner's own last win-back text is theirs
+    # from the start: kept as written, not as an edit of Cavnar AI's copy.
+    try:
+        import marketing_voice
+        drafted = row["message"] or ""
+        own = drafted.strip() == (marketing_voice.last_sent(restaurant_id, "text", "winback", db_path=db_path)
+                                  or "").strip()
+        marketing_voice.record_final(restaurant_id, "text", text, "winback", ref_id=draft_id,
+                                     user=user,
+                                     original_body=None if own else drafted, db_path=db_path)
+    except Exception as e:
+        print(f"[winback] edit not recorded for {restaurant_id}: {e}")
     try:
         import rec_ledger
         rec_ledger.record(restaurant_id, row["rec_key"], "accepted", surface="marketing", user_id=user_id,
@@ -3158,6 +3278,49 @@ def plan_campaign(prompt) -> dict:
 
 CAMPAIGN_RATE_MIN = 2           # campaigns a rate rests on before the page shows it
 CAMPAIGN_RATE_MIN_SENT = 10     # texts a campaign needs to count toward a rate
+
+
+def segment_returns(restaurant_id, db_path=DB_PATH, hist=None) -> dict:
+    """{segment: {"label", "back_per_100", "campaigns", "sent", "came_back"}}
+    — guests who came back within ATTRIBUTION_WINDOW_DAYS per 100 texted,
+    per audience, over campaigns whose window has closed, each with
+    CAMPAIGN_RATE_MIN_SENT texts or more, and only an audience with
+    CAMPAIGN_RATE_MIN such campaigns (campaign_overview's rule, CS-8). {}
+    until one clears it (memory audit 9/29/26, mkt_results)."""
+    hist = hist if hist is not None else campaign_history(restaurant_id, limit=50, db_path=db_path)
+    by = {}
+    for c in hist:
+        if int(c.get("sent_count") or 0) < CAMPAIGN_RATE_MIN_SENT or not c.get("window_closed"):
+            continue
+        by.setdefault(c.get("segment") or "all", []).append(c)
+    out = {}
+    for seg, rows in by.items():
+        if len(rows) < CAMPAIGN_RATE_MIN:
+            continue
+        sent = sum(int(c.get("sent_count") or 0) for c in rows)
+        back = sum(int(c.get("visits_matched") or 0) for c in rows)
+        if sent:
+            out[seg] = {"label": (SEGMENTS.get(seg) or SEGMENTS["all"])["label"], "campaigns": len(rows),
+                        "sent": sent, "came_back": back, "back_per_100": round(back / sent * 100, 1)}
+    return out
+
+
+def returns_block(restaurant_id, db_path=DB_PATH) -> str:
+    """The measured return by audience as a prompt block for the text
+    drafter, or "" (memory audit 9/29/26, mkt_results: "9 per 100 against
+    1" changed neither the draft nor the segment). Context for what to ask
+    for — never a figure to state to guests."""
+    try:
+        rets = segment_returns(restaurant_id, db_path=db_path)
+    except Exception:
+        return ""
+    if not rets:
+        return ""
+    lines = [f"- {r['label']}: {r['back_per_100']:g} came back per 100 texted, over {r['campaigns']} campaigns "
+             f"({r['came_back']} of {r['sent']})" for r in sorted(rets.values(), key=lambda r: -r["back_per_100"])]
+    return ("\nWHAT PAST TEXTS DID HERE — guests who came back within "
+            f"{ATTRIBUTION_WINDOW_DAYS} days, matched against Toast check-ins (before and after, not proof):\n"
+            + "\n".join(lines) + "\nUse it to judge what to ask of this audience. Never put a figure in the text.")
 
 
 def campaign_overview(restaurant_id, db_path=DB_PATH) -> dict:

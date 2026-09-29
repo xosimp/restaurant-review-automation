@@ -906,6 +906,7 @@ def _store_discovered(restaurant_id: int, seen: dict, _mod) -> dict:
                 seen[guid] = m["name"]
 
     discovered, updated, hidden = 0, 0, 0
+    added_dishes = []
     with db_conn() as conn:
         if info:
             # Items stored earlier but not sold in this window are named and
@@ -949,7 +950,13 @@ def _store_discovered(restaurant_id: int, seen: dict, _mod) -> dict:
             discovered += 1
             if kind and kind != "dish":
                 hidden += 1
+            else:
+                added_dishes.append(name)
         conn.commit()
+    # A dish the POS menu brought in is a menu change the trackers see (INT
+    # #24); a modifier or add-on stored hidden is no dish and no change.
+    for name in added_dishes:
+        _log_menu_change(restaurant_id, "menu_item", "added", None, name, name, source="sync")
 
     return {"discovered": discovered, "updated": updated, "hidden": hidden, "total_seen": len(seen)}
 
@@ -1173,9 +1180,15 @@ def update_ingredient(restaurant_id: int, ingredient_id: int, **fields) -> bool:
                 return False
             updates[k] = v
     sets = ", ".join(f"{k}=?" for k in updates) + ", updated_at=datetime('now')"
+    args = list(updates.values())
+    if "par_level" in updates:
+        # SET expressions read the row as it was, so this compares the old par.
+        sets += (", par_changed_at=CASE WHEN COALESCE(par_level, -1) <> COALESCE(?, -1) "
+                 "THEN datetime('now') ELSE par_changed_at END")
+        args.append(updates["par_level"])
     with db_conn() as conn:
         cur = conn.execute(f"UPDATE ingredients SET {sets} WHERE id=? AND restaurant_id=?",
-                           [*updates.values(), ingredient_id, restaurant_id])
+                           [*args, ingredient_id, restaurant_id])
         conn.commit()
         return cur.rowcount > 0
 
@@ -1207,7 +1220,9 @@ def create_menu_item(restaurant_id: int, name: str) -> int:
             (restaurant_id, name)
         )
         conn.commit()
-        return cur.lastrowid
+        new_id = cur.lastrowid
+    _log_menu_change(restaurant_id, "menu_item", "added", None, name, name)
+    return new_id
 
 
 def list_menu_items_with_recipes(restaurant_id: int) -> list:
@@ -1593,10 +1608,29 @@ def set_menu_item_price(restaurant_id: int, menu_item_id: int, sell_price) -> bo
         return False
     conn = get_conn()
     try:
+        was = conn.execute("SELECT name, sell_price FROM menu_items WHERE id=? AND restaurant_id=? AND is_active=1",
+                           (menu_item_id, restaurant_id)).fetchone()
         cur = conn.execute(
             "UPDATE menu_items SET sell_price=? WHERE id=? AND restaurant_id=? AND is_active=1",
             (price, menu_item_id, restaurant_id))
         conn.commit()
-        return cur.rowcount > 0
+        ok = cur.rowcount > 0
     finally:
         conn.close()
+    if ok and was is not None:
+        # The price change, attributed to whoever made it (memory audit
+        # 9/29/26 change_log, INT #24): a tracker running on this dish's
+        # numbers lists it as something else that changed, and says who.
+        _log_menu_change(restaurant_id, "price", "sell_price", was["sell_price"], price, was["name"])
+    return ok
+
+
+def _log_menu_change(restaurant_id, entity, field, before, after, subject, source=None):
+    """One change_log row for a sell price or a dish added (entity "price" /
+    "menu_item"), subject the dish; the actor is the request's login unless
+    `source` says a sync or an import made it. Never raises."""
+    try:
+        import change_log
+        change_log.record(restaurant_id, entity, field, before, after, subject=subject, source=source)
+    except Exception as e:
+        print(f"[inventory] change not logged rid={restaurant_id} {entity}/{field}: {e}")

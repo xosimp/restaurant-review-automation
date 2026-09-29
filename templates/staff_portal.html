@@ -270,7 +270,8 @@
   // Staff-safe by construction (preshift.py): relative volume, what guests
   // have raised, what is running low. No money, no names. An empty or failed
   // briefing shows nothing rather than an error — it is a bonus, not the page.
-  var BRIEF_TAGS = {volume: 'Volume', watch: 'Watch', stock: '86 risk', event: 'Today', weather: 'Weather'};
+  // promotion: a campaign or post filling tonight (memory round 9/29/26, M3).
+  var BRIEF_TAGS = {volume: 'Volume', watch: 'Watch', stock: '86 risk', event: 'Today', weather: 'Weather', promotion: 'Promotion'};
   fetch('/staff/api/preshift').then(function(r){ return r.json(); }).then(function(d){
     if (!d.ok || !d.items || !d.items.length) return;
     var html = '<h2>Before service</h2><div class="brief">';

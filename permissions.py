@@ -135,12 +135,20 @@ def enter_path_allowed(user, method, path) -> bool:
 # opening this — and the manager being granted it may be the one it names.
 LOSS_VIEW = "loss.view"
 
+# A login the owner marks as writing review replies in the restaurant's own
+# voice (memory audit 9/29/26, reply_voice): its approved replies and its
+# edits teach the drafter as the owner's do. It opens no route and no data —
+# models.reply_voice_sql reads the grant — and it never earns auto-approve
+# trust, which rests on the account holder's own approvals.
+REVIEWS_VOICE = "reviews.voice"
+
 # What an owner may grant an individual login on top of its role, per
 # location (permission_grants). A fixed list on purpose: administering logins,
 # billing and switching locations are never grantable.
 GRANTABLE = {
     FOOD_COST_VIEW: "Food cost & margins",
     LOSS_VIEW: "Comps & voids",
+    REVIEWS_VOICE: "Writes replies in our voice",
 }
 # Roles a grant can be given to. Owners already hold everything; employees
 # are PIN identities with no console at all.
@@ -310,6 +318,47 @@ def is_principal(user) -> bool:
     if not user:
         return False
     return bool(user.get("is_admin")) or has_permission(user, TEAM_INVITE)
+
+
+def answer_authority(user) -> str:
+    """Whose answer this is, for recommendation memory (memory audit 9/29/26,
+    "who_answered" and "view_as"): 'admin' for an admin or support login, or
+    anyone acting through view-as (the admin behind it is on the session as
+    acting_admin_id); 'principal' for an account holder (is_principal); else
+    'delegate' (a manager or employee login). A principal's answer governs
+    the restaurant; a delegate's silences only that login; an admin's never
+    trains the owner's preferences."""
+    if not user:
+        return "delegate"
+    if user.get("acting_admin_id") or user.get("acting_admin_role") or user.get("is_admin") \
+            or str(user.get("role") or "").strip().lower() == "support":
+        return "admin"
+    return "principal" if is_principal(user) else "delegate"
+
+
+def acting_via(user=None):
+    """{"admin_id", "admin", "role"} when a write is an admin (or support
+    login) acting through view-as — read from the login dict
+    (acting_admin_id, set by auth for a view-as session) or, with none
+    given, from the request (flask.g.view_as) — else None. Anything that
+    learns the owner's preferences leaves such a write out (memory audit
+    9/29/26, "view_as"): support triaging a queue is not the owner
+    deciding. Never raises."""
+    ctx = None
+    if isinstance(user, dict) and (user.get("acting_admin_id") or user.get("acting_admin_role")):
+        ctx = {"acting_admin_id": user.get("acting_admin_id"), "acting_admin": user.get("acting_admin"),
+               "acting_admin_role": user.get("acting_admin_role")}
+    if ctx is None:
+        try:
+            from flask import g, has_request_context
+            if has_request_context():
+                ctx = getattr(g, "view_as", None)
+        except Exception:
+            ctx = None
+    if not ctx:
+        return None
+    return {"admin_id": ctx.get("acting_admin_id"), "admin": ctx.get("acting_admin"),
+            "role": ctx.get("acting_admin_role") or "admin"}
 
 
 def principal_only(user, what="this"):

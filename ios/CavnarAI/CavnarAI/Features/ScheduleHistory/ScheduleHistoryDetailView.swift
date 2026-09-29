@@ -55,6 +55,12 @@ struct ScheduleHistoryDetailView: View {
                         if let republishedAt = detail.republishedAt, !republishedAt.isEmpty {
                             republishedLine(at: republishedAt)
                         }
+                        // A replaced draft's detail is trimmed after 30 days
+                        // (memory round, 9/29/26) — say so, so a missing
+                        // per-shift reason isn't read as never having existed.
+                        if let thinned = detail.detailThinnedAt?.value {
+                            thinnedLine(at: thinned)
+                        }
 
                         if let summary = detail.summary, !summary.isEmpty {
                             VStack(alignment: .leading, spacing: 8) {
@@ -220,6 +226,23 @@ struct ScheduleHistoryDetailView: View {
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.cavnarGreen.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+    }
+
+    /// "Details trimmed 10/22/26, 30 days on — the score, band, schedule
+    /// and economics are kept."
+    private func thinnedLine(at thinned: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "archivebox")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Color.cavnarInk3)
+            HomeMixedText.make("Details trimmed " + CavnarDate.mdy(thinned) + ", 30 days on \u{2014} the score, band, "
+                               + "schedule and economics are kept.", size: 13.5, weight: 500, color: .cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(0.03))
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
     }
 

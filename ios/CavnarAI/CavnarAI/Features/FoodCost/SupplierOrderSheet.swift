@@ -177,6 +177,11 @@ struct SupplierOrderSheet: View {
                         .font(.cavnarBody(12.5))
                         .foregroundStyle(Color.cavnarInk3)
                 }
+                // The owner's own ordering habit applied (memory round).
+                if let adjusted = item.adjustmentLine {
+                    HomeMixedText.make(adjusted, size: 12.5, weight: 500, color: .cavnarEmber2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer(minLength: 8)
             TextField("0", text: Binding(

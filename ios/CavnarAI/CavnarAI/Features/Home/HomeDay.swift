@@ -49,6 +49,13 @@ struct HomeDayCard: View {
                                         HomeMixedText.make(record + ".", size: 12.5, weight: 500, color: .cavnarInk3)
                                             .fixedSize(horizontal: false, vertical: true)
                                     }
+                                    // Last night's report's own calls for
+                                    // today, with how often its range held
+                                    // (memory round 9/29/26, M5).
+                                    if !line.reportCalls.isEmpty {
+                                        HomeReportCalls(calls: line.reportCalls, confidencePct: line.confidencePct)
+                                            .padding(.top, 2)
+                                    }
                                     // The line's direct action first — send,
                                     // open the order, answer the replies —
                                     // and Ask as the secondary (web #46).
@@ -76,6 +83,11 @@ struct HomeDayCard: View {
                                     // recommendation is answered where it
                                     // is read: Done / Not for us, never
                                     // Track (the brief names no metric).
+                                    if let conflict = line.conflict {
+                                        RecConflictPanel(conflict: conflict, onSettled: {
+                                            Task { await viewModel.load() }
+                                        })
+                                    }
                                     if let key = line.answerKey {
                                         RecAnswerRow(key: key, surface: "home", module: line.answerModule,
                                                      answers: [.completed, .notForUs],
@@ -141,6 +153,12 @@ struct HomeDayCard: View {
                                     if let note = viewModel.coverNote[issue.id] {
                                         Text(note).font(.cavnarBody(12, weight: 600)).foregroundStyle(Color.cavnarGreen)
                                     }
+                                    // Whoever was asked: "Did Zed take it?" —
+                                    // the manager's word counts on their
+                                    // record of covers (memory round).
+                                    ForEach(issue.askedNames, id: \.self) { name in
+                                        CoverAnswerRow(issueId: issue.id, name: name)
+                                    }
                                 }
                                 Spacer(minLength: 0)
                             }
@@ -183,6 +201,15 @@ final class HomeDayViewModel {
         /// The line's direct action ({label, nav}: "Reply now" →
         /// reviews?filter=urgent), drawn before Ask.
         var action: LineAction? = nil
+        /// The nightly report's own calls for today, graded tomorrow, on the
+        /// "today" line built from last night's report (source "dsr",
+        /// dsr.memory.morning_carry — memory round 9/29/26, M5), and how
+        /// often its forecast range has held here. Empty / nil otherwise.
+        var predictions: [String] = []
+        var confidencePct: Int? = nil
+        /// Advice this line pulls against, for the owner to settle
+        /// (lever_conflicts, M1). Nil on an older server.
+        var conflict: RecConflict? = nil
         var id: String { (key ?? "") + text }
 
         struct LineAction: Decodable, Hashable {
@@ -191,10 +218,11 @@ final class HomeDayViewModel {
         }
 
         enum CodingKeys: String, CodingKey {
-            case key, text, tone, ask, answerable, rec, source, action
+            case key, text, tone, ask, answerable, rec, source, action, predictions, conflict
             case recKey = "rec_key"
             case recKeys = "rec_keys"
             case claimKind = "claim_kind"
+            case confidencePct = "confidence_pct"
         }
 
         init(key: String?, text: String, rec: String? = nil, source: String? = nil) {
@@ -215,7 +243,19 @@ final class HomeDayViewModel {
             recKey = try? c.decodeIfPresent(String.self, forKey: .recKey)
             recKeys = try? c.decodeIfPresent([String].self, forKey: .recKeys)
             answerable = try? c.decodeIfPresent(Bool.self, forKey: .answerable)
+            predictions = (((try? c.decodeIfPresent(HomeLenientList<String>.self, forKey: .predictions)) ?? nil)?
+                .items ?? []).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            if let i = (try? c.decodeIfPresent(Int.self, forKey: .confidencePct)) ?? nil {
+                confidencePct = max(0, min(i, 100))
+            } else if let d = (try? c.decodeIfPresent(Double.self, forKey: .confidencePct)) ?? nil, d.isFinite {
+                confidencePct = max(0, min(Int(d.rounded()), 100))
+            }
+            conflict = (try? c.decodeIfPresent(RecConflict.self, forKey: .conflict)) ?? nil
         }
+
+        /// The report's calls are drawn only on the line built from the
+        /// report itself.
+        var reportCalls: [String] { source == "dsr" ? predictions : [] }
 
         /// The key Done / Not for us answer — only on a keyed line the
         /// server marked answerable.
@@ -273,6 +313,11 @@ final class HomeDayViewModel {
         var tone: Color {
             if status != "open" { return .cavnarInk3 }
             return severity == "high" ? .cavnarRed : .cavnarAmber
+        }
+        /// Who was asked to cover, while the issue is open (at most two).
+        var askedNames: [String] {
+            guard status != "resolved" else { return [] }
+            return Array((meta?.asked ?? []).compactMap(\.name).filter { !$0.isEmpty }.prefix(2))
         }
     }
     private struct BriefResponse: Decodable {
@@ -418,11 +463,50 @@ enum HomeBriefFilter {
         return lines.filter { l in
             // The one thing and the money line have their own card.
             if l.key == "fix_first" || l.key == "money" { return false }
-            // The report's "Last night" line: the Last night card says it.
-            if l.key == "yesterday" && l.source == "dsr" { return false }
+            // The report's "Last night" line and its unanswered priority
+            // (dsr_action, memory round 9/29/26): the Last night card says
+            // both (morning_brief.shown_on_home).
+            if (l.key == "yesterday" || l.key == "dsr_action") && l.source == "dsr" { return false }
             if let j = same(l.rec), shown.contains(j) { return false }
             if let j = same(l.key), shown.contains(j) { return false }
             return true
         }
+    }
+}
+
+/// "THE REPORT'S CALLS" — what last night's report said today would bring,
+/// each graded against the night tomorrow (dsr/predictions.py), under the
+/// brief's "today" line, with the share of nights its forecast range has
+/// held here as a small meter. Numbers in the number face; the kicker
+/// orange, as every kicker.
+struct HomeReportCalls: View {
+    let calls: [String]
+    var confidencePct: Int? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .center, spacing: 8) {
+                Text("THE REPORT\u{2019}S CALLS")
+                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
+                    .tracking(1.2)
+                    .foregroundStyle(Color.cavnarEmber2)
+                if let pct = confidencePct {
+                    ConfidenceMeter(fraction: Double(pct) / 100, tone: pct >= 75 ? .good : (pct >= 50 ? .neutral : .warn))
+                    HomeMixedText.make("range held \(pct)%", size: CavnarType.caption, weight: 600,
+                                       color: .cavnarInk3)
+                }
+            }
+            ForEach(Array(calls.prefix(4).enumerated()), id: \.offset) { _, call in
+                HStack(alignment: .firstTextBaseline, spacing: 7) {
+                    Circle().fill(Color.cavnarEmber2.opacity(0.8)).frame(width: 4, height: 4)
+                        .alignmentGuide(.firstTextBaseline) { d in d[.bottom] + 3 }
+                    HomeMixedText.make(call, size: CavnarType.secondary, weight: 500, color: .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("The report's calls for today: " + calls.joined(separator: ". ")
+                            + (confidencePct.map { ". Its forecast range has held \($0) percent of the time." } ?? ""))
     }
 }

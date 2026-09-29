@@ -36,8 +36,10 @@ def test_three_panels_in_order_with_the_asked_for_sections():
     assert re.findall(r'data-ss-tab="(\w+)"', left) == ["basic", "forecast", "employees", "rules", "ai", "advanced"]
     assert re.findall(r'data-ss-panel="(\w+)"', left) == ["basic", "forecast", "employees", "rules", "ai", "advanced"]
     assert 'id="gen-sched-btn"' in left[left.index('data-ss-panel="advanced"'):], "Generate closes the settings"
-    assert _kickers(right) == ["Shift quality", "Coverage", "Labor", "Cost", "Warnings", "Opportunities",
-                               "AI suggestions", "Apply fixes"]
+    # "What this draft was asked to do": the soft requirements and pattern
+    # clashes (memory round 9/29/26, UI wave B), in the Overview after Labor.
+    assert _kickers(right) == ["Shift quality", "Coverage", "Labor", "What this draft was asked to do", "Cost",
+                               "Warnings", "Opportunities", "AI suggestions", "Apply fixes"]
     assert re.findall(r'data-ss-rtab="(\w+)"', right) == ["overview", "fix", "shift"]
     center = ws[ws.index('class="sw-center"'):ws.index('id="sw-right"')]
     for part in ('id="schedule-preview-panel"', 'id="swg"', 'id="sched-table-wrap"', 'data-sw-view="week"',

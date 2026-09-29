@@ -700,16 +700,26 @@ def run_daily_fetch(restaurant_ids=None):
                 except Exception:
                     pass
 
-            # Draft — include approved examples for style learning. Same
-            # unconditional-sweep reasoning as the analysis loop above.
-            from models import get_approved_examples
-            approved_examples = get_approved_examples(rid, limit=4)
+            # A review that just arrived may answer a review request: matched
+            # by the guest's name, one-to-one or not at all (review_signals;
+            # memory audit 9/29/26, uncaptured).
+            if new_reviews:
+                try:
+                    import review_signals
+                    review_signals.match_review_requests(rid)
+                except Exception as _me:
+                    log.error(f"Review request matching error [{restaurant.name}]: {_me}")
+
+            # Draft. Same unconditional-sweep reasoning as the analysis loop
+            # above. Each draft picks its own style examples from the owner's
+            # approvals for reviews of its star band (drafter.draft_response;
+            # memory audit 9/29/26, reply_voice) — four fetched here once
+            # used to be every draft's examples, 1-star or 5.
             for r in get_pending_drafts(rid, limit=50):
                 try:
                     draft_response(r.id, r.rating, r.text, r.sentiment,
                                   restaurant.name, restaurant.voice_notes or "",
                                   restaurant_id=rid,
-                                  approved_examples=approved_examples,
                                   sign_off=restaurant.sign_off_name or restaurant.name,
                                   never_say=restaurant.never_say or "",
                                   language=getattr(restaurant, "response_language", None) or None,
@@ -3136,6 +3146,35 @@ def run_forecast_scoring():
     return c
 
 
+LEARNING_MEMORY_CURSOR_KEY = "learning_memory_cursor"
+
+
+def run_learning_memory():
+    """Daily, after the outcome evaluations — the nightly learning pass for
+    every restaurant allowed to teach a learner (learning_memory.nightly:
+    score AI claims at their horizon, summarise closed quarters of reads,
+    and the steps the memory audit added after them). Bounded and resumable
+    like every sweep here; sends nothing."""
+    import learning_memory
+    ids = learning_memory.eligible_ids()
+    c = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0}
+    lock = threading.Lock()
+
+    def _one(rid):
+        res = learning_memory.nightly(rid)
+        with lock:
+            c["attempted"] += 1
+            c["ok" if res.get("ok") else "failed"] += 1
+
+    _done, ran_out = resumable_sweep(LEARNING_MEMORY_CURSOR_KEY, ids, _one, SWEEP_MAX_SECONDS,
+                                     workers=SWEEP_WORKERS, job="learning_memory")
+    if ran_out:
+        _ops.capture(RuntimeError(f"The learning pass stopped at the {SWEEP_MAX_SECONDS}s bound; "
+                                  "the rest lead the next pass"), job="learning_memory", context="time_bound")
+    c["hit_bound"] = bool(ran_out)
+    return c
+
+
 def run_food_cost_diagnoses():
     """Daily — the root-cause read over each restaurant's ranked cost drivers.
 
@@ -4388,6 +4427,14 @@ def scheduler_loop():
             if _due(now, 5) and _ops.claim_period("forecast_scoring", str(today)):
                 _ops.run_job("forecast_scoring", run_forecast_scoring)
 
+            # 5am+ — what the nights just finished taught (event_memory): the
+            # weather each day actually had, and the measured lift of every
+            # listed event, holiday, rain night, payday and campaign, before
+            # the morning briefs. Sends nothing; bounded and resumable.
+            if _due(now, 5) and _ops.claim_period("event_memory", str(today)):
+                import event_memory as _event_memory
+                _ops.run_job("event_memory", _event_memory.run_event_memory)
+
             # 6am+ — one Data Health snapshot per restaurant, after the
             # nightly chain (POS, depletion, snapshots) has landed.
             if _due(now, 6) and _ops.claim_period("data_health_daily", str(today)):
@@ -4414,6 +4461,12 @@ def scheduler_loop():
                 from strategy_jobs import run_outcome_rechecks
                 _ops.run_job("outcome_rechecks", run_outcome_rechecks)
 
+            # 6am+, after the evaluations and re-checks — the nightly
+            # learning pass (learning_memory): score AI claims whose horizon
+            # passed, summarise closed quarters of reads. Sends nothing.
+            if _due(now, 6) and _ops.claim_period("learning_memory", str(today)):
+                _ops.run_job("learning_memory", run_learning_memory)
+
             # 6am+, after the outcome evaluations — each restaurant's four
             # value figures into value_figures_daily, which the admin
             # Intelligence page sums (intelligence.dashboard, #57). On the
@@ -4423,6 +4476,15 @@ def scheduler_loop():
                 from intelligence.dashboard import snapshot_value_figures
                 if not _ops.run_in_lane("intel", "value_figures", snapshot_value_figures):
                     _ops.release_period("value_figures", str(today))
+
+            # 6am+, after the outcome evaluations — each restaurant's own
+            # value point (value_snapshots, the Home sparkline), dated on its
+            # local day. It was written only when someone opened Home, so the
+            # series had holes on exactly the days nobody looked (memory audit
+            # 9/29/26). Bounded, resumable; sends nothing.
+            if _due(now, 6) and _ops.claim_period("value_snapshots", str(today)):
+                from value_delivered import run_value_snapshots
+                _ops.run_job("value_snapshots", run_value_snapshots)
 
             # Hourly: each restaurant is told about a result or a milestone
             # at ITS OWN 9am (strategy_jobs.WIN_HOUR, local_due inside),
@@ -4463,6 +4525,15 @@ def scheduler_loop():
             if _due(now, 4) and now.weekday() == 0 and _ops.claim_period("schedule_outcomes", str(today)):
                 from strategy_jobs import run_schedule_outcomes
                 _ops.run_job("schedule_outcomes", run_schedule_outcomes)
+
+            # 5am daily, once the 3am POS sync (45 minutes at most) is in —
+            # what last night taught about the people: attendance from the
+            # punches and the checks, covers taken, guest mentions, standing
+            # schedule patterns, the quarterly summaries (memory audit
+            # 9/29/26). Sends nothing.
+            if _due(now, 5) and _ops.claim_period("people_nightly", str(today)):
+                from strategy_jobs import run_people_nightly
+                _ops.run_job("people_nightly", run_people_nightly)
 
             # 5am daily — reservation feeds into demand_signals for each
             # restaurant whose draft is tomorrow (its auto_draft_weekday; the
@@ -4627,6 +4698,17 @@ def scheduler_loop():
             if _due(now, 4) and _ops.claim_period("intelligence_learning", str(today)):
                 from intelligence import jobs as _intel_jobs
                 _ops.run_job("intelligence_learning", _intel_jobs.run_learning)
+            # 5am — past feature weeks from the raw tables (bounded,
+            # resumable; memory audit PLATFORM-5), after the night's own
+            # feature and learning passes.
+            if _due(now, 5) and _ops.claim_period("intelligence_features_backfill", str(today)):
+                from intelligence import jobs as _intel_jobs
+                _ops.run_job("intelligence_features_backfill", _intel_jobs.run_features_backfill)
+            # Monday 5am — the schedule A/B's clustered verdict, stored for
+            # the week (memory audit PLATFORM-13).
+            if _due(now, 5) and now.weekday() == 0 and _ops.claim_period("schedule_experiment_verdicts", str(today)):
+                import schedule_experiments as _sx
+                _ops.run_job("schedule_experiment_verdicts", _sx.record_verdicts)
 
             # Noon daily — which campaign recipients Toast saw on a later
             # check (guest_marketing.run_campaign_attribution). Reads each

@@ -29,6 +29,11 @@ struct ChatMessage: Identifiable {
     /// or skipped, so the field closes. Web asks the same (dashboard.html
     /// _appendAskCavnarFeedback).
     var noteSettled: Bool = false
+    /// What this login's ratings now say about answer length, once the
+    /// server derived it (owner_memory.derive_rating_preferences — memory
+    /// round 9/29/26, M2): "Got it — shorter answers for you (Account →
+    /// Memory)". Nil until a rating returns one.
+    var preferenceNote: String? = nil
     /// Set once this message's typewriter reveal has actually played. The
     /// view model (not the view) owns this because the view's own @State is
     /// torn down every time the screen goes away — without a model-level
@@ -94,11 +99,16 @@ struct AskEvidence: Decodable, Hashable {
     /// claim reads as a guess. Empty from a server that does not send them.
     var unsupportedCauses: [String] = []
     var unsupportedNames: [String] = []
+    /// Suggestions in the answer the owner already said "not for us" to on
+    /// some surface — kept, and caveated in place in the prose (memory
+    /// round 9/29/26, M1 "relevance": decisions.annotate_declined →
+    /// `declined_repeats`). Empty from a server that does not send them.
+    var declinedRepeats: [AskDeclinedRepeat] = []
 
     /// Nothing worth drawing a strip for. A measured confidence is always
     /// worth its line; a legacy band only when it is low (as before).
     var isEmpty: Bool {
-        guard modules.isEmpty && unverifiedFigures.isEmpty
+        guard modules.isEmpty && unverifiedFigures.isEmpty && declinedRepeats.isEmpty
                 && unsupportedCauses.isEmpty && unsupportedNames.isEmpty else { return false }
         guard let c = confidence, ConfidenceDisplay(c).isRenderable else { return true }
         return !c.isMeasuredShape && c.effectiveBand != "low"
@@ -134,16 +144,52 @@ struct AskEvidence: Decodable, Hashable {
 
     /// Every warning line, in the order the strip draws them.
     var warnings: [String] { [warning, causeWarning, nameWarning].compactMap { $0 } }
+
+    /// "1 suggestion here is one you said not for us to on 8/12/26 —
+    /// marked in the answer." Nil with none.
+    var declinedLine: String? {
+        let n = declinedRepeats.count
+        guard n > 0 else { return nil }
+        if n == 1, let on = declinedRepeats[0].declinedOn {
+            return "1 suggestion here is one you said not for us to on \(on) \u{2014} marked in the answer."
+        }
+        return "\(n) suggestion\(n == 1 ? " here is one" : "s here are ones") you said not for us to before \u{2014} each marked in the answer."
+    }
+}
+
+/// One suggestion in an answer that repeats advice the owner declined
+/// (`declined_repeats`: {text, signature, declined_on M/D/YY}).
+struct AskDeclinedRepeat: Codable, Hashable, Sendable {
+    let text: String
+    var declinedOn: String? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case text
+        case declinedOn = "declined_on"
+    }
+
+    init(text: String, declinedOn: String? = nil) { self.text = text; self.declinedOn = declinedOn }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        text = try c.decode(String.self, forKey: .text)
+        let on = ((try? c.decodeIfPresent(String.self, forKey: .declinedOn)) ?? nil)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        declinedOn = (on?.isEmpty ?? true) ? nil : on
+    }
 }
 
 /// K5 names the answer's metadata `meta`; today's server merges it into the
 /// answer itself. Both places are read — the top-level one first.
 struct AskMeta: Decodable, Hashable, Sendable {
     let confidence: TrustConfidence?
+    /// `declined_repeats` when the server nests it under `meta`.
+    var declinedRepeats: [AskDeclinedRepeat] = []
 
     enum CodingKeys: String, CodingKey {
         case confidence
         case confidenceDetail = "confidence_detail"
+        case declinedRepeats = "declined_repeats"
     }
 
     /// Never throws: a `meta` that is not an object is no metadata, not an
@@ -152,6 +198,14 @@ struct AskMeta: Decodable, Hashable, Sendable {
         guard let c = try? decoder.container(keyedBy: CodingKeys.self) else { confidence = nil; return }
         confidence = (try? c.decodeIfPresent(TrustConfidence.self, forKey: .confidenceDetail))
             ?? (try? c.decodeIfPresent(TrustConfidence.self, forKey: .confidence))
+        declinedRepeats = ((try? c.decodeIfPresent(HomeLenientList<AskDeclinedRepeat>.self,
+                                                   forKey: .declinedRepeats)) ?? nil)?.items ?? []
+    }
+
+    /// The top-level list, else the one nested in `meta`.
+    static func declined(_ topLevel: HomeLenientList<AskDeclinedRepeat>?, _ meta: AskMeta?) -> [AskDeclinedRepeat] {
+        let top = topLevel?.items ?? []
+        return top.isEmpty ? (meta?.declinedRepeats ?? []) : top
     }
 
     static func pick(_ topLevel: TrustConfidence?, _ meta: AskMeta?) -> TrustConfidence? {
@@ -239,8 +293,16 @@ struct AskConversation: Decodable, Identifiable, Hashable {
 /// Minimal JSON value box — proposal bodies are small and untyped
 /// (a supplier email, a schedule id), and this avoids inventing a
 /// separate Swift type per action.
-enum AnyCodableValue: Decodable, Hashable, Encodable {
+///
+/// Lists and objects are kept as they came (memory round 9/29/26): the Ask
+/// card `set_staff_unavailable` posts `unavailable_days` as a list, and a
+/// list read as null posted `unavailable_days: null` — the availability
+/// route then saved the person as available every day, wiping the days
+/// they had blocked. Every value round-trips now.
+indirect enum AnyCodableValue: Decodable, Hashable, Encodable {
     case string(String), int(Int), double(Double), bool(Bool), null
+    case array([AnyCodableValue])
+    case object([String: AnyCodableValue])
 
     init(from decoder: Decoder) throws {
         let c = try decoder.singleValueContainer()
@@ -249,6 +311,8 @@ enum AnyCodableValue: Decodable, Hashable, Encodable {
         else if let v = try? c.decode(Int.self) { self = .int(v) }
         else if let v = try? c.decode(Double.self) { self = .double(v) }
         else if let v = try? c.decode(String.self) { self = .string(v) }
+        else if let v = try? c.decode([AnyCodableValue].self) { self = .array(v) }
+        else if let v = try? c.decode([String: AnyCodableValue].self) { self = .object(v) }
         else { self = .null }
     }
 
@@ -260,6 +324,8 @@ enum AnyCodableValue: Decodable, Hashable, Encodable {
         case .double(let v): try c.encode(v)
         case .bool(let v):   try c.encode(v)
         case .null:          try c.encodeNil()
+        case .array(let v):  try c.encode(v)
+        case .object(let v): try c.encode(v)
         }
     }
 }
@@ -397,11 +463,13 @@ final class AskCavnarViewModel {
         let unverifiedFigures: [String]?
         var unsupportedCauses: [String]? = nil
         var unsupportedNames: [String]? = nil
+        var declinedRepeats: HomeLenientList<AskDeclinedRepeat>? = nil
         let messageId: Int?
         let suggestions: [AskSuggestion]?
 
         enum CodingKeys: String, CodingKey {
             case ok, answer, error, truncated, proposals, confidence, suggestions, meta
+            case declinedRepeats = "declined_repeats"
             case confidenceDetail = "confidence_detail"
             case conversationId = "conversation_id"
             case modulesConsulted = "modules_consulted"
@@ -416,7 +484,8 @@ final class AskCavnarViewModel {
                         confidence: AskMeta.pick(confidenceDetail ?? confidence, meta),
                         unverifiedFigures: unverifiedFigures ?? [],
                         unsupportedCauses: unsupportedCauses ?? [],
-                        unsupportedNames: unsupportedNames ?? [])
+                        unsupportedNames: unsupportedNames ?? [],
+                        declinedRepeats: AskMeta.declined(declinedRepeats, meta))
         }
     }
 
@@ -441,12 +510,30 @@ final class AskCavnarViewModel {
         let ok: Bool
         let error: String?
         let jobId: String?
+        /// POST /goals from a teammate: the goal waits for the owner
+        /// (memory round 9/29/26, M2 — goal.proposed).
+        var proposed: Bool? = nil
 
         enum CodingKeys: String, CodingKey {
-            case ok, error
+            case ok, error, proposed
             case jobId = "job_id"
         }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = (try? c.decode(Bool.self, forKey: .ok)) ?? false
+            error = (try? c.decodeIfPresent(String.self, forKey: .error)) ?? nil
+            jobId = (try? c.decodeIfPresent(String.self, forKey: .jobId)) ?? nil
+            proposed = (try? c.decodeIfPresent(Bool.self, forKey: .proposed)) ?? nil
+        }
     }
+
+    /// What a confirmed card did beyond "Done", when the route says so —
+    /// "Sent to the owner to confirm" for a teammate's goal. Nil otherwise.
+    private(set) var lastConfirmNote: String?
+
+    /// The line a goal a teammate set earns: it waits for an account holder.
+    static let proposedGoalNote = "Sent to the owner to confirm"
 
     private struct JobStatus: Decodable {
         let ok: Bool
@@ -643,6 +730,7 @@ final class AskCavnarViewModel {
     /// reason the owner then never saw (CLIENT-19).
     func confirm(_ proposal: AskProposal) async -> Bool {
         lastConfirmMayHaveRun = false
+        lastConfirmNote = nil
         do {
             let response: JobOrOK
             if proposal.route.method == "GET" {
@@ -664,6 +752,7 @@ final class AskCavnarViewModel {
                 errorBanner = "The schedule didn't finish building. Open Labor to see where it stopped."
                 return false
             }
+            if response.proposed == true { lastConfirmNote = Self.proposedGoalNote }
             await record(proposal, outcome: "confirmed")
             return true
         } catch is CancellationError {
@@ -747,7 +836,7 @@ final class AskCavnarViewModel {
         guard let messageId = message.messageId else { return false }
         let clean = (note ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let sentNote: String? = clean.isEmpty ? nil : String(clean.prefix(Self.feedbackNoteMax))
-        let r: PlainOK? = try? await client.send(
+        let r: FeedbackResponse? = try? await client.send(
             "/mobile/api/ask-cavnar/feedback", method: .post,
             body: FeedbackBody(message_id: messageId, helpful: helpful, note: sentNote),
             hapticOnError: false, retryTransient: false)
@@ -755,6 +844,12 @@ final class AskCavnarViewModel {
         if let idx = messages.firstIndex(where: { $0.id == message.id }) {
             messages[idx].rating = helpful
             if sentNote != nil { messages[idx].noteSettled = true }
+            // Said once a chat: the preference stands until the ratings
+            // change it, and repeating it under every answer is noise.
+            if let note = Self.preferenceNote(r?.preference?.preference), note != lastPreferenceNote {
+                messages[idx].preferenceNote = note
+                lastPreferenceNote = note
+            }
         }
         Haptic.success()
         return true
@@ -762,6 +857,41 @@ final class AskCavnarViewModel {
 
     /// The web field's maxlength for the "What was missing?" line.
     static let feedbackNoteMax = 500
+
+    /// POST /ask-cavnar/feedback's answer: `preference` is what this
+    /// login's own ratings now say about answer length ({preference:
+    /// "short"|"full", fact}), or null.
+    struct FeedbackResponse: Decodable {
+        struct Preference: Decodable {
+            let preference: String?
+            let fact: String?
+        }
+        let ok: Bool
+        let error: String?
+        var preference: Preference? = nil
+
+        enum CodingKeys: String, CodingKey { case ok, error, preference }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = (try? c.decode(Bool.self, forKey: .ok)) ?? false
+            error = (try? c.decodeIfPresent(String.self, forKey: .error)) ?? nil
+            preference = (try? c.decodeIfPresent(Preference.self, forKey: .preference)) ?? nil
+        }
+    }
+
+    /// "Got it — shorter answers for you (Account → Memory)" — the one
+    /// line a derived preference earns; nil for anything else.
+    static func preferenceNote(_ preference: String?) -> String? {
+        switch preference {
+        case "short": return "Got it \u{2014} shorter answers for you (Account \u{2192} Memory)"
+        case "full": return "Got it \u{2014} fuller answers for you (Account \u{2192} Memory)"
+        default: return nil
+        }
+    }
+
+    /// The last preference line said in this chat.
+    @ObservationIgnored private var lastPreferenceNote: String?
 
     /// The owner closed the "What was missing?" field without writing
     /// anything: the No already stands, so nothing more is sent.

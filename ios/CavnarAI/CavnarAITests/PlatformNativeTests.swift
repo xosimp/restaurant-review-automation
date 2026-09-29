@@ -29,11 +29,11 @@ final class PlatformNativeTests: XCTestCase {
         XCTAssertNil(sent["reason_code"])
     }
 
-    func testPassQueuesAsNotForUsWithItsReason() throws {
+    func testNotForUsQueuesWithItsReason() throws {
         let body = APIClient.recEventBody(key: "reviews:k1", answer: .notForUs, surface: "home",
                                           module: "reviews", reasonCode: "too_costly")
         let write = try XCTUnwrap(QueuedWrite.recAnswer(body))
-        XCTAssertEqual(write.label, "Pass on a recommendation")
+        XCTAssertEqual(write.label, "Not for us on a recommendation")
         let sent = try json(write.bodyJSON)
         XCTAssertEqual(sent["event"] as? String, "dismissed")
         XCTAssertEqual(sent["kind"] as? String, "not_for_us")
@@ -47,7 +47,7 @@ final class PlatformNativeTests: XCTestCase {
         XCTAssertNil(QueuedWrite.recAnswer(body))
         let viewed = APIClient.RecEventBody(key: "k", event: "evidence_viewed", surface: "home",
                                             module: "home", kind: nil)
-        XCTAssertNil(QueuedWrite.recAnswer(viewed), "only Done and Pass are on the list")
+        XCTAssertNil(QueuedWrite.recAnswer(viewed), "only Done and Not for us are on the list")
     }
 
     func testACountSheetQueuesItsLinesPinnedToTheDayCounted() throws {

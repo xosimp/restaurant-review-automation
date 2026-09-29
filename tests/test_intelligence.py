@@ -196,7 +196,10 @@ def test_a_restaurants_own_record_names_what_worked_only_over_the_floor(db_path)
     feedback.record(rid, "trim_day", "trim_day:Mon", "not_for_us", db_path=db_path)
     feedback.record(rid, "trim_day", "trim_day:Tue", "hidden", db_path=db_path)
     rec = memory.own_record(rid, db_path=db_path)
-    assert rec["worked"] == [] and rec["ignored"] == ["trim_day"]
+    # One "not for us" and one two-week hide are not a standing no any more
+    # (memory audit 9/29/26, "one_hide"): 3 "not for us" in 180 days, by
+    # subject (decisions.declined_subjects) — see tests/test_mem_m1_kinds.py.
+    assert rec["worked"] == [] and rec["ignored"] == []
     assert rec["by_kind"]["cut_waste"]["success_rate"] is None           # 3 measured: below the floor
     assert rec["by_kind"]["cut_waste"]["improved"] == 3
     for i in range(3, 5):
@@ -206,7 +209,7 @@ def test_a_restaurants_own_record_names_what_worked_only_over_the_floor(db_path)
     assert rec["by_kind"]["cut_waste"]["success_rate"] == 1.0 and rec["by_kind"]["cut_waste"]["median_days_to_improvement"] == 20
     lines = memory.lines(memory.restaurant_memory(rid, db_path=db_path))
     assert any("5 of 5 measured results improved" in l and "cut_waste" in l for l in lines)
-    assert any("declined or hidden" in l and "trim_day" in l for l in lines)
+    assert not any("declined or hidden" in l for l in lines)
 
 
 def test_one_improvement_beside_four_worse_is_never_what_worked(db_path):
@@ -333,6 +336,10 @@ def test_trends_need_six_weekly_points_over_a_cohort_at_the_floor(db_path):
     assert cafe["weeks"] == 7 and cafe["slope_per_week"] > 0 and cafe["n_latest"] == 9
     flat = next(t for t in ts if t["cohort"] == "cafe" and t["metric"] == "labor_pct_28d")
     assert flat["slope_per_week"] == 0
+    # "Emerging" is read from the frozen series (memory audit PLATFORM-14):
+    # nothing until the learning pass has persisted the complete weeks.
+    assert trends.emerging(cohorts=cohorts, db_path=db_path) == []
+    assert trends.persist(cohorts=cohorts, db_path=db_path)["written"] > 0
     assert trends.emerging(cohorts=cohorts, db_path=db_path)[0]["metric"] == "avg_rating_30d"
 
 

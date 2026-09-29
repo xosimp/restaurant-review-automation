@@ -464,6 +464,9 @@ actor APIClient {
         /// (NS1 H1). Absent from a server that does not send them.
         var unsupportedCauses: [String]? = nil
         var unsupportedNames: [String]? = nil
+        /// Suggestions repeating advice the owner declined (M1), read
+        /// element by element so one odd entry never drops the answer.
+        var declinedRepeats: HomeLenientList<AskDeclinedRepeat>? = nil
         /// The answer's id — what "Was this useful?" rates.
         let messageId: Int?
         /// The answer's own concrete suggestions, keyed (`ask_tip:<hash>`).
@@ -471,6 +474,7 @@ actor APIClient {
 
         enum CodingKeys: String, CodingKey {
             case type, label, state, answer, truncated, proposals, error, confidence, suggestions, meta
+            case declinedRepeats = "declined_repeats"
             case confidenceDetail = "confidence_detail"
             case conversationId = "conversation_id"
             case modulesConsulted = "modules_consulted"
@@ -485,7 +489,8 @@ actor APIClient {
                         confidence: AskMeta.pick(confidenceDetail ?? confidence, meta),
                         unverifiedFigures: unverifiedFigures ?? [],
                         unsupportedCauses: unsupportedCauses ?? [],
-                        unsupportedNames: unsupportedNames ?? [])
+                        unsupportedNames: unsupportedNames ?? [],
+                        declinedRepeats: AskMeta.declined(declinedRepeats, meta))
         }
     }
 

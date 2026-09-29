@@ -15,7 +15,7 @@ at least `privacy.MIN_COHORT` restaurants and never carry a name.
     cohort_for(restaurant)            (category, source) for a restaurant
 """
 from models import DB_PATH
-from . import privacy, categories, features, memory, feedback, scoring, patterns, benchmarks, trends, confidence, jobs, dashboard, staffing, metrics_registry, engine  # noqa: F401
+from . import privacy, categories, features, memory, feedback, scoring, patterns, benchmarks, trends, confidence, jobs, dashboard, staffing, metrics_registry, engine, provenance  # noqa: F401
 
 
 def restaurant_memory(restaurant_id, db_path=DB_PATH):
@@ -43,13 +43,17 @@ def recommendation_history(restaurant_id, limit=100, db_path=DB_PATH):
 
 
 def recommendation_success(rec_kind, cohort=None, restaurant_id=None, db_path=DB_PATH, exclude_restaurant_id=None,
-                           window_days=None, half_life_days=None):
-    """scoring.kind_stats. A cohort figure used as one restaurant's prior
-    passes exclude_restaurant_id so its own rows are not in it, and
-    window_days (scoring.PRIOR_WINDOW_DAYS) so it is the recent record."""
+                           window_days=None, half_life_days=None, partition=None, decay=False):
+    """scoring.kind_stats. A group figure used as one restaurant's prior
+    passes exclude_restaurant_id so its own organisation's rows are not in
+    it, window_days (scoring.PRIOR_WINDOW_DAYS — the decay horizon) and
+    `decay` so each result counts by its age (rec_learning.decay_weight).
+    The group is one rung of the prior ladder: `cohort` (the confirmed
+    concept), `partition` (the confirmed peer partition) or neither (every
+    restaurant on Cavnar AI — a behaviour kind's rung only)."""
     return scoring.kind_stats(rec_kind, cohort=cohort, restaurant_id=restaurant_id, db_path=db_path,
                               exclude_restaurant_id=exclude_restaurant_id, window_days=window_days,
-                              half_life_days=half_life_days)
+                              half_life_days=half_life_days, partition=partition, decay=decay)
 
 
 def pattern_discovery(db_path=DB_PATH):

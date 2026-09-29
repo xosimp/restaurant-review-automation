@@ -508,12 +508,19 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
                         # A period with no sales has no labor % (its 0.0 is a
                         # missing figure): "trending … from 0.0%" (B6 low) —
                         # the filter notify.py and get_labor_history apply.
-                        """SELECT labor_pct, period_start FROM labor_history
+                        # Never the legacy rolling windows (memory audit
+                        # 9/29/26, labor_periods).
+                        """SELECT labor_pct, period_start, basis FROM labor_history
                            WHERE restaurant_id=? AND total_sales > 0
+                             AND COALESCE(kind, '') != 'rolling_window'
                            ORDER BY period_start DESC LIMIT 3""",
                         (report.restaurant_id,)
                     ).fetchall()
                     _conn_lr.close()
+                    # A trend only across periods costed alike: a recost is
+                    # not the labor moving.
+                    if _lh and _lh[0]["basis"]:
+                        _lh = [r for r in _lh if r["basis"] == _lh[0]["basis"]]
                     if len(_lh) >= 2:
                         _vals = [r["labor_pct"] for r in reversed(_lh)]
                         _facts["labor"].update({"from_pct": float(_vals[0]), "weeks": len(_vals)})
@@ -925,6 +932,27 @@ You MUST output exactly these lines and no others (plus HEADLINE and ACTION): {"
 
 Every module NOT in that list is either switched off for this client or reported no data this week. Write NO line for it. Do not infer what it might have said, do not suggest what it might show, and do not refer to it at all. A module with no data is handled outside this summary — inventing a sentence for it would be inventing a fact about this restaurant's week."""
 
+        # What Cavnar AI remembers for this restaurant (memory_context,
+        # surface "digest" — memory audit 9/29/26): the owner's constraints
+        # and goals, decisions and what has worked here, fenced and dated
+        # M/D/YY by memory_context. Context for the ACTION line; the owner's
+        # and people's words in it are checked for echoes like the reviews.
+        _mem_dig = ""
+        try:
+            import memory_context as _mc_dig
+            _mem_block = _mc_dig.memory_context(_rid_dg, "digest")
+            _mem_dig = _mem_block.text or ""
+            for _sec in (_mem_block.sections or {}).values():
+                for _ln in _sec:
+                    if not _ln.get("trusted") and _ln.get("text"):
+                        _untrusted_texts.append(str(_ln["text"])[:300])
+        except Exception as _me:
+            print(f"[digest] memory unavailable for {_rid_dg}: {_me}")
+            _mem_dig = ""
+        _mem_section = ("\n\nWHAT CAVNAR AI REMEMBERS FOR THIS RESTAURANT (the owner's own constraints and goals, "
+                        "their decisions and what has worked here — context for the ACTION line; never propose what "
+                        "the owner declined, and state no figure from it):\n" + _mem_dig) if _mem_dig else ""
+
         from ai_guard import UNTRUSTED_NOTE as _UN_RPT
         # A missing measurement is said as missing, never "0.0/5" (NS4 C2).
         _avg_line = (f"{report.avg_rating}/5" if _has_reviews and report.avg_rating
@@ -941,7 +969,7 @@ This week's data:
 - Top themes: {top_themes or "nothing notable"}
 - Period: {report.period_start} to {report.period_end}{wow_context}{extra_context}{backlog_context}{module_instruction}
 
-Today: {today_rpt}
+Today: {today_rpt}{_mem_section}
 
 Notable reviews:{specific_reviews}
 
@@ -1080,6 +1108,22 @@ Rules:
         # ignored them — they are measured, not generated.
         if signals:
             parsed["_correlations"] = signals
+        # The week's read kept as history (ai_reads, surface "digest" —
+        # memory audit 9/29/26): what this digest concluded and advised, so
+        # next week's can be held to it. Never fails the email.
+        try:
+            import ai_reads as _air_dig
+            _read_text = "\n".join(f"{k.upper()}: {parsed[k]}" for k in
+                                   ("headline", "reviews", "labor", "inventory", "marketing", "action")
+                                   if parsed.get(k))
+            if _read_text:
+                parsed["_read_id"] = _air_dig.record_read(
+                    _rid_dg, "digest", _read_text, subject="digest:week",
+                    meta={"period_start": str(report.period_start), "period_end": str(report.period_end),
+                          "lines": [k for k in ("reviews", "labor", "inventory", "marketing", "action") if parsed.get(k)]},
+                    call_id=getattr(msg, "_cavnar_call_id", None))
+        except Exception as _re:
+            print(f"[digest] read not recorded for {_rid_dg}: {_re}")
         # What the validation layer kept a line WITH (a stale source, a
         # disclosure the line left out): nobody reads this email before the
         # owner, so the caveat is printed in it rather than dropped.
@@ -1179,6 +1223,8 @@ def _follow_through_sections(restaurant_id, owner_view=False, include_results=Tr
                 f"{x['dish']}: {(x.get('drivers') or [{}])[0].get('ingredient', 'ingredient costs')} "
                 f"rose, about ${x['monthly_margin_lost']:,.0f}/month of margin — "
                 f"${x['suggested_price']:.2f} restores the old food cost %"
+                # The reprice guard (link_memory): guests are naming it.
+                + (f". {x['guard']['text']}" if (x.get("guard") or {}).get("text") else "")
                 for x in worth if x.get("suggested_price"))))
     except Exception as e:
         log.warning("digest reprice block failed: %s", e)

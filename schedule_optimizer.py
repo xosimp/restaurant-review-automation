@@ -30,6 +30,7 @@ nothing improves, or at its time and evaluation budget.
 Nothing here calls a model. Pure over its inputs apart from time.
 """
 import time as _time
+from datetime import datetime as _dt
 
 import shift_quality as sq
 
@@ -51,6 +52,14 @@ BUDGET_TOLERANCE = 1.02
 # How far a shift may be stretched in one move.
 MAX_EXTEND_MINUTES = 150
 STEP = 30
+# A move that takes hours out of a weekday where cutting staffing was taken
+# and measured WORSE here (inputs["learned_worse"], rec_learning.
+# worsened_levers — memory audit 9/29/26, "what_worked") pays this much of
+# its gain per worse result, capped: a small score gain no longer repeats a
+# cut that went badly, a large one (a breach fixed) still goes through and
+# says what it overrode.
+LEARNED_WORSE_STEP = 0.5
+LEARNED_WORSE_MAX = 1.5
 
 NOTE_TAG = "Cavnar AI:"
 
@@ -577,6 +586,39 @@ def _hard_count(rows, constraints) -> int:
         return 10 ** 9
 
 
+def learned_worse_days(inputs) -> dict:
+    """{weekday (lower): {worsened, measured, label}} from
+    inputs["learned_worse"], keeping the days with a worse result."""
+    return {str(k).strip().lower(): v for k, v in ((inputs or {}).get("learned_worse") or {}).items()
+            if isinstance(v, dict) and int(v.get("worsened") or 0) > 0}
+
+
+def learned_penalty(worse, before_rows, after_rows):
+    """(penalty, note) for a move that takes hours out of a weekday whose
+    cuts measured worse here (learned_worse_days), else (0.0, None). Pure."""
+    if not worse:
+        return 0.0, None
+    hb, ha = {}, {}
+    for r in before_rows or []:
+        hb[r.get("date")] = hb.get(r.get("date"), 0.0) + sq._row_hours(r)
+    for r in after_rows or []:
+        ha[r.get("date")] = ha.get(r.get("date"), 0.0) + sq._row_hours(r)
+    hit = set()
+    for d, h in hb.items():
+        if ha.get(d, 0.0) < h - 0.01:
+            try:
+                hit.add(_dt.strptime(str(d)[:10], "%Y-%m-%d").strftime("%A").lower())
+            except (TypeError, ValueError):
+                continue
+    hit &= set(worse)
+    if not hit:
+        return 0.0, None
+    n = sum(int(worse[d].get("worsened") or 0) for d in hit)
+    pen = min(LEARNED_WORSE_MAX, LEARNED_WORSE_STEP * n)
+    labels = ", ".join(sorted(str(worse[d].get("label") or d) for d in hit))
+    return pen, f"{labels} measured worse here {n} time{'s' if n != 1 else ''} (before and after, not proof)"
+
+
 def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dict = None,
              constraints=None, target: int = DEFAULT_TARGET, max_seconds: float = DEFAULT_SECONDS,
              max_evaluations: int = DEFAULT_EVALUATIONS, hours_budget: float = None,
@@ -647,6 +689,8 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
         if cap <= 0:
             return True
         return all(p <= max(cap, peaks_before.get(d, 0)) for d, p in _server_peaks(rs).items())
+    worse = learned_worse_days(inputs)
+
     evaluations, tabu = 1, set()
     stopped = "no improving move"
     while True:
@@ -697,6 +741,10 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
             if not trial.get("checked"):
                 continue
             gain = objective(trial) - base_obj
+            pen, why_pen = learned_penalty(worse, current_rows, trial_rows)
+            if pen:
+                gain -= pen
+                desc = f"{desc} Kept despite this: {why_pen}."
             ranked.append((gain, sig, desc, trial_rows, trial))
             if gain >= TAKE_AT_ONCE:
                 break

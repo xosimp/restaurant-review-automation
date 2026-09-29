@@ -955,6 +955,12 @@ def _load_with(conn):
                          "suppressed FROM alert_storm_caps WHERE lifted_at IS NULL "
                          "AND julianday(until_at) > julianday('now') ORDER BY id",
                          label="alert_storm_caps", optional=True)
+    # The learning scorecard's latest month (learning_scorecard, memory audit
+    # 9/29/26): a curve worsening or flat, and fatigue — admin rows that are
+    # now issues on the client, never only numbers on a page.
+    learning = per_rid("SELECT s.restaurant_id, s.month, s.flags_json, s.fatigued, s.computed_at "
+                       "FROM learning_scorecards s WHERE s.month = (SELECT MAX(s2.month) FROM learning_scorecards s2 "
+                       "WHERE s2.restaurant_id = s.restaurant_id)", label="learning_scorecards", optional=True)
 
     d = dict(now=w["now"], windows=w, rests=rests, users=by_rid, reviews=reviews, ai_month=ai_month,
              ai_today=ai_today, ai_prev=ai_prev, ai_week=ai_week, ai_failed_week=ai_failed_week,
@@ -970,7 +976,7 @@ def _load_with(conn):
              status_changes=status_changes, events=events, suppressed=suppressed, risk_state=risk_state,
              sms_cost=sms_cost, storm_caps=storm_caps, budget_watch=budget_rows, ai_anomalies=anomaly_rows,
              owed_failed=owed_failed, reconcile=reconcile, open_invoices=open_invoices, envelope_fate=envelope_fate,
-             pay_reminders=pay_reminders,
+             pay_reminders=pay_reminders, learning=learning,
              rest_names={r["id"]: r.get("name") for r in rests},
              has_converted_at=bool(rests) and "converted_at" in rests[0],
              pos_states={}, loaded_at=_utc_stamp(w["now"]))
@@ -2321,6 +2327,31 @@ def _issues_for(r, d, owner, integrations, modules, onboarding, last_active, bil
         add(f"source:{s['source']}", f"{labels.get(s['source'], s['source'])} sync failing ({n} in a row)",
             "critical" if auth else "warning", s.get("first_failed_at"), "Open data", None,
             (s.get("last_error") or "")[:160], zone="UTC", action_kind="link", action_href=data_tab)
+    # Whether Cavnar AI is getting better here (learning_scorecard, memory
+    # audit 9/29/26): a learning curve worsening or flat, and fatigue, which
+    # now also cuts what the owner is shown (volume_limit).
+    lrow = (d.get("learning") or {}).get(rid) or {}
+    if lrow:
+        try:
+            lflags = json.loads(lrow.get("flags_json") or "[]") or []
+        except (TypeError, ValueError):
+            lflags = []
+        for f in lflags:
+            if not isinstance(f, dict) or not f.get("curve"):
+                continue
+            months = [_month_word(m) for m in f.get("months") or []]
+            add(f"learning:{f['curve']}", f"Learning curve {f.get('state')}: {f.get('label') or f['curve']}",
+                "warning", lrow.get("computed_at"), "Open AI quality", None,
+                (f"{months[-1] if months else 'The latest month'}: {_curve_fig(f['curve'], f.get('latest'))}, "
+                 f"against {_curve_fig(f['curve'], f.get('before'))} over "
+                 f"{' and '.join(months[:-1]) if len(months) > 1 else 'the two months before'}."),
+                zone="UTC", action_kind="link", action_href=f"{client}?tab=ai")
+        if lrow.get("fatigued"):
+            add("learning:fatigue", "Owner fatigue: most recommendations dismissed or ignored", "warning",
+                lrow.get("computed_at"), "Open AI quality", None,
+                "Three quarters or more of what this owner settled in the month went dismissed or ignored; "
+                "Home, the nightly report and the feed now show fewer until it recovers.", zone="UTC",
+                action_kind="link", action_href=f"{client}?tab=ai")
     return out
 
 
@@ -3569,7 +3600,22 @@ def ai_quality(days=30, restaurant_id=None):
             "safety": {"disagreements": disagreements, "reviews_analysed": int(analysed),
                        "rate_pct": round(100.0 * disagreements / analysed, 2) if analysed else None},
             "events": events, "event_trend": event_trend, "recent_events": recent_events,
-            "unusable_outputs": unusable}
+            "unusable_outputs": unusable,
+            # The model's own confidence against what was measured (memory
+            # audit 9/29/26, "claims"): diagnoses keep the model's band so it
+            # can be compared with the result, and now it is — how often a
+            # claim the model called high / medium / low held, for advice
+            # that was taken, over a year of scored claims.
+            "model_confidence": _model_confidence_check(restaurant_id)}
+
+
+def _model_confidence_check(restaurant_id=None):
+    try:
+        import ai_reads
+        return ai_reads.confidence_calibration(restaurant_id=restaurant_id)
+    except Exception as e:
+        log.warning("model confidence check unavailable: %s", e)
+        return None
 
 
 def _client_validation(restaurant_id, since):
@@ -3627,7 +3673,59 @@ def ai_client(rid, days=30):
             "budget": {"ai": ai_budget, "places": places_budget, "tier": ai_budget.get("tier"), "warnings": warn},
             "by_action": by_action, "blocked": blocked, "daily": daily, "recent_calls": calls,
             "quality": ai_quality(days, restaurant_id=rid),
+            # The learning curve here, month by month (learning_scorecard,
+            # memory audit 9/29/26): whether Cavnar AI is getting better at
+            # this restaurant, with its flags and fatigue.
+            "learning": _learning_scorecards(rid),
+            # What each curve means, so the page draws it without guessing:
+            # its label, which way is better, and the sample under which a
+            # month is not read (learning_scorecard.MIN_N — flags() skips it).
+            "learning_curves": _learning_curve_meta(),
             "stalled_reviews": stalled, "stalled_total": int(stalled.get("unanalysed") or 0) + int(stalled.get("undrafted") or 0)}
+
+
+def _learning_scorecards(rid):
+    try:
+        import learning_scorecard
+        return learning_scorecard.scorecards(rid, months=12)
+    except Exception as e:
+        log.warning("learning scorecards unavailable for %s: %s", rid, e)
+        return []
+
+
+def _learning_curve_meta():
+    """{curves: {name: {label, better, min_n, unit}}, fatigue_share,
+    fatigue_min_n} from learning_scorecard's own constants. `unit` is
+    "share" (0-1) or "pct" (forecast_error is already a percentage miss)."""
+    try:
+        import learning_scorecard as lsc
+    except Exception as e:
+        log.warning("learning curve meta unavailable: %s", e)
+        return None
+    return {"curves": {name: {"label": lsc.CURVE_LABELS.get(name, name), "better": spec[0],
+                              "min_n": lsc.MIN_N.get(name), "unit": "pct" if name == "forecast_error" else "share"}
+                       for name, spec in lsc.CURVES.items()},
+            "fatigue_share": lsc.FATIGUE_SHARE, "fatigue_min_n": lsc.FATIGUE_MIN_N}
+
+
+def _curve_fig(curve, v):
+    """A learning curve's figure as words: a share as a percent, the forecast
+    miss (already a percent) as a percent miss."""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return "unknown"
+    if curve == "forecast_error":
+        return f"{v:.1f}% miss"
+    return f"{round(v * 100)}%"
+
+
+def _month_word(m):
+    """'2026-08' as 'Aug 2026' — a month, never read as a day."""
+    try:
+        return datetime.strptime(str(m)[:7], "%Y-%m").strftime("%b %Y")
+    except (TypeError, ValueError):
+        return str(m or "")
 
 
 def ai_calls(restaurant_id=None, action=None, correlation_id=None, limit=50):
@@ -4215,7 +4313,24 @@ def jobs():
             "operator_alert": _ops.last_operator_alert(), "missed_windows": missed, "dsr_missing": dsr_missing,
             "jobs_overdue": overdue, "local_sends_refused": local_refused,
             "local_sends_refused_reason": LOCAL_SENDS_REFUSED if local_refused else None,
-            "history_runs": JOB_HISTORY_RUNS}
+            "history_runs": JOB_HISTORY_RUNS,
+            # The retention windows set under their floor right now (memory
+            # audit 9/29/26): prune_ledgers refuses each one — nothing is
+            # deleted from it — until its RETAIN_* variable is fixed.
+            "retention": _retention_now()}
+
+
+def _retention_now():
+    """{refused: [{table, days, floor}], cap_rows} from ops' one registry;
+    None when it cannot be read (the page says unknown, never "none")."""
+    try:
+        import ops as _ops_r
+        return {"refused": [{"table": r["table"], "days": r["days"], "floor": r["floor"]}
+                            for r in _ops_r.retention_refusals()],
+                "cap_rows": _ops_r.RETENTION_PASS_MAX_ROWS}
+    except Exception as e:
+        log.warning("retention state unreadable: %s", e)
+        return None
 
 
 def _has_cols(conn, table, cols):
@@ -4564,19 +4679,15 @@ def _ras_block(eps):
 
 
 def _internal_restaurants_sql(conn):
-    """Accounts whose owners' behaviour is not a customer's (#141): demo and
-    test accounts (exclude_from_learning), internal billing, the admin's own
-    home — built from the columns this database has."""
-    cols = _columns(conn, "restaurants")
-    parts = ["COALESCE(is_demo,0)=1"] if "is_demo" in cols else []
-    if "exclude_from_learning" in cols:
-        parts.append("COALESCE(exclude_from_learning,0)=1")
-    if "billing_status" in cols:
-        parts.append("LOWER(COALESCE(billing_status,''))='internal'")
-    if _columns(conn, "users") >= {"restaurant_id", "is_admin"}:
-        parts.append("id IN (SELECT restaurant_id FROM users GROUP BY restaurant_id "
-                     "HAVING MIN(COALESCE(is_admin,0))=1)")
-    return "SELECT id FROM restaurants WHERE " + (" OR ".join(parts) if parts else "0")
+    """Accounts whose owners' behaviour is not a customer's (#141) — the one
+    learning predicate, models.learning_exclusion (memory audit 9/29/26,
+    "eligibility"): demo accounts, test accounts (by an admin's flag or,
+    automatically, by name), internal billing, the admin's own home, with
+    the admin's learning_override. As a SELECT over the ids it rules out."""
+    import models as _m
+    ids = sorted(_m.learning_ineligible_ids(conn=conn))
+    return ("SELECT id FROM restaurants WHERE id IN (" + ",".join(str(int(i)) for i in ids) + ")") if ids \
+        else "SELECT id FROM restaurants WHERE 0"
 
 
 def _episodes(conn, since, restaurant_id=None, include_internal=False):
@@ -4589,14 +4700,21 @@ def _episodes(conn, since, restaurant_id=None, include_internal=False):
         where += " AND i.restaurant_id=?"
         args.append(restaurant_id)
     elif not include_internal:
+        import models as _m
         where += f" AND i.restaurant_id NOT IN ({_internal_restaurants_sql(conn)})"
+        # Nor what a converted demo recorded before its learning_since.
+        where += " AND " + _m.learning_rows_sql("i.restaurant_id", "i.created_at")
     inst = _rows_dict(conn, "SELECT i.*, r.name AS restaurant FROM rec_instances i LEFT JOIN restaurants r ON r.id=i.restaurant_id "
                             f"WHERE {where}", tuple(args))
     if not inst:
         return []
     evs = {}
-    for e in _rows_dict(conn, "SELECT e.rec_id, e.event, e.surface, e.meta, e.at, e.role FROM rec_events e JOIN rec_instances i "
-                              f"ON i.rec_id=e.rec_id WHERE {where} ORDER BY e.id", tuple(args)):
+    for e in _rows_dict(conn, "SELECT e.rec_id, e.event, e.surface, e.meta, e.at, e.role, e.authority FROM rec_events e "
+                              f"JOIN rec_instances i ON i.rec_id=e.rec_id WHERE {where} ORDER BY e.id", tuple(args)):
+        # An admin's answer through view-as is support at work, never the
+        # owner's (memory audit 9/29/26, view_as): out of every rate.
+        if e.get("authority") == "admin" and e["event"] != "shown":
+            continue
         evs.setdefault(e["rec_id"], []).append(e)
     import rec_ledger
     trackers = _trackers(conn, sorted({i["tracker_id"] for i in inst if i.get("tracker_id")}))
@@ -4616,6 +4734,13 @@ def _episodes(conn, since, restaurant_id=None, include_internal=False):
         # recommendation twice, and neither was answered nor ignored.
         if i["status"] == "superseded":
             continue
+        # "Bad timing" put it off: neither taken nor declined, in no
+        # denominator (memory audit 9/29/26, "reasons").
+        if i["status"] == "dismissed" and str(_col_or_none(i, "silence_rule") or "") == "bad_timing":
+            continue
+        # "Already doing it" is taken: the owner's answer closed it completed.
+        if i["status"] == "completed" and "completed" not in names and "dismissed" in names:
+            names = (names - {"dismissed"}) | {"completed"}
         # The episode's measured result, read ONLY through
         # rec_learning.learned_verdict (confidence audit E13): the ledger's
         # first outcome event was taken as the verdict, so a result the
@@ -4834,6 +4959,100 @@ def recommendation_acceptance(days=30, restaurant_id=None, include_internal=Fals
             "fatigue": fatigue}
 
 
+# ── what learning did to the rankings (memory audit 9/29/26, rank_log) ──────
+#
+# Every shown card now carries what the effectiveness model did to its rank
+# (rec_events meta "rank": weight, why, prior rung, EFFECTIVENESS_VERSION),
+# and each build logs the candidates it did NOT show (rec_rank_builds). This
+# read answers "did the model raise acceptance or outcomes?" by version and
+# by weight bucket: a weight that lifted a card should go with more taken and
+# more improved than one that sank it, or the model is not helping.
+
+RANK_WEIGHT_BUCKETS = ((0.0, 0.9, "lowered (under 0.9x)"), (0.9, 1.1, "about even (0.9-1.1x)"),
+                       (1.1, 9.9, "raised (over 1.1x)"))
+
+
+def _weight_bucket(w):
+    try:
+        w = float(w)
+    except (TypeError, ValueError):
+        return "no weight logged"
+    for lo, hi, label in RANK_WEIGHT_BUCKETS:
+        if lo <= w < hi:
+            return label
+    return "no weight logged"
+
+
+def rank_learning(days=90, restaurant_id=None, include_internal=False):
+    """Acceptance and measured outcome of shown recommendations, grouped by
+    the effectiveness model's version and by the weight it gave (from each
+    episode's first `shown` carrying a rank), plus how many ranked
+    candidates each surface's builds left unshown. Internal only."""
+    import models
+    days = max(1, min(int(days or 90), 365))
+    since = _stamp(datetime.utcnow() - timedelta(days=days))
+    with heavy_slot("rank learning"):
+        conn = models.get_conn()
+        try:
+            try:
+                eps = _episodes(conn, since, restaurant_id, include_internal=include_internal)
+            except Exception as e:
+                log.warning("rank_learning unavailable: %s", e)
+                eps = []
+            ranks = {}
+            ids = [e["rec_id"] for e in eps]
+            for i in range(0, len(ids), 400):
+                chunk = ids[i:i + 400]
+                for r in _rows_dict(conn, "SELECT rec_id, meta FROM rec_events WHERE event='shown' AND rec_id IN "
+                                          f"({','.join('?' for _ in chunk)}) ORDER BY at, id", tuple(chunk)):
+                    if r["rec_id"] in ranks:
+                        continue
+                    m = _meta_of(r) or {}
+                    if isinstance(m.get("rank"), dict):
+                        ranks[r["rec_id"]] = m["rank"]
+            where, args = "built_at >= ?", [since]
+            if restaurant_id:
+                where += " AND restaurant_id=?"
+                args.append(restaurant_id)
+            builds = _rows_dict(conn, f"SELECT surface, version, shown, not_shown FROM rec_rank_builds WHERE {where}",
+                                tuple(args), optional=True)
+        finally:
+            conn.close()
+    groups = {}
+    for e in eps:
+        rk = ranks.get(e["rec_id"]) or {}
+        g = groups.setdefault((rk.get("version"), _weight_bucket(rk.get("weight")) if rk else "no weight logged"),
+                              {"shown": 0, "taken": 0, "settled": 0, "measured": 0, "improved": 0})
+        g["shown"] += 1
+        took = e["accepted"] or e["completed"] or e.get("implemented")
+        if took or e["dismissed"] or e["ignored"]:
+            g["settled"] += 1
+        if took:
+            g["taken"] += 1
+            if e.get("measured"):
+                g["measured"] += 1
+                g["improved"] += 1 if e.get("improved") else 0
+    rows = []
+    for (version, bucket), g in sorted(groups.items(), key=lambda kv: (str(kv[0][0]), kv[0][1])):
+        rows.append({"version": version, "bucket": bucket, **g,
+                     "accept_rate": round(g["taken"] / g["settled"], 3) if g["settled"] else None,
+                     "accept_ci90": _wilson(g["taken"], g["settled"]) if g["settled"] else None,
+                     "outcome_rate": round(g["improved"] / g["measured"], 3) if g["measured"] else None,
+                     "enough": g["settled"] >= RAS_MIN_N})
+    unshown = {}
+    for b in builds or []:
+        try:
+            n = len(json.loads(b["not_shown"] or "[]") or [])
+        except (TypeError, ValueError):
+            n = 0
+        u = unshown.setdefault(b["surface"], {"builds": 0, "unshown": 0})
+        u["builds"] += 1
+        u["unshown"] += n
+    return {"ok": True, "days": days, "restaurant_id": restaurant_id, "min_n": RAS_MIN_N, "groups": rows,
+            "unshown_by_surface": unshown,
+            "note": "Before and after, not proof: a bucket's rates compare what the model lifted with what it sank."}
+
+
 # ── schedule generation experiments (internal only) ─────────────────────────
 #
 # The live A/B of schedule generation variants (schedule_experiments, audit
@@ -4887,6 +5106,19 @@ def revert_schedule_experiment(experiment, by="admin"):
 CALIBRATION_MIN_N = 5      # pairs per kind before a ratio is called
 
 
+def _google_connected(conn):
+    """intelligence.provenance.google_connected_ids on this connection —
+    the restaurants whose review-derived results no pooled calibration
+    reads. It is empty only when the restaurants/reviews columns it reads
+    are absent (a database with no reviews holds no Google data)."""
+    try:
+        from intelligence.provenance import google_connected_ids
+        return frozenset(google_connected_ids(conn=conn))
+    except Exception as e:
+        log.warning("calibration: Google-connected restaurants unreadable: %s", e)
+        return frozenset()
+
+
 def recommendation_calibration(days=365, restaurant_id=None):
     """Each recommendation's predicted dollars (what it was shown with,
     rec_instances.dollar_value) against what its tracker measured
@@ -4905,6 +5137,12 @@ def recommendation_calibration(days=365, restaurant_id=None):
         args.append(int(restaurant_id))
     conn = models.get_conn()
     try:
+        if not restaurant_id:
+            # Across the fleet, a demo's, a test account's or Cavnar AI's own
+            # trackers never calibrate the dollars, nor a converted demo's
+            # from before its learning_since (memory audit 9/29/26).
+            where += (f" AND i.restaurant_id NOT IN ({_internal_restaurants_sql(conn)}) AND "
+                      + models.learning_rows_sql("i.restaurant_id", "i.created_at"))
         try:
             rows = None
             # concurrent / baseline_overlaps_trigger: the result rule learning
@@ -4912,7 +5150,8 @@ def recommendation_calibration(days=365, restaurant_id=None):
             # item 8); an older database without them reads as before.
             for extra in (", o.concurrent, o.baseline_overlaps_trigger", ""):
                 try:
-                    rows = _rows_strict(conn, "SELECT i.rec_id, i.kind, i.key, i.status, i.dollar_value, o.verdict, "
+                    rows = _rows_strict(conn, "SELECT i.rec_id, i.restaurant_id, i.kind, i.key, i.status, "
+                                            "i.dollar_value, o.verdict, o.metric, "
                                             "o.dollars_monthly, o.id AS tracker_id, o.status AS tracker_status, "
                                             "o.recheck_verdict, o.owner_checkin, o.source_key" + extra + " "
                                             "FROM rec_instances i JOIN recommendation_outcomes o ON o.id=i.tracker_id "
@@ -4931,12 +5170,20 @@ def recommendation_calibration(days=365, restaurant_id=None):
         except Exception as e:           # the columns predate this database
             log.warning("recommendation_calibration unavailable: %s", e)
             rows, _ck = [], {}
+        # Pooled across the fleet, a Google-connected restaurant's
+        # review-derived results calibrate nothing (INT #5: Google API
+        # Limited Use, privacy.html's Google section — intelligence.provenance).
+        google = _google_connected(conn) if not restaurant_id else frozenset()
     finally:
         conn.close()
     by = {}
     import rec_learning
+    from intelligence.provenance import pooled_row_excluded
     for r in rows:
         if r["status"] not in ("accepted", "completed", "implemented"):
+            continue
+        if google and pooled_row_excluded(r.get("restaurant_id"), key=r.get("key"), kind=r.get("kind"),
+                                          metric=r.get("metric"), google=google):
             continue
         # The verdict through learned_verdict (confidence audit E13): a
         # disowned or conditions-changed result is not a pair at all, and a
@@ -5040,6 +5287,16 @@ def confidence_calibration(days=365, restaurant_id=None):
         except Exception as e:           # the ledger / snapshot columns predate this database
             log.warning("confidence_calibration unavailable: %s", e)
             eps = []
+        # The support score's order is checked on pooled results only
+        # without a Google-connected restaurant's review-derived ones
+        # (INT #5 — intelligence.provenance; confidence_engine.ordering reads
+        # nothing else). One restaurant's own view keeps everything.
+        if not restaurant_id and eps:
+            from intelligence.provenance import pooled_row_excluded
+            google = _google_connected(conn)
+            eps = [e for e in eps if not pooled_row_excluded(
+                e.get("restaurant_id"), key=e.get("key"), kind=e.get("kind"),
+                metric=(e.get("tracker") or {}).get("metric"), google=google)]
     finally:
         conn.close()
     scored = _calibration_scored(eps)

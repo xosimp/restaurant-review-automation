@@ -367,7 +367,13 @@ def test_done_and_not_for_us_do_not_come_back_in_a_fortnight(db_path):
     done = home_brief.dismiss(rid, "cut_waste:Salmon", kind="done")
     never = home_brief.dismiss(rid, "post_this_week", kind="not_for_us")
     assert hide["days"] == home_brief._DISMISS_DAYS
-    assert done["days"] > 365 and never["days"] > 365
+    # Longer than a fortnight — but what each answer holds by its kind, never
+    # ten years (memory audit 9/29/26, "silences"): a Done on an item's
+    # waste holds until it clears and comes back (at most 60 days), a
+    # recurring card's "not for us" a season.
+    import rec_ledger
+    assert done["days"] == rec_ledger.SITUATIONAL_DONE_DAYS and never["days"] == rec_ledger.RECURRING_DECLINE_DAYS
+    assert done["days"] > home_brief._DISMISS_DAYS and never["days"] > home_brief._DISMISS_DAYS
     assert done["kind"] == "done" and never["kind"] == "not_for_us"
 
 

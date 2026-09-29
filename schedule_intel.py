@@ -25,6 +25,7 @@ from datetime import date, datetime, timedelta
 
 import models as _models_mod
 from models import DB_PATH
+from canonical_facts import FINAL_SQL
 
 
 def get_conn(db_path=None):
@@ -39,6 +40,7 @@ def get_conn(db_path=None):
 OUTCOME_WEEKS = 12
 LEDGER_WEEKS = 8
 MENTOR_SHIFTS_TO_HOLD = 8
+MENTOR_WINDOW_DAYS = 365          # the shifts that count toward holding a station
 SUGGEST_MIN_SHARED = 6
 SUGGEST_MIN_CLEAN = 0.8
 SUPPRESS_AFTER_SHOWN = 10
@@ -61,9 +63,17 @@ def _daypart(r):
 def record_outcomes(restaurant_id, db_path=DB_PATH, today=None) -> dict:
     """For every published week that has ended, one row per date and
     daypart: scheduled hours (from the published CSV), sales and labor %
-    (labor_daily_history, split by the intraday morning share), coverage
-    and no-show issues on that date, and the mean review rating dated that
-    day. Idempotent: rows are keyed by (history_id, date, daypart)."""
+    (labor_daily_history's FINAL day, split by this restaurant's MEASURED
+    morning share — _morning_share), coverage and no-show issues on that
+    date, and the mean review rating dated that day. Idempotent: rows are
+    keyed by (history_id, date, daypart).
+
+    A day whose morning share was never measured has NULL daypart sales
+    and split_basis 'unmeasured' (memory audit 9/29/26, QUALITY-11): the
+    split used to fall back to a stated 0.4, so every restaurant without
+    intraday data was recorded as doing 40% of its sales before 3pm — a
+    dinner-only bar included — and peer benchmarks and the schedule
+    prompt's sales per labor hour read it as measured."""
     from schedule_versions import rows_from_csv
     today = today or date.today()
     conn = get_conn(db_path)
@@ -111,37 +121,49 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None) -> dict:
                 e = by.setdefault((r["date"], part), {"hours": 0.0, "people": set()})
                 e["hours"] += _hours(r)
                 e["people"].add(r["employee"])
+            placed = _place_reviews(conn, restaurant_id, by, _tz)
             for (d, part), e in by.items():
-                day = conn.execute("SELECT sales, labor_pct, day_of_week FROM labor_daily_history WHERE restaurant_id=? AND date=?",
-                                   (restaurant_id, d)).fetchone()
-                sales = None
+                day = conn.execute("SELECT sales, labor_pct, day_of_week FROM labor_daily_history WHERE restaurant_id=? "
+                                   f"AND date=? AND {FINAL_SQL}", (restaurant_id, d)).fetchone()
+                sales, split_basis = None, None
                 if day and day["sales"]:
                     try:
                         wd = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
                     except ValueError:
                         wd = day["day_of_week"]
-                    s = share.get(wd, 0.4)
-                    sales = round(float(day["sales"]) * (s if part == "morning" else 1 - s), 0)
+                    s = share.get(wd)
+                    if s is None:
+                        split_basis = "unmeasured"
+                    else:
+                        split_basis = "measured"
+                        sales = round(float(day["sales"]) * (s if part == "morning" else 1 - s), 0)
                 issues = issue_at.get((d, part), 0)
-                # A review carries a date, not a time: it can't be split
-                # between lunch and dinner, so it is recorded once, on the
-                # daypart that carried the day's most hours — not on both.
-                main_part = max((p2 for (d2, p2) in by if d2 == d), key=lambda p2: by[(d, p2)]["hours"])
-                rating, n_reviews = None, 0
-                if part == main_part:
-                    try:
-                        rv = conn.execute("SELECT AVG(rating), COUNT(*) FROM reviews WHERE restaurant_id=? AND substr(review_date,1,10)=?",
-                                          (restaurant_id, d)).fetchone()
-                        rating, n_reviews = (round(float(rv[0]), 2) if rv and rv[0] else None), (rv[1] if rv else 0)
-                    except Exception as _rx:
-                        print(f"[outcomes] reviews unavailable for restaurant {restaurant_id}: {_rx}")
+                # Each review on the shift it was about (_place_reviews): the
+                # meal the analyser read in it, posted within
+                # REVIEW_LAG_DAYS — a Sunday-afternoon review of Saturday's
+                # dinner is Saturday night's, not Sunday lunch's — else, for
+                # want of anything better, the posting day's busiest daypart.
+                got = placed.get((d, part)) or []
+                ratings = [g["rating"] for g in got]
+                rating = round(sum(ratings) / len(ratings), 2) if ratings else None
+                n_reviews = len(ratings)
+                attributed = [g["rating"] for g in got if g["how"] == "daypart"]
+                kinds = {g["how"] for g in got}
+                attribution = (next(iter(kinds)) if len(kinds) == 1 else ("mixed" if kinds else None))
                 conn.execute(
                     "INSERT INTO schedule_outcomes (restaurant_id, history_id, date, daypart, hours, people, sales, labor_pct, issues, "
-                    "review_rating, reviews) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(history_id, date, daypart) DO UPDATE SET "
+                    "review_rating, reviews, review_attribution, review_rating_attributed, reviews_attributed, review_lag_days, "
+                    "split_basis) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(history_id, date, daypart) DO UPDATE SET "
                     "hours=excluded.hours, people=excluded.people, sales=excluded.sales, labor_pct=excluded.labor_pct, "
-                    "issues=excluded.issues, review_rating=excluded.review_rating, reviews=excluded.reviews, recorded_at=datetime('now')",
+                    "issues=excluded.issues, review_rating=excluded.review_rating, reviews=excluded.reviews, "
+                    "review_attribution=excluded.review_attribution, "
+                    "review_rating_attributed=excluded.review_rating_attributed, "
+                    "reviews_attributed=excluded.reviews_attributed, review_lag_days=excluded.review_lag_days, "
+                    "split_basis=excluded.split_basis, recorded_at=datetime('now')",
                     (restaurant_id, w["id"], d, part, round(e["hours"], 1), len(e["people"]), sales,
-                     (day["labor_pct"] if day else None), issues, rating, n_reviews))
+                     (day["labor_pct"] if day else None), issues, rating, n_reviews, attribution,
+                     round(sum(attributed) / len(attributed), 2) if attributed else None, len(attributed),
+                     max((g["lag"] for g in got), default=None), split_basis))
                 written += 1
         conn.commit()
     finally:
@@ -149,13 +171,90 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None) -> dict:
     return {"written": written}
 
 
+MORNING_SPLIT_HOUR = 15        # schedule_rules.daypart_of: a shift starting at 3pm or later is "night"
+MORNING_SHARE_MIN_DAYS = 3
+
+
+# A review is placed on a shift at most this many days before it was posted
+# (memory audit 9/29/26, reviews_to_labor).
+REVIEW_LAG_DAYS = 2
+# When a daypart's service has begun: a dinner review posted at 2pm is about
+# an EARLIER dinner.
+_SERVICE_STARTS = {"morning": 11 * 60, "night": 17 * 60}
+
+
+def _place_reviews(conn, restaurant_id, by, tz):
+    """{(date, daypart): [{"rating", "how", "lag"}]} — each review posted
+    during this week's shifts (or up to REVIEW_LAG_DAYS after) on the one
+    shift it was about. With the analyser's daypart: the latest recorded
+    shift of that daypart that had begun by the time it was posted, no more
+    than REVIEW_LAG_DAYS before ("daypart"). Without one: the posting day's
+    busiest daypart, as before ("hours") — which calibration leaves out."""
+    import staffing_signals
+    from zoneinfo import ZoneInfo as _ZI
+    if not by:
+        return {}
+    dates = sorted({d for d, _p in by})
+    lo, hi = dates[0], (datetime.strptime(dates[-1], "%Y-%m-%d") + timedelta(days=REVIEW_LAG_DAYS)).strftime("%Y-%m-%d")
+    try:
+        rows = conn.execute("SELECT rating, review_date, entities FROM reviews WHERE restaurant_id=? AND "
+                            "deleted_at IS NULL AND substr(review_date,1,10) BETWEEN ? AND ?",
+                            (restaurant_id, lo, hi)).fetchall()
+    except Exception as _rx:
+        print(f"[outcomes] reviews unavailable for restaurant {restaurant_id}: {_rx}")
+        return {}
+    main = {}
+    for (d, p), e in by.items():
+        if d not in main or e["hours"] > by[(d, main[d])]["hours"]:
+            main[d] = p
+    out = {}
+    for r in rows:
+        raw = str(r["review_date"] or "")
+        try:
+            if len(raw) > 10 and ("T" in raw or " " in raw):
+                stamp = datetime.fromisoformat(raw.replace("Z", "+00:00")[:25])
+                if stamp.tzinfo is not None:
+                    stamp = stamp.astimezone(tz).replace(tzinfo=None)
+                posted, minute = stamp.date(), stamp.hour * 60 + stamp.minute
+            else:
+                posted, minute = datetime.strptime(raw[:10], "%Y-%m-%d").date(), None
+        except ValueError:
+            continue
+        try:
+            ents = json.loads(r["entities"] or "null") or {}
+        except (TypeError, ValueError, IndexError, KeyError):
+            ents = {}
+        part = staffing_signals.schedule_daypart((ents or {}).get("daypart"))
+        spot = None
+        if part:
+            for back in range(0, REVIEW_LAG_DAYS + 1):
+                d = (posted - timedelta(days=back)).isoformat()
+                if back == 0 and minute is not None and minute < _SERVICE_STARTS[part]:
+                    continue               # that meal had not happened yet when they wrote
+                if (d, part) in by:
+                    spot = ((d, part), "daypart", back)
+                    break
+        else:
+            d = posted.isoformat()
+            if d in main:
+                spot = ((d, main[d]), "hours", 0)
+        if spot:
+            out.setdefault(spot[0], []).append({"rating": float(r["rating"] or 0), "how": spot[1], "lag": spot[2]})
+    return out
+
+
 def _morning_share(conn, restaurant_id) -> dict:
-    """{weekday: share of the day's sales taken by 3pm}, from ≥3 captured days."""
+    """{weekday: share of the day's sales taken by 3pm}, MEASURED: from ≥3
+    captured days of the POS's running total (pos_intraday), else from ≥3
+    nights of the nightly report's own hourly split (its sales block's
+    hourly nets — the source for a POS that cannot be asked during the day,
+    as Restaurant DNA reads it). A weekday with neither is absent: its
+    daypart sales are unmeasured, never a stated 0.4."""
     try:
         rows = conn.execute("SELECT weekday, business_date, captured_hour, net_sales FROM pos_intraday WHERE restaurant_id=? "
                             "AND business_date >= date('now','-84 days') ORDER BY business_date, captured_hour", (restaurant_id,)).fetchall()
     except Exception:
-        return {}
+        rows = []
     by = {}
     for r in rows:
         by.setdefault((r["weekday"], r["business_date"]), []).append((int(r["captured_hour"]), float(r["net_sales"] or 0)))
@@ -163,10 +262,58 @@ def _morning_share(conn, restaurant_id) -> dict:
     for (wd, _), caps in by.items():
         caps.sort()
         total = caps[-1][1]
-        at3 = max((s for h, s in caps if h <= 15), default=None)
+        at3 = max((s for h, s in caps if h <= MORNING_SPLIT_HOUR), default=None)
         if total > 0 and at3 is not None:
             tmp.setdefault(wd, []).append(min(1.0, at3 / total))
-    return {wd: sorted(v)[len(v) // 2] for wd, v in tmp.items() if len(v) >= 3}
+    out = {wd: sorted(v)[len(v) // 2] for wd, v in tmp.items() if len(v) >= MORNING_SHARE_MIN_DAYS}
+    for wd, v in _dsr_morning_shares(conn, restaurant_id).items():
+        if wd not in out and len(v) >= MORNING_SHARE_MIN_DAYS:
+            out[wd] = sorted(v)[len(v) // 2]
+    return out
+
+
+def _dsr_morning_shares(conn, restaurant_id) -> dict:
+    """{weekday: [share before 3pm]} from the nightly report's hourly split
+    (dsr_reports facts → blocks.sales.detail.hourly), the latest finished
+    version of each night in the last 12 weeks. An hour before the business
+    day starts (1am) belongs to the night."""
+    import json as _json
+    from time_utils import BUSINESS_DAY_START_HOUR
+    try:
+        rows = conn.execute("SELECT business_date, version, facts_json FROM dsr_reports WHERE restaurant_id=? "
+                            "AND business_date >= date('now','-84 days') AND status IN ('final','provisional') "
+                            "ORDER BY business_date, version", (restaurant_id,)).fetchall()
+    except Exception:
+        return {}
+    nights = {}
+    for r in rows:                          # later versions overwrite earlier ones
+        try:
+            blk = ((_json.loads(r["facts_json"] or "{}") or {}).get("blocks") or {}).get("sales") or {}
+        except (TypeError, ValueError):
+            continue
+        if blk.get("status") != "ready":
+            continue
+        early = tot = 0.0
+        for h in ((blk.get("detail") or {}).get("hourly") or []):
+            try:
+                hour, net = int(h.get("hour")), float(h.get("net") or 0)
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if net <= 0:
+                continue
+            tot += net
+            if BUSINESS_DAY_START_HOUR <= hour < MORNING_SPLIT_HOUR:
+                early += net
+        if tot > 0:
+            nights[str(r["business_date"])[:10]] = early / tot
+    out = {}
+    for d, share in nights.items():
+        try:
+            wd = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
+        except ValueError:
+            continue
+        out.setdefault(wd, []).append(share)
+    return out
 
 
 def outcomes_by_daypart(restaurant_id, db_path=DB_PATH) -> dict:
@@ -174,7 +321,12 @@ def outcomes_by_daypart(restaurant_id, db_path=DB_PATH) -> dict:
     over the recorded weeks."""
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT date, daypart, hours, sales, issues, review_rating FROM schedule_outcomes WHERE restaurant_id=? "
+        # Daypart sales only where the split was measured (split_basis): a
+        # row recorded before the column existed divided the day by a stated
+        # 0.4, and its sales per labor hour is not a figure to hand the
+        # schedule prompt (QUALITY-11).
+        rows = conn.execute("SELECT date, daypart, hours, CASE WHEN split_basis='measured' THEN sales END AS sales, "
+                            "issues, review_rating FROM schedule_outcomes WHERE restaurant_id=? "
                             "ORDER BY date DESC LIMIT 400", (restaurant_id,)).fetchall()
     except Exception:
         return {}
@@ -633,10 +785,16 @@ def mentoring(restaurant_id, db_path=DB_PATH) -> dict:
     role that is not their usual one, on the same date and daypart as
     somebody authorised to close. At MENTOR_SHIFTS_TO_HOLD they could hold
     the station."""
-    from models import _cached_shifts, get_leader_flags
+    from models import get_leader_flags
     try:
         closers = {n.lower() for n, v in (get_leader_flags(restaurant_id, db_path) or {}).items() if v}
-        shifts = _cached_shifts(restaurant_id)
+        # A year of shifts from the per-shift history (memory audit 9/29/26,
+        # shift_facts): the stored file was a rolling window an upload could
+        # shrink to a fortnight, and the evidence for "could hold the bar"
+        # went with it.
+        import shift_facts as _sf
+        since = (date.today() - timedelta(days=MENTOR_WINDOW_DAYS)).isoformat()
+        shifts = _sf.person_rows(restaurant_id, since=since)
     except Exception:
         return {}
     if not closers or not shifts:
@@ -810,13 +968,34 @@ def chemistry_suggestions_shown(restaurant_id, surface="labor", user_id=None, db
 
 # ── recommendation ledger ──────────────────────────────────────────────────
 
-def record_recommendation(restaurant_id, kind: str, key: str, action: str, actor=None, db_path=DB_PATH) -> None:
+def record_recommendation(restaurant_id, kind: str, key: str, action: str, actor=None, db_path=DB_PATH,
+                          authority=None) -> None:
     """action: shown | accepted | dismissed | restored (the owner asked for a
-    suppressed kind back)."""
+    suppressed kind back). `authority` is whose showing or answer it was
+    (permissions.answer_authority; None = the owner's, as every row before
+    it) — only the owner's count toward suppressing a kind for the owner.
+    A restore also lifts the kind's durable suppression."""
     if action not in ("shown", "accepted", "dismissed", "restored") or not kind:
         return
+    if authority is None:
+        try:
+            from permissions import acting_via
+            if acting_via():
+                authority = "admin"
+        except Exception:
+            pass
     conn = get_conn(db_path)
     try:
+        if action == "restored":
+            now = conn.execute("SELECT datetime('now')").fetchone()[0]
+            try:
+                conn.execute("DELETE FROM rec_kind_states WHERE restaurant_id=? AND family='schedule' AND kind=?",
+                             (restaurant_id, str(kind)[:60]))
+                conn.execute("INSERT OR REPLACE INTO rec_kind_states (restaurant_id, family, kind, state, since, "
+                             "restored_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+                             (restaurant_id, "schedule_restore", str(kind)[:60], "restored", now, now, now))
+            except Exception as e:
+                print(f"[schedule_intel] restore not held durably: {e}")
         # A showing is one per recommendation per day: a manager saving the
         # same week ten times in one sitting was ten "shown, never taken"
         # and switched the advice off for good (SCHED-26), and every rescore
@@ -826,8 +1005,10 @@ def record_recommendation(restaurant_id, kind: str, key: str, action: str, actor
                 "AND action='shown' AND created_at >= date('now')",
                 (restaurant_id, str(kind)[:60], str(key or "")[:200])).fetchone():
             return
-        conn.execute("INSERT INTO schedule_recommendation_events (restaurant_id, kind, key, action, actor) VALUES (?,?,?,?,?)",
-                     (restaurant_id, str(kind)[:60], str(key or "")[:200], action, (actor or "")[:120] or None))
+        conn.execute("INSERT INTO schedule_recommendation_events (restaurant_id, kind, key, action, actor, authority) "
+                     "VALUES (?,?,?,?,?,?)",
+                     (restaurant_id, str(kind)[:60], str(key or "")[:200], action, (actor or "")[:120] or None,
+                      authority if authority in ("principal", "delegate", "admin") else None))
         conn.commit()
     finally:
         conn.close()
@@ -938,38 +1119,147 @@ def schedule_rec_key(kind, text) -> str:
     return _rl.rec_key("schedule_" + (kind or "other"), (text or "")[:120])
 
 
+# A suppressed schedule kind is re-tested this long after it was suppressed
+# (and after each re-test that went unaccepted), for RETEST_WINDOW_DAYS
+# (memory audit 9/29/26, "quiet_kinds"): it used to come back by accident a
+# year later, when the pruned log forgot why.
+SUPPRESS_REVIEW_DAYS = 60
+RETEST_WINDOW_DAYS = 14
+
+
+def suppression_state(restaurant_id, db_path=DB_PATH, now=None, write=True) -> dict:
+    """{kind: {state: suppressed | retest, reason, since, review_on (M/D/YY),
+    retests}} — the schedule recommendation kinds this owner has plainly
+    declined, held as durable state (rec_kind_states, family "schedule")
+    instead of recounted from schedule_recommendation_events, which is
+    pruned at 365 days. A kind is suppressed when, since the owner last
+    asked for it back, it was shown SUPPRESS_AFTER_SHOWN times and never
+    accepted, or dismissed "not for us" twice and never accepted — counting
+    the OWNER's showings and answers only (a manager's or support's never
+    suppress a kind for the owner; memory audit, who_answered). From its
+    review date it is re-tested for RETEST_WINDOW_DAYS: accepted, it is
+    back; declined again or left unaccepted, it is suppressed to the next
+    review date. Kinds about whether a shift is safe to run
+    (shift_quality.PROTECTED_REC_KINDS) are never suppressed."""
+    from datetime import datetime as _dt, timedelta as _td
+    from shift_quality import PROTECTED_REC_KINDS
+    now = now or _dt.utcnow()
+    now_s = now.strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_conn(db_path)
+    out = {}
+    try:
+        try:
+            states = {r["kind"]: dict(r) for r in conn.execute(
+                "SELECT * FROM rec_kind_states WHERE restaurant_id=? AND family='schedule'", (restaurant_id,)).fetchall()}
+            restores = {r["kind"]: r["restored_at"] for r in conn.execute(
+                "SELECT kind, restored_at FROM rec_kind_states WHERE restaurant_id=? AND family='schedule_restore'",
+                (restaurant_id,)).fetchall()}
+        except Exception:
+            states, restores = {}, {}
+        try:
+            rows = conn.execute("SELECT kind, key, action, authority, created_at FROM schedule_recommendation_events "
+                                "WHERE restaurant_id=?", (restaurant_id,)).fetchall()
+        except Exception as e:
+            print(f"[schedule_intel] suppressed_kinds failed: {e}")
+            rows = []
+        # Counted since the owner last asked for the kind back — the log's
+        # own restore row, or the durable one (the log is pruned at 365 days).
+        since = dict(restores)
+        for r in rows:
+            if r["action"] == "restored":
+                since[r["kind"]] = max(since.get(r["kind"], ""), r["created_at"] or "")
+        counted = {}
+        for r in rows:
+            kind = r["kind"]
+            if kind in PROTECTED_REC_KINDS or (r["created_at"] or "") <= since.get(kind, ""):
+                continue
+            c = counted.setdefault(kind, {"shown": set(), "acc": 0, "dis": 0})
+            who = r["authority"] or "principal"
+            if r["action"] == "shown" and who == "principal":
+                c["shown"].add(f"{r['key']}|{str(r['created_at'])[:10]}")
+            elif r["action"] == "accepted" and who != "admin":
+                c["acc"] += 1
+            elif r["action"] == "dismissed" and who == "principal":
+                c["dis"] += 1
+        for kind, r in counted.items():
+            r["shown"] = len(r["shown"])
+            if kind in states or r["acc"]:
+                continue
+            if r["shown"] >= SUPPRESS_AFTER_SHOWN or r["dis"] >= 2:
+                reason = (f"declined {int(r['dis'])} times" if (r["dis"] or 0) >= 2
+                          else f"shown {int(r['shown'])} times, never accepted")
+                review = (now + _td(days=SUPPRESS_REVIEW_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+                states[kind] = {"kind": kind, "state": "suppressed", "reason": reason, "since": now_s,
+                                "review_on": review, "retests": 0}
+                if write:
+                    conn.execute("INSERT OR REPLACE INTO rec_kind_states (restaurant_id, family, kind, state, reason, "
+                                 "since, review_on, retests, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                                 (restaurant_id, "schedule", kind, "suppressed", reason, now_s, review, 0, now_s))
+        from time_utils import mdy
+        for kind, st in list(states.items()):
+            if kind in PROTECTED_REC_KINDS:
+                continue
+            # An acceptance of the kind since it was suppressed — an edit
+            # that carried one out, a button on a week still showing it —
+            # brings it back: the strongest sign it is wanted.
+            took = conn.execute(
+                "SELECT 1 FROM schedule_recommendation_events WHERE restaurant_id=? AND kind=? AND action='accepted' "
+                "AND COALESCE(authority,'principal')!='admin' AND created_at >= ? LIMIT 1",
+                (restaurant_id, kind, st.get("since") or "")).fetchone()
+            if took:
+                if write:
+                    conn.execute("DELETE FROM rec_kind_states WHERE restaurant_id=? AND family='schedule' AND kind=?",
+                                 (restaurant_id, kind))
+                continue
+            state = "suppressed"
+            review = st.get("review_on")
+            if review and review <= now_s:
+                since_review = conn.execute(
+                    "SELECT SUM(action='accepted' AND COALESCE(authority,'principal')!='admin') AS acc, "
+                    "SUM(action='dismissed' AND COALESCE(authority,'principal')='principal') AS dis "
+                    "FROM schedule_recommendation_events WHERE restaurant_id=? AND kind=? AND created_at >= ?",
+                    (restaurant_id, kind, review)).fetchone()
+                window_over = (datetime.strptime(review[:19], "%Y-%m-%d %H:%M:%S")
+                               + timedelta(days=RETEST_WINDOW_DAYS)) <= now
+                if since_review and (since_review["acc"] or 0):
+                    if write:
+                        conn.execute("DELETE FROM rec_kind_states WHERE restaurant_id=? AND family='schedule' "
+                                     "AND kind=?", (restaurant_id, kind))
+                    continue                                   # the re-test was taken: back for good
+                if (since_review and (since_review["dis"] or 0)) or window_over:
+                    review = (now + _td(days=SUPPRESS_REVIEW_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+                    st = dict(st, review_on=review, retests=int(st.get("retests") or 0) + 1)
+                    if write:
+                        conn.execute("UPDATE rec_kind_states SET review_on=?, retests=?, updated_at=? "
+                                     "WHERE restaurant_id=? AND family='schedule' AND kind=?",
+                                     (review, st["retests"], now_s, restaurant_id, kind))
+                else:
+                    state = "retest"
+            out[kind] = {"state": state, "reason": st.get("reason"), "since": mdy(str(st.get("since") or "")[:10])
+                         if st.get("since") else None, "review_on": mdy(str(review)[:10]) if review else None,
+                         "retests": int(st.get("retests") or 0)}
+        if write:
+            conn.commit()
+    finally:
+        conn.close()
+    return out
+
+
 def suppressed_kinds(restaurant_id, db_path=DB_PATH) -> set:
-    """Recommendation kinds this owner has plainly declined: shown at least
-    SUPPRESS_AFTER_SHOWN times and never accepted, or dismissed "not for us"
-    at least twice and never accepted — counted since the owner last asked
-    for the kind back. Kinds about whether a shift is safe to run
-    (shift_quality.PROTECTED_REC_KINDS) are never suppressed.
+    """Recommendation kinds this owner has plainly declined and that are not
+    being re-tested (suppression_state): neither shown nor stored until the
+    review date, a restore, or an accepted re-test brings them back.
 
     "Not for us" used to change nothing (only shown and accepted counted),
     and a suppressed kind could never come back: its recommendations were
     neither shown nor stored, so neither a button nor an edit could accept
     one."""
-    from shift_quality import PROTECTED_REC_KINDS
-    conn = get_conn(db_path)
     try:
-        rows = conn.execute(
-            "SELECT e.kind, COUNT(DISTINCT CASE WHEN e.action='shown' THEN e.key || '|' || date(e.created_at) END) AS shown, "
-            "SUM(e.action='accepted') AS acc, SUM(e.action='dismissed') AS dis FROM schedule_recommendation_events e "
-            "WHERE e.restaurant_id=? AND e.created_at > COALESCE((SELECT MAX(r.created_at) FROM schedule_recommendation_events r "
-            "  WHERE r.restaurant_id=e.restaurant_id AND r.kind=e.kind AND r.action='restored'), '') "
-            "GROUP BY e.kind", (restaurant_id,)).fetchall()
+        return {k for k, st in suppression_state(restaurant_id, db_path=db_path).items()
+                if st["state"] == "suppressed"}
     except Exception as e:
         print(f"[schedule_intel] suppressed_kinds failed: {e}")
         return set()
-    finally:
-        conn.close()
-    out = set()
-    for r in rows:
-        if r["kind"] in PROTECTED_REC_KINDS or (r["acc"] or 0):
-            continue
-        if (r["shown"] or 0) >= SUPPRESS_AFTER_SHOWN or (r["dis"] or 0) >= 2:
-            out.add(r["kind"])
-    return out
 
 
 # ── learned-pattern dismissals ────────────────────────────────────────────
@@ -1037,6 +1327,26 @@ def init_schedule_intel(db_path: str = DB_PATH):
         UNIQUE(history_id, date, daypart)
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_outcomes_rest ON schedule_outcomes(restaurant_id, date)")
+    # How each row's daypart sales were split (memory audit 9/29/26,
+    # QUALITY-11): 'measured' (the POS's intraday running total or the
+    # nightly report's hourly split) or 'unmeasured' (sales NULL). A row
+    # from before the column has NULL: read as unmeasured.
+    if "split_basis" not in {r[1] for r in conn.execute("PRAGMA table_info(schedule_outcomes)").fetchall()}:
+        conn.execute("ALTER TABLE schedule_outcomes ADD COLUMN split_basis TEXT")
+    # Which shift a review's rating was put on, and how sure (memory audit
+    # 9/29/26, reviews_to_labor): "daypart" when the analyser read the meal
+    # in the review itself and it was posted within REVIEW_LAG_DAYS of that
+    # shift; "hours" when it was put on the day's busiest daypart for want
+    # of anything better. Calibration reads the first kind only.
+    _oc = {r[1] for r in conn.execute("PRAGMA table_info(schedule_outcomes)").fetchall()}
+    for _col, _typ in (("review_attribution", "TEXT"), ("review_rating_attributed", "REAL"),
+                       ("reviews_attributed", "INTEGER"), ("review_lag_days", "INTEGER")):
+        if _col not in _oc:
+            try:
+                conn.execute(f"ALTER TABLE schedule_outcomes ADD COLUMN {_col} {_typ}")
+            except Exception as _e:
+                if "duplicate column" not in str(_e).lower():
+                    raise
     conn.execute("""CREATE TABLE IF NOT EXISTS schedule_recommendation_events (
         id             INTEGER PRIMARY KEY AUTOINCREMENT,
         restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
@@ -1047,6 +1357,11 @@ def init_schedule_intel(db_path: str = DB_PATH):
         created_at     TEXT    NOT NULL DEFAULT (datetime('now'))
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_rec_events ON schedule_recommendation_events(restaurant_id, kind)")
+    # Whose showing or answer each row is (memory audit 9/29/26,
+    # who_answered): only the owner's suppress a kind for the owner.
+    _cols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_recommendation_events)").fetchall()}
+    if "authority" not in _cols:
+        conn.execute("ALTER TABLE schedule_recommendation_events ADD COLUMN authority TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_rec_events_created "
                  "ON schedule_recommendation_events(created_at)")          # ops.prune_ledgers (DATA-40)
     conn.execute("""CREATE TABLE IF NOT EXISTS schedule_pattern_dismissals (
@@ -1055,6 +1370,34 @@ def init_schedule_intel(db_path: str = DB_PATH):
         dismissed_by   TEXT,
         created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
         PRIMARY KEY (restaurant_id, key)
+    )""")
+    # What the draft has learned and keeps (memory audit 9/29/26,
+    # standing_patterns): a move the manager made in enough weeks becomes a
+    # row here, confirmed by every published week that keeps it and retired
+    # only when a manager reverses it twice — never because nobody had to
+    # make the correction again. Kept forever (one row per pattern).
+    conn.execute("""CREATE TABLE IF NOT EXISTS schedule_standing_patterns (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        restaurant_id    INTEGER NOT NULL REFERENCES restaurants(id),
+        pattern_key      TEXT    NOT NULL,
+        kind             TEXT    NOT NULL,
+        employee         TEXT,
+        role             TEXT,
+        day              TEXT,
+        daypart          TEXT,
+        time             TEXT,
+        text             TEXT,
+        editors          TEXT,
+        first_learned    TEXT    NOT NULL,
+        last_confirmed   TEXT    NOT NULL,
+        times_applied    INTEGER NOT NULL DEFAULT 0,
+        times_overridden INTEGER NOT NULL DEFAULT 0,
+        status           TEXT    NOT NULL DEFAULT 'active',
+        rule_note        TEXT,
+        ruled_by         TEXT,
+        checked_through  INTEGER NOT NULL DEFAULT 0,
+        updated_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(restaurant_id, pattern_key)
     )""")
     conn.execute("""CREATE TABLE IF NOT EXISTS staff_first_seen (
         restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
@@ -1076,7 +1419,45 @@ def init_schedule_intel(db_path: str = DB_PATH):
         if "duplicate column" not in str(e).lower():
             raise
     conn.commit()
-    conn.close()
+    try:
+        _normalise_tenure_dates(conn)
+    finally:
+        conn.close()
+
+
+_ISO_GLOB = "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]"
+
+
+def _normalise_tenure_dates(conn) -> int:
+    """Every first_seen / last_seen as ISO, once, at boot (memory audit
+    9/29/26, tenure_date). A legacy "09/01/2026" sorts before every ISO date,
+    so it won first_seen=MIN(...) forever and passed dna's "180 days of
+    history" string comparison. Only malformed rows are read, so on a clean
+    table this is one indexed-free scan of a small table. A date that cannot
+    be read at all falls back to the other column (or updated_at's date):
+    first_seen is NOT NULL and a guess from the same row beats a sort-order
+    accident. Returns the rows rewritten."""
+    from labor import _iso_date
+    rows = conn.execute(
+        f"SELECT restaurant_id, employee_name, first_seen, last_seen, updated_at FROM staff_first_seen "
+        f"WHERE first_seen NOT GLOB '{_ISO_GLOB}' OR length(first_seen) != 10 "
+        f"OR (last_seen IS NOT NULL AND (last_seen NOT GLOB '{_ISO_GLOB}' OR length(last_seen) != 10))").fetchall()
+    fixed = 0
+    for r in rows:
+        first = _iso_date(r["first_seen"])
+        last = _iso_date(r["last_seen"]) if r["last_seen"] else None
+        fallback = last or _iso_date(str(r["updated_at"] or "")[:10])
+        first = first or fallback
+        if not first:
+            continue
+        if last and last < first:
+            first, last = last, first
+        conn.execute("UPDATE staff_first_seen SET first_seen=?, last_seen=? WHERE restaurant_id=? AND employee_name=?",
+                     (first, last, r["restaurant_id"], r["employee_name"]))
+        fixed += 1
+    if fixed:
+        conn.commit()
+    return fixed
 
 
 def remember_tenure(restaurant_id, shifts: list, db_path=DB_PATH) -> None:
@@ -1086,10 +1467,13 @@ def remember_tenure(restaurant_id, shifts: list, db_path=DB_PATH) -> None:
     older upload re-sent never makes a current employee look departed."""
     if not shifts:
         return
+    from labor import _iso_date
     first, last, count = {}, {}, {}
     for s in shifts:
         n = (s.get("employee") or "").strip()
-        d = (s.get("date") or "")[:10]
+        # ISO or nothing (tenure_date): a "09/01/2026" that reached this
+        # table was MIN'd as text and won against every real date forever.
+        d = _iso_date(s.get("date")) or ""
         if not n or len(d) != 10:
             continue
         count[n] = count.get(n, 0) + 1

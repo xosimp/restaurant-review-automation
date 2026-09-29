@@ -159,6 +159,18 @@ struct HomeView: View {
                                     .belowFold(heroAppeared, delay: 0.1)
                             }
 
+                            // The updated Privacy Policy and Terms, owed an
+                            // account holder for 30 days (policy_notice) —
+                            // dismissed once, for this login everywhere.
+                            if let notice = summary.policyNotice {
+                                HomePolicyNoticeCard(notice: notice,
+                                                     onDismissed: { Task { await viewModel.load() } })
+                                    .id(notice.key)
+                                    .padding(.horizontal, 20)
+                                    .padding(.top, 16)
+                                    .belowFold(heroAppeared, delay: 0.12)
+                            }
+
                             // The order is fixed by role, the same as the web
                             // Home (§11b as amended 9/25/26, density #3):
                             // header strip, THE ONE THING at position 2 with
@@ -178,7 +190,8 @@ struct HomeView: View {
                             if let lead {
                                 HomeOneThingCard(viewModel: followThrough, lead: lead,
                                                  busy: viewModel.isPublishingReplies,
-                                                 onPrimary: { item in primaryAction(item, in: summary) })
+                                                 onPrimary: { item in primaryAction(item, in: summary) },
+                                                 onChanged: { Task { await viewModel.load() } })
                                     .padding(.horizontal, 20)
                                     .padding(.top, 26)
                                     .belowFold(heroAppeared, delay: 0.16)
@@ -263,6 +276,16 @@ struct HomeView: View {
                                 .padding(.horizontal, 20)
                                 .padding(.top, 30)
                                 .belowFold(heroAppeared, delay: 0.46)
+                            }
+
+                            // The kinds held back by this restaurant's own
+                            // record, each asked "Keep suggesting it?" (M4)
+                            // — right under the cards they were taken from.
+                            if let holds = summary.kindHolds?.items, !holds.isEmpty {
+                                HomeKindHolds(holds: holds)
+                                    .padding(.horizontal, 20)
+                                    .padding(.top, 30)
+                                    .belowFold(heroAppeared, delay: 0.48)
                             }
 
                             // No readiness row after the recommendations
@@ -755,11 +778,16 @@ struct HomeView: View {
                         return
                     }
                     Task {
-                        if await followThrough.answerAttention(item, kind: kind) {
+                        // The server's sentence for what the answer does
+                        // (memory round 9/29/26) in the screen's posted
+                        // check — the row leaves on the reload under it.
+                        if let said = await followThrough.answerAttention(item, kind: kind) {
+                            postedLabel = said
                             await viewModel.load()
                         }
                     }
-                }
+                },
+                onChanged: { Task { await viewModel.load() } }
             )
             .recReasonDialog(isPresented: $showingAttentionWhy,
                              title: "You\u{2019}ve hidden this before \u{2014} why?",
@@ -776,7 +804,8 @@ struct HomeView: View {
         guard let item = attentionAskingWhy else { return }
         attentionAskingWhy = nil
         Task {
-            if await followThrough.answerAttention(item, kind: kind, reasonCode: reason?.code) {
+            if let said = await followThrough.answerAttention(item, kind: kind, reasonCode: reason?.code) {
+                postedLabel = said
                 await viewModel.load()
             }
         }

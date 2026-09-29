@@ -71,7 +71,11 @@ WINDOW_DAYS = 28
 
 
 def link(audit_id, restaurant_id, db_path=None):
-    """Point an audit at the account it became. Idempotent."""
+    """Point an audit at the account it became. Idempotent. A link to an
+    account seeds its memory from the audit, once (owner_memory.
+    seed_from_audit: the owner's own answers as facts sourced "Sales audit
+    M/D/YY", the targets they gave as proposed goals — memory audit 9/29/26,
+    sales_audit)."""
     from models import get_conn, DB_PATH
     conn = get_conn(db_path or DB_PATH)
     try:
@@ -80,6 +84,12 @@ def link(audit_id, restaurant_id, db_path=None):
         conn.commit()
     finally:
         conn.close()
+    if restaurant_id:
+        try:
+            import owner_memory
+            owner_memory.seed_from_audit(audit_id, int(restaurant_id), db_path=db_path)
+        except Exception as e:
+            log.warning("promise: audit %s memory not seeded for %s: %s", audit_id, restaurant_id, e)
     return True
 
 

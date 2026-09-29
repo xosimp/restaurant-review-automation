@@ -3605,12 +3605,17 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
             # sales. One day of shifts used to text "Labor at 48% — 23 pts
             # over target" (CA3 F5): the same floor under which labor.py
             # refuses to project a period forward (MIN_DAYS_TO_EXTRAPOLATE).
+            # A labor period is a payroll week now, replaced in place when
+            # it is recosted; the legacy rolling windows are never read
+            # (memory audit 9/29/26, labor_periods) — the alert's period_start
+            # is the calendar week Home's labor_over card is keyed on too.
             recent = c2.execute("""
                 SELECT labor_pct, period_start, period_end
                 FROM labor_history
                 WHERE restaurant_id=?
                   AND period_end >= date('now', ?)
                   AND total_sales > 0
+                  AND COALESCE(kind, '') != 'rolling_window'
                   AND julianday(period_end) - julianday(period_start) + 1 >= ?
                 ORDER BY period_end DESC, saved_at DESC LIMIT 1
             """, (rid, f"-{_labor_alert_max_age_days()} days", LABOR_ALERT_MIN_PERIOD_DAYS)).fetchone()
@@ -3620,8 +3625,12 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                 target = labor_target_for(dict(r))
                 # One definition of "over target" (thresholds.py) shared with
                 # the labor issue and Home. Any overage at all used to fire
-                # this, so 30.2% against 30% was a text (#34).
-                if actual - target >= LABOR_OVER_TARGET_PTS:
+                # this, so 30.2% against 30% was a text (#34). The margin is
+                # fitted to this restaurant's own swing, never below the
+                # stated one (restaurant_thresholds, memory audit 9/29/26):
+                # a volatile restaurant is not texted about noise.
+                import restaurant_thresholds as _rthr_al
+                if actual - target >= _rthr_al.margin(rid, "labor_over_period", stated=LABOR_OVER_TARGET_PTS):
                     from time_utils import mdy_range
                     over_by = round(actual - target, 1)
                     _period_label = _short_period(recent["period_start"], recent["period_end"])

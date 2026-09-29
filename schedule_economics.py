@@ -26,6 +26,9 @@ say so. Nothing calls a model.
 from datetime import date, datetime, timedelta
 
 from models import get_conn, DB_PATH
+# Final days only (canonical_facts, memory audit 9/29/26): a half-night the
+# POS had not closed is never a week's sales or a day's labor %.
+from canonical_facts import FINAL_SQL
 
 TRIM_TOLERANCE = 0.02            # a week within 2% of the budget is not trimmed
 TRIM_MAX_REMOVALS = 60
@@ -140,16 +143,145 @@ def cost_delta(before_rows: list, after_rows: list, role_rates: dict, blended_ra
 
 # ── weekly revenue from the restaurant's own pattern ──────────────────────
 
-def projected_weekly_revenue(restaurant_id, weeks: int = 8, db_path=DB_PATH) -> dict:
-    """{"value", "source", "weeks"} — the median of the last `weeks` complete
-    weeks of daily sales, so the budget follows how this restaurant
-    actually earns rather than a twelfth of a monthly target. None when
-    fewer than three complete weeks exist."""
+# The week's own budget is the projection once the owner has budgeted this
+# many of its nights in the DSR (memory audit 9/29/26, owner_goals).
+BUDGET_MIN_NIGHTS = 5
+
+
+def budgeted_week_revenue(restaurant_id, week_dates, db_path=DB_PATH) -> dict:
+    """{"value", "source", "nights"} from the owner's own nightly budgets
+    (dsr_budgets, net, else gross) for the week being scheduled, when at
+    least BUDGET_MIN_NIGHTS of its nights are budgeted: the owner who
+    budgets a record festival week in the DSR had the schedule's hours
+    budget built from last month's median week. A night not budgeted is
+    filled from the restaurant's own median for that weekday (said in the
+    source); None value when too few nights are budgeted."""
+    dates = [str(d)[:10] for d in week_dates or () if d]
+    if not dates:
+        return {"value": None, "source": None, "nights": 0}
+    try:
+        from dsr import store as _dsr_store
+        got = _dsr_store.budgets_for(restaurant_id, min(dates), max(dates), db_path=db_path)
+    except Exception:
+        return {"value": None, "source": None, "nights": 0}
+    per_night = {}
+    for d in dates:
+        b = got.get(d) or {}
+        v = b.get("net") if b.get("net") not in (None, "") else b.get("gross")
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            continue
+        if v > 0:
+            per_night[d] = v
+    if len(per_night) < BUDGET_MIN_NIGHTS:
+        return {"value": None, "source": None, "nights": len(per_night)}
+    total = sum(per_night.values())
+    missing = [d for d in dates if d not in per_night]
+    filled = 0
+    if missing:
+        medians = _weekday_medians(restaurant_id, db_path=db_path)
+        for d in missing:
+            try:
+                wd = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
+            except ValueError:
+                continue
+            if medians.get(wd):
+                total += medians[wd]
+                filled += 1
+    src = f"your budget ({len(per_night)} of {len(dates)} nights budgeted"
+    src += (f"; {filled} filled from your usual {'night' if filled == 1 else 'nights'})" if filled else ")")
+    return {"value": round(total, 0), "source": src, "nights": len(per_night)}
+
+
+def _weekday_medians(restaurant_id, weeks: int = 8, db_path=DB_PATH) -> dict:
+    """{weekday: median daily sales} over the last `weeks` weeks."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT day_of_week, sales FROM labor_daily_history WHERE restaurant_id=? AND sales IS NOT NULL "
+            f"AND sales > 0 AND date >= date('now', ?) AND {FINAL_SQL}",
+            (restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+    by = {}
+    for r in rows:
+        by.setdefault(str(r["day_of_week"] or "").capitalize(), []).append(float(r["sales"] or 0))
+    out = {}
+    for wd, vals in by.items():
+        vals.sort()
+        n = len(vals)
+        out[wd] = vals[n // 2] if n % 2 else (vals[n // 2 - 1] + vals[n // 2]) / 2
+    return out
+
+
+def _corrected_by_record(restaurant_id, out, raw, db_path=DB_PATH):
+    """Apply the published weeks' own record (forecast_log kind
+    revenue_week) to `raw` — ONLY for the estimator that record scores:
+    demand.week_projection, frozen at publish (demand.freeze_week_projection).
+    When those projections have leaned one way the figure is corrected by
+    the same factor and the source says so; when the record reads often
+    wide it is said, since the budget still needs a figure. The frozen
+    projection stays raw, so the correction never feeds on itself."""
+    try:
+        import forecast_log
+        rec = forecast_log.shown(restaurant_id, "revenue_week", raw, db_path=db_path)
+        if rec.get("corrected") and rec.get("shown") is not None:
+            out.update(value=round(float(rec["shown"]), 0),
+                       calibration={"factor": rec["factor"], "bias_pct": rec.get("bias_pct"),
+                                    "reading": rec.get("reading")})
+            out["source"] += (f", corrected {'down' if rec['factor'] < 1 else 'up'} "
+                              f"{abs(round((1 - rec['factor']) * 100))}% because the published weeks' "
+                              f"projections here {rec.get('reading')}")
+        elif rec.get("withheld"):
+            out["source"] += "; the published weeks' projections here have often been wide, so treat it as rough"
+    except Exception as e:
+        print(f"[schedule_economics] revenue record unreadable for {restaurant_id}: {e}")
+    return out
+
+
+def projected_weekly_revenue(restaurant_id, weeks: int = 8, db_path=DB_PATH, week_dates=None) -> dict:
+    """{"value", "source", "weeks", "estimator"} — the week's own budget
+    when the owner has budgeted at least BUDGET_MIN_NIGHTS of `week_dates`
+    in the DSR (budgeted_week_revenue, source "your budget …"); else, for a
+    named week every day of which has a forecast, the week's day-by-day
+    projection (demand.week_projection: each weekday's median with the
+    measured events on its dates — the figure frozen at publish and scored
+    when the week closes), corrected by that record when it leans; else the
+    median of the last `weeks` complete weeks of daily sales, raw, so the
+    budget follows how this restaurant actually earns rather than a twelfth
+    of a monthly target. None when none exists (fewer than three complete
+    weeks).
+
+    The revenue_week record corrects only the estimator it measured (PRED-4,
+    memory fix round integration 9/29/26): it used to be applied to the
+    median-week figure, a different estimate whose own lean nobody scored."""
+    if week_dates:
+        own = budgeted_week_revenue(restaurant_id, week_dates, db_path=db_path)
+        if own.get("value"):
+            return {"value": own["value"], "source": own["source"], "weeks": 0, "budget_nights": own["nights"],
+                    "estimator": "budget"}
+        try:
+            import demand
+            proj = demand.week_projection(restaurant_id, week_dates, db_path=db_path)
+        except Exception as e:
+            print(f"[schedule_economics] week projection unavailable for {restaurant_id}: {e}")
+            proj = {}
+        if proj.get("total") and not proj.get("missing") and len(proj.get("days") or []) == len(week_dates):
+            total = float(proj["total"])
+            out = {"value": round(total, 0), "raw_value": round(total, 0), "calibration": None,
+                   "source": ("the week's day-by-day projection (each weekday's typical night"
+                              + (", with the measured events on its dates" if proj.get("modelled") else "") + ")"),
+                   "weeks": 0, "estimator": "week_projection"}
+            return _corrected_by_record(restaurant_id, out, total, db_path=db_path)
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
             "SELECT date, sales FROM labor_daily_history WHERE restaurant_id=? AND sales IS NOT NULL AND sales > 0 "
-            "AND date >= date('now', ?) ORDER BY date", (restaurant_id, f"-{int(weeks) * 7 + 7} days")).fetchall()
+            f"AND date >= date('now', ?) AND {FINAL_SQL} ORDER BY date",
+            (restaurant_id, f"-{int(weeks) * 7 + 7} days")).fetchall()
     except Exception:
         return {"value": None, "source": "no history", "weeks": 0}
     finally:
@@ -170,7 +302,11 @@ def projected_weekly_revenue(restaurant_id, weeks: int = 8, db_path=DB_PATH) -> 
         return {"value": None, "source": "fewer than three complete weeks on file", "weeks": len(complete)}
     vals = sorted(s for _, s in complete)
     med = vals[len(vals) // 2] if len(vals) % 2 else (vals[len(vals) // 2 - 1] + vals[len(vals) // 2]) / 2
-    return {"value": round(med, 0), "source": f"median of the last {len(complete)} complete weeks", "weeks": len(complete)}
+    # Raw: the published weeks' record (revenue_week) scores the day-by-day
+    # projection, not this median, so its lean is never applied here.
+    return {"value": round(med, 0), "raw_value": round(med, 0), "calibration": None,
+            "source": f"median of the last {len(complete)} complete weeks", "weeks": len(complete),
+            "estimator": "median_weeks"}
 
 
 # ── sales per labor hour by daypart ───────────────────────────────────────
@@ -189,7 +325,8 @@ def splh_by_daypart(restaurant_id, weeks: int = 8, db_path=DB_PATH) -> dict:
     try:
         days = conn.execute(
             "SELECT date, day_of_week, sales, total_hours FROM labor_daily_history WHERE restaurant_id=? "
-            "AND sales IS NOT NULL AND sales > 0 AND date >= date('now', ?)", (restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
+            f"AND sales IS NOT NULL AND sales > 0 AND date >= date('now', ?) AND {FINAL_SQL}",
+            (restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
         intra = conn.execute(
             "SELECT weekday, business_date, captured_hour, net_sales FROM pos_intraday WHERE restaurant_id=? "
             "AND business_date >= date('now', ?) ORDER BY business_date, captured_hour",
@@ -350,7 +487,7 @@ def splh_objective(restaurant_id, splh: dict = None, labor_target_pct=None, week
     conn = get_conn(db_path)
     try:
         row = conn.execute("SELECT SUM(labor_pct * sales) AS w, SUM(sales) AS s FROM labor_daily_history WHERE restaurant_id=? "
-                           "AND sales > 0 AND labor_pct IS NOT NULL AND date >= date('now', ?)",
+                           f"AND sales > 0 AND labor_pct IS NOT NULL AND date >= date('now', ?) AND {FINAL_SQL}",
                            (restaurant_id, f"-{int(weeks) * 7} days")).fetchone()
         if row and row["s"]:
             hist_pct = float(row["w"]) / float(row["s"])
@@ -534,11 +671,20 @@ def _holiday_dates(year: int) -> dict:
 
 
 def holiday_lift(restaurant_id, week_dates: list, db_path=DB_PATH) -> dict:
-    """{date: {"name", "lift_pct", "based_on"}} for holidays in the week,
-    with the lift THIS restaurant saw on that holiday last year against the
-    median of the same weekday in the four weeks either side. A holiday
-    with no sales on file last year is listed with lift None — a name the
-    model can react to, never a number it did not measure."""
+    """{date: {"name", "lift_pct", "based_on", "date", "source"}} for holidays
+    in the week, with the lift THIS restaurant saw on that holiday last year
+    against the median of the same weekday in the four weeks either side. A
+    holiday with no sales on file last year is listed with lift None — a
+    name the model can react to, never a number it did not measure.
+
+    Last year is read through the ONE last-year reader
+    (canonical_facts.sales_history: the night's report, the owner's imported
+    DSR workbooks, the POS sync's final nights — memory audit 9/29/26,
+    imported_year), so an owner who imported a year of workbooks has a
+    holiday lift from day one. The holiday night and the nights it is
+    compared with are on ONE basis (canonical_facts.one_basis), and
+    `source` / `based_on` say where last year came from."""
+    import canonical_facts as _cf
     if not week_dates:
         return {}
     years = {int(d[:4]) for d in week_dates}
@@ -548,7 +694,6 @@ def holiday_lift(restaurant_id, week_dates: list, db_path=DB_PATH) -> dict:
     hits = {d: names[d] for d in week_dates if d in names}
     if not hits:
         return {}
-    conn = get_conn(db_path)
     out = {}
     try:
         for d, name in hits.items():
@@ -556,29 +701,31 @@ def holiday_lift(restaurant_id, week_dates: list, db_path=DB_PATH) -> dict:
             # the holiday's own date last year, whichever weekday it fell on
             prior_dates = [k for k, n in _holiday_dates(last.year).items() if n == name]
             hol_date = prior_dates[0] if prior_dates else last.isoformat()
-            row = conn.execute("SELECT sales FROM labor_daily_history WHERE restaurant_id=? AND date=?",
-                               (restaurant_id, hol_date)).fetchone()
             # `date`: the night last year's figure is read from, so a reader
             # can name ITS weekday (re-audit OPP-2).
-            entry = {"name": name, "lift_pct": None, "based_on": None, "date": hol_date}
-            if row and row["sales"]:
-                hd = datetime.strptime(hol_date, "%Y-%m-%d").date()
-                same = conn.execute(
-                    "SELECT sales FROM labor_daily_history WHERE restaurant_id=? AND date BETWEEN ? AND ? "
-                    "AND date<>? AND day_of_week=? AND sales > 0",
-                    (restaurant_id, (hd - timedelta(days=28)).isoformat(), (hd + timedelta(days=28)).isoformat(),
-                     hol_date, hd.strftime("%A"))).fetchall()
-                vals = sorted(float(r["sales"]) for r in same)
+            entry = {"name": name, "lift_pct": None, "based_on": None, "date": hol_date, "source": None}
+            hd = datetime.strptime(hol_date, "%Y-%m-%d").date()
+            series = _cf.sales_history(restaurant_id, (hd - timedelta(days=28)).isoformat(),
+                                       (hd + timedelta(days=28)).isoformat(), db_path=db_path)
+            night = series.get(hol_date)
+            if night and night["net"]:
+                same = {k: x for k, x in series.items() if k != hol_date and x.get("basis") == night.get("basis")
+                        and datetime.strptime(k, "%Y-%m-%d").date().weekday() == hd.weekday()}
+                vals = sorted(float(x["net"]) for x in same.values() if x["net"] and x["net"] > 0)
                 if len(vals) >= 3:
                     med = vals[len(vals) // 2]
                     if med > 0:
-                        entry["lift_pct"] = int(round((float(row["sales"]) / med - 1) * 100))
-                        entry["based_on"] = f"{name} {hd.year}: ${float(row['sales']):,.0f} against a typical {hd.strftime('%A')} of ${med:,.0f}"
+                        entry["lift_pct"] = int(round((float(night["net"]) / med - 1) * 100))
+                        entry["source"] = night.get("source")
+                        entry["based_on"] = (f"{name} {hd.year}: ${float(night['net']):,.0f} against a typical "
+                                             f"{hd.strftime('%A')} of ${med:,.0f}")
+                        # The POS archive is the ordinary source; an imported
+                        # workbook or a nightly report is named.
+                        if night.get("source") in ("import", "dsr"):
+                            entry["based_on"] += f", from {_cf.SOURCE_LABELS[night['source']]}"
             out[d] = entry
     except Exception:
         return {d: {"name": n, "lift_pct": None, "based_on": None} for d, n in hits.items()}
-    finally:
-        conn.close()
     return out
 
 

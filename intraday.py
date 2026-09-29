@@ -216,14 +216,40 @@ def arrival_keys(restaurant_id, clocked, db_path=DB_PATH) -> set:
                   for c in get_staff_contacts(restaurant_id, db_path=db_path) if c.get("pos_id")}
     except Exception:
         by_pos = {}
+    # The person each POS id is (people.person_aliases — memory audit
+    # 9/29/26, identity): a clock-in is its person whatever either side is
+    # spelled, so a POS rename mid-week is not a no-show.
+    by_ext = {}
+    try:
+        import people as _people
+        conn = get_conn(db_path)
+        try:
+            for r in conn.execute("SELECT a.external_id, p.display_name FROM person_aliases a JOIN people p "
+                                  "ON p.id = a.person_id WHERE a.restaurant_id=? AND a.external_id IS NOT NULL "
+                                  "AND p.merged_into IS NULL", (restaurant_id,)).fetchall():
+                by_ext[str(r["external_id"]).strip()] = r["display_name"]
+        finally:
+            conn.close()
+    except Exception:
+        by_ext = {}
     keys = set()
+    names = []
     for c in clocked or []:
         n = str(c.get("employee") or "").strip()
         if n:
             keys.add(_ss.name_key(n))
+            names.append(n)
         pid = c.get("pos_id") or c.get("employee_id") or c.get("external_id")
         if pid is not None and str(pid).strip() in by_pos:
             keys.add(_ss.name_key(by_pos[str(pid).strip()]))
+        if pid is not None and str(pid).strip() in by_ext:
+            keys.add(_ss.name_key(by_ext[str(pid).strip()]))
+    # Each spelling also as the person it means (an alias → their name now).
+    try:
+        import people as _people
+        keys |= {_ss.name_key(v) for v in _people.canonical_names(restaurant_id, names, db_path=db_path).values()}
+    except Exception:
+        pass
     return keys
 
 
@@ -276,6 +302,14 @@ def coverage_gaps(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=Non
         log.warning("coverage check failed rid=%s: %s", restaurant_id, e)
         return {"available": False, "reason": "the POS didn't answer"}
     here = arrival_keys(restaurant_id, clocked, db_path)
+    # The published week may carry a spelling from before a rename: each
+    # scheduled name is read as the person it means now (people).
+    try:
+        import people as _people
+        _canon = _people.canonical_names(restaurant_id, [s["employee"] for s in scheduled], db_path=db_path)
+    except Exception:
+        _canon = {}
+    scheduled = [dict(s, employee=_canon.get(s["employee"], s["employee"])) for s in scheduled]
     scheduled_keys = [_ss.name_key(s["employee"]) for s in scheduled]
     missing = []
     for s in scheduled:
@@ -403,6 +437,43 @@ def ask_to_cover(restaurant_id, issue_id, name, user_id=None, surface="labor", d
     except Exception as e:
         log.warning("cover rec_ledger failed rid=%s: %s", restaurant_id, e)
     return {"ok": True, "via": via, "name": who}
+
+
+def mark_cover_answer(restaurant_id, issue_id, name, accepted, db_path=None) -> bool:
+    """The manager's answer to "Did Zed take it?", kept on the coverage
+    issue's own `asked` entry (`answer`: "took" | "declined") so both Home
+    clients stop asking once it is answered (memory audit 9/29/26, covers;
+    the person's record is people.answer_cover's). False when the issue or
+    the ask is not there. Never raises."""
+    import json as _json
+    import issues
+    import models as _models
+    import staff_settings as _ss
+    db = db_path or _models.DB_PATH     # resolved at call time (CLAUDE.md, bound imports)
+    try:
+        issue = issues.get_issue(restaurant_id, issue_id, db_path=db)
+        if not issue or issue.get("kind") != "coverage":
+            return False
+        meta = _json.loads(issue.get("meta_json") or "null") or {}
+        hit = False
+        for a in meta.get("asked") or []:
+            if isinstance(a, dict) and _ss.name_key(a.get("name")) == _ss.name_key(name):
+                a["answer"] = "took" if accepted else "declined"
+                a["answered_at"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+                hit = True
+        if not hit:
+            return False
+        conn = _models.get_conn(db)
+        try:
+            conn.execute("UPDATE ops_issues SET meta_json=? WHERE id=? AND restaurant_id=?",
+                         (_json.dumps(meta)[:4000], issue_id, restaurant_id))
+            conn.commit()
+        finally:
+            conn.close()
+        return True
+    except Exception as e:
+        log.warning("cover answer not kept on the issue rid=%s issue=%s: %s", restaurant_id, issue_id, e)
+        return False
 
 
 def cover_key(issue) -> str:

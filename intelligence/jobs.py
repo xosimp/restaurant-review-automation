@@ -15,7 +15,7 @@ import hashlib
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
 import models as _models_mod
@@ -115,6 +115,122 @@ def real_restaurant_ids(db_path=DB_PATH) -> set:
     finally:
         conn.close()
     return {int(r["id"]) for r in rows}
+
+
+# models.learning_eligible over every restaurant, kept this long per
+# database — kind_stats asks per kind on a Home build.
+ELIGIBILITY_TTL_SECONDS = 60
+_excluded_cache = {"key": None, "at": 0.0, "ids": None}
+
+
+def excluded_learning_ids(db_path=DB_PATH) -> set:
+    """Restaurants whose rows may teach NO cross-restaurant figure (memory
+    audit 9/29/26 — "every learner filters with models.learning_eligible"):
+    every restaurant models.learning_eligible refuses (a demo, a test or
+    internal account — exclude_from_learning, billing 'internal') and every
+    one still inside its seeded quarantine (seeded_restaurant_ids). A
+    deleted restaurant has no row, so its kept, anonymised rows are not
+    excluded: they count toward groups and never carry a name. Cached
+    briefly per database."""
+    import time as _time
+    key = (db_path or DB_PATH, getattr(_models_mod, "DB_PATH", None), id(getattr(_models_mod, "get_conn", None)))
+    now = _time.monotonic()
+    if _excluded_cache["key"] == key and _excluded_cache["ids"] is not None \
+            and now - _excluded_cache["at"] < ELIGIBILITY_TTL_SECONDS:
+        return _excluded_cache["ids"]
+    conn = get_conn(db_path)
+    try:
+        try:
+            out = {int(r["id"]) for r in conn.execute(SEEDED_RESTAURANT_SQL, (f"-{SEEDED_HISTORY_DAYS} days",))}
+        except Exception:
+            out = {int(r["id"]) for r in conn.execute("SELECT id FROM restaurants WHERE COALESCE(is_demo,0)=1")}
+        rows = conn.execute("SELECT * FROM restaurants").fetchall()
+    finally:
+        conn.close()
+    since = {}
+    for r in rows:
+        try:
+            ok = _models_mod.learning_eligible(dict(r))
+        except Exception:
+            ok = True
+        if not ok:
+            out.add(int(r["id"]))
+        if "learning_since" in r.keys() and r["learning_since"]:
+            since[int(r["id"])] = str(r["learning_since"])
+    _excluded_cache.update(key=key, at=now, ids=out, since=since)
+    return out
+
+
+def invalidate_excluded(*_a):
+    _excluded_cache.update(key=None, at=0.0, ids=None, since=None)
+
+
+def learning_since_by_id(db_path=DB_PATH) -> dict:
+    """{restaurant_id: learning_since} — a converted demo's first day of real
+    learning (models.learning_since, stamped when is_demo is turned off).
+    A cross-restaurant reader drops every row recorded before it
+    (before_learning), on top of the whole-restaurant exclusion above.
+    Cached with excluded_learning_ids (memory fix round INT #20)."""
+    excluded_learning_ids(db_path=db_path)
+    return dict(_excluded_cache.get("since") or {})
+
+
+def before_learning(restaurant_id, when, since=None) -> bool:
+    """Whether a row stamped `when` (an ISO date or stamp) was recorded
+    before its restaurant's learning_since — its demo era, which teaches
+    no cross-restaurant figure. `since`: learning_since_by_id()."""
+    ls = (since or {}).get(int(restaurant_id)) if restaurant_id is not None else None
+    if not ls or not when:
+        return False
+    return str(when)[:19] < str(ls)[:19]
+
+
+def learning_since_week(restaurant_id, since=None):
+    """The ISO week ("2026-W40") of a restaurant's learning_since, or None:
+    a feature or A/B week before it is its demo era."""
+    ls = (since or {}).get(int(restaurant_id)) if restaurant_id is not None else None
+    if not ls:
+        return None
+    try:
+        y, w, _ = date.fromisoformat(str(ls)[:10]).isocalendar()
+        return f"{y}-W{w:02d}"
+    except ValueError:
+        return None
+
+
+def learning_labels(db_path=DB_PATH, ids=None, conn=None) -> dict:
+    """{restaurant_id: {cohort, partitions: {family: key}, google}} for every
+    restaurant (or `ids`) — what feedback.sync stamps each row with: the
+    owner-confirmed concept (categories.confirmed_type — None for a guess),
+    the confirmed partition per metric family (categories.partition_key),
+    and whether its reviews come through the owner's Google connection
+    (provenance.google_connected_ids). Every restaurant, seeded and excluded
+    ones too: a label is a fact about the restaurant, eligibility is the
+    readers' (PLATFORM-15). Read on the caller's connection when given (the
+    sync writes a whole pass on one)."""
+    from . import provenance
+    own = conn is None
+    conn = conn or get_conn(db_path)
+    try:
+        if ids is not None:
+            want = sorted({int(i) for i in ids})
+            rows = [dict(r) for r in conn.execute(
+                f"SELECT * FROM restaurants WHERE id IN ({','.join('?' for _ in want)})", want).fetchall()] \
+                if want else []
+        else:
+            rows = [dict(r) for r in conn.execute("SELECT * FROM restaurants").fetchall()]
+        google = provenance.google_connected_ids(conn=conn)
+    finally:
+        if own:
+            conn.close()
+    out = {}
+    for d in rows:
+        r = SimpleNamespace(**d)
+        prof = categories.profile_for(r)
+        out[int(d["id"])] = {"cohort": categories.confirmed_type(r),
+                             "partitions": {fam: categories.partition_key(prof, fam) for fam in categories.FAMILIES},
+                             "google": int(d["id"]) in google}
+    return out
 
 
 def active_restaurants(db_path=DB_PATH, include_demo=False) -> list:
@@ -640,6 +756,135 @@ def run_features(db_path=DB_PATH, today: date = None, wall_seconds=FEATURE_WALL_
             "week": _features.iso_week(today)}
 
 
+# The features backfill (memory audit PLATFORM-5): past weeks computed from
+# the raw tables, bounded by a wall clock and resumed from a cursor (the
+# restaurant it stopped at) and a per-restaurant watermark (the last week it
+# finished, under which FEATURES_VERSION) — run_daily_fetch's pattern.
+BACKFILL_CURSOR = "intelligence_features_backfill"
+BACKFILL_MARK = "intelligence_features_backfill:"
+BACKFILL_WALL_SECONDS = 180
+
+
+def _backfill_mark(db_path, rid):
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT value FROM job_cursors WHERE key=?", (f"{BACKFILL_MARK}{int(rid)}",)).fetchone()
+    finally:
+        conn.close()
+    raw = str(row["value"]) if row and row["value"] else ""
+    ver, _, through = raw.partition("|")
+    try:
+        return int(ver), (through or None)
+    except ValueError:
+        return None, None
+
+
+def _set_backfill_mark(db_path, rid, through):
+    conn = get_conn(db_path)
+    try:
+        conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now')) "
+                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=datetime('now')",
+                     (f"{BACKFILL_MARK}{int(rid)}", f"{_features.FEATURES_VERSION}|{through or ''}"))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _backfill_floor(r):
+    """A restaurant's earliest backfillable day beyond the raw data: a
+    converted demo's seeded history is never read as its own past."""
+    raw = getattr(r, "demo_cleared_at", None)
+    if raw and not getattr(r, "is_demo", 0):
+        try:
+            return datetime.strptime(str(raw)[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return None
+    return None
+
+
+def run_features_backfill(db_path=DB_PATH, today: date = None, wall_seconds=BACKFILL_WALL_SECONDS) -> dict:
+    """Compute the past weeks each restaurant has raw data for and no row of
+    the current FEATURES_VERSION (features.weeks_to_backfill: up to
+    features.BACKFILL_MAX_WEEKS back, never this week — the nightly pass's),
+    as of each week's last day, stored `backfilled`. Bounded by
+    `wall_seconds` (the first week always runs, so the pass always moves),
+    resumed from BACKFILL_CURSOR, and each restaurant's watermark moves week
+    by week, so a stopped pass resumes mid-restaurant and a week the raw
+    tables measure nothing in is not recomputed nightly. A FEATURES_VERSION
+    bump starts every watermark over. Returns the standard counts."""
+    today = today or date.today()
+    rs = sorted(active_restaurants(db_path, include_demo=True), key=lambda r: r.id)
+    if not rs:
+        return {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False, "weeks": 0}
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT value FROM job_cursors WHERE key=?", (BACKFILL_CURSOR,)).fetchone()
+    finally:
+        conn.close()
+    try:
+        start_after = int(row["value"]) if row and row["value"] else 0
+    except (TypeError, ValueError):
+        start_after = 0
+    order = [r for r in rs if r.id > start_after] + [r for r in rs if r.id <= start_after]
+    deadline = time.monotonic() + wall_seconds
+    attempted = done = failed = weeks = 0
+    stopped, last_done, worked = False, start_after, False
+    last_week = _features.iso_week(today - timedelta(days=7))
+    for r in order:
+        if worked and time.monotonic() > deadline:
+            stopped = True
+            break
+        attempted += 1
+        ver, through = _backfill_mark(db_path, r.id)
+        after = through if ver == _features.FEATURES_VERSION else None
+        floor = _backfill_floor(r)
+        if floor is not None:
+            fw = _features.iso_week(floor - timedelta(days=7))
+            after = max(after or "", fw) or None
+        try:
+            todo = _features.weeks_to_backfill(r.id, today=today, db_path=db_path, after_week=after)
+        except Exception as e:
+            failed += 1
+            _capture(e, "intelligence_features_backfill", r.id)
+            continue
+        for wk in todo:
+            if worked and time.monotonic() > deadline:
+                stopped = True
+                break
+            worked = True
+            try:
+                weeks += 1 if _features.backfill_week(r.id, wk, db_path=db_path) else 0
+            except Exception as e:          # one week's failure never stops the pass
+                failed += 1
+                _capture(e, "intelligence_features_backfill", r.id)
+            _set_backfill_mark(db_path, r.id, wk)
+        if stopped:
+            break
+        mark = max(last_week, todo[-1] if todo else last_week)
+        if todo or ver != _features.FEATURES_VERSION or through != mark:
+            _set_backfill_mark(db_path, r.id, mark)
+        done += 1
+        last_done = r.id
+    conn = get_conn(db_path)
+    try:
+        conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now')) "
+                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=datetime('now')",
+                     (BACKFILL_CURSOR, str(int(last_done if stopped else 0))))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"attempted": attempted, "ok": done, "failed": failed, "skipped": len(rs) - attempted,
+            "hit_bound": stopped, "weeks": weeks, "resumed_at": start_after}
+
+
+def _capture(e, job, rid):
+    try:
+        import ops
+        ops.capture(e, job=job, context=f"restaurant_id={rid}")
+    except Exception:
+        pass
+
+
 def features_sweep_complete(db_path=DB_PATH, today: date = None) -> bool:
     """Whether this ISO week's feature pass has reached every restaurant:
     its cursor is back at 0 and was last moved this week. A database whose
@@ -689,10 +934,16 @@ def run_learning(db_path=DB_PATH, today: date = None) -> dict:
     rs = active_restaurants(db_path)
     cohorts = cohorts_for(rs)
     members = member_info(db_path=db_path, today=today)
+    # Once: pooled rows built before Google user data was kept out of them
+    # (intelligence.provenance) are dropped and rebuilt tonight.
+    _stage({}, "google_purge", lambda: purge_google_pooled(db_path=db_path))
     latest = _features.latest_by_restaurant(db_path=db_path)
     partitions = peer_partitions(members, latest=latest, db_path=db_path, today=today)
     out = {"restaurants": len(rs), "cohorts": len({c for c in cohorts.values() if c})}
-    _stage(out, "feedback", lambda: feedback.sync(db_path=db_path, cohorts=cohorts))
+    # Every restaurant's labels, seeded and excluded ones too (PLATFORM-15):
+    # a row's cohort, partition and Google flag are facts about its
+    # restaurant; who may teach is each reader's rule.
+    _stage(out, "feedback", lambda: feedback.sync(db_path=db_path, labels=learning_labels(db_path=db_path)))
     _stage(out, "patterns", lambda: patterns.discover(db_path=db_path, cohorts=cohorts, today=today, members=members))
     groups = {}
     if features_sweep_complete(db_path=db_path, today=today):
@@ -703,8 +954,12 @@ def run_learning(db_path=DB_PATH, today: date = None) -> dict:
     else:
         out["benchmarks"] = {"written": 0, "held": "this week's feature pass has not reached every restaurant yet — "
                                                    "the bands are written once it has"}
+    # The ledger asks what each restaurant measured on its OWN side of a
+    # comparison (it is shown its own rating beside a band whether or not
+    # its reviews come through Google), so it reads the un-pooled rows.
+    own_latest = _features.latest_by_restaurant(db_path=db_path, pooled=False)
     _stage(out, "peer_ledger", lambda: record_assignments(rs, members, partitions, groups, db_path=db_path,
-                                                          today=today, latest=latest))
+                                                          today=today, latest=own_latest))
     from . import trends
     _stage(out, "cohort_series", lambda: trends.persist(cohorts=partitions, members=members, db_path=db_path,
                                                         today=today))
@@ -744,8 +999,23 @@ CONFIDENCE_LOG_WINDOW_DAYS = 365
 def log_confidence(db_path=DB_PATH, cohorts: dict = None, today: date = None) -> dict:
     """The week's acceptance and success by kind, per cohort and platform-
     wide, so the dashboard can draw model confidence over time — over the
-    last CONFIDENCE_LOG_WINDOW_DAYS of events."""
+    last CONFIDENCE_LOG_WINDOW_DAYS of events (memory audit PLATFORM-14):
+
+      * mean_confidence averages only snapshots of the CURRENT trust version
+        (confidence_engine.VERSION, stored as `trust_version`): a version-1
+        % measured something else, and mixing them drew two meanings on one
+        line;
+      * `n` counts recommendations (episodes), not event rows;
+      * the floors count organisations (privacy.org_map, via scoring), and
+        `orgs` is stored beside n;
+      * the rows of restaurants that may not teach (excluded_learning_ids)
+        and Google user data (provenance) are never in it."""
     from datetime import timedelta
+    try:
+        import confidence_engine as _ce
+        current_tv = int(_ce.VERSION)
+    except Exception:
+        current_tv = None
     today = today or date.today()
     week = _features.iso_week(today)
     since = (today - timedelta(days=CONFIDENCE_LOG_WINDOW_DAYS)).isoformat()
@@ -753,15 +1023,18 @@ def log_confidence(db_path=DB_PATH, cohorts: dict = None, today: date = None) ->
     written = 0
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT restaurant_id, source_key, rec_kind, action, outcome, confidence_at, days_to_effect "
-                            "FROM intel_rec_events WHERE event_at >= ?", (since,)).fetchall()
+        rows = conn.execute("SELECT restaurant_id, source_key, rec_kind, action, outcome, confidence_at, trust_version, "
+                            "days_to_effect, event_at FROM intel_rec_events WHERE event_at >= ? "
+                            "AND COALESCE(google_data, 0) = 0", (since,)).fetchall()
     finally:
         conn.close()
+    excluded = excluded_learning_ids(db_path)     # demo, test, internal (CA3 F7, memory audit)
+    learning_since = learning_since_by_id(db_path)   # a converted demo's demo era (INT #20)
+    rows = [r for r in rows if r["restaurant_id"] not in excluded
+            and not before_learning(r["restaurant_id"], r["event_at"], learning_since)]
+    orgs = scoring.org_map([r["restaurant_id"] for r in rows], db_path=db_path)
     groups = {}
-    seeded = seeded_restaurant_ids(db_path)      # demo accounts never in a platform rate (CA3 F7)
     for r in rows:
-        if r["restaurant_id"] in seeded:
-            continue
         groups.setdefault(("platform", r["rec_kind"]), []).append(r)
         c = cohorts.get(r["restaurant_id"])
         if c:
@@ -769,18 +1042,66 @@ def log_confidence(db_path=DB_PATH, cohorts: dict = None, today: date = None) ->
     conn = get_conn(db_path)
     try:
         for (cohort, kind), rs_ in groups.items():
-            s = scoring._summarise(rs_)
+            s = scoring._summarise(rs_, orgs=orgs)
             if not s["available"]:
                 continue
-            confs = [float(r["confidence_at"]) for r in rs_ if r["confidence_at"] is not None]
-            conn.execute("INSERT INTO intel_confidence_log (week, cohort, rec_kind, n, mean_confidence, acceptance_rate, success_rate) "
-                         "VALUES (?,?,?,?,?,?,?) ON CONFLICT(week, cohort, rec_kind) DO UPDATE SET n=excluded.n, "
+            confs = [float(r["confidence_at"]) for r in rs_ if r["confidence_at"] is not None
+                     and (current_tv is None or r["trust_version"] == current_tv)]
+            recs = {scoring._rec(r) for r in rs_ if r["action"] != "measured"}
+            n_orgs = len({orgs.get(r["restaurant_id"], f"r{r['restaurant_id']}") for r in rs_})
+            conn.execute("INSERT INTO intel_confidence_log (week, cohort, rec_kind, n, mean_confidence, acceptance_rate, "
+                         "success_rate, trust_version, orgs) VALUES (?,?,?,?,?,?,?,?,?) "
+                         "ON CONFLICT(week, cohort, rec_kind) DO UPDATE SET n=excluded.n, "
                          "mean_confidence=excluded.mean_confidence, acceptance_rate=excluded.acceptance_rate, "
-                         "success_rate=excluded.success_rate, computed_at=datetime('now')",
-                         (week, cohort, kind, len(rs_), round(sum(confs) / len(confs), 3) if confs else None,
-                          s["acceptance_rate"], s["success_rate"]))
+                         "success_rate=excluded.success_rate, trust_version=excluded.trust_version, "
+                         "orgs=excluded.orgs, computed_at=datetime('now')",
+                         (week, cohort, kind, len(recs), round(sum(confs) / len(confs), 3) if confs else None,
+                          s["acceptance_rate"], s["success_rate"], current_tv, n_orgs))
             written += 1
         conn.commit()
     finally:
         conn.close()
     return {"written": written, "week": week}
+
+
+# Pooled rows computed before the Google rule (intelligence.provenance):
+# review metrics' bands and cohort series and the review hypotheses'
+# patterns, dropped once and rebuilt that night from the Google-free view.
+GOOGLE_PURGE_MARK = "intelligence_google_purge:v1"
+
+
+def purge_google_pooled(db_path=DB_PATH) -> dict:
+    """Once (GOOGLE_PURGE_MARK): drop the pooled rows a Google-connected
+    restaurant's review figures may have entered before the rule — every
+    intel_benchmarks and intel_cohort_series row of a review metric, the
+    materialised comparisons and neighbour predictions built on them
+    (intel_benchmark_facts, intel_effects), and every intel_patterns row
+    whose hypothesis reads a review feature — so the night's pass rebuilds
+    them from features.cross_restaurant_view (the bands' weekly freeze
+    starts again with the first rebuilt one). Derived, recomputable
+    aggregates only; nothing a restaurant entered. Returns {"purged": n}
+    (0 once done)."""
+    from . import provenance
+    conn = get_conn(db_path)
+    try:
+        if conn.execute("SELECT 1 FROM job_cursors WHERE key=?", (GOOGLE_PURGE_MARK,)).fetchone():
+            return {"purged": 0}
+        metrics = [m for m in _features.BENCHMARK_KEYS if provenance.review_metric(m)]
+        marks = ",".join("?" for _ in metrics)
+        n = 0
+        for table in ("intel_benchmarks", "intel_cohort_series", "intel_benchmark_facts"):
+            n += conn.execute(f"DELETE FROM {table} WHERE metric IN ({marks})", metrics).rowcount or 0
+        # predictions keyed by an outcome metric (metrics.py's review metrics)
+        n += conn.execute("DELETE FROM intel_effects WHERE metric IN ('avg_rating','response_hours') "
+                          "OR metric LIKE 'complaints%'").rowcount or 0
+        hyps = [h["key"] for h in patterns.HYPOTHESES + patterns.PROSPECTIVE_HYPOTHESES
+                if provenance.review_metric(h["outcome"]) or provenance.review_metric(h["behaviour"][0])]
+        if hyps:
+            n += conn.execute(f"DELETE FROM intel_patterns WHERE hypothesis IN ({','.join('?' for _ in hyps)})",
+                              hyps).rowcount or 0
+        conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?, '1', datetime('now')) "
+                     "ON CONFLICT(key) DO UPDATE SET value='1', updated_at=datetime('now')", (GOOGLE_PURGE_MARK,))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"purged": n}

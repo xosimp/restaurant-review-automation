@@ -419,6 +419,40 @@ def _waste_confidence(weeks: int) -> str:
     return "low"
 
 
+# A cost driver's kind -> the rec_ledger lever topic its fix pulls, so the
+# driver is weighed by every result of that lever here (cut_waste,
+# food_waste and a nightly report's reduce_waste are all "waste").
+DRIVER_TOPIC = {"waste": "waste", "price": "purchasing", "sourcing": "purchasing", "menu": "pricing",
+                "portion": "food_cost"}
+
+
+def _learned_driver_weights(restaurant_id, drivers, db_path=DB_PATH):
+    """Put this restaurant's learned weight on each driver (`learned`:
+    {weight, why}) when it is not 1.0 (rec_learning.effectiveness). Never
+    raises; with nothing learned every driver is left as it was."""
+    if not drivers:
+        return
+    try:
+        import rec_learning
+        import rec_ledger
+        import business_intelligence as _bi_w
+        learned = rec_learning.effectiveness(restaurant_id, db_path=db_path)
+    except Exception as e:
+        print(f"[food_cost_intelligence] learned weights unavailable for {restaurant_id}: {e}")
+        return
+    for d in drivers:
+        try:
+            key = d.get("rec_key") or _bi_w.driver_key(d)
+            topic = DRIVER_TOPIC.get(d.get("kind"))
+            tags = list(rec_ledger.tags_for(key)) + ([f"topic:{topic}"] if topic else [])
+            w, why = learned.weight(key, tags=sorted(set(tags)))
+        except Exception as e:
+            print(f"[food_cost_intelligence] learned weight failed for a driver: {e}")
+            continue
+        if w != 1.0:
+            d["learned"] = {"weight": w, "why": list(why or [])[:3]}
+
+
 def driver_evidence(d: dict) -> dict:
     """A cost driver's Evidence Strength input (confidence_engine.evidence):
     what its own measurement rests on, per kind. Replaces the hand-set
@@ -528,12 +562,17 @@ def _recipe_provenance(restaurant_id, dish_ids, db_path=DB_PATH) -> dict:
 
 
 def _food_cost_target(restaurant_id) -> float:
-    """restaurants.food_cost_target — the same target Home and cogs use.
+    """The food cost target the menu driver judges dishes against — the one
+    target read (thresholds.target_value), so the owner's active goal on
+    food cost % comes first ("food cost 28% by 12/1" in Goals while the
+    drivers kept judging against 30% — memory audit 9/29/26, owner_goals),
+    then restaurants.food_cost_target, the same target Home and cogs use.
     The menu driver used a fixed 35% while Home judged against this."""
     try:
         from models import get_restaurant
+        import thresholds
         r = get_restaurant(restaurant_id)
-        t = _f(getattr(r, "food_cost_target", None), 0.0) if r else 0.0
+        t = _f(thresholds.target_value(r, "food"), 0.0) if r else 0.0
         return t if 5.0 <= t <= 80.0 else 30.0
     except Exception:
         return 30.0
@@ -870,14 +909,24 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     for d in drivers:
         d["value_kind"] = driver_value_kind(d)
 
-    # The priority model, in order: financial impact first, then confidence,
-    # then ease. Difficulty breaks a tie between two drivers worth similar
-    # money — it never promotes a small easy win over a large hard one,
-    # because that is the ranking an owner would not forgive.
+    # What this restaurant's own record says about each kind of fix (memory
+    # audit 9/29/26, "what_worked"): the effectiveness model's bounded weight
+    # (0.6-1.25x) for the driver's key and its lever — waste, purchasing,
+    # pricing, food cost — so a kind of fix that measurably worked here
+    # moves up and one that measurably made things worse moves down. It
+    # used to enter only as the confidence tie-break. The dollars shown are
+    # never changed.
+    _learned_driver_weights(restaurant_id, drivers, db_path=db_path)
+
+    # The priority model, in order: financial impact (weighted by that
+    # record) first, then confidence, then ease. Difficulty breaks a tie
+    # between two drivers worth similar money — it never promotes a small
+    # easy win over a large hard one, because that is the ranking an owner
+    # would not forgive.
     _CONF = {"high": 0, "medium": 1, "low": 2}
     _DIFF = {"low": 0, "medium": 1, "high": 2}
-    drivers.sort(key=lambda d: (-d["dollars_monthly"], _CONF.get(d["confidence"], 3),
-                                _DIFF.get(d["difficulty"], 3)))
+    drivers.sort(key=lambda d: (-d["dollars_monthly"] * float((d.get("learned") or {}).get("weight") or 1.0),
+                                _CONF.get(d["confidence"], 3), _DIFF.get(d["difficulty"], 3)))
     dedup = deduplicated_total(drivers)
     return {
         "available": bool(drivers),
@@ -904,7 +953,8 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         "complete": not degraded,
         "basis": ("Each driver is priced from this restaurant's own recorded usage and "
                   "prices, expressed monthly so drivers measured over different periods "
-                  "are comparable. Ranked by dollars, then confidence, then ease."),
+                  "are comparable. Ranked by dollars — weighted by how that kind of fix has measured "
+                  "here — then confidence, then ease."),
         "reason": None if drivers else
                   f"nothing clears the ${MIN_DRIVER_DOLLARS:g}/month floor",
     }
@@ -940,6 +990,50 @@ def _labor_stale_why(restaurant_id, analysis, period_end, today, db_path=DB_PATH
     if st and (st.get("state") in ("stale", "unknown") or st.get("error")):
         return f"shift data is not current ({st.get('error') or st.get('basis') or st.get('state')})"
     return None
+
+
+def _dsr_measured_labor(restaurant_id, start, end, db_path=DB_PATH) -> dict:
+    """{iso: {"labor": $, "archive_sales": $|None}} for the nights in
+    [start, end] the nightly report MEASURED labor dollars on (dsr_metrics
+    labor.cost, from a ready Labor block), with the POS archive's own sales
+    for the same night (labor_daily_history, final) — the figure the
+    projection's sales denominator already counts that night at."""
+    from canonical_facts import FINAL_SQL
+    conn = get_conn(db_path)
+    try:
+        try:
+            labor = {str(r["business_date"])[:10]: float(r["value"]) for r in conn.execute(
+                "SELECT business_date, value FROM dsr_metrics WHERE restaurant_id=? AND metric='labor.cost' "
+                "AND value IS NOT NULL AND business_date BETWEEN ? AND ?",
+                (restaurant_id, str(start)[:10], str(end)[:10])).fetchall()}
+        except Exception:
+            labor = {}
+        archive = {}
+        if labor:
+            marks = ",".join("?" for _ in labor)
+            archive = {str(r["date"])[:10]: float(r["sales"]) for r in conn.execute(
+                f"SELECT date, sales FROM labor_daily_history WHERE restaurant_id=? AND date IN ({marks}) "
+                f"AND sales IS NOT NULL AND sales > 0 AND {FINAL_SQL}", (restaurant_id, *labor)).fetchall()}
+    finally:
+        conn.close()
+    return {d: {"labor": v, "archive_sales": archive.get(d)} for d, v in labor.items()}
+
+
+def _prime_labor(net_sales, share_pct, measured) -> tuple:
+    """(labor dollars, measured nights, nights on the share, why missing) for
+    one window: the nightly report's measured labor dollars on the nights it
+    measured, and the analysis share applied only to the sales of the other
+    nights (the window's net less the archive's sales of the measured
+    nights). Missing (None, ...) when some sales were not measured and there
+    is no share to put on them."""
+    measured_labor = sum(x["labor"] for x in measured.values())
+    measured_sales = sum(x["archive_sales"] or 0.0 for x in measured.values())
+    rest = max(0.0, float(net_sales) - measured_sales)
+    if rest <= 0.005:
+        return measured_labor, len(measured), 0, None
+    if share_pct is None:
+        return None, len(measured), None, "labor was not measured on every night and there is no labor share for the rest"
+    return measured_labor + rest * float(share_pct) / 100.0, len(measured), rest, None
 
 
 def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhold: bool = True) -> dict:
@@ -1026,7 +1120,18 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
             labor_why = "no shift data synced — labor cannot be measured"
     except Exception as e:
         labor_why = f"labor analysis unavailable: {e}"
-    if labor_pct is None:
+    # The nightly report measures each night's labor DOLLARS (memory audit
+    # 9/29/26, prime_cost): where it ran, the projection sums them, and the
+    # analysis share stands in only for the nights it did not measure. The
+    # report said prime cost 58% last night while the brief said 61.2% month
+    # to date on a labor share carried over from another period, and neither
+    # said why.
+    measured = _dsr_measured_labor(restaurant_id, month_start, today - timedelta(days=1), db_path=db_path)
+    labor_measured_all = False
+    if measured and net_sales is not None:
+        _lc, _n, _rest, _why = _prime_labor(net_sales, labor_pct, measured)
+        labor_measured_all = _lc is not None and _rest == 0
+    if labor_pct is None and not labor_measured_all:
         missing.append({"component": "labor", "why": labor_why or "unavailable"})
 
     # The labor share comes from the shift analysis's OWN period, which is not
@@ -1052,7 +1157,27 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
 
     days_in_month = ((month_start + timedelta(days=32)).replace(day=1) - month_start).days
     cogs_mtd = _f(fc["cogs"])
-    labor_cost = net_sales * labor_pct / 100.0
+    labor_cost, n_measured, share_sales, _lwhy = _prime_labor(net_sales, labor_pct, measured)
+    if n_measured and share_sales:
+        labor_basis = "mixed"
+        labor_basis_text = (f"labor measured on {n_measured} night{'s' if n_measured != 1 else ''} by your nightly "
+                            f"reports, {labor_from or 'the shift analysis share'} for the rest")
+    elif n_measured:
+        labor_basis = "measured"
+        labor_basis_text = (f"labor measured every night by your nightly reports ({n_measured} "
+                            f"night{'s' if n_measured != 1 else ''})")
+    else:
+        labor_basis = "analysis_share"
+        labor_basis_text = labor_from
+    if n_measured:
+        basis = ("Prime cost = COGS + labor, month to date, projected to month end at the current daily run rate. "
+                 "This is prime cost, not net profit — rent, utilities and overheads are not in this system. "
+                 f"Labor is the nightly report's measured labor dollars on {n_measured} night"
+                 f"{'s' if n_measured != 1 else ''}"
+                 + (f"; the {labor_period} labor share is applied only to the other nights' sales." if share_sales
+                    else ", every night of the month so far.")
+                 + " The nightly report's own prime cost is one night's labor plus the estimated recipe cost of "
+                   "what sold, over that night's net; this one uses the food cost ledger (COGS) for the month.")
     prime_mtd = cogs_mtd + labor_cost
     prime_pct = round(prime_mtd / net_sales * 100, 1)
     scale = days_in_month / days_elapsed
@@ -1067,13 +1192,15 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
     prev_sales, prev_sales_why = _cogs.net_sales_in_window(restaurant_id, prev_start, prev_end)
     prev_fc = _cogs.build_food_cost_pct(
         restaurant_id, days=(prev_end - prev_start).days + 1, db_path=db_path, today=prev_end)
-    if prev_sales and prev_fc.get("ok") and labor_pct is not None:
-        # The same labor share is used on both sides on purpose: there is only
-        # one labor measurement available, so it cancels out of the comparison
-        # and the month-over-month movement this reports is entirely the FOOD
-        # cost component. Saying that is the difference between a comparison
-        # and a number that looks like it covers both halves of prime cost.
-        prev_prime = _f(prev_fc["cogs"]) + prev_sales * labor_pct / 100.0
+    prev_measured = _dsr_measured_labor(restaurant_id, prev_start, prev_end, db_path=db_path) if prev_sales else {}
+    prev_labor = _prime_labor(prev_sales, labor_pct, prev_measured)[0] if prev_sales else None
+    if prev_sales and prev_fc.get("ok") and prev_labor is not None:
+        # Last month measured the same way: the nightly report's labor
+        # dollars where it measured them, the one labor share elsewhere.
+        # Where both months rest on the share alone it cancels out, and the
+        # month-over-month movement is entirely the FOOD cost component —
+        # said in comparison_basis.
+        prev_prime = _f(prev_fc["cogs"]) + prev_labor
         prev_pct = round(prev_prime / prev_sales * 100, 1)
     else:
         prev_why = prev_sales_why or "last month cannot be measured the same way"
@@ -1086,9 +1213,30 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
         # difference in how busy the two months were.
         delta_dollars = round((prime_pct - prev_pct) / 100.0 * projected_sales)
 
+    # The projection read against its own record (forecast_log.shown,
+    # memory audit 9/29/26 "forecasts" — the waste pattern): when this
+    # restaurant's frozen mid-month projections have leaned one way, the
+    # month-end projection is ALSO given corrected, and says so. The
+    # month-to-date figures stay as measured, and the raw is what the
+    # nightly freeze records (withhold=False), so a correction never feeds
+    # on itself.
+    correction = None
+    if withhold:
+        try:
+            import forecast_log as _flog_pp
+            rec = _flog_pp.shown(restaurant_id, "profitability_month", prime_pct, db_path=db_path)
+            if rec.get("corrected") and rec.get("shown") is not None:
+                correction = {"factor": rec["factor"], "bias_pct": rec.get("bias_pct"), "note": rec.get("note"),
+                              "prime_cost_pct": round(float(rec["shown"]), 1),
+                              "projected_prime_cost": round(projected_prime * float(rec["factor"]))}
+        except Exception as e:
+            print(f"[food_cost_intelligence] projection record unreadable for {restaurant_id}: {e}")
     return {
         "available": True,
         "claim_kind": "forecast",
+        # The month-end projection corrected by its own record, or None
+        # when the record shows no consistent lean.
+        "projection_correction": correction,
         "days_elapsed": days_elapsed, "days_in_month": days_in_month,
         "net_sales_mtd": round(net_sales, 2),
         "cogs_mtd": round(cogs_mtd, 2),
@@ -1105,8 +1253,14 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
         "dollars_vs_last_month": delta_dollars,
         "direction": (None if delta_dollars is None else
                       "worse" if delta_dollars > 0 else "better"),
-        "comparison_basis": ("Both months use the same labor share, so this movement is the "
-                             "food cost component only." if prev_pct is not None else None),
+        "comparison_basis": (None if prev_pct is None else
+                             "Both months use the same labor share, so this movement is the food cost component only."
+                             if not (n_measured or prev_measured) else
+                             "Labor is measured nightly where your nightly reports ran, in both months, so this "
+                             "movement covers labor and food cost."),
+        "labor_basis": labor_basis, "labor_basis_text": labor_basis_text,
+        "labor_measured_nights": n_measured,
+        "labor_pct_mtd": round(labor_cost / net_sales * 100, 1) if net_sales else None,
         "labor_period": labor_period,
         "labor_period_start": labor_period_start, "labor_period_end": labor_period_end,
         "labor_from": labor_from,
@@ -1164,16 +1318,27 @@ def operational_context(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         pass
 
     try:
+        # Reach is REACH over the posts whose reach was measured, on the
+        # posts' own publish time (canonical_facts; the review context's
+        # rule). It summed reach + impressions over every post, unmeasured
+        # ones as 0 — "reaching 2,600" for 1,000 unique accounts, cited as
+        # operational evidence (memory audit 9/29/26, CROSS-15, QUALITY-15).
+        import canonical_facts
+        reach_ok = canonical_facts.reach_measured_sql()
         conn = get_conn(db_path)
-        row = _one_row(conn, """
-            SELECT COUNT(*) AS n, COALESCE(SUM(COALESCE(reach,0)+COALESCE(impressions,0)),0) AS reach
+        row = _one_row(conn, f"""
+            SELECT COUNT(*) AS n,
+                   SUM(CASE WHEN {reach_ok} THEN 1 ELSE 0 END) AS reach_posts,
+                   SUM(CASE WHEN {reach_ok} THEN reach END) AS reach
               FROM marketing_content_log
              WHERE restaurant_id=? AND post_id IS NOT NULL
-               AND created_at >= datetime('now','-30 days')
+               AND COALESCE(posted_at, created_at) >= datetime('now','-30 days')
         """, (restaurant_id,))
         conn.close()
         if row and (row["n"] or 0) > 0:
-            ctx["marketing"] = {"posts_30d": int(row["n"]), "reach_30d": int(row["reach"] or 0)}
+            ctx["marketing"] = {"posts_30d": int(row["n"])}
+            if (row["reach_posts"] or 0) > 0 and row["reach"] is not None:
+                ctx["marketing"]["reach_30d"] = int(row["reach"])
     except Exception:
         pass
     return ctx
@@ -1214,13 +1379,17 @@ def _operational_lines(ctx) -> dict:
              "window_days": op_field("days in the window", rev["window_days"], "count", evidence=False)})
     mk = ctx.get("marketing")
     if mk:
+        # Reach only where it was measured: "reaching —" is never said as 0.
+        fields = {"posts_30d": op_field("published posts in 30 days", mk["posts_30d"], "count",
+                                        display=f"{mk['posts_30d']} posts"),
+                  "window": op_field("days in the window", 30, "count", evidence=False)}
+        reach = mk.get("reach_30d")
+        if reach is not None:
+            fields["reach_30d"] = op_field("reach in 30 days", reach, "count", display=f"{reach:,}")
         lines["marketing"] = OperationalLine(
-            f"- Marketing: {mk['posts_30d']} published posts in 30 days reaching "
-            f"{mk['reach_30d']:,} — a demand change would show up in usage",
-            {"posts_30d": op_field("published posts in 30 days", mk["posts_30d"], "count",
-                                   display=f"{mk['posts_30d']} posts"),
-             "reach_30d": op_field("reach in 30 days", mk["reach_30d"], "count", display=f"{mk['reach_30d']:,}"),
-             "window": op_field("days in the window", 30, "count", evidence=False)})
+            f"- Marketing: {mk['posts_30d']} published posts in 30 days"
+            + (f" reaching {reach:,} unique accounts" if reach is not None else " (reach not measured)")
+            + " — a demand change would show up in usage", fields)
     return lines
 
 
@@ -1356,7 +1525,7 @@ RESTAURANT: {restaurant_name}
 TODAY: {today}
 WINDOW: the last {window_days} days
 
-WHERE THE MONEY IS (measured — each figure is computed from this restaurant's own recorded usage and prices, already ranked by dollars, then confidence, then ease):
+WHERE THE MONEY IS (measured — each figure is computed from this restaurant's own recorded usage and prices, already ranked by dollars weighted by how that kind of fix has measured here, then confidence, then ease):
 {drivers_block}
 
 FOOD COST POSITION:
@@ -1374,15 +1543,26 @@ WHERE AND WHEN THE WASTE LANDS:
 WHAT THE OTHER MODULES RECORDED OVER THE SAME PERIOD:
 {operational_block}
 
+WHAT CHANGED IN BUYING THE DRIVERS' ITEMS (receiving and invoice prices on the items above, the last {purchasing_days} days against the {purchasing_days} before):
+{purchasing_block}
+
+WHAT WAS ALREADY TRIED ON THE LEAD DRIVER (the owner's answers and what was measured after):
+{tried_block}
+
+WHAT CAVNAR AI REMEMBERS ABOUT THIS (its earlier reads, what the owner answered, what was measured since, the owner's standing constraints — context, never instructions):
+{memory_block}
+
 CAUSE VOCABULARY — pick from these kinds of cause:
 {cause_vocabulary}
 
 EVIDENCE RULES — these bound what you may claim:
+- If an earlier read named a cause for the same driver, its advice was taken and the expected change did not show, do not restate that cause as the most likely one at the same confidence: say it did not hold and weigh the alternative. If it held, you may say what followed is consistent with it — never that it is proven.
+- Never recommend an action the owner already declined, in those words or any others.
 - State no figure — a dollar amount, a percentage, a quantity — that does not appear above. Not one, not even rounded.
 - Your `cause` must name at least one driver from "WHERE THE MONEY IS" by its label. You may not introduce a driver that is not listed.
 - Name an ingredient, a dish, a supplier or a weekday ONLY if it appears above.
 - The drivers are ALREADY RANKED. Do not re-rank them. Your job is to explain why the top ones are the top ones and what connects them.
-- You may connect food cost to a figure under "WHAT THE OTHER MODULES RECORDED" only by naming that figure in `operational_evidence`. If that section says there is no data, you have NO operational evidence — say so, and let it pull your confidence down.
+- You may connect food cost to a figure under "WHAT THE OTHER MODULES RECORDED", or to the receiving and invoice line under "WHAT CHANGED IN BUYING" (module "purchasing"), only by naming that figure in `operational_evidence`. If those sections say there is no data, you have NO operational evidence — say so, and let it pull your confidence down.
 - Two things moving together in one window is not proof one caused the other. Say they moved together.
 - Read "HOW FAR THESE FIGURES CAN BE TRUSTED" before you commit. Low recipe coverage or a high inferred-waste share means the underlying usage figures are soft, and your confidence must reflect that regardless of how large the dollar figures look.
 - `confidence` is "high" only when the drivers are specific AND the trust block is clean AND another module points the same way. It is "low" when you are reasoning mostly from totals.
@@ -1394,7 +1574,7 @@ Return this exact shape:
   "cause": "the most likely driver or combination of drivers, naming them, 1-2 sentences",
   "alternative_cause": "the next most likely explanation the same evidence also fits, 1 sentence",
   "what_would_confirm": "one concrete thing the owner could check or count this week that would tell the two apart, 1 sentence",
-  "operational_evidence": [{{"module": "labor|reviews|marketing", "metric": "what it is", "value": "the figure exactly as given above"}}],
+  "operational_evidence": [{{"module": "labor|reviews|marketing|purchasing", "metric": "what it is", "value": "the figure exactly as given above"}}],
   "confidence": "high" | "medium" | "low",
   "recommended_action": "the single highest-value thing to do first, startable this week with the staff and suppliers they already have, 1 sentence",
   "expected_outcome": "what should change if the cause is right, and roughly when, 1 sentence starting with \"If the cause is right,\""
@@ -1531,7 +1711,7 @@ def _pattern_block(wd, seasonal) -> str:
     return "\n".join(lines) if lines else "- Nothing above the evidence floor."
 
 
-OPERATIONAL_MODULES = ("labor", "reviews", "marketing")
+OPERATIONAL_MODULES = ("labor", "reviews", "marketing", "purchasing")
 
 
 def typed_facts(drivers=None, food_cost=None, profitability=None) -> list:
@@ -1712,9 +1892,21 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False) ->
     ev = build_evidence(restaurant_id, db_path=db_path)
     drv = ev["drivers"]
     if not drv.get("drivers"):
+        # Nothing clears the floor any more: the stored cause is history,
+        # not the current read (memory audit 9/29/26, "stale_diagnoses") —
+        # it used to stay the food read's WHY and Home's "why" for months.
+        retire_diagnosis(restaurant_id, "no cost driver clears the floor any more", db_path=db_path)
         return {"ok": False, "reason": drv.get("reason") or "no drivers above the floor"}
 
     prior = get_diagnosis(restaurant_id, db_path=db_path, include_stale=True)
+    if prior and not lead_still_ranked(prior, drv["drivers"]):
+        # Its lead driver dropped out of the ranking: retired before a new
+        # read is attempted, so a refused or failed call never leaves it
+        # standing as the cause.
+        lead, _d = _lead_of(prior.get("drivers"))
+        retire_diagnosis(restaurant_id, f"{lead or 'its lead driver'} is no longer a ranked cost driver",
+                         db_path=db_path)
+        prior = None
     if not force and prior and not prior.get("stale"):
         prior_top = (prior.get("drivers") or [{}])[0].get("label")
         if prior_top == drv["drivers"][0]["label"]:
@@ -1733,6 +1925,10 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False) ->
         return {"ok": False, "reason": f"data not ready: {_ready_fd.get('reason')}",
                 "retry_after": _ready_fd.get("retry_after")}
     _op_block = _operational_block(ev["operational"])
+    # The drivers' own items in the receiving and invoice record, and what
+    # was already tried on the lead driver (memory audit 9/29/26,
+    # "diagnosis_slice") — the diagnosis saw period totals only.
+    _purch = purchasing_context(restaurant_id, drv["drivers"], db_path=db_path)
     if _ready_fd.get("prompt_block"):
         _op_block = f"{_op_block}\n\n{_ready_fd['prompt_block']}"
     prompt = DIAGNOSE_PROMPT.format(
@@ -1746,6 +1942,10 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False) ->
         trust_block=_trust_block(ev["coverage"], ev["waste_sources"]),
         pattern_block=_pattern_block(ev["weekday"], ev["seasonal"]),
         operational_block=_op_block,
+        purchasing_days=PURCHASING_WINDOW_DAYS,
+        purchasing_block=_purch["block"],
+        tried_block=_tried_on_lead(restaurant_id, drv, db_path),
+        memory_block=_diagnosis_memory(restaurant_id, drv, db_path),
         cause_vocabulary=CAUSE_VOCABULARY,
     )
     client = get_client()
@@ -1758,9 +1958,12 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False) ->
     # A leading sentence before the JSON failed json.loads (AI-26).
     from ai_utils import parse_json_reply
     labels = [d.get("item") or d["label"] for d in drv["drivers"]]
+    _op_lines = dict(_operational_lines(ev["operational"]))
+    if _purch.get("line") is not None:
+        _op_lines["purchasing"] = _purch["line"]
     result = _validate_diagnosis(parse_json_reply(extract_text(msg), expect=dict, message=msg),
                                  labels, prompt, restaurant_id,
-                                 op_lines=_operational_lines(ev["operational"]),
+                                 op_lines=_op_lines,
                                  facts=typed_facts(drv, ev["food_cost"], ev["profitability"]))
 
     # One "at stake" figure, the same one the web card and iOS header show:
@@ -1775,6 +1978,146 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False) ->
     result.update({"drivers": drv["drivers"][:6], "dollars_at_stake": round(at_stake, 2),
                    "window_days": DIAGNOSIS_WINDOW_DAYS, "stale": False, "ok": True})
     return result
+
+
+def diagnosis_subjects(drivers) -> list:
+    """What a food diagnosis is about, in every spelling a memory line may
+    carry: its lead driver's claim subject and recommendation key, and the
+    lead item's advice signatures (waste, food cost)."""
+    import ai_reads
+    lead, d = ai_reads.food_diagnosis_lead(drivers)
+    if not lead:
+        return []
+    low = lead.lower()[:80]
+    out = [f"driver:{low}", f"diag_food:{low}"]
+    item = (d or {}).get("item")
+    if item:
+        slug = " ".join(str(item).strip().lower().split())[:60]
+        out += [f"item:{slug}", f"waste:item:{slug}", f"food_cost:item:{slug}"]
+    return out
+
+
+PURCHASING_WINDOW_DAYS = 28
+PURCHASING_ITEMS = 3
+
+
+def purchasing_context(restaurant_id, drivers, db_path=DB_PATH, today=None) -> dict:
+    """What the receiving and invoice record says about the drivers' own
+    items (memory audit 9/29/26, "diagnosis_slice"): {"line" (an
+    ai_guard.OperationalLine for the "purchasing" module, or None),
+    "block" (the prompt section)}. Per item, up to PURCHASING_ITEMS: how
+    often and how much was received in the last PURCHASING_WINDOW_DAYS
+    against the same days before, and every invoice that moved its cost.
+    Never raises."""
+    out = {"line": None, "block": "(No driver names an item on file.)"}
+    names = []
+    for d in drivers or []:
+        if isinstance(d, dict) and d.get("item") and str(d["item"]).strip().lower() not in [n.lower() for n in names]:
+            names.append(str(d["item"]).strip())
+        if len(names) >= PURCHASING_ITEMS:
+            break
+    if not names:
+        return out
+    from datetime import date as _date, timedelta as _td
+    from ai_guard import OperationalLine, op_field
+    today = today or _date.today()
+    now_start = (today - _td(days=PURCHASING_WINDOW_DAYS)).isoformat()
+    before_start = (today - _td(days=2 * PURCHASING_WINDOW_DAYS)).isoformat()
+    texts, fields = [], {}
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return out
+    try:
+        marks = ",".join("?" for _ in names)
+        ing = {r["id"]: dict(r) for r in _rows_raw(
+            conn, f"SELECT id, name, unit FROM ingredients WHERE restaurant_id=? AND LOWER(name) IN ({marks})",
+            (restaurant_id, *[n.lower() for n in names]))}
+        if not ing:
+            out["block"] = "(The drivers' items are not ingredients on file, so there is no receiving record.)"
+            return out
+        recv = {}
+        for r in _rows_raw(conn, f"SELECT ingredient_id, event_date, qty FROM ingredient_stock_events WHERE "
+                                 f"restaurant_id=? AND event_type='receiving' AND event_date >= ? AND event_date < ? "
+                                 f"AND ingredient_id IN ({','.join('?' for _ in ing)})",
+                           (restaurant_id, before_start, today.isoformat(), *ing.keys())):
+            w = "now" if str(r["event_date"]) >= now_start else "before"
+            e = recv.setdefault(r["ingredient_id"], {"now": [0, 0.0], "before": [0, 0.0]})
+            e[w][0] += 1
+            e[w][1] += float(r["qty"] or 0)
+        prices = {}
+        for r in _rows_raw(conn, "SELECT invoice_date, applied_at, applied_json FROM invoice_imports WHERE "
+                                 "restaurant_id=? AND applied_at IS NOT NULL AND applied_at >= ? ORDER BY applied_at",
+                           (restaurant_id, before_start)):
+            try:
+                lines = json.loads(r["applied_json"] or "[]") or []
+            except (TypeError, ValueError):
+                lines = []
+            for ln in lines:
+                if not isinstance(ln, dict) or ln.get("ingredient_id") not in ing:
+                    continue
+                try:
+                    old, new = float(ln.get("old_cost")), float(ln.get("new_cost"))
+                except (TypeError, ValueError):
+                    continue
+                if old > 0 and abs(new - old) / old >= 0.02:
+                    prices.setdefault(ln["ingredient_id"], []).append(
+                        (old, new, _mdy_safe(r["invoice_date"] or r["applied_at"])))
+        for i, (iid, meta) in enumerate(ing.items()):
+            name, unit = meta["name"], (meta.get("unit") or "units")
+            bits = []
+            rv = recv.get(iid)
+            if rv:
+                n_now, q_now = rv["now"]
+                n_b, q_b = rv["before"]
+                bits.append(f"received {n_now} time{'s' if n_now != 1 else ''} ({q_now:g} {unit}) in the last "
+                            f"{PURCHASING_WINDOW_DAYS} days against {n_b} ({q_b:g} {unit}) before")
+                fields[f"received_qty_{i}"] = op_field(f"{name} received, last {PURCHASING_WINDOW_DAYS} days",
+                                                       round(q_now, 2), "count", display=f"{q_now:g}")
+                fields[f"received_qty_before_{i}"] = op_field(f"{name} received, the {PURCHASING_WINDOW_DAYS} days "
+                                                              f"before", round(q_b, 2), "count", display=f"{q_b:g}")
+            for j, (old, new, when) in enumerate(prices.get(iid, [])[-2:]):
+                bits.append(f"invoice of {when} moved its cost ${old:,.2f} → ${new:,.2f}")
+                fields[f"cost_{i}_{j}"] = op_field(f"{name} cost after the {when} invoice", round(new, 2), "money",
+                                                   display=f"${new:,.2f}")
+            if bits:
+                texts.append(f"{name}: " + "; ".join(bits))
+    except Exception as e:
+        print(f"[food_cost_intelligence] purchasing context unavailable for {restaurant_id}: {e}")
+        return out
+    finally:
+        conn.close()
+    if not texts:
+        out["block"] = (f"(No receiving or invoice price change on the drivers' items in the last "
+                        f"{2 * PURCHASING_WINDOW_DAYS} days.)")
+        return out
+    line = OperationalLine("- Purchasing: " + " | ".join(texts), fields)
+    out.update(line=line, block=str(line))
+    return out
+
+
+def _tried_on_lead(restaurant_id, drv, db_path=DB_PATH) -> str:
+    """What was already tried on the lead driver: its diagnosis key and any
+    advice with the lead item's signatures (ai_reads.tried_block)."""
+    try:
+        import ai_reads
+        subj = diagnosis_subjects((drv or {}).get("drivers"))
+        if not subj:
+            return "(Nothing answered on this driver in the last year.)"
+        keys = [k for k in subj if k.startswith("diag_food:")]
+        sigs = [k for k in subj if k.startswith(("waste:", "food_cost:"))]
+        text = ai_reads.tried_block(restaurant_id, keys=keys, signatures=sigs,
+                                   db_path=None if db_path == DB_PATH else db_path)
+        return text or "(Nothing answered on this driver in the last year.)"
+    except Exception as e:
+        print(f"[food_cost_intelligence] tried unavailable for {restaurant_id}: {e}")
+        return "(Nothing answered on this driver in the last year.)"
+
+
+def _diagnosis_memory(restaurant_id, drv, db_path=DB_PATH) -> str:
+    from review_intelligence import diagnosis_memory
+    return diagnosis_memory(restaurant_id, "food_diagnosis", diagnosis_subjects((drv or {}).get("drivers")),
+                            db_path=db_path)
 
 
 def _save_diagnosis(restaurant_id, drv, result, at_stake, db_path):
@@ -1799,7 +2142,8 @@ def _save_diagnosis(restaurant_id, drv, result, at_stake, db_path):
                 dollars_at_stake=excluded.dollars_at_stake,
                 unsupported_figures=excluded.unsupported_figures,
                 model_confidence=excluded.model_confidence,
-                generated_at=excluded.generated_at
+                generated_at=excluded.generated_at,
+                retired_at=NULL, retired_reason=NULL
         """, (restaurant_id, DIAGNOSIS_WINDOW_DAYS, result["headline"], result["cause"],
               result["alternative_cause"], result["what_would_confirm"],
               json.dumps(drv["drivers"][:6]), json.dumps(result["operational_evidence"]),
@@ -1810,6 +2154,81 @@ def _save_diagnosis(restaurant_id, drv, result, at_stake, db_path):
               # The model's own band, apart from the capped one (H1).
               result.get("model_confidence")))
         conn.commit()
+    finally:
+        conn.close()
+    record_diagnosis_read(restaurant_id, drv, result, at_stake, db_path=db_path)
+
+
+def record_diagnosis_read(restaurant_id, drv, result, at_stake=None, db_path=DB_PATH):
+    """The CFO read just written, kept as history (ai_reads) — the row in
+    food_cost_diagnoses is the CURRENT read and the next one overwrites it —
+    with its one checkable claim on the lead driver (memory audit 9/29/26:
+    ai_reads, claims). Never raises."""
+    try:
+        import ai_reads
+        from review_intelligence import diagnosis_read_text
+        drivers = (drv or {}).get("drivers") or []
+        claim = ai_reads.food_diagnosis_claim(drivers, result)
+        lead, _d = ai_reads.food_diagnosis_lead(drivers)
+        text = diagnosis_read_text(result)
+        if result.get("headline"):
+            text = f"{' '.join(str(result['headline']).split())}\n{text}"
+        ai_reads.record_read(
+            restaurant_id, "food_diagnosis", text, subject=(f"driver:{lead.lower()[:80]}" if lead else None),
+            meta={"kind": "food_cost_diagnoses", "rec_keys": [claim["rec_key"]] if claim else None,
+                  "model_band": result.get("model_confidence"), "capped_band": result.get("confidence"),
+                  "drivers": [d.get("label") for d in drivers[:6] if isinstance(d, dict)],
+                  "dollars_at_stake": round(_f(at_stake), 2) if at_stake is not None else None,
+                  "unsupported_figures": result.get("unsupported_figures") or None,
+                  "claims": [claim] if claim else None},
+            db_path=None if db_path == DB_PATH else db_path)
+    except Exception as e:
+        print(f"[food_cost_intelligence] diagnosis history not kept for {restaurant_id}: {e}")
+
+
+def _lead_of(drivers):
+    for d in drivers or []:
+        if isinstance(d, dict):
+            name = d.get("item") or d.get("label")
+            if name:
+                return str(name).strip(), d
+        elif isinstance(d, str) and d.strip():
+            return d.strip(), {}
+    return None, {}
+
+
+def lead_still_ranked(diag, drivers) -> bool:
+    """Whether a stored diagnosis's lead driver is still among today's
+    ranked drivers (cost_drivers) — by item, else by label."""
+    lead, d = _lead_of((diag or {}).get("drivers"))
+    if not lead:
+        return True
+    names = set()
+    for x in drivers or []:
+        if isinstance(x, dict):
+            for k in ("item", "label"):
+                if x.get(k):
+                    names.add(str(x[k]).strip().lower())
+    return lead.lower() in names or str((d or {}).get("label") or "").strip().lower() in names
+
+
+def retire_diagnosis(restaurant_id, reason, db_path=DB_PATH) -> bool:
+    """Stamp the stored food diagnosis retired (retired_at, retired_reason)
+    and keep the row as history (its read is in ai_reads). No surface
+    serves a retired diagnosis as current (get_diagnosis). Returns whether
+    a live one was retired. Never raises."""
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return False
+    try:
+        n = conn.execute("UPDATE food_cost_diagnoses SET retired_at=datetime('now'), retired_reason=? "
+                         "WHERE restaurant_id=? AND retired_at IS NULL", (str(reason)[:200], restaurant_id)).rowcount
+        conn.commit()
+        return bool(n)
+    except Exception as e:
+        print(f"[food_cost_intelligence] diagnosis not retired for {restaurant_id}: {e}")
+        return False
     finally:
         conn.close()
 
@@ -1823,15 +2242,21 @@ def _mdy_safe(stamp):
 
 
 def get_diagnosis(restaurant_id: int, db_path: str = DB_PATH,
-                  include_stale: bool = False):
+                  include_stale: bool = False, include_retired: bool = False):
     """The stored CFO read, with its own age. `stale` is computed rather than
     enforced: a stale cause is still the best answer available, and hiding it
-    leaves the owner with the bare waste total the module used to give them."""
+    leaves the owner with the bare waste total the module used to give them.
+    A RETIRED read (its lead driver no longer ranked, or no driver above the
+    floor — retire_diagnosis) is history, not an answer: left out unless
+    `include_retired`."""
     conn = get_conn(db_path)
     row = _one_row(conn, "SELECT * FROM food_cost_diagnoses WHERE restaurant_id=? "
                      "ORDER BY generated_at DESC LIMIT 1", (restaurant_id,))
     conn.close()
     if not row:
+        return None
+    retired_at = row["retired_at"] if "retired_at" in row.keys() else None
+    if retired_at and not include_retired:
         return None
     age_h = None
     try:
@@ -1871,6 +2296,8 @@ def get_diagnosis(restaurant_id: int, db_path: str = DB_PATH,
         "unsupported_figures": _j(row["unsupported_figures"] if "unsupported_figures" in row.keys() else None, []),
         "window_days": row["window_days"], "generated_at": row["generated_at"],
         "age_hours": round(age_h, 1) if age_h is not None else None, "stale": stale,
+        "retired_at": retired_at,
+        "retired_reason": row["retired_reason"] if "retired_reason" in row.keys() else None,
         # Owner-facing date of the read (M/D/YY) and, when it is past its
         # TTL, the sentence that says so — a stale cause read as current
         # wherever a surface dropped the `stale` flag.

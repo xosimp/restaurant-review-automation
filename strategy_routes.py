@@ -50,6 +50,13 @@ def _principal(u):
     return bool(u.get("is_admin")) or has_permission(u, TEAM_INVITE)
 
 
+def _answer_authority(u):
+    """permissions.answer_authority: whose answer this is (principal |
+    delegate | admin) — every stored answer records it (memory audit)."""
+    from permissions import answer_authority
+    return answer_authority(u)
+
+
 def _sees_food(u):
     from permissions import has_permission, FOOD_COST_VIEW
     return bool(u.get("is_admin")) or has_permission(u, FOOD_COST_VIEW)
@@ -301,22 +308,61 @@ def _do_routing_contact(u):
 # ── goals & outcomes ──────────────────────────────────────────────────────────
 
 def _do_goals_list(u):
+    """The active goals, and the goals a teammate proposed that wait for an
+    account holder (`proposed`, each with who proposed it; `can_confirm`
+    says whether this login may confirm them)."""
     import goals
+    import owner_memory
+    from permissions import is_principal
+    props = [g for g in goals.proposed(_rid(u)) if _metric_visible(u, g.get("metric"))]
+    labels = owner_memory._user_labels([g.get("created_by") for g in props])
+    for g in props:
+        g["proposed_by"] = "Your sales audit" if g.get("source") == "audit" else labels.get(g.get("created_by"))
     return {"ok": True, "goals": [g for g in goals.progress(_rid(u))
-                                  if _metric_visible(u, g.get("metric"))]}, 200
+                                  if _metric_visible(u, g.get("metric"))],
+            "proposed": props, "can_confirm": bool(is_principal(u))}, 200
 
 
 def _do_goal_set(u):
+    """Set a goal. An account holder's goal is active at once and becomes
+    the target every module judges the metric against (owner_memory.
+    target_for); a teammate's is PROPOSED and waits for an account holder
+    (memory audit 9/29/26, owner_goals) — `goal.proposed` says which."""
     import goals
+    from permissions import answer_authority
     b = _body()
     if not _metric_visible(u, b.get("metric")):
         return _forbidden("Food cost goals are for logins that can see food cost.")
     try:
         g = goals.set_goal(_rid(u), b.get("metric"), b.get("target"), deadline=b.get("deadline"),
-                           note=b.get("note"), user_id=u.get("id"))
+                           note=b.get("note"), user_id=u.get("id"), authority=answer_authority(u),
+                           source="goals")
     except ValueError as e:
         return {"ok": False, "error": str(e)}, 400
+    return {"ok": True, "goal": g, "proposed": bool(g.get("proposed"))}, 200
+
+
+def _do_goal_confirm(u, goal_id):
+    """An account holder confirms a teammate's proposed goal: it becomes the
+    active goal (and the target) on its metric."""
+    import goals
+    from permissions import is_principal
+    if not is_principal(u):
+        return _forbidden("Only the owner can confirm a goal.")
+    g = goals.confirm_goal(_rid(u), goal_id, user_id=u.get("id"))
+    if g is None:
+        return {"ok": False, "error": "Goal not found."}, 404
     return {"ok": True, "goal": g}, 200
+
+
+def _do_goal_decline(u, goal_id):
+    import goals
+    from permissions import is_principal
+    if not is_principal(u):
+        return _forbidden("Only the owner can decline a goal.")
+    if not goals.decline_goal(_rid(u), goal_id, user_id=u.get("id")):
+        return {"ok": False, "error": "Goal not found."}, 404
+    return {"ok": True}, 200
 
 
 def _do_goal_end(u, goal_id):
@@ -333,7 +379,8 @@ def _do_goal_end(u, goal_id):
         conn.close()
     if row is not None and not _metric_visible(u, row["metric"]):
         return {"ok": False, "error": "Goal not found."}, 404
-    goals.end_goal(_rid(u), goal_id)
+    from permissions import answer_authority
+    goals.end_goal(_rid(u), goal_id, user_id=u.get("id"), authority=answer_authority(u))
     return {"ok": True}, 200
 
 
@@ -567,6 +614,75 @@ def _do_reprice(u):
                                                                    user_id=u.get("id"))}, 200
 
 
+def _do_review_retag(u, review_id):
+    """Correct how a review was tagged: {categories?, sentiment?, severity?,
+    dishes?} in the analyser's own vocabulary (review_signals.retag; memory
+    audit 9/29/26, uncaptured). The review takes the correction, it is kept
+    with who made it, and the analyser learns this restaurant's tags from
+    the recent ones."""
+    import review_signals
+    out = review_signals.retag(_rid(u), review_id, _body(), user=u)
+    if not out.get("ok"):
+        return out, (404 if out.get("error") == "Review not found." else 400)
+    return out, 200
+
+
+def _do_par_suggestions(u):
+    """Items the close-out 86'd on 2+ nights in 4 weeks, each with a higher
+    par to accept (ordering.par_suggestions; memory audit 9/29/26,
+    food_corrections). Each carries its rec_ledger key ("raise_par:<item>"),
+    is logged as shown, and one already answered is left out — "Not now"
+    answers it through POST /recs/event like any card."""
+    import insight_store
+    import ordering
+    if not _sees_food(u):
+        return {"ok": True, "suggestions": []}, 200
+    sug = ordering.par_suggestions(_rid(u))
+    if not sug:
+        return {"ok": True, "suggestions": []}, 200
+    items = [{"key": s["key"], "text": f"Raise the par on {s['name']} to {s['suggested_par']:g}",
+              "model_written": False, "cavnar_completes": True, "_s": s} for s in sug]
+    kept = insight_store.present_recs(_rid(u), "food", "food", items, user_id=u.get("id"))
+    out = []
+    for it in kept:
+        row = dict(it["_s"])
+        row["rec_id"] = it.get("rec_id")
+        out.append(row)
+    return {"ok": True, "suggestions": out}, 200
+
+
+def _do_par_accept(u, ingredient_id):
+    """Accept a par suggestion: {par?} (default the suggested one). Writes the
+    par (inventory_ledger.update_ingredient), records the change
+    (change_log.record) and marks the recommendation implemented. Only a
+    live suggestion can be accepted — a par is otherwise the owner's to set
+    from their count sheet."""
+    import change_log
+    import inventory_ledger
+    import ordering
+    import rec_ledger
+    if not _sees_food(u):
+        return _forbidden("Food cost is not part of this login's access.")
+    sug = next((s for s in ordering.par_suggestions(_rid(u)) if s["ingredient_id"] == ingredient_id), None)
+    if not sug:
+        return {"ok": False, "error": "There's no par suggestion for that item right now."}, 409
+    try:
+        par = float(_body().get("par") if _body().get("par") not in (None, "") else sug["suggested_par"])
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "The par has to be a number."}, 400
+    if par <= 0 or par > 100000:
+        return {"ok": False, "error": "Pick a par above 0."}, 400
+    if not inventory_ledger.update_ingredient(_rid(u), ingredient_id, par_level=par):
+        return {"ok": False, "error": "Couldn't set that par — check the item."}, 400
+    change_log.record(_rid(u), "ingredient", "par_level", sug["par"], par, actor_user_id=u.get("id"),
+                      source="owner" if _principal(u) else "manager")
+    rec_ledger.implemented(_rid(u), sug["key"], "food", user_id=u.get("id"), role=u.get("role"),
+                           source_ref=f"par:{ingredient_id}:{par:g}",
+                           meta={"module": "food", "par_before": sug["par"], "par_after": par,
+                                 "suggested": sug["suggested_par"]})
+    return {"ok": True, "ingredient_id": ingredient_id, "par": par, "was": sug["par"]}, 200
+
+
 def _do_invoice_scan(u):
     import invoices
     f = request.files.get("file")
@@ -629,7 +745,8 @@ def _do_invoice_apply(u, import_id):
                                          "open it on Food Cost to settle the rest."}, 409
     if not isinstance(sel, list) or not sel:
         return {"ok": False, "error": "Pick at least one line to update."}, 400
-    out = invoices.apply(_rid(u), import_id, sel, user_id=u.get("id"))
+    from permissions import answer_authority
+    out = invoices.apply(_rid(u), import_id, sel, user_id=u.get("id"), authority=answer_authority(u))
     return out, (200 if out.get("ok") else 409)
 
 
@@ -1244,6 +1361,20 @@ def _do_trust(u):
            "schedule": {"enabled": bool(getattr(r, "auto_publish_schedule", 0)),
                         "unedited_in_a_row": schedule_publish_trust(_rid(u)), "needed": SCHEDULE_PUBLISH_TRUST_MIN},
            "suppliers": [], "invoices": []}
+    # When trust lapsed and why, so the owner is asked again rather than an
+    # automation going quiet on its own (memory audit 9/29/26, trust_ledger);
+    # and when the auto-publish was last undone (undo).
+    try:
+        import automation_trust
+        import delayed
+        out["lapsed"] = automation_trust.lapsed_items(_rid(u))
+        _undone = delayed.last_undo(_rid(u), "schedule_publish")
+        if _undone:
+            from time_utils import mdy
+            out["schedule"]["undone_on"] = mdy(_undone[:10])
+    except Exception as e:
+        print(f"[trust] trust ledger unavailable for {_rid(u)}: {e}")
+        out["lapsed"] = []
     if _sees_food(u):
         try:
             from models import get_conn
@@ -1271,22 +1402,30 @@ def _do_trust(u):
 
 def _do_memory_add(u):
     """The owner adds a fact directly — the profile is theirs to write, not
-    only the assistant's to keep."""
-    from models import remember_ask_fact
+    only the assistant's to keep. Typed like Ask's own (owner_memory.
+    remember): a kind, the modules it is about, a date it holds until (or a
+    follow-up's due date) and who may read it; the author is this login."""
+    import owner_memory
     from client_api import log_account_event
     b = _body()
     fact = (b.get("fact") or "").strip()[:300]
     kind = (b.get("kind") or "context").strip()
     if not fact:
         return {"ok": False, "error": "Write the fact first."}, 400
-    if kind not in ("goal", "context", "preference", "followup"):
+    if kind not in owner_memory.KINDS:
         kind = "context"
+    modules = b.get("modules") if isinstance(b.get("modules"), list) else None
     try:
-        saved = remember_ask_fact(_rid(u), fact, kind=kind, source="Account", user_id=u.get("id"))
+        saved = owner_memory.remember(_rid(u), fact, kind=kind, modules=modules,
+                                      valid_until=b.get("valid_until") or None, due_on=b.get("due_on") or None,
+                                      audience=b.get("audience") or None, user=u, source="Account",
+                                      origin="account")
     except ValueError as e:
         return {"ok": False, "error": str(e)}, 400
     log_account_event(_rid(u), "memory_added", current_user=u, detail=fact[:120])
-    return {"ok": True, "fact": saved.get("fact") if isinstance(saved, dict) else fact}, 200
+    return {"ok": True, "fact": saved.get("fact") if isinstance(saved, dict) else fact,
+            "kind": saved.get("kind"), "audience": saved.get("audience"),
+            "evicted": saved.get("evicted", 0)}, 200
 
 
 def _do_decisions(u):
@@ -1489,7 +1628,18 @@ def _do_demand_signals_get(u):
     from datetime import date, timedelta
     start = (request.args.get("start") or date.today().isoformat())[:10]
     end = (request.args.get("end") or (date.today() + timedelta(days=60)).isoformat())[:10]
-    return {"ok": True, "signals": _ds.upcoming(_rid(u), start, end)}, 200
+    rid = _rid(u)
+    signals = _ds.upcoming(rid, start, end)
+    # What the nights taught here (event_memory, memory audit 9/29/26):
+    # beside each listed event its label's measured record, and the recurring
+    # effects on file — measured, before and after, not proof.
+    import event_memory as _em
+    for sg in signals:
+        if sg.get("kind") == "event":
+            e = _ds._measured(rid, sg.get("label"))
+            sg["measured"] = ({"median_lift_pct": e["median_lift_pct"], "n": e["n"], "applies": e["applies"],
+                               "last": e["last"].isoformat(), "text": e["basis"]} if e else None)
+    return {"ok": True, "signals": signals, "what_nights_teach": _em.summaries(rid)}, 200
 
 
 def _do_demand_signals_save(u):
@@ -1789,7 +1939,7 @@ def _do_schedule_apply_fixes(u):
     after = _sr.violations(fixed_rows, c)
     quality, what_if = _score_schedule_quality(_rid(u), fixed_rows, inputs)
     from schedule_engine import present_quality
-    present_quality(_rid(u), quality, user_id=u.get("id"))
+    present_quality(_rid(u), quality, user_id=u.get("id"), authority=_answer_authority(u))
     return {"ok": True, "rows": fixed_rows, "fixes": out["fixes"], "unfixed": out["unfixed"],
             "violations": after, "review": _sr.summarize(after), "quality": quality, "what_if": what_if}, 200
 
@@ -1855,7 +2005,7 @@ def _do_schedule_optimize(u):
                         hours_budget=(budget if int(getattr(_r_opt, "trim_to_budget", 1) or 0) else None))
     quality, what_if = _score_schedule_quality(_rid(u), res["rows"], inputs)
     from schedule_engine import present_quality
-    present_quality(_rid(u), quality, user_id=u.get("id"))
+    present_quality(_rid(u), quality, user_id=u.get("id"), authority=_answer_authority(u))
     summary = _opt.summary(res, signals)
     # A proposal with changes is a recommendation: kept on Save, set aside
     # on Discard (the page reports which to /recs/event).
@@ -1991,10 +2141,15 @@ def _do_rec_event(u):
 
     What each answer does, and the sentence the client shows for it (M-8,
     H-10) — both clients show `message` rather than their own promise:
-      completed  — "Done": silenced for SILENCE_DAYS["done"] (it said "won't
-                   suggest it again" and came back after 14 days);
-      dismissed  — "Not for us": silenced; the module's insight prompt is
-                   told not to suggest the same thing in other words;
+      completed  — "Done": silenced for what the answer holds
+                   (rec_ledger.answer_silence: until a situational trigger
+                   clears and comes back, a stock-out cycle, a year);
+      dismissed  — "Not for us": silenced (a year, re-offered with "you
+                   passed on this on M/D/YY"; "bad timing" a few weeks; "don't
+                   trust the data" until it is re-verified); the module's
+                   insight prompt is told not to suggest the same thing in
+                   other words. A delegate's (manager's) answer holds for that
+                   login only, and the owner is shown who passed on it;
       accepted   — "Track": a real outcomes tracker on the module's metric
                    when one can be measured, quiet for its window; otherwise
                    no tracker, and the message says it is only hidden.
@@ -2056,7 +2211,11 @@ def _do_rec_event(u):
     message = None
     tracking = None
     started = None
-    if event in ("completed", "accepted") and still_open:
+    # Whose answer this is (memory audit 9/29/26): support's through
+    # view-as starts no tracker — it is not the owner acting.
+    from permissions import answer_authority
+    authority = answer_authority(u)
+    if event in ("completed", "accepted") and still_open and authority != "admin":
         # Accept/Done on a recommendation that carries a metric starts its
         # tracker (rec-ROI #18, #39), under the family gate. `body_metric`
         # lets a client name the metric a line was shown with.
@@ -2067,20 +2226,24 @@ def _do_rec_event(u):
     refused = (started or {}).get("tracker_refused")
     if tracker:
         meta["tracker_id"] = tracker.get("id")
-    # Recurring advice (a slow weekday, an idle list, a category dip, a
-    # posting gap) comes back with its next occurrence: the answer says how
-    # long it holds instead of "won't suggest it again" (re-audit OPP-9).
-    held = _rl.recurring_silence(key.strip(), event, meta.get("kind"))
+    # What the answer holds is the ledger's to decide, by kind and by the
+    # owner's reason (rec_ledger.answer_silence, memory audit 9/29/26): the
+    # message says exactly that — "won't come back" promised ten years to a
+    # "bad timing" and to a Saturday trim that would be needed again.
+    held = _rl.silence_message(key.strip(), event, kind=meta.get("kind"), reason_code=code or None,
+                               reason=meta.get("reason"))
+    if authority != "principal" and event in ("dismissed", "snoozed"):
+        # A delegate's (or support's) decline holds for this login alone;
+        # the owner still decides (who_answered, view_as).
+        held = "Noted \u2014 hidden for you; the owner still sees it"
     if event == "completed":
-        silence = _rl.SILENCE_DAYS["done"]
-        message = (f"Done \u2014 hidden for {held} days" if held
-                   else "Done \u2014 Cavnar AI won\u2019t suggest it again")
+        message = held or "Done"
         if tracker:
             message += f". Now {tracker['label_text']}"
         elif refused and refused.get("code") == "in_flight":
             message += f". {refused['reason']}"
-    elif event == "dismissed" and meta.get("kind") == "not_for_us":
-        message = f"Noted \u2014 hidden for {held} days" if held else "Noted \u2014 it won\u2019t come back"
+    elif event == "dismissed" and (meta.get("kind") == "not_for_us" or authority != "principal" or code):
+        message = held or "Noted"
     elif event == "accepted":
         if tracker:
             window = int(tracker.get("window_days") or info["default_window_days"])
@@ -2098,7 +2261,8 @@ def _do_rec_event(u):
             message = (f"Noted \u2014 hidden for {_rl.ACCEPTED_QUIET_DAYS} days. There is nothing "
                        "here Cavnar AI can measure it against yet")
     ok = _rl.record(_rid(u), key.strip(), event, surface=surface, user_id=u.get("id"), role=u.get("role"),
-                    meta=meta or None, silence_days=silence, snooze_until=until, require_existing=True)
+                    meta=meta or None, silence_days=silence, snooze_until=until, require_existing=True,
+                    authority=authority, via=_rl.request_via(u))
     out = {"ok": True, "recorded": ok}
     if not still_open:
         out["already_answered"] = True
@@ -2110,6 +2274,52 @@ def _do_rec_event(u):
         out["tracker"] = tracker
     elif refused:
         out["tracker_refused"] = refused
+    return out, 200
+
+
+def _do_data_verify(u):
+    """POST /data-health/verify {"source"} — the owner has checked a data
+    source they said they don't trust ("don't trust the data" on a card,
+    memory audit 9/29/26 "reasons"): the cap on every card resting on it
+    lifts, and the answers held until it was verified are released.
+    Principal only: re-verifying the data is the owner's call."""
+    if not _principal(u):
+        return _forbidden("Only the owner can re-verify the data.")
+    import rec_ledger as _rl
+    src = _body().get("source")
+    if not isinstance(src, str) or not src.strip():
+        return {"ok": False, "error": "Which source?"}, 400
+    out = _rl.verify_source(_rid(u), src.strip().lower(), user_id=u.get("id"))
+    if not out.get("closed"):
+        return {"ok": False, "error": "Nothing is waiting to be re-verified there."}, 404
+    try:
+        import data_health
+        data_health.invalidate(_rid(u))
+    except Exception:
+        pass
+    return {"ok": True, "released": out.get("released", 0),
+            "message": "Thanks \u2014 recommendations resting on it are back at full confidence"}, 200
+
+
+def _do_rec_conflict(u):
+    """POST /recs/conflict {"conflict", "prefer"} — the owner chose between
+    two recommendations that pull against each other ("Trim Tuesday" and
+    "Fill Tuesday"): the choice is stored as a decision, so the same
+    conflict resolves the same way next time (lever_conflicts, memory audit
+    9/29/26 "conflicts"). `prefer` is the advice signature kept."""
+    import lever_conflicts
+    b = _body()
+    cid, prefer = b.get("conflict"), b.get("prefer")
+    if not isinstance(cid, str) or not isinstance(prefer, str) or not cid.strip() or not prefer.strip():
+        return {"ok": False, "error": "conflict and prefer are required"}, 400
+    out = lever_conflicts.record_choice(_rid(u), cid.strip(), prefer.strip(), user=u)
+    if not out.get("ok"):
+        return {"ok": False, "error": out.get("error") or "No such conflict."}, 404
+    try:
+        import home_brief
+        home_brief.invalidate(_rid(u))
+    except Exception:
+        pass
     return out, 200
 
 
@@ -2322,7 +2532,17 @@ def _do_learned_patterns(u):
     for p in _sv.learned_patterns(rid, min_repeats=1):
         key = _si.pattern_key(p)
         out.append({**p, "key": key, "active": p["times"] >= 2 and key not in dismissed, "dismissed": key in dismissed})
-    return {"ok": True, "patterns": out, "can_edit": _may_draft(u)}, 200
+    # What the draft keeps after the manager stopped correcting it, with
+    # who taught it, when it was learned and last kept, and whether it can
+    # become the person's rule (memory audit 9/29/26, standing_patterns);
+    # and the pairs two editors pull opposite ways, for the owner to settle.
+    try:
+        standing = _sv.standing_patterns(rid)
+        conflicts = _sv.patterns_for_draft(rid)[1]
+    except Exception:
+        standing, conflicts = [], []
+    return {"ok": True, "patterns": out, "standing": standing, "conflicts": conflicts,
+            "can_edit": _may_draft(u)}, 200
 
 
 def _do_learned_pattern_set(u):
@@ -2333,11 +2553,116 @@ def _do_learned_pattern_set(u):
     key = (b.get("key") or "").strip()
     if not key:
         return {"ok": False, "error": "key required"}, 400
+    if b.get("rule"):
+        # "Make it a rule": the person's own availability, with its author.
+        import schedule_versions as _sv
+        try:
+            out = _sv.make_rule(_rid(u), key, user=u)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}, 400
+        return {"ok": True, "key": key, **{k: v for k, v in out.items() if k != "ok"}}, 200
     if b.get("dismissed", True):
         _si.dismiss_pattern(_rid(u), key, actor=_who(u))
     else:
         _si.restore_pattern(_rid(u), key)
     return {"ok": True, "key": key, "dismissed": bool(b.get("dismissed", True))}, 200
+
+
+# ── scheduling notes, dated (memory audit 9/29/26, staff_notes) ─────────────
+
+def _staff_note_out(n):
+    """One person's constraints for the clients: M/D/YY for the eye, ISO
+    beside it for a date picker."""
+    return {"id": n["id"], "employee_name": n["employee_name"], "notes": n.get("notes") or "",
+            "noted": n.get("noted"), "noted_on": n.get("noted_on"), "stale": bool(n.get("stale")),
+            "expires_on": n.get("expires_on"),
+            "parts": [{"index": i, "text": p["text"], "noted": p.get("noted_label"), "noted_on": p.get("noted"),
+                       "expires": p.get("expires_label"), "expires_on": p.get("expires"),
+                       "ended": bool(p.get("ended")), "stale": bool(p.get("stale"))}
+                      for i, p in enumerate(n.get("parts") or [])]}
+
+
+def _do_staff_notes_get(u):
+    """Every scheduling note with the day each constraint was noted, its end
+    date and whether it needs the owner's "still true?" — the notes the
+    schedule and the labor read obey, which only an admin could see."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see scheduling notes.")
+    from models import get_staff_notes, STAFF_NOTE_STALE_DAYS
+    notes = [_staff_note_out(n) for n in get_staff_notes(_rid(u), include_expired=True, today=_local_today(u))]
+    return {"ok": True, "notes": notes, "stale_after_days": STAFF_NOTE_STALE_DAYS,
+            "stale": sum(1 for n in notes for p in n["parts"] if p["stale"]), "can_edit": _may_rate(u)}, 200
+
+
+def _note_change(u, name, before, after):
+    try:
+        import change_log
+        import people
+        # A scheduling note is a roster change about that person (M7's
+        # change_log: subject= the employee; the login decides whose).
+        change_log.record(_rid(u), "roster", "note", before, after, subject=name, user=u)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="staff_note_change_log", context=f"restaurant_id={_rid(u)}")
+
+
+def _do_staff_note_add(u):
+    """{employee_name, notes, expires_on?} — a constraint for one person,
+    added to theirs, dated today; `expires_on` (M/D/YY or ISO) or the end its
+    own words give ("out until 6/1") retires it on its own."""
+    if not _may_rate(u):
+        return _forbidden("Your login can view the team but not change their scheduling notes.")
+    from models import save_staff_note, get_staff_notes, _iso_or_none
+    b = _body()
+    name = " ".join(str(b.get("employee_name") or "").split())[:80]
+    text = str(b.get("notes") or "").strip()[:500]
+    if not name or not text:
+        return {"ok": False, "error": "A name and the constraint are both needed."}, 400
+    if b.get("expires_on") not in (None, "") and not _iso_or_none(b.get("expires_on")):
+        return {"ok": False, "error": "That end date isn't a date — use M/D/YY."}, 400
+    before = next((n.get("notes") for n in get_staff_notes(_rid(u))
+                   if n["employee_name"].strip().lower() == name.lower()), None)
+    out = save_staff_note(_rid(u), name, text, expires_on=b.get("expires_on") or None, updated_by=_who(u),
+                          today=_local_today(u))
+    _note_change(u, name, before, out["notes"])
+    note = next((n for n in get_staff_notes(_rid(u), include_expired=True, today=_local_today(u))
+                 if n["id"] == out["id"]), None)
+    return {"ok": True, "appended": out["appended"], "note": _staff_note_out(note) if note else None}, 200
+
+
+def _do_staff_note_update(u, note_id):
+    """{action: confirm | expire | remove, part?, expires_on?} — the owner's
+    answer to one constraint ("still true", "ends on", "gone"). `part` is
+    its index in the note; none means every constraint on it."""
+    if not _may_rate(u):
+        return _forbidden("Your login can view the team but not change their scheduling notes.")
+    from models import update_staff_note_part, _iso_or_none
+    b = _body()
+    action = str(b.get("action") or "").strip().lower()
+    if action not in ("confirm", "expire", "remove"):
+        return {"ok": False, "error": "action is confirm, expire or remove"}, 400
+    part = b.get("part")
+    if part not in (None, ""):
+        try:
+            part = int(part)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "part is a number"}, 400
+    else:
+        part = None
+    if action == "expire" and b.get("expires_on") not in (None, "") and not _iso_or_none(b.get("expires_on")):
+        return {"ok": False, "error": "That end date isn't a date — use M/D/YY."}, 400
+    try:
+        row = update_staff_note_part(_rid(u), int(note_id), part, confirm=(action == "confirm"),
+                                     expires_on=((b.get("expires_on") or "") if action == "expire" else None),
+                                     remove=(action == "remove"), updated_by=_who(u), today=_local_today(u))
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}, 400
+    if row is None:
+        return {"ok": False, "error": "That note isn't on this restaurant."}, 404
+    if action != "confirm":
+        _note_change(u, row.get("employee_name") or f"note {note_id}", action, row.get("notes"))
+    return {"ok": True, "note": _staff_note_out(row) if not row.get("removed") else None,
+            "removed": bool(row.get("removed"))}, 200
 
 
 def _do_recommendation_event(u):
@@ -2369,7 +2694,7 @@ def _do_recommendation_event(u):
         import rec_learning as _rlearn
         if _rlearn.answerable_episode(u, _rid(u), rkey) is None:
             return {"ok": False, "error": "No such recommendation."}, 404
-    _si.record_recommendation(_rid(u), kind, text, action, actor=_who(u))
+    _si.record_recommendation(_rid(u), kind, text, action, actor=_who(u), authority=_answer_authority(u))
     # The same answer in the one trail every surface reads: "Not for us"
     # keeps this recommendation off the draft from now on, on any device.
     started = None
@@ -2392,7 +2717,8 @@ def _do_recommendation_event(u):
         window = int(o.get("window_days") or 0) or None
         _rl.record(_rid(u), rkey, "accepted", surface="schedule_review", user_id=u.get("id"), role=u.get("role"),
                    meta=({"tracker_id": o["id"]} if o.get("id") else None),
-                   silence_days=max(_rl.ACCEPTED_QUIET_DAYS, window or 0), require_existing=True)
+                   silence_days=max(_rl.ACCEPTED_QUIET_DAYS, window or 0), require_existing=True,
+                   authority=_answer_authority(u), via=_rl.request_via(u))
     elif action == "dismissed":
         meta = {"kind": "not_for_us"}
         if code:
@@ -2400,8 +2726,9 @@ def _do_recommendation_event(u):
         if reason:
             meta["reason"] = reason
         _rl.record(_rid(u), rkey, "dismissed", surface="schedule_review", user_id=u.get("id"), role=u.get("role"),
-                   meta=meta, require_existing=True)
-    out = {"ok": True, "suppressed_kinds": sorted(_si.suppressed_kinds(_rid(u)))}
+                   meta=meta, require_existing=True, authority=_answer_authority(u), via=_rl.request_via(u))
+    out = {"ok": True, "suppressed_kinds": sorted(_si.suppressed_kinds(_rid(u))),
+           "suppression": _si.suppression_state(_rid(u), write=False)}
     if started:
         out.update({k: started[k] for k in ("tracker", "tracker_refused") if k in started})
     return out, 200
@@ -2519,11 +2846,186 @@ def _do_ratings_match(u):
         return {"ok": False, "error": "Pick a name from the roster."}, 400
     if rated.lower() != target.lower() and rated.lower() in {e["name"].strip().lower() for e in everyone}:
         return {"ok": False, "error": f"{rated} is on your roster (deactivated) — their rating stays theirs."}, 409
-    moved = rename_capability_holder(_rid(u), rated, target)
-    if moved is None:
+    from models import get_capabilities
+    have = {_ss.name_key(n): set(v) for n, v in (get_capabilities(_rid(u)) or {}).items()}
+    if have.get(_ss.name_key(rated), set()) & have.get(_ss.name_key(target), set()):
         return {"ok": False, "error": f"{target} already has a rating. Remove one of them first."}, 409
+    # One person now, not just one rating (memory audit 9/29/26, identity):
+    # the rated name's settings, minor band, notes, availability and the
+    # rest follow the rating onto the roster name — the old repair moved
+    # staff_capabilities rows and left everything else stranded.
+    import people as _people
+    a = _people.person_id_for(_rid(u), rated)
+    z = _people.person_id_for(_rid(u), target)
+    if a and z and a != z:
+        try:
+            out = _people.merge_people(_rid(u), a, z, actor_user_id=u.get("id"), source=_people.change_source(u),
+                                       user=u)
+        except _people.PeopleError as e:
+            return {"ok": False, "error": str(e)}, 409
+        moved = int((out.get("moved") or {}).get("staff_capabilities") or 0)
+    else:
+        moved = rename_capability_holder(_rid(u), rated, target)
+        if moved is None:
+            return {"ok": False, "error": f"{target} already has a rating. Remove one of them first."}, 409
     log_account_event(_rid(u), "rating_matched", current_user=u, detail=f"{rated} → {target}")
     return {"ok": True, "moved": moved}, 200
+
+
+# ── who is who (memory audit 9/29/26, identity) ─────────────────────────────
+
+def _do_people_identity(u):
+    """The questions only the owner answers: two records that may be one
+    person ("Kim T." / "Kim Tran"), or two people the POS spells alike.
+    Nothing is ever merged on a guess."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see the team.")
+    import people as _people
+    return {"ok": True, "questions": _people.open_questions(_rid(u)), "can_answer": _principal(u)}, 200
+
+
+def _do_people_identity_answer(u, question_id):
+    """{same: true|false, keep?: person_id} — "same person" merges them
+    (every rating, setting, note and shift follows), "different people"
+    closes the question for good."""
+    if not _principal(u):
+        return _forbidden("Only the account owner can decide who is the same person.")
+    import people as _people
+    b = _body()
+    if not isinstance(b.get("same"), bool):
+        return {"ok": False, "error": "same is true or false"}, 400
+    keep = b.get("keep") if isinstance(b.get("keep"), int) else None
+    try:
+        out = _people.answer_question(_rid(u), int(question_id), b["same"], user=u, keep=keep)
+    except _people.PeopleError as e:
+        return {"ok": False, "error": str(e)}, 409
+    from client_api import log_account_event
+    log_account_event(_rid(u), "people_identity_answered", current_user=u,
+                      detail=(f"{out.get('from')} → {out.get('into')}" if out.get("status") == "merged"
+                              else f"question {question_id}: different people"))
+    return {"ok": True, **{k: v for k, v in out.items() if k != "ok"}}, 200
+
+
+def _do_people_merge(u):
+    """{from, into} — two people keys (the list's) the owner says are one
+    person: `from`'s records all move onto `into`."""
+    if not _principal(u):
+        return _forbidden("Only the account owner can merge two people.")
+    import people as _people
+    b = _body()
+    try:
+        a = _people.find(_rid(u), b.get("from"))
+        z = _people.find(_rid(u), b.get("into"))
+    except _people.AmbiguousPerson as e:
+        return {"ok": False, "error": str(e)}, 409
+    if not a or not z:
+        return {"ok": False, "error": "Pick two people from the list."}, 400
+    pa = _people.person_id_for(_rid(u), a["name"])
+    pz = _people.person_id_for(_rid(u), z["name"])
+    try:
+        out = _people.merge_people(_rid(u), pa, pz, actor_user_id=u.get("id"), source=_people.change_source(u),
+                                   user=u)
+    except _people.PeopleError as e:
+        return {"ok": False, "error": str(e)}, 409
+    from client_api import log_account_event
+    log_account_event(_rid(u), "people_merged", current_user=u, detail=f"{out['from']} → {out['into']}")
+    return {"ok": True, **{k: v for k, v in out.items() if k != "ok"}}, 200
+
+
+def _do_person_roles(u, key):
+    """{role, since?, primary?, remove?} — a role this person holds beyond
+    the shifts they have worked: "trained on bar from 9/1" (a candidate for
+    a bartender gap from then), or a promotion (`primary`: their role on
+    the roster). Memory audit 9/29/26, uncaptured."""
+    if not _may_rate(u):
+        return _forbidden("Your login can view the team but not change their roles.")
+    import people as _people
+    try:
+        p = _people.find(_rid(u), key)
+    except _people.AmbiguousPerson as e:
+        return {"ok": False, "error": str(e)}, 409
+    if not p:
+        return {"ok": False, "error": "That person isn't on the roster."}, 404
+    b = _body()
+    if b.get("remove"):
+        ok = _people.remove_role(_rid(u), p["name"], b.get("role"), user=u)
+        return ({"ok": True, "removed": True}, 200) if ok else ({"ok": False, "error": "They don't hold that role."}, 404)
+    try:
+        out = _people.add_role(_rid(u), p["name"], b.get("role"), since=b.get("since"),
+                               primary=bool(b.get("primary")), created_by=u.get("id"),
+                               source=_people.change_source(u), user=u)
+    except _people.PeopleError as e:
+        return {"ok": False, "error": str(e)}, 400
+    from time_utils import mdy
+    return {"ok": True, **out, "since_label": mdy(out["since"]) if out.get("since") else None}, 200
+
+
+def _do_people_mentions(u):
+    """Guests naming someone on staff, waiting on the owner's confirmation
+    before they count on the person's record."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see the team.")
+    import people as _people
+    return {"ok": True, "mentions": _people.mentions(_rid(u)), "can_confirm": _may_rate(u)}, 200
+
+
+def _do_people_mention_answer(u, signal_id):
+    """{confirm: true|false} — this review is (or is not) about them."""
+    if not _may_rate(u):
+        return _forbidden("Your login can view the team but not change their record.")
+    import people as _people
+    b = _body()
+    if not isinstance(b.get("confirm"), bool):
+        return {"ok": False, "error": "confirm is true or false"}, 400
+    if not _people.answer_mention(_rid(u), int(signal_id), b["confirm"], user=u):
+        return {"ok": False, "error": "That mention was already answered."}, 409
+    return {"ok": True, "confirmed": b["confirm"]}, 200
+
+
+def _do_issue_cover_answer(u, issue_id):
+    """{name, accepted} — the person asked to cover said yes or no (the
+    manager's word; otherwise a punch that day says yes). Their record of
+    taking covers ranks the next suggestions (labor_replacements)."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can do this.")
+    import issues as _issues
+    import people as _people
+    b = _body()
+    if not isinstance(b.get("name"), str) or not isinstance(b.get("accepted"), bool):
+        return {"ok": False, "error": "name and accepted are required"}, 400
+    issue = _issues.get_issue(_rid(u), int(issue_id))
+    if not issue or issue.get("kind") != "coverage":
+        return {"ok": False, "error": "That coverage issue wasn't found."}, 404
+    day = str(issue.get("source_key") or "").split(":")[1] if str(issue.get("source_key") or "").count(":") >= 2 \
+        else _local_today(u).isoformat()
+    _people.answer_cover(_rid(u), b["name"], int(issue_id), b["accepted"], day, user=u)
+    # Kept on the issue's own ask too, so Home stops asking (UI wave).
+    import intraday as _intraday
+    _intraday.mark_cover_answer(_rid(u), int(issue_id), b["name"], b["accepted"])
+    return {"ok": True, "answer": "took" if b["accepted"] else "declined"}, 200
+
+
+def _do_person_rename(u, key):
+    """{name} — the owner renames a person; every store follows and the old
+    spelling stays an alias (a later upload under it still finds them)."""
+    if not _principal(u):
+        return _forbidden("Only the account owner can rename someone.")
+    import people as _people
+    try:
+        p = _people.find(_rid(u), key)
+    except _people.AmbiguousPerson as e:
+        return {"ok": False, "error": str(e)}, 409
+    if not p:
+        return {"ok": False, "error": "That person isn't on the roster."}, 404
+    pid = _people.person_id_for(_rid(u), p["name"])
+    try:
+        out = _people.rename_person(_rid(u), pid, _body().get("name"), actor_user_id=u.get("id"),
+                                    source=_people.change_source(u), user=u)
+    except _people.PeopleError as e:
+        return {"ok": False, "error": str(e)}, 409
+    from client_api import log_account_event
+    log_account_event(_rid(u), "person_renamed", current_user=u, detail=f"{out['from']} → {out['to']}")
+    return {"ok": True, "from": out["from"], "to": out["to"], "key": _people.person_key(out["to"])}, 200
 
 
 def _roster_roles(rid) -> dict:
@@ -2604,7 +3106,11 @@ def _do_schedule_intel(u):
             "attendance_by_weekday": _safe(lambda: _sl.attendance_by_weekday(rid), {}),
             "auto_publish_offer": (_safe(lambda: _auto_publish_offer(rid), {"eligible": False}) if _may_publish(u)
                                    else {"eligible": False, "reason": "Only someone who can send the schedule can turn this on."}),
-            "suppressed_recommendation_kinds": sorted(_safe(lambda: _si.suppressed_kinds(rid), set()))}, 200
+            "suppressed_recommendation_kinds": sorted(_safe(lambda: _si.suppressed_kinds(rid), set())),
+            # Why each is off and when it is re-tested (memory audit 9/29/26,
+            # quiet_kinds): {kind: {state suppressed|retest, reason, since,
+            # review_on (M/D/YY), retests}}.
+            "recommendation_suppression": _safe(lambda: _si.suppression_state(rid, write=False), {})}, 200
 
 
 def _do_reservation_sync(u):
@@ -2689,22 +3195,159 @@ def _do_marketing_diagnosis(u):
 
 
 def _do_memory_list(u):
-    """What Ask Cavnar remembers about this restaurant, with who added it —
-    so the owner can read and correct the memory that shapes every answer."""
-    from models import get_ask_memory
-    return {"ok": True, "facts": get_ask_memory(_rid(u))}, 200
+    """What Cavnar AI remembers about this restaurant, with who added each
+    fact — so the owner can read and correct the memory that shapes every
+    answer (owner_memory.account_view): the facts this login may read, the
+    lanes and how full each is, and what left without anyone asking (a full
+    lane, a date passed, a retracted answer), which can be put back."""
+    import owner_memory
+    return {"ok": True, **owner_memory.account_view(_rid(u), u)}, 200
 
 
 def _do_memory_forget(u):
-    from models import forget_ask_fact
+    """Forget one fact by its exact text. A teammate may forget only what
+    they added; an account holder any fact."""
+    import owner_memory
     from client_api import log_account_event
     fact = (_body().get("fact") or "").strip()
     if not fact:
         return {"ok": False, "error": "Which fact?"}, 400
-    ok = forget_ask_fact(_rid(u), fact)
-    if ok:
-        log_account_event(_rid(u), "memory_forgotten", current_user=u, detail=fact[:120])
-    return ({"ok": True} if ok else {"ok": False, "error": "No fact like that."}), (200 if ok else 404)
+    rows = owner_memory.facts_for(_rid(u), viewer=u, include_expired=True)
+    row = next((r for r in rows if r["fact"] == fact), None)
+    if row is None:
+        return {"ok": False, "error": "No fact like that."}, 404
+    out = owner_memory.forget(_rid(u), fact, user=u)
+    if out.get("error"):
+        return {"ok": False, "error": out["error"]}, 403
+    log_account_event(_rid(u), "memory_forgotten", current_user=u, detail=fact[:120])
+    return {"ok": True}, 200
+
+
+# ── preferences: the login's own, the location's, the organisation's ─────────
+# (memory audit 9/29/26, owner_layers — preferences.py)
+
+_SHOWN_LOCATION_KEYS = ("voice_notes", "never_say", "sign_off_name", "briefing_level", "morning_brief_enabled",
+                        "morning_brief_hour", "alert_quiet_start", "alert_quiet_end", "alert_max_per_day")
+
+
+def _do_preferences_get(u):
+    """What this login's settings resolve to and where each came from:
+    `mine` (this login's own notification choices and whether they get this
+    location's brief), `location` (the location settings a group shares,
+    each with its source — "all locations", "this location" or "default"),
+    whether this login may apply them to every location, the group's
+    locations, and `never_opened` — the alert types delivered to this
+    login's phone and never opened by them."""
+    import preferences
+    from auth import get_team_access
+    from models import get_restaurant
+    r = get_restaurant(_rid(u))
+    if r is None:
+        return {"ok": False, "error": "Restaurant not found."}, 404
+    mine = {k: preferences.resolve(k, r, user=u)["value"] for k in preferences.LOGIN_KEYS}
+    try:
+        mine["morning_brief"] = bool((get_team_access(_rid(u)).get(u.get("id")) or {}).get("morning_brief"))
+    except Exception:
+        mine["morning_brief"] = None
+    location = {k: preferences.resolve(k, r, user=u) for k in _SHOWN_LOCATION_KEYS}
+    locs = [{"id": loc["id"], "name": loc.get("location_name") or loc.get("name")}
+            for loc in preferences.group_locations(r)]
+    return {"ok": True, "mine": mine, "location": location,
+            "can_apply_to_all": preferences.may_apply_to_all(u, r) and len(locs) > 1,
+            "locations": locs, "org_keys": list(preferences.ORG_KEYS),
+            "unmutable_types": sorted(preferences.UNMUTABLE_TYPES),
+            # The alert types a login may mute on its own phone, in the bell's
+            # words (client_api._NOTIFICATION_LABELS) — the checklist both
+            # clients draw, so neither keeps a second list of types.
+            "alert_types": _mutable_alert_types(preferences),
+            "never_opened": preferences.never_opened_for_login(u.get("id"), _rid(u))}, 200
+
+
+def _mutable_alert_types(preferences):
+    """[{type, label}] every notification type with a label except the ones
+    no login can mute (preferences.UNMUTABLE_TYPES) — one row per label."""
+    try:
+        from client_api import _NOTIFICATION_LABELS
+    except Exception:
+        return []
+    out, seen = [], set()
+    for t, label in _NOTIFICATION_LABELS.items():
+        if t in preferences.UNMUTABLE_TYPES or label in seen:
+            continue
+        seen.add(label)
+        out.append({"type": t, "label": label})
+    return out
+
+
+def _do_preferences_mine(u):
+    """This login's own choices at this location: push on or off, the alert
+    types they mute on their own phone, their own quiet hours (only ever
+    taking alerts away from their phone — the owner's settings still
+    apply), and whether they get this location's morning brief. Any
+    console login, for itself only."""
+    import preferences
+    from auth import set_morning_brief_pref, TeamAccessError
+    b = _body()
+    try:
+        mine = preferences.set_login_overrides(u.get("id"), _rid(u),
+                                               {k: b[k] for k in preferences.LOGIN_KEYS if k in b})
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}, 400
+    if "morning_brief" in b:
+        try:
+            set_morning_brief_pref(_rid(u), u.get("id"), bool(b.get("morning_brief")))
+        except TeamAccessError as e:
+            return {"ok": False, "error": e.message}, 400
+        mine["morning_brief"] = bool(b.get("morning_brief"))
+    return {"ok": True, "mine": mine}, 200
+
+
+def _do_preferences_apply_to_all(u):
+    """A group owner makes this location's settings (`keys`, from
+    preferences.ORG_KEYS) the organisation's default and every location's —
+    "add 'cheap' to never-say everywhere" in one save."""
+    import preferences
+    from client_api import log_account_event
+    from models import get_restaurant
+    r = get_restaurant(_rid(u))
+    if r is None:
+        return {"ok": False, "error": "Restaurant not found."}, 404
+    if not preferences.may_apply_to_all(u, r):
+        return _forbidden("Only the owner of every location can apply a setting to all of them.")
+    keys = _body().get("keys")
+    if not isinstance(keys, list) or not keys:
+        return {"ok": False, "error": "Which settings? Send keys."}, 400
+    out = preferences.apply_to_all_locations(r, keys, user=u)
+    if not out["keys"]:
+        return {"ok": False, "error": "None of those settings can be applied to every location.",
+                "skipped": out["skipped"]}, 400
+    log_account_event(_rid(u), "preferences_applied", current_user=u,
+                      detail=f"{', '.join(out['keys'])[:100]} → {len(out['locations'])} locations")
+    return {"ok": True, **out}, 200
+
+
+def _do_memory_restore(u):
+    """Put back a fact that left without anyone asking (a full lane, a date
+    passed, a retracted answer) — ask_memory_archive by id."""
+    import owner_memory
+    from models import restore_ask_fact
+    from client_api import log_account_event
+    try:
+        aid = int(_body().get("id"))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "Which fact?"}, 400
+    view = owner_memory.account_view(_rid(u), u)
+    item = next((a for a in view["archived"] if a["id"] == aid), None)
+    if item is None:
+        return {"ok": False, "error": "No fact like that."}, 404
+    if not item.get("can_restore"):
+        return {"ok": False, "error": "Only the owner or the person who added it can put it back."}, 403
+    fact = restore_ask_fact(_rid(u), aid)
+    if not fact:
+        return {"ok": False, "error": "No fact like that."}, 404
+    owner_memory.invalidate(_rid(u))
+    log_account_event(_rid(u), "memory_added", current_user=u, detail=f"restored: {fact[:110]}")
+    return {"ok": True, "fact": fact}, 200
 
 
 def _do_delayed_pending(u):
@@ -2738,10 +3381,40 @@ def _do_delayed_cancel(u, action_id):
         conn.close()
     if row and not _may_undo(u, row["kind"]):
         return _forbidden("Your login can't stop this — ask whoever can send it.")
-    ok = delayed.cancel(_rid(u), int(action_id), actor=u)
+    b = _body()
+    code = b.get("reason_code")
+    if code not in (None, "") and code not in delayed.UNDO_REASONS:
+        return {"ok": False, "error": "reason_code must be one of " + ", ".join(delayed.UNDO_REASONS)}, 400
+    ok = delayed.cancel(_rid(u), int(action_id), actor=u, reason_code=code or None,
+                        reason=b.get("reason") if isinstance(b.get("reason"), str) else None)
     if ok:
         log_account_event(_rid(u), "delayed_action_cancelled", current_user=u, detail=f"#{action_id}")
-    return ({"ok": True} if ok else {"ok": False, "error": "That already went out, or was already undone."}), (200 if ok else 409)
+    if not ok:
+        return {"ok": False, "error": "That already went out, or was already undone."}, 409
+    out = {"ok": True}
+    if row and row["kind"] in delayed.TRUSTED_KINDS:
+        # It counts against the trust that queued it (memory audit, undo):
+        # the client says so and asks why, once.
+        out["message"] = ("Undone \u2014 Cavnar AI will wait for a few clean runs before doing this "
+                          "on its own again")
+        if not code:
+            out["ask_why"] = {"route": f"/actions/{int(action_id)}/why",
+                              "options": [{"code": c, "label": delayed.UNDO_REASON_LABELS[c]}
+                                          for c in delayed.UNDO_REASONS]}
+    return out, 200
+
+
+def _do_delayed_why(u, action_id):
+    """POST /actions/<id>/why {reason_code, reason?} — the owner's answer to
+    "why did you undo it?" (memory audit 9/29/26, "undo")."""
+    import delayed
+    b = _body()
+    code = b.get("reason_code")
+    if code not in delayed.UNDO_REASONS:
+        return {"ok": False, "error": "reason_code must be one of " + ", ".join(delayed.UNDO_REASONS)}, 400
+    ok = delayed.record_undo_reason(_rid(u), int(action_id), reason_code=code,
+                                    reason=b.get("reason") if isinstance(b.get("reason"), str) else None)
+    return ({"ok": True} if ok else {"ok": False, "error": "No undone action like that."}), (200 if ok else 404)
 
 
 # ── principal-only ────────────────────────────────────────────────────────────
@@ -2912,7 +3585,9 @@ def _do_ask_feedback(u):
     if note is not None and not isinstance(note, str):
         return {"ok": False, "error": "note must be text"}, 400
     from models import record_ask_feedback, ask_feedback_summary
-    row = record_ask_feedback(_rid(u), mid, helpful, note, user_id=u.get("id"))
+    from permissions import answer_authority
+    authority = answer_authority(u)
+    row = record_ask_feedback(_rid(u), mid, helpful, note, user_id=u.get("id"), authority=authority)
     if row is None:
         return {"ok": False, "error": "That answer isn't in your Ask history."}, 404
     try:
@@ -2920,7 +3595,18 @@ def _do_ask_feedback(u):
         ask_cavnar.invalidate_context(_rid(u))
     except Exception as e:
         print(f"[ask] context not refreshed after feedback rid={_rid(u)}: {e}")
-    return {"ok": True, "feedback": row, "summary": ask_feedback_summary(_rid(u))}, 200
+    # What their ratings now say about answer length — a preference they can
+    # see (and forget) in Account, and the depth Ask picks for them (memory
+    # audit 9/29/26, ask_feedback). Their own ratings only.
+    preference = None
+    if authority != "admin":             # an admin's rating (view-as too) never trains the owner's
+        try:
+            import owner_memory
+            preference = owner_memory.derive_rating_preferences(_rid(u), u)
+        except Exception as e:
+            print(f"[ask] rating preference not derived rid={_rid(u)}: {e}")
+    return {"ok": True, "feedback": row, "summary": ask_feedback_summary(_rid(u), user_id=u.get("id")),
+            "preference": preference}, 200
 
 
 def _do_good_news(u):
@@ -4116,7 +4802,58 @@ def _targets_payload(rid):
             "sched_notes": getattr(r, "sched_notes", None) or "",
             "sources": {"labor_target_pct": getattr(r, "labor_target_source", None),
                         "food_cost_target": getattr(r, "food_cost_target_source", None),
-                        "hourly_rate": getattr(r, "hourly_rate_source", None)}}
+                        "hourly_rate": getattr(r, "hourly_rate_source", None)},
+            # The owner's active goal on each metric, which every module
+            # judges against in place of the setting while it holds
+            # (owner_memory.target_for; memory audit 9/29/26, owner_goals):
+            # the card says "Your goal of 26% by 12/31/26 applies" beside it.
+            "labor": {"goal": _target_goal(rid, "labor")},
+            "food": {"goal": _target_goal(rid, "food")},
+            # Who last set each target and when (change_log), "Set by the
+            # owner on 9/12/26" — M7's attributed history.
+            "set_notes": _target_set_notes(rid)}
+
+
+def _target_goal(rid, metric):
+    """{pct, label, until, until_label, goal_id} for the active goal on
+    `metric`, or None. Never raises."""
+    try:
+        import owner_memory
+        from time_utils import mdy
+        t = owner_memory.target_for(rid, metric)
+        if not t or not isinstance(t.get("value"), (int, float)):
+            return None
+        until = t.get("until")
+        label = str(t.get("label") or "")
+        return {"pct": float(t["value"]), "label": (label[:1].upper() + label[1:]) if label else None,
+                "until": until.isoformat() if hasattr(until, "isoformat") else (until or None),
+                "until_label": mdy(until) if until else None, "goal_id": t.get("goal_id")}
+    except Exception as e:
+        print(f"[targets] goal unreadable for {rid}/{metric}: {e}")
+        return None
+
+
+def _target_set_notes(rid):
+    """{field: "Set by the owner on 9/12/26"} for each target the change log
+    has a change for. {} when it has none. Never raises."""
+    out = {}
+    try:
+        import change_log
+        from time_utils import mdy
+        # The same settable fields the targets route bounds (one list): these
+        # name change-log rows, they judge no figure against a target.
+        for field in _TARGET_BOUNDS:
+            rows = change_log.history(rid, field=field, limit=1)
+            if not rows:
+                continue
+            row = rows[0]
+            who = change_log.SOURCE_LABELS.get(row.get("source"))
+            on = mdy(row.get("changed_at")) if row.get("changed_at") else ""
+            if who or on:
+                out[field] = "Set" + (f" by {who}" if who else "") + (f" on {on}" if on else "")
+    except Exception as e:
+        print(f"[targets] change history unreadable for {rid}: {e}")
+    return out
 
 
 def _do_targets_get(u):
@@ -4238,8 +4975,27 @@ def _do_targets_set(u):
     return {"ok": True, "targets": _targets_payload(_rid(u))}, 200
 
 
+def _do_policy_notice_dismiss(u):
+    """POST /account/policy-notice/dismiss — this account holder has read
+    the notice of the updated Privacy Policy and Terms (policy_notice): it
+    stays gone on every device and location until a later change. An
+    admin's view-as dismisses nothing for the owner."""
+    import policy_notice
+    from permissions import answer_authority
+    if answer_authority(u) != "principal":
+        return _forbidden("Only the account holder can dismiss this notice.")
+    ok = policy_notice.dismiss(u)
+    try:
+        import home_brief
+        home_brief.invalidate_user(u.get("id"))
+    except Exception:
+        pass
+    return {"ok": True, "dismissed": bool(ok)}, 200
+
+
 _ROUTES = [
     # (path, methods, body, endpoint)
+    ("/account/policy-notice/dismiss", ["POST"], _do_policy_notice_dismiss, "policy_notice_dismiss"),
     ("/issues", ["GET"], _do_issues_list, "issues_list"),
     ("/issues", ["POST"], _do_issue_create, "issue_create"),
     ("/issues/<int:issue_id>/resolve", ["POST"], _do_issue_resolve, "issue_resolve"),
@@ -4251,6 +5007,8 @@ _ROUTES = [
     ("/goals", ["GET"], _do_goals_list, "goals_list"),
     ("/goals", ["POST"], _do_goal_set, "goal_set"),
     ("/goals/<int:goal_id>/end", ["POST"], _do_goal_end, "goal_end"),
+    ("/goals/<int:goal_id>/confirm", ["POST"], _do_goal_confirm, "goal_confirm"),
+    ("/goals/<int:goal_id>/decline", ["POST"], _do_goal_decline, "goal_decline"),
     ("/outcomes", ["GET"], _do_outcomes_list, "outcomes_list"),
     ("/outcomes", ["POST"], _do_outcome_record, "outcome_record"),
     ("/outcomes/<int:outcome_id>/abandon", ["POST"], _do_outcome_abandon, "outcome_abandon"),
@@ -4258,6 +5016,9 @@ _ROUTES = [
     ("/value", ["GET"], _do_value, "value_summary"),
     ("/food-cost/dish-scorecard", ["GET"], _do_dish_scorecard, "dish_scorecard"),
     ("/food-cost/reprice", ["GET"], _do_reprice, "reprice"),
+    ("/food-cost/par-suggestions", ["GET"], _do_par_suggestions, "par_suggestions"),
+    ("/reviews/<int:review_id>/retag", ["POST"], _do_review_retag, "review_retag"),
+    ("/food-cost/par-suggestions/<int:ingredient_id>/accept", ["POST"], _do_par_accept, "par_accept"),
     ("/food-cost/invoices", ["GET"], _do_invoice_list, "invoice_list"),
     ("/food-cost/invoices", ["POST"], _idempotent(_do_invoice_scan, "invoice_scan"), "invoice_scan"),
     ("/food-cost/invoices/<int:import_id>", ["GET"], _do_invoice_get, "invoice_get"),
@@ -4329,6 +5090,9 @@ _ROUTES = [
     ("/labor/shift-requests/<int:request_id>/decide", ["POST"], _do_shift_request_decide, "shift_request_decide"),
     ("/labor/learned-patterns", ["GET"], _do_learned_patterns, "learned_patterns"),
     ("/labor/learned-patterns", ["POST"], _do_learned_pattern_set, "learned_pattern_set"),
+    ("/labor/staff-notes", ["GET"], _do_staff_notes_get, "staff_notes_get"),
+    ("/labor/staff-notes", ["POST"], _do_staff_note_add, "staff_note_add"),
+    ("/labor/staff-notes/<int:note_id>", ["POST"], _do_staff_note_update, "staff_note_update"),
     ("/labor/schedule/recommendation", ["POST"], _do_recommendation_event, "schedule_recommendation_event"),
     ("/labor/standby/ask", ["POST"], _do_standby_ask, "labor_standby_ask"),
     ("/labor/intel", ["GET"], _do_schedule_intel, "schedule_intel"),
@@ -4337,8 +5101,13 @@ _ROUTES = [
     ("/account/trust", ["GET"], _do_trust, "trust"),
     ("/decisions", ["GET"], _do_decisions, "decisions"),
     ("/account/memory/forget", ["POST"], _do_memory_forget, "memory_forget"),
+    ("/account/memory/restore", ["POST"], _do_memory_restore, "memory_restore"),
+    ("/account/preferences", ["GET"], _do_preferences_get, "preferences_get"),
+    ("/account/preferences/mine", ["POST"], _do_preferences_mine, "preferences_mine"),
+    ("/account/preferences/apply-to-all", ["POST"], _do_preferences_apply_to_all, "preferences_apply_to_all"),
     ("/actions/pending", ["GET"], _do_delayed_pending, "delayed_pending"),
     ("/actions/<int:action_id>/cancel", ["POST"], _do_delayed_cancel, "delayed_cancel"),
+    ("/actions/<int:action_id>/why", ["POST"], _do_delayed_why, "delayed_why"),
     ("/account/pause", ["GET"], _do_pause_status, "pause_status"),
     ("/account/pause", ["POST"], _do_pause, "pause"),
     ("/account/resume", ["POST"], _do_resume, "resume"),
@@ -4361,11 +5130,21 @@ _ROUTES = [
     ("/dsr/<day>", ["GET"], _do_dsr_get, "dsr_get"),
     ("/dsr/<day>/status", ["GET"], _do_dsr_status, "dsr_status"),
     ("/people", ["GET"], _do_people_list, "people_list"),
+    ("/people/identity", ["GET"], _do_people_identity, "people_identity"),
+    ("/people/identity/<int:question_id>", ["POST"], _do_people_identity_answer, "people_identity_answer"),
+    ("/people/merge", ["POST"], _do_people_merge, "people_merge"),
     ("/people/<key>", ["GET"], _do_person_get, "person_get"),
     ("/people/<key>", ["POST"], _do_person_set, "person_set"),
+    ("/people/<key>/rename", ["POST"], _do_person_rename, "person_rename"),
+    ("/people/<key>/roles", ["POST"], _do_person_roles, "person_roles"),
+    ("/people/mentions", ["GET"], _do_people_mentions, "people_mentions"),
+    ("/people/mentions/<int:signal_id>", ["POST"], _do_people_mention_answer, "people_mention_answer"),
+    ("/issues/<int:issue_id>/cover-answer", ["POST"], _do_issue_cover_answer, "issue_cover_answer"),
     ("/labor/publish-check", ["GET"], _do_publish_check, "publish_check"),
     ("/account/targets", ["GET"], _do_targets_get, "targets_get"),
     ("/account/targets", ["POST"], _do_targets_set, "targets_set"),
+    ("/data-health/verify", ["POST"], _do_data_verify, "data_health_verify"),
+    ("/recs/conflict", ["POST"], _do_rec_conflict, "rec_conflict"),
 ]
 
 
