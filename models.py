@@ -8034,6 +8034,30 @@ def in_service(restaurant) -> bool:
     return (status or "").strip().lower() not in BLOCKED_BILLING_STATES
 
 
+def learning_eligible(restaurant) -> bool:
+    """Whether this restaurant may teach any learner — its own or the
+    platform's (memory audit 9/29/26, "eligibility"). Not a demo, not a test
+    account (exclude_from_learning), not internal billing. The admin's own
+    home restaurant is billing 'internal' (or should be: the audit found the
+    internal rid 1 counted as live), which the admin fix round made the rule.
+    Accepts a Restaurant, a row/dict, or an id."""
+    r = restaurant
+    if isinstance(r, int):
+        r = get_restaurant(r)
+    if r is None:
+        return False
+    def _get(k):
+        if hasattr(r, k):
+            return getattr(r, k)
+        try:
+            return r[k]
+        except (KeyError, IndexError, TypeError):
+            return None
+    if _get("is_demo") or _get("exclude_from_learning"):
+        return False
+    return (str(_get("billing_status") or "").strip().lower() != "internal")
+
+
 PAYING_BILLING_STATES = {"active", "past_due"}
 
 

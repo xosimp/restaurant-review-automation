@@ -312,6 +312,22 @@ def is_principal(user) -> bool:
     return bool(user.get("is_admin")) or has_permission(user, TEAM_INVITE)
 
 
+def answer_authority(user) -> str:
+    """Whose answer this is, for recommendation memory (memory audit 9/29/26,
+    "who_answered" and "view_as"): 'admin' for an admin or support login, or
+    anyone acting through view-as (the admin behind it is on the session as
+    acting_admin_id); 'principal' for an account holder (is_principal); else
+    'delegate' (a manager or employee login). A principal's answer governs
+    the restaurant; a delegate's silences only that login; an admin's never
+    trains the owner's preferences."""
+    if not user:
+        return "delegate"
+    if user.get("acting_admin_id") or user.get("acting_admin_role") or user.get("is_admin") \
+            or str(user.get("role") or "").strip().lower() == "support":
+        return "admin"
+    return "principal" if is_principal(user) else "delegate"
+
+
 def principal_only(user, what="this"):
     """None when `user` is an account holder, otherwise the 403 JSON response
     a route returns as-is. For the restaurant-wide switches whose blast radius
