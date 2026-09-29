@@ -686,6 +686,18 @@ private struct EvidenceStrip: View {
             if !evidence.modules.isEmpty {
                 FlowChips(labels: evidence.modules.map { ($0, Color.cavnarInk3) })
             }
+            // Advice the owner already said not for us to, repeated in the
+            // answer — kept and marked in the prose; said here once (M1).
+            if let declined = evidence.declinedLine {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 10, weight: .semibold))
+                        .accessibilityHidden(true)
+                    HomeMixedText.make(declined, size: 12.5, weight: 500, color: .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundStyle(Color.cavnarInk3)
+            }
             // How sure — the shared confidence line (K5): "72% confidence"
             // in the one colour map (low is amber, never red — CA4 F9),
             // with "Why?" when the server sent what it rests on.
@@ -886,8 +898,19 @@ private struct AskFeedbackRow: View {
         HStack(spacing: 8) {
             if let rating = message.rating {
                 Image(systemName: "checkmark").font(.system(size: 10, weight: .bold))
-                Text(rating ? "Marked useful \u{2014} thanks" : "Noted \u{2014} this goes into future answers")
-                    .font(.cavnarBody(12.5, weight: 500))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(rating ? "Marked useful \u{2014} thanks" : "Noted \u{2014} this goes into future answers")
+                        .font(.cavnarBody(12.5, weight: 500))
+                    // What the ratings now say about answer length — a
+                    // preference kept for this login, forgettable in
+                    // Account → Memory (M2).
+                    if let pref = message.preferenceNote {
+                        Text(pref)
+                            .font(.cavnarBody(12.5, weight: 600))
+                            .foregroundStyle(Color.cavnarGreen)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             } else {
                 Text("Was this useful?")
                     .font(.cavnarBody(12.5, weight: 600))

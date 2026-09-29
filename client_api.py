@@ -2838,6 +2838,11 @@ def _ask_meta(meta):
         "unsupported_names": meta.get("unsupported_names") or [],
         "validation": meta.get("validation"),
         "depth": meta.get("depth") or "standard",
+        # Suggestions in the answer the owner already said "not for us" to
+        # on some surface — kept, caveated in the prose, and listed here so
+        # a client can say so (memory round 9/29/26, M1 "relevance":
+        # decisions.annotate_declined). It stopped at _meta: no client got it.
+        "declined_repeats": meta.get("declined_repeats") or [],
     }
 
 
