@@ -42,13 +42,20 @@ def _d(v):
 
 # ── the metrics ────────────────────────────────────────────────────────────
 
+# A converted demo's own baselines never read the demo seed's synthetic days
+# (memory audit 9/29/26, "eligibility"): models.own_history_sql drops rows
+# stamped source 'seed' once the restaurant is no longer a demo. The
+# before-and-after windows, last year's same weeks and the weekday medians
+# all read through these three.
+_OWN = _models_mod.own_history_sql()
+
 def _labor_pct(rid, start, end, param, db_path):
     conn = get_conn(db_path)
     try:
         row = conn.execute(
             "SELECT SUM(labor_cost) AS labor, SUM(sales) AS sales, COUNT(*) AS n "
             "FROM labor_daily_history WHERE restaurant_id=? AND date>=? AND date<=? "
-            "AND sales IS NOT NULL AND sales > 0 AND labor_cost IS NOT NULL",
+            "AND sales IS NOT NULL AND sales > 0 AND labor_cost IS NOT NULL AND " + _OWN,
             (rid, _d(start), _d(end))).fetchone()
     finally:
         conn.close()
@@ -62,7 +69,7 @@ def _sales(rid, start, end, param, db_path):
     try:
         row = conn.execute(
             "SELECT SUM(sales) AS s, COUNT(*) AS n FROM labor_daily_history "
-            "WHERE restaurant_id=? AND date>=? AND date<=? AND sales IS NOT NULL AND sales > 0",
+            "WHERE restaurant_id=? AND date>=? AND date<=? AND sales IS NOT NULL AND sales > 0 AND " + _OWN,
             (rid, _d(start), _d(end))).fetchone()
     finally:
         conn.close()
@@ -82,7 +89,7 @@ def _weekday_sales(rid, start, end, param, db_path):
     try:
         rows = conn.execute(
             "SELECT sales FROM labor_daily_history WHERE restaurant_id=? AND date>=? AND date<=? "
-            "AND sales IS NOT NULL AND sales > 0 AND day_of_week=?",
+            "AND sales IS NOT NULL AND sales > 0 AND day_of_week=? AND " + _OWN,
             (rid, _d(start), _d(end), day)).fetchall()
     finally:
         conn.close()

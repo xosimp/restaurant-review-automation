@@ -63,58 +63,36 @@ def _cursor_set(db_path, value):
         conn.close()
 
 
-# After is_demo is turned off, the seeded history is still in the tables
-# (never hard-deleted). The longest window a feature reads is 90 days
-# (features.compute), so the restaurant stays out of cross-restaurant
-# learning until that window holds none of it.
-SEEDED_HISTORY_DAYS = 90
-
-# The one predicate (one parameter: f"-{SEEDED_HISTORY_DAYS} days"), so SQL
-# readers such as scoring.kind_stats filter exactly as real_restaurant_ids.
-# A test or internal account flagged `exclude_from_learning` (Benchmarking
-# audit #9) is out of every cross-restaurant figure exactly as a demo is.
-REAL_RESTAURANT_SQL = ("SELECT id FROM restaurants WHERE COALESCE(is_demo,0)=0 AND "
-                       "COALESCE(exclude_from_learning,0)=0 AND "
-                       "(demo_cleared_at IS NULL OR demo_cleared_at < datetime('now', ?))")
-# Its complement over the restaurants table — what readers of other tables
-# exclude (a row whose restaurant is not in the table is left alone).
-SEEDED_RESTAURANT_SQL = ("SELECT id FROM restaurants WHERE COALESCE(is_demo,0)=1 OR "
-                         "COALESCE(exclude_from_learning,0)=1 OR "
-                         "(demo_cleared_at IS NOT NULL AND demo_cleared_at >= datetime('now', ?))")
+# Who may teach cross-restaurant learning is models.learning_exclusion — the
+# ONE predicate (memory audit 9/29/26, "eligibility"): a demo, an account an
+# admin excluded, Cavnar AI's own (internal billing, only internal logins)
+# and a test account by its name, automatically, with the admin's
+# learning_override. A demo turned real is no longer quarantined for a
+# fixed 90 days (readers look back 365 days and 72 weeks): it is eligible
+# at once, and every row it recorded before its learning_since — the demo
+# era — is left out (models.learning_rows_sql, learning_since_map).
 
 
 def seeded_restaurant_ids(db_path=DB_PATH) -> set:
-    """The complement of real_restaurant_ids within the restaurants table:
-    demo accounts and recently de-flagged ones. Readers of the feature and
-    event tables drop these ids."""
-    conn = get_conn(db_path)
-    try:
-        try:
-            rows = conn.execute(SEEDED_RESTAURANT_SQL, (f"-{SEEDED_HISTORY_DAYS} days",)).fetchall()
-        except Exception:
-            rows = conn.execute("SELECT id FROM restaurants WHERE COALESCE(is_demo,0)=1").fetchall()
-    finally:
-        conn.close()
-    return {int(r["id"]) for r in rows}
+    """The restaurants that may not teach cross-restaurant learning
+    (models.learning_ineligible_ids). Readers of the feature and event
+    tables drop these ids — and, for the rest, the rows recorded before a
+    restaurant's learning_since."""
+    return _models_mod.learning_ineligible_ids(db_path=None if db_path in (None, DB_PATH) else db_path)
 
 
 def real_restaurant_ids(db_path=DB_PATH) -> set:
     """Ids of restaurants whose data may feed CROSS-restaurant learning —
     benchmarks, patterns, trends, cohort and platform rates, the privacy
-    floor's count (CA3 F7). Excluded: is_demo=1 accounts (seeded, synthetic),
-    and a restaurant whose is_demo flag was turned off less than
-    SEEDED_HISTORY_DAYS ago (restaurants.demo_cleared_at), because its
-    windows still hold the seeded rows. A restaurant's OWN screens are not
-    filtered by this — only what it contributes to everyone else's."""
+    floor's count (CA3 F7): every restaurant models.learning_exclusion
+    allows. A restaurant's OWN screens are not filtered by this — only what
+    it contributes to everyone else's."""
     conn = get_conn(db_path)
     try:
-        try:
-            rows = conn.execute(REAL_RESTAURANT_SQL, (f"-{SEEDED_HISTORY_DAYS} days",)).fetchall()
-        except Exception:
-            rows = conn.execute("SELECT id FROM restaurants WHERE COALESCE(is_demo,0)=0").fetchall()
+        ids = {int(r["id"]) for r in conn.execute("SELECT id FROM restaurants").fetchall()}
     finally:
         conn.close()
-    return {int(r["id"]) for r in rows}
+    return ids - seeded_restaurant_ids(db_path)
 
 
 def active_restaurants(db_path=DB_PATH, include_demo=False) -> list:
@@ -753,15 +731,19 @@ def log_confidence(db_path=DB_PATH, cohorts: dict = None, today: date = None) ->
     written = 0
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT restaurant_id, source_key, rec_kind, action, outcome, confidence_at, days_to_effect "
-                            "FROM intel_rec_events WHERE event_at >= ?", (since,)).fetchall()
+        rows = conn.execute("SELECT restaurant_id, source_key, rec_kind, action, outcome, confidence_at, days_to_effect, "
+                            "event_at FROM intel_rec_events WHERE event_at >= ?", (since,)).fetchall()
     finally:
         conn.close()
     groups = {}
     seeded = seeded_restaurant_ids(db_path)      # demo accounts never in a platform rate (CA3 F7)
+    since_by = _models_mod.learning_since_map(db_path=None if db_path in (None, DB_PATH) else db_path)
     for r in rows:
         if r["restaurant_id"] in seeded:
             continue
+        floor = since_by.get(r["restaurant_id"])
+        if floor and str(r["event_at"] or "") < str(floor):
+            continue                             # recorded in its demo era (learning_since)
         groups.setdefault(("platform", r["rec_kind"]), []).append(r)
         c = cohorts.get(r["restaurant_id"])
         if c:

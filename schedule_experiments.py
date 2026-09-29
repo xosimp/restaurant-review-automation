@@ -442,6 +442,16 @@ def readout(db_path=DB_PATH) -> dict:
         rows = conn.execute("SELECT history_id, restaurant_id, experiment, arm, week_start, pinned, quality_score, "
                             "solver_applied FROM schedule_experiment_weeks ORDER BY history_id DESC LIMIT 20000").fetchall()
         rows = [dict(r) for r in rows]
+        # Only weeks of restaurants that may teach — never a demo's, a test
+        # account's or Cavnar AI's own, nor a converted demo's weeks from
+        # before its learning_since: a winner called on demo regenerations
+        # would be promoted to every customer (memory audit 9/29/26,
+        # "eligibility"; models.learning_exclusion is the one predicate).
+        import models as _m_elig
+        _excluded = _m_elig.learning_ineligible_ids(conn=conn)
+        _since = _m_elig.learning_since_map(conn=conn)
+        rows = [r for r in rows if r["restaurant_id"] not in _excluded
+                and str(r["week_start"] or "") >= str(_since.get(r["restaurant_id"]) or "")[:10]]
         rids = sorted({r["restaurant_id"] for r in rows if not r["pinned"]})[:READOUT_MAX_RESTAURANTS]
         in_scope = set(rids)
         pins = [dict(r) for r in conn.execute(

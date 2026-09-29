@@ -32,8 +32,8 @@ def busiest_days(restaurant_id, days=84, db_path=DB_PATH) -> dict:
     floor = (restaurant_now_by_id(restaurant_id).date() - timedelta(days=days)).isoformat()
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT date, sales, labor_pct FROM labor_daily_history WHERE restaurant_id=? AND date >= ? AND sales > 0",
-                            (restaurant_id, floor)).fetchall()
+        rows = conn.execute("SELECT date, sales, labor_pct FROM labor_daily_history WHERE restaurant_id=? AND date >= ? "
+                            "AND sales > 0 AND " + _models_mod.own_history_sql(), (restaurant_id, floor)).fetchall()
     finally:
         conn.close()
     if len(rows) < 28:
@@ -62,8 +62,11 @@ def seasonality(restaurant_id, db_path=DB_PATH) -> dict:
     twelve distinct months, otherwise says so."""
     conn = get_conn(db_path)
     try:
+        # A converted demo's seasonality never reads the seed's synthetic
+        # year (memory audit 9/29/26, models.own_history_sql).
         rows = conn.execute("SELECT substr(date,1,7) AS ym, SUM(sales) AS s, COUNT(*) AS n FROM labor_daily_history "
-                            "WHERE restaurant_id=? AND sales > 0 GROUP BY ym ORDER BY ym", (restaurant_id,)).fetchall()
+                            "WHERE restaurant_id=? AND sales > 0 AND " + _models_mod.own_history_sql()
+                            + " GROUP BY ym ORDER BY ym", (restaurant_id,)).fetchall()
     finally:
         conn.close()
     months = {r["ym"]: float(r["s"]) / max(1, int(r["n"])) for r in rows if int(r["n"]) >= 10}

@@ -177,9 +177,13 @@ def load_waste_history(restaurant_id, limit=None, db_path=None, since=None, unti
         # of it in Python. The first query reads one small indexed column to
         # find the true week count and the cutoff; only the rows inside the
         # requested range carry their JSON across.
+        # A converted demo's own trend never reads the seed's synthetic
+        # counts (memory audit 9/29/26, models.own_history_sql).
+        import models as _m_own
+        own = _m_own.own_history_sql()
         all_days = [r["week_end"] for r in conn.execute(
             "SELECT week_end FROM inventory_history "
-            "WHERE restaurant_id=? AND week_end IS NOT NULL ORDER BY week_end ASC",
+            "WHERE restaurant_id=? AND week_end IS NOT NULL AND " + own + " ORDER BY week_end ASC",
             (restaurant_id,),
         ).fetchall()]
         # The weeks whose snapshots the retention pass has dropped (past 395
@@ -214,7 +218,7 @@ def load_waste_history(restaurant_id, limit=None, db_path=None, since=None, unti
             cutoff = first_day_of[ordered_keys[-limit]]
         lo = max([str(v)[:10] for v in (cutoff, since) if v] or [""]) or None
         sql = ("SELECT week_end, waste_json, items_json, inv_value FROM inventory_history "
-               "WHERE restaurant_id=? AND week_end IS NOT NULL")
+               "WHERE restaurant_id=? AND week_end IS NOT NULL AND " + own)
         params = [restaurant_id]
         if lo:
             sql += " AND week_end >= ?"

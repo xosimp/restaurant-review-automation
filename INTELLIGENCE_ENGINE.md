@@ -11,11 +11,20 @@ one restaurant ever seeing another's data. Written before implementation
    holds only ratios, rates and counts per restaurant-week — and every
    figure that leaves it is an aggregate over a cohort of at least
    `MIN_COHORT` (5) restaurants. Below that the answer is "not enough
-   similar restaurants", never a number. Demo accounts are never in a
-   cohort, a platform rate or the MIN_COHORT count: `jobs.seeded_restaurant_ids`
-   (`is_demo`, or de-flagged under `SEEDED_HISTORY_DAYS` ago) is left out by
-   `active_restaurants`, `features.latest_by_restaurant`/`weekly_by_restaurant`,
-   `scoring.kind_stats` and the confidence log (CA3 F7).
+   similar restaurants", never a number. Demo, test and internal accounts
+   are never in a cohort, a platform rate or the MIN_COHORT count:
+   `jobs.seeded_restaurant_ids` is `models.learning_ineligible_ids` — the one
+   predicate, `models.learning_exclusion` (a demo; `exclude_from_learning`;
+   internal billing; a restaurant whose every login is internal; a
+   test-pattern name — automatically, with the admin's `learning_override`)
+   — left out by `active_restaurants`, `features.latest_by_restaurant` /
+   `weekly_by_restaurant`, `scoring.kind_stats` / `similar_prior` /
+   `rank_kinds` / `platform_totals` and the confidence log (CA3 F7; memory
+   audit 9/29/26). A demo turned real is eligible at once; every row it
+   recorded before its `learning_since` is left out, for good
+   (`models.learning_rows_sql`; it replaced a 90-day quarantine). A deleted
+   restaurant's rows under a tombstoned (negative) id still count
+   (`DATABASE_SCHEMA.md` → *What delete_restaurant keeps*).
 3. **Nothing is generated to fill a gap.** A pattern exists only when a
    permutation test and a false-discovery correction say so; a benchmark
    only when the cohort is large enough; a confidence score only from
@@ -55,7 +64,7 @@ other modules need.
 |---|---|---|
 | `restaurants.category` | the owner's or admin's category (taxonomy in `categories.py`); inferred from name/vibe/menu when unset and labelled so | own row |
 | `restaurants` profile columns (Benchmarking #7) | `service_model` (counter / full_service / bar_led / daytime), `concept` (a taxonomy value), `bar_led`, `ownership` (independent / franchise / corporate), `opened_year`, `profile_source` (set / inferred), `profile_confirmed_at`; `google_types` + `google_price_level` (the restaurant's own listing, a cross-check for the guess only) | own row; the peer partition is built from the CONFIRMED profile only |
-| `restaurants.exclude_from_learning` | a test or internal account: out of every cross-restaurant figure exactly as a demo is (`jobs.REAL_RESTAURANT_SQL`) | — |
+| `restaurants.exclude_from_learning`, `learning_override`, `learning_since` | a test or internal account: out of every learner exactly as a demo is (`models.learning_exclusion`; `learning_override` 'include' / 'exclude' is the admin's word over the automatic rule); rows recorded before `learning_since` teach nothing | — |
 | `restaurants.labor_target_source`, `food_cost_target_source` | set / seeded / default — where a target came from (#13) | own row |
 | `intel_features` | one row per restaurant-week: `features_json` of ratios, rates and counts; `completeness` 0–1 | no names, no dollars, no people; tenant-keyed |
 | `intel_rec_events` | one row per recommendation event: kind, action (presented / done / not for us / hidden / snoozed / accepted / tracking / implemented / measured / confirmed / dismissed / auto / ignored), outcome (improved / worsened / no clear change / unknown), days to effect, confidence at the time | kind is a key prefix, never text |
