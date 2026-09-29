@@ -2615,11 +2615,111 @@ def _do_ratings_match(u):
         return {"ok": False, "error": "Pick a name from the roster."}, 400
     if rated.lower() != target.lower() and rated.lower() in {e["name"].strip().lower() for e in everyone}:
         return {"ok": False, "error": f"{rated} is on your roster (deactivated) — their rating stays theirs."}, 409
-    moved = rename_capability_holder(_rid(u), rated, target)
-    if moved is None:
+    from models import get_capabilities
+    have = {_ss.name_key(n): set(v) for n, v in (get_capabilities(_rid(u)) or {}).items()}
+    if have.get(_ss.name_key(rated), set()) & have.get(_ss.name_key(target), set()):
         return {"ok": False, "error": f"{target} already has a rating. Remove one of them first."}, 409
+    # One person now, not just one rating (memory audit 9/29/26, identity):
+    # the rated name's settings, minor band, notes, availability and the
+    # rest follow the rating onto the roster name — the old repair moved
+    # staff_capabilities rows and left everything else stranded.
+    import people as _people
+    a = _people.person_id_for(_rid(u), rated)
+    z = _people.person_id_for(_rid(u), target)
+    if a and z and a != z:
+        try:
+            out = _people.merge_people(_rid(u), a, z, actor_user_id=u.get("id"), source=_people.change_source(u))
+        except _people.PeopleError as e:
+            return {"ok": False, "error": str(e)}, 409
+        moved = int((out.get("moved") or {}).get("staff_capabilities") or 0)
+    else:
+        moved = rename_capability_holder(_rid(u), rated, target)
+        if moved is None:
+            return {"ok": False, "error": f"{target} already has a rating. Remove one of them first."}, 409
     log_account_event(_rid(u), "rating_matched", current_user=u, detail=f"{rated} → {target}")
     return {"ok": True, "moved": moved}, 200
+
+
+# ── who is who (memory audit 9/29/26, identity) ─────────────────────────────
+
+def _do_people_identity(u):
+    """The questions only the owner answers: two records that may be one
+    person ("Kim T." / "Kim Tran"), or two people the POS spells alike.
+    Nothing is ever merged on a guess."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see the team.")
+    import people as _people
+    return {"ok": True, "questions": _people.open_questions(_rid(u)), "can_answer": _principal(u)}, 200
+
+
+def _do_people_identity_answer(u, question_id):
+    """{same: true|false, keep?: person_id} — "same person" merges them
+    (every rating, setting, note and shift follows), "different people"
+    closes the question for good."""
+    if not _principal(u):
+        return _forbidden("Only the account owner can decide who is the same person.")
+    import people as _people
+    b = _body()
+    if not isinstance(b.get("same"), bool):
+        return {"ok": False, "error": "same is true or false"}, 400
+    keep = b.get("keep") if isinstance(b.get("keep"), int) else None
+    try:
+        out = _people.answer_question(_rid(u), int(question_id), b["same"], user=u, keep=keep)
+    except _people.PeopleError as e:
+        return {"ok": False, "error": str(e)}, 409
+    from client_api import log_account_event
+    log_account_event(_rid(u), "people_identity_answered", current_user=u,
+                      detail=(f"{out.get('from')} → {out.get('into')}" if out.get("status") == "merged"
+                              else f"question {question_id}: different people"))
+    return {"ok": True, **{k: v for k, v in out.items() if k != "ok"}}, 200
+
+
+def _do_people_merge(u):
+    """{from, into} — two people keys (the list's) the owner says are one
+    person: `from`'s records all move onto `into`."""
+    if not _principal(u):
+        return _forbidden("Only the account owner can merge two people.")
+    import people as _people
+    b = _body()
+    try:
+        a = _people.find(_rid(u), b.get("from"))
+        z = _people.find(_rid(u), b.get("into"))
+    except _people.AmbiguousPerson as e:
+        return {"ok": False, "error": str(e)}, 409
+    if not a or not z:
+        return {"ok": False, "error": "Pick two people from the list."}, 400
+    pa = _people.person_id_for(_rid(u), a["name"])
+    pz = _people.person_id_for(_rid(u), z["name"])
+    try:
+        out = _people.merge_people(_rid(u), pa, pz, actor_user_id=u.get("id"), source=_people.change_source(u))
+    except _people.PeopleError as e:
+        return {"ok": False, "error": str(e)}, 409
+    from client_api import log_account_event
+    log_account_event(_rid(u), "people_merged", current_user=u, detail=f"{out['from']} → {out['into']}")
+    return {"ok": True, **{k: v for k, v in out.items() if k != "ok"}}, 200
+
+
+def _do_person_rename(u, key):
+    """{name} — the owner renames a person; every store follows and the old
+    spelling stays an alias (a later upload under it still finds them)."""
+    if not _principal(u):
+        return _forbidden("Only the account owner can rename someone.")
+    import people as _people
+    try:
+        p = _people.find(_rid(u), key)
+    except _people.AmbiguousPerson as e:
+        return {"ok": False, "error": str(e)}, 409
+    if not p:
+        return {"ok": False, "error": "That person isn't on the roster."}, 404
+    pid = _people.person_id_for(_rid(u), p["name"])
+    try:
+        out = _people.rename_person(_rid(u), pid, _body().get("name"), actor_user_id=u.get("id"),
+                                    source=_people.change_source(u))
+    except _people.PeopleError as e:
+        return {"ok": False, "error": str(e)}, 409
+    from client_api import log_account_event
+    log_account_event(_rid(u), "person_renamed", current_user=u, detail=f"{out['from']} → {out['to']}")
+    return {"ok": True, "from": out["from"], "to": out["to"], "key": _people.person_key(out["to"])}, 200
 
 
 def _roster_roles(rid) -> dict:
@@ -4460,8 +4560,12 @@ _ROUTES = [
     ("/dsr/<day>", ["GET"], _do_dsr_get, "dsr_get"),
     ("/dsr/<day>/status", ["GET"], _do_dsr_status, "dsr_status"),
     ("/people", ["GET"], _do_people_list, "people_list"),
+    ("/people/identity", ["GET"], _do_people_identity, "people_identity"),
+    ("/people/identity/<int:question_id>", ["POST"], _do_people_identity_answer, "people_identity_answer"),
+    ("/people/merge", ["POST"], _do_people_merge, "people_merge"),
     ("/people/<key>", ["GET"], _do_person_get, "person_get"),
     ("/people/<key>", ["POST"], _do_person_set, "person_set"),
+    ("/people/<key>/rename", ["POST"], _do_person_rename, "person_rename"),
     ("/labor/publish-check", ["GET"], _do_publish_check, "publish_check"),
     ("/account/targets", ["GET"], _do_targets_get, "targets_get"),
     ("/account/targets", ["POST"], _do_targets_set, "targets_set"),

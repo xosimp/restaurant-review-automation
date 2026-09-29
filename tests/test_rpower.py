@@ -421,8 +421,12 @@ def test_the_shifts_csv_matches_what_labor_already_parses(db_path, monkeypatch):
     monkeypatch.setattr(rpower, "fetch_business_days", lambda r, s, e: {"2026-09-10": 4200.0})
     csv_str = rpower.build_shifts_csv(rid, days=7)
     header = csv_str.splitlines()[0]
+    # The employee's own RPOWER ids travel with each shift (memory audit
+    # 9/29/26, identity), and whether the row carries a real schedule
+    # (attendance): RPOWER's never does.
     assert header == ("date,day,employee,role,shift_start,shift_end,"
-                      "scheduled_hours,actual_hours,sales,notes,pay_rate")
+                      "scheduled_hours,actual_hours,sales,notes,pay_rate,"
+                      "employee_ext_id,employee_payroll_id,employee_named,schedule_known")
 
 
 def test_shifts_carry_the_stores_job_and_employee_names_not_its_codes(db_path, monkeypatch):

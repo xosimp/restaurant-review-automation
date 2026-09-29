@@ -3323,6 +3323,14 @@ def init_db(db_path: str = DB_PATH):
     # attribution columns — at boot, never on a call path (fix round G).
     from ai_utils import init_ai_ops
     init_ai_ops(db_path)
+    # People: one identity per employee, their aliases (POS ids and
+    # spellings), the owner's same-person questions, and a person_id on
+    # every name-keyed store — after every store's own init above (memory
+    # audit 9/29/26, identity).
+    from shift_facts import init_shift_facts
+    init_shift_facts(db_path)
+    import people as _people_boot
+    _people_boot.init_people(db_path)
     # Runs after ensure_columns() so organization_id exists to write into.
     backfill_organizations(db_path=db_path)
     # A target seeded from a figure the registry no longer seeds from goes
@@ -3337,6 +3345,15 @@ def init_db(db_path: str = DB_PATH):
         backfill_labor_periods(db_path=db_path)
     except Exception as e:
         print(f"[labor periods] boot backfill skipped: {e}")
+    # Every restaurant with staff gets its people once — from its shift
+    # history's names and every store — bounded; the nightly people job
+    # reaches whatever this did not (memory audit 9/29/26, identity).
+    try:
+        _people_boot.backfill_people(db_path=db_path, max_seconds=15)
+        import shift_facts as _sf_boot
+        _sf_boot.backfill_from_csv(db_path=db_path, max_seconds=15)
+    except Exception as e:
+        print(f"[people] boot backfill skipped: {e}")
     print(f"Database initialised at {db_path}")
 
 

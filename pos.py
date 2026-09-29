@@ -406,33 +406,18 @@ def save_synced_shifts(restaurant_id, csv_str, source):
       Square and Clover restaurants never accumulated history (MOD-LAB-8).
     Returns the number of shift rows the synced window carried. Serialized
     by _WRITE_LOCK (the sweep's fetches run four at a time)."""
-    import csv as _csv
-    import io as _io
     from datetime import datetime, timezone
-    from labor import load_shifts, drop_future_shifts
-    from models import get_client_data, save_client_data
-    # A provider row dated after the restaurant's today is a clock or data
-    # error, never stored (re-audit B3#4 — the upload refuses it too).
-    new_rows = drop_future_shifts(load_shifts(csv_string=csv_str), restaurant_id=restaurant_id)
-    dates = sorted({r["date"] for r in new_rows if r.get("date")})
-    merged = list(new_rows)
-    if dates:
-        lo, hi = dates[0], dates[-1]
-        prior = (get_client_data(restaurant_id) or {}).get("shifts_csv") or ""
-        if prior.strip():
-            kept = [r for r in load_shifts(csv_string=prior) if not (lo <= (r.get("date") or "") <= hi)]
-            merged = kept + merged
-    merged.sort(key=lambda r: (r.get("date") or "", str(r.get("shift_start") or "")))
-    fields = []
-    for r in merged:
-        for k in r:
-            if k not in fields:
-                fields.append(k)
-    buf = _io.StringIO()
-    w = _csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore")
-    w.writeheader()
-    w.writerows(merged)
-    save_client_data(restaurant_id, "shifts", buf.getvalue(), source=source)
+    from labor import load_shifts
+    import shift_facts
+    # The one ingest every sync and upload goes through (memory audit
+    # 9/29/26, shift_facts / identity): future-dated rows dropped (re-audit
+    # B3#4), each row given its person — the POS's own id first, then the
+    # exact name — the stored file merged (outside the synced dates
+    # everything is kept, MOD-LAB-18) and the per-shift history written.
+    got = shift_facts.ingest(restaurant_id, load_shifts(csv_string=csv_str), source)
+    # The window's rows as stored — each spelled the way its person is.
+    new_rows = got.get("resolved") or []
+    dates = list(got["window"]) if got.get("window") else []
     try:
         # Inside the synced window the POS is the record: a remembered name
         # it no longer carries was a code or a station login (schedule_intel).
@@ -469,7 +454,7 @@ def save_synced_shifts(restaurant_id, csv_str, source):
         client_api.invalidate_insight_cache(restaurant_id)
     except Exception as e:
         log.warning(f"[{source} sync] insight cache not cleared: {e}")
-    return len(new_rows)
+    return int(got.get("rows") or 0)
 
 
 def connection_status(restaurant_id):

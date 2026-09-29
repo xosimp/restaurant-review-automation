@@ -394,6 +394,9 @@ def test_a_failed_history_write_is_reported_and_the_upload_is_atomic(db_path, mo
     c.set_cookie("session_token", create_session(owner, db_path=db_path))
     c.set_cookie("csrf_js", CSRF)
     assert _upload(c, FIRST_UPLOAD).get_json()["ok"] is True
+    # Stored as the one ingest stores every file — normalised, the way a
+    # sync always was (memory audit 9/29/26, shift_facts).
+    first_stored = (models.get_client_data(rid, db_path=db_path) or {}).get("shifts_csv")
 
     def history_write_fails(*a, **k):
         raise sqlite3.OperationalError("database is locked")
@@ -402,7 +405,7 @@ def test_a_failed_history_write_is_reported_and_the_upload_is_atomic(db_path, mo
     body = _upload(c, SECOND_UPLOAD).get_json()
 
     stored = (models.get_client_data(rid, db_path=db_path) or {}).get("shifts_csv")
-    assert stored == FIRST_UPLOAD, "the new CSV is live while the daily history YoY generation reads is the old one"
+    assert stored == first_stored, "the new CSV is live while the daily history YoY generation reads is the old one"
     assert body.get("ok") is not True, "the upload reported success with its history write lost"
 
 

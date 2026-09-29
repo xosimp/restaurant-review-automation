@@ -5634,11 +5634,21 @@ def _do_upload_data(restaurant_id, data_type, f, current_user, source="upload", 
     # still reported success (DATA-62). The previous CSV is kept, and put
     # back if the history cannot be written.
     _prev_shifts = None
+    _window = None
     if data_type == "shifts":
         from models import get_client_data as _gcd_prev
         _prev_row = _gcd_prev(restaurant_id) or {}
         _prev_shifts = (_prev_row.get("shifts_csv"), _prev_row.get("shifts_source") or "upload")
-    save_client_data(restaurant_id, data_type, csv_content, source=source)
+        # The one ingest a sync uses too (memory audit 9/29/26, shift_facts):
+        # each row given its person, and inside this file's dates the file
+        # is the record while everything outside them is KEPT — an upload
+        # used to replace the whole history, so a year of shifts became the
+        # two weeks just uploaded.
+        import shift_facts as _sf_up
+        _got = _sf_up.ingest(restaurant_id, _shift_rows, "admin_upload" if operator else source)
+        _window = _got.get("window")
+    else:
+        save_client_data(restaurant_id, data_type, csv_content, source=source)
     # The AI insight is cached for five minutes with no invalidation, so a
     # fresh upload showed the previous data's narrative beside the new
     # data's numbers on the same screen. Drop it on write.
@@ -5663,6 +5673,10 @@ def _do_upload_data(restaurant_id, data_type, f, current_user, source="upload", 
                 _ops_dh.capture(_dh_e, job="shifts_upload_history", context=f"restaurant_id={restaurant_id}")
                 try:
                     save_client_data(restaurant_id, "shifts", _prev_shifts[0], source=_prev_shifts[1])
+                    if _window:
+                        import shift_facts as _sf_rb
+                        _sf_rb.rewrite_window_from_csv(restaurant_id, _prev_shifts[0], _window[0], _window[1],
+                                                       _prev_shifts[1])
                     invalidate_insight_cache(restaurant_id)
                     _restored = True
                 except Exception as _rb_e:

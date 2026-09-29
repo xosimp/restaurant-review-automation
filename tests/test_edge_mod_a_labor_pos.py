@@ -308,7 +308,8 @@ def test_an_open_toast_clock_in_is_not_a_no_show(db_path):
     entries.append(_entry("g1", "Sam", "Close", "2026-09-21T23:00:00.000+0000", sched=sched(21)))
     buf = io.StringIO()
     w = csv.DictWriter(buf, fieldnames=["date", "day", "employee", "role", "shift_start", "shift_end",
-                                        "scheduled_hours", "actual_hours", "sales", "notes"])
+                                        "scheduled_hours", "actual_hours", "sales", "notes"],
+                       extrasaction="ignore")      # rows carry the employee's ids too (identity, 9/29/26)
     w.writeheader()
     w.writerows(toast.normalise_entries(entries, {}))
     models.save_client_data(rid, "shifts", buf.getvalue(), db_path=db_path)

@@ -1137,19 +1137,33 @@ def normalise_entries(time_entries: list, sales_by_date: dict, people: dict = No
             notes.append(f"DT {dt_h:g}h")
         if e.get("break_minutes"):
             notes.append(f"break {int(e['break_minutes'])}m")
+        mid = str(e.get("emp_mid") or "").strip()
+        named = mid in emp_names
         rows.append({
             "date": day,
             "day": _DOW_NAMES[start.weekday()],
-            "employee": (emp_names.get(str(e.get("emp_mid") or ""))
+            "employee": (emp_names.get(mid)
                          or (e.get("payroll_id") or e.get("emp_mid") or "").strip()),
+            # The employee's own RPOWER ids (memory audit 9/29/26, identity):
+            # the record id every punch carries, and the payroll id the
+            # schedule write-back needs. A name can change; these do not —
+            # people.resolve_rows keys the person on them. `employee_named`
+            # is "0" when the name above is the payroll-code fallback, so a
+            # code never renames a person.
+            "employee_ext_id": mid,
+            "employee_payroll_id": str(e.get("payroll_id") or "").strip(),
+            "employee_named": "1" if named else "0",
             "role": (job_names.get(str(e.get("job_mid") or ""))
                      or (e.get("job_id") or "").strip()),
             "shift_start": start.strftime("%H:%M"),
             "shift_end": end.strftime("%H:%M"),
             # RPOWER's timeclock is what was WORKED. It carries no schedule,
             # so scheduled_hours is left equal to actual rather than invented
-            # — a fabricated variance is worse than none.
+            # — a fabricated variance is worse than none — and
+            # `schedule_known` says so: no attendance reader may read a
+            # no-show out of it (memory audit 9/29/26, attendance).
             "scheduled_hours": actual,
+            "schedule_known": "0",
             "actual_hours": actual,
             "sales": sales_by_date.get(day, ""),
             "notes": ", ".join(notes),
@@ -1181,7 +1195,8 @@ def build_shifts_csv(restaurant_id: int, days: int = 60) -> Optional[str]:
     if not rows:
         return ""
     fieldnames = ["date", "day", "employee", "role", "shift_start", "shift_end",
-                  "scheduled_hours", "actual_hours", "sales", "notes", "pay_rate"]
+                  "scheduled_hours", "actual_hours", "sales", "notes", "pay_rate",
+                  "employee_ext_id", "employee_payroll_id", "employee_named", "schedule_known"]
     buf = _io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=fieldnames)
     writer.writeheader()
@@ -1305,8 +1320,19 @@ def push_labor_schedule(restaurant_id: int, shifts: list, job_codes: dict = None
     token, base = _ctx(restaurant_id)
     by_employee = {}
     skipped = []
+    # A person's payroll id is kept now (people.person_aliases, source
+    # rpower_payroll — memory audit 9/29/26, identity): a Cavnar schedule
+    # names people, and the push can find each one's id.
+    try:
+        import people as _people
+        import staff_settings as _ss
+        _payroll = _people.external_ids(restaurant_id, "rpower_payroll")
+    except Exception:
+        _payroll, _ss = {}, None
     for s in shifts or []:
         pid = (s.get("employee_payroll_id") or s.get("payroll_id") or "").strip()
+        if not pid and _ss is not None and s.get("employee"):
+            pid = str(_payroll.get(_ss.name_key(s.get("employee"))) or "").strip()
         job = (s.get("job") or s.get("role") or "").strip()
         # The sync stores the job's NAME as the role ("Server AM"); RPOWER's
         # push wants its code. Pass fetch_job_codes() to translate.

@@ -86,7 +86,7 @@ def _local_midnight_utc(restaurant_id, day_iso, db_path=DB_PATH) -> str:
 # every acceptance figure that could only ever expire "ignored" — a shift
 # request answered in Labor left its episode open (re-audit C7). They are
 # listed, snoozable, and never enter the ledger.
-TASK_KEY_PREFIXES = ("issue:", "shift_request:", "time_off:", "invoice:", "staff_note:")
+TASK_KEY_PREFIXES = ("issue:", "shift_request:", "time_off:", "invoice:", "staff_note:", "people:")
 
 
 def is_task(key) -> bool:
@@ -437,6 +437,23 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
                 {"label": "Review them", "module": "labor"},
                 detail=", ".join(names[:3]) + (f" and {len(names) - 3} more" if len(names) > 3 else ""),
                 module="labor", count=len(stale))
+
+    # ── who is who: records that may be one person (memory audit 9/29/26,
+    # identity) — a rating under "Kim Tran" judges nobody while the roster
+    # says "Kim T.", so the owner is asked; nothing is merged on a guess.
+    if getattr(restaurant, "module_labor", 0) and _sees(viewer, "labor"):
+        try:
+            import people as _people_q
+            qs = _people_q.open_questions(restaurant_id, db_path=db_path)
+        except Exception:
+            qs = []
+        if qs:
+            first = qs[0]
+            add("people:identity", "people",
+                (f"Is {first['a']['name']} the same person as {first['b']['name']}?" if len(qs) == 1 else
+                 f"{len(qs)} people on your team may be listed twice — same person?"),
+                "watch", {"label": "Answer", "module": "labor"},
+                detail=first.get("reason"), module="labor", count=len(qs))
 
     hidden = _snoozed(restaurant_id, today, db_path)
     rank = {"critical": 0, "important": 1, "watch": 2}
