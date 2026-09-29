@@ -130,7 +130,8 @@ SECTION_TITLES = {
     "events": "WHAT EVENTS, WEATHER AND CAMPAIGNS HAVE DONE HERE",
     "people": "THE PEOPLE",
     "marketing": "MARKETING MEMORY",
-    "conversation": "EARLIER IN THIS CONVERSATION (a summary — use it to resolve what the owner refers back to)",
+    "conversation": ("EARLIER IN THIS CONVERSATION, AND WHAT THIS PERSON OFTEN ASKS (notes on turns no longer shown, "
+                     "what your last answer read — use them to resolve what they refer back to)"),
 }
 
 # Relevance: a line about a subject in play outranks any weight a provider
