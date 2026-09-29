@@ -32,7 +32,9 @@ def _scripts(page):
 
 
 def _api_helper(page):
-    m = re.search(r"async function api\(path, opts\)\{(.*?)\n", page)
+    # The whole body: since the fix-round plumbing (9/29/26) api() takes the
+    # step-up retry arguments and spans several lines.
+    m = re.search(r"async function api\(path, opts[^)]*\)\{(.*?)\n\}\n", page, re.S)
     assert m, "the admin api() helper moved"
     return m.group(1)
 

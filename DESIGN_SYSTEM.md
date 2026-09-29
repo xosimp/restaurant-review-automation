@@ -1209,6 +1209,32 @@ never with text: the rebuild cut the visible text across its screens by 69%
 - **Actions menu** (`.menu`, `menuToggle`) — a client's 25 actions in one
   searchable menu, grouped, the danger zone red and last; every action still
   confirms.
+- **Honest reads (fix round, 9/29/26).** A figure whose read failed is the
+  dimmed word "unknown" (`unknownV`, `figOr(d, tables, html)` — the failure
+  names the table), never 0 or "all clear"; a payload with failed reads gets
+  the amber line (`errBanner`) and every fleet header its age (`asOf`). A
+  platform system whose read failed is a grey ring segment, never green; the
+  others are green / amber / red by their own thresholds. The rail polls the
+  slim badges read; when a poll fails it keeps the last counts, dimmed
+  (`.rail.stale`), and the heartbeat says "unknown" with when it last read.
+- **Writes say what really happened.** Every write control carries `.w`
+  (hidden for a support login). Its confirm names the client or the
+  recipient; the toast is the server's own sentence (`say(d)`) — its `error`
+  on any non-2xx, never "done" for a 409 or a 502. An action that starts a
+  background job follows it to its end (`pollJob`), and a value handed over
+  once (a new password) opens in the Shown-once box.
+- **A form an action needs** opens in one modal (`formOpen(spec)`: fields,
+  the go button, `submit` returning the server's answer); a refusal keeps it
+  open with the server's sentence under the buttons.
+- **A tab's extra reads load after first paint** (`lazy(id, fn)`): the card
+  shows skeleton lines, then its content, or its own amber line if its read
+  failed — one slow or broken panel never blanks the page.
+- **Server-paged lists** end in a pager row (`.pager`: "N rows · page X of
+  Y", Previous / Next); filters and search go to the server, counts come
+  from the full set.
+- **Spend against a ceiling** is a `.meter` tile: spend of budget, a bar
+  (green, amber past the warning line, red when stopped) and when it resets
+  (M/D/YY).
 - **Cmd-K / `/`** opens one palette: every page and action, and the fleet
   search.
 - **A page's reads belong to the visit that asked** (`api()` and `_seq`): a
