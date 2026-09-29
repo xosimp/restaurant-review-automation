@@ -373,7 +373,7 @@ body.role-support .w{display:none!important}
     <div id="m-toast-status" class="sub"></div>
     <label>Client ID</label><input id="t-cid"><label>Client secret</label><input id="t-sec" type="password"><label>Restaurant GUID</label><input id="t-guid">
     <div class="dim">Toast Admin → Integrations → API Access → a credential set with Labor and Orders.</div>
-    <div style="display:flex;gap:8px;margin-top:6px"><button class="btn p" onclick="toastSave()">Test &amp; save</button><button class="btn" onclick="toastSync()">Sync now</button><button class="btn d" onclick="toastDisconnect()">Disconnect</button></div>
+    <div style="display:flex;gap:8px;margin-top:6px"><button class="btn p w" onclick="toastSave()">Test &amp; save</button><button class="btn w" onclick="toastSync()">Sync now</button><button class="btn d w" onclick="toastDisconnect()">Disconnect</button></div>
   </div>
 </div></div>
 <!-- RPOWER. A token, not a credential set: RPOWER issues one to Cavnar as
@@ -387,26 +387,32 @@ body.role-support .w{display:none!important}
     <div id="m-rpower-status" class="sub"></div>
     <label>Authorization token</label><input id="rp-token" type="password" placeholder="Bearer token from RPOWER">
     <div class="dim">Issued by RPOWER to Cavnar AI (integrations@rpower.com). The store resolves once the token verifies.</div>
-    <div id="rp-stores" style="display:none;margin-top:8px"><label>Which store is this restaurant?</label><select id="rp-store"></select><button class="btn p" style="margin-top:8px" onclick="rpowerBind()">Bind store</button></div>
-    <div style="display:flex;gap:8px;margin-top:6px"><button class="btn p" onclick="rpowerSave()">Verify &amp; save</button><button class="btn" onclick="rpowerSync()">Sync now</button><button class="btn d" onclick="rpowerDisconnect()">Disconnect</button></div>
+    <div id="rp-stores" style="display:none;margin-top:8px"><label>Which store is this restaurant?</label><select id="rp-store"></select><button class="btn p w" style="margin-top:8px" onclick="rpowerBind()">Bind store</button></div>
+    <div style="display:flex;gap:8px;margin-top:6px"><button class="btn p w" onclick="rpowerSave()">Verify &amp; save</button><button class="btn w" onclick="rpowerSync()">Sync now</button><button class="btn d w" onclick="rpowerDisconnect()">Disconnect</button></div>
   </div>
 </div></div>
+<!-- Branding & peer profile (#23): filled from the client's own stored values
+     on open, only changed fields are sent (with the version it loaded), an
+     emptied field is cleared on purpose, and it is reset on close — it used to
+     carry the previous client's values onto the next. -->
 <div class="mo" id="m-brand"><div class="mb">
-  <div class="mh"><h2>Branding &amp; peer profile</h2><button class="x" onclick="closeModal('m-brand')" aria-label="Close">✕</button></div>
-  <div class="fl"><label>Brand name</label><input id="b-name"><label>Brand color (hex)</label><input id="b-color" placeholder="#c84b2f"><label>Logo URL</label><input id="b-logo">
-  <div class="lbl" style="margin-top:10px">Peer profile — blank service model keeps the current one</div>
-  <label>Service model</label><select id="b-sm"><option value="">— keep current —</option><option value="counter">Counter service</option><option value="full_service">Full service</option><option value="bar_led">Bar-led</option><option value="daytime">Daytime (café, bakery, breakfast)</option></select>
-  <label>Concept</label><select id="b-concept"><option value="">—</option><option value="sports_bar">Sports bar</option><option value="bar">Bar</option><option value="fine_dining">Fine dining</option><option value="steakhouse">Steakhouse</option><option value="pizza">Pizza</option><option value="italian">Italian</option><option value="mexican">Mexican</option><option value="breakfast">Breakfast &amp; brunch</option><option value="coffee_shop">Coffee shop</option><option value="fast_casual">Fast casual</option><option value="cafe">Café</option><option value="bakery">Bakery</option><option value="seafood">Seafood</option><option value="sushi">Sushi</option><option value="asian">Asian</option><option value="bbq">BBQ</option><option value="burgers">Burgers</option><option value="brewery">Brewery</option><option value="wine_bar">Wine bar</option><option value="family">Family restaurant</option><option value="other">Other</option></select>
+  <div class="mh"><h2 id="b-title">Branding &amp; peer profile</h2><button class="x" onclick="brandClose()" aria-label="Close">✕</button></div>
+  <div class="fl"><div class="sub" id="b-load"></div><label>Brand name</label><input id="b-name"><label>Brand color (hex)</label><input id="b-color" placeholder="#c84b2f"><label>Logo URL</label><input id="b-logo" placeholder="https://…">
+  <div class="dim">A field you leave as it is isn't sent. Emptying one clears it.</div>
+  <div class="lbl" style="margin-top:10px">Peer profile</div>
+  <label>Service model</label><select id="b-sm"><option value="">Not set</option><option value="counter">Counter service</option><option value="full_service">Full service</option><option value="bar_led">Bar-led</option><option value="daytime">Daytime (café, bakery, breakfast)</option></select>
+  <label>Concept</label><select id="b-concept"><option value="">Not set</option><option value="sports_bar">Sports bar</option><option value="bar">Bar</option><option value="fine_dining">Fine dining</option><option value="steakhouse">Steakhouse</option><option value="pizza">Pizza</option><option value="italian">Italian</option><option value="mexican">Mexican</option><option value="breakfast">Breakfast &amp; brunch</option><option value="coffee_shop">Coffee shop</option><option value="fast_casual">Fast casual</option><option value="cafe">Café</option><option value="bakery">Bakery</option><option value="seafood">Seafood</option><option value="sushi">Sushi</option><option value="asian">Asian</option><option value="bbq">BBQ</option><option value="burgers">Burgers</option><option value="brewery">Brewery</option><option value="wine_bar">Wine bar</option><option value="family">Family restaurant</option><option value="other">Other</option></select>
   <label><input type="checkbox" id="b-bar"> Bar-led (alcohol is about 40% or more of sales)</label>
-  <label>Ownership</label><select id="b-own"><option value="">—</option><option value="independent">Independent</option><option value="franchise">Franchise</option><option value="corporate">Corporate / chain-owned</option></select>
+  <label>Ownership</label><select id="b-own"><option value="">Not set</option><option value="independent">Independent</option><option value="franchise">Franchise</option><option value="corporate">Corporate / chain-owned</option></select>
   <label>Year opened</label><input id="b-opened" inputmode="numeric" placeholder="2019">
-  <label>Cross-restaurant learning</label><select id="b-excl"><option value="">— keep current —</option><option value="0">Include in benchmarks and patterns</option><option value="1">Test or internal account — leave out of every cross-restaurant figure</option></select>
-  <div style="display:flex;gap:8px;margin-top:6px;align-items:center"><button class="btn p" onclick="brandSave()">Save</button><span class="sub" id="b-status"></span></div></div>
+  <label>Cross-restaurant learning</label><select id="b-excl"><option value="0">Include in benchmarks and patterns</option><option value="1">Test or internal account — leave out of every cross-restaurant figure</option></select>
+  <div style="display:flex;gap:8px;margin-top:6px;align-items:center"><button class="btn p w" id="b-save" onclick="brandSave()">Save</button><span class="sub" id="b-status"></span></div></div>
 </div></div>
+<!-- Review import (#149): the platform's own columns, into THIS client -->
 <div class="mo" id="m-import"><div class="mb">
   <div class="mh"><h2 id="m-import-title">Import reviews CSV</h2><button class="x" onclick="closeModal('m-import')" aria-label="Close">✕</button></div>
-  <div class="fl"><div class="dim">Columns: <b>rating</b> and <b>text</b>; optional author, date, title. AI drafting runs after import.</div>
-  <input type="file" id="i-file" accept=".csv"><div style="display:flex;gap:8px;align-items:center"><button class="btn p" onclick="importSubmit()">Upload &amp; import</button><a class="btn" href="/admin/inventory-template">Template</a><span class="sub" id="i-status"></span></div></div>
+  <div class="fl"><div class="dim" id="i-cols">Columns: <b>rating</b> and <b>text</b>; optional author, date, title. AI drafting runs after import. Reviews already stored are recognised and skipped.</div>
+  <input type="file" id="i-file" accept=".csv"><div style="display:flex;gap:8px;align-items:center"><button class="btn p w" id="i-btn" onclick="importSubmit()">Upload &amp; import</button><span class="sub" id="i-status"></span></div></div>
 </div></div>
 <div class="mo" id="m-resolve"><div class="mb" style="max-width:440px">
   <div class="mh"><h2>Mark resolved</h2><button class="x" onclick="closeModal('m-resolve')" aria-label="Close">✕</button></div>
@@ -414,24 +420,54 @@ body.role-support .w{display:none!important}
 </div></div>
 <div class="mo" id="m-cap"><div class="mb" style="max-width:440px">
   <div class="mh"><h2>Cap daily alerts</h2><button class="x" onclick="closeModal('m-cap')" aria-label="Close">✕</button></div>
-  <div class="fl"><div class="sub">Most alerts a day for <b id="cap-name"></b>. Past the cap they are logged, not sent. 0 turns it off.</div><label>Alerts per day</label><input id="cap-n" type="number" min="0" max="500" step="1" onkeydown="if(event.key==='Enter')capSubmit()"><div style="display:flex;gap:8px"><button class="btn p" onclick="capSubmit()">Save</button><button class="btn" onclick="closeModal('m-cap')">Cancel</button></div></div>
+  <div class="fl"><div class="sub">Most alerts a day for <b id="cap-name"></b>. Past the cap they are logged, not sent. 0 turns it off.</div><label>Alerts per day</label><input id="cap-n" type="number" min="0" max="500" step="1" onkeydown="if(event.key==='Enter')capSubmit()"><div style="display:flex;gap:8px"><button class="btn p w" onclick="capSubmit()">Save</button><button class="btn" onclick="closeModal('m-cap')">Cancel</button></div></div>
 </div></div>
-<div class="mo" id="m-password"><div class="mb" style="max-width:440px">
-  <div class="mh"><h2>Temporary password</h2><button class="x" onclick="closeModal('m-password')" aria-label="Close">✕</button></div>
-  <div class="fl"><div class="sub">Shown once. The client changes it at next sign-in.</div><div class="mono" id="pw-out" style="font-size:16px;padding:12px;background:var(--strip);border-radius:10px;border:1px dashed var(--ember2)"></div></div>
+<!-- Shown once: a value the server hands over a single time (the App Store
+     review account's new password, #127). The console never sets or shows a
+     client's password (#86). -->
+<div class="mo" id="m-password"><div class="mb" style="max-width:520px">
+  <div class="mh"><h2 id="pw-title">Shown once</h2><button class="x" onclick="closeModal('m-password')" aria-label="Close">✕</button></div>
+  <div class="fl"><div class="sub" id="pw-sub">Copy it now — it isn't shown again.</div><div class="mono" id="pw-out" style="font-size:16px;padding:12px;background:var(--strip);border-radius:10px;border:1px dashed var(--ember2)"></div><pre class="mono pre" id="pw-log" hidden style="margin:0;padding:12px;background:var(--strip);color:var(--ink2);border:1px solid var(--line);border-radius:10px;font-size:12px;max-height:260px;overflow:auto"></pre></div>
 </div></div>
-<!-- New client (was on System): contract goes out on creation; payment link + welcome after signing -->
+<!-- New client: the contract goes out on creation (a background job the modal
+     follows to its end); the payment link and the set-password welcome after
+     signing. The timezone is the restaurant's own (#152). -->
 <div class="mo" id="m-client"><div class="mb" style="max-width:640px">
   <div class="mh"><h2>New client</h2><button class="x" onclick="closeModal('m-client')" aria-label="Close">✕</button></div>
   <div class="frm">
     <div class="fl"><label>Restaurant name</label><input id="r-name"></div><div class="fl"><label>Owner email</label><input id="r-email" type="email"></div>
-    <div class="fl"><label>Dashboard username</label><input id="u-username"></div><div class="fl"><label>Temporary password</label><div style="display:flex;gap:6px"><input id="u-password" style="flex:1;min-width:0"><button class="btn" onclick="$('u-password').value=Math.random().toString(36).slice(2,8)+'-'+Math.random().toString(36).slice(2,6)">Generate</button></div></div>
+    <div class="fl"><label>Dashboard username</label><input id="u-username"></div><div class="fl"><label>First password (never emailed)</label><div style="display:flex;gap:6px"><input id="u-password" style="flex:1;min-width:0"><button class="btn" onclick="$('u-password').value=Math.random().toString(36).slice(2,8)+'-'+Math.random().toString(36).slice(2,6)">Generate</button></div></div>
     <div class="fl"><label>Owner / GM name</label><input id="r-owner-name"></div><div class="fl"><label>Owner phone</label><input id="r-phone"></div>
     <div class="fl"><label>Brand (multi-location)</label><input id="r-group" placeholder="e.g. Gia Mia"></div><div class="fl"><label>Location name</label><input id="r-location" placeholder="e.g. Geneva"></div>
     <div class="fl"><label>Google Place ID</label><input id="r-google"></div><div class="fl"><label>Yelp Business ID</label><input id="r-yelp"></div>
+    <div class="fl"><label>Timezone</label><select id="r-tz"></select></div><div class="fl"><label>Sales audit it came from (optional)</label><select id="r-audit"><option value="">None</option></select></div>
     <div class="fl full"><label>Owner voice notes (AI drafting)</label><textarea id="r-voice" rows="2"></textarea></div>
     <div class="full" style="display:flex;gap:16px;flex-wrap:wrap;font-size:13px"><label><input type="checkbox" id="mod-reviews" checked> Reviews</label><label><input type="checkbox" id="mod-labor"> Labor</label><label><input type="checkbox" id="mod-inventory"> Food Cost</label><label><input type="checkbox" id="mod-marketing"> Marketing</label></div>
-    <div class="full" style="display:flex;gap:10px;align-items:center"><button class="btn p" id="cc-btn" onclick="createClient()">Create client</button><span class="sub" id="create-status"></span></div>
+    <div class="full dim">A location of an existing brand? Use <a href="#" onclick="closeModal('m-client');addLocationOpen();return false">Add location</a> — same owner and login, no new contract.</div>
+    <div class="full" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn p w" id="cc-btn" onclick="createClient()">Create client</button><span class="sub" id="create-status"></span></div>
+  </div>
+</div></div>
+<!-- A form an action needs (change plan, mark signed, attach a Stripe
+     customer, lift a hold, test sends…): formOpen() fills it, formSubmit()
+     sends it, and it stays open with the server's sentence when refused. -->
+<div class="mo" id="m-form"><div class="mb" style="max-width:520px">
+  <div class="mh"><h2 id="f-title"></h2><button class="x" onclick="closeModal('m-form')" aria-label="Close">✕</button></div>
+  <div class="fl"><div class="sub" id="f-sub"></div><div class="fl" id="f-body"></div>
+    <div style="display:flex;gap:8px;margin-top:6px;align-items:center;flex-wrap:wrap"><button class="btn p w" id="f-go" onclick="formSubmit()">Save</button><button class="btn" onclick="closeModal('m-form')">Cancel</button><span class="sub" id="f-status"></span></div></div>
+</div></div>
+<!-- Add a location to an existing brand (#42): same owner and login, no new
+     contract; billing follows the brand (one subscription per group). -->
+<div class="mo" id="m-addloc"><div class="mb" style="max-width:640px">
+  <div class="mh"><h2>Add a location to a brand</h2><button class="x" onclick="closeModal('m-addloc')" aria-label="Close">✕</button></div>
+  <div class="frm">
+    <div class="fl full"><label>The brand — find any of its locations</label><input id="al-find" placeholder="Restaurant, brand or owner" autocomplete="off" oninput="addLocFind()"><div id="al-res" class="fl"></div><div class="sub" id="al-picked"></div></div>
+    <div class="fl"><label>New location's name</label><input id="al-name" placeholder="e.g. Gia Mia Wheaton"></div><div class="fl"><label>Location name</label><input id="al-loc" placeholder="e.g. Wheaton"></div>
+    <div class="fl"><label>Google Place ID</label><input id="al-place"></div><div class="fl"><label>Yelp Business ID</label><input id="al-yelp"></div>
+    <div class="fl"><label>Location phone</label><input id="al-phone"></div><div class="fl"><label>Timezone</label><select id="al-tz"></select></div>
+    <div class="fl full"><label>Sales audit it came from (optional)</label><select id="al-audit"><option value="">None</option></select></div>
+    <div class="full" style="display:flex;gap:16px;flex-wrap:wrap;font-size:13px;align-items:center"><label><input type="checkbox" id="al-same" checked onchange="$('al-mods').hidden=this.checked"> Same modules as the brand</label><span id="al-mods" hidden style="display:inline-flex;gap:14px"><label><input type="checkbox" id="al-m-reviews" checked> Reviews</label><label><input type="checkbox" id="al-m-labor"> Labor</label><label><input type="checkbox" id="al-m-inventory"> Food Cost</label><label><input type="checkbox" id="al-m-marketing"> Marketing</label></span></div>
+    <div class="full dim">The brand's owner login gets this location too (as Owner, the role that switches locations). No login is created and no contract is sent; the new location is billed with the brand.</div>
+    <div class="full" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn p w" id="al-btn" onclick="addLocationSubmit()">Add location</button><span class="sub" id="al-status"></span></div>
   </div>
 </div></div>
 <div class="mo" id="m-incident"><div class="mb">
@@ -745,7 +781,7 @@ const PAGES = [
   ['Customers · Bug reports','#customers/support?view=bugs','Page'], ['Customers · Deletion requests','#customers/support?view=deletions','Page'], ['Customers · Resolved issues','#customers/support?view=resolved','Page'],
   ['Engineering','#engineering','Page'], ['Engineering · Experiments','#engineering/experiments','Page'],
   ['Analytics','#analytics','Page'], ['Analytics · Recommendations','#analytics/recommendations','Page'], ['Analytics · Intelligence','#analytics/intelligence','Page'],
-  ['New client','fn:newClient','Action'], ['Post an incident','fn:incidentOpen','Action'],
+  ['New client','fn:newClientOpen','Action'], ['Add a location to a brand','fn:addLocationOpen','Action'], ['Post an incident','fn:incidentOpen','Action'],
   ['Current audit','/admin/audits/latest','Tool'], ['Meeting cheat sheet','/admin/audits/latest/cheatsheet','Tool'], ['All audits','/admin/audits','Tool']
 ];
 let _palSel = 0, _qt;
@@ -1162,15 +1198,15 @@ async function auditOptions(selId){
 
 // ── The five areas ──────────────────────────────────────────────────────────
 // Each area is a header, its tabs, and the tab's view in the body.
-async function customers(tab){
+async function customers(tab, qs){
   tab = tab || 'restaurants';
   const k = _ovk || {};
-  areaShell(head('Customers', 'Customers', '', `<button class="btn p" onclick="newClient()">${ico('plus','s')}New client</button>`) + tabsNav('customers', [
-    ['restaurants', 'Restaurants'], ['billing', 'Billing', (k.past_due || 0) + (k.canceled || 0) || '', 'bad'],
+  areaShell(head('Customers', 'Customers', '', `<button class="btn w" onclick="addLocationOpen()">${ico('plus','s')}Add location</button><button class="btn p w" onclick="newClientOpen()">${ico('plus','s')}New client</button>`) + tabsNav('customers', [
+    ['restaurants', 'Restaurants'], ['billing', 'Billing', k.past_due || '', 'bad'],
     ['onboarding', 'Onboarding'], ['support', 'Support queue', k.attention || '', k.critical ? 'bad' : 'warn']], tab));
   if(tab === 'billing') await billing();
   else if(tab === 'onboarding') await onboarding();
-  else if(tab === 'support') await issues();
+  else if(tab === 'support') await issues(qs);
   else await clientsView();
 }
 function newClient(){ openModal('m-client'); setTimeout(()=>$('r-name').focus(), 30); }
@@ -1178,23 +1214,16 @@ const INC_KEYS = ['dashboard','ai_drafting','review_sync','email','labor_analyti
 function incidentOpen(){ $('inc-keys').innerHTML = INC_KEYS.map(k=>`<label><input type="checkbox" class="inc-k" value="${k}"> ${k.replace('_',' ')}</label>`).join(''); openModal('m-incident'); }
 
 // ── Customers ───────────────────────────────────────────────────────────────
-// The customer is the unit of work: one list, a row per restaurant (a brand
-// with several locations is one row that opens to them), seven facts on the
-// row and the rest on expand. Billing, Onboarding and the Support queue are
-// tabs beside it.
-let _clients = null, _cf = 'all', _cq = '', _showDemo = true, _openBrands = {};
-const CF = [
-  ['all','All', r=>true], ['attention','Needs attention', r=>r.issues.length>0], ['onboarding','Onboarding', r=>!r.onboarding.complete && !r.onboarding.dismissed],
-  ['trial','Trial', r=>r.billing.status==='trial'], ['past_due','Past due', r=>r.billing.status==='past_due'], ['churn','Churn risk', r=>(r.churn_risk||{}).level==='high'],
-  // under More filters
-  ['active','Active', r=>r.billing.status==='active'], ['canceled','Canceled', r=>['churned','canceled'].includes(r.billing.status)],
-  ['integration','Integration issue', r=>r.integration_health==='error'], ['ai','AI issue', r=>r.issues.some(i=>/ai_/.test(i.key))],
-  ['email','Email issue', r=>r.email.failed_7d>0], ['push','Notification issue', r=>r.push.failed_7d>0||r.push.disabled>0],
-  ['stale','Data stale', r=>r.modules.some(m=>m.state==='stale'||m.state==='no_data')], ['usage','High usage', r=>r.ai.cost_30d>10||r.ai.calls_30d>150],
-  ['thin','Setup under 50%', r=>orDefault(setupDone(r).score,100)<50], ['inactive','Inactive 14 days', r=>{const d=parseTs(r.last_active); return !d || (Date.now()-d)>14*864e5;}],
-  ['new','Joined in 30 days', r=>{const d=parseTs(r.created_at); return d && (Date.now()-d)<30*864e5;}]
-];
-const CUST_COLS = 'grid-template-columns:minmax(0,2.6fr) minmax(0,1fr) minmax(0,1.2fr) minmax(0,1.15fr) minmax(0,1fr) 60px 96px';
+// The customer is the unit of work: one list, a row per location, filtered,
+// sorted and paged on the server as slim rows (#79) — not every full record
+// shipped to the browser. A brand with several locations on the page is one
+// row that opens to them. Internal accounts (demo, test, the admin's own
+// home) are their own segment: shown, chipped, and never counted toward
+// attention (#141). Billing, Onboarding and the Support queue are tabs beside it.
+// (_clients stays the full-record cache loadClients() fills for the pages
+// that still read every record.)
+let _clients = null, _cq = '', _showDemo = true, _openBrands = {}, _ch = '', _cs = '', _csort = 'health', _cpage = 1;
+const CUST_COLS = 'grid-template-columns:minmax(0,2.6fr) minmax(0,1fr) minmax(0,1.3fr) minmax(0,1.1fr) minmax(0,1fr) 72px 96px';
 const HEALTH_RANK = {inactive:-1, healthy:0, warning:1, critical:2};
 function monoTile(name, health){
   const t = {critical:['var(--red-bg)','var(--red-t)'], warning:['var(--amber-bg)','var(--amber-t)'], healthy:['var(--green-bg)','var(--green-t)']}[health] || ['rgba(255,255,255,.06)','var(--ink3)'];
@@ -1202,139 +1231,271 @@ function monoTile(name, health){
   const ini = ((words[0]||'?')[0] + (words[1] ? words[1][0] : (words[0]||'')[1]||'')).toUpperCase();
   return `<span class="mono-tile" style="background:${t[0]};color:${t[1]}">${esc(ini)}</span>`;
 }
-function modSquares(mods){
-  return `<span style="display:flex;gap:4px">${(mods||[]).filter(m=>m.key!=='intel').map(m=>{ const tone = !m.enabled ? '' : (m.state==='healthy' ? 'var(--green-t);background:var(--green-bg)' : m.state==='off' ? '' : 'var(--amber-t);background:var(--amber-bg)');
-    return `<span title="${esc(m.label)}: ${m.enabled?MODL[m.state]:'not on the plan'}" style="width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10.5px;font-weight:700;${tone?'color:'+tone:'color:var(--ink5);border:1px dashed rgba(240,235,224,.13)'}">${esc((m.label||'?')[0])}</span>`; }).join('')}</span>`;
-}
-function setupBar(r){ const sc = setupDone(r).score; if(sc == null) return '<span class="dim">—</span>';
+function setupBar(sc){ if(sc == null) return '<span class="dim">—</span>';
   const c = sc >= 75 ? 'var(--green)' : sc >= 50 ? 'var(--amber)' : 'var(--ember2)';
   return `<span style="display:flex;align-items:center;gap:10px"><span class="bar" style="flex:1;max-width:92px"><i style="width:${sc}%;background:${c}"></i></span><span class="n ink2" style="font-size:12.5px">${sc}%</span></span>`; }
-function planCell(b){ const c = {active:'var(--ink2)', past_due:'var(--amber-t)', trial:'var(--blue)'}[b.status] || 'var(--ink4)';
-  return `<span style="display:flex;flex-direction:column"><span style="font-size:13px;font-weight:700;color:${c}">${esc((b.status||'trial').replace('_',' ').replace(/^./,x=>x.toUpperCase()))}</span><span class="n muted" style="font-size:12px">${b.monthly?fmtUSD(b.monthly)+'/mo':'—'}</span></span>`; }
-function attnBadge(r){ return r.issues.length ? `<span class="cnt ${r.issues.some(i=>i.severity==='critical')?'bad':'warn'}">${r.issues.length}</span>` : ''; }
+// Plan: the status, and what the location contributes — billed from the
+// Stripe mirror, list price where there is no mirror row yet, or nothing
+// because a group's subscription covers it (decision 1, #116).
+function planCell(r){ const c = {active:'var(--ink2)', past_due:'var(--red-t)', trial:'var(--blue)', paused:'var(--amber-t)'}[r.status] || 'var(--ink4)';
+  const money = r.billed_by ? 'covered by ' + ((r.billed_by && r.billed_by.name) || 'its group') : (r.monthly ? fmtUSD(r.monthly) + '/mo' + (r.mrr_source === 'list' ? ' · list price' : '') : '—');
+  return `<span style="display:flex;flex-direction:column;min-width:0"><span style="font-size:13px;font-weight:700;color:${c}">${esc((r.status||'trial').replace('_',' ').replace(/^./,x=>x.toUpperCase()))}</span><span class="n muted" style="font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(money)}">${esc(money)}</span></span>`; }
+function riskCell(r){
+  const out = [];
+  if(r.deletion_due) out.push(`<span class="chip bad" title="Asked to close their account">closing · due ${fmtD(r.deletion_due)}</span>`);
+  if(r.churn === 'high' || r.churn === 'medium') out.push(`<span class="chip ${r.churn==='high'?'bad':'warn'}" title="Churn risk (paying accounts only)">${esc(r.churn)} churn</span>`);
+  return out.join('') || '<span class="dim">—</span>';
+}
+function attnBadge(r){ return r.issues ? `<span class="cnt ${r.critical?'bad':'warn'}" title="${r.issues} open issue${r.issues===1?'':'s'}">${r.issues}</span>` : ''; }
 function miniStat(label, value, sub, tone){ return `<div style="flex:1;min-width:140px;padding:14px 16px;border-radius:12px;background:var(--strip);border:1px solid var(--line);display:flex;flex-direction:column;gap:6px"><span class="lbl">${label}</span><span class="n" style="font-size:22px;font-weight:600;line-height:1;${tone||''}">${value}</span><span class="muted" style="font-size:12px">${sub}</span></div>`; }
+// A full record (the client page's siblings) in the list's slim shape.
+function slimOf(r){ const b = r.billing || {}, iss = r.issues || [];
+  return {id:r.id, name:r.name, brand:r.brand, location_name:r.location_name, city:r.city, segment:r.segment, is_demo:r.is_demo, health:r.health,
+    status:b.status, monthly:b.monthly, mrr_source:b.mrr_source, billed_by:b.billed_by, owner:(r.owner||{}).username, owner_email:r.owner_email,
+    last_active:r.last_active, on_ios:r.on_ios, created_at:r.created_at, issues:iss.length, critical:iss.filter(i=>i.severity==='critical').length,
+    churn:(r.churn_risk||{}).level, setup:setupDone(r).score, onboarding:r.onboarding ? r.onboarding.done + '/' + r.onboarding.total : '', deletion_due:(r.deletion||{}).due_at}; }
 function custDetail(r){
-  const ints = r.integrations.filter(i=>i.in_use||i.key==='google_business');
-  return `<div class="lx" style="padding-left:68px"><div style="display:flex;flex-direction:column;gap:14px">
-    <div style="display:flex;gap:12px;flex-wrap:wrap">${miniStat('Reviews awaiting', fmtN(r.reviews.awaiting), r.reviews.urgent_stale ? r.reviews.urgent_stale+' urgent · 48h+' : fmtN(r.reviews.total)+' in all', r.reviews.urgent_stale?'color:var(--red-t)':'')}
-      ${miniStat('AI · 30 days', fmtN(r.ai.calls_30d), `calls · <span class="n">${fmtUSD(r.ai.cost_30d,2)}</span>`)}${miniStat('Emails · 7 days', fmtN(r.email.sent_7d), r.email.failed_7d ? r.email.failed_7d+' failed' : '0 failed', r.email.failed_7d?'color:var(--red-t)':'')}
-      ${miniStat('Devices', fmtN(r.push.devices), r.push.disabled ? r.push.disabled+' dead' : 'owner, joined '+fmtD(r.created_at))}</div>
-    ${r.issues.length ? `<div style="display:flex;flex-direction:column;gap:8px">${r.issues.slice(0,3).map(i=>`<div style="display:flex;align-items:center;gap:12px">${pill(TONE[i.severity]||'warn', i.severity==='critical'?'Critical':'Warning')}<span style="flex:1;min-width:0;font-weight:700">${esc(i.title)}</span>${i.action_route?`<button class="btn s" onclick="event.stopPropagation();issueAction('${jsq(i.action_route)}','${jsq(i.action)}')">${esc(i.action)}</button>`:''}</div>`).join('')}${r.issues.length>3?`<span class="muted" style="font-size:12.5px">+${r.issues.length-3} more on the client page</span>`:''}</div>` : ''}
-    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="lbl" style="margin-right:4px">Connected</span>${ints.map(i=>`<span style="display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 11px;border-radius:9px;background:var(--strip);border:1px solid var(--line);font-size:12.5px" title="${esc(i.error||'')}"><i style="display:block;width:7px;height:7px;border-radius:50%;background:${i.state==='connected'?'var(--green)':i.state==='error'?'var(--red)':'var(--ink5)'}"></i><span class="ink2">${esc(i.label.replace(' POS',''))}</span><span class="n muted">${i.last_success?ago(i.last_success):'—'}</span></span>`).join('')||'<span class="muted">nothing yet</span>'}
-      <span style="margin-left:auto;display:flex;gap:8px"><a class="btn s" href="/admin/view-as/${r.id}" onclick="event.stopPropagation()">${ico('eye','xs')}View as client</a><a class="btn s" href="/admin/client-settings/${r.id}" onclick="event.stopPropagation()">Settings</a><a class="btn s p" href="#client/${r.id}" onclick="event.stopPropagation()">Open client ${ico('chev','xs')}</a></span></div>
+  return `<div class="lx" style="padding-left:68px"><div style="display:flex;flex-direction:column;gap:12px">
+    <div style="display:flex;gap:12px;flex-wrap:wrap">${miniStat('Open issues', fmtN(r.issues), r.critical ? r.critical + ' critical' : 'none critical', r.critical?'color:var(--red-t)':'')}${miniStat('Onboarding', esc(r.onboarding || '—'), 'steps done')}${miniStat('Churn risk', esc(r.churn || '—'), r.churn ? 'scored while paying' : 'scored for paying accounts only')}${miniStat('Joined', fmtD(r.created_at), esc(r.owner_email || ''))}</div>
+    ${r.deletion_due ? `<div class="warnline">${ico('alert','xs')} Asked to close their account — due ${fmtD(r.deletion_due)}. <a href="#client/${r.id}?tab=access" onclick="event.stopPropagation()">Open offboarding</a></div>` : ''}
+    <div style="display:flex;align-items:center;gap:8px;justify-content:flex-end;flex-wrap:wrap"><a class="btn s" href="/admin/view-as/${r.id}" onclick="event.stopPropagation()">${ico('eye','xs')}View as client</a><a class="btn s" href="/admin/client-settings/${r.id}" onclick="event.stopPropagation()">Settings</a><a class="btn s p" href="#client/${r.id}" onclick="event.stopPropagation()">Open client ${ico('chev','xs')}</a></div>
   </div></div>`;
 }
 function custRow(r, indent){
-  const sub = [r.location_name || r.city || '', (r.owner||{}).username || r.owner_name || ''].filter(Boolean).join(' · ');
+  const sub = [r.location_name || r.city || '', r.owner || ''].filter(Boolean).join(' · ');
+  const tag = r.segment === 'internal' ? ` <span class="chip" title="Internal accounts never count toward attention or MRR">${r.is_demo ? 'demo' : 'internal'}</span>` : '';
   return `<div class="li click" style="display:grid;${CUST_COLS};gap:14px${indent?';padding-left:46px':''}" onclick="toggleRow(this)">
-    <span style="display:flex;align-items:center;gap:12px;min-width:0">${monoTile(r.name, r.health)}<span style="display:flex;flex-direction:column;min-width:0"><a href="#client/${r.id}" onclick="event.stopPropagation()" style="font-weight:700;font-size:14px;color:var(--ink)">${esc(indent ? (r.location_name || r.name) : r.name)}</a><span class="muted" style="font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(sub)}${r.is_demo?' <span class="chip">demo</span>':''}</span></span></span>
-    <span>${hb(r.health)}</span>${planCell(r.billing)}${setupBar(r)}${modSquares(r.modules)}
-    <span class="n ink2" style="font-size:12.5px">${ago(r.last_active)}</span>
+    <span style="display:flex;align-items:center;gap:12px;min-width:0">${monoTile(r.name, r.health)}<span style="display:flex;flex-direction:column;min-width:0"><a href="#client/${r.id}" onclick="event.stopPropagation()" style="font-weight:700;font-size:14px;color:var(--ink)">${esc(indent ? (r.location_name || r.name) : r.name)}</a><span class="muted" style="font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(sub)}${tag}</span></span></span>
+    <span>${hb(r.health)}</span>${planCell(r)}${setupBar(r.setup)}<span style="display:flex;gap:4px;flex-wrap:wrap">${riskCell(r)}</span>
+    <span class="n ink2" style="font-size:12.5px" title="The owner's own use — web or iOS">${ago(r.last_active)}${r.on_ios?' <span class="chip" title="Uses the iOS app">iOS</span>':''}</span>
     <span style="display:flex;align-items:center;justify-content:flex-end;gap:8px"><a class="btn s g ic reveal" href="/admin/client-settings/${r.id}" onclick="event.stopPropagation()" title="Settings" aria-label="Settings for ${esc(r.name)}">${ico('sliders','xs')}</a>${attnBadge(r)}<span class="chev">${ico('chev','s')}</span></span></div>${custDetail(r)}`;
 }
 function brandRow(b){
   const open = !!_openBrands[b.brand], worst = b.locs.reduce((w,l)=>HEALTH_RANK[l.health]>HEALTH_RANK[w]?l.health:w,'inactive');
-  const issues = b.locs.reduce((n,l)=>n+l.issues.length,0), crit = b.locs.some(l=>l.issues.some(i=>i.severity==='critical'));
-  const mrr = b.locs.reduce((n,l)=>n+(l.billing.monthly||0),0), set = b.locs.map(l=>setupDone(l).score).filter(x=>x!=null);
-  const owners = [...new Set(b.locs.map(l=>(l.owner||{}).username).filter(Boolean))].join(', ');
+  const issues = b.locs.reduce((n,l)=>n+(l.issues||0),0), crit = b.locs.some(l=>l.critical);
+  const mrr = b.locs.reduce((n,l)=>n+(l.monthly||0),0), set = b.locs.map(l=>l.setup).filter(x=>x!=null);
+  const owners = b.locs.map(l=>l.owner).filter((x,i,a)=>x && a.indexOf(x)===i).join(', ');
   const last = b.locs.map(l=>l.last_active).filter(Boolean).sort().pop();
   return `<div class="li click${open?' open':''}" style="display:grid;${CUST_COLS};gap:14px" onclick="_openBrands['${jsq(b.brand)}']=!_openBrands['${jsq(b.brand)}'];clientsView()">
-    <span style="display:flex;align-items:center;gap:12px;min-width:0">${monoTile(b.brand, worst)}<span style="display:flex;flex-direction:column;min-width:0"><b style="font-size:14px">${esc(b.brand)}</b><span class="muted" style="font-size:12.5px"><span class="n">${b.locs.length}</span> locations${owners?' · '+esc(owners):''}</span></span></span>
-    <span>${hb(worst)}</span><span style="display:flex;flex-direction:column"><span style="font-size:13px;font-weight:700;color:var(--ink2)">${b.locs.filter(l=>l.billing.status==='active').length} active</span><span class="n muted" style="font-size:12px">${mrr?fmtUSD(mrr)+'/mo':'—'}</span></span>
+    <span style="display:flex;align-items:center;gap:12px;min-width:0">${monoTile(b.brand, worst)}<span style="display:flex;flex-direction:column;min-width:0"><b style="font-size:14px">${esc(b.brand)}</b><span class="muted" style="font-size:12.5px"><span class="n">${b.locs.length}</span> locations on this page${owners?' · '+esc(owners):''}</span></span></span>
+    <span>${hb(worst)}</span><span style="display:flex;flex-direction:column"><span style="font-size:13px;font-weight:700;color:var(--ink2)">${b.locs.filter(l=>l.status==='active').length} active</span><span class="n muted" style="font-size:12px">${mrr?fmtUSD(mrr)+'/mo':'—'}</span></span>
     <span class="n ink2" style="font-size:12.5px">${set.length?Math.round(set.reduce((a,x)=>a+x,0)/set.length)+'% avg':'—'}</span><span></span>
     <span class="n ink2" style="font-size:12.5px">${ago(last)}</span>
     <span style="display:flex;align-items:center;justify-content:flex-end;gap:10px">${issues?`<span class="cnt ${crit?'bad':'warn'}">${issues}</span>`:''}<span class="chev">${ico('chev','s')}</span></span></div>
     ${open ? b.locs.map(l=>custRow(l, true)).join('') : ''}`;
 }
-async function loadClients(){ if(!_clients){ const d = await api('/admin/api/clients'); if(!d.ok) throw new Error('clients failed'); _clients = d.clients; } return _clients; }
+async function loadClients(){ if(!_clients){ const d = await api('/admin/api/clients'); if(!okRes(d)) throw new Error(errText(d, 'The client records couldn\'t be read')); _clients = d.clients; } return _clients; }
+function clientsPage(n){ _cpage = n; clientsView(); }
 async function clientsView(){
-  await loadClients();
-  const base = _clients.filter(r=>_showDemo||!r.is_demo);
-  const f = CF.find(x=>x[0]===_cf)||CF[0]; const q=_cq.toLowerCase();
-  const rows = base.filter(f[2]).filter(r=>!q||[r.name,r.brand,r.location_name,r.city,r.owner_email,r.owner_name,(r.owner||{}).username,(r.owner||{}).email,r.billing.stripe_customer_id,String(r.id)].some(v=>v&&String(v).toLowerCase().includes(q)));
-  const groups = {}; rows.forEach(r=>{ (groups[r.brand]=groups[r.brand]||[]).push(r); });
-  const score = l => l.reduce((n,r)=>n + r.issues.reduce((m,i)=>m + (i.severity==='critical'?100:1),0), 0);
-  const brands = Object.entries(groups).map(([brand, locs])=>({brand, locs})).sort((a,b)=>score(b.locs)-score(a.locs) || a.brand.localeCompare(b.brand));
-  const extra = CF.slice(6), extraOn = CF.indexOf(f) >= 6;
-  const hidden = _clients.filter(r=>r.is_demo).length;
-  V().innerHTML = `
+  const p = new URLSearchParams({segment: _showDemo ? 'all' : 'customer', sort: _csort, page: String(_cpage), per_page: '50'});
+  if(_cq) p.set('q', _cq); if(_ch) p.set('health', _ch); if(_cs) p.set('status', _cs);
+  const d = await api('/admin/api/clients/list?' + p.toString());
+  if(!okRes(d)) throw new Error(errText(d, 'The restaurant list couldn\'t be read'));
+  const rows = d.items || [], cnt = d.counts || {}, hc = cnt.health || {}, sc = cnt.status || {}, segc = cnt.segment || {};
+  const hTotal = Object.keys(hc).reduce((n,k)=>n+hc[k],0);
+  // This page's rows, a brand's locations together.
+  const order = [], groups = {};
+  rows.forEach(r => { const b = r.brand || r.name; if(!groups[b]){ groups[b] = []; order.push(b); } groups[b].push(r); });
+  const HS = [['','All',hTotal],['critical','Critical',hc.critical||0],['warning','Warning',hc.warning||0],['healthy','Healthy',hc.healthy||0],['inactive','Inactive',hc.inactive||0]];
+  const ST = Object.keys(sc).sort();
+  V().innerHTML = `${errBanner(d)}
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-      <div class="seg">${CF.slice(0,6).map(x=>`<button class="${_cf===x[0]?'on':''}" onclick="_cf='${x[0]}';clientsView()">${x[1]} <b>${base.filter(x[2]).length}</b></button>`).join('')}${extraOn?`<button class="on">${f[1]} <b>${rows.length}</b></button>`:''}</div>
+      <div class="seg">${HS.map(x=>`<button class="${_ch===x[0]?'on':''}" onclick="_ch='${x[0]}';_cpage=1;clientsView()">${x[1]} <b>${x[2]}</b></button>`).join('')}</div>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <span style="position:relative"><button class="btn g s" data-menu onclick="menuToggle('cf-more')">${ico('sliders','xs')}More filters</button>
-          <div class="menu" id="cf-more">${extra.map(x=>`<button data-a onclick="_cf='${x[0]}';menusClose();clientsView()"><span style="flex:1">${x[1]}</span><span class="n muted">${base.filter(x[2]).length}</span></button>`).join('')}</div></span>
-        <label class="search-in">${ico('search','s')}<input placeholder="Name, city, email, Stripe ID, #id" value="${esc(_cq)}" oninput="_cq=this.value;clearTimeout(window._cqt);window._cqt=setTimeout(()=>{clientsView();const i=V().querySelector('.search-in input');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length);}},180)"></label>
-        <label class="switch"><input type="checkbox" ${_showDemo?'checked':''} onchange="_showDemo=this.checked;clientsView()"><i></i>Demo</label>
+        <select aria-label="Billing status" onchange="_cs=this.value;_cpage=1;clientsView()" style="height:32px;padding:0 10px"><option value="">Every status</option>${ST.map(x=>`<option value="${esc(x)}" ${_cs===x?'selected':''}>${esc(x.replace('_',' '))} · ${sc[x]}</option>`).join('')}</select>
+        <select aria-label="Sort" onchange="_csort=this.value;_cpage=1;clientsView()" style="height:32px;padding:0 10px">${[['health','Needs attention first'],['name','Name'],['mrr','MRR'],['last_active','Last active'],['created','Newest']].map(x=>`<option value="${x[0]}" ${_csort===x[0]?'selected':''}>${x[1]}</option>`).join('')}</select>
+        <label class="search-in">${ico('search','s')}<input placeholder="Name, city, email, phone, Stripe ID, #id" value="${esc(_cq)}" oninput="_cq=this.value;_cpage=1;clearTimeout(window._cqt);window._cqt=setTimeout(()=>{clientsView().then(()=>{const i=V().querySelector('.search-in input');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length);}});},250)"></label>
+        <label class="switch" title="Demo, test and internal accounts — never counted in attention or MRR"><input type="checkbox" ${_showDemo?'checked':''} onchange="_showDemo=this.checked;_cpage=1;clientsView()"><i></i>Internal <span class="n">${segc.internal||0}</span></label>
       </div></div>
     <section class="card" style="overflow:hidden">
-      <div class="lbl" style="display:grid;${CUST_COLS};gap:14px;padding:12px 18px;border-bottom:1px solid var(--line)"><span>Restaurant</span><span>Health</span><span>Plan</span><span>Setup</span><span>Modules</span><span>Active</span><span></span></div>
-      <div class="lst">${brands.map(b=>b.locs.length>1?brandRow(b):custRow(b.locs[0])).join('') || '<div class="empty">No restaurants match.</div>'}</div>
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-top:1px solid var(--line)"><span class="muted" style="font-size:12.5px"><span class="n">${rows.length}</span> location${rows.length===1?'':'s'} · <span class="n">${brands.length}</span> brand${brands.length===1?'':'s'}${!_showDemo&&hidden?' · <span class="n">'+hidden+'</span> demo hidden':''}</span><span class="muted" style="font-size:12px">Sorted by attention</span></div>
+      <div class="lbl" style="display:grid;${CUST_COLS};gap:14px;padding:12px 18px;border-bottom:1px solid var(--line)"><span>Restaurant</span><span>Health</span><span>Plan</span><span>Setup</span><span>Risk</span><span>Active</span><span></span></div>
+      <div class="lst">${order.map(b=>groups[b].length>1?brandRow({brand:b, locs:groups[b]}):custRow(groups[b][0])).join('') || `<div class="empty">${_cq||_ch||_cs?'No restaurants match.':'No restaurants yet.'}</div>`}</div>
+      ${pager(d.page, d.pages, d.total, 'clientsPage', 'locations')}
     </section>`;
 }
 
 // ── One brand's locations (search results link here) ────────────────────────
 async function locations(){
-  await loadClients();
-  const want = new URLSearchParams(location.hash.split('?')[1]||'').get('brand');
-  const locs = _clients.filter(r=>!want || r.brand===want);
-  V().innerHTML = head('Customers · brand', esc(want || 'All brands'), `<span class="n">${locs.length}</span> location${locs.length===1?'':'s'}. A brand is only as healthy as its worst location.`, `<a class="btn" href="#customers/restaurants">All restaurants</a>`)
+  const want = new URLSearchParams(location.hash.split('?')[1]||'').get('brand') || '';
+  const d = await api('/admin/api/clients/list?segment=all&sort=name&per_page=200' + (want ? '&q=' + encodeURIComponent(want) : ''));
+  if(!okRes(d)) throw new Error(errText(d, 'The locations couldn\'t be read'));
+  const locs = (d.items || []).filter(r=>!want || r.brand===want);
+  V().innerHTML = head('Customers · brand', esc(want || 'All brands'), `<span class="n">${locs.length}</span> location${locs.length===1?'':'s'}. A brand is only as healthy as its worst location.`, `${locs.length?`<button class="btn w" onclick="addLocationOpen(${locs[0].id},'${jsq(want || locs[0].name)}')">${ico('plus','s')}Add location</button>`:''}<a class="btn" href="#customers/restaurants">All restaurants</a>`)
+    + errBanner(d)
     + `<section class="card" style="overflow:hidden"><div class="lst">${locs.map(r=>custRow(r)).join('') || '<div class="empty">No restaurants in this brand.</div>'}</div></section>`
     + (locs.length ? `<div class="muted" style="font-size:12.5px">Settings for each: ${locs.map(r=>`<a href="/admin/client-settings/${r.id}" onclick="event.stopPropagation()">${esc(r.location_name||r.name)}</a>`).join(' · ')}</div>` : '');
 }
 
 // ── Onboarding ──────────────────────────────────────────────────────────────
+// In-service customer accounts that aren't set up yet — never a churned,
+// paused, internal or demo account (#152). The owner hiding their setup card
+// doesn't hide it here.
 async function onboarding(){
-  await loadClients();
-  const rows = _clients.filter(r=>!r.is_demo && !r.onboarding.complete).sort((a,b)=>tsMs(b.created_at)-tsMs(a.created_at));
-  V().innerHTML = rows.length ? `<div class="grid g3">${rows.map(r=>{ const o = r.onboarding, pct = Math.round(100*o.done/(o.total||1)), left = o.steps.filter(s=>!s.done), done = o.steps.filter(s=>s.done);
+  const d = await api('/admin/api/onboarding'); if(!okRes(d)) throw new Error(errText(d, 'Onboarding couldn\'t be read'));
+  const rows = d.rows || [];
+  V().innerHTML = errBanner(d) + (rows.length ? `<div class="grid g3">${rows.map(r=>{ const pct = Math.round(100*(r.done||0)/(r.total||1)), steps = r.steps || [], left = steps.filter(s=>!s.done), done = steps.filter(s=>s.done);
     return `<div class="card" style="padding:18px;display:flex;flex-direction:column;gap:14px">
-      <div style="display:flex;align-items:center;gap:12px">${monoTile(r.name, r.health)}<div style="flex:1;min-width:0;display:flex;flex-direction:column"><a href="#client/${r.id}" style="font-weight:700;font-size:14px;color:var(--ink)">${esc(r.name)}</a><span class="muted" style="font-size:12.5px">${esc((r.owner||{}).username||r.owner_email||'')} · joined ${fmtD(r.created_at)}</span></div><span class="n" style="font-size:18px;font-weight:600">${o.done}<span class="muted" style="font-size:13px">/${o.total}</span></span></div>
+      <div style="display:flex;align-items:center;gap:12px">${monoTile(r.name, r.health)}<div style="flex:1;min-width:0;display:flex;flex-direction:column"><a href="#client/${r.id}" style="font-weight:700;font-size:14px;color:var(--ink)">${esc(r.name)}</a><span class="muted" style="font-size:12.5px">${esc(r.owner||r.owner_email||'')} · joined ${fmtD(r.created_at)} · day <span class="n">${r.days_since_signup}</span></span></div><span class="n" style="font-size:18px;font-weight:600">${r.done}<span class="muted" style="font-size:13px">/${r.total}</span></span></div>
       <span class="bar"><i style="width:${pct}%;background:${pct>=75?'var(--green)':pct>=40?'var(--amber)':'var(--ember2)'}"></i></span>
       <div class="steps">${left.slice(0,2).map(s=>`<div><span class="no">○</span><span>${esc(s.label)}</span></div>`).join('')}<div class="muted" style="font-size:12.5px" title="${esc(left.slice(2).map(s=>s.label).join(' · '))}">${left.length>2?'+'+(left.length-2)+' more to go · ':''}<span class="ok">✓</span> ${done.length} done</div></div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap">${bill(r.billing.status)}<span class="b ${r.billing.contract_status==='signed'?'ok':'warn'} nodot">contract ${esc(r.billing.contract_status)}</span>${o.dismissed?'<span class="chip">card hidden by client</span>':''}</div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:auto">${r.billing.contract_status!=='signed'?`<button class="btn s" onclick="act('/admin/resend-contract/${r.id}','Resend contract')">Resend contract</button>`:''}<button class="btn s" onclick="act('/admin/resend-welcome/${r.id}','Resend welcome email')">Resend welcome</button>${r.billing.status!=='active'?`<button class="btn s" onclick="act('/admin/resend-payment/${r.id}','Resend payment link')">Payment link</button>`:''}<a class="btn s g" href="/admin/client-settings/${r.id}">Settings</a></div></div>`; }).join('')}</div>`
-    : '<div class="card empty">Everyone is set up.</div>';
+      <div style="display:flex;gap:6px;flex-wrap:wrap">${bill(r.status)}${r.owner_hid_card?'<span class="chip" title="The owner hid their setup card; this stays until the steps are done">card hidden by owner</span>':''}${r.deletion_due?'<span class="chip bad">closing</span>':''}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:auto"><button class="btn s w" onclick="resendWelcome(${r.id},'${jsq(r.name)}','${jsq(r.owner_email||'')}')">Resend welcome</button>${r.status!=='active'&&!r.billed_by?`<button class="btn s w" onclick="resendPayment(${r.id},'${jsq(r.name)}','${jsq(r.status||'')}','${jsq(r.owner_email||'')}')">Payment link</button>`:''}<a class="btn s g" href="#client/${r.id}?tab=billing">Billing</a><a class="btn s g" href="/admin/client-settings/${r.id}">Settings</a></div></div>`; }).join('')}</div>`
+    : `<div class="card empty">${readFailed(d, ['restaurants']) ? 'Onboarding is unknown — the fleet couldn\'t be read.' : 'Everyone in service is set up.'}</div>`);
 }
 
 // ── Billing ─────────────────────────────────────────────────────────────────
+// Every row from the Stripe subscription mirror (#37: no Stripe call per
+// customer on a request thread). MRR counts each subscription once — a
+// location a group's subscription covers says who pays for it (#15, #116).
+// Margin and ARPA against entered vendor costs (#90). The plumbing — webhook
+// verification, the nightly reconcile, owed billing mail, signed-but-unpaid —
+// in one Billing health panel (#74, #115, #12, #26). One client's live Stripe
+// state is read only on its own page, on demand.
 async function billing(){
-  const d = await api('/admin/api/billing'); if(!d.ok) throw new Error('billing failed');
-  const rows = d.rows.filter(r=>_showDemo||!r.is_demo);
-  const cnt = s => rows.filter(r=>s.indexOf(r.status)>=0).length, unsigned = rows.filter(r=>r.contract_status!=='signed').length;
+  const d = await api('/admin/api/billing'); if(!okRes(d)) throw new Error(errText(d, 'Billing couldn\'t be read'));
+  const t = d.totals || {}, m = d.margin || {};
+  const rows = (d.rows || []).filter(r=>_showDemo || r.segment === 'customer');
+  const cnt = s => rows.filter(r=>r.segment==='customer' && s.indexOf(r.status)>=0).length;
+  const unsigned = rows.filter(r=>r.segment==='customer' && r.contract_status!=='signed' && ['churned','canceled'].indexOf(r.status)<0).length;
+  const money = v => figOr(d, ['restaurants', 'stripe_subscriptions'], fmtUSD(v));
+  const order = {past_due:0, paused:1, trial:2, active:3};
+  rows.sort((a,b)=>(order[a.status]!=null?order[a.status]:4)-(order[b.status]!=null?order[b.status]:4) || String(a.restaurant||'').localeCompare(String(b.restaurant||'')));
   V().innerHTML = `
-    ${d.stripe_live ? '' : '<div class="warnbox">STRIPE_SECRET_KEY is not set on this server — local billing status only.</div>'}${d.stripe_error?`<div class="err"><b>Stripe:</b> ${esc(d.stripe_error)}</div>`:''}
+    ${errBanner(d)}
+    ${d.mirror_available === false ? `<div class="warnline">${ico('alert','xs')} The Stripe subscription mirror is empty, so MRR is at list price. It fills from Stripe's subscription events and the nightly reconcile.</div>` : ''}
+    ${t.mrr_fallback_accounts ? `<div class="warnline">${ico('alert','xs')} <span class="n">${t.mrr_fallback_accounts}</span> account${t.mrr_fallback_accounts===1?' counts':'s count'} at list price — no mirror row yet.</div>` : ''}
     <section class="card strip">
-      <div><span class="lbl">MRR · list price</span><span class="v" style="color:var(--ember2)">${fmtUSD(d.mrr)}</span><span class="s">active accounts</span></div>
-      <div><span class="lbl">Active</span><span class="v">${cnt(['active'])}</span><span class="s">paying</span></div>
-      <div><span class="lbl">Trial</span><span class="v">${cnt(['trial'])}</span><span class="s">not billed yet</span></div>
-      <div><span class="lbl">Past due</span><span class="v" style="${cnt(['past_due'])?'color:var(--red-t)':''}">${cnt(['past_due'])}</span><span class="s">${cnt(['past_due'])?'send a payment link':'none'}</span></div>
-      <div><span class="lbl">Canceled</span><span class="v">${cnt(['churned','canceled'])}</span><span class="s">all time</span></div>
-      <div><span class="lbl">Unsigned</span><span class="v" style="${unsigned?'color:var(--amber-t)':''}">${unsigned}</span><span class="s">contracts</span></div>
+      <div><span class="lbl">MRR · ${esc(MRR_SRC[t.mrr_source] || 'list price')}</span><span class="v" style="color:var(--ember2)">${money(t.mrr)}</span><span class="s" title="${esc(t.mrr_basis||'')}">${t.subscriptions!=null?'<span class="n">'+t.subscriptions+'</span> subscriptions, each once':'active accounts'}</span></div>
+      <div><span class="lbl">Committed</span><span class="v">${money(t.mrr_committed)}</span><span class="s">trialing — not billed yet</span></div>
+      <div><span class="lbl">Past due</span><span class="v" style="${cnt(['past_due'])?'color:var(--red-t)':''}">${money(t.mrr_past_due)}</span><span class="s"><span class="n">${cnt(['past_due'])}</span> account${cnt(['past_due'])===1?'':'s'}</span></div>
+      <div><span class="lbl">ARPA</span><span class="v">${m.arpa==null?'—':fmtUSD(m.arpa)}</span><span class="s">MRR per paying account</span></div>
+      <div title="${esc(m.basis||'')}"><span class="lbl">Gross margin</span><span class="v" style="${m.gross_margin!=null&&m.gross_margin<0?'color:var(--red-t)':''}">${m.gross_margin==null?'—':fmtUSD(m.gross_margin)}</span><span class="s">${m.gross_margin_pct==null?'no MRR yet':m.gross_margin_pct+'% after AI, SMS and vendor costs'}</span></div>
+      <div><span class="lbl">Contracts</span><span class="v" style="${unsigned?'color:var(--amber-t)':''}">${unsigned}</span><span class="s">not signed yet${t.covered_locations?' · '+t.covered_locations+' covered':''}</span></div>
     </section>
-    <section class="card" style="overflow:hidden"><div class="lst">${rows.sort((a,b)=>({past_due:0,trial:1,active:2}[a.status]!=null?{past_due:0,trial:1,active:2}[a.status]:3)-({past_due:0,trial:1,active:2}[b.status]!=null?{past_due:0,trial:1,active:2}[b.status]:3)).map(r=>`
-      <div class="li"><div class="tt"><a href="#client/${r.restaurant_id}?tab=billing" style="font-weight:700;font-size:14px;color:var(--ink)">${esc(r.restaurant)}</a><span title="${esc(r.owner_email||'')}">${esc(r.owner||'')}</span></div>
-        <span style="width:110px">${bill(r.status)}</span>
-        <span class="n" style="width:90px;font-weight:600" title="${r.modules} module${r.modules===1?'':'s'}${r.tier?' · '+esc(r.tier):''}">${r.monthly?fmtUSD(r.monthly)+'/mo':'—'}</span>
-        <span style="width:150px;font-size:12.5px">${r.live?`<span class="b ${r.live.status==='active'?'ok':r.live.status==='past_due'?'bad':'warn'} nodot">Stripe · ${esc(r.live.status)}</span>${r.live.cancel_at_period_end?' <span class="chip warn">cancels</span>':''}`:(r.stripe_customer_id?`<a class="mono" href="https://dashboard.stripe.com/customers/${esc(r.stripe_customer_id)}" target="_blank">Stripe ↗</a>`:'<span class="muted">—</span>')}</span>
-        <span style="width:100px"><span class="b ${r.contract_status==='signed'?'ok':'warn'} nodot">${esc(r.contract_status)}</span></span>
-        <span style="display:flex;justify-content:flex-end;min-width:110px">${r.contract_status!=='signed'?`<button class="btn s" onclick="act('/admin/resend-contract/${r.restaurant_id}','Resend contract')">Contract</button>`:(r.status!=='active'?`<button class="btn s" onclick="act('/admin/resend-payment/${r.restaurant_id}','Resend payment link')">Payment link</button>`:'')}</span></div>`).join('') || '<div class="empty">No accounts.</div>'}</div></section>
+    <section class="card" style="overflow:hidden"><div class="lbl" style="display:grid;${BILL_COLS};gap:14px;padding:12px 18px;border-bottom:1px solid var(--line)"><span>Account</span><span>Status</span><span>Pays</span><span>Stripe (mirror)</span><span>Contract</span><span>Margin · 30d</span><span></span></div><div class="lst">${rows.map(billRow).join('') || '<div class="empty">No accounts.</div>'}</div></section>
+    <section class="grid g2" style="align-items:start">
+      <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px" id="bh-card"><h2>Billing health</h2>${skel(3)}</div>
+      <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px" id="vc-card"><h2>Vendor costs</h2>${skel(2)}</div>
+    </section>
     <details class="card"><summary>Payment &amp; contract history · <span class="n">${(d.events||[]).length}</span></summary><div class="cb">
     ${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Client',key:'restaurant',cell:r=>r.restaurant_id?clientLink(r.restaurant_id,r.restaurant||('#'+r.restaurant_id)):`<span class="dim">unmatched${r.email?' · '+esc(r.email):''}${r.customer_id?' · '+esc(r.customer_id):''}</span>`},{h:'Source',key:'source',cell:r=>`<span class="chip">${esc(r.source)}</span>`},{h:'Event',key:'event_type',cell:r=>evBadge(r)},{h:'Amount',key:'amount',r:true,cell:r=>r.amount!=null&&r.source!=='admin'?`<span class="num">${fmtUSD(r.amount,2)}</span>`:''},{h:'Detail',key:'summary',wrap:true,cell:r=>`<span class="dim">${esc(r.summary||'')}</span>`}], d.events||[], {id:'ev-t', sort:'created_at', limit:25, empty:'No Stripe or DocuSign events yet — they land here as the webhooks fire.'})}</div></details>
-    <div class="dim">Billing changes happen in Stripe, never here. MRR is list price by module count for active accounts.</div>`;
+    <div class="dim">Plan changes, holds, marking a contract signed and attaching a Stripe customer are on each client's Billing tab. ${asOf(d)}</div>`;
+  lazy('bh-card', billingHealth);
+  lazy('vc-card', vendorCosts);
+}
+const BILL_COLS = 'grid-template-columns:minmax(0,2fr) minmax(0,1.2fr) minmax(0,1.3fr) minmax(0,1.2fr) minmax(0,1.4fr) minmax(0,.8fr) 104px';
+function billRow(r){
+  const who = r.billed_by ? `covered by ${clientLink(r.billed_by.restaurant_id, r.billed_by.name || ('#' + r.billed_by.restaurant_id))}`
+    : (r.monthly ? `<span class="n">${fmtUSD(r.monthly)}</span>/mo${r.mrr_source==='list'?' <span class="chip" title="No Stripe mirror row: list price">list</span>':''}` : (r.committed_monthly ? `<span class="n">${fmtUSD(r.committed_monthly)}</span>/mo <span class="chip" title="Trialing in Stripe">committed</span>` : '<span class="dim">—</span>'));
+  const lm = r.list_mismatch ? ` <span class="chip warn" title="Billed ${fmtUSD(r.list_mismatch.billed_gross,2)} vs list ${fmtUSD(r.list_mismatch.list,2)} (${esc(r.list_mismatch.interval||'month')})">≠ list</span>` : '';
+  const sm = r.status_mismatch ? ` <span class="chip bad" title="Stripe says ${esc(r.status_mismatch.stripe)}; the account says ${esc(r.status_mismatch.local)}">Stripe disagrees</span>` : '';
+  const live = r.live ? `<span class="b ${r.live.status==='active'?'ok':r.live.status==='past_due'?'bad':'warn'} nodot" title="From the mirror, updated ${esc(fmtDT(r.live.updated_at))}">Stripe · ${esc(r.live.status||'—')}</span>${r.live.cancel_at_period_end?' <span class="chip warn">cancels</span>':''}` : (r.stripe_customer_id?`<a class="mono" href="https://dashboard.stripe.com/customers/${esc(r.stripe_customer_id)}" target="_blank" rel="noopener">Stripe ↗</a>`:'<span class="muted">—</span>');
+  const pause = r.status === 'paused' ? ` <span class="chip ${r.pause_reason==='dispute'?'bad':'warn'}" title="${r.pause_reason_inferred?'Read from the Stripe events':''}">${esc(PAUSE_LABEL[r.pause_reason] || 'paused')}${r.paused_until?' · until '+fmtD(r.paused_until):''}</span>` : '';
+  const mg = r.margin || {};
+  // Sends are for customers: never the admin's own home, a demo or a test account.
+  const act = r.segment !== 'customer' ? '' : r.contract_status!=='signed' && ['churned','canceled'].indexOf(r.status)<0 ? `<button class="btn s w" onclick="resendContract(${r.restaurant_id},'${jsq(r.restaurant)}','${jsq(r.owner_email||'')}')">Contract</button>`
+    : (r.status!=='active' && !r.billed_by && ['churned','canceled','paused','internal'].indexOf(r.status)<0 ? `<button class="btn s w" onclick="resendPayment(${r.restaurant_id},'${jsq(r.restaurant)}','${jsq(r.status||'')}','${jsq(r.owner_email||'')}')">${r.status==='past_due'?'Card link':'Payment link'}</button>` : '');
+  return `<div class="li" style="display:grid;${BILL_COLS};gap:14px"><div class="tt"><a href="#client/${r.restaurant_id}?tab=billing" style="font-weight:700;font-size:14px;color:var(--ink)">${esc(r.restaurant)}</a><span title="${esc(r.owner_email||'')}">${esc(r.owner||'')}${r.segment==='internal'?' <span class="chip">internal</span>':''}${r.deletion?' <span class="chip bad">closing</span>':''}</span></div>
+    <span style="display:flex;gap:4px;flex-wrap:wrap;align-items:center">${bill(r.status)}${pause}</span>
+    <span style="font-size:12.5px">${who}${lm}</span>
+    <span style="font-size:12.5px">${live}${sm}</span>
+    <span style="font-size:12.5px">${contractPill(r.contract_status)}${r.signed_at?`<div class="dim">signed ${fmtD(r.signed_at)}${r.days_since_signed!=null&&!r.converted_at&&r.status==='trial'?' · '+r.days_since_signed+'d unpaid':''}</div>`:(r.days_in_trial!=null?`<div class="dim">trial day ${r.days_in_trial}</div>`:'')}</span>
+    <span style="font-size:12.5px" class="n" title="${esc('Margin: pays ' + fmtUSD(mg.revenue_monthly||0) + '/mo; AI + SMS ' + fmtUSD(mg.variable_cost_30d||0, 2) + ' in 30 days')}">${mg.revenue_monthly ? fmtUSD(mg.margin) + (mg.margin_pct!=null?'<div class="dim">'+mg.margin_pct+'% margin</div>':'') : '<span class="dim">—</span>'}</span>
+    <span style="display:flex;justify-content:flex-end">${act}</span></div>`;
+}
+async function billingHealth(){
+  const d = await need('/admin/api/billing/health');
+  const hooks = d.webhooks || [], rec = d.reconcile || [], failed = d.failed_sends || [], pend = d.owed_pending || {}, pipe = d.pipeline || [];
+  const hookRow = h => `<div style="display:flex;justify-content:space-between;gap:10px;font-size:12.5px"><span><b>${esc(h.provider)}</b> <span class="dim">${h.last_verified_at?'verified '+ago(h.last_verified_at)+' ago':'never verified'}</span></span><span>${h.failures_since_verified?`<span class="chip bad" title="${esc(h.last_failure_error||'')}">${h.failures_since_verified} failed since</span>`:'<span class="chip ok">ok</span>'}</span></div>`;
+  return `<h2>Billing health</h2>
+    <div class="lbl">Inbound webhooks</div>${hooks.length ? hooks.map(hookRow).join('') : '<span class="dim">No Stripe or DocuSign webhook has been verified yet.</span>'}
+    <div class="lbl">Nightly reconcile</div>${rec.length ? rec.map(r=>`<div style="font-size:12.5px">${clientLink(r.restaurant_id, r.name||('#'+r.restaurant_id))} <span class="dim">· since ${fmtD(r.first_seen_at)}</span><div class="dim">${esc((r.mismatches||[]).map(x=>x.detail||x.kind).join('; '))}</div></div>`).join('') : '<span class="dim">No mismatches between Stripe and the accounts.</span>'}
+    <div class="lbl">Billing email</div><span style="font-size:12.5px">${pend.count ? `<span class="n">${pend.count}</span> waiting to send, oldest ${ago(pend.oldest)} ago` : 'Nothing waiting to send.'}</span>
+    ${failed.length ? failed.slice(0,8).map(f=>`<div style="font-size:12.5px"><span class="chip bad">failed</span> ${esc(f.kind)} → ${f.restaurant_id?clientLink(f.restaurant_id, f.name||('#'+f.restaurant_id)):''} <span class="dim">${f.attempts} tries · ${esc(f.last_error||'')}</span></div>`).join('') + (failed.length>8?`<span class="dim">+${failed.length-8} more in 30 days</span>`:'') : '<span class="dim">No billing email failed for good in 30 days.</span>'}
+    <div class="lbl">Signed, not paid</div>${pipe.length ? pipe.map(p=>`<div style="display:flex;justify-content:space-between;gap:8px;font-size:12.5px"><span>${clientLink(p.restaurant_id, p.name)} <span class="dim">signed ${fmtD(p.signed_at)} · ${p.days_since_signed}d · ${Object.keys(p.reminders||{}).length} reminder${Object.keys(p.reminders||{}).length===1?'':'s'}</span></span>${p.overdue?'<span class="chip bad">overdue</span>':''}</div>`).join('') : '<span class="dim">Nobody signed and unpaid.</span>'}`;
+}
+async function vendorCosts(){
+  const d = await need('/admin/api/vendor-costs?months=6');
+  const months = d.by_month || [], vendors = d.vendors || [];
+  const now = new Date(), thisMonth = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
+  // "Sep 2026" — a month, never read as the 26th of September.
+  const mlabel = s => { const x = dayOf(s); return x ? x.toLocaleString(undefined,{month:'short'}) + ' ' + x.getFullYear() : s; };
+  return `<h2>Vendor costs</h2>
+    ${errBanner(d)}
+    ${table([{h:'Month',key:'month',cell:r=>esc(mlabel(r.month))},{h:'Entered',key:'entered_total',r:true,cell:r=>`<span class="num" title="${esc(Object.keys(r.entered||{}).map(k=>k+' '+fmtUSD(r.entered[k],2)).join(' · '))}">${fmtUSD(r.entered_total,2)}</span>`},{h:'Metered',key:'usage_total',r:true,cell:r=>`<span class="num" title="${esc(Object.keys(r.usage||{}).map(k=>k.replace('usage:','')+' '+fmtUSD(r.usage[k],2)).join(' · '))}">${fmtUSD(r.usage_total,2)}</span>`},{h:'Total',key:'total',r:true,cell:r=>`<span class="num">${fmtUSD(r.total,2)}</span>`}], months.slice().reverse(), {id:'vc-t', limit:6, empty:'Nothing entered yet.'})}
+    <button class="btn s w" style="align-self:flex-start" onclick="vendorCostOpen('${jsq(vendors.join(','))}','${thisMonth}')">Enter a cost…</button>
+    <div class="dim">${esc(d.note||'')}</div>`;
+}
+function vendorCostOpen(vendors, month){
+  formOpen({title:'Enter a vendor cost', sub:'One vendor, one month. It feeds gross margin; it is never added to MRR.', go:'Save cost', done:'Cost saved',
+    fields:[{id:'vendor', label:'Vendor', type:'select', options:vendors.split(',').filter(Boolean).map(v=>[v, v.replace(/_/g,' ')])},
+            {id:'month', label:'Month (YYYY-MM)', value:month, placeholder:'2026-09'},
+            {id:'amount_usd', label:'Amount (USD)', placeholder:'e.g. 20'},
+            {id:'note', label:'Note (optional)', placeholder:'Invoice number, plan…'}],
+    submit: v => post('/admin/api/vendor-costs', {vendor:v.vendor, month:v.month, amount_usd:v.amount_usd, note:v.note}),
+    after: () => lazy('vc-card', vendorCosts)});
 }
 
 // ── Support queue ───────────────────────────────────────────────────────────
-let _sf = 'all';
-const ISSUE_KINDS = {billing:/billing|canceled|contract/, integration:/int:/, data:/stale|nodata|unconf/, comms:/email|push|posts/, usage:/ai_|inactive|onboarding|urgent|dup/, platform:/^job|^scheduler|^fleet|^platform/};
-async function issues(){
-  const d = await api('/admin/api/issues'); if(!d.ok) throw new Error('issues failed');
-  const F = [['all','All',i=>true],['critical','Critical',i=>i.severity==='critical'],['billing','Billing',i=>ISSUE_KINDS.billing.test(i.key)],['integration','Integrations',i=>ISSUE_KINDS.integration.test(i.key)],['data','Data',i=>ISSUE_KINDS.data.test(i.key)],['comms','Email &amp; push',i=>ISSUE_KINDS.comms.test(i.key)],['platform','Platform',i=>ISSUE_KINDS.platform.test(i.key)]];
-  const f = F.find(x=>x[0]===_sf)||F[0], rows = d.issues.filter(f[2]);
-  V().innerHTML = `
-    <div class="seg">${F.map(x=>`<button class="${_sf===x[0]?'on':''}" onclick="_sf='${x[0]}';issues()">${x[1]} <b>${d.issues.filter(x[2]).length}</b></button>`).join('')}</div>
-    <section class="card" style="overflow:hidden"><div class="lst">${rows.slice(0, 40).map(needRow).join('') || '<div class="empty">Nothing needs attention.</div>'}</div>${rows.length>40?`<div class="more" style="cursor:default;color:var(--ink4)">Showing the first 40 of ${rows.length} — narrow it with a filter.</div>`:''}</section>
-    ${d.resolved.length?`<details class="card"><summary>Resolved · <span class="n">${d.resolved.length}</span></summary><div class="cb">${table([{h:'Issue',key:'key',cell:r=>`<span class="mono">${esc(r.key)}</span>`},{h:'Note',key:'note'},{h:'By',key:'actor'},{h:'When',key:'resolved_at',cell:r=>`<span class="num">${fmtDT(r.resolved_at)}</span>`},{h:'',cell:r=>`<button class="btn s" onclick="unresolve('${jsq(r.key)}')">Reopen</button>`}], d.resolved, {id:'res-t', limit:20})}</div></details>`:''}`;
+// Every open issue, filtered, sorted and paged on the server (#79), counted
+// per segment (#141) — plus the in-app bug reports and the account-deletion
+// requests (#34), and what was resolved (#24).
+let _sf = 'attention', _ssev = '', _sq = '', _ssort = 'severity', _spage = 1, _sview = 'issues', _bugStatus = 'open';
+async function issues(qs){
+  const p0 = new URLSearchParams(qs || '');
+  if(p0.get('view')) _sview = p0.get('view');
+  if(p0.get('segment')){ _sf = p0.get('segment'); _sview = 'issues'; }
+  const k = _ovk || {};
+  const views = [['issues','Issues', k.attention || ''],['bugs','Bug reports',''],['deletions','Deletion requests', k.deletion_requests || ''],['resolved','Resolved','']];
+  const nav = `<div class="seg">${views.map(v=>`<button class="${_sview===v[0]?'on':''}" onclick="_sview='${v[0]}';issues()">${v[1]}${v[2]!==''?' <b>'+v[2]+'</b>':''}</button>`).join('')}</div>`;
+  if(_sview === 'bugs') return bugReports(nav);
+  if(_sview === 'deletions') return deletionRequests(nav);
+  if(_sview === 'resolved') return resolvedIssues(nav);
+  const p = new URLSearchParams({segment:_sf, sort:_ssort, page:String(_spage), per_page:'40'});
+  if(_ssev) p.set('severity', _ssev); if(_sq) p.set('q', _sq);
+  const d = await api('/admin/api/issues/list?' + p.toString()); if(!okRes(d)) throw new Error(errText(d, 'The support queue couldn\'t be read'));
+  const c = d.counts || {}, n = x => (c[x] || {}).total || 0;
+  const segs = [['attention','Needs attention', c.attention || 0],['customer','Customers', n('customer')],['platform','Platform', n('platform')],['internal','Internal', n('internal')]];
+  V().innerHTML = `${errBanner(d)}
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">${nav}
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <div class="seg">${segs.map(x=>`<button class="${_sf===x[0]?'on':''}" onclick="_sf='${x[0]}';_spage=1;issues()"${x[0]==='internal'?' title="Demo, test and internal accounts — never counted in attention"':''}>${x[1]} <b>${x[2]}</b></button>`).join('')}</div>
+        <div class="seg">${[['','All'],['critical','Critical'],['warning','Warning']].map(x=>`<button class="${_ssev===x[0]?'on':''}" onclick="_ssev='${x[0]}';_spage=1;issues()">${x[1]}</button>`).join('')}</div>
+        <select aria-label="Sort" onchange="_ssort=this.value;_spage=1;issues()" style="height:32px;padding:0 10px">${[['severity','Most severe first'],['age','Oldest first'],['restaurant','By restaurant']].map(x=>`<option value="${x[0]}" ${_ssort===x[0]?'selected':''}>${x[1]}</option>`).join('')}</select>
+        <label class="search-in" style="width:220px">${ico('search','s')}<input placeholder="Find an issue or client" value="${esc(_sq)}" oninput="_sq=this.value;_spage=1;clearTimeout(window._sqt);window._sqt=setTimeout(()=>{issues().then(()=>{const i=V().querySelector('.search-in input');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length);}});},250)"></label>
+      </div></div>
+    <section class="card" style="overflow:hidden"><div class="lst">${(d.items||[]).map(needRow).join('') || `<div class="empty">${readFailed(d,['restaurants'])?'Unknown — the fleet couldn\'t be read.':'Nothing needs attention here.'}</div>`}</div>${pager(d.page, d.pages, d.total, 'issuesPage', 'issues')}</section>
+    <div class="dim">${asOf(d)}</div>`;
+}
+function issuesPage(n){ _spage = n; issues(); }
+async function bugReports(nav){
+  const d = await api('/admin/api/bug-reports?status=' + _bugStatus + '&limit=100'); if(!okRes(d)) throw new Error(errText(d, 'Bug reports couldn\'t be read'));
+  const rows = d.reports || [];
+  V().innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">${nav}<div class="seg">${[['open','Open', d.open],['closed','Closed','']].map(x=>`<button class="${_bugStatus===x[0]?'on':''}" onclick="_bugStatus='${x[0]}';issues()">${x[1]}${x[2]!==''&&x[2]!=null?' <b>'+x[2]+'</b>':''}</button>`).join('')}</div></div>
+    <section class="card" style="overflow:hidden"><div class="lst">${rows.map(b=>`<div class="li click" onclick="toggleRow(this)"><div class="tt"><b>${esc(String(b.message||'').slice(0,110))}${String(b.message||'').length>110?'…':''}</b><span>${b.restaurant_id?esc(b.restaurant||('#'+b.restaurant_id)):'no restaurant'} · ${esc(b.username||b.email||'unknown sender')} · ${fmtDT(b.created_at)} · ${esc(b.source||'')}${b.notified?'':' · <span style="color:var(--amber-t)" title="'+esc(b.notify_error||'')+'">email to you didn\'t go out</span>'}</span></div>${b.status==='open'?`<button class="btn s w" onclick="event.stopPropagation();bugStatus(${b.id},'closed')">Close</button>`:`<button class="btn s g w" onclick="event.stopPropagation();bugStatus(${b.id},'open')">Reopen</button>`}<span class="chev">${ico('chev','s')}</span></div>
+      <div class="lx"><div class="box"><span class="ink2 pre" style="font-size:13px">${esc(b.message||'')}</span>${b.meta&&Object.keys(b.meta).length?`<span class="dim mono">${esc(Object.keys(b.meta).map(k=>k+': '+b.meta[k]).join(' · '))}</span>`:''}${b.close_note?`<span class="dim">Closed by ${esc(b.closed_by||'')} ${fmtD(b.closed_at)}: ${esc(b.close_note)}</span>`:''}${b.restaurant_id?`<a class="btn s" style="align-self:flex-start" href="#client/${b.restaurant_id}">Open client</a>`:''}</div></div>`).join('') || `<div class="empty">${_bugStatus==='open'?'No open bug reports.':'No closed bug reports.'}</div>`}</div></section>`;
+}
+async function bugStatus(id, status){
+  let note = null;
+  if(status === 'closed'){ note = prompt('Close this bug report. A note for the record (optional):'); if(note === null) return; }
+  else if(!confirm('Reopen this bug report?')) return;
+  const d = await post('/admin/api/bug-reports/' + id + '/status', {status, note});
+  if(say(d, status === 'closed' ? 'Bug report closed' : 'Bug report reopened')) issues();
+}
+async function deletionRequests(nav){
+  const d = await api('/admin/api/deletion-requests'); if(!okRes(d)) throw new Error(errText(d, 'Deletion requests couldn\'t be read'));
+  const rows = d.requests || [];
+  V().innerHTML = `${nav}<section class="card" style="overflow:hidden"><div class="lst">${rows.map(r=>`<div class="li"><span style="width:96px;flex-shrink:0">${pill(r.overdue?'bad':(r.days_left!=null&&r.days_left<=7?'warn':'neu'), r.overdue?'Overdue':'Due '+esc(r.due_on), false)}</span>
+      <div class="tt"><a href="#client/${r.restaurant_id}?tab=access" style="font-weight:700;font-size:14px;color:var(--ink)">${esc(r.name)}</a><span>asked ${esc(r.requested_on||'')} · ${r.overdue?'overdue by '+(-r.days_left)+' day'+(r.days_left===-1?'':'s'):r.days_left+' day'+(r.days_left===1?'':'s')+' left'} · ${esc((r.billing_status||'').replace('_',' '))}</span></div>
+      <span class="dim" style="font-size:12.5px">${(r.outstanding||[]).length ? (r.outstanding||[]).length + ' step' + ((r.outstanding||[]).length===1?'':'s') + ' left' : 'ready to delete'}</span><a class="btn s" href="#client/${r.restaurant_id}?tab=access">Offboarding</a></div>`).join('') || '<div class="empty">No account is waiting to be closed.</div>'}</div></section>
+    <div class="dim">Soonest due first. Apple's guideline 5.1.1(v): an account-deletion request is finished within 30 days, or withdrawn with the owner.</div>`;
+}
+async function resolvedIssues(nav){
+  const d = await api('/admin/api/issues/resolutions'); if(!okRes(d)) throw new Error(errText(d, 'Resolutions couldn\'t be read'));
+  V().innerHTML = `${nav}${errBanner(d)}
+    <section class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2>Resolved, in force</h2><span class="cnt">${d.total||0}</span></div>
+    ${table([{h:'Issue',key:'key',cell:r=>`<span class="mono">${esc(r.key)}</span>`},{h:'Scope',key:'occurrence_at',cell:r=>r.occurrence_at?`<span class="dim">occurrence of ${fmtDT(r.occurrence_at)}</span>`:'<span class="dim">while it lasts</span>'},{h:'Note',key:'note',wrap:true},{h:'By',key:'actor'},{h:'When',key:'resolved_at',cell:r=>`<span class="num">${fmtDT(r.resolved_at)}</span>`},{h:'',cell:r=>`<button class="btn s w" onclick="unresolve('${jsq(r.key)}')">Reopen</button>`}], d.resolved||[], {id:'res-t', limit:25, empty:'Nothing is marked resolved.'})}</section>
+    <details class="card"><summary>History · <span class="n">${(d.history||[]).length}</span></summary><div class="cb">${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Issue',key:'key',cell:r=>`<span class="mono">${esc(r.key)}</span>`},{h:'What',key:'action',cell:r=>`<span class="chip">${esc(r.action)}</span>`},{h:'By',key:'actor'},{h:'Note',key:'note',wrap:true}], d.history||[], {id:'resh-t', limit:25, empty:'No history yet.'})}</div></details>`;
 }
 
 // ── Client page ─────────────────────────────────────────────────────────────
@@ -2076,78 +2237,310 @@ function expPinForm(){
 
 // ── System ──────────────────────────────────────────────────────────────────
 async function seedReviewAccount(){
+  // The App Store reviewer's password is KEPT (#127) — rotating it would sign
+  // Apple's reviewer out mid-review. The seed runs as an admin job (#153); a
+  // new password (a brand-new account) is handed over once, in Shown once.
   const btn = $('seed-btn'), status = $('seed-status'), out = $('seed-out');
-  btn.disabled = true; status.textContent = 'Creating…'; out.hidden = true;
-  try{
-    const r = await fetch('/admin/seed-review-account', {method:'POST'});
-    const d = await r.json();
-    if(d.ok){
-      status.textContent = 'Done — copy the password below, it is only shown once.';
-      out.textContent = d.output || '';
-      out.hidden = false;
-    } else {
-      status.textContent = 'Failed: ' + (d.error || r.status);
-    }
-  }catch(e){
-    status.textContent = 'Failed: ' + e;
-  }
+  if(!confirm('Create or refresh the App Store review account? Its existing password is kept.')) return;
+  btn.disabled = true; status.textContent = 'Starting…'; out.hidden = true;
+  const d = await post('/admin/seed-review-account', {});
+  if(!okRes(d) || !d.job_id){ btn.disabled = false; status.textContent = errText(d, 'It didn\'t start'); return; }
+  status.textContent = d.message || 'Seeding (up to two minutes)…';
+  const r = await pollJob(jobUrl(d.job_id));
   btn.disabled = false;
+  if(!okRes(r)){ status.textContent = errText(r, 'Seeding failed'); return; }
+  status.textContent = r.password_once ? 'Done — a new password was set; it is shown once.' : 'Done — the password in App Store Connect still works.';
+  out.textContent = r.output || ''; out.hidden = !r.output;
+  if(r.password_once) jobSaid(r, 'App Store review account');
 }
 
 async function createClient(){
-  const v = id => ($(id)||{}).value||''; const btn=$('cc-btn'); const st=$('create-status');
-  const payload = {restaurant_name:v('r-name'), owner_email:v('r-email'), username:v('u-username'), password:v('u-password'), google_place_id:v('r-google'), yelp_business_id:v('r-yelp'), owner_name:v('r-owner-name'), voice_notes:v('r-voice'), owner_phone:v('r-phone'), location_group:v('r-group'), location_name:v('r-location'), module_reviews:$('mod-reviews').checked?1:0, module_labor:$('mod-labor').checked?1:0, module_inventory:$('mod-inventory').checked?1:0, module_marketing:$('mod-marketing').checked?1:0};
-  if(!payload.restaurant_name||!payload.owner_email||!payload.username||!payload.password){ st.textContent='Name, email, username and password are required.'; st.style.color='var(--red)'; return; }
-  btn.disabled=true; btn.textContent='Creating…'; st.textContent='';
-  const d = await post('/admin/create-client', payload); btn.disabled=false; btn.textContent='Create client account';
-  if(d.ok){ st.style.color='var(--green)'; st.textContent='✓ Created — username '+payload.username+(d.docusign_skipped?' (DocuSign unavailable — send the contract manually)':''); _clients=null; badges(); }
-  else { st.style.color='var(--red)'; st.textContent=d.error||'Something went wrong'; }
+  // The restaurant and its owner login are made at once; the contract (and a
+  // Places menu fetch) run as a background job this follows to its end, and
+  // the answer says whether DocuSign actually sent (#152, #153). An optional
+  // sales audit is linked to the new client (#66).
+  const v = id => (($(id)||{}).value||'').trim(); const btn=$('cc-btn'); const st=$('create-status');
+  const payload = {restaurant_name:v('r-name'), owner_email:v('r-email'), username:v('u-username'), password:v('u-password'), google_place_id:v('r-google'), yelp_business_id:v('r-yelp'), owner_name:v('r-owner-name'), voice_notes:v('r-voice'), owner_phone:v('r-phone'), location_group:v('r-group'), location_name:v('r-location'), timezone:v('r-tz'), module_reviews:$('mod-reviews').checked?1:0, module_labor:$('mod-labor').checked?1:0, module_inventory:$('mod-inventory').checked?1:0, module_marketing:$('mod-marketing').checked?1:0};
+  if(!payload.restaurant_name||!payload.owner_email||!payload.username||!payload.password){ st.textContent='Name, email, username and a first password are required.'; st.style.color='var(--red-t)'; return; }
+  const mods = [payload.module_reviews, payload.module_labor, payload.module_inventory, payload.module_marketing].filter(Boolean).length;
+  if(!confirm('Create ' + payload.restaurant_name + ' with the login ' + payload.username + (mods ? '? The DocuSign contract goes to ' + payload.owner_email + ' at once.' : '?'))) return;
+  btn.disabled=true; btn.textContent='Creating…'; st.style.color=''; st.textContent='';
+  const d = await post('/admin/create-client', payload); btn.disabled=false; btn.textContent='Create client';
+  if(!okRes(d)){ st.style.color='var(--red-t)'; st.textContent=errText(d, 'Something went wrong'); return; }
+  _clients=null; badges();
+  const rid = d.restaurant_id, said = ['✓ Created ' + payload.restaurant_name + ' — username ' + payload.username + (d.timezone_defaulted ? ' (timezone: Central, the default).' : '.')];
+  st.style.color='var(--green-t)'; st.textContent = said[0] + (d.setup_job_id ? ' Sending the contract…' : '');
+  const aid = v('r-audit');
+  if(aid){ const l = await post('/admin/api/audits/' + encodeURIComponent(aid) + '/link', {restaurant_id: rid}); said.push(okRes(l) ? 'Linked to its sales audit.' : "The sales audit didn't link: " + errText(l)); }
+  let bad = false;
+  if(d.setup_error){ bad = true; said.push('The contract step didn\'t start: ' + d.setup_error + " Send it from the client's Billing tab."); }
+  else if(d.setup_job_id){
+    const r = await pollJob('/admin/api/create-client/' + encodeURIComponent(d.setup_job_id));
+    if(r && r.envelope_id) said.push('Contract sent.');
+    else if(r && r.docusign_skipped){ bad = true; said.push('DocuSign not sent — ' + String(r.docusign_error || 'unavailable').replace(/\.$/, '') + "; send it from the client's Billing tab."); }
+    else if(!okRes(r)){ bad = true; said.push('The contract step failed — ' + errText(r) + " Send it from the client's Billing tab."); }
+    else if(mods) said.push('No contract was sent.');
+    if(r && r.menu_notes_fetched) said.push('Menu notes filled from Google.');
+  }
+  st.style.color = bad ? 'var(--amber-t)' : 'var(--green-t)';
+  st.innerHTML = esc(said.join(' ')) + ` <a href="#client/${rid}" onclick="closeModal('m-client')">Open client →</a>`;
 }
 async function postIncident(){ const keys=[...document.querySelectorAll('.inc-k:checked')].map(c=>c.value); const d = await post('/admin/status/incident', {title:$('inc-title').value, body:$('inc-body').value, severity:$('inc-sev').value, affected_keys:keys, status:'investigating'}); toast(d.ok?'Incident posted':(d.error||'Failed'), d.ok?'good':'bad'); }
 async function changelogPost(){ const d = await post('/admin/api/changelog', {title:$('cl-title').value, body:$('cl-body').value, tag:$('cl-tag').value}); toast(d.ok?'Posted':(d.error||'Failed'), d.ok?'good':'bad'); if(d.ok){ $('cl-title').value=''; $('cl-body').value=''; changelogLoad(); } }
 async function changelogDelete(id){ if(!confirm('Delete this changelog entry?')) return; await api('/admin/api/changelog/'+id, {method:'DELETE'}); changelogLoad(); }
 
 // ── Client detail ───────────────────────────────────────────────────────────
-async function act(path, label, dangerous){
-  if(dangerous ? !confirm(label + '?\n\nThis cannot be undone.') : !confirm(label + '?')) return;
-  const d = await post(path); toast(d.ok===false ? (d.error||'Failed') : (d.message||d.msg||label+' — done'), d.ok===false?'bad':'good'); if(d.ok!==false){ _clients=null; badges(); route(); }
+// An action: asks first (the label names the client), sends, and says what
+// the server really answered — its error on any non-2xx, not only ok:false
+// (#109); the errors a fetch collected (#78); a job it started, followed to
+// its end (#153).
+async function act(path, label, dangerous, body){
+  if(!confirm(label + (dangerous ? '?\n\nThis cannot be undone.' : '?'))) return null;
+  const d = await post(path, body || {});
+  if(!okRes(d)){ toast(errText(d), 'bad'); return d; }
+  if(d.job_id){
+    toast(d.message || (label + ' — started'), '');
+    const r = await pollJob(jobUrl(d.job_id));
+    jobSaid(r, label);
+  } else {
+    const errs = Array.isArray(d.errors) ? d.errors.filter(e => typeof e === 'string') : [];
+    const said = d.message || d.msg || (d.new_reviews != null ? d.new_reviews + ' new review' + (d.new_reviews === 1 ? '' : 's') + ' fetched' : label + ' — done');
+    toast(said + (errs.length ? ' — but: ' + errs.join('; ') : ''), errs.length ? 'bad' : 'good');
+  }
+  _clients = null; badges(); route();
+  return d;
 }
-async function setDemo(rid, on){ if(!confirm(on ? 'Mark this restaurant as a demo? Its reviews and labor history will be wiped and reseeded on every deploy.' : 'Mark this restaurant as a real client? Seed data will never touch it again.')) return; const d = await post('/admin/api/client/'+rid+'/demo', {is_demo:on}); toast(d.ok?(on?'Marked as demo':'Marked as real client'):(d.error||'Failed'), d.ok?'good':'bad'); if(d.ok){ _clients=null; route(); badges(); } }
-async function deleteDemo(rid, name){ const typed = prompt('Permanently delete the demo account "'+name+'" (#'+rid+') and every row that belongs to it? This cannot be undone.\n\nType its name to confirm:'); if(typed===null) return; if(typed.trim()!==name){ toast('Name did not match — nothing deleted','bad'); return; } const d = await post('/admin/api/client/'+rid+'/delete-demo', {confirm_name:typed.trim()}); toast(d.ok?('Deleted '+name+' ('+(d.rows||0)+' rows)'):(d.error||'Failed'), d.ok?'good':'bad'); if(d.ok){ _clients=null; location.hash='#clients'; badges(); } }
-async function setRole(userId, role){ if(!role) return; const d = await post('/admin/api/set-user-role', {user_id:userId, role}); toast(d.ok?'Role updated':(d.error||'Failed'), d.ok?'good':'bad'); _clients=null; }
-async function sendResetLink(uid, username){ if(!uid){ toast('No active login','bad'); return; } if(!confirm('Email '+username+' a one-hour password-reset link?')) return; const d = await post('/admin/send-reset-link/'+uid, {}); toast(d.ok?'Reset link sent':(d.error||'Failed'), d.ok?'':'bad'); }
-async function freezeAccount(rid){ const reason = prompt('Freeze this account: every session and trusted device is revoked and every login must reset its password before signing in again. Reason (goes in the log):'); if(reason===null) return; const d = await post('/admin/freeze/'+rid, {reason}); toast(d.ok?('Frozen — '+d.frozen+' login(s)'):(d.error||'Failed'), d.ok?'':'bad'); }
-async function resetPassword(rid){ const pw = prompt('New temporary password for this client (8+ characters). Their current password stops working immediately. Prefer "Send a password-reset link" — the owner picks it and it never passes through us.', Math.random().toString(36).slice(2,8)+'-'+Math.random().toString(36).slice(2,6)); if(!pw) return; const d = await post('/admin/reset-password-by-restaurant/'+rid, {password: pw}); if(d.ok){ $('pw-out').textContent = pw; openModal('m-password'); } else toast(d.error||'Failed','bad'); }
+// The demo flag (#118): turning it ON wipes reseedable history, so it needs
+// the restaurant's typed name, and the server refuses a paying or signed
+// account whatever the console asks.
+async function setDemo(rid, on, name){
+  let body = {is_demo: on};
+  if(on){
+    const typed = prompt('Mark ' + (name || 'this restaurant') + ' as a demo? A demo\'s reviews and labor history can be wiped and reseeded by the boot seed, and it can be deleted outright. An account with a Stripe customer, a signed contract or a paying status is refused.\n\nType its name to confirm:');
+    if(typed === null) return;
+    if(name && typed.trim() !== name){ toast('The name did not match — nothing changed', 'bad'); return; }
+    body.confirm_name = typed.trim();
+  } else if(!confirm('Mark ' + (name || 'this restaurant') + ' as a real client? Seed data never touches it again.')) return;
+  const d = await post('/admin/api/client/'+rid+'/demo', body);
+  if(say(d, on ? 'Marked as a demo' : 'Marked as a real client')){ _clients = null; route(); badges(); }
+}
+async function deleteDemo(rid, name){ const typed = prompt('Permanently delete the demo account "'+name+'" (#'+rid+') and every row that belongs to it? This cannot be undone.\n\nType its name to confirm:'); if(typed===null) return; if(typed.trim()!==name){ toast('Name did not match — nothing deleted','bad'); return; } const d = await post('/admin/api/client/'+rid+'/delete-demo', {confirm_name:typed.trim()}); if(say(d, 'Deleted '+name+' ('+(d.rows||0)+' rows)')){ _clients=null; location.hash='#customers/restaurants'; badges(); } }
+// A login's role (#60): Co-owner, Owner, Manager or Teammate, asked first.
+async function setRole(userId, role, username, sel){
+  if(!role) return;
+  const label = ROLE_LABEL[role] || role, who = username || 'this login';
+  if(!confirm('Make ' + who + ' ' + (/^[AEIOU]/.test(label) ? 'an ' : 'a ') + label + '? It changes what they can see and do at this restaurant.')){ if(sel) sel.value = ''; return; }
+  const d = await post('/admin/api/set-user-role', {user_id:userId, role});
+  if(say(d, who + ' is now ' + (/^[AEIOU]/.test(label) ? 'an ' : 'a ') + label + (d && d.previous_role ? ' (was ' + (ROLE_LABEL[d.previous_role] || d.previous_role) + ')' : ''))){ _clients = null; route(); }
+  else if(sel) sel.value = '';
+}
+async function sendResetLink(uid, username, email){ if(!uid){ toast('There is no active login to send a link to','bad'); return; } if(!confirm('Email ' + (email || username) + ' a one-hour password-reset link' + (email && username ? ' for ' + username : '') + '? Their password is unchanged until they use it.')) return; const d = await post('/admin/send-reset-link/'+uid, {}); say(d, 'Reset link sent'); }
+async function freezeAccount(rid, name){ const reason = prompt('Freeze ' + (name || 'this account') + ': every session and remembered device of every login there is revoked, and each login must reset its password before signing in again. The reason (it goes in the log):'); if(reason===null) return; const d = await post('/admin/freeze/'+rid, {reason}); if(say(d, 'Frozen — ' + (d.frozen||0) + ' login(s)')) route(); }
+// An admin never sets or sees a client's password (#86): this emails the
+// owner login a one-hour reset link and says what happened.
+async function resetPassword(rid, name, email){
+  if(!confirm('Email ' + (email || 'the owner') + (name ? ' at ' + name : '') + ' a one-hour link to choose a new password? Their password is unchanged until they use it.')) return;
+  const d = await post('/admin/reset-password-by-restaurant/' + rid, {});
+  say(d, 'Reset link sent');
+}
+// Resend welcome (#22): the username and a one-hour set-password link to
+// the owner login's own address; the current password keeps working.
+async function resendWelcome(rid, name, email){
+  if(!confirm('Email ' + (email || 'the owner') + ' their username and a one-hour set-password link' + (name ? ' for ' + name : '') + '? Their current password keeps working.')) return;
+  const d = await post('/admin/resend-welcome/' + rid, {});
+  say(d, 'Welcome email sent');
+}
+// The payment link, or — for a past-due client — the card-update link (#6);
+// a paying, covered or held account is refused with the reason (#109).
+async function resendPayment(rid, name, status, email){
+  const past = status === 'past_due';
+  if(!confirm((past ? 'Email ' + (email || 'the owner') + ' a link to update the card for ' : 'Email ' + (email || 'the owner') + ' the payment link for ') + name + '?')) return;
+  const d = await post('/admin/resend-payment/' + rid, {});
+  if(say(d, (d && d.kind === 'card_update') ? 'Card-update link sent' : 'Payment link sent')) route();
+}
+async function cardLink(rid, name, email){
+  if(!confirm('Email ' + (email || 'the owner') + ' a link to update the card on file for ' + name + '? It opens Stripe\'s billing portal (and the open invoice, if one is owed).')) return;
+  const d = await post('/admin/api/billing/' + rid + '/card-update-link', {});
+  if(say(d, 'Card-update link sent')) route();
+}
+// Resend contract: the same envelope while it is unsigned; a signed contract
+// is refused (409), and the answer offers an amendment instead (#78, #26).
+async function resendContract(rid, name, email){
+  if(!confirm('Resend the service agreement for ' + name + (email ? ' to ' + email : '') + '? An unsigned envelope is re-sent as the same envelope, with DocuSign reminders on.')) return;
+  let d = await post('/admin/resend-contract/' + rid, {});
+  if(d && d.signed && d._status === 409){
+    if(!confirm((d.error || 'This contract is already signed.') + '\n\nSend an amendment to ' + name + ' — a new envelope with today\'s modules; the signed contract stays in force?')) return;
+    d = await post('/admin/resend-contract/' + rid, {amendment: true});
+  }
+  if(say(d, d && d.amendment ? 'Amendment sent' : (d && d.resent ? 'Contract re-sent (same envelope)' : 'Contract sent'))) route();
+}
+// Change plan (#106): Stripe's price and module list first, then the modules
+// here — one audited action, so the next subscription event can't revert it.
+function changePlan(rid, name, current, live){
+  const cur = String(current || '').split(',').filter(Boolean);
+  formOpen({title:'Change plan — ' + name, go:'Change plan', done:'Plan changed',
+    sub: live ? 'Changes the Stripe subscription\'s price and module list first, then the modules here.' : 'No live Stripe subscription: only the modules here change, and the next payment link quotes the new plan.',
+    fields:[{id:'modules', label:'Modules', type:'checks', options:MODULE_KEYS, value:cur},
+            {id:'proration', label:'The difference this period', type:'select', value:'create_prorations', options:[['create_prorations','Prorate it — credit or charge on the next invoice'],['always_invoice','Invoice the difference now'],['none','No proration — the new price starts next period']]}],
+    submit: v => { if(!v.modules.length) return {ok:false, error:'Pick at least one module.'}; if(!confirm('Change ' + name + ' to ' + v.modules.map(m=>(MODULE_KEYS.find(x=>x[0]===m)||[m,m])[1]).join(', ') + '?' + (live ? ' Stripe is charged or credited as chosen.' : ''))) return false; return post('/admin/api/billing/' + rid + '/change-plan', {modules: v.modules, proration: v.proration}); }});
+}
+// Mark signed (offline) (#78): a contract signed on paper; the note is the record.
+function markSigned(rid, name, email){
+  formOpen({title:'Mark signed (offline) — ' + name, go:'Mark signed', done:'Contract marked signed',
+    sub:'For a contract signed outside DocuSign. The pay-link reminders count from the signing date.',
+    fields:[{id:'note', label:'How it was signed', placeholder:'e.g. Signed on paper at the 9/28 meeting'},
+            {id:'signed_on', label:'Signed on (M/D/YY — blank is today)', placeholder:'9/28/26'},
+            {id:'send_payment_link', label:'Email the owner the payment link now', type:'checkbox', value:true},
+            {id:'send_welcome', label:'Email the welcome (set-password link) — only if the owner has never signed in', type:'checkbox', value:false}],
+    submit: v => { if(!v.note) return {ok:false, error:'Say how it was signed — the note is the record.'}; const sends = [v.send_payment_link ? 'the payment link' : '', v.send_welcome ? 'the welcome' : ''].filter(Boolean);
+      if(!confirm('Mark ' + name + '\'s contract signed' + (sends.length ? ' and email ' + (email || 'the owner') + ' ' + sends.join(' and ') : '') + '?')) return false;
+      return post('/admin/api/billing/' + rid + '/mark-signed', v); }});
+}
+function attachCustomer(rid, name, stored){
+  formOpen({title:(stored ? 'Replace the Stripe customer — ' : 'Attach a Stripe customer — ') + name, go:'Attach', done:'Stripe customer attached',
+    sub: stored ? 'Now attached: <span class="mono">' + esc(stored) + '</span>. Replacing it changes where this client\'s payments are matched.' : 'Links this client to a customer that already exists in Stripe (checked with Stripe, read-only).',
+    fields:[{id:'customer_id', label:'Stripe customer id', placeholder:'cus_…'}].concat(stored ? [{id:'replace', label:'Yes, replace ' + stored, type:'checkbox', value:false}] : []),
+    submit: v => { if(!confirm('Attach ' + (v.customer_id || 'that customer') + ' to ' + name + '?' + (stored ? ' It replaces ' + stored + '.' : ''))) return false; return post('/admin/api/billing/' + rid + '/attach-stripe-customer', v); }});
+}
+// Lift a hold (#114): a chargeback, refund or admin hold only an admin lifts.
+function liftHold(rid, name, reason){
+  formOpen({title:'Lift the ' + reason + ' hold — ' + name, go:'Lift hold', danger:true, done:'Hold lifted',
+    sub:'Every location of the group held for the same reason is released together. The status goes back to what Stripe\'s subscription says, unless you pick one.',
+    fields:[{id:'note', label:'Why it is lifted (the note is the record)', placeholder:'e.g. Dispute won — Stripe case closed'},
+            {id:'status', label:'Status afterwards', type:'select', value:'', options:[['','What Stripe says (or what it was before)'],['active','Active'],['past_due','Past due'],['trial','Trial']]}],
+    submit: v => { if(!v.note) return {ok:false, error:'Say why the hold is lifted — the note is the record.'}; if(!confirm('Lift the ' + reason + ' hold on ' + name + ' (and any location of its group held for the same reason)?')) return false; return post('/admin/api/billing/' + rid + '/lift-hold', v); }});
+}
+// Test sends name who gets them, and can go to you instead (#127).
+function testSend(kind, rid, name, ownerEmail){
+  const what = kind === 'digest' ? 'test digest' : 'test urgent alert';
+  formOpen({title:'Send a ' + what + ' — ' + name, go:'Send', done:'Sent',
+    fields:[{id:'to', label:'Send it to', type:'select', value:'me', options:[['me','Me — my own address'],['owner','The owner' + (ownerEmail ? ' — ' + ownerEmail : '')]]}],
+    submit: v => { if(v.to === 'owner' && !confirm('Send a [TEST] ' + (kind === 'digest' ? 'digest' : 'urgent alert') + ' to ' + (ownerEmail || 'the owner') + ', the real owner of ' + name + '?')) return false; return post('/admin/test-' + (kind === 'digest' ? 'digest' : 'urgent') + '/' + rid, v.to === 'me' ? {to:'me'} : {}); }});
+}
+// The value recap (#83): what Cavnar AI measurably did for them, to the owner.
+async function valueRecap(rid, name, email){
+  if(!confirm('Email ' + (email || 'the owner') + ' a recap of what Cavnar AI has measurably done for ' + name + '? Only measured figures are in it.')) return;
+  const d = await post('/admin/api/client/' + rid + '/value-recap', {});
+  say(d, 'Value recap sent');
+}
 // Toast credentials
-let _tRid=null;
-async function toastOpen(rid, name){ _tRid=rid; $('m-toast-title').textContent='Toast POS — '+name; $('m-toast-status').textContent='Loading…'; ['t-cid','t-sec','t-guid'].forEach(i=>$(i).value=''); openModal('m-toast'); const d = await api('/admin/toast/status/'+rid); $('m-toast-status').textContent = d.connected ? ('Connected · GUID '+(d.guid_masked||'')+' · last sync '+ago(d.last_synced)+(d.sync_error?' · error: '+d.sync_error:'')) : 'Not connected — enter credentials below.'; }
-async function toastSave(){ const d = await post('/admin/toast/save/'+_tRid, {client_id:$('t-cid').value.trim(), client_secret:$('t-sec').value.trim(), restaurant_guid:$('t-guid').value.trim(), test:true}); $('m-toast-status').textContent = d.ok ? ('✓ '+(d.message||'Saved and tested')) : ('✕ '+(d.error||'Failed')); if(d.ok){ _clients=null; } }
-async function toastSync(){ const d = await post('/admin/toast/sync/'+_tRid); $('m-toast-status').textContent = d.ok ? ('✓ '+(d.message||'Synced')) : ('✕ '+(d.error||'Sync failed')); }
-async function toastDisconnect(){ if(!confirm('Disconnect Toast for this restaurant?')) return; const d = await post('/admin/toast/disconnect/'+_tRid); $('m-toast-status').textContent = d.ok?'Disconnected':(d.error||'Failed'); _clients=null; }
+let _tRid=null, _tName='';
+async function toastOpen(rid, name){ _tRid=rid; _tName=name||''; $('m-toast-title').textContent='Toast POS — '+name; $('m-toast-status').textContent='Loading…'; ['t-cid','t-sec','t-guid'].forEach(i=>$(i).value=''); openModal('m-toast'); let d; try{ d = await api('/admin/toast/status/'+rid, {method:'GET'}); }catch(e){ d = {ok:false, error:String(e.message||e)}; } $('m-toast-status').textContent = !okRes(d) && !d.connected ? errText(d, 'Toast status couldn\'t be read') : (d.connected ? ('Connected · GUID '+(d.guid_masked||'')+' · last sync '+ago(d.last_synced)+(d.sync_error?' · error: '+d.sync_error:'')) : 'Not connected — enter credentials below.'); }
+async function toastSave(){ const d = await post('/admin/toast/save/'+_tRid, {client_id:$('t-cid').value.trim(), client_secret:$('t-sec').value.trim(), restaurant_guid:$('t-guid').value.trim(), test:true}); $('m-toast-status').textContent = okRes(d) ? ('✓ '+(d.message||'Saved and tested')) : ('✕ '+errText(d)); if(okRes(d)){ _clients=null; } }
+async function toastSync(){ const d = await post('/admin/toast/sync/'+_tRid); $('m-toast-status').textContent = okRes(d) ? ('✓ '+(d.message||'Synced')) : ('✕ '+errText(d, 'Sync failed')); }
+async function toastDisconnect(){ if(!confirm('Disconnect Toast for ' + (_tName || 'this restaurant') + '? Its sales and labor stop syncing.')) return; const d = await post('/admin/toast/disconnect/'+_tRid); $('m-toast-status').textContent = okRes(d)?'Disconnected':errText(d); _clients=null; }
 // RPOWER
-let _rpRid=null;
-function rpowerOpen(rid, name){ _rpRid=rid; $('m-rpower-title').textContent='RPOWER POS — '+name; $('m-rpower-status').textContent=''; $('rp-token').value=''; $('rp-stores').style.display='none'; openModal('m-rpower'); rpowerStatus(); }
-async function rpowerStatus(){ const r = await fetch('/admin/rpower/status/'+_rpRid); const d = await r.json();
+let _rpRid=null, _rpName='';
+function rpowerOpen(rid, name){ _rpRid=rid; _rpName=name||''; $('m-rpower-title').textContent='RPOWER POS — '+name; $('m-rpower-status').textContent=''; $('rp-token').value=''; $('rp-stores').style.display='none'; openModal('m-rpower'); rpowerStatus(); }
+async function rpowerStatus(){ let d; try{ d = await api('/admin/rpower/status/'+_rpRid, {method:'GET'}); }catch(e){ d = {ok:false, error:String(e.message||e)}; }
   $('m-rpower-status').textContent = d.connected ? ('✓ Connected to '+(d.store_name||'RPOWER')+(d.last_synced?(' — last synced '+fmtDT(d.last_synced)):'')) : (d.message||d.error||'Not connected'); }
 async function rpowerSave(){ const t=$('rp-token').value.trim(); if(!t){ $('m-rpower-status').textContent='✕ Paste the token first'; return; }
   $('m-rpower-status').textContent='Verifying…';
   const d = await post('/admin/rpower/save/'+_rpRid, {token:t});
-  if(!d.ok){ $('m-rpower-status').textContent='✕ '+(d.error||'Failed'); return; }
+  if(!okRes(d)){ $('m-rpower-status').textContent='✕ '+errText(d); return; }
   if(d.needs_choice){ const sel=$('rp-store'); sel.innerHTML=''; (d.stores||[]).forEach(function(st){ const o=document.createElement('option'); o.value=st.store_mid; o.textContent=st.name+' (cg '+st.cg+')'; sel.appendChild(o); });
     $('rp-stores').style.display='block'; $('m-rpower-status').textContent=d.message; return; }
   $('m-rpower-status').textContent='✓ '+(d.message||'Connected'); _clients=null; }
 async function rpowerBind(){ const d = await post('/admin/rpower/bootstrap/'+_rpRid, {store_mid:$('rp-store').value});
-  $('m-rpower-status').textContent = d.ok ? ('✓ Bound to '+(d.store&&d.store.name||'store')) : ('✕ '+(d.error||'Failed'));
-  if(d.ok){ $('rp-stores').style.display='none'; _clients=null; } }
-async function rpowerSync(){ const d = await post('/admin/rpower/sync/'+_rpRid); $('m-rpower-status').textContent = d.ok ? ('✓ '+(d.message||'Sync started')) : ('✕ '+(d.error||'Sync failed')); }
-async function rpowerDisconnect(){ if(!confirm('Disconnect RPOWER for this restaurant?')) return; const d = await post('/admin/rpower/disconnect/'+_rpRid); $('m-rpower-status').textContent = d.ok?'Disconnected':(d.error||'Failed'); _clients=null; }
-// Brand
-let _bRid=null; function brandOpen(rid, name){ _bRid=rid; $('b-status').textContent=''; openModal('m-brand'); }
-async function brandSave(){ const body = {brand_name:$('b-name').value.trim(), brand_color:$('b-color').value.trim(), brand_logo_url:$('b-logo').value.trim()}; if($('b-excl').value!==''){ body.exclude_from_learning=$('b-excl').value==='1'?1:0; } if($('b-sm').value){ body.service_model=$('b-sm').value; body.concept=$('b-concept').value; body.bar_led=$('b-bar').checked?1:0; body.ownership=$('b-own').value; body.opened_year=$('b-opened').value.trim(); } const d = await post('/admin/api/brand/'+_bRid, body); $('b-status').textContent = d.ok?'✓ Saved':('✕ '+(d.error||'Failed')); }
-// Review import
-let _iRid=null, _iPlat=null; function importOpen(rid, name, platform){ _iRid=rid; _iPlat=platform; $('m-import-title').textContent='Import '+platform+' reviews — '+name; $('i-status').textContent=''; $('i-file').value=''; openModal('m-import'); }
-async function importSubmit(){ const f=$('i-file').files[0]; if(!f){ $('i-status').textContent='Choose a CSV first'; return; } const fd=new FormData(); fd.append('file',f); fd.append('restaurant_id',_iRid); fd.append('platform',_iPlat); $('i-status').textContent='Uploading…'; const r = await fetch('/api/import-tripadvisor',{method:'POST',body:fd}); const d = await r.json(); $('i-status').textContent = d.ok?('✓ Imported '+d.imported+' ('+d.new+' new) — AI drafting in the background'):('✕ '+(d.error||'Import failed')); }
-
+  $('m-rpower-status').textContent = okRes(d) ? ('✓ Bound to '+(d.store&&d.store.name||'store')) : ('✕ '+errText(d));
+  if(okRes(d)){ $('rp-stores').style.display='none'; _clients=null; } }
+async function rpowerSync(){ const d = await post('/admin/rpower/sync/'+_rpRid); $('m-rpower-status').textContent = okRes(d) ? ('✓ '+(d.message||'Sync started')) : ('✕ '+errText(d, 'Sync failed')); }
+async function rpowerDisconnect(){ if(!confirm('Disconnect RPOWER for ' + (_rpName || 'this restaurant') + '? Its sales and labor stop syncing.')) return; const d = await post('/admin/rpower/disconnect/'+_rpRid); $('m-rpower-status').textContent = okRes(d)?'Disconnected':errText(d); _clients=null; }
+// Brand (#23): the form is this client's own stored values; only what the
+// admin changed is sent, with the version it was loaded at; an emptied field
+// is cleared on purpose; a stale form (409) is refilled from what is stored.
+let _bRid=null, _b0=null;
+const BRAND_FIELDS = [['b-name','brand_name'],['b-color','brand_color'],['b-logo','brand_logo_url']];
+const PROFILE_FIELDS = [['b-sm','service_model'],['b-concept','concept'],['b-own','ownership'],['b-opened','opened_year']];
+function brandReset(){ BRAND_FIELDS.concat(PROFILE_FIELDS).forEach(f=>{ $(f[0]).value=''; }); $('b-bar').checked=false; $('b-excl').value='0'; $('b-status').textContent=''; $('b-load').textContent=''; _b0=null; }
+function brandFill(p){
+  _b0 = p;
+  BRAND_FIELDS.forEach(f=>{ $(f[0]).value = p[f[1]] || ''; });
+  const pr = p.profile || {};
+  PROFILE_FIELDS.forEach(f=>{ $(f[0]).value = pr[f[1]] == null ? '' : String(pr[f[1]]); });
+  $('b-bar').checked = !!pr.bar_led; $('b-excl').value = p.exclude_from_learning ? '1' : '0';
+  $('b-load').textContent = pr.profile_source === 'set' ? 'Peer profile confirmed' + (pr.profile_confirmed_at ? ' ' + fmtD(pr.profile_confirmed_at) : '') + '.' : 'Peer profile not confirmed yet.';
+}
+async function brandOpen(rid, name){
+  _bRid=rid; brandReset(); $('b-title').textContent = 'Branding & peer profile — ' + name; $('b-save').disabled = true; $('b-load').textContent = 'Loading what is stored…'; openModal('m-brand');
+  let d; try{ d = await api('/admin/api/brand/'+rid, {method:'GET'}); }catch(e){ d = {ok:false, error:String(e.message||e)}; }
+  if(_bRid !== rid) return;
+  if(!okRes(d)){ $('b-load').textContent = errText(d, 'The stored branding couldn\'t be read') + ' Nothing can be saved until it loads.'; return; }
+  brandFill(d); $('b-save').disabled = false;
+}
+function brandClose(){ brandReset(); _bRid = null; closeModal('m-brand'); }
+async function brandSave(){
+  if(!_b0){ $('b-status').textContent = '✕ The stored values haven\'t loaded — close and open it again.'; return; }
+  const body = {expected_version: _b0.version}, clear = [];
+  BRAND_FIELDS.forEach(f=>{ const v = $(f[0]).value.trim(), was = _b0[f[1]] || ''; if(v === was) return; if(!v) clear.push(f[1]); else body[f[1]] = v; });
+  const pr = _b0.profile || {}, prof = {service_model:$('b-sm').value, concept:$('b-concept').value, ownership:$('b-own').value, opened_year:$('b-opened').value.trim(), bar_led:$('b-bar').checked ? 1 : 0};
+  const profChanged = ['service_model','concept','ownership','opened_year'].some(k=>String(prof[k]||'') !== String(pr[k]==null?'':pr[k])) || (!!prof.bar_led) !== (!!pr.bar_led);
+  if(profChanged){ if(!prof.service_model){ $('b-status').textContent = '✕ Choose a service model — the peer profile needs one.'; return; } Object.assign(body, prof); }
+  const excl = $('b-excl').value === '1' ? 1 : 0; if(excl !== (_b0.exclude_from_learning ? 1 : 0)) body.exclude_from_learning = excl;
+  if(clear.length) body.clear = clear;
+  if(Object.keys(body).length === 1){ $('b-status').textContent = 'Nothing changed.'; return; }
+  const d = await post('/admin/api/brand/'+_bRid, body);
+  if(okRes(d)){ brandFill(d); $('b-status').textContent = '✓ Saved'; return; }
+  if(d && d._status === 409 && d.current){ brandFill(d.current); $('b-status').textContent = '✕ Changed by someone else since this opened — the form now shows what is stored. Make your change again.'; return; }
+  $('b-status').textContent = '✕ ' + errText(d);
+}
+// Review import (#149): the platform's own columns, into THIS client.
+let _iRid=null, _iPlat=null;
+const IMPORT_LABEL = {tripadvisor:'TripAdvisor', doordash:'DoorDash', ubereats:'Uber Eats'};
+function importOpen(rid, name, platform){ _iRid=rid; _iPlat=platform; $('m-import-title').textContent='Import '+(IMPORT_LABEL[platform]||platform)+' reviews — '+name; $('i-status').textContent=''; $('i-file').value=''; $('i-btn').disabled=false; openModal('m-import'); }
+async function importSubmit(){
+  const f=$('i-file').files[0]; if(!f){ $('i-status').textContent='Choose a CSV first'; return; }
+  const fd=new FormData(); fd.append('file',f); fd.append('platform',_iPlat);
+  $('i-status').textContent='Uploading…'; $('i-btn').disabled=true;
+  let d; try{ d = await api('/admin/import-reviews/'+_iRid, {method:'POST', body:fd}); }catch(e){ d = {ok:false, error:String(e.message||e)}; }
+  $('i-btn').disabled=false;
+  if(!okRes(d)){ $('i-status').textContent = '✕ ' + errText(d, 'Import failed'); return; }
+  const bits = [(d.new||0) + ' new'];
+  if(d.already_had) bits.push(d.already_had + ' already here');
+  if(d.skipped) bits.push(d.skipped + ' skipped (no rating or text)');
+  if(d.rejected) bits.push(d.rejected + ' refused');
+  $('i-status').textContent = '✓ Read ' + (d.imported||0) + ' ' + (IMPORT_LABEL[d.platform]||'') + ' review' + (d.imported===1?'':'s') + ': ' + bits.join(', ') + (d.new ? '. AI drafting runs in the background.' : '.');
+  _clients = null;
+}
+// Add a location to an existing brand (#42).
+let _alFrom = null, _alt;
+async function addLocationOpen(fromId, brand){
+  _alFrom = fromId || null;
+  ['al-find','al-name','al-loc','al-place','al-yelp','al-phone'].forEach(i=>{ $(i).value=''; });
+  $('al-res').innerHTML=''; $('al-status').textContent=''; $('al-same').checked=true; $('al-mods').hidden=true; $('al-btn').disabled=false;
+  $('al-tz').innerHTML = tzOptions('', 'Same as the brand');
+  $('al-picked').innerHTML = fromId ? 'Brand: <b>' + esc(brand || ('#' + fromId)) + '</b>' : 'Pick a location of the brand above.';
+  openModal('m-addloc'); setTimeout(()=>$(fromId ? 'al-name' : 'al-find').focus(), 30);
+  auditOptions('al-audit');
+}
+function addLocFind(){ clearTimeout(_alt); const q = $('al-find').value.trim(); if(q.length < 2){ $('al-res').innerHTML=''; return; }
+  _alt = setTimeout(async () => { let d; try{ d = await api('/admin/api/search?q='+encodeURIComponent(q), {method:'GET'}); }catch(e){ return; }
+    const locs = ((d && d.results) || []).filter(r=>r.type==='location').slice(0, 6);
+    $('al-res').innerHTML = locs.map(r=>`<button class="btn s g" style="justify-content:flex-start" onclick="addLocPick(${r.id},'${jsq(r.title)}')">${esc(r.title)}${r.sub?' <span class="dim">'+esc(r.sub)+'</span>':''}</button>`).join('') || '<span class="dim">No restaurant matches.</span>'; }, 200); }
+function addLocPick(id, title){ _alFrom = id; $('al-picked').innerHTML = 'Brand: <b>' + esc(title) + '</b>'; $('al-res').innerHTML = ''; $('al-find').value = ''; $('al-name').focus(); }
+async function addLocationSubmit(){
+  const v = id => ($(id).value || '').trim();
+  if(!_alFrom){ $('al-status').textContent = 'Pick a location of the brand first.'; return; }
+  if(!v('al-name')){ $('al-status').textContent = 'Give the new location a name.'; return; }
+  const body = {from_restaurant_id:_alFrom, restaurant_name:v('al-name'), location_name:v('al-loc'), google_place_id:v('al-place'), yelp_business_id:v('al-yelp'), owner_phone:v('al-phone'), timezone:v('al-tz')};
+  if(!$('al-same').checked) MODULE_KEYS.forEach(m=>{ body['module_' + m[0]] = $('al-m-' + m[0]).checked ? 1 : 0; });
+  if(v('al-audit')) body.audit_id = +v('al-audit');
+  if(!confirm('Add ' + body.restaurant_name + ' to this brand? Same owner and login; billed with the brand; no contract is sent.')) return;
+  $('al-btn').disabled = true; $('al-status').textContent = 'Adding…';
+  const d = await post('/admin/api/brand/add-location', body);
+  $('al-btn').disabled = false;
+  if(!okRes(d)){ $('al-status').textContent = '✕ ' + errText(d); return; }
+  _clients = null; badges(); closeModal('m-addloc'); toast(d.message || 'Location added', 'good');
+  location.hash = '#client/' + d.restaurant_id;
+}
+// New client: fresh fields, the timezone list and the sales audits, then the modal.
+function newClientOpen(){
+  ['r-name','r-email','u-username','u-password','r-owner-name','r-phone','r-group','r-location','r-google','r-yelp','r-voice'].forEach(i=>{ const el = $(i); if(el) el.value=''; });
+  $('mod-reviews').checked = true; ['mod-labor','mod-inventory','mod-marketing'].forEach(i=>{ $(i).checked = false; });
+  $('r-tz').innerHTML = tzOptions('America/Chicago'); $('create-status').textContent = ''; $('cc-btn').disabled = false; $('cc-btn').textContent = 'Create client';
+  auditOptions('r-audit');
+  newClient();
+}
 
 // go
 route(); badges(); setInterval(badges, 120000);

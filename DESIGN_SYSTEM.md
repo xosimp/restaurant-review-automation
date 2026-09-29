@@ -1217,6 +1217,21 @@ never with text: the rebuild cut the visible text across its screens by 69%
   others are green / amber / red by their own thresholds. The rail polls the
   slim badges read; when a poll fails it keeps the last counts, dimmed
   (`.rail.stale`), and the heartbeat says "unknown" with when it last read.
+- **Writes say what really happened.** Every write control carries `.w`
+  (hidden for a support login). Its confirm names the client or the
+  recipient; the toast is the server's own sentence (`say(d)`) — its `error`
+  on any non-2xx, never "done" for a 409 or a 502. An action that starts a
+  background job follows it to its end (`pollJob`), and a value handed over
+  once (a new password) opens in the Shown-once box.
+- **A form an action needs** opens in one modal (`formOpen(spec)`: fields,
+  the go button, `submit` returning the server's answer); a refusal keeps it
+  open with the server's sentence under the buttons.
+- **A tab's extra reads load after first paint** (`lazy(id, fn)`): the card
+  shows skeleton lines, then its content, or its own amber line if its read
+  failed — one slow or broken panel never blanks the page.
+- **Server-paged lists** end in a pager row (`.pager`: "N rows · page X of
+  Y", Previous / Next); filters and search go to the server, counts come
+  from the full set.
 - **Cmd-K / `/`** opens one palette: every page and action, and the fleet
   search.
 - **A page's reads belong to the visit that asked** (`api()` and `_seq`): a
