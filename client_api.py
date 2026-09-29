@@ -3658,6 +3658,14 @@ brand voice. No corporate language. The whole brief must be under 60 words.{answ
         # Stored with the model's own text, so a later engine version
         # re-validates it rather than serving this verdict (insight_store.get).
         _ist_m.put(rid, "marketing", _fp_m, dict(_checks, insight=insight), raw=_raw_m)
+        # Kept as history, not only overwritten (ai_reads; memory audit
+        # 9/29/26): what the marketing read said, for the next read and Ask.
+        try:
+            import ai_reads
+            ai_reads.record_read(rid, "marketing_read", insight, subject="marketing",
+                                 meta={"fingerprint": _fp_m})
+        except Exception as _are:
+            print(f"[MktInsight] read not kept as history: {_are}")
         return _mkt_insight_out(rid, insight, raw, _checks), 200
     except Exception as e:
         import traceback; traceback.print_exc()

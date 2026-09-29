@@ -190,3 +190,18 @@ def test_the_competitor_read_carries_memory_context(db_path, monkeypatch):
     competitor.generate_competitor_insight("Gia Mia", [{"name": "Rival", "rating": 4.5, "review_count": 100,
                                                         "reviews": []}], restaurant_id=rid)
     assert calls == ["competitor_read"] and "Not for us: a patio promo" in seen[-1]
+
+
+def test_the_marketing_and_competitor_reads_are_kept_as_history():
+    """ai_reads.record_read (the contract workstream M4 fills in) is called
+    where each read is stored — the marketing read beside its insight_store
+    put, the competitor read beside its weekly blob — so the next read and
+    Ask can see what was said, not only the latest overwrite."""
+    import inspect
+    import client_api
+    import competitor
+    mkt = inspect.getsource(client_api._do_mkt_insight)
+    assert 'ai_reads.record_read(rid, "marketing_read", insight, subject="marketing"' in mkt
+    assert mkt.index("_ist_m.put(rid, \"marketing\"") < mkt.index("ai_reads.record_read")
+    comp = inspect.getsource(competitor.run_competitor_analysis)
+    assert 'ai_reads.record_read(restaurant_id, "competitor_read", insight, subject="intel"' in comp
