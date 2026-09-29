@@ -262,12 +262,18 @@ def _dsr_yesterday_line(night):
 
 def _prime_stamp(pp, health):
     """" (sales through 9/23/26; labor share from 9/1/26 to 9/14/26)" — what
-    the prime-cost run rate rests on, dated (#12, DH1-3)."""
+    the prime-cost run rate rests on, dated (#12, DH1-3). Where the nightly
+    report measured labor dollars, that is said instead: "labor measured on
+    12 nights by your nightly reports, …" (memory audit 9/29/26, prime_cost)
+    — the report's own nightly prime cost and this month-to-date figure name
+    their bases, so the two can be told apart."""
     bits = []
     sales = ((health or {}).get("states") or {}).get("sales") or {}
     if sales.get("as_of"):
         bits.append(f"sales through {sales['as_of']}")
-    if pp.get("labor_period"):
+    if pp.get("labor_basis") in ("measured", "mixed") and pp.get("labor_basis_text"):
+        bits.append(pp["labor_basis_text"])
+    elif pp.get("labor_period"):
         bits.append(f"labor share from {pp['labor_period']}")
     elif pp.get("labor_from"):
         bits.append(pp['labor_from'])

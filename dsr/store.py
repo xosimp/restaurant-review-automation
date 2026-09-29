@@ -567,6 +567,30 @@ def budgets_for(restaurant_id, start, end, db_path=DB_PATH):
     return {r["business_date"]: {"gross": r["gross"], "net": r["net"]} for r in rows}
 
 
+def night_budget(restaurant_id, day, db_path=DB_PATH) -> dict:
+    """The night's sales target: {"gross", "net", "source", "label"} — the
+    owner's budget for the night (dsr_budgets, source "budget"), else the
+    owner's GOAL for nightly sales when they set one (owner_memory.target_for
+    "nightly_sales", source "goal" — memory audit 9/29/26: the owner's
+    financial intent sets the report's target, and it is said as their goal,
+    never as a budget they did not enter); {} when neither. Never raises."""
+    iso = day.isoformat() if hasattr(day, "isoformat") else str(day)[:10]
+    b = budgets_for(restaurant_id, iso, iso, db_path=db_path).get(iso) or {}
+    if b and (b.get("gross") is not None or b.get("net") is not None):
+        return {"gross": b.get("gross"), "net": b.get("net"), "source": "budget", "label": "Budget"}
+    try:
+        import owner_memory
+        from time_utils import mdy
+        t = owner_memory.target_for(restaurant_id, "nightly_sales", db_path=db_path)
+        if t and isinstance(t.get("value"), (int, float)) and t["value"] > 0:
+            until = f" by {mdy(t['until'])}" if t.get("until") else ""
+            return {"gross": None, "net": float(t["value"]), "source": "goal", "goal_id": t.get("goal_id"),
+                    "label": f"Your goal of ${float(t['value']):,.0f} a night{until}"}
+    except Exception:
+        pass
+    return {}
+
+
 PREFILL_SOURCES = ("last_week", "last_year", "forecast")
 LAST_YEAR_DAYS = 364     # the same weekday a year back (dsr.block_sales)
 

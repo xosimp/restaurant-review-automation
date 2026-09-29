@@ -145,10 +145,12 @@ def _track(rid, tmr, db_path):
 
 
 def _budget(rid, day, db_path):
+    """The night's net target: the owner's budget, else their nightly-sales
+    goal (store.night_budget)."""
     try:
         from dsr import store
-        b = store.budgets_for(rid, day, day, db_path=db_path) if db_path else store.budgets_for(rid, day, day)
-        return (b.get(day.isoformat()) or {}).get("net")
+        b = store.night_budget(rid, day, db_path=db_path) if db_path else store.night_budget(rid, day)
+        return b.get("net")
     except Exception:
         return None
 

@@ -300,7 +300,9 @@ def _ready(ctx, data, provider, closed_by):
         baselines["forecast"] = {"net": None, "source": None,
                                  "reason": (fc_any or {}).get("reason") if isinstance(fc_any, dict) else None}
 
-    budget = store.budgets_for(ctx.restaurant_id, day, day, db_path=ctx.db_path).get(day.isoformat()) or {}
+    # The owner's budget for the night, else their goal for nightly sales,
+    # said as a goal (store.night_budget; memory audit 9/29/26).
+    budget = store.night_budget(ctx.restaurant_id, day, db_path=ctx.db_path)
     b_gross, b_net = budget.get("gross"), budget.get("net")
     metrics.update({
         "budget_gross": b_gross, "vs_budget_gross": _delta(gross, b_gross), "vs_budget_gross_pct": _pct(gross, b_gross),
@@ -332,7 +334,8 @@ def _ready(ctx, data, provider, closed_by):
                        "gross_basis": gross_basis, "gross_missing": gross_missing,
                        "net_deductions": data.get("net_deductions") or []},
         "baselines": baselines,
-        "budget": {"gross": b_gross, "net": b_net} if budget else None,
+        "budget": ({"gross": b_gross, "net": b_net, "source": budget.get("source"), "label": budget.get("label"),
+                    "goal_id": budget.get("goal_id")} if budget else None),
         "hourly": hourly,
         "categories": cats,
         "unmapped": unmapped,

@@ -942,6 +942,50 @@ def _labor_stale_why(restaurant_id, analysis, period_end, today, db_path=DB_PATH
     return None
 
 
+def _dsr_measured_labor(restaurant_id, start, end, db_path=DB_PATH) -> dict:
+    """{iso: {"labor": $, "archive_sales": $|None}} for the nights in
+    [start, end] the nightly report MEASURED labor dollars on (dsr_metrics
+    labor.cost, from a ready Labor block), with the POS archive's own sales
+    for the same night (labor_daily_history, final) — the figure the
+    projection's sales denominator already counts that night at."""
+    from canonical_facts import FINAL_SQL
+    conn = get_conn(db_path)
+    try:
+        try:
+            labor = {str(r["business_date"])[:10]: float(r["value"]) for r in conn.execute(
+                "SELECT business_date, value FROM dsr_metrics WHERE restaurant_id=? AND metric='labor.cost' "
+                "AND value IS NOT NULL AND business_date BETWEEN ? AND ?",
+                (restaurant_id, str(start)[:10], str(end)[:10])).fetchall()}
+        except Exception:
+            labor = {}
+        archive = {}
+        if labor:
+            marks = ",".join("?" for _ in labor)
+            archive = {str(r["date"])[:10]: float(r["sales"]) for r in conn.execute(
+                f"SELECT date, sales FROM labor_daily_history WHERE restaurant_id=? AND date IN ({marks}) "
+                f"AND sales IS NOT NULL AND sales > 0 AND {FINAL_SQL}", (restaurant_id, *labor)).fetchall()}
+    finally:
+        conn.close()
+    return {d: {"labor": v, "archive_sales": archive.get(d)} for d, v in labor.items()}
+
+
+def _prime_labor(net_sales, share_pct, measured) -> tuple:
+    """(labor dollars, measured nights, nights on the share, why missing) for
+    one window: the nightly report's measured labor dollars on the nights it
+    measured, and the analysis share applied only to the sales of the other
+    nights (the window's net less the archive's sales of the measured
+    nights). Missing (None, ...) when some sales were not measured and there
+    is no share to put on them."""
+    measured_labor = sum(x["labor"] for x in measured.values())
+    measured_sales = sum(x["archive_sales"] or 0.0 for x in measured.values())
+    rest = max(0.0, float(net_sales) - measured_sales)
+    if rest <= 0.005:
+        return measured_labor, len(measured), 0, None
+    if share_pct is None:
+        return None, len(measured), None, "labor was not measured on every night and there is no labor share for the rest"
+    return measured_labor + rest * float(share_pct) / 100.0, len(measured), rest, None
+
+
 def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhold: bool = True) -> dict:
     """Month-to-date prime cost, projected to month end.
 
@@ -1026,7 +1070,18 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
             labor_why = "no shift data synced — labor cannot be measured"
     except Exception as e:
         labor_why = f"labor analysis unavailable: {e}"
-    if labor_pct is None:
+    # The nightly report measures each night's labor DOLLARS (memory audit
+    # 9/29/26, prime_cost): where it ran, the projection sums them, and the
+    # analysis share stands in only for the nights it did not measure. The
+    # report said prime cost 58% last night while the brief said 61.2% month
+    # to date on a labor share carried over from another period, and neither
+    # said why.
+    measured = _dsr_measured_labor(restaurant_id, month_start, today - timedelta(days=1), db_path=db_path)
+    labor_measured_all = False
+    if measured and net_sales is not None:
+        _lc, _n, _rest, _why = _prime_labor(net_sales, labor_pct, measured)
+        labor_measured_all = _lc is not None and _rest == 0
+    if labor_pct is None and not labor_measured_all:
         missing.append({"component": "labor", "why": labor_why or "unavailable"})
 
     # The labor share comes from the shift analysis's OWN period, which is not
@@ -1052,7 +1107,27 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
 
     days_in_month = ((month_start + timedelta(days=32)).replace(day=1) - month_start).days
     cogs_mtd = _f(fc["cogs"])
-    labor_cost = net_sales * labor_pct / 100.0
+    labor_cost, n_measured, share_sales, _lwhy = _prime_labor(net_sales, labor_pct, measured)
+    if n_measured and share_sales:
+        labor_basis = "mixed"
+        labor_basis_text = (f"labor measured on {n_measured} night{'s' if n_measured != 1 else ''} by your nightly "
+                            f"reports, {labor_from or 'the shift analysis share'} for the rest")
+    elif n_measured:
+        labor_basis = "measured"
+        labor_basis_text = (f"labor measured every night by your nightly reports ({n_measured} "
+                            f"night{'s' if n_measured != 1 else ''})")
+    else:
+        labor_basis = "analysis_share"
+        labor_basis_text = labor_from
+    if n_measured:
+        basis = ("Prime cost = COGS + labor, month to date, projected to month end at the current daily run rate. "
+                 "This is prime cost, not net profit — rent, utilities and overheads are not in this system. "
+                 f"Labor is the nightly report's measured labor dollars on {n_measured} night"
+                 f"{'s' if n_measured != 1 else ''}"
+                 + (f"; the {labor_period} labor share is applied only to the other nights' sales." if share_sales
+                    else ", every night of the month so far.")
+                 + " The nightly report's own prime cost is one night's labor plus the estimated recipe cost of "
+                   "what sold, over that night's net; this one uses the food cost ledger (COGS) for the month.")
     prime_mtd = cogs_mtd + labor_cost
     prime_pct = round(prime_mtd / net_sales * 100, 1)
     scale = days_in_month / days_elapsed
@@ -1067,13 +1142,15 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
     prev_sales, prev_sales_why = _cogs.net_sales_in_window(restaurant_id, prev_start, prev_end)
     prev_fc = _cogs.build_food_cost_pct(
         restaurant_id, days=(prev_end - prev_start).days + 1, db_path=db_path, today=prev_end)
-    if prev_sales and prev_fc.get("ok") and labor_pct is not None:
-        # The same labor share is used on both sides on purpose: there is only
-        # one labor measurement available, so it cancels out of the comparison
-        # and the month-over-month movement this reports is entirely the FOOD
-        # cost component. Saying that is the difference between a comparison
-        # and a number that looks like it covers both halves of prime cost.
-        prev_prime = _f(prev_fc["cogs"]) + prev_sales * labor_pct / 100.0
+    prev_measured = _dsr_measured_labor(restaurant_id, prev_start, prev_end, db_path=db_path) if prev_sales else {}
+    prev_labor = _prime_labor(prev_sales, labor_pct, prev_measured)[0] if prev_sales else None
+    if prev_sales and prev_fc.get("ok") and prev_labor is not None:
+        # Last month measured the same way: the nightly report's labor
+        # dollars where it measured them, the one labor share elsewhere.
+        # Where both months rest on the share alone it cancels out, and the
+        # month-over-month movement is entirely the FOOD cost component —
+        # said in comparison_basis.
+        prev_prime = _f(prev_fc["cogs"]) + prev_labor
         prev_pct = round(prev_prime / prev_sales * 100, 1)
     else:
         prev_why = prev_sales_why or "last month cannot be measured the same way"
@@ -1105,8 +1182,14 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
         "dollars_vs_last_month": delta_dollars,
         "direction": (None if delta_dollars is None else
                       "worse" if delta_dollars > 0 else "better"),
-        "comparison_basis": ("Both months use the same labor share, so this movement is the "
-                             "food cost component only." if prev_pct is not None else None),
+        "comparison_basis": (None if prev_pct is None else
+                             "Both months use the same labor share, so this movement is the food cost component only."
+                             if not (n_measured or prev_measured) else
+                             "Labor is measured nightly where your nightly reports ran, in both months, so this "
+                             "movement covers labor and food cost."),
+        "labor_basis": labor_basis, "labor_basis_text": labor_basis_text,
+        "labor_measured_nights": n_measured,
+        "labor_pct_mtd": round(labor_cost / net_sales * 100, 1) if net_sales else None,
         "labor_period": labor_period,
         "labor_period_start": labor_period_start, "labor_period_end": labor_period_end,
         "labor_from": labor_from,

@@ -233,7 +233,26 @@ def _peers(key, restaurant, db_path):
             "why_not": (p.get("why_not") or "No fair comparison yet")}
 
 
+def _prime_goal(restaurant):
+    """The owner's prime-cost goal as the KPI's target (owner_memory
+    .target_for "prime_cost_pct" — memory audit 9/29/26): said as their
+    goal. None without one: Cavnar AI keeps no prime-cost target of its own."""
+    try:
+        import owner_memory
+        from time_utils import mdy
+        t = owner_memory.target_for(restaurant.id, "prime_cost_pct")
+    except Exception:
+        return None
+    if not t or not _num(t.get("value")):
+        return None
+    until = f" by {mdy(t['until'])}" if t.get("until") else ""
+    return {"value": float(t["value"]), "value_text": f"{float(t['value']):g}%", "label": f"Your goal{until}",
+            "source": "goal", "goal_id": t.get("goal_id")}
+
+
 def _target(key, restaurant):
+    if key == "prime_pct" and restaurant is not None:
+        return _prime_goal(restaurant)
     kind = TARGET_KIND.get(key)
     if not kind or restaurant is None:
         return None
