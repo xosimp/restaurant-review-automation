@@ -456,9 +456,15 @@ def link_lines(req) -> list:
     for i, r in enumerate(rows[:6]):
         m = r["memory"]
         when = m["label"][:1].lower() + m["label"][1:]
+        module = LINE_MODULE.get(r["kind"], "food")
         if r["kind"] == "reviews_x_menu" and req.surface == "marketing" and r.get("dish"):
-            text = (f"DO NOT PROMOTE {r['dish']}: guests name it in {_complaints_phrase(r)} and it is a food cost "
-                    f"driver ({when}). Do not feature, discount or push it until that clears.")
+            # What a post needs, and no more: the marketing drafts are read by
+            # logins without food-cost view (memory_context reads the marketing
+            # surface as the team), so the line carries the instruction and the
+            # guests' side of why — never the dish's cost (INT #41).
+            text = (f"DO NOT PROMOTE {r['dish']}: guests name it in {_complaints_phrase(r)} ({when}). Do not "
+                    f"feature, discount or push it until that clears.")
+            module = "reviews"
         else:
             d = r.get("detail") or {}
             text = f"{r.get('headline')} ({when}) — two modules pointing at the same thing, not a proven cause"
@@ -466,5 +472,5 @@ def link_lines(req) -> list:
                 text += f". Confirm by: {d['confirm_by']}"
         lines.append({"text": text, "date": r.get("last_seen"), "source": "link", "subject": r["link_key"],
                       "weight": 10.0 - i + (2.0 if m["recurring"] else 0.0), "trusted": False,
-                      "module": LINE_MODULE.get(r["kind"], "food")})
+                      "module": module})
     return lines

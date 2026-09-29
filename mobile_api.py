@@ -1692,7 +1692,8 @@ def mobile_regenerate_draft(review_id, current_user):
 @mobile_login_required
 def mobile_save_draft(review_id, current_user):
     data = request.get_json() or {}
-    payload, status = _capi._do_save_draft(review_id, current_user["restaurant_id"], data.get("draft", ""))
+    payload, status = _capi._do_save_draft(review_id, current_user["restaurant_id"], data.get("draft", ""),
+                                           user=current_user)
     return jsonify(**payload), status
 
 

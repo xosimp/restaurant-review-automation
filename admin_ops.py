@@ -5047,6 +5047,19 @@ def revert_schedule_experiment(experiment, by="admin"):
 CALIBRATION_MIN_N = 5      # pairs per kind before a ratio is called
 
 
+def _google_connected(conn):
+    """intelligence.provenance.google_connected_ids on this connection —
+    the restaurants whose review-derived results no pooled calibration
+    reads. It is empty only when the restaurants/reviews columns it reads
+    are absent (a database with no reviews holds no Google data)."""
+    try:
+        from intelligence.provenance import google_connected_ids
+        return frozenset(google_connected_ids(conn=conn))
+    except Exception as e:
+        log.warning("calibration: Google-connected restaurants unreadable: %s", e)
+        return frozenset()
+
+
 def recommendation_calibration(days=365, restaurant_id=None):
     """Each recommendation's predicted dollars (what it was shown with,
     rec_instances.dollar_value) against what its tracker measured
@@ -5078,7 +5091,8 @@ def recommendation_calibration(days=365, restaurant_id=None):
             # item 8); an older database without them reads as before.
             for extra in (", o.concurrent, o.baseline_overlaps_trigger", ""):
                 try:
-                    rows = _rows_strict(conn, "SELECT i.rec_id, i.kind, i.key, i.status, i.dollar_value, o.verdict, "
+                    rows = _rows_strict(conn, "SELECT i.rec_id, i.restaurant_id, i.kind, i.key, i.status, "
+                                            "i.dollar_value, o.verdict, o.metric, "
                                             "o.dollars_monthly, o.id AS tracker_id, o.status AS tracker_status, "
                                             "o.recheck_verdict, o.owner_checkin, o.source_key" + extra + " "
                                             "FROM rec_instances i JOIN recommendation_outcomes o ON o.id=i.tracker_id "
@@ -5097,12 +5111,20 @@ def recommendation_calibration(days=365, restaurant_id=None):
         except Exception as e:           # the columns predate this database
             log.warning("recommendation_calibration unavailable: %s", e)
             rows, _ck = [], {}
+        # Pooled across the fleet, a Google-connected restaurant's
+        # review-derived results calibrate nothing (INT #5: Google API
+        # Limited Use, privacy.html's Google section — intelligence.provenance).
+        google = _google_connected(conn) if not restaurant_id else frozenset()
     finally:
         conn.close()
     by = {}
     import rec_learning
+    from intelligence.provenance import pooled_row_excluded
     for r in rows:
         if r["status"] not in ("accepted", "completed", "implemented"):
+            continue
+        if google and pooled_row_excluded(r.get("restaurant_id"), key=r.get("key"), kind=r.get("kind"),
+                                          metric=r.get("metric"), google=google):
             continue
         # The verdict through learned_verdict (confidence audit E13): a
         # disowned or conditions-changed result is not a pair at all, and a
@@ -5206,6 +5228,16 @@ def confidence_calibration(days=365, restaurant_id=None):
         except Exception as e:           # the ledger / snapshot columns predate this database
             log.warning("confidence_calibration unavailable: %s", e)
             eps = []
+        # The support score's order is checked on pooled results only
+        # without a Google-connected restaurant's review-derived ones
+        # (INT #5 — intelligence.provenance; confidence_engine.ordering reads
+        # nothing else). One restaurant's own view keeps everything.
+        if not restaurant_id and eps:
+            from intelligence.provenance import pooled_row_excluded
+            google = _google_connected(conn)
+            eps = [e for e in eps if not pooled_row_excluded(
+                e.get("restaurant_id"), key=e.get("key"), kind=e.get("kind"),
+                metric=(e.get("tracker") or {}).get("metric"), google=google)]
     finally:
         conn.close()
     scored = _calibration_scored(eps)

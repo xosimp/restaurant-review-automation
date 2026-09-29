@@ -1025,8 +1025,24 @@ def confidence_calibration(restaurant_id=None, days=365, db_path=None) -> dict:
         if restaurant_id:
             where.append("restaurant_id=?")
             args.append(restaurant_id)
-        rows = conn.execute(f"SELECT verdict, model_band, capped_band FROM ai_claims WHERE {' AND '.join(where)}",
-                            args).fetchall()
+        rows = conn.execute("SELECT restaurant_id, surface, rec_key, metric, verdict, model_band, capped_band "
+                            f"FROM ai_claims WHERE {' AND '.join(where)}", args).fetchall()
+        if not restaurant_id and rows:
+            # Pooled across restaurants, the check calibrates the model's
+            # confidence: an ineligible account's claims (demo, test,
+            # internal) and a Google-connected restaurant's review-derived
+            # ones stay out (INT #5 — intelligence.provenance, Google API
+            # Limited Use). One restaurant's own view keeps everything.
+            from intelligence.provenance import google_connected_ids, pooled_row_excluded
+            google = frozenset(google_connected_ids(conn=conn))
+            try:
+                import models as _m
+                ineligible = set(_m.learning_ineligible_ids(conn=conn))
+            except Exception:
+                ineligible = set()
+            rows = [r for r in rows if int(r["restaurant_id"]) not in ineligible
+                    and not pooled_row_excluded(r["restaurant_id"], key=r["rec_key"], metric=r["metric"],
+                                                surface=r["surface"], google=google)]
     except Exception:
         return out
     finally:

@@ -162,3 +162,33 @@ def pooled_features(f: dict, google: bool) -> dict:
     for v in REVIEW_FREE_VARIANT.values():
         out.pop(v, None)
     return out
+
+
+# ── the admin calibration views (INT #5, the lead's decision, 9/29/26) ───────
+#
+# Outside intelligence/, three admin-only views pool measured results across
+# restaurants to tune what Cavnar AI tells owners: the dollar calibration
+# (admin_ops.recommendation_calibration), the support-score order check
+# (admin_ops.confidence_calibration → confidence_engine.ordering) and the
+# model's own confidence check (ai_reads.confidence_calibration). Only Will
+# sees them, but calibrating a score on pooled results is generalized
+# learning all the same, so the rule above applies to them: a Google-connected
+# restaurant's review-derived results stay out of every POOLED calibration.
+# A view of one restaurant (restaurant_id given) is that restaurant's own.
+
+REVIEW_SURFACES = ("review_read", "review_diagnosis")
+
+
+def pooled_row_excluded(restaurant_id, key=None, kind=None, metric=None, surface=None, google=()) -> bool:
+    """Whether one measured row leaves a pooled calibration: its restaurant
+    is Google-connected (`google`: google_connected_ids) and the row rests
+    on reviews — a review kind or topic, a review metric, or a read of the
+    reviews (REVIEW_SURFACES). Never raises."""
+    try:
+        if restaurant_id is None or int(restaurant_id) not in google:
+            return False
+    except (TypeError, ValueError):
+        return False
+    if surface and str(surface).split(":", 1)[0] in REVIEW_SURFACES:
+        return True
+    return review_derived(key, kind=kind, metric=metric)

@@ -2090,7 +2090,7 @@ def _issues(ctx):
 # manager's report (dsr.access filters it by what each line cites), so owner-
 # only memory must never reach it — the rule decisions.context(sees_loss=
 # False) already follows here.
-NARRATIVE_MEMORY_VIEWER = {"id": None, "role": "manager", "is_admin": 0}
+from memory_context import TEAM as NARRATIVE_MEMORY_VIEWER   # the first-class team viewer (INT #41)
 
 
 def _memory(ctx):
