@@ -867,6 +867,8 @@ class Effectiveness:
             return self._priors[kind]
         acc = 0.5
         suc = self.base_rate(kind)
+        self._prior_src = getattr(self, "_prior_src", {})
+        self._prior_src[kind] = "base_rate"
         if self.cohort:
             try:
                 import intelligence
@@ -886,6 +888,7 @@ class Effectiveness:
                     pm = float(s.get("measured_capped", s.get("measured")) or 0.0)
                     pi = float(s.get("improved_capped", s.get("improved")) or 0.0)
                     suc = _shrink(pi / pm if pm else None, pm, suc)
+                    self._prior_src[kind] = "cohort"
             except Exception as e:
                 print(f"[rec_learning] cohort prior unavailable for {kind}: {e}")
         self._priors[kind] = (acc, suc)
@@ -988,7 +991,9 @@ class Effectiveness:
         kind = kind or rec_ledger.kind_of(str(key or ""))
         tags = rec_ledger.tags_for(str(key or ""), kind=kind) if tags is None else tags
         if self.kinds.get(kind) or any(self.tags.get(t) for t in tags):
-            return "own"
+            # Its own record, shrunk toward the cohort's rate or the
+            # do-nothing base rate.
+            return f"own+{getattr(self, '_prior_src', {}).get(kind, 'base_rate')}"
         return "similar" if self._cold.get(kind) else "none"
 
     def explain(self, key, kind=None, tags=None, title=None) -> dict:
