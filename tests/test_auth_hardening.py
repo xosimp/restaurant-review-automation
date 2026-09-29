@@ -108,9 +108,12 @@ def test_the_google_sso_handler_checks_both_gates():
     not covering it at all."""
     src = open("auth_routes.py", encoding="utf-8").read()
     start = src.index("def google_sso_callback") if "def google_sso_callback" in src else 0
-    handler = src[start:start + 6000]
+    handler = src[start:start + 7000]
     assert "must_reset_password" in handler
-    assert "two_fa_enabled" in handler
+    # The second factor is asked through auth.login_needs_second_factor
+    # since fix round A — the one rule for every sign-in path, which reads
+    # the restaurant's two_fa_enabled or, for an admin, his own.
+    assert "login_needs_second_factor" in handler
     assert "sso_needs_2fa = True" in handler   # fails closed on error
 
 

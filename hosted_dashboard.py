@@ -357,20 +357,20 @@ def login_required(f):
             # redirect to a path on this site.
             nxt = request.full_path if request.query_string else request.path
             return redirect(url_for("auth.login", next=nxt))
-        from auth import _console_denied as _cd_shell
+        from auth import _console_denied as _cd_shell, is_internal_login as _iil_shell
+        # Cavnar AI's own logins (admin, support) have no restaurant
+        # dashboard: the console is theirs. A support login was sent to the
+        # staff portal here, because its role holds no console permission.
+        if _iil_shell(user):
+            return redirect("/admin")
         if _cd_shell(user):
             return redirect(url_for("staff.portal_home"))
         return f(*args, **kwargs, current_user=user)
     return decorated
 
-def admin_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        user = get_current_user()
-        if not user or not user["is_admin"]:
-            return redirect(url_for("auth.login"))
-        return f(*args, **kwargs, current_user=user)
-    return decorated
+# (A second, weaker admin_required lived here — no second-factor gate, no
+# support handling — and nothing used it. Removed 9/29/26 after the ten-point
+# trace (fix round A, #99); auth.admin_required is the one admin gate.)
 
 # ── Data helpers ──────────────────────────────────────────────────────────────
 
@@ -433,6 +433,11 @@ Sitemap: https://cavnar.ai/sitemap.xml"""
 def index(current_user):
     # /schedule/studio is the same page opened on the Schedule Studio (the
     # template reads request.path): one application, its own address.
+    # An admin has no dashboard of its own; the console is his. (A
+    # view-as session is the client's login — is_admin 0 — so it lands here
+    # and gets the client's dashboard, with the view-as banner.) An admin
+    # whose login needs two-factor enrolment is sent on from /admin to
+    # /admin/two-factor, which he can reach (SECURITY-1).
     if current_user.get("is_admin"):
         return redirect("/admin")
     # A link from an email or a text that names a recommendation (rec=,
@@ -1098,32 +1103,24 @@ except Exception as _e:
     raise
 
 # ── Admin account seed (module-level so it runs under Gunicorn too) ──────────
+# auth.ensure_admin_login: only when no admin login exists at all, never
+# without ADMIN_PASSWORD (no default password anywhere), on a restaurant row
+# of its own, and loudly (#136). Then the break-glass unlock, when set.
 try:
-    from models import get_conn as _gc_boot, create_restaurant as _cr_boot, Restaurant as _R_boot
-    from auth import create_user as _cu_boot
-    _conn_boot = _gc_boot()
-    _existing_admin = _conn_boot.execute(
-        "SELECT id FROM users WHERE username=?", (os.getenv("ADMIN_USERNAME","will"),)
-    ).fetchone()
-    _conn_boot.close()
-    if not _existing_admin:
-        _admin_pw = os.getenv("ADMIN_PASSWORD", "changeme123")
-        if _admin_pw == "changeme123":
-            print("SECURITY WARNING: ADMIN_PASSWORD is not set — using insecure default. Set ADMIN_PASSWORD in Railway env vars immediately.")
-        _conn_boot2 = _gc_boot()
-        _r_boot = _conn_boot2.execute("SELECT id FROM restaurants LIMIT 1").fetchone()
-        _conn_boot2.close()
-        if not _r_boot:
-            _rid_boot = _cr_boot(_R_boot(name="Cavnar AI Admin", owner_email="will@cavnar.ai"))
-        else:
-            _rid_boot = _r_boot[0]
-        _cu_boot(_rid_boot, os.getenv("ADMIN_USERNAME","will"), "will@cavnar.ai", _admin_pw, is_admin=True)
-        _conn_boot3 = _gc_boot()
-        _conn_boot3.execute("UPDATE restaurants SET billing_status='internal' WHERE id=?", (_rid_boot,))
-        _conn_boot3.commit(); _conn_boot3.close()
-        print(f"Admin account created: {os.getenv('ADMIN_USERNAME','will')}")
+    from auth import ensure_admin_login as _eal_boot
+    _eal_boot()
 except Exception as _boot_e:
     print(f"Admin seed error: {_boot_e}")
+try:
+    import security as _sec_boot
+    _sec_boot.apply_boot_unlocks()
+except Exception as _unlock_e:
+    print(f"Break-glass unlock error: {_unlock_e}")
+try:
+    from auth import apply_boot_two_factor_resets as _a2fr_boot
+    _a2fr_boot()
+except Exception as _reset_e:
+    print(f"Break-glass two-factor reset error: {_reset_e}")
 
 # The scheduler runs in this process by default, which is how it has always
 # worked and what a single-service deployment needs.

@@ -2040,14 +2040,22 @@ function loadFailed(el, d){
 @keyframes upulse{0%,100%{opacity:.2;transform:scale(.75)}50%{opacity:1;transform:scale(1.15)}}
 </style>
 
-{% if current_user.is_admin %}
-<div style="background:#b7791f;padding:8px 28px;display:flex;align-items:center;justify-content:space-between">
-  <span style="font-size:12px;color:white;font-weight:500">
-    👁 Viewing as client — {{ restaurant.name }}. This is exactly what they see.
+{# The view-as banner (fix round A, SECURITY-3): driven by the SESSION — a
+   view-as session is the client's own login (is_admin 0), so the old
+   current_user.is_admin test never showed it. Every change made here is
+   recorded as the admin's (auth.record_view_as_write). "Back to admin" is a
+   POST: a GET to /admin/stop-viewing only asks. #}
+{% if current_user.device_type == 'admin-view-as' %}
+<div id="view-as-banner" role="status" style="background:var(--amber);color:var(--paper);padding:8px 28px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+  <span style="font-size:12px;font-weight:600">
+    Viewing as {{ restaurant.name }}, signed in as their owner login{% if current_user.acting_admin %} — {{ current_user.acting_admin }}{% endif %}.
+    {% if current_user.view_as_read_only %}Read-only: nothing can be changed.{% else %}Anything you change is recorded under your name.{% endif %}
+    It closes on its own 2 hours after it opened.
   </span>
-  <a href="/admin/stop-viewing" style="font-size:11px;color:rgba(255,255,255,.8);text-decoration:none;padding:3px 10px;border:1px solid rgba(255,255,255,.4);border-radius:4px">
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M9.5 5.5l-3 2.5 3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>Back to admin
-  </a>
+  <form method="post" action="/admin/stop-viewing" style="margin:0" onsubmit="var m=document.cookie.match(/(?:^|;\s*)csrf_js=([^;]+)/);if(m){this.csrf_token.value=decodeURIComponent(m[1]);}">
+    <input type="hidden" name="csrf_token" value="{{ request.cookies.get('csrf_js', '') }}">
+    <button type="submit" class="cbtn cbtn-secondary cbtn-sm">Back to admin</button>
+  </form>
 </div>
 {% endif %}
 <header class="hdr">

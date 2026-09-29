@@ -209,7 +209,9 @@ def test_a_deactivated_logins_device_gets_nothing(app, pushes):
     admin_rid = _loc("Cavnar HQ", owner_email="will@x.test")
     admin_uid = create_user(admin_rid, "will", "will@x.test", "admin-pass-1", is_admin=True)
     admin = app.test_client()
-    admin.set_cookie("session_token", create_session(admin_uid))
+    # Deactivating ends sessions, a step-up action since fix round A: a
+    # session whose password was just typed.
+    admin.set_cookie("session_token", create_session(admin_uid, password_verified_at=True))
     assert admin.post(f"/admin/deactivate-client/{mate}").get_json()["ok"] is True
 
     push.fire_push(rid, "1star", "1-star review", "Cold food.")

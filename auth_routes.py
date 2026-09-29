@@ -33,13 +33,45 @@ def _get_client_ip():
     by rotating the header (SEC-3)."""
     return request.remote_addr or "unknown"
 
+def _request_device_token(restaurant_id):
+    """The "remember this device" token this request carries for a login at
+    `restaurant_id`: the web's device_token_<rid> cookie, or the phone's
+    device_token (JSON body) / X-Device-Token header."""
+    tok = request.cookies.get("device_token_" + str(restaurant_id), "") if restaurant_id else ""
+    if not tok:
+        try:
+            tok = ((request.get_json(silent=True) or {}).get("device_token") or "") if request.is_json else ""
+        except Exception:
+            tok = ""
+    return (tok or request.headers.get("X-Device-Token", "") or "").strip()
+
+
+def _throttle_context(username):
+    """(internal, known_device) for the account a sign-in names. An internal
+    login (admin, support) is locked per address; a device the login
+    remembered at a two-factor sign-in skips the account lock (SECURITY-12).
+    Unknown names and any failure answer (False, False): the normal lock."""
+    if not username:
+        return False, False
+    try:
+        from auth import get_user_by_username, is_internal_login, remembered_device_ok
+        u = get_user_by_username(username)
+        if not u:
+            return False, False
+        tok = _request_device_token(u.get("restaurant_id"))
+        return is_internal_login(u), bool(tok) and remembered_device_ok(u, tok)
+    except Exception:
+        return False, False
+
+
 def _is_rate_limited(ip, username=None):
     """Durable, keyed by IP and account (security.py). The in-memory dict
     this replaced reset on deploy and never saw an attacker rotate
     addresses; it was also the reason gunicorn could not run two workers."""
     try:
         import security
-        blocked, _ = security.login_throttled(ip, username)
+        internal, known = _throttle_context(username)
+        blocked, _ = security.login_throttled(ip, username, internal=internal, known_device=known)
         return blocked
     except Exception:
         # A limiter that cannot read its table must not fail open.
@@ -53,18 +85,21 @@ def _record_failed_attempt(ip, username=None):
     _login_attempts.setdefault(ip, []).append(time.time())
     try:
         import security
-        security.record_login_failure(ip, username)
+        internal = _throttle_context(username)[0] if username else False
+        security.record_login_failure(ip, username, internal=internal)
     except Exception:
         pass
 
 def _clear_attempts(ip, username=None, clear_key=False):
-    """After a success. Clears the ACCOUNT's failures; an address's budget
-    only ages out, or a successful login on the attacker's own account wiped
-    the budget they were spending guessing someone else's codes (SEC-3).
-    `clear_key` clears a purpose-specific key such as "2fa:<ip>"."""
+    """After a success. Clears the ACCOUNT's failures (and this address's
+    lock on it); an address's own budget only ages out, or a successful
+    login on the attacker's own account wiped the budget they were spending
+    guessing someone else's codes (SEC-3). `clear_key` clears a
+    purpose-specific key such as "2fa:<ip>"."""
     try:
         import security
-        security.clear_login_failures(ip=ip if clear_key else None, username=username)
+        security.clear_login_failures(ip=ip if clear_key else None, username=username,
+                                      pair_ip=ip if (username and not clear_key) else None)
         if clear_key:
             _login_attempts.pop(ip, None)
     except Exception:
@@ -206,6 +241,27 @@ def reset_password(token):
 
 
 
+def _send_restaurant_login_alert(user, token, ip, ua):
+    """The restaurant's sign-in notice (email + push + bell), when its owner
+    turned it on. Never for an internal login: the admin's home row is not
+    his restaurant — it could be a client's — and the owner of that row has
+    no business hearing about the operator's sign-ins."""
+    try:
+        from auth import is_internal_login as _iil_ln
+        if _iil_ln(user):
+            return
+        from models import get_restaurant as _gr_ln
+        _rid_ln = user.get("restaurant_id")
+        _rest_ln = _gr_ln(_rid_ln) if _rid_ln else None
+        if _rest_ln and getattr(_rest_ln, "login_notify", 0) and _rest_ln.owner_email:
+            from notify import send_login_alert
+            from auth import create_login_report as _clr
+            send_login_alert(_rid_ln, _rest_ln.name or "", _rest_ln.owner_email, ip, ua,
+                             report_url=f"https://dashboard.cavnar.ai/auth/not-me/{_clr(user['id'], token)}")
+    except Exception as _ln_e:
+        print(f"[LoginNotify] {_ln_e}")
+
+
 @auth_bp.route("/login", methods=["GET","POST"])
 def login():
     if request.method == "POST":
@@ -229,24 +285,39 @@ def login():
         if user.get("must_reset_password"):
             return render_template('login.html', google_sso_enabled=_google_sso_post, csrf_token=_csrf_cookie,
                 error="This account needs a password reset before signing in — use Forgot password below.")
-        next_url = safe_next_url(request.args.get("next"), "/admin" if user["is_admin"] else "/")
+        from auth import is_internal_login as _is_internal
+        _internal = _is_internal(user)
+        next_url = safe_next_url(request.args.get("next"), "/admin" if _internal else "/")
 
-        # Check if 2FA is enabled and device not remembered
+        # Whether this sign-in needs a second factor, and whether a device
+        # this login remembered already is one. Admins are no longer exempt
+        # (SECURITY-1): an internal login answers from its own users row, so
+        # an admin without 2FA still signs in, and one with it is asked. For
+        # a restaurant's logins a failure to read the switch fails CLOSED
+        # (the code is asked for) — it used to wave the sign-in through.
+        _rid = user.get("restaurant_id")
+        from auth import login_needs_second_factor as _lnsf
         try:
-            from models import get_restaurant
-            _rid = user.get("restaurant_id")
-            rest = get_restaurant(_rid) if _rid and not user.get("is_admin") else None
-            _device_cookie = request.cookies.get("device_token_" + str(_rid), "")
-            _2fa_on = rest and rest.two_fa_enabled and not user.get("is_admin")
-            from auth import remembered_device_ok as _tdo
-            _device_ok = bool(_device_cookie) and _tdo(user, _device_cookie)
-        except Exception as _e_2fa:
-            _2fa_on = False
-            _device_ok = False
+            rest = get_restaurant(_rid) if _rid else None
+        except Exception:
+            rest = None
+        if _internal:
+            _2fa_on = _lnsf(user, rest)
+        else:
+            try:
+                _2fa_on = _lnsf(user, rest) if rest is not None else True
+            except Exception:
+                _2fa_on = True
+        _device_ok = False
+        if _2fa_on:
+            try:
+                from auth import remembered_device_ok as _tdo
+                _device_cookie = request.cookies.get("device_token_" + str(_rid), "")
+                _device_ok = bool(_device_cookie) and _tdo(user, _device_cookie)
+            except Exception:
+                _device_ok = False
 
         if _2fa_on and not _device_ok:
-            # Generate and send 2FA code
-            from models import update_restaurant, get_restaurant
             # pending is a per-login-attempt secret bound into the token AND
             # stored (hashed) server-side with this attempt's own code, so
             # verify-2fa can confirm the submitted token was actually issued by
@@ -254,18 +325,18 @@ def login():
             # own challenge instead of overwriting this one (SEC-20).
             from auth import issue_two_fa_challenge as _itfc
             # To this login's own email or phone, never the owner's (SEC-20).
-            from auth import two_fa_destination as _tfd, send_two_fa_code as _stfc, NO_TWO_FA_DESTINATION as _no_dest
-            rest2 = get_restaurant(_rid)
-            _dest = _tfd(user, rest2)
+            from auth import (two_fa_destination as _tfd, deliver_two_fa_code as _dtfc,
+                              undelivered_code_message as _ucm, NO_TWO_FA_DESTINATION as _no_dest)
+            _dest = _tfd(user, rest)
             if not _dest:
                 return render_template('login.html', error=_no_dest, google_sso_enabled=_google_sso_post,
                                        csrf_token=_csrf_cookie)
             pending, code = _itfc(_rid, user["id"], "login")
-            try:
-                _stfc(_dest, rest2, code)
-            except Exception as _e_send:
-                print(f"[2fa] login code send failed for user {user['id']}: {_e_send}")
-            masked = _dest["masked"]
+            # What actually happened, not what was meant to (COMMS-13): a
+            # text that could not go falls back to email, and a code that
+            # went nowhere says so instead of "We texted…".
+            _sent = _dtfc(user, rest, _dest, code)
+            masked = _sent["masked"] or _dest["masked"]
             # Encode restaurant_id AND the user_id that actually authenticated:
             # "rid:uid:secret". The user_id used to be absent, and verify-2fa
             # then resolved the session with get_user_by_restaurant_id(), an
@@ -279,29 +350,23 @@ def login():
             import secrets as _sec4
             csrf3 = _sec4.token_hex(16)
             resp3 = make_response(render_template('two_fa.html',
-                masked_email=masked, channel=_dest["kind"], error=None,
+                masked_email=masked, channel=_sent["kind"] if _sent["sent"] else None,
+                error=None if _sent["sent"] else _ucm(_sent),
                 pending_token=pending_encoded, next_url=next_url, csrf_token=csrf3))
             resp3.set_cookie("csrf_token", csrf3, httponly=True, samesite="Lax")
             return resp3
 
         _ua = request.headers.get("User-Agent", "")
-        token = create_session(user["id"], ip_address=ip, user_agent=_ua, restaurant_id=user["restaurant_id"])
-        # Send login notification (email + push + bell) if enabled
-        try:
-            from models import get_restaurant as _gr_ln
-            _rid_ln = user.get("restaurant_id")
-            _rest_ln = _gr_ln(_rid_ln) if _rid_ln else None
-            if _rest_ln and getattr(_rest_ln, "login_notify", 0) and _rest_ln.owner_email:
-                from notify import send_login_alert
-                from auth import create_login_report as _clr
-                send_login_alert(_rid_ln, _rest_ln.name or "", _rest_ln.owner_email, ip, _ua,
-                                 report_url=f"https://dashboard.cavnar.ai/auth/not-me/{_clr(user['id'], token)}")
-        except Exception as _ln_e:
-            print(f"[LoginNotify] {_ln_e}")
+        # The password was just typed (a step-up needs nothing more for the
+        # next RECENT_AUTH_MINUTES); a remembered device is this sign-in's
+        # second factor when the login has one.
+        token = create_session(user["id"], ip_address=ip, user_agent=_ua, restaurant_id=user["restaurant_id"],
+                               second_factor=bool(_2fa_on and _device_ok), password_verified_at=True)
+        _send_restaurant_login_alert(user, token, ip, _ua)
         resp = make_response(redirect(next_url))
-        from auth import cookies_require_secure as _crs
+        from auth import cookies_require_secure as _crs, session_cookie_max_age as _scma
         _on_railway = _crs()
-        resp.set_cookie("session_token", token, max_age=30*24*3600,
+        resp.set_cookie("session_token", token, max_age=_scma(user),
                         httponly=True, secure=_on_railway, samesite="Lax")
         return resp
     import secrets as _sec2
@@ -355,9 +420,11 @@ def verify_2fa():
             return redirect("/login")
         import secrets as _sec5
         csrf4 = _sec5.token_hex(16)
+        from auth import get_user_by_id as _gubi_v
+        _pending_user = _gubi_v(pending_user_id)
         try:
-            from auth import two_fa_destination as _tfd_v, get_user_by_id as _gubi_v
-            _dest_v = _tfd_v(_gubi_v(pending_user_id), rest)
+            from auth import two_fa_destination as _tfd_v
+            _dest_v = _tfd_v(_pending_user, rest)
             masked = _dest_v["masked"] if _dest_v else "your registered email"
             channel_v = _dest_v["kind"] if _dest_v else None
         except Exception as _e_v:
@@ -370,8 +437,10 @@ def verify_2fa():
         _backup_mode = bool(_nbc(code_entered))
         _otp_result = _ctfc(uid, pending_user_id, code_entered, pending=pending_secret, consume=False)
         if _otp_result == "wrong":
-            from models import verify_and_consume_backup_code as _vcbc
-            if not _vcbc(uid, code_entered):
+            # The login's own backup codes for an internal login; the
+            # restaurant's for everyone else (auth.verify_backup_code_for).
+            from auth import verify_backup_code_for as _vbcf
+            if not (_pending_user and _vbcf(_pending_user, uid, code_entered)):
                 _record_failed_attempt("2fa:" + ip)
                 resp_err = make_response(render_template('two_fa.html',
                     masked_email=masked, channel=channel_v, backup_mode=_backup_mode, error="Incorrect code. Try again.",
@@ -386,6 +455,10 @@ def verify_2fa():
             return resp_exp
         # Code correct — clear it (and the pending secret, single-use) and create session
         _clear_attempts("2fa:" + ip, clear_key=True)
+        # When the password step happened — the session's re-auth stamp, so
+        # a step-up counts from the password, not from the code.
+        from auth import two_fa_challenge_started_at as _tfcsa
+        _pw_at = _tfcsa(uid, pending_user_id, pending_secret)
         # Single use: this sign-in's challenge ends here (and only this one).
         from auth import end_two_fa_challenge as _etfc
         _etfc(uid, pending_user_id, pending_secret)
@@ -403,21 +476,17 @@ def verify_2fa():
                 or _user_for_session.get("restaurant_id") != uid
                 or _user_for_session.get("must_reset_password")):
             return redirect("/login")
-        token = create_session(_user_for_session["id"], ip_address=_ip_2fa, user_agent=_ua_2fa, restaurant_id=_user_for_session["restaurant_id"])
+        # The session records that it passed the second factor — the admin
+        # gate reads exactly that (SECURITY-1).
+        token = create_session(_user_for_session["id"], ip_address=_ip_2fa, user_agent=_ua_2fa,
+                               restaurant_id=_user_for_session["restaurant_id"],
+                               second_factor=True, password_verified_at=_pw_at or True)
         # Login notification (email + push + bell)
-        try:
-            _rest_ln2 = get_restaurant(uid)
-            if _rest_ln2 and getattr(_rest_ln2, "login_notify", 0) and _rest_ln2.owner_email:
-                from notify import send_login_alert
-                from auth import create_login_report as _clr2
-                send_login_alert(uid, _rest_ln2.name or "", _rest_ln2.owner_email, _ip_2fa, _ua_2fa,
-                                 report_url=f"https://dashboard.cavnar.ai/auth/not-me/{_clr2(_user_for_session['id'], token)}")
-        except Exception as _ln2_e:
-            print(f"[LoginNotify2FA] {_ln2_e}")
-        from auth import cookies_require_secure as _crs
+        _send_restaurant_login_alert(_user_for_session, token, _ip_2fa, _ua_2fa)
+        from auth import cookies_require_secure as _crs, session_cookie_max_age as _scma2
         _on_railway = _crs()
         resp_ok = make_response(redirect(next_url or "/"))
-        resp_ok.set_cookie("session_token", token, max_age=30*24*3600,
+        resp_ok.set_cookie("session_token", token, max_age=_scma2(_user_for_session),
                            httponly=True, secure=_on_railway, samesite="Lax")
         if remember == "1":
             from auth import create_trusted_device as _ctd, describe_user_agent as _dua
@@ -461,22 +530,24 @@ def resend_two_fa(pending_token):
     code = _rtfc(uid, _pending_uid_r, pending_secret_r)
     if not code:
         return expired
-    from auth import two_fa_destination as _tfd_r, send_two_fa_code as _stfc_r, get_user_by_id as _gubi_r
-    _dest_r = _tfd_r(_gubi_r(_pending_uid_r), rest)
+    from auth import (two_fa_destination as _tfd_r, deliver_two_fa_code as _dtfc_r, get_user_by_id as _gubi_r,
+                      undelivered_code_message as _ucm_r)
+    _user_r = _gubi_r(_pending_uid_r)
+    _dest_r = _tfd_r(_user_r, rest)
     if not _dest_r:
         return expired
     # "Sent" only when it went: this answered ok when the send raised or the
-    # provider refused, so the person waited for a code that never came.
-    try:
-        _sent_r = bool(_stfc_r(_dest_r, rest, code))
-    except Exception as _e_r:
-        print(f"[2fa] resend failed for user {_pending_uid_r}: {_e_r}")
-        _sent_r = False
-    if not _sent_r:
+    # provider refused, so the person waited for a code that never came. A
+    # text that cannot go (a STOP, a refusal) falls back to the login's email
+    # and says so (COMMS-13).
+    _res_r = _dtfc_r(_user_r, rest, _dest_r, code)
+    if not _res_r["sent"]:
         where = "text" if _dest_r["kind"] == "sms" else "email"
-        return {"ok": False, "channel": _dest_r["kind"],
-                "error": f"We couldn't {where} a new code just now. Wait a minute and try again."}, 502
-    return {"ok": True, "channel": _dest_r["kind"], "masked": _dest_r["masked"]}, 200
+        msg = (_ucm_r(_res_r) if _res_r.get("reason") == "sms_stopped"
+               else f"We couldn't {where} a new code just now. Wait a minute and try again.")
+        return {"ok": False, "channel": _dest_r["kind"], "error": msg}, 502
+    return {"ok": True, "channel": _res_r["kind"], "masked": _res_r["masked"],
+            "fell_back": _res_r["fell_back"]}, 200
 
 
 @auth_bp.route("/resend-2fa", methods=["POST"])
@@ -506,10 +577,32 @@ def logout():
     return resp
 
 
+def _restaurant_two_fa_refusal(current_user):
+    """None when this login may change its restaurant's two-factor switch;
+    otherwise the 403 to return. The switch is the account holder's
+    (SEC-6) — and never an internal login's: an admin's own second factor
+    lives on his users row (/admin/two-factor), and this switch would flip
+    whatever restaurant he is homed on for everyone there (SECURITY-1)."""
+    from auth import is_internal_login as _iil_rt
+    if _iil_rt(current_user):
+        return jsonify(ok=False, error="Your own two-factor is set up at /admin/two-factor. "
+                                       "This switch is the restaurant's."), 403
+    from permissions import is_principal
+    if not is_principal(current_user):
+        return jsonify(ok=False, error="Only the account owner can change sign-in security."), 403
+    return None
+
+
 @auth_bp.route("/api/send-2fa-test", methods=["POST"])
+@csrf_required
 @login_required
 def send_2fa_test(current_user):
-    """Send a test 2FA code to verify email or phone before enabling."""
+    """Send a test 2FA code to verify email or phone before enabling.
+    CSRF-checked like the rest of auth_bp's session JSON posts (SEC-21);
+    these two were missed (SECURITY-15)."""
+    denied = _restaurant_two_fa_refusal(current_user)
+    if denied:
+        return denied
     from models import get_restaurant, update_restaurant
     rest = get_restaurant(current_user["restaurant_id"])
     if not rest:
@@ -539,9 +632,14 @@ def send_2fa_test(current_user):
     return jsonify(ok=True, masked=masked, method=method)
 
 @auth_bp.route("/api/verify-2fa-setup", methods=["POST"])
+@csrf_required
 @login_required
 def verify_2fa_setup(current_user):
-    """Verify the test code and enable 2FA."""
+    """Verify the test code and enable 2FA. The account holder's, like the
+    toggle and the phone's twin (it had no check at all)."""
+    denied = _restaurant_two_fa_refusal(current_user)
+    if denied:
+        return denied
     from models import get_restaurant, update_restaurant
     data = request.get_json() or {}
     code = data.get("code", "").strip()
@@ -563,9 +661,9 @@ def verify_2fa_setup(current_user):
 @login_required
 def toggle_2fa(current_user):
     from models import update_restaurant
-    from permissions import is_principal
-    if not is_principal(current_user):
-        return jsonify(ok=False, error="Only the account owner can change sign-in security."), 403
+    denied = _restaurant_two_fa_refusal(current_user)
+    if denied:
+        return denied
     data = request.get_json() or {}
     enabled = 1 if data.get("enabled") else 0
     update_restaurant(current_user["restaurant_id"], {"two_fa_enabled": enabled})
@@ -727,7 +825,12 @@ def list_sessions(current_user):
                 s["ip_address"] = live_ip
         device = _parse_ua(ua)
         browser = _parse_browser(ua)
-        if device and browser:
+        if s.get("is_view_as"):
+            # Cavnar AI support looking at the account (admin view-as): said
+            # as such, not as one of the owner's own devices (SECURITY-3).
+            s["device"] = "Cavnar AI support"
+            s["browser"] = "view-as"
+        elif device and browser:
             s["device"] = device
             s["browser"] = browser
         elif device:
@@ -1028,11 +1131,12 @@ def google_sso_start():
     return resp
 
 
-def _sso_web_finish(token=None, error=None):
+def _sso_web_finish(token=None, error=None, max_age=30 * 24 * 3600):
     """The web half of Google sign-in's finish: the session cookie and a
     redirect to where the sign-in was headed (g_sso_next, set by
     google_sso_start — re-audit C10), or back to /login with the error and
-    that same destination."""
+    that same destination. `max_age` is the session's own lifetime
+    (auth.session_cookie_max_age — 12 hours for an internal login)."""
     from urllib.parse import quote
     nxt = safe_next_url(request.cookies.get("g_sso_next"), "")
     if error:
@@ -1040,7 +1144,7 @@ def _sso_web_finish(token=None, error=None):
     else:
         resp = make_response(redirect(nxt or "/"))
         resp.set_cookie("session_token", token, httponly=True, samesite="Lax",
-                        secure=True, max_age=30*24*3600)
+                        secure=True, max_age=max_age)
         resp.delete_cookie("g_sso_state")
     resp.delete_cookie("g_sso_next")
     return resp
@@ -1054,7 +1158,7 @@ def google_sso_callback():
 
     is_mobile = request.cookies.get("g_sso_mobile") == "1"
 
-    def _finish(token=None, error=None):
+    def _finish(token=None, error=None, max_age=30 * 24 * 3600):
         """Web gets its existing cookie-session redirect; the iOS app (which
         has no cookie jar and speaks bearer tokens) gets the same outcome
         via a cavnarai:// deep link instead."""
@@ -1071,7 +1175,7 @@ def google_sso_callback():
             resp.delete_cookie("g_sso_mobile")
             resp.delete_cookie("g_sso_device_id")
             return resp
-        return _sso_web_finish(token, error)
+        return _sso_web_finish(token, error, max_age=max_age)
 
     error = request.args.get("error")
     if error:
@@ -1167,15 +1271,22 @@ def google_sso_callback():
     if user.get("must_reset_password"):
         return _finish(error="password_reset_required")
 
+    # Admins are no longer exempt (SECURITY-1): an internal login is asked
+    # for its own second factor here like everyone else is for theirs.
+    from auth import (is_internal_login as _iil_sso, login_needs_second_factor as _lnsf_sso,
+                      session_cookie_max_age as _scma_sso)
+    needs = True
+    device_ok = False
     try:
         from models import get_restaurant as _gr_sso
-        rest_sso = _gr_sso(user.get("restaurant_id")) if not user.get("is_admin") else None
-        device_ok = False
-        if rest_sso and rest_sso.two_fa_enabled:
+        rest_sso = (_gr_sso(user.get("restaurant_id"))
+                    if user.get("restaurant_id") and not _iil_sso(user) else None)
+        needs = _lnsf_sso(user, rest_sso)
+        if needs:
             from auth import remembered_device_ok as _tdo_sso
             cookie = request.cookies.get("device_token_" + str(user.get("restaurant_id")), "")
             device_ok = bool(cookie) and _tdo_sso(user, cookie)
-        sso_needs_2fa = bool(rest_sso and rest_sso.two_fa_enabled and not device_ok)
+        sso_needs_2fa = bool(needs and not device_ok)
     except Exception:
         # Fail CLOSED: if we cannot determine whether 2FA applies, do not
         # hand out a session on a path that bypasses it.
@@ -1189,10 +1300,14 @@ def google_sso_callback():
     ip = request.remote_addr or ""
     ua = request.headers.get("User-Agent", "")
     device_id = request.cookies.get("g_sso_device_id") or None
-    token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios" if is_mobile else "web", device_id=device_id, restaurant_id=user["restaurant_id"])
+    # No password was typed on this path, so no re-auth stamp: a step-up
+    # asks for it. A remembered device is the second factor when one applies.
+    token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios" if is_mobile else "web",
+                           device_id=device_id, restaurant_id=user["restaurant_id"],
+                           second_factor=bool(needs and device_ok))
     update_last_login(user["id"])
 
-    return _finish(token=token)
+    return _finish(token=token, max_age=_scma_sso(user))
 
 
 @auth_bp.route("/auth/google/disconnect", methods=["POST"])

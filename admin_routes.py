@@ -9,7 +9,7 @@ from datetime import datetime
 
 # Import everything needed from the main app
 from models import get_conn, get_restaurant, update_restaurant, create_restaurant, Restaurant, get_reviews_data, get_review_stats, log_email, get_changelog, save_changelog_entry, delete_changelog_entry, location_group_conflict, place_id_conflict
-from auth import get_session_user, delete_session, create_user, update_password, admin_required, login_required
+from auth import get_session_user, delete_session, create_user, update_password, admin_required, login_required, recent_auth_required
 from emails import send_payment_email, send_welcome_email
 import emails as _emails
 
@@ -225,56 +225,136 @@ def create_client(current_user):
         import traceback; traceback.print_exc()
         return jsonify(ok=False, error=_safe_err(e))
 
+def _audit_admin_action(current_user, action, restaurant_id=None, target=None, before=None, after=None,
+                        result="ok", summary=None):
+    """One admin_events row for an admin action, with who, on what, and the
+    before and after. admin_events.record never raises. (B2's richer
+    record_admin_action takes these same fields; the integration wave can
+    route this through it.)"""
+    try:
+        import admin_events
+        admin_events.record("admin", action, restaurant_id=restaurant_id,
+                            summary=summary or f"{current_user.get('username')} {action.replace('_', ' ')}",
+                            payload={"actor_id": current_user.get("id"), "actor": current_user.get("username"),
+                                     "target": target, "before": before, "after": after, "result": result,
+                                     "ip": request.remote_addr})
+    except Exception:
+        pass
+
+
+def _login_row(user_id):
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT id, restaurant_id, username, email, role, is_admin, is_active FROM users WHERE id=?",
+                           (user_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
 @admin_bp.route("/admin/deactivate-client/<int:user_id>", methods=["POST"])
 @admin_required
+@recent_auth_required()
 def deactivate_client(user_id, current_user):
+    """Switch a login off and end every way it was signed in: its sessions
+    (web and phone) and its remembered devices. It used to set is_active=0
+    and nothing else, so reactivating brought every unexpired session back —
+    an iOS token for up to 30 days (SECURITY-13) — while the console said
+    "signed out everywhere". Never an admin row. Step-up: it revokes
+    sessions (owner decision 4)."""
+    import auth as _auth_d
+    row = _login_row(user_id)
+    if not row or row["is_admin"]:
+        return jsonify(ok=False, error="That login can't be deactivated here."), 404
+    ended = _auth_d.end_login_access(user_id)
     conn = get_conn()
     conn.execute("UPDATE users SET is_active=0 WHERE id=? AND is_admin=0", (user_id,))
     conn.commit(); conn.close()
-    return jsonify(ok=True)
+    _audit_admin_action(current_user, "login_deactivated", restaurant_id=row["restaurant_id"],
+                        target={"user_id": user_id, "username": row["username"]},
+                        before={"is_active": bool(row["is_active"])}, after={"is_active": False},
+                        summary=f"{current_user.get('username')} deactivated {row['username']} "
+                                f"({ended['sessions']} session(s), {ended['devices']} remembered device(s) ended)")
+    return jsonify(ok=True, sessions_ended=ended["sessions"], devices_forgotten=ended["devices"])
 
 @admin_bp.route("/admin/reactivate-client/<int:user_id>", methods=["POST"])
 @admin_required
 def reactivate_client(user_id, current_user):
+    """Switch a login back on. Never an admin row (the deactivate twin
+    always refused one; this did not — SECURITY #93). Any session left from
+    before is ended rather than revived, so the login signs in fresh. The
+    welcome-back email goes to the reactivated login itself — it went to
+    the restaurant's owner whoever was reactivated — and only to an account
+    holder whose subscription allows access, since it says everything is
+    running again."""
+    import auth as _auth_r
+    row = _login_row(user_id)
+    if not row or row["is_admin"]:
+        return jsonify(ok=False, error="That login can't be reactivated here."), 404
+    _auth_r.end_login_access(user_id)
     conn = get_conn()
-    conn.execute("UPDATE users SET is_active=1 WHERE id=?", (user_id,))
+    conn.execute("UPDATE users SET is_active=1 WHERE id=? AND is_admin=0", (user_id,))
     conn.commit()
-    # Get user info to send reactivation email
-    user_row = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
     conn.close()
-    if user_row:
-        try:
-            restaurant = get_restaurant(dict(user_row)["restaurant_id"])
+    _audit_admin_action(current_user, "login_reactivated", restaurant_id=row["restaurant_id"],
+                        target={"user_id": user_id, "username": row["username"]},
+                        before={"is_active": bool(row["is_active"])}, after={"is_active": True},
+                        summary=f"{current_user.get('username')} reactivated {row['username']}")
+    emailed, note = False, None
+    try:
+        from permissions import is_principal
+        from models import subscription_allows_access
+        import scheduler as _sched_r
+        to_email = (row.get("email") or "").strip()
+        if not is_principal(row) or not to_email or to_email.endswith("@staff.invalid"):
+            note = "no email: not an account holder's login"
+        elif not subscription_allows_access(row["restaurant_id"]):
+            note = "no email: the subscription does not allow access"
+        elif not _sched_r.scheduling_allowed():
+            note = "no email: this backend does not send (local)"
+        else:
+            restaurant = get_restaurant(row["restaurant_id"])
             if restaurant:
                 from emails import send_reactivation_email
-                send_reactivation_email(
-                    to_email=restaurant.owner_email,
-                    restaurant_name=restaurant.name,
-                    owner_name=restaurant.owner_name,
-                )
-        except Exception as e:
-            print(f"Reactivation email failed: {e}")
-    return jsonify(ok=True)
+                send_reactivation_email(to_email=to_email, restaurant_name=restaurant.name,
+                                        owner_name=restaurant.owner_name)
+                emailed = True
+    except Exception as e:
+        note = "no email: the send failed"
+        print(f"Reactivation email failed: {e}")
+    return jsonify(ok=True, emailed=emailed, email_note=note)
 
 @admin_bp.route("/admin/api/set-user-role", methods=["POST"])
 @admin_required
+@recent_auth_required()
 def set_user_role_route(current_user):
-    data = request.get_json(force=True, silent=True) or {}
+    """Change a login's role from the console. It wrote users.role only,
+    and the session reads the membership, so the change never took effect;
+    it refused "member" (Teammate) although the console offers it; and it
+    would rewrite an admin's row (SECURITY #60, #93). One body now —
+    auth.admin_set_role — writes users.role and the membership together
+    with the owner path's last-owner guard, refuses admin, support and staff
+    PIN rows, and the change is audited with before and after. Step-up:
+    a role change (owner decision 4)."""
+    data = request.get_json(silent=True) or {}
     try:
         user_id = int(data.get("user_id") or 0)
     except (TypeError, ValueError):
-        return jsonify(ok=False, error="Invalid user_id")
-    role = data.get("role", "client")
-    if role not in ("client", "owner"):
-        return jsonify(ok=False, error="Invalid role")
+        return jsonify(ok=False, error="Invalid user_id"), 400
     if not user_id:
-        return jsonify(ok=False, error="Missing user_id")
-    from auth import set_user_role
+        return jsonify(ok=False, error="Missing user_id"), 400
+    import auth as _auth_sr
+    role = (data.get("role") or "").strip().lower()
     try:
-        set_user_role(user_id, role)
-    except Exception as e:
-        return jsonify(ok=False, error=_safe_err(e))
-    return jsonify(ok=True)
+        out = _auth_sr.admin_set_role(user_id, role, acting_user_id=current_user.get("id"))
+    except _auth_sr.TeamAccessError as e:
+        return jsonify(ok=False, error=e.message), 400
+    _audit_admin_action(current_user, "login_role_changed", restaurant_id=out["restaurant_id"],
+                        target={"user_id": user_id, "username": out["username"]},
+                        before={"role": out["before"]}, after={"role": out["after"]},
+                        summary=f"{current_user.get('username')} changed {out['username']}'s role "
+                                f"from {out['before']} to {out['after']}")
+    return jsonify(ok=True, role=out["after"], previous_role=out["before"])
 
 
 @admin_bp.route("/admin/client-data/<int:restaurant_id>")
@@ -1027,8 +1107,14 @@ def review_count_api(current_user):
 @admin_bp.route("/api/log-activity", methods=["POST"])
 @login_required
 def log_activity_route(current_user):
+    """The web tab ping behind restaurants.last_activity (the console's
+    "last active"). An admin viewing as the client is not the client being
+    active: an operator opening an inactive account to investigate used to
+    clear its "No activity" issue (LIFECYCLE-9)."""
+    if (current_user.get("device_type") or "") == "admin-view-as":
+        return jsonify(ok=True, skipped="view_as")
     from models import log_activity
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     log_activity(current_user["restaurant_id"], data.get("tab",""))
     return jsonify(ok=True)
 
@@ -1373,52 +1459,59 @@ def view_as_client(restaurant_id, current_user):
     A GET only asks. It used to mint the impersonation session and swap the
     admin's cookie for it, so any page could send an admin's browser into a
     client's account with a link (SEC-34). The button on the page POSTs,
-    with the same double-submit CSRF token every admin write carries."""
-    user_id = _principal_login_id(restaurant_id, fallback_to_any=True)
+    with the same double-submit CSRF token every admin write carries.
+
+    Owner decision (9/29/26): an admin's view-as keeps full write access;
+    a support login's is read-only. Either way it lasts auth.VIEW_AS_HOURS
+    from now (never extended by use), names the admin behind it on the
+    session row, shows the banner on every page, and every write through it
+    is recorded as that admin's (auth.record_view_as_write). It opens only
+    on the restaurant's own owner login — never a manager's or anyone
+    else's as a stand-in (SECURITY #85)."""
+    user_id = _principal_login_id(restaurant_id)
     if not user_id:
-        return "No client user found for this restaurant", 404
+        return ("This restaurant has no owner login to view as. Open it from the location "
+                "that has the owner's login, or add one first."), 404
     if request.method != "POST":
         return _view_as_confirm_page(restaurant_id)
-    # A view-as session for that user: auth.VIEW_AS_HOURS, sliding with use
-    # (auth.get_session_user renews it on every request).
-    from auth import VIEW_AS_HOURS
-    from datetime import datetime, timezone, timedelta
-    from models import get_conn as _gc
-    _conn = _gc()
-    token = __import__('secrets').token_urlsafe(32)
-    expires = (datetime.now(timezone.utc) + timedelta(hours=VIEW_AS_HOURS)).isoformat()
-    # Store the hash, not the token — same rule as auth.create_session, or
-    # this impersonation session would be unreadable by get_session_user.
-    from auth import hash_session_token as _hst
-    # device_type marks this as an admin impersonation rather than a real
-    # client sign-in. Without it the row is indistinguishable from the
-    # client's own session: it shows up in their Account -> Devices list as an
-    # unexplained login, and nothing in activity_log separates what Will did
-    # while viewing-as from what the client did themselves.
-    _conn.execute(
-        "INSERT INTO sessions (token, user_id, expires_at, last_active, device_type) VALUES (?,?,?,?,?)",
-        (_hst(token), user_id, expires,
-         datetime.now(timezone.utc).isoformat(), "admin-view-as")
-    )
-    _conn.commit(); _conn.close()
-    # Who opened it, and whether it may write. A support login is read-only
-    # in the admin console, and a view-as it opens must be read-only too — it
-    # used to be a full client session (SEC-12). See auth.get_session_user.
-    from auth import record_view_as_session
-    record_view_as_session(token, current_user.get("id"), read_only=not current_user.get("is_admin"))
+    from auth import create_view_as_session, VIEW_AS_HOURS, current_session_token, sql_utc
+    from datetime import datetime as _dt_va, timedelta as _td_va, timezone as _tz_va
+    read_only = not current_user.get("is_admin")
+    token = create_view_as_session(user_id, current_user, read_only=read_only,
+                                   ip_address=request.remote_addr,
+                                   user_agent=request.headers.get("User-Agent", ""))
     try:
         import admin_events
+        # The end is on the record too: a view that simply runs out has no
+        # stop row of its own.
         admin_events.record("admin", "view_as_started", restaurant_id=restaurant_id,
-                            summary=f"{current_user.get('username')} opened a view-as session")
+                            summary=(f"{current_user.get('username')} opened a "
+                                     f"{'read-only ' if read_only else ''}view-as session "
+                                     f"(signed in as login #{user_id}, {VIEW_AS_HOURS}h)"),
+                            payload={"actor_id": current_user.get("id"), "actor": current_user.get("username"),
+                                     "target_user_id": user_id, "read_only": read_only,
+                                     "hours": VIEW_AS_HOURS, "ip": request.remote_addr,
+                                     "ends_at": sql_utc(_dt_va.now(_tz_va.utc) + _td_va(hours=VIEW_AS_HOURS))})
     except Exception:
         pass
     resp = make_response(redirect("/"))
-    # A browser-session cookie: the server's sliding deadline is the only
-    # clock. A fixed max_age cut an active review off at its mark however
-    # recently the admin had clicked.
-    resp.set_cookie("session_token", token,
+    # The cookie ends when the session does: VIEW_AS_HOURS, absolute.
+    resp.set_cookie("session_token", token, max_age=VIEW_AS_HOURS * 3600,
                     httponly=True, secure=config.on_railway(), samesite="Strict")
+    # The admin's own session waits in a cookie only /admin/stop-viewing
+    # can read, and comes back when the view ends — a view-as used to cost
+    # a full sign-in (and a code) every time (LIFECYCLE-17).
+    own = current_session_token()
+    if own:
+        resp.set_cookie(_VIEW_AS_RETURN_COOKIE, own, max_age=VIEW_AS_HOURS * 3600, path="/admin/stop-viewing",
+                        httponly=True, secure=config.on_railway(), samesite="Strict")
     return resp
+
+
+# The admin's own session token while a view-as is open, readable only by
+# /admin/stop-viewing (path-scoped, HttpOnly, SameSite=Strict).
+_VIEW_AS_RETURN_COOKIE = "cavnar_admin_return"
+
 
 def _view_as_confirm_page(restaurant_id):
     """The GET half of view-as: a button that POSTs, carrying the csrf_js
@@ -1434,8 +1527,9 @@ def _view_as_confirm_page(restaurant_id):
     csrf_tok = request.cookies.get(CSRF_COOKIE) or _sec_va.token_urlsafe(32)
     import auth_routes as _ar_va
     body = _ar_va._SIMPLE_PAGE % (
-        f"<h1>View as {name}?</h1><p>This opens their dashboard in this browser until {VIEW_AS_HOURS} hours after you stop using it, "
-        f"signed in as their owner login. Everything you do is recorded.</p>"
+        f"<h1>View as {name}?</h1><p>This opens their dashboard in this browser for {VIEW_AS_HOURS} hours, "
+        f"signed in as their owner login. A banner shows on every page while it lasts, and every change "
+        f"you make is recorded under your name.</p>"
         f"<form method='post' action='/admin/view-as/{int(restaurant_id)}'>"
         f"<input type='hidden' name='csrf_token' value='{_esc_va(csrf_tok)}'>"
         f"<button type='submit' class='cbtn cbtn-primary'>Open their dashboard</button></form>"
@@ -1447,18 +1541,60 @@ def _view_as_confirm_page(restaurant_id):
     return resp
 
 
-@admin_bp.route("/admin/stop-viewing")
+@admin_bp.route("/admin/stop-viewing", methods=["GET", "POST"])
 def stop_viewing():
-    """Return to admin — delete current session and redirect to admin login."""
+    """End a view-as session. A GET only asks: it deleted whatever session
+    the cookie named, so any link anywhere signed its visitor out
+    (SECURITY-15). The POST (CSRF-checked like every admin_bp write) ends
+    only an admin-view-as session, records who ended it, and puts the
+    admin's own session back when it is still alive; otherwise the admin
+    signs in again. Deliberately not @admin_required: the session in the
+    cookie is the client's login, worn by the admin."""
     token = request.cookies.get("session_token")
-    if token:
-        # Only delete session if it actually exists (prevents session fixation).
-        # auth.get_session_user, imported at the top — models has none, and the
-        # local `from models import` made this route a 500.
-        if get_session_user(token):
-            delete_session(token)
-    resp = make_response(redirect("/login?next=/admin"))
-    resp.delete_cookie("session_token")
+    viewing = get_session_user(token) if token else None
+    is_view_as = bool(viewing) and (viewing.get("device_type") or "") == "admin-view-as"
+    if request.method != "POST":
+        if not is_view_as:
+            return redirect("/admin")
+        import secrets as _sec_sv
+        from markupsafe import escape as _esc_sv
+        from csrf import CSRF_COOKIE
+        csrf_tok = request.cookies.get(CSRF_COOKIE) or _sec_sv.token_urlsafe(32)
+        import auth_routes as _ar_sv
+        body = _ar_sv._SIMPLE_PAGE % (
+            "<h1>Stop viewing as this client?</h1><p>This ends the view-as session and takes you back "
+            "to the admin console.</p><form method='post' action='/admin/stop-viewing'>"
+            f"<input type='hidden' name='csrf_token' value='{_esc_sv(csrf_tok)}'>"
+            "<button type='submit' class='cbtn cbtn-primary'>Back to admin</button></form>")
+        resp = make_response(body)
+        if not request.cookies.get(CSRF_COOKIE):
+            resp.set_cookie(CSRF_COOKIE, csrf_tok, max_age=30 * 24 * 3600, httponly=False,
+                            secure=config.on_railway(), samesite="Lax")
+        return resp
+    if not is_view_as:
+        # Nothing to stop; never sign an ordinary session out from here.
+        return redirect("/admin")
+    delete_session(token)
+    try:
+        import admin_events
+        admin_events.record("admin", "view_as_stopped", restaurant_id=viewing.get("restaurant_id"),
+                            summary=f"{viewing.get('acting_admin') or 'an admin'} stopped viewing as "
+                                    f"{viewing.get('username')}",
+                            payload={"actor_id": viewing.get("acting_admin_id"), "actor": viewing.get("acting_admin"),
+                                     "target_user_id": viewing.get("id"), "ip": request.remote_addr})
+    except Exception:
+        pass
+    own = request.cookies.get(_VIEW_AS_RETURN_COOKIE, "")
+    back = get_session_user(own) if own else None
+    from auth import is_internal_login as _iil_sv, session_cookie_max_age as _scma_sv
+    if back and _iil_sv(back) and back.get("id") == viewing.get("acting_admin_id"):
+        resp = make_response(redirect("/admin"))
+        resp.set_cookie("session_token", own, max_age=_scma_sv(back), httponly=True,
+                        secure=config.on_railway(), samesite="Lax")
+    else:
+        resp = make_response(redirect("/login?next=/admin"))
+        resp.delete_cookie("session_token")
+    resp.delete_cookie(_VIEW_AS_RETURN_COOKIE, path="/admin/stop-viewing")
     return resp
 
 @admin_bp.route("/admin/inventory-template")
@@ -2525,3 +2661,486 @@ def admin_api_activity(current_user):
 def admin_api_search(current_user):
     import admin_ops
     return jsonify(**admin_ops.search(request.args.get("q", "")))
+
+
+# ── Fix round A ── auth & sessions: step-up, admin two-factor, login support
+# actions, support logins (9/29/26). The sensitive ones carry
+# @recent_auth_required (owner decision 4): the console answers a
+# {reauth_required: true} 403 by asking for the password, POSTing
+# /admin/api/reauth, and sending the action again.
+
+REAUTH_MAX_MISSES = 5
+
+
+@admin_bp.route("/admin/api/reauth", methods=["POST"])
+@admin_required
+def admin_api_reauth(current_user):
+    """Step-up: the admin types their password again; this session may then
+    make sensitive changes for auth.RECENT_AUTH_MINUTES. Five wrong
+    passwords on one session in 15 minutes end the session — a stolen
+    cookie cannot guess its way to the dangerous actions."""
+    import auth as _auth_ra
+    import security as _sec_ra
+    data = request.get_json(silent=True) or {}
+    token = _auth_ra.current_session_token()
+    if not token:
+        return jsonify(ok=False, error="Your session expired — please log in again.", session_expired=True), 401
+    key = "reauth:" + _auth_ra.hash_session_token(token)[:24]
+    if not _auth_ra.password_matches(current_user["id"], data.get("password") or ""):
+        misses = _sec_ra.record_reauth_miss(key, request.remote_addr)
+        _audit_admin_action(current_user, "admin_reauth_failed", result="denied",
+                            summary=f"{current_user.get('username')} entered a wrong password at a step-up "
+                                    f"({misses} in 15 minutes)")
+        if misses >= REAUTH_MAX_MISSES:
+            _auth_ra.delete_session(token)
+            return jsonify(ok=False, session_expired=True,
+                           error="Too many wrong passwords — sign in again."), 401
+        return jsonify(ok=False, error="That password isn't right."), 403
+    _sec_ra.clear_reauth_misses(key)
+    _auth_ra.mark_reauthenticated(token)
+    return jsonify(ok=True, valid_minutes=_auth_ra.RECENT_AUTH_MINUTES)
+
+
+# ── an internal login's own two-factor (SECURITY-1) ─────────────────────────
+
+# two_fa_challenges.purpose for an internal login's enrolment code, per
+# channel ("admin-setup-email" / "admin-setup-sms").
+_ADMIN_SETUP_PURPOSE = "admin-setup-%s"
+
+
+def _masked_contacts(user):
+    from auth import _mask_email, _mask_phone
+    email = (user.get("email") or "").strip()
+    phone = (user.get("phone") or "").strip()
+    return (_mask_email(email) if "@" in email else None), (_mask_phone(phone) if phone else None)
+
+
+@admin_bp.route("/admin/two-factor")
+@admin_required
+def admin_two_factor_page(current_user):
+    """Where an admin or support login turns its own two-factor on (and sees
+    it). Reachable while ADMIN_REQUIRE_2FA holds the rest of the console
+    shut — the old page sent admins to "/", which redirects them straight
+    back to /admin."""
+    import auth as _auth_tf
+    from auth_routes import safe_next_url
+    email_m, phone_m = _masked_contacts(current_user)
+    return render_template(
+        "admin_two_factor.html",
+        enrolled=_auth_tf.user_two_factor_enrolled(current_user),
+        method=current_user.get("two_fa_method") or "email",
+        required=_auth_tf.admin_two_factor_required(),
+        email_masked=email_m, phone_masked=phone_m,
+        backup_left=_auth_tf.count_unused_user_backup_codes(current_user["id"]),
+        next_url=safe_next_url(request.args.get("next"), "/admin"),
+        username=current_user.get("username"),
+        message=None)
+
+
+@admin_bp.route("/admin/two-factor/send", methods=["POST"])
+@admin_required
+def admin_two_factor_send(current_user):
+    """Send the enrolment code to this login's own email (or phone). Only
+    to the contact already on the login — never an address typed here."""
+    import auth as _auth_tf
+    if _auth_tf.user_two_factor_enrolled(current_user):
+        return jsonify(ok=False, error="Two-factor is already on for your login."), 409
+    data = request.get_json(silent=True) or {}
+    method = "sms" if data.get("method") == "sms" else "email"
+    dest = _auth_tf.two_fa_destination(dict(current_user, two_fa_method=method), None, method=method, strict=True)
+    if not dest:
+        return jsonify(ok=False, error=("There's no phone number on your login — use email." if method == "sms"
+                                        else "There's no email address on your login.")), 400
+    conn = get_conn()
+    try:
+        recent = conn.execute(
+            "SELECT 1 FROM two_fa_challenges WHERE user_id=? AND purpose LIKE 'admin-setup-%' "
+            "AND created_at > datetime('now','-60 seconds') LIMIT 1", (current_user["id"],)).fetchone()
+    finally:
+        conn.close()
+    if recent:
+        return jsonify(ok=False, error="A code was just sent. Use that one, or wait a minute to send another."), 429
+    # The challenge is bound to the channel it went by, so the confirm below
+    # can only switch on a channel this login proved it receives.
+    purpose = _ADMIN_SETUP_PURPOSE % dest["kind"]
+    _pending, code = _auth_tf.issue_two_fa_challenge(current_user["restaurant_id"], current_user["id"], purpose)
+    try:
+        sent = _auth_tf.send_two_fa_code(dest, _auth_tf._code_label(current_user, None), code)
+    except Exception as e:
+        print(f"[admin 2fa] enrolment code send failed for user {current_user['id']}: {e}")
+        sent = False
+    if not sent:
+        conn = get_conn()
+        try:
+            conn.execute("DELETE FROM two_fa_challenges WHERE user_id=? AND purpose=?", (current_user["id"], purpose))
+            conn.commit()
+        finally:
+            conn.close()
+        where = "text" if dest["kind"] == "sms" else "email"
+        return jsonify(ok=False, error=f"We couldn't {where} the code just now. Try again in a minute."), 502
+    return jsonify(ok=True, masked=dest["masked"], method=dest["kind"])
+
+
+@admin_bp.route("/admin/two-factor/verify", methods=["POST"])
+@admin_required
+def admin_two_factor_verify(current_user):
+    """Confirm the enrolment code: the login's two-factor goes on, its backup
+    codes are shown once, and this session counts as having passed the
+    second factor (it just did)."""
+    import auth as _auth_tf
+    if _auth_tf.user_two_factor_enrolled(current_user):
+        return jsonify(ok=False, error="Two-factor is already on for your login."), 409
+    data = request.get_json(silent=True) or {}
+    method = "sms" if data.get("method") == "sms" else "email"
+    result = _auth_tf.check_two_fa_code(current_user["restaurant_id"], current_user["id"],
+                                        (data.get("code") or "").strip(), purpose=_ADMIN_SETUP_PURPOSE % method)
+    if result in ("wrong", "missing"):
+        return jsonify(ok=False, error="That code isn't right. Try again."), 400
+    if result == "expired":
+        return jsonify(ok=False, error="That code expired. Send a new one."), 400
+    conn = get_conn()
+    try:
+        conn.execute("UPDATE users SET two_fa_enabled=1, two_fa_method=? WHERE id=?", (method, current_user["id"]))
+        conn.commit()
+    finally:
+        conn.close()
+    codes = _auth_tf.generate_user_backup_codes(current_user["id"])
+    _auth_tf.mark_second_factor(_auth_tf.current_session_token())
+    _audit_admin_action(current_user, "admin_two_factor_enabled", target={"user_id": current_user["id"]},
+                        before={"two_fa_enabled": False}, after={"two_fa_enabled": True, "method": method},
+                        summary=f"{current_user.get('username')} turned on two-factor ({method})")
+    from auth_routes import safe_next_url
+    return jsonify(ok=True, backup_codes=codes, method=method,
+                   next=safe_next_url(data.get("next"), "/admin"))
+
+
+@admin_bp.route("/admin/two-factor/disable", methods=["POST"])
+@admin_required
+@recent_auth_required()
+def admin_two_factor_disable(current_user):
+    """Turn this login's own two-factor off. Refused while ADMIN_REQUIRE_2FA
+    is set (the login would be sent straight back to enrolment)."""
+    import auth as _auth_tf
+    if _auth_tf.admin_two_factor_required():
+        return jsonify(ok=False, error="Two-factor is required for admin logins here, so it can't be turned off."), 409
+    _clear_user_two_factor(current_user["id"])
+    _audit_admin_action(current_user, "admin_two_factor_disabled", target={"user_id": current_user["id"]},
+                        before={"two_fa_enabled": True}, after={"two_fa_enabled": False},
+                        summary=f"{current_user.get('username')} turned off their own two-factor")
+    return jsonify(ok=True)
+
+
+@admin_bp.route("/admin/two-factor/backup-codes", methods=["POST"])
+@admin_required
+@recent_auth_required()
+def admin_two_factor_backup_codes(current_user):
+    """A fresh set of this login's backup codes (the old ones stop working)."""
+    import auth as _auth_tf
+    if not _auth_tf.user_two_factor_enrolled(current_user):
+        return jsonify(ok=False, error="Turn two-factor on first."), 409
+    codes = _auth_tf.generate_user_backup_codes(current_user["id"])
+    _audit_admin_action(current_user, "admin_backup_codes_regenerated", target={"user_id": current_user["id"]},
+                        summary=f"{current_user.get('username')} made new two-factor backup codes")
+    return jsonify(ok=True, backup_codes=codes)
+
+
+@admin_bp.route("/admin/api/me/username", methods=["POST"])
+@admin_required
+@recent_auth_required()
+def admin_api_change_own_username(current_user):
+    """Move this admin login off a guessable sign-in name (SECURITY-12): the
+    seed's default is "will", and the sign-in lock is keyed on the name
+    typed. Safe now that the boot seed only runs when no admin exists at
+    all, whatever ADMIN_USERNAME says. Step-up; audited."""
+    import re as _re_un
+    data = request.get_json(silent=True) or {}
+    new = (data.get("username") or "").strip().lower()
+    if not _re_un.fullmatch(r"[a-z0-9._-]{3,30}", new):
+        return jsonify(ok=False, error="Username: 3–30 letters, numbers, dots, dashes or underscores."), 400
+    old = (current_user.get("username") or "").lower()
+    if new == old:
+        return jsonify(ok=True, username=new)
+    conn = get_conn()
+    try:
+        if conn.execute("SELECT 1 FROM users WHERE LOWER(username)=? AND id<>?", (new, current_user["id"])).fetchone():
+            return jsonify(ok=False, error="That username is taken."), 409
+        conn.execute("UPDATE users SET username=? WHERE id=?", (new, current_user["id"]))
+        conn.commit()
+    finally:
+        conn.close()
+    _audit_admin_action(current_user, "admin_username_changed", target={"user_id": current_user["id"]},
+                        before={"username": old}, after={"username": new},
+                        summary=f"{old} changed their sign-in name to {new}")
+    return jsonify(ok=True, username=new)
+
+
+def _clear_user_two_factor(user_id):
+    """An internal login's own second factor off (auth.clear_user_two_factor:
+    the flag, its backup codes and the devices it remembered)."""
+    import auth as _auth_cl
+    _auth_cl.clear_user_two_factor(user_id)
+
+
+# ── one login's access, for Access & activity (#55) ─────────────────────────
+
+@admin_bp.route("/admin/api/users/<int:user_id>/security")
+@admin_required
+def admin_api_user_security(user_id, current_user):
+    """One login's sign-in security as the console shows it: its two-factor
+    (the login's own for an internal login, else its restaurant's switch),
+    any lockout, its live sessions (each with a session_id the revoke route
+    takes) and its remembered devices. IPs and user agents are withheld
+    from a support login."""
+    import auth as _auth_us
+    import security as _sec_us
+    row = _login_row(user_id)
+    if not row:
+        return jsonify(ok=False, error="That login wasn't found."), 404
+    conn = get_conn()
+    try:
+        full = dict(conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone())
+        devices = conn.execute("SELECT COUNT(*) FROM trusted_devices WHERE user_id=? AND datetime(expires_at) > "
+                               "datetime('now')", (user_id,)).fetchone()[0]
+    finally:
+        conn.close()
+    internal = _auth_us.is_internal_login(full)
+    if internal:
+        two = {"scope": "login", "enabled": _auth_us.user_two_factor_enrolled(full),
+               "method": full.get("two_fa_method") or None,
+               "backup_codes_left": _auth_us.count_unused_user_backup_codes(user_id)}
+    else:
+        r = get_restaurant(row["restaurant_id"])
+        from models import count_unused_backup_codes
+        two = {"scope": "restaurant", "enabled": bool(r and r.two_fa_enabled),
+               "method": (getattr(r, "two_fa_method", None) or "email") if r else None,
+               "backup_codes_left": count_unused_backup_codes(row["restaurant_id"])}
+    names = {n for n in ((full.get("username") or "").lower(), (full.get("email") or "").lower()) if n}
+    lock = {"locked": False, "seconds_left": 0, "failures_15m": 0, "failures_24h": 0, "addresses": []}
+    for n in names:
+        st = _sec_us.lockout_state(n, internal=internal)
+        if st["locked"] or st["failures_24h"] > lock["failures_24h"]:
+            lock = st
+    support = _auth_us.current_admin_role() == "support"
+    sessions = []
+    for s in _auth_us.get_sessions_for_user(user_id):
+        if support:
+            s.pop("ip_address", None)
+            s.pop("user_agent", None)
+        sessions.append(s)
+    return jsonify(ok=True, user={"id": user_id, "username": row["username"], "role": row["role"],
+                                  "is_active": bool(row["is_active"]), "internal": internal,
+                                  "must_reset_password": bool(full.get("must_reset_password"))},
+                   two_factor=two, lockout=lock, sessions=sessions, trusted_devices=devices)
+
+
+@admin_bp.route("/admin/api/users/<int:user_id>/reset-2fa", methods=["POST"])
+@admin_required
+@recent_auth_required()
+def admin_api_reset_two_factor(user_id, current_user):
+    """Two-factor reset for a login that lost its phone (#55). An internal
+    login: its own second factor, backup codes and remembered devices.
+    A restaurant's login: two-factor is one switch for the whole restaurant,
+    so it is turned off there (the owner can turn it back on), with that
+    restaurant's backup codes and remembered devices — the response says
+    scope "restaurant" so the console can say so. Audited; the owner's
+    Account activity shows it."""
+    import auth as _auth_rt
+    row = _login_row(user_id)
+    if not row:
+        return jsonify(ok=False, error="That login wasn't found."), 404
+    conn = get_conn()
+    try:
+        full = dict(conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone())
+    finally:
+        conn.close()
+    if _auth_rt.is_internal_login(full):
+        before = {"two_fa_enabled": _auth_rt.user_two_factor_enrolled(full), "method": full.get("two_fa_method")}
+        _clear_user_two_factor(user_id)
+        scope = "login"
+    else:
+        r = get_restaurant(row["restaurant_id"])
+        before = {"two_fa_enabled": bool(r and r.two_fa_enabled), "method": getattr(r, "two_fa_method", None)}
+        update_restaurant(row["restaurant_id"], {"two_fa_enabled": 0})
+        conn = get_conn()
+        try:
+            conn.execute("DELETE FROM two_fa_backup_codes WHERE restaurant_id=?", (row["restaurant_id"],))
+            conn.commit()
+        except Exception:
+            pass
+        finally:
+            conn.close()
+        _auth_rt.revoke_all_trusted_devices(row["restaurant_id"])
+        try:
+            from models import log_event
+            log_event(row["restaurant_id"], "two_fa_disabled",
+                      {"actor": "Cavnar AI support", "detail": f"reset for {row['username']}"})
+        except Exception:
+            pass
+        scope = "restaurant"
+    _audit_admin_action(current_user, "two_factor_reset", restaurant_id=row["restaurant_id"],
+                        target={"user_id": user_id, "username": row["username"], "scope": scope},
+                        before=before, after={"two_fa_enabled": False},
+                        summary=f"{current_user.get('username')} reset two-factor for {row['username']} ({scope})")
+    return jsonify(ok=True, scope=scope)
+
+
+@admin_bp.route("/admin/api/lockouts")
+@admin_required
+def admin_api_lockouts(current_user):
+    """Every account the sign-in throttle is holding right now."""
+    import security as _sec_lo
+    import auth as _auth_lo
+    rows = _sec_lo.active_lockouts()
+    if _auth_lo.current_admin_role() == "support":
+        for r in rows:
+            for a in r.get("addresses") or []:
+                a.pop("ip", None)
+    return jsonify(ok=True, lockouts=rows)
+
+
+@admin_bp.route("/admin/api/users/<int:user_id>/clear-lockout", methods=["POST"])
+@admin_required
+@recent_auth_required()
+def admin_api_clear_lockout(user_id, current_user):
+    """Lift a sign-in lockout on one login (#55): its account key and every
+    per-address lock, under its username and its email."""
+    import security as _sec_cl
+    row = _login_row(user_id)
+    if not row:
+        return jsonify(ok=False, error="That login wasn't found."), 404
+    before = _sec_cl.lockout_state(row["username"])
+    removed = 0
+    for n in {(row.get("username") or "").lower(), (row.get("email") or "").lower()}:
+        if n:
+            removed += _sec_cl.clear_account_lock(n)
+    _audit_admin_action(current_user, "lockout_cleared", restaurant_id=row["restaurant_id"],
+                        target={"user_id": user_id, "username": row["username"]},
+                        before={"locked": before["locked"], "failures_24h": before["failures_24h"]},
+                        after={"locked": False},
+                        summary=f"{current_user.get('username')} cleared the sign-in lockout on {row['username']}")
+    return jsonify(ok=True, cleared=removed)
+
+
+@admin_bp.route("/admin/api/users/<int:user_id>/sessions/<session_id>/revoke", methods=["POST"])
+@admin_required
+@recent_auth_required()
+def admin_api_revoke_session(user_id, session_id, current_user):
+    """Sign one session of one login out (#55). session_id is the handle the
+    security view lists (auth.session_handle)."""
+    import re as _re_rs
+    row = _login_row(user_id)
+    if not row:
+        return jsonify(ok=False, error="That login wasn't found."), 404
+    if not _re_rs.fullmatch(r"[0-9a-f]{16}", session_id or ""):
+        return jsonify(ok=False, error="That session wasn't found."), 404
+    conn = get_conn()
+    try:
+        n = conn.execute("DELETE FROM sessions WHERE user_id=? AND substr(token, 1, 16)=?",
+                         (user_id, session_id)).rowcount or 0
+        conn.commit()
+    finally:
+        conn.close()
+    if not n:
+        return jsonify(ok=False, error="That session has already ended."), 404
+    _audit_admin_action(current_user, "session_revoked", restaurant_id=row["restaurant_id"],
+                        target={"user_id": user_id, "username": row["username"], "session_id": session_id},
+                        summary=f"{current_user.get('username')} signed out one session of {row['username']}")
+    return jsonify(ok=True)
+
+
+@admin_bp.route("/admin/api/users/<int:user_id>/revoke-sessions", methods=["POST"])
+@admin_required
+@recent_auth_required()
+def admin_api_revoke_all_sessions(user_id, current_user):
+    """Sign one login out everywhere and forget its remembered devices,
+    leaving it active (#55)."""
+    import auth as _auth_ras
+    row = _login_row(user_id)
+    if not row:
+        return jsonify(ok=False, error="That login wasn't found."), 404
+    if row["is_admin"] and user_id == current_user.get("id"):
+        return jsonify(ok=False, error="Sign yourself out from the menu instead."), 400
+    ended = _auth_ras.end_login_access(user_id)
+    _audit_admin_action(current_user, "sessions_revoked", restaurant_id=row["restaurant_id"],
+                        target={"user_id": user_id, "username": row["username"]}, after=ended,
+                        summary=f"{current_user.get('username')} signed {row['username']} out everywhere "
+                                f"({ended['sessions']} session(s))")
+    return jsonify(ok=True, sessions_ended=ended["sessions"], devices_forgotten=ended["devices"])
+
+
+# ── support logins (#99) ──────────────────────────────────────────────────────
+
+@admin_bp.route("/admin/api/support-logins")
+@admin_required
+def admin_api_support_logins(current_user):
+    """Cavnar AI's read-only support logins."""
+    conn = get_conn()
+    try:
+        rows = conn.execute("SELECT id, username, email, is_active, last_login, created_at, two_fa_enabled "
+                            "FROM users WHERE LOWER(COALESCE(role,''))='support' AND is_admin=0 "
+                            "ORDER BY id").fetchall()
+    finally:
+        conn.close()
+    return jsonify(ok=True, logins=[dict(r, two_fa_enabled=bool(r["two_fa_enabled"]),
+                                         is_active=bool(r["is_active"])) for r in rows])
+
+
+@admin_bp.route("/admin/api/support-logins", methods=["POST"])
+@admin_required
+@recent_auth_required()
+def admin_api_create_support_login(current_user):
+    """Provision a read-only support login from the console (#99). Nothing
+    could create one — the only way to give a colleague access was
+    is_admin=1, which is everything. It is homed on the admin's own internal
+    row, gets a random password nobody sees, and its owner sets their own
+    from an emailed reset link. Deactivate it like any other login."""
+    import re as _re_sl
+    import secrets as _sec_sl
+    import auth as _auth_sl
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Only an admin can add support logins."), 403
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip().lower()
+    email = (data.get("email") or "").strip().lower()
+    if not _re_sl.fullmatch(r"[a-z0-9._-]{3,30}", username):
+        return jsonify(ok=False, error="Username: 3–30 letters, numbers, dots, dashes or underscores."), 400
+    if not _re_sl.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+        return jsonify(ok=False, error="Enter a valid email address."), 400
+    conn = get_conn()
+    try:
+        taken = conn.execute("SELECT 1 FROM users WHERE LOWER(username)=? OR LOWER(email)=?",
+                             (username, email)).fetchone()
+    finally:
+        conn.close()
+    if taken:
+        return jsonify(ok=False, error="That username or email is already in use."), 409
+    home = current_user.get("base_restaurant_id") or current_user.get("restaurant_id")
+    try:
+        uid = _auth_sl.create_user(home, username, email, _sec_sl.token_urlsafe(24), role="support",
+                                   generated=True)
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 400
+    try:
+        _auth_sl.upsert_membership(uid, home, "support")
+    except Exception:
+        pass
+    sent, note = False, None
+    try:
+        import scheduler as _sched_sl
+        from models import create_reset_token
+        if not _sched_sl.scheduling_allowed():
+            note = "Not emailed: this backend does not send (local). Send a reset link from production."
+        else:
+            tok = create_reset_token(email)
+            if tok:
+                from emails import send_password_reset_email
+                sent = bool(send_password_reset_email(email, f"{config.base_url()}/reset-password/{tok}"))
+                if not sent:
+                    note = "The reset-link email didn't go out — send one from the login's row."
+    except Exception as e:
+        note = "The reset-link email didn't go out — send one from the login's row."
+        print(f"[support login] reset link failed for {username}: {e}")
+    _audit_admin_action(current_user, "support_login_created", restaurant_id=home,
+                        target={"user_id": uid, "username": username}, after={"role": "support"},
+                        summary=f"{current_user.get('username')} added support login {username}")
+    return jsonify(ok=True, user_id=uid, reset_link_sent=sent, note=note)
