@@ -698,7 +698,8 @@ def _do_invoice_apply(u, import_id):
                                          "open it on Food Cost to settle the rest."}, 409
     if not isinstance(sel, list) or not sel:
         return {"ok": False, "error": "Pick at least one line to update."}, 400
-    out = invoices.apply(_rid(u), import_id, sel, user_id=u.get("id"))
+    from permissions import answer_authority
+    out = invoices.apply(_rid(u), import_id, sel, user_id=u.get("id"), authority=answer_authority(u))
     return out, (200 if out.get("ok") else 409)
 
 

@@ -297,3 +297,12 @@ def test_86s_from_before_the_par_was_raised_never_raise_it_again(db_path):
     _eighty_six(db_path, rid, salmon, 2)
     _eighty_six(db_path, rid, salmon, 1)
     assert [s["times"] for s in ordering.par_suggestions(rid, today=date.today())] == [4]
+
+
+def test_an_admins_apply_through_view_as_teaches_no_match(db_path):
+    rid = _rid(db_path)
+    breast = _ingredient(db_path, rid, "Chicken Breast", cost=3.2)
+    first = invoices.propose(rid, EXTRACTED)
+    invoices.apply(rid, _import(db_path, rid, first), [{"index": 0, "ingredient_id": breast, "unit_cost": 3.5}],
+                   user_id=1, authority="admin")
+    assert invoices.propose(rid, EXTRACTED)["lines"][0]["ingredient_id"] is None

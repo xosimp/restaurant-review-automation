@@ -500,7 +500,7 @@ def pending_imports(restaurant_id, db_path=DB_PATH):
 
 # ── 3. apply ──────────────────────────────────────────────────────────────────
 
-def apply(restaurant_id, import_id, selections, user_id=None, db_path=DB_PATH, auto=False):
+def apply(restaurant_id, import_id, selections, user_id=None, db_path=DB_PATH, auto=False, authority=None):
     """Write the confirmed costs. selections: [{"index", "ingredient_id",
     "unit_cost"}] — the owner's choices, which may differ from the proposal
     (a different ingredient, a corrected cost). Returns {"ok", "updated"}.
@@ -570,12 +570,15 @@ def apply(restaurant_id, import_id, selections, user_id=None, db_path=DB_PATH, a
             conn.rollback()
             return {"ok": False, "error": "This invoice has already been applied."}
         # What the owner chose for each line is remembered for this supplier
-        # (food_corrections) — in the same transaction as the writes.
-        try:
-            lines = (json.loads(row["lines_json"] or "{}") or {}).get("lines") or []
-            remember_matches(conn, restaurant_id, row["supplier"], lines, applied, user_id=user_id)
-        except Exception as e:
-            log.warning("invoice matches not remembered for %s: %s", restaurant_id, e)
+        # (food_corrections) — in the same transaction as the writes. An
+        # admin's apply (support, view-as: `authority` 'admin') teaches
+        # nothing, as its answers never train the owner's.
+        if authority != "admin":
+            try:
+                lines = (json.loads(row["lines_json"] or "{}") or {}).get("lines") or []
+                remember_matches(conn, restaurant_id, row["supplier"], lines, applied, user_id=user_id)
+            except Exception as e:
+                log.warning("invoice matches not remembered for %s: %s", restaurant_id, e)
         conn.commit()
     finally:
         conn.close()
