@@ -301,6 +301,21 @@ struct GuestTextClubView: View {
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                // What past texts did with this audience, once a draft has
+                // been written (returns_by_segment) — measured, never
+                // stated to guests.
+                if let ret = viewModel.selectedSegmentReturn {
+                    HomeMixedText.make(ret.line + " \u{2014} before and after, not proof.", size: 14, weight: 600,
+                                       color: .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if !viewModel.segmentReturns.isEmpty {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(viewModel.segmentReturns.prefix(3)) { ret in
+                            HomeMixedText.make(ret.line, size: 13.5, color: .cavnarInk3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
             }
 
             if viewModel.audienceUnknown {

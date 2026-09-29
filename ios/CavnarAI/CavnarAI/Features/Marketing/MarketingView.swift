@@ -515,7 +515,8 @@ struct MarketingView: View {
                        systemImage: "tray.and.arrow.down", disabled: compose.isSavingDraft) {
                 Task {
                     await compose.saveDraft(body: viewModel.draft, topic: viewModel.topic,
-                                            contentType: viewModel.selectedType)
+                                            contentType: viewModel.selectedType,
+                                            draftRef: viewModel.draftRef, contentLogId: viewModel.contentLogId)
                 }
             }
         }
