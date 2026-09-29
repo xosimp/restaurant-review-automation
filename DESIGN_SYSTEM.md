@@ -1174,6 +1174,49 @@ One order on web (`#panel-dsr`), iPhone (`DailyReportView`) and email (`emails.d
 
 Above the grid, one `.hb-card.dr-wsum`: four tiles from the grid's own totals row — "Week to date · net" (with "N of 7 nights measured"), **vs budget** (owner only; "—" with the grid's reason when a measured night has no budget), **vs last year**, **Labor %** (only when the view reads labor) — then `.dr-wbars`, one bar per night (a period: per week) of net, green when it made its budget, red when under, a dashed ink mark at the budget (owner only; a manager's bars are plain ember and the legend says "Net sales"), a hairline for a night not measured; then `.dr-story`, the one sentence `dsr.rollup.story` writes from the view's redacted grid ("Thursday carried the week ($8,420 net, 48% of it); Friday missed budget by $610." — a view without the budget reads the miss against last year). Nothing on it is summed in the browser. Once any night in the week has a last-year figure, the import card folds to a "Import more last-year nights" text link (`.dr-imp-link`) that opens it.
 
+## 12c. The admin console (internal, `templates/admin.html`)
+
+Rebuilt 9/28/26 as five places, each answering what needs attention, what
+changed, who needs help, what is broken and what is growing. Dense with data,
+never with text: the rebuild cut the visible text across its screens by 69%
+(51% leaving out the three long logs), measured on the same database.
+
+- **The five areas** — Overview, Operations (Jobs, Email, Push & alerts, AI,
+  Integrations), Customers (Restaurants, Billing, Onboarding, Support queue,
+  and the client page), Engineering (Overview, Experiments), Analytics
+  (Overview, Recommendations, Intelligence) — plus Field tools (audits, cheat
+  sheet, status page) at the foot of the rail. Every older hash (`#clients`,
+  `#jobs`, `#emails`, `#recommendations/<id>`, …) lands in the area and tab it
+  moved to (`ALIAS`); keep that map when a page moves again.
+- **Palette** — the web app's dark staircase (`--bg` canvas < `--rail` <
+  `--card` < `--raised`), Clash Display titles, Space Grotesk for every figure,
+  Apfel Grotezk for the rest; ember for the one primary action per screen and
+  the kickers; green / amber / red only for state.
+- **Area header** — kicker, title, and one sentence written by rules from the
+  page's own payload ("1 job is failing · 14 jobs are overdue.") — no model on
+  load.
+- **Rank, don't list** — hero figures (`.kc`, 40px) for the few that matter,
+  then a figure strip (`.strip`, one card split into cells, each a link), then
+  the lists.
+- **Operational list** (`.lst` / `.li` / `.lx`) in place of a dense table: one
+  row per thing with its state pill, one action, and the rest on expand
+  (`toggleRow`). A secondary action shows on hover (`.reveal`); a failing
+  row's action is always shown.
+- **Tables** stay for detail lists only, `limit` rows at a time with "Show
+  all", and raw logs sit behind a `<details class="card">`.
+- **Filters** are a segmented control (`.seg`) of the five or six that matter,
+  the rest under a More filters menu.
+- **Actions menu** (`.menu`, `menuToggle`) — a client's 25 actions in one
+  searchable menu, grouped, the danger zone red and last; every action still
+  confirms.
+- **Cmd-K / `/`** opens one palette: every page and action, and the fleet
+  search.
+- **A page's reads belong to the visit that asked** (`api()` and `_seq`): a
+  read that returns after the admin has moved on is dropped, never drawn
+  over the newer page.
+- Dates read M/D/YY here too (`mdy`). No `?.` or `??` (older iPad Safari at an
+  on-site audit, `tests/test_edge_client_web_admin.py`).
+
 ## 13. Checklist before shipping a screen
 
 1. Tokens only — no literal colours (`scripts/check_colors.py`).

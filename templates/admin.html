@@ -105,7 +105,8 @@ h2{font-family:var(--disp);font-weight:500;font-size:17px;letter-spacing:-.005em
 /* an older view inside an area's tab: the area already says where you are */
 .area-body{display:flex;flex-direction:column;gap:18px;min-width:0}
 .area-body > .head .k,.area-body > .head h1{display:none}
-.area-body > .head .sub{font-size:13px}
+.area-body > .head > div:first-child{display:none}
+.area-body > .head{justify-content:flex-end}
 .area-body > .head:has(> div:first-child:empty){display:none}
 
 /* ── surfaces ── */
@@ -483,7 +484,12 @@ function fmtD(s){ return mdy(parseTs(s)); }
 function fmtT(d){ return d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}); }
 function fmtDT(s){ const d = parseTs(s); return d ? mdy(d) + ' · ' + fmtT(d) : '—'; }
 let _tt; function toast(msg, tone){ const t=$('toast'); t.textContent=msg; t.className='toast on'+(tone?' '+tone:''); clearTimeout(_tt); _tt=setTimeout(()=>t.className='toast',3200); }
-async function api(path, opts){ const r = await fetch(path, opts); let j; try{ j = await r.json(); }catch(e){ j = {ok:false, error:'HTTP '+r.status}; } if(r.status===401){ location.href='/login?next=/admin'; } return j; }
+// A page's reads are tagged with the visit that asked for them: a read that
+// lands after the admin has moved on is dropped (STALE), never drawn over the
+// newer page. Writes (a method in opts) always complete.
+const STALE = '__stale__';
+let _seq = 0;
+async function api(path, opts){ const s = _seq; const r = await fetch(path, opts); let j; try{ j = await r.json(); }catch(e){ j = {ok:false, error:'HTTP '+r.status}; } if(r.status===401){ location.href='/login?next=/admin'; } if(s !== _seq && !(opts && opts.method)) throw new Error(STALE); return j; }
 async function post(path, body){ return api(path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body||{})}); }
 function openModal(id){ $(id).classList.add('on'); } function closeModal(id){ $(id).classList.remove('on'); }
 document.addEventListener('keydown', e => {
@@ -583,13 +589,15 @@ async function route(){
   const area = name === 'client' || name === 'locations' ? 'customers' : name;
   document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('on', a.dataset.v === area));
   _tgt = null; menusClose();
+  const seq = ++_seq;
   const view = $('view'); view.classList.remove('enter');
   view.innerHTML = '<div class="sk" style="width:28%;height:26px"></div><div class="sk blk"></div><div class="sk blk"></div>';
   try {
     if(name === 'client' && arg) await clientView(parseInt(arg, 10), qs);
     else if(VIEWS[name]) await VIEWS[name](arg, qs);
     else view.innerHTML = '<div class="empty">No such page.</div>';
-  } catch(e){ _tgt = null; view.innerHTML = `<div class="err">Couldn't load this page — ${esc(e.message||e)}</div>`; console.error(e); }
+  } catch(e){ if(e && e.message === STALE) return; if(seq !== _seq) return; _tgt = null; view.innerHTML = `<div class="err">Couldn't load this page — ${esc(e.message||e)}</div>`; console.error(e); }
+  if(seq !== _seq) return;
   void view.offsetWidth; view.classList.add('enter');
   window.scrollTo(0,0);
 }
@@ -602,7 +610,7 @@ function areaShell(html){ $('view').innerHTML = html + '<div class="area-body" i
 let _ovk = null;
 async function badges(){
   if (document.hidden) return;   // a background tab skips the poll; it refreshes when looked at again (CLIENT-37)
-  const d = await api('/admin/api/overview'); if(!d.ok) return; applyBadges(d);
+  let d; try{ d = await api('/admin/api/overview'); }catch(e){ return; } if(!d.ok) return; applyBadges(d);
 }
 // The rail's counts and the heartbeat, from any overview payload (Overview
 // already holds one, so its first paint never waits on the poll).
@@ -639,7 +647,7 @@ function palRender(results){
     return `<a href="${fn ? '#' : esc(r.href)}" class="${i===_palSel?'act':''}" onclick="palClose();${fn ? fn + '();return false' : ''}"><span class="t">${esc(r.t)}</span><b>${esc(r.title)}</b><span class="d">${esc(r.d)}</span></a>`; }).join('') : '<div class="empty">No matches.</div>';
 }
 $('q').addEventListener('input', () => { clearTimeout(_qt); _palSel = 0; const q = $('q').value.trim(); if(q.length<2){ palRender([]); return; } _qt = setTimeout(async () => {
-  const d = await api('/admin/api/search?q='+encodeURIComponent(q)); palRender(d.ok ? d.results : []);
+  let d; try{ d = await api('/admin/api/search?q='+encodeURIComponent(q)); }catch(e){ return; } palRender(d.ok ? d.results : []);
 }, 200); });
 $('q').addEventListener('keydown', e => {
   const links = $('q-res').querySelectorAll('a'); if(!links.length) return;
@@ -838,17 +846,6 @@ async function customers(tab){
   else if(tab === 'support') await issues();
   else await clientsView();
 }
-async function engineering(tab){
-  tab = tab || 'overview';
-  areaShell(head('Engineering', 'Engineering', '', '') + tabsNav('engineering', [['overview', 'Overview'], ['experiments', 'Experiments']], tab));
-  if(tab === 'experiments') await experiments(); else await system();
-}
-async function analytics(tab){
-  tab = tab || 'recommendations';
-  const rid = (location.hash.split('?')[0].split('/')[2]) || '';
-  areaShell(head('Analytics', 'Analytics', '', '') + tabsNav('analytics', [['recommendations', 'Recommendations'], ['intelligence', 'Intelligence']], tab));
-  if(tab === 'intelligence') await intelligence(); else await recommendations(rid);
-}
 function newClient(){ openModal('m-client'); setTimeout(()=>$('r-name').focus(), 30); }
 const INC_KEYS = ['dashboard','ai_drafting','review_sync','email','labor_analytics','scheduler','scheduled_posts'];
 function incidentOpen(){ $('inc-keys').innerHTML = INC_KEYS.map(k=>`<label><input type="checkbox" class="inc-k" value="${k}"> ${k.replace('_',' ')}</label>`).join(''); openModal('m-incident'); }
@@ -967,7 +964,7 @@ async function onboarding(){
     return `<div class="card" style="padding:18px;display:flex;flex-direction:column;gap:14px">
       <div style="display:flex;align-items:center;gap:12px">${monoTile(r.name, r.health)}<div style="flex:1;min-width:0;display:flex;flex-direction:column"><a href="#client/${r.id}" style="font-weight:700;font-size:14px;color:var(--ink)">${esc(r.name)}</a><span class="muted" style="font-size:12.5px">${esc((r.owner||{}).username||r.owner_email||'')} · joined ${fmtD(r.created_at)}</span></div><span class="n" style="font-size:18px;font-weight:600">${o.done}<span class="muted" style="font-size:13px">/${o.total}</span></span></div>
       <span class="bar"><i style="width:${pct}%;background:${pct>=75?'var(--green)':pct>=40?'var(--amber)':'var(--ember2)'}"></i></span>
-      <div class="steps">${left.map(s=>`<div><span class="no">○</span><span>${esc(s.label)}</span></div>`).join('')}${done.length?`<div class="muted" style="font-size:12.5px"><span class="ok">✓</span> ${done.length} done</div>`:''}</div>
+      <div class="steps">${left.slice(0,2).map(s=>`<div><span class="no">○</span><span>${esc(s.label)}</span></div>`).join('')}<div class="muted" style="font-size:12.5px" title="${esc(left.slice(2).map(s=>s.label).join(' · '))}">${left.length>2?'+'+(left.length-2)+' more to go · ':''}<span class="ok">✓</span> ${done.length} done</div></div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">${bill(r.billing.status)}<span class="b ${r.billing.contract_status==='signed'?'ok':'warn'} nodot">contract ${esc(r.billing.contract_status)}</span>${o.dismissed?'<span class="chip">card hidden by client</span>':''}</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:auto">${r.billing.contract_status!=='signed'?`<button class="btn s" onclick="act('/admin/resend-contract/${r.id}','Resend contract')">Resend contract</button>`:''}<button class="btn s" onclick="act('/admin/resend-welcome/${r.id}','Resend welcome email')">Resend welcome</button>${r.billing.status!=='active'?`<button class="btn s" onclick="act('/admin/resend-payment/${r.id}','Resend payment link')">Payment link</button>`:''}<a class="btn s g" href="/admin/client-settings/${r.id}">Settings</a></div></div>`; }).join('')}</div>`
     : '<div class="card empty">Everyone is set up.</div>';
@@ -989,12 +986,12 @@ async function billing(){
       <div><span class="lbl">Unsigned</span><span class="v" style="${unsigned?'color:var(--amber-t)':''}">${unsigned}</span><span class="s">contracts</span></div>
     </section>
     <section class="card" style="overflow:hidden"><div class="lst">${rows.sort((a,b)=>({past_due:0,trial:1,active:2}[a.status]!=null?{past_due:0,trial:1,active:2}[a.status]:3)-({past_due:0,trial:1,active:2}[b.status]!=null?{past_due:0,trial:1,active:2}[b.status]:3)).map(r=>`
-      <div class="li"><div class="tt"><a href="#client/${r.restaurant_id}?tab=billing" style="font-weight:700;font-size:14px;color:var(--ink)">${esc(r.restaurant)}</a><span>${esc(r.owner||'')}${r.owner_email?' · '+esc(r.owner_email):''}</span></div>
+      <div class="li"><div class="tt"><a href="#client/${r.restaurant_id}?tab=billing" style="font-weight:700;font-size:14px;color:var(--ink)">${esc(r.restaurant)}</a><span title="${esc(r.owner_email||'')}">${esc(r.owner||'')}</span></div>
         <span style="width:110px">${bill(r.status)}</span>
-        <span style="width:130px;display:flex;flex-direction:column"><span class="n" style="font-weight:600">${r.monthly?fmtUSD(r.monthly)+'/mo':'—'}</span><span class="muted" style="font-size:12px">${r.modules} module${r.modules===1?'':'s'}${r.tier?' · '+esc(r.tier):''}</span></span>
-        <span style="width:190px;font-size:12.5px">${r.live?`<span class="b ${r.live.status==='active'?'ok':r.live.status==='past_due'?'bad':'warn'} nodot">Stripe · ${esc(r.live.status)}</span>${r.live.cancel_at_period_end?' <span class="chip warn">cancels at period end</span>':''}`:(r.stripe_customer_id?`<a class="mono" href="https://dashboard.stripe.com/customers/${esc(r.stripe_customer_id)}" target="_blank">Stripe ↗</a>`:'<span class="muted">no Stripe customer</span>')}</span>
-        <span style="width:110px"><span class="b ${r.contract_status==='signed'?'ok':'warn'} nodot">${esc(r.contract_status)}</span></span>
-        <span style="display:flex;gap:6px;justify-content:flex-end;min-width:170px">${r.status!=='active'?`<button class="btn s" onclick="act('/admin/resend-payment/${r.restaurant_id}','Resend payment link')">Payment link</button>`:''}${r.contract_status!=='signed'?`<button class="btn s" onclick="act('/admin/resend-contract/${r.restaurant_id}','Resend contract')">Contract</button>`:''}</span></div>`).join('') || '<div class="empty">No accounts.</div>'}</div></section>
+        <span class="n" style="width:90px;font-weight:600" title="${r.modules} module${r.modules===1?'':'s'}${r.tier?' · '+esc(r.tier):''}">${r.monthly?fmtUSD(r.monthly)+'/mo':'—'}</span>
+        <span style="width:150px;font-size:12.5px">${r.live?`<span class="b ${r.live.status==='active'?'ok':r.live.status==='past_due'?'bad':'warn'} nodot">Stripe · ${esc(r.live.status)}</span>${r.live.cancel_at_period_end?' <span class="chip warn">cancels</span>':''}`:(r.stripe_customer_id?`<a class="mono" href="https://dashboard.stripe.com/customers/${esc(r.stripe_customer_id)}" target="_blank">Stripe ↗</a>`:'<span class="muted">—</span>')}</span>
+        <span style="width:100px"><span class="b ${r.contract_status==='signed'?'ok':'warn'} nodot">${esc(r.contract_status)}</span></span>
+        <span style="display:flex;justify-content:flex-end;min-width:110px">${r.contract_status!=='signed'?`<button class="btn s" onclick="act('/admin/resend-contract/${r.restaurant_id}','Resend contract')">Contract</button>`:(r.status!=='active'?`<button class="btn s" onclick="act('/admin/resend-payment/${r.restaurant_id}','Resend payment link')">Payment link</button>`:'')}</span></div>`).join('') || '<div class="empty">No accounts.</div>'}</div></section>
     <details class="card"><summary>Payment &amp; contract history · <span class="n">${(d.events||[]).length}</span></summary><div class="cb">
     ${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Client',key:'restaurant',cell:r=>r.restaurant_id?clientLink(r.restaurant_id,r.restaurant||('#'+r.restaurant_id)):`<span class="dim">unmatched${r.email?' · '+esc(r.email):''}${r.customer_id?' · '+esc(r.customer_id):''}</span>`},{h:'Source',key:'source',cell:r=>`<span class="chip">${esc(r.source)}</span>`},{h:'Event',key:'event_type',cell:r=>evBadge(r)},{h:'Amount',key:'amount',r:true,cell:r=>r.amount!=null&&r.source!=='admin'?`<span class="num">${fmtUSD(r.amount,2)}</span>`:''},{h:'Detail',key:'summary',wrap:true,cell:r=>`<span class="dim">${esc(r.summary||'')}</span>`}], d.events||[], {id:'ev-t', sort:'created_at', limit:25, empty:'No Stripe or DocuSign events yet — they land here as the webhooks fire.'})}</div></details>
     <div class="dim">Billing changes happen in Stripe, never here. MRR is list price by module count for active accounts.</div>`;
@@ -1077,8 +1074,8 @@ async function clientView(id, qs){
     <div class="stack">
       <div class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2>Needs attention</h2>${c.issues.length?`<span class="cnt ${c.issues.some(i=>i.severity==='critical')?'bad':'warn'}">${c.issues.length}</span>`:''}</div><div class="lst" style="border-top:1px solid var(--line)">${c.issues.map(i=>needRow(Object.assign({}, i, {restaurant: c.name, restaurant_id: c.id}))).join('') || '<div class="empty">Nothing needs attention on this account.</div>'}</div></div>
       <div class="card" style="padding:18px;display:flex;flex-direction:column;gap:14px"><div style="display:flex;align-items:center;justify-content:space-between"><h2>Setup completeness</h2><span class="muted" style="font-size:12.5px">what is connected and configured</span></div>
-        <div style="display:flex;gap:22px;align-items:center">${setupRing(sc)}<div style="flex:1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 18px">${(setupDone(c).checks||[]).map(k=>`<span style="display:flex;align-items:center;gap:9px;font-size:13px;color:${k.ok?'var(--ink4)':'var(--ink)'}" title="${esc(k.detail||'')}"><span style="width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;${k.ok?'background:var(--green-bg);color:var(--green-t)':'border:1.5px solid rgba(240,235,224,.25)'}">${k.ok?ico('check','xs'):''}</span>${esc(k.label)}</span>`).join('')}</div></div></div>
-      ${!c.onboarding.complete ? `<div class="card" style="padding:18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Onboarding</h2><span class="n">${c.onboarding.done}/${c.onboarding.total}</span></div><div class="steps">${c.onboarding.steps.map(s=>`<div><span class="${s.done?'ok':'no'}">${s.done?'✓':'○'}</span><span style="${s.done?'color:var(--ink4)':''}">${esc(s.label)}</span></div>`).join('')}</div></div>` : ''}
+        <div style="display:flex;gap:22px;align-items:center">${setupRing(sc)}<div style="flex:1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 18px">${(setupDone(c).checks||[]).filter(k=>!k.ok).map(k=>`<span style="display:flex;align-items:center;gap:9px;font-size:13px;color:${k.ok?'var(--ink4)':'var(--ink)'}" title="${esc(k.detail||'')}"><span style="width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;${k.ok?'background:var(--green-bg);color:var(--green-t)':'border:1.5px solid rgba(240,235,224,.25)'}">${k.ok?ico('check','xs'):''}</span>${esc(k.label)}</span>`).join('')}${(setupDone(c).checks||[]).some(k=>k.ok)?`<span class="muted" style="font-size:12.5px;display:flex;align-items:center;gap:9px" title="${esc((setupDone(c).checks||[]).filter(k=>k.ok).map(k=>k.label).join(' · '))}"><span style="width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--green-bg);color:var(--green-t)">${ico('check','xs')}</span>${(setupDone(c).checks||[]).filter(k=>k.ok).length} done</span>`:''}</div></div></div>
+      ${!c.onboarding.complete ? `<div class="card" style="padding:18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Onboarding</h2><span class="n">${c.onboarding.done}/${c.onboarding.total}</span></div><div class="steps">${c.onboarding.steps.filter(s=>!s.done).map(s=>`<div><span class="no">○</span><span>${esc(s.label)}</span></div>`).join('')}<div class="muted" style="font-size:12.5px"><span class="ok">✓</span> ${c.onboarding.done} done</div></div></div>` : ''}
       ${(churn.reasons||[]).length ? `<div class="card" style="padding:18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Churn risk</h2>${pill(churn.level==='high'?'bad':churn.level==='medium'?'warn':'neu', esc(churn.level||''), false)}</div><div class="steps">${churn.reasons.map(x=>`<div><span class="no">•</span><span>${esc(x)}</span></div>`).join('')}</div></div>` : ''}
     </div>
     <div class="stack">
@@ -1328,9 +1325,142 @@ function opsIntegrations(d){
     ${d.systemic.length?`<div class="err"><b>Systemic:</b> ${d.systemic.map(s=>esc(s.label)+' failing for '+s.failing+' locations').join(' · ')}</div>`:''}
     <div class="seg">${F.map(x=>`<button class="${_if===x[0]?'on':''}" onclick="_if='${x[0]}';opsRender()">${x[1]} <b>${d.rows.filter(x[2]).length}</b></button>`).join('')}</div>
     <section class="card" style="overflow:hidden"><div class="lst">${rows.map(r=>`<div class="li"><span class="ico ${r.state==='connected'?'good':r.state==='error'?'bad':'neu'}">${ico('plug')}</span>
-      <div class="tt"><b>${esc(r.label)} <span class="muted" style="font-weight:400">· ${clientLink(r.restaurant_id, r.restaurant)}${r.location_name?' · '+esc(r.location_name):''}</span></b><span>${esc(r.auth||'')}${r.last_success?' · last success '+ago(r.last_success)+' ago':' · never succeeded'}</span>${r.error?`<span style="color:var(--red-t);white-space:normal">${esc(r.error)}</span>`:''}</div>
-      ${r.freshness&&r.freshness!=='—'?`<span class="chip ${r.freshness==='fresh'?'ok':'warn'}">${esc(r.freshness)}</span>`:''}${intb(r.state, r.state==='connected'?'Connected':r.state==='error'?'Error':'Off')}<span style="display:flex;gap:6px">${integrationAction(r)}</span></div>`).join('') || '<div class="empty">No integrations match.</div>'}</div></section>`;
+      <div class="tt"><b>${esc(r.label)} <span class="muted" style="font-weight:400">· ${clientLink(r.restaurant_id, r.restaurant)}</span></b>${r.error?`<span style="color:var(--red-t);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(r.error)}">${esc(r.error)}</span>`:''}</div>
+      ${r.freshness&&r.freshness!=='—'&&r.freshness!=='fresh'?`<span class="chip warn">${esc(r.freshness)}</span>`:''}${intb(r.state, r.state==='connected'?'Connected':r.state==='error'?'Error':'Off')}<span class="n muted" style="width:40px;text-align:right;font-size:12.5px" title="last success">${r.last_success?ago(r.last_success):'—'}</span><span style="display:flex;gap:6px">${integrationAction(r)}</span></div>`).join('') || '<div class="empty">No integrations match.</div>'}</div></section>`;
 }
+
+// ── Engineering ─────────────────────────────────────────────────────────────
+// Three glances (deploy, API, scheduler), then what changes behaviour
+// without a deploy, the keys this server holds, the public status page and
+// the changelog. Rare tools sit behind one disclosure.
+async function engineering(tab){
+  tab = tab || 'overview';
+  if(tab === 'experiments'){ areaShell(head('Engineering', 'Engineering', '', '') + tabsNav('engineering', [['overview','Overview'],['experiments','Experiments']], tab)); await experiments(); return; }
+  const [sys, ov, ex, aib] = await Promise.all([api('/admin/api/system'), api('/admin/api/overview'), api('/admin/api/schedule-experiments'), api('/admin/api/ai?days=1')]);
+  if(ov.ok) applyBadges(ov);
+  const k = ov.ok ? ov.kpis : {}, svc = sys.ok ? Object.entries(sys.services) : [], missing = svc.filter(s=>!s[1]).map(s=>s[0]);
+  const hbm = k.scheduler_heartbeat_minutes, hbBad = hbm == null || hbm > 15, b = aib.ok ? (aib.budget||{}).global_month : null;
+  const sentence = (sys.ok ? `Build <span class="n" style="color:var(--ink)">${esc((sys.build||'—').slice(0,7))}</span> is live on ${esc(sys.env||'—')}. ` : '')
+    + (missing.length ? `<b>${missing.length} key${missing.length===1?'':'s'} missing</b>: ${esc(missing.join(', '))}.` : '<b>Every key is configured.</b>');
+  const exps = ex.ok ? ex.experiments : [];
+  const tabs = [['overview','Overview'],['experiments','Experiments', exps.filter(e=>(e.verdict||{}).state==='winner' && !e.promotion).length || '', '']];
+  $('view').innerHTML = head('Engineering', 'Engineering', sentence, `<a class="btn" href="/health" target="_blank">${ico('ext','xs')}/health</a><a class="btn" href="/status" target="_blank">${ico('ext','xs')}Status page</a>`)
+    + tabsNav('engineering', tabs, tab) + '<div class="area-body" id="area-body"></div>';
+  _tgt = $('area-body');
+  const flagRow = (icn, title, sub, right) => `<div class="li"><span class="ico neu">${ico(icn)}</span><div class="tt"><b>${title}</b><span>${sub}</span></div>${right||''}</div>`;
+  const expRows = exps.map(e => { const v = e.verdict || {}, pr = e.promotion;
+    return flagRow('flag', `Schedule experiment · ${esc(e.key)}`, `${esc(v.text || e.question || '')}${e.active?'':' · not running'}`,
+      pr ? `<span style="display:flex;align-items:center;gap:8px">${pill('good','promoted: '+esc(pr.arm))}<button class="btn s g" onclick="expRevert('${jsq(e.key)}')">Revert</button></span>`
+         : (v.state==='winner' && v.call ? `<button class="btn s p" onclick="expPromote('${jsq(e.key)}','${jsq(v.call)}')">Promote ${esc(v.call)}</button>` : pill(v.state==='insufficient'?'warn':v.state==='conflicting'?'bad':'neu', esc((v.state||'running').replace('_',' ')), false))); }).join('');
+  V().innerHTML = `
+    <section class="grid g3">
+      <div class="card" style="padding:20px;display:flex;flex-direction:column;gap:12px"><span style="display:flex;align-items:center;gap:9px"><span class="ico emb">${ico('rocket')}</span><span class="lbl">Deployment</span><span style="margin-left:auto">${pill('good','Live')}</span></span>
+        <span class="n" style="font-size:26px;font-weight:600">${esc(sys.ok ? (sys.build||'—').slice(0,12) : '—')}</span>
+        <div class="kv" style="grid-template-columns:100px 1fr;margin-top:auto"><span class="k">Environment</span><span>${esc(sys.env||'—')}</span><span class="k">Database</span><span class="mono">${esc(sys.db||'—')}</span></div></div>
+      <div class="card" style="padding:20px;display:flex;flex-direction:column;gap:12px"><span style="display:flex;align-items:center;gap:9px"><span class="ico ${k.server_error_rate>=5?'bad':'good'}">${ico('gauge')}</span><span class="lbl">API</span><span class="muted" style="margin-left:auto;font-size:12px">since the last deploy</span></span>
+        <div class="grid g3" style="gap:10px"><span style="display:flex;flex-direction:column;gap:4px"><span class="n" style="font-size:24px;font-weight:600">${k.rpm==null?'—':fmtN(Math.round(k.rpm))}</span><span class="muted" style="font-size:11.5px">requests / min</span></span>
+        <span style="display:flex;flex-direction:column;gap:4px"><span class="n" style="font-size:24px;font-weight:600">${k.p95_ms==null?'—':fmtN(Math.round(k.p95_ms))}<span style="font-size:13px;color:var(--ink4)">ms</span></span><span class="muted" style="font-size:11.5px">p95 · p50 <span class="n">${k.p50_ms==null?'—':fmtN(Math.round(k.p50_ms))}</span></span></span>
+        <span style="display:flex;flex-direction:column;gap:4px"><span class="n" style="font-size:24px;font-weight:600;color:${k.server_error_rate>=5?'var(--red-t)':'var(--green-t)'}">${k.server_error_rate==null?'—':k.server_error_rate+'%'}</span><span class="muted" style="font-size:11.5px">5xx</span></span></div>
+        <span class="muted" style="font-size:12px">Rolling, in the web process — resets on deploy.</span></div>
+      <div class="card" style="padding:20px;display:flex;flex-direction:column;gap:12px"><span style="display:flex;align-items:center;gap:9px"><span class="ico ${hbBad?'bad':'good'}">${ico('clock')}</span><span class="lbl">Scheduler</span><span style="margin-left:auto">${pill(hbBad?'bad':'good', hbBad?'Stale':'Beating')}</span></span>
+        <span class="n" style="font-size:26px;font-weight:600">${hbm==null?'never':Math.round(hbm)+'m'} <span style="font-size:14px;color:var(--ink4);font-weight:500">since the last beat</span></span>
+        <div class="kv" style="grid-template-columns:100px 1fr;margin-top:auto"><span class="k">Tick</span><span class="num">${sys.ok?sys.tick+'s':'—'}</span><span class="k">Overdue</span><span class="num" style="${k.jobs_overdue?'color:var(--amber-t)':''}">${fmtN(k.jobs_overdue||0)} job${k.jobs_overdue===1?'':'s'}</span></div></div>
+    </section>
+    <section class="split">
+      <div class="stack">
+        <div class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2>Flags &amp; experiments</h2><span class="muted" style="font-size:12.5px">what changes behaviour without a deploy</span></div><div class="lst" style="border-top:1px solid var(--line)">
+          ${expRows}
+          ${ex.ok && ex.env_pin ? flagRow('alert', 'Every restaurant is pinned', `SCHEDULE_EXPERIMENT_PIN=${esc(ex.env_pin)} — new weeks are not randomised`, pill('warn','env',false)) : ''}
+          ${ex.ok ? flagRow('users', 'Pinned restaurants', ex.pins.length ? ex.pins.slice(0,3).map(p=>esc(p.restaurant||'#'+p.restaurant_id)+' on '+esc(p.arm)).join(' · ') + (ex.pins.length>3?' · +'+(ex.pins.length-3):'') : 'none — every restaurant is randomised', `<a class="btn s g" href="#engineering/experiments">Manage</a>`) : ''}
+          ${b && b.budget ? flagRow('dollar', 'AI monthly ceiling', `<span class="n">${fmtUSD(b.spend,2)}</span> of <span class="n">${fmtUSD(b.budget,2)}</span> this month · AI_GLOBAL_MONTHLY_BUDGET_USD`, `<span style="display:flex;align-items:center;gap:10px"><span class="bar" style="width:120px"><i style="width:${Math.min(100,b.pct)}%;background:${b.over?'var(--red)':b.pct>=80?'var(--amber)':'var(--ember2)'}"></i></span><span class="n">${b.pct}%</span></span>`) : flagRow('dollar', 'AI monthly ceiling', 'not set — AI_GLOBAL_MONTHLY_BUDGET_USD', pill('neu','off',false))}
+          ${!exps.length && !(ex.ok && ex.env_pin) ? '' : ''}
+        </div></div>
+        <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Keys on this server</h2><span class="muted" style="font-size:12.5px"><span class="n">${svc.length-missing.length}</span> of <span class="n">${svc.length}</span></span></div>
+          <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px">${svc.map(s=>`<span style="display:flex;align-items:center;gap:8px;height:34px;padding:0 11px;border-radius:9px;background:var(--strip);border:1px ${s[1]?'solid':'dashed'} var(--line);font-size:12.5px"><i style="display:block;width:7px;height:7px;border-radius:50%;background:${s[1]?'var(--green)':'var(--ink5)'}"></i><span class="${s[1]?'ink2':'muted'}" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s[0])}</span></span>`).join('')}</div></div>
+      </div>
+      <div class="stack">
+        <div class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2>Status page</h2><button class="btn s" onclick="incidentOpen()">Post incident</button></div><div id="svc-list" style="border-top:1px solid var(--line);padding:4px 18px 10px"><div class="sk"></div></div></div>
+        <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Changelog</h2><button class="btn s g" onclick="const f=$('cl-form');f.hidden=!f.hidden;if(!f.hidden)$('cl-title').focus()">${ico('plus','xs')}New entry</button></div>
+          <div class="fl" id="cl-form" hidden><input id="cl-title" placeholder="Title"><textarea id="cl-body" rows="2" placeholder="Body (optional)"></textarea><div style="display:flex;gap:8px"><select id="cl-tag"><option value="feature">feature</option><option value="improvement">improvement</option><option value="fix">fix</option></select><button class="btn p" onclick="changelogPost()">Post to What's new</button></div></div>
+          <div id="cl-list"></div></div>
+        <details class="card"><summary>Tools · App Store review account, templates, sitemap</summary><div class="cb stack">
+          <div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn s" href="/admin/inventory-template">Inventory CSV template</a><a class="btn s" href="/sitemap.xml" target="_blank">sitemap.xml</a><a class="btn s" href="/admin/stop-viewing">Stop viewing as client</a></div>
+          <div class="lbl">App Store review account</div><div class="dim">Creates or refreshes the account Apple signs in with, seeded so no screen opens empty. Re-running rotates the password and keeps the data.</div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn" id="seed-btn" onclick="seedReviewAccount()">Create review account</button><span class="sub" id="seed-status"></span></div>
+          <pre id="seed-out" hidden style="margin:0;padding:12px;background:var(--strip);color:var(--ink);border:1px solid var(--line);border-radius:10px;font-family:var(--num);font-size:12px;line-height:1.55;white-space:pre-wrap;overflow-x:auto;user-select:all"></pre></div></details>
+      </div>
+    </section>`;
+  loadServices(); changelogLoad();
+}
+
+// ── Analytics ───────────────────────────────────────────────────────────────
+// Are owners using it, which modules, are we keeping them, what does it
+// cost — then whether recommendations get taken and work. Breakdowns and the
+// intelligence layer are their own tabs.
+async function analytics(tab){
+  tab = tab || 'overview';
+  const rid = (location.hash.split('?')[0].split('/')[2]) || '';
+  $('view').innerHTML = head('Analytics', 'Analytics', '', '') + tabsNav('analytics', [['overview','Overview'],['recommendations','Recommendations'],['intelligence','Intelligence']], tab) + '<div class="area-body" id="area-body"></div>';
+  _tgt = $('area-body');
+  if(tab === 'recommendations'){ await recommendations(rid); return; }
+  if(tab === 'intelligence'){ await intelligence(); return; }
+  const [c, ai, rec, intel] = await Promise.all([loadClients().then(()=>({ok:true})).catch(()=>({ok:false})), api('/admin/api/ai?days=30'), api('/admin/api/recommendations?days=30'), api('/admin/api/intelligence')]);
+  const real = realAccounts(_clients), live = real.filter(r=>['churned','canceled'].indexOf(r.billing.status) < 0);
+  const within = (r, days) => { const t = parseTs(r.last_active); return t && (Date.now()-t) < days*864e5; };
+  const a7 = live.filter(r=>within(r,7)).length, a1 = live.filter(r=>within(r,1)).length, a28 = live.filter(r=>within(r,28)).length;
+  const canceled = real.length - live.length, kept = real.length ? Math.round(live.length/real.length*100) : null;
+  const churn = {low:0, medium:0, high:0}; live.forEach(r=>{ const l = (r.churn_risk||{}).level; if(churn[l]!=null) churn[l]++; });
+  const modNames = {}; live.forEach(r=>r.modules.filter(m=>m.key!=='intel').forEach(m=>{ modNames[m.label] = (modNames[m.label]||0) + (m.enabled?1:0); }));
+  const b = ai.ok ? (ai.budget||{}).global_month : null, cost = ai.ok ? ai.totals.cost : null;
+  const T = rec.ok ? rec.total : {}, top = rec.ok ? Math.max(1, ...rec.funnel.map(f=>f.n)) : 1, pct = v => v==null ? '—' : Math.round(v*100)+'%';
+  const costs = ai.ok ? Object.values(ai.by_action.reduce((m,r)=>{ const k = r.action; m[k] = m[k] || {action:k, cost:0}; m[k].cost += r.cost||0; return m; }, {})).sort((x,y)=>y.cost-x.cost).slice(0,6) : [];
+  const cmax = Math.max(0.0001, ...costs.map(x=>x.cost));
+  const L = intel.ok ? intel.learning : null;
+  const sentence = `<b>${a7} of ${live.length} ${live.length===1?'account was':'accounts were'} active this week</b>.` + (b && b.budget ? ` AI spend is <span class="n">${b.pct}%</span> of the monthly ceiling.` : '');
+  document.querySelector('.ahead .t').insertAdjacentHTML('beforeend', `<p>${sentence}</p>`);
+  const stackBar = parts => `<div style="display:flex;gap:3px;height:10px;border-radius:5px;overflow:hidden">${parts.filter(p=>p[0]>0).map(p=>`<i style="flex:${p[0]};background:${p[1]}"></i>`).join('') || '<i style="flex:1;background:rgba(255,255,255,.07)"></i>'}</div>`;
+  V().innerHTML = `
+    <section class="grid g4">
+      <div class="card kc"><span class="lbl">Usage</span><span style="display:flex;align-items:baseline;gap:8px"><span class="big" style="font-size:34px">${a7}</span><span class="s">of ${live.length} active this week</span></span>
+        <div style="margin-top:auto;display:flex;flex-direction:column;gap:8px">${stackBar([[a1,'var(--green)'],[a7-a1,'rgba(92,194,140,.55)'],[a28-a7,'var(--amber)'],[live.length-a28,'rgba(255,255,255,.1)']])}
+        <span class="s" style="font-size:11.5px;display:flex;gap:10px;flex-wrap:wrap"><span><span style="color:var(--green-t)">●</span> <span class="n">${a1}</span> today</span><span><span style="color:var(--amber-t)">●</span> <span class="n">${a28-a7}</span> 1–4 weeks</span><span>● <span class="n">${live.length-a28}</span> quiet</span></span></div></div>
+      <div class="card kc"><span class="lbl">Module adoption</span>${Object.entries(modNames).map(([m,n])=>`<div style="display:flex;flex-direction:column;gap:5px"><span style="display:flex;justify-content:space-between;font-size:12.5px"><span class="ink2">${esc(m)}</span><span class="n">${n}/${live.length}</span></span><span class="bar"><i style="width:${live.length?Math.round(n/live.length*100):0}%;background:var(--green)"></i></span></div>`).join('')||'<span class="s">No accounts yet.</span>'}</div>
+      <div class="card kc"><span class="lbl">Retention</span><span style="display:flex;align-items:baseline;gap:8px"><span class="big" style="font-size:34px">${kept==null?'—':kept+'%'}</span><span class="s">kept · ${canceled} canceled</span></span>
+        <div style="margin-top:auto;display:flex;flex-direction:column;gap:8px"><span class="s" style="font-size:12px">Churn risk now</span>${stackBar([[churn.low,'var(--green)'],[churn.medium,'var(--amber)'],[churn.high,'var(--red)']])}
+        <span class="s" style="font-size:11.5px;display:flex;gap:10px"><span><span style="color:var(--green-t)">●</span> <span class="n">${churn.low}</span> low</span><span><span style="color:var(--amber-t)">●</span> <span class="n">${churn.medium}</span> medium</span><span><span style="color:var(--red-t)">●</span> <span class="n">${churn.high}</span> high</span></span></div></div>
+      <div class="card kc"><span class="lbl">AI cost · 30 days</span><span class="big" style="font-size:34px">${cost==null?'—':fmtUSD(cost,2)}</span><span class="s">${live.length&&cost!=null?`<span class="n">${fmtUSD(cost/live.length,2)}</span> per account`:''}</span>
+        ${b && b.budget ? `<div style="margin-top:auto;display:flex;flex-direction:column;gap:6px"><span class="bar" style="height:8px"><i style="width:${Math.min(100,b.pct)}%;background:linear-gradient(90deg,var(--ember),var(--ember2))"></i></span><span class="s" style="font-size:11.5px"><span class="n">${b.pct}%</span> of the <span class="n">${fmtUSD(b.budget)}</span> monthly ceiling</span></div>` : ''}</div>
+    </section>
+    <section class="split">
+      <div class="card" style="padding:18px 20px;display:flex;flex-direction:column;gap:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap"><div style="display:flex;align-items:baseline;gap:12px"><h2>Recommendations · 30 days</h2><span class="muted" style="font-size:12.5px">shown → what the owner did → whether it worked</span></div>
+          <span style="display:flex;align-items:baseline;gap:8px"><span class="lbl">Acceptance score</span><span class="n" style="font-size:22px;font-weight:600;color:var(--ember2)">${T.ras==null?'—':T.ras}</span></span></div>
+        ${rec.ok ? `<div style="display:flex;flex-direction:column;gap:10px">${rec.funnel.map((f,i)=>`<div style="display:grid;grid-template-columns:110px minmax(0,1fr) 90px;gap:14px;align-items:center"><span class="ink2" style="font-weight:700;font-size:13px">${esc(f.step)}</span><span style="height:24px;border-radius:8px;background:rgba(255,255,255,.04);overflow:hidden;display:block"><i style="display:block;height:100%;width:${Math.round(100*f.n/top)}%;border-radius:8px;background:linear-gradient(90deg,rgba(212,88,58,${(.55-i*.07).toFixed(2)}),rgba(232,149,106,${(1-i*.13).toFixed(2)}))"></i></span><span class="n" style="font-size:15px;font-weight:600">${fmtN(f.n)}</span></div>`).join('')}</div>
+          <span class="muted" style="font-size:12.5px">Accepted <span class="n">${pct(T.accept_rate)}</span> · completed <span class="n">${pct(T.complete_rate)}</span> · improved <span class="n">${pct(T.outcome_rate)}</span> of those taken · <a href="#analytics/recommendations">every breakdown</a></span>` : '<div class="empty">Recommendations failed to load.</div>'}
+      </div>
+      <div class="stack">
+        <div class="card" style="padding:18px 20px;display:flex;flex-direction:column;gap:12px"><h2>AI cost by workflow</h2>${costs.map((x,i)=>`<div style="display:grid;grid-template-columns:minmax(0,1fr) 110px 64px;gap:12px;align-items:center;font-size:13px"><span class="ink2" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(x.action)}</span><span class="bar" style="height:8px"><i style="width:${Math.round(x.cost/cmax*100)}%;background:var(--ember2);opacity:${(1-i*.1).toFixed(2)}"></i></span><span class="n" style="text-align:right">${fmtUSD(x.cost,2)}</span></div>`).join('')||'<span class="muted">No AI calls in 30 days.</span>'}</div>
+        <div class="card" style="padding:18px 20px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center"><h2>Intelligence</h2>${L?pill(L.cohorts_at_floor.length?'good':'neu', L.cohorts_at_floor.length?L.cohorts_at_floor.length+' cohort'+(L.cohorts_at_floor.length===1?'':'s')+' learning':'Level 1 learning', false):''}</div>
+          ${L ? `<span class="ink2" style="font-size:13px">Cross-restaurant patterns start once a cohort reaches <span class="n">${intel.floor}</span> restaurants.</span>${Object.entries(L.cohorts).sort((x,y)=>y[1]-x[1]).slice(0,3).map(([cName,n])=>`<div style="display:flex;flex-direction:column;gap:5px"><span style="display:flex;justify-content:space-between;font-size:12.5px"><span class="ink2">${esc(L.cohort_labels[cName]||(cName==='uncategorised'?'Uncategorised':cName))}</span><span class="n">${Math.min(n,intel.floor)}/${intel.floor}</span></span><span class="bar"><i style="width:${Math.min(100,Math.round(n/intel.floor*100))}%;background:var(--ember2)"></i></span></div>`).join('')}<a href="#analytics/intelligence" style="font-size:12.5px;font-weight:700">Patterns, cohorts and benchmarks</a>` : '<span class="muted">Intelligence failed to load.</span>'}</div>
+      </div>
+    </section>`;
+}
+
+// The public status page: each service's state as a pill; Change opens the
+// selector in place (the four options used to print on every row).
+const SVC_TONE = {operational:'good', degraded:'warn', outage:'bad', maintenance:'neu'};
+async function loadServices(){
+  const d = await api('/admin/status/services'); const map = {}; (d.statuses||[]).forEach(s=>map[s.service_key]=s);
+  $('svc-list').innerHTML = (d.services||[]).map(s=>{ const cur = map[s.key]||{}, st = cur.status||'operational';
+    return `<div class="li" style="padding:11px 0"><div class="tt"><b style="font-size:13.5px">${esc(s.name)}</b>${cur.message?`<span>${esc(cur.message)}</span>`:''}</div><span id="svc-ctl-${esc(s.key)}" style="display:flex;align-items:center;gap:8px">${pill(SVC_TONE[st]||'neu', esc(st))}<button class="btn s g" onclick="svcEdit('${jsq(s.key)}','${jsq(st)}')">Change</button></span></div>`; }).join('') || '<div class="empty">No services defined.</div>';
+}
+function svcEdit(key, st){
+  $('svc-ctl-'+key).innerHTML = `<select id="svc-${esc(key)}" style="height:28px;padding:0 8px;font-size:12px">${['operational','degraded','outage','maintenance'].map(v=>`<option ${st===v?'selected':''}>${v}</option>`).join('')}</select><button class="btn s p" onclick="saveService('${jsq(key)}')">Save</button><button class="btn s g" onclick="loadServices()">Cancel</button>`;
+}
+async function saveService(key){ const msg = prompt('Optional status message for '+key, ''); if(msg === null) return; const d = await post('/admin/status/update', {service_key:key, status:$('svc-'+key).value, message:msg||''}); toast(d.ok?'Status saved':'Failed', d.ok?'good':'bad'); if(d.ok) loadServices(); }
+
+async function changelogLoad(){ const d = await api('/admin/api/changelog'); const list = d.entries||d.changelog||[]; const tone = {feature:'emb', improvement:'neu', fix:'good'};
+  $('cl-list').innerHTML = list.slice(0, window._clAll ? 40 : 6).map(e=>`<div class="li" style="padding:9px 0;gap:10px"><span class="pill ${tone[e.tag]||'neu'} nd"><i></i>${esc(e.tag||'')}</span><span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(e.body||'')}">${esc(e.title)}</span><span class="n muted" style="font-size:12px">${fmtD(e.created_at)}</span><button class="btn s g ic reveal" title="Delete" aria-label="Delete" onclick="changelogDelete(${e.id})">✕</button></div>`).join('') + (list.length > 6 && !window._clAll ? `<button class="lnk" style="margin-top:6px" onclick="window._clAll=true;changelogLoad()">Show all ${list.length}</button>` : '') || '<div class="empty">No entries yet.</div>'; }
 
 // ── Clients ─────────────────────────────────────────────────────────────────
 
@@ -1369,8 +1499,8 @@ async function intelligence(){
       <div><div class="k" style="margin-bottom:6px">Learning over time</div><div class="card"><div class="cb">${L.weeks.length ? bars(L.weeks.map(w=>({day:w.week, n:w.n})),'n') : '<div class="empty">No feature rows yet — the 3am pass writes one per restaurant per week.</div>'}<div class="dim" style="margin-top:4px">restaurants with a feature row, by week · completeness ${L.weeks.length?Math.round((L.weeks[L.weeks.length-1].completeness||0)*100)+'%':'—'}</div></div></div>
       <div class="k" style="margin:10px 0 6px">Model confidence over time</div>${d.confidence_over_time.length ? table([{h:'Week',key:'week'},{h:'Kind',key:'rec_kind'},{h:'n',key:'n',r:true,cell:r=>`<span class="num">${r.n}</span>`},{h:'Mean confidence',key:'mean_confidence',r:true,cell:r=>`<span class="num">${r.mean_confidence==null?'—':pct(r.mean_confidence)}</span>`},{h:'Accepted',key:'acceptance_rate',r:true,cell:r=>`<span class="num">${pct(r.acceptance_rate)}</span>`},{h:'Improved',key:'success_rate',r:true,cell:r=>`<span class="num">${pct(r.success_rate)}</span>`}], d.confidence_over_time, {id:'int-conf', sort:'week'}) : '<div class="empty">Logged weekly by the learning pass once a kind clears the floor.</div>'}</div>
     </div>
-    <div class="k" style="margin-bottom:6px">All patterns</div>
-    ${d.patterns.rows.length ? table([{h:'Status',key:'status',cell:r=>`<span style="color:${r.status==='active'?'var(--green)':'var(--ink4)'}">${esc(r.status)}</span>`},{h:'Cohort',key:'cohort'},{h:'Pattern',key:'sentence',wrap:true,cell:r=>esc(r.sentence)},{h:'Effect',key:'effect',r:true,cell:r=>`<span class="num">${r.effect} ${esc(r.effect_unit||'')}</span>`},{h:'Strength',key:'strength_pct',r:true,cell:r=>`<span class="num" title="${esc(r.strength_basis||'')}">${patStrength(r)}</span>`},{h:'First seen',key:'first_seen',cell:r=>`<span class="num">${fmtD(r.first_seen)}</span>`}], d.patterns.rows, {id:'int-pat', sort:'strength_pct'}) : '<div class="empty">Nothing discovered yet.</div>'}
+    <details class="card"><summary>All patterns · ${d.patterns.rows.length}</summary><div class="cb">
+    ${d.patterns.rows.length ? table([{h:'Status',key:'status',cell:r=>`<span style="color:${r.status==='active'?'var(--green)':'var(--ink4)'}">${esc(r.status)}</span>`},{h:'Cohort',key:'cohort'},{h:'Pattern',key:'sentence',wrap:true,cell:r=>esc(r.sentence)},{h:'Effect',key:'effect',r:true,cell:r=>`<span class="num">${r.effect} ${esc(r.effect_unit||'')}</span>`},{h:'Strength',key:'strength_pct',r:true,cell:r=>`<span class="num" title="${esc(r.strength_basis||'')}">${patStrength(r)}</span>`},{h:'First seen',key:'first_seen',cell:r=>`<span class="num">${fmtD(r.first_seen)}</span>`}], d.patterns.rows, {id:'int-pat', sort:'strength_pct'}) : '<div class="empty">Nothing discovered yet.</div>'}</div></details>
     <div class="dim" style="margin-top:10px">Nightly: features at 3am (bounded, resumable), learning at 4am. ${d.jobs.length ? d.jobs.map(j=>esc(j.job)+' '+ago(j.started_at)+(j.ok?'':' <span style="color:var(--red)">failed</span>')).join(' · ') : 'No runs yet.'}</div>`;
 }
 
@@ -1418,7 +1548,7 @@ async function recommendations(arg){
         ${d.fatigue.length ? d.fatigue.map(r=>`<div style="display:flex;justify-content:space-between;padding:3px 0"><a href="#recommendations/${r.restaurant_id}">${esc(r.group)}</a><span class="num">${pct(r.dismiss_rate + r.ignore_rate)} of ${fmtN(r.n)}</span></div>`).join('') : '<div class="empty">No restaurant is tuning it out.</div>'}
       </div></div>
     </div>
-    <div class="grid g2" style="margin-bottom:14px">
+    <details class="card"><summary>Breakdowns · dollars, who prepares it, cross-module, model-written, confidence, surface, module, who answered, kind</summary><div class="cb stack"><div class="grid g2">
       ${cmp('With a dollar figure vs without', d.by_dollars, 'rec-dollars')}
       ${cmp('Cavnar AI prepares it vs the owner does it', d.by_cavnar_completes, 'rec-cavnar')}
       ${cmp('Cross-module vs one module', d.by_cross_module, 'rec-cross')}
@@ -1428,7 +1558,7 @@ async function recommendations(arg){
       ${cmp('By module', d.by_module, 'rec-module')}
       ${cmp('By who answered', d.by_role, 'rec-role')}
     </div>
-    ${cmp('By kind', d.by_kind, 'rec-kind')}
+    ${cmp('By kind', d.by_kind, 'rec-kind')}</div></details>
     ${rid ? '' : `<div style="margin-top:14px"><div class="k" style="margin-bottom:6px">By restaurant</div>${d.by_restaurant.length ? table(restCols, d.by_restaurant, {id:'rec-rest', sort:'n'}) : '<div class="empty">Nothing recorded yet.</div>'}</div>`}
     <div class="grid g2" style="margin-top:14px">
       <div class="card"><div class="ch"><h2>Calibration · 365d</h2><span class="sub">Predicted $/month (as shown) against what the tracker measured. No clear change counts as $0. A ratio needs ${cal.ok ? cal.min_n : 5}+ pairs.</span></div><div class="cb">
@@ -1637,22 +1767,6 @@ async function seedReviewAccount(){
   btn.disabled = false;
 }
 
-async function system(){
-  const d = await api('/admin/api/system');
-  V().innerHTML = `
-    <div class="head"><div><div class="k ember">Admin</div><h1>System</h1></div></div>
-    <div class="grid g2">
-      <div style="display:flex;flex-direction:column;gap:12px">
-        <div class="card"><div class="ch"><h2>Configuration</h2><span class="sub">what this server has keys for</span></div><div class="cb" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px">${(d.ok?Object.entries(d.services):[]).map(([k,v])=>`<div style="display:flex;justify-content:space-between;font-size:12.5px"><span>${esc(k)}</span>${v?'<span class="b ok nodot">configured</span>':'<span class="b off nodot">missing</span>'}</div>`).join('')}</div>${d.ok?`<div class="cb" style="border-top:1px solid var(--paper3)" ><div class="kv"><span class="k">Environment</span><span>${esc(d.env)}</span><span class="k">Scheduler tick</span><span class="num">${d.tick}s</span><span class="k">DB</span><span class="mono">${esc(d.db)}</span><span class="k">Build</span><span class="mono">${esc(d.build||'—')}</span></div></div>`:''}</div>
-        <div class="card"><div class="ch"><h2>Public status page</h2><a class="sub" href="/status" target="_blank">status.cavnar.ai ↗</a></div><div class="cb" id="svc-list"><div class="sk"></div></div>
-          <div class="cb" style="border-top:1px solid var(--line)"><button class="btn" onclick="incidentOpen()">Post an incident</button></div></div>
-        <div class="card"><div class="ch"><h2>In-app changelog</h2><span class="sub">✦ What's new, on web and iOS</span></div><div class="cb"><div class="fl"><input id="cl-title" placeholder="Title"><textarea id="cl-body" rows="2" placeholder="Body (optional)"></textarea><div style="display:flex;gap:8px"><select id="cl-tag"><option value="feature">feature</option><option value="improvement">improvement</option><option value="fix">fix</option></select><button class="btn p" onclick="changelogPost()">Post</button></div></div><div id="cl-list" style="margin-top:10px"></div></div></div>
-        <div class="card"><div class="ch"><h2>Utilities</h2></div><div class="cb" style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn" href="/admin/inventory-template">Inventory CSV template</a><a class="btn" href="/health" target="_blank">/health</a><a class="btn" href="/sitemap.xml" target="_blank">sitemap.xml</a><a class="btn" href="/admin/stop-viewing">Stop viewing as client</a></div>
-          <div class="cb" style="border-top:1px solid var(--paper3)"><div class="k" style="margin-bottom:6px">App Store review account</div><div class="sub" style="margin-bottom:8px">Creates (or refreshes) the account Apple signs in with, seeded with demo data so no screen opens empty. Runs here, against this server's database. Re-running rotates the password and leaves the data alone.</div><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn p" id="seed-btn" onclick="seedReviewAccount()">Create review account</button><span class="sub" id="seed-status"></span></div><pre id="seed-out" hidden style="margin-top:10px;padding:12px;background:var(--paper2);color:var(--ink);border:1px solid var(--paper3);border-radius:8px;font-family:var(--num);font-size:12px;line-height:1.55;white-space:pre-wrap;overflow-x:auto;user-select:all"></pre></div></div>
-      </div>
-    </div>`;
-  loadServices(); changelogLoad();
-}
 async function createClient(){
   const v = id => ($(id)||{}).value||''; const btn=$('cc-btn'); const st=$('create-status');
   const payload = {restaurant_name:v('r-name'), owner_email:v('r-email'), username:v('u-username'), password:v('u-password'), google_place_id:v('r-google'), yelp_business_id:v('r-yelp'), owner_name:v('r-owner-name'), voice_notes:v('r-voice'), owner_phone:v('r-phone'), location_group:v('r-group'), location_name:v('r-location'), module_reviews:$('mod-reviews').checked?1:0, module_labor:$('mod-labor').checked?1:0, module_inventory:$('mod-inventory').checked?1:0, module_marketing:$('mod-marketing').checked?1:0};
@@ -1662,13 +1776,7 @@ async function createClient(){
   if(d.ok){ st.style.color='var(--green)'; st.textContent='✓ Created — username '+payload.username+(d.docusign_skipped?' (DocuSign unavailable — send the contract manually)':''); _clients=null; badges(); }
   else { st.style.color='var(--red)'; st.textContent=d.error||'Something went wrong'; }
 }
-async function loadServices(){
-  const d = await api('/admin/status/services'); const map={}; (d.statuses||[]).forEach(s=>map[s.service_key]=s);
-  $('svc-list').innerHTML = (d.services||[]).map(s=>{ const cur=map[s.key]||{}; return `<div style="display:grid;grid-template-columns:1fr 130px auto;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--paper3)"><div><b>${esc(s.name)}</b><div class="dim" style="color:var(--ink4)">${esc(cur.message||s.description||'')}</div></div><select id="svc-${esc(s.key)}">${['operational','degraded','outage','maintenance'].map(v=>`<option ${cur.status===v?'selected':''}>${v}</option>`).join('')}</select><button class="btn s" onclick="saveService('${jsq(s.key)}')">Save</button></div>`; }).join('')||'<div class="empty">No services defined.</div>';
-}
-async function saveService(key){ const msg = prompt('Optional status message for '+key, '') || ''; const d = await post('/admin/status/update', {service_key:key, status:$('svc-'+key).value, message:msg}); toast(d.ok?'Status saved':'Failed', d.ok?'good':'bad'); }
 async function postIncident(){ const keys=[...document.querySelectorAll('.inc-k:checked')].map(c=>c.value); const d = await post('/admin/status/incident', {title:$('inc-title').value, body:$('inc-body').value, severity:$('inc-sev').value, affected_keys:keys, status:'investigating'}); toast(d.ok?'Incident posted':(d.error||'Failed'), d.ok?'good':'bad'); }
-async function changelogLoad(){ const d = await api('/admin/api/changelog'); const list = d.entries||d.changelog||[]; $('cl-list').innerHTML = list.slice(0,12).map(e=>`<div style="display:flex;gap:8px;align-items:baseline;padding:5px 0;border-bottom:1px solid var(--paper3)"><span class="chip">${esc(e.tag||'')}</span><span><b>${esc(e.title)}</b> <span class="dim" style="color:var(--ink4)">${esc(e.body||'')}</span></span><span class="dim num" style="margin-left:auto;white-space:nowrap">${fmtD(e.created_at)}</span><button class="lnk" onclick="changelogDelete(${e.id})">delete</button></div>`).join('')||'<div class="empty">No entries yet.</div>'; }
 async function changelogPost(){ const d = await post('/admin/api/changelog', {title:$('cl-title').value, body:$('cl-body').value, tag:$('cl-tag').value}); toast(d.ok?'Posted':(d.error||'Failed'), d.ok?'good':'bad'); if(d.ok){ $('cl-title').value=''; $('cl-body').value=''; changelogLoad(); } }
 async function changelogDelete(id){ if(!confirm('Delete this changelog entry?')) return; await api('/admin/api/changelog/'+id, {method:'DELETE'}); changelogLoad(); }
 
