@@ -67,7 +67,7 @@ def test_the_consent_checkbox_is_a_real_unchecked_input_by_default():
 
 def test_a_real_phone_input_exists():
     html = _client().get("/sms-optin-preview").data.decode()
-    assert '<input type="tel" id="optin-phone" name="phone" required' in html, \
+    assert '<input type="tel" id="optin-phone" name="phone" autocomplete="tel"' in html, \
         "reviewer note: \"the opt-in link provided lacks phone number field\""
 
 
@@ -93,25 +93,36 @@ def test_the_form_posts_to_itself():
 
 # ── server-side validation, not just browser-side ─────────────────────────
 
-def test_submitting_without_consent_is_refused_server_side():
+def test_nothing_in_the_form_is_required():
+    """Error 30923, fourth review (9/29/26): "we are unable to submit the
+    form without checking the consent box ... and Phone number is also
+    mandatory." No field, and not the consent box, carries `required`."""
+    html = _client().get("/sms-optin-preview").data.decode()
+    form = html.split('<form class="optin-form"', 1)[1].split("</form>", 1)[0]
+    assert " required" not in form
+
+
+def test_the_form_saves_without_consent_and_without_a_phone():
     c = _client()
     tok = _csrf_token(c)
     c.set_cookie("csrf_js", tok)
-    resp = c.post("/sms-optin-preview", data={"csrf_token": tok, "phone": "5551234567"})
-    html = resp.data.decode()
-    assert resp.status_code == 200
-    assert 'id="optin-card" data-state="submitted"' not in html
-    assert "consent" in html.lower()
+    for data in ({}, {"phone": "5551234567"}, {"email": "jane@example.com"}):
+        resp = c.post("/sms-optin-preview", data=dict(data, csrf_token=tok))
+        html = resp.data.decode()
+        assert resp.status_code == 200
+        assert 'id="optin-card" data-state="submitted"' in html, data
+        assert "Preferences saved — no text messages" in html and "no text message will be sent" in html
 
 
-def test_submitting_without_a_valid_phone_is_refused():
+def test_checking_the_box_without_a_number_asks_for_one():
     c = _client()
     tok = _csrf_token(c)
     c.set_cookie("csrf_js", tok)
-    resp = c.post("/sms-optin-preview", data={"csrf_token": tok, "phone": "123", "consent": "on"})
-    html = resp.data.decode()
-    assert 'id="optin-card" data-state="submitted"' not in html
-    assert "valid mobile phone" in html.lower()
+    for phone in ("", "123"):
+        resp = c.post("/sms-optin-preview", data={"csrf_token": tok, "phone": phone, "consent": "on"})
+        html = resp.data.decode()
+        assert 'id="optin-card" data-state="submitted"' not in html
+        assert "uncheck the box to save without texts" in html
 
 
 def test_a_valid_submission_shows_the_confirmation_state():
@@ -123,7 +134,7 @@ def test_a_valid_submission_shows_the_confirmation_state():
     })
     html = resp.data.decode()
     assert 'id="optin-card" data-state="submitted"' in html
-    assert "You're opted in" in html
+    assert "You're opted in to text alerts" in html
 
 
 def test_confirmation_is_explicit_that_no_real_text_is_sent():

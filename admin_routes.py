@@ -2654,6 +2654,7 @@ def sms_optin_preview_page():
     from csrf import CSRF_COOKIE as _CSRF_COOKIE
 
     submitted = False
+    texts = False
     error = None
     if request.method == "POST":
         cookie_tok = request.cookies.get(_CSRF_COOKIE, "")
@@ -2661,15 +2662,23 @@ def sms_optin_preview_page():
         if not (cookie_tok and sent_tok and cookie_tok == sent_tok):
             error = "Your session expired — please try again."
         else:
+            # Error 30923 (9/29/26, the fourth review): "we are unable to
+            # submit the form without checking the consent box ... and Phone
+            # number is also mandatory." Consent to texts must never be a
+            # condition of completing the form, so nothing here is required:
+            # the form saves without the box and without a number (alerts by
+            # email and in the app only). A number is asked for only when the
+            # box IS checked, because a text needs somewhere to go.
             phone = (request.form.get("phone") or "").strip()
             consent = request.form.get("consent") == "on"
             digits = _re.sub(r"\D", "", phone)
-            if not consent:
-                error = "Check the consent box to subscribe."
-            elif len(digits) < 10:
-                error = "Enter a valid mobile phone number."
+            if consent and len(digits) < 10:
+                error = "To get text alerts, enter your mobile number — or uncheck the box to save without texts."
+            elif phone and len(digits) < 10:
+                error = "That mobile number looks incomplete — fix it or clear the field."
             else:
                 submitted = True
+                texts = consent
 
     try:
         html_path = _os.path.join(_os.path.dirname(__file__), "sms_optin_preview.html")
@@ -2683,6 +2692,15 @@ def sms_optin_preview_page():
     html = html.replace("{{FORM_STATE}}", "submitted" if submitted else ("error" if error else "form"))
     html = html.replace("{{ERROR_TEXT}}", error or "")
     html = html.replace("{{ERROR_DISPLAY}}", "block" if error else "none")
+    if submitted and texts:
+        title, body = ("You're opted in to text alerts",
+                       "Saved. Your consent was recorded exactly as the checkbox describes — message types, frequency, "
+                       "rates, and STOP/HELP instructions. Alerts also arrive by email and in the app.")
+    else:
+        title, body = ("Preferences saved — no text messages",
+                       "Saved without text alerts. Alerts will arrive by email and in the app only, and no text "
+                       "message will be sent. You can add text alerts at any time by checking the box.")
+    html = html.replace("{{CONFIRM_TITLE}}", title if submitted else "").replace("{{CONFIRM_TEXT}}", body if submitted else "")
 
     resp = Response(html, mimetype="text/html")
     if not request.cookies.get(_CSRF_COOKIE):

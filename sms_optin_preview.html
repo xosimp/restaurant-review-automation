@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SMS Opt-In — Cavnar AI</title>
+  <title>Notification preferences — Cavnar AI</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <style>
@@ -33,7 +33,7 @@
     .card { border: 1.5px solid var(--paper3); border-radius: 14px; padding: 28px 26px; margin: 24px 0 32px; background: white; box-shadow: 0 8px 24px rgba(14,12,10,.08); }
     .field-label { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--ink3); margin-bottom: 7px; }
     .field { margin-bottom: 18px; }
-    .field input[type=text], .field input[type=tel] {
+    .field input[type=text], .field input[type=email], .field input[type=tel] {
       width: 100%; font-family: inherit; font-size: 15px; color: var(--ink); background: var(--paper);
       border: 1.5px solid var(--paper3); border-radius: 8px; padding: 11px 13px; outline: none;
     }
@@ -81,8 +81,8 @@
   <div class="hero">
     <div class="hero-inner">
       <div class="pill">A2P 10DLC Compliance</div>
-      <h1>SMS opt-in</h1>
-      <p>Subscribe to Cavnar AI operational text alerts below — the same consent step a restaurant owner or manager completes inside their account settings, reproduced here as a live, unauthenticated form for carrier and campaign review.</p>
+      <h1>Notification preferences</h1>
+      <p>Choose how Cavnar AI alerts reach you — the same step a restaurant owner or manager completes inside their account settings (Account → Notifications), reproduced here as a live, unauthenticated form for carrier and campaign review. Text messages are an optional extra: this form saves with or without them.</p>
     </div>
   </div>
 
@@ -105,26 +105,31 @@
             <input type="text" id="optin-name" name="name" autocomplete="name" placeholder="Jane Doe">
           </div>
           <div class="field">
-            <label class="field-label" for="optin-phone">Mobile phone number</label>
-            <input type="tel" id="optin-phone" name="phone" required autocomplete="tel" placeholder="(555) 555-5555">
-            <div class="hint">Standard message and data rates from your carrier may apply.</div>
+            <label class="field-label" for="optin-email">Email for alerts (optional)</label>
+            <input type="email" id="optin-email" name="email" autocomplete="email" placeholder="jane@restaurant.com">
+            <div class="hint">Every alert is delivered by email and in the app, whether or not you choose texts.</div>
+          </div>
+          <div class="field">
+            <label class="field-label" for="optin-phone">Mobile phone number (optional, only for text alerts)</label>
+            <input type="tel" id="optin-phone" name="phone" autocomplete="tel" placeholder="(555) 555-5555">
+            <div class="hint">Leave blank if you don't want texts. Standard message and data rates from your carrier may apply.</div>
           </div>
           <div class="consent-row">
             <input type="checkbox" id="optin-consent" name="consent">
             <label for="optin-consent">Optional: I agree to receive operational text message alerts from Cavnar&nbsp;AI about my restaurant at the mobile number above — new and urgent reviews (such as 1-star and health or safety mentions), issues assigned to me, staffing and labor alerts, and my sign-in codes if I choose text for two-step sign-in. Message frequency varies with activity, typically up to about 5 messages per week. <strong>Message and data rates may apply.</strong> Reply <strong>STOP</strong> to unsubscribe at any time, or <strong>HELP</strong> for help. See our <a href="/privacy#sms">Privacy Policy</a> and <a href="/terms#sms">Terms of Service</a>. Consent is not a condition of using Cavnar&nbsp;AI or of any purchase.</label>
           </div>
-          <button type="submit">Subscribe to SMS alerts</button>
+          <button type="submit">Save notification preferences</button>
         </form>
 
         <div class="confirm">
           <div class="check">✓</div>
-          <h3>You're opted in</h3>
-          <p>This confirms your consent was recorded exactly as the checkbox above describes — message type, frequency, rates, and STOP/HELP instructions.</p>
+          <h3>{{CONFIRM_TITLE}}</h3>
+          <p>{{CONFIRM_TEXT}}</p>
           <p>No text message is sent from this preview page: the messaging service this opt-in is being registered for is itself pending carrier approval, so there is nothing live to send a real confirmation through yet. Once approved, the identical consent step inside the authenticated dashboard is what enrolls a real account.</p>
         </div>
       </div>
     </div>
-    <p class="caption">Nothing here is pre-checked. Subscribing to texts needs a phone number and the box checked (checked on the server, not only in the browser) — leaving it unchecked simply means no texts; alerts still arrive by email and in the app.</p>
+    <p class="caption">Nothing here is required and nothing is pre-checked. The form saves with the text box unchecked and the phone field empty: alerts then arrive by email and in the app only, and no text is ever sent. Texts are sent only to a number entered here with the box checked.</p>
 
     <h2>Message program details</h2>
     <p>
