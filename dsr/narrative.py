@@ -216,6 +216,10 @@ _OPPORTUNITY_TOKENS = {"recoverable", "opportunity", "opportunities", "potential
 _PLAN_TOKENS = {"budget", "target", "goal", "plan"}
 
 
+# Stored for the record, never a figure to write about: whether the night's
+# forecast rested on the report's own basis (demand.demand_accuracy reads it).
+BOOKKEEPING_FACTS = frozenset({"sales.forecast_same_basis"})
+
 # The Intel block's figures that are not measurements of the night (memory
 # audit 9/29/26, QUALITY-17): the National Weather Service FORECAST for the
 # date (dsr.block_intel says so — the actual weather is its observed_* keys),
@@ -1799,7 +1803,7 @@ def build_prompt(ctx, facts, history=(), issues=(), decisions_text="", declined_
             continue
         parts.append(f"[{bname} · {'filed by the manager' if bname == 'closeout' else b.get('source') or 'cavnar'}]")
         for k, v in (b.get("metrics") or {}).items():
-            if _is_number(v):
+            if _is_number(v) and f"{bname}.{k}" not in BOOKKEEPING_FACTS:
                 parts.append(f"{bname}.{k} = {_fmt(v)}{'%' if _is_pct(k) else ''}")
         if bname == "closeout":
             continue                      # its words go in their own fence below

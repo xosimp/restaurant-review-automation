@@ -584,10 +584,13 @@ def holiday_lift(restaurant_id, week_dates: list, db_path=DB_PATH) -> dict:
                     med = vals[len(vals) // 2]
                     if med > 0:
                         entry["lift_pct"] = int(round((float(night["net"]) / med - 1) * 100))
-                        src = _cf.SOURCE_LABELS.get(night.get("source"), night.get("source"))
                         entry["source"] = night.get("source")
                         entry["based_on"] = (f"{name} {hd.year}: ${float(night['net']):,.0f} against a typical "
-                                             f"{hd.strftime('%A')} of ${med:,.0f}, from {src}")
+                                             f"{hd.strftime('%A')} of ${med:,.0f}")
+                        # The POS archive is the ordinary source; an imported
+                        # workbook or a nightly report is named.
+                        if night.get("source") in ("import", "dsr"):
+                            entry["based_on"] += f", from {_cf.SOURCE_LABELS[night['source']]}"
             out[d] = entry
     except Exception:
         return {d: {"name": n, "lift_pct": None, "based_on": None} for d, n in hits.items()}

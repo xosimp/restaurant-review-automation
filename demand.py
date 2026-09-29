@@ -173,7 +173,8 @@ def forecast_net(restaurant_id, day=None, db_path=DB_PATH, effects=True):
     day = day or local_today(restaurant_id)
     weekday = day.strftime("%A")
     if cf.pos_basis(cf._current_provider(restaurant_id)) != cf.BASIS_POS:
-        fc = forecast_day(restaurant_id, day, db_path=db_path, effects=effects)
+        fc = (forecast_day(restaurant_id, day, db_path=db_path) if effects
+              else forecast_day(restaurant_id, day, db_path=db_path, effects=False))
         return dict(fc, basis=cf.BASIS_DSR) if isinstance(fc, dict) else fc
     start = day - timedelta(weeks=LOOKBACK_WEEKS)
     series = cf.net_series(restaurant_id, start, day - timedelta(days=1), db_path=db_path, pos=cf.POS_SAME_BASIS)
