@@ -83,7 +83,8 @@ def test_an_owner_re_tag_corrects_the_review_and_is_kept_with_who_made_it(db_pat
 def test_a_re_tag_outside_the_analysers_vocabulary_is_refused(db_path):
     rid = _rid(db_path)
     rv = _review(db_path, rid)
-    assert "categories must be" in rs.retag(rid, rv, {"categories": ["vibes"]}, user=OWNER)["error"]
+    assert "Pick one to three of: food quality, service, wait time" in \
+        rs.retag(rid, rv, {"categories": ["vibes"]}, user=OWNER)["error"]
     assert rs.retag(rid, 99999, {"sentiment": "positive"}, user=OWNER)["error"] == "Review not found."
     assert rs.retag(rid + 1, rv, {"sentiment": "positive"}, user=OWNER)["error"] == "Review not found."
 

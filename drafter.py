@@ -72,6 +72,16 @@ def _format_examples(rows) -> str:
     return "\n".join(lines)
 
 
+def _learns(restaurant_id) -> bool:
+    """models.learning_eligible for the drafter's learned inputs; fails closed."""
+    if not restaurant_id:
+        return False
+    try:
+        return bool(_models_mod.learning_eligible(restaurant_id))
+    except Exception:
+        return False
+
+
 def get_owner_edit_note(restaurant_id: int, rating: int = None) -> str:
     """reply_edits.style_note over this owner's recent approvals, or "".
 
@@ -599,7 +609,12 @@ def draft_response(review_id: int, rating: int, text: str,
     # used to fetch four examples once and hand the same four to every
     # draft, so a 1-star reply learned from 5-star thank-yous. A caller may
     # still pass its own list; none in the product does.
-    if approved_examples is None and restaurant_id:
+    # A restaurant that may not teach a learner (a demo, test or internal
+    # account — models.learning_eligible) drafts from its voice notes alone:
+    # no learned examples, no measured edit note. Its templates and the
+    # owner's confirmed changes are its own words, not learning, and stay.
+    learns = _learns(restaurant_id)
+    if approved_examples is None and restaurant_id and learns:
         try:
             from models import get_approved_examples as _fetch_examples
             approved_examples = _fetch_examples(restaurant_id, limit=4, rating=rating) or []
@@ -617,7 +632,7 @@ def draft_response(review_id: int, rating: int, text: str,
     # original_draft against the approved reply (reply_edits; audit #40):
     # a short, deterministic note, or "" until they have edited enough —
     # measured on replies to reviews of this one's star band.
-    edit_note = get_owner_edit_note(restaurant_id, rating=rating) if restaurant_id else ""
+    edit_note = get_owner_edit_note(restaurant_id, rating=rating) if (restaurant_id and learns) else ""
     memory_note = _memory_block(restaurant_id, categories) if restaurant_id else ""
 
     # The owner's confirmed changes on this review's complaint categories

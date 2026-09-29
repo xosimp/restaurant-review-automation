@@ -300,3 +300,21 @@ def test_no_caller_hands_every_draft_one_shared_pool_of_examples():
     for src in (inspect.getsource(scheduler.run_daily_fetch), inspect.getsource(drafter.draft_pending),
                 inspect.getsource(client_api._do_regenerate_draft), inspect.getsource(admin_routes)):
         assert "approved_examples=" not in src
+
+
+def test_a_demo_account_drafts_from_its_voice_notes_alone(db_path, monkeypatch):
+    rid = _rid(db_path)
+    c = _conn(db_path)
+    c.execute("UPDATE restaurants SET is_demo=1 WHERE id=?", (rid,))
+    c.commit()
+    c.close()
+    _review(db_path, rid, rating=1, status="approved", draft="We are truly sorry about the cold soup.",
+            role="principal", via="normal")
+    seen = []
+    monkeypatch.setattr(drafter, "get_client", lambda *a, **k: object())
+    monkeypatch.setattr(drafter, "create_with_retry",
+                        lambda client, **kw: seen.append(kw["messages"][0]["content"])
+                        or _msg("We are sorry the soup was cold. Please reach out so we can make it right."))
+    drafter.draft_response(_review(db_path, rid, rating=1, status="pending", draft=None), 1, "Cold soup", "negative",
+                           "Gia Mia", restaurant_id=rid)
+    assert "truly sorry about the cold soup" not in seen[-1] and "Approved response examples" not in seen[-1]

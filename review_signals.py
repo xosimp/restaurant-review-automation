@@ -94,17 +94,19 @@ def _clean(field, value):
         vals = [str(v).strip().lower() for v in (value if isinstance(value, list) else [value]) if str(v).strip()]
         bad = [v for v in vals if v not in analyser.CATEGORIES]
         if bad or not vals:
-            raise ValueError("categories must be 1-3 of: " + ", ".join(analyser.CATEGORIES))
+            raise ValueError("Pick one to three of: " + ", ".join(analyser.category_label(c)
+                                                                 for c in analyser.CATEGORIES) + ".")
         return list(dict.fromkeys(vals))[:3]
     if field == "sentiment":
         v = str(value or "").strip().lower()
         if v not in analyser.SENTIMENTS:
-            raise ValueError("sentiment must be one of: " + ", ".join(analyser.SENTIMENTS))
+            raise ValueError("A review reads positive, neutral or negative.")
         return v
     if field == "severity":
         v = str(value or "").strip().lower()
         if v not in analyser.SEVERITIES:
-            raise ValueError("severity must be one of: " + ", ".join(analyser.SEVERITIES))
+            raise ValueError("Pick one of: " + ", ".join(analyser.SEVERITY_LABELS[x] for x in analyser.SEVERITIES)
+                             + ".")
         return v
     if field == "dishes":
         vals = value if isinstance(value, list) else [value]
@@ -120,7 +122,8 @@ def retag(restaurant_id, review_id, changes, user=None, db_path=None) -> dict:
     or {"ok": False, "error"}."""
     changes = {k: v for k, v in (changes or {}).items() if k in RETAG_FIELDS}
     if not changes:
-        return {"ok": False, "error": "Say what to change: categories, sentiment, severity or dishes."}
+        return {"ok": False, "error": "Say what to change: the topics, how it reads, how serious it is, or the "
+                                      "dishes it names."}
     try:
         clean = {k: _clean(k, v) for k, v in changes.items()}
     except ValueError as e:
