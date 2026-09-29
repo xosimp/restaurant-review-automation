@@ -68,6 +68,29 @@ def test_rid_5_is_not_rid_50(db_path):
     assert [r["error"] for r in rows] == ["five"]
 
 
+def test_failures_captured_before_the_kind_column_get_theirs_once(tmp_path):
+    """The boot migration that adds job_failures.kind classifies the rows
+    already there, once — its default made every AI output check of the
+    last weeks a failed job (#58)."""
+    path = str(tmp_path / "legacy.db")
+    c = sqlite3.connect(path)
+    c.execute("CREATE TABLE job_failures (id INTEGER PRIMARY KEY AUTOINCREMENT, job TEXT NOT NULL, error TEXT, "
+              "context TEXT, created_at TEXT DEFAULT (datetime('now')))")
+    c.executemany("INSERT INTO job_failures (job, error, context) VALUES (?,?,?)", [
+        ("labor_insight", "labor_insight stated figures not present in its input: ['$9']", "restaurant_id=1"),
+        ("admin_console", "overview query failed", ""),
+        ("pos_sync", "Toast 500", "restaurant_id=1")])
+    c.commit()
+    c.close()
+    ops.init_ops(path)
+    assert {r["job"]: r["kind"] for r in _q(path, "SELECT job, kind FROM job_failures")} == \
+        {"labor_insight": "ai_quality", "admin_console": "request", "pos_sync": "job"}
+    # Once: a row that carries its kind is never re-read from its text.
+    _x(path, "INSERT INTO job_failures (job, error, kind) VALUES ('later', 'stated figures not present in its input', 'job')")
+    ops.init_ops(path)
+    assert _q(path, "SELECT kind FROM job_failures WHERE job='later'")[0]["kind"] == "job"
+
+
 def test_job_runs_carry_the_restaurant(db_path):
     ops.run_job("one_restaurant", lambda: None, context="restaurant_id=12 manual by will")
     assert _q(db_path, "SELECT restaurant_id FROM job_runs WHERE job='one_restaurant'")[0]["restaurant_id"] == 12
@@ -82,7 +105,12 @@ def test_job_runs_carry_the_restaurant(db_path):
     ({"attempted": 3, "ok": 0, "failed": 3}, ops.RUN_FAILED),
     ({"drafted": 4, "complete": False}, ops.RUN_PARTIAL),   # the bound, in its own words
     ({"attempted": 0, "ok": 0, "failed": 0, "skipped": 5, "hit_bound": False}, ops.RUN_OK),
-    (None, ops.RUN_OK),
+    # Tightened once every registered job returned its counts (#39): a
+    # result that counts nothing is no longer a clean run.
+    (None, ops.RUN_PARTIAL),
+    ({"note": "done"}, ops.RUN_PARTIAL),
+    (False, ops.RUN_FAILED),
+    (True, ops.RUN_OK),
 ])
 def test_run_outcome(result, state):
     assert ops.run_outcome(result)[0] == state

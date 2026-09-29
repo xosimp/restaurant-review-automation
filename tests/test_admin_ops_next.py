@@ -94,7 +94,10 @@ def test_run_now_records_a_manual_run(db_path, rid, monkeypatch):
     (#9) — pos_sync is the non-sending one."""
     import scheduler
     calls = []
-    monkeypatch.setattr(scheduler, "run_toast_sync", lambda: calls.append("ran"))
+    # The standard counts, as run_toast_sync returns them (#39): a job that
+    # returns nothing is a partial run since run_outcome was tightened.
+    monkeypatch.setattr(scheduler, "run_toast_sync", lambda: calls.append("ran") or
+                        {"attempted": 1, "ok": 1, "failed": 0, "skipped": 0, "hit_bound": False})
     out = admin_ops.run_job_now("pos_sync", "will")
     assert out["ok"] and out["context"] == "manual by will" and out["queued"] is False
     row = None

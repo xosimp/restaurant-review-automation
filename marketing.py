@@ -923,7 +923,7 @@ def _fill_missing_days(restaurant_id, prompt, ideas, days_map, iso_map, profile,
         )
         if getattr(msg, "stop_reason", None) == "max_tokens":
             return ideas
-        extra = _calendar_ideas(extract_text(msg)) or []
+        extra = _calendar_ideas(extract_text(msg), message=msg) or []
     except Exception as e:
         try:
             import ops
@@ -1011,11 +1011,13 @@ def _revalidated(restaurant_id, ideas):
     return out
 
 
-def _calendar_ideas(text):
+def _calendar_ideas(text, message=None):
     """The week's ideas from the model's reply: a JSON array of objects, or
     the same array wrapped in an object ({"ideas": [...]}), with any preamble
     or code fence around it. The wrapped shape used to be read as free text,
-    fail, and reach the owner as an empty week with no reason (AI-26)."""
+    fail, and reach the owner as an empty week with no reason (AI-26). With
+    `message` (what create_with_retry returned), a reply with no week in it
+    is re-filed 'unparseable' in the ledger (fix round G, #52)."""
     from ai_utils import parse_json_reply
 
     def _week(v):
@@ -1027,7 +1029,7 @@ def _calendar_ideas(text):
                     return inner
         return None
 
-    return _week(parse_json_reply(text, accept=lambda v: _week(v) is not None))
+    return _week(parse_json_reply(text, accept=lambda v: _week(v) is not None, message=message))
 
 
 def _calendar_week_context(restaurant_id, iso_map, now):
@@ -1207,7 +1209,7 @@ Rules:
     if getattr(msg, "stop_reason", None) == "max_tokens":
         raise ValueError("the content calendar was cut off before the week was finished")
     try:
-        ideas = _calendar_ideas(extract_text(msg))
+        ideas = _calendar_ideas(extract_text(msg), message=msg)
         # Inject real dates into each idea based on day name, without any
         # date the model added to it ("Thursday, June 5" -> "Thursday").
         for idea in ideas:

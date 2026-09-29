@@ -46,8 +46,15 @@ def _build_default_schema():
     from guest_marketing import init_guest_marketing
     from push import init_push
     from sales_audits import init_sales_audits
+    import platform_monitor
+    import provider_health
     init_db()
     init_auth()
+    # F's telemetry tables and provider probe ledger, created at boot right
+    # after init_auth (hosted_dashboard); the code tolerates their absence,
+    # but a test on the default database should meet what production has.
+    platform_monitor.init_platform_tables()
+    provider_health.init_provider_health()
     models.init_staff_notes()
     models.init_staff_availability()
     ensure_columns()
@@ -180,7 +187,8 @@ def _fixture_logins_skip_the_password_policy(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_real_email_or_sms(monkeypatch):
-    """The suite must never reach Resend, Twilio, Stripe or DocuSign.
+    """The suite must never reach Resend, Twilio, Stripe, DocuSign, Anthropic,
+    Google Places or Perplexity.
 
     It did: the full run sent ~75 real 2FA and notification emails to the
     tests' fake addresses through the production Resend key and exhausted
@@ -194,7 +202,12 @@ def _no_real_email_or_sms(monkeypatch):
     monkeypatch.setenv("TWILIO_AUTH_TOKEN", "")
     monkeypatch.setenv("STRIPE_SECRET_KEY", "")
     monkeypatch.setattr(emails, "_resend_key", lambda: "")
-    blocked = ("api.resend.com", "api.twilio.com", "api.stripe.com", "docusign.net", "docusign.com")
+    # Anthropic, Places and Perplexity too: the hourly provider probes
+    # (provider_health.run_probes, a registered job the registry test runs)
+    # call them whenever a key is in the environment — and scheduler.py
+    # loads the checkout's .env at import.
+    blocked = ("api.resend.com", "api.twilio.com", "api.stripe.com", "docusign.net", "docusign.com",
+               "api.anthropic.com", "maps.googleapis.com", "places.googleapis.com", "api.perplexity.ai")
     real_post, real_request = requests.post, requests.request
 
     def guard(fn):
@@ -259,6 +272,43 @@ def db_path(tmp_path):
     path = str(tmp_path / "test_reviews.db")
     shutil.copyfile(_db_template(), path)
     return path
+
+
+def stamp_scheduler_heartbeat(db_path, minutes_ago, loop_minutes_ago=None, running=None, running_minutes=None):
+    """Make the scheduler loop's heartbeat `minutes_ago` old in `db_path`.
+
+    It lives in its own table, scheduler_heartbeat (fix round D, #4), written
+    only by the loop — the one source /health, the platform SLA check, the
+    public status page and the console read. It used to be
+    service_status.updated_at, which every status write reset; stamping that
+    column now changes nothing, which is how a /health test and a console
+    test kept passing against a heartbeat nobody read. `loop_minutes_ago` is
+    the last COMPLETED tick (defaults to the beat); `running` /
+    `running_minutes` put the loop inside a job for the watchdog (#121)."""
+    import sqlite3
+    loop = minutes_ago if loop_minutes_ago is None else loop_minutes_ago
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("INSERT OR IGNORE INTO scheduler_heartbeat (id) VALUES (1)")
+        conn.execute("UPDATE scheduler_heartbeat SET beat_at=datetime('now', ?), loop_completed_at=datetime('now', ?), "
+                     "running_job=?, running_since=CASE WHEN ? IS NULL THEN NULL ELSE datetime('now', ?) END "
+                     "WHERE id=1",
+                     (f"-{float(minutes_ago)} minutes", f"-{float(loop)} minutes", running, running,
+                      f"-{float(running_minutes or 0)} minutes"))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@pytest.fixture
+def scheduler_heartbeat(db_path):
+    """stamp_scheduler_heartbeat bound to this test's database:
+    `scheduler_heartbeat(60)` is a scheduler that died an hour ago;
+    pass db_path= to stamp another file."""
+    def _stamp(minutes_ago, loop_minutes_ago=None, running=None, running_minutes=None, db_path=db_path):
+        stamp_scheduler_heartbeat(db_path, minutes_ago, loop_minutes_ago=loop_minutes_ago, running=running,
+                                  running_minutes=running_minutes)
+    return _stamp
 
 
 @pytest.fixture

@@ -28,8 +28,8 @@ import jobs_registry as _jobs_registry
 SCHEDULER_STALE_MINUTES = _jobs_registry.HEARTBEAT_STALE_MINUTES
 
 
-def _conn():
-    c = sqlite3.connect(DB_PATH)
+def _conn(db_path=None):
+    c = sqlite3.connect(db_path or DB_PATH)
     c.row_factory = sqlite3.Row
     return c
 
@@ -57,8 +57,8 @@ def get_all_statuses():
     return [dict(r) for r in rows]
 
 
-def update_service_status(service_key, status, message=None):
-    conn = _conn()
+def update_service_status(service_key, status, message=None, db_path=None):
+    conn = _conn(db_path)
     conn.execute(
         "UPDATE service_status SET status=?, message=?, updated_at=datetime('now') WHERE service_key=?",
         (status, message, service_key),
@@ -150,10 +150,14 @@ def update_incident(incident_id, message, status):
 #   loop_completed_at  the end of a tick only — the proof every job in it got
 #                      its chance; a tick that fails part-way never writes it
 #   running_job/since  the job the loop is inside, for the runtime watchdog
+#
+# The readers take the database they are judging (`db_path`), so /health,
+# the SLA check and the console read the heartbeat from the same file as
+# everything else they report; None is this module's DB_PATH.
 
 
-def _heartbeat_row():
-    conn = _conn()
+def _heartbeat_row(db_path=None):
+    conn = _conn(db_path)
     try:
         return conn.execute(
             "SELECT running_job, running_since, beat_at, loop_completed_at, "
@@ -202,7 +206,7 @@ def record_running_job(name=None):
         conn.close()
 
 
-def scheduler_heartbeat_age_minutes():
+def scheduler_heartbeat_age_minutes(db_path=None):
     """Minutes since the scheduler loop last proved it was alive — from its
     own heartbeat, which nothing else writes. A loop that has never stamped
     counts from when the heartbeat row was created (boot), so a scheduler
@@ -216,7 +220,7 @@ def scheduler_heartbeat_age_minutes():
     quietly never go out.
     """
     try:
-        row = _heartbeat_row()
+        row = _heartbeat_row(db_path)
     except Exception:
         return None
     if not row or row["beat_age"] is None:
@@ -224,22 +228,26 @@ def scheduler_heartbeat_age_minutes():
     return max(0.0, float(row["beat_age"]))
 
 
-def scheduler_state():
-    """The scheduler's liveness in full, for the platform watchdog and the
-    console: {beat_age_minutes, loop_completed_age_minutes, running_job,
-    running_minutes, running_bound_minutes, wedged, loop_stalled, stale}.
+def scheduler_state(db_path=None):
+    """The scheduler's liveness in full, for /health, the platform watchdog,
+    the status page and the console — the ONE reading of the heartbeat:
+    {beat_age_minutes, loop_completed_age_minutes, running_job,
+    running_minutes, running_bound_minutes, wedged, loop_stalled, stale,
+    state}.
 
     wedged: the loop has been inside one job past that job's own bound
     (jobs_registry.max_minutes) — the pulse stops vouching for it then, so
     the beat goes stale too. loop_stalled: no tick has COMPLETED within the
     threshold and no job is running to explain it — a tick failing
-    part-way, which a fresh beat from the jobs before the failure hid (#121)."""
-    beat = scheduler_heartbeat_age_minutes()
+    part-way, which a fresh beat from the jobs before the failure hid (#121).
+    state: "unknown" (heartbeat unreadable), "stale", "wedged", "stalled"
+    or "ok" — in that order of precedence."""
+    beat = scheduler_heartbeat_age_minutes(db_path) if db_path else scheduler_heartbeat_age_minutes()
     out = {"beat_age_minutes": beat, "loop_completed_age_minutes": None, "running_job": None,
            "running_minutes": None, "running_bound_minutes": None, "wedged": False, "loop_stalled": False,
-           "stale": beat is not None and beat > SCHEDULER_STALE_MINUTES}
+           "stale": beat is not None and beat > SCHEDULER_STALE_MINUTES, "state": "unknown"}
     try:
-        row = _heartbeat_row()
+        row = _heartbeat_row(db_path)
     except Exception:
         row = None
     if not row:
@@ -253,23 +261,28 @@ def scheduler_state():
     loop_age = out["loop_completed_age_minutes"]
     out["loop_stalled"] = bool(loop_age is not None and loop_age > SCHEDULER_STALE_MINUTES
                                and not out["running_job"] and not out["stale"])
+    if beat is not None:
+        out["state"] = ("stale" if out["stale"] else "wedged" if out["wedged"]
+                        else "stalled" if out["loop_stalled"] else "ok")
     return out
 
 
-def check_scheduler_liveness():
+def check_scheduler_liveness(db_path=None):
     """Mark the scheduler down on the public status page when its heartbeat
     has gone stale. Returns the age in minutes (None if unreadable).
 
-    Writes only service_status — never the heartbeat — so two checks in a
-    row on a dead scheduler both report it stale (#4); and only when the row
-    is not already saying so, rather than on every /health request."""
-    age = scheduler_heartbeat_age_minutes()
+    Run by the web process's supervisor (platform_monitor.PlatformSupervisor
+    .tick), never by /health, which is read-only. Writes only
+    service_status — never the heartbeat — so two checks in a row on a dead
+    scheduler both report it stale (#4); and only when the row is not
+    already saying so."""
+    age = scheduler_heartbeat_age_minutes(db_path) if db_path else scheduler_heartbeat_age_minutes()
     if age is None:
         return None
     if age > SCHEDULER_STALE_MINUTES:
         msg = f"No heartbeat for {int(age)} minutes — scheduled posts and nightly syncs are not running"
         try:
-            conn = _conn()
+            conn = _conn(db_path)
             try:
                 row = conn.execute("SELECT status, message FROM service_status WHERE service_key='scheduler'").fetchone()
             finally:
@@ -277,7 +290,7 @@ def check_scheduler_liveness():
         except Exception:
             row = None
         if not row or row["status"] != "outage" or row["message"] != msg:
-            update_service_status("scheduler", "outage", msg)
+            update_service_status("scheduler", "outage", msg, db_path=db_path)
     return age
 
 
@@ -560,23 +573,26 @@ def health_snapshot(db_path=None):
     if disk["state"] in ("low", "critical"):
         problems.append(f"disk_{disk['state']}")
 
-    # Read only: scheduler_heartbeat_age_minutes never writes. This used to
-    # call check_scheduler_liveness, whose "outage" write stamped the very
-    # column the age is read from (RELIABILITY-4).
-    scheduler_state, age = "unknown", None
+    # Read only: scheduler_state never writes, and reads the loop's own
+    # heartbeat table in THIS database. This used to call
+    # check_scheduler_liveness, whose "outage" write stamped the very column
+    # the age was read from (RELIABILITY-4); the supervisor runs that now.
     try:
-        age = scheduler_heartbeat_age_minutes()
+        sched = scheduler_state(path)
     except Exception:
-        age = None
-    if age is not None:
-        scheduler_state = "stale" if age > SCHEDULER_STALE_MINUTES else "ok"
-    if scheduler_state == "stale":
-        problems.append("scheduler_stale")
+        sched = {"state": "unknown", "beat_age_minutes": None, "loop_completed_age_minutes": None}
+    code = {"stale": "scheduler_stale", "wedged": "scheduler_wedged",
+            "stalled": "scheduler_stalled"}.get(sched["state"])
+    if code:
+        problems.append(code)
 
     overdue = []
     try:
         import ops
-        overdue = ops.check_platform_sla(send=False, db_path=db_path).get("jobs_overdue") or []
+        # This probe's answer, so the SLA check does not take the write lock a
+        # second time; "unknown" (no answer) lets it probe for itself.
+        write_ok = None if write["state"] == "unknown" else write["state"] == "ok"
+        overdue = ops.check_platform_sla(send=False, db_path=db_path, write_ok=write_ok).get("jobs_overdue") or []
     except Exception:
         overdue = []
     if overdue:
@@ -592,11 +608,16 @@ def health_snapshot(db_path=None):
                "db": "ok",
                "database": {"write": write["state"], "write_ms": write["ms"], "journal": journal,
                             "size_mb": disk.get("db_mb"), "wal_mb": disk.get("wal_mb")},
-               "scheduler": scheduler_state, "disk": disk,
-               "backup": {k: backup[k] for k in ("state", "age_hours", "offsite", "offsite_age_hours")},
+               "scheduler": sched["state"], "disk": disk,
+               "backup": {**{k: backup[k] for k in ("state", "age_hours", "offsite", "offsite_age_hours")},
+                          # ops.backup_status's own verdict on the newest run:
+                          # ok | stale | no_offsite | failed | never.
+                          "last_run": (backup.get("raw") or {}).get("state")},
                "jobs_overdue": [j["job"] for j in overdue]}
-    if age is not None:
-        payload["scheduler_heartbeat_age_minutes"] = round(age, 1)
+    if sched.get("beat_age_minutes") is not None:
+        payload["scheduler_heartbeat_age_minutes"] = round(sched["beat_age_minutes"], 1)
+    if sched.get("loop_completed_age_minutes") is not None:
+        payload["scheduler_loop_age_minutes"] = round(sched["loop_completed_age_minutes"], 1)
     return payload, 200
 
 

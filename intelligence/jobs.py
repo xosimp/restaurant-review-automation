@@ -571,10 +571,15 @@ def record_assignments(restaurants, members, partitions, groups, db_path=DB_PATH
 
 
 def run_features(db_path=DB_PATH, today: date = None, wall_seconds=FEATURE_WALL_SECONDS, workers=FEATURE_WORKERS) -> dict:
+    """The nightly per-restaurant feature pass (and Restaurant DNA beside
+    it): bounded by wall_seconds, resumable from its cursor. Returns the
+    standard counts (#39) — attempted, ok (computed), failed, skipped,
+    hit_bound (the bound cut the pass short) — with its own keys."""
     today = today or date.today()
     rs = sorted(active_restaurants(db_path, include_demo=True), key=lambda r: r.id)
     if not rs:
-        return {"computed": 0, "skipped": 0, "resumed_at": 0, "complete": True}
+        return {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False,
+                "computed": 0, "resumed_at": 0, "complete": True}
     start_after = _cursor_get(db_path)
     order = [r for r in rs if r.id > start_after] + [r for r in rs if r.id <= start_after]
     deadline = time.monotonic() + wall_seconds
@@ -629,7 +634,9 @@ def run_features(db_path=DB_PATH, today: date = None, wall_seconds=FEATURE_WALL_
                 last_done = rid
     # A completed sweep resets the cursor so the next night starts at the top.
     _cursor_set(db_path, last_done if stopped_early else 0)
-    return {"computed": computed, "failed": failed, "resumed_at": start_after, "complete": not stopped_early,
+    return {"attempted": computed + failed, "ok": computed, "failed": failed,
+            "skipped": len(rs) - computed - failed, "hit_bound": stopped_early,
+            "computed": computed, "resumed_at": start_after, "complete": not stopped_early,
             "week": _features.iso_week(today)}
 
 
@@ -718,6 +725,14 @@ def run_learning(db_path=DB_PATH, today: date = None) -> dict:
     except Exception as e:
         print(f"[intelligence] effects not computed: {e}")
         out["effects"] = {"error": str(e)}
+    # The standard counts (#39), by stage: a stage that raised is failed
+    # (and captured), the bands held for an unfinished feature pass skipped.
+    stages = [k for k in ("feedback", "patterns", "benchmarks", "peer_ledger", "cohort_series", "confidence_log",
+                          "benchmark_facts", "effects") if k in out]
+    failed = sum(1 for k in stages if isinstance(out[k], dict) and out[k].get("error"))
+    held = 1 if isinstance(out.get("benchmarks"), dict) and out["benchmarks"].get("held") else 0
+    out.update(attempted=len(stages) - held, ok=len(stages) - held - failed, failed=failed, skipped=held,
+               hit_bound=False)
     return out
 
 

@@ -329,7 +329,7 @@ def test_review_request_followup_sends_after_delay(db_path):
 
     # TWILIO_* unset in this test env, so send_sms() always returns False —
     # this exercises the eligibility/logging logic, not a real Twilio send.
-    assert result == {"sent": 0, "failed": 1, "skipped_no_place_id": 0, "deferred_quiet_hours": 0}
+    assert result == {"attempted": 1, "ok": 0, "failed": 1, "skipped": 0, "hit_bound": False, "sent": 0, "skipped_no_place_id": 0, "deferred_quiet_hours": 0}
     contacts = get_guest_contacts(r.id, db_path=db_path)
     assert contacts[0]["last_review_requested_at"] is not None
     conn = get_conn(db_path)
@@ -347,7 +347,7 @@ def test_review_request_followup_skips_contact_within_delay_window(db_path):
 
     result = run_review_request_followups(delay_hours=3, db_path=db_path)
 
-    assert result == {"sent": 0, "failed": 0, "skipped_no_place_id": 0, "deferred_quiet_hours": 0}
+    assert result == {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False, "sent": 0, "skipped_no_place_id": 0, "deferred_quiet_hours": 0}
     assert get_guest_contacts(r.id, db_path=db_path)[0]["last_review_requested_at"] is None
 
 
@@ -358,7 +358,7 @@ def test_review_request_followup_skips_restaurant_without_place_id(db_path):
 
     result = run_review_request_followups(delay_hours=3, db_path=db_path)
 
-    assert result == {"sent": 0, "failed": 0, "skipped_no_place_id": 1, "deferred_quiet_hours": 0}
+    assert result == {"attempted": 0, "ok": 0, "failed": 0, "skipped": 1, "hit_bound": False, "sent": 0, "skipped_no_place_id": 1, "deferred_quiet_hours": 0}
 
 
 def test_review_request_followup_skips_restaurant_without_marketing_module(db_path):
@@ -371,7 +371,7 @@ def test_review_request_followup_skips_restaurant_without_marketing_module(db_pa
 
     result = run_review_request_followups(delay_hours=3, db_path=db_path)
 
-    assert result == {"sent": 0, "failed": 0, "skipped_no_place_id": 0, "deferred_quiet_hours": 0}
+    assert result == {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False, "sent": 0, "skipped_no_place_id": 0, "deferred_quiet_hours": 0}
 
 
 def test_review_request_followup_skips_unconsented_contact(db_path):
@@ -382,7 +382,7 @@ def test_review_request_followup_skips_unconsented_contact(db_path):
 
     result = run_review_request_followups(delay_hours=3, db_path=db_path)
 
-    assert result == {"sent": 0, "failed": 0, "skipped_no_place_id": 0, "deferred_quiet_hours": 0}
+    assert result == {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False, "sent": 0, "skipped_no_place_id": 0, "deferred_quiet_hours": 0}
 
 
 def test_review_request_followup_skips_unsubscribed_contact(db_path):
@@ -393,7 +393,7 @@ def test_review_request_followup_skips_unsubscribed_contact(db_path):
 
     result = run_review_request_followups(delay_hours=3, db_path=db_path)
 
-    assert result == {"sent": 0, "failed": 0, "skipped_no_place_id": 0, "deferred_quiet_hours": 0}
+    assert result == {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False, "sent": 0, "skipped_no_place_id": 0, "deferred_quiet_hours": 0}
 
 
 def test_review_request_followup_is_idempotent(db_path):
@@ -405,7 +405,7 @@ def test_review_request_followup_is_idempotent(db_path):
     run_review_request_followups(delay_hours=3, db_path=db_path)
     second = run_review_request_followups(delay_hours=3, db_path=db_path)
 
-    assert second == {"sent": 0, "failed": 0, "skipped_no_place_id": 0, "deferred_quiet_hours": 0}
+    assert second == {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False, "sent": 0, "skipped_no_place_id": 0, "deferred_quiet_hours": 0}
     conn = get_conn(db_path)
     count = conn.execute("SELECT COUNT(*) AS c FROM review_requests WHERE restaurant_id=?", (r.id,)).fetchone()["c"]
     conn.close()

@@ -182,7 +182,9 @@ def test_run_probes_records_and_pages_once_when_a_provider_starts_failing(monkey
     bad = {"state": "failing", "detail": "key rejected (invalid_api_key)", "http_status": 403, "latency_ms": 5}
     _only(monkeypatch, "resend", [ok, bad, bad, ok])
     out = ph.run_probes(db)
-    assert out == {"attempted": 1, "ok": 1, "failed": 0, "skipped": 0, "results": {"resend": "ok"}}
+    # The standard counts of a registered job (fix round D, #39), plus the per-provider states.
+    assert out == {"attempted": 1, "ok": 1, "failed": 0, "skipped": 0, "hit_bound": False,
+                   "results": {"resend": "ok"}}
     assert pages == []
     assert ph.run_probes(db)["failed"] == 1
     assert len(pages) == 1 and "resend" in pages[0][0] and "was ok" in pages[0][0]

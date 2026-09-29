@@ -501,6 +501,9 @@ class PlatformSupervisor:
         paged only when something requested /health, and nothing did (#3).
         It runs here, off the request path and outside the scheduler it is
         watching;
+      * every tick, the public status page's scheduler row
+        (status_manager.check_scheduler_liveness): outage while the loop's
+        heartbeat is stale. /health only reads;
       * the request rollups and 5xx samples http_layer buffers, flushed to
         the database every tick, kept for the next tick when the write
         fails;
@@ -596,10 +599,21 @@ class PlatformSupervisor:
         except Exception as e:
             log.error("platform SLA check failed: %s", e)
 
+    def _check_liveness(self):
+        """Flip the public status page's scheduler row to outage when the
+        loop's heartbeat has gone stale. Safe here now that the heartbeat is
+        its own table (#4): check_scheduler_liveness writes service_status
+        only, never the heartbeat it measures. /health stays read-only."""
+        try:
+            _sm.check_scheduler_liveness(self.db_path)
+        except Exception as e:
+            log.warning("scheduler liveness check failed: %s", e)
+
     def tick(self, now=None):
         now = self.clock() if now is None else now
         self.flush()
         self._watch_scheduler(now)
+        self._check_liveness()
         if now - self._last["sla"] >= self.sla_every:
             self._last["sla"] = now
             self._run_sla()
@@ -746,13 +760,22 @@ def _ai_health():
 
 
 def _size_trend(db_path=None):
-    """Database size over time: ops.size_history (D's daily record) when it
-    exists, else the size at each boot from boot_events."""
+    """Database size over time: the nightly backup's record of the database,
+    WAL, backups and free space (ops.storage_trend, fix round D #28) when it
+    has any, with growth per day and days to full; else the size at each
+    boot from boot_events."""
+    def _mb(v):
+        return round(v / (1024 * 1024), 2) if isinstance(v, (int, float)) else None
     try:
         import ops
-        fn = getattr(ops, "size_history", None)
-        if fn is not None:
-            return {"source": "daily", "points": fn(days=30)}
+        st = ops.storage_trend(days=30, db_path=db_path)
+        if st.get("rows"):
+            return {"source": "daily",
+                    "points": [{"at": r.get("date"), "db_mb": _mb(r.get("db_bytes")), "wal_mb": _mb(r.get("wal_bytes")),
+                                "backups_mb": _mb(r.get("backups_bytes")), "free_mb": _mb(r.get("free_bytes"))}
+                               for r in st["rows"]],
+                    "growth_mb_per_day": _mb(st.get("growth_bytes_per_day")),
+                    "days_to_full": st.get("days_to_full")}
     except Exception as e:
         log.warning("size history unavailable: %s", e)
     from models import get_conn, DB_PATH
@@ -806,10 +829,17 @@ def system_report(db_path=None) -> dict:
     except Exception as e:
         lease = {"error": str(e)[:120]}
     report["lease"] = lease
+    # The last time the operator was paged, and whether it reached him (#27).
     try:
-        report["heartbeat_minutes"] = _sm.scheduler_heartbeat_age_minutes()
+        import ops as _ops_alert
+        report["operator_alert"] = _ops_alert.last_operator_alert()
+    except Exception as e:
+        report["operator_alert"] = {"error": str(e)[:120]}
+    try:
+        report["scheduler"] = _sm.scheduler_state(path)
+        report["heartbeat_minutes"] = report["scheduler"].get("beat_age_minutes")
     except Exception:
-        report["heartbeat_minutes"] = None
+        report["scheduler"], report["heartbeat_minutes"] = None, None
     report["ai"] = _ai_health()
     report["supervisor"] = SUPERVISOR.state() if SUPERVISOR is not None else None
 

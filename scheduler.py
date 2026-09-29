@@ -430,11 +430,14 @@ def run_daily_fetch(restaurant_ids=None):
         conn = get_conn()
         # In service only (MOD-REV-2): a cancelled restaurant is not fetched,
         # analysed, drafted or alerted — its reviews are no longer ours to
-        # read and its Google listing no longer ours to reply on.
+        # read and its Google listing no longer ours to reply on. A
+        # deletion request does NOT stop the fetch (fix round B2): the
+        # account is served until the offboarding checklist deletes it or
+        # it churns, and a request can be withdrawn — skipping it left a
+        # hole in the owner's reviews for the whole 30-day notice.
         from models import in_service_sql
         live = conn.execute(
             "SELECT id FROM restaurants WHERE (reviews_live=1 OR gmb_refresh_token IS NOT NULL) "
-            "AND deletion_requested_at IS NULL "    # the owner asked for it gone
             "AND " + in_service_sql()
         ).fetchall()
         conn.close()
@@ -892,7 +895,13 @@ def run_weekly_digests():
     without grouping, so a restaurant with three logins comes back three
     times. The claim_period below hid that (rows 2 and 3 lose the claim), at
     the cost of a wasted get_restaurant per row.
+
+    Returns the standard counts over the emails (one per owner address):
+    attempted, ok (Resend accepted it), failed, skipped (a restaurant with no
+    address or nothing measured, an address already sent to today). A
+    failure outside one email raises (#39).
     """
+    counts = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
     try:
         from models import get_restaurants_for_digest, get_restaurant
         from reporter import build_report_from_db, render_html
@@ -900,7 +909,7 @@ def run_weekly_digests():
         today = _chi_now().strftime("%A").lower()
         scheduled = get_restaurants_for_digest(today)
         if not scheduled:
-            return
+            return counts
 
         seen_rids, unique = set(), []
         for row in scheduled:
@@ -930,6 +939,7 @@ def run_weekly_digests():
             owner_emails = get_owner_emails(rid)
             if not owner_emails:
                 log.warning(f"No email for {restaurant.name}, skipping")
+                counts["skipped"] += 1
                 continue
             try:
                 report = build_report_from_db(rid, restaurant.name, days=7)
@@ -941,6 +951,7 @@ def run_weekly_digests():
                 from reporter import digest_has_data
                 if not digest_has_data(restaurant, report):
                     log.info(f"Not enough data this week for {restaurant.name} — skipping digest")
+                    counts["skipped"] += 1
                     continue
                 for owner_email in owner_emails:
                     key = (owner_email or "").strip().lower()
@@ -951,6 +962,8 @@ def run_weekly_digests():
             except Exception as e:
                 log.error(f"Digest build failed for {restaurant.name}: {e}")
                 _ops.capture(e, job="weekly_digest", context=f"restaurant_id={rid}")
+                counts["attempted"] += 1
+                counts["failed"] += 1
 
         from time_utils import restaurant_now as _rnow
         for key, bucket in by_email.items():
@@ -961,7 +974,9 @@ def run_weekly_digests():
             # mails an address that already got it.
             sent_period = _rnow(first_rest, naive=True).date().isoformat()
             if _ops.period_claimed(f"weekly_digest_to:{key}", sent_period):
+                counts["skipped"] += 1
                 continue
+            counts["attempted"] += 1
             try:
                 import rec_delivery
                 owner_name = _emails.greeting_name(first_rest)
@@ -993,8 +1008,10 @@ def run_weekly_digests():
                 if getattr(result, "ok", False):
                     shown.flush()
                     _ops.claim_period(f"weekly_digest_to:{key}", sent_period)
+                    counts["ok"] += 1
                     log.info(f"Digest sent to {bucket['to']} covering {len(items)} location(s)")
                 else:
+                    counts["failed"] += 1
                     log.error(f"Digest send to {bucket['to']} failed: {result.error}")
                     _ops.capture(RuntimeError(result.error or "digest send failed"),
                                  job="weekly_digest", context=f"restaurant_id={first_rest.id}")
@@ -1018,10 +1035,29 @@ def run_weekly_digests():
             except Exception as e:
                 log.error(f"Digest failed for {bucket['to']}: {e}")
                 _ops.capture(e, job="weekly_digest", context=f"restaurant_id={first_rest.id}")
+                counts["failed"] += 1
 
     except Exception as e:
+        # Raised, not swallowed (#39): ops.run_job captures it and records
+        # the run failed — it used to be a green run over no digests at all.
         log.error(f"Weekly digest error: {e}")
-        _ops.capture(e, job="weekly_digest", context="outer")
+        raise
+    return counts
+
+
+def _served_client(r):
+    """A client this job serves: in service (models.in_service — past due
+    included while Stripe retries the card, #155) and not Cavnar AI's own
+    internal account. Replaces the hand-kept ('trial', 'active') lists,
+    which dropped past-due clients and disagreed with every sync job."""
+    from models import in_service
+    return in_service(r) and str(getattr(r, "billing_status", "") or "").strip().lower() != "internal"
+
+
+def _served_client_sql(column="billing_status"):
+    """_served_client as a WHERE fragment."""
+    from models import in_service_sql
+    return f"{in_service_sql(column)} AND LOWER(TRIM(COALESCE({column},''))) <> 'internal'"
 
 
 def check_stale_inventory():
@@ -1060,7 +1096,7 @@ def find_stale_inventory():
             return None if dt is None else (now_utc - dt).days
 
         for r in restaurants:
-            if not r.module_inventory or r.billing_status not in ("trial", "active"):
+            if not r.module_inventory or not _served_client(r):
                 continue
             try:
                 conn = __import__('models').get_conn()
@@ -1325,7 +1361,7 @@ def run_daily_depletion_sync():
         import inventory_ledger
         import ops
         from datetime import timedelta as _td
-        from models import get_all_restaurants, get_conn as _gc
+        from models import get_all_restaurants, get_conn as _gc, in_service
 
         conn = _gc()
         restaurants_with_recipes = {
@@ -1347,7 +1383,7 @@ def run_daily_depletion_sync():
             wants_item_sales = bool(getattr(r, "module_marketing", 0) or getattr(r, "module_inventory", 0))
             if r.id not in restaurants_with_recipes and not wants_item_sales:
                 continue
-            if (getattr(r, "billing_status", None) or "trial").lower() in ("churned", "cancelled", "canceled", "paused"):
+            if not in_service(r):
                 continue
             by_id[r.id] = r
 
@@ -1917,9 +1953,27 @@ def _now_utc_stamp():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _email_offsite(enc_path, enc_name, timestamp, size_kb):
+def _scrub_lines_html(scrubbed):
+    """The backup email's account of what left the copy — from what
+    offsite_backup.redact actually did (offsite_backup.describe_scrub), not
+    a fixed sentence (#102)."""
+    import offsite_backup
+    b = _emails.BRAND
+    d = offsite_backup.describe_scrub(scrubbed)
+    esc = lambda items: _html.escape(", ".join(items)) if items else "none"  # noqa: E731
+    lines = [f"<b>Emptied</b> ({len(d['emptied'])} tables): {esc(d['emptied'])}.",
+             f"<b>Blanked</b> ({len(d['blanked'])} credential columns): {esc(d['blanked'])}."]
+    if d["precaution"]:
+        lines.append(f"<b>Also blanked, not yet classified</b>: {esc(d['precaution'])} — add each to "
+                     "offsite_backup.SCRUB_COLUMNS or KEEP_COLUMNS.")
+    lines.append(f"<b>Kept on purpose</b>: {_html.escape(d['kept'])}.")
+    return "".join(f'<p style="font-size:12px;color:{b["muted"]};margin:0 0 6px">{l}</p>' for l in lines)
+
+
+def _email_offsite(enc_path, enc_name, timestamp, size_kb, scrubbed=None):
     """The encrypted email copy (the second off-site path). Returns None on
-    success, or why it did not go."""
+    success, or why it did not go. `scrubbed` is what redact() took out of
+    the copy; the email says exactly that."""
     if not _resend_key():
         return "RESEND_API_KEY is not set"
     enc_bytes = os.path.getsize(enc_path)
@@ -1940,9 +1994,10 @@ def _email_offsite(enc_path, enc_name, timestamp, size_kb):
     <tr><td style="padding:3px 12px 3px 0;color:{b['muted']}">File</td><td>{_html.escape(enc_name)}</td></tr>
     <tr><td style="padding:3px 12px 3px 0;color:{b['muted']}">Size</td><td>{size_kb} KB</td></tr>
   </table>
-  <p style="font-size:12px;color:{b['muted']};margin-top:16px">
-    Sessions, device tokens, staff-portal links and every API credential and secret are stripped from
-    this copy. Decrypt with BACKUP_ENCRYPTION_KEY, then rename to reviews.db (docs/ops/RECOVERY.md).
+  <p style="font-size:12px;color:{b['muted']};margin:16px 0 6px">What was stripped from this copy:</p>
+  {_scrub_lines_html(scrubbed)}
+  <p style="font-size:12px;color:{b['muted']};margin-top:10px">
+    Decrypt with BACKUP_ENCRYPTION_KEY, then rename to reviews.db (docs/ops/RECOVERY.md).
   </p>"""),
         "attachments": [{"filename": enc_name, "content": _base64_file(enc_path)}],
     })
@@ -2060,6 +2115,8 @@ def backup_db():
         _shutil.copy2(local_path, redacted_path)
         scrubbed = _redact_snapshot(redacted_path) or {}
         run["_detail"]["scrubbed_unclassified"] = scrubbed.get("unclassified") or []
+        run["_detail"]["scrubbed_tables"] = scrubbed.get("tables") or []
+        run["_detail"]["scrubbed_columns"] = len(scrubbed.get("columns") or [])
         _encrypt_file_chunked(redacted_path, enc_path, key)
         enc_bytes = os.path.getsize(enc_path)
         size_kb = round(enc_bytes / 1024, 1)
@@ -2077,7 +2134,7 @@ def backup_db():
                 log.error(f"backup_db: object-storage copy failed: {e}")
                 _ops.capture(e, job="backup_db", context="s3")
         if cfg.get("email"):
-            why = _email_offsite(enc_path, enc_name, timestamp, size_kb)
+            why = _email_offsite(enc_path, enc_name, timestamp, size_kb, scrubbed=scrubbed)
             if why is None:
                 targets.append("email")
                 log.info(f"backup_db: emailed encrypted {enc_name} ({size_kb} KB)")
@@ -2232,15 +2289,31 @@ def run_onboarding_sequence(local_hour: int = None):
     delivered, not a demo, in service (#20, #155). A step is marked done
     only when Resend accepted it (#16); a transient failure releases the
     day's claim for the next tick, a permanent one is recorded and raised.
+
+    Returns the standard counts over the sends (#39): attempted, ok (Resend
+    accepted it), failed, skipped (a send the sender declined, a step
+    another location already got, a settled client). Restaurants that
+    cannot be read raise.
     """
     from models import get_all_restaurants, get_onboarding_sent, mark_onboarding_sent, owner_got_onboarding_step
     from emails import send_onboarding_day2, send_onboarding_day7, send_onboarding_day30
 
-    try:
-        restaurants = get_all_restaurants()
-    except Exception as e:
-        log.error(f"run_onboarding_sequence: could not load restaurants: {e}")
-        return
+    counts = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
+
+    def _outcome(r, key, result, period):
+        """_onboarding_outcome, counted."""
+        sent = _onboarding_outcome(r, key, result, period)
+        if sent:
+            counts["attempted"] += 1
+            counts["ok"] += 1
+        elif getattr(result, "skipped", False):
+            counts["skipped"] += 1
+        else:
+            counts["attempted"] += 1
+            counts["failed"] += 1
+        return sent
+
+    restaurants = get_all_restaurants()
 
     from time_utils import restaurant_now as _rnow
     for r in restaurants:
@@ -2278,6 +2351,7 @@ def run_onboarding_sequence(local_hour: int = None):
             theirs, not a second copy (#20)."""
             if owner_got_onboarding_step(r.owner_email, key, exclude_restaurant_id=r.id):
                 mark_onboarding_sent(r.id, key, status="covered")
+                counts["skipped"] += 1
                 return True
             return False
 
@@ -2298,7 +2372,7 @@ def run_onboarding_sequence(local_hour: int = None):
                     modules=modules,
                     restaurant_id=r.id,
                 )
-                if _onboarding_outcome(r, "day_2", result, period):
+                if _outcome(r, "day_2", result, period):
                     log.info(f"Onboarding day 2 sent to {r.owner_email} ({r.name})")
 
         # Day 7 — same windowing rationale as day 2 above.
@@ -2309,6 +2383,7 @@ def run_onboarding_sequence(local_hour: int = None):
             _logins, _days_idle = _onboarding_engagement(r.id)
             if _logins >= ONBOARDING_SETTLED_LOGINS and (_days_idle or 99) <= 7:
                 mark_onboarding_sent(r.id, "day_7", status="skipped", error="settled: signs in often")
+                counts["skipped"] += 1
                 log.info(f"Onboarding day 7 skipped for {r.name} — "
                          f"{_logins} logins, last {_days_idle}d ago")
                 continue
@@ -2342,7 +2417,7 @@ def run_onboarding_sequence(local_hour: int = None):
                     pending_count=pending_count,
                     restaurant_id=r.id,
                 )
-                if _onboarding_outcome(r, "day_7", result, period):
+                if _outcome(r, "day_7", result, period):
                     log.info(f"Onboarding day 7 sent to {r.owner_email} ({r.name})")
 
         # Day 30 — same windowing rationale; two weeks of grace, then the
@@ -2356,7 +2431,7 @@ def run_onboarding_sequence(local_hour: int = None):
                     modules=modules,
                     restaurant_id=r.id,
                 )
-                if _onboarding_outcome(r, "day_30", result, period):
+                if _outcome(r, "day_30", result, period):
                     log.info(f"Onboarding day 30 sent to {r.owner_email} ({r.name})")
 
         # Days 60, 90, 180 — the lifecycle after onboarding. The retention
@@ -2373,13 +2448,15 @@ def run_onboarding_sequence(local_hour: int = None):
             if _day <= days_since <= _day + 14 and _key not in already_sent:
                 if not getattr(r, "monthly_review_enabled", 1):
                     mark_onboarding_sent(r.id, _key, status="skipped", error="monthly review switched off")
+                    counts["skipped"] += 1
                     break
                 from emails import send_lifecycle_email
                 result = send_lifecycle_email(_day, to_email=r.owner_email, restaurant_name=r.name,
                                               owner_name=r.owner_name, restaurant_id=r.id)
-                if _onboarding_outcome(r, _key, result, period):
+                if _outcome(r, _key, result, period):
                     log.info(f"Lifecycle day {_day} sent to {r.owner_email} ({r.name})")
                 break
+    return counts
 
 
 # ── Step-based onboarding nudges (#41) ──────────────────────────────────────
@@ -2442,16 +2519,12 @@ def run_onboarding_nudges(local_hour: int = None):
     """One nudge per missing setup step (#41). At most one email per
     restaurant per day; each step's nudge at most once (onboarding_emails
     key "nudge_<step>"), marked only when Resend accepted it (#16). Returns
-    {"attempted", "ok", "failed", "skipped"}."""
+    the standard counts; raises when the restaurants cannot be read (#39)."""
     from models import get_all_restaurants, get_onboarding_sent, mark_onboarding_sent, owner_got_onboarding_step
     from emails import send_onboarding_nudge
     from time_utils import restaurant_now as _rnow
-    out = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0}
-    try:
-        restaurants = get_all_restaurants()
-    except Exception as e:
-        log.error(f"run_onboarding_nudges: could not load restaurants: {e}")
-        return out
+    out = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
+    restaurants = get_all_restaurants()
     for r in restaurants:
         ok, _why = onboarding_eligible(r)
         if not ok or getattr(r, "marketing_emails_opt_out", 0):
@@ -2515,7 +2588,7 @@ def find_inactive_clients():
     cutoff = now - timedelta(days=14)
 
     for r in restaurants:
-        if getattr(r, "billing_status", "trial") not in ("trial", "active"):
+        if not _served_client(r):
             continue
         try:
             conn = get_conn()
@@ -2602,7 +2675,7 @@ def send_while_away_nudges():
     sent = failed = attempted = 0
     now = _chi_now()
     for r in get_all_restaurants():
-        if getattr(r, "billing_status", "trial") not in ("trial", "active"):
+        if not _served_client(r):
             continue
         try:
             conn = get_conn()
@@ -2942,8 +3015,7 @@ def run_food_cost_snapshots():
     import food_cost_intelligence as fci
     conn = get_conn()
     rows = conn.execute(
-        "SELECT id FROM restaurants WHERE module_inventory=1 "
-        "AND COALESCE(billing_status,'trial') IN ('trial','active')"
+        "SELECT id FROM restaurants WHERE module_inventory=1 AND " + _served_client_sql()
     ).fetchall()
     conn.close()
     c = {"written": 0, "skipped": 0, "failed": 0, "scored": 0, "held": 0}
@@ -3077,8 +3149,7 @@ def run_food_cost_diagnoses():
     import food_cost_intelligence as fci
     conn = get_conn()
     rows = conn.execute(
-        "SELECT id FROM restaurants WHERE module_inventory=1 "
-        "AND COALESCE(billing_status,'trial') IN ('trial','active')"
+        "SELECT id FROM restaurants WHERE module_inventory=1 AND " + _served_client_sql()
     ).fetchall()
     conn.close()
     c = {"diagnosed": 0, "skipped": 0, "failed": 0}
@@ -3170,8 +3241,7 @@ def run_review_diagnoses():
     import review_intelligence as ri
     conn = get_conn()
     rows = conn.execute(
-        "SELECT id FROM restaurants WHERE module_reviews=1 "
-        "AND COALESCE(billing_status,'trial') IN ('trial','active')"
+        "SELECT id FROM restaurants WHERE module_reviews=1 AND " + _served_client_sql()
     ).fetchall()
     conn.close()
     c = {"diagnosed": 0, "skipped": 0, "failed": 0, "attempted": 0}
@@ -3354,7 +3424,9 @@ def run_monthly_summaries():
             failed += len(rs)
             log.error(f"Monthly summary failed for {', '.join(x.name for x in rs)}: "
                       f"{getattr(result, 'error', None)}")
-    return {"sent": sent, "skipped": skipped, "failed": failed}
+    # The standard counts (#39), by restaurant, with `sent` as it was.
+    return {"attempted": sent + failed, "ok": sent, "failed": failed, "skipped": skipped, "hit_bound": False,
+            "sent": sent}
 
 
 def run_quarterly_summaries():
@@ -3386,7 +3458,9 @@ def run_quarterly_summaries():
             skipped += 1
         else:
             failed += 1
-    return {"sent": sent, "skipped": skipped, "failed": failed}
+    # The standard counts (#39), with `sent` as it was.
+    return {"attempted": sent + failed, "ok": sent, "failed": failed, "skipped": skipped, "hit_bound": False,
+            "sent": sent}
 
 
 AUTO_PUBLISH_UNDO_MINUTES = 120
@@ -3408,7 +3482,7 @@ def run_auto_publish_schedules():
     for r in get_all_restaurants():
         if not getattr(r, "auto_publish_schedule", 0) or not getattr(r, "module_labor", 0):
             continue
-        if (getattr(r, "billing_status", "") or "trial") not in ("trial", "active"):
+        if not _served_client(r):
             continue
         local = restaurant_now(r, naive=True)
         if local.weekday() != auto_publish_weekday(r) or not local_due(r, 9, claim_key="auto_publish_schedule"):
@@ -3699,11 +3773,12 @@ def run_rec_ledger_pass():
 def _minute_duties():
     """The per-tick work that owes the owner minutes, not hours: scheduled
     posts, delayed actions whose undo window closed, issue escalations and
-    held notifications, and alerts held through a rush. Each is idempotent
-    and claims its own rows, so running it an extra time is harmless.
+    held notifications, alerts held through a rush, newsletter and campaign
+    batches, and the push and webhook outboxes. Each is idempotent and
+    claims its own rows, so running it an extra time is harmless.
 
     Runs as the `minute_duties` job (ops.run_job) — it wrote no job run at
-    all (#31) — and returns the standard counts over its six duties."""
+    all (#31) — and returns the standard counts over its eight duties."""
     c = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
 
     def _duty(fn, job):
@@ -3760,6 +3835,23 @@ def _minute_duties():
     gc = _duty(_campaigns, job="guest_campaign_sends")
     if gc and (gc.get("sent") or gc.get("failed")):
         log.info(f"Guest campaign sends: {gc}")
+
+    # The push and webhook outboxes (#75): rows a restart or a full pool
+    # left queued or half-delivered go back to the pool; rows too old to
+    # matter expire, recorded as not sent.
+    def _push_outbox():
+        import push as _push
+        return _push.reap_push_outbox()
+    po = _duty(_push_outbox, job="push_outbox_reaper")
+    if po and (po.get("submitted") or po.get("expired")):
+        log.info(f"Push outbox: {po}")
+
+    def _webhook_outbox():
+        import webhooks as _webhooks
+        return _webhooks.reap_webhook_outbox()
+    wo = _duty(_webhook_outbox, job="webhook_outbox_reaper")
+    if wo and (wo.get("submitted") or wo.get("expired")):
+        log.info(f"Webhook outbox: {wo}")
     return c
 
 
@@ -4141,8 +4233,17 @@ def _run_manual_requests(pulsed):
                 raise
             outcome["result"] = res
             return res
-        pulsed.run_job(name, body, context=f"manual by {req.get('requested_by') or 'admin'}",
-                       request_id=req["id"])
+        # An admin's Run now: its model calls are the admin's (#148), not
+        # the scheduler's.
+        try:
+            import ai_utils as _ai_manual
+            manual_ctx = _ai_manual.ai_context(trigger="admin", correlation_id=f"run_now:{name}:{req['id']}")
+        except Exception:
+            import contextlib as _ctxlib
+            manual_ctx = _ctxlib.nullcontext()
+        with manual_ctx:
+            pulsed.run_job(name, body, context=f"manual by {req.get('requested_by') or 'admin'}",
+                           request_id=req["id"])
         state = _ops.run_outcome(outcome["result"])[0] if "result" in outcome else _ops.RUN_FAILED
         _ops.finish_job_request(req["id"], state != _ops.RUN_FAILED,
                                 outcome.get("error") or (None if state != _ops.RUN_FAILED else "the run failed"))
@@ -4259,6 +4360,14 @@ def scheduler_loop():
                 from strategy_jobs import run_loss_sync
                 _ops.run_job("loss_sync", run_loss_sync)
 
+            # 3:30am — refresh the Stripe subscription mirror and record
+            # where Stripe and the local billing state disagree
+            # (billing_jobs.reconcile_stripe: bounded, resumable, reads
+            # Stripe only — it never changes a billing status).
+            if (now.hour, now.minute) >= (3, 30) and _ops.claim_period("stripe_reconcile", str(today)):
+                from billing_jobs import reconcile_stripe
+                _ops.run_job("stripe_reconcile", reconcile_stripe)
+
             if _due(now, 5) and _ops.claim_period("inventory_depletion", str(today)):
                 log.info("Running nightly ingredient depletion sync...")
                 _ops.run_job("inventory_depletion", run_daily_depletion_sync)
@@ -4304,6 +4413,16 @@ def scheduler_loop():
             if _due(now, 6) and _ops.claim_period("outcome_rechecks", str(today)):
                 from strategy_jobs import run_outcome_rechecks
                 _ops.run_job("outcome_rechecks", run_outcome_rechecks)
+
+            # 6am+, after the outcome evaluations — each restaurant's four
+            # value figures into value_figures_daily, which the admin
+            # Intelligence page sums (intelligence.dashboard, #57). On the
+            # Intel lane: a bounded sweep of up to 45 minutes must not hold
+            # the morning briefs; a busy lane gives the claim back.
+            if _due(now, 6) and _ops.claim_period("value_figures", str(today)):
+                from intelligence.dashboard import snapshot_value_figures
+                if not _ops.run_in_lane("intel", "value_figures", snapshot_value_figures):
+                    _ops.release_period("value_figures", str(today))
 
             # Hourly: each restaurant is told about a result or a milestone
             # at ITS OWN 9am (strategy_jobs.WIN_HOUR, local_due inside),
@@ -4404,6 +4523,26 @@ def scheduler_loop():
                          f"(now {now.hour}:{now.minute:02d})...")
                 _ops.run_job("review_fetch", run_daily_fetch)
 
+            # Hourly — one authenticated, non-sending call per provider; a
+            # provider that starts failing pages Will once (provider_health,
+            # #29). Pages only where scheduling is allowed.
+            if _ops.claim_period("provider_probes", f"{today}-{now.hour}"):
+                import provider_health as _provider_health
+                _ops.run_job("provider_probes", _provider_health.run_probes)
+
+            # Hourly — dunning's safety net: owe the email for a failed
+            # invoice attempt the webhook could not, stand down dunning for
+            # invoices since paid, then send (billing_jobs.run_dunning, #25).
+            if _ops.claim_period("dunning", f"{today}-{now.hour}"):
+                from billing_jobs import run_dunning
+                _ops.run_job("dunning", run_dunning)
+
+            # 10am daily — the pay link again on days 2, 5 and 9 after
+            # signing to a client who has not paid (#26; trials never expire).
+            if _due(now, 10) and _ops.claim_period("contract_chase", str(today)):
+                from billing_jobs import run_contract_chase
+                _ops.run_job("contract_chase", run_contract_chase)
+
             # 8am daily — operator failure digest (only sends if something
             # failed, stuck, is overdue or the backup is unhealthy). A digest
             # that did not go out gives the day back, up to three more tries
@@ -4450,6 +4589,11 @@ def scheduler_loop():
                 # 10am daily — onboarding email sequence
                 log.info("Running onboarding sequence check...")
                 _ops.run_job("onboarding_emails", run_onboarding_sequence, local_hour=10, claim="onboarding")
+
+            # Hourly, each restaurant at ITS 11am (local_due inside) — one
+            # nudge per missing setup step, each step once (#41).
+            if _ops.claim_period("onboarding_nudges", f"{today}-{now.hour}"):
+                _ops.run_job("onboarding_nudges", run_onboarding_nudges, local_hour=11)
 
             if _due(now, 11) and now.weekday() == 0 and _ops.claim_period("inactive_clients", str(today)):
                 # Monday 11am — inactive client check
@@ -4562,6 +4706,24 @@ def scheduler_loop():
             # when a job's pulse ran them within the last interval.
             if _ops.duties_due():
                 _ops.run_duties()
+
+            # Every tick — the billing mail a signing or a Stripe event owes
+            # (receipts, dunning, the set-password welcome, pay reminders):
+            # each owed_sends row is claimed before its send and retried with
+            # backoff (billing_jobs, #12). Stripe-originated mail is sent only
+            # from here.
+            from billing_jobs import run_owed_sends
+            _ops.run_job("owed_sends", run_owed_sends)
+
+            # 11:50pm CT — the day's business metrics (business_metrics_daily,
+            # never pruned) and each account's churn-risk state (#18, #83).
+            # Idempotent. A night the loop missed, or a failed run's retry,
+            # is taken before 6am for the day it belongs to.
+            _metrics_day = today if (now.hour, now.minute) >= (23, 50) else (
+                today - timedelta(days=1) if now.hour < 6 else None)
+            if _metrics_day is not None and _ops.claim_period("business_metrics", str(_metrics_day)):
+                from admin_ops import snapshot_business_metrics
+                _ops.run_job("business_metrics", snapshot_business_metrics, day=str(_metrics_day))
 
             # Every tick — morning briefs go at each restaurant's own local
             # hour and claim themselves per restaurant per day. A job run of

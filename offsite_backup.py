@@ -26,10 +26,13 @@ Two things here:
    restore artifact (docs/ops/RECOVERY.md). The redaction list used to name
    six restaurants columns by hand, so the POS, reservation and webhook
    credentials and every staff-portal link rode along in the "stripped"
-   emailed copy (#102). It is built now from credentials.FIELDS plus every
-   column whose name looks like a credential; tests/test_fix_d_backup.py
-   fails when a new credential-looking column is neither scrubbed nor kept
-   on purpose, and at runtime an unclassified one is scrubbed anyway.
+   emailed copy (#102). It is built now from the platform's one credential
+   registry (credentials.credential_columns: credentials.FIELDS plus every
+   column whose name says it holds a secret) and the token tables below;
+   tests/test_fix_d_backup.py fails when a new credential-looking column is
+   neither scrubbed nor kept on purpose, and at runtime an unclassified one
+   is scrubbed anyway. What a run actually took out is what the backup
+   email says (describe_scrub).
 """
 import datetime as _dt
 import hashlib
@@ -221,6 +224,9 @@ SCRUB_TABLES = {
     "staff_portal_tokens": "bearer links into each restaurant's staff portal",
     "app_secrets": "this install's own link-signing secrets",
     "view_as_sessions": "admin view-as sessions",
+    "user_backup_codes": "each login's own 2FA recovery codes (hashed) — the admin's included (fix round A)",
+    "async_jobs": "transient job results (6-hour TTL); one can hold a one-time password (the review-account "
+                  "seed's password_once) until it is read",
 }
 
 # Columns nulled in the off-site copy, beyond every credentials.FIELDS
@@ -235,6 +241,9 @@ SCRUB_COLUMNS = {
     ("restaurants", "rpower_token"), ("restaurants", "reservation_api_key"),
     ("restaurants", "backoffice_api_key"), ("restaurants", "stripe_customer_id"),
     ("webhooks", "secret"),
+    # The share link itself, encrypted under CREDENTIAL_KEY so the admin can
+    # copy it again (fix round B2): a working public link once decrypted.
+    ("sales_audit_shares", "token_enc"),
 }
 
 # Credential-LOOKING columns that are deliberately kept, and why. A new one
@@ -260,7 +269,20 @@ KEEP_COLUMNS = {
     ("marketing_links", "token"): "a public tracked-link id in a published post",
     ("marketing_media", "token"): "a public media link id",
     ("schedule_shares", "token"): "a schedule link staff already hold; the data is in the copy anyway",
-    ("sales_audit_shares", "token"): "an audit share link; the data is in the copy anyway",
+    ("sales_audit_shares", "token"): "the SHA-256 of an audit share link (sales_audits._hash_token), not the link",
+    ("sales_audit_shares", "token_hint"): "the link's last four characters, which open nothing",
+    ("push_outbox", "device_token_id"): "an id into device_tokens, which is emptied",
+    # Model token COUNTS — usage and cost figures, not credentials.
+    ("ai_calls", "input_tokens"): "a count of model tokens",
+    ("ai_calls", "output_tokens"): "a count of model tokens",
+    ("ai_usage", "input_tokens"): "a count of model tokens",
+    ("ai_usage", "output_tokens"): "a count of model tokens",
+    ("ai_usage", "cache_write_tokens"): "a count of model tokens",
+    ("ai_usage", "cache_read_tokens"): "a count of model tokens",
+    ("ai_usage_daily", "input_tokens"): "a count of model tokens",
+    ("ai_usage_daily", "output_tokens"): "a count of model tokens",
+    ("ai_usage_daily", "cache_write_tokens"): "a count of model tokens",
+    ("ai_usage_daily", "cache_read_tokens"): "a count of model tokens",
 }
 
 
@@ -278,8 +300,17 @@ def credential_columns(conn):
 
 def scrub_plan(conn):
     """(tables to empty, [(table, column)] to null, unclassified) for this
-    database. `unclassified` are credential-looking columns in neither list —
-    scrubbed anyway (fail safe) and reported, so a new one is noticed."""
+    database.
+
+    The columns are built from the platform's one credential registry,
+    credentials.credential_columns(conn) (credentials.FIELDS plus every
+    column whose name says it holds a secret), and SCRUB_COLUMNS for what a
+    name cannot tell (a Stripe customer id, a reset token's expiry). A
+    column kept on purpose (KEEP_COLUMNS: hashes, counts, public link ids a
+    restore must keep working) is never nulled. `unclassified` are
+    credential-looking columns — by this module's broader pattern or the
+    registry — named in no list: scrubbed anyway (fail safe) and reported,
+    so a new one is noticed (tests/test_fix_d_backup.py fails on one)."""
     import credentials
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     have = {}
@@ -289,13 +320,15 @@ def scrub_plan(conn):
             have[t] = {r[1] for r in conn.execute(f'PRAGMA table_info("{t}")')} if t in tables else set()
         return have[t]
     wipe = sorted(t for t in SCRUB_TABLES if t in tables)
-    wanted = set(SCRUB_COLUMNS) | {("restaurants", f) for f in credentials.FIELDS}
+    named = set(SCRUB_COLUMNS) | {("restaurants", f) for f in credentials.FIELDS}
+    registry = set(credentials.credential_columns(conn))
     unclassified = []
-    for t, c in credential_columns(conn):
-        if t in SCRUB_TABLES or (t, c) in wanted or (t, c) in KEEP_COLUMNS:
+    for t, c in sorted(set(credential_columns(conn)) | registry):
+        if t in SCRUB_TABLES or (t, c) in named or (t, c) in KEEP_COLUMNS:
             continue
         unclassified.append((t, c))
-    null = sorted((t, c) for t, c in wanted | set(unclassified) if t not in SCRUB_TABLES and c in _cols(t))
+    null = sorted((t, c) for t, c in (named | registry | set(unclassified)) - set(KEEP_COLUMNS)
+                  if t not in SCRUB_TABLES and c in _cols(t))
     return wipe, null, unclassified
 
 
@@ -323,3 +356,20 @@ def redact(path):
         return {"tables": wipe, "columns": [f"{t}.{c}" for t, c in null], "unclassified": unclassified}
     finally:
         conn.close()
+
+
+def describe_scrub(scrubbed) -> dict:
+    """What one redact() took out of the copy, in words for the backup
+    email: {emptied, blanked, precaution, kept}. The email used to say
+    "every API credential and secret" whatever had actually been stripped;
+    now it names the tables emptied and the columns blanked, what was
+    blanked only because nobody had classified it, and what is kept on
+    purpose. Lists are sorted, plain strings; the caller escapes them."""
+    scrubbed = scrubbed or {}
+    return {
+        "emptied": sorted(scrubbed.get("tables") or []),
+        "blanked": sorted(scrubbed.get("columns") or []),
+        "precaution": sorted(f"{t}.{c}" for t, c in (scrubbed.get("unclassified") or [])),
+        "kept": "password hashes, hashed link tokens, public link ids guests and staff already hold, and "
+                "model token counts (offsite_backup.KEEP_COLUMNS)",
+    }

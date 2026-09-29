@@ -276,7 +276,13 @@ def draft_missing(restaurant_id, limit=RECIPE_DRAFT_LIMIT, client=None, db_path=
                 output_config={"format": {"type": "json_schema", "schema": _SCHEMA}},
                 messages=[{"role": "user", "content": _prompt(item["name"], ingredients, context)}])
             text = next((b.text for b in msg.content if getattr(b, "type", "") == "text"), "")
-            out = json.loads(text)
+            try:
+                out = json.loads(text)
+            except ValueError:
+                # Billed, and useless: the ledger says so (fix round G, #52).
+                from ai_utils import mark_outcome
+                mark_outcome(msg, "unparseable", reason="recipe draft was not JSON")
+                raise
         except Exception as e:
             import ops
             ops.capture(e, job="recipe_draft", context=f"restaurant_id={restaurant_id} item={item.get('id')}")
@@ -522,6 +528,8 @@ def extract_from_image(restaurant_id, data, media_type, user_id=None, client=Non
     try:
         out = json.loads(text)
     except ValueError:
+        from ai_utils import mark_outcome
+        mark_outcome(msg, "unparseable", reason="recipe card read was not JSON")
         raise RecipePhotoError("The card couldn't be read. Try a clearer photo.")
     dish = (out.get("menu_item_name") or "").strip()[:120]
     if not dish:

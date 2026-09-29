@@ -176,7 +176,8 @@ def test_the_quarterly_job_skips_a_paused_account_and_respects_the_monthly_switc
     monkeypatch.setattr(emails, "send_quarterly_summary_email",
                         lambda **kw: calls.append(kw) or emails.SendResult(True))
     out = scheduler.run_quarterly_summaries()
-    assert out == {"sent": 1, "skipped": 2, "failed": 0}
+    # The standard counts of a scheduled job (fix round D, #39) beside `sent`.
+    assert out == {"attempted": 1, "ok": 1, "failed": 0, "skipped": 2, "hit_bound": False, "sent": 1}
 
 
 def test_the_quarterly_slot_fires_on_the_first_of_a_quarter_only():

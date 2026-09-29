@@ -78,6 +78,22 @@ def test_a_churned_restaurant_is_not_fetched(db_path, monkeypatch):
     assert sorted(reached) == [ACTIVE]
 
 
+def test_a_deletion_notice_does_not_stop_the_fetch(db_path, monkeypatch):
+    """Integration (B2): an account with a deletion request is served until
+    the offboarding deletes it or it churns — the request can be withdrawn,
+    and skipping it left a hole in the owner's reviews for the notice."""
+    import scheduler
+    _pair(db_path, module_reviews=1)
+    conn = sqlite3.connect(db_path)
+    conn.execute("UPDATE restaurants SET deletion_requested_at=datetime('now','-3 days')")
+    conn.commit()
+    conn.close()
+    reached = _quiet_fetch(monkeypatch)
+    monkeypatch.setattr(scheduler, "auto_approve_five_stars", lambda *a, **k: 0)
+    scheduler.run_daily_fetch()
+    assert sorted(reached) == [ACTIVE], "the notice period is still service; a churned account is not"
+
+
 # ── R3 #8: not auto-published ──────────────────────────────────────────────
 
 def test_a_churned_restaurant_is_never_auto_published(db_path, monkeypatch):

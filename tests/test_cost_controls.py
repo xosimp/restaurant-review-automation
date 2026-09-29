@@ -108,6 +108,14 @@ def test_every_places_caller_goes_through_the_metered_helper(db_path):
         if os.path.basename(path) == "ai_utils.py":
             continue
         src = open(path, encoding="utf-8").read()
+        if os.path.basename(path) == "provider_health.py":
+            # The hourly key probe (fix round F, #29) is the one exception,
+            # and nothing billable: it asks Place Details for place_id alone
+            # — Google's no-charge ID-refresh SKU — and must reach Google
+            # while the Places breaker is open, or it could never see a
+            # repaired key. One request, that field only.
+            assert src.count("maps.googleapis.com") == 1 and '"fields": "place_id"' in src
+            continue
         assert "maps.googleapis.com" not in src, f"{os.path.basename(path)} calls Places around places_request"
     for mod in (competitor, fetcher, weather, first_look):
         assert "places_request" in inspect.getsource(mod), f"{mod.__name__} no longer uses places_request"

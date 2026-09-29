@@ -15,9 +15,9 @@ list reads it:
     long network-bound sweep runs on instead of the loop thread (`lane`).
 
 A job's NAME is the name ops.run_job records it under (job_runs.job).
-tests/test_fix_d_jobs_registry.py fails when a `run_job("…")` in the loop has
-no entry here, or an entry here is never run — the two lists cannot drift
-again.
+tests/test_fix_d_jobs.py fails when a `run_job("…")` in the loop has no
+entry here, or an entry here is never run — the two lists cannot drift
+again — and runs every entry's target to hold it to the standard counts.
 
 Fields
 ------
@@ -101,6 +101,13 @@ JOBS = {
         cadence="hourly, until 11am local", sla_minutes=_H, sends=False, runnable=True,
         label="POS retry", description="Retry failed POS syncs whose retry is due (+1h, +3h, +6h; never an auth failure)",
         target=("scheduler", "run_pos_retry"), max_minutes=25),
+    "stripe_reconcile": dict(
+        # Reads Stripe; never changes a billing status (billing_jobs, #115).
+        cadence="3:30am CT nightly", sla_minutes=_D, sends=False, runnable=True,
+        label="Stripe reconcile",
+        description="Refresh the subscription mirror from Stripe and record where Stripe and the local billing state "
+                    "disagree (bounded, resumable)",
+        target=("billing_jobs", "reconcile_stripe"), max_minutes=20, retry=True),
     "loss_sync": dict(
         cadence="3am CT nightly", sla_minutes=_D, sends=False, runnable=True,
         label="Loss sync", description="Pull comps, voids and refunds from POSes that report them",
@@ -161,6 +168,12 @@ JOBS = {
         cadence="6am CT daily", sla_minutes=_D, sends=False, runnable=True,
         label="Outcome rechecks", description="Re-check measured results at 90 days and accrue measured savings day by day",
         target=("strategy_jobs", "run_outcome_rechecks"), max_minutes=20, retry=True),
+    "value_figures": dict(
+        cadence="6am CT daily, after outcome evaluations (Intel lane)", sla_minutes=_D, sends=False, runnable=True,
+        label="Value figures",
+        description="Each restaurant's four value figures into value_figures_daily, which the Intelligence page "
+                    "sums (bounded, resumable)",
+        target=("intelligence.dashboard", "snapshot_value_figures"), max_minutes=55, lane="intel"),
     "competitor_analysis": dict(
         cadence="Mon 6am CT (catch-up to Wed), then a daily retry", sla_minutes=_W, sends=False, runnable=True,
         label="Competitor analysis", description="Weekly competitor analysis for full-tier clients (Places + Claude), on the Intel lane",
@@ -184,6 +197,19 @@ JOBS = {
         cadence="8am / 12pm / 4pm / 8pm CT", sla_minutes=16 * 60, sends=True, runnable=True,
         label="Review fetch", description="Fetch new reviews, analyse, draft replies, alert owners (bounded, resumable)",
         target=("scheduler", "run_daily_fetch"), max_minutes=200),
+    "provider_probes": dict(
+        cadence="hourly", sla_minutes=_H, sends=True, runnable=True,
+        label="Provider probes",
+        description="One authenticated, non-sending call per provider (Resend, Twilio, Anthropic, Stripe, Places, "
+                    "APNs); pages Will when one starts failing",
+        target=("provider_health", "run_probes"), max_minutes=10),
+    "business_metrics": dict(
+        cadence="11:50pm CT nightly (a missed night is taken before 6am)", sla_minutes=_D, sends=False,
+        runnable=True, label="Business metrics",
+        description="The day's MRR, accounts, signups, churn, active users and costs into business_metrics_daily "
+                    "(never pruned), and each paying account's churn-risk state",
+        target=("admin_ops", "snapshot_business_metrics"), run_kwargs=lambda now: {"day": now.date().isoformat()},
+        max_minutes=15, retry=True),
     "ops_failure_digest": dict(
         cadence="8am CT daily", sla_minutes=_D, sends=True, runnable=True,
         label="Failure digest", description="Email Will what failed, what is stuck and what is overdue since the last digest",
@@ -247,6 +273,22 @@ JOBS = {
         label="Onboarding", description="Day-2 / 7 / 30 onboarding and the 60 / 90 / 180-day lifecycle emails",
         target=("scheduler", "run_onboarding_sequence"), run_kwargs={"local_hour": 10}, claim="onboarding",
         max_minutes=30),
+    "onboarding_nudges": dict(
+        cadence="hourly (11am local)", sla_minutes=_H, sends=True, runnable=True,
+        label="Onboarding nudges",
+        description="One email per missing setup step (Google, brand voice, first approval, the app), each step once",
+        target=("scheduler", "run_onboarding_nudges"), run_kwargs={"local_hour": 11}, max_minutes=30),
+    "contract_chase": dict(
+        cadence="10am CT daily", sla_minutes=_D, sends=True, runnable=True,
+        label="Contract chase",
+        description="Re-send the pay link on days 2, 5 and 9 after signing to a client who has not paid",
+        target=("billing_jobs", "run_contract_chase"), max_minutes=5),
+    "dunning": dict(
+        cadence="hourly", sla_minutes=_H, sends=True, runnable=True,
+        label="Dunning",
+        description="Owe a dunning email for a failed invoice attempt the Stripe webhook missed, stand down dunning "
+                    "for invoices since paid, then send",
+        target=("billing_jobs", "run_dunning"), max_minutes=5),
     "stale_inventory": dict(
         cadence="Mon 10am CT", sla_minutes=_W, sends=True, runnable=True,
         label="Stale inventory", description="Email Will the clients whose inventory data is stale",
@@ -323,10 +365,17 @@ JOBS = {
         cadence="every tick (each restaurant's own brief hour)", sla_minutes=60, sends=True, runnable=True,
         label="Morning brief", description="Each restaurant's brief, once, at or after its own local hour (bounded, resumable)",
         target=("morning_brief", "run_due"), max_minutes=20),
+    "owed_sends": dict(
+        cadence="every tick", sla_minutes=60, sends=True, runnable=True,
+        label="Owed billing mail",
+        description="Send the billing email a signing or a Stripe event owes (receipts, dunning, the set-password "
+                    "welcome, pay reminders): each row claimed before its send, retried with backoff",
+        target=("billing_jobs", "run_owed_sends"), max_minutes=5),
     "minute_duties": dict(
         cadence="every tick, and every pulse during a long job", sla_minutes=60, sends=True, runnable=False,
         label="Minute duties",
-        description="Scheduled posts, delayed actions, issue escalations, held alerts, newsletter and campaign sends",
+        description="Scheduled posts, delayed actions, issue escalations, held alerts, newsletter and campaign "
+                    "sends, and the push and webhook outboxes a restart left behind",
         target=("scheduler", "_minute_duties"), max_minutes=20),
     "prune_login_attempts": dict(
         cadence="daily", sla_minutes=_D, sends=False, runnable=True,

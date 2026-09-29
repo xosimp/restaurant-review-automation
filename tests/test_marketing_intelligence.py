@@ -265,7 +265,10 @@ def test_guest_matching_asks_the_connected_pos_and_refuses_one_that_cannot(db_pa
     conn.execute("INSERT INTO guest_campaign_recipients (campaign_id, restaurant_id, contact_id, phone) VALUES (?,?,?,?)",
                  (cur.lastrowid, rid, 1, "+13125550100"))
     conn.commit(); conn.close()
-    assert gm.run_campaign_attribution(db_path=db_path) == {"campaigns_checked": 0, "visits_matched": 0}
+    # The standard counts (fix round D, #39): the restaurant is skipped, not attempted.
+    assert gm.run_campaign_attribution(db_path=db_path) == {
+        "attempted": 0, "ok": 0, "failed": 0, "skipped": 1, "hit_bound": False,
+        "campaigns_checked": 0, "visits_matched": 0}
     # once the provider can answer, the same store is matched without any Toast field
     fake.fetch_order_customers = lambda r, d: []
     assert pos.supports(rid, "fetch_order_customers")

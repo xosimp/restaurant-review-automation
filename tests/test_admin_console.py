@@ -115,7 +115,7 @@ def test_search_says_what_kind_of_thing_it_found(client, db_path, monkeypatch):
 
 def test_job_runs_are_recorded_by_run_job(db_path):
     import ops
-    ops.run_job("probe_job", lambda: 42)
+    ops.run_job("probe_job", lambda: {"attempted": 1, "ok": 1, "failed": 0, "skipped": 0, "hit_bound": False})
     ops.run_job("probe_job_bad", lambda: 1 / 0)
     conn = get_conn(db_path)
     rows = {r[0]: (r[1], r[2]) for r in conn.execute("SELECT job, ok, error FROM job_runs").fetchall()}

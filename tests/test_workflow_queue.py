@@ -173,6 +173,28 @@ def test_the_lineup_nudge_texts_the_routed_manager_not_staff(db_path, monkeypatc
     assert strategy_jobs.run_preshift_nudge(db_path=db_path)["sent"] == 0, "once a day"
 
 
+def test_the_lineup_text_is_its_restaurants_in_the_sms_ledger(db_path, monkeypatch):
+    """Integration (E #14): the text is sent inside notify.sms_context, so
+    sms_log files it under the restaurant it was about."""
+    import issues, notify, preshift, strategy_jobs, time_utils, auth
+    auth.init_auth(db_path=db_path)
+    rid = _rid(db_path)
+    models.update_restaurant(rid, {"preshift_nudge_hour": 16}, db_path=db_path)
+    conn = get_conn(db_path)
+    cid = conn.execute("INSERT INTO alert_contacts (restaurant_id, name, phone, sms_consent) "
+                       "VALUES (?, 'GM', '+15555550100', 1)", (rid,)).lastrowid
+    conn.commit(); conn.close()
+    issues.set_routing(rid, "manager", cid, db_path=db_path)
+    monkeypatch.setattr(preshift, "build", lambda *a, **k: {"items": [
+        {"kind": "watch", "text": "Watch service speed tonight."}]})
+    monkeypatch.setattr(time_utils, "restaurant_now", lambda r, naive=False: datetime(2026, 9, 21, 16, 10))
+    attributed = []
+    monkeypatch.setattr("notify.send_sms", lambda to, msg, use_case="alert":
+                        attributed.append(getattr(notify._sms_local, "rid", None)) or True)
+    assert strategy_jobs.run_preshift_nudge(db_path=db_path)["sent"] == 1
+    assert attributed == [rid]
+
+
 def test_the_nudge_is_off_by_default_and_silent_with_nothing_to_say(db_path, monkeypatch):
     import issues, preshift, strategy_jobs, time_utils, auth
     auth.init_auth(db_path=db_path)

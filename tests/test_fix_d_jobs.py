@@ -122,11 +122,10 @@ def test_the_opt_in_invite_run_uses_each_restaurants_own_day():
 
 # ── #39: the standard counts ────────────────────────────────────────────────
 
-# Scheduled functions other workstreams own; the integration wave brings
-# them onto the counts (their shapes are read by ops.standard_counts until).
-_PENDING = {"run_weekly_digests", "run_onboarding_sequence", "run_monthly_summaries",
-            "run_quarterly_summaries", "run_features", "run_learning", "run_reservation_sync",
-            "run_toast_optin_invites", "run_review_request_followups", "run_campaign_attribution"}
+# Scheduled functions not yet on the counts. Empty since the integration
+# wave brought the other workstreams' jobs onto them (and ops.run_outcome
+# stopped reading a result without counts as a clean run).
+_PENDING = set()
 _KEYS = {"attempted", "ok", "failed", "skipped", "hit_bound"}
 
 

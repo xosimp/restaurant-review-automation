@@ -141,20 +141,29 @@ def test_a_deletion_request_is_critical_with_its_due_date(db_path):
 # ── #58: failed jobs are jobs ───────────────────────────────────────────────
 
 def test_ai_quality_findings_are_not_failed_jobs(db_path):
+    """AI output findings are ai_quality_events rows (fix round G, #58) —
+    never job_failures — counted apart from failed jobs, and a job_failures
+    row is judged by its kind column (fix round D)."""
+    import ai_utils
     import ops
+    rid = _mk(db_path, "Quality Co")
     for _ in range(6):
-        ops.capture(RuntimeError("labor_insight stated figures not present in its input: ['$9']"),
-                    job="labor_insight", context="restaurant_id=1", db_path=db_path)
-    ops.capture(RuntimeError("Toast 500"), job="pos_sync", context="restaurant_id=1", db_path=db_path)
+        ai_utils.record_quality_event("labor_insight", "figures", restaurant_id=rid,
+                                      detail="stated figures not present in its input: ['$9']", db_path=db_path)
+    ops.capture(RuntimeError("Toast 500"), job="pos_sync", context=f"restaurant_id={rid}", db_path=db_path)
     ov = admin_ops.overview()
     assert ov["kpis"]["job_failures_24h"] == 1 and ov["kpis"]["ai_quality_24h"] == 6
+    assert ov["kpis"]["job_kind_basis"] == "job_failures.kind"
     keys = {i["key"] for i in ov["issues"]}
     assert "job:pos_sync" in keys and "job:labor_insight" not in keys
-    # With job_failures.kind (workstream D) the column decides.
-    _sql(db_path, "ALTER TABLE job_failures ADD COLUMN kind TEXT NOT NULL DEFAULT 'job'")
-    _sql(db_path, "UPDATE job_failures SET kind='ai_quality' WHERE job='labor_insight'")
+    # The column decides: a failure captured as an AI finding is one, whatever its text.
+    ops.capture(RuntimeError("guard finding"), job="labor_insight", context=f"restaurant_id={rid}",
+                kind="ai_quality", db_path=db_path)
     k = admin_ops.overview()["kpis"]
-    assert k["job_failures_24h"] == 1 and k["job_kind_basis"] == "job_failures.kind"
+    assert k["job_failures_24h"] == 1 and k["ai_quality_24h"] == 7
+    quality = admin_ops.client_detail(rid)["ai_quality"]
+    assert len(quality) == 7 and {q["source"] for q in quality} == {"ai_quality_events", "job_failures"}
+    assert [j["job"] for j in admin_ops.client_detail(rid)["jobs"]] == ["pos_sync"]
 
 
 # ── #59: bounces and complaints are not deliveries ─────────────────────────
@@ -203,7 +212,14 @@ def test_queues_report_counts_oldest_and_failures(db_path):
     q = {x["key"]: x for x in admin_ops.queues()["queues"]}
     d = q["delayed_actions"]
     assert d["available"] and d["pending"] == 1 and d["failed_24h"] == 1 and 1.9 < d["oldest_pending_age_hours"] < 2.1
-    assert q["push_outbox"]["available"] is False        # no queued state column yet (workstream E)
+    # E's outboxes are merged: the queue is push_outbox itself (it was
+    # "unavailable" while only push_deliveries existed).
+    _sql(db_path, "INSERT INTO push_outbox (restaurant_id, device_token_id, alert_type, state, created_at) "
+                  "VALUES (?, 1, 'digest', 'queued', datetime('now','-30 minutes'))", (rid,))
+    _sql(db_path, "INSERT INTO push_outbox (restaurant_id, device_token_id, alert_type, state, done_at) "
+                  "VALUES (?, 1, 'digest', 'expired', datetime('now'))", (rid,))
+    p = {x["key"]: x for x in admin_ops.queues()["queues"]}["push_outbox"]
+    assert p["available"] and p["pending"] == 1 and p["failed_24h"] == 1
 
 
 # ── #62: actions that act ───────────────────────────────────────────────────
@@ -238,16 +254,23 @@ def test_search_finds_phone_place_envelope_and_pos_ids(db_path):
 # ── #67: a client's own job failures ────────────────────────────────────────
 
 def test_client_job_failures_match_the_restaurant_exactly(db_path):
+    """By job_failures.restaurant_id (fix round D, #67), which capture stamps
+    from a "restaurant_id=N" / "rid=N" context or takes as an argument: rid 5
+    never matches rid 50, and a context that only names the restaurant
+    matches nothing."""
     import ops
     rid = _mk(db_path, "Five")
     ops.capture(RuntimeError("mine"), job="pos_sync", context=f"restaurant_id={rid}", db_path=db_path)
     ops.capture(RuntimeError("theirs"), job="pos_sync", context=f"rid={rid}0", db_path=db_path)
     ops.capture(RuntimeError("named"), job="pos_sync", context="Five", db_path=db_path)
-    jobs = admin_ops.client_detail(rid)["jobs"]
-    assert [j["error"] for j in jobs] == ["mine"]
-    _sql(db_path, "ALTER TABLE job_failures ADD COLUMN restaurant_id INTEGER")
-    _sql(db_path, "UPDATE job_failures SET restaurant_id=? WHERE error='named'", (rid,))
-    assert [j["error"] for j in admin_ops.client_detail(rid)["jobs"]] == ["named"]
+    assert [j["error"] for j in admin_ops.client_detail(rid)["jobs"]] == ["mine"]
+    # The column decides, not the text: passed with a context that names no
+    # restaurant, it matches; a row stamped for another restaurant does not,
+    # whatever its context says.
+    ops.capture(RuntimeError("explicit"), job="pos_sync", context="toast sync", restaurant_id=rid, db_path=db_path)
+    ops.capture(RuntimeError("elsewhere"), job="pos_sync", context=f"restaurant_id={rid}", restaurant_id=rid + 1,
+                db_path=db_path)
+    assert [j["error"] for j in admin_ops.client_detail(rid)["jobs"]] == ["explicit", "mine"]
 
 
 # ── #71: adoption is use, not entitlement ──────────────────────────────────
@@ -312,7 +335,8 @@ def test_notification_figures(db_path):
     n = admin_ops.notifications()
     row = next(e for e in n["engagement"] if e["alert_type"] == "1star")
     assert (row["alerts"], row["delivered"], row["opened"], row["open_rate"]) == (12, 4, 1, 25.0)
-    assert n["storm_counts"]["today"] == 1 and n["auto_caps_supported"] is False
+    # E's alert_storm_caps is merged: automatic caps are read (none is on here).
+    assert n["storm_counts"]["today"] == 1 and n["auto_caps_supported"] is True and n["auto_caps"] == []
     assert n["posts_failed_total"] == 65 and len(n["scheduled_posts"]) == 60
     assert _rec(rid)["scheduled_posts"]["pending"] == 5
 

@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS push_outbox (
     done_at         TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_push_outbox_state ON push_outbox(state, created_at);
+CREATE INDEX IF NOT EXISTS idx_push_outbox_created ON push_outbox(created_at);
 """
 
 

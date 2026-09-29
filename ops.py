@@ -14,6 +14,7 @@ watchdog and the operator's out-of-band pages (SMS, email, push, and an
 external dead-man ping), and the backup ledger.
 """
 import collections.abc
+import contextlib
 import logging
 import re
 import sqlite3
@@ -56,6 +57,31 @@ def _ensure_table(conn):
     conn.execute(_TABLE_SQL)
 
 
+# What a failure captured before job_failures.kind existed was, read from its
+# job name and text (#58): AI output checks and console request errors were
+# ops.capture calls like any failed job until fix rounds D and G. Used once,
+# when the boot migration adds the column, and by the console on a database
+# that has not had it yet — never for a row that carries its kind.
+_AI_QUALITY_JOBS = frozenset(("safety_disagreement", "ai_quality"))
+_AI_QUALITY_MARKERS = ("stated figures not present in its input", "rated normal urgency", "unsupported figure",
+                       "validation refused", "refused by validation", "cause claim", "citation dropped",
+                       "stated a cause no stored diagnosis supports", "attached figures to the wrong fact",
+                       "bullet dropped", "dsr narrative truncated", "dsr narrative failed validation",
+                       "dsr narrative lead refused", "dsr narrative dropped")
+_REQUEST_JOBS = frozenset(("admin_console", "request"))
+
+
+def infer_failure_kind(job, error):
+    """job | request | ai_quality for a failure with no kind of its own."""
+    job = str(job or "").lower()
+    err = str(error or "").lower()
+    if job in _AI_QUALITY_JOBS or any(m in err for m in _AI_QUALITY_MARKERS):
+        return "ai_quality"
+    if job in _REQUEST_JOBS:
+        return "request"
+    return "job"
+
+
 def restaurant_id_from(context):
     """The restaurant a context string names ("restaurant_id=N" or "rid=N"),
     or None — so the capture sites that already say which restaurant they
@@ -90,6 +116,19 @@ def capture(exc, job="unknown", context="", db_path=None, restaurant_id=None, ki
     except (TypeError, ValueError):
         rid = None
     kind = kind if kind in CAPTURE_KINDS else "job"
+    tb = getattr(exc, "__traceback__", None) if isinstance(exc, BaseException) else None
+    if tb is not None:
+        # A raised exception's traceback reaches the log (#38): it used to
+        # stop at this table and Sentry. Redacted like the row — a traceback
+        # ends with the exception's own text, URL and key= included.
+        try:
+            import traceback as _traceback
+            from ai_guard import redact_secrets
+            text = redact_secrets("".join(_traceback.format_exception(type(exc), exc, tb)))
+            log.warning("captured %s failure: %s", job, redact_secrets(str(exc))[:300],
+                        extra={"traceback": text[-6000:], "restaurant_id": rid})
+        except Exception:
+            pass
     try:
         from models import get_conn
         conn = get_conn(db_path) if db_path else get_conn()
@@ -200,12 +239,19 @@ def run_outcome(result):
     is 1; every attempt failed is 0; anything between — or a pass the time
     bound cut short — is 2 (partial). One failure among a hundred sends is a
     PARTIAL run, never a failed one (#150): without an `attempted` of its
-    own, every other number the job counted is a success. Any other return
-    value is a clean run."""
+    own, every other number the job counted is a success.
+
+    Every scheduled job returns its counts or raises (#39), so a result
+    without counts is no longer taken for a clean run: False is a failed
+    run, True a clean one (an explicit yes), and anything else — a bare
+    None, a dict counting nothing recognisable — partial, so the Jobs page
+    shows amber instead of a green run that proved nothing."""
     import json as _json
     counts = standard_counts(result)
     if counts is None:
-        return RUN_OK, None
+        if result is True:
+            return RUN_OK, None
+        return (RUN_FAILED if result is False else RUN_PARTIAL), None
     failed, attempted = counts["failed"], counts["attempted"]
     state = RUN_OK
     if failed and attempted and failed >= attempted:
@@ -495,6 +541,8 @@ def init_ops(db_path=None):
             for col, typ in columns:
                 if col not in have:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+                    if (table, col) == ("job_failures", "kind"):
+                        _classify_legacy_failures(conn)
         for sql in (
             # The retention deletes in prune_ledgers (DATA-40), and the
             # dead-run lookup in _reclaim_dead_run.
@@ -524,6 +572,18 @@ def init_ops(db_path=None):
         conn.commit()
     finally:
         conn.close()
+
+
+def _classify_legacy_failures(conn):
+    """Give the rows captured before job_failures.kind existed their kind,
+    once, as the column is added: the column's default made every one a
+    failed job, so the AI output checks and console request errors of the
+    last weeks would have read as "Job X failed" until they aged out."""
+    rows = conn.execute("SELECT id, job, error FROM job_failures").fetchall()
+    for fid, job, error in rows:
+        kind = infer_failure_kind(job, error)
+        if kind != "job":
+            conn.execute("UPDATE job_failures SET kind=? WHERE id=?", (kind, fid))
 
 
 def _memo_claim(key, reason):
@@ -1073,6 +1133,16 @@ def run_admin_task(kind, restaurant_id, name, fn, *args, context="", **kwargs):
         if _admin_pool is None:
             _admin_pool = concurrent.futures.ThreadPoolExecutor(max_workers=max(1, ADMIN_TASK_WORKERS),
                                                                 thread_name_prefix="admin-task")
+    # Who asked, taken here on the request thread: in the pool thread the
+    # request is gone, and every model call would read as 'system' (#148).
+    try:
+        import ai_utils as _ai
+        attribution = _ai.attribution_for_thread()
+        attribution["trigger"] = attribution.get("trigger") if attribution.get("trigger") not in (None, "system") \
+            else "admin"
+        attribution["correlation_id"] = attribution.get("correlation_id") or f"admin:{kind}:{job_id}"
+    except Exception:
+        _ai, attribution = None, {}
 
     def _go():
         outcome = {}
@@ -1081,7 +1151,8 @@ def run_admin_task(kind, restaurant_id, name, fn, *args, context="", **kwargs):
             outcome["result"] = fn(*a, **k)
             return outcome["result"]
         try:
-            run_job(name, body, *args, context=context, restaurant_id=restaurant_id, **kwargs)
+            with (_ai.ai_context(**attribution) if _ai is not None else contextlib.nullcontext()):
+                run_job(name, body, *args, context=context, restaurant_id=restaurant_id, **kwargs)
             res = outcome.get("result")
             state = run_outcome(res)[0] if "result" in outcome else RUN_FAILED
             finish_async_job(job_id, "done" if state != RUN_FAILED else "error",
@@ -1138,33 +1209,76 @@ def run_job(name, fn, *args, context="", db_path=None, claim=None, restaurant_id
     if run_id is not None:
         threading.Thread(target=_pulse_run, args=(run_id, db_path, stop), daemon=True,
                          name=f"run-pulse-{name}").start()
+    job_ctx = _job_context(name, run_id)
+    job_ctx.__enter__()
     try:
         result = fn(*args, **kwargs)
         state, blob = run_outcome(result)
         err = None
-        if state != RUN_OK and isinstance(result, dict):
-            counts = standard_counts(result) or {}
+        counts = standard_counts(result)
+        if counts is not None and state != RUN_OK:
             err = (f"{counts.get('failed') or 0} of {counts.get('attempted') or 0} failed"
                    + (" · stopped at its time bound" if counts.get("hit_bound") else ""))
-        if state == RUN_OK:
+        elif counts is None and state != RUN_OK:
+            err = "the job returned False" if result is False else "the job returned no counts (#39)"
+        if state == RUN_OK or counts is None:
             captured = _failures_during(names, run_id, db_path=db_path)
             if captured:
-                state = RUN_PARTIAL
-                err = f"{captured} failure{'s' if captured != 1 else ''} captured during the run"
+                state = RUN_PARTIAL if state == RUN_OK else state
+                err = f"{captured} failure{'s' if captured != 1 else ''} captured during the run" + (
+                    f"; {err}" if err else "")
         _record_run_end(run_id, started, state, err, db_path=db_path, result_json=blob)
         return result
     except Exception as e:
-        log.error(f"Job '{name}' crashed: {e}")
+        # Inside the job's log context, so the line carries job=<name>;
+        # capture() logs the traceback (redacted) beside it (#38).
+        log.error("Job '%s' crashed: %s", name, _redacted(e))
         capture(e, job=name, db_path=db_path, restaurant_id=restaurant_id)
         _record_run_end(run_id, started, RUN_FAILED, e, db_path=db_path)
         return None
     finally:
+        job_ctx.__exit__(None, None, None)
         stop.set()
         with _running_lock:
             for n in names:
                 _running_jobs[n] -= 1
                 if not _running_jobs[n]:
                     del _running_jobs[n]
+
+
+@contextlib.contextmanager
+def _job_context(name, run_id):
+    """What one job run carries while it runs: `job=<name>` on every log
+    line (logging_setup.context, #38), and the AI attribution of every model
+    and Places call it makes (ai_utils.ai_context, #148) — trigger
+    "scheduler" and correlation id "job:<name>:<run id>", unless the caller
+    already said otherwise (an admin's Run now, an owner's background task:
+    their trigger and correlation id stand). Neither can fail the job."""
+    with contextlib.ExitStack() as stack:
+        try:
+            import logging_setup
+            stack.enter_context(logging_setup.context(job=name))
+        except Exception as e:
+            log.debug(f"job log context unavailable: {e}")
+        try:
+            import ai_utils
+            outer = ai_utils.current_ai_context()
+            stack.enter_context(ai_utils.ai_context(
+                trigger=None if outer.get("trigger") else "scheduler",
+                correlation_id=None if outer.get("correlation_id") else f"job:{name}:{run_id}"))
+        except Exception as e:
+            log.debug(f"job AI context unavailable: {e}")
+        yield
+
+
+def _redacted(exc):
+    """An exception's text with secrets taken out (a requests error carries
+    the URL it failed on, and a Places URL carries key=) — for log lines."""
+    try:
+        from ai_guard import redact_secrets
+        return redact_secrets(str(exc))[:500]
+    except Exception:
+        return type(exc).__name__
 
 
 def is_running(name) -> bool:
@@ -1394,18 +1508,20 @@ def write_probe(db_path=None, timeout=2.0):
     """(ok, error): can the database take a write right now? BEGIN
     IMMEDIATE takes the write lock without writing anything, then ROLLBACK.
     A full, locked or read-only database answered SELECT 1 perfectly well
-    and passed /health (#105)."""
+    and passed /health (#105).
+
+    One implementation: status_manager.db_write_probe, which /health and the
+    system card use too. Its "busy" (the lock held past `timeout`) is not ok
+    here — the SLA check reports a database that would not take a write
+    when it looked."""
     try:
-        from models import DB_PATH
-        conn = sqlite3.connect(db_path or DB_PATH, timeout=float(timeout))
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            conn.execute("ROLLBACK")
-            return True, None
-        finally:
-            conn.close()
+        import status_manager
+        st = status_manager.db_write_probe(db_path=db_path, timeout_ms=int(float(timeout) * 1000))
     except Exception as e:
         return False, str(e)[:200]
+    if st.get("state") == "ok":
+        return True, None
+    return False, (st.get("error") or st.get("state") or "write probe failed")[:200]
 
 
 def _dsr_missing(db_path=None):
@@ -1434,17 +1550,23 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
         paged over channels that need no database write (#28, #105);
       * the newest backup is older than 26 hours, or has no off-site copy
         (#2);
-      * a DSR night is missing past its deadline (#17).
+      * a DSR night is missing past its deadline (#17);
+      * a messaging channel is broken (notify.messaging_problems, fix round
+        E): an inbound webhook refusing every request, no verified Resend
+        event while mail goes out, Twilio account errors, an operator
+        address suppressed. Read only when paging (send=True) — /health's
+        read-only call does not publish or need them.
 
     Only where the scheduler is meant to run (scheduler.scheduling_allowed):
     a laptop has no scheduler and must not page anyone. Owners are never
     contacted from here. Never raises. `write_ok` is the caller's own write
     probe (/health may already have run one)."""
     out = {"heartbeat_minutes": None, "loop_minutes": None, "running_job": None, "jobs_overdue": [],
-           "disk": None, "write_ok": None, "backup": None, "dsr_missing": [], "problems": [], "alerted": False}
+           "disk": None, "write_ok": None, "backup": None, "dsr_missing": [], "messaging": [], "problems": [],
+           "alerted": False}
     try:
         import status_manager
-        state = status_manager.scheduler_state()
+        state = status_manager.scheduler_state(db_path)
         out["heartbeat_minutes"] = state.get("beat_age_minutes")
         out["loop_minutes"] = state.get("loop_completed_age_minutes")
         out["running_job"] = state.get("running_job")
@@ -1468,6 +1590,12 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     out["write_ok"] = bool(write_ok)
     out["backup"] = backup_status(db_path=db_path)
     out["dsr_missing"] = _dsr_missing(db_path=db_path)
+    if send:
+        try:
+            import notify
+            out["messaging"] = list(notify.messaging_problems(db_path=db_path) or [])
+        except Exception as e:
+            log.warning(f"messaging health unavailable to the platform check: {e}")
 
     problems = []
     hb = out["heartbeat_minutes"]
@@ -1494,6 +1622,7 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
         names = ", ".join(str(m.get("restaurant") or m.get("restaurant_id")) for m in out["dsr_missing"][:4])
         problems.append(f"Daily Sales Report missing past its deadline for {len(out['dsr_missing'])} "
                         f"restaurant{'s' if len(out['dsr_missing']) != 1 else ''}: {names}.")
+    problems.extend(f"Messaging: {m}" for m in out["messaging"])
     out["problems"] = problems
     if not problems or not send:
         return out
@@ -1983,6 +2112,28 @@ _RETENTION_DAYS = {
     "backup_runs":        int(os.getenv("RETAIN_BACKUP_RUNS_DAYS", "400")),
     "job_run_requests":   int(os.getenv("RETAIN_JOB_RUN_REQUESTS_DAYS", "90")),
     "missed_windows":     int(os.getenv("RETAIN_MISSED_WINDOWS_DAYS", "90")),
+    # The other workstreams' ledgers, registered by the integration wave.
+    # business_metrics_daily is NOT here, on purpose: it is the history MRR
+    # and account trends are drawn from, and nothing earlier is rebuilt.
+    # The platform telemetry (request_rollups, http_5xx_log, boot_events,
+    # provider_health) is pruned hourly by the web process's supervisor
+    # (platform_monitor.TELEMETRY_RETENTION_DAYS) — one pruner, not two.
+    # The AI-operations tables are ai_utils.prune_ai_ops', run by the
+    # rollup below.
+    "value_figures_daily": int(os.getenv("RETAIN_VALUE_FIGURES_DAYS", "120")),
+    "admin_issue_resolution_history": int(os.getenv("RETAIN_RESOLUTION_HISTORY_DAYS", "400")),
+    "sms_log":            int(os.getenv("RETAIN_SMS_LOG_DAYS", "90")),
+    "push_outbox":        int(os.getenv("RETAIN_PUSH_OUTBOX_DAYS", "30")),
+    "webhook_outbox":     int(os.getenv("RETAIN_WEBHOOK_OUTBOX_DAYS", "30")),
+    "morning_brief_deliveries": int(os.getenv("RETAIN_BRIEF_DELIVERIES_DAYS", "90")),
+    "alert_storm_caps":   int(os.getenv("RETAIN_ALERT_STORM_CAPS_DAYS", "365")),
+    # The sign-in record: 90 days, auth.LOGIN_HISTORY_RETENTION_DAYS, which
+    # auth.prune_login_history also applies at boot. Its created_at index is
+    # auth.AUTH_INDEXES' idx_login_history_created (INT-2), made at boot with
+    # the table — after this module's own boot init, so it is not made here.
+    "login_history":      int(os.getenv("RETAIN_LOGIN_HISTORY_DAYS", "90")),
+    # view_as_sessions is not here: auth.record_view_as_session deletes its
+    # rows past two days whenever a view-as opens, and one pruner per table.
 }
 
 # Each table's own timestamp column — they do not agree on a name.
@@ -1999,6 +2150,9 @@ _RETENTION_COLUMN = {
     "sessions": "expires_at", "rec_events": "at",
     "operator_alerts": "created_at", "backup_runs": "started_at", "job_run_requests": "requested_at",
     "missed_windows": "created_at",
+    "value_figures_daily": "date", "admin_issue_resolution_history": "created_at", "sms_log": "created_at",
+    "push_outbox": "created_at", "webhook_outbox": "created_at", "morning_brief_deliveries": "created_at",
+    "alert_storm_caps": "started_at", "login_history": "created_at",
 }
 # Every table above has an index on its column, created where the table is
 # or at boot here (_ensure_retention_indexes, DATA-40): these deletes run
@@ -2031,6 +2185,12 @@ def _ensure_retention_indexes(conn):
         ("ai_validation_log", "CREATE INDEX IF NOT EXISTS idx_ai_validation_log_created ON ai_validation_log(created_at)"),
         ("activity_log", "CREATE INDEX IF NOT EXISTS idx_activity_log_created ON activity_log(created_at)"),
         ("schedule_versions", "CREATE INDEX IF NOT EXISTS idx_schedule_versions_created ON schedule_versions(created_at)"),
+        # Messaging ledgers made in models.init_db before this runs (fix
+        # round E). sms_log's, the outboxes' and the resolution history's
+        # live with their own tables.
+        ("morning_brief_deliveries",
+         "CREATE INDEX IF NOT EXISTS idx_morning_brief_deliveries_created ON morning_brief_deliveries(created_at)"),
+        ("alert_storm_caps", "CREATE INDEX IF NOT EXISTS idx_alert_storm_caps_started ON alert_storm_caps(started_at)"),
     ):
         if table in have:
             try:
@@ -2177,6 +2337,19 @@ def prune_ledgers(db_path=None):
         text = str(err).lower()
         return "no such table" in text or "no such column" in text
 
+    # The AI ledger's daily rollup first (fix round G, #70): ai_usage_daily
+    # and ai_validation_daily are never pruned, so what the raw rows said
+    # outlives them. models.prune_operational_logs ran it, and is no longer
+    # scheduled. A rollup that failed keeps tonight's raw AI rows.
+    rolled = True
+    try:
+        import ai_utils
+        ai_utils.rollup_usage(db_path)
+    except Exception as e:
+        rolled = False
+        log.error(f"prune_ledgers: the AI usage rollup failed, so the AI ledgers are kept tonight: {e}")
+        capture(e, job="prune_ledgers", context="ai_utils.rollup_usage", db_path=db_path)
+
     try:
         for table, days in _RETENTION_DAYS.items():
             if days <= 0:
@@ -2184,6 +2357,9 @@ def prune_ledgers(db_path=None):
             if time.monotonic() > deadline:
                 counts["hit_bound"] = True
                 break
+            if not rolled and table in ("ai_usage", "ai_validation_log"):
+                counts["skipped"] += 1
+                continue
             col = _RETENTION_COLUMN.get(table, "created_at")
             counts["attempted"] += 1
             try:
@@ -2431,10 +2607,23 @@ def send_operator_weekly_digest():
         recs = admin_ops.clients().get("clients") or []
     except Exception:
         recs = []
-    real = [r for r in recs if not r.get("is_demo") and not r.get("is_admin_home")]
-    at_risk = sorted([r for r in real if (r.get("churn") or {}).get("level") in ("high", "medium")],
-                     key=lambda r: -int((r.get("churn") or {}).get("score") or 0))[:8]
+    # The console's records: customer accounts only (C's segment), their
+    # churn read under `churn_risk` (level, reasons, points) — this read
+    # `churn`/`score`, keys the records never carried, so the at-risk list
+    # was always empty — and the first onboarding step not yet done.
+    real = [r for r in recs if r.get("segment", "customer") == "customer"
+            and not r.get("is_demo") and not r.get("is_admin_home")]
+
+    def _churn(r):
+        return r.get("churn_risk") or r.get("churn") or {}
+    at_risk = sorted([r for r in real if _churn(r).get("level") in ("high", "medium")],
+                     key=lambda r: -int(_churn(r).get("points") or _churn(r).get("score") or 0))[:8]
     onboarding = [r for r in real if (r.get("onboarding") or {}).get("complete") is False][:8]
+    for r in onboarding:
+        ob = r.get("onboarding") or {}
+        if not ob.get("next_step"):
+            nxt = next((st for st in ob.get("steps") or [] if not st.get("done")), None)
+            ob["next_step"] = (nxt or {}).get("label")
     b = _emails_ops.BRAND
 
     def _row(label, value):
@@ -2455,7 +2644,7 @@ def send_operator_weekly_digest():
         ("Job failures (24h)", k.get("job_failures_24h", 0)), ("Jobs overdue", k.get("jobs_overdue", 0)),
         ("AI cost today", f"${float(k.get('ai_cost_today') or 0):,.2f}")))
     risk_items = [f'<b>{_html.escape(str(r.get("name")))}</b> — '
-                  f'{_html.escape("; ".join((r.get("churn") or {}).get("reasons") or [])[:160])}' for r in at_risk]
+                  f'{_html.escape("; ".join(_churn(r).get("reasons") or [])[:160])}' for r in at_risk]
     onb_items = [f'<b>{_html.escape(str(r.get("name")))}</b> — '
                  f'{_html.escape(str((r.get("onboarding") or {}).get("next_step") or "setup incomplete"))}'
                  for r in onboarding]

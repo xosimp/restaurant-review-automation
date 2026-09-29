@@ -73,12 +73,12 @@ def sync(restaurant_id, days: int = 21, db_path=DB_PATH) -> dict:
     code = (getattr(r, "reservation_provider", None) or "").strip().lower()
     p = PROVIDERS.get(code)
     if not p:
-        return {"written": 0, "skipped": 0, "error": "no provider"}
+        return {"written": 0, "skipped": 0, "error": "no provider", "not_configured": True}
     start, end = date.today(), date.today() + timedelta(days=days)
     try:
         rows = p["fetch"](r, start, end)     # [{date, covers}]
     except NotConfigured as e:
-        return {"written": 0, "skipped": 0, "error": str(e)}
+        return {"written": 0, "skipped": 0, "error": str(e), "not_configured": True}
     except Exception as e:
         return {"written": 0, "skipped": 0, "error": f"{p['label']} sync failed: {e}"}
     out = demand_signals.save(restaurant_id, [{"date": x["date"], "kind": "reservations", "covers": x["covers"]} for x in rows],
@@ -91,7 +91,8 @@ def run_reservation_sync(db_path=DB_PATH, weekday=None) -> dict:
     Monday), only those whose schedule is drafted tomorrow, so each feed
     lands the day before its own draft (models.auto_draft_weekday; the
     scheduler runs this daily). Unconfigured ones cost one dict each and
-    are counted, not retried."""
+    are counted, not retried. Returns the standard counts (#39): a feed
+    whose provider is not live yet is skipped, one that fails is failed."""
     from models import AUTO_DRAFT_WEEKDAY_DEFAULT
     conn = get_conn(db_path)
     try:
@@ -104,11 +105,19 @@ def run_reservation_sync(db_path=DB_PATH, weekday=None) -> dict:
     ids = [r["id"] for r in rows
            if weekday is None or (r["auto_draft_weekday"] if r["auto_draft_weekday"] is not None
                                   else AUTO_DRAFT_WEEKDAY_DEFAULT) == (weekday + 1) % 7]
-    synced = skipped = 0
+    synced = skipped = failed = 0
     for rid in ids:
         res = sync(rid, db_path=db_path)
-        if res.get("error"):
+        if res.get("not_configured"):
             skipped += 1
+        elif res.get("error"):
+            failed += 1
+            try:
+                import ops
+                ops.capture(RuntimeError(res["error"]), job="reservation_sync", context=f"restaurant_id={rid}")
+            except Exception:
+                pass
         else:
             synced += 1
-    return {"synced": synced, "skipped": skipped}
+    return {"attempted": synced + failed, "ok": synced, "failed": failed, "skipped": skipped, "hit_bound": False,
+            "synced": synced}

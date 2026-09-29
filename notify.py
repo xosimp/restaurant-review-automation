@@ -263,13 +263,23 @@ def _sms_hash(phone: str) -> str:
     return hashlib.sha256((phone or "").encode("utf-8")).hexdigest()[:32]
 
 
+# How long an sms_log write waits for the write lock before it gives up.
+# ops.alert_will pages the operator through send_sms exactly when the
+# database is in trouble (full, locked, failing); a ledger row must never be
+# what holds the page up — get_conn's own wait is 30 seconds.
+SMS_LOG_BUSY_MS = 2000
+
+
 def _log_sms(restaurant_id, use_case, phone, status, error_code=None, error=None, sid=None, db_path=None):
-    """One sms_log row; returns its id. Never raises: a ledger hiccup must not
-    turn a delivered text into an exception at the call site. The number is
-    stored as a hash and its last four digits, never whole."""
+    """One sms_log row; returns its id. Never raises, and never waits more
+    than SMS_LOG_BUSY_MS for the lock: a ledger hiccup must not turn a
+    delivered text into an exception at the call site, nor hold up a page
+    to the operator. The number is stored as a hash and its last four
+    digits, never whole."""
     try:
         conn = models.get_conn(db_path) if db_path else models.get_conn()
         try:
+            conn.execute(f"PRAGMA busy_timeout={int(SMS_LOG_BUSY_MS)}")
             cur = conn.execute(
                 "INSERT INTO sms_log (restaurant_id, use_case, to_hash, to_last4, status, error_code, error, "
                 "provider_sid, updated_at) VALUES (?,?,?,?,?,?,?,?, datetime('now'))",
@@ -1189,7 +1199,10 @@ def send_test_sms(restaurant_id: int) -> dict:
     """Send a test SMS to all consented contacts for a restaurant, and say
     what Twilio answered for each — accepted with its message id, or the
     error code and reason (#14). Each attempt is in sms_log; the status
-    callback then records whether the handset got it."""
+    callback then records whether the handset got it. A number is never
+    handed back whole: `errors` holds the failed ones as "…" and their last
+    four digits (the form the admin route masked them to), `results` their
+    to_last4."""
     contacts = get_alert_contacts(restaurant_id, sms_consent_only=True)
     if not contacts:
         return {"ok": False, "error": "No consented alert contact who can be texted (none on file, "
@@ -1206,7 +1219,7 @@ def send_test_sms(restaurant_id: int) -> dict:
         if res.ok:
             sent += 1
         else:
-            errors.append(c["phone"])
+            errors.append("…" + str(c["phone"])[-4:])
     return {"ok": sent > 0, "sent": sent, "errors": errors, "results": results}
 
 

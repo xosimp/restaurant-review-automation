@@ -152,11 +152,13 @@ def test_minute_duties_run_while_a_long_pass_is_in_progress(db_path, monkeypatch
     assert during, "delayed actions did not run while the fetch pass was in progress"
 
 
-def test_the_status_page_does_not_report_an_outage_during_a_long_pass(db_path, monkeypatch):
+def test_the_status_page_does_not_report_an_outage_during_a_long_pass(db_path, scheduler_heartbeat, monkeypatch):
     import scheduler, status_manager
     status_manager.seed_default_services()
     status_manager.update_service_status("scheduler", "operational", None)
-    _sql(db_path, "UPDATE service_status SET updated_at=datetime('now','-25 minutes') WHERE service_key='scheduler'")
+    # The loop's heartbeat, in its own table (fix round D, #4), 25 minutes
+    # old as the pass starts — stale, until the pulse stamps it.
+    scheduler_heartbeat(25)
     seen = {}
 
     def long_fetch():                               # 25 minutes into a pass that started on time
@@ -243,7 +245,10 @@ def test_an_active_restaurant_is_fetched(db_path, monkeypatch):
     assert fetched == [rid]
 
 
-@pytest.mark.parametrize("state", ["churned", "paused", "deletion_requested"])
+# A deletion request no longer stops the fetch (integration, fix round B2):
+# the account is served through its notice until it is deleted or churns —
+# tests/test_edge_mod_a_reviews_churned.py::test_a_deletion_notice_does_not_stop_the_fetch.
+@pytest.mark.parametrize("state", ["churned", "paused"])
 def test_a_cancelled_restaurant_is_not_fetched(db_path, monkeypatch, state):
     import fetcher, scheduler
     rid = _live(db_path)

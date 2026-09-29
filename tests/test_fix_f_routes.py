@@ -113,8 +113,22 @@ def test_incident_writes_are_validated_instead_of_500ing(app, db_path):
 
 def test_incident_routes_are_admin_only(app, db_path):
     owner = _owner_client(app, db_path)
-    assert owner.get("/admin/status/incidents").status_code == 403
-    assert _post(owner, "/admin/status/incident/1/resolve", json={}).status_code == 403
+    # auth.admin_required's answers (INT-1): a page GET goes to the login,
+    # a write is a 401.
+    assert owner.get("/admin/status/incidents").status_code == 302
+    assert _post(owner, "/admin/status/incident/1/resolve", json={}).status_code == 401
+
+
+def test_support_reads_the_incidents_but_never_posts_the_banner(app, db_path):
+    """Integration (A #87 meets F #61): the status routes answer as the rest
+    of /admin does — support reads, and is read-only."""
+    hq = create_restaurant(Restaurant(name="Cavnar HQ", owner_email="will@cavnar.test"), db_path=db_path)
+    sup = create_user(hq, "sup", "sup@cavnar.test", "Support-pass-2026", role="support", db_path=db_path)
+    c = _client(app, create_session(sup, db_path=db_path))
+    assert c.get("/admin/status/incidents").status_code == 200
+    r = _post(c, "/admin/status/incident", json={"title": "Outage"})
+    assert r.status_code == 403 and "read-only" in r.get_json()["error"]
+    assert status_manager.get_open_incidents() == []
 
 
 def test_the_services_list_carries_the_valid_values(app, db_path):

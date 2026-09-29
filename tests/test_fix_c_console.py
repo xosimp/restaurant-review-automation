@@ -249,8 +249,11 @@ def test_a_legacy_resolution_does_not_mute_a_newer_payment_failure(db_path):
     assert issue["since"] in ("1d", "24h", "23h")            # aged from the failure, not the owner's last click
 
 
-def test_self_clearing_and_legal_issues_refuse_resolve(db_path, monkeypatch):
+def test_self_clearing_and_legal_issues_refuse_resolve(db_path, scheduler_heartbeat, monkeypatch):
     rid = _mk(db_path)
+    # A scheduler that died an hour ago, in the loop's own heartbeat table
+    # (fix round D, #4) — the one the console reads.
+    scheduler_heartbeat(60)
     for key in ("scheduler", "platform:error_rate", f"{rid}:deletion"):
         out = admin_ops.resolve_issue(key, "", "will")
         assert out["ok"] is False and out["resolvable"] is False and out["error"]

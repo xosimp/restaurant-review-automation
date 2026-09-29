@@ -83,14 +83,24 @@ def test_one_threshold_everywhere():
 
 
 def test_two_health_checks_on_a_dead_scheduler_both_report_it_stale(db_path, monkeypatch):
+    """/health only reads (fix round F, #94); the web process's supervisor
+    runs the liveness check that flips the status page — and neither resets
+    the heartbeat they measure, so the second look says stale too."""
+    import platform_monitor
     monkeypatch.setattr(ops, "check_platform_sla", lambda **k: {"jobs_overdue": []})
+    supervisor = platform_monitor.PlatformSupervisor(db_path=db_path)
     _beat(db_path, 60)
     first, _ = status_manager.health_snapshot(db_path)
+    supervisor.tick()
     second, _ = status_manager.health_snapshot(db_path)
+    supervisor.tick()
     assert first["scheduler"] == "stale" and second["scheduler"] == "stale", \
         "the liveness check reset the heartbeat it measured"
     assert status_manager.scheduler_heartbeat_age_minutes() > 55
     assert _q(db_path, "SELECT status FROM service_status WHERE service_key='scheduler'")[0]["status"] == "outage"
+    status_manager.record_scheduler_heartbeat(loop_completed=True)
+    supervisor.tick()
+    assert _q(db_path, "SELECT status FROM service_status WHERE service_key='scheduler'")[0]["status"] == "operational"
 
 
 def test_the_consoles_status_change_does_not_reset_the_heartbeat(db_path):
