@@ -84,7 +84,7 @@ def get_owner_edit_note(restaurant_id: int, rating: int = None) -> str:
     Never raises: a draft is never lost to the note."""
     try:
         import reply_edits
-        from models import get_reply_edit_summaries, reply_band, band_label
+        from models import get_reply_edit_summaries, get_reply_rejection_signals, reply_band, band_label
         band = reply_band(rating)
         if band is None:
             return reply_edits.style_note(get_reply_edit_summaries(restaurant_id))
@@ -94,7 +94,11 @@ def get_owner_edit_note(restaurant_id: int, rating: int = None) -> str:
             note = reply_edits.style_note(get_reply_edit_summaries(restaurant_id),
                                           only=reply_edits.BAND_FREE_SIGNALS, with_length=False,
                                           scope="replies to reviews of any rating")
-        return note
+        # What the drafts this owner regenerated had in common, against the
+        # replies they approve (memory audit 9/29/26, rejected_drafts).
+        seen = get_reply_rejection_signals(restaurant_id, rating=rating)
+        return note + reply_edits.rejection_note(seen["rejected"], seen["approved"],
+                                                 scope=f"for {band_label(band)} reviews")
     except Exception:
         return ""
 

@@ -159,3 +159,89 @@ def style_note(summaries, only=None, with_length=True, scope="") -> str:
     if typical:
         line += f" The replies they approve run about {typical} words."
     return line + " Write this draft the way they finish theirs.\n"
+
+
+# ── drafts the owner turned down (memory audit 9/29/26, rejected_drafts) ────
+#
+# A draft the owner regenerated is a "no" to that draft. Its words are not
+# kept (reply_draft_rejections holds a hash and these signals, 90 days), so
+# what the drafter hears is only what the rejected drafts had in common,
+# from the same closed vocabulary style of note: never free text.
+
+# The word range the drafter asks for, by star band (drafter.draft_response's
+# length notes), with a little give: a draft past the top is "long".
+DRAFT_WORD_RANGE = {(1, 2): (50, 90), (3,): (35, 65), (4, 5): (20, 45)}
+_EMOJI = re.compile("[\U0001F300-\U0001FAFF☀-➿\U0001F1E6-\U0001F1FF]")
+DRAFT_SIGNAL_TEXT = {
+    "long": "run longer than they want",
+    "short": "run shorter than they want",
+    "exclamations": "use exclamation marks",
+    "apology": "apologise",
+    "invitation": "invite the guest back",
+    "emoji": "use emoji",
+}
+REJECTION_MIN = 3            # rejected drafts in the band before a line is said
+REJECTION_SHARE = 0.6        # ...and at least this share of them show the signal
+REJECTION_MARGIN = 0.3       # ...this much more often than the replies they approve
+
+
+def _band_of(rating):
+    try:
+        r = int(rating)
+    except (TypeError, ValueError):
+        return None
+    return next((b for b in DRAFT_WORD_RANGE if r in b), None)
+
+
+def draft_signals(text, rating=None) -> list:
+    """What one draft is like, in DRAFT_SIGNAL_TEXT's closed vocabulary —
+    never its words. Length is judged against the range the drafter asks
+    for at this star rating (no rating, no length signal)."""
+    t = str(text or "")
+    out = []
+    band = _band_of(rating)
+    if band:
+        lo, hi = DRAFT_WORD_RANGE[band]
+        n = len(_words(t))
+        if n > hi:
+            out.append("long")
+        elif n and n < lo:
+            out.append("short")
+    if "!" in t:
+        out.append("exclamations")
+    if _APOLOGY.search(t):
+        out.append("apology")
+    if _INVITE.search(t):
+        out.append("invitation")
+    if _EMOJI.search(t):
+        out.append("emoji")
+    return out
+
+
+def rejection_note(rejected, approved=(), scope="") -> str:
+    """One line for the OWNER'S EDITS block: what the drafts this owner
+    regenerated tended to do that the replies they approve do not. Each of
+    `rejected` / `approved` is a list of draft_signals lists (one per
+    draft). "" below REJECTION_MIN rejected drafts or with nothing in
+    common. A signal is named when REJECTION_SHARE of the rejected drafts
+    show it and — once there are REJECTION_MIN approved replies to compare
+    with — REJECTION_MARGIN more of them than of the approved. Deterministic."""
+    rejected = [set(s or ()) for s in (rejected or [])]
+    approved = [set(s or ()) for s in (approved or [])]
+    if len(rejected) < REJECTION_MIN:
+        return ""
+    named = []
+    for sig in DRAFT_SIGNAL_TEXT:
+        share = sum(1 for s in rejected if sig in s) / len(rejected)
+        if share < REJECTION_SHARE:
+            continue
+        if len(approved) >= REJECTION_MIN:
+            base = sum(1 for s in approved if sig in s) / len(approved)
+            if share - base < REJECTION_MARGIN:
+                continue
+        named.append(DRAFT_SIGNAL_TEXT[sig])
+    if not named:
+        return ""
+    return (f"\nThe owner regenerated {len(rejected)} drafts{(' (' + scope + ')') if scope else ''} in the last "
+            f"90 days rather than send them; those drafts tended to " + "; ".join(named[:MAX_NOTE_SIGNALS])
+            + ". Avoid that here.\n")

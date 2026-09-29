@@ -2134,6 +2134,10 @@ _RETENTION_DAYS = {
     "login_history":      int(os.getenv("RETAIN_LOGIN_HISTORY_DAYS", "90")),
     # view_as_sessions is not here: auth.record_view_as_session deletes its
     # rows past two days whenever a view-as opens, and one pruner per table.
+    # Memory audit 9/29/26, workstream M6: a reply draft the owner turned
+    # down, as a hash and signals (never its words) — the drafter's edit
+    # note reads the last 90 days (models.REJECTIONS_KEEP_DAYS).
+    "reply_draft_rejections": int(os.getenv("RETAIN_REPLY_REJECTIONS_DAYS", "90")),
 }
 
 # Each table's own timestamp column — they do not agree on a name.
@@ -2153,6 +2157,7 @@ _RETENTION_COLUMN = {
     "value_figures_daily": "date", "admin_issue_resolution_history": "created_at", "sms_log": "created_at",
     "push_outbox": "created_at", "webhook_outbox": "created_at", "morning_brief_deliveries": "created_at",
     "alert_storm_caps": "started_at", "login_history": "created_at",
+    "reply_draft_rejections": "created_at",
 }
 # Every table above has an index on its column, created where the table is
 # or at boot here (_ensure_retention_indexes, DATA-40): these deletes run

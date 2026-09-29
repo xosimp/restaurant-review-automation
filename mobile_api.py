@@ -1679,7 +1679,7 @@ def mobile_retract_review(review_id, current_user):
 @mobile_bp.route("/reviews/<int:review_id>/regenerate-draft", methods=["POST"])
 @mobile_login_required
 def mobile_regenerate_draft(review_id, current_user):
-    payload, status = _capi._do_regenerate_draft(review_id, current_user["restaurant_id"])
+    payload, status = _capi._do_regenerate_draft(review_id, current_user["restaurant_id"], user=current_user)
     return jsonify(**payload), status
 
 

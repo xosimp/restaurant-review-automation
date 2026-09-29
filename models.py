@@ -2129,6 +2129,29 @@ def init_db(db_path: str = DB_PATH):
         )""",
         "CREATE INDEX IF NOT EXISTS idx_mkt_drafts_restaurant ON marketing_drafts(restaurant_id, updated_at)",
 
+        # ── Memory audit 9/29/26, workstream M6 ────────────────────────────
+        # A reply draft the owner turned down by asking for another (a
+        # regenerate, or Ask rewriting it) — kept as its hash and its
+        # closed-vocabulary signals (reply_edits.draft_signals), NEVER its
+        # text, for 90 days (ops._RETENTION_DAYS), so the drafter's edit
+        # note can say what the drafts this owner regenerated had in common
+        # (rejected_drafts). Only the count used to survive.
+        """CREATE TABLE IF NOT EXISTS reply_draft_rejections (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id  INTEGER NOT NULL,
+            review_id      INTEGER,
+            rating         INTEGER,
+            draft_hash     TEXT    NOT NULL,
+            words          INTEGER,
+            signals        TEXT,
+            how            TEXT    NOT NULL DEFAULT 'regenerate',
+            user_id        INTEGER,
+            authority      TEXT,
+            created_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_reply_rejections_rid ON reply_draft_rejections(restaurant_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_reply_rejections_created ON reply_draft_rejections(created_at)",
+
         # Nothing this module published was measurable once it left the
         # platform. A short link is the only way to know a text drove a
         # click, and SMS in particular carried no links at all.
@@ -7182,6 +7205,87 @@ def get_reply_edit_summaries(restaurant_id: int, limit: int = 12, db_path: str =
         before = len((r["original_draft"] or r["draft_response"] or "").split())
         out.append({"distance": r["edit_distance"], "category": r["edit_category"], "signals": signals,
                     "words_after": words, "words_before": before, "rating": r["rating"]})
+    return out
+
+
+REJECTIONS_KEEP_DAYS = 90       # ops._RETENTION_DAYS["reply_draft_rejections"]
+
+
+def record_reply_rejection(restaurant_id: int, review_id: int, text: str, rating=None, how: str = "regenerate",
+                           user=None, db_path: str = DB_PATH):
+    """A model draft the owner turned down by asking for another (memory
+    audit 9/29/26, rejected_drafts): its sha256 and its closed-vocabulary
+    signals (reply_edits.draft_signals) — never its words — with who turned
+    it down. Returns the row id or None; never raises."""
+    import hashlib
+    import json as _json
+    import reply_edits
+    text = str(text or "").strip()
+    if not restaurant_id or not text:
+        return None
+    try:
+        from permissions import answer_authority
+        authority = answer_authority(user) if user else None
+        uid = (user or {}).get("acting_admin_id") or (user or {}).get("id")
+        conn = get_conn(db_path)
+        try:
+            cur = conn.execute(
+                "INSERT INTO reply_draft_rejections (restaurant_id, review_id, rating, draft_hash, words, signals, "
+                "how, user_id, authority) VALUES (?,?,?,?,?,?,?,?,?)",
+                (restaurant_id, review_id, rating, hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                 len(text.split()), _json.dumps(reply_edits.draft_signals(text, rating)), how, uid, authority))
+            conn.commit()
+            return cur.lastrowid
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[reply_edits] rejection not recorded for review {review_id}: {e}")
+        return None
+
+
+def get_reply_rejection_signals(restaurant_id: int, rating=None, days: int = REJECTIONS_KEEP_DAYS,
+                                db_path: str = DB_PATH) -> dict:
+    """{"rejected": [signals...], "approved": [signals...]} for the band of
+    `rating` over the last `days`: what the drafts this owner regenerated
+    were like, and what the replies they approved in their own voice were
+    like, for reply_edits.rejection_note. Whose "no" counts is the voice
+    rule the examples follow: the account holder, a login marked as
+    writing in their voice, or an unrecorded one — never an admin, a
+    view-as session or another delegate. Never raises."""
+    import json as _json
+    import reply_edits
+    out = {"rejected": [], "approved": []}
+    band = reply_band(rating)
+    if not restaurant_id or band is None:
+        return out
+    marks = ",".join(str(int(x)) for x in band)
+    try:
+        conn = get_conn(db_path)
+        try:
+            who = "authority IS NULL OR authority='principal'"
+            if _has_table(conn, "permission_grants"):
+                who += (" OR (authority='delegate' AND user_id IN (SELECT g.user_id FROM permission_grants g "
+                        f"WHERE g.restaurant_id=reply_draft_rejections.restaurant_id "
+                        f"AND g.permission='{REPLY_VOICE_GRANT}'))")
+            for r in conn.execute(
+                    f"SELECT signals FROM reply_draft_rejections WHERE restaurant_id=? AND rating IN ({marks}) "
+                    f"AND ({who}) AND created_at >= datetime('now', ?) "
+                    "ORDER BY id DESC LIMIT 50", (restaurant_id, f"-{int(days)} days")).fetchall():
+                try:
+                    out["rejected"].append(_json.loads(r["signals"] or "[]"))
+                except Exception:
+                    continue
+            for r in conn.execute(
+                    f"SELECT rating, draft_response FROM reviews WHERE restaurant_id=? AND rating IN ({marks}) "
+                    "AND deleted_at IS NULL AND response_status IN ('approved','posted') "
+                    "AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved') "
+                    f"AND {reply_voice_sql(conn)} AND COALESCE(approved_at, fetched_at) >= datetime('now', ?) "
+                    "ORDER BY id DESC LIMIT 50", (restaurant_id, f"-{int(days)} days")).fetchall():
+                out["approved"].append(reply_edits.draft_signals(r["draft_response"], r["rating"]))
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[reply_edits] rejections unreadable for {restaurant_id}: {e}")
     return out
 
 

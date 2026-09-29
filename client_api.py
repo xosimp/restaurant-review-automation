@@ -4550,10 +4550,15 @@ def content_calendar(current_user):
                                                 force=force, phone=False)
     return jsonify(**payload), status
 
-def _do_regenerate_draft(review_id, restaurant_id):
+def _do_regenerate_draft(review_id, restaurant_id, user=None):
     """Regenerate AI draft for a review — delegates to drafter.draft_response()
     so a regenerated draft gets the same quality/model/urgency-escalation as
-    the original draft (this used to be a separate, drifted reimplementation)."""
+    the original draft (this used to be a separate, drifted reimplementation).
+
+    The draft being replaced was turned down: an unedited model draft is
+    kept as its hash and signals, never its text, with who asked
+    (models.record_reply_rejection; memory audit 9/29/26, rejected_drafts)
+    — only the regenerate count used to survive."""
     from models import get_conn
     from drafter import draft_response, DraftNotReplaced
     from ai_utils import ai_rate_limited
@@ -4574,6 +4579,10 @@ def _do_regenerate_draft(review_id, restaurant_id):
     if r.get("response_status") in ("posted", "approved"):
         return {"ok": False, "error": "This reply has already been sent. Retract it before replacing it.",
                 "response_status": r.get("response_status")}, 409
+    if (r.get("draft_response") or "").strip() and not int(r.get("draft_edited") or 0):
+        from models import record_reply_rejection
+        record_reply_rejection(restaurant_id, review_id, r["draft_response"], rating=r.get("rating"),
+                               how="regenerate", user=user)
     restaurant = get_restaurant(restaurant_id)
     try:
         # Style examples are the drafter's own pick for this review's star
@@ -4627,7 +4636,7 @@ def _same_words(a, b) -> bool:
     return " ".join(str(a or "").split()) == " ".join(str(b or "").split())
 
 
-def _do_save_draft(review_id, restaurant_id, draft_text, by_model=False):
+def _do_save_draft(review_id, restaurant_id, draft_text, by_model=False, user=None):
     """Store the reply text for a review.
 
     What counts as the OWNER's edit (reply_edits, the drafter's style note
@@ -4635,7 +4644,9 @@ def _do_save_draft(review_id, restaurant_id, draft_text, by_model=False):
     only whitespace is not an edit, and a rewrite Ask's model wrote at the
     owner's request (`by_model`, ask_cavnar_tools.edit_review_reply) is a
     fresh model draft — the next edit is measured against it — never the
-    owner's own words (re-audit C11)."""
+    owner's own words (re-audit C11). The unedited model draft it replaces
+    was turned down, and is recorded as such (models.record_reply_rejection,
+    how='rewrite'; memory audit 9/29/26, rejected_drafts)."""
     draft = (draft_text or "").strip()
     if not draft:
         return {"ok": False, "error": "Draft cannot be empty"}, 200
@@ -4677,9 +4688,16 @@ def _do_save_draft(review_id, restaurant_id, draft_text, by_model=False):
         # original_draft keeps the model's text as it stood before the first
         # edit (suggested vs chosen, audit #41); a save that changes nothing
         # but whitespace is not an edit.
-        cur_row = conn.execute("SELECT draft_response FROM reviews WHERE id=? AND restaurant_id=?",
+        cur_row = conn.execute("SELECT draft_response, rating, COALESCE(draft_edited, 0) AS edited, response_status "
+                               "FROM reviews WHERE id=? AND restaurant_id=?",
                                (review_id, restaurant_id)).fetchone()
         edited = 0 if (cur_row is not None and _same_words(cur_row["draft_response"], draft)) else 1
+        if by_model and edited and cur_row is not None and not cur_row["edited"] \
+                and cur_row["response_status"] not in ("posted", "approved") \
+                and (cur_row["draft_response"] or "").strip():
+            from models import record_reply_rejection
+            record_reply_rejection(restaurant_id, review_id, cur_row["draft_response"], rating=cur_row["rating"],
+                                   how="rewrite", user=user)
         if by_model:
             cur = conn.execute(
                 "UPDATE reviews SET original_draft=NULL, draft_edited=0, "
@@ -4711,7 +4729,7 @@ def _do_save_draft(review_id, restaurant_id, draft_text, by_model=False):
 @client_bp.route("/api/regenerate-draft/<int:review_id>", methods=["POST"])
 @login_required
 def regenerate_draft(review_id, current_user):
-    payload, status = _do_regenerate_draft(review_id, current_user["restaurant_id"])
+    payload, status = _do_regenerate_draft(review_id, current_user["restaurant_id"], user=current_user)
     return jsonify(**payload), status
 
 @client_bp.route("/api/save-draft/<int:review_id>", methods=["POST"])

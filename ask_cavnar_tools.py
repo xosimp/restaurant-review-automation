@@ -1140,7 +1140,7 @@ def _generate_marketing_content(restaurant_id, content_type="instagram_post", to
     return {"ok": True, "content_type": content_type, "topic": topic, "content": text}
 
 
-def _edit_review_reply(restaurant_id, review_id=None, draft=None):
+def _edit_review_reply(restaurant_id, review_id=None, draft=None, _viewer=None):
     """Replace a drafted reply's text.
 
     Direct: it edits an unpublished draft and posts nothing. Previously the
@@ -1158,7 +1158,10 @@ def _edit_review_reply(restaurant_id, review_id=None, draft=None):
     # The model wrote this text: it is a fresh draft, not the owner's edit
     # (by_model — re-audit C11), so reply-edit learning never mistakes it
     # for the owner's own words.
-    result, status = client_api._do_save_draft(rid, restaurant_id, text, by_model=True)
+    # The login asking: the draft this rewrite replaces was turned down by
+    # them (models.record_reply_rejection; memory audit 9/29/26).
+    user = getattr(_viewer, "_ask_dsr_user", None)
+    result, status = client_api._do_save_draft(rid, restaurant_id, text, by_model=True, user=user)
     return {"ok": status == 200 and result.get("ok", False), "review_id": rid, "result": result}
 
 
@@ -1990,6 +1993,7 @@ TOOLS = [
         "kind": "action",
         "fn": _edit_review_reply,
         "module": "module_reviews",
+        "wants_viewer": True,
         "spec": {
             "name": "edit_review_reply",
             "description": (
