@@ -218,9 +218,16 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_
             (rid, restaurant_id)
         ).fetchone()
         _ac.close()
+        from permissions import acting_via as _via_approve
         if _row:
             if auto:
                 _action = "auto_approved"
+            elif _via_approve():
+                # Support approving through view-as: not the owner's yes,
+                # not the owner's style (memory audit 9/29/26, view_as) —
+                # left out of trust, style examples and edit learning like
+                # the rule's own approvals.
+                _action = "support_approved"
             elif (_row["regenerate_count"] or 0) > 0:
                 _action = "regenerated"
             elif (_row["draft_edited"] or 0) == 1:
@@ -239,7 +246,7 @@ def _do_approve(rid, restaurant_id, google=None, auto=None, bulk=False, confirm_
             # What the owner did to the draft, measured (audit #40) — only a
             # person's approval: the rule's and a bulk publish's are the
             # model's own text.
-            if _action not in ("auto_approved", "bulk_approved"):
+            if _action not in ("auto_approved", "bulk_approved", "support_approved"):
                 from models import record_reply_edit
                 record_reply_edit(rid, restaurant_id)
     except Exception as _ae:
@@ -596,11 +603,15 @@ def _do_skip(rid, restaurant_id):
     conn = get_conn()
     try:
         # skipped_at dates the owner turning a draft down; auto_approve_trust
-        # counts a skipped draft against its band (audit #15).
-        cur = conn.execute("UPDATE reviews SET response_status='skipped', skipped_at=datetime('now') "
+        # counts a skipped draft against its band (audit #15). Support
+        # skipping through view-as is not the owner's "no" (memory audit
+        # 9/29/26, view_as): response_action 'support_skipped', left out.
+        from permissions import acting_via as _via_skip
+        cur = conn.execute("UPDATE reviews SET response_status='skipped', skipped_at=datetime('now'), "
+                           "response_action=CASE WHEN ? THEN 'support_skipped' ELSE response_action END "
                            "WHERE id=? AND restaurant_id=? "
                            "AND COALESCE(response_status, '') NOT IN ('approved', 'posted')",
-                           (rid, restaurant_id))
+                           (1 if _via_skip() else 0, rid, restaurant_id))
         conn.commit()
         if cur.rowcount:
             return {"ok": True}, 200

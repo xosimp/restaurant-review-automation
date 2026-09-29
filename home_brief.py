@@ -2280,7 +2280,10 @@ def _build(current_user, present=True):
     # Ordered by urgency x dollars x ease (#24), and a kind the owner has let
     # expire unanswered four times running goes quieter (#45).
     try:
-        quiet = decisions.quiet_kinds(rid)
+        # With its review dates (memory audit, quiet_kinds): a quiet kind is
+        # re-tested after RETEST_AFTER_DAYS, or at once when its figure has
+        # doubled, labelled a re-test on the card (`retest`).
+        quiet = decisions.quiet_state(rid, write=present)
     except Exception:
         quiet = set()
     # ...and what this restaurant's own answers and results taught the

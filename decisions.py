@@ -14,6 +14,8 @@ the agent a short, dated history — so Ask reasons from *this restaurant's
 decisions*, not only its numbers. Nothing here is generated; every field
 is read from a row a person or a job wrote.
 """
+import re
+
 import models as _models_mod
 from models import DB_PATH
 
@@ -522,6 +524,89 @@ def memory_lines(req):
     return out
 
 
+# A kind is named as declined only on this much evidence (memory audit
+# 9/29/26, "one_hide"): one "hide for now" on a reprice card a year ago put
+# the whole reprice kind on Ask's do-not-propose list for good.
+DECLINE_MIN_ANSWERS = 3
+DECLINE_WINDOW_DAYS = 180
+DECLINE_HALF_LIFE_DAYS = 90
+# ...and three "not for us" answers all near the edge of the window weigh
+# less than this, recency-weighted: they are not a standing no.
+DECLINE_MIN_WEIGHT = 1.5
+
+
+def declined_subjects(restaurant_id, db_path=DB_PATH, now=None) -> list:
+    """The advice this owner has plainly said "not for us" to, named by
+    subject, never by whole kind (memory audit 9/29/26, "one_hide"): only
+    "not for us" answers count — a plain hide, a timing answer, "already
+    doing it" and "don't trust the data" are not a no — at least
+    DECLINE_MIN_ANSWERS of a kind within DECLINE_WINDOW_DAYS whose
+    recency-weighted sum (half-life DECLINE_HALF_LIFE_DAYS) reaches
+    DECLINE_MIN_WEIGHT. Principal answers only (a delegate's decline is
+    theirs; support's through view-as is nobody's). Returns [{kind, label,
+    subjects, n, weight, since (M/D/YY)}], strongest first. Never raises."""
+    import json as _json
+    from datetime import datetime as _dt
+    now = now or _dt.utcnow()
+    since = (now - _dt_mod.timedelta(days=DECLINE_WINDOW_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        conn = _conn(db_path)
+    except Exception:
+        return []
+    try:
+        rows = conn.execute(
+            "SELECT e.key, e.meta, e.at, e.authority, i.kind, i.title, i.signature FROM rec_events e "
+            "JOIN rec_instances i ON i.rec_id=e.rec_id WHERE e.restaurant_id=? AND e.event='dismissed' "
+            "AND e.at >= ?", (restaurant_id, since)).fetchall()
+    except Exception as e:
+        print(f"[decisions] declined subjects unreadable: {e}")
+        return []
+    finally:
+        conn.close()
+    import rec_ledger as _rl
+    by_kind = {}
+    for r in rows:
+        if r["authority"] in ("delegate", "admin"):
+            continue
+        try:
+            meta = _json.loads(r["meta"] or "{}") or {}
+        except (TypeError, ValueError):
+            meta = {}
+        if meta.get("kind") != "not_for_us" or \
+                _rl.reason_effect(meta.get("reason_code"), meta.get("reason")) not in (None, "decline"):
+            continue
+        kind = r["kind"] or _rl.kind_of(r["key"])
+        if not _rl.counts_in_acceptance(r["key"]) or kind == "ask":
+            continue
+        try:
+            age = max(0.0, (now - _dt.strptime(str(r["at"])[:19], "%Y-%m-%d %H:%M:%S")).total_seconds() / 86400.0)
+        except ValueError:
+            age = 0.0
+        b = by_kind.setdefault(kind, {"n": 0, "weight": 0.0, "subjects": [], "first": r["at"]})
+        b["n"] += 1
+        b["weight"] += 0.5 ** (age / DECLINE_HALF_LIFE_DAYS)
+        b["first"] = min(b["first"], r["at"])
+        subject = r["key"].split(":", 1)[1] if ":" in r["key"] else ""
+        if r["signature"]:
+            label = r["signature"].split(":", 1)[1].split(":", 1)[-1]
+        elif subject and not re.fullmatch(r"[0-9a-f]{10}", subject):
+            label = subject
+        else:
+            label = (r["title"] or "")[:60]
+        label = label.replace("_", " ").strip()
+        if label and label.lower() not in [x.lower() for x in b["subjects"]]:
+            b["subjects"].append(label[:60])
+    out = []
+    from time_utils import mdy
+    for kind, b in by_kind.items():
+        if b["n"] < DECLINE_MIN_ANSWERS or b["weight"] < DECLINE_MIN_WEIGHT:
+            continue
+        out.append({"kind": kind, "label": kind_label(kind), "subjects": b["subjects"][:6], "n": b["n"],
+                    "weight": round(b["weight"], 2), "since": mdy(str(b["first"])[:10])})
+    out.sort(key=lambda x: (-x["weight"], x["kind"]))
+    return out
+
+
 def annotate_declined(restaurant_id, text, db_path=DB_PATH):
     """(text, repeats): an answer's imperative lines (ask_cavnar.
     extract_suggestions — the lines it already finds for the chips) checked
@@ -543,8 +628,9 @@ def annotate_declined(restaurant_id, text, db_path=DB_PATH):
         if not declines:
             return text, []
         hits = {}
+        subjects = insight_store.known_subjects(restaurant_id, db_path=db_path)
         for it in items:
-            sig = insight_store.advice_signature("ask_tip:x", it["text"])
+            sig = insight_store.advice_signature("ask_tip:x", it["text"], subjects=subjects)
             if sig and sig in declines:
                 hits[it["text"]] = (sig, mdy(str(declines[sig]["on"])[:10]))
         if not hits:
@@ -611,9 +697,21 @@ def _restored_kind(key):
 
 
 def quiet_kinds(restaurant_id, db_path=DB_PATH) -> set:
+    """Recommendation kinds this owner has gone quiet on and that are not
+    due a re-test (quiet_state): every surface that ranks drops them below
+    the top three. Never raises."""
+    try:
+        return {k for k, st in quiet_state(restaurant_id, db_path=db_path).items() if not st.get("retest")}
+    except Exception as e:
+        print(f"[decisions] quiet kinds unavailable for {restaurant_id}: {e}")
+        return quiet_kinds_vote(restaurant_id, db_path=db_path)
+
+
+def quiet_kinds_vote(restaurant_id, db_path=DB_PATH) -> set:
     """Recommendation kinds whose last QUIET_AFTER_EXPIRED episodes at this
     restaurant all expired unanswered, counting only episodes since the
-    owner last restored the kind. Never raises."""
+    owner last restored the kind (the ledger's restore marker, or the
+    durable state's restored_at). Never raises."""
     out = set()
     try:
         conn = _conn(db_path)
@@ -632,6 +730,18 @@ def quiet_kinds(restaurant_id, db_path=DB_PATH) -> set:
         k = _restored_kind(r["key"])
         if k:
             restored[k] = max(restored.get(k, ""), r["created_at"] or "")
+    # The restore held durably too: the ledger rows above are read over a
+    # 2,000-episode window, which a busy restaurant fills in weeks.
+    try:
+        c2 = _conn(db_path)
+        try:
+            for st in _kind_state_rows(c2, restaurant_id, "restore").values():
+                if st.get("restored_at"):
+                    restored[st["kind"]] = max(restored.get(st["kind"], ""), st["restored_at"])
+        finally:
+            c2.close()
+    except Exception:
+        pass
     by_kind = {}
     for r in rows:
         kind = r["kind"] or ""
@@ -656,6 +766,90 @@ def quiet_kinds(restaurant_id, db_path=DB_PATH) -> set:
     return out
 
 
+# A kind gone quiet is re-tested once this long after it went quiet, and
+# again after each re-test that also went unanswered (memory audit 9/29/26,
+# "quiet_kinds": a kind ignored during one busy month stayed quiet for good).
+RETEST_AFTER_DAYS = 60
+_FAMILY = "home"
+
+
+def _kind_state_rows(conn, restaurant_id, family):
+    try:
+        return {r["kind"]: dict(r) for r in conn.execute(
+            "SELECT * FROM rec_kind_states WHERE restaurant_id=? AND family=?", (restaurant_id, family)).fetchall()}
+    except Exception:
+        return {}
+
+
+def quiet_state(restaurant_id, db_path=DB_PATH, now=None, write=True) -> dict:
+    """{kind: {since, review_on, retest, retests, last_dollars}} for every
+    kind this owner has gone quiet on (quiet_kinds' vote), held as durable
+    state with a review date (rec_kind_states, family "home"): from
+    RETEST_AFTER_DAYS after it went quiet the kind is shown again, once,
+    labelled a re-test (`retest` True) — answered, it is loud again;
+    ignored too, it is quiet again until the next review date. A kind the
+    vote no longer calls quiet leaves the state. `write=False` (a build that
+    records nothing) judges without writing. Never raises."""
+    from datetime import datetime as _dt, timedelta as _td
+    now = now or _dt.utcnow()
+    now_s = now.strftime("%Y-%m-%d %H:%M:%S")
+    voted = quiet_kinds_vote(restaurant_id, db_path=db_path)
+    out = {}
+    try:
+        conn = _conn(db_path)
+    except Exception:
+        return {k: {"since": None, "review_on": None, "retest": False, "retests": 0, "last_dollars": None}
+                for k in voted}
+    try:
+        states = _kind_state_rows(conn, restaurant_id, _FAMILY)
+        for kind in voted:
+            st = states.get(kind)
+            last = conn.execute("SELECT dollar_value FROM rec_instances WHERE restaurant_id=? AND kind=? "
+                                "AND dollar_value IS NOT NULL ORDER BY created_at DESC LIMIT 1",
+                                (restaurant_id, kind)).fetchone()
+            last_dollars = float(last["dollar_value"]) if last else None
+            if st is None:
+                review = (now + _td(days=RETEST_AFTER_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+                st = {"since": now_s, "review_on": review, "retests": 0, "last_dollars": last_dollars}
+                if write:
+                    conn.execute("INSERT OR REPLACE INTO rec_kind_states (restaurant_id, family, kind, state, reason, "
+                                 "since, review_on, retests, last_dollars, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                                 (restaurant_id, _FAMILY, kind, "quiet",
+                                  f"the last {QUIET_AFTER_EXPIRED} went unanswered", now_s, review, 0, last_dollars,
+                                  now_s))
+            retest = False
+            if st.get("review_on") and st["review_on"] <= now_s:
+                # Due its re-test: loud until a showing since the review date
+                # settles. Ignored again, it is quiet to the next review.
+                settled = conn.execute(
+                    "SELECT status FROM rec_instances WHERE restaurant_id=? AND kind=? AND created_at >= ? "
+                    "AND status NOT IN ('open','superseded') ORDER BY created_at DESC LIMIT 1",
+                    (restaurant_id, kind, st["review_on"])).fetchone()
+                if settled is not None and settled["status"] == "expired":
+                    review = (now + _td(days=RETEST_AFTER_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+                    st = dict(st, review_on=review, retests=int(st.get("retests") or 0) + 1)
+                    if write:
+                        conn.execute("UPDATE rec_kind_states SET review_on=?, retests=?, updated_at=? "
+                                     "WHERE restaurant_id=? AND family=? AND kind=?",
+                                     (review, st["retests"], now_s, restaurant_id, _FAMILY, kind))
+                else:
+                    retest = True
+            out[kind] = {"since": st.get("since"), "review_on": st.get("review_on"), "retest": retest,
+                         "retests": int(st.get("retests") or 0),
+                         "last_dollars": st.get("last_dollars") if st.get("last_dollars") is not None else last_dollars}
+        if write:
+            for kind in states:
+                if kind not in voted:
+                    conn.execute("DELETE FROM rec_kind_states WHERE restaurant_id=? AND family=? AND kind=?",
+                                 (restaurant_id, _FAMILY, kind))
+            conn.commit()
+    except Exception as e:
+        print(f"[decisions] quiet state unavailable for {restaurant_id}: {e}")
+    finally:
+        conn.close()
+    return out
+
+
 def restore_kind(restaurant_id, kind, user_id=None, surface="home", db_path=DB_PATH) -> bool:
     """The owner asked to see a quiet kind again. Recorded in the ledger as
     an accepted `restore_kind:<kind>@<stamp>` episode — a new key each time,
@@ -669,6 +863,22 @@ def restore_kind(restaurant_id, kind, user_id=None, surface="home", db_path=DB_P
     key = f"{_RESTORE_PREFIX}{kind}@{_dt.utcnow().strftime('%Y%m%d%H%M%S%f')}"
     ok = rec_ledger.record(restaurant_id, key, "accepted", surface=surface, user_id=user_id,
                            meta={"module": "home"}, db_path=db_path)
+    # Held durably (memory audit, quiet_kinds): the quiet state goes and the
+    # restore is remembered beyond the vote's 2,000-episode window.
+    try:
+        conn = _conn(db_path)
+        try:
+            now_s = _dt.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            conn.execute("DELETE FROM rec_kind_states WHERE restaurant_id=? AND family=? AND kind=?",
+                         (restaurant_id, _FAMILY, kind))
+            conn.execute("INSERT OR REPLACE INTO rec_kind_states (restaurant_id, family, kind, state, since, "
+                         "restored_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+                         (restaurant_id, "restore", kind, "restored", now_s, now_s, now_s))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[decisions] restore not held durably: {e}")
     try:
         conn = _conn(db_path)
         try:

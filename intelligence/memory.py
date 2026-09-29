@@ -109,10 +109,20 @@ def own_record(restaurant_id, db_path=DB_PATH) -> dict:
         ranked.append((lo, n, k, imp))
     ranked.sort(key=lambda x: (-x[0], -x[1], x[2]))
     worked_detail = [{"kind": k, "improved": imp, "measured": n} for _lo, n, k, imp in ranked[:5]]
-    ignored = sorted([k for k, s in out.items() if (s["declined"] or 0) + (s["hidden"] or 0) > (s["accepted"] or 0)],
-                     key=lambda k: -((out[k]["declined"] or 0) + (out[k]["hidden"] or 0)))
+    # What this owner has plainly declined, by SUBJECT (memory audit
+    # 9/29/26, "one_hide"): declined + hidden > accepted over all history,
+    # with no floor, put a whole kind on Ask's do-not-propose list after one
+    # two-week hide. Now only "not for us", at least three in 180 days,
+    # recency-weighted (decisions.declined_subjects).
+    try:
+        import decisions
+        declined = decisions.declined_subjects(restaurant_id, db_path=db_path)
+    except Exception as e:
+        print(f"[intelligence.memory] declined subjects unavailable: {e}")
+        declined = []
     return {"by_kind": out, "worked": [w["kind"] for w in worked_detail], "worked_detail": worked_detail,
-            "ignored": ignored[:5], "min_measured": rec_learning.MIN_MEASURED_FOR_RATE}
+            "ignored": [d["kind"] for d in declined[:5]], "declined_detail": declined[:5],
+            "min_measured": rec_learning.MIN_MEASURED_FOR_RATE}
 
 
 # A slope is worth a line when the series moved, over the weeks read, by
@@ -176,8 +186,15 @@ def lines(mem: dict) -> list:
         # A record built before worked_detail: names only, no rate claimed.
         out.append("Recommendation kinds most often followed by a measured improvement here: "
                    + ", ".join(rec["worked"]) + ".")
-    if rec.get("ignored"):
-        out.append("Kinds this owner has declined or hidden more than acted on: " + ", ".join(rec["ignored"]) + " — do not re-propose without new evidence.")
+    if rec.get("declined_detail"):
+        out.append("Advice this owner has said 'not for us' to at least 3 times in 180 days — do not re-propose "
+                   "these subjects without new evidence: "
+                   + "; ".join(f"{d['label']} ({', '.join(d['subjects']) or 'any subject'}; {d['n']} times since "
+                               f"{d['since']})" for d in rec["declined_detail"]) + ".")
+    elif rec.get("ignored"):
+        # A record built before declined_detail: the kinds, no subjects.
+        out.append("Kinds this owner has said 'not for us' to repeatedly: " + ", ".join(rec["ignored"])
+                   + " — do not re-propose without new evidence.")
     for k, s in (mem.get("slopes") or {}).items():
         if s["slope_per_week"] and abs(s["slope_per_week"]) >= slope_threshold(k, s.get("weeks")):
             unit = SLOPE_UNITS.get(k, "")

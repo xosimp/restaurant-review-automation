@@ -561,13 +561,71 @@ def _text_subject(text):
     return None
 
 
-def advice_signature(key, text=None):
+_SUBJECTS_CACHE = {}
+_SUBJECTS_TTL = 600
+
+
+def known_subjects(restaurant_id, db_path=DB_PATH) -> dict:
+    """{"items": [ingredient names], "dishes": [menu item names]} for this
+    restaurant, lower-cased, longest first — what a model-written line's
+    words can name as its subject (advice_signature's `subjects`). Cached
+    per process for _SUBJECTS_TTL seconds. Never raises."""
+    import time as _t
+    k = (db_path, restaurant_id)
+    hit = _SUBJECTS_CACHE.get(k)
+    if hit and _t.time() - hit[0] < _SUBJECTS_TTL:
+        return hit[1]
+    out = {"items": [], "dishes": []}
+    try:
+        conn = get_conn(db_path)
+        try:
+            out["items"] = [str(r[0]).strip().lower() for r in conn.execute(
+                "SELECT name FROM ingredients WHERE restaurant_id=? AND COALESCE(is_active,1)=1 LIMIT 400",
+                (restaurant_id,)).fetchall() if r[0] and len(str(r[0]).strip()) >= 3]
+            try:
+                out["dishes"] = [str(r[0]).strip().lower() for r in conn.execute(
+                    "SELECT name FROM menu_items WHERE restaurant_id=? LIMIT 400", (restaurant_id,)).fetchall()
+                                 if r[0] and len(str(r[0]).strip()) >= 3]
+            except Exception:
+                out["dishes"] = []
+        finally:
+            conn.close()
+    except Exception:
+        pass
+    out["items"].sort(key=len, reverse=True)
+    out["dishes"].sort(key=len, reverse=True)
+    if len(_SUBJECTS_CACHE) > 500:
+        _SUBJECTS_CACHE.clear()
+    _SUBJECTS_CACHE[k] = (_t.time(), out)
+    return out
+
+
+def _named_subject(text, subjects, family):
+    """The item or dish a line names, from the restaurant's own lists: a
+    pricing or marketing line names a dish first, anything else an item."""
+    if not subjects:
+        return None
+    low = " " + re.sub(r"[^a-z0-9 ]", " ", str(text or "").lower()) + " "
+    order = (("dishes", "dish"), ("items", "item")) if family in ("pricing", "marketing") else \
+        (("items", "item"), ("dishes", "dish"))
+    for bucket, head in order:
+        for name in subjects.get(bucket) or ():
+            n = re.sub(r"[^a-z0-9 ]", " ", name)
+            n = " ".join(n.split())
+            if n and f" {n} " in low:
+                return f"{head}:{n[:60]}"
+    return None
+
+
+def advice_signature(key, text=None, subjects=None):
     """"<family>:<subject>" — what one recommendation is about, the same for
     the same advice on every surface (trim_day:Tuesday and a DSR action to
     cut Tuesday's hours are both "labor:day:tuesday"), or None when the key
     and its words do not name both a lever and a single subject. Never a
     bare lever ("labor"): declining one Tuesday cut is not declining all
-    staffing advice."""
+    staffing advice. `subjects` (known_subjects) lets a line's words name an
+    item or a dish of this restaurant's — "Cut the salmon order" is
+    cut_waste:Salmon's advice (memory audit 9/29/26, "signatures")."""
     try:
         import rec_ledger
         tags = rec_ledger.tags_for(key)
@@ -591,6 +649,8 @@ def advice_signature(key, text=None):
     if kind in _WHOLE_SCHEDULE_KINDS:
         subject = "schedule:whole"
     subject = subject or _text_subject(text)
+    if not subject and subjects and family:
+        subject = _named_subject(text, subjects, family)
     if not family or not subject:
         return None
     return f"{family}:{subject}"

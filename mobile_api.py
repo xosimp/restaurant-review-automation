@@ -3275,7 +3275,9 @@ def mobile_schedule_history_detail(history_id, current_user):
     # A stored week reopened puts its verdict back on screen (web reload,
     # iOS Labor): its recommendations are shown by this response.
     from schedule_engine import present_quality
-    present_quality(current_user["restaurant_id"], detail.get("quality"), user_id=current_user.get("id"))
+    from permissions import answer_authority as _aa_pq
+    present_quality(current_user["restaurant_id"], detail.get("quality"), user_id=current_user.get("id"),
+                    authority=_aa_pq(current_user))
     # What the draft was written against, and its rows priced as they stand
     # now (edits and all), so a reopened week states its labor % and
     # overtime the way a fresh one does (Schedule Studio, 9/26/26).
@@ -7226,7 +7228,8 @@ def mobile_score_schedule(current_user):
         # The rescored verdict is on the manager's screen: its
         # recommendations are shown now (re-audit C1).
         from schedule_engine import present_quality
-        present_quality(rid, quality, user_id=current_user.get("id"))
+        from permissions import answer_authority as _aa_pq2
+        present_quality(rid, quality, user_id=current_user.get("id"), authority=_aa_pq2(current_user))
         from models import capability_version
         return jsonify(ok=True, quality=quality, what_if=what_if, saved=bool(saved),
                        violations=violations or [], review=review,

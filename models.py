@@ -6362,6 +6362,15 @@ def record_capability_change(restaurant_id: int, kind: str, subject: str = None,
     """Append one change. Never raises — an audit row failing to write must
     not stop an owner setting a target."""
     import json as _j
+    # Support changing a rating or target through view-as is attributed to
+    # support, never read as the owner's (memory audit 9/29/26, view_as).
+    try:
+        from permissions import acting_via
+        _via = acting_via()
+    except Exception:
+        _via = None
+    if _via:
+        changed_by = f"support:{_via.get('admin') or _via.get('admin_id')} (as {changed_by or 'the owner'})"
     try:
         conn = get_conn(db_path)
         conn.execute(
@@ -6961,7 +6970,7 @@ def get_approved_examples(restaurant_id: int, limit: int = 5,
         SELECT rating, text, draft_response FROM reviews
         WHERE restaurant_id=?
           AND response_status IN ('approved','posted')
-          AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved')
+          AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved', 'support_approved')
           AND draft_response IS NOT NULL
           AND draft_response != ''
         ORDER BY CASE WHEN edit_category IN ('light', 'heavy', 'rewrite') THEN 0 ELSE 1 END, id DESC
@@ -7016,7 +7025,7 @@ def get_reply_edit_summaries(restaurant_id: int, limit: int = 12, db_path: str =
         rows = conn.execute(
             "SELECT edit_distance, edit_category, edit_signals, original_draft, draft_response FROM reviews "
             "WHERE restaurant_id=? AND edit_category IS NOT NULL AND response_status IN ('approved','posted') "
-            "AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved') "
+            "AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved', 'support_approved') "
             "ORDER BY COALESCE(approved_at, '') DESC, id DESC LIMIT ?", (restaurant_id, int(limit))).fetchall()
     except Exception:
         return []
@@ -10339,13 +10348,14 @@ def auto_approve_trust(restaurant_id: int, db_path: str = DB_PATH, days: int = 3
             "SUM(CASE WHEN COALESCE(draft_edited, 0) = 1 OR COALESCE(regenerate_count, 0) > 0 "
             "    OR response_action IN ('edited', 'regenerated') THEN 1 ELSE 0 END) AS edited FROM reviews "
             "WHERE restaurant_id=? AND deleted_at IS NULL AND response_status IN ('approved','posted') "
-            "AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved') "
+            "AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved', 'support_approved') "
             "AND approved_at >= datetime('now', ?) AND rating IN (3,4,5) GROUP BY rating",
             (restaurant_id, since)).fetchall()
         try:
             skipped = conn.execute(
                 "SELECT rating, COUNT(*) AS n FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
                 "AND response_status='skipped' AND draft_response IS NOT NULL AND TRIM(draft_response) != '' "
+                "AND COALESCE(response_action, '') != 'support_skipped' "
                 "AND skipped_at >= datetime('now', ?) AND rating IN (3,4,5) GROUP BY rating",
                 (restaurant_id, since)).fetchall()
         except Exception:

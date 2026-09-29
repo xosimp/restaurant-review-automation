@@ -976,11 +976,16 @@ def with_signature_tag(tags, signature) -> list:
     return sorted(out)
 
 
-def signature_for(key, title=None):
-    """insight_store.advice_signature(key, title), or None. Never raises."""
+def signature_for(key, title=None, restaurant_id=None, db_path=None):
+    """insight_store.advice_signature(key, title), or None — with the
+    restaurant's own items and dishes as subjects when it is named, so a
+    model line's "cut the salmon order" is cut_waste:Salmon's advice.
+    Never raises."""
     try:
         import insight_store
-        return insight_store.advice_signature(key, title)
+        subjects = insight_store.known_subjects(restaurant_id, db_path=db_path or DB_PATH) \
+            if restaurant_id else None
+        return insight_store.advice_signature(key, title, subjects=subjects)
     except Exception as e:
         print(f"[rec_ledger] signature unavailable for {key}: {e}")
         return None
@@ -1174,7 +1179,7 @@ def _open_or_new(conn, rid, key, module, kind, title=None, attrs=None, surface=N
     # (the "signatures" item): a model line's hash key names nothing, so a
     # Labor read's "cut a server Tuesday" taken three times never built a
     # Tuesday-staffing record. '' = computed, none.
-    sig = signature_for(key, title)
+    sig = signature_for(key, title, restaurant_id=rid)
     conn.execute(
         "INSERT INTO rec_instances (rec_id, restaurant_id, key, module, kind, title, dollar_value, confidence_band, "
         "evidence_sources, cross_module, model_written, cavnar_completes, expected_metric, expected_by, first_surface, "
@@ -1522,22 +1527,12 @@ _ANSWER_EVENTS = ("accepted", "completed", "dismissed", "snoozed")
 def request_via(user=None):
     """{"admin_id", "admin", "role"} when this request (or `user`) is an
     admin acting through view-as — the admin behind it, never the owner it
-    views as — else None. Never raises."""
-    ctx = None
-    if isinstance(user, dict) and (user.get("acting_admin_id") or user.get("acting_admin_role")):
-        ctx = {"acting_admin_id": user.get("acting_admin_id"), "acting_admin": user.get("acting_admin"),
-               "acting_admin_role": user.get("acting_admin_role")}
-    if ctx is None:
-        try:
-            from flask import g, has_request_context
-            if has_request_context():
-                ctx = getattr(g, "view_as", None)
-        except Exception:
-            ctx = None
-    if not ctx:
+    views as — else None (permissions.acting_via). Never raises."""
+    try:
+        from permissions import acting_via
+        return acting_via(user)
+    except Exception:
         return None
-    return {"admin_id": ctx.get("acting_admin_id"), "admin": ctx.get("acting_admin"),
-            "role": ctx.get("acting_admin_role") or "admin"}
 
 
 def silence_subject(user):
@@ -2120,7 +2115,7 @@ def backfill_tags(db_path=DB_PATH, limit=5000) -> int:
         for r in rows:
             sig = r["signature"]
             if sig is None:
-                sig = signature_for(r["key"], r["title"]) or ""
+                sig = signature_for(r["key"], r["title"], restaurant_id=r["restaurant_id"], db_path=db_path) or ""
             conn.execute("UPDATE rec_instances SET tags=?, signature=? WHERE rec_id=?",
                          (_stored_tags(conn, r["restaurant_id"], r["key"], r["module"], r["kind"], signature=sig or None),
                           sig, r["rec_id"]))

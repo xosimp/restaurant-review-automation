@@ -1796,7 +1796,7 @@ def _do_schedule_apply_fixes(u):
     after = _sr.violations(fixed_rows, c)
     quality, what_if = _score_schedule_quality(_rid(u), fixed_rows, inputs)
     from schedule_engine import present_quality
-    present_quality(_rid(u), quality, user_id=u.get("id"))
+    present_quality(_rid(u), quality, user_id=u.get("id"), authority=_answer_authority(u))
     return {"ok": True, "rows": fixed_rows, "fixes": out["fixes"], "unfixed": out["unfixed"],
             "violations": after, "review": _sr.summarize(after), "quality": quality, "what_if": what_if}, 200
 
@@ -1862,7 +1862,7 @@ def _do_schedule_optimize(u):
                         hours_budget=(budget if int(getattr(_r_opt, "trim_to_budget", 1) or 0) else None))
     quality, what_if = _score_schedule_quality(_rid(u), res["rows"], inputs)
     from schedule_engine import present_quality
-    present_quality(_rid(u), quality, user_id=u.get("id"))
+    present_quality(_rid(u), quality, user_id=u.get("id"), authority=_answer_authority(u))
     summary = _opt.summary(res, signals)
     # A proposal with changes is a recommendation: kept on Save, set aside
     # on Discard (the page reports which to /recs/event).
@@ -2434,7 +2434,7 @@ def _do_recommendation_event(u):
         import rec_learning as _rlearn
         if _rlearn.answerable_episode(u, _rid(u), rkey) is None:
             return {"ok": False, "error": "No such recommendation."}, 404
-    _si.record_recommendation(_rid(u), kind, text, action, actor=_who(u))
+    _si.record_recommendation(_rid(u), kind, text, action, actor=_who(u), authority=_answer_authority(u))
     # The same answer in the one trail every surface reads: "Not for us"
     # keeps this recommendation off the draft from now on, on any device.
     started = None
