@@ -98,6 +98,21 @@ SURFACE_LABELS = {
     "competitor_read": "the competitor read",
     "weekly_plan": "the Monday plan",
 }
+# Which module's permission each surface's reads fall under, for a reader
+# that serves them to a login (Ask's read_recent_reads): a delegate without
+# that module's view never reads them. OWNER_ONLY surfaces carry the owner's
+# figures (budget, food cost, prime cost, the month's money) and are for the
+# owner's own view only.
+OWNER_ONLY = "owner"
+SURFACE_MODULE = {
+    "food_read": "inventory", "food_diagnosis": "inventory",
+    "review_read": "reviews", "review_diagnosis": "reviews",
+    "marketing_read": "marketing", "marketing_feed": "marketing",
+    "labor_read": "labor", "competitor_read": "intel",
+    "monthly_review": OWNER_ONLY, "digest": OWNER_ONLY, "brief": OWNER_ONLY, "weekly_plan": OWNER_ONLY,
+    "dsr_narrative": OWNER_ONLY,
+}
+
 # insight_cache kind -> the surface its read is filed under (insight_store.put).
 STORE_SURFACE = {"food": "food_read", "reviews": "review_read", "marketing": "marketing_read",
                  "labor": "labor_read", "mkt_opps": "marketing_feed"}

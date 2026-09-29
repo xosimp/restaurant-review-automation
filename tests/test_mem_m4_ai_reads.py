@@ -196,3 +196,12 @@ def test_the_competitor_read_is_kept_as_history(monkeypatch):
     assert competitor.run_competitor_analysis(rid)["ok"] is True
     row = _rows("SELECT * FROM ai_reads WHERE restaurant_id=? AND surface='competitor_read'", (rid,))[0]
     assert row["shown_text"] == "Taco Place undercuts you at lunch."
+
+
+def test_every_surface_names_the_permission_its_reads_fall_under():
+    """A reader serving reads to a login (Ask) filters by it: a manager
+    without Food Cost never reads a food read, and the owner-level reads
+    (the month's money, the brief, the nightly report) are the owner's."""
+    assert set(ai_reads.SURFACE_LABELS) == set(ai_reads.SURFACE_MODULE)
+    assert ai_reads.SURFACE_MODULE["monthly_review"] == ai_reads.OWNER_ONLY
+    assert set(ai_reads.STORE_SURFACE.values()) <= set(ai_reads.SURFACE_MODULE)
