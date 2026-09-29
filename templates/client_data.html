@@ -205,7 +205,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
           <a href="/client/sample-template/inventory" download="sample_inventory_template.csv" style="font-size:12px;color:var(--ember);text-decoration:none;font-weight:600">📥 Download sample inventory template</a>
           <span style="font-size:11px;color:var(--ink3);margin-left:8px">Required columns: item, current_stock, par_level, unit_cost, waste_last_week</span>
         </div>
-        <div class="upload-zone">
+        <div class="upload-zone" id="inv-drop">
           <input type="file" accept=".csv" onchange="handleFile('inv', this)">
           <div class="upload-icon">📦</div>
           <div class="upload-label">Drop inventory CSV here or click to browse</div>
@@ -300,8 +300,11 @@ async function uploadData(module, source) {
     form.append('csv_file', new Blob([csvContent], {type:'text/csv'}), 'data.csv');
   }
 
-  // Use client route (works for both admins and regular clients)
-  const res = await fetch('/client/upload-data', {method:'POST', body: form});
+  // THIS client's restaurant, named in the URL. This posted to the owner's
+  // /client/upload-data, which writes into the signed-in login's own
+  // restaurant — for an admin, the admin's home restaurant, while this page
+  // said "rows loaded" (fix round #19).
+  const res = await fetch('/admin/upload-data/' + restaurantId, {method:'POST', body: form});
   const data = await res.json();
   if (data.ok) {
     showResult(resultEl, true, '✓ ' + data.rows + ' rows loaded. Refreshing dashboard...');

@@ -144,13 +144,9 @@ textarea{resize:vertical;min-height:60px}
           <label>Timezone</label>
           {% set tz = restaurant.timezone or 'America/Chicago' %}
           <select id="timezone">
-            <option value="America/New_York" {{ 'selected' if tz == 'America/New_York' else '' }}>Eastern (New York)</option>
-            <option value="America/Chicago" {{ 'selected' if tz == 'America/Chicago' else '' }}>Central (Chicago)</option>
-            <option value="America/Denver" {{ 'selected' if tz == 'America/Denver' else '' }}>Mountain (Denver)</option>
-            <option value="America/Phoenix" {{ 'selected' if tz == 'America/Phoenix' else '' }}>Arizona (Phoenix)</option>
-            <option value="America/Los_Angeles" {{ 'selected' if tz == 'America/Los_Angeles' else '' }}>Pacific (Los Angeles)</option>
-            <option value="America/Anchorage" {{ 'selected' if tz == 'America/Anchorage' else '' }}>Alaska (Anchorage)</option>
-            <option value="Pacific/Honolulu" {{ 'selected' if tz == 'Pacific/Honolulu' else '' }}>Hawaii (Honolulu)</option>
+            {% for value, label in timezone_choices %}
+            <option value="{{ value }}"{% if tz == value %} selected{% endif %}>{{ label }}</option>
+            {% endfor %}
           </select>
           <div class="hint">Drives "today", weekly trends, and schedule weeks for this restaurant</div>
         </div>
@@ -163,11 +159,11 @@ textarea{resize:vertical;min-height:60px}
     <div class="section-hdr"><div class="section-title">Module access</div></div>
     <div class="section-body">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
-        {% for mod_id, label, price in [
-          ("reviews","Review Intelligence","$300/mo"),
-          ("labor","Labor Optimizer","$300/mo"),
-          ("inventory","Food Cost Control","$300/mo"),
-          ("marketing","Marketing Autopilot","$300/mo")
+        {% for mod_id, label in [
+          ("reviews","Review Intelligence"),
+          ("labor","Labor Optimizer"),
+          ("inventory","Food Cost Control"),
+          ("marketing","Marketing Autopilot")
         ] %}
         <label style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none">
           <input type="checkbox" id="setting-mod-{{mod_id}}"
@@ -176,18 +172,15 @@ textarea{resize:vertical;min-height:60px}
             {% elif mod_id == "inventory" and restaurant.module_inventory %}checked
             {% elif mod_id == "marketing" and restaurant.module_marketing %}checked
             {% endif %}
-            style="width:14px;height:14px;accent-color:#c84b2f">
-          <div>
-            <div style="font-size:13px;font-weight:500;color:var(--ink)">{{label}}</div>
-            <div style="font-size:11px;color:var(--ink3)">{{price}}</div>
-          </div>
+            style="width:14px;height:14px;accent-color:var(--ember)">
+          <div style="font-size:13px;font-weight:500;color:var(--ink)">{{label}}</div>
         </label>
         {% endfor %}
       </div>
       <div style="font-size:11px;color:var(--ink3);line-height:1.6">
-        <strong>Pricing:</strong> $500 setup per module · $300/mo per module<br>
-        2 modules = $1,000 + $600/mo &nbsp;·&nbsp; 3 modules = $1,500 + $900/mo &nbsp;·&nbsp; 4 modules = $2,000 + $1,200/mo<br>
-        Checked modules appear as tabs in the client dashboard. Save to apply.
+        <strong>Plans</strong> (one-time setup, then monthly):
+        {% for p in price_ladder %}{{ p.modules }} module{{ 's' if p.modules > 1 else '' }} {{ p.setup }} + {{ p.monthly }}/mo{% if not loop.last %} &nbsp;·&nbsp; {% endif %}{% endfor %}<br>
+        Checked modules appear as tabs in the client dashboard. Changing them here doesn't change the Stripe subscription or the contract.
       </div>
     </div>
   </div>
@@ -208,14 +201,21 @@ textarea{resize:vertical;min-height:60px}
           <div class="hint">The slug at the end of the Yelp business URL</div>
         </div>
       </div>
-      <div style="margin-top:14px">
-        <label style="display:block;margin-bottom:6px">Review data status</label>
+      <div style="margin-top:14px" id="review-fetching">
+        <label style="display:block;margin-bottom:6px">Review fetching</label>
         <div class="status-row">
-          <div class="status-dot {{'dot-live' if restaurant.gmb_refresh_token else 'dot-sample'}}"></div>
+          <div class="status-dot {{'dot-live' if (restaurant.gmb_refresh_token or (restaurant.reviews_live and restaurant.google_place_id)) else 'dot-sample'}}"></div>
           <div class="status-text">
-            {{'Pulling live reviews from Google Business' if restaurant.gmb_refresh_token else 'Using sample review data — connect Google Business Profile in the Account tab to go live'}}
+            {% if restaurant.gmb_refresh_token %}Fetching through the owner's Google Business Profile.
+            {% elif restaurant.reviews_live and restaurant.google_place_id %}Fetching through Google Places with the Place ID above.
+            {% else %}Not fetching. Add the Place ID and turn fetching on, or have the owner connect Google Business Profile in their Account tab.{% endif %}
           </div>
         </div>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-weight:400;letter-spacing:0;text-transform:none;font-size:13px;color:var(--ink2)">
+          <input type="checkbox" id="reviews_live" {% if restaurant.reviews_live %}checked{% endif %} style="width:14px;height:14px;accent-color:var(--ember)">
+          Fetch this restaurant's Google reviews with the Place ID
+        </label>
+        <div class="hint">Saving a Place ID with Review Intelligence on turns this on. A connected Google Business Profile is fetched either way.{% if shared_listing and restaurant.is_demo %} This listing also belongs to {{ shared_listing }}, so this demo can't fetch it.{% endif %}</div>
       </div>
       <div style="margin-top:14px">
         <div class="form-grid">
@@ -356,18 +356,19 @@ textarea{resize:vertical;min-height:60px}
         <div style="font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--ink3);margin-bottom:10px">Staff scheduling constraints</div>
         <p style="font-size:13px;color:var(--ink2);margin-bottom:14px;line-height:1.6">
           Add constraints per staff member — fixed days, availability limits, overtime allowances.
-          The AI consultant and schedule generator always respect these.
+          The AI consultant and schedule generator always respect these. Adding one for someone who
+          already has constraints adds to them; it never replaces them.
         </p>
       {% if staff_notes %}
       <div style="margin-bottom:14px">
         {% for note in staff_notes %}
-        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;margin-bottom:6px">
+        <div id="staff-note-{{ note.id }}" style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;margin-bottom:6px">
           <div style="flex:1">
             <div style="font-weight:600;font-size:13px">{{note.employee_name}}</div>
             <div style="font-size:12px;color:var(--ink3);margin-top:2px">{{note.notes}}</div>
           </div>
           <button onclick="deleteNote({{note.id}})"
-            style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid #f5c6c2;background:white;color:#c0392b;cursor:pointer;font-family:'DM Sans',sans-serif">
+            style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid var(--paper3);background:var(--paper);color:var(--ember);cursor:pointer;font-family:'DM Sans',sans-serif">
             Remove
           </button>
         </div>
@@ -438,9 +439,9 @@ textarea{resize:vertical;min-height:60px}
           <div class="hint">AI uses this to generate accurate, specific marketing content. Update when menu or specials change.</div>
           <div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">
             {% if restaurant.google_place_id %}
-            <button type="button" onclick="refreshMenuFromGoogle()" style="background:none;border:1px solid var(--paper3);color:var(--ink3);padding:4px 12px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">↻ Refresh from Google Places</button>
+            <button type="button" onclick="refreshMenuFromGoogle(event)" style="background:none;border:1px solid var(--paper3);color:var(--ink3);padding:4px 12px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">↻ Refresh from Google Places</button>
             {% endif %}
-            <button type="button" onclick="fetchMenuFromUrl()" style="background:none;border:1px solid var(--paper3);color:var(--ink3);padding:4px 12px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">↻ Fetch from menu URL</button>
+            <button type="button" onclick="fetchMenuFromUrl(event)" style="background:none;border:1px solid var(--paper3);color:var(--ink3);padding:4px 12px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">↻ Fetch from menu URL</button>
             <label style="cursor:pointer;background:none;border:1px solid var(--paper3);color:var(--ink3);padding:4px 12px;border-radius:4px;font-size:11px;font-weight:600;font-family:'DM Sans',sans-serif">
               📄 Upload menu PDF
               <input type="file" id="menu-pdf-input" accept=".pdf" style="display:none" onchange="uploadMenuPDF(this)">
@@ -466,8 +467,8 @@ textarea{resize:vertical;min-height:60px}
           <label>POS system</label>
           <select id="pos_system">
             <option value="">Unknown / not set</option>
-            {% for pos in ['Toast','Square','Lightspeed','Aloha / NCR','Clover','Revel','TouchBistro','Other / Manual'] %}
-            <option value="{{ pos }}" {{'selected' if restaurant.pos_system == pos}}>{{ pos }}</option>
+            {% for pos in pos_choices %}
+            <option value="{{ pos }}"{% if restaurant.pos_system == pos %} selected{% endif %}>{{ pos }}</option>
             {% endfor %}
           </select>
           <div class="hint">Used to plan direct POS integration for automated data pulls</div>
@@ -586,6 +587,45 @@ textarea{resize:vertical;min-height:60px}
     </div>
   </div>
 
+  <!-- Alert contacts (fix round #73: the routes existed with no screen) -->
+  <div class="section-card" id="alert-contacts">
+    <div class="section-hdr"><div class="section-title">Alert contacts</div></div>
+    <div class="section-body">
+      <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:12px">
+        The people this restaurant's urgent alerts and routed issues go to, up to {{ max_alert_contacts }}.
+        A number added here is never texted until its owner consents in the restaurant's own Alert Settings.
+      </p>
+      <div id="alert-contact-list">
+        {% for c in alert_contacts %}
+        <div id="alert-contact-{{ c.id }}" style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;margin-bottom:6px">
+          <div style="flex:1">
+            <div style="font-weight:600;font-size:13px">{{ c.name or 'No name' }}</div>
+            <div style="font-size:12px;color:var(--ink3);margin-top:2px">{{ c.phone }} · {{ 'texts on (consented)' if c.sms_consent else 'no texts until they consent' }}</div>
+          </div>
+          <button onclick="removeAlertContact({{ c.id }})"
+            style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid var(--paper3);background:var(--paper);color:var(--ember);cursor:pointer;font-family:'DM Sans',sans-serif">
+            Remove
+          </button>
+        </div>
+        {% else %}
+        <div class="hint" style="margin-bottom:8px">No alert contacts yet.</div>
+        {% endfor %}
+      </div>
+      <div class="form-grid" style="margin-top:6px">
+        <div class="form-group">
+          <label>Contact name</label>
+          <input type="text" id="alert-contact-name" placeholder="e.g. Sam (GM)" maxlength="80">
+        </div>
+        <div class="form-group">
+          <label>Mobile number</label>
+          <input type="text" id="alert-contact-phone" placeholder="(312) 555-0100" maxlength="40">
+        </div>
+      </div>
+      <button class="btn-data" style="margin-top:8px;padding:6px 14px;font-size:12px" onclick="addAlertContact()">Add contact</button>
+      <div style="font-size:12px;margin-top:8px;display:none" id="alert-contact-result"></div>
+    </div>
+  </div>
+
   <!-- Billing status -->
   <div class="section-card">
     <div class="section-hdr"><div class="section-title">Billing & status</div></div>
@@ -593,11 +633,13 @@ textarea{resize:vertical;min-height:60px}
       <div class="form-grid">
         <div class="form-group">
           <label>Billing status</label>
-          <select id="billing_status">
-            {% for s in ["trial","active","paused","churned"] %}
-            <option value="{{ s }}" {{"selected" if restaurant.billing_status == s}}>{{ s|title }}</option>
+          {% set stored_billing = restaurant.billing_status or '' %}
+          <select id="billing_status" disabled>
+            {% for value, label in billing_choices %}
+            <option value="{{ value }}"{% if stored_billing == value %} selected{% endif %}>{{ label }}</option>
             {% endfor %}
           </select>
+          <div class="hint">Set by Stripe. <a href="#" id="billing-override-link" style="color:var(--ember)" onclick="cavBillingOverride(event)">Override…</a> An override needs a reason and is recorded with it.</div>
         </div>
         <div class="form-group">
           <label>Internal notes (private — not visible to client)</label>
@@ -635,51 +677,29 @@ textarea{resize:vertical;min-height:60px}
   </div>
 
   <div class="save-bar">
-    <button class="btn-save" onclick="saveSettings()">Save all settings</button>
+    <button class="btn-save" id="save-all-btn" onclick="saveSettings()">Save all settings</button>
     <a href="/admin/client-data/{{ restaurant.id }}" class="btn-data">Manage data →</a>
     <span class="save-status" id="save-status"></span>
   </div>
 </div>
 
 <script>
-var reviewsLive = {{ 'true' if restaurant.gmb_refresh_token else 'false' }};
-
-// Poll for new reviews every 5 minutes when on reviews tab
-(function() {
-  let _knownTotal = {% if rstats is defined %}{{ rstats.total }}{% else %}0{% endif %};
-  let _knownPending = {% if rstats is defined %}{{ rstats.awaiting_approval }}{% else %}0{% endif %};
-  let _pollActive = false;
-
-  function checkNewReviews() {
-    if(document.hidden) return; // don't poll when tab is hidden
-    fetch('/api/review-count')
-      .then(r => r.json())
-      .then(d => {
-        const newTotal = d.total || 0;
-        const newPending = d.pending || 0;
-        const newUrgent = d.urgent || 0;
-        if(newTotal > _knownTotal || newPending > _knownPending) {
-          var added = newTotal - _knownTotal;
-          var banner = document.getElementById('new-reviews-banner');
-          const txt = document.getElementById('new-reviews-text');
-          if(banner && txt) {
-            const urgentNote = newUrgent > 0 ? ` (${newUrgent} urgent ⚠)` : '';
-            txt.textContent = added > 0
-              ? `${added} new review${added > 1 ? 's' : ''} available${urgentNote}`
-              : `New review activity — click to refresh${urgentNote}`;
-            banner.style.display = 'flex';
-          }
-        }
-      })
-      .catch(() => {}); // silently ignore errors
-  }
-
-  // Start polling every 5 minutes
-  if(reviewsLive) {
-    setInterval(checkNewReviews, 5 * 60 * 1000);
-  }
-})();
-
+// One escaper for every value this page writes into HTML. Ingredient,
+// category, unit and recipe names come from POS syncs, CSV imports and the
+// owner's own screens; four of them went into innerHTML raw while the menu
+// names beside them were escaped, so a name like <img src=x onerror=...> ran
+// in the admin's session on this page (fix round #10). Quotes too: several
+// land inside value="..." attributes.
+function fcEsc(v) {
+  return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+// A number for a cell or an attribute: finite, or blank, never raw text.
+function fcNum(v, digits) {
+  var n = Number(v);
+  if (v === null || v === undefined || v === '' || !isFinite(n)) { return ''; }
+  return digits === undefined ? String(n) : n.toFixed(digits);
+}
 
 async function resetPassword() {
   const btn = event.target;
@@ -715,94 +735,143 @@ async function addStaffNote() {
   const data = await res.json();
   if(data.ok) {
     result.style.display='block'; result.style.color='var(--green)';
-    result.textContent='✓ Saved';
-    setTimeout(()=>location.reload(), 800);
+    // A second constraint for the same person is added to the first, never
+    // written over it (fix round #142).
+    result.textContent = data.appended ? '✓ Added to ' + name + '’s constraints' : '✓ Saved';
+    setTimeout(()=>location.reload(), 900);
   } else {
     result.style.display='block'; result.style.color='var(--ember)';
     result.textContent=data.error||'Save failed';
   }
 }
+// Remove asks first and can be undone: the route hands back what it removed.
+var cavRemovedNote = null;
 async function deleteNote(noteId) {
+  const row = document.getElementById('staff-note-' + noteId);
+  if (!confirm('Remove this person’s scheduling constraints? The schedule generator stops respecting them.')) return;
   const res = await fetch('/admin/staff-notes/'+noteId+'/delete', {method:'POST'});
   const data = await res.json();
-  if(data.ok) location.reload();
+  const result = document.getElementById('staff-note-result');
+  result.style.display = 'block';
+  if (!data.ok) { result.style.color = 'var(--ember)'; result.textContent = data.error || 'Remove failed'; return; }
+  if (row) { row.style.display = 'none'; }
+  cavRemovedNote = data.deleted || null;
+  result.style.color = 'var(--ink2)';
+  result.innerHTML = 'Removed ' + fcEsc(cavRemovedNote ? cavRemovedNote.employee_name : 'the constraint') + '. '
+    + '<a href="#" style="color:var(--ember)" onclick="undoDeleteNote(event)">Undo</a>';
 }
-async function uploadMenuPDF(input){
-  const file = input.files[0];
-  if(!file) return;
-  const status = document.getElementById('menu-refresh-status');
-  status.textContent = 'Extracting menu from PDF...'; status.style.color = 'var(--ink3)';
+async function undoDeleteNote(ev) {
+  if (ev) { ev.preventDefault(); }
+  if (!cavRemovedNote) return;
   const form = new FormData();
-  form.append('pdf', file);
-  try {
-    const res = await fetch('/admin/upload-menu-pdf/{{ restaurant.id }}', {method:'POST', body: form});
-    const d = await res.json();
-    if(d.ok){
-      document.getElementById('menu_notes').value = d.menu_notes;
-      status.textContent = '✓ Menu extracted from PDF — review and save';
-      status.style.color = '#2d6a4f';
-    } else {
-      status.textContent = d.error || 'Could not extract menu from PDF';
-      status.style.color = '#c84b2f';
-    }
-  } catch(e) {
-    status.textContent = 'Upload failed';
-    status.style.color = '#c84b2f';
-  }
-  input.value = '';
+  form.append('employee_name', cavRemovedNote.employee_name);
+  form.append('notes', cavRemovedNote.notes);
+  const res = await fetch('/admin/staff-notes/{{restaurant.id}}', {method:'POST', body:form});
+  const data = await res.json();
+  const result = document.getElementById('staff-note-result');
+  if (data.ok) { cavRemovedNote = null; location.reload(); }
+  else { result.style.color = 'var(--ember)'; result.textContent = data.error || 'Undo failed'; }
 }
-
-async function fetchMenuFromUrl(){
-  const urlInput = document.getElementById('menu_url');
-  const status = document.getElementById('menu-refresh-status');
-  const url = urlInput ? urlInput.value.trim() : '';
-  if(!url){ status.textContent = 'Enter a menu URL first'; status.style.color = '#c84b2f'; return; }
-  const btn = event.target;
-  btn.disabled = true; btn.textContent = '↻ Fetching...';
-  status.textContent = ''; 
-  try {
-    const res = await fetch('/admin/fetch-menu-from-url/{{ restaurant.id }}', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({url})
+// Alert contacts: one contact per add or remove, never the whole list.
+function cavContactResult(ok, msg) {
+  var el = document.getElementById('alert-contact-result');
+  el.style.display = 'block';
+  el.style.color = ok ? 'var(--green)' : 'var(--ember)';
+  el.textContent = msg;
+}
+function addAlertContact() {
+  var name = document.getElementById('alert-contact-name').value.trim();
+  var phone = document.getElementById('alert-contact-phone').value.trim();
+  if (!phone) { cavContactResult(false, 'Enter a mobile number.'); return; }
+  fetch('/admin/api/alert-contacts/{{ restaurant.id }}', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name: name, phone: phone})
+  }).then(function (r) { return r.json(); }).then(function (d) {
+    if (d.ok) { cavContactResult(true, '✓ Added'); setTimeout(function () { location.reload(); }, 700); }
+    else { cavContactResult(false, d.error || 'Could not add the contact'); }
+  })['catch'](function () { cavContactResult(false, 'Request failed.'); });
+}
+function removeAlertContact(contactId) {
+  if (!confirm('Remove this alert contact? They stop getting this restaurant’s alerts.')) return;
+  fetch('/admin/api/alert-contacts/{{ restaurant.id }}/' + contactId + '/delete', {method: 'POST'})
+    .then(function (r) { return r.json(); }).then(function (d) {
+      if (d.ok) {
+        var row = document.getElementById('alert-contact-' + contactId);
+        if (row) { row.style.display = 'none'; }
+        cavContactResult(true, '✓ Removed');
+      } else { cavContactResult(false, d.error || 'Could not remove the contact'); }
+    })['catch'](function () { cavContactResult(false, 'Request failed.'); });
+}
+// ── Menu extraction ─────────────────────────────────────────────────────────
+// Each source runs as a background job (a model or Places call can take a
+// minute, and held one of the server's four request threads the whole time)
+// and hands back text to review. Nothing is saved until "Save all settings":
+// the PDF and URL routes used to overwrite the saved menu notes the moment
+// they finished, while this page said "review and save" (fix round #142,
+// #153).
+function cavMenuStatus(text, ok) {
+  var status = document.getElementById('menu-refresh-status');
+  status.textContent = text;
+  status.style.color = ok === true ? 'var(--green)' : (ok === false ? 'var(--ember)' : 'var(--ink3)');
+}
+function cavPollMenuJob(jobId, done) {
+  var tries = 0;
+  function tick() {
+    tries++;
+    fetch('/admin/api/menu-extract/' + encodeURIComponent(jobId))
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.status === 'pending' && tries < 120) { setTimeout(tick, 1500); return; }
+        done(d);
+      })['catch'](function () {
+        if (tries < 120) { setTimeout(tick, 3000); }
+        else { done({ok: false, error: 'Lost track of the extraction. Try again.'}); }
+      });
+  }
+  setTimeout(tick, 1200);
+}
+function cavStartMenuJob(request, okText, finish) {
+  cavMenuStatus('Extracting the menu… this can take a minute.');
+  request.then(function (r) { return r.json(); }).then(function (d) {
+    if (!d.ok || !d.job_id) { cavMenuStatus(d.error || 'Could not start the extraction.', false); finish(); return; }
+    cavPollMenuJob(d.job_id, function (res) {
+      if (res.ok && res.menu_notes) {
+        document.getElementById('menu_notes').value = res.menu_notes;
+        cavMarkTouched('menu_notes');
+        cavMenuStatus(okText, true);
+      } else {
+        cavMenuStatus(res.error || 'Could not extract a menu. Fill it in by hand.', false);
+      }
+      finish();
     });
-    const d = await res.json();
-    if(d.ok){
-      document.getElementById('menu_notes').value = d.menu_notes;
-      status.textContent = '✓ Menu extracted — review and save';
-      status.style.color = '#2d6a4f';
-    } else {
-      status.textContent = d.error || 'Could not extract menu from that URL — fill in manually';
-      status.style.color = '#7a736a';
-    }
-  } catch(e) {
-    status.textContent = 'Request failed';
-    status.style.color = '#c84b2f';
-  }
-  btn.disabled = false; btn.textContent = '↻ Fetch from menu URL';
+  })['catch'](function () { cavMenuStatus('Request failed.', false); finish(); });
 }
-
-async function refreshMenuFromGoogle(){
-  const btn = event.target;
-  const status = document.getElementById('menu-refresh-status');
+function uploadMenuPDF(input){
+  var file = input.files[0];
+  if (!file) return;
+  var form = new FormData();
+  form.append('pdf', file);
+  cavStartMenuJob(fetch('/admin/upload-menu-pdf/{{ restaurant.id }}', {method: 'POST', body: form}),
+                  '✓ Menu extracted from the PDF. Review it, then Save all settings.',
+                  function () { input.value = ''; });
+}
+function fetchMenuFromUrl(ev){
+  var urlInput = document.getElementById('menu_url');
+  var url = urlInput ? urlInput.value.trim() : '';
+  if (!url) { cavMenuStatus('Enter a menu URL first', false); return; }
+  var btn = (ev || window.event).target;
   btn.disabled = true; btn.textContent = '↻ Fetching...';
-  status.textContent = '';
-  try {
-    const res = await fetch('/admin/refresh-menu-notes/{{ restaurant.id }}', {method:'POST'});
-    const d = await res.json();
-    if(d.ok){
-      document.getElementById('menu_notes').value = d.menu_notes;
-      status.textContent = d.message || '✓ Menu data updated';
-      status.style.color = '#2d6a4f';
-    } else {
-      status.textContent = d.error || 'No menu data found — try PDF upload or enter manually';
-      status.style.color = '#7a736a';
-    }
-  } catch(e) {
-    status.textContent = 'Request failed';
-    status.style.color = '#c84b2f';
-  }
-  btn.disabled = false; btn.textContent = '↻ Refresh from Google Places';
+  cavMarkTouched('menu_url');
+  cavStartMenuJob(fetch('/admin/fetch-menu-from-url/{{ restaurant.id }}', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({url: url})}),
+                  '✓ Menu extracted. Review it, then Save all settings.',
+                  function () { btn.disabled = false; btn.textContent = '↻ Fetch from menu URL'; });
+}
+function refreshMenuFromGoogle(ev){
+  var btn = (ev || window.event).target;
+  btn.disabled = true; btn.textContent = '↻ Fetching...';
+  cavStartMenuJob(fetch('/admin/refresh-menu-notes/{{ restaurant.id }}', {method: 'POST'}),
+                  '✓ Menu from Google Places, merged with the saved notes. Review it, then Save all settings.',
+                  function () { btn.disabled = false; btn.textContent = '↻ Refresh from Google Places'; });
 }
 
 async function resendWelcome(){
@@ -858,15 +927,29 @@ async function refreshIgToken() {
   status.style.color = data.ok ? 'var(--green)' : 'var(--ember)';
   status.textContent = data.ok ? '✓ Tokens refreshed — new expiry: ' + data.expires : 'Error: ' + (data.error || 'failed');
 }
-// The target and rate fields the admin actually edited: the server records
-// them as the owner's even when typed back as the default (re-audit #45).
+// ── Save: only what the admin touched (fix round #8, #113) ──────────────────
+// Every save used to post ~60 fields, so fixing one typo reverted anything
+// the owner had changed since this page loaded, reset a billing state the
+// select didn't list and dropped the payroll week. The page now sends only
+// the fields touched here, each with the value it loaded (`base`) and the
+// row version; the server refuses (409) a field somebody else changed in the
+// meantime rather than reverting it.
+var CAV_VERSION = {{ row_version|tojson }};
+var CAV_LOADED = {{ loaded_settings|tojson }};
+var CAV_FIELD_KEYS = {{ settings_fields|tojson }};
+// Payload key -> element id, where they differ.
+var CAV_IDS = {module_reviews: 'setting-mod-reviews', module_labor: 'setting-mod-labor',
+               module_inventory: 'setting-mod-inventory', module_marketing: 'setting-mod-marketing'};
 var cavTouched = {};
+function cavMarkTouched(key) { cavTouched[key] = true; }
 (function () {
-  var ids = ['labor_target_pct', 'food_cost_target', 'hourly_rate'];
   function mark(k) { return function () { cavTouched[k] = true; }; }
-  for (var i = 0; i < ids.length; i++) {
-    var el = document.getElementById(ids[i]);
-    if (el) { el.addEventListener('input', mark(ids[i])); }
+  for (var i = 0; i < CAV_FIELD_KEYS.length; i++) {
+    var el = document.getElementById(CAV_IDS[CAV_FIELD_KEYS[i]] || CAV_FIELD_KEYS[i]);
+    if (el) {
+      el.addEventListener('input', mark(CAV_FIELD_KEYS[i]));
+      el.addEventListener('change', mark(CAV_FIELD_KEYS[i]));
+    }
   }
 })();
 // One revenue target shown by the month and by the week: typing either box
@@ -893,82 +976,96 @@ function cavTouchedList() {
   for (var k in cavTouched) { if (cavTouched.hasOwnProperty(k)) { out.push(k); } }
   return out;
 }
-async function saveSettings() {
-  const btn = document.querySelector('.btn-save');
-  const status = document.getElementById('save-status');
-  btn.textContent = 'Saving…'; btn.disabled = true;
-  const payload = {
-    name:            document.getElementById('name').value,
-    owner_email:     document.getElementById('owner_email').value,
-    owner_name:      document.getElementById('owner_name').value,
-    owner_phone:     document.getElementById('owner_phone').value,
-    location_group:       document.getElementById('location_group').value,
-    location_name:        document.getElementById('location_name').value,
-    inventory_frequency:  document.getElementById('inventory_frequency') ? document.getElementById('inventory_frequency').value : 'weekly',
-    delivery_days:        document.getElementById('delivery_days') ? document.getElementById('delivery_days').value : '',
-    inventory_notes:      document.getElementById('inventory_notes') ? document.getElementById('inventory_notes').value : '',
-    food_cost_target:     document.getElementById('food_cost_target') ? document.getElementById('food_cost_target').value : 30,
-    waste_target_pct:     document.getElementById('waste_target_pct') && document.getElementById('waste_target_pct').value !== '' ? document.getElementById('waste_target_pct').value : '',
-    digest_day:      document.getElementById('digest_day').value,
-    digest_enabled:  parseInt(document.getElementById('digest_enabled').value),
-    pos_system:      document.getElementById('pos_system').value,
-    sign_off_name:   document.getElementById('sign_off_name').value,
-    timezone:        document.getElementById('timezone').value,
-    google_place_id: document.getElementById('google_place_id').value,
-    yelp_business_id:document.getElementById('yelp_business_id').value,
-    {# The stored value is kept: a Place-ID-only restaurant (no Business Profile token) fetches through Places with reviews_live on, and posting 0 here switched its review fetching off on every admin save (re-audit B6). #}
-    reviews_live:    {{ 1 if (restaurant.gmb_refresh_token or restaurant.reviews_live) else 0 }},
-    neighborhood:    document.getElementById('neighborhood').value,
-    known_for:       document.getElementById('known_for').value,
-    vibe:            document.getElementById('vibe').value,
-    voice_notes:     document.getElementById('voice_notes').value,
-    never_say:       document.getElementById('never_say').value,
-    skip_holidays:   document.getElementById('skip_holidays').value,
-    custom_competitors: document.getElementById('custom_competitors').value,
-    menu_notes:      document.getElementById('menu_notes').value,
-    menu_url:        document.getElementById('menu_url').value,
-    hourly_rate:             parseFloat(document.getElementById('hourly_rate').value),
-    labor_target_pct:        parseFloat(document.getElementById('labor_target_pct').value) || 30.0,
-    week_start_day:          parseInt(document.getElementById('week_start_day').value) || 0,
-    monthly_revenue_target:  parseFloat(document.getElementById('monthly_revenue_target').value) || 0,
-    hours_notes:             document.getElementById('hours_notes').value,
-    sched_notes:             document.getElementById('sched_notes').value,
-    section_count:           parseInt(document.getElementById('section_count').value) || null,
-    delivery_pct:            parseInt(document.getElementById('delivery_pct').value) || null,
-    daypart_split:           document.getElementById('daypart_split').value,
-    role_minimums_json:      document.getElementById('role_minimums_json').value,
-    cut_floor_default:       document.getElementById('cut_floor_default').value,
-    role_rates_json:         document.getElementById('role_rates_json').value,
-    close_times_json:        document.getElementById('close_times_json').value,
-    role_close_buffer_json:  document.getElementById('role_close_buffer_json').value,
-    billing_status:  document.getElementById('billing_status').value,
-    internal_notes:  document.getElementById('internal_notes').value,
-    module_reviews:  document.getElementById('setting-mod-reviews').checked ? 1 : 0,
-    module_labor:    document.getElementById('setting-mod-labor').checked ? 1 : 0,
-    module_inventory:document.getElementById('setting-mod-inventory').checked ? 1 : 0,
-    module_marketing:document.getElementById('setting-mod-marketing').checked ? 1 : 0,
-    touched:         cavTouchedList(),
-  };
-  if (cavRevSource === 'weekly') payload.weekly_revenue_target = parseFloat(document.getElementById('weekly_revenue_target').value) || 0;
-  const res = await fetch(window.location.pathname, {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify(payload)
-  });
-  const data = await res.json();
+function cavValue(key) {
+  var el = document.getElementById(CAV_IDS[key] || key);
+  if (!el) { return undefined; }
+  if (el.type === 'checkbox') { return el.checked ? 1 : 0; }
+  return el.value;
+}
+// Billing status is Stripe's; an override is deliberate and carries a reason.
+var cavBillingReason = '';
+function cavBillingOverride(ev) {
+  if (ev) { ev.preventDefault(); }
+  var reason = prompt('Billing status is set by Stripe. Why are you overriding it? The reason is recorded with the change.');
+  if (!reason || !reason.replace(/\s+/g, '')) { return; }
+  cavBillingReason = reason.replace(/^\s+|\s+$/g, '');
+  var sel = document.getElementById('billing_status');
+  sel.disabled = false;
+  sel.focus();
+}
+function cavSaveStatus(ok, msg, html) {
+  var status = document.getElementById('save-status');
   status.style.display = 'inline';
-  if (data.ok) {
-    status.className = 'save-status save-ok';
-    status.textContent = '✓ Saved';
-    setTimeout(() => status.style.display='none', 3000);
-  } else {
-    status.className = 'save-status save-err';
-    status.textContent = data.error || 'Save failed';
+  status.className = 'save-status ' + (ok ? 'save-ok' : 'save-err');
+  if (html) { status.innerHTML = msg; } else { status.textContent = msg; }
+}
+function saveSettings() {
+  var btn = document.getElementById('save-all-btn');
+  var payload = {};
+  for (var i = 0; i < CAV_FIELD_KEYS.length; i++) {
+    var k = CAV_FIELD_KEYS[i];
+    if (cavTouched[k] && k !== 'weekly_revenue_target') { payload[k] = cavValue(k); }
   }
-  btn.textContent = 'Save all settings'; btn.disabled = false;
+  if (cavRevSource === 'weekly') payload.weekly_revenue_target = cavValue('weekly_revenue_target');
+  if (cavRevSource === 'weekly') { delete payload.monthly_revenue_target; }
+  var keys = [];
+  for (var key in payload) { if (payload.hasOwnProperty(key)) { keys.push(key); } }
+  if (!keys.length) { cavSaveStatus(true, 'Nothing to save: no setting was changed.'); return; }
+  if (payload.billing_status !== undefined) { payload.billing_status_reason = cavBillingReason; }
+  payload.base = {};
+  for (var j = 0; j < keys.length; j++) {
+    var col = keys[j] === 'weekly_revenue_target' ? 'monthly_revenue_target' : keys[j];
+    payload.base[col] = CAV_LOADED.hasOwnProperty(col) ? CAV_LOADED[col] : null;
+  }
+  payload.expected_version = CAV_VERSION;
+  payload.touched = cavTouchedList();
+  btn.textContent = 'Saving…'; btn.disabled = true;
+  fetch(window.location.pathname, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  }).then(function (res) {
+    return res.json().then(function (data) { return {status: res.status, data: data}; });
+  }).then(function (r) {
+    var data = r.data || {};
+    if (data.ok) {
+      var saved = data.saved || {};
+      for (var s in saved) { if (saved.hasOwnProperty(s)) { CAV_LOADED[s] = saved[s]; } }
+      CAV_VERSION = data.version;
+      cavTouched = {};
+      cavRevSource = null;
+      cavBillingReason = '';
+      document.getElementById('billing_status').disabled = true;
+      cavSaveStatus(true, '✓ Saved');
+      setTimeout(function () { document.getElementById('save-status').style.display = 'none'; }, 3000);
+    } else if (r.status === 409) {
+      // Somebody else changed a field this save touches. Nothing was written;
+      // the admin's edits stay on the page.
+      var names = [];
+      var labels = data.labels || {};
+      var current = data.current || {};
+      for (var f = 0; f < (data.fields || []).length; f++) {
+        var name = data.fields[f];
+        var now = current[name];
+        names.push(fcEsc(labels[name] || name) + ' (now ' + fcEsc(now === null || now === undefined || now === '' ? 'blank' : now) + ')');
+      }
+      var leadHtml = names.length ? 'Not saved. Changed by somebody else since this page loaded: ' + names.join(', ') + '. '
+                                  : fcEsc(data.error || 'Not saved: these settings changed since this page loaded.') + ' ';
+      cavSaveStatus(false, leadHtml + '<a href="' + fcEsc(window.location.pathname) + '" style="color:var(--ember)">Reload</a> to see the change, then make yours again.', true);
+    } else {
+      cavSaveStatus(false, data.error || 'Save failed');
+    }
+    btn.textContent = 'Save all settings'; btn.disabled = false;
+  })['catch'](function () {
+    cavSaveStatus(false, 'Save failed: check your connection and try again.');
+    btn.textContent = 'Save all settings'; btn.disabled = false;
+  });
 }
 
-// ── TripAdvisor import ──────────────────────────────────────────────────────
+// ── Review CSV import ───────────────────────────────────────────────────────
+// Through the admin route for THIS restaurant. It posted to the owner's
+// /api/import-tripadvisor with no restaurant id, so the reviews landed in the
+// admin's own home restaurant (fix round #149).
 function importTripAdvisor(input) {
   var file = input.files[0];
   if (!file) return;
@@ -978,28 +1075,33 @@ function importTripAdvisor(input) {
   status.textContent   = 'Uploading…';
   var form = new FormData();
   form.append('file', file);
-  fetch('/api/import-tripadvisor', {method: 'POST', body: form})
+  form.append('platform', 'tripadvisor');
+  fetch('/admin/import-reviews/{{ restaurant.id }}', {method: 'POST', body: form})
     .then(function(r){ return r.json(); })
     .then(function(d){
       if (d.ok) {
-        status.style.color = '#2d6a4f';
+        status.style.color = 'var(--green)';
         status.textContent = '✓ Imported ' + d.imported + ' reviews (' + d.new + ' new). AI is processing them now.';
       } else {
-        status.style.color = '#c0392b';
+        status.style.color = 'var(--ember)';
         status.textContent = 'Error: ' + (d.error || 'Import failed');
       }
       input.value = '';
     })
-    .catch(function(){
-      status.style.color = '#c0392b';
+    ['catch'](function(){
+      status.style.color = 'var(--ember)';
       status.textContent = 'Upload failed — check your connection';
       input.value = '';
     });
 }
 
 // ── Response template library ───────────────────────────────────────────────
+// THIS restaurant's templates, through the admin routes. The section called
+// the owner's session-scoped /api/templates, which read and wrote the admin's
+// own home restaurant's library (fix round #73).
+var CAV_TEMPLATES_URL = '/admin/api/templates/{{ restaurant.id }}';
 function loadTemplates() {
-  fetch('/api/templates').then(function(r){ return r.json(); }).then(function(d){
+  fetch(CAV_TEMPLATES_URL).then(function(r){ return r.json(); }).then(function(d){
     var list = document.getElementById('tmpl-mgmt-list');
     if (!list) return;
     var tmpls = d.templates || [];
@@ -1009,30 +1111,28 @@ function loadTemplates() {
     }
     var html = '';
     tmpls.forEach(function(t){
-      html += '<div style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--paper3);border-radius:6px;background:white;margin-bottom:6px">'
+      var body = String(t.body || '');
+      var uses = Number(t.use_count) || 0;
+      html += '<div style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--paper3);border-radius:6px;background:var(--paper);margin-bottom:6px">'
             + '<div style="flex:1">'
-            + '<div style="font-size:13px;font-weight:600;color:var(--ink)">' + _esc(t.title) + '</div>'
-            + '<div style="font-size:11px;color:var(--ink3);margin-top:3px;line-height:1.5">' + _esc(t.body.slice(0,120)) + (t.body.length>120?'…':'') + '</div>'
-            + '<div style="font-size:10px;color:var(--ink3);margin-top:4px">Used ' + (t.use_count||0) + ' time' + (t.use_count===1?'':'s') + '</div>'
+            + '<div style="font-size:13px;font-weight:600;color:var(--ink)">' + fcEsc(t.title) + '</div>'
+            + '<div style="font-size:11px;color:var(--ink3);margin-top:3px;line-height:1.5">' + fcEsc(body.slice(0,120)) + (body.length>120?'…':'') + '</div>'
+            + '<div style="font-size:10px;color:var(--ink3);margin-top:4px">Used ' + fcNum(uses) + ' time' + (uses===1?'':'s') + '</div>'
             + '</div>'
-            + '<button onclick="deleteTemplate(' + t.id + ',this)" style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid #f5c6c2;background:white;color:#c0392b;cursor:pointer;font-family:\'DM Sans\',sans-serif;flex-shrink:0">Remove</button>'
+            + '<button onclick="deleteTemplate(' + fcNum(t.id) + ',this)" style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid var(--paper3);background:var(--paper);color:var(--ember);cursor:pointer;font-family:\'DM Sans\',sans-serif;flex-shrink:0">Remove</button>'
             + '</div>';
     });
     list.innerHTML = html;
   });
 }
 
-function _esc(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-
 function createTemplate() {
   var title  = (document.getElementById('new-tmpl-title').value || '').trim();
   var body   = (document.getElementById('new-tmpl-body').value || '').trim();
   var status = document.getElementById('new-tmpl-status');
-  if (!title || !body) { status.style.display='inline';status.style.color='#c0392b';status.textContent='Title and text required'; return; }
+  if (!title || !body) { status.style.display='inline';status.style.color='var(--ember)';status.textContent='Title and text required'; return; }
   status.style.display='inline';status.style.color='var(--ink3)';status.textContent='Saving…';
-  fetch('/api/templates', {
+  fetch(CAV_TEMPLATES_URL, {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify({title: title, body: body})
@@ -1040,12 +1140,12 @@ function createTemplate() {
     if (d.ok) {
       document.getElementById('new-tmpl-title').value = '';
       document.getElementById('new-tmpl-body').value  = '';
-      status.style.color = '#2d6a4f';
+      status.style.color = 'var(--green)';
       status.textContent = '✓ Saved';
       loadTemplates();
       setTimeout(function(){ status.style.display='none'; }, 2000);
     } else {
-      status.style.color = '#c0392b';
+      status.style.color = 'var(--ember)';
       status.textContent = d.error || 'Failed';
     }
   });
@@ -1053,7 +1153,7 @@ function createTemplate() {
 
 function deleteTemplate(id, btn) {
   if (!confirm('Remove this template?')) return;
-  fetch('/api/templates/' + id, {method: 'DELETE'}).then(function(r){ return r.json(); }).then(function(d){
+  fetch(CAV_TEMPLATES_URL + '/' + id + '/delete', {method: 'POST'}).then(function(r){ return r.json(); }).then(function(d){
     if (d.ok) { loadTemplates(); }
   });
 }
@@ -1076,30 +1176,34 @@ async function fcLoadIngredients() {
 
   document.getElementById('fc-ing-count').textContent = ingredients.length;
 
+  // Every value escaped (fcEsc) or reduced to a number (fcNum): these names
+  // are tenant data (fix round #10).
   document.getElementById('fc-ing-rows').innerHTML = ingredients.map(ing => `
-    <tr data-id="${ing.id}">
-      <td>${ing.name}</td>
-      <td><input style="width:80px" value="${ing.category||''}" onchange="fcUpdateField(${ing.id},'category',this.value)"></td>
-      <td><input style="width:55px" value="${ing.unit||''}" onchange="fcUpdateField(${ing.id},'unit',this.value)"></td>
-      <td><input type="number" step="0.01" style="width:60px" value="${ing.par_level}" onchange="fcUpdateField(${ing.id},'par_level',this.value)"></td>
-      <td style="color:var(--ink3)" title="Change via recount/receiving, not directly">${Number(ing.current_stock).toFixed(1)}</td>
-      <td><input type="number" step="0.01" style="width:65px" value="${ing.unit_cost}" onchange="fcUpdateField(${ing.id},'unit_cost',this.value)"></td>
-      <td><input type="number" step="0.01" style="width:55px" value="${ing.case_size}" onchange="fcUpdateField(${ing.id},'case_size',this.value)"></td>
-      <td style="color:var(--ink3)">${Number(ing.avg_daily_usage).toFixed(2)}</td>
-      <td style="color:var(--ink3)">${Number(ing.waste_last_week).toFixed(2)}</td>
-      <td><span class="fc-x" onclick="fcDeleteIngredient(${ing.id})">✕</span></td>
+    <tr data-id="${fcNum(ing.id)}">
+      <td>${fcEsc(ing.name)}</td>
+      <td><input style="width:80px" value="${fcEsc(ing.category)}" onchange="fcUpdateField(${fcNum(ing.id)},'category',this.value)"></td>
+      <td><input style="width:55px" value="${fcEsc(ing.unit)}" onchange="fcUpdateField(${fcNum(ing.id)},'unit',this.value)"></td>
+      <td><input type="number" step="0.01" style="width:60px" value="${fcNum(ing.par_level)}" onchange="fcUpdateField(${fcNum(ing.id)},'par_level',this.value)"></td>
+      <td style="color:var(--ink3)" title="Change via recount/receiving, not directly">${fcNum(ing.current_stock, 1)}</td>
+      <td><input type="number" step="0.01" style="width:65px" value="${fcNum(ing.unit_cost)}" onchange="fcUpdateField(${fcNum(ing.id)},'unit_cost',this.value)"></td>
+      <td><input type="number" step="0.01" style="width:55px" value="${fcNum(ing.case_size)}" onchange="fcUpdateField(${fcNum(ing.id)},'case_size',this.value)"></td>
+      <td style="color:var(--ink3)">${fcNum(ing.avg_daily_usage, 2)}</td>
+      <td style="color:var(--ink3)">${fcNum(ing.waste_last_week, 2)}</td>
+      <td><span class="fc-x" onclick="fcDeleteIngredient(${fcNum(ing.id)})">✕</span></td>
     </tr>
   `).join('');
 
   document.getElementById('fc-quick-ingredient').innerHTML =
-    ingredients.map(ing => `<option value="${ing.id}">${ing.name}</option>`).join('');
+    ingredients.map(ing => `<option value="${fcNum(ing.id)}">${fcEsc(ing.name)}</option>`).join('');
 }
 
 async function fcUpdateField(ingredientId, field, value) {
-  await fetch(`/admin/inventory/ingredients/{{ restaurant.id }}/${ingredientId}`, {
+  const res = await fetch(`/admin/inventory/ingredients/{{ restaurant.id }}/${fcNum(ingredientId)}`, {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({[field]: value})
   });
+  const data = await res.json();
+  if (!data.ok) { alert(data.error || 'That change was not saved'); }
   fcLoadIngredients();
 }
 
@@ -1116,7 +1220,7 @@ function fcShowAddIngredient() {
 async function fcCreateIngredient() {
   const name = document.getElementById('fc-new-name').value.trim();
   if (!name) { alert('Ingredient name required'); return; }
-  await fetch('/admin/inventory/ingredients/{{ restaurant.id }}', {
+  const res = await fetch('/admin/inventory/ingredients/{{ restaurant.id }}', {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({
       name,
@@ -1128,6 +1232,9 @@ async function fcCreateIngredient() {
       case_size: document.getElementById('fc-new-case').value || 1,
     })
   });
+  const data = await res.json();
+  // A refused value is said, not swallowed (fix round #142).
+  if (!data.ok) { alert(data.error || 'Could not add the ingredient'); return; }
   document.getElementById('fc-add-ingredient-row').style.display = 'none';
   ['fc-new-name','fc-new-category','fc-new-unit','fc-new-par','fc-new-stock','fc-new-cost'].forEach(id => document.getElementById(id).value = '');
   fcLoadIngredients();
@@ -1193,7 +1300,10 @@ async function fcLoadRecipes() {
   const res = await fetch('/admin/inventory/recipes/{{ restaurant.id }}');
   const data = await res.json();
   if (!data.ok) return;
-  const ingredientOptions = data.ingredients.map(i => `<option value="${i.id}">${i.name}</option>`).join('');
+  // Every name here is tenant data (POS, CSV import, the owner's screens):
+  // escaped with fcEsc, numbers through fcNum (fix round #10). A variable
+  // ending in Html holds markup already built from escaped parts.
+  const ingredientOptionsHtml = data.ingredients.map(i => `<option value="${fcNum(i.id)}">${fcEsc(i.name)}</option>`).join('');
 
   const priorityEl = document.getElementById('fc-priority-list');
   const priority = data.priority_ingredients || [];
@@ -1201,8 +1311,8 @@ async function fcLoadRecipes() {
     priorityEl.textContent = '';
   } else {
     const remaining = priority.filter(p => !p.has_recipe).length;
-    const names = priority.map(p => p.has_recipe ? `${p.name} ✓` : p.name).join(', ');
-    priorityEl.innerHTML = ` Start here (highest weekly spend impact, ${remaining} of ${priority.length} still need a recipe): <strong style="color:var(--ink2)">${names}</strong>`;
+    const namesHtml = priority.map(p => fcEsc(p.name) + (p.has_recipe ? ' ✓' : '')).join(', ');
+    priorityEl.innerHTML = ` Start here (highest weekly spend impact, ${fcNum(remaining)} of ${fcNum(priority.length)} still need a recipe): <strong style="color:var(--ink2)">${namesHtml}</strong>`;
   }
 
   const list = document.getElementById('fc-recipes-list');
@@ -1211,28 +1321,28 @@ async function fcLoadRecipes() {
     return;
   }
   // Grouped under the POS's own categories ("01. Shareables" reads
-  // "Shareables"); names escaped - they come from the POS.
-  const fcEsc = v => String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  // "Shareables").
   let lastCat = null;
   list.innerHTML = data.menu_items.map(mi => {
     const cat = (mi.pos_category || '').replace(/^\d+\.\s*/, '');
-    const head = (mi.pos_category || null) !== lastCat && cat
+    const headHtml = (mi.pos_category || null) !== lastCat && cat
       ? `<div class="hint" style="margin:14px 0 6px;font-weight:700;text-transform:uppercase;letter-spacing:.06em">${fcEsc(cat)}</div>` : '';
     lastCat = mi.pos_category || null;
-    return head + `
+    const rowsHtml = mi.recipe.map(r => `
+        <div class="fc-recipe-row">
+          <span style="flex:1">${fcEsc(r.ingredient_name)}</span>
+          <span style="color:var(--ink3)">${fcNum(r.qty_per_unit)} ${fcEsc(r.unit)} / sale</span>
+          <span class="fc-x" onclick="fcDeleteRecipeRow(${fcNum(mi.id)},${fcNum(r.id)})">✕</span>
+        </div>
+      `).join('') || '<div class="hint" style="margin-bottom:6px">No ingredients mapped yet</div>';
+    return headHtml + `
     <div class="fc-recipe-card">
       <div class="fc-recipe-title">${fcEsc(mi.name)}</div>
-      ${mi.recipe.map(r => `
-        <div class="fc-recipe-row">
-          <span style="flex:1">${r.ingredient_name}</span>
-          <span style="color:var(--ink3)">${r.qty_per_unit} ${r.unit||''} / sale</span>
-          <span class="fc-x" onclick="fcDeleteRecipeRow(${mi.id},${r.id})">✕</span>
-        </div>
-      `).join('') || '<div class="hint" style="margin-bottom:6px">No ingredients mapped yet</div>'}
+      ${rowsHtml}
       <div class="fc-inline" style="margin-top:8px">
-        <select id="fc-recipe-ing-${mi.id}" style="width:150px">${ingredientOptions}</select>
-        <input type="number" step="0.01" placeholder="qty/sale" id="fc-recipe-qty-${mi.id}" style="width:80px">
-        <button type="button" class="btn-data" style="padding:6px 12px;font-size:12px" onclick="fcAddRecipeRow(${mi.id})">Add</button>
+        <select id="fc-recipe-ing-${fcNum(mi.id)}" style="width:150px">${ingredientOptionsHtml}</select>
+        <input type="number" step="0.01" placeholder="qty/sale" id="fc-recipe-qty-${fcNum(mi.id)}" style="width:80px">
+        <button type="button" class="btn-data" style="padding:6px 12px;font-size:12px" onclick="fcAddRecipeRow(${fcNum(mi.id)})">Add</button>
       </div>
     </div>
   `;
@@ -1243,10 +1353,12 @@ async function fcAddRecipeRow(menuItemId) {
   const ingredientId = document.getElementById(`fc-recipe-ing-${menuItemId}`).value;
   const qty = document.getElementById(`fc-recipe-qty-${menuItemId}`).value;
   if (!ingredientId || !qty) { alert('Pick an ingredient and a quantity'); return; }
-  await fetch(`/admin/inventory/recipes/${menuItemId}`, {
+  const res = await fetch(`/admin/inventory/recipes/${fcNum(menuItemId)}`, {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ingredient_id: ingredientId, qty_per_unit: qty})
   });
+  const data = await res.json();
+  if (!data.ok) { alert(data.error || 'Could not add that ingredient to the recipe'); return; }
   fcLoadRecipes();
 }
 

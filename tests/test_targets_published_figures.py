@@ -302,4 +302,4 @@ def test_an_explicit_admin_save_of_the_default_is_the_owners(db, monkeypatch):
     assert thresholds.target_source(r, "labor") == "set" and thresholds.target_alerts_allowed(r, "labor")
     assert thresholds.labor_cost_basis(r) == "owner_blended"
     html = open(os.path.join(ROOT, "templates", "client_settings.html"), encoding="utf-8").read()
-    assert "touched:         cavTouchedList()," in html
+    assert "payload.touched = cavTouchedList();" in html
