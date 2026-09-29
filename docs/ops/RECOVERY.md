@@ -104,7 +104,7 @@ Railway outage or a crashed process.
    previous container does NOT keep serving.
 4. If the process is crash-looping, read the deploy logs. Each boot writes a
    `boot_events` row saying how the previous process ended (clean, unclean,
-   boot failed); more than 3 boots of one deployment, or 3 after crashes, in
+   boot failed); more than 3 boots of one deployment, or more than 3 that followed a crash, in
    an hour pages once. `hosted_dashboard` refuses to boot when:
    - **the volume is missing** (`models.require_volume`): on Railway with no
      `RAILWAY_VOLUME_MOUNT_PATH`, a mount that is missing or not writable,
