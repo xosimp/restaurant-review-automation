@@ -267,11 +267,11 @@ def _deliver(webhook, event_type, data, db_path=DB_PATH, event_id=None):
                 (webhook["id"], webhook["restaurant_id"], event_type, status, int(ok), attempts, error)
             )
         if ok:
-            conn.execute("UPDATE webhooks SET consecutive_failures=0 WHERE id=?", (webhook["id"],))
-            try:
-                conn.execute("UPDATE webhooks SET last_success_at=datetime('now') WHERE id=?", (webhook["id"],))
-            except Exception:
-                pass
+            # last_success_at is added at boot (init_webhooks), as
+            # consecutive_failures is: one write, not a second one whose
+            # failure was swallowed (scripts/check_silent_handlers.py).
+            conn.execute("UPDATE webhooks SET consecutive_failures=0, last_success_at=datetime('now') WHERE id=?",
+                         (webhook["id"],))
         else:
             row = conn.execute("SELECT consecutive_failures FROM webhooks WHERE id=?", (webhook["id"],)).fetchone()
             failures = (row["consecutive_failures"] or 0) + 1 if row else 1

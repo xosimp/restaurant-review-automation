@@ -925,6 +925,24 @@ def ai_context(trigger=None, actor_user_id=None, correlation_id=None, restaurant
         _CTX.reset(token)
 
 
+def current_ai_context() -> dict:
+    """The attribution in force here (a copy): what an enclosing ai_context
+    named. Empty outside one."""
+    return dict(_CTX.get() or {})
+
+
+def attribution_for_thread() -> dict:
+    """This work's attribution as ai_context keyword arguments — taken on the
+    thread that hands work to a background thread (ops.run_admin_task, an
+    owner's generation job) and re-entered there, where the request that
+    said who asked is gone and the calls would read as 'system' (#148)."""
+    try:
+        trigger, actor, corr = _attribution()
+    except Exception:
+        trigger, actor, corr = None, None, None
+    return {"trigger": trigger, "actor_user_id": actor, "correlation_id": corr}
+
+
 def new_correlation_id(prefix="run"):
     """A fresh id for one unit of work ("ask:…", "aivis:…")."""
     return f"{prefix}:{uuid.uuid4().hex[:12]}"
@@ -970,22 +988,34 @@ def _request_attribution():
                 conn = _conn()
                 try:
                     th = hash_session_token(token)
-                    row = conn.execute(
-                        "SELECT s.user_id, s.device_type, s.active_restaurant_id, u.restaurant_id AS home, "
-                        "u.is_admin FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token=?",
-                        (th,)).fetchone()
+                    # The admin behind a view-as is on the session row
+                    # (sessions.acting_admin_id, fix round A); a database
+                    # from before that column reads view_as_sessions.
+                    try:
+                        row = conn.execute(
+                            "SELECT s.user_id, s.device_type, s.active_restaurant_id, s.acting_admin_id, "
+                            "u.restaurant_id AS home, u.is_admin FROM sessions s JOIN users u ON u.id = s.user_id "
+                            "WHERE s.token=?", (th,)).fetchone()
+                    except sqlite3.OperationalError:
+                        row = conn.execute(
+                            "SELECT s.user_id, s.device_type, s.active_restaurant_id, NULL AS acting_admin_id, "
+                            "u.restaurant_id AS home, u.is_admin FROM sessions s JOIN users u ON u.id = s.user_id "
+                            "WHERE s.token=?", (th,)).fetchone()
                     if row:
                         actor = row["user_id"]
                         rid = row["active_restaurant_id"] or row["home"]
                         if (row["device_type"] or "") == "admin-view-as":
                             trigger = "admin"
-                            try:
-                                va = conn.execute("SELECT opened_by FROM view_as_sessions WHERE token_hash=?",
-                                                  (th,)).fetchone()
-                                if va and va["opened_by"]:
-                                    actor = va["opened_by"]
-                            except sqlite3.Error:
-                                pass
+                            if row["acting_admin_id"]:
+                                actor = row["acting_admin_id"]
+                            else:
+                                try:
+                                    va = conn.execute("SELECT opened_by FROM view_as_sessions WHERE token_hash=?",
+                                                      (th,)).fetchone()
+                                    if va and va["opened_by"]:
+                                        actor = va["opened_by"]
+                                except sqlite3.Error:
+                                    pass
                         elif row["is_admin"]:
                             trigger = "admin"
                         trigger = trigger or "owner"

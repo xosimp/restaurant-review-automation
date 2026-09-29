@@ -36,11 +36,9 @@ import signal
 import sys
 import time
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [worker] %(message)s",
-)
-log = logging.getLogger(__name__)
+# Configured in main() by logging_setup, the web process's handler: JSON lines
+# on Railway (with the job and restaurant on each), text locally (#38).
+log = logging.getLogger("worker")
 
 _stopping = False
 
@@ -64,8 +62,20 @@ def _handle_stop(signum, _frame):
 
 
 def main():
+    # The web process's logging (JSON on Railway, tracebacks rendered), with
+    # every line saying it came from here.
+    import logging_setup
+    logging_setup.configure()
+    logging_setup.bind(process="worker")
+
     signal.signal(signal.SIGTERM, _handle_stop)
     signal.signal(signal.SIGINT, _handle_stop)
+
+    # On Railway the database must be on the volume (#108), as the web boot
+    # requires: a worker with no volume would schedule against an empty
+    # database of its own. Raises, so the process refuses to start.
+    import models
+    models.require_volume()
 
     # Same boot the web process does: the schema must exist before any job
     # touches it, and this process may well start first.

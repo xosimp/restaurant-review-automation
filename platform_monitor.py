@@ -760,13 +760,22 @@ def _ai_health():
 
 
 def _size_trend(db_path=None):
-    """Database size over time: ops.size_history (D's daily record) when it
-    exists, else the size at each boot from boot_events."""
+    """Database size over time: the nightly backup's record of the database,
+    WAL, backups and free space (ops.storage_trend, fix round D #28) when it
+    has any, with growth per day and days to full; else the size at each
+    boot from boot_events."""
+    def _mb(v):
+        return round(v / (1024 * 1024), 2) if isinstance(v, (int, float)) else None
     try:
         import ops
-        fn = getattr(ops, "size_history", None)
-        if fn is not None:
-            return {"source": "daily", "points": fn(days=30)}
+        st = ops.storage_trend(days=30, db_path=db_path)
+        if st.get("rows"):
+            return {"source": "daily",
+                    "points": [{"at": r.get("date"), "db_mb": _mb(r.get("db_bytes")), "wal_mb": _mb(r.get("wal_bytes")),
+                                "backups_mb": _mb(r.get("backups_bytes")), "free_mb": _mb(r.get("free_bytes"))}
+                               for r in st["rows"]],
+                    "growth_mb_per_day": _mb(st.get("growth_bytes_per_day")),
+                    "days_to_full": st.get("days_to_full")}
     except Exception as e:
         log.warning("size history unavailable: %s", e)
     from models import get_conn, DB_PATH

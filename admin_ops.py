@@ -3714,9 +3714,21 @@ def run_job_now(name, actor):
         return {"ok": False, "error": f"Could not load {mod}.{fn_name}: {e}"}
     kwargs = _jobs_registry.run_kwargs(name)
 
+    try:
+        import ai_utils as _ai_now
+        attribution = dict(_ai_now.attribution_for_thread(), trigger="admin")
+    except Exception:
+        _ai_now, attribution = None, {}
+
     def _go():
         try:
-            _ops_now.run_job(name, fn, context=ctx, **kwargs)
+            # An admin's run: its model calls are the admin's, not the
+            # scheduler's or the client's ceiling (#148).
+            if _ai_now is not None:
+                with _ai_now.ai_context(**attribution):
+                    _ops_now.run_job(name, fn, context=ctx, **kwargs)
+            else:
+                _ops_now.run_job(name, fn, context=ctx, **kwargs)
         except Exception:
             pass  # run_job already recorded the failure
     threading.Thread(target=_go, name=f"admin-run-{name}", daemon=True).start()

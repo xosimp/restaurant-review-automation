@@ -2423,14 +2423,17 @@ def run_preshift_nudge(db_path=DB_PATH, restaurants=None):
             if is_in_quiet_hours(r.id, db_path=db_path):
                 continue
             from auth import get_or_create_staff_portal_token
-            from notify import send_sms
+            from notify import send_sms, sms_context
             token = get_or_create_staff_portal_token(r.id, db_path=db_path)
             base = config.base_url()
             lead = items[0]["text"]
             msg = (f"Cavnar AI · tonight's lineup notes are ready ({len(items)} point"
                    f"{'' if len(items) == 1 else 's'}): {lead} Read them with the team: "
                    f"{base}/staff/r/{token}")
-            if send_sms(manager["phone"], msg[:320], use_case="alert"):
+            # The text is this restaurant's in sms_log (fix round E, #14).
+            with sms_context(r.id):
+                texted = send_sms(manager["phone"], msg[:320], use_case="alert")
+            if texted:
                 sent += 1
         except Exception as e:
             st["failed"] += 1

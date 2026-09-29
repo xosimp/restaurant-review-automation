@@ -1508,6 +1508,9 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
 # ones it did not reach lead the next tick (a cursor), five minutes later,
 # still inside their window (#81).
 BRIEF_MAX_SECONDS = 4 * 60
+# A brief that failed transiently for someone is retried at most this many
+# more times a day (fix round E: deliver() says `retry`).
+BRIEF_RETRIES_PER_DAY = 3
 BRIEF_CURSOR_KEY = "morning_brief_cursor"
 
 
@@ -1602,8 +1605,19 @@ def run_due(db_path=DB_PATH, now_utc=None, max_seconds=BRIEF_MAX_SECONDS):
             r = get_restaurant(rid, db_path=db_path)
             from datetime import date as _date
             out = deliver(rid, restaurant=r, today=_date.fromisoformat(day), db_path=db_path)
-            c["ok"] += 1
             c["sent"] += 1 if out.get("sent") else 0
+            if out.get("retry") and any(ops.claim_period(f"morning_brief_retry:{rid}", f"{day}#{n}")
+                                        for n in range(BRIEF_RETRIES_PER_DAY)):
+                # A transient failure (a 429, a 5xx, a timeout) left someone
+                # unreached: the day goes back, so a later tick inside the
+                # window tries again — deliver() skips everyone already
+                # reached today (morning_brief_deliveries). Up to
+                # BRIEF_RETRIES_PER_DAY times.
+                ops.release_period(f"morning_brief:{rid}", day)
+                c["failed"] += 1
+                c["retried"] = c.get("retried", 0) + 1
+            else:
+                c["ok"] += 1
         except Exception as e:
             c["failed"] += 1
             ops.capture(e, job="morning_brief", context=f"restaurant_id={rid}")

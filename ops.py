@@ -14,6 +14,7 @@ watchdog and the operator's out-of-band pages (SMS, email, push, and an
 external dead-man ping), and the backup ledger.
 """
 import collections.abc
+import contextlib
 import logging
 import re
 import sqlite3
@@ -115,6 +116,19 @@ def capture(exc, job="unknown", context="", db_path=None, restaurant_id=None, ki
     except (TypeError, ValueError):
         rid = None
     kind = kind if kind in CAPTURE_KINDS else "job"
+    tb = getattr(exc, "__traceback__", None) if isinstance(exc, BaseException) else None
+    if tb is not None:
+        # A raised exception's traceback reaches the log (#38): it used to
+        # stop at this table and Sentry. Redacted like the row — a traceback
+        # ends with the exception's own text, URL and key= included.
+        try:
+            import traceback as _traceback
+            from ai_guard import redact_secrets
+            text = redact_secrets("".join(_traceback.format_exception(type(exc), exc, tb)))
+            log.warning("captured %s failure: %s", job, redact_secrets(str(exc))[:300],
+                        extra={"traceback": text[-6000:], "restaurant_id": rid})
+        except Exception:
+            pass
     try:
         from models import get_conn
         conn = get_conn(db_path) if db_path else get_conn()
@@ -1119,6 +1133,16 @@ def run_admin_task(kind, restaurant_id, name, fn, *args, context="", **kwargs):
         if _admin_pool is None:
             _admin_pool = concurrent.futures.ThreadPoolExecutor(max_workers=max(1, ADMIN_TASK_WORKERS),
                                                                 thread_name_prefix="admin-task")
+    # Who asked, taken here on the request thread: in the pool thread the
+    # request is gone, and every model call would read as 'system' (#148).
+    try:
+        import ai_utils as _ai
+        attribution = _ai.attribution_for_thread()
+        attribution["trigger"] = attribution.get("trigger") if attribution.get("trigger") not in (None, "system") \
+            else "admin"
+        attribution["correlation_id"] = attribution.get("correlation_id") or f"admin:{kind}:{job_id}"
+    except Exception:
+        _ai, attribution = None, {}
 
     def _go():
         outcome = {}
@@ -1127,7 +1151,8 @@ def run_admin_task(kind, restaurant_id, name, fn, *args, context="", **kwargs):
             outcome["result"] = fn(*a, **k)
             return outcome["result"]
         try:
-            run_job(name, body, *args, context=context, restaurant_id=restaurant_id, **kwargs)
+            with (_ai.ai_context(**attribution) if _ai is not None else contextlib.nullcontext()):
+                run_job(name, body, *args, context=context, restaurant_id=restaurant_id, **kwargs)
             res = outcome.get("result")
             state = run_outcome(res)[0] if "result" in outcome else RUN_FAILED
             finish_async_job(job_id, "done" if state != RUN_FAILED else "error",
@@ -1184,6 +1209,8 @@ def run_job(name, fn, *args, context="", db_path=None, claim=None, restaurant_id
     if run_id is not None:
         threading.Thread(target=_pulse_run, args=(run_id, db_path, stop), daemon=True,
                          name=f"run-pulse-{name}").start()
+    job_ctx = _job_context(name, run_id)
+    job_ctx.__enter__()
     try:
         result = fn(*args, **kwargs)
         state, blob = run_outcome(result)
@@ -1203,17 +1230,55 @@ def run_job(name, fn, *args, context="", db_path=None, claim=None, restaurant_id
         _record_run_end(run_id, started, state, err, db_path=db_path, result_json=blob)
         return result
     except Exception as e:
-        log.error(f"Job '{name}' crashed: {e}")
+        # Inside the job's log context, so the line carries job=<name>;
+        # capture() logs the traceback (redacted) beside it (#38).
+        log.error("Job '%s' crashed: %s", name, _redacted(e))
         capture(e, job=name, db_path=db_path, restaurant_id=restaurant_id)
         _record_run_end(run_id, started, RUN_FAILED, e, db_path=db_path)
         return None
     finally:
+        job_ctx.__exit__(None, None, None)
         stop.set()
         with _running_lock:
             for n in names:
                 _running_jobs[n] -= 1
                 if not _running_jobs[n]:
                     del _running_jobs[n]
+
+
+@contextlib.contextmanager
+def _job_context(name, run_id):
+    """What one job run carries while it runs: `job=<name>` on every log
+    line (logging_setup.context, #38), and the AI attribution of every model
+    and Places call it makes (ai_utils.ai_context, #148) — trigger
+    "scheduler" and correlation id "job:<name>:<run id>", unless the caller
+    already said otherwise (an admin's Run now, an owner's background task:
+    their trigger and correlation id stand). Neither can fail the job."""
+    with contextlib.ExitStack() as stack:
+        try:
+            import logging_setup
+            stack.enter_context(logging_setup.context(job=name))
+        except Exception as e:
+            log.debug(f"job log context unavailable: {e}")
+        try:
+            import ai_utils
+            outer = ai_utils.current_ai_context()
+            stack.enter_context(ai_utils.ai_context(
+                trigger=None if outer.get("trigger") else "scheduler",
+                correlation_id=None if outer.get("correlation_id") else f"job:{name}:{run_id}"))
+        except Exception as e:
+            log.debug(f"job AI context unavailable: {e}")
+        yield
+
+
+def _redacted(exc):
+    """An exception's text with secrets taken out (a requests error carries
+    the URL it failed on, and a Places URL carries key=) — for log lines."""
+    try:
+        from ai_guard import redact_secrets
+        return redact_secrets(str(exc))[:500]
+    except Exception:
+        return type(exc).__name__
 
 
 def is_running(name) -> bool:
@@ -1485,14 +1550,20 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
         paged over channels that need no database write (#28, #105);
       * the newest backup is older than 26 hours, or has no off-site copy
         (#2);
-      * a DSR night is missing past its deadline (#17).
+      * a DSR night is missing past its deadline (#17);
+      * a messaging channel is broken (notify.messaging_problems, fix round
+        E): an inbound webhook refusing every request, no verified Resend
+        event while mail goes out, Twilio account errors, an operator
+        address suppressed. Read only when paging (send=True) — /health's
+        read-only call does not publish or need them.
 
     Only where the scheduler is meant to run (scheduler.scheduling_allowed):
     a laptop has no scheduler and must not page anyone. Owners are never
     contacted from here. Never raises. `write_ok` is the caller's own write
     probe (/health may already have run one)."""
     out = {"heartbeat_minutes": None, "loop_minutes": None, "running_job": None, "jobs_overdue": [],
-           "disk": None, "write_ok": None, "backup": None, "dsr_missing": [], "problems": [], "alerted": False}
+           "disk": None, "write_ok": None, "backup": None, "dsr_missing": [], "messaging": [], "problems": [],
+           "alerted": False}
     try:
         import status_manager
         state = status_manager.scheduler_state(db_path)
@@ -1519,6 +1590,12 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     out["write_ok"] = bool(write_ok)
     out["backup"] = backup_status(db_path=db_path)
     out["dsr_missing"] = _dsr_missing(db_path=db_path)
+    if send:
+        try:
+            import notify
+            out["messaging"] = list(notify.messaging_problems(db_path=db_path) or [])
+        except Exception as e:
+            log.warning(f"messaging health unavailable to the platform check: {e}")
 
     problems = []
     hb = out["heartbeat_minutes"]
@@ -1545,6 +1622,7 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
         names = ", ".join(str(m.get("restaurant") or m.get("restaurant_id")) for m in out["dsr_missing"][:4])
         problems.append(f"Daily Sales Report missing past its deadline for {len(out['dsr_missing'])} "
                         f"restaurant{'s' if len(out['dsr_missing']) != 1 else ''}: {names}.")
+    problems.extend(f"Messaging: {m}" for m in out["messaging"])
     out["problems"] = problems
     if not problems or not send:
         return out

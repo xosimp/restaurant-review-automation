@@ -430,11 +430,14 @@ def run_daily_fetch(restaurant_ids=None):
         conn = get_conn()
         # In service only (MOD-REV-2): a cancelled restaurant is not fetched,
         # analysed, drafted or alerted — its reviews are no longer ours to
-        # read and its Google listing no longer ours to reply on.
+        # read and its Google listing no longer ours to reply on. A
+        # deletion request does NOT stop the fetch (fix round B2): the
+        # account is served until the offboarding checklist deletes it or
+        # it churns, and a request can be withdrawn — skipping it left a
+        # hole in the owner's reviews for the whole 30-day notice.
         from models import in_service_sql
         live = conn.execute(
             "SELECT id FROM restaurants WHERE (reviews_live=1 OR gmb_refresh_token IS NOT NULL) "
-            "AND deletion_requested_at IS NULL "    # the owner asked for it gone
             "AND " + in_service_sql()
         ).fetchall()
         conn.close()
@@ -1042,6 +1045,21 @@ def run_weekly_digests():
     return counts
 
 
+def _served_client(r):
+    """A client this job serves: in service (models.in_service — past due
+    included while Stripe retries the card, #155) and not Cavnar AI's own
+    internal account. Replaces the hand-kept ('trial', 'active') lists,
+    which dropped past-due clients and disagreed with every sync job."""
+    from models import in_service
+    return in_service(r) and str(getattr(r, "billing_status", "") or "").strip().lower() != "internal"
+
+
+def _served_client_sql(column="billing_status"):
+    """_served_client as a WHERE fragment."""
+    from models import in_service_sql
+    return f"{in_service_sql(column)} AND LOWER(TRIM(COALESCE({column},''))) <> 'internal'"
+
+
 def check_stale_inventory():
     """Alert Will when a client's inventory data is more than 7 days old.
     Returns the standard counts; a send that failed raises (#39) — it used
@@ -1078,7 +1096,7 @@ def find_stale_inventory():
             return None if dt is None else (now_utc - dt).days
 
         for r in restaurants:
-            if not r.module_inventory or r.billing_status not in ("trial", "active"):
+            if not r.module_inventory or not _served_client(r):
                 continue
             try:
                 conn = __import__('models').get_conn()
@@ -1343,7 +1361,7 @@ def run_daily_depletion_sync():
         import inventory_ledger
         import ops
         from datetime import timedelta as _td
-        from models import get_all_restaurants, get_conn as _gc
+        from models import get_all_restaurants, get_conn as _gc, in_service
 
         conn = _gc()
         restaurants_with_recipes = {
@@ -1365,7 +1383,7 @@ def run_daily_depletion_sync():
             wants_item_sales = bool(getattr(r, "module_marketing", 0) or getattr(r, "module_inventory", 0))
             if r.id not in restaurants_with_recipes and not wants_item_sales:
                 continue
-            if (getattr(r, "billing_status", None) or "trial").lower() in ("churned", "cancelled", "canceled", "paused"):
+            if not in_service(r):
                 continue
             by_id[r.id] = r
 
@@ -2570,7 +2588,7 @@ def find_inactive_clients():
     cutoff = now - timedelta(days=14)
 
     for r in restaurants:
-        if getattr(r, "billing_status", "trial") not in ("trial", "active"):
+        if not _served_client(r):
             continue
         try:
             conn = get_conn()
@@ -2657,7 +2675,7 @@ def send_while_away_nudges():
     sent = failed = attempted = 0
     now = _chi_now()
     for r in get_all_restaurants():
-        if getattr(r, "billing_status", "trial") not in ("trial", "active"):
+        if not _served_client(r):
             continue
         try:
             conn = get_conn()
@@ -2997,8 +3015,7 @@ def run_food_cost_snapshots():
     import food_cost_intelligence as fci
     conn = get_conn()
     rows = conn.execute(
-        "SELECT id FROM restaurants WHERE module_inventory=1 "
-        "AND COALESCE(billing_status,'trial') IN ('trial','active')"
+        "SELECT id FROM restaurants WHERE module_inventory=1 AND " + _served_client_sql()
     ).fetchall()
     conn.close()
     c = {"written": 0, "skipped": 0, "failed": 0, "scored": 0, "held": 0}
@@ -3132,8 +3149,7 @@ def run_food_cost_diagnoses():
     import food_cost_intelligence as fci
     conn = get_conn()
     rows = conn.execute(
-        "SELECT id FROM restaurants WHERE module_inventory=1 "
-        "AND COALESCE(billing_status,'trial') IN ('trial','active')"
+        "SELECT id FROM restaurants WHERE module_inventory=1 AND " + _served_client_sql()
     ).fetchall()
     conn.close()
     c = {"diagnosed": 0, "skipped": 0, "failed": 0}
@@ -3225,8 +3241,7 @@ def run_review_diagnoses():
     import review_intelligence as ri
     conn = get_conn()
     rows = conn.execute(
-        "SELECT id FROM restaurants WHERE module_reviews=1 "
-        "AND COALESCE(billing_status,'trial') IN ('trial','active')"
+        "SELECT id FROM restaurants WHERE module_reviews=1 AND " + _served_client_sql()
     ).fetchall()
     conn.close()
     c = {"diagnosed": 0, "skipped": 0, "failed": 0, "attempted": 0}
@@ -3467,7 +3482,7 @@ def run_auto_publish_schedules():
     for r in get_all_restaurants():
         if not getattr(r, "auto_publish_schedule", 0) or not getattr(r, "module_labor", 0):
             continue
-        if (getattr(r, "billing_status", "") or "trial") not in ("trial", "active"):
+        if not _served_client(r):
             continue
         local = restaurant_now(r, naive=True)
         if local.weekday() != auto_publish_weekday(r) or not local_due(r, 9, claim_key="auto_publish_schedule"):
@@ -4218,8 +4233,17 @@ def _run_manual_requests(pulsed):
                 raise
             outcome["result"] = res
             return res
-        pulsed.run_job(name, body, context=f"manual by {req.get('requested_by') or 'admin'}",
-                       request_id=req["id"])
+        # An admin's Run now: its model calls are the admin's (#148), not
+        # the scheduler's.
+        try:
+            import ai_utils as _ai_manual
+            manual_ctx = _ai_manual.ai_context(trigger="admin", correlation_id=f"run_now:{name}:{req['id']}")
+        except Exception:
+            import contextlib as _ctxlib
+            manual_ctx = _ctxlib.nullcontext()
+        with manual_ctx:
+            pulsed.run_job(name, body, context=f"manual by {req.get('requested_by') or 'admin'}",
+                           request_id=req["id"])
         state = _ops.run_outcome(outcome["result"])[0] if "result" in outcome else _ops.RUN_FAILED
         _ops.finish_job_request(req["id"], state != _ops.RUN_FAILED,
                                 outcome.get("error") or (None if state != _ops.RUN_FAILED else "the run failed"))

@@ -117,6 +117,18 @@ def test_incident_routes_are_admin_only(app, db_path):
     assert _post(owner, "/admin/status/incident/1/resolve", json={}).status_code == 403
 
 
+def test_support_reads_the_incidents_but_never_posts_the_banner(app, db_path):
+    """Integration (A #87 meets F #61): the status routes answer as the rest
+    of /admin does — support reads, and is read-only."""
+    hq = create_restaurant(Restaurant(name="Cavnar HQ", owner_email="will@cavnar.test"), db_path=db_path)
+    sup = create_user(hq, "sup", "sup@cavnar.test", "Support-pass-2026", role="support", db_path=db_path)
+    c = _client(app, create_session(sup, db_path=db_path))
+    assert c.get("/admin/status/incidents").status_code == 200
+    r = _post(c, "/admin/status/incident", json={"title": "Outage"})
+    assert r.status_code == 403 and "read-only" in r.get_json()["error"]
+    assert status_manager.get_open_incidents() == []
+
+
 def test_the_services_list_carries_the_valid_values(app, db_path):
     d = _admin_client(app, db_path).get("/admin/status/services").get_json()
     assert {s["key"] for s in d["services"]} >= {"email", "storage", "scheduler"}

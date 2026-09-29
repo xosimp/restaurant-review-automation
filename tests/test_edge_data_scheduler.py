@@ -245,7 +245,10 @@ def test_an_active_restaurant_is_fetched(db_path, monkeypatch):
     assert fetched == [rid]
 
 
-@pytest.mark.parametrize("state", ["churned", "paused", "deletion_requested"])
+# A deletion request no longer stops the fetch (integration, fix round B2):
+# the account is served through its notice until it is deleted or churns —
+# tests/test_edge_mod_a_reviews_churned.py::test_a_deletion_notice_does_not_stop_the_fetch.
+@pytest.mark.parametrize("state", ["churned", "paused"])
 def test_a_cancelled_restaurant_is_not_fetched(db_path, monkeypatch, state):
     import fetcher, scheduler
     rid = _live(db_path)

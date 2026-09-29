@@ -91,15 +91,31 @@ status_bp.before_request(_admin_events.audit_admin_write)
 
 
 def _require_admin():
-    from auth import get_session_user, _admin_two_factor_missing
-    token = request.cookies.get("session_token")
-    user = get_session_user(token) if token else None
-    if not user or not user.get("is_admin"):
+    """The /admin gate, answered as auth.admin_required answers it on
+    admin_bp (fix round A: #5, #87, #88): the session, the admin role —
+    support may read the incidents but never post the public banner — the
+    per-session request ceiling, and the internal login's second factor
+    (enrol, verify or fail closed, the console's own refusals). A call, not
+    the decorator, so anyone else keeps this blueprint's plain 403."""
+    import auth
+    from flask import g
+    user = auth.get_current_user()
+    is_support = bool(user) and not user.get("is_admin") and user.get("role") == "support"
+    if not user or not (user.get("is_admin") or is_support):
         abort(403)
-    if _admin_two_factor_missing(user):
-        abort(make_response(jsonify(ok=False, two_factor_required=True,
-                                    error="Turn on two-factor authentication in Account → Security "
-                                          "to use the admin console."), 403))
+    limited = auth._admin_rate_limited(user)
+    if limited:
+        abort(make_response(*limited))
+    if is_support and request.method not in ("GET", "HEAD", "OPTIONS"):
+        abort(make_response(jsonify(ok=False, error="Support accounts are read-only."), 403))
+    state = auth.admin_second_factor_state(user)
+    if state != "ok":
+        refusal = auth._second_factor_refusal(state)
+        abort(make_response(*refusal) if isinstance(refusal, tuple) else refusal)
+    try:
+        g.admin_role = "admin" if user.get("is_admin") else "support"
+    except Exception:
+        pass
     return user
 
 
