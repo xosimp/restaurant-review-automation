@@ -3613,9 +3613,15 @@ class _PulsedOps:
 
     def became_runner(self):
         """Newly the lease holder: its record of completed ticks starts again,
-        so ticks from before a stand-by do not count for or against it."""
+        so ticks from before a stand-by do not count for or against it; and a
+        job a dead holder was inside is no longer "running" — it would read
+        as wedged until this runner's first job replaced it."""
         self._ticks = 0
         self._completed_at = None
+        try:
+            record_running_job(None)
+        except Exception:
+            pass
 
     def begin_tick(self):
         self._claimed = {}

@@ -209,6 +209,16 @@ def test_a_job_past_its_bound_silences_the_pulse(monkeypatch):
     assert pings == []
 
 
+def test_a_new_runner_clears_the_job_a_dead_holder_was_inside(db_path):
+    import scheduler
+    status_manager.record_running_job("review_fetch")
+    _x(db_path, "UPDATE scheduler_heartbeat SET running_since=datetime('now','-5 hours') WHERE id=1")
+    assert status_manager.scheduler_state()["wedged"] is True
+    scheduler._PulsedOps().became_runner()
+    st = status_manager.scheduler_state()
+    assert st["running_job"] is None and st["wedged"] is False
+
+
 def test_a_real_tick_stamps_loop_completed_and_pings(db_path, monkeypatch):
     """Drive the loop: every gate closed, the heartbeat NOT stubbed."""
     import scheduler, marketing_publish, morning_brief
