@@ -1231,7 +1231,16 @@ never with text: the rebuild cut the visible text across its screens by 69%
   (the welcome's set-password link: once, for 3 days) is pinned to the
   server's constant by a test (`tests/test_fix_ui_ui1.py` reads
   `models.SET_PASSWORD_LINK_HOURS`). A link to a page support is
-  refused (the legacy settings and data pages) carries `.w` like a write.
+  refused (the legacy settings and data pages) carries `.w` like a write —
+  every one, held source-wide by `tests/test_fix_integration_lead.py`.
+- **One stored field edited in place** (the client's menu notes, UI-3)
+  sends only that field, with the version and the value it loaded
+  (`expected_version`, `base`) — the settings contract. A 409 refills the
+  box with what is stored now and keeps the admin's own text under it
+  ("Your text, not saved") to put back; no answer at all says the outcome
+  is unknown and asks for a reload, never "saved". A counter shows the
+  length against the server's own cap and "not saved" while the text
+  differs from what was loaded.
 - **The server's guards are answered in one place** (`api()`): 401 → sign
   in again; 403 `two_factor_required` → the enrolment page; 403
   `reauth_required` → the password asked once, however many calls asked
