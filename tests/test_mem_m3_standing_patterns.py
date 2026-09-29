@@ -140,3 +140,12 @@ def test_make_it_a_rule_writes_the_persons_availability_with_its_author():
     assert st["daypart_availability"]["Tuesday"] == "morning" and st["updated_by"] == "owner"
     row = next(s for s in schedule_versions.standing_patterns(rid) if s["key"] == key)
     assert row["status"] == "ruled" and row["rule"]["by"] == "owner"
+
+
+def test_a_demo_restaurant_teaches_its_draft_nothing():
+    rid = create_restaurant(Restaurant(name="Demo Co", owner_email="d@x.test", module_labor=1, is_demo=1))
+    everyone, without_bob = ["Ana", "Bob", "Cy"], ["Ana", "Cy"]
+    _week(rid, _tuesday(3), everyone, without_bob, age_days=20)
+    _week(rid, _tuesday(2), everyone, without_bob, age_days=13)
+    out = schedule_versions.refresh_standing_patterns(rid)
+    assert out["skipped"] == "not_eligible" and schedule_versions.standing_patterns(rid) == []

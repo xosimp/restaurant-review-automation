@@ -643,6 +643,14 @@ def refresh_standing_patterns(restaurant_id, db_path=DB_PATH) -> dict:
     import schedule_intel as _si
     from schedule_learning import edited_weeks
     stats = {"learned": 0, "confirmed": 0, "overridden": 0, "retired": 0}
+    # A learner: a demo, test or internal restaurant teaches nothing, not
+    # even its own draft (models.learning_eligible, SHARED_MEM).
+    try:
+        import models as _m_elig
+        if not _m_elig.learning_eligible(_m_elig.get_restaurant(restaurant_id, db_path)):
+            return dict(stats, skipped="not_eligible")
+    except Exception:
+        return dict(stats, skipped="not_eligible")
     gone = _si.dismissed_patterns(restaurant_id, db_path)
     live = [p for p in learned_patterns(restaurant_id, db_path=db_path) if _si.pattern_key(p) not in gone]
     conn = get_conn(db_path)

@@ -109,7 +109,15 @@ def measured_campaign_lift(restaurant_id, db_path=DB_PATH):
     sales across this restaurant's closed fill-a-night campaigns
     (outcomes, source slow_day_campaign), or None under
     CAMPAIGN_LIFT_MIN_CLOSED of them. Before and after, not proof — the
-    same basis the outcome cards state."""
+    same basis the outcome cards state. A demo, test or internal
+    restaurant's outcomes teach nothing (models.learning_eligible): None,
+    and the assumed path stands."""
+    try:
+        import models as _m_elig
+        if not _m_elig.learning_eligible(_m_elig.get_restaurant(restaurant_id, db_path)):
+            return None
+    except Exception:
+        return None
     conn = get_conn(db_path)
     try:
         rows = conn.execute("SELECT delta_pct FROM recommendation_outcomes WHERE restaurant_id=? AND "

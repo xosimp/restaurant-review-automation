@@ -80,6 +80,9 @@ def test_the_lift_is_this_restaurants_measured_median_after_three_campaigns():
     assert demand_signals.measured_campaign_lift(rid) == {"lift_pct": 12, "n": 3}
     demand_signals.record_campaign(rid, "Tuesday", 300, today=date(2026, 9, 29))
     assert _q("SELECT lift_pct FROM demand_signals WHERE restaurant_id=?", (rid,))[0]["lift_pct"] == 12
+    # A demo account's outcomes teach nothing: the assumed path stands.
+    models.update_restaurant(rid, {"is_demo": 1})
+    assert demand_signals.measured_campaign_lift(rid) is None
 
 
 def test_a_post_about_a_dish_reaches_the_lineup_and_the_prep_list():
