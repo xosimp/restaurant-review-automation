@@ -115,18 +115,24 @@ _STEP_UP_TODAY = {
 
 def test_the_step_up_routes_are_the_ones_the_doc_lists():
     import ast
-    tree = ast.parse(_read("admin_routes.py"))
+    import glob
     found = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.FunctionDef):
+    files = ["admin_routes.py", "auth_routes.py", "client_api.py", "mobile_api.py", "strategy_routes.py"]
+    files += [os.path.relpath(f, ROOT) for f in glob.glob(os.path.join(ROOT, "*_routes.py"))]
+    for rel in sorted(set(files)):
+        src = _read(rel)
+        if "recent_auth_required" not in src:
             continue
-        names = [d.func.attr if isinstance(d.func, ast.Attribute) else getattr(d.func, "id", "")
-                 for d in node.decorator_list if isinstance(d, ast.Call)]
-        if "recent_auth_required" not in names:
-            continue
-        for d in node.decorator_list:
-            if isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute) and d.func.attr == "route":
-                found.add(d.args[0].value)
+        for node in ast.walk(ast.parse(src)):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            names = [d.func.attr if isinstance(d.func, ast.Attribute) else getattr(d.func, "id", "")
+                     for d in node.decorator_list if isinstance(d, ast.Call)]
+            if "recent_auth_required" not in names:
+                continue
+            for d in node.decorator_list:
+                if isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute) and d.func.attr == "route":
+                    found.add(d.args[0].value)
     assert found == _STEP_UP_TODAY
     _says(SECURITY, "applied today", "not yet")
 
