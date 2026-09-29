@@ -3569,6 +3569,15 @@ class _PulsedOps:
     recorded (status_manager.record_running_job) so "the loop has not
     finished a tick" can tell a long job from a tick failing part-way.
 
+    The external dead-man monitor (HEALTHCHECK_PING_URL, #3) hears from the
+    end of every tick (tick_completed) and, during a long job, from the
+    pulse — on the same terms as the heartbeat: the job is inside its bound
+    AND the loop has been completing its ticks (_keeping_up). Pinged only at
+    the end of a tick, a review fetch or a diagnoses pass inside its bound
+    (40 minutes to over three hours) went silent for longer than any sane
+    monitor grace and paged a healthy platform; pinged from every pulse,
+    a tick failing part-way still pinged from the jobs before its failure.
+
     Two guards on starting a job:
       * never one that is already running, here or in another process (a
         manual run, a run a lease hand-over left going) — skipped and
@@ -3584,12 +3593,41 @@ class _PulsedOps:
         self._last = None               # time.monotonic() the duties last ran
         self._claimed = {}              # claim key -> the period this tick claimed
         self._retries = {}              # (claim key, period) -> {"attempt", "at"}
+        self._ticks = 0                 # ticks this process has begun
+        self._tick_began = None         # time.monotonic() the current tick began
+        self._completed_at = None       # time.monotonic() a tick last completed
 
     def __getattr__(self, name):
         return getattr(_ops, name)
 
+    def became_runner(self):
+        """Newly the lease holder: its record of completed ticks starts again,
+        so ticks from before a stand-by do not count for or against it."""
+        self._ticks = 0
+        self._completed_at = None
+
     def begin_tick(self):
         self._claimed = {}
+        self._ticks += 1
+        self._tick_began = time.monotonic()
+
+    def tick_completed(self):
+        """The end of a tick: remember it, and tell the external dead-man
+        monitor (#3). ops.ping_healthcheck is short and never raises."""
+        self._completed_at = time.monotonic()
+        _ops.ping_healthcheck()
+
+    def _keeping_up(self):
+        """Whether the loop has been completing its ticks: this is the
+        process's first tick, or the previous one completed no more than a
+        tick interval (and a minute) before this one began. A tick failing
+        part-way never completes, so from the next tick on this is False and
+        the pulse stops pinging — the monitor's silence then pages."""
+        if self._tick_began is None:
+            return False
+        if self._completed_at is None:
+            return self._ticks <= 1
+        return self._tick_began - self._completed_at <= SCHEDULER_TICK_SECONDS + 60
 
     def claim_period(self, job, period):
         retry = self._retries.get((job, period))
@@ -3643,6 +3681,9 @@ class _PulsedOps:
                 self.run_duties(renew_lease=True, vouch=within)
             except Exception as e:
                 log.error(f"Scheduler pulse failed: {e}")
+            # Outside the duties' lock: a slow monitor never holds them up.
+            if within and self._keeping_up():
+                _ops.ping_healthcheck()
 
     def _already_running(self, name, claim):
         for n in {name, claim or name}:
@@ -3909,6 +3950,7 @@ def scheduler_loop():
                 # Newly the runner: the runs a previous holder left open are
                 # closed as interrupted, not left "stuck" for 45 days (#150).
                 holding = True
+                _ops.became_runner()
                 _ops.close_orphaned_runs()
             _ops.begin_tick()
             # The heartbeat is stamped only at the END of a tick (DH2-2): a
@@ -4308,7 +4350,7 @@ def scheduler_loop():
                 record_scheduler_heartbeat(loop_completed=True)
             except Exception:
                 pass
-            _ops.ping_healthcheck()
+            _ops.tick_completed()
 
         except Exception as e:
             # Captured, not only logged (DH2-2): an exception here skips the

@@ -149,6 +149,54 @@ def test_the_pulse_stops_vouching_past_the_bound_and_says_so_once(monkeypatch):
         ("wedge_test has run past its 0-minute bound", "watchdog")]
 
 
+def _pinging_pulse(monkeypatch, bound_minutes=60):
+    import scheduler, jobs_registry
+    pings = []
+    monkeypatch.setattr(scheduler, "record_scheduler_heartbeat", lambda *a, **k: None)
+    monkeypatch.setattr(scheduler, "_minute_duties", lambda: {})
+    monkeypatch.setattr(scheduler, "_pulse_interval", lambda: 0.03)
+    monkeypatch.setattr(jobs_registry, "max_minutes", lambda name: bound_minutes)
+    monkeypatch.setattr(ops, "acquire_scheduler_lease", lambda *a, **k: True)
+    monkeypatch.setattr(ops, "ping_healthcheck", lambda status="ok": pings.append(status) or True)
+    return scheduler._PulsedOps(), pings
+
+
+def test_a_long_job_inside_its_bound_keeps_the_monitor_fed(monkeypatch):
+    """A review fetch or diagnoses pass inside its bound is a live
+    scheduler; pinged only at the end of a tick, it paged a healthy
+    platform for as long as the job ran (#3)."""
+    pulsed, pings = _pinging_pulse(monkeypatch)
+    pulsed.begin_tick()                       # the process's first tick
+    pulsed.run_job("long_test", lambda: time.sleep(0.2))
+    assert pings, "the pulse vouched for the loop but the monitor heard nothing"
+    pings.clear()
+    pulsed.tick_completed()
+    assert pings == ["ok"]
+    pulsed.begin_tick()                       # the next tick, right after
+    pings.clear()
+    pulsed.run_job("long_test", lambda: time.sleep(0.2))
+    assert pings
+
+
+def test_a_tick_failing_part_way_silences_the_pulse(monkeypatch):
+    pulsed, pings = _pinging_pulse(monkeypatch)
+    pulsed.begin_tick()                       # tick 1 never completes ...
+    pulsed.begin_tick()                       # ... and tick 2 starts
+    pulsed.run_job("long_test", lambda: time.sleep(0.2))
+    assert pings == [], "a loop failing part-way kept the dead-man monitor quiet"
+    pulsed.became_runner()                    # a fresh runner starts clean
+    pulsed.begin_tick()
+    pulsed.run_job("long_test", lambda: time.sleep(0.2))
+    assert pings
+
+
+def test_a_job_past_its_bound_silences_the_pulse(monkeypatch):
+    pulsed, pings = _pinging_pulse(monkeypatch, bound_minutes=0)
+    pulsed.begin_tick()
+    pulsed.run_job("wedge_test", lambda: time.sleep(0.2))
+    assert pings == []
+
+
 def test_a_real_tick_stamps_loop_completed_and_pings(db_path, monkeypatch):
     """Drive the loop: every gate closed, the heartbeat NOT stubbed."""
     import scheduler, marketing_publish, morning_brief
