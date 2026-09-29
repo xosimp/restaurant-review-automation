@@ -170,9 +170,39 @@ def init_billing(db_path=None):
             # here; init_db always creates it first.
             if "no such" not in str(e).lower():
                 raise
+        _backfill_lifecycle_stamps(conn)
         conn.commit()
     finally:
         conn.close()
+    # The backfill writes restaurants outside update_restaurant (CLAUDE.md):
+    # at boot there is no request memo, but the rule costs nothing to keep.
+    _models._invalidate_request_cache()
+
+
+def _backfill_lifecycle_stamps(conn):
+    """contract_signed_at and converted_at for clients who signed or paid
+    before the columns existed, read from the event ledger (the DocuSign
+    'contract.signed' row; the first checkout, or the first paid invoice
+    with money in it). Only NULLs are filled, so every later boot is a
+    no-op; at boot there is no request cache to invalidate. Best effort:
+    a ledger older than the columns is the only record there is."""
+    try:
+        conn.execute(
+            "UPDATE restaurants SET contract_signed_at = (SELECT MIN(e.created_at) FROM admin_events e "
+            "  WHERE e.source='docusign' AND e.event_type='contract.signed' AND e.restaurant_id=restaurants.id) "
+            "WHERE contract_status='signed' AND contract_signed_at IS NULL AND EXISTS (SELECT 1 FROM admin_events e "
+            "  WHERE e.source='docusign' AND e.event_type='contract.signed' AND e.restaurant_id=restaurants.id)")
+        conn.execute(
+            "UPDATE restaurants SET converted_at = (SELECT MIN(e.created_at) FROM admin_events e "
+            "  WHERE e.source='stripe' AND e.restaurant_id=restaurants.id AND (e.event_type='checkout.session.completed' "
+            "  OR (e.event_type='invoice.paid' AND COALESCE(e.amount,0) > 0))) "
+            "WHERE converted_at IS NULL AND EXISTS (SELECT 1 FROM admin_events e WHERE e.source='stripe' "
+            "  AND e.restaurant_id=restaurants.id AND (e.event_type='checkout.session.completed' "
+            "  OR (e.event_type='invoice.paid' AND COALESCE(e.amount,0) > 0)))")
+    except Exception as e:
+        # A partial fixture without these columns; init_db adds them first.
+        if "no such" not in str(e).lower():
+            raise
 
 
 # ── small helpers ────────────────────────────────────────────────────────────

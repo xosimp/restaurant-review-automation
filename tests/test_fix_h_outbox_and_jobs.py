@@ -356,6 +356,25 @@ def test_reconcile_stripe_is_a_bounded_resumable_sweep(db_path, monkeypatch):
     assert cursor and int(cursor[0]["value"]) == max(a, b)
 
 
+def test_boot_backfills_signed_and_converted_stamps_from_the_ledger(db_path):
+    import admin_events
+    signed = _rid(db_path, name="Signed Before", contract_status="signed")
+    paid = _rid(db_path, name="Paid Before", billing_status="active")
+    untouched = _rid(db_path, name="Stamped", contract_status="signed", contract_signed_at="2026-01-01 00:00:00")
+    admin_events.record("docusign", "contract.signed", restaurant_id=signed, summary="Contract signed",
+                        db_path=db_path)
+    admin_events.record("docusign", "contract.signed", restaurant_id=untouched, summary="Contract signed",
+                        db_path=db_path)
+    admin_events.record("stripe", "invoice.paid", restaurant_id=paid, amount=0, db_path=db_path)
+    admin_events.record("stripe", "invoice.paid", restaurant_id=paid, amount=750.0, db_path=db_path)
+    billing_jobs.init_billing(db_path)
+    billing_jobs.init_billing(db_path)                      # every later boot is a no-op
+    assert get_restaurant(signed, db_path).contract_signed_at
+    assert get_restaurant(untouched, db_path).contract_signed_at == "2026-01-01 00:00:00"
+    assert get_restaurant(paid, db_path).converted_at
+    assert get_restaurant(signed, db_path).converted_at is None
+
+
 def test_billing_coverage_counts_each_subscription_once(db_path):
     a = _rid(db_path, name="A", owner_email="g@x.test", location_group="G")
     b = _rid(db_path, name="B", owner_email="g@x.test", location_group="G")
