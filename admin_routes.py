@@ -1463,20 +1463,24 @@ def view_as_client(restaurant_id, current_user):
                 "that has the owner's login, or add one first."), 404
     if request.method != "POST":
         return _view_as_confirm_page(restaurant_id)
-    from auth import create_view_as_session, VIEW_AS_HOURS, current_session_token
+    from auth import create_view_as_session, VIEW_AS_HOURS, current_session_token, sql_utc
+    from datetime import datetime as _dt_va, timedelta as _td_va, timezone as _tz_va
     read_only = not current_user.get("is_admin")
     token = create_view_as_session(user_id, current_user, read_only=read_only,
                                    ip_address=request.remote_addr,
                                    user_agent=request.headers.get("User-Agent", ""))
     try:
         import admin_events
+        # The end is on the record too: a view that simply runs out has no
+        # stop row of its own.
         admin_events.record("admin", "view_as_started", restaurant_id=restaurant_id,
                             summary=(f"{current_user.get('username')} opened a "
                                      f"{'read-only ' if read_only else ''}view-as session "
                                      f"(signed in as login #{user_id}, {VIEW_AS_HOURS}h)"),
                             payload={"actor_id": current_user.get("id"), "actor": current_user.get("username"),
                                      "target_user_id": user_id, "read_only": read_only,
-                                     "hours": VIEW_AS_HOURS, "ip": request.remote_addr})
+                                     "hours": VIEW_AS_HOURS, "ip": request.remote_addr,
+                                     "ends_at": sql_utc(_dt_va.now(_tz_va.utc) + _td_va(hours=VIEW_AS_HOURS))})
     except Exception:
         pass
     resp = make_response(redirect("/"))
