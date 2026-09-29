@@ -12,18 +12,15 @@ one restaurant ever seeing another's data. Written before implementation
    figure that leaves it is an aggregate over a cohort of at least
    `MIN_COHORT` (5) restaurants. Below that the answer is "not enough
    similar restaurants", never a number. Demo, test and internal accounts
-   are never in a cohort, a platform rate or the MIN_COHORT count:
-   `jobs.seeded_restaurant_ids` is `models.learning_ineligible_ids` — the one
-   predicate, `models.learning_exclusion` (a demo; `exclude_from_learning`;
-   internal billing; a restaurant whose every login is internal; a
-   test-pattern name — automatically, with the admin's `learning_override`)
-   — left out by `active_restaurants`, `features.latest_by_restaurant` /
-   `weekly_by_restaurant`, `scoring.kind_stats` / `similar_prior` /
-   `rank_kinds` / `platform_totals` and the confidence log (CA3 F7; memory
-   audit 9/29/26). A demo turned real is eligible at once; every row it
-   recorded before its `learning_since` is left out, for good
-   (`models.learning_rows_sql`; it replaced a 90-day quarantine). A deleted
-   restaurant's rows under a tombstoned (negative) id still count
+   are never in a cohort, a platform rate or the MIN_COHORT count: the one
+   predicate is `models.learning_eligible` / `learning_exclusion` (a demo;
+   `exclude_from_learning`; internal billing; a restaurant whose every
+   login is internal; a test-pattern name — automatically, with the admin's
+   `learning_override`), and every cohort reader leaves out the restaurants
+   it refuses (CA3 F7; memory audit 9/29/26). Every row a converted demo
+   recorded before its `learning_since` teaches nothing
+   (`models.learning_rows_sql` / `learning_since_map` for a reader's rows).
+   A deleted restaurant's rows under a tombstoned (negative) id still count
    (`DATABASE_SCHEMA.md` → *What delete_restaurant keeps*).
 3. **Nothing is generated to fill a gap.** A pattern exists only when a
    permutation test and a false-discovery correction say so; a benchmark

@@ -6720,7 +6720,15 @@ def mobile_account_activity(current_user):
     """Account-level events (password/email/2FA/team/export/etc.) — the
     user-facing slice of activity_log. Sign-ins are in /account/login-history."""
     from models import get_account_activity
-    return jsonify(ok=True, events=get_account_activity(current_user["restaurant_id"]))
+    # `changes`: the lasting, attributed change history — targets, settings,
+    # never-say, hours, prices, menu, roster — who and when (change_log;
+    # memory audit 9/29/26). The web route serves this same body.
+    try:
+        import change_log as _chlog_aa
+        changes = _chlog_aa.for_viewer(current_user["restaurant_id"], current_user)
+    except Exception:
+        changes = []
+    return jsonify(ok=True, events=get_account_activity(current_user["restaurant_id"]), changes=changes)
 
 
 @mobile_bp.route("/account/2fa/trusted-devices")

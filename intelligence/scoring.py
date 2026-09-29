@@ -176,16 +176,13 @@ def kind_stats(rec_kind: str, cohort: str = None, restaurant_id: int = None, db_
         where.append("cohort=?"); args.append(cohort)
     if restaurant_id is None and exclude_restaurant_id is not None:
         where.append("restaurant_id != ?"); args.append(exclude_restaurant_id)
+    if restaurant_id is None:
+        # A cohort or platform rate never counts a demo account's seeded
+        # answers (CA3 F7; the rule lives in jobs.real_restaurant_ids).
+        from .jobs import SEEDED_RESTAURANT_SQL, SEEDED_HISTORY_DAYS
+        where.append(f"restaurant_id NOT IN ({SEEDED_RESTAURANT_SQL})"); args.append(f"-{SEEDED_HISTORY_DAYS} days")
     conn = get_conn(db_path)
     try:
-        if restaurant_id is None:
-            # A cohort or platform rate never counts a demo's, a test
-            # account's or Cavnar AI's own answers, nor what a converted demo
-            # recorded before its learning_since (CA3 F7; memory audit
-            # 9/29/26 — the one predicate is models.learning_exclusion).
-            where.append(_models_mod.learning_filter_sql("restaurant_id", conn=conn))
-        # Own record or not: nothing from before the restaurant's learning_since.
-        where.append(_models_mod.learning_rows_sql("intel_rec_events.restaurant_id", "intel_rec_events.event_at"))
         rows = conn.execute(f"SELECT restaurant_id, source_key, action, outcome, days_to_effect, event_at "
                             f"FROM intel_rec_events WHERE {' AND '.join(where)}", args).fetchall()
         orgs = (org_map([r["restaurant_id"] for r in rows] + [exclude_restaurant_id], conn=conn)
@@ -238,15 +235,15 @@ def similar_prior(rec_kind: str, restaurant_id: int, cohort: str, db_path: str =
     out = {"available": False, "rate": None, "restaurants": 0, "measured": 0, "weighted": 0.0}
     if not cohort:
         return dict(out, reason="no restaurant type")
+    from .jobs import SEEDED_RESTAURANT_SQL, SEEDED_HISTORY_DAYS
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
             f"SELECT restaurant_id, outcome, event_at FROM intel_rec_events WHERE rec_kind=? AND cohort=? "
             f"AND action='measured' AND restaurant_id != ? AND event_at >= ? "
-            f"AND {_models_mod.learning_filter_sql('restaurant_id', conn=conn)} "
-            f"AND {_models_mod.learning_rows_sql('intel_rec_events.restaurant_id', 'intel_rec_events.event_at')}",
-            (rec_kind, cohort, restaurant_id,
-             (now - timedelta(days=PRIOR_WINDOW_DAYS)).strftime("%Y-%m-%d"))).fetchall()
+            f"AND restaurant_id NOT IN ({SEEDED_RESTAURANT_SQL})",
+            (rec_kind, cohort, restaurant_id, (now - timedelta(days=PRIOR_WINDOW_DAYS)).strftime("%Y-%m-%d"),
+             f"-{SEEDED_HISTORY_DAYS} days")).fetchall()
     finally:
         conn.close()
     orgs = org_map([r["restaurant_id"] for r in rows] + [restaurant_id], db_path=db_path)
@@ -403,17 +400,12 @@ def rank_kinds(cohort: str = None, db_path: str = DB_PATH, limit: int = 20) -> l
     listed as unavailable with its count only."""
     conn = get_conn(db_path)
     try:
-        # Only restaurants that may teach, and nothing from a converted
-        # demo's demo era (memory audit 9/29/26, "eligibility": the admin
-        # Intelligence page read every row, seeded ones included).
-        eligible = (f"{_models_mod.learning_filter_sql('restaurant_id', conn=conn)} AND "
-                    f"{_models_mod.learning_rows_sql('intel_rec_events.restaurant_id', 'intel_rec_events.event_at')}")
         if cohort:
             rows = conn.execute("SELECT rec_kind, restaurant_id, source_key, action, outcome, days_to_effect "
-                                f"FROM intel_rec_events WHERE cohort=? AND {eligible}", (cohort,)).fetchall()
+                                "FROM intel_rec_events WHERE cohort=?", (cohort,)).fetchall()
         else:
             rows = conn.execute("SELECT rec_kind, restaurant_id, source_key, action, outcome, days_to_effect "
-                                f"FROM intel_rec_events WHERE {eligible}").fetchall()
+                                "FROM intel_rec_events").fetchall()
     finally:
         conn.close()
     by_kind = {}
@@ -436,10 +428,8 @@ def rank_kinds(cohort: str = None, db_path: str = DB_PATH, limit: int = 20) -> l
 def platform_totals(db_path: str = DB_PATH) -> dict:
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT restaurant_id, source_key, action, outcome, days_to_effect FROM intel_rec_events "
-                            f"WHERE {_models_mod.learning_filter_sql('restaurant_id', conn=conn)} AND "
-                            f"{_models_mod.learning_rows_sql('intel_rec_events.restaurant_id', 'intel_rec_events.event_at')}"
-                            ).fetchall()
+        rows = conn.execute("SELECT restaurant_id, source_key, action, outcome, days_to_effect "
+                            "FROM intel_rec_events").fetchall()
     finally:
         conn.close()
     return _summarise(rows, orgs=org_map([r["restaurant_id"] for r in rows], db_path=db_path))

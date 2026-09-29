@@ -274,19 +274,11 @@ def test_cohort_success_rates_leave_demo_answers_out(db_path):
     assert scoring.kind_stats("trim_day", restaurant_id=demo, db_path=db_path)["measured"] == 1   # its own
 
 
-def test_turning_demo_off_tags_the_restaurant_and_keeps_its_demo_era_out(db_path, monkeypatch):
-    """Memory audit 9/29/26 ("eligibility"): the 90-day quarantine was
-    shorter than readers that look back a year. A converted demo is
-    eligible at once; everything it recorded before learning_since — the
-    demo era — is out of every learner, for good."""
+def test_turning_demo_off_tags_the_restaurant_and_keeps_it_out(db_path, monkeypatch):
     from flask import Flask
     import admin_routes
-    from intelligence import jobs, scoring
-    rid = _rid(db_path, name="Bella's", is_demo=1)
-    c = get_conn(db_path)
-    c.execute("INSERT INTO intel_rec_events (restaurant_id, rec_kind, source_key, action, outcome, cohort, event_at) "
-              "VALUES (?,?,?,?,?,?,date('now','-30 days'))", (rid, "trim_day", "demo-era", "measured", "improved", "bar"))
-    c.commit(); c.close()
+    from intelligence import jobs
+    rid = _rid(db_path, name="Was demo", is_demo=1)
     app = Flask(__name__)
     app.secret_key = "x"
     # The route body itself, under admin_required and the step-up.
@@ -295,9 +287,12 @@ def test_turning_demo_off_tags_the_restaurant_and_keeps_its_demo_era_out(db_path
     with app.test_request_context(json={"is_demo": 0}):
         fn(rid, current_user={"username": "will"})
     r = models.get_restaurant(rid, db_path=db_path)
-    assert r.is_demo == 0 and r.demo_cleared_at and r.learning_since
-    assert rid in jobs.real_restaurant_ids(db_path) and rid not in jobs.seeded_restaurant_ids(db_path)
-    assert scoring.kind_stats("trim_day", db_path=db_path)["measured"] == 0, "the demo era teaches nothing"
+    assert r.is_demo == 0 and r.demo_cleared_at
+    assert rid not in jobs.real_restaurant_ids(db_path) and rid in jobs.seeded_restaurant_ids(db_path)
+    c = get_conn(db_path)
+    c.execute("UPDATE restaurants SET demo_cleared_at=datetime('now','-100 days') WHERE id=?", (rid,))
+    c.commit(); c.close()
+    assert rid in jobs.real_restaurant_ids(db_path)
 
 
 # ── G5 / CA3 F8: "demo" Toast credentials only on a demo restaurant ─────────

@@ -533,25 +533,50 @@ def value_as_of(restaurant_id, field, when, db_path=None, current=None):
 SOURCE_LABELS = {"owner": "the owner", "manager": "a manager", "admin": "Cavnar AI", "seeded": "Cavnar AI (seeded)",
                  "sync": "a sync", "import": "an import", "system": "Cavnar AI", "legacy": None}
 
+# The words an owner reads for the fields most often changed; any other
+# field is its column name in plain words.
+FIELD_LABELS = {
+    # models.OWNER_TARGET_FIELDS, in its order (labor, food cost, waste, revenue).
+    **dict(zip(_models.OWNER_TARGET_FIELDS, ("Labor target", "Food cost target", "Waste target",
+                                            "Monthly revenue target"))),
+    "never_say": "Never-say list", "voice_notes": "Brand voice",
+    "hourly_rate": "Blended hourly rate", "role_rates_json": "Pay rates by role", "salaried_staff_json": "Salaried staff",
+    "open_times_json": "Opening times", "close_times_json": "Closing times", "hours_notes": "Hours notes",
+    "auto_publish_schedule": "Auto-publish schedules", "auto_approve_5star": "Auto-approve 5-star replies",
+    "auto_approve_4star": "Auto-approve 4-star replies", "auto_draft_schedule": "Auto-draft schedules",
+    "compliance_json": "Scheduling rules", "role_floors_json": "Staffing floors", "sched_notes": "Scheduling notes",
+    "data_retention_months": "Review retention (months)", "timezone": "Time zone",
+    "sell_price": "Price", "service_model": "Service model", "concept": "Restaurant type",
+}
+# Kinds whose values are switches: 1/0 read as on/off.
+_SWITCH_KINDS = frozenset({"automation", "notifications"})
+
+
+def _show(v, switch=False) -> str:
+    if v is None or v == "":
+        return "—"
+    if isinstance(v, (dict, list)):
+        return "updated"
+    if switch and str(v) in ("0", "1", "True", "False", "true", "false"):
+        return "on" if str(v).lower() in ("1", "true") else "off"
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    s = str(v)
+    return s if len(s) <= 40 else s[:37] + "…"
+
 
 def describe(row) -> str:
-    """One owner-facing line for a change: "Labor target 30 → 28, by the
+    """One owner-facing line for a change: "Labor target: 30 → 28, by the
     owner on 9/12/26". Dates M/D/YY."""
     from time_utils import mdy
-    field = str(row.get("field") or row.get("entity") or "setting").replace("_json", "").replace("_", " ")
+    raw = str(row.get("field") or row.get("entity") or "setting")
+    field = FIELD_LABELS.get(raw) or raw.replace("_json", "").replace("_", " ")
     what = f"{row['subject']} — {field}" if row.get("subject") else field
-    old, new = row.get("old_value"), row.get("new_value")
-
-    def show(v):
-        if v is None or v == "":
-            return "—"
-        if isinstance(v, (dict, list)):
-            return "updated"
-        s = str(v)
-        return s if len(s) <= 40 else s[:37] + "…"
+    switch = row.get("kind") in _SWITCH_KINDS
     who = SOURCE_LABELS.get(row.get("source"))
     tail = (f", by {who}" if who else "") + (f" on {mdy(row.get('changed_at'))}" if row.get("changed_at") else "")
-    return f"{what[:1].upper()}{what[1:]}: {show(old)} → {show(new)}{tail}"
+    return (f"{what[:1].upper()}{what[1:]}: {_show(row.get('old_value'), switch)} → "
+            f"{_show(row.get('new_value'), switch)}{tail}")
 
 
 # ── what a change means to the learning readers ───────────────────────────
@@ -689,3 +714,34 @@ def _noun(kind, subject) -> str:
             "roster_change": f"{s}'s details changed" if s else "A team member's details changed",
             "pay": "Pay rates changed", "hours": "Hours changed",
             "supplier": f"Supplier {s} changed" if s else "A supplier changed"}.get(kind, "A setting changed")
+
+
+# ── what a login may read of it ───────────────────────────────────────────
+# Pay (a salary, a pay rate) is the account holder's alone — the salaried
+# staff figure already is; the learning switches are the operator's.
+_PRINCIPAL_ONLY_KINDS = frozenset({"pay"})
+_OPERATOR_ONLY_FIELDS = frozenset({"exclude_from_learning", "learning_override", "is_demo"})
+
+
+def for_viewer(restaurant_id, user, limit=100, db_path=None) -> list:
+    """The change history as `user` may see it, newest first — the Account
+    activity payload's `changes`: [{kind, field, subject, old_value,
+    new_value, source, who, changed_at, line}], `line` the owner-facing
+    sentence (dates M/D/YY). A delegate never sees pay changes; nobody but
+    an internal login sees the operator's learning switches."""
+    import permissions
+    authority = permissions.answer_authority(user) if user else "delegate"
+    principal = authority in ("principal", "admin")
+    out = []
+    for row in history(restaurant_id, limit=limit * 2, db_path=db_path):
+        if row.get("kind") in _PRINCIPAL_ONLY_KINDS and not principal:
+            continue
+        if row.get("field") in _OPERATOR_ONLY_FIELDS and authority != "admin":
+            continue
+        out.append({"kind": row.get("kind"), "field": row.get("field"), "subject": row.get("subject"),
+                    "old_value": row.get("old_value"), "new_value": row.get("new_value"),
+                    "source": row.get("source"), "who": SOURCE_LABELS.get(row.get("source")),
+                    "changed_at": row.get("changed_at"), "line": describe(row)})
+        if len(out) >= limit:
+            break
+    return out

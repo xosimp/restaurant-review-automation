@@ -590,19 +590,6 @@ def series(restaurant_id: int, weeks: int = 12, db_path: str = DB_PATH) -> list:
             for r in reversed(rows)]
 
 
-def _learning_weeks(db_path=DB_PATH) -> dict:
-    """{restaurant_id: the ISO week of its learning_since} — a feature row
-    of an earlier week was computed from its demo era (memory audit
-    9/29/26, "eligibility")."""
-    out = {}
-    for rid, stamp in _models_mod.learning_since_map(db_path=None if db_path in (None, DB_PATH) else db_path).items():
-        try:
-            out[rid] = iso_week(date.fromisoformat(str(stamp)[:10]))
-        except (TypeError, ValueError):
-            continue
-    return out
-
-
 def latest_by_restaurant(db_path: str = DB_PATH, max_age_weeks: int = 3) -> dict:
     """{restaurant_id: {week, features, completeness}} — each restaurant's
     most recent row, only if it is recent enough to describe it now."""
@@ -616,15 +603,12 @@ def latest_by_restaurant(db_path: str = DB_PATH, max_age_weeks: int = 3) -> dict
     finally:
         conn.close()
     # Cross-restaurant readers (benchmarks, patterns, trends) only ever see
-    # restaurants that may teach: a demo account's seeded rows counted
-    # toward the privacy floor and the cohort percentiles (CA3 F7) — and
-    # never a converted demo's weeks from before its learning_since.
+    # real restaurants: a demo account's seeded rows counted toward the
+    # privacy floor and the cohort percentiles (CA3 F7).
     from .jobs import seeded_restaurant_ids
     seeded = seeded_restaurant_ids(db_path=db_path)
-    before = _learning_weeks(db_path)
     return {r["restaurant_id"]: {"week": r["week"], "features": cross_restaurant_view(json.loads(r["features_json"])),
-                                 "completeness": r["completeness"]} for r in rows
-            if r["restaurant_id"] not in seeded and r["week"] >= before.get(r["restaurant_id"], "")}
+                                 "completeness": r["completeness"]} for r in rows if r["restaurant_id"] not in seeded}
 
 
 def weekly_by_restaurant(weeks: int = 8, db_path: str = DB_PATH) -> dict:
@@ -638,10 +622,9 @@ def weekly_by_restaurant(weeks: int = 8, db_path: str = DB_PATH) -> dict:
         conn.close()
     from .jobs import seeded_restaurant_ids
     seeded = seeded_restaurant_ids(db_path=db_path)      # demo accounts excluded (CA3 F7)
-    before = _learning_weeks(db_path)                    # and a converted demo's demo era
     out = {}
     for r in rows:
-        if r["restaurant_id"] in seeded or r["week"] < before.get(r["restaurant_id"], ""):
+        if r["restaurant_id"] in seeded:
             continue
         out.setdefault(r["week"], {})[r["restaurant_id"]] = cross_restaurant_view(json.loads(r["features_json"]))
     return out

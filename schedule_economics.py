@@ -37,13 +37,6 @@ STAGGER_MAX_MIN = 90
 _COLS = ("date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes")
 
 
-def _own_sql():
-    """Daily history this restaurant's own readers may use: never the demo
-    seed's synthetic days on a converted demo (models.own_history_sql)."""
-    import models as _m_own
-    return _m_own.own_history_sql()
-
-
 def _minutes(t):
     from schedule_rules import parse_minutes
     return parse_minutes(t)
@@ -563,10 +556,8 @@ def holiday_lift(restaurant_id, week_dates: list, db_path=DB_PATH) -> dict:
             # the holiday's own date last year, whichever weekday it fell on
             prior_dates = [k for k, n in _holiday_dates(last.year).items() if n == name]
             hol_date = prior_dates[0] if prior_dates else last.isoformat()
-            # Never the demo seed's synthetic "last year" on a converted demo
-            # (memory audit 9/29/26, models.own_history_sql).
-            row = conn.execute("SELECT sales FROM labor_daily_history WHERE restaurant_id=? AND date=? AND "
-                               + _own_sql(), (restaurant_id, hol_date)).fetchone()
+            row = conn.execute("SELECT sales FROM labor_daily_history WHERE restaurant_id=? AND date=?",
+                               (restaurant_id, hol_date)).fetchone()
             # `date`: the night last year's figure is read from, so a reader
             # can name ITS weekday (re-audit OPP-2).
             entry = {"name": name, "lift_pct": None, "based_on": None, "date": hol_date}
@@ -574,7 +565,7 @@ def holiday_lift(restaurant_id, week_dates: list, db_path=DB_PATH) -> dict:
                 hd = datetime.strptime(hol_date, "%Y-%m-%d").date()
                 same = conn.execute(
                     "SELECT sales FROM labor_daily_history WHERE restaurant_id=? AND date BETWEEN ? AND ? "
-                    "AND date<>? AND day_of_week=? AND sales > 0 AND " + _own_sql(),
+                    "AND date<>? AND day_of_week=? AND sales > 0",
                     (restaurant_id, (hd - timedelta(days=28)).isoformat(), (hd + timedelta(days=28)).isoformat(),
                      hol_date, hd.strftime("%A"))).fetchall()
                 vals = sorted(float(r["sales"]) for r in same)

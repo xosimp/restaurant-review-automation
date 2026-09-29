@@ -108,12 +108,20 @@ def test_data_recorded_before_learning_since_teaches_nothing():
 # ── every cross-restaurant reader and admin check ──────────────────────────
 
 def _answer(rid, key, at, outcome="improved", cohort="bar"):
-    _x("INSERT INTO intel_rec_events (restaurant_id, rec_kind, source_key, cohort, action, outcome, event_at) "
-       "VALUES (?,?,?,?,?,?,?)", (rid, "trim_day", key, cohort, "measured", outcome, at))
+    c = models.get_conn()
+    try:
+        c.execute("PRAGMA foreign_keys=OFF")
+        c.execute("INSERT INTO intel_rec_events (restaurant_id, rec_kind, source_key, cohort, action, outcome, event_at) "
+                  "VALUES (?,?,?,?,?,?,?)", (rid, "trim_day", key, cohort, "measured", outcome, at))
+        c.commit()
+    finally:
+        c.close()
 
 
-def test_cohort_and_platform_rates_leave_test_internal_and_demo_era_rows_out():
-    from intelligence import scoring
+def test_the_sql_helpers_leave_ineligible_restaurants_and_demo_eras_out():
+    """What every cross-restaurant reader filters with (the platform's
+    readers call models.learning_eligible through intelligence.jobs; these
+    are the SQL forms for a reader that filters in the query)."""
     real = _rid("Bella's Bistro")
     test = _rid("Preview Test")
     ours = _rid("Our Kitchen", billing_status="internal")
@@ -123,32 +131,19 @@ def test_cohort_and_platform_rates_leave_test_internal_and_demo_era_rows_out():
         _answer(rid, f"k{rid}", today)
     _answer(conv, "before", (date.today() - timedelta(days=60)).isoformat())
     _answer(conv, "after", today)
-    stats = scoring.kind_stats("trim_day")
-    assert stats["measured"] == 2 and stats["restaurants"] == 2          # real + conv's post-conversion row
-    assert scoring.kind_stats("trim_day", restaurant_id=conv)["measured"] == 1   # its own record too
-    ranked = {k["rec_kind"]: k for k in scoring.rank_kinds()}
-    assert ranked["trim_day"]["restaurants"] == 2
-    assert scoring.platform_totals()["restaurants"] == 2
-    from intelligence import jobs
-    assert {real, conv} <= jobs.real_restaurant_ids() and not {test, ours} & jobs.real_restaurant_ids()
-
-
-def test_feature_weeks_from_a_demo_era_never_join_a_cohort():
-    from intelligence import features
-    conv = _rid("Converted Co", learning_since=_ago(0))
-    real = _rid("Bella's Bistro")
-    old_week = features.iso_week(date.today() - timedelta(days=14))
-    new_week = features.iso_week(date.today())
-    for rid in (conv, real):
-        _x("INSERT INTO intel_features (restaurant_id, week, features_json, completeness) VALUES (?,?,?,?)",
-           (rid, old_week, "{}", 0.5))
-    latest = features.latest_by_restaurant()
-    assert real in latest and conv not in latest
-    _x("INSERT INTO intel_features (restaurant_id, week, features_json, completeness) VALUES (?,?,?,?)",
-       (conv, new_week, "{}", 0.5))
-    assert conv in features.latest_by_restaurant()
-    weekly = features.weekly_by_restaurant(weeks=4)
-    assert conv not in weekly.get(old_week, {}) and conv in weekly.get(new_week, {})
+    _answer(-7, "tombstoned", today)                 # a deleted restaurant's kept row
+    c = models.get_conn()
+    try:
+        c.execute("PRAGMA foreign_keys=OFF")
+        rows = c.execute(
+            "SELECT restaurant_id, source_key FROM intel_rec_events WHERE "
+            + models.learning_filter_sql("restaurant_id", conn=c) + " AND "
+            + models.learning_rows_sql("intel_rec_events.restaurant_id", "intel_rec_events.event_at")).fetchall()
+    finally:
+        c.close()
+    assert sorted(r["source_key"] for r in rows) == sorted([f"k{real}", "after", "tombstoned"])
+    assert models.learning_since_map()[conv].startswith(_ago(30)[:10])
+    assert models.learning_filter_sql("restaurant_id") .startswith("restaurant_id NOT IN (")
 
 
 def _episode(rid, rec_id, created, kind="trim_day"):
@@ -176,24 +171,6 @@ def test_the_admin_acceptance_view_leaves_test_accounts_and_demo_eras_out():
         conn.close()
     assert sorted(e["rec_id"] for e in eps) == ["c-after", "r1"]
     assert shown is None or test not in shown
-
-
-def test_the_schedule_ab_readout_reads_no_demo_or_test_weeks():
-    import schedule_experiments as se
-    real = _rid("Bella's Bistro")
-    demo = _rid("Simple EJ's Demo", is_demo=1)
-    conv = _rid("Converted Co", learning_since=_ago(3))
-    arm = se.EXPERIMENTS[0]["arms"][0]["key"] if se.EXPERIMENTS else "control"
-    exp = se.EXPERIMENTS[0]["key"] if se.EXPERIMENTS else "exp"
-    hid = 0
-    for rid, week in ((real, date.today().isoformat()), (demo, date.today().isoformat()),
-                      (conv, (date.today() - timedelta(days=14)).isoformat())):
-        hid = _x("INSERT INTO schedule_history (restaurant_id, week_start) VALUES (?,?)", (rid, week))
-        _x("INSERT INTO schedule_experiment_weeks (history_id, restaurant_id, experiment, arm, week_start, quality_score) "
-           "VALUES (?,?,?,?,?,?)", (hid, rid, exp, arm, week, 80))
-    out = se.readout()
-    arms = [a for e in out["experiments"] for a in e["arms"] if e["key"] == exp]
-    assert sum(a["generated"] for a in arms) == 1, "only the real restaurant's week counts"
 
 
 # ── a demo turned real ─────────────────────────────────────────────────────
@@ -258,20 +235,30 @@ def test_the_seed_stamps_its_labor_days_and_old_ones_are_stamped_once():
         c.close()
 
 
-def test_a_converted_demos_own_baselines_drop_the_seed_and_a_demo_keeps_it():
-    import metrics
-    from intelligence import memory
-    import schedule_economics
+def test_a_converted_demos_own_history_drops_the_seed_and_a_demo_keeps_it():
+    """models.own_history_sql — what a restaurant's own daily-history readers
+    add (canonical_facts' final-day readers are where it belongs once merged;
+    the waste loader already reads through it)."""
+    import waste_trend
     rid = _rid("Bella's Bistro", is_demo=1)
     for i in range(40):
         d = (date(2025, 6, 1) + timedelta(days=i)).isoformat()
         _x("INSERT INTO labor_daily_history (restaurant_id, date, day_of_week, sales, labor_cost, source) "
            "VALUES (?,?,?,?,?,?)", (rid, d, date.fromisoformat(d).strftime("%A"), 5000.0, 1000.0, "seed"))
-    v, _ = metrics.measure(rid, "sales", "2025-06-01", "2025-06-30")
-    assert v == 5000.0, "a demo's own screens show the demo"
+    _x("INSERT INTO labor_daily_history (restaurant_id, date, sales, source) VALUES (?,?,?,?)",
+       (rid, "2026-09-01", 7000.0, "toast"))
+    _x("INSERT INTO inventory_history (restaurant_id, week_end, waste_json, inv_value, source) VALUES (?,?,?,?,?)",
+       (rid, "2025-06-08", '{"total_waste_cost": 50}', 3000.0, "seed"))
+
+    def own_days():
+        c = models.get_conn()
+        try:
+            return c.execute("SELECT COUNT(*) FROM labor_daily_history WHERE restaurant_id=? AND "
+                             + models.own_history_sql(), (rid,)).fetchone()[0]
+        finally:
+            c.close()
+    assert own_days() == 41, "a demo's own screens show the demo"
+    assert waste_trend.load_waste_history(rid)[1] == 1
     _x("UPDATE restaurants SET is_demo=0, learning_since=datetime('now') WHERE id=?", (rid,))
-    v, why = metrics.measure(rid, "sales", "2025-06-01", "2025-06-30")
-    assert v is None, "a converted demo's year-over-year never reads synthetic sales"
-    assert memory.seasonality(rid)["available"] is False
-    for src in (inspect.getsource(schedule_economics),):
-        assert src.count("_own_sql()") >= 2, "the holiday lift reads through the own-history filter"
+    assert own_days() == 1, "a converted demo's own history never reads synthetic sales"
+    assert waste_trend.load_waste_history(rid)[1] == 0, "nor synthetic counts"

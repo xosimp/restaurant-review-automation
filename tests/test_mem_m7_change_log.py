@@ -260,7 +260,7 @@ def test_value_as_of_answers_which_target_applied_on_a_date():
     hist = change_log.history(rid, kinds="target")
     assert [json.loads(json.dumps(h["new_value"])) for h in hist] == [26, 28]
     line = change_log.describe(hist[0])
-    assert line == "Labor target pct: 28 → 26, by the owner on 6/1/26"
+    assert line == "Labor target: 28 → 26, by the owner on 6/1/26"
 
 
 def test_record_names_the_thing_changed_and_derives_its_kind():
@@ -352,3 +352,37 @@ def test_the_table_is_made_at_boot_and_the_decorators_keep_the_login_on_g():
         assert g.cavnar_current_user is OWNER
     for dec in (auth.login_required, auth.admin_required, auth.mobile_login_required):
         assert "_bind_log_context(" in inspect.getsource(dec)
+
+
+# ── what a login may read of it (the Account activity payload) ─────────────
+
+def test_the_account_activity_payload_carries_the_change_history_by_viewer():
+    import mobile_api
+    rid = _rid()
+    ctx = _as(OWNER)
+    try:
+        update_restaurant(rid, {"labor_target_pct": 28.0, "hourly_rate": 18.5})
+    finally:
+        ctx.pop()
+    ctx = _as(ADMIN)
+    try:
+        update_restaurant(rid, {"exclude_from_learning": 1})
+    finally:
+        ctx.pop()
+    owner = dict(OWNER, restaurant_id=rid, grants=())
+    manager = dict(MANAGER, restaurant_id=rid, grants=())
+    seen = {c["field"] for c in change_log.for_viewer(rid, owner)}
+    assert {"labor_target_pct", "hourly_rate"} <= seen and "exclude_from_learning" not in seen
+    assert "hourly_rate" not in {c["field"] for c in change_log.for_viewer(rid, manager)}, "pay is the owner's alone"
+    assert "exclude_from_learning" in {c["field"] for c in change_log.for_viewer(rid, dict(ADMIN, restaurant_id=rid))}
+    line = [c for c in change_log.for_viewer(rid, owner) if c["field"] == "labor_target_pct"][0]["line"]
+    assert line.startswith("Labor target: 30 → 28, by the owner on ")
+    fn = mobile_api.mobile_account_activity.__wrapped__ if hasattr(mobile_api.mobile_account_activity, "__wrapped__") \
+        else None
+    import inspect
+    body = inspect.unwrap(mobile_api.mobile_account_activity)
+    with _app.test_request_context("/mobile/api/account/activity"):
+        resp = body(current_user=owner)
+    data = resp.get_json()
+    assert data["ok"] and {c["field"] for c in data["changes"]} >= {"labor_target_pct"}
+    assert "events" in data
