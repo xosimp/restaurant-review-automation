@@ -11087,28 +11087,23 @@ def auto_approve_candidates(restaurant_id: int, db_path: str = DB_PATH, ratings=
 
 
 def build_labor_export_csv(restaurant_id: int, db_path: str = DB_PATH) -> str:
+    """The owner's labor history export: one row per labor period, newest
+    first — the calendar payroll weeks (refresh_labor_periods) and any
+    period a caller stored, each once, never the legacy rolling windows
+    that overlapped one another (memory audit 9/29/26, labor_periods). It
+    read columns labor_history never had (week_start, hours_scheduled,
+    labor_cost), so every row but its percentage was blank."""
     import io
-    conn = get_conn(db_path)
     out = io.StringIO()
     w = safe_csv_writer(out)
-    w.writerow(["week_start", "hours_scheduled", "labor_cost", "labor_pct", "generated_at"])
+    w.writerow(["week_start", "week_end", "labor_pct", "labor_cost", "sales", "days_with_sales", "complete"])
     try:
-        rows = conn.execute("""
-            SELECT * FROM labor_history WHERE restaurant_id=? ORDER BY created_at DESC LIMIT 520
-        """, (restaurant_id,)).fetchall()
-        for r in rows:
-            k = r.keys()
-            w.writerow([
-                r["week_start"] if "week_start" in k else "",
-                r["hours_scheduled"] if "hours_scheduled" in k else "",
-                r["labor_cost"] if "labor_cost" in k else "",
-                r["labor_pct"] if "labor_pct" in k else "",
-                r["created_at"] if "created_at" in k else "",
-            ])
+        for r in get_labor_history(restaurant_id, limit=520, db_path=db_path):
+            w.writerow([str(r.get("period_start") or "")[:10], str(r.get("period_end") or "")[:10],
+                        r.get("labor_pct"), r.get("total_labor"), r.get("total_sales"), r.get("days") or "",
+                        "yes" if r.get("complete") else "no"])
     except Exception as e:
         w.writerow([f"labor history unavailable: {e}"])
-    finally:
-        conn.close()
     return out.getvalue()
 
 

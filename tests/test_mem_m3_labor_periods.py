@@ -134,6 +134,25 @@ def test_legacy_rolling_windows_are_marked_at_boot_and_never_read():
     assert [w["period_start"] for w in models.get_labor_history(rid, limit=8)] == ["2026-09-21", "2026-09-14"]
 
 
+def test_the_owners_labor_export_is_the_weeks_each_once_with_their_figures():
+    """labor.csv read columns labor_history never had (week_start,
+    hours_scheduled, labor_cost): every cell but the percentage was blank,
+    and the overlapping legacy windows were exported beside the weeks."""
+    rid = _rid()
+    conn = models.get_conn()
+    conn.execute("INSERT INTO labor_history (restaurant_id, period_start, period_end, labor_pct, total_labor, "
+                 "total_sales, kind) VALUES (?,?,?,?,?,?,?)",
+                 (rid, "2026-09-12", "2026-09-25", 18.4, 1840, 10000, models.LABOR_PERIOD_LEGACY))
+    conn.commit()
+    conn.close()
+    models.save_labor_daily_history(rid, _days(date(2026, 9, 14), 14))
+    models.refresh_labor_periods(rid, today=TODAY)
+    lines = models.build_labor_export_csv(rid).strip().splitlines()
+    assert lines[0] == "week_start,week_end,labor_pct,labor_cost,sales,days_with_sales,complete"
+    assert lines[1:] == ["2026-09-21,2026-09-27,30.0,2100.0,7000.0,7,yes",
+                         "2026-09-14,2026-09-20,30.0,2100.0,7000.0,7,yes"]
+
+
 def test_an_explicitly_stored_period_is_replaced_in_place_too():
     rid = _rid()
     models.save_labor_snapshot(rid, "2026-09-14", "2026-09-27", 31.1, 3371.7, 10840.0, basis="a:toast")
