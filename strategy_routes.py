@@ -2531,7 +2531,17 @@ def _do_learned_patterns(u):
     for p in _sv.learned_patterns(rid, min_repeats=1):
         key = _si.pattern_key(p)
         out.append({**p, "key": key, "active": p["times"] >= 2 and key not in dismissed, "dismissed": key in dismissed})
-    return {"ok": True, "patterns": out, "can_edit": _may_draft(u)}, 200
+    # What the draft keeps after the manager stopped correcting it, with
+    # who taught it, when it was learned and last kept, and whether it can
+    # become the person's rule (memory audit 9/29/26, standing_patterns);
+    # and the pairs two editors pull opposite ways, for the owner to settle.
+    try:
+        standing = _sv.standing_patterns(rid)
+        conflicts = _sv.patterns_for_draft(rid)[1]
+    except Exception:
+        standing, conflicts = [], []
+    return {"ok": True, "patterns": out, "standing": standing, "conflicts": conflicts,
+            "can_edit": _may_draft(u)}, 200
 
 
 def _do_learned_pattern_set(u):
@@ -2542,11 +2552,116 @@ def _do_learned_pattern_set(u):
     key = (b.get("key") or "").strip()
     if not key:
         return {"ok": False, "error": "key required"}, 400
+    if b.get("rule"):
+        # "Make it a rule": the person's own availability, with its author.
+        import schedule_versions as _sv
+        try:
+            out = _sv.make_rule(_rid(u), key, user=u)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}, 400
+        return {"ok": True, "key": key, **{k: v for k, v in out.items() if k != "ok"}}, 200
     if b.get("dismissed", True):
         _si.dismiss_pattern(_rid(u), key, actor=_who(u))
     else:
         _si.restore_pattern(_rid(u), key)
     return {"ok": True, "key": key, "dismissed": bool(b.get("dismissed", True))}, 200
+
+
+# ── scheduling notes, dated (memory audit 9/29/26, staff_notes) ─────────────
+
+def _staff_note_out(n):
+    """One person's constraints for the clients: M/D/YY for the eye, ISO
+    beside it for a date picker."""
+    return {"id": n["id"], "employee_name": n["employee_name"], "notes": n.get("notes") or "",
+            "noted": n.get("noted"), "noted_on": n.get("noted_on"), "stale": bool(n.get("stale")),
+            "expires_on": n.get("expires_on"),
+            "parts": [{"index": i, "text": p["text"], "noted": p.get("noted_label"), "noted_on": p.get("noted"),
+                       "expires": p.get("expires_label"), "expires_on": p.get("expires"),
+                       "ended": bool(p.get("ended")), "stale": bool(p.get("stale"))}
+                      for i, p in enumerate(n.get("parts") or [])]}
+
+
+def _do_staff_notes_get(u):
+    """Every scheduling note with the day each constraint was noted, its end
+    date and whether it needs the owner's "still true?" — the notes the
+    schedule and the labor read obey, which only an admin could see."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see scheduling notes.")
+    from models import get_staff_notes, STAFF_NOTE_STALE_DAYS
+    notes = [_staff_note_out(n) for n in get_staff_notes(_rid(u), include_expired=True, today=_local_today(u))]
+    return {"ok": True, "notes": notes, "stale_after_days": STAFF_NOTE_STALE_DAYS,
+            "stale": sum(1 for n in notes for p in n["parts"] if p["stale"]), "can_edit": _may_rate(u)}, 200
+
+
+def _note_change(u, name, before, after):
+    try:
+        import change_log
+        import people
+        # A scheduling note is a roster change about that person (M7's
+        # change_log: subject= the employee; the login decides whose).
+        change_log.record(_rid(u), "roster", "note", before, after, subject=name, user=u)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="staff_note_change_log", context=f"restaurant_id={_rid(u)}")
+
+
+def _do_staff_note_add(u):
+    """{employee_name, notes, expires_on?} — a constraint for one person,
+    added to theirs, dated today; `expires_on` (M/D/YY or ISO) or the end its
+    own words give ("out until 6/1") retires it on its own."""
+    if not _may_rate(u):
+        return _forbidden("Your login can view the team but not change their scheduling notes.")
+    from models import save_staff_note, get_staff_notes, _iso_or_none
+    b = _body()
+    name = " ".join(str(b.get("employee_name") or "").split())[:80]
+    text = str(b.get("notes") or "").strip()[:500]
+    if not name or not text:
+        return {"ok": False, "error": "A name and the constraint are both needed."}, 400
+    if b.get("expires_on") not in (None, "") and not _iso_or_none(b.get("expires_on")):
+        return {"ok": False, "error": "That end date isn't a date — use M/D/YY."}, 400
+    before = next((n.get("notes") for n in get_staff_notes(_rid(u))
+                   if n["employee_name"].strip().lower() == name.lower()), None)
+    out = save_staff_note(_rid(u), name, text, expires_on=b.get("expires_on") or None, updated_by=_who(u),
+                          today=_local_today(u))
+    _note_change(u, name, before, out["notes"])
+    note = next((n for n in get_staff_notes(_rid(u), include_expired=True, today=_local_today(u))
+                 if n["id"] == out["id"]), None)
+    return {"ok": True, "appended": out["appended"], "note": _staff_note_out(note) if note else None}, 200
+
+
+def _do_staff_note_update(u, note_id):
+    """{action: confirm | expire | remove, part?, expires_on?} — the owner's
+    answer to one constraint ("still true", "ends on", "gone"). `part` is
+    its index in the note; none means every constraint on it."""
+    if not _may_rate(u):
+        return _forbidden("Your login can view the team but not change their scheduling notes.")
+    from models import update_staff_note_part, _iso_or_none
+    b = _body()
+    action = str(b.get("action") or "").strip().lower()
+    if action not in ("confirm", "expire", "remove"):
+        return {"ok": False, "error": "action is confirm, expire or remove"}, 400
+    part = b.get("part")
+    if part not in (None, ""):
+        try:
+            part = int(part)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "part is a number"}, 400
+    else:
+        part = None
+    if action == "expire" and b.get("expires_on") not in (None, "") and not _iso_or_none(b.get("expires_on")):
+        return {"ok": False, "error": "That end date isn't a date — use M/D/YY."}, 400
+    try:
+        row = update_staff_note_part(_rid(u), int(note_id), part, confirm=(action == "confirm"),
+                                     expires_on=((b.get("expires_on") or "") if action == "expire" else None),
+                                     remove=(action == "remove"), updated_by=_who(u), today=_local_today(u))
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}, 400
+    if row is None:
+        return {"ok": False, "error": "That note isn't on this restaurant."}, 404
+    if action != "confirm":
+        _note_change(u, row.get("employee_name") or f"note {note_id}", action, row.get("notes"))
+    return {"ok": True, "note": _staff_note_out(row) if not row.get("removed") else None,
+            "removed": bool(row.get("removed"))}, 200
 
 
 def _do_recommendation_event(u):
@@ -2730,11 +2845,183 @@ def _do_ratings_match(u):
         return {"ok": False, "error": "Pick a name from the roster."}, 400
     if rated.lower() != target.lower() and rated.lower() in {e["name"].strip().lower() for e in everyone}:
         return {"ok": False, "error": f"{rated} is on your roster (deactivated) — their rating stays theirs."}, 409
-    moved = rename_capability_holder(_rid(u), rated, target)
-    if moved is None:
+    from models import get_capabilities
+    have = {_ss.name_key(n): set(v) for n, v in (get_capabilities(_rid(u)) or {}).items()}
+    if have.get(_ss.name_key(rated), set()) & have.get(_ss.name_key(target), set()):
         return {"ok": False, "error": f"{target} already has a rating. Remove one of them first."}, 409
+    # One person now, not just one rating (memory audit 9/29/26, identity):
+    # the rated name's settings, minor band, notes, availability and the
+    # rest follow the rating onto the roster name — the old repair moved
+    # staff_capabilities rows and left everything else stranded.
+    import people as _people
+    a = _people.person_id_for(_rid(u), rated)
+    z = _people.person_id_for(_rid(u), target)
+    if a and z and a != z:
+        try:
+            out = _people.merge_people(_rid(u), a, z, actor_user_id=u.get("id"), source=_people.change_source(u),
+                                       user=u)
+        except _people.PeopleError as e:
+            return {"ok": False, "error": str(e)}, 409
+        moved = int((out.get("moved") or {}).get("staff_capabilities") or 0)
+    else:
+        moved = rename_capability_holder(_rid(u), rated, target)
+        if moved is None:
+            return {"ok": False, "error": f"{target} already has a rating. Remove one of them first."}, 409
     log_account_event(_rid(u), "rating_matched", current_user=u, detail=f"{rated} → {target}")
     return {"ok": True, "moved": moved}, 200
+
+
+# ── who is who (memory audit 9/29/26, identity) ─────────────────────────────
+
+def _do_people_identity(u):
+    """The questions only the owner answers: two records that may be one
+    person ("Kim T." / "Kim Tran"), or two people the POS spells alike.
+    Nothing is ever merged on a guess."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see the team.")
+    import people as _people
+    return {"ok": True, "questions": _people.open_questions(_rid(u)), "can_answer": _principal(u)}, 200
+
+
+def _do_people_identity_answer(u, question_id):
+    """{same: true|false, keep?: person_id} — "same person" merges them
+    (every rating, setting, note and shift follows), "different people"
+    closes the question for good."""
+    if not _principal(u):
+        return _forbidden("Only the account owner can decide who is the same person.")
+    import people as _people
+    b = _body()
+    if not isinstance(b.get("same"), bool):
+        return {"ok": False, "error": "same is true or false"}, 400
+    keep = b.get("keep") if isinstance(b.get("keep"), int) else None
+    try:
+        out = _people.answer_question(_rid(u), int(question_id), b["same"], user=u, keep=keep)
+    except _people.PeopleError as e:
+        return {"ok": False, "error": str(e)}, 409
+    from client_api import log_account_event
+    log_account_event(_rid(u), "people_identity_answered", current_user=u,
+                      detail=(f"{out.get('from')} → {out.get('into')}" if out.get("status") == "merged"
+                              else f"question {question_id}: different people"))
+    return {"ok": True, **{k: v for k, v in out.items() if k != "ok"}}, 200
+
+
+def _do_people_merge(u):
+    """{from, into} — two people keys (the list's) the owner says are one
+    person: `from`'s records all move onto `into`."""
+    if not _principal(u):
+        return _forbidden("Only the account owner can merge two people.")
+    import people as _people
+    b = _body()
+    try:
+        a = _people.find(_rid(u), b.get("from"))
+        z = _people.find(_rid(u), b.get("into"))
+    except _people.AmbiguousPerson as e:
+        return {"ok": False, "error": str(e)}, 409
+    if not a or not z:
+        return {"ok": False, "error": "Pick two people from the list."}, 400
+    pa = _people.person_id_for(_rid(u), a["name"])
+    pz = _people.person_id_for(_rid(u), z["name"])
+    try:
+        out = _people.merge_people(_rid(u), pa, pz, actor_user_id=u.get("id"), source=_people.change_source(u),
+                                   user=u)
+    except _people.PeopleError as e:
+        return {"ok": False, "error": str(e)}, 409
+    from client_api import log_account_event
+    log_account_event(_rid(u), "people_merged", current_user=u, detail=f"{out['from']} → {out['into']}")
+    return {"ok": True, **{k: v for k, v in out.items() if k != "ok"}}, 200
+
+
+def _do_person_roles(u, key):
+    """{role, since?, primary?, remove?} — a role this person holds beyond
+    the shifts they have worked: "trained on bar from 9/1" (a candidate for
+    a bartender gap from then), or a promotion (`primary`: their role on
+    the roster). Memory audit 9/29/26, uncaptured."""
+    if not _may_rate(u):
+        return _forbidden("Your login can view the team but not change their roles.")
+    import people as _people
+    try:
+        p = _people.find(_rid(u), key)
+    except _people.AmbiguousPerson as e:
+        return {"ok": False, "error": str(e)}, 409
+    if not p:
+        return {"ok": False, "error": "That person isn't on the roster."}, 404
+    b = _body()
+    if b.get("remove"):
+        ok = _people.remove_role(_rid(u), p["name"], b.get("role"), user=u)
+        return ({"ok": True, "removed": True}, 200) if ok else ({"ok": False, "error": "They don't hold that role."}, 404)
+    try:
+        out = _people.add_role(_rid(u), p["name"], b.get("role"), since=b.get("since"),
+                               primary=bool(b.get("primary")), created_by=u.get("id"),
+                               source=_people.change_source(u), user=u)
+    except _people.PeopleError as e:
+        return {"ok": False, "error": str(e)}, 400
+    from time_utils import mdy
+    return {"ok": True, **out, "since_label": mdy(out["since"]) if out.get("since") else None}, 200
+
+
+def _do_people_mentions(u):
+    """Guests naming someone on staff, waiting on the owner's confirmation
+    before they count on the person's record."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see the team.")
+    import people as _people
+    return {"ok": True, "mentions": _people.mentions(_rid(u)), "can_confirm": _may_rate(u)}, 200
+
+
+def _do_people_mention_answer(u, signal_id):
+    """{confirm: true|false} — this review is (or is not) about them."""
+    if not _may_rate(u):
+        return _forbidden("Your login can view the team but not change their record.")
+    import people as _people
+    b = _body()
+    if not isinstance(b.get("confirm"), bool):
+        return {"ok": False, "error": "confirm is true or false"}, 400
+    if not _people.answer_mention(_rid(u), int(signal_id), b["confirm"], user=u):
+        return {"ok": False, "error": "That mention was already answered."}, 409
+    return {"ok": True, "confirmed": b["confirm"]}, 200
+
+
+def _do_issue_cover_answer(u, issue_id):
+    """{name, accepted} — the person asked to cover said yes or no (the
+    manager's word; otherwise a punch that day says yes). Their record of
+    taking covers ranks the next suggestions (labor_replacements)."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can do this.")
+    import issues as _issues
+    import people as _people
+    b = _body()
+    if not isinstance(b.get("name"), str) or not isinstance(b.get("accepted"), bool):
+        return {"ok": False, "error": "name and accepted are required"}, 400
+    issue = _issues.get_issue(_rid(u), int(issue_id))
+    if not issue or issue.get("kind") != "coverage":
+        return {"ok": False, "error": "That coverage issue wasn't found."}, 404
+    day = str(issue.get("source_key") or "").split(":")[1] if str(issue.get("source_key") or "").count(":") >= 2 \
+        else _local_today(u).isoformat()
+    _people.answer_cover(_rid(u), b["name"], int(issue_id), b["accepted"], day, user=u)
+    return {"ok": True}, 200
+
+
+def _do_person_rename(u, key):
+    """{name} — the owner renames a person; every store follows and the old
+    spelling stays an alias (a later upload under it still finds them)."""
+    if not _principal(u):
+        return _forbidden("Only the account owner can rename someone.")
+    import people as _people
+    try:
+        p = _people.find(_rid(u), key)
+    except _people.AmbiguousPerson as e:
+        return {"ok": False, "error": str(e)}, 409
+    if not p:
+        return {"ok": False, "error": "That person isn't on the roster."}, 404
+    pid = _people.person_id_for(_rid(u), p["name"])
+    try:
+        out = _people.rename_person(_rid(u), pid, _body().get("name"), actor_user_id=u.get("id"),
+                                    source=_people.change_source(u), user=u)
+    except _people.PeopleError as e:
+        return {"ok": False, "error": str(e)}, 409
+    from client_api import log_account_event
+    log_account_event(_rid(u), "person_renamed", current_user=u, detail=f"{out['from']} → {out['to']}")
+    return {"ok": True, "from": out["from"], "to": out["to"], "key": _people.person_key(out["to"])}, 200
 
 
 def _roster_roles(rid) -> dict:
@@ -4709,6 +4996,9 @@ _ROUTES = [
     ("/labor/shift-requests/<int:request_id>/decide", ["POST"], _do_shift_request_decide, "shift_request_decide"),
     ("/labor/learned-patterns", ["GET"], _do_learned_patterns, "learned_patterns"),
     ("/labor/learned-patterns", ["POST"], _do_learned_pattern_set, "learned_pattern_set"),
+    ("/labor/staff-notes", ["GET"], _do_staff_notes_get, "staff_notes_get"),
+    ("/labor/staff-notes", ["POST"], _do_staff_note_add, "staff_note_add"),
+    ("/labor/staff-notes/<int:note_id>", ["POST"], _do_staff_note_update, "staff_note_update"),
     ("/labor/schedule/recommendation", ["POST"], _do_recommendation_event, "schedule_recommendation_event"),
     ("/labor/standby/ask", ["POST"], _do_standby_ask, "labor_standby_ask"),
     ("/labor/intel", ["GET"], _do_schedule_intel, "schedule_intel"),
@@ -4746,8 +5036,16 @@ _ROUTES = [
     ("/dsr/<day>", ["GET"], _do_dsr_get, "dsr_get"),
     ("/dsr/<day>/status", ["GET"], _do_dsr_status, "dsr_status"),
     ("/people", ["GET"], _do_people_list, "people_list"),
+    ("/people/identity", ["GET"], _do_people_identity, "people_identity"),
+    ("/people/identity/<int:question_id>", ["POST"], _do_people_identity_answer, "people_identity_answer"),
+    ("/people/merge", ["POST"], _do_people_merge, "people_merge"),
     ("/people/<key>", ["GET"], _do_person_get, "person_get"),
     ("/people/<key>", ["POST"], _do_person_set, "person_set"),
+    ("/people/<key>/rename", ["POST"], _do_person_rename, "person_rename"),
+    ("/people/<key>/roles", ["POST"], _do_person_roles, "person_roles"),
+    ("/people/mentions", ["GET"], _do_people_mentions, "people_mentions"),
+    ("/people/mentions/<int:signal_id>", ["POST"], _do_people_mention_answer, "people_mention_answer"),
+    ("/issues/<int:issue_id>/cover-answer", ["POST"], _do_issue_cover_answer, "issue_cover_answer"),
     ("/labor/publish-check", ["GET"], _do_publish_check, "publish_check"),
     ("/account/targets", ["GET"], _do_targets_get, "targets_get"),
     ("/account/targets", ["POST"], _do_targets_set, "targets_set"),

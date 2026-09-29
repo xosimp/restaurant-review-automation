@@ -1521,10 +1521,16 @@ def settle_actions(actions, F, ctx, declined, dropped):
             why = "the owner already answered this"
         elif key in seen:
             why = "the same action as one above it"
+        guard = _staffing_guard(a, ctx) if not why else {}
+        if guard.get("suppress"):
+            why = guard["why"]
         if why:
             dropped.append({"field": field, "text": a["text"], "why": why, "key": key})
             continue
         seen.add(key)
+        if guard.get("caution"):
+            # Kept, said, and ranked lower (below, after ranking).
+            a = dict(a, caution=guard["caution"], rank_penalty=guard["rank_penalty"])
         keyed.append(dict(a, key=key, expected_metric=action_expected_metric(dict(a, key=key), ctx)))
     if not keyed:
         return []
@@ -1556,6 +1562,9 @@ def settle_actions(actions, F, ctx, declined, dropped):
         a["confidence"] = action_confidence(a, F, ctx, tctx)
     shadow = [{"key": a["key"], "timeframe": URGENCIES[a["urgency"]], "dollars_monthly": a["dollars_monthly"],
                "effort": a["effort"], "confidence": a.get("confidence"), "_a": a} for a in keyed]
+    for s_ in shadow:
+        if s_["_a"].get("rank_penalty"):
+            s_["rank_penalty"] = s_["_a"]["rank_penalty"]
     ranked = []
     for s in order_recommendations(shadow, quiet_kinds=quiet, learned=learned):
         a = dict(s["_a"], rank_score=s["rank_score"])
@@ -1619,6 +1628,28 @@ def settle_actions(actions, F, ctx, declined, dropped):
     except Exception as e:
         _capture(e, ctx.restaurant_id, "rank log")
     return ranked
+
+
+def _staffing_guard(action, ctx):
+    """A staffing CUT the report would suggest, checked against what the
+    rest of the product knows about the night it is about (memory audit
+    9/29/26, reviews_to_labor and mkt_to_staffing): a live campaign to fill
+    that night drops it, saying why; a service complaint cluster on it keeps
+    it with a caution and a lower rank. The night is the weekday it names,
+    else tomorrow."""
+    try:
+        import staffing_signals
+        if staffing_signals.action_direction(action) != "cut":
+            return {}
+        from datetime import date as _date_g, timedelta as _td_g
+        tomorrow = _date_g.fromisoformat(str(ctx.day)[:10]) + _td_g(days=1)
+        wd = staffing_signals._weekday_named(f"{action.get('text') or ''} {action.get('why') or ''}") \
+            or tomorrow.strftime("%A")
+        return staffing_signals.trim_guard(ctx.restaurant_id, wd, db_path=ctx.db_path,
+                                           on_date=staffing_signals._next_date(wd, tomorrow))
+    except Exception as e:
+        _capture(e, getattr(ctx, "restaurant_id", None), "staffing guard")
+        return {}
 
 
 _ONE_NIGHT_BASELINES = ("yesterday", "last_week", "last_year")

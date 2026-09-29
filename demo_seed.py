@@ -409,6 +409,13 @@ def _seed_ejs_shifts(rid: int, db_path: str):
     for r in _ejs_history_rows(date.today() - timedelta(days=14), 14):
         lines.append(",".join(str(x) for x in r) + ",")
     save_client_data(rid, "shifts", "\n".join(lines), source="seed", db_path=db_path)
+    # The seed IS the demo's whole record: its per-shift history follows it
+    # (shift_facts; memory audit 9/29/26), never a stale earlier seed.
+    try:
+        import shift_facts as _sf_seed
+        _sf_seed.replace_all(rid, "\n".join(lines), source="seed", db_path=db_path)
+    except Exception as _sfe:
+        print(f"[auto-seed] {SIMPLE_EJS_NAME} shift facts not written: {_sfe}")
     print(f"[auto-seed] {SIMPLE_EJS_NAME} shift data written ({len(lines) - 1} rows)")
 
 

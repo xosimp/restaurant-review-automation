@@ -406,33 +406,18 @@ def save_synced_shifts(restaurant_id, csv_str, source):
       Square and Clover restaurants never accumulated history (MOD-LAB-8).
     Returns the number of shift rows the synced window carried. Serialized
     by _WRITE_LOCK (the sweep's fetches run four at a time)."""
-    import csv as _csv
-    import io as _io
     from datetime import datetime, timezone
-    from labor import load_shifts, drop_future_shifts
-    from models import get_client_data, save_client_data
-    # A provider row dated after the restaurant's today is a clock or data
-    # error, never stored (re-audit B3#4 — the upload refuses it too).
-    new_rows = drop_future_shifts(load_shifts(csv_string=csv_str), restaurant_id=restaurant_id)
-    dates = sorted({r["date"] for r in new_rows if r.get("date")})
-    merged = list(new_rows)
-    if dates:
-        lo, hi = dates[0], dates[-1]
-        prior = (get_client_data(restaurant_id) or {}).get("shifts_csv") or ""
-        if prior.strip():
-            kept = [r for r in load_shifts(csv_string=prior) if not (lo <= (r.get("date") or "") <= hi)]
-            merged = kept + merged
-    merged.sort(key=lambda r: (r.get("date") or "", str(r.get("shift_start") or "")))
-    fields = []
-    for r in merged:
-        for k in r:
-            if k not in fields:
-                fields.append(k)
-    buf = _io.StringIO()
-    w = _csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore")
-    w.writeheader()
-    w.writerows(merged)
-    save_client_data(restaurant_id, "shifts", buf.getvalue(), source=source)
+    from labor import load_shifts
+    import shift_facts
+    # The one ingest every sync and upload goes through (memory audit
+    # 9/29/26, shift_facts / identity): future-dated rows dropped (re-audit
+    # B3#4), each row given its person — the POS's own id first, then the
+    # exact name — the stored file merged (outside the synced dates
+    # everything is kept, MOD-LAB-18) and the per-shift history written.
+    got = shift_facts.ingest(restaurant_id, load_shifts(csv_string=csv_str), source)
+    # The window's rows as stored — each spelled the way its person is.
+    new_rows = got.get("resolved") or []
+    dates = list(got["window"]) if got.get("window") else []
     try:
         # Inside the synced window the POS is the record: a remembered name
         # it no longer carries was a code or a station login (schedule_intel).
@@ -441,10 +426,12 @@ def save_synced_shifts(restaurant_id, csv_str, source):
     except Exception:
         pass
     try:
-        from labor import analyse_shifts_for_restaurant
-        from models import save_labor_daily_history, save_labor_snapshot
-        # The per-day archive takes the whole synced file; the period
-        # snapshot (what the labor alert reads) is the current window.
+        from models import save_labor_daily_history, refresh_labor_periods
+        # The per-day archive takes the whole synced file; the labor periods
+        # (what the labor alert, Home and the trend read) are the payroll
+        # weeks derived from it — never the current window, which appended
+        # an overlapping "period" on every sync (memory audit 9/29/26,
+        # labor_periods).
         from labor import full_history_by_day
         # Provenance for the days this pull covered (DH1-9): which provider,
         # when, and whether the business day had ENDED when it was read — a
@@ -456,11 +443,7 @@ def save_synced_shifts(restaurant_id, csv_str, source):
                 "window": (dates[0], dates[-1]) if dates else None,
                 "complete_through": ct.isoformat() if ct else None}
         save_labor_daily_history(restaurant_id, full_history_by_day(restaurant_id), provenance=prov)
-        analysis = analyse_shifts_for_restaurant(restaurant_id)
-        dr = analysis.get("date_range", {})
-        if dr.get("start") and dr.get("end"):
-            save_labor_snapshot(restaurant_id, dr["start"], dr["end"], analysis["overall_labor_pct"],
-                                analysis.get("costed_labor", analysis["total_labor_cost"]), analysis["total_sales"])
+        refresh_labor_periods(restaurant_id)
     except Exception as e:
         log.warning(f"[{source} sync] daily history archive error: {e}")
     # The synced figures just changed: the cached Labor read (and Home and
@@ -471,7 +454,7 @@ def save_synced_shifts(restaurant_id, csv_str, source):
         client_api.invalidate_insight_cache(restaurant_id)
     except Exception as e:
         log.warning(f"[{source} sync] insight cache not cleared: {e}")
-    return len(new_rows)
+    return int(got.get("rows") or 0)
 
 
 def connection_status(restaurant_id):

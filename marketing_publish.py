@@ -332,10 +332,20 @@ def schedule_post(restaurant_id, platform, body, scheduled_for, *, topic="",
              cta_type or None, cta_url or None, when.strftime("%Y-%m-%dT%H:%M:%S")),
         )
         conn.commit()
-        return {"ok": True, "id": cur.lastrowid,
-                "scheduled_for": when.strftime("%Y-%m-%dT%H:%M:%S")}
+        post_id = cur.lastrowid
     finally:
         conn.close()
+    # A post about an occasion or a dish is a signal on its night, where
+    # staffing, prep and the lineup see it (memory audit 9/29/26,
+    # mkt_to_staffing). A post about nothing in particular writes nothing.
+    try:
+        import demand_signals
+        demand_signals.record_post(restaurant_id, when.strftime("%Y-%m-%d"), topic, body, platform=platform,
+                                   post_id=post_id, db_path=db_path)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="post_demand_signal", context=f"restaurant_id={restaurant_id}")
+    return {"ok": True, "id": post_id, "scheduled_for": when.strftime("%Y-%m-%dT%H:%M:%S")}
 
 
 def _parse_local(value):

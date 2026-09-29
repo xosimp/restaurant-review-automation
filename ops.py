@@ -2135,6 +2135,18 @@ _RETENTION_DAYS = {
     # auth.AUTH_INDEXES' idx_login_history_created (INT-2), made at boot with
     # the table — after this module's own boot init, so it is not made here.
     "login_history":      int(os.getenv("RETAIN_LOGIN_HISTORY_DAYS", "90")),
+    # People memory (memory audit 9/29/26). Every shift every person worked
+    # for three years, then their per-quarter summary in person_quarters,
+    # kept forever — shift_facts.rollup_quarters writes each quarter while
+    # all of it is still here, and never rewrites one from what is left.
+    # Attendance outcomes and the signals about a person (covers taken,
+    # guests naming them) for two years, their quarterly counts the same
+    # way (shift_facts.roll_all_quarters, the rollup declared below).
+    # people, person_aliases, person_questions, person_merges, person_roles,
+    # person_quarters and schedule_standing_patterns are kept forever.
+    "shift_facts":        int(os.getenv("RETAIN_SHIFT_FACTS_DAYS", "1095")),
+    "attendance_events":  int(os.getenv("RETAIN_ATTENDANCE_DAYS", "730")),
+    "person_signals":     int(os.getenv("RETAIN_PERSON_SIGNALS_DAYS", "730")),
     # Cavnar AI's own reads and their claims (ai_reads, memory audit
     # 9/29/26): the raw text 13 months. Each closed quarter is summarised
     # into ai_read_summaries (never pruned) by the nightly learning job
@@ -2183,6 +2195,7 @@ _RETENTION_COLUMN = {
     "value_figures_daily": "date", "admin_issue_resolution_history": "created_at", "sms_log": "created_at",
     "push_outbox": "created_at", "webhook_outbox": "created_at", "morning_brief_deliveries": "created_at",
     "alert_storm_caps": "started_at", "login_history": "created_at",
+    "shift_facts": "business_date", "attendance_events": "business_date", "person_signals": "signal_date",
     "ai_reads": "created_at", "ai_claims": "created_at",
     "ask_memory_archive": "archived_at",
     "rec_rank_builds": "built_at", "rec_silences": "until",
@@ -2248,6 +2261,11 @@ _RETENTION_FLOOR_DAYS = {
     # delegate's per-login silence is read only while it holds (M1,
     # who_answered).
     "rec_rank_builds": 365, "rec_silences": 1,
+    # The people memory (M3): the overtime metric's seasonal re-check reads
+    # the same weeks last year (392 days), mentoring a year, reliability
+    # 360 days, a person's record its guest mentions a year; tenure reads
+    # person_quarters for the rest.
+    "shift_facts": 400, "attendance_events": 400, "person_signals": 400,
     # M6: the drafter's edit note reads 90 days of turned-down reply drafts
     # (models.REJECTIONS_KEEP_DAYS); the marketing voice reads 90 days of
     # model drafts to see which were regenerated (marketing_voice.DRAFTS_KEEP_DAYS).
@@ -2266,6 +2284,12 @@ _RETENTION_ROLLUP = {
     "notification_opens": "history_rollups:roll_engagement",
     "login_history": "history_rollups:roll_engagement",
     "email_log": "history_rollups:stamp_newsletter_results",
+    # Each person's quarter (shifts, hours, roles, dayparts, attendance
+    # outcomes, covers taken, guest mentions) into person_quarters, kept
+    # forever, while the quarter's rows are all still here (M3).
+    "shift_facts": "shift_facts:roll_all_quarters",
+    "attendance_events": "shift_facts:roll_all_quarters",
+    "person_signals": "shift_facts:roll_all_quarters",
     # "What we said, what was done, what happened" per closed quarter
     # (ai_read_summaries, kept forever) before any raw read or claim goes.
     "ai_reads": "ai_reads:rollup_quarters",
@@ -2317,6 +2341,18 @@ _RETENTION_READERS = {
     "ask_memory_archive": (("models.get_ask_memory_archive", 365, None),),
     "rec_rank_builds": (("admin_ops.rank_learning", 365, None),),
     "rec_silences": (("rec_ledger.silenced_keys", 1, None), ("rec_ledger.login_silences", 1, None)),
+    # The people memory (M3). Every per-person reader names its window; the
+    # one lifetime reader, tenure, reads the quarterly summaries.
+    "shift_facts": (("metrics._overtime_hours", 392, None),              # same weeks last year (outcomes)
+                    ("schedule_intel.mentoring", "schedule_intel.MENTOR_WINDOW_DAYS", None),
+                    ("staff_settings.reliability", "staff_settings.RELIABILITY_WINDOW_DAYS", None),
+                    ("shift_facts.tenure", None, "person_quarters")),
+    "attendance_events": (("staff_settings.reliability", "staff_settings.RELIABILITY_WINDOW_DAYS", None),
+                          ("schedule_learning._attendance_tally", "staff_settings.RELIABILITY_WINDOW_DAYS", None),
+                          ("attendance.summary_lines", 84, None)),
+    "person_signals": (("people.cover_record", 180, None),
+                       ("people.get_person", "people.PERSON_MENTION_DAYS", None),
+                       ("people.memory_lines", "people.MEMORY_MENTION_DAYS", None)),
     "reply_draft_rejections": (("models.get_reply_rejection_signals", "models.REJECTIONS_KEEP_DAYS", None),),
     "marketing_model_drafts": (("marketing_voice.regenerated", "marketing_voice.DRAFTS_KEEP_DAYS", None),
                                ("marketing_voice._match_draft", 1, None)),

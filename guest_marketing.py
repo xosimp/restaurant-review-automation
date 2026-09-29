@@ -2273,6 +2273,15 @@ def track_campaign_outcome(restaurant_id, target_day, result, user_id=None, rec_
             ops.capture(e, job="campaign_card_implemented", context=f"restaurant_id={restaurant_id}")
     if day not in _WEEKDAY_TITLES:
         return None
+    # The night it is aimed at, where staffing and the kitchen can see it
+    # (memory audit 9/29/26, mkt_to_staffing): one demand_signals row the
+    # schedule, the DSR's Tomorrow, the pre-shift and every trim read.
+    try:
+        import demand_signals
+        demand_signals.record_campaign(restaurant_id, day, res.get("sent"))
+    except Exception as e:
+        import ops
+        ops.capture(e, job="campaign_demand_signal", context=f"restaurant_id={restaurant_id}")
     # The texts went out: "text your list before a slow <day>" was
     # implemented (ROI #27) — recorded only if it was ever shown, and once:
     # not again when the feed card that named it was just recorded (OPP-10).

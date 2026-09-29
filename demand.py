@@ -680,8 +680,32 @@ def prep_list(restaurant_id, day=None, db_path=DB_PATH, limit=15):
     rows.sort(key=lambda n: (n["covered"], -n["shortfall"], -n["expected_use"]))
     return {"available": True, "day": day.isoformat(), "weekday": day.strftime("%A"),
             "items": rows[:limit], "dishes_forecast": len(expected),
+            "promoted": promoted_dishes(restaurant_id, day, db_path=db_path),
             "note": ("A usage forecast from each dish's typical sales on this weekday times its "
                      "recipe. It does not model sub-recipes or batch sizes.")}
+
+
+def promoted_dishes(restaurant_id, day, db_path=DB_PATH) -> list:
+    """The dishes a post promotes on `day` (demand_signals source "post"
+    with a menu item — memory audit 9/29/26, mkt_to_staffing): the kitchen
+    prepped a normal weekday for a dish the owner was advertising. The
+    usage forecast above is a weekday median and does not include any lift;
+    this says which dish to prep above it, with the dish's own typical
+    sales on that weekday when there are some."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT s.label, s.menu_item_id, m.name FROM demand_signals s LEFT JOIN menu_items m "
+                            "ON m.id = s.menu_item_id WHERE s.restaurant_id=? AND s.date=? AND s.source='post' "
+                            "AND s.menu_item_id IS NOT NULL", (restaurant_id, day.isoformat())).fetchall()
+    except Exception:
+        return []
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        out.append({"dish": r["name"] or r["label"], "menu_item_id": r["menu_item_id"],
+                    "why": f"{r['label']} — prep above a usual {day.strftime('%A')}"})
+    return out
 
 
 # Far enough ahead that a guest-club send, a post or a staffing change can

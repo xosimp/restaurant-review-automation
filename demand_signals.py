@@ -103,6 +103,119 @@ def save(restaurant_id, rows, source="manual", created_by=None, db_path=DB_PATH)
     return {"written": written, "skipped": skipped, "errors": errors[:10]}
 
 
+# ── marketing's own signals (memory audit 9/29/26, mkt_to_staffing) ─────────
+#
+# The owner texted 412 guests to fill Tuesday; the auto-draft staffed a slow
+# Tuesday, Home kept saying "Trim Tuesday staffing", the DSR's Tomorrow and
+# the lineup never mentioned it and the kitchen prepped a normal Tuesday —
+# because no marketing module wrote here. A campaign with a target day, or a
+# post tagged with an occasion or a dish, is now one row (source "campaign" /
+# "post"), and every reader of this table sees it. Its lift is this
+# restaurant's MEASURED median campaign lift once CAMPAIGN_LIFT_MIN_CLOSED
+# campaigns have closed their measurement windows; before that it is NULL —
+# the existing assumed path, which never raises a demand level.
+CAMPAIGN_LIFT_MIN_CLOSED = 3
+MARKETING_OCCASIONS = ("game_day", "holiday", "event", "offer")
+
+
+def measured_campaign_lift(restaurant_id, db_path=DB_PATH):
+    """{lift_pct, n} — the median measured change in the target weekday's
+    sales across this restaurant's closed fill-a-night campaigns
+    (outcomes, source slow_day_campaign), or None under
+    CAMPAIGN_LIFT_MIN_CLOSED of them. Before and after, not proof — the
+    same basis the outcome cards state. A demo, test or internal
+    restaurant's outcomes teach nothing (models.learning_eligible): None,
+    and the assumed path stands."""
+    try:
+        import models as _m_elig
+        if not _m_elig.learning_eligible(_m_elig.get_restaurant(restaurant_id, db_path)):
+            return None
+    except Exception:
+        return None
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT delta_pct FROM recommendation_outcomes WHERE restaurant_id=? AND "
+                            "source='slow_day_campaign' AND status='evaluated' AND delta_pct IS NOT NULL",
+                            (restaurant_id,)).fetchall()
+    except Exception:
+        return None
+    finally:
+        conn.close()
+    vals = sorted(float(r["delta_pct"]) for r in rows)
+    if len(vals) < CAMPAIGN_LIFT_MIN_CLOSED:
+        return None
+    mid = len(vals) // 2
+    med = vals[mid] if len(vals) % 2 else (vals[mid - 1] + vals[mid]) / 2
+    return {"lift_pct": int(round(med)), "n": len(vals)}
+
+
+def record_marketing(restaurant_id, day, label, source, ref=None, menu_item_id=None, db_path=DB_PATH) -> bool:
+    """One marketing signal for a date: `source` "campaign" (a fill-a-night
+    text that went out) or "post" (a scheduled post about an occasion or a
+    dish). Idempotent per (date, label); the lift is measured or NULL."""
+    if source not in ("campaign", "post"):
+        raise ValueError(f"record_marketing: {source!r}")
+    try:
+        d = _d(day)
+    except (TypeError, ValueError, AttributeError):
+        return False
+    label = " ".join(str(label or "").split())[:120]
+    if not label:
+        return False
+    lift = measured_campaign_lift(restaurant_id, db_path=db_path) if source == "campaign" else None
+    conn = get_conn(db_path)
+    try:
+        conn.execute("INSERT INTO demand_signals (restaurant_id, date, kind, label, covers, lift_pct, source, "
+                     "created_by, ref, menu_item_id) VALUES (?,?,?,?,?,?,?,?,?,?) "
+                     "ON CONFLICT(restaurant_id, date, kind, label) DO UPDATE SET lift_pct=excluded.lift_pct, "
+                     "source=excluded.source, ref=excluded.ref, menu_item_id=excluded.menu_item_id",
+                     (restaurant_id, d, "event", label, None, (lift or {}).get("lift_pct"), source,
+                      "Cavnar AI (marketing)", (str(ref)[:60] if ref else None), menu_item_id))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def record_campaign(restaurant_id, target_day, sent, campaign_id=None, today=None, db_path=DB_PATH) -> bool:
+    """A fill-a-night campaign whose texts went out: a signal on the next
+    `target_day` (a weekday name) — "Text to 412 guests to fill Tuesday"."""
+    wd = str(target_day or "").strip().capitalize()
+    days = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+    if wd not in days or not int(sent or 0):
+        return False
+    if today is None:
+        try:
+            from time_utils import restaurant_now_by_id
+            today = restaurant_now_by_id(restaurant_id, naive=True).date()
+        except Exception:
+            today = date.today()
+    night = today + timedelta(days=(days.index(wd) - today.weekday()) % 7)
+    return record_marketing(restaurant_id, night, f"Text to {int(sent)} guests to fill {wd}", "campaign",
+                            ref=f"campaign:{campaign_id}" if campaign_id else None, db_path=db_path)
+
+
+def record_post(restaurant_id, scheduled_for, topic, body=None, platform=None, post_id=None, db_path=DB_PATH) -> bool:
+    """A scheduled post tagged with an occasion or a dish (marketing_tags.
+    infer): a signal on the post's date. A post about nothing in particular
+    writes nothing."""
+    try:
+        import marketing_tags
+        tags = marketing_tags.infer(restaurant_id, topic, body, db_path=db_path)
+    except Exception:
+        return False
+    occ, dish = tags.get("occasion"), tags.get("menu_item_name")
+    if occ not in MARKETING_OCCASIONS and not dish:
+        return False
+    what = dish or (marketing_tags.OCCASION_LABELS.get(occ) or occ)
+    where = f" on {platform.title()}" if platform else ""
+    label = f"Post{where}: {what}" + (f" ({str(topic).strip()[:50]})" if topic and str(topic).strip() and
+                                      str(topic).strip().lower() != str(what).lower() else "")
+    return record_marketing(restaurant_id, str(scheduled_for)[:10], label, "post",
+                            ref=f"post:{post_id}" if post_id else None, menu_item_id=tags.get("menu_item_id"),
+                            db_path=db_path)
+
+
 def parse_reservations_csv(text):
     """'date,covers' lines → rows of kind reservations. Header skipped."""
     rows = []
@@ -261,10 +374,15 @@ def prompt_block(signals_by_date: dict, week_dates: list) -> str:
         elif e.get("assumed"):
             tail = (f" — no covers or lift given; ASSUMED busier (about {e.get('assumed_lift_pct')}% is an "
                     f"assumption, not a figure) — staff it as a normal busy {day}, not above it")
-        lines.append(f"  {day} {d}: {what}{tail}")
+        # The labels are the owner's words (an event they named, a post's
+        # dish) and the date is M/D/YY (memory reaching a prompt, 9/29/26).
+        import ai_guard
+        from time_utils import mdy
+        lines.append(f"  {day} {mdy(d)}: {ai_guard.wrap_untrusted(what)}{tail}")
     if not lines:
         return ""
-    return ("\n\nWHAT THE OWNER KNOWS ABOUT SPECIFIC DATES (events and reservations, entered by them — "
+    return ("\n\nWHAT THE OWNER KNOWS ABOUT SPECIFIC DATES (events and reservations they entered, and the "
+            "texts or posts they sent to fill a night — "
             "a stronger signal than the weekday averages above for the date it names; scale that day's "
             "headcount by roughly the lift stated, proportionally across roles, and say so in the summary):\n"
             + "\n".join(lines))

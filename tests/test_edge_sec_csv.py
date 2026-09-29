@@ -312,13 +312,20 @@ def test_labor_analysis_of_a_saved_file_never_emits_non_finite_numbers(world):
 
 # ── A refused upload keeps the previous dataset (appendix #9 / SEC-16) ──────
 
-def test_a_valid_re_upload_replaces_the_current_dataset(world):
-    """Pins today's contract: an accepted upload IS the new dataset."""
+def test_a_valid_re_upload_replaces_the_dates_it_covers_and_keeps_the_rest(world):
+    """An accepted upload is the record for the dates it covers, and every
+    shift outside them is kept — the POS sync's rule, for uploads too
+    (memory audit 9/29/26, shift_facts). It used to BE the new dataset: a
+    year of history uploaded over with a fortnight became the fortnight."""
     _login(world, world["owner"])
     assert _upload(world, "shifts", GOOD_SHIFTS).get_json()["ok"] is True
     newer = SHIFTS_HEADER + "2026-09-08,Tuesday,Dee,Host,17:00,22:00,5,5,3900,\n"
     assert _upload(world, "shifts", newer).get_json()["ok"] is True
-    assert _stored(world) == newer
+    assert _stored(world) == GOOD_SHIFTS + "2026-09-08,Tuesday,Dee,Host,17:00,22:00,5,5,3900,\n"
+    again = SHIFTS_HEADER + "2026-09-02,Wednesday,Bob,Cook,10:00,17:00,7,7,4200,\n"
+    assert _upload(world, "shifts", again).get_json()["ok"] is True
+    assert "2026-09-02,Wednesday,Bob,Cook,10:00,17:00,7,7,4200," in _stored(world)
+    assert "10:00,18:00,8,8,4200" not in _stored(world)       # inside the new file's dates, the file wins
 
 
 def test_a_shifts_file_whose_dates_cannot_be_read_is_refused_and_the_previous_dataset_kept(world):

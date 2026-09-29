@@ -117,8 +117,12 @@ def _calibration_world(db_path, rid, weeks=9, shifts_per_week=6, curve_follows=F
             "schedule_csv, summary_json, quality_json, published_at) VALUES (?,?,?,0,0,30,?,'[]',?,'2026-10-01')",
             (rid, days[0], days[6], HEADER, json.dumps({"score": 80, "shifts": shifts})))
         for d, part, issues, rating, labor in outs:
+            # The rating as attributed to the shift (the reviews named its
+            # meal, posted within two days) — what calibration reads
+            # (memory audit 9/29/26, reviews_to_labor).
             c.execute("INSERT INTO schedule_outcomes (restaurant_id, history_id, date, daypart, hours, people, issues, "
-                      "review_rating, labor_pct) VALUES (?,?,?,?,10,2,?,?,?)", (rid, cur.lastrowid, d, part, issues, rating, labor))
+                      "review_rating, review_rating_attributed, labor_pct) VALUES (?,?,?,?,10,2,?,?,?,?)",
+                      (rid, cur.lastrowid, d, part, issues, rating, rating, labor))
     c.commit()
     c.close()
 

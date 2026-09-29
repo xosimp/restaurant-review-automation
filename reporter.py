@@ -508,12 +508,19 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
                         # A period with no sales has no labor % (its 0.0 is a
                         # missing figure): "trending … from 0.0%" (B6 low) —
                         # the filter notify.py and get_labor_history apply.
-                        """SELECT labor_pct, period_start FROM labor_history
+                        # Never the legacy rolling windows (memory audit
+                        # 9/29/26, labor_periods).
+                        """SELECT labor_pct, period_start, basis FROM labor_history
                            WHERE restaurant_id=? AND total_sales > 0
+                             AND COALESCE(kind, '') != 'rolling_window'
                            ORDER BY period_start DESC LIMIT 3""",
                         (report.restaurant_id,)
                     ).fetchall()
                     _conn_lr.close()
+                    # A trend only across periods costed alike: a recost is
+                    # not the labor moving.
+                    if _lh and _lh[0]["basis"]:
+                        _lh = [r for r in _lh if r["basis"] == _lh[0]["basis"]]
                     if len(_lh) >= 2:
                         _vals = [r["labor_pct"] for r in reversed(_lh)]
                         _facts["labor"].update({"from_pct": float(_vals[0]), "weeks": len(_vals)})

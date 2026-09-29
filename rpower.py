@@ -1137,19 +1137,33 @@ def normalise_entries(time_entries: list, sales_by_date: dict, people: dict = No
             notes.append(f"DT {dt_h:g}h")
         if e.get("break_minutes"):
             notes.append(f"break {int(e['break_minutes'])}m")
+        mid = str(e.get("emp_mid") or "").strip()
+        named = mid in emp_names
         rows.append({
             "date": day,
             "day": _DOW_NAMES[start.weekday()],
-            "employee": (emp_names.get(str(e.get("emp_mid") or ""))
+            "employee": (emp_names.get(mid)
                          or (e.get("payroll_id") or e.get("emp_mid") or "").strip()),
+            # The employee's own RPOWER ids (memory audit 9/29/26, identity):
+            # the record id every punch carries, and the payroll id the
+            # schedule write-back needs. A name can change; these do not —
+            # people.resolve_rows keys the person on them. `employee_named`
+            # is "0" when the name above is the payroll-code fallback, so a
+            # code never renames a person.
+            "employee_ext_id": mid,
+            "employee_payroll_id": str(e.get("payroll_id") or "").strip(),
+            "employee_named": "1" if named else "0",
             "role": (job_names.get(str(e.get("job_mid") or ""))
                      or (e.get("job_id") or "").strip()),
             "shift_start": start.strftime("%H:%M"),
             "shift_end": end.strftime("%H:%M"),
             # RPOWER's timeclock is what was WORKED. It carries no schedule,
             # so scheduled_hours is left equal to actual rather than invented
-            # — a fabricated variance is worse than none.
+            # — a fabricated variance is worse than none — and
+            # `schedule_known` says so: no attendance reader may read a
+            # no-show out of it (memory audit 9/29/26, attendance).
             "scheduled_hours": actual,
+            "schedule_known": "0",
             "actual_hours": actual,
             "sales": sales_by_date.get(day, ""),
             "notes": ", ".join(notes),
@@ -1181,7 +1195,8 @@ def build_shifts_csv(restaurant_id: int, days: int = 60) -> Optional[str]:
     if not rows:
         return ""
     fieldnames = ["date", "day", "employee", "role", "shift_start", "shift_end",
-                  "scheduled_hours", "actual_hours", "sales", "notes", "pay_rate"]
+                  "scheduled_hours", "actual_hours", "sales", "notes", "pay_rate",
+                  "employee_ext_id", "employee_payroll_id", "employee_named", "schedule_known"]
     buf = _io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=fieldnames)
     writer.writeheader()
@@ -1208,18 +1223,14 @@ def sync_to_db(restaurant_id: int) -> dict:
             "rpower_last_synced": datetime.utcnow().isoformat(timespec="seconds"),
             "rpower_sync_error": None})
 
-        # Same archival step toast.sync_to_db does: without it the rolling
-        # 60-day CSV is refreshed nightly and labor_daily_history — which is
-        # what year-over-year and the trend charts actually read — never
-        # accumulates for a POS-connected restaurant.
+        # The per-day labor archive (labor_daily_history — what year-over-
+        # year and the trend charts read) and the payroll-week labor periods
+        # were written by pos.save_synced_shifts above, with the pull's
+        # provenance. This used to save the whole file again without it and
+        # then append a rolling-window "period": Simple EJ's 9/1 period was
+        # saved three times on its first day (memory audit 9/29/26,
+        # labor_periods).
         try:
-            from labor import analyse_shifts_for_restaurant
-            from models import save_labor_daily_history, save_labor_snapshot
-            # Whole file for the per-day archive; the current window for
-            # the period snapshot the labor alert reads (re-audit A-12).
-            from labor import full_history_by_day
-            save_labor_daily_history(restaurant_id, full_history_by_day(restaurant_id))
-            analysis = analyse_shifts_for_restaurant(restaurant_id)
             # Same as the Toast sync: keep menu_items current so the dish a
             # post names, the count sheet and recipe drafts have RPOWER's
             # items to match against — not only when Food Cost is open.
@@ -1239,12 +1250,6 @@ def sync_to_db(restaurant_id: int) -> dict:
                     _dsr_backfill.backfill(_r_dsr, days=60)
             except Exception as _menu_e:
                 log.warning("[rpower sync] menu item discovery error for %s: %s", restaurant_id, _menu_e)
-            dr = analysis.get("date_range", {})
-            if dr.get("start") and dr.get("end"):
-                save_labor_snapshot(restaurant_id, dr["start"], dr["end"],
-                                    analysis["overall_labor_pct"],
-                                    analysis.get("costed_labor", analysis["total_labor_cost"]),
-                                    analysis["total_sales"])
         except Exception as e:
             log.warning("[rpower] labor archive failed for %s: %s", restaurant_id, e)
 
@@ -1315,8 +1320,19 @@ def push_labor_schedule(restaurant_id: int, shifts: list, job_codes: dict = None
     token, base = _ctx(restaurant_id)
     by_employee = {}
     skipped = []
+    # A person's payroll id is kept now (people.person_aliases, source
+    # rpower_payroll — memory audit 9/29/26, identity): a Cavnar schedule
+    # names people, and the push can find each one's id.
+    try:
+        import people as _people
+        import staff_settings as _ss
+        _payroll = _people.external_ids(restaurant_id, "rpower_payroll")
+    except Exception:
+        _payroll, _ss = {}, None
     for s in shifts or []:
         pid = (s.get("employee_payroll_id") or s.get("payroll_id") or "").strip()
+        if not pid and _ss is not None and s.get("employee"):
+            pid = str(_payroll.get(_ss.name_key(s.get("employee"))) or "").strip()
         job = (s.get("job") or s.get("role") or "").strip()
         # The sync stores the job's NAME as the role ("Server AM"); RPOWER's
         # push wants its code. Pass fetch_job_codes() to translate.

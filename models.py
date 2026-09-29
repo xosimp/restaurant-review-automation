@@ -946,6 +946,17 @@ def ensure_columns(db_path: str = DB_PATH):
         ("ingredients", "external_ref", "TEXT"),
         ("menu_items", "external_ref", "TEXT"),
         ("labor_daily_history", "total_hours", "REAL"),
+        # The costing basis each day was last costed on (the rates, the
+        # salaried set, where the labor came from), and the labor period
+        # store's own shape: calendar payroll weeks derived from the daily
+        # history, replaced in place, never a rolling window appended on
+        # every sync (memory audit 9/29/26, labor_periods).
+        ("labor_daily_history", "basis", "TEXT"),
+        ("labor_history", "basis", "TEXT"),
+        ("labor_history", "days", "INTEGER"),
+        ("labor_history", "kind", "TEXT"),
+        ("labor_history", "updated_at", "TEXT"),
+        ("labor_history", "recosted_from", "REAL"),
         ("users", "role", "TEXT DEFAULT 'client'"),
         ("users", "google_id", "TEXT"),
         ("users", "apple_user_id", "TEXT"),
@@ -3704,6 +3715,16 @@ def init_db(db_path: str = DB_PATH):
     # costs (history_rollups), kept forever.
     import history_rollups as _history_rollups
     _history_rollups.init_history_rollups(db_path)
+    # People: one identity per employee, their aliases (POS ids and
+    # spellings), the owner's same-person questions, and a person_id on
+    # every name-keyed store — after every store's own init above (memory
+    # audit 9/29/26, identity).
+    from shift_facts import init_shift_facts
+    init_shift_facts(db_path)
+    from attendance import init_attendance
+    init_attendance(db_path)
+    import people as _people_boot
+    _people_boot.init_people(db_path)
     # Runs after ensure_columns() so organization_id exists to write into.
     backfill_organizations(db_path=db_path)
     # A target seeded from a figure the registry no longer seeds from goes
@@ -3714,6 +3735,23 @@ def init_db(db_path: str = DB_PATH):
     # The demo seed's labor days written before they carried source 'seed'
     # (memory audit 9/29/26, "eligibility"), once.
     stamp_seed_provenance(db_path=db_path)
+    # Labor period history as payroll weeks, the legacy rolling windows
+    # marked unread (memory audit 9/29/26, labor_periods) — after
+    # ensure_columns() has added labor_history.kind, and after the seed's
+    # days carry their provenance.
+    try:
+        backfill_labor_periods(db_path=db_path)
+    except Exception as e:
+        print(f"[labor periods] boot backfill skipped: {e}")
+    # Every restaurant with staff gets its people once — from its shift
+    # history's names and every store — bounded; the nightly people job
+    # reaches whatever this did not (memory audit 9/29/26, identity).
+    try:
+        _people_boot.backfill_people(db_path=db_path, max_seconds=15)
+        import shift_facts as _sf_boot
+        _sf_boot.backfill_from_csv(db_path=db_path, max_seconds=15)
+    except Exception as e:
+        print(f"[people] boot backfill skipped: {e}")
     print(f"Database initialised at {db_path}")
 
 
@@ -5902,59 +5940,315 @@ def get_email_log_for_client(restaurant_id: int, limit: int = 50, db_path: str =
 def init_staff_notes(db_path: str = DB_PATH):
     conn = sqlite3.connect(db_path)
     conn.executescript(STAFF_NOTES_SCHEMA)
+    # Each constraint dated, with an optional end (memory audit 9/29/26,
+    # staff_notes): "Out until 6/1 after surgery" still blocked a cook in
+    # September because the note had no date and no expiry and the prompt
+    # said it outranks every rule. `parts_json` holds the person's
+    # constraints one by one ([{text, noted, expires, confirmed, by}]) —
+    # the row is one per person (UNIQUE), and an end date belongs to ONE
+    # constraint, never to "mornings only" written beside it. `notes` stays
+    # the joined text every older reader and the admin page read.
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(staff_notes)").fetchall()}
+    for col in ("updated_at", "updated_by", "expires_on", "confirmed_at", "parts_json"):
+        if col not in cols:
+            try:
+                conn.execute(f"ALTER TABLE staff_notes ADD COLUMN {col} TEXT")
+            except sqlite3.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
     conn.commit()
     conn.close()
 
+
+# A note nobody has confirmed in this long is shown to the owner as "still
+# true?" (memory audit 9/29/26, staff_notes). It stays in force until they
+# answer: silently dropping a real constraint is worse than asking.
+STAFF_NOTE_STALE_DAYS = 90
+
+import re as _re_staff_notes   # the staff-note date reader below (memory audit 9/29/26)
+
+_NOTE_MONTHS = {m: i for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct",
+                                            "nov", "dec"), start=1)}
+_NOTE_UNTIL_RE = _re_staff_notes.compile(
+    r"\b(?:until|till|til|thru|through|back(?:\s+on)?|returns?(?:\s+on)?|out\s+to|ends?(?:\s+on)?)\s+"
+    r"(?:(?P<m>\d{1,2})/(?P<d>\d{1,2})(?:/(?P<y>\d{2,4}))?"
+    r"|(?P<mon>jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(?P<md>\d{1,2})(?:st|nd|rd|th)?"
+    r"(?:,?\s+(?P<my>\d{4}))?)", _re_staff_notes.I)
+
+
+def staff_note_expiry(text, noted_on=None):
+    """The ISO date a constraint says it ends ("out until 6/1", "back on
+    Oct 3", "through 10/15/26"), or None. A month and day with no year is
+    the first such date on or after the day it was noted — "until 6/1"
+    written in May is this June, written in July is next June."""
+    from datetime import date
+    m = _NOTE_UNTIL_RE.search(str(text or ""))
+    if not m:
+        return None
+    try:
+        base = date.fromisoformat(str(noted_on)[:10]) if noted_on else date.today()
+    except ValueError:
+        base = date.today()
+    try:
+        if m.group("m"):
+            month, day = int(m.group("m")), int(m.group("d"))
+            year = m.group("y")
+        else:
+            month, day = _NOTE_MONTHS[m.group("mon").lower()[:3]], int(m.group("md"))
+            year = m.group("my")
+        if year:
+            y = int(year)
+            y = y + 2000 if y < 100 else y
+            return date(y, month, day).isoformat()
+        end = date(base.year, month, day)
+        if end < base:
+            end = date(base.year + 1, month, day)
+        return end.isoformat()
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def _iso_or_none(value):
+    """An ISO date from ISO or M/D/YY input, or None."""
+    from datetime import date
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw[:10]).isoformat()
+    except ValueError:
+        pass
+    for fmt in ("%m/%d/%Y", "%m/%d/%y"):
+        try:
+            return datetime.strptime(raw, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+def _note_parts(row) -> list:
+    """One person's constraints, each dated: [{"text", "noted", "expires",
+    "confirmed", "by"}]. A note written before parts existed is one part,
+    noted the day its row was written."""
+    keys = row.keys() if hasattr(row, "keys") else row
+    raw = row["parts_json"] if "parts_json" in keys else None
+    try:
+        parts = json.loads(raw) if raw else None
+    except (TypeError, ValueError):
+        parts = None
+    if isinstance(parts, list):
+        out = []
+        for p in parts:
+            if isinstance(p, dict) and str(p.get("text") or "").strip():
+                out.append({"text": str(p["text"]).strip(), "noted": _iso_or_none(p.get("noted")),
+                            "expires": _iso_or_none(p.get("expires")),
+                            "confirmed": _iso_or_none(p.get("confirmed")), "by": p.get("by")})
+        return out
+    text = str(row["notes"] or "").strip()
+    if not text:
+        return []
+    stamp = (row["updated_at"] if "updated_at" in keys else None) or row["created_at"]
+    return [{"text": text, "noted": _iso_or_none(str(stamp or "")[:10]),
+             "expires": _iso_or_none(row["expires_on"] if "expires_on" in keys else None),
+             "confirmed": _iso_or_none(str((row["confirmed_at"] if "confirmed_at" in keys else None) or "")[:10]),
+             "by": None}]
+
+
+def _join_parts(parts) -> str:
+    return "; ".join(p["text"].rstrip(" ;.") if i < len(parts) - 1 else p["text"]
+                     for i, p in enumerate(parts))
+
+
+def _write_parts(conn, note_id, parts, updated_by=None):
+    exp = sorted(p["expires"] for p in parts if p.get("expires"))
+    conn.execute("UPDATE staff_notes SET notes=?, parts_json=?, updated_at=datetime('now'), updated_by=?, "
+                 "expires_on=? WHERE id=?",
+                 (_join_parts(parts), json.dumps(parts), (updated_by or "").strip()[:120] or None,
+                  exp[0] if exp else None, note_id))
+
+
 def save_staff_note(restaurant_id: int, employee_name: str,
-                    notes: str, db_path: str = DB_PATH, replace: bool = False) -> dict:
-    """Add a scheduling constraint for one person; {"id", "notes", "appended"}.
+                    notes: str, db_path: str = DB_PATH, replace: bool = False,
+                    expires_on=None, updated_by: str = None, today=None) -> dict:
+    """Add a scheduling constraint for one person; {"id", "notes", "appended",
+    "expires_on"}.
 
     One row per person (UNIQUE(restaurant_id, employee_name)), so a second
     constraint is ADDED to the first — it used to be written over it: adding
     "no Sundays" for Maria erased "mornings only", the page said Saved, and
     the schedule generator stopped respecting the first (fix round #142).
     The person is matched however their name is cased, as every reader
-    matches it; text already there is not added twice. `replace=True` sets
-    the text outright (the undo of a removal puts back exactly what was)."""
+    matches it; text already there is not added twice (saying it again
+    confirms it). `replace=True` sets the text outright (the undo of a
+    removal puts back exactly what was).
+
+    Each constraint is dated the day it was noted, and ends on `expires_on`
+    (ISO or M/D/YY) or the date its own words give ("out until 6/1") —
+    after which every reader leaves it out (memory audit 9/29/26)."""
+    from datetime import date
     name = (employee_name or "").strip()
     text = (notes or "").strip()
+    noted = (today or date.today()).isoformat() if not isinstance(today, str) else today[:10]
+    ends = _iso_or_none(expires_on) or staff_note_expiry(text, noted)
+    part = {"text": text, "noted": noted, "expires": ends, "confirmed": None,
+            "by": (updated_by or "").strip()[:120] or None}
     conn = get_conn(db_path)
     try:
         conn.execute("BEGIN IMMEDIATE")
-        row = conn.execute("SELECT id, notes FROM staff_notes WHERE restaurant_id=? AND lower(employee_name)=lower(?) "
+        row = conn.execute("SELECT * FROM staff_notes WHERE restaurant_id=? AND lower(employee_name)=lower(?) "
                            "ORDER BY id LIMIT 1", (restaurant_id, name)).fetchone()
         appended = False
         if row is None:
             cur = conn.execute("INSERT INTO staff_notes (restaurant_id, employee_name, notes) VALUES (?,?,?)",
                                (restaurant_id, name, text))
-            note_id, combined = cur.lastrowid, text
+            note_id, parts = cur.lastrowid, [part]
         else:
-            existing = (row["notes"] or "").strip()
-            if replace or not existing:
-                combined = text
-            elif text.lower() in existing.lower():
-                combined = existing
-            else:
-                combined, appended = existing.rstrip(" ;.") + "; " + text, True
-            conn.execute("UPDATE staff_notes SET notes=? WHERE id=?", (combined, row["id"]))
             note_id = row["id"]
+            existing = _note_parts(row)
+            if replace or not existing:
+                parts = [part]
+            else:
+                same = next((p for p in existing if text.lower() in p["text"].lower()), None)
+                if same is not None:
+                    same["confirmed"] = noted          # said again: still true
+                    if ends and not same.get("expires"):
+                        same["expires"] = ends
+                    parts = existing
+                else:
+                    parts, appended = existing + [part], True
+        _write_parts(conn, note_id, parts, updated_by)
         conn.commit()
     except BaseException:
         conn.rollback()
         raise
     finally:
         conn.close()
-    return {"id": note_id, "notes": combined, "appended": appended}
+    return {"id": note_id, "notes": _join_parts(parts), "appended": appended, "expires_on": ends}
 
-def get_staff_notes(restaurant_id: int,
-                    db_path: str = DB_PATH) -> list[dict]:
+
+def get_staff_notes(restaurant_id: int, db_path: str = DB_PATH, include_expired: bool = False,
+                    today=None) -> list[dict]:
+    """Each person's constraints in force, one row per person as before
+    ({id, employee_name, notes, ...}) — `notes` is the constraints that have
+    not ended, joined; a person whose every constraint has ended is left out
+    (memory audit 9/29/26: an ended "out until 6/1" kept blocking a cook in
+    September). Each row also carries `parts` (every constraint with its
+    `noted` / `expires` ISO dates and M/D/YY labels), `noted_on` / `noted`
+    (the newest), `expires_on` (the soonest end still ahead) and `stale`
+    (a constraint nobody has noted or confirmed in STAFF_NOTE_STALE_DAYS).
+    `include_expired=True` (the admin page) keeps ended constraints, marked."""
+    from datetime import date, timedelta
+    from time_utils import mdy as _mdy_n
+    day = today or date.today()
+    day = date.fromisoformat(day[:10]) if isinstance(day, str) else day
+    cut = (day - timedelta(days=STAFF_NOTE_STALE_DAYS)).isoformat()
     conn = get_conn(db_path)
-    rows = conn.execute(
-        "SELECT * FROM staff_notes WHERE restaurant_id=? ORDER BY employee_name",
-        (restaurant_id,)
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        rows = conn.execute("SELECT * FROM staff_notes WHERE restaurant_id=? ORDER BY employee_name",
+                            (restaurant_id,)).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        parts = []
+        for p in _note_parts(r):
+            ended = bool(p.get("expires")) and p["expires"] < day.isoformat()
+            if ended and not include_expired:
+                continue
+            seen = max(x for x in (p.get("noted"), p.get("confirmed")) if x) if (p.get("noted") or p.get("confirmed")) else None
+            parts.append({**p, "ended": ended, "noted_label": _mdy_n(p["noted"]) if p.get("noted") else None,
+                          "expires_label": _mdy_n(p["expires"]) if p.get("expires") else None,
+                          "stale": bool(seen) and seen < cut and not ended})
+        if not parts:
+            continue
+        d = dict(r)
+        live = [p for p in parts if not p["ended"]]
+        d["parts"] = parts
+        d["notes"] = _join_parts(live) if live else ""
+        noted = max((p["noted"] for p in live if p.get("noted")), default=None)
+        d["noted_on"], d["noted"] = noted, (_mdy_n(noted) if noted else None)
+        ahead = sorted(p["expires"] for p in live if p.get("expires"))
+        d["expires_on"] = ahead[0] if ahead else None
+        d["stale"] = any(p["stale"] for p in live)
+        out.append(d)
+    return out
+
+
+def staff_note_line(note: dict) -> str:
+    """"Maria G.: mornings only (noted 5/2/26); out until 6/1 (noted 5/20/26,
+    ends 6/1/26)" — the one way both prompts print a person's constraints,
+    each with the day it was noted (memory audit 9/29/26). Ended ones are
+    never passed here (get_staff_notes leaves them out)."""
+    bits = []
+    for p in note.get("parts") or [{"text": note.get("notes"), "noted_label": note.get("noted")}]:
+        if p.get("ended") or not str(p.get("text") or "").strip():
+            continue
+        when = []
+        if p.get("noted_label"):
+            when.append(f"noted {p['noted_label']}")
+        if p.get("expires_label"):
+            when.append(f"ends {p['expires_label']}")
+        bits.append(str(p["text"]).strip().rstrip(" ;") + (f" ({', '.join(when)})" if when else ""))
+    return f"{note.get('employee_name')}: " + "; ".join(bits)
+
+
+def stale_staff_notes(restaurant_id: int, db_path: str = DB_PATH, today=None) -> list:
+    """The constraints nobody has noted or confirmed in STAFF_NOTE_STALE_DAYS
+    — the owner's "still true?" list: [{id, employee_name, text, noted,
+    part}] (memory audit 9/29/26, staff_notes)."""
+    out = []
+    for n in get_staff_notes(restaurant_id, db_path=db_path, today=today):
+        for i, p in enumerate(n["parts"]):
+            if p.get("stale"):
+                out.append({"id": n["id"], "employee_name": n["employee_name"], "text": p["text"],
+                            "noted": p.get("noted_label"), "noted_on": p.get("noted"), "part": i})
+    return out
+
+
+def update_staff_note_part(restaurant_id: int, note_id: int, part: int = None, *, confirm: bool = False,
+                           expires_on=None, remove: bool = False, updated_by: str = None,
+                           db_path: str = DB_PATH, today=None):
+    """The owner's answer to one constraint: `confirm` (still true — dated
+    today), `expires_on` (ISO or M/D/YY; "" clears it) or `remove`. `part`
+    is its index in the row's parts (None: every part). Returns the row as
+    get_staff_notes shapes it (include_expired), or None when the note is not
+    this restaurant's."""
+    from datetime import date
+    stamp = (today or date.today())
+    stamp = stamp[:10] if isinstance(stamp, str) else stamp.isoformat()
+    conn = get_conn(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT * FROM staff_notes WHERE id=? AND restaurant_id=?",
+                           (note_id, restaurant_id)).fetchone()
+        if row is None:
+            conn.rollback()
+            return None
+        parts = _note_parts(row)
+        idx = range(len(parts)) if part is None else [int(part)] if 0 <= int(part) < len(parts) else []
+        if not idx:
+            conn.rollback()
+            raise ValueError("That constraint isn't on this note.")
+        for i in idx:
+            if confirm:
+                parts[i]["confirmed"] = stamp
+            if expires_on is not None:
+                parts[i]["expires"] = _iso_or_none(expires_on)
+        if remove:
+            parts = [p for i, p in enumerate(parts) if i not in set(idx)]
+        if parts:
+            _write_parts(conn, note_id, parts, updated_by)
+        else:
+            conn.execute("DELETE FROM staff_notes WHERE id=?", (note_id,))
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return next((n for n in get_staff_notes(restaurant_id, db_path=db_path, include_expired=True, today=today)
+                 if n["id"] == note_id), {"id": note_id, "removed": True})
+
 
 def delete_staff_note(note_id: int, db_path: str = DB_PATH, restaurant_id: int = None):
     """Remove one person's constraints and return what was removed
@@ -6610,6 +6904,17 @@ def init_demand_signals(db_path: str = DB_PATH):
         UNIQUE(restaurant_id, date, kind, label)
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_demand_signals_date ON demand_signals(restaurant_id, date)")
+    # What a marketing signal came from and what it promotes (memory audit
+    # 9/29/26, mkt_to_staffing): "campaign:45" / "post:12", and the dish a
+    # post is about, so the prep list can name it.
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(demand_signals)").fetchall()}
+    for col, typ in (("ref", "TEXT"), ("menu_item_id", "INTEGER")):
+        if col not in cols:
+            try:
+                conn.execute(f"ALTER TABLE demand_signals ADD COLUMN {col} {typ}")
+            except sqlite3.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
     conn.commit()
     conn.close()
 
@@ -6633,6 +6938,15 @@ def init_schedule_versions(db_path: str = DB_PATH):
         UNIQUE(history_id, version)
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_versions_hist ON schedule_versions(history_id)")
+    # Whose save each version is (permissions.answer_authority — memory
+    # audit 9/29/26): a support login's edits through view-as are stored
+    # under the owner's name, and must never teach the draft.
+    if "saved_authority" not in {r[1] for r in conn.execute("PRAGMA table_info(schedule_versions)").fetchall()}:
+        try:
+            conn.execute("ALTER TABLE schedule_versions ADD COLUMN saved_authority TEXT")
+        except Exception as e:
+            if "duplicate column" not in str(e).lower():
+                raise
     conn.commit()
     conn.close()
 
@@ -6709,6 +7023,8 @@ def add_manual_team_member(restaurant_id: int, employee_name: str, role: str = N
     clean_role = (role or "").strip()[:60] or None
     conn = get_conn(db_path)
     try:
+        had = conn.execute("SELECT role FROM manual_team_members WHERE restaurant_id=? AND employee_name=?",
+                           (restaurant_id, name)).fetchone()
         conn.execute("""
             INSERT INTO manual_team_members (restaurant_id, employee_name, role, added_by, created_at)
             VALUES (?,?,?,?,datetime('now'))
@@ -6718,6 +7034,18 @@ def add_manual_team_member(restaurant_id: int, employee_name: str, role: str = N
         conn.commit()
     finally:
         conn.close()
+    # The change history (memory audit 9/29/26, change_log): someone added
+    # to the team by hand, or their role changed; subject= the person.
+    try:
+        import change_log
+        if had is None:
+            change_log.record(restaurant_id, "roster", "added", None, {"role": clean_role}, subject=name,
+                              db_path=None if db_path == DB_PATH else db_path)
+        else:
+            change_log.record(restaurant_id, "roster", "role", had["role"], clean_role, subject=name,
+                              db_path=None if db_path == DB_PATH else db_path)
+    except Exception as e:
+        print(f"[roster] change history not recorded rid={restaurant_id}: {e!r}")
     return {"employee_name": name, "role": clean_role}
 
 
@@ -6733,9 +7061,17 @@ def remove_manual_team_member(restaurant_id: int, employee_name: str, db_path: s
             "DELETE FROM manual_team_members WHERE restaurant_id=? AND employee_name=?",
             (restaurant_id, name))
         conn.commit()
-        return cur.rowcount > 0
+        removed = cur.rowcount > 0
     finally:
         conn.close()
+    if removed:
+        try:
+            import change_log
+            change_log.record(restaurant_id, "roster", "removed", True, False, subject=name,
+                              db_path=None if db_path == DB_PATH else db_path)
+        except Exception as e:
+            print(f"[roster] change history not recorded rid={restaurant_id}: {e!r}")
+    return removed
 
 
 def get_manual_team_members(restaurant_id: int, db_path: str = DB_PATH) -> list:
@@ -7343,13 +7679,24 @@ def get_employee_tenure(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     """
     try:
         out = {}
-        for sh in _cached_shifts(restaurant_id):
-            name = (sh.get("employee") or "").strip()
-            if name:
-                out[name] = out.get(name, 0) + 1
-        # The upload is a rolling window; staff_first_seen remembers the
-        # earliest date and the most shifts ever counted for each name, so
-        # a person here since March is not "still new" in October.
+        # Every shift they have ever worked here (shift_facts — memory audit
+        # 9/29/26): the stored file was a rolling window, and an upload
+        # replaced it, so a 3-year employee read as a dozen shifts.
+        try:
+            import shift_facts as _sf
+            facts = _sf.tenure(restaurant_id)
+        except Exception:
+            facts = {}
+        if facts:
+            out = {n: v["shifts"] for n, v in facts.items()}
+        else:
+            for sh in _cached_shifts(restaurant_id):
+                name = (sh.get("employee") or "").strip()
+                if name:
+                    out[name] = out.get(name, 0) + 1
+        # staff_first_seen remembers the earliest date and the most shifts
+        # ever counted for each name from before the facts began, so a
+        # person here since March is not "still new" in October.
         try:
             import schedule_intel as _si
             out = _si.tenure(restaurant_id, out, db_path=db_path)
@@ -7382,26 +7729,73 @@ def get_prior_shift_pattern(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     from a stated preference nobody keeps up to date.
     """
     try:
-        from shift_quality import daypart_of
-        from datetime import datetime as _dt
-        out = {}
-        for sh in _cached_shifts(restaurant_id):
-            name = (sh.get("employee") or "").strip()
-            if not name:
-                continue
-            entry = out.setdefault(name, {"days": set(), "dayparts": set()})
-            try:
-                entry["days"].add(_dt.strptime(sh.get("date", ""), "%Y-%m-%d").strftime("%A"))
-            except (ValueError, TypeError):
-                if sh.get("day"):
-                    entry["days"].add(sh["day"])
-            part = daypart_of(sh.get("shift_start", ""))
-            if part != "unknown":
-                entry["dayparts"].add(part)
-        return {n: {"days": sorted(v["days"]), "dayparts": sorted(v["dayparts"])}
-                for n, v in out.items()}
+        from datetime import timedelta as _td_pp
+        import shift_facts as _sf
+        today = _restaurant_today(restaurant_id)
+        # The last USUAL_WEEKS weeks of the per-shift history (memory audit
+        # 9/29/26): what they work now, from every source, whatever an
+        # upload's window was.
+        rows = _sf.person_rows(restaurant_id, since=(today - _td_pp(weeks=USUAL_WEEKS)).isoformat())
+        return usual_pattern(rows, today=today)
     except Exception:
         return {}
+
+
+# What "usually works" means (memory audit 9/29/26, staff_notes): the last
+# USUAL_WEEKS weeks only, and a day or daypart counts once it recurs in at
+# least USUAL_MIN_WEEKS of them. The union of every shift ever worked kept a
+# cook who moved to nights in June "usually" on mornings in September.
+USUAL_WEEKS = 12
+USUAL_MIN_WEEKS = 2
+
+
+def _restaurant_today(restaurant_id):
+    from datetime import date as _date_rt
+    try:
+        from time_utils import restaurant_now_by_id
+        return restaurant_now_by_id(restaurant_id, naive=True).date()
+    except Exception:
+        return _date_rt.today()
+
+
+def usual_pattern(shifts, today=None, weeks: int = USUAL_WEEKS, min_weeks: int = USUAL_MIN_WEEKS) -> dict:
+    """{name: {"days": [...], "dayparts": [...], "weeks": n}} from shift rows
+    ({employee, date, shift_start}). Only the `weeks` weeks before `today`
+    are read (a person with no shift in them has no usual pattern), and a
+    weekday or daypart is "usual" when it recurs in `min_weeks` distinct
+    weeks of that window — or in the only week there is, for someone new."""
+    from datetime import date as _date_up, datetime as _dt_up, timedelta as _td_up
+    from shift_quality import daypart_of
+    today = today or _date_up.today()
+    since = (today - _td_up(weeks=weeks)).isoformat()
+    tally = {}
+    for sh in shifts or []:
+        name = (sh.get("employee") or "").strip()
+        day = str(sh.get("date") or "")[:10]
+        if not name:
+            continue
+        if day and day < since:
+            continue
+        try:
+            dt = _dt_up.strptime(day, "%Y-%m-%d")
+            wd, wk = dt.strftime("%A"), dt.strftime("%G-%V")
+        except (ValueError, TypeError):
+            if not sh.get("day"):
+                continue
+            wd, wk = sh["day"], "?"
+        t = tally.setdefault(name, {"weeks": set(), "days": {}, "dayparts": {}})
+        t["weeks"].add(wk)
+        t["days"].setdefault(wd, set()).add(wk)
+        part = daypart_of(sh.get("shift_start", ""))
+        if part != "unknown":
+            t["dayparts"].setdefault(part, set()).add(wk)
+    out = {}
+    for n, t in tally.items():
+        need = min(min_weeks, len(t["weeks"]))
+        out[n] = {"days": sorted(d for d, w in t["days"].items() if len(w) >= need),
+                  "dayparts": sorted(p for p, w in t["dayparts"].items() if len(w) >= need),
+                  "weeks": len(t["weeks"])}
+    return out
 
 
 def sibling_location_shifts(restaurant_id: int, dates: list,
@@ -8027,13 +8421,53 @@ def get_reply_rejection_signals(restaurant_id: int, rating=None, days: int = REJ
     return out
 
 
+def labor_rates_key(restaurant_id: int, db_path: str = DB_PATH) -> str:
+    """The costing half of a labor day's basis (memory audit 9/29/26,
+    labor_periods): a short hash of the per-role rates, the restaurant's
+    hourly rate and the salaried set — the inputs that re-cost the same
+    shifts to a different labor figure. The other half is the day's labor
+    source (save_labor_daily_history): POS wages and an upload's rates are
+    different bases too."""
+    import hashlib
+    r = get_restaurant(restaurant_id, db_path)
+    try:
+        rates = get_role_rates(restaurant_id, db_path=db_path) or {}
+    except Exception:
+        rates = {}
+    blob = json.dumps({
+        "rates": sorted((str(k).strip().lower(), round(float(v), 2)) for k, v in rates.items()
+                        if isinstance(v, (int, float)) and v),
+        "hourly": round(float(getattr(r, "hourly_rate", 0) or 0), 2) if r else 0,
+        "salaried": sorted((salaried_name_key(x["name"]), x["annual"]) for x in salaried_staff(r)) if r else [],
+    }, sort_keys=True)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:10]
+
+
+# Labor period rows (labor_history.kind). A PAYROLL_WEEK is derived from
+# labor_daily_history by refresh_labor_periods and is the only kind the
+# product writes now; PERIOD is one a caller stored explicitly; ROLLING_WINDOW
+# marks the legacy rows every sync and every note build used to append —
+# overlapping 14/28-day windows, and recosts of the same one — which no
+# reader reads (memory audit 9/29/26, labor_periods).
+LABOR_PERIOD_WEEK = "payroll_week"
+LABOR_PERIOD_EXPLICIT = "period"
+LABOR_PERIOD_LEGACY = "rolling_window"
+# How far back the weekly periods are kept current: a year and a week, so
+# last year's same week is always there to compare.
+LABOR_PERIOD_WEEKS = 53
+
+
 def save_labor_snapshot(restaurant_id: int, period_start: str, period_end: str,
                          labor_pct: float, total_labor: float, total_sales: float,
-                         db_path: str = DB_PATH):
-    """Save a labor analysis snapshot for trend tracking — once per period.
-    It was written on every insight view, so the second view found "the
-    previous upload" to be the same period and compared it with itself: the
-    trend and forecast lines vanished.
+                         db_path: str = DB_PATH, basis: str = None, days: int = None,
+                         kind: str = LABOR_PERIOD_EXPLICIT):
+    """Store one labor period, REPLACED IN PLACE — never a second row for the
+    same period (memory audit 9/29/26, labor_periods). A recost used to
+    append: the same 14 days read 31.1% then 29.5% three seconds apart, and
+    the labor read told the owner "Labor's down 1.6 points from last upload".
+    A payroll week is keyed by its start (its end grows while it is in
+    progress); an explicit period by its start and end. A row whose basis
+    changed keeps the figure it replaced in `recosted_from`.
 
     Never for a period with no sales: its labor % is a stand-in 0, and a
     (0.0%, $0) row was later handed to the labor note as a "previous upload"
@@ -8043,49 +8477,215 @@ def save_labor_snapshot(restaurant_id: int, period_start: str, period_end: str,
             return
     except (TypeError, ValueError):
         return
+    kind = kind or LABOR_PERIOD_EXPLICIT
     conn = get_conn(db_path)
     try:
-        same = conn.execute("SELECT 1 FROM labor_history WHERE restaurant_id=? AND period_start IS ? AND period_end IS ? "
-                            "AND ABS(COALESCE(labor_pct, 0) - COALESCE(?, 0)) < 0.05 LIMIT 1",
-                            (restaurant_id, period_start, period_end, labor_pct)).fetchone()
-        if same:
-            return
-        conn.execute("""
-            INSERT INTO labor_history (restaurant_id, period_start, period_end, labor_pct, total_labor, total_sales)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (restaurant_id, period_start, period_end, labor_pct, total_labor, total_sales))
+        if kind == LABOR_PERIOD_WEEK:
+            row = conn.execute("SELECT id, labor_pct, basis FROM labor_history WHERE restaurant_id=? AND kind=? "
+                               "AND period_start=? ORDER BY id DESC LIMIT 1",
+                               (restaurant_id, kind, period_start)).fetchone()
+        else:
+            row = conn.execute("SELECT id, labor_pct, basis FROM labor_history WHERE restaurant_id=? "
+                               "AND COALESCE(kind, '') != ? AND period_start IS ? AND period_end IS ? "
+                               "ORDER BY id DESC LIMIT 1",
+                               (restaurant_id, LABOR_PERIOD_LEGACY, period_start, period_end)).fetchone()
+        if row is None:
+            conn.execute("INSERT INTO labor_history (restaurant_id, period_start, period_end, labor_pct, total_labor, "
+                         "total_sales, basis, days, kind, updated_at) VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))",
+                         (restaurant_id, period_start, period_end, labor_pct, total_labor, total_sales,
+                          basis, days, kind))
+        else:
+            recosted = row["labor_pct"] if (basis and row["basis"] and basis != row["basis"]
+                                            and row["labor_pct"] is not None and labor_pct is not None
+                                            and abs(float(row["labor_pct"]) - float(labor_pct)) >= 0.05) else None
+            conn.execute("UPDATE labor_history SET period_end=?, labor_pct=?, total_labor=?, total_sales=?, "
+                         "basis=COALESCE(?, basis), days=COALESCE(?, days), kind=?, updated_at=datetime('now'), "
+                         "recosted_from=COALESCE(?, recosted_from) WHERE id=?",
+                         (period_end, labor_pct, total_labor, total_sales, basis, days, kind, recosted, row["id"]))
         conn.commit()
     finally:
         conn.close()
 
 
+def _week_start_of(day, week_start_day):
+    from datetime import timedelta as _td_w
+    return day - _td_w(days=(day.weekday() - int(week_start_day or 0)) % 7)
+
+
+def refresh_labor_periods(restaurant_id: int, db_path: str = DB_PATH, today=None) -> int:
+    """The restaurant's labor period history as calendar-aligned payroll
+    weeks (restaurants.week_start_day), derived from labor_daily_history's
+    FINAL days and written into labor_history in place (memory audit
+    9/29/26, labor_periods). Called wherever the daily history is saved (a
+    POS sync, an upload); every reader reads the result. A week's labor % is
+    its labor on the days with sales over those days' sales — the analysis's
+    own rule. A week whose days were costed on two bases is `mixed`, and is
+    compared with nothing. A week that has ended runs to its last calendar
+    day; the week in progress to its last day with figures. Returns the
+    weeks written."""
+    from datetime import date as _date_lp, timedelta as _td_lp
+    r = get_restaurant(restaurant_id, db_path)
+    if r is None:
+        return 0
+    wsd = int(getattr(r, "week_start_day", 0) or 0)
+    today = today or _restaurant_today(restaurant_id)
+    since = _week_start_of(today - _td_lp(weeks=LABOR_PERIOD_WEEKS), wsd).isoformat()
+    conn = get_conn(db_path)
+    try:
+        # Final days only (canonical_facts.FINAL_SQL — the one rule every
+        # daily-history learner reads), and a converted demo's own history
+        # without the seed's synthetic days (own_history_sql).
+        from canonical_facts import FINAL_SQL as _FINAL_LP
+        rows = conn.execute("SELECT date, labor_cost, sales, basis FROM labor_daily_history WHERE restaurant_id=? "
+                            f"AND date >= ? AND {_FINAL_LP} AND {own_history_sql()} ORDER BY date",
+                            (restaurant_id, since)).fetchall()
+    finally:
+        conn.close()
+    weeks = {}
+    for row in rows:
+        try:
+            d = _date_lp.fromisoformat(str(row["date"])[:10])
+        except ValueError:
+            continue
+        w = weeks.setdefault(_week_start_of(d, wsd), {"labor": 0.0, "sales": 0.0, "days": 0, "bases": set(),
+                                                      "last": d})
+        w["last"] = max(w["last"], d)
+        sales = row["sales"]
+        if sales is None or float(sales) <= 0:
+            continue
+        w["labor"] += float(row["labor_cost"] or 0)
+        w["sales"] += float(sales)
+        w["days"] += 1
+        w["bases"].add(row["basis"] or "unknown")
+    written = 0
+    for start, w in sorted(weeks.items()):
+        if not w["days"] or w["sales"] <= 0:
+            continue
+        week_end = start + _td_lp(days=6)
+        end = week_end if week_end < today else w["last"]
+        basis = next(iter(w["bases"])) if len(w["bases"]) == 1 else "mixed"
+        save_labor_snapshot(restaurant_id, start.isoformat(), end.isoformat(),
+                            round(w["labor"] / w["sales"] * 100, 1), round(w["labor"], 2), round(w["sales"], 2),
+                            db_path=db_path, basis=basis, days=w["days"], kind=LABOR_PERIOD_WEEK)
+        written += 1
+    return written
+
+
 def get_labor_history(restaurant_id: int, limit: int = 4,
                       db_path: str = DB_PATH) -> list:
-    """Return recent labor snapshots for trend awareness.
+    """The restaurant's labor periods, newest first: [{period_start,
+    period_end, labor_pct, total_labor, total_sales, days, basis, kind,
+    complete, comparable, recosted_from}] — calendar payroll weeks
+    (refresh_labor_periods) plus any period a caller stored, never the
+    legacy rolling windows (memory audit 9/29/26, labor_periods). One row
+    per period (the newest), so a chart never stacks two bars on one label.
 
-    save_labor_snapshot() inserts a new row every time an insight is
-    generated, not just on a genuinely new upload — a restaurant whose
-    data hasn't changed can accumulate many rows for the same
-    period_start/period_end. Without dedup, those duplicates share one
-    x-axis label on the client's trend chart, which makes Swift Charts'
-    BarMark treat them as a stacked series (same category = stack) and
-    sum them into one wildly-inflated bar. Keep only the latest snapshot
-    (highest id) per distinct period.
-    """
+    `complete` — the period has ended (a payroll week whose last day is
+    before the restaurant's today). `comparable` — this period can be read
+    against the one listed after it (the period just before it): both
+    complete, adjacent (no gap between them), and costed on the same single
+    basis. A comparison with anything else is "recosted, not comparable" or
+    no comparison at all (labor_period_change)."""
+    from datetime import date as _date_gh, timedelta as _td_gh
     conn = get_conn(db_path)
-    rows = conn.execute("""
-        SELECT h.period_start, h.period_end, h.labor_pct, h.total_labor, h.total_sales
-        FROM labor_history h
-        JOIN (
-            SELECT period_start, MAX(id) AS max_id
-            FROM labor_history
-            WHERE restaurant_id=? AND total_sales > 0
-            GROUP BY period_start
-        ) latest ON h.id = latest.max_id
-        ORDER BY h.period_start DESC LIMIT ?
-    """, (restaurant_id, limit)).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        rows = conn.execute("""
+            SELECT h.period_start, h.period_end, h.labor_pct, h.total_labor, h.total_sales,
+                   h.basis, h.days, h.kind, h.recosted_from
+            FROM labor_history h
+            JOIN (
+                SELECT period_start, MAX(id) AS max_id
+                FROM labor_history
+                WHERE restaurant_id=? AND total_sales > 0 AND COALESCE(kind, '') != ?
+                GROUP BY period_start
+            ) latest ON h.id = latest.max_id
+            ORDER BY h.period_start DESC LIMIT ?
+        """, (restaurant_id, LABOR_PERIOD_LEGACY, int(limit) + 1)).fetchall()
+    finally:
+        conn.close()
+    today = _restaurant_today(restaurant_id).isoformat()
+    out = []
+    for r in rows:
+        d = dict(r)
+        end = str(d.get("period_end") or "")[:10]
+        if d.get("kind") == LABOR_PERIOD_WEEK:
+            try:
+                wk_end = (_date_gh.fromisoformat(str(d["period_start"])[:10]) + _td_gh(days=6)).isoformat()
+            except ValueError:
+                wk_end = end
+            d["complete"] = wk_end < today
+        else:
+            d["complete"] = bool(end) and end < today
+        out.append(d)
+    for i, d in enumerate(out):
+        prev = out[i + 1] if i + 1 < len(out) else None
+        d["comparable"] = bool(prev) and _periods_comparable(d, prev)
+    return out[:int(limit)]
+
+
+def _periods_comparable(cur: dict, prev: dict) -> bool:
+    from datetime import date as _date_pc, timedelta as _td_pc
+    if not (cur.get("complete") and prev.get("complete")):
+        return False
+    if not cur.get("basis") or cur.get("basis") in ("mixed", "unknown") or cur.get("basis") != prev.get("basis"):
+        return False
+    try:
+        return (_date_pc.fromisoformat(str(prev["period_end"])[:10]) + _td_pc(days=1)
+                == _date_pc.fromisoformat(str(cur["period_start"])[:10]))
+    except (TypeError, ValueError, KeyError):
+        return False
+
+
+def labor_period_change(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """The one period-on-period labor comparison every surface states
+    (memory audit 9/29/26, labor_periods): the latest COMPLETE period against
+    the one before it, only when the two are adjacent and costed on the same
+    basis. {latest, previous, delta, comparable, reason} — reason "recosted"
+    when the rates or the labor source differ between them ("recosted, not
+    comparable"), "gap" when they are not back to back, "partial" when fewer
+    than two periods have ended, None when comparable."""
+    hist = [h for h in get_labor_history(restaurant_id, limit=6, db_path=db_path) if h.get("complete")]
+    if len(hist) < 2:
+        return {"latest": hist[0] if hist else None, "previous": None, "delta": None, "comparable": False,
+                "reason": "partial"}
+    cur, prev = hist[0], hist[1]
+    comparable = _periods_comparable(cur, prev)
+    reason = None
+    if not comparable:
+        reason = "recosted" if (cur.get("basis") != prev.get("basis") or cur.get("basis") == "mixed") else "gap"
+    delta = (round(float(cur["labor_pct"]) - float(prev["labor_pct"]), 1)
+             if comparable and cur.get("labor_pct") is not None and prev.get("labor_pct") is not None else None)
+    return {"latest": cur, "previous": prev, "delta": delta, "comparable": comparable, "reason": reason}
+
+
+def backfill_labor_periods(db_path: str = DB_PATH, max_seconds: float = 20.0) -> int:
+    """At boot: the legacy rolling-window rows marked (never read again) and
+    every restaurant's payroll weeks derived once from its daily history, so
+    the first read after this deploy sees weeks, not windows (memory audit
+    9/29/26, labor_periods). Idempotent — marking touches only unmarked rows
+    and refresh_labor_periods replaces in place; bounded by `max_seconds`
+    (whatever it did not reach, the next sync or upload refreshes)."""
+    import time as _time_lp
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE labor_history SET kind=? WHERE kind IS NULL", (LABOR_PERIOD_LEGACY,))
+        conn.commit()
+        rids = [row[0] for row in conn.execute(
+            "SELECT DISTINCT restaurant_id FROM labor_daily_history WHERE restaurant_id NOT IN "
+            "(SELECT restaurant_id FROM labor_history WHERE kind=?)", (LABOR_PERIOD_WEEK,)).fetchall()]
+    finally:
+        conn.close()
+    stop = _time_lp.monotonic() + float(max_seconds)
+    done = 0
+    for rid in rids:
+        if _time_lp.monotonic() > stop:
+            break
+        try:
+            refresh_labor_periods(rid, db_path=db_path)
+            done += 1
+        except Exception as e:
+            print(f"[labor periods] backfill skipped restaurant {rid}: {e}")
+    return done
 
 
 def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
@@ -8530,6 +9130,14 @@ def save_labor_daily_history(restaurant_id: int, by_day: dict,
     day still trading when it was read); days outside keep what they had.
     Without it (an upload) the provenance columns are left as they were."""
     from datetime import datetime as _dt
+    # Every day saved here is re-costed on the restaurant's current rates:
+    # the basis says which rates and which labor source, so two periods
+    # costed differently are never compared as if the labor moved (memory
+    # audit 9/29/26, labor_periods). A day keeps its own source's half.
+    try:
+        rates_key = labor_rates_key(restaurant_id, db_path=db_path)
+    except Exception:
+        rates_key = None
     conn = get_conn(db_path)
     prov = provenance or {}
     win = prov.get("window") or None
@@ -8562,9 +9170,12 @@ def save_labor_daily_history(restaurant_id: int, by_day: dict,
         conn.execute("""
             INSERT INTO labor_daily_history
                 (restaurant_id, date, day_of_week, labor_pct, labor_cost, sales, total_hours,
-                 source, provider, synced_at, final)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 source, provider, synced_at, final, basis)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    CASE WHEN ? IS NULL THEN NULL ELSE ? || ':' || COALESCE(?, 'upload') END)
             ON CONFLICT(restaurant_id, date) DO UPDATE SET
+                basis=CASE WHEN ? IS NULL THEN labor_daily_history.basis
+                           ELSE ? || ':' || COALESCE(excluded.source, labor_daily_history.source, 'upload') END,
                 source=COALESCE(excluded.source, labor_daily_history.source),
                 provider=COALESCE(excluded.provider, labor_daily_history.provider),
                 synced_at=COALESCE(excluded.synced_at, labor_daily_history.synced_at),
@@ -8583,7 +9194,7 @@ def save_labor_daily_history(restaurant_id: int, by_day: dict,
                 total_hours=excluded.total_hours,
                 saved_at=datetime('now')
         """, (restaurant_id, date_str, dow, labor_pct, labor_cost, sales, actual_hours,
-              p_src, p_prov, p_at, p_final))
+              p_src, p_prov, p_at, p_final, rates_key, rates_key, p_src, rates_key, rates_key))
     conn.commit()
     conn.close()
 
@@ -11803,28 +12414,23 @@ def auto_approve_candidates(restaurant_id: int, db_path: str = DB_PATH, ratings=
 
 
 def build_labor_export_csv(restaurant_id: int, db_path: str = DB_PATH) -> str:
+    """The owner's labor history export: one row per labor period, newest
+    first — the calendar payroll weeks (refresh_labor_periods) and any
+    period a caller stored, each once, never the legacy rolling windows
+    that overlapped one another (memory audit 9/29/26, labor_periods). It
+    read columns labor_history never had (week_start, hours_scheduled,
+    labor_cost), so every row but its percentage was blank."""
     import io
-    conn = get_conn(db_path)
     out = io.StringIO()
     w = safe_csv_writer(out)
-    w.writerow(["week_start", "hours_scheduled", "labor_cost", "labor_pct", "generated_at"])
+    w.writerow(["week_start", "week_end", "labor_pct", "labor_cost", "sales", "days_with_sales", "complete"])
     try:
-        rows = conn.execute("""
-            SELECT * FROM labor_history WHERE restaurant_id=? ORDER BY created_at DESC LIMIT 520
-        """, (restaurant_id,)).fetchall()
-        for r in rows:
-            k = r.keys()
-            w.writerow([
-                r["week_start"] if "week_start" in k else "",
-                r["hours_scheduled"] if "hours_scheduled" in k else "",
-                r["labor_cost"] if "labor_cost" in k else "",
-                r["labor_pct"] if "labor_pct" in k else "",
-                r["created_at"] if "created_at" in k else "",
-            ])
+        for r in get_labor_history(restaurant_id, limit=520, db_path=db_path):
+            w.writerow([str(r.get("period_start") or "")[:10], str(r.get("period_end") or "")[:10],
+                        r.get("labor_pct"), r.get("total_labor"), r.get("total_sales"), r.get("days") or "",
+                        "yes" if r.get("complete") else "no"])
     except Exception as e:
         w.writerow([f"labor history unavailable: {e}"])
-    finally:
-        conn.close()
     return out.getvalue()
 
 

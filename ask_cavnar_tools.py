@@ -1054,9 +1054,15 @@ def _read_labor_detail(restaurant_id, weeks=8):
         # Same source the web Labor tab's trend chart uses; oldest first so
         # the direction reads left to right.
         history = get_labor_history(restaurant_id, limit=min(int(weeks or 8), 26)) or []
+        # get_labor_history's own field names — labor_cost and sales were
+        # read from keys it never had, so they were always empty (memory
+        # audit 9/29/26, labor_periods). Each row is a payroll week; one
+        # still in progress says so, and `comparable` says whether it can be
+        # read against the week before (same costing, back to back).
         trend = [{"period_start": h.get("period_start"), "period_end": h.get("period_end"),
-                  "labor_pct": h.get("labor_pct"), "labor_cost": h.get("labor_cost"),
-                  "sales": h.get("sales")}
+                  "labor_pct": h.get("labor_pct"), "labor_cost": h.get("total_labor"),
+                  "sales": h.get("total_sales"), "complete": bool(h.get("complete")),
+                  "comparable_with_week_before": bool(h.get("comparable"))}
                  for h in history[::-1]]
     except Exception:
         trend = []

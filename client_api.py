@@ -4951,6 +4951,9 @@ def labor_trend_api(current_user):
                 "pct": round(h["labor_pct"], 1),
                 "labor": h["total_labor"],
                 "sales": h["total_sales"],
+                # A payroll week still in progress (memory audit 9/29/26,
+                # labor_periods): drawn as partial, never read as a trend.
+                "complete": bool(h.get("complete")),
             })
         resp = jsonify(weeks=weeks)
         resp.headers['Cache-Control'] = 'no-store'
@@ -5847,11 +5850,21 @@ def _do_upload_data(restaurant_id, data_type, f, current_user, source="upload", 
     # still reported success (DATA-62). The previous CSV is kept, and put
     # back if the history cannot be written.
     _prev_shifts = None
+    _window = None
     if data_type == "shifts":
         from models import get_client_data as _gcd_prev
         _prev_row = _gcd_prev(restaurant_id) or {}
         _prev_shifts = (_prev_row.get("shifts_csv"), _prev_row.get("shifts_source") or "upload")
-    save_client_data(restaurant_id, data_type, csv_content, source=source)
+        # The one ingest a sync uses too (memory audit 9/29/26, shift_facts):
+        # each row given its person, and inside this file's dates the file
+        # is the record while everything outside them is KEPT — an upload
+        # used to replace the whole history, so a year of shifts became the
+        # two weeks just uploaded.
+        import shift_facts as _sf_up
+        _got = _sf_up.ingest(restaurant_id, _shift_rows, "admin_upload" if operator else source)
+        _window = _got.get("window")
+    else:
+        save_client_data(restaurant_id, data_type, csv_content, source=source)
     # The AI insight is cached for five minutes with no invalidation, so a
     # fresh upload showed the previous data's narrative beside the new
     # data's numbers on the same screen. Drop it on write.
@@ -5876,6 +5889,10 @@ def _do_upload_data(restaurant_id, data_type, f, current_user, source="upload", 
                 _ops_dh.capture(_dh_e, job="shifts_upload_history", context=f"restaurant_id={restaurant_id}")
                 try:
                     save_client_data(restaurant_id, "shifts", _prev_shifts[0], source=_prev_shifts[1])
+                    if _window:
+                        import shift_facts as _sf_rb
+                        _sf_rb.rewrite_window_from_csv(restaurant_id, _prev_shifts[0], _window[0], _window[1],
+                                                       _prev_shifts[1])
                     invalidate_insight_cache(restaurant_id)
                     _restored = True
                 except Exception as _rb_e:
@@ -5885,19 +5902,16 @@ def _do_upload_data(restaurant_id, data_type, f, current_user, source="upload", 
                     "The upload could not be saved completely, so your previous shift data is still in place. "
                     "Please try again." if _restored else
                     "The upload could not be saved completely. Please upload it again.")), 500
-            # Persist this upload as a labor_history snapshot so trend chart is immediately correct
+            # The labor periods the trend chart, the alert and Home read: the
+            # payroll weeks derived from the per-day archive just written —
+            # never this upload's window, which appended an overlapping
+            # "period" per upload (memory audit 9/29/26, labor_periods).
             try:
-                from models import save_labor_snapshot as _sls
-                _dr = _shift_analysis.get("date_range", {})
-                if _dr.get("start") and _dr.get("end"):
-                    _sls(restaurant_id, _dr["start"], _dr["end"],
-                         _shift_analysis["overall_labor_pct"],
-                         # labor on the days with sales, the pair of total_sales (NS3 H4)
-                         _shift_analysis.get("costed_labor", _shift_analysis["total_labor_cost"]),
-                         _shift_analysis["total_sales"])
+                from models import refresh_labor_periods as _rlp
+                _rlp(restaurant_id)
             except Exception as _snap_e:
-                # The trend chart's snapshot; not what YoY generation reads,
-                # so the upload stands — but it is reported, not printed.
+                # Not what YoY generation reads, so the upload stands — but
+                # it is reported, not printed.
                 import ops as _ops_snap
                 _ops_snap.capture(_snap_e, job="shifts_upload_snapshot", context=f"restaurant_id={restaurant_id}")
             try:
@@ -10552,7 +10566,8 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
         finally:
             conn.close()
         import schedule_versions as _sv
-        _sv.append(rid, schedule_id, "published", row["schedule_csv"], saved_by=actor_name)
+        _sv.append(rid, schedule_id, "published", row["schedule_csv"], saved_by=actor_name,
+                   saved_authority=_sv.authority_of(actor))
     except Exception as _px:
         _ops.capture(_px, job="schedule_publish_stamp", context=f"restaurant_id={rid} schedule_id={schedule_id}")
     # The week's sales projection the schedule was built against, frozen
@@ -10672,7 +10687,7 @@ def send_schedule_changes(restaurant_id, schedule_id, actor=None, acknowledge=Fa
                         status=get_schedule_share_status(rid, row["id"]),
                         error="The changes could not be sent. Try again in a few minutes."), 200
         who = (actor.get("username") or actor.get("email") or "automation") if isinstance(actor, dict) else "automation"
-        _sv.append(rid, row["id"], "published", csv_now, saved_by=who)
+        _sv.append(rid, row["id"], "published", csv_now, saved_by=who, saved_authority=_sv.authority_of(actor))
         conn = get_conn()
         try:
             conn.execute("UPDATE schedule_history SET republished_at=datetime('now') WHERE id=? AND restaurant_id=?",

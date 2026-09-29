@@ -40,6 +40,7 @@ def get_conn(db_path=None):
 OUTCOME_WEEKS = 12
 LEDGER_WEEKS = 8
 MENTOR_SHIFTS_TO_HOLD = 8
+MENTOR_WINDOW_DAYS = 365          # the shifts that count toward holding a station
 SUGGEST_MIN_SHARED = 6
 SUGGEST_MIN_CLEAN = 0.8
 SUPPRESS_AFTER_SHOWN = 10
@@ -120,6 +121,7 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None) -> dict:
                 e = by.setdefault((r["date"], part), {"hours": 0.0, "people": set()})
                 e["hours"] += _hours(r)
                 e["people"].add(r["employee"])
+            placed = _place_reviews(conn, restaurant_id, by, _tz)
             for (d, part), e in by.items():
                 day = conn.execute("SELECT sales, labor_pct, day_of_week FROM labor_daily_history WHERE restaurant_id=? "
                                    f"AND date=? AND {FINAL_SQL}", (restaurant_id, d)).fetchone()
@@ -136,27 +138,32 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None) -> dict:
                         split_basis = "measured"
                         sales = round(float(day["sales"]) * (s if part == "morning" else 1 - s), 0)
                 issues = issue_at.get((d, part), 0)
-                # A review carries a date, not a time: it can't be split
-                # between lunch and dinner, so it is recorded once, on the
-                # daypart that carried the day's most hours — not on both.
-                main_part = max((p2 for (d2, p2) in by if d2 == d), key=lambda p2: by[(d, p2)]["hours"])
-                rating, n_reviews = None, 0
-                if part == main_part:
-                    try:
-                        rv = conn.execute("SELECT AVG(rating), COUNT(*) FROM reviews WHERE restaurant_id=? AND substr(review_date,1,10)=?",
-                                          (restaurant_id, d)).fetchone()
-                        rating, n_reviews = (round(float(rv[0]), 2) if rv and rv[0] else None), (rv[1] if rv else 0)
-                    except Exception as _rx:
-                        print(f"[outcomes] reviews unavailable for restaurant {restaurant_id}: {_rx}")
+                # Each review on the shift it was about (_place_reviews): the
+                # meal the analyser read in it, posted within
+                # REVIEW_LAG_DAYS — a Sunday-afternoon review of Saturday's
+                # dinner is Saturday night's, not Sunday lunch's — else, for
+                # want of anything better, the posting day's busiest daypart.
+                got = placed.get((d, part)) or []
+                ratings = [g["rating"] for g in got]
+                rating = round(sum(ratings) / len(ratings), 2) if ratings else None
+                n_reviews = len(ratings)
+                attributed = [g["rating"] for g in got if g["how"] == "daypart"]
+                kinds = {g["how"] for g in got}
+                attribution = (next(iter(kinds)) if len(kinds) == 1 else ("mixed" if kinds else None))
                 conn.execute(
                     "INSERT INTO schedule_outcomes (restaurant_id, history_id, date, daypart, hours, people, sales, labor_pct, issues, "
-                    "review_rating, reviews, split_basis) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
-                    "ON CONFLICT(history_id, date, daypart) DO UPDATE SET "
+                    "review_rating, reviews, review_attribution, review_rating_attributed, reviews_attributed, review_lag_days, "
+                    "split_basis) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(history_id, date, daypart) DO UPDATE SET "
                     "hours=excluded.hours, people=excluded.people, sales=excluded.sales, labor_pct=excluded.labor_pct, "
                     "issues=excluded.issues, review_rating=excluded.review_rating, reviews=excluded.reviews, "
+                    "review_attribution=excluded.review_attribution, "
+                    "review_rating_attributed=excluded.review_rating_attributed, "
+                    "reviews_attributed=excluded.reviews_attributed, review_lag_days=excluded.review_lag_days, "
                     "split_basis=excluded.split_basis, recorded_at=datetime('now')",
                     (restaurant_id, w["id"], d, part, round(e["hours"], 1), len(e["people"]), sales,
-                     (day["labor_pct"] if day else None), issues, rating, n_reviews, split_basis))
+                     (day["labor_pct"] if day else None), issues, rating, n_reviews, attribution,
+                     round(sum(attributed) / len(attributed), 2) if attributed else None, len(attributed),
+                     max((g["lag"] for g in got), default=None), split_basis))
                 written += 1
         conn.commit()
     finally:
@@ -166,6 +173,74 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None) -> dict:
 
 MORNING_SPLIT_HOUR = 15        # schedule_rules.daypart_of: a shift starting at 3pm or later is "night"
 MORNING_SHARE_MIN_DAYS = 3
+
+
+# A review is placed on a shift at most this many days before it was posted
+# (memory audit 9/29/26, reviews_to_labor).
+REVIEW_LAG_DAYS = 2
+# When a daypart's service has begun: a dinner review posted at 2pm is about
+# an EARLIER dinner.
+_SERVICE_STARTS = {"morning": 11 * 60, "night": 17 * 60}
+
+
+def _place_reviews(conn, restaurant_id, by, tz):
+    """{(date, daypart): [{"rating", "how", "lag"}]} — each review posted
+    during this week's shifts (or up to REVIEW_LAG_DAYS after) on the one
+    shift it was about. With the analyser's daypart: the latest recorded
+    shift of that daypart that had begun by the time it was posted, no more
+    than REVIEW_LAG_DAYS before ("daypart"). Without one: the posting day's
+    busiest daypart, as before ("hours") — which calibration leaves out."""
+    import staffing_signals
+    from zoneinfo import ZoneInfo as _ZI
+    if not by:
+        return {}
+    dates = sorted({d for d, _p in by})
+    lo, hi = dates[0], (datetime.strptime(dates[-1], "%Y-%m-%d") + timedelta(days=REVIEW_LAG_DAYS)).strftime("%Y-%m-%d")
+    try:
+        rows = conn.execute("SELECT rating, review_date, entities FROM reviews WHERE restaurant_id=? AND "
+                            "deleted_at IS NULL AND substr(review_date,1,10) BETWEEN ? AND ?",
+                            (restaurant_id, lo, hi)).fetchall()
+    except Exception as _rx:
+        print(f"[outcomes] reviews unavailable for restaurant {restaurant_id}: {_rx}")
+        return {}
+    main = {}
+    for (d, p), e in by.items():
+        if d not in main or e["hours"] > by[(d, main[d])]["hours"]:
+            main[d] = p
+    out = {}
+    for r in rows:
+        raw = str(r["review_date"] or "")
+        try:
+            if len(raw) > 10 and ("T" in raw or " " in raw):
+                stamp = datetime.fromisoformat(raw.replace("Z", "+00:00")[:25])
+                if stamp.tzinfo is not None:
+                    stamp = stamp.astimezone(tz).replace(tzinfo=None)
+                posted, minute = stamp.date(), stamp.hour * 60 + stamp.minute
+            else:
+                posted, minute = datetime.strptime(raw[:10], "%Y-%m-%d").date(), None
+        except ValueError:
+            continue
+        try:
+            ents = json.loads(r["entities"] or "null") or {}
+        except (TypeError, ValueError, IndexError, KeyError):
+            ents = {}
+        part = staffing_signals.schedule_daypart((ents or {}).get("daypart"))
+        spot = None
+        if part:
+            for back in range(0, REVIEW_LAG_DAYS + 1):
+                d = (posted - timedelta(days=back)).isoformat()
+                if back == 0 and minute is not None and minute < _SERVICE_STARTS[part]:
+                    continue               # that meal had not happened yet when they wrote
+                if (d, part) in by:
+                    spot = ((d, part), "daypart", back)
+                    break
+        else:
+            d = posted.isoformat()
+            if d in main:
+                spot = ((d, main[d]), "hours", 0)
+        if spot:
+            out.setdefault(spot[0], []).append({"rating": float(r["rating"] or 0), "how": spot[1], "lag": spot[2]})
+    return out
 
 
 def _morning_share(conn, restaurant_id) -> dict:
@@ -710,10 +785,16 @@ def mentoring(restaurant_id, db_path=DB_PATH) -> dict:
     role that is not their usual one, on the same date and daypart as
     somebody authorised to close. At MENTOR_SHIFTS_TO_HOLD they could hold
     the station."""
-    from models import _cached_shifts, get_leader_flags
+    from models import get_leader_flags
     try:
         closers = {n.lower() for n, v in (get_leader_flags(restaurant_id, db_path) or {}).items() if v}
-        shifts = _cached_shifts(restaurant_id)
+        # A year of shifts from the per-shift history (memory audit 9/29/26,
+        # shift_facts): the stored file was a rolling window an upload could
+        # shrink to a fortnight, and the evidence for "could hold the bar"
+        # went with it.
+        import shift_facts as _sf
+        since = (date.today() - timedelta(days=MENTOR_WINDOW_DAYS)).isoformat()
+        shifts = _sf.person_rows(restaurant_id, since=since)
     except Exception:
         return {}
     if not closers or not shifts:
@@ -1252,6 +1333,20 @@ def init_schedule_intel(db_path: str = DB_PATH):
     # from before the column has NULL: read as unmeasured.
     if "split_basis" not in {r[1] for r in conn.execute("PRAGMA table_info(schedule_outcomes)").fetchall()}:
         conn.execute("ALTER TABLE schedule_outcomes ADD COLUMN split_basis TEXT")
+    # Which shift a review's rating was put on, and how sure (memory audit
+    # 9/29/26, reviews_to_labor): "daypart" when the analyser read the meal
+    # in the review itself and it was posted within REVIEW_LAG_DAYS of that
+    # shift; "hours" when it was put on the day's busiest daypart for want
+    # of anything better. Calibration reads the first kind only.
+    _oc = {r[1] for r in conn.execute("PRAGMA table_info(schedule_outcomes)").fetchall()}
+    for _col, _typ in (("review_attribution", "TEXT"), ("review_rating_attributed", "REAL"),
+                       ("reviews_attributed", "INTEGER"), ("review_lag_days", "INTEGER")):
+        if _col not in _oc:
+            try:
+                conn.execute(f"ALTER TABLE schedule_outcomes ADD COLUMN {_col} {_typ}")
+            except Exception as _e:
+                if "duplicate column" not in str(_e).lower():
+                    raise
     conn.execute("""CREATE TABLE IF NOT EXISTS schedule_recommendation_events (
         id             INTEGER PRIMARY KEY AUTOINCREMENT,
         restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
@@ -1276,6 +1371,34 @@ def init_schedule_intel(db_path: str = DB_PATH):
         created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
         PRIMARY KEY (restaurant_id, key)
     )""")
+    # What the draft has learned and keeps (memory audit 9/29/26,
+    # standing_patterns): a move the manager made in enough weeks becomes a
+    # row here, confirmed by every published week that keeps it and retired
+    # only when a manager reverses it twice — never because nobody had to
+    # make the correction again. Kept forever (one row per pattern).
+    conn.execute("""CREATE TABLE IF NOT EXISTS schedule_standing_patterns (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        restaurant_id    INTEGER NOT NULL REFERENCES restaurants(id),
+        pattern_key      TEXT    NOT NULL,
+        kind             TEXT    NOT NULL,
+        employee         TEXT,
+        role             TEXT,
+        day              TEXT,
+        daypart          TEXT,
+        time             TEXT,
+        text             TEXT,
+        editors          TEXT,
+        first_learned    TEXT    NOT NULL,
+        last_confirmed   TEXT    NOT NULL,
+        times_applied    INTEGER NOT NULL DEFAULT 0,
+        times_overridden INTEGER NOT NULL DEFAULT 0,
+        status           TEXT    NOT NULL DEFAULT 'active',
+        rule_note        TEXT,
+        ruled_by         TEXT,
+        checked_through  INTEGER NOT NULL DEFAULT 0,
+        updated_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(restaurant_id, pattern_key)
+    )""")
     conn.execute("""CREATE TABLE IF NOT EXISTS staff_first_seen (
         restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
         employee_name  TEXT    NOT NULL,
@@ -1296,7 +1419,45 @@ def init_schedule_intel(db_path: str = DB_PATH):
         if "duplicate column" not in str(e).lower():
             raise
     conn.commit()
-    conn.close()
+    try:
+        _normalise_tenure_dates(conn)
+    finally:
+        conn.close()
+
+
+_ISO_GLOB = "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]"
+
+
+def _normalise_tenure_dates(conn) -> int:
+    """Every first_seen / last_seen as ISO, once, at boot (memory audit
+    9/29/26, tenure_date). A legacy "09/01/2026" sorts before every ISO date,
+    so it won first_seen=MIN(...) forever and passed dna's "180 days of
+    history" string comparison. Only malformed rows are read, so on a clean
+    table this is one indexed-free scan of a small table. A date that cannot
+    be read at all falls back to the other column (or updated_at's date):
+    first_seen is NOT NULL and a guess from the same row beats a sort-order
+    accident. Returns the rows rewritten."""
+    from labor import _iso_date
+    rows = conn.execute(
+        f"SELECT restaurant_id, employee_name, first_seen, last_seen, updated_at FROM staff_first_seen "
+        f"WHERE first_seen NOT GLOB '{_ISO_GLOB}' OR length(first_seen) != 10 "
+        f"OR (last_seen IS NOT NULL AND (last_seen NOT GLOB '{_ISO_GLOB}' OR length(last_seen) != 10))").fetchall()
+    fixed = 0
+    for r in rows:
+        first = _iso_date(r["first_seen"])
+        last = _iso_date(r["last_seen"]) if r["last_seen"] else None
+        fallback = last or _iso_date(str(r["updated_at"] or "")[:10])
+        first = first or fallback
+        if not first:
+            continue
+        if last and last < first:
+            first, last = last, first
+        conn.execute("UPDATE staff_first_seen SET first_seen=?, last_seen=? WHERE restaurant_id=? AND employee_name=?",
+                     (first, last, r["restaurant_id"], r["employee_name"]))
+        fixed += 1
+    if fixed:
+        conn.commit()
+    return fixed
 
 
 def remember_tenure(restaurant_id, shifts: list, db_path=DB_PATH) -> None:
@@ -1306,10 +1467,13 @@ def remember_tenure(restaurant_id, shifts: list, db_path=DB_PATH) -> None:
     older upload re-sent never makes a current employee look departed."""
     if not shifts:
         return
+    from labor import _iso_date
     first, last, count = {}, {}, {}
     for s in shifts:
         n = (s.get("employee") or "").strip()
-        d = (s.get("date") or "")[:10]
+        # ISO or nothing (tenure_date): a "09/01/2026" that reached this
+        # table was MIN'd as text and won against every real date forever.
+        d = _iso_date(s.get("date")) or ""
         if not n or len(d) != 10:
             continue
         count[n] = count.get(n, 0) + 1
