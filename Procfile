@@ -1,1 +1,1 @@
-web: python hosted_dashboard.py
+web: gunicorn hosted_dashboard:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120 --keep-alive 5 --log-level info --access-logfile - --access-logformat '%(m)s %({cavnar.route}e)s %(s)s %(M)sms bytes=%(b)s class=%({cavnar.class}e)s rid=%({cavnar.request_id}e)s'

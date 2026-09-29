@@ -16,6 +16,50 @@ from typing import Optional
 # only sessions/login_history (which have no such reseed) visibly emptied.
 DB_PATH = os.path.join(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "."), "reviews.db")
 
+# Any one of these means the process is running on Railway (the same test
+# scheduler.scheduling_allowed uses).
+_RAILWAY_MARKERS = ("RAILWAY_ENVIRONMENT", "RAILWAY_PROJECT_ID", "RAILWAY_SERVICE_ID",
+                    "RAILWAY_ENVIRONMENT_NAME")
+
+
+def require_volume(environ=None, db_path=None):
+    """Refuse to run on Railway without the persistent volume (#108).
+
+    The fallback above is right for a laptop and wrong on Railway: a boot
+    whose volume was detached, or whose mount failed, came up on an empty
+    ./reviews.db in the container, built a full schema, seeded an admin and
+    the demos, reported healthy — and the next 2am backup rotated a copy of
+    the empty file in beside the real ones. Called at the top of the web
+    boot (hosted_dashboard) and by worker.py, never at import: scripts and
+    the test suite import this module off Railway.
+
+    Returns the mount path (None off Railway, or with the deliberate
+    ALLOW_NO_VOLUME=1 override); raises RuntimeError when the volume is
+    missing, is not a directory, cannot be written, or is not where
+    DB_PATH points."""
+    env = os.environ if environ is None else environ
+    if not any((env.get(v) or "").strip() for v in _RAILWAY_MARKERS):
+        return None
+    if (env.get("ALLOW_NO_VOLUME") or "").strip().lower() in ("1", "true", "yes"):
+        print("WARNING: ALLOW_NO_VOLUME is set — running on Railway without the persistent volume; "
+              "this database is lost on every deploy.")
+        return None
+    mount = (env.get("RAILWAY_VOLUME_MOUNT_PATH") or "").strip()
+    if not mount:
+        raise RuntimeError("Refusing to boot: this is Railway but no volume is attached "
+                           "(RAILWAY_VOLUME_MOUNT_PATH is unset), so the database would be an empty "
+                           "file in the container, lost on the next deploy. Attach the volume, or "
+                           "set ALLOW_NO_VOLUME=1 if that is really intended.")
+    if not os.path.isdir(mount):
+        raise RuntimeError(f"Refusing to boot: the volume mount {mount} does not exist.")
+    if not os.access(mount, os.W_OK):
+        raise RuntimeError(f"Refusing to boot: the volume mount {mount} is not writable.")
+    target = os.path.dirname(os.path.abspath(db_path or DB_PATH))
+    if target != os.path.abspath(mount):
+        raise RuntimeError(f"Refusing to boot: the database ({db_path or DB_PATH}) is not on the "
+                           f"volume ({mount}).")
+    return mount
+
 # ── The one time axis every review query uses ─────────────────────────────────
 #
 # When a GUEST wrote the review, falling back to when Cavnar pulled it only

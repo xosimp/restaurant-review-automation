@@ -1,0 +1,29 @@
+# The app's direct dependencies — the file a person edits.
+#
+# Every one is pinned exactly, to the version production ran on 9/28/26
+# (Python 3.12.7, .python-version). Ten of them were ranges: a variable
+# change that rebuilt an unchanged commit could pull a new SDK minor, and a
+# rollback did not restore the old dependency set (#112 — production had
+# already broken once on an anthropic minor; ai_utils.create_with_retry).
+#
+# requirements.txt is the LOCK generated from this file: every package,
+# transitive ones included, pinned. Railway (Nixpacks) and CI install the
+# lock, never this file. To change a version, edit it here, regenerate the
+# lock (the command is in its header) and let CI's lockfile check prove it.
+anthropic==0.125.0
+flask==3.1.3
+werkzeug==3.1.8
+stripe==11.6.0
+sentry-sdk[flask]==2.8.0
+gunicorn==23.0.0
+python-dotenv==1.2.2
+requests==2.33.1
+schedule==1.2.2
+resend==2.48.0
+reportlab==4.5.1
+pyjwt==2.15.1
+cryptography==48.0.0
+pypdf==5.9.0
+qrcode[pil]==8.2
+httpx[http2]==0.28.1
+pillow==12.2.0

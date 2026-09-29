@@ -49,15 +49,24 @@ def admin(current_user):
 @admin_bp.route("/admin/api/system")
 @admin_required
 def admin_api_system(current_user):
-    """Which services this server has keys for — presence only, never the
-    values."""
+    """The platform's configuration and physical state, for Engineering.
+
+    `services` is the label -> configured map the console has always read,
+    now over every variable docs/ops/SECURITY.md calls required, not one
+    per provider: it said "Every key is configured" with CREDENTIAL_KEY and
+    BACKUP_ENCRYPTION_KEY unset (#125). `keys` says which variables, what
+    breaks without each, and whether a set key is valid. `system` is the
+    rest (platform_monitor.system_report): disk, database and WAL, backups,
+    the scheduler lease and heartbeat, the last restore drill, the AI
+    breaker, the supervisor, request rollups, 5xx by route, boots, provider
+    probes, the credential-encryption state, and `warnings` in plain
+    sentences. Presence only — never a value."""
     import os as _os
-    keys = {"Anthropic (Claude)": "ANTHROPIC_API_KEY", "Perplexity": "PERPLEXITY_API_KEY", "Resend (email)": "RESEND_API_KEY",
-            "Stripe": "STRIPE_SECRET_KEY", "Stripe webhook": "STRIPE_WEBHOOK_SECRET", "DocuSign": "DOCUSIGN_INTEGRATION_KEY",
-            "Twilio (SMS)": "TWILIO_ACCOUNT_SID", "Google OAuth": "GOOGLE_CLIENT_ID", "Google Places": "GOOGLE_PLACES_API_KEY",
-            "Meta (Instagram)": "META_APP_ID", "APNs (push)": "APNS_KEY_ID", "Sentry": "SENTRY_DSN"}
-    services = {label: bool(_os.getenv(var)) for label, var in keys.items()}
-    build = _os.getenv("RAILWAY_GIT_COMMIT_SHA", "")[:8] or None
+    import platform_monitor
+    system = platform_monitor.system_report()
+    keys = system.pop("keys")
+    services = {k["label"]: bool(k["present"]) for k in keys if k["required"]}
+    build = (_os.getenv("RAILWAY_GIT_COMMIT_SHA") or "")[:8] or None
     if not build:
         try:
             import subprocess
@@ -65,8 +74,10 @@ def admin_api_system(current_user):
         except Exception:
             build = None
     from models import DB_PATH
-    return jsonify(ok=True, services=services, env=("railway" if config.on_railway() else "local"),
-                   tick=int(_os.getenv("SCHEDULER_TICK_SECONDS", "300")), db=_os.path.basename(str(DB_PATH)), build=build)
+    return jsonify(ok=True, services=services, keys=keys, warnings=system.pop("warnings"), system=system,
+                   env=("railway" if config.on_railway() else "local"),
+                   tick=int(_os.getenv("SCHEDULER_TICK_SECONDS", "300")), db=_os.path.basename(str(DB_PATH)),
+                   build=build)
 
 @admin_bp.route("/admin/create-client", methods=["POST"])
 @admin_required

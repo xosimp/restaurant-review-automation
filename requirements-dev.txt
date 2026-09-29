@@ -1,5 +1,16 @@
-# Test/CI-only dependencies — not installed on Railway.
+# Test/CI-only dependencies — not installed on Railway. Pinned exactly, like
+# the production lock they extend, so CI tests what it tested yesterday.
 -r requirements.txt
-pytest>=8.0.0
-pytest-xdist>=3.6  # parallel runs: pytest -n auto --dist loadfile
-pyflakes>=3.0
+execnet==2.1.2
+    # via pytest-xdist
+iniconfig==2.3.0
+    # via pytest
+pluggy==1.6.0
+    # via pytest
+pyflakes==4.0.0
+    # tests/test_undefined_names.py
+pygments==2.21.0
+    # via pytest
+pytest==9.1.1
+pytest-xdist==3.8.0
+    # parallel runs: pytest -n auto --dist loadfile

@@ -139,7 +139,9 @@ def test_a_locked_database_fails_the_boot_migration_loudly(tmp_path, monkeypatch
 
 def test_a_failed_boot_init_stops_the_process():
     src = open(os.path.join(ROOT, "hosted_dashboard.py"), encoding="utf-8").read()
-    at = src.index('print(f"DB init error: {_e}")')
+    # Anchored on the message, not the call: the handler logs it with its
+    # traceback now (logging_setup) instead of printing it.
+    at = src.index("DB init error")
     handler_start = src.rindex("except Exception as _e:", 0, at)
     lines = src[handler_start:].splitlines()[1:]
     body = []

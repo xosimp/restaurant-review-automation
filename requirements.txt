@@ -1,20 +1,99 @@
-# Core — pinned exactly (security audit: supply chain). Bump deliberately.
-anthropic>=0.105.0,<1.0
-flask==3.1.3
-werkzeug==3.1.8
-stripe>=8.0.0,<12.0.0
-sentry-sdk[flask]==2.8.0
-
-# Infrastructure
-gunicorn>=21.0.0,<24.0.0
-python-dotenv==1.2.2
-requests==2.33.1
-schedule==1.2.2
-resend>=0.8.0,<3.0
-reportlab>=4.0.0,<5.0
-PyJWT>=2.8.0,<3.0
+# LOCKFILE — generated from requirements.in. Do not edit versions by hand.
+#
+# Every package the app runs on, direct and transitive, pinned exactly: the
+# set production ran on 9/28/26 under Python 3.12.7 (.python-version).
+# Railway (Nixpacks) installs this file. CI installs it with --no-deps and
+# runs `pip check`, so a package missing from the lock, or a pin another
+# package refuses, fails CI before it can reach a deploy.
+#
+# To change a version: edit requirements.in, then, under Python 3.12,
+#   pip install pip-tools && pip-compile --output-file=requirements.txt requirements.in
+# and review the diff (put this header back).
+annotated-types==0.8.0
+    # via pydantic
+anthropic==0.125.0
+    # via -r requirements.in
+anyio==4.15.1
+    # via anthropic, httpx
+blinker==1.9.0
+    # via flask, sentry-sdk
+certifi==2026.7.22
+    # via httpcore, httpx, requests, sentry-sdk
+cffi==2.1.1
+    # via cryptography
+charset-normalizer==3.5.1
+    # via reportlab, requests
+click==8.5.0
+    # via flask
 cryptography==48.0.0
-pypdf>=4.0,<6.0
-qrcode[pil]>=7.4.0,<9.0
-httpx[http2]>=0.27.0,<1.0
+    # via -r requirements.in
+distro==1.9.0
+    # via anthropic
+docstring-parser==0.18.0
+    # via anthropic
+flask==3.1.3
+    # via -r requirements.in, sentry-sdk
+gunicorn==23.0.0
+    # via -r requirements.in
+h11==0.16.0
+    # via httpcore
+h2==4.4.1
+    # via httpx
+hpack==4.2.0
+    # via h2
+httpcore==1.0.9
+    # via httpx
+httpx[http2]==0.28.1
+    # via -r requirements.in, anthropic
+hyperframe==6.1.0
+    # via h2
+idna==3.20
+    # via anyio, httpx, requests
+itsdangerous==2.2.0
+    # via flask
+jinja2==3.1.6
+    # via flask
+jiter==0.17.0
+    # via anthropic
+markupsafe==3.0.3
+    # via flask, jinja2, sentry-sdk, werkzeug
+packaging==26.3
+    # via gunicorn
 pillow==12.2.0
+    # via -r requirements.in, qrcode, reportlab
+pycparser==3.0
+    # via cffi
+pydantic==2.13.5
+    # via anthropic
+pydantic-core==2.46.5
+    # via pydantic
+pyjwt==2.15.1
+    # via -r requirements.in
+pypdf==5.9.0
+    # via -r requirements.in
+python-dotenv==1.2.2
+    # via -r requirements.in
+qrcode[pil]==8.2
+    # via -r requirements.in
+reportlab==4.5.1
+    # via -r requirements.in
+requests==2.33.1
+    # via -r requirements.in, resend, stripe
+resend==2.48.0
+    # via -r requirements.in
+schedule==1.2.2
+    # via -r requirements.in
+sentry-sdk[flask]==2.8.0
+    # via -r requirements.in
+sniffio==1.3.1
+    # via anthropic
+stripe==11.6.0
+    # via -r requirements.in
+typing-extensions==4.16.0
+    # via anthropic, anyio, pydantic, pydantic-core, resend, stripe, typing-inspection
+typing-inspection==0.4.4
+    # via pydantic
+urllib3==2.8.0
+    # via requests, sentry-sdk
+werkzeug==3.1.8
+    # via -r requirements.in, flask

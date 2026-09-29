@@ -70,8 +70,9 @@ def test_every_send_site_goes_through_a_guarded_path():
     offenders = []
     for path in glob.glob("*.py"):
         src = open(path, encoding="utf-8").read()
-        # status_manager posts through requests too (guarded); anything else is new.
-        if "api.resend.com" in src and path not in ("emails.py", "status_manager.py"):
+        # provider_health GETs /domains to check the key (it sends nothing; the
+        # probe moved there from status_manager); anything else is new.
+        if "api.resend.com" in src and path not in ("emails.py", "provider_health.py"):
             offenders.append(path)
         # Raw SDK sends — every one of these is blocked by conftest's
         # resend.Emails.send patch. A new file appearing here means a new

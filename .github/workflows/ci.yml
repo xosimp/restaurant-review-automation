@@ -11,13 +11,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The same interpreter production runs (.python-version; Nixpacks
+      # reads the same file), not "whatever 3.12 is today".
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version-file: .python-version
           cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
 
-      - name: Install dependencies
-        run: pip install -r requirements-dev.txt
+      - name: Install the locked dependencies
+        # --no-deps: exactly what the lock names and nothing else, so the
+        # next step can prove the lock is complete.
+        run: pip install --no-deps -r requirements-dev.txt
+
+      - name: The lockfile is complete and consistent
+        # Fails when a locked package needs something the lock left out, or
+        # a version another package refuses. Railway installs the same file.
+        run: pip check
 
       - name: Compile every module
         run: python -m py_compile *.py
@@ -39,7 +51,7 @@ jobs:
           RESEND_API_KEY: ""
 
   audit:
-    # Known-vulnerability scan of the pinned dependencies. Non-blocking for
+    # Known-vulnerability scan of the locked dependencies. Non-blocking for
     # now (an advisory with no fix must not stop a deploy); read it.
     runs-on: ubuntu-latest
     continue-on-error: true
@@ -47,6 +59,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version-file: .python-version
       - name: pip-audit
         run: pip install pip-audit && pip-audit -r requirements.txt

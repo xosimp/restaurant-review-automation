@@ -25,6 +25,15 @@ from functools import wraps
 # API_KEY not set" even though .env plainly has a working key.
 from dotenv import load_dotenv
 load_dotenv(pathlib.Path(__file__).parent / ".env")
+# One log format for the whole process — level, logger, request id, JSON on
+# Railway — installed before anything below logs (logging_setup, #38).
+# scheduler.py's basicConfig is a no-op after this, which is intended.
+import logging_setup as _logging_setup
+_logging_setup.configure()
+import logging as _logging
+_boot_log = _logging.getLogger("boot")
+import time as _boot_time
+_BOOT_STARTED = _boot_time.monotonic()
 PORT = int(os.getenv("PORT", 5000))
 from flask import Flask, render_template, request, jsonify, redirect, url_for, send_file
 from models import get_conn, get_restaurant, get_review_stats, get_reviews_data, get_top_issues, get_sentiment_trend, is_full_tier, get_active_modules
@@ -41,6 +50,9 @@ if _SENTRY_DSN:
         traces_sample_rate=0.1,   # 10% of requests for performance tracing
         profiles_sample_rate=0.0, # off — not needed yet
         environment=os.getenv("RAILWAY_ENVIRONMENT", "production"),
+        # The deployed commit, so an error is tied to the build that raised
+        # it and a regression shows as new in a release (#38, #77).
+        release=(os.getenv("RAILWAY_GIT_COMMIT_SHA") or os.getenv("GIT_COMMIT") or None),
         send_default_pii=False,   # never send PII to Sentry
     )
 
@@ -122,38 +134,51 @@ def inv_banner_gradient(waste_tone, annual_waste, annual_recoverable):
     gh = f"#{int(22+grn_i*(26-22)):02x}{int(43+grn_i*(102-43)):02x}{int(30+grn_i*(64-30)):02x}"
     return f"linear-gradient(to right,{rh} 0%,{gh} 65%,{gh} 100%)"
 
+# /health answers from a result at most this old: it is public and
+# unthrottled, and the write probe takes the write lock (RELIABILITY-25).
+_HEALTH_CACHE_SECONDS = 5
+_health_cache = {"at": None, "result": None}
+
+
 @app.route("/health")
 def health():
-    """Health check for UptimeRobot and Railway.
+    """Health check for Railway's deploy-time check and an external uptime
+    monitor. Read-only: it writes nothing and sends nothing (#94).
 
-    Checks the database AND the background scheduler's heartbeat. The
-    scheduler runs as a thread inside this process and cannot notice its own
-    death — so if it stops, nothing raises and nothing 500s. Scheduled
-    marketing posts, nightly POS syncs and review fetches simply stop
-    happening, quietly, and the first sign is a client asking why their post
-    never appeared. Checking it from a REQUEST thread is the only place that
-    can see it.
+    Two readers, one body (status_manager.health_snapshot has the detail):
 
-    Deliberately still 200 when the scheduler is stale, and likewise when
-    the volume is filling: the web app is up and serving, and failing the
-    healthcheck would put a deploy problem on top of a real one. The signal
-    goes in the body and on the status page, where the operator digest and
-    /status can act on it. The one 500 is an unreadable database — the case
-    where a new deployment genuinely should not replace a working one.
+      * Railway promotes a deploy on a 200. /health is a 200 while the app
+        is serving — including when it is DEGRADED (stale scheduler, low
+        disk, stale backup, overdue jobs, a long-held write lock) — and a
+        500 only when this deployment should not take traffic: a database
+        it cannot open, read or write, a schema missing what this code
+        expects, or an empty database on a volume that has held client data.
+        Failing the deploy check for a degraded platform would block the
+        very deploy that fixes it.
+      * An uptime monitor (Better Stack, UptimeRobot, healthchecks.io —
+        docs/ops/RECOVERY.md) polls every 1-5 minutes and alerts unless the
+        body contains the keyword `"status":"ok"` (#3), so a degraded 200
+        pages exactly like a 500. `problems` names what is wrong; backup
+        age, disk and the scheduler heartbeat are in the body.
 
-    The body lives in status_manager.health_snapshot so it can be tested:
-    importing THIS module boots the database, seeds demo data, starts the
-    scheduler thread and re-runs csrf_protect on already-registered
-    blueprints, which is the same reason http_layer.py was extracted.
+    Paging from inside the process runs on the supervisor thread
+    (platform_monitor.PlatformSupervisor), not here: a request path that
+    wrote and sent was a GET with side effects, and it only ran when
+    something happened to poll it.
     """
-    from status_manager import health_snapshot
-    payload, status = health_snapshot()
-    if status != 200:
-        return jsonify(**payload), status
+    now = _boot_time.monotonic()
+    cached = _health_cache["result"]
+    if cached is not None and _health_cache["at"] is not None and now - _health_cache["at"] < _HEALTH_CACHE_SECONDS:
+        payload, status = cached
+    else:
+        from status_manager import health_snapshot
+        payload, status = health_snapshot()
+        _health_cache["at"], _health_cache["result"] = now, (payload, status)
+    payload = dict(payload)
     sha = os.getenv("RAILWAY_GIT_COMMIT_SHA") or os.getenv("GIT_COMMIT") or ""
-    if sha:
+    if sha and status == 200:
         payload["build"] = sha[:12]
-    return jsonify(**payload), 200
+    return jsonify(**payload), status
 
 @app.template_filter("format_num")
 def format_num(v):
@@ -293,6 +318,9 @@ if not _secret_key:
     # Every module that signs something (2FA pending tokens, connect state,
     # reset codes) reads SECRET_KEY; one per-process key for all of them.
     os.environ["SECRET_KEY"] = _secret_key
+    # Marked, because writing it back made SECRET_KEY look set to anything
+    # that checks presence — the admin key panel included (#125).
+    os.environ["CAVNAR_SECRET_KEY_EPHEMERAL"] = "1"
     print("WARNING: SECRET_KEY not set — sessions will invalidate on every restart. Set SECRET_KEY in Railway env vars.")
 app.secret_key = _secret_key
 
@@ -977,6 +1005,15 @@ def server_error(e):
 
 # ── Module-level init (runs under gunicorn/Railway AND direct python) ────────
 
+# On Railway the database must be on the volume: a boot without it served an
+# empty platform and reported healthy (#108). Raises, so the boot fails and
+# the refusal is the first thing in the deploy log. Off Railway, a no-op.
+import models as _models_boot
+_models_boot.require_volume()
+import status_manager as _sm_boot
+import platform_monitor as _pm_boot
+_BOOT_ID = None
+
 try:
     from models import init_db as _init_db, ensure_columns as _ec, init_email_log as _iel, init_onboarding_emails as _ioe
     from models import init_staff_notes as _isn, init_staff_availability as _isa
@@ -995,8 +1032,21 @@ try:
     # (db_restore.py). A refused one raises, so the deploy fails loudly.
     import db_restore as _dbr
     _dbr.restore_if_requested()
+    # Before init_db and the seeds, which would build a schema and an admin
+    # over an emptied database and make it look like a platform: a volume
+    # whose marker says it held client restaurants must still hold them.
+    _sm_boot.assert_platform_not_emptied()
     _init_db()
+    # This boot, in boot_events (#76): the row before it says whether the
+    # last process ended cleanly. After init_db, never before it: creating
+    # the file first would stop adopt_legacy_db from ever running.
+    _BOOT_ID = _pm_boot.record_boot_start()
     _init_auth()
+    # Telemetry tables (boot events, 5xx log, request rollups) and the
+    # provider probe ledger — created here, never on a request.
+    _pm_boot.init_platform_tables()
+    import provider_health as _ph_boot
+    _ph_boot.init_provider_health()
     # The public status page's service rows. Seeded here, once, rather than
     # by /status on every public GET (SEC-38); the scheduler's health check
     # also re-seeds, so a service added to SERVICES appears without a deploy.
@@ -1037,10 +1087,14 @@ try:
         pass
     print("DB init OK")
 except Exception as _e:
-    print(f"DB init error: {_e}")
+    _boot_log.exception("DB init error: %s", _e)
+    _pm_boot.record_boot_failed(_BOOT_ID, _e)
     # Fail the boot. Carrying on served every request on a half-migrated
-    # schema and let a refused restore (above) promote as healthy; a failed
-    # deploy instead leaves the previous container serving (DATA-11).
+    # schema and let a refused restore (above) promote as healthy (DATA-11).
+    # With the volume attached Railway never runs two deployments at once,
+    # so the previous container is already stopped when this one boots: a
+    # failed boot is downtime until a redeploy or rollback, which is still
+    # better than serving a broken or empty platform.
     raise
 
 # ── Admin account seed (module-level so it runs under Gunicorn too) ──────────
@@ -1085,17 +1139,53 @@ except Exception as _boot_e:
 # idles and takes over only if the holder stops heartbeating. Unsetting the
 # variable is therefore also the rollback.
 _RUN_SCHEDULER_IN_WEB = os.getenv("RUN_SCHEDULER_IN_WEB", "1").strip().lower() not in ("0", "false", "no")
+import threading as _sched_threading
+_SCHED_THREAD = None
+_SCHED_START_FAILED = False
 if _RUN_SCHEDULER_IN_WEB:
     try:
         from scheduler import start_scheduler as _ss
         # Returns None off Railway: see scheduler.scheduling_allowed.
-        if _ss() is not None:
+        _SCHED_THREAD = _ss()
+        if _SCHED_THREAD is not None:
             print("Scheduler started OK")
     except Exception as _e:
-        print(f"Scheduler start error: {_e}")
+        # A scheduler that cannot start is a platform with no jobs. It only
+        # printed; now it is logged with its traceback, captured for the
+        # digest, and the supervisor below keeps retrying it (with backoff)
+        # through a never-started placeholder thread.
+        _boot_log.exception("Scheduler start error: %s", _e)
+        try:
+            import ops as _ops_sched
+            _ops_sched.capture(_e, job="scheduler_start", context="web boot")
+        except Exception as _cap_e:
+            _boot_log.warning("could not record the scheduler start failure: %s", _cap_e)
+        _SCHED_THREAD = _sched_threading.Thread(name="scheduler-not-started")
+        _SCHED_START_FAILED = True
 else:
     print("Scheduler not started in web process (RUN_SCHEDULER_IN_WEB=0) — "
           "worker.py is expected to be running it")
+
+
+def _restart_scheduler_loop():
+    """The supervisor's way back when the scheduler thread has died: a new
+    thread on scheduler_loop, whose lease and claims make it safe to start
+    again. Only ever called when the old thread is dead — never beside a
+    live one, which would run every job twice under one lease owner."""
+    global _SCHED_START_FAILED
+    import scheduler as _sched_mod
+    if not _sched_mod.scheduling_allowed():
+        return None
+    t = _sched_threading.Thread(target=_sched_mod.scheduler_loop, daemon=True, name="scheduler")
+    t.start()
+    if _SCHED_START_FAILED:
+        # start_scheduler never got as far as registering the clean-exit
+        # lease release; do it once for the loop that did start.
+        import atexit
+        import ops as _ops_lease
+        atexit.register(_ops_lease.release_scheduler_lease)
+        _SCHED_START_FAILED = False
+    return t
 
 # Enable WAL mode for concurrent access
 try:
@@ -1126,6 +1216,57 @@ def og_image():
 # The demo accounts are seeded and refreshed off the request path (demo_seed.py).
 import demo_seed as _demo_seed
 _demo_seed.start_background_seed()
+
+
+# ── After boot: warm-up, migrations that need a key, the boot record, and
+# the supervisor thread ─────────────────────────────────────────────────────
+def _post_boot():
+    import atexit
+    import threading
+    # The reference schema /health compares against, built now rather than
+    # inside the first /health — i.e. inside Railway's deploy check (#134).
+    try:
+        _boot_log.info("reference schema built in %ss", _sm_boot.warm_reference_schema())
+    except Exception as e:
+        _boot_log.warning("reference schema not built at boot (the first /health builds it): %s", e)
+    # Plaintext client credentials are re-saved encrypted once CREDENTIAL_KEY
+    # is set (#102); a no-op without a working key, and after the first pass.
+    try:
+        import credentials as _cred_boot
+        res = _cred_boot.encrypt_existing()
+        if res.get("encrypted") or res.get("failed"):
+            _boot_log.info("credentials encrypted at boot: %s", res)
+    except Exception as e:
+        _boot_log.exception("credential encryption pass failed: %s", e)
+    # Now that this database is known good, say on the volume that it holds
+    # client data, so an emptied one is refused from here on (#108).
+    _sm_boot.record_volume_marker()
+    _pm_boot.record_boot_ready(_BOOT_ID, (_boot_time.monotonic() - _BOOT_STARTED) * 1000)
+    # A crash loop pages Will (at most hourly) — off the boot path.
+    threading.Thread(target=_pm_boot.page_if_crash_looping, args=(_BOOT_ID,), daemon=True,
+                     name="boot-crash-check").start()
+
+    supervisor = _pm_boot.PlatformSupervisor(
+        scheduler_thread=_SCHED_THREAD if _RUN_SCHEDULER_IN_WEB else None,
+        restart_scheduler=_restart_scheduler_loop if _RUN_SCHEDULER_IN_WEB else None)
+    _pm_boot.SUPERVISOR = supervisor
+    stop = threading.Event()
+    threading.Thread(target=supervisor.run, args=(stop,), daemon=True, name="platform-supervisor").start()
+
+    def _at_exit():
+        # A clean shutdown: stop the supervisor, persist the minute still
+        # filling, and stamp this boot as ended cleanly.
+        supervisor.stopping = True
+        stop.set()
+        try:
+            supervisor.flush(include_current=True)
+        except Exception as e:
+            _boot_log.warning("final telemetry flush failed: %s", e)
+        _pm_boot.record_boot_stop(_BOOT_ID)
+    atexit.register(_at_exit)
+
+
+_post_boot()
 
 if __name__ == "__main__":
     print(f"\n  Hosted dashboard → http://localhost:{PORT}")

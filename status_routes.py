@@ -5,6 +5,8 @@ from status_manager import (
     get_all_statuses, update_service_status, get_open_incidents,
     get_recent_incidents, get_incident_updates, create_incident,
     update_incident, overall_status, seed_default_services, SERVICES,
+    effective_statuses, get_incident, INCIDENT_STATUSES, INCIDENT_SEVERITIES,
+    SERVICE_STATUSES,
 )
 # seed_default_services is imported for the tests that prove /status never
 # calls it; the rows are seeded at boot (hosted_dashboard.py).
@@ -22,7 +24,10 @@ def status_page():
     # No seeding here: this is a public GET, and it used to write the
     # services table on every hit (SEC-38). The rows are seeded once at boot
     # (hosted_dashboard.py) and get_all_statuses() reads whatever exists.
-    statuses  = get_all_statuses()
+    # An open incident holds the services it names at its severity, and sets
+    # the banner, whatever the automated checks last wrote (#61).
+    open_incidents = get_open_incidents()
+    statuses  = effective_statuses(get_all_statuses(), open_incidents)
     incidents = get_recent_incidents(limit=30)
     for inc in incidents:
         try:
@@ -38,7 +43,7 @@ def status_page():
         day = inc["created_at"][:10]
         grouped.setdefault(day, []).append(inc)
 
-    banner = overall_status(statuses)
+    banner = overall_status(statuses, open_incidents)
     # Convert current time to CT (UTC-5 standard / UTC-6 daylight — approximate with fixed offset)
     try:
         from zoneinfo import ZoneInfo
@@ -61,14 +66,15 @@ def status_page():
 
 @status_bp.route("/api/status")
 def api_status():
-    statuses  = get_all_statuses()
     incidents = get_open_incidents()
+    statuses  = effective_statuses(get_all_statuses(), incidents)
     for inc in incidents:
         try:
             inc["affected_keys"] = json.loads(inc["affected_keys"] or "[]")
         except Exception:
             inc["affected_keys"] = []
-    return jsonify({"overall": overall_status(statuses), "services": statuses, "incidents": incidents})
+    return jsonify({"overall": overall_status(statuses, incidents), "services": statuses,
+                    "incidents": incidents})
 
 
 # ── Admin endpoints (require login) ──────────────────────────────────────────
@@ -114,41 +120,100 @@ def admin_update_status():
     message = data.get("message", "").strip() or None
     if not key:
         return jsonify({"ok": False, "error": "missing service_key"}), 400
-    valid = {"operational", "degraded", "outage", "maintenance"}
-    if status not in valid:
+    if key not in _SERVICE_KEYS:
+        return jsonify({"ok": False, "error": "unknown service_key"}), 400
+    if status not in SERVICE_STATUSES:
         return jsonify({"ok": False, "error": "invalid status"}), 400
     update_service_status(key, status, message)
     return jsonify({"ok": True})
+
+
+_SERVICE_KEYS = {s["key"] for s in SERVICES}
+
+
+def _text(data, key, default=""):
+    v = data.get(key, default)
+    return v.strip() if isinstance(v, str) else default
 
 
 @status_bp.route("/admin/status/incident", methods=["POST"])
 def admin_create_incident():
     _require_admin()
     data     = _json_body()
-    title    = data.get("title", "").strip()
-    body     = data.get("body", "").strip()
+    title    = _text(data, "title")
+    body     = _text(data, "body")
     keys     = data.get("affected_keys", [])
-    severity = data.get("severity", "degraded")
-    status   = data.get("status", "investigating")
+    severity = _text(data, "severity", "degraded") or "degraded"
+    status   = _text(data, "status", "investigating") or "investigating"
     if not title:
         return jsonify({"ok": False, "error": "title required"}), 400
-    inc_id = create_incident(title, body, keys, severity, status)
+    # Validated here rather than left to the table's CHECK constraints, which
+    # answered a bad value with a 500 (#61).
+    if severity not in INCIDENT_SEVERITIES:
+        return jsonify({"ok": False, "error": f"severity must be one of {', '.join(INCIDENT_SEVERITIES)}"}), 400
+    if status not in INCIDENT_STATUSES:
+        return jsonify({"ok": False, "error": f"status must be one of {', '.join(INCIDENT_STATUSES)}"}), 400
+    if not isinstance(keys, list) or any(k not in _SERVICE_KEYS for k in keys):
+        return jsonify({"ok": False, "error": "affected_keys must be service keys from /admin/status/services"}), 400
+    inc_id = create_incident(title[:200], body[:4000], keys, severity, status)
     return jsonify({"ok": True, "id": inc_id})
 
 
 @status_bp.route("/admin/status/incident/<int:inc_id>/update", methods=["POST"])
 def admin_update_incident(inc_id):
+    """Post an update to an incident, or resolve it (status "resolved").
+    It existed with no caller and no validation: an unknown id wrote an
+    update row for an incident that did not exist, and a status outside the
+    table's CHECK was a 500."""
     _require_admin()
     data    = _json_body()
-    message = data.get("message", "").strip()
-    status  = data.get("status", "monitoring")
+    message = _text(data, "message")
+    status  = _text(data, "status", "monitoring") or "monitoring"
     if not message:
         return jsonify({"ok": False, "error": "message required"}), 400
-    update_incident(inc_id, message, status)
-    return jsonify({"ok": True})
+    if status not in INCIDENT_STATUSES:
+        return jsonify({"ok": False, "error": f"status must be one of {', '.join(INCIDENT_STATUSES)}"}), 400
+    if get_incident(inc_id) is None:
+        return jsonify({"ok": False, "error": "No such incident."}), 404
+    update_incident(inc_id, message[:4000], status)
+    return jsonify({"ok": True, "incident": get_incident(inc_id)})
+
+
+@status_bp.route("/admin/status/incident/<int:inc_id>/resolve", methods=["POST"])
+def admin_resolve_incident(inc_id):
+    """Resolve an incident, with an optional closing message."""
+    _require_admin()
+    data = _json_body()
+    inc = get_incident(inc_id)
+    if inc is None:
+        return jsonify({"ok": False, "error": "No such incident."}), 404
+    if inc.get("status") == "resolved":
+        return jsonify({"ok": True, "incident": inc, "already_resolved": True})
+    update_incident(inc_id, (_text(data, "message") or "Resolved.")[:4000], "resolved")
+    return jsonify({"ok": True, "incident": get_incident(inc_id)})
+
+
+@status_bp.route("/admin/status/incidents")
+def admin_list_incidents():
+    """Open incidents (with their updates), and the last few resolved — what
+    the console lists with Update and Resolve."""
+    _require_admin()
+    open_incs = [get_incident(i["id"]) for i in get_open_incidents()]
+    recent = [i for i in get_recent_incidents(limit=20) if i.get("status") == "resolved"][:10]
+    for inc in recent:
+        try:
+            inc["affected_keys"] = json.loads(inc.get("affected_keys") or "[]")
+        except (TypeError, ValueError):
+            inc["affected_keys"] = []
+    return jsonify({"ok": True, "open": [i for i in open_incs if i], "resolved": recent,
+                    "statuses": list(INCIDENT_STATUSES), "severities": list(INCIDENT_SEVERITIES)})
 
 
 @status_bp.route("/admin/status/services")
 def admin_list_services():
     _require_admin()
-    return jsonify({"services": SERVICES, "statuses": get_all_statuses()})
+    return jsonify({"services": SERVICES, "statuses": get_all_statuses(),
+                    "effective": effective_statuses(get_all_statuses(), get_open_incidents()),
+                    "service_statuses": list(SERVICE_STATUSES),
+                    "incident_statuses": list(INCIDENT_STATUSES),
+                    "incident_severities": list(INCIDENT_SEVERITIES)})
