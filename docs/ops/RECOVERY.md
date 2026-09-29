@@ -74,7 +74,8 @@ Three things page, and they fail independently:
    every five minutes when something needs a person — a stale heartbeat, a
    wedged job or stalled loop, an overdue job, low or critical disk, a
    refused write, a stale / failed / off-site-less backup, a DSR night
-   missing past its deadline — at most once an hour per problem, and only
+   missing past its deadline, a retention window set under its floor
+   (`retention_floor`) — at most once an hour per problem, and only
    on Railway. The same unresolved problem repeats hourly until it is
    fixed. Every page is an `operator_alerts` row (Operations → Jobs shows
    the last one and whether it went). Owners are never paged.
@@ -472,6 +473,7 @@ The admin console needs a password, and — once enrolled or with
 | A client's alerts stopped mid-day | An alert storm cap (10 alerts in an hour caps the restaurant until its local midnight; health alerts still go). Lift it on the client page or on Operations → Push & alerts (`POST /admin/api/client/<rid>/storm-cap/lift`) |
 | Some restaurants not fetched | `/admin` → Overview's *Needs you* list (`fleet:fetch_coverage`, and a client's `fetch_behind`). A bounded pass resumes from its cursor next slot; **Fetch reviews now** on the client runs one restaurant on the admin pool |
 | A job failed | `/admin` → Operations → Jobs, then **Run now** there |
+| A table stopped being pruned (`retention_floor` page) | A `RETAIN_*` variable was set under that table's floor (`ops._RETENTION_FLOOR_DAYS`; the floors exist because a reader looks back that far). `ops.prune_ledgers` refuses the table — nothing is deleted from it — marks the run partial, captures a failure and pages once an hour. Operations → Jobs names each refused table with its window and floor (`retention` on the jobs payload, and `refused` / `capped` kept in the `prune_ledgers` run's result). Fix or remove the variable in Railway; the next night's pass prunes it again. `capped` is not a fault: more rows were past their window than one pass deletes, and the rest go on the following nights |
 | A billing email never went | `/admin` → Customers → Billing → *Billing health* (`GET /admin/api/billing/health`) lists failed and waiting `owed_sends`; a client's own are on its Billing tab. To retry one after fixing the cause: `UPDATE owed_sends SET status='pending', next_attempt_at=datetime('now'), attempts=0 WHERE id=<id>;` — the `owed_sends` job drains it on its next tick (only on Railway; Run now from Operations → Jobs sends it at once) |
 | Stripe and the console disagree | Billing health → *Nightly reconcile*: `billing_reconcile` holds what the `stripe_reconcile` job (3:30am CT, `billing_jobs.reconcile_stripe`) found; it never changes billing status itself — fix the account by hand (change plan, attach customer, lift hold), then run `stripe_reconcile` again from Operations → Jobs |
 | A client is paused and cannot resume | A HOLD (`pause_reason` dispute, refund or admin). Only an admin lifts it: the client's Billing tab → **Lift hold** (`POST /admin/api/billing/<rid>/lift-hold {note, status?}`), which lifts every location held for the same reason |
