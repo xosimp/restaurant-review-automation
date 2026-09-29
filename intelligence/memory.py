@@ -26,8 +26,11 @@ _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct",
 
 def busiest_days(restaurant_id, days=84, db_path=DB_PATH) -> dict:
     """Sales share by weekday over the last 12 weeks, from the restaurant's
-    own daily history. None when fewer than 4 weeks are on file."""
-    floor = (date.today() - timedelta(days=days)).isoformat()
+    own daily history. None when fewer than 4 weeks are on file. The window
+    ends on the restaurant's own day, not the server's (memory audit
+    9/29/26, "outside": date.today() is UTC on Railway)."""
+    from time_utils import restaurant_now_by_id
+    floor = (restaurant_now_by_id(restaurant_id).date() - timedelta(days=days)).isoformat()
     conn = get_conn(db_path)
     try:
         rows = conn.execute("SELECT date, sales, labor_pct FROM labor_daily_history WHERE restaurant_id=? AND date >= ? "

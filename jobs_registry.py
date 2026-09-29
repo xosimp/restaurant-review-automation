@@ -193,6 +193,13 @@ JOBS = {
         description="Each restaurant's four value figures into value_figures_daily, which the Intelligence page "
                     "sums (bounded, resumable)",
         target=("intelligence.dashboard", "snapshot_value_figures"), max_minutes=55, lane="intel"),
+    "value_snapshots": dict(
+        cadence="6am CT daily, after outcome evaluations", sla_minutes=_D, sends=False, runnable=True,
+        label="Value history",
+        description="Each restaurant's measured value point for its own day into value_snapshots (the Home "
+                    "sparkline), for every restaurant in service — not only the days someone opened Home "
+                    "(bounded, resumable)",
+        target=("value_delivered", "run_value_snapshots"), max_minutes=25, retry=True),
     "competitor_analysis": dict(
         cadence="Mon 6am CT (catch-up to Wed), then a daily retry", sla_minutes=_W, sends=False, runnable=True,
         label="Competitor analysis", description="Weekly competitor analysis for full-tier clients (Places + Claude), on the Intel lane",

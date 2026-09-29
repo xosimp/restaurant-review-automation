@@ -399,3 +399,57 @@ def rating_gap_beyond_noise(a, n_a, b, n_b, z=1.0) -> bool:
     if se_a is None or se_b is None:
         return False
     return abs(a - b) > z * (se_a ** 2 + se_b ** 2) ** 0.5
+
+
+# ── who set a target (memory audit 9/29/26, "change_log") ──────────────────
+# models.update_restaurant records, beside every target stamped 'set', who
+# set it (restaurants.target_setters_json: principal | delegate | admin —
+# permissions.answer_authority of the login that saved it). "your target"
+# is said only when an account holder set it: Will setting 28% at onboarding
+# read to the owner as "your 28% target". A target set before the setter was
+# recorded (no entry) keeps "your target", as it always read. target_label
+# and target_phrase take these words for a 'set' target (setter_label,
+# setter_phrase) — the owner's goal, when one applies, comes first.
+SETTER_TARGET_LABELS = {"admin": "the target Cavnar AI set", "delegate": "the target a manager set"}
+
+
+def target_setter(restaurant, kind):
+    """'principal' | 'delegate' | 'admin' for a target stamped 'set', or
+    None when nobody was recorded (before 9/29/26) or it is not 'set'."""
+    field, src_field = _TARGET_FIELDS[kind]
+    if restaurant is None:
+        return None
+    src = restaurant.get(src_field) if isinstance(restaurant, dict) else getattr(restaurant, src_field, None)
+    if src != "set":
+        return None
+    raw = restaurant.get("target_setters_json") if isinstance(restaurant, dict) \
+        else getattr(restaurant, "target_setters_json", None)
+    try:
+        import json as _json
+        who = (_json.loads(raw) if isinstance(raw, str) else (raw or {})).get(field)
+    except (TypeError, ValueError, AttributeError):
+        return None
+    return who if who in ("principal", "delegate", "admin") else None
+
+
+def setter_label(restaurant, kind) -> str:
+    """How a 'set' target is named: "your target" (an account holder set
+    it, or nobody was recorded), "the target Cavnar AI set" or "the target a
+    manager set"."""
+    return SETTER_TARGET_LABELS.get(target_setter(restaurant, kind), "your target")
+
+
+def setter_phrase(restaurant, kind, value) -> str:
+    """A 'set' target in a sentence: "your 28% target", "the 28% target
+    Cavnar AI set" or "the 28% target a manager set"."""
+    try:
+        v = f"{float(value):g}%"
+    except (TypeError, ValueError):
+        v = "—"
+    who = target_setter(restaurant, kind)
+    if who == "admin":
+        return f"the {v} target Cavnar AI set"
+    if who == "delegate":
+        return f"the {v} target a manager set"
+    return f"your {v} target"
+
