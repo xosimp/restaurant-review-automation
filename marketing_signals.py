@@ -681,14 +681,68 @@ def _setting_facts(restaurant) -> dict:
     return {"patio": patio, "takeout": takeout}
 
 
+# What the generator is told measurably worked here (memory audit 9/29/26,
+# mkt_results): the sales-lift verdicts by post kind, occasion and dish that
+# only Analytics, Ask and one Home line used to read. A group is named only
+# with MIN_GROUP_POSTS measured posts (_group_lift's floor), with its count,
+# its median and its verdict from its posts' own verdicts.
+MIN_GROUP_POSTS = 2
+_GROUP_LABELS = (("by_kind", "post kind"), ("by_occasion", "occasion"), ("by_dish", "dish"))
+
+
+def measured_lines(restaurant_id, db_path: str = DB_PATH, summary=None) -> list:
+    """["dish posts: 3 measured, median sales +12% in the 2 days after, most
+    lifted"], strongest first per grouping — [] until a group has
+    MIN_GROUP_POSTS measured posts. Never raises."""
+    try:
+        summ = summary if summary is not None else attribution_summary(restaurant_id, db_path=db_path)
+    except Exception as e:
+        log.warning("attribution summary unavailable for %s: %s", restaurant_id, e)
+        return []
+    if not summ.get("ok"):
+        return []
+    verdict_words = {"lifted": "most of them lifted sales", "dropped": "most of them dropped",
+                     "no_clear_change": "no clear change"}
+    days = max(1, ATTRIBUTION_WINDOW_HOURS // 24)
+    out = []
+    for key, label in _GROUP_LABELS:
+        for g in (summ.get(key) or [])[:3]:
+            if int(g.get("posts") or 0) < MIN_GROUP_POSTS:
+                continue
+            name = str(g.get("group") or "").replace("_", " ")
+            line = (f"{label} \"{name}\": {g['posts']} measured posts, median sales {g['median_lift_pct']:+.1f}% "
+                    f"in the {days} days after against the same weekdays before")
+            if g.get("median_item_lift_pct") is not None:
+                line += f", the dish's own units {g['median_item_lift_pct']:+.1f}%"
+            out.append(line + f" — {verdict_words.get(g.get('verdict'), 'no clear change')}")
+    return out
+
+
 def generation_context(restaurant_id, db_path: str = DB_PATH) -> str:
     """The three signals above, as prompt text.
 
     Appended to both the single-piece generator and the calendar so a post is
     written knowing what worked, what guests just said, and what the sky is
     doing — instead of only the restaurant's static profile.
+
+    "What worked" is measured on sales, not only likes (memory audit
+    9/29/26, mkt_results): the attribution verdicts by post kind, occasion
+    and dish (measured_lines) lead, for a restaurant that may teach a
+    learner (models.learning_eligible); the most-engaged posts follow.
     """
     parts = []
+    try:
+        import models as _models_ms
+        eligible = _models_ms.learning_eligible(restaurant_id)
+    except Exception:
+        eligible = False
+    measured = measured_lines(restaurant_id, db_path=db_path) if eligible else []
+    if measured:
+        parts.append("WHAT MEASURABLY WORKED HERE — sales after each post against the same weekdays before it "
+                     "(before and after, not proof; groups of 2+ measured posts):\n"
+                     + "\n".join(f"- {m}" for m in measured)
+                     + "\nLean toward the kinds, occasions and dishes that lifted sales here. One that showed no "
+                       "clear change is not a reason to avoid it, only not a reason to prefer it.")
 
     # best_posts' ranking and floor (AUX-13): nothing under six measured
     # posts, so one lucky post is never "what performed best".

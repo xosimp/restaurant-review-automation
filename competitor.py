@@ -937,6 +937,22 @@ def generate_competitor_insight(restaurant_name: str, competitors: list, owner_n
         except Exception as _we:
             print(f"[Competitor] weather context unavailable: {_we}")
 
+        # What Cavnar AI remembers about this restaurant (memory audit
+        # 9/29/26: memory_context, surface 'competitor_read' — the owner's
+        # constraints, the last read and its verdict, the answers they gave),
+        # fenced and dated M/D/YY by the reader; "" when there is nothing.
+        memory_ctx = ""
+        if restaurant_id:
+            try:
+                import memory_context as _mc
+                _mt = _mc.memory_context(restaurant_id, "competitor_read", subjects=("intel",)).text
+                if _mt:
+                    memory_ctx = ("\n\nWHAT CAVNAR AI REMEMBERS ABOUT THIS RESTAURANT — context, not evidence: a "
+                                  "recommendation the owner already answered is not made again, and nothing here "
+                                  "is a competitor fact:\n" + _mt)
+            except Exception as _me:
+                print(f"[Competitor] memory unavailable for {restaurant_id}: {_me}")
+
         from competitor_intel_format import NOTHING_TO_ACT_ON
         prompt = f"""You are the Cavnar AI Consultant analyzing the competitive landscape for {restaurant_name}.
 Today's date: {today_comp}{holiday_rec_context}{weather_ctx}
@@ -944,7 +960,7 @@ Today's date: {today_comp}{holiday_rec_context}{weather_ctx}
 {UNTRUSTED_NOTE}
 
 About {restaurant_name}:
-{profile_context}
+{profile_context}{memory_ctx}
 
 CRITICAL RULES:
 - Only recommend actions that fit {restaurant_name}'s actual concept and cuisine

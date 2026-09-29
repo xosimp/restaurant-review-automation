@@ -1729,10 +1729,12 @@ def draft_campaign_message(restaurant, campaign_type="general", topic="", goal="
     from marketing import marketing_memory_block
     voice = marketing_voice.voice_block(restaurant.id, "text")
     memory = marketing_memory_block(restaurant.id)
+    # What past texts measurably did here, by audience (mkt_results).
+    returns = returns_block(restaurant.id)
 
     prompt = (
         f"Write {intent} for {p['name']}, a {p['vibe']} in {p['neighborhood']}. "
-        f"Brand voice: {p['voice']}.{never_clause}{menu_clause}{topic_clause}{goal_clause}{voice}{memory}\n\n"
+        f"Brand voice: {p['voice']}.{never_clause}{menu_clause}{topic_clause}{goal_clause}{voice}{returns}{memory}\n\n"
         f"Rules: under {budget} characters total (this is a real text message, not an email). "
         # A guest text is refused on any stated cause ("because of you",
         # "thanks to our new chef"): the guard can't tell warmth from a claim.
@@ -3200,6 +3202,49 @@ def plan_campaign(prompt) -> dict:
 
 CAMPAIGN_RATE_MIN = 2           # campaigns a rate rests on before the page shows it
 CAMPAIGN_RATE_MIN_SENT = 10     # texts a campaign needs to count toward a rate
+
+
+def segment_returns(restaurant_id, db_path=DB_PATH, hist=None) -> dict:
+    """{segment: {"label", "back_per_100", "campaigns", "sent", "came_back"}}
+    — guests who came back within ATTRIBUTION_WINDOW_DAYS per 100 texted,
+    per audience, over campaigns whose window has closed, each with
+    CAMPAIGN_RATE_MIN_SENT texts or more, and only an audience with
+    CAMPAIGN_RATE_MIN such campaigns (campaign_overview's rule, CS-8). {}
+    until one clears it (memory audit 9/29/26, mkt_results)."""
+    hist = hist if hist is not None else campaign_history(restaurant_id, limit=50, db_path=db_path)
+    by = {}
+    for c in hist:
+        if int(c.get("sent_count") or 0) < CAMPAIGN_RATE_MIN_SENT or not c.get("window_closed"):
+            continue
+        by.setdefault(c.get("segment") or "all", []).append(c)
+    out = {}
+    for seg, rows in by.items():
+        if len(rows) < CAMPAIGN_RATE_MIN:
+            continue
+        sent = sum(int(c.get("sent_count") or 0) for c in rows)
+        back = sum(int(c.get("visits_matched") or 0) for c in rows)
+        if sent:
+            out[seg] = {"label": (SEGMENTS.get(seg) or SEGMENTS["all"])["label"], "campaigns": len(rows),
+                        "sent": sent, "came_back": back, "back_per_100": round(back / sent * 100, 1)}
+    return out
+
+
+def returns_block(restaurant_id, db_path=DB_PATH) -> str:
+    """The measured return by audience as a prompt block for the text
+    drafter, or "" (memory audit 9/29/26, mkt_results: "9 per 100 against
+    1" changed neither the draft nor the segment). Context for what to ask
+    for — never a figure to state to guests."""
+    try:
+        rets = segment_returns(restaurant_id, db_path=db_path)
+    except Exception:
+        return ""
+    if not rets:
+        return ""
+    lines = [f"- {r['label']}: {r['back_per_100']:g} came back per 100 texted, over {r['campaigns']} campaigns "
+             f"({r['came_back']} of {r['sent']})" for r in sorted(rets.values(), key=lambda r: -r["back_per_100"])]
+    return ("\nWHAT PAST TEXTS DID HERE — guests who came back within "
+            f"{ATTRIBUTION_WINDOW_DAYS} days, matched against Toast check-ins (before and after, not proof):\n"
+            + "\n".join(lines) + "\nUse it to judge what to ask of this audience. Never put a figure in the text.")
 
 
 def campaign_overview(restaurant_id, db_path=DB_PATH) -> dict:

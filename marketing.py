@@ -1336,3 +1336,59 @@ Rules:
         except Exception:
             pass
         return []
+
+
+# ── memory_context provider (memory audit 9/29/26, workstream M6) ───────────
+
+def memory_lines(req):
+    """memory_context provider 'marketing': what measurably worked in this
+    restaurant's marketing, and the owner's marketing voice, as memory lines.
+
+    For the surfaces that do not build those blocks themselves — Ask above
+    all. The marketing generators carry richer blocks of their own
+    (marketing_signals.generation_context, guest_marketing.returns_block,
+    marketing_voice.voice_block) and the reply drafter has its own voice
+    learning, so on 'marketing' and 'reply_drafter' this says nothing rather
+    than say it twice inside the budget. A login that may not read Marketing
+    gets nothing; nor does a restaurant that may not teach a learner
+    (models.learning_eligible). A line that names a dish is fenced (the
+    name is the owner's); the rest are system sentences. Never raises."""
+    if req.surface in ("marketing", "reply_drafter"):
+        return []
+    rid = req.restaurant_id
+    try:
+        if req.viewer:
+            from permissions import MARKETING_VIEW, has_permission
+            if not has_permission(req.viewer, MARKETING_VIEW):
+                return []
+        import models as _m
+        if not _m.learning_eligible(rid):
+            return []
+    except Exception:
+        return []
+    kw = {"db_path": req.db_path} if req.db_path else {}
+    out = []
+    try:
+        import marketing_signals
+        for line in marketing_signals.measured_lines(rid, **kw)[:4]:
+            out.append({"text": f"Posts here — {line} (before and after, not proof).", "source": "system",
+                        "subject": "marketing", "weight": 3.0, "trusted": 'dish "' not in line})
+    except Exception as e:
+        print(f"[marketing] memory: post results unavailable for {rid}: {e}")
+    try:
+        import guest_marketing
+        for seg, r in sorted(guest_marketing.segment_returns(rid, **kw).items(),
+                             key=lambda kv: -kv[1]["back_per_100"])[:3]:
+            out.append({"text": (f"Guest texts to \"{r['label']}\": {r['back_per_100']:g} came back per 100 texted "
+                                 f"over {r['campaigns']} campaigns (matched against check-ins; before and after, "
+                                 "not proof)."),
+                        "source": "system", "subject": "marketing", "weight": 2.0, "trusted": True})
+    except Exception as e:
+        print(f"[marketing] memory: text returns unavailable for {rid}: {e}")
+    try:
+        import marketing_voice
+        for line in marketing_voice.summary_lines(rid, **kw):
+            out.append({"text": line, "source": "system", "subject": "marketing", "weight": 1.0, "trusted": True})
+    except Exception as e:
+        print(f"[marketing] memory: voice unavailable for {rid}: {e}")
+    return out

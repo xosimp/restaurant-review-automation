@@ -3721,6 +3721,15 @@ def mobile_mark_guest_visit(contact_id, current_user):
     return jsonify(ok=True)
 
 
+def _gm_returns(rid) -> dict:
+    """guest_marketing.segment_returns, never failing a draft."""
+    try:
+        import guest_marketing as _gm_r
+        return _gm_r.segment_returns(rid)
+    except Exception:
+        return {}
+
+
 @mobile_bp.route("/guest-campaign/draft", methods=["POST"])
 @mobile_login_required
 def mobile_guest_campaign_draft(current_user):
@@ -3746,7 +3755,10 @@ def mobile_guest_campaign_draft(current_user):
         import marketing_voice as _mv
         out = dict(ok=True, message=message, validation=_rv_of(message), type=ctype,
                    draft_ref=_mv.record_draft(rid, "text", str(message), "campaign_draft",
-                                              user_id=current_user.get("id")))
+                                              user_id=current_user.get("id")),
+                   # What past texts did here per audience (mkt_results): the
+                   # Studio shows it beside the audience it suggests.
+                   returns_by_segment=_gm_returns(rid))
         if plan:
             out.update(segment=plan["segment"], goal=plan["goal"], target_day=plan["target_day"])
         return jsonify(**out)
