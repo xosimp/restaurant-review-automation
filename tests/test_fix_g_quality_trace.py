@@ -36,6 +36,11 @@ def _rid(db_path, name="Quality Co"):
     return create_restaurant(Restaurant(name=name, owner_email=f"{name.split()[0].lower()}@x.test"), db_path=db_path)
 
 
+def _row_conn(conn):
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 def _q(db_path, sql, args=()):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -233,8 +238,11 @@ def test_the_rollup_is_idempotent_and_rolls_validation_verdicts_too(db_path):
 
 # ── #140 anomalies and fallbacks ───────────────────────────────────────────
 
-def test_a_moderate_runaway_trips_the_cost_and_rate_rules(db_path):
+def test_a_moderate_runaway_trips_the_cost_and_rate_rules(db_path, monkeypatch):
     import admin_ops
+    # admin_ops binds get_conn at import (CLAUDE.md's bound-import hazard).
+    real = sqlite3.connect
+    monkeypatch.setattr(admin_ops, "get_conn", lambda *a, **k: _row_conn(real(db_path)))
     rid = _rid(db_path)
     conn = sqlite3.connect(db_path)
     for d in range(1, 15):                  # a quiet baseline
