@@ -105,7 +105,12 @@ def test_job_runs_carry_the_restaurant(db_path):
     ({"attempted": 3, "ok": 0, "failed": 3}, ops.RUN_FAILED),
     ({"drafted": 4, "complete": False}, ops.RUN_PARTIAL),   # the bound, in its own words
     ({"attempted": 0, "ok": 0, "failed": 0, "skipped": 5, "hit_bound": False}, ops.RUN_OK),
-    (None, ops.RUN_OK),
+    # Tightened once every registered job returned its counts (#39): a
+    # result that counts nothing is no longer a clean run.
+    (None, ops.RUN_PARTIAL),
+    ({"note": "done"}, ops.RUN_PARTIAL),
+    (False, ops.RUN_FAILED),
+    (True, ops.RUN_OK),
 ])
 def test_run_outcome(result, state):
     assert ops.run_outcome(result)[0] == state

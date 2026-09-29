@@ -225,12 +225,19 @@ def run_outcome(result):
     is 1; every attempt failed is 0; anything between — or a pass the time
     bound cut short — is 2 (partial). One failure among a hundred sends is a
     PARTIAL run, never a failed one (#150): without an `attempted` of its
-    own, every other number the job counted is a success. Any other return
-    value is a clean run."""
+    own, every other number the job counted is a success.
+
+    Every scheduled job returns its counts or raises (#39), so a result
+    without counts is no longer taken for a clean run: False is a failed
+    run, True a clean one (an explicit yes), and anything else — a bare
+    None, a dict counting nothing recognisable — partial, so the Jobs page
+    shows amber instead of a green run that proved nothing."""
     import json as _json
     counts = standard_counts(result)
     if counts is None:
-        return RUN_OK, None
+        if result is True:
+            return RUN_OK, None
+        return (RUN_FAILED if result is False else RUN_PARTIAL), None
     failed, attempted = counts["failed"], counts["attempted"]
     state = RUN_OK
     if failed and attempted and failed >= attempted:
@@ -1181,15 +1188,18 @@ def run_job(name, fn, *args, context="", db_path=None, claim=None, restaurant_id
         result = fn(*args, **kwargs)
         state, blob = run_outcome(result)
         err = None
-        if state != RUN_OK and isinstance(result, dict):
-            counts = standard_counts(result) or {}
+        counts = standard_counts(result)
+        if counts is not None and state != RUN_OK:
             err = (f"{counts.get('failed') or 0} of {counts.get('attempted') or 0} failed"
                    + (" · stopped at its time bound" if counts.get("hit_bound") else ""))
-        if state == RUN_OK:
+        elif counts is None and state != RUN_OK:
+            err = "the job returned False" if result is False else "the job returned no counts (#39)"
+        if state == RUN_OK or counts is None:
             captured = _failures_during(names, run_id, db_path=db_path)
             if captured:
-                state = RUN_PARTIAL
-                err = f"{captured} failure{'s' if captured != 1 else ''} captured during the run"
+                state = RUN_PARTIAL if state == RUN_OK else state
+                err = f"{captured} failure{'s' if captured != 1 else ''} captured during the run" + (
+                    f"; {err}" if err else "")
         _record_run_end(run_id, started, state, err, db_path=db_path, result_json=blob)
         return result
     except Exception as e:

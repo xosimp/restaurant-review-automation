@@ -2928,16 +2928,20 @@ def run_campaign_attribution(db_path=DB_PATH, today=None, max_seconds=None):
     by_rid = {}
     for c in camps:
         by_rid.setdefault(c["restaurant_id"], []).append(c)
-    totals = {"checked": 0, "matched": 0}
+    totals = {"checked": 0, "matched": 0, "attempted": 0, "ok": 0, "failed": 0, "skipped": 0}
 
     def _one(rid):
         r = get_restaurant(rid, db_path=db_path)
         # Any POS that shares guest records — Toast today; RPOWER once its
         # customer scope is granted — not a Toast field check.
         if not r or not _pos.supports(rid, "fetch_order_customers"):
+            totals["skipped"] += 1
             return
         if (getattr(r, "billing_status", None) or "trial").lower() in ("churned", "cancelled", "canceled", "paused"):
+            totals["skipped"] += 1
             return          # no POS calls on behalf of an account that asked for quiet
+        totals["attempted"] += 1
+        fetch_failed = False
         tz = getattr(r, "timezone", None)
         local_today = today or restaurant_now(r, naive=True).date()
         last_closed = (today - _td(days=1)) if today else _last_closed_business_date(r)
@@ -2976,6 +2980,7 @@ def run_campaign_attribution(db_path=DB_PATH, today=None, max_seconds=None):
                     except Exception as e:
                         import ops
                         ops.capture(e, job="campaign_attribution", context=f"restaurant_id={rid} date={day}")
+                        fetch_failed = True
                         break
                 for ph in phones_by_day[key] & set(by_phone):
                     if by_phone[ph] not in [n[0] for n in newly]:
@@ -2997,7 +3002,9 @@ def run_campaign_attribution(db_path=DB_PATH, today=None, max_seconds=None):
                 conn.close()
             totals["checked"] += 1
             totals["matched"] += len(newly)
+        totals["failed" if fetch_failed else "ok"] += 1
 
+    hit_bound = False
     if by_rid:
         _done, hit_bound = scheduler.resumable_sweep(ATTRIBUTION_CURSOR_KEY, sorted(by_rid), _one, max_seconds,
                                                      job="campaign_attribution")
@@ -3006,7 +3013,12 @@ def run_campaign_attribution(db_path=DB_PATH, today=None, max_seconds=None):
             ops.capture(RuntimeError(f"Campaign attribution stopped at its {max_seconds}s bound after {_done} "
                                      "restaurant(s); the next pass resumes from there"),
                         job="campaign_attribution", context="time_bound")
-    return {"campaigns_checked": totals["checked"], "visits_matched": totals["matched"]}
+    # The standard counts (#39), by restaurant: a POS read that failed part
+    # of the window is failed (captured; the campaign's own cursor keeps
+    # what was read).
+    return {"attempted": totals["attempted"], "ok": totals["ok"], "failed": totals["failed"],
+            "skipped": totals["skipped"], "hit_bound": bool(hit_bound),
+            "campaigns_checked": totals["checked"], "visits_matched": totals["matched"]}
 
 
 def _last_closed_business_date(restaurant, now_local=None):
@@ -3576,7 +3588,10 @@ def run_toast_optin_invites(business_date=None, db_path=DB_PATH, max_seconds=Non
         conn.commit()
     finally:
         conn.close()
-    return {"invited": counts["invited"], "skipped": counts["skipped"], "failed": counts["failed"],
+    # The standard counts (#39) over the invites: attempted is every text
+    # tried plus every restaurant whose POS read failed.
+    return {"attempted": counts["invited"] + counts["failed"], "ok": counts["invited"],
+            "invited": counts["invited"], "skipped": counts["skipped"], "failed": counts["failed"],
             "deferred_quiet_hours": counts["deferred"], "purged": counts["purged"],
             "hit_bound": bool(hit_bound)}
 
@@ -3657,8 +3672,10 @@ def run_review_request_followups(delay_hours=None, db_path=DB_PATH, max_seconds=
         conn.close()
 
     sent, failed, skipped, deferred = 0, 0, 0, 0
+    hit_bound = False
     for row in rows:
         if _time.monotonic() - started > max_seconds:
+            hit_bound = True
             break
         try:
             visited_at = datetime.fromisoformat(row["last_visit"])
@@ -3735,5 +3752,7 @@ def run_review_request_followups(delay_hours=None, db_path=DB_PATH, max_seconds=
             conn.commit()
         finally:
             conn.close()
-    return {"sent": sent, "failed": failed, "skipped_no_place_id": skipped,
+    # The standard counts (#39) over the texts, with the job's own keys.
+    return {"attempted": sent + failed, "ok": sent, "failed": failed, "skipped": skipped + deferred,
+            "hit_bound": hit_bound, "sent": sent, "skipped_no_place_id": skipped,
             "deferred_quiet_hours": deferred}

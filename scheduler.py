@@ -892,7 +892,13 @@ def run_weekly_digests():
     without grouping, so a restaurant with three logins comes back three
     times. The claim_period below hid that (rows 2 and 3 lose the claim), at
     the cost of a wasted get_restaurant per row.
+
+    Returns the standard counts over the emails (one per owner address):
+    attempted, ok (Resend accepted it), failed, skipped (a restaurant with no
+    address or nothing measured, an address already sent to today). A
+    failure outside one email raises (#39).
     """
+    counts = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
     try:
         from models import get_restaurants_for_digest, get_restaurant
         from reporter import build_report_from_db, render_html
@@ -900,7 +906,7 @@ def run_weekly_digests():
         today = _chi_now().strftime("%A").lower()
         scheduled = get_restaurants_for_digest(today)
         if not scheduled:
-            return
+            return counts
 
         seen_rids, unique = set(), []
         for row in scheduled:
@@ -930,6 +936,7 @@ def run_weekly_digests():
             owner_emails = get_owner_emails(rid)
             if not owner_emails:
                 log.warning(f"No email for {restaurant.name}, skipping")
+                counts["skipped"] += 1
                 continue
             try:
                 report = build_report_from_db(rid, restaurant.name, days=7)
@@ -941,6 +948,7 @@ def run_weekly_digests():
                 from reporter import digest_has_data
                 if not digest_has_data(restaurant, report):
                     log.info(f"Not enough data this week for {restaurant.name} — skipping digest")
+                    counts["skipped"] += 1
                     continue
                 for owner_email in owner_emails:
                     key = (owner_email or "").strip().lower()
@@ -951,6 +959,8 @@ def run_weekly_digests():
             except Exception as e:
                 log.error(f"Digest build failed for {restaurant.name}: {e}")
                 _ops.capture(e, job="weekly_digest", context=f"restaurant_id={rid}")
+                counts["attempted"] += 1
+                counts["failed"] += 1
 
         from time_utils import restaurant_now as _rnow
         for key, bucket in by_email.items():
@@ -961,7 +971,9 @@ def run_weekly_digests():
             # mails an address that already got it.
             sent_period = _rnow(first_rest, naive=True).date().isoformat()
             if _ops.period_claimed(f"weekly_digest_to:{key}", sent_period):
+                counts["skipped"] += 1
                 continue
+            counts["attempted"] += 1
             try:
                 import rec_delivery
                 owner_name = _emails.greeting_name(first_rest)
@@ -993,8 +1005,10 @@ def run_weekly_digests():
                 if getattr(result, "ok", False):
                     shown.flush()
                     _ops.claim_period(f"weekly_digest_to:{key}", sent_period)
+                    counts["ok"] += 1
                     log.info(f"Digest sent to {bucket['to']} covering {len(items)} location(s)")
                 else:
+                    counts["failed"] += 1
                     log.error(f"Digest send to {bucket['to']} failed: {result.error}")
                     _ops.capture(RuntimeError(result.error or "digest send failed"),
                                  job="weekly_digest", context=f"restaurant_id={first_rest.id}")
@@ -1018,10 +1032,14 @@ def run_weekly_digests():
             except Exception as e:
                 log.error(f"Digest failed for {bucket['to']}: {e}")
                 _ops.capture(e, job="weekly_digest", context=f"restaurant_id={first_rest.id}")
+                counts["failed"] += 1
 
     except Exception as e:
+        # Raised, not swallowed (#39): ops.run_job captures it and records
+        # the run failed — it used to be a green run over no digests at all.
         log.error(f"Weekly digest error: {e}")
-        _ops.capture(e, job="weekly_digest", context="outer")
+        raise
+    return counts
 
 
 def check_stale_inventory():
@@ -2253,15 +2271,31 @@ def run_onboarding_sequence(local_hour: int = None):
     delivered, not a demo, in service (#20, #155). A step is marked done
     only when Resend accepted it (#16); a transient failure releases the
     day's claim for the next tick, a permanent one is recorded and raised.
+
+    Returns the standard counts over the sends (#39): attempted, ok (Resend
+    accepted it), failed, skipped (a send the sender declined, a step
+    another location already got, a settled client). Restaurants that
+    cannot be read raise.
     """
     from models import get_all_restaurants, get_onboarding_sent, mark_onboarding_sent, owner_got_onboarding_step
     from emails import send_onboarding_day2, send_onboarding_day7, send_onboarding_day30
 
-    try:
-        restaurants = get_all_restaurants()
-    except Exception as e:
-        log.error(f"run_onboarding_sequence: could not load restaurants: {e}")
-        return
+    counts = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
+
+    def _outcome(r, key, result, period):
+        """_onboarding_outcome, counted."""
+        sent = _onboarding_outcome(r, key, result, period)
+        if sent:
+            counts["attempted"] += 1
+            counts["ok"] += 1
+        elif getattr(result, "skipped", False):
+            counts["skipped"] += 1
+        else:
+            counts["attempted"] += 1
+            counts["failed"] += 1
+        return sent
+
+    restaurants = get_all_restaurants()
 
     from time_utils import restaurant_now as _rnow
     for r in restaurants:
@@ -2299,6 +2333,7 @@ def run_onboarding_sequence(local_hour: int = None):
             theirs, not a second copy (#20)."""
             if owner_got_onboarding_step(r.owner_email, key, exclude_restaurant_id=r.id):
                 mark_onboarding_sent(r.id, key, status="covered")
+                counts["skipped"] += 1
                 return True
             return False
 
@@ -2319,7 +2354,7 @@ def run_onboarding_sequence(local_hour: int = None):
                     modules=modules,
                     restaurant_id=r.id,
                 )
-                if _onboarding_outcome(r, "day_2", result, period):
+                if _outcome(r, "day_2", result, period):
                     log.info(f"Onboarding day 2 sent to {r.owner_email} ({r.name})")
 
         # Day 7 — same windowing rationale as day 2 above.
@@ -2330,6 +2365,7 @@ def run_onboarding_sequence(local_hour: int = None):
             _logins, _days_idle = _onboarding_engagement(r.id)
             if _logins >= ONBOARDING_SETTLED_LOGINS and (_days_idle or 99) <= 7:
                 mark_onboarding_sent(r.id, "day_7", status="skipped", error="settled: signs in often")
+                counts["skipped"] += 1
                 log.info(f"Onboarding day 7 skipped for {r.name} — "
                          f"{_logins} logins, last {_days_idle}d ago")
                 continue
@@ -2363,7 +2399,7 @@ def run_onboarding_sequence(local_hour: int = None):
                     pending_count=pending_count,
                     restaurant_id=r.id,
                 )
-                if _onboarding_outcome(r, "day_7", result, period):
+                if _outcome(r, "day_7", result, period):
                     log.info(f"Onboarding day 7 sent to {r.owner_email} ({r.name})")
 
         # Day 30 — same windowing rationale; two weeks of grace, then the
@@ -2377,7 +2413,7 @@ def run_onboarding_sequence(local_hour: int = None):
                     modules=modules,
                     restaurant_id=r.id,
                 )
-                if _onboarding_outcome(r, "day_30", result, period):
+                if _outcome(r, "day_30", result, period):
                     log.info(f"Onboarding day 30 sent to {r.owner_email} ({r.name})")
 
         # Days 60, 90, 180 — the lifecycle after onboarding. The retention
@@ -2394,13 +2430,15 @@ def run_onboarding_sequence(local_hour: int = None):
             if _day <= days_since <= _day + 14 and _key not in already_sent:
                 if not getattr(r, "monthly_review_enabled", 1):
                     mark_onboarding_sent(r.id, _key, status="skipped", error="monthly review switched off")
+                    counts["skipped"] += 1
                     break
                 from emails import send_lifecycle_email
                 result = send_lifecycle_email(_day, to_email=r.owner_email, restaurant_name=r.name,
                                               owner_name=r.owner_name, restaurant_id=r.id)
-                if _onboarding_outcome(r, _key, result, period):
+                if _outcome(r, _key, result, period):
                     log.info(f"Lifecycle day {_day} sent to {r.owner_email} ({r.name})")
                 break
+    return counts
 
 
 # ── Step-based onboarding nudges (#41) ──────────────────────────────────────
@@ -3371,7 +3409,9 @@ def run_monthly_summaries():
             failed += len(rs)
             log.error(f"Monthly summary failed for {', '.join(x.name for x in rs)}: "
                       f"{getattr(result, 'error', None)}")
-    return {"sent": sent, "skipped": skipped, "failed": failed}
+    # The standard counts (#39), by restaurant, with `sent` as it was.
+    return {"attempted": sent + failed, "ok": sent, "failed": failed, "skipped": skipped, "hit_bound": False,
+            "sent": sent}
 
 
 def run_quarterly_summaries():
@@ -3403,7 +3443,9 @@ def run_quarterly_summaries():
             skipped += 1
         else:
             failed += 1
-    return {"sent": sent, "skipped": skipped, "failed": failed}
+    # The standard counts (#39), with `sent` as it was.
+    return {"attempted": sent + failed, "ok": sent, "failed": failed, "skipped": skipped, "hit_bound": False,
+            "sent": sent}
 
 
 AUTO_PUBLISH_UNDO_MINUTES = 120

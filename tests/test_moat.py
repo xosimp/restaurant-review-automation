@@ -433,7 +433,9 @@ def test_recipients_are_kept_and_visits_matched_once_within_the_window(db_path, 
         is_connected=lambda r: r == rid, fetch_order_customers=fake_customers,
         sync_to_db=lambda r: {}, build_shifts_csv=lambda r, days=60: None)})
     res = gm.run_campaign_attribution(db_path=db_path, today=date(2026, 9, 19))
-    assert res == {"campaigns_checked": 1, "visits_matched": 1}
+    # The standard counts of a scheduled job (fix round D, #39) beside its own.
+    assert res == {"attempted": 1, "ok": 1, "failed": 0, "skipped": 0, "hit_bound": False,
+                   "campaigns_checked": 1, "visits_matched": 1}
     # From the day AFTER the send (re-audit M-22): the send day's own orders
     # are not guests coming back.
     assert fetched == ["2026-09-16", "2026-09-17", "2026-09-18"]
