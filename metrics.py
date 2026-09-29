@@ -833,6 +833,34 @@ def _day_sql(base, param):
     return sql, extra
 
 
+def history_sales(restaurant_id, windows, db_path=DB_PATH, min_share=0.8):
+    """Sales per day over each (start, end) window from the ONE sales
+    history (canonical_facts.sales_history: the night's report, the owner's
+    imported DSR workbook, the POS sync's final days — memory audit 9/29/26,
+    imported_year), every window on ONE basis (canonical_facts.one_basis),
+    each covering at least `min_share` of its trading days (the weekdays the
+    same history shows traded in the eight weeks before). {"values": [...],
+    "sources": "..."} or None when any window falls short."""
+    import canonical_facts as _cf
+    wins = [(date.fromisoformat(_d(a)), date.fromisoformat(_d(b))) for a, b in windows or []]
+    if not wins:
+        return None
+    lo = min(a for a, _b in wins) - timedelta(days=TRADING_REFERENCE_DAYS)
+    hi = max(b for _a, b in wins)
+    series = _cf.one_basis(_cf.sales_history(restaurant_id, lo, hi, db_path=db_path))
+    values = []
+    for a, b in wins:
+        ref = {date.fromisoformat(d).weekday() for d in series
+               if a - timedelta(days=TRADING_REFERENCE_DAYS) <= date.fromisoformat(d) <= b}
+        days = [a + timedelta(days=i) for i in range((b - a).days + 1)]
+        expected = [d for d in days if d.weekday() in ref]
+        got = [series[d.isoformat()]["net"] for d in expected if d.isoformat() in series]
+        if not expected or len(got) / len(expected) < min_share:
+            return None
+        values.append(round(sum(got) / len(got), 2))
+    return {"values": values, "sources": _cf.sources_said(series)}
+
+
 def data_days(restaurant_id, key, start, end, db_path=DB_PATH):
     """The ISO dates in the window that carry this metric's data, for the
     per-day metrics (PER_DAY_METRICS); None for a metric read over its
