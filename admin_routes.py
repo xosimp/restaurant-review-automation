@@ -2514,3 +2514,134 @@ def admin_api_activity(current_user):
 def admin_api_search(current_user):
     import admin_ops
     return jsonify(**admin_ops.search(request.args.get("q", "")))
+
+
+# ── Fix round G ──────────────────────────────────────────────────────────────
+# AI operations: health and the breaker reset (#104), the AI Quality panel
+# (#69), one client's AI — spend against its ceilings, outcomes, blocked
+# calls, stalled reviews (#48, #122, #124) — the call trace (#117), and
+# Retry AI on stalled reviews (#124). Reads admit the support role except the
+# call detail, which carries prompt and output text; every write is
+# admin-only and audited.
+
+_G_DAYS = (1, 7, 30, 90, 365)
+
+
+def _g_days(default=30):
+    days = request.args.get("days", default, type=int)
+    return days if days in _G_DAYS else default
+
+
+def _g_audit(current_user, action, restaurant_id=None, target=None, before=None, after=None, summary=None):
+    """One admin_events row for an AI-operations action: B2's
+    record_admin_action when it is there, else the plain record."""
+    try:
+        import admin_events
+        rec = getattr(admin_events, "record_admin_action", None)
+        if rec:
+            rec(current_user.get("username"), action, restaurant_id=restaurant_id, target=target,
+                before=before, after=after, summary=summary)
+        else:
+            admin_events.record("admin", action, restaurant_id=restaurant_id, summary=summary,
+                                payload={"actor": current_user.get("username"), "target": target,
+                                         "before": before, "after": after})
+    except Exception as e:
+        print(f"[admin] audit not recorded for {action}: {e}")
+
+
+@admin_bp.route("/admin/api/ai/health")
+@admin_required
+def admin_api_ai_health(current_user):
+    """ai_utils.ai_health(): breakers, last-hour error rates, the last
+    credential failure, the global and Places budgets, recent events."""
+    import ai_utils
+    return jsonify(ok=True, **ai_utils.ai_health())
+
+
+@admin_bp.route("/admin/api/ai/reset-breaker", methods=["POST"])
+@admin_required
+def admin_api_ai_reset_breaker(current_user):
+    """Close a provider's breaker in this process now (body {"provider":
+    "anthropic" | "perplexity" | "google_places"}, or none for all). The next
+    call goes straight to the provider."""
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Admins only."), 403
+    import ai_utils
+    provider = ((request.get_json(silent=True) or {}).get("provider") or "").strip() or None
+    if provider and provider not in ai_utils.BREAKER_PROVIDERS:
+        return jsonify(ok=False, error="Unknown provider."), 400
+    before = ai_utils.breakers()
+    ai_utils.reset_breaker(provider, actor=current_user.get("username"))
+    after = ai_utils.breakers()
+    _g_audit(current_user, "ai.breaker_reset", target=provider or "all",
+             before={p: b["state"] for p, b in before.items()}, after={p: b["state"] for p, b in after.items()},
+             summary=f"AI breaker reset ({provider or 'all providers'}) by {current_user.get('username')}")
+    return jsonify(ok=True, breakers=after)
+
+
+@admin_bp.route("/admin/api/ai/quality")
+@admin_required
+def admin_api_ai_quality(current_user):
+    """The AI Quality panel: validation verdicts and rules by surface with a
+    trend and each surface's mode, models in force, draft review and edit
+    rates, Ask ratings, safety disagreements, quality findings, unusable
+    outputs. ?days=1|7|30|90|365, ?restaurant_id= for one client."""
+    import admin_ops
+    return jsonify(**admin_ops.ai_quality(days=_g_days(), restaurant_id=request.args.get("restaurant_id", type=int)))
+
+
+@admin_bp.route("/admin/api/ai/client/<int:restaurant_id>")
+@admin_required
+def admin_api_ai_client(restaurant_id, current_user):
+    """One client's AI: budget against its own ceilings (warn at 80%),
+    outcomes, blocked calls, recent traced calls, quality, stalled reviews."""
+    import admin_ops
+    return jsonify(**admin_ops.ai_client(restaurant_id, days=_g_days()))
+
+
+@admin_bp.route("/admin/api/ai/calls")
+@admin_required
+def admin_api_ai_calls(current_user):
+    """Traced calls, newest first: ?restaurant_id=&action=&correlation_id=&limit=."""
+    import admin_ops
+    return jsonify(**admin_ops.ai_calls(restaurant_id=request.args.get("restaurant_id", type=int),
+                                        action=(request.args.get("action") or "").strip() or None,
+                                        correlation_id=(request.args.get("correlation_id") or "").strip() or None,
+                                        limit=request.args.get("limit", 50, type=int)))
+
+
+@admin_bp.route("/admin/api/ai/calls/<call_id>")
+@admin_required
+def admin_api_ai_call(call_id, current_user):
+    """One traced call with its prompt and output (redacted) and everything
+    linked to it. Admins only: the text is a restaurant's business data."""
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Admins only."), 403
+    import re as _re_g
+    if not _re_g.fullmatch(r"[0-9a-f]{8,40}", call_id or ""):
+        return jsonify(ok=False, error="Not found"), 404
+    import admin_ops
+    out = admin_ops.ai_call_detail(call_id)
+    return jsonify(**out), (200 if out.get("ok") else 404)
+
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/retry-ai", methods=["POST"])
+@admin_required
+def admin_api_retry_ai(restaurant_id, current_user):
+    """Put this client's stalled reviews — analysis or drafting that failed
+    MAX_AI_ATTEMPTS times — back in their queues (#124). The next review
+    cycle (8am, noon, 4pm, 8pm Central) processes them."""
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Admins only."), 403
+    import models
+    if not get_restaurant(restaurant_id):
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    before = models.count_stalled_reviews(restaurant_id)
+    reset = models.reset_stalled_reviews(restaurant_id)
+    _g_audit(current_user, "ai.retry_stalled", restaurant_id=restaurant_id, target="reviews",
+             before=before, after=reset,
+             summary=(f"Retry AI: {reset['analysis']} analysis and {reset['draft']} draft review(s) "
+                      f"put back in the queue by {current_user.get('username')}"))
+    return jsonify(ok=True, reset=reset, stalled_before=before,
+                   message=("Nothing was stalled." if not (reset["analysis"] or reset["draft"]) else
+                            "Queued again — the next review cycle picks them up."))
