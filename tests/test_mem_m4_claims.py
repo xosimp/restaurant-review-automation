@@ -299,6 +299,19 @@ def test_a_nightly_report_action_with_an_honest_number_is_a_claim():
         ("dsr_action:control_hours:labor", "labor_pct", "down")]
 
 
+def test_a_report_action_is_claimed_on_its_own_slice_in_the_shape_the_report_keeps():
+    """dsr.narrative._record_read (M5) passes the night's actions as {key,
+    text, urgency}; an action carrying its finer number is scored on it."""
+    rid = _rid()
+    ai_reads.record_read(rid, "dsr_narrative", "Tuesday ran heavy.", subject="dsr:2026-09-22", meta={
+        "actions": [{"key": "dsr_action:control_hours:labor", "text": "Cut one server Tuesday lunch.",
+                     "urgency": "next_schedule", "expected_metric": "labor_pct_day:tuesday"},
+                    {"key": "dsr_action:adjust_staffing:labor/server", "text": "Add a Friday server.",
+                     "urgency": "next_schedule"}]})
+    got = {c["rec_key"]: c["metric"] for c in _rows("SELECT * FROM ai_claims WHERE restaurant_id=?", (rid,))}
+    assert got["dsr_action:control_hours:labor"] == "labor_pct_day:Tuesday"
+
+
 # ── both diagnosis prompts read the last claim ───────────────────────────────
 
 def _msg(text):

@@ -699,6 +699,16 @@ def dsr_action_claims(actions) -> list:
         metric = outcomes.DSR_ACTION_METRICS.get(parts[1] if len(parts) > 1 else "")
         if not metric:
             continue
+        # The action's own finer number when it carries one (settle_actions'
+        # expected_metric — "labor_pct_day:Tuesday" for a Tuesday cut), so
+        # the claim is scored on the slice it was about.
+        try:
+            import metrics as _m_dsr
+            finer = a.get("expected_metric")
+            if finer and _m_dsr.known(finer):
+                metric = _m_dsr.normalize(finer)
+        except Exception:
+            pass
         out.append({"claim_type": "action", "text": a.get("text"), "action": a.get("text"),
                     "expected": a.get("why"), "rec_key": a["key"], "metric": metric,
                     "subject": ":".join(parts[1:])[:160] or a["key"],
