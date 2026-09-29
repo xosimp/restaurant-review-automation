@@ -25,7 +25,6 @@ import config
 import jobs_registry
 
 
-from emails import html_document as _html_doc  # one definition; emails reads its env lazily
 
 log = logging.getLogger("ops")
 
