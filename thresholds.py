@@ -246,18 +246,22 @@ def target_source(restaurant, kind, include_goal=True) -> str:
 
 def target_label(restaurant, kind, include_goal=True) -> str:
     """How a surface names the target: "your goal of 28% by 12/1/26" while a
-    goal applies, "your target", or "Cavnar's starting target" for a seeded
-    or default one."""
+    goal applies; for a target someone set, "your target" only when an
+    account holder set it (setter_label: "the target a manager set", "the
+    target Cavnar AI set" — INT #23); or "Cavnar's starting target" for a
+    seeded or default one."""
     goal = goal_target(restaurant, kind) if include_goal else None
     if goal:
         return goal["label"]
-    return "your target" if target_source(restaurant, kind, include_goal=False) == "set" else STARTING_TARGET_LABEL
+    return (setter_label(restaurant, kind) if target_source(restaurant, kind, include_goal=False) == "set"
+            else STARTING_TARGET_LABEL)
 
 
 def target_phrase(restaurant, kind, value, include_goal=True) -> str:
     """The target in a sentence: "your goal of 28% by 12/1/26", "your 30%
-    target", or "Cavnar's starting target of 30%" when the owner has not
-    set one (#13)."""
+    target" (an account holder's — else setter_phrase's "the 30% target a
+    manager set", INT #23), or "Cavnar's starting target of 30%" when the
+    owner has not set one (#13)."""
     goal = goal_target(restaurant, kind) if include_goal else None
     if goal:
         return goal["label"]
@@ -265,7 +269,7 @@ def target_phrase(restaurant, kind, value, include_goal=True) -> str:
         v = f"{float(value):g}%"
     except (TypeError, ValueError):
         v = "—"
-    return (f"your {v} target" if target_source(restaurant, kind, include_goal=False) == "set"
+    return (setter_phrase(restaurant, kind, value) if target_source(restaurant, kind, include_goal=False) == "set"
             else f"{STARTING_TARGET_LABEL} of {v}")
 
 
@@ -437,6 +441,18 @@ def setter_label(restaurant, kind) -> str:
     it, or nobody was recorded), "the target Cavnar AI set" or "the target a
     manager set"."""
     return SETTER_TARGET_LABELS.get(target_setter(restaurant, kind), "your target")
+
+
+def setter_named(restaurant, kind, noun="target") -> str:
+    """A 'set' target named with its own noun: "your food-cost target", "the
+    food-cost target a manager set" or "the food-cost target Cavnar AI set"
+    — "your" only when an account holder set it (INT #23)."""
+    who = target_setter(restaurant, kind)
+    if who == "admin":
+        return f"the {noun} Cavnar AI set"
+    if who == "delegate":
+        return f"the {noun} a manager set"
+    return f"your {noun}"
 
 
 def setter_phrase(restaurant, kind, value) -> str:

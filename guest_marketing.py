@@ -2556,8 +2556,35 @@ def campaign_history(restaurant_id, limit=20, db_path=DB_PATH) -> list:
         # yet (CS-8): only once attribution has read its whole window.
         item["window_closed"] = _window_closed(item)
         item["waiting_until"] = _hour_label(GUEST_SMS_EARLIEST_HOUR) if item["status"] == "waiting" else None
+        item["night_effect"] = _campaign_night_effect(restaurant_id, item, db_path=db_path)
         out.append(item)
     return out
+
+
+def _campaign_night_effect(restaurant_id, c, db_path=DB_PATH):
+    """What a fill-a-night campaign's own target night measured against a
+    typical same weekday — {"date", "lift_pct", "text"} from
+    event_memory.campaign_night, the one campaign measurement staffing and
+    the forecast read too (INT PRED-27) — or None before that night is
+    recorded (or for a campaign aimed at no weekday). Never raises."""
+    day = str(c.get("target_day") or "").strip().capitalize()
+    if day not in _WEEKDAY_TITLES or not int(c.get("sent_count") or 0):
+        return None
+    try:
+        from datetime import date as _date
+        from time_utils import mdy
+        import event_memory
+        sent = _date.fromisoformat(str(c.get("completed_at") or c.get("created_at") or "")[:10])
+        night = sent + timedelta(days=(_WEEKDAY_TITLES.index(day) - sent.weekday()) % 7)
+        got = event_memory.campaign_night(restaurant_id, night,
+                                          db_path=None if db_path == DB_PATH else db_path)
+        if not got:
+            return None
+        got["text"] = (f"{day} {mdy(night)} ran {got['lift_pct']:+.0f}% against a typical {day} here "
+                       "(before and after, not proof)")
+        return got
+    except Exception:
+        return None
 
 
 def _window_closed(c) -> bool:

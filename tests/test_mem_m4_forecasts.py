@@ -134,15 +134,21 @@ def _sales(rid, weeks=8, per_day=1000.0):
 
 
 def test_the_published_weeks_record_corrects_the_schedules_revenue_and_budget():
+    """The record corrects the estimator it scores (INT PRED-4): the week's
+    day-by-day projection, frozen at publish — never the median-week
+    figure, a different estimate whose lean nobody measured."""
     import schedule_economics as econ
     rid = _rid()
     _sales(rid)
-    plain = econ.projected_weekly_revenue(rid)
-    assert plain["value"] == 7000 and plain["calibration"] is None
+    week = [date.today() + timedelta(days=1 + i) for i in range(7)]      # every weekday has recent nights
+    plain = econ.projected_weekly_revenue(rid, week_dates=week)
+    assert plain["value"] == 7000 and plain["calibration"] is None and plain["estimator"] == "week_projection"
     _scored(rid, "revenue_week", 7840.0, 7000.0)                              # projections ran 12% high
-    got = econ.projected_weekly_revenue(rid)
+    got = econ.projected_weekly_revenue(rid, week_dates=week)
     assert got["raw_value"] == 7000 and got["value"] == round(7000 / 1.12)
     assert "corrected down 11%" in got["source"] and "ran 12% high" in got["source"]
+    median = econ.projected_weekly_revenue(rid)
+    assert median["estimator"] == "median_weeks" and median["value"] == 7000 and median["calibration"] is None
     # The frozen weekly projection itself is never corrected.
     import demand, inspect
     assert "calibrat" not in inspect.getsource(demand.freeze_week_projection)

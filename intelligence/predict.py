@@ -273,13 +273,18 @@ def _taken(conn, rids, rec_kind, metric, tags, since):
         return []
     marks = ",".join("?" for _ in rids)
     rows = conn.execute(
-        f"SELECT restaurant_id, source_key, effect_pct, tags_json, after_end FROM intel_rec_events "
+        f"SELECT restaurant_id, source_key, effect_pct, tags_json, after_end, event_at FROM intel_rec_events "
         f"WHERE action='measured' AND COALESCE(google_data, 0) = 0 "
         f"AND rec_kind=? AND metric=? AND effect_pct IS NOT NULL AND outcome IN ('improved','worsened',"
         f"'no_clear_change') AND event_at >= ? AND restaurant_id IN ({marks})",
         (rec_kind, metric, since, *rids)).fetchall()
+    # A neighbour's demo era teaches nothing (INT #20: jobs.before_learning).
+    from .jobs import before_learning, learning_since_by_id
+    learning_since = learning_since_by_id()
     out = []
     for r in rows:
+        if before_learning(r["restaurant_id"], r["event_at"], learning_since):
+            continue
         if tags:
             try:
                 have = set(json.loads(r["tags_json"] or "[]"))

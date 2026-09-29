@@ -745,10 +745,40 @@ def latest_by_restaurant(db_path: str = DB_PATH, max_age_weeks: int = 3, pooled:
     # privacy floor and the cohort percentiles (CA3 F7).
     from .jobs import seeded_restaurant_ids
     seeded = seeded_restaurant_ids(db_path=db_path)
+    if pooled:
+        # A pooled read takes only what may teach (INT #20): every account
+        # models.learning_eligible refuses, and a converted demo's weeks
+        # before its learning_since's week.
+        seeded = seeded | _not_teaching(db_path)
+    since = _since_weeks(db_path) if pooled else {}
     return {r["restaurant_id"]: {"week": r["week"],
                                  "features": cross_restaurant_view(json.loads(r["features_json"]),
                                                                    google=pooled and r["restaurant_id"] in google),
-                                 "completeness": r["completeness"]} for r in rows if r["restaurant_id"] not in seeded}
+                                 "completeness": r["completeness"]} for r in rows
+            if r["restaurant_id"] not in seeded and not _demo_era(r, since)}
+
+
+def _not_teaching(db_path) -> set:
+    try:
+        from .jobs import excluded_learning_ids
+        return set(excluded_learning_ids(db_path=db_path))
+    except Exception:
+        return set()
+
+
+def _since_weeks(db_path) -> dict:
+    """{restaurant_id: ISO week of its learning_since} (jobs.learning_since_week)."""
+    try:
+        from .jobs import learning_since_by_id, learning_since_week
+        since = learning_since_by_id(db_path=db_path)
+        return {rid: learning_since_week(rid, since) for rid in since}
+    except Exception:
+        return {}
+
+
+def _demo_era(row, since_weeks) -> bool:
+    w = since_weeks.get(row["restaurant_id"]) if since_weeks else None
+    return bool(w) and str(row["week"]) < w
 
 
 def weekly_by_restaurant(weeks: int = 8, db_path: str = DB_PATH) -> dict:
@@ -765,9 +795,11 @@ def weekly_by_restaurant(weeks: int = 8, db_path: str = DB_PATH) -> dict:
         conn.close()
     from .jobs import seeded_restaurant_ids
     seeded = seeded_restaurant_ids(db_path=db_path)      # demo accounts excluded (CA3 F7)
+    seeded = seeded | _not_teaching(db_path)             # every account that may not teach (INT #20)
+    since = _since_weeks(db_path)
     out = {}
     for r in rows:
-        if r["restaurant_id"] in seeded:
+        if r["restaurant_id"] in seeded or _demo_era(r, since):
             continue
         out.setdefault(r["week"], {})[r["restaurant_id"]] = cross_restaurant_view(
             json.loads(r["features_json"]), google=r["restaurant_id"] in google)

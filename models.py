@@ -1140,6 +1140,14 @@ def ensure_columns(db_path: str = DB_PATH):
         ("reviews", "approved_by", "INTEGER"),
         ("reviews", "approved_role", "TEXT"),
         ("reviews", "approved_via", "TEXT"),
+        # How the draft's edit was made (INT #16, memory audit 9/29/26
+        # view_as): 'view_as' once an admin or support login acting through
+        # view-as changed the draft since the model wrote it — the owner who
+        # later approves it approved support's words, not their own edit —
+        # else 'normal'; NULL until a person edits. Reset with each fresh
+        # model draft. reply_voice_sql leaves a 'view_as' edit out of the
+        # style examples, the OWNER'S EDITS note and auto-approve trust.
+        ("reviews", "draft_edited_via", "TEXT"),
         # The model's first text on a saved marketing draft, kept when the
         # owner edits it (memory audit 9/29/26, mkt_edits): an edit used to
         # overwrite `body` and the original was gone.
@@ -8205,7 +8213,10 @@ def reply_voice_sql(conn, trust=False) -> str:
     if not trust and _has_table(conn, "permission_grants"):
         who += (" OR (approved_role='delegate' AND approved_by IN (SELECT g.user_id FROM permission_grants g "
                 f"WHERE g.restaurant_id=reviews.restaurant_id AND g.permission='{REPLY_VOICE_GRANT}'))")
-    return f"(COALESCE(approved_via, '') != 'view_as' AND ({who}))"
+    # A draft support edited through view-as is support's words, whoever
+    # approved it after (draft_edited_via, INT #16).
+    return (f"(COALESCE(approved_via, '') != 'view_as' AND COALESCE(draft_edited_via, '') != 'view_as' "
+            f"AND ({who}))")
 
 
 def get_approved_examples(restaurant_id: int, limit: int = 5,

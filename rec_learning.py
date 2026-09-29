@@ -1437,8 +1437,9 @@ def effectiveness(restaurant_id, db_path=DB_PATH, restaurant=None, now=None, per
     try:
         conn = get_conn(db_path)
         try:
-            eps = _load(conn, restaurant_id, since=_stamp(now - timedelta(days=EFFECT_WINDOW_DAYS)), lean=True,
-                        perspective=perspective)
+            eps = _load(conn, restaurant_id,
+                        since=_learning_floor(restaurant, _stamp(now - timedelta(days=EFFECT_WINDOW_DAYS))),
+                        lean=True, perspective=perspective)
         finally:
             conn.close()
     except Exception as e:
@@ -1451,6 +1452,38 @@ def effectiveness(restaurant_id, db_path=DB_PATH, restaurant=None, now=None, per
     # "thresholds"): held() never stops those.
     model.kept_kinds = frozenset(kept_hold_kinds(restaurant_id, db_path=db_path, now=now))
     return model
+
+
+def _learning_floor(restaurant, since):
+    """The later of `since` and the restaurant's learning_since: a converted
+    demo's own model never learns from its demo era (memory audit 9/29/26,
+    "eligibility"; models.learning_eligible; M7's patch, applied by the
+    integration wave, INT #22)."""
+    floor = getattr(restaurant, "learning_since", None) if restaurant is not None else None
+    if floor is None and isinstance(restaurant, dict):
+        floor = restaurant.get("learning_since")
+    if floor and str(floor)[:19] > str(since or "")[:19]:
+        return str(floor)[:19]
+    return since
+
+
+def _learning_since_of(restaurant_id, restaurant, db_path):
+    """The restaurant's learning_since, from the row a caller passed or one
+    light read. None for a restaurant that was never a demo."""
+    if restaurant is not None:
+        got = getattr(restaurant, "learning_since", None)
+        if got is None and isinstance(restaurant, dict):
+            got = restaurant.get("learning_since")
+        return got
+    try:
+        conn = get_conn(db_path)
+        try:
+            r = conn.execute("SELECT learning_since FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+        finally:
+            conn.close()
+        return r[0] if r else None
+    except Exception:
+        return None
 
 
 def weigh(learned, key, title=None) -> dict:
@@ -1544,13 +1577,21 @@ def kind_record(restaurant_id, kind, db_path=DB_PATH, restaurant=None, now=None,
            "base_rate_basis": None, "measured_eff": 0.0, "improved_eff": 0.0, "prior_rung": None,
            "prior_unlock": None, "window_days": DECAY_HORIZON_DAYS}
     try:
+        # A converted demo's record starts at its learning_since (INT #22):
+        # its demo era is never its own measured record, loaded here or
+        # handed in by a caller that loaded the ledger itself.
+        since_learning = _learning_since_of(restaurant_id, restaurant, db_path)
         if episodes is None:
             conn = get_conn(db_path)
             try:
-                episodes = _load(conn, restaurant_id, since=_stamp(now - timedelta(days=EFFECT_WINDOW_DAYS)),
-                                 lean=True)
+                episodes = _load(conn, restaurant_id, lean=True,
+                                 since=_learning_floor({"learning_since": since_learning},
+                                                       _stamp(now - timedelta(days=EFFECT_WINDOW_DAYS))))
             finally:
                 conn.close()
+        elif since_learning:
+            episodes = [e for e in episodes
+                        if not e.get("created_at") or str(e["created_at"])[:19] >= str(since_learning)[:19]]
         mine = [e for e in episodes
                 if e.get("shown") and _taken(e)
                 and (e.get("kind") or rec_ledger.kind_of(e["key"])) == kind]

@@ -541,6 +541,23 @@ def _excluded(db_path):
         return set()
 
 
+def _learning_since(db_path):
+    """{restaurant_id: learning_since} — a converted demo's weeks before it
+    are its demo era and read in no arm (INT #20). {} when unreadable."""
+    try:
+        from intelligence.jobs import learning_since_by_id
+        return learning_since_by_id(db_path=db_path)
+    except Exception:
+        return {}
+
+
+def _before_learning(restaurant_id, week_start, since):
+    if not since:
+        return False
+    from intelligence.jobs import before_learning
+    return before_learning(restaurant_id, week_start, since)
+
+
 def _capped(rows, per=MAX_WEEKS_PER_RESTAURANT):
     """Each restaurant's `per` most recent weeks (by week start, then id)."""
     by = {}
@@ -560,11 +577,13 @@ def readout(db_path=DB_PATH) -> dict:
     published weeks per restaurant per arm, eligible restaurants only."""
     import schedule_versions as sv
     excluded = _excluded(db_path)
+    since = _learning_since(db_path)
     conn = get_conn(db_path)
     try:
         rows = conn.execute("SELECT history_id, restaurant_id, experiment, arm, week_start, pinned, quality_score, "
                             "solver_applied FROM schedule_experiment_weeks ORDER BY history_id DESC LIMIT 20000").fetchall()
-        rows = [dict(r) for r in rows if r["restaurant_id"] not in excluded]
+        rows = [dict(r) for r in rows if r["restaurant_id"] not in excluded
+                and not _before_learning(r["restaurant_id"], r["week_start"], since)]
         rids = sorted({r["restaurant_id"] for r in rows if not r["pinned"]})[:READOUT_MAX_RESTAURANTS]
         in_scope = set(rids)
         pins = [dict(r) for r in conn.execute(

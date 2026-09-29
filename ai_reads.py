@@ -1025,8 +1025,24 @@ def confidence_calibration(restaurant_id=None, days=365, db_path=None) -> dict:
         if restaurant_id:
             where.append("restaurant_id=?")
             args.append(restaurant_id)
-        rows = conn.execute(f"SELECT verdict, model_band, capped_band FROM ai_claims WHERE {' AND '.join(where)}",
-                            args).fetchall()
+        rows = conn.execute("SELECT restaurant_id, surface, rec_key, metric, verdict, model_band, capped_band "
+                            f"FROM ai_claims WHERE {' AND '.join(where)}", args).fetchall()
+        if not restaurant_id and rows:
+            # Pooled across restaurants, the check calibrates the model's
+            # confidence: an ineligible account's claims (demo, test,
+            # internal) and a Google-connected restaurant's review-derived
+            # ones stay out (INT #5 — intelligence.provenance, Google API
+            # Limited Use). One restaurant's own view keeps everything.
+            from intelligence.provenance import google_connected_ids, pooled_row_excluded
+            google = frozenset(google_connected_ids(conn=conn))
+            try:
+                import models as _m
+                ineligible = set(_m.learning_ineligible_ids(conn=conn))
+            except Exception:
+                ineligible = set()
+            rows = [r for r in rows if int(r["restaurant_id"]) not in ineligible
+                    and not pooled_row_excluded(r["restaurant_id"], key=r["rec_key"], metric=r["metric"],
+                                                surface=r["surface"], google=google)]
     except Exception:
         return out
     finally:
@@ -1170,7 +1186,18 @@ def claim_lines(req):
         latest = {}
         for r in rows:
             latest.setdefault((r["surface"], r["subject"]), r)
-        picked = sorted(latest.values(), key=lambda r: -r["id"])[:4]
+        # The newest four the viewer may read (memory_context.visible on the
+        # claim's surface scope): an owner-level claim is dropped BEFORE the
+        # cut, so a manager (or a shared output, memory_context.TEAM) is not
+        # left with nothing because the four newest were the owner's (INT).
+        viewer = getattr(req, "viewer", None)
+        pool = sorted(latest.values(), key=lambda r: -r["id"])
+        if viewer is not None:
+            import memory_context as _mc
+            user = _mc.viewer_user(viewer)
+            if user is not None:
+                pool = [r for r in pool if _mc.visible(dict(line_scope(r["surface"]), text="x"), user)]
+        picked = pool[:4]
         for i, r in enumerate(picked):
             weight = 10.0 - i
             said = f"LAST READ on {r['subject'].replace('_', ' ')} ({SURFACE_LABELS.get(r['surface'], r['surface'])})"

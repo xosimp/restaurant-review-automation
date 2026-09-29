@@ -4802,7 +4802,7 @@ def _do_regenerate_draft(review_id, restaurant_id, user=None):
             # and approved the new draft as written left draft_edited=1 with
             # no original, and the approval recorded nothing (re-audit C11).
             "UPDATE reviews SET response_status='drafted', regenerate_count=COALESCE(regenerate_count,0)+1, "
-            "original_draft=NULL, draft_edited=0 WHERE id=? AND restaurant_id=? "
+            "original_draft=NULL, draft_edited=0, draft_edited_via=NULL WHERE id=? AND restaurant_id=? "
             "AND response_status NOT IN ('posted', 'approved')",
             (review_id, restaurant_id)
         )
@@ -4897,19 +4897,30 @@ def _do_save_draft(review_id, restaurant_id, draft_text, by_model=False, user=No
                                    how="rewrite", user=user)
         if by_model:
             cur = conn.execute(
-                "UPDATE reviews SET original_draft=NULL, draft_edited=0, "
+                "UPDATE reviews SET original_draft=NULL, draft_edited=0, draft_edited_via=NULL, "
                 "draft_response=?, response_status='drafted', draft_needs_review=?, draft_review_reason=? "
                 "WHERE id=? AND restaurant_id=? AND response_status NOT IN ('posted', 'approved')",
                 (draft, 1 if claims else 0, reason, review_id, restaurant_id))
         else:
+            # Who made the edit (INT #16): support through view-as (or an
+            # admin login) is stamped 'view_as' and stays so until a fresh
+            # model draft — an owner who approves it later approved support's
+            # words, never their own edit (reply_voice_sql leaves it out of
+            # the voice examples, the edit note and auto-approve trust).
+            from permissions import acting_via as _acting_via, answer_authority as _auth_of
+            support = bool(_acting_via(user)) or (user is not None and _auth_of(user) == "admin")
             cur = conn.execute(
                 "UPDATE reviews SET "
                 "original_draft=CASE WHEN ? THEN COALESCE(original_draft, draft_response) "
                 "ELSE original_draft END, "
                 "draft_edited=CASE WHEN ? THEN 1 ELSE COALESCE(draft_edited, 0) END, "
+                "draft_edited_via=CASE WHEN ? THEN "
+                "  CASE WHEN ? OR COALESCE(draft_edited_via, '') = 'view_as' THEN 'view_as' ELSE 'normal' END "
+                "ELSE draft_edited_via END, "
                 "draft_response=?, response_status='drafted', draft_needs_review=?, draft_review_reason=? "
                 "WHERE id=? AND restaurant_id=? AND response_status NOT IN ('posted', 'approved')",
-                (edited, edited, draft, 1 if claims else 0, reason, review_id, restaurant_id))
+                (edited, edited, edited, 1 if support else 0, draft, 1 if claims else 0, reason, review_id,
+                 restaurant_id))
         conn.commit()
         if cur.rowcount == 1:
             return {"ok": True, "needs_review": bool(claims), "review_reason": reason}, 200
@@ -4933,7 +4944,8 @@ def regenerate_draft(review_id, current_user):
 @login_required
 def save_draft(review_id, current_user):
     data = request.get_json()
-    payload, status = _do_save_draft(review_id, current_user["restaurant_id"], (data or {}).get("draft", ""))
+    payload, status = _do_save_draft(review_id, current_user["restaurant_id"], (data or {}).get("draft", ""),
+                                     user=current_user)
     return jsonify(**payload), status
 
 @client_bp.route("/api/labor-trend")

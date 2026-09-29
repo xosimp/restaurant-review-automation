@@ -119,34 +119,34 @@ MARKETING_OCCASIONS = ("game_day", "holiday", "event", "offer")
 
 
 def measured_campaign_lift(restaurant_id, db_path=DB_PATH):
-    """{lift_pct, n} — the median measured change in the target weekday's
-    sales across this restaurant's closed fill-a-night campaigns
-    (outcomes, source slow_day_campaign), or None under
-    CAMPAIGN_LIFT_MIN_CLOSED of them. Before and after, not proof — the
-    same basis the outcome cards state. A demo, test or internal
-    restaurant's outcomes teach nothing (models.learning_eligible): None,
-    and the assumed path stands."""
+    """{lift_pct, n, source, basis} — THE measured effect of a guest text
+    campaign here: the campaign nights' own lift against their typical same
+    weekday (event_memory.campaign_effect), once it clears event_memory's
+    floor (`applies`); else None, and the assumed path stands. Before and
+    after, not proof.
+
+    One measurement (INT PRED-27, memory fix round 9/29/26): this read the
+    campaign outcome trackers' weekday_sales change over their multi-week
+    windows, which diluted a +30% campaign night to +0.2% — while the
+    forecast read event_memory's measurement of the night itself. Staffing,
+    the forecast and the campaign's own result now read the one figure. A
+    demo, test or internal restaurant's nights teach nothing
+    (models.learning_eligible)."""
     try:
         import models as _m_elig
         if not _m_elig.learning_eligible(_m_elig.get_restaurant(restaurant_id, db_path)):
             return None
     except Exception:
         return None
-    conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT delta_pct FROM recommendation_outcomes WHERE restaurant_id=? AND "
-                            "source='slow_day_campaign' AND status='evaluated' AND delta_pct IS NOT NULL",
-                            (restaurant_id,)).fetchall()
+        import event_memory
+        e = event_memory.campaign_effect(restaurant_id, db_path=db_path)
     except Exception:
         return None
-    finally:
-        conn.close()
-    vals = sorted(float(r["delta_pct"]) for r in rows)
-    if len(vals) < CAMPAIGN_LIFT_MIN_CLOSED:
+    if not e or not e.get("applies"):
         return None
-    mid = len(vals) // 2
-    med = vals[mid] if len(vals) % 2 else (vals[mid - 1] + vals[mid]) / 2
-    return {"lift_pct": int(round(med)), "n": len(vals)}
+    return {"lift_pct": int(round(float(e["median_lift_pct"]))), "n": int(e["n"]), "source": "event_memory",
+            "basis": e.get("basis")}
 
 
 def record_marketing(restaurant_id, day, label, source, ref=None, menu_item_id=None, db_path=DB_PATH) -> bool:
@@ -162,7 +162,10 @@ def record_marketing(restaurant_id, day, label, source, ref=None, menu_item_id=N
     label = " ".join(str(label or "").split())[:120]
     if not label:
         return False
-    lift = measured_campaign_lift(restaurant_id, db_path=db_path) if source == "campaign" else None
+    # No figure is baked into the row: a campaign night's lift is read live
+    # from the one measurement (measured_campaign_lift, by_date), so it
+    # follows every night event_memory measures after this one.
+    lift = None
     conn = get_conn(db_path)
     try:
         conn.execute("INSERT INTO demand_signals (restaurant_id, date, kind, label, covers, lift_pct, source, "
@@ -290,6 +293,19 @@ def _measured(restaurant_id, label, db_path=DB_PATH):
     return None
 
 
+def _campaign_measured(restaurant_id, db_path=DB_PATH):
+    """event_memory.campaign_effect in _measured's shape, gated like
+    measured_campaign_lift (a learning-eligible restaurant only), or None."""
+    try:
+        import models as _m_elig
+        if not _m_elig.learning_eligible(_m_elig.get_restaurant(restaurant_id, db_path)):
+            return None
+        import event_memory
+        return event_memory.campaign_effect(restaurant_id, db_path=db_path)
+    except Exception:
+        return None
+
+
 def by_date(restaurant_id, dates, db_path=DB_PATH) -> dict:
     """{date: {"lift_pct": int, "covers": int|None, "labels": [..]}} for the
     dates asked for. The lift is the strongest signal on the date: an
@@ -311,7 +327,11 @@ def by_date(restaurant_id, dates, db_path=DB_PATH) -> dict:
         entry = out.setdefault(d, {"lift_pct": None, "covers": None, "labels": []})
         label = s["label"] + (f" ({s['covers']} covers)" if s.get("covers") else "")
         lift = s.get("lift_pct")
-        measured = _measured(restaurant_id, s["label"], db_path=db_path) if s.get("kind") == "event" else None
+        if s.get("kind") == "event" and str(s.get("source") or "") == "campaign":
+            # A fill-a-night text: the one campaign measurement (INT PRED-27).
+            measured = _campaign_measured(restaurant_id, db_path=db_path)
+        else:
+            measured = _measured(restaurant_id, s["label"], db_path=db_path) if s.get("kind") == "event" else None
         if measured:
             entry.setdefault("measured", []).append({
                 "label": s["label"], "median_lift_pct": measured["median_lift_pct"], "n": measured["n"],

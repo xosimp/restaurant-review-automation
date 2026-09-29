@@ -468,6 +468,7 @@ def draft_from_menu(restaurant_id, text, user_id=None, client=None, db_path=DB_P
         return {"ok": False, "error": "Paste your menu, one dish a line — a price after a comma is optional."}
     created = priced = 0
     targets = []
+    menu_changes = []
     conn = get_conn(db_path)
     try:
         existing = {r["name"].strip().lower(): dict(r) for r in conn.execute(
@@ -481,15 +482,20 @@ def draft_from_menu(restaurant_id, text, user_id=None, client=None, db_path=DB_P
                 row = {"id": cur.lastrowid, "name": name, "sell_price": None}
                 existing[name.lower()] = row
                 created += 1
+                menu_changes.append(("menu_item", "added", None, name, name))
             if price and not row.get("sell_price"):
                 conn.execute("UPDATE menu_items SET sell_price=? WHERE id=? AND restaurant_id=?",
                              (price, row["id"], restaurant_id))
                 row["sell_price"] = price
                 priced += 1
+                menu_changes.append(("price", "sell_price", None, price, row["name"]))
             targets.append({"id": row["id"], "name": row["name"]})
         conn.commit()
     finally:
         conn.close()
+    # The dishes the pasted menu added and the prices it set, attributed to
+    # the login that pasted it (memory audit 9/29/26 change_log, INT #24).
+    _log_menu(restaurant_id, menu_changes, db_path)
     missing = {m["id"] for m in missing_recipes(restaurant_id, db_path=db_path)}
     todo = [t for t in targets if t["id"] in missing]
     out = (draft_missing(restaurant_id, limit=limit, client=client, db_path=db_path, items=todo)
@@ -638,6 +644,7 @@ def extract_from_image(restaurant_id, data, media_type, user_id=None, client=Non
             item_id, item_name = cur.lastrowid, dish
         finally:
             conn.close()
+        _log_menu(restaurant_id, [("menu_item", "added", None, dish, dish)], db_path)
     else:
         item_id, item_name = match["id"], match["name"]
     note_bits = ["From a photographed recipe card"]
@@ -898,3 +905,18 @@ def import_csv(restaurant_id, text, db_path=DB_PATH):
             "unlinked_dishes": sorted(unlinked)[:50],
             "truncated_rows": max(0, total_rows - IMPORT_MAX_ROWS),
             "error": None if written_any else "Nothing written — check the ingredient names match your list."}
+
+
+def _log_menu(restaurant_id, changes, db_path=None):
+    """change_log rows for dishes added and prices set here (entity, field,
+    before, after, subject), the actor being the request's login. Never
+    raises (memory audit 9/29/26 change_log, INT #24)."""
+    if not changes:
+        return
+    try:
+        import change_log
+        for entity, field, before, after, subject in changes:
+            change_log.record(restaurant_id, entity, field, before, after, subject=subject,
+                              db_path=None if db_path == DB_PATH else db_path)
+    except Exception as e:
+        print(f"[recipes] change not logged rid={restaurant_id}: {e}")

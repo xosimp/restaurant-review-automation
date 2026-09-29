@@ -147,6 +147,7 @@ def excluded_learning_ids(db_path=DB_PATH) -> set:
         rows = conn.execute("SELECT * FROM restaurants").fetchall()
     finally:
         conn.close()
+    since = {}
     for r in rows:
         try:
             ok = _models_mod.learning_eligible(dict(r))
@@ -154,12 +155,47 @@ def excluded_learning_ids(db_path=DB_PATH) -> set:
             ok = True
         if not ok:
             out.add(int(r["id"]))
-    _excluded_cache.update(key=key, at=now, ids=out)
+        if "learning_since" in r.keys() and r["learning_since"]:
+            since[int(r["id"])] = str(r["learning_since"])
+    _excluded_cache.update(key=key, at=now, ids=out, since=since)
     return out
 
 
 def invalidate_excluded(*_a):
-    _excluded_cache.update(key=None, at=0.0, ids=None)
+    _excluded_cache.update(key=None, at=0.0, ids=None, since=None)
+
+
+def learning_since_by_id(db_path=DB_PATH) -> dict:
+    """{restaurant_id: learning_since} — a converted demo's first day of real
+    learning (models.learning_since, stamped when is_demo is turned off).
+    A cross-restaurant reader drops every row recorded before it
+    (before_learning), on top of the whole-restaurant exclusion above.
+    Cached with excluded_learning_ids (memory fix round INT #20)."""
+    excluded_learning_ids(db_path=db_path)
+    return dict(_excluded_cache.get("since") or {})
+
+
+def before_learning(restaurant_id, when, since=None) -> bool:
+    """Whether a row stamped `when` (an ISO date or stamp) was recorded
+    before its restaurant's learning_since — its demo era, which teaches
+    no cross-restaurant figure. `since`: learning_since_by_id()."""
+    ls = (since or {}).get(int(restaurant_id)) if restaurant_id is not None else None
+    if not ls or not when:
+        return False
+    return str(when)[:19] < str(ls)[:19]
+
+
+def learning_since_week(restaurant_id, since=None):
+    """The ISO week ("2026-W40") of a restaurant's learning_since, or None:
+    a feature or A/B week before it is its demo era."""
+    ls = (since or {}).get(int(restaurant_id)) if restaurant_id is not None else None
+    if not ls:
+        return None
+    try:
+        y, w, _ = date.fromisoformat(str(ls)[:10]).isocalendar()
+        return f"{y}-W{w:02d}"
+    except ValueError:
+        return None
 
 
 def learning_labels(db_path=DB_PATH, ids=None, conn=None) -> dict:
@@ -988,12 +1024,14 @@ def log_confidence(db_path=DB_PATH, cohorts: dict = None, today: date = None) ->
     conn = get_conn(db_path)
     try:
         rows = conn.execute("SELECT restaurant_id, source_key, rec_kind, action, outcome, confidence_at, trust_version, "
-                            "days_to_effect FROM intel_rec_events WHERE event_at >= ? AND COALESCE(google_data, 0) = 0",
-                            (since,)).fetchall()
+                            "days_to_effect, event_at FROM intel_rec_events WHERE event_at >= ? "
+                            "AND COALESCE(google_data, 0) = 0", (since,)).fetchall()
     finally:
         conn.close()
     excluded = excluded_learning_ids(db_path)     # demo, test, internal (CA3 F7, memory audit)
-    rows = [r for r in rows if r["restaurant_id"] not in excluded]
+    learning_since = learning_since_by_id(db_path)   # a converted demo's demo era (INT #20)
+    rows = [r for r in rows if r["restaurant_id"] not in excluded
+            and not before_learning(r["restaurant_id"], r["event_at"], learning_since)]
     orgs = scoring.org_map([r["restaurant_id"] for r in rows], db_path=db_path)
     groups = {}
     for r in rows:

@@ -42,6 +42,13 @@ What the assembler does, once, for every caller:
     module the login may not open (`module`) not at all. `viewer` is the
     login dict (auth's current_user); None is an internal caller, which
     reads the owner's view.
+  * SHARED OUTPUTS READ AS THE TEAM. A surface whose output more than one
+    login reads (a stored read, a diagnosis, the schedule draft, a public
+    reply or post, the nightly report — SHARED_SURFACES) is always
+    assembled for TEAM, whatever viewer the caller passes: owner-only lines
+    ("principals" / "author") and comps-and-voids lines never reach it, and
+    a module line only when every reader of that output holds the module's
+    view (team_viewer).
   * RELEVANCE ORDER. Within a section, a line about a subject in play
     (`subjects`: advice signatures, ledger tags, "conversation:<id>") ranks
     first, then its own weight, then recency — so a relevant old decline
@@ -104,8 +111,13 @@ SURFACE_SECTIONS = {
     "dsr_narrative": ("constraints", "goals", "last_claim", "decisions", "what_worked", "events"),
     "brief": ("constraints", "goals", "decisions", "events"),
     "digest": ("constraints", "goals", "decisions", "what_worked"),
-    "marketing": ("constraints", "goals", "decisions", "what_worked", "events", "marketing", "links"),
-    "reply_drafter": ("constraints", "decisions", "marketing"),
+    # Not "marketing" on the marketing generators or the reply drafter: they
+    # build richer blocks of their own (marketing_signals.generation_context,
+    # guest_marketing.returns_block, marketing_voice.voice_block; the
+    # drafter's voice learning), and marketing:memory_lines says nothing
+    # there rather than say it twice (INT_NOTES #30).
+    "marketing": ("constraints", "goals", "decisions", "what_worked", "events", "links"),
+    "reply_drafter": ("constraints", "decisions"),
     "competitor_read": ("constraints", "last_claim", "decisions"),
     "weekly_plan": ("constraints", "goals", "last_claim", "decisions", "what_worked", "events"),
 }
@@ -149,6 +161,66 @@ RECENCY_DAYS = 365.0
 _MODULE_PERMISSION = {"food": "inventory", "inventory": "inventory", "food_cost": "inventory",
                       "labor": "labor", "schedule": "labor", "reviews": "reviews",
                       "marketing": "marketing", "guests": "marketing", "intel": "intel"}
+
+
+# ── the team viewer (shared outputs) ────────────────────────────────────────
+#
+# One stored labor read, one schedule draft, one review diagnosis serve every
+# login that can open them — and a reply or a post goes out in public. Their
+# memory is assembled as the least-privileged console login that can open the
+# output would read it: a manager (permissions.ROLE_MANAGER — every module but
+# food cost, no comps and voids, a delegate's authority), plus the output's
+# own module when a manager lacks it (a food read's readers all hold food-cost
+# view). Owner-only lines — personnel plans and money (owner_memory's
+# "principals" audience), a teammate's own ("author") — never reach it.
+# Memory audit 9/29/26 (INT #41): M3 and M5 each built this by hand as a
+# synthetic {"id": None, "role": "manager"}; it is one viewer here.
+
+class TeamViewer(dict):
+    """The viewer a shared output is assembled for. A login-shaped dict (so
+    permissions.has_permission and every provider's viewer check read it as
+    a manager with no id), recognised by memory_context.is_team."""
+    team = True
+
+
+def _team(grants=()):
+    return TeamViewer(id=None, role="manager", is_admin=0, team=True, grants=frozenset(grants))
+
+
+TEAM = _team()
+
+# Surfaces whose output more than one login reads, and the module view the
+# output's own readers all hold beyond a manager's (None: a manager's view).
+# Not shared: "ask" / "ask_conversation" and "brief" (built per login, the
+# login is the viewer), "digest" (emailed to the owner) — ai_reads.SURFACE_MODULE
+# marks those owner-level. "weekly_plan" is the owner's Monday question, but
+# its items become issues every console login reads, so it is shared; it keeps
+# the owner's food-cost view because the plan's own prompt reads those figures.
+SHARED_SURFACES = {
+    "schedule": None, "labor_read": None,
+    "review_read": None, "review_diagnosis": None, "reply_drafter": None,
+    "food_read": "inventory", "food_diagnosis": "inventory",
+    "marketing": None, "competitor_read": None,
+    "dsr_narrative": None,
+    "weekly_plan": "inventory",
+}
+
+
+def is_team(viewer) -> bool:
+    return isinstance(viewer, TeamViewer) or viewer == "team"
+
+
+def team_viewer(surface=None) -> TeamViewer:
+    """TEAM for `surface`: a manager's view, plus the view of the surface's
+    own module when every reader of its output holds it."""
+    module = SHARED_SURFACES.get(surface)
+    if not module:
+        return TEAM
+    try:
+        from permissions import MODULE_VIEW_PERMISSIONS
+        return _team((MODULE_VIEW_PERMISSIONS[module],))
+    except Exception:
+        return TEAM                              # fail closed: a manager's view
 
 
 @dataclass
@@ -279,6 +351,8 @@ def viewer_user(viewer):
         return None
     if isinstance(viewer, dict):
         return viewer
+    if viewer == "team":
+        return TEAM
     user = getattr(viewer, "_ask_dsr_user", None)
     return user if isinstance(user, dict) else None
 
@@ -311,7 +385,9 @@ def _may_read_module(user, module, _cache):
 
 def visible(line, user, authority=None, _cache=None) -> bool:
     """Whether the login `user` may read this memory line (None: internal —
-    the owner's view). Fails closed on an unknown audience."""
+    the owner's view; TEAM: a shared output — "team" lines only, and a
+    module line only where a manager, or the output's own module, may).
+    Fails closed on an unknown audience."""
     if user is None:
         return True
     authority = authority or _authority(user)
@@ -321,6 +397,8 @@ def visible(line, user, authority=None, _cache=None) -> bool:
     audience = str(line.get("audience") or "team").strip().lower()
     if audience == "team":
         return True
+    if is_team(user):
+        return False                             # a shared output reads no one's private line
     uid = user.get("id")
     if audience == "author":
         return line.get("author_id") is not None and uid is not None and int(line["author_id"]) == int(uid)
@@ -401,7 +479,9 @@ def memory_context(restaurant_id, surface, viewer=None, subjects=(), budget_char
 
 
 def _assemble(restaurant_id, surface, viewer, subjects, budget_chars, now, db_path):
-    user = viewer_user(viewer)
+    # A shared output is read as the team, whoever asked for it (SHARED_SURFACES):
+    # the owner's own view never shapes what a manager, or the public, reads.
+    user = team_viewer(surface) if (surface in SHARED_SURFACES or is_team(viewer)) else viewer_user(viewer)
     req = MemoryRequest(restaurant_id=restaurant_id, surface=surface, viewer=user,
                         subjects=tuple(subjects or ()), now=now or datetime.now(), db_path=db_path)
     wanted = SURFACE_SECTIONS.get(surface)
