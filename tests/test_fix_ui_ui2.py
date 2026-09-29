@@ -146,6 +146,8 @@ def test_the_jobs_tab_reads_the_registry_rows_and_the_liveness(page):
     for key in ("j.history", "j.sla_minutes", "j.stuck_after_minutes", "j.overdue", "j.runs_7d", "j.partial_7d"):
         assert key in row, key
     assert "/admin/api/jobs/' + encodeURIComponent(job) + '/runs" in _fn(page, "jobRuns")
+    # Resolving a job's failures is for the occurrence the page saw (#24): its newest failure.
+    assert "resolveOpen('job:${jsq(g.job)}','Job ${jsq(g.job)} failures','${jsq(g.last_at || '')}')" in j
 
 
 def test_partial_and_running_are_never_green(page):
