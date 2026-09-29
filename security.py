@@ -366,6 +366,18 @@ PWNED_MESSAGE = "That password appears in a known data breach — choose a diffe
 
 # ── freeze ───────────────────────────────────────────────────────────────────
 
+def _capture_freeze_gap(exc, restaurant_id):
+    """A freeze step that failed — a remembered device or a switched-in
+    session left alive — reaches the operator (ops.capture); it used to be
+    an `except: pass`, and a takeover response that silently half-ran reads
+    as done. Never raises: the rest of the freeze still runs."""
+    try:
+        import ops
+        ops.capture(exc, job="account_freeze", context=f"restaurant_id={restaurant_id}")
+    except Exception:
+        print(f"[freeze] restaurant {restaurant_id}: a step failed: {exc}")
+
+
 def freeze_restaurant(restaurant_id, actor=None, reason=None, db_path=DB_PATH):
     """The takeover response. Returns how many logins were frozen.
 
@@ -392,8 +404,10 @@ def freeze_restaurant(restaurant_id, actor=None, reason=None, db_path=DB_PATH):
             conn.execute("UPDATE users SET must_reset_password=1 WHERE id=?", (uid,))
             try:
                 conn.execute("DELETE FROM trusted_devices WHERE user_id=?", (uid,))
-            except Exception:
-                pass
+            except Exception as e:
+                # A remembered device that survives a freeze skips the code
+                # at the next sign-in: said, not swallowed.
+                _capture_freeze_gap(e, restaurant_id)
         # Anyone else's session acting here right now (switched in, or a
         # staff PIN session minted for this restaurant) ends too — never an
         # admin's own session.
@@ -401,8 +415,8 @@ def freeze_restaurant(restaurant_id, actor=None, reason=None, db_path=DB_PATH):
             conn.execute("DELETE FROM sessions WHERE (active_restaurant_id=? OR staff_restaurant_id=?) "
                          "AND user_id NOT IN (SELECT id FROM users WHERE is_admin=1)",
                          (restaurant_id, restaurant_id))
-        except Exception:
-            pass
+        except Exception as e:
+            _capture_freeze_gap(e, restaurant_id)
         conn.commit()
     finally:
         conn.close()

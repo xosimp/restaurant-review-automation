@@ -356,8 +356,14 @@ def _void_open_envelope(row, actor, note, db_path=None):
         conn.execute("UPDATE docusign_envelopes SET status='voided', status_at=datetime('now'), "
                      "status_reason=? WHERE envelope_id=?", ((note or "account closed")[:200], envelope_id))
         conn.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        # The envelope IS voided at DocuSign; only the history row's status
+        # did not move. Said, not swallowed.
+        try:
+            import ops
+            ops.capture(e, job="offboarding_void_record", context=f"restaurant_id={int(row['id'])}")
+        except Exception:
+            print(f"[offboarding] envelope {envelope_id} voided but not recorded: {e}")
     finally:
         conn.close()
     import admin_events

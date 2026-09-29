@@ -4165,8 +4165,10 @@ def admin_api_reset_two_factor(user_id, current_user):
         try:
             conn.execute("DELETE FROM two_fa_backup_codes WHERE restaurant_id=?", (row["restaurant_id"],))
             conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            # Backup codes that survive a reset still open the account: this
+            # must reach the operator, not vanish.
+            _ops.capture(e, job="two_factor_reset", context=f"restaurant_id={row['restaurant_id']}")
         finally:
             conn.close()
         _auth_rt.revoke_all_trusted_devices(row["restaurant_id"])
