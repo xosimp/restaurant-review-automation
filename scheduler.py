@@ -252,12 +252,18 @@ def resumable_sweep(key, ids, fn, max_seconds, workers=1, job=None):
     raises is captured and counts as covered (a restaurant that always
     raises must not pin the cursor). A BaseException — the process going
     away — is not caught and does not advance the cursor.
+
+    The writes only ever move the cursor forward (#137): each prefix was
+    computed under the lock but written after it, so with several workers
+    a thread holding an older, shorter prefix could write last and leave
+    the cursor behind restaurants already done — the next pass re-fetched
+    them first. Seen as a flaky test on the six-worker review fetch.
     """
     order = _fetch_order(list(ids), key=key)
     if not order:
         return 0, False
-    lock = threading.Lock()
-    finished, state = set(), {"prefix": 0}
+    lock, write_lock = threading.Lock(), threading.Lock()
+    finished, state = set(), {"prefix": 0, "written": 0}
 
     def _covered(rid):
         with lock:
@@ -268,7 +274,12 @@ def resumable_sweep(key, ids, fn, max_seconds, workers=1, job=None):
             advanced = p != state["prefix"]
             state["prefix"] = p
         if advanced:
-            _remember_fetch_cursor(order, p, key=key)
+            # One writer at a time, and never backwards; the SQLite write
+            # stays outside `lock` so workers finishing are not held up.
+            with write_lock:
+                if p > state["written"]:
+                    _remember_fetch_cursor(order, p, key=key)
+                    state["written"] = p
 
     def _run(rid):
         fn(rid)

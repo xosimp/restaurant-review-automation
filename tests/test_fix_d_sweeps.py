@@ -113,6 +113,23 @@ def test_the_fetch_cursor_is_the_finished_prefix_not_the_success_count(db, monke
     assert int(cur) == ids[-1], "the cursor landed short by the number of failures"
 
 
+def test_a_late_write_of_a_shorter_prefix_never_moves_the_cursor_back(db, monkeypatch):
+    """With several workers, each prefix was computed under the lock but
+    written after it: the thread holding the shortest prefix could write
+    last and leave the cursor behind restaurants already done (#137)."""
+    real = scheduler._remember_fetch_cursor
+
+    def slow_first_write(order, processed, key="x"):
+        if processed == 1:
+            time.sleep(0.25)          # the others finish and write meanwhile
+        real(order, processed, key=key)
+    monkeypatch.setattr(scheduler, "_remember_fetch_cursor", slow_first_write)
+    ids = [11, 12, 13, 14]
+    scheduler.resumable_sweep("race_cursor", ids, lambda rid: time.sleep(0 if rid == 11 else 0.05),
+                              60, workers=4, job="race_test")
+    assert _q(db, "SELECT value FROM job_cursors WHERE key='race_cursor'")[0]["value"] == "14"
+
+
 def test_sync_now_runs_the_same_pass_for_one_restaurant_and_analyses_before_alerting(db, monkeypatch):
     import fetcher
     from models import Review
