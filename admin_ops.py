@@ -5132,12 +5132,14 @@ def _email_rates(conn, w):
 
 
 # Inbound webhooks (#74). Each provider's last VERIFIED event and the
-# requests refused since. Two ledgers record them, one per workstream, and
-# the console reads both as one: E's inbound_webhook_health (Resend, Twilio
-# inbound texts, Twilio delivery reports) and H's webhook_verifications
-# (Stripe, DocuSign). A provider neither has a row for yet falls back to
-# what a verified delivery already writes, and to its signature captures in
-# job_failures over the last day.
+# requests refused since. E's inbound_webhook_health is the one ledger the
+# console reads for every provider: Resend and Twilio write it, and since the
+# integration wave Stripe and DocuSign do too (webhook_routes._webhook_seen).
+# H's webhook_verifications (Stripe, DocuSign; still written, for the billing
+# health panel) is read only for a provider E's ledger has no row for yet —
+# a database from before the switch. A provider neither has a row for falls
+# back to what a verified delivery already writes, and to its signature
+# captures in job_failures over the last day.
 WEBHOOK_PROVIDERS = (
     {"provider": "stripe", "label": "Stripe", "secret_env": "STRIPE_WEBHOOK_SECRET", "job": "stripe_webhook"},
     {"provider": "resend", "label": "Resend", "secret_env": "RESEND_WEBHOOK_SECRET", "job": "resend_webhook"},
@@ -5147,7 +5149,7 @@ WEBHOOK_PROVIDERS = (
     {"provider": "docusign", "label": "DocuSign", "secret_env": "DOCUSIGN_WEBHOOK_SECRET", "job": "docusign_webhook"},
 )
 # (table, {normalized field: that table's column}) — each ledger in its own
-# words (E's and H's), read into one shape.
+# words (E's and H's), read into one shape; the first with a row wins.
 _WEBHOOK_LEDGERS = (
     ("inbound_webhook_health", {"last_verified_at": "last_verified_at", "last_event": "last_event_type",
                                 "failed_since_verified": "failed_since_verified", "failures_total": "failed_count",
@@ -5232,8 +5234,9 @@ def _webhook_health(conn):
                     "configured": bool(os.getenv(spec["secret_env"], "")),
                     "source": row["ledger"] if row else "derived"})
     return {"providers": out, "ledger": ", ".join(ledger_names) or None,
-            "basis": ("the providers' own ledgers (inbound_webhook_health for Resend and Twilio, "
-                      "webhook_verifications for Stripe and DocuSign); a provider with no row yet is derived"
+            "basis": ("the inbound webhook ledger (inbound_webhook_health, every provider; "
+                      "webhook_verifications for a Stripe or DocuSign row from before it); "
+                      "a provider with no row yet is derived"
                       if ledger_names else
                       "derived: Stripe and DocuSign from the events they record, Resend from opens, clicks and "
                       "bounce suppressions, Twilio from sms_log; failures from signature captures in job_failures")}

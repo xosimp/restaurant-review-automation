@@ -274,6 +274,7 @@ def test_the_overview_carries_the_backup_and_a_failed_backup_is_an_issue(db_path
     assert issue["severity"] == "critical" and "disk full" in issue["detail"] and issue["resolvable"] is False
     assert admin_ops.resolve_issue("backup", "", "will")["resolvable"] is False
 
+
 # ── the alert cap is one typed audit row (INT-2 handoff; B2's record_admin_action) ──
 
 def test_the_alert_cap_is_a_typed_audit_row_with_the_number_either_side(db_path):
@@ -292,3 +293,41 @@ def test_the_alert_cap_is_a_typed_audit_row_with_the_number_either_side(db_path)
     assert json.loads(rows[1]["before_json"]) == {"alert_max_per_day": 12} and rows[1]["actor_id"] is None
     assert rows[1]["summary"] == "Alert cap set to off by will"
 
+
+# ── webhook health: E's ledger for every provider, H's as the fallback ─────
+
+def test_webhook_health_reads_the_inbound_ledger_first_and_the_verifications_after(db_path):
+    now = datetime.now(timezone.utc)
+    # Stripe is in both: E's ledger (written since the integration wave) wins.
+    _sql(db_path, "INSERT INTO inbound_webhook_health (provider, last_verified_at, last_event_type, "
+                  "failed_since_verified, failed_count) VALUES ('stripe', ?, 'invoice.paid', 0, 2)",
+         (_utc(now - timedelta(hours=1)),))
+    _sql(db_path, "INSERT INTO webhook_verifications (provider, last_verified_at, last_verified_event, "
+                  "failures_since_verified, failures_total) VALUES ('stripe', ?, 'old', 5, 9)",
+         (_utc(now - timedelta(days=3)),))
+    # DocuSign only in H's table (a database from before the switch).
+    _sql(db_path, "INSERT INTO webhook_verifications (provider, last_verified_at, last_verified_event, "
+                  "failures_since_verified, failures_total, last_failure_at, last_failure_error) "
+                  "VALUES ('docusign', ?, 'envelope-completed', 3, 3, ?, 'bad hmac')",
+         (_utc(now - timedelta(days=2)), _utc(now - timedelta(hours=2))))
+    # Twilio's delivery reports refused since they began.
+    _sql(db_path, "INSERT INTO inbound_webhook_health (provider, failed_since_verified, failed_count, "
+                  "last_failed_at, last_failure_reason) VALUES ('twilio_status', 4, 4, ?, 'signature mismatch')",
+         (_utc(now - timedelta(minutes=5)),))
+    conn = admin_ops.get_conn()
+    try:
+        wh = admin_ops._webhook_health(conn)
+    finally:
+        conn.close()
+    by = {p["provider"]: p for p in wh["providers"]}
+    s = by["stripe"]
+    assert (s["source"], s["failures_since_verified"], s["failures_total"], s["last_event"], s["problem"]) == \
+        ("inbound_webhook_health", 0, 2, "invoice.paid", False)
+    d = by["docusign"]
+    assert (d["source"], d["failures_since_verified"], d["last_failure"], d["problem"]) == \
+        ("webhook_verifications", 3, "bad hmac", True)
+    t = by["twilio_status"]
+    assert (t["source"], t["last_verified_at"], t["last_failure"], t["problem"]) == \
+        ("inbound_webhook_health", None, "signature mismatch", True)
+    assert by["resend"]["source"] == "derived" and by["resend"]["failures_since_verified"] is None
+    assert wh["ledger"] == "inbound_webhook_health, webhook_verifications"
