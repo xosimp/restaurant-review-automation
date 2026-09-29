@@ -27,11 +27,8 @@ Three things live here:
 Nothing here writes a model's words as the owner's: a model-written summary
 is labelled as one and fenced like every other untrusted line.
 """
-import json
 import logging
 import re
-import threading
-import time
 from datetime import date, datetime, timedelta
 
 log = logging.getLogger(__name__)
@@ -621,19 +618,35 @@ _METRIC_ALIASES = {"labor": "labor_pct", "labor_pct": "labor_pct", "food": "food
                    "overtime_hours": "overtime_hours", "waste": "weekly_waste", "weekly_waste": "weekly_waste",
                    "rating": "avg_rating", "avg_rating": "avg_rating", "response_hours": "response_hours",
                    "prime_cost_pct": "prime_cost_pct"}
-_TARGET_TTL_SECONDS = 5.0
-_TARGET_CACHE = {}
-_TARGET_LOCK = threading.Lock()
+def _request_memo():
+    """A per-Flask-request memo for target_for (a Home build reads the same
+    target many times), like models' per-request get_restaurant: None off a
+    request (the scheduler, tests, scripts), so a long job sees a goal the
+    moment it is set and nothing outlives the request that read it."""
+    try:
+        from flask import g, has_request_context
+        if not has_request_context():
+            return None
+        memo = getattr(g, "_owner_targets", None)
+        if memo is None:
+            memo = {}
+            g._owner_targets = memo
+        return memo
+    except Exception:
+        return None
 
 
 def invalidate_targets(restaurant_id=None):
-    """Called by every goals write, so a goal set is the target at once."""
-    with _TARGET_LOCK:
-        if restaurant_id is None:
-            _TARGET_CACHE.clear()
-        else:
-            for k in [k for k in _TARGET_CACHE if k[0] == int(restaurant_id)]:
-                _TARGET_CACHE.pop(k, None)
+    """Called by every goals write, so a goal set is the target at once —
+    even later in the same request."""
+    memo = _request_memo()
+    if memo is None:
+        return
+    if restaurant_id is None:
+        memo.clear()
+    else:
+        for k in [k for k in memo if k[0] == int(restaurant_id)]:
+            memo.pop(k, None)
 
 
 def _goal_label(metric, value, deadline):
@@ -662,11 +675,9 @@ def target_for(restaurant_id, metric, db_path=None):
     if not key:
         return None
     ck = (int(restaurant_id), key, db_path or "")
-    now = time.monotonic()
-    with _TARGET_LOCK:
-        hit = _TARGET_CACHE.get(ck)
-        if hit and now - hit[0] < _TARGET_TTL_SECONDS:
-            return dict(hit[1]) if hit[1] else None
+    memo = _request_memo()
+    if memo is not None and ck in memo:
+        return dict(memo[ck]) if memo[ck] else None
     out = None
     try:
         conn = get_conn(db_path)
@@ -685,10 +696,8 @@ def target_for(restaurant_id, metric, db_path=None):
     except Exception as e:
         log.debug("owner_memory: target_for %s/%s unreadable: %s", restaurant_id, key, e)
         out = None
-    with _TARGET_LOCK:
-        if len(_TARGET_CACHE) > 4000:
-            _TARGET_CACHE.clear()
-        _TARGET_CACHE[ck] = (now, dict(out) if out else None)
+    if memo is not None:
+        memo[ck] = dict(out) if out else None
     return out
 
 
