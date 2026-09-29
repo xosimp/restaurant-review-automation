@@ -376,7 +376,16 @@ def dish_margins(restaurant_id, db_path=DB_PATH, praise=None, mentions=None):
     days = _sales_days(restaurant_id, db_path)
     praised = {str(p.get("name") or "").strip().lower(): int(p.get("positive_reviews") or 0) for p in praise or []}
     out = Found()
-    promote = sorted((d for d in usable if d.get("action") == "promote"), key=lambda d: -float(d["margin"]))
+    # Marketing's do-not-promote list (memory audit 9/29/26, "links"): a
+    # dish guests name in complaints while Food Cost ranks it as a driver
+    # (a live reviews_x_menu link) is never put in front of guests.
+    try:
+        import link_memory
+        _dnp = link_memory.do_not_promote(restaurant_id, db_path=db_path)
+    except Exception:
+        _dnp = {}
+    promote = sorted((d for d in usable if d.get("action") == "promote"
+                      and not link_memory_names(_dnp, d.get("name"))), key=lambda d: -float(d["margin"]))
     for i, d in enumerate(promote):
         name = d["name"]
         pos = praised.get(name.strip().lower(), 0)
@@ -390,6 +399,17 @@ def dish_margins(restaurant_id, db_path=DB_PATH, praise=None, mentions=None):
             evidence={"n": days, "kind": "trading_days", "basis": f"{days} days of item sales"},
             sources=("pos", "sales"), score=62 + (4 if pos >= 2 else 0) - i * 0.1, food=True))
     return out
+
+
+def link_memory_names(listed, name):
+    """Whether the do-not-promote list names this menu dish (never raises)."""
+    if not listed:
+        return False
+    try:
+        import link_memory
+        return bool(link_memory.names_dish(listed, name))
+    except Exception:
+        return False
 
 
 def dish_praise_cards(restaurant_id, db_path=DB_PATH, praise=None):

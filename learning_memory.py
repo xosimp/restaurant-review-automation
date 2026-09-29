@@ -16,6 +16,8 @@ and resumable), each step isolated so one failing never stops the others:
                (restaurant_thresholds.refresh)
   scorecard    this month's learning scorecard and its flags
                (learning_scorecard.snapshot; kept forever)
+  links        resolve the cross-module links the owner answered or that a
+               later read no longer found (link_memory.settle)
 
 Only restaurants that may teach a learner are passed in
 (models.learning_eligible): a demo, a test account or an internal one never
@@ -61,6 +63,11 @@ def _scorecard(restaurant_id, today, db_path):
     return learning_scorecard.snapshot(restaurant_id, today=today, db_path=db_path)
 
 
+def _links(restaurant_id, today, db_path):
+    import link_memory
+    return link_memory.settle(restaurant_id, today=today, db_path=db_path)
+
+
 STEPS = [
     ("claims", _claims),
     ("summaries", _summaries),
@@ -68,6 +75,7 @@ STEPS = [
     ("implemented_trackers", _implemented_trackers),
     ("thresholds", _thresholds),
     ("scorecard", _scorecard),
+    ("links", _links),
 ]
 
 

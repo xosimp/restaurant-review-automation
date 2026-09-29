@@ -46,6 +46,7 @@ PROVIDERS = {
     "last_claim":   ("ai_reads:claim_lines", 30),             # what this surface said last time, and its verdict
     "decisions":    ("decisions:memory_lines", 40),           # relevant answers and declines
     "what_worked":  ("rec_learning:what_worked_lines", 50),   # measured results for this kind
+    "links":        ("link_memory:link_lines", 55),           # cross-module links this surface acts on, kept
     "events":       ("event_memory:memory_lines", 60),        # how events, weather, campaigns moved sales here
     "people":       ("people:memory_lines", 70),              # attendance, standing patterns, notes (staffing)
     "marketing":    ("marketing:memory_lines", 80),           # what worked in marketing, the owner's voice
@@ -60,11 +61,11 @@ SURFACE_SECTIONS = {
     "food_read": ("constraints", "goals", "last_claim", "decisions", "what_worked"),
     "review_read": ("constraints", "goals", "last_claim", "decisions", "what_worked"),
     "review_diagnosis": ("constraints", "last_claim", "decisions", "what_worked", "people"),
-    "food_diagnosis": ("constraints", "last_claim", "decisions", "what_worked"),
+    "food_diagnosis": ("constraints", "last_claim", "decisions", "what_worked", "links"),
     "dsr_narrative": ("constraints", "goals", "last_claim", "decisions", "what_worked", "events"),
     "brief": ("constraints", "goals", "decisions", "events"),
     "digest": ("constraints", "goals", "decisions", "what_worked"),
-    "marketing": ("constraints", "goals", "decisions", "what_worked", "events", "marketing"),
+    "marketing": ("constraints", "goals", "decisions", "what_worked", "events", "marketing", "links"),
     "reply_drafter": ("constraints", "decisions", "marketing"),
     "competitor_read": ("constraints", "last_claim", "decisions"),
     "weekly_plan": ("constraints", "goals", "last_claim", "decisions", "what_worked", "events"),

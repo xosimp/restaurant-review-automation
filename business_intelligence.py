@@ -172,7 +172,7 @@ def gather(restaurant_id: int, restaurant=None, db_path: str = DB_PATH) -> dict:
     restaurant = restaurant or get_restaurant(restaurant_id)
     degraded, off = [], []
     out = {"reviews": None, "food_cost": None, "labor": None,
-           "marketing": None, "visibility": None}
+           "marketing": None, "visibility": None, "dsr": None}
 
     def _on(flag):
         return bool(getattr(restaurant, flag, 0)) if restaurant else False
@@ -214,6 +214,12 @@ def gather(restaurant_id: int, restaurant=None, db_path: str = DB_PATH) -> dict:
 
     out["visibility"] = _safe("visibility", lambda: _visibility(restaurant_id, db_path), degraded)
 
+    # The daily report's nights (memory audit 9/29/26, "links"): the
+    # no-shows it measured by weekday, which the DSR link joins to a
+    # complaint weekday. A labor figure, so read only where Labor is.
+    if _on("module_labor"):
+        out["dsr"] = _safe("dsr", lambda: _dsr_nights(restaurant_id, db_path), degraded)
+
     out["degraded"] = degraded
     out["modules_off"] = off
     out["complete"] = not degraded
@@ -246,7 +252,103 @@ def _marketing_activity(restaurant_id, db_path=DB_PATH):
             "posts_published": int(posts["n"] or 0) if posts else 0,
             "reach": int(posts["reach"] or 0) if posts else 0,
             "campaigns_sent": int(camps["n"] or 0) if camps else 0,
-            "texts_delivered": int(camps["sent"] or 0) if camps else 0}
+            "texts_delivered": int(camps["sent"] or 0) if camps else 0,
+            "fill_campaigns": _fill_campaigns(restaurant_id, since, db_path)}
+
+
+def _fill_campaigns(restaurant_id, since, db_path=DB_PATH):
+    """The fill-a-night text campaigns of the window — a campaign with a
+    target day (guest_marketing's "Fill Tuesday" goal) that went out or is
+    queued: [{"day", "sent", "total", "queued", "on"}], newest first. The
+    marketing x labor link reads them. [] when none, or when the column
+    is not there."""
+    conn = _conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT target_day, COALESCE(sent_count,0) AS sent, COALESCE(total,0) AS total, "
+            "COALESCE(status,'done') AS status, date(created_at) AS on_day FROM guest_campaigns "
+            "WHERE restaurant_id=? AND target_day IS NOT NULL AND target_day != '' AND date(created_at) >= ? "
+            "AND COALESCE(status,'done') IN ('sending','waiting','done') ORDER BY created_at DESC, id DESC",
+            (restaurant_id, since)).fetchall()
+    except Exception:
+        return []
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        queued = r["status"] in ("sending", "waiting")
+        if not queued and not int(r["sent"] or 0):
+            continue
+        day = str(r["target_day"]).strip().capitalize()
+        if day in _WEEKDAYS:
+            out.append({"day": day, "sent": int(r["sent"] or 0), "total": int(r["total"] or 0),
+                        "queued": queued, "on": r["on_day"]})
+    return out
+
+
+def _conn(db_path=None):
+    """models.get_conn resolved at call time (CLAUDE.md, bound imports): the
+    readers added with the links (memory audit 9/29/26)."""
+    import models
+    return models.get_conn(db_path) if db_path and db_path != models.DB_PATH else models.get_conn()
+
+
+# The daily report's no-show link (memory audit 9/29/26, "links"). Floors on
+# the report's side, as the other kinds have on theirs: enough measured
+# nights of the weekday, more than one with a no-show, and that weekday's
+# no-show rate well above the other nights' — one no-show is one night.
+DSR_LINK_WINDOW_DAYS = 56
+DSR_LINK_MIN_NIGHTS = 3
+DSR_LINK_MIN_HITS = 2
+DSR_LINK_CONCENTRATION = 2.0
+
+
+def _dsr_nights(restaurant_id, db_path=DB_PATH):
+    """{"window_days", "start", "end", "nights", "by_weekday": {day:
+    {"nights", "no_show_nights"}}} from the daily report's measured
+    labor.no_shows over DSR_LINK_WINDOW_DAYS (a night the report could not
+    measure is absent, never zero). None when nothing was measured."""
+    since = (date.today() - timedelta(days=DSR_LINK_WINDOW_DAYS)).isoformat()
+    conn = _conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT business_date, value FROM dsr_metrics WHERE restaurant_id=? AND metric='labor.no_shows' "
+            "AND business_date >= ? AND value IS NOT NULL ORDER BY business_date", (restaurant_id, since)).fetchall()
+    except Exception:
+        return None
+    finally:
+        conn.close()
+    by = {}
+    for r in rows:
+        try:
+            day = date.fromisoformat(str(r["business_date"])[:10]).strftime("%A")
+            v = float(r["value"])
+        except (TypeError, ValueError):
+            continue
+        b = by.setdefault(day, {"nights": 0, "no_show_nights": 0})
+        b["nights"] += 1
+        b["no_show_nights"] += 1 if v > 0 else 0
+    if not by:
+        return None
+    return {"window_days": DSR_LINK_WINDOW_DAYS, "start": str(rows[0]["business_date"])[:10],
+            "end": str(rows[-1]["business_date"])[:10], "nights": sum(b["nights"] for b in by.values()),
+            "by_weekday": by}
+
+
+def _dsr_no_show_day(dsr_nights, day):
+    """{"nights", "hits", "other_nights", "other_hits"} when the daily
+    report's no-shows concentrate on `day` past the DSR_LINK floors, else
+    None."""
+    by = (dsr_nights or {}).get("by_weekday") or {}
+    d = by.get(day) or {}
+    n, k = int(d.get("nights") or 0), int(d.get("no_show_nights") or 0)
+    if n < DSR_LINK_MIN_NIGHTS or k < DSR_LINK_MIN_HITS:
+        return None
+    on = sum(int(v.get("nights") or 0) for w, v in by.items() if w != day)
+    ok = sum(int(v.get("no_show_nights") or 0) for w, v in by.items() if w != day)
+    if on and (k / n) < DSR_LINK_CONCENTRATION * (ok / on):
+        return None
+    return {"nights": n, "hits": k, "other_nights": on, "other_hits": ok}
 
 
 def _visibility(restaurant_id, db_path=DB_PATH):
@@ -315,6 +417,23 @@ def _lean_days(labor):
             if isinstance(pct, (int, float)) and pct > 0 and (avg - pct) >= LEAN_DAY_MIN_GAP_PTS}
 
 
+def _heavy_days(labor):
+    """Weekdays whose labor percentage runs materially ABOVE this
+    restaurant's own weekday average, with the gap in points — _lean_days's
+    mirror, with its floors (a period of MIN_PERIOD_DAYS_FOR_WEEKDAY, three
+    weekdays with data, LEAN_DAY_MIN_GAP_PTS). The day Labor's own trim
+    advice points at (memory audit 9/29/26, the marketing x labor link)."""
+    if _f((labor or {}).get("period_days")) < MIN_PERIOD_DAYS_FOR_WEEKDAY:
+        return {}
+    dow = (labor or {}).get("dow_summary") or {}
+    vals = [v for v in dow.values() if isinstance(v, (int, float)) and v > 0]
+    if len(vals) < 3:
+        return {}
+    avg = sum(vals) / len(vals)
+    return {day: round(pct - avg, 1) for day, pct in dow.items()
+            if isinstance(pct, (int, float)) and pct > 0 and (pct - avg) >= LEAN_DAY_MIN_GAP_PTS}
+
+
 def _cluster_days(cluster):
     """The weekday(s) a complaint cluster concentrates on, if any cleared
     review_intelligence's own concentration floor."""
@@ -358,6 +477,7 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
                 links.append({
                     "kind": "reviews_x_labor",
                     "day": day,
+                    "category": c.get("category"), "mentions": c.get("mentions"),
                     # What the link is about, for its recommendation key: one
                     # answer silences THIS pairing, not every cross-module
                     # link of the kind (H-13).
@@ -407,6 +527,7 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
             links.append({
                 "kind": "reviews_x_food_cost",
                 "day": waste_day,
+                "category": c.get("category"), "mentions": c.get("mentions"),
                 "subject": _link_subject(c.get("category"), waste_day),
                 "modules": ["reviews", "food_cost"],
                 "claim_kind": "inferred",
@@ -442,6 +563,7 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
                     links.append({
                         "kind": "reviews_x_menu",
                         "dish": dish,
+                        "category": c.get("category"), "mentions": c.get("mentions"),
                         "subject": _link_subject(c.get("category"), dish),
                         "modules": ["reviews", "food_cost"],
                         "claim_kind": "inferred",
@@ -461,6 +583,52 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
                                         "more cost simply because it sells more."),
                     })
                     break
+
+        # ── complaints on the weekday the daily report keeps logging no-shows ──
+        # The DSR had no link (memory audit 9/29/26, "links"): its nightly
+        # no-show count is measured per night, so a complaint weekday that
+        # is also the no-show weekday is a pairing no module sees alone.
+        # Both floors hold: the cluster's own concentration, and the
+        # report's (_dsr_no_show_day). Never a cause.
+        dn = data.get("dsr") or {}
+        for day in days:
+            hit = _dsr_no_show_day(dn, day)
+            if not hit:
+                continue
+            _periods = _window_overlap(_cluster_window(c), (dn.get("start"), dn.get("end"))
+                                       if dn.get("start") and dn.get("end") else None,
+                                       what="the daily reports")
+            links.append({
+                "kind": "dsr_x_reviews",
+                "day": day,
+                "category": c.get("category"), "mentions": c.get("mentions"),
+                "subject": _link_subject(c.get("category"), day),
+                "modules": ["reviews", "dsr"],
+                "claim_kind": "inferred",
+                "headline": (f"{c['mentions']} {_cat(c['category'])} complaints concentrate on {day}, and the "
+                             f"daily report logged a no-show on {hit['hits']} of the last {hit['nights']} {day}s"
+                             + (" — from different periods" if _periods.get("different") else "")),
+                "evidence": [
+                    f"{c['mentions']} negative reviews naming {_cat(c['category'])} over "
+                    f"{c['window_days']} days, {_concentration_phrase(c)}",
+                    f"A no-show on {hit['hits']} of {hit['nights']} {day}s in the last "
+                    f"{DSR_LINK_WINDOW_DAYS // 7} weeks of daily reports, against {hit['other_hits']} of "
+                    f"{hit['other_nights']} other nights",
+                ] + ([_periods["line"]] if _periods.get("different") else []),
+                "evidence_inputs": [_cluster_evidence_input(c),
+                                    {"n": hit["nights"], "kind": "count", "n_full": DSR_LINK_WINDOW_DAYS // 7,
+                                     "basis": f"{hit['nights']} {day}s measured in the daily report"}],
+                "periods": "different" if _periods.get("different") else (
+                    "overlapping" if _periods.get("known") else "unknown"),
+                "review_ids": (c.get("review_ids") or [])[:5],
+                "not_a_cause": ("A no-show leaves the floor short, but a review does not say which night it "
+                                "was written about, so the two sharing a weekday is a question, not a finding."),
+                "confirm_by": (f"Read the {day} reviews against the {day}s the daily report logged a no-show; "
+                               f"if they line up, put someone on call for {day}."),
+                "alternative": (f"{day} may simply be the busiest night, which raises complaint volume and "
+                                f"what one missing person costs at the same time."),
+            })
+            break
 
     # ── marketing × reviews: a posting month and a review-volume move ──
     # Marketing and Intel contributed nothing to the cross-module argument:
@@ -497,6 +665,43 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
                                "whether the same weeks last year moved the same way."),
                 "alternative": "A seasonal week, a holiday, or a press mention moves review volume on its own.",
             })
+
+    # ── marketing × labor: a fill-a-night campaign on the day labor runs heaviest ──
+    # (memory audit 9/29/26, "links"): Marketing texting guests to fill a
+    # night and Labor's own numbers calling that night the heaviest of the
+    # week point at one day from two sides. Both floors hold: the campaign
+    # went out (or is queued) — a record, not a guess — and the day clears
+    # _heavy_days's floors. Not a verdict on either: what the campaign does
+    # to the night is not measured yet.
+    heavy = _heavy_days(labor) if labor.get("is_live") else {}
+    _fill_seen = set()
+    for fc in (mk.get("fill_campaigns") or []):
+        day = fc.get("day")
+        if day not in heavy or day in _fill_seen:
+            continue
+        _fill_seen.add(day)
+        from time_utils import mdy as _mdy_fc
+        sent_line = (f"A text to fill {day} is queued for {fc['total']:,} guests" if fc.get("queued") else
+                     f"A text to fill {day} went to {fc['sent']:,} guests on {_mdy_fc(fc.get('on'))}")
+        links.append({
+            "kind": "marketing_x_labor",
+            "day": day,
+            "subject": _link_subject("fill", day),
+            "modules": ["marketing", "labor"],
+            "claim_kind": "inferred",
+            "headline": (f"{sent_line}, and {day} runs {heavy[day]} points heavier on labor than this "
+                         f"restaurant's weekday average"),
+            "evidence": [sent_line,
+                         f"{day} averages {heavy[day]} points above this restaurant's own weekday average labor "
+                         f"percentage"],
+            "evidence_inputs": [_labor_evidence_input(labor)],
+            "not_a_cause": (f"A heavy labor % on a slow night is sales falling short of the crew it needs, not proof "
+                            f"{day} is overstaffed — and what the campaign does to {day} is not measured yet."),
+            "confirm_by": (f"Hold any cut to {day} until the campaign's window closes, then compare {day}'s sales "
+                           f"and labor % with the {day}s before it."),
+            "alternative": (f"The campaign may not bring enough guests to change what {day} needs; the labor "
+                            f"figure is from before it went out."),
+        })
 
     # ── intel × reviews: AI visibility and the rating moving together ──
     vis = data.get("visibility") or {}
@@ -548,6 +753,15 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
         act = link_action(link)
         if act:
             link["act"] = act
+    # Kept, not rediscovered (memory audit 9/29/26, "links"): each link
+    # carries its `memory` — first and last found, weeks running, whether
+    # it came back — and a read that consulted a link's modules without
+    # finding it stamps the miss. Never fails the read.
+    try:
+        import link_memory
+        link_memory.observe(restaurant_id, links, consulted=link_memory.consulted_modules(data), db_path=db_path)
+    except Exception as e:
+        log.warning("business_intelligence: links not remembered for rid=%s: %s", restaurant_id, e)
     return links
 
 
@@ -570,6 +784,8 @@ def link_action(link):
         return {"label": "Open Marketing", "nav": nav.path("marketing")}
     if kind == "intel_x_reviews":
         return {"label": "Open AI visibility", "nav": nav.path("intel")}
+    if kind in ("dsr_x_reviews", "marketing_x_labor") and link.get("day"):
+        return {"label": f"Open {link['day']}'s schedule", "nav": nav.path("labor", "schedule", day=link["day"])}
     return None
 
 
@@ -786,6 +1002,10 @@ def money_at_stake(restaurant_id: int, data: dict = None, restaurant=None,
 # reply to a 1-2 star review); important is what two modules agree on or a
 # gap against the owner's own target; normal is everything else.
 URGENCY_WEIGHT = {"critical": 10.0, "important": 2.0, "normal": 1.0}
+# A cross-module link found link_memory.ESCALATE_WEEKS weeks running, or back
+# after it was answered or went away, counts this much more in the ranking
+# (memory audit 9/29/26, "links") — below critical however long it stands.
+RECURRING_LINK_WEIGHT = 2.0
 # An action with no dollar figure is ranked as if it carried this much — not
 # zero (a missing measurement is never $0), and not enough to beat a real
 # line on its own.
@@ -923,14 +1143,26 @@ def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> li
                 # Home's urgent_reviews item carries none either.
                 fact=True)
 
-    for top in (links or [])[:1]:
+    # The link that has stood longest goes first (memory audit 9/29/26,
+    # "links"): a link found weeks running, or back after it was answered
+    # or went away, is the one worth the owner's attention — each read
+    # used to rediscover it as new, in whatever order the clusters came.
+    def _standing(l):
+        m = l.get("memory") or {}
+        return (not m.get("recurring"), -int(m.get("weeks_running") or 0))
+    for top in sorted(links or [], key=_standing)[:1]:
         # "link:<kind>:<subject>" — a bare "link:<kind>" meant one "Not for
         # us" silenced every future link of that kind for ten years (H-13).
+        mem = top.get("memory") or {}
+        why = top.get("headline")
+        if mem.get("recurring") and mem.get("label") and why:
+            why = f"{why} — {mem['label'][:1].lower()}{mem['label'][1:]}"
         add(link_key(top), top.get("confirm_by") or top.get("headline"),
-            top.get("headline"), top.get("modules") or [], urgency="important",
+            why, top.get("modules") or [], urgency="important",
             evidence=top.get("evidence"), claim_kind="inferred",
             confirm_by=top.get("confirm_by"), link_headline=top.get("headline"),
-            evidence_input=link_evidence_input(top))
+            evidence_input=link_evidence_input(top),
+            recurring=bool(mem.get("recurring")), link_memory=mem or None)
 
     fx = food_brief.get("fix_first")
     if fx and (fx.get("what") or fx.get("label")):
@@ -1022,6 +1254,11 @@ def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> li
 
     for c in out:
         c["score"] = URGENCY_WEIGHT.get(c["urgency"], 1.0) * max(c["dollars_monthly"] or 0.0, UNPRICED_FLOOR)
+        if c.get("recurring"):
+            # Escalated, never made critical (critical is a guest waiting):
+            # two modules agreeing week after week is that many readings,
+            # not one (link_memory.ESCALATE_WEEKS).
+            c["score"] = round(c["score"] * RECURRING_LINK_WEIGHT, 2)
     out.sort(key=lambda c: -c["score"])
     return out
 
@@ -1049,14 +1286,14 @@ def _labor_window(labor):
     return (a, b) if a and b else None
 
 
-def _window_overlap(a, b) -> dict:
+def _window_overlap(a, b, what="the labor figures") -> dict:
     """{known, different, line}: whether two (start, end) windows share any
     day, and the owner's line naming both when they do not."""
     if not a or not b:
         return {"known": False, "different": False, "line": None}
     different = a[1] < b[0] or b[1] < a[0]
     from time_utils import mdy_range
-    line = (f"Different periods: the complaints run {mdy_range(a[0], a[1])}, the labor figures "
+    line = (f"Different periods: the complaints run {mdy_range(a[0], a[1])}, {what} "
             f"{mdy_range(b[0], b[1])} — the two were never measured over the same days") if different else None
     return {"known": True, "different": different, "line": line}
 
@@ -1330,7 +1567,9 @@ def executive_brief(restaurant_id: int, restaurant=None, db_path: str = DB_PATH,
         "labor": _trim_labor(data.get("labor") or {}),
         "marketing": data.get("marketing"),
         "visibility": data.get("visibility"),
-        "modules_consulted": [k for k in ("reviews", "food_cost", "labor", "marketing", "visibility")
+        # The daily report's measured nights the DSR link reads.
+        "dsr": data.get("dsr"),
+        "modules_consulted": [k for k in ("reviews", "food_cost", "labor", "marketing", "visibility", "dsr")
                               if data.get(k)],
         "modules_off": data.get("modules_off", []),
         "degraded": data.get("degraded", []),
@@ -1406,7 +1645,10 @@ def snapshot_block(restaurant_id: int, restaurant=None, db_path: str = DB_PATH) 
     if brief.get("links"):
         lines.append("- What lines up across modules:")
         for l in brief["links"][:3]:
-            lines.append(f"    {l['headline']}")
+            # How long it has stood (link_memory), so Ask can say a link
+            # recurs rather than presenting it as new each time.
+            _m = l.get("memory") or {}
+            lines.append(f"    {l['headline']}" + (f" ({_m['label']})" if _m.get("label") else ""))
             lines.append(f"      confirm by: {l.get('confirm_by')}")
             lines.append(f"      could also be: {l.get('alternative')}")
             if l.get("not_a_cause"):

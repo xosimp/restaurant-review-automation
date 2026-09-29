@@ -1179,6 +1179,8 @@ def _follow_through_sections(restaurant_id, owner_view=False, include_results=Tr
                 f"{x['dish']}: {(x.get('drivers') or [{}])[0].get('ingredient', 'ingredient costs')} "
                 f"rose, about ${x['monthly_margin_lost']:,.0f}/month of margin — "
                 f"${x['suggested_price']:.2f} restores the old food cost %"
+                # The reprice guard (link_memory): guests are naming it.
+                + (f". {x['guard']['text']}" if (x.get("guard") or {}).get("text") else "")
                 for x in worth if x.get("suggested_price"))))
     except Exception as e:
         log.warning("digest reprice block failed: %s", e)

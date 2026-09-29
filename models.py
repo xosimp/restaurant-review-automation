@@ -3297,6 +3297,9 @@ def init_db(db_path: str = DB_PATH):
     # quarterly summaries that outlive them (ai_reads, memory audit 9/29/26).
     from ai_reads import init_ai_reads
     init_ai_reads(db_path)
+    # The cross-module links, kept (memory audit 9/29/26, "links").
+    from link_memory import init_link_memory
+    init_link_memory(db_path)
     from menu_intelligence import init_menu_intelligence
     init_menu_intelligence(db_path)
     # Job claims, runs, failures, async jobs and the scheduler lease — at

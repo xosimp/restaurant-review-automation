@@ -1865,8 +1865,11 @@ def _build(current_user, present=True):
             # by POST /api/food-cost/reprice/apply {dish, price}.
             try:
                 import menu_intelligence as _mi_hb
+                # A guarded dish (guests naming it in complaints — the
+                # reprice guard, link_memory) is not a one-tap reprice.
                 _sg = [x for x in ((_mi_hb.reprice_suggestions(rid) or {}).get("suggestions") or [])
-                       if (x.get("monthly_margin_lost") or 0) >= 25 and x.get("suggested_price")]
+                       if (x.get("monthly_margin_lost") or 0) >= 25 and x.get("suggested_price")
+                       and not x.get("guard")]
             except Exception:
                 _sg = []
             _named = str((drivers[0].get("item") if drivers else "") or "").lower()

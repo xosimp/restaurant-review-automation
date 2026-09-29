@@ -788,6 +788,7 @@ def _read_business_snapshot(restaurant_id, _viewer=None):
         "labor": brief.get("labor"),
         "marketing": brief.get("marketing"),
         "visibility": brief.get("visibility"),
+        "dsr": brief.get("dsr"),
         "modules_consulted": brief.get("modules_consulted"),
         "modules_off": brief.get("modules_off"),
         "degraded": brief.get("degraded"),

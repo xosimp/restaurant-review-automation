@@ -402,7 +402,7 @@ KIND_TOPIC = {
     "dsr_action:respond_reviews": "replies", "dsr_action:promote": "marketing",
     "link:reviews_x_labor": "staffing", "link:reviews_x_food_cost": "food_cost",
     "link:reviews_x_menu": "guest_experience", "link:marketing_x_reviews": "marketing",
-    "link:intel_x_reviews": "competition",
+    "link:intel_x_reviews": "competition", "link:dsr_x_reviews": "staffing", "link:marketing_x_labor": "staffing",
 }
 # Kinds whose subject names a dish, and kinds whose subject names an item.
 DISH_KINDS = ("reprice", "dish_promote", "dish_praise")
