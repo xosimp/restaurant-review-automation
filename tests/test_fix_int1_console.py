@@ -234,3 +234,38 @@ def test_the_system_card_shows_the_last_operator_page(db_path, monkeypatch):
                                {"sent": True, "channels": {"email": True}})
     card = platform_monitor.system_report(db_path)
     assert card["operator_alert"]["key"] == "platform_sla_alert"
+
+
+# ── the deletion issue opens B2's offboarding checklist (#34) ──────────────
+
+def test_the_deletion_issue_opens_the_checklist_and_says_what_is_left(db_path):
+    import offboarding
+    offboarding.init_offboarding(db_path)
+    rid = _mk(db_path, "Leaving Co")
+    _sql(db_path, "UPDATE restaurants SET deletion_requested_at=datetime('now','-2 days') WHERE id=?", (rid,))
+    issue = next(i for i in _rec(rid)["issues"] if i["key"] == f"{rid}:deletion")
+    assert issue["action_href"] == f"#client/{rid}?tab=offboarding"
+    assert "Left on the checklist:" in issue["detail"]
+
+
+# ── A's session ids on the client page ─────────────────────────────────────
+
+def test_client_sessions_carry_the_id_the_revoke_route_takes(db_path):
+    rid = _mk(db_path, "Session Co")
+    uid = auth.create_user(rid, "sess_owner", "so@x.test", "a-long-pass-1", db_path=db_path)
+    uid = uid if isinstance(uid, int) else None
+    token = auth.create_session(uid, db_path=db_path)
+    row = admin_ops.client_detail(rid)["sessions"][0]
+    assert row["session_id"] == auth.hash_session_token(token)[:16] and not row["is_view_as"]
+
+
+# ── the overview's backup tile and a failed backup (D #1, #2, #28) ─────────
+
+def test_the_overview_carries_the_backup_and_a_failed_backup_is_an_issue(db_path):
+    _sql(db_path, "INSERT INTO backup_runs (started_at, finished_at, local_ok, offsite_ok, detail_json) "
+                  "VALUES (datetime('now','-1 hour'), datetime('now','-1 hour'), 0, 0, ?)", ('{"error": "disk full"}',))
+    ov = admin_ops.overview()
+    assert ov["backup"]["state"] == "failed" and "storage" in ov
+    issue = next(i for i in ov["issues"] if i["key"] == "backup")
+    assert issue["severity"] == "critical" and "disk full" in issue["detail"] and issue["resolvable"] is False
+    assert admin_ops.resolve_issue("backup", "", "will")["resolvable"] is False

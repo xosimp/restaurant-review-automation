@@ -66,6 +66,16 @@ def get_conn(db_path=None):
     return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 
 
+def _storage_trend():
+    """ops.storage_trend for this database, or None when unreadable."""
+    try:
+        import ops as _ops_st
+        return _ops_st.storage_trend(days=30, db_path=_current_db_path())
+    except Exception as e:
+        _note_failure("storage_trend", e)
+        return None
+
+
 def _current_db_path():
     """The database get_conn() opens right now: the caller's override, else
     models.DB_PATH at call time — for readers that take a path, not a
@@ -1894,6 +1904,7 @@ UNRESOLVABLE = {
                  "resolved.",
     "platform:error_rate": "The 5xx rate is a live five-minute reading that clears itself, so it can't be "
                            "marked resolved.",
+    "backup": "The backup issue clears itself on the next good nightly run, so it can't be marked resolved.",
 }
 _UNRESOLVABLE_KINDS = {
     "deletion": "An account-deletion request is closed by withdrawing it or completing the offboarding, not by "
@@ -2237,13 +2248,25 @@ def _issues_for(r, d, owner, integrations, modules, onboarding, last_active, bil
             action_kind="link", action_href=ai_href)
     if deletion:
         overdue = deletion["days_left"] < 0
+        # Where the offboarding checklist stands (B2's offboarding, #34) —
+        # read only for the few accounts with a request open.
+        left = None
+        try:
+            import offboarding as _offb
+            chk = _offb.checklist(rid, db_path=_current_db_path()) or {}
+            left = [st["label"] for st in chk.get("steps") or []
+                    if st.get("status") not in ("done", "skipped", "not_needed")]
+        except Exception as e:
+            _note_failure("offboarding_checklist", e)
+        todo = (f" Left on the checklist: {', '.join(left)}." if left else
+                " The checklist is finished — the account can be deleted." if left == [] else "")
         add("deletion",
             (f"Account deletion overdue by {-deletion['days_left']} days (was due {deletion['due_label']})" if overdue
              else f"Account deletion requested — due {deletion['due_label']}"),
             "critical", deletion["requested_at"], "Open offboarding", None,
             f"Requested {_mdy(deletion['requested_at'])} in the app. Withdraw the request or finish the "
-            f"offboarding by {deletion['due_label']} (App Store guideline 5.1.1(v)).",
-            zone="UTC", resolvable=False, action_kind="link", action_href=f"{client}?tab=access")
+            f"offboarding by {deletion['due_label']} (App Store guideline 5.1.1(v)).{todo}",
+            zone="UTC", resolvable=False, action_kind="link", action_href=f"{client}?tab=offboarding")
     sub = billing.get("subscription") or {}
     stored_mm = sub.get("module_mismatch") if isinstance(sub.get("module_mismatch"), dict) else None
     if stored_mm and bs in PAYING_STATES:
@@ -2556,6 +2579,21 @@ def _platform_issues(recs, d):
         add("scheduler", title, "critical", detail=f"{int(hb)} minutes since the last beat" if hb is not None else None,
             resolvable=False, action="Check Railway", action_kind="link", action_href="#engineering")
         out[-1]["since"] = f"{int(hb)}m" if hb is not None else "—"
+    # The nightly backup (D, #1, #2): failed, stale, or with no off-site copy.
+    # It clears itself on the next good run, so it cannot be resolved.
+    try:
+        import ops as _ops_backup
+        bk = _ops_backup.backup_status(db_path=_current_db_path())
+    except Exception as e:
+        bk = {}
+        _note_failure("backup_status", e)
+    facts["backup"] = bk
+    if bk.get("state") in ("failed", "stale", "no_offsite"):
+        add("backup", {"failed": "Last night's backup failed", "stale": "No good backup in over a day",
+                       "no_offsite": "No off-site copy of the database"}[bk["state"]],
+            "warning" if bk["state"] == "no_offsite" and bk.get("age_hours") is not None else "critical",
+            since=bk.get("last_run_at"), zone="UTC", occurrence=None, detail=bk.get("summary"),
+            resolvable=False, action="Open backups", action_kind="link", action_href="#engineering")
     # Latency and error rate. Rolling, in-process, reset on deploy — see
     # http_layer.request_metrics for why it is not a table.
     try:
@@ -2796,7 +2834,11 @@ def overview():
             "issues_total": len(visible), "issues_truncated": len(visible) > ISSUES_IN_OVERVIEW,
             "issue_counts": counts, "internal_issues": [i for i in issues if i.get("segment") == "internal"][:20],
             "activity": activity_events, "brands": _brand_rows(recs), "series": series,
-            "webhooks": facts.get("webhooks"), **_payload_meta(meta, bucket)}
+            "webhooks": facts.get("webhooks"),
+            # The backup tile (D, #1, #2, #28): the newest run's verdict and
+            # the size trend with days to full.
+            "backup": facts.get("backup"), "storage": _storage_trend(),
+            **_payload_meta(meta, bucket)}
 
 
 def clients():
@@ -2834,7 +2876,14 @@ def client_detail(rid):
             logins = _rows_dict(conn, "SELECT event, ip_address, user_agent, device_type, created_at FROM login_history WHERE restaurant_id=? ORDER BY id DESC LIMIT 30", (rid,))
             for l in logins:
                 l["label"] = _login_label(l.get("event"), l.get("device_type"))
-            sessions = _rows_dict(conn, "SELECT s.created_at, s.last_active, s.device_type, s.ip_address, u.username FROM sessions s JOIN users u ON u.id=s.user_id WHERE u.restaurant_id=? AND julianday(s.expires_at) > julianday('now') ORDER BY julianday(s.last_active) DESC", (rid,))
+            # session_id is the stored token hash's first 16 characters — the
+            # id A's revoke route takes (…/sessions/<session_id>/revoke); a
+            # view-as session is marked, never counted as the owner's.
+            sessions = _rows_dict(conn, "SELECT substr(s.token,1,16) AS session_id, s.user_id, s.created_at, s.last_active, "
+                                        "s.device_type, (COALESCE(s.device_type,'')='admin-view-as') AS is_view_as, "
+                                        "s.ip_address, u.username FROM sessions s JOIN users u ON u.id=s.user_id "
+                                        "WHERE u.restaurant_id=? AND julianday(s.expires_at) > julianday('now') "
+                                        "ORDER BY julianday(s.last_active) DESC", (rid,))
             jobs, runs, quality = _client_job_rows(conn, rid, d)
             posts = _rows_dict(conn, "SELECT platform, content_type, topic, scheduled_for, status, error, attempts, posted_at FROM marketing_scheduled_posts WHERE restaurant_id=? ORDER BY id DESC LIMIT 20", (rid,))
             hooks = _rows_dict(conn, "SELECT event_type, status, ok, attempts, error, created_at FROM webhook_deliveries WHERE restaurant_id=? ORDER BY id DESC LIMIT 20", (rid,))
@@ -6109,6 +6158,10 @@ def viewer_role():
         from flask import g, has_request_context
         if not has_request_context():
             return None
+        import auth as _auth_role
+        role = _auth_role.current_admin_role()     # fix round A: 'admin' | 'support'
+        if role:
+            return role
         for attr in ("admin_role", "viewer_role"):
             v = getattr(g, attr, None)
             if isinstance(v, str) and v:

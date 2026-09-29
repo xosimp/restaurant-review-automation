@@ -152,3 +152,27 @@ def test_the_system_cards_size_trend_reads_the_nightly_record(db):
     out = platform_monitor._size_trend(db)
     assert out["source"] == "daily" and out["points"][-1]["db_mb"] == 110.0
     assert out["growth_mb_per_day"] == 5.0 and out["days_to_full"]
+
+
+# ── the operator's weekly digest reads the console's real record keys (D #35 meets C) ──
+
+def test_the_weekly_digest_reads_churn_risk_and_the_next_onboarding_step(db, monkeypatch):
+    import admin_ops
+    import emails
+    monkeypatch.setattr(admin_ops, "overview", lambda: {"kpis": {"clients": 2}, "issues": []})
+    monkeypatch.setattr(admin_ops, "clients", lambda: {"clients": [
+        {"name": "Risky Grill", "segment": "customer",
+         "churn_risk": {"level": "high", "points": 7, "reasons": ["no logins in 20 days"], "scored": True},
+         "onboarding": {"complete": True}},
+        {"name": "New Bistro", "segment": "customer", "churn_risk": {"level": "n/a"},
+         "onboarding": {"complete": False, "steps": [{"label": "Contract signed", "done": True},
+                                                     {"label": "Connect Google", "done": False}]}},
+        {"name": "Demo Co", "segment": "internal", "churn_risk": {"level": "high", "points": 9, "reasons": ["x"]},
+         "onboarding": {"complete": False, "steps": []}}]})
+    sent = {}
+    monkeypatch.setattr(emails, "deliver", lambda payload=None, **k: sent.update(payload) or
+                        emails.SendResult(True, attempts=1))
+    ops.send_operator_weekly_digest()
+    assert "Risky Grill" in sent["html"] and "no logins in 20 days" in sent["html"]
+    assert "New Bistro" in sent["html"] and "Connect Google" in sent["html"]
+    assert "Demo Co" not in sent["html"]

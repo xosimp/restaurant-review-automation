@@ -2605,10 +2605,23 @@ def send_operator_weekly_digest():
         recs = admin_ops.clients().get("clients") or []
     except Exception:
         recs = []
-    real = [r for r in recs if not r.get("is_demo") and not r.get("is_admin_home")]
-    at_risk = sorted([r for r in real if (r.get("churn") or {}).get("level") in ("high", "medium")],
-                     key=lambda r: -int((r.get("churn") or {}).get("score") or 0))[:8]
+    # The console's records: customer accounts only (C's segment), their
+    # churn read under `churn_risk` (level, reasons, points) — this read
+    # `churn`/`score`, keys the records never carried, so the at-risk list
+    # was always empty — and the first onboarding step not yet done.
+    real = [r for r in recs if r.get("segment", "customer") == "customer"
+            and not r.get("is_demo") and not r.get("is_admin_home")]
+
+    def _churn(r):
+        return r.get("churn_risk") or r.get("churn") or {}
+    at_risk = sorted([r for r in real if _churn(r).get("level") in ("high", "medium")],
+                     key=lambda r: -int(_churn(r).get("points") or _churn(r).get("score") or 0))[:8]
     onboarding = [r for r in real if (r.get("onboarding") or {}).get("complete") is False][:8]
+    for r in onboarding:
+        ob = r.get("onboarding") or {}
+        if not ob.get("next_step"):
+            nxt = next((st for st in ob.get("steps") or [] if not st.get("done")), None)
+            ob["next_step"] = (nxt or {}).get("label")
     b = _emails_ops.BRAND
 
     def _row(label, value):
@@ -2629,7 +2642,7 @@ def send_operator_weekly_digest():
         ("Job failures (24h)", k.get("job_failures_24h", 0)), ("Jobs overdue", k.get("jobs_overdue", 0)),
         ("AI cost today", f"${float(k.get('ai_cost_today') or 0):,.2f}")))
     risk_items = [f'<b>{_html.escape(str(r.get("name")))}</b> — '
-                  f'{_html.escape("; ".join((r.get("churn") or {}).get("reasons") or [])[:160])}' for r in at_risk]
+                  f'{_html.escape("; ".join(_churn(r).get("reasons") or [])[:160])}' for r in at_risk]
     onb_items = [f'<b>{_html.escape(str(r.get("name")))}</b> — '
                  f'{_html.escape(str((r.get("onboarding") or {}).get("next_step") or "setup incomplete"))}'
                  for r in onboarding]
