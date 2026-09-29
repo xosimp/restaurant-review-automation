@@ -10728,7 +10728,12 @@ def home_dismiss_api(current_user):
         _ep = _rl_undo.episode_for(rid, key[:160])
         if _ep is not None and not _rl_undo.viewer_sees(current_user, _ep):
             return jsonify(ok=False, error="No such recommendation."), 404
-        return jsonify(**home_brief.undismiss(rid, key))
+        # A delegate's (or support's) "Use again" takes back that login's own
+        # answer only, never the owner's (memory audit, who_answered).
+        import rec_ledger as _rl_sub
+        from permissions import answer_authority as _aa_undo
+        return jsonify(**home_brief.undismiss(rid, key, subject_id=_rl_sub.silence_subject(current_user),
+                                              own=_aa_undo(current_user) == "principal"))
     # The owner's one-tap why (rec_ledger.REASON_CODES); an unknown code is
     # refused, never stored as if it were one of the six.
     import rec_ledger as _rl_codes
@@ -10748,10 +10753,16 @@ def home_dismiss_api(current_user):
     elif _rlearn.answerable_episode(current_user, rid, key) is None:
         return jsonify(ok=False, error="No such recommendation."), 404
     kind = (data.get("kind") or "recommendation")[:40]
+    # Whose answer this is (permissions.answer_authority): a delegate's holds
+    # for that login alone, an admin's through view-as trains nothing
+    # (memory audit 9/29/26, who_answered / view_as).
+    from permissions import answer_authority as _aa
+    _authority = _aa(current_user)
     out = home_brief.dismiss(rid, key, kind=kind, user_id=current_user.get("id"),
                              days=data.get("days"), reason=data.get("reason"), title=data.get("title"),
                              surface="home", role=current_user.get("role"), reason_code=reason_code or None,
-                             require_existing=True)
+                             require_existing=True, authority=_authority,
+                             via=_rl_codes.request_via(current_user))
     # "Done" on a recommendation that names a metric is an owner saying
     # they acted. That is exactly what Track this records, so record it:
     # source "observed", baseline now, re-measured when the window closes.
@@ -10760,7 +10771,7 @@ def home_dismiss_api(current_user):
     # card's own (sent by the client, else the one it was presented with),
     # and the start is automatic, so the family gate applies (rec-ROI #18):
     # while anything in its family is measured the reply says so instead.
-    if out.get("ok") and kind == "done":
+    if out.get("ok") and kind == "done" and _authority != "admin":
         try:
             import outcomes
             # The login's own permissions decide which metric it may start

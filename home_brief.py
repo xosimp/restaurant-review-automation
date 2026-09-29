@@ -142,7 +142,8 @@ def times_hidden(conn, rid):
 
 
 def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=None, title=None,
-            surface="home", role=None, _card=True, reason_code=None, require_existing=False):
+            surface="home", role=None, _card=True, reason_code=None, require_existing=False, authority=None,
+            via=None):
     """Hide one recommendation for this restaurant. Keys carry their subject
     ("trim_day:Monday", "cut_waste:Salmon Fillet"), so a different day or
     item is a new recommendation and comes through.
@@ -172,15 +173,36 @@ def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=Non
     except (TypeError, ValueError):
         days = _DISMISS_DAYS_BY_KIND[kind]
     days = max(1, min(days, 3650))
-    conn = get_conn()
-    prior = conn.execute("SELECT COALESCE(times, 1) AS n FROM home_dismissals WHERE restaurant_id=? AND key=?",
-                         (rid, key)).fetchone()
-    times = (int(prior["n"]) + 1) if prior else 1
-    conn.execute("INSERT INTO home_dismissals (restaurant_id, key, kind, dismissed_by, expires_at, times) "
-                 "VALUES (?,?,?,?, datetime('now', ?), ?)", (rid, key, kind, user_id, f"+{int(days)} days", times))
-    conn.commit(); conn.close()
-    invalidate(rid)
     reason = (reason or "").strip()[:200]
+    # What an answer holds is the ledger's rule (rec_ledger.answer_silence,
+    # memory audit 9/29/26): Home's own row used to hold Done and "not for
+    # us" 3,650 days whatever the kind or the reason — the running-out card
+    # included — and silenced_keys reads this row too.
+    try:
+        import rec_ledger as _rl_pol
+        if kind != "snooze" and key not in HOME_SETUP_KEYS:
+            _pol, _rule = _rl_pol.answer_silence(key, "completed" if kind == "done" else "dismissed",
+                                                 kind=_LEDGER_KIND.get(kind), reason_code=reason_code, reason=reason)
+            if _pol:
+                days = max(1, min(days, int(_pol)))
+        elif kind == "snooze" and _rl_pol.kind_of(key) in _rl_pol.SAFETY_KINDS:
+            days = max(1, min(days, _rl_pol.SAFETY_CYCLE_DAYS))
+    except Exception as e:
+        print(f"[home] answer policy unavailable for {key}: {e}")
+    # A manager's (delegate's) answer, or support's through view-as, holds
+    # for that login alone (rec_ledger keeps it per login): Home's own row
+    # is restaurant-wide, so it is not written, and their reason is not the
+    # owner's preference ("who_answered", "view_as").
+    own = authority in (None, "principal") and not via
+    if own:
+        conn = get_conn()
+        prior = conn.execute("SELECT COALESCE(times, 1) AS n FROM home_dismissals WHERE restaurant_id=? AND key=?",
+                             (rid, key)).fetchone()
+        times = (int(prior["n"]) + 1) if prior else 1
+        conn.execute("INSERT INTO home_dismissals (restaurant_id, key, kind, dismissed_by, expires_at, times) "
+                     "VALUES (?,?,?,?, datetime('now', ?), ?)", (rid, key, kind, user_id, f"+{int(days)} days", times))
+        conn.commit(); conn.close()
+    invalidate(rid)
     try:
         import rec_ledger
         from datetime import datetime as _dtl
@@ -193,7 +215,8 @@ def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=Non
             if code:
                 smeta["reason_code"] = code
             rec_ledger.record(rid, key, "snoozed", surface=surface, user_id=user_id, role=role,
-                              meta=smeta, snooze_until=until, require_existing=require_existing)
+                              meta=smeta, snooze_until=until, require_existing=require_existing,
+                              authority=authority, via=via)
         else:
             meta = {"kind": _LEDGER_KIND[kind]}
             if reason:
@@ -202,49 +225,76 @@ def dismiss(rid, key, kind="recommendation", user_id=None, days=None, reason=Non
                 meta["reason_code"] = code
             rec_ledger.record(rid, key, "completed" if kind == "done" else "dismissed", surface=surface,
                               user_id=user_id, role=role, meta=meta, silence_days=days,
-                              require_existing=require_existing)
+                              require_existing=require_existing, authority=authority, via=via)
     except Exception as e:
         print(f"[home] dismissal not recorded in the ledger: {e}")
     # The critically-low card lists every unanswered item under the first
-    # one's key; an answer to the card is an answer to each item on it.
+    # one's key; an answer to the card is an answer to each item on it —
+    # for THIS stock-out only: the ledger holds a stock answer until the
+    # item's next count or delivery (rec_ledger.silenced_keys), so "Done —
+    # ordered already" never silences the next time it runs out.
     if _card and key.startswith("stock_low:"):
         quiet = _stock_quiet(rid)
         for k in _current_stock_keys(rid):
             if k != key and k not in quiet:
                 dismiss(rid, k, kind=kind, user_id=user_id, days=days, surface=surface, role=role, _card=False,
-                        reason_code=reason_code)
+                        reason_code=reason_code, authority=authority, via=via)
     # The why, remembered: "not doing X: the patio closes in October" is a
-    # preference the assistant reads back in every future answer.
-    if reason:
+    # preference the assistant reads back in every future answer — the
+    # owner's own only.
+    if reason and own:
         try:
             from models import remember_ask_fact
             remember_ask_fact(rid, f"Not doing \u201c{(title or key)[:80]}\u201d: {reason}", kind="preference",
                               source="Home", user_id=user_id)
         except Exception:
             pass
-    return {"ok": True, "key": key, "kind": kind, "days": int(days), "remembered": bool(reason)}
+    out = {"ok": True, "key": key, "kind": kind, "days": int(days), "remembered": bool(reason and own)}
+    try:
+        import rec_ledger as _rl_msg
+        if not own and kind != "snooze":
+            out["message"] = "Noted \u2014 hidden for you; the owner still sees it"
+        elif kind != "snooze" and key not in HOME_SETUP_KEYS:
+            msg = _rl_msg.silence_message(key, "completed" if kind == "done" else "dismissed",
+                                          kind=_LEDGER_KIND.get(kind), reason_code=reason_code, reason=reason)
+            if msg:
+                out["message"] = msg
+    except Exception:
+        pass
+    return out
 
 
-def undismiss(rid, key, _card=True):
+def undismiss(rid, key, _card=True, subject_id=None, own=True):
     """"Use again": the Home row goes, and so does the ledger's silence, so
     the key can be said on every surface again. The critically-low card is
     answered for every item on it (dismiss), so "Use again" on the card
-    restores every item it answered, not only the first."""
+    restores every item it answered, not only the first. A delegate's (or
+    support's) "Use again" (own=False) takes back only that login's own
+    answer — never the owner's."""
     if _card and (key or "").startswith("stock_low:"):
         try:
             quiet = _stock_quiet(rid)
             for k in _current_stock_keys(rid):
                 if k != key and k in quiet:
-                    undismiss(rid, k, _card=False)
+                    undismiss(rid, k, _card=False, subject_id=subject_id, own=own)
         except Exception as e:
             print(f"[home] stock card restore incomplete: {e}")
+    if not own:
+        try:
+            import rec_ledger
+            n = 1 if rec_ledger.unsilence_login(rid, (key or "").strip()[:160], subject_id) else 0
+        except Exception as e:
+            print(f"[home] login unsilence failed: {e}")
+            n = 0
+        invalidate(rid)
+        return {"ok": True, "restored": n}
     conn = get_conn()
     n = conn.execute("DELETE FROM home_dismissals WHERE restaurant_id=? AND key IN (?, ?)",
                      (rid, (key or "").strip()[:160], (key or "").strip()[:120])).rowcount
     conn.commit(); conn.close()
     try:
         import rec_ledger
-        if rec_ledger.unsilence(rid, (key or "").strip()[:160]):
+        if rec_ledger.unsilence(rid, (key or "").strip()[:160], subject_id=subject_id):
             n = n or 1
     except Exception as e:
         print(f"[home] ledger unsilence failed: {e}")
@@ -872,10 +922,10 @@ def stock_key(item) -> str:
     return rec_ledger.rec_key("stock_low", str(item or "?"))
 
 
-def _stock_quiet(rid) -> set:
+def _stock_quiet(rid, viewer=None) -> set:
     try:
         import rec_ledger
-        return rec_ledger.silenced_keys(rid)
+        return rec_ledger.silenced_keys(rid, viewer=viewer)
     except Exception:
         return set()
 
@@ -1703,7 +1753,7 @@ def _build(current_user, present=True):
             # first item alone, answering the salmon alert hid "Salmon,
             # Chicken critically low" entirely.
             if crit:
-                _sq = _stock_quiet(rid)
+                _sq = _stock_quiet(rid, viewer=current_user)
                 crit = [c for c in crit if stock_key(c.get("item")) not in _sq]
             if crit:
                 add_attn("critical_low", "important", f"{_plural(len(crit), 'item')} critically low",
@@ -2045,9 +2095,34 @@ def _build(current_user, present=True):
     import rec_ledger
     import decisions
     try:
-        silenced = rec_ledger.silenced_keys(rid)
+        # This login's own answers too: a manager's decline holds for that
+        # manager alone (memory audit, who_answered).
+        silenced = rec_ledger.silenced_keys(rid, viewer=current_user)
     except Exception:
         silenced = set()
+    # An answer holds only while it still fits (memory audit, silences): a
+    # situational Done re-arms once its trigger has cleared and fires
+    # again, and any answered key reopens when its figure has doubled.
+    # Home is the build that evaluates its own situational kinds in full.
+    try:
+        _evaluated = set()
+        if labor_live:
+            _evaluated |= {"trim_day", "labor_over", "overtime"}
+        if inv_live:
+            _evaluated |= {"cut_waste", "food_cost_driver", "diag_food"}
+        if "reviews" in active_keys and rstats.get("total"):
+            _evaluated |= {"top_issue", "diag_review"}
+        _cands = ([{"key": a.get("rec_key") or ledger_key(a["key"])} for a in attention]
+                  + [{"key": r["key"], "dollar_value": r.get("dollars_monthly"),
+                      "target": ((r.get("action") or {}).get("price")
+                                 if (r.get("action") or {}).get("kind") == "reprice" else None)} for r in recs])
+        _lifted = rec_ledger.reconsider(rid, _cands, evaluated_kinds=_evaluated, write=present)
+        if _lifted:
+            silenced -= _lifted
+            for _k in _lifted:
+                dismissed.pop(_k, None)
+    except Exception as e:
+        print(f"[home] reconsider unavailable for {rid}: {e}")
     answered = set(dismissed) | silenced
     # ...and a "not for us" to the same ADVICE on any surface (H16): the
     # nightly report's "cut Tuesday's hours" or the Reviews "Do today" line
@@ -2277,6 +2352,26 @@ def _build(current_user, present=True):
         recs = [r for r in recs if not r["answerable"] or shown.get(r["key"], True) is not None]
         if [a["rec_key"] for a in attention[:HOME_ATTENTION_SHOWN]] == before:
             break
+
+    # What was said before about what is on screen now (memory audit
+    # 9/29/26): a card re-offered after the owner answered it names that
+    # answer ("You passed on this on 3/12/26 ($120/mo then)" — silences,
+    # rec_ledger.previous_answers), and a card a manager passed on names
+    # them to the owner ("Dana passed on this: already doing it" —
+    # who_answered, rec_ledger.delegate_answers). None when neither.
+    try:
+        _on_screen = [a["rec_key"] for a in attention[:HOME_ATTENTION_SHOWN]] + [r["key"] for r in recs]
+        _prev = rec_ledger.previous_answers(rid, _on_screen)
+        from permissions import answer_authority as _aa_home
+        _deleg = rec_ledger.delegate_answers(rid, _on_screen) if _aa_home(current_user) == "principal" else {}
+        for a in attention:
+            a["previous_answer"] = _prev.get(a["rec_key"])
+            a["delegate_answer"] = _deleg.get(a["rec_key"])
+        for r in recs:
+            r["previous_answer"] = _prev.get(r["key"])
+            r["delegate_answer"] = _deleg.get(r["key"])
+    except Exception as e:
+        print(f"[home] answer history unavailable for {rid}: {e}")
 
     # ── quick actions ──────────────────────────────────────────────────────
     quick = []

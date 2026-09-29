@@ -667,8 +667,9 @@ def test_b14_names_carry_no_when_and_old_episodes_are_retagged(db):
     _x(db, "UPDATE rec_instances SET tags=? WHERE rec_id=?",
        (json.dumps(["day:friday", "daytype:weekend", "dish:friday fish fry", "focus:weekend_pricing"]), rec))
     assert rl.backfill_tags(db_path=db) == 1 and rl.backfill_tags(db_path=db) == 0
+    # ...with the advice signature's own tag (memory audit 9/29/26, "signatures").
     assert json.loads(_q(db, "SELECT tags FROM rec_instances WHERE rec_id=?", (rec,))[0]["tags"]) == \
-        ["dish:friday fish fry", "topic:pricing"]
+        ["dish:friday fish fry", "sig:pricing:dish:friday fish fry", "topic:pricing"]
 
 
 # ══ B15 · a change made today is not March's recommendation ═════════════════
