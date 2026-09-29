@@ -46,8 +46,15 @@ def _build_default_schema():
     from guest_marketing import init_guest_marketing
     from push import init_push
     from sales_audits import init_sales_audits
+    import platform_monitor
+    import provider_health
     init_db()
     init_auth()
+    # F's telemetry tables and provider probe ledger, created at boot right
+    # after init_auth (hosted_dashboard); the code tolerates their absence,
+    # but a test on the default database should meet what production has.
+    platform_monitor.init_platform_tables()
+    provider_health.init_provider_health()
     models.init_staff_notes()
     models.init_staff_availability()
     ensure_columns()
