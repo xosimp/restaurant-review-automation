@@ -623,11 +623,31 @@ def send_2fa_test(current_user):
     # else has in progress at this restaurant (SEC-20).
     from auth import issue_two_fa_challenge as _itfc_t
     _pending_t, code = _itfc_t(current_user["restaurant_id"], current_user["id"], "setup")
+
+    def _unsent():
+        # Nothing reached the owner: the challenge goes, so a one-a-minute
+        # limit can't refuse their retry (the app's twin does the same).
+        _c_u = get_conn()
+        try:
+            _c_u.execute("DELETE FROM two_fa_challenges WHERE restaurant_id=? AND user_id=? AND purpose='setup'",
+                         (current_user["restaurant_id"], current_user["id"]))
+            _c_u.commit()
+        finally:
+            _c_u.close()
     try:
-        _stfc_t(dest, rest, code)
+        sent = _stfc_t(dest, rest, code)
     except Exception as e:
+        _unsent()
         print(f"[2fa] setup code send failed for user {current_user['id']}: {e}")
-        return jsonify(ok=False, error="Couldn't send the code. Try again in a moment.")
+        return jsonify(ok=False, error="Couldn't send the code. Try again in a moment."), 500
+    if not sent:
+        # The senders report a failure (a missing key, a refusal) as False
+        # rather than raising: this answered ok:true — "Code sent" — for a
+        # code that never went (docs pass). The same answer as the app's twin.
+        _unsent()
+        channel = "text" if dest["kind"] == "sms" else "email"
+        return jsonify(ok=False, error=f"Couldn't send the code — {channel} delivery failed. "
+                                       f"Try again in a moment."), 502
     masked = dest["masked"]
     return jsonify(ok=True, masked=masked, method=method)
 

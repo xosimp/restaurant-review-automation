@@ -4275,6 +4275,23 @@ def _run_view_as_write(f, args, kwargs, user, ctx):
         record_view_as_write(ctx, status)
 
 
+def _bind_log_context(user, with_restaurant=True):
+    """Put who this request is on every log line it writes (F's request 9:
+    logging_setup; http_layer clears it at teardown), so a traceback names
+    the login — and, for an owner's request, the restaurant, which is also
+    what a 5xx sample is attributed to. An admin request binds the login
+    only: its restaurant is the one the URL names, not the admin's home.
+    Never raises."""
+    try:
+        import logging_setup
+        fields = {"user_id": (user or {}).get("id")}
+        if with_restaurant:
+            fields["restaurant_id"] = (user or {}).get("restaurant_id")
+        logging_setup.bind(**fields)
+    except Exception:
+        pass
+
+
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -4291,6 +4308,7 @@ def login_required(f):
             state = admin_second_factor_state(user)
             if state != "ok":
                 return _second_factor_refusal(state)
+        _bind_log_context(user)
         if _console_denied(user):
             if _wants_json_response():
                 from flask import jsonify as _jsonify_cd
@@ -4429,6 +4447,7 @@ def admin_required(f):
             _g_adm.admin_role = "admin" if user.get("is_admin") else "support"
         except Exception:
             pass
+        _bind_log_context(user, with_restaurant=False)
         return f(*args, **kwargs, current_user=user)
     return decorated
 
@@ -4558,6 +4577,7 @@ def mobile_login_required(f):
             state = admin_second_factor_state(user)
             if state != "ok":
                 return _second_factor_refusal(state)
+        _bind_log_context(user)
         # Same console gate as the web decorator — the iOS app ships both the
         # owner dashboard and the staff portal against this one blueprint, so
         # a PIN session must be refused here too or the whole owner API is

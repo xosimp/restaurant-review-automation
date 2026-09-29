@@ -25,6 +25,20 @@ import admin_events as _admin_events
 _admin_events.register_audit(audit_bp)
 
 
+@audit_bp.after_request
+def _support_redaction(resp):
+    """The console's masking for a read-only support login (#87 —
+    admin_routes._admin_support_redaction, over admin_ops.redact_for_support)
+    on this blueprint's /admin/api/audits* reads too: the hook was registered
+    on admin_bp only, so prospects' contact details reached support unmasked
+    here (docs pass, integration wave). Never raises."""
+    try:
+        import admin_routes
+        return admin_routes._admin_support_redaction(resp)
+    except Exception:
+        return resp
+
+
 def _share_payload(share, audit_id):
     """The share link as the admin side shows it: the URL only when the
     token can be recovered (it is stored hashed), otherwise its last four

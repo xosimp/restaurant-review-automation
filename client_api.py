@@ -5133,7 +5133,17 @@ def _notify_deletion_request(rid, restaurant, current_user, requested_at):
     except Exception:
         may_send = False
     if not may_send:
+        # Recorded, not only printed (docs pass): the console's trail says the
+        # notice did not go, and why — as a bug report's row records its own.
         print(f"[deletion-request] notice for restaurant {rid} not emailed: not a sending server")
+        try:
+            import admin_events
+            admin_events.record("account", "deletion.notice_skipped", restaurant_id=rid,
+                                summary="The close-account notice to Will was not emailed: this server does not "
+                                        "send (not the production server)",
+                                payload={"reason": "not_a_sending_server", "requested_at": requested_at})
+        except Exception:
+            pass
         return
     error = None
     try:

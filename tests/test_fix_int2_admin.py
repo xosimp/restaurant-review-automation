@@ -83,6 +83,13 @@ def _world(monkeypatch, db_path):
 
 @pytest.fixture
 def app():
+    # The audit blueprint gets its CSRF check before its first registration,
+    # as hosted_dashboard and tests/test_sales_audit.py wire it: Flask refuses
+    # a before_request added after a blueprint was registered anywhere.
+    if not getattr(sales_audit_routes.audit_bp, "_csrf_wired", False):
+        from csrf import csrf_protect
+        csrf_protect(sales_audit_routes.audit_bp)
+        sales_audit_routes.audit_bp._csrf_wired = True
     flask_app = Flask(__name__, template_folder="../templates")
     flask_app.secret_key = "int2-admin"
     for bp in (admin_routes.admin_bp, auth_routes.auth_bp, toast_routes.toast_bp, square_routes.square_bp,
@@ -583,3 +590,143 @@ def test_admin_events_has_one_index_per_purpose(db_path):
                                                 "AND tbl_name='admin_events'")}
     assert {"idx_admin_events_rid", "idx_admin_events_created_at"} <= names
     assert not names & {"idx_admin_events_rest", "idx_admin_events_created"}
+
+
+# ── the docs pass's code findings (integration wave, second round) ──────────
+
+def test_the_task_poll_is_admin_only_scoped_and_never_hands_over_a_password(app, db_path):
+    c, _ = _admin(app, db_path)
+    ops.start_async_job("task-1", "pos_sync_one", 5)
+    ops.finish_async_job("task-1", "done", {"ok": True, "state": "ok",
+                                            "result": {"attempted": 1, "ok": 1, "failed": 0, "provider": "toast",
+                                                       "secret_rows": [1, 2]}})
+    ops.start_async_job("seed-1", "admin_review_account", 0)
+    ops.finish_async_job("seed-1", "done", {"ok": True, "password_once": "abcde-FGHJK", "_scrub": ["password_once"]})
+    got = c.get("/admin/api/tasks/task-1").get_json()
+    assert got["status"] == "done" and got["result"]["state"] == "ok"
+    assert got["result"]["result"] == {"attempted": 1, "ok": 1, "failed": 0, "provider": "toast"}
+    # Not a task this route serves: the review account's job is read once,
+    # through /admin/api/admin-jobs/<id>, and never here.
+    r = c.get("/admin/api/tasks/seed-1")
+    assert r.status_code == 404 and "abcde" not in r.get_data(as_text=True)
+    sup = create_user(_hq(db_path), "sup", "sup@cavnar.test", "Support-pass-2026", role="support", db_path=db_path)
+    s = app.test_client()
+    s.set_cookie("session_token", create_session(sup, db_path=db_path))
+    assert s.get("/admin/api/tasks/task-1").status_code == 403
+
+
+def test_mark_signed_checks_for_production_before_it_writes(app, db_path, local_backend):
+    c, _ = _admin(app, db_path)
+    rid = _rid(db_path, contract_status="sent")
+    r = _post(c, f"/admin/api/billing/{rid}/mark-signed", {"note": "Signed on paper", "send_welcome": True})
+    assert r.status_code == 409
+    assert get_restaurant(rid, db_path=db_path).contract_status == "sent", "nothing is written before the gate"
+    ok = _post(c, f"/admin/api/billing/{rid}/mark-signed", {"note": "Signed on paper"})
+    assert ok.status_code == 200 and get_restaurant(rid, db_path=db_path).contract_status == "signed"
+
+
+def test_the_alert_contact_test_names_failed_numbers_by_their_last_four(app, db_path, monkeypatch):
+    import notify
+    monkeypatch.setenv("ALLOW_LOCAL_SCHEDULER", "1")
+    c, _ = _admin(app, db_path)
+    rid = _rid(db_path)
+    monkeypatch.setattr(notify, "send_test_sms", lambda restaurant_id: {
+        "ok": False, "sent": 0, "errors": ["+13125550123"],
+        "results": [{"to_last4": "0123", "ok": False, "status": "failed"}]})
+    out = _post(c, f"/admin/alert-contacts/test/{rid}").get_json()
+    assert out["errors"] == ["…0123"] and "5550123" not in json.dumps(out)
+
+
+def test_support_reads_of_the_audit_tool_are_masked(app, db_path, monkeypatch):
+    import admin_ops
+    monkeypatch.setattr(admin_ops, "viewer_role", lambda: "support")
+    monkeypatch.setattr(admin_ops, "redact_for_support", lambda data: {"masked": True})
+    import sales_audit_routes as sar
+    fake = Flask(__name__)
+
+    @fake.route("/admin/api/audits/probe")
+    def _probe():
+        from flask import jsonify
+        return jsonify(owner_email="prospect@example.com")
+    with fake.test_request_context("/admin/api/audits/probe"):
+        resp = sar._support_redaction(_probe())
+    assert resp.get_json() == {"masked": True} and resp.headers["X-Redacted"] == "support"
+    assert sar._support_redaction in sar.audit_bp.after_request_funcs.get(None, [])
+
+
+def test_an_unknown_break_glass_name_is_said_not_claimed(db_path, monkeypatch, capsys):
+    import security
+    monkeypatch.setattr(security, "get_conn", lambda *a, **k: models.get_conn(db_path), raising=False)
+    create_user(_hq(db_path), "realadmin", "real@cavnar.test", "Admin-pass-2026", is_admin=True, db_path=db_path)
+    assert security.apply_boot_unlocks(env={"LOGIN_UNLOCK_USERNAMES": "realadmin, typo-admin"},
+                                       db_path=db_path) == ["realadmin"]
+    printed = capsys.readouterr().out
+    assert "NO login is named 'typo-admin'" in printed
+    rows = _rows(db_path, "SELECT summary FROM admin_events WHERE event_type='lockout_cleared_break_glass'")
+    assert any("which is no login" in r["summary"] for r in rows)
+
+
+# ── no admin action reaches a sender from a local backend ───────────────────
+# A worktree's test server can hold production's keys (Flask's .env walk-up),
+# so these gates are what stop a real send (coordinator, UI-2 round). Routes
+# whose PURPOSE is the send refuse with the one 409; routes whose send is a
+# side effect (reactivate, a support login's reset link, create-client's
+# contract) do their work and skip the send, saying so.
+
+_SENDING_ROUTES = [
+    ("/admin/send-reset-link/{uid}", {}), ("/admin/reset-password/{uid}", {}),
+    ("/admin/reset-password-by-restaurant/{rid}", {}), ("/admin/resend-welcome/{rid}", {}),
+    ("/admin/test-digest/{rid}", {}), ("/admin/test-urgent/{rid}", {}),
+    ("/admin/resend-contract/{rid}", {}), ("/admin/alert-contacts/test/{rid}", {}),
+    ("/admin/resend-payment/{rid}", {}), ("/admin/api/billing/{rid}/card-update-link", {}),
+    ("/admin/api/billing/{rid}/mark-signed", {"note": "paper", "send_payment_link": True}),
+    ("/admin/api/client/{rid}/value-recap", {}),
+]
+
+
+@pytest.mark.parametrize("path,body", _SENDING_ROUTES)
+def test_a_sending_admin_route_refuses_on_a_local_backend(app, db_path, local_backend, monkeypatch, path, body):
+    import notify
+    import requests
+    for name in [n for n in dir(emails) if n.startswith("send_")] + ["deliver", "deliver_or_raise"]:
+        monkeypatch.setattr(emails, name, lambda *a, **k: pytest.fail("reached a sender"), raising=False)
+    monkeypatch.setattr(notify, "send_test_sms", lambda *a, **k: pytest.fail("texted"))
+    monkeypatch.setattr(docusign_helper, "send_contract", lambda *a, **k: pytest.fail("reached DocuSign"))
+    monkeypatch.setattr(docusign_helper, "resend_envelope", lambda *a, **k: pytest.fail("reached DocuSign"))
+    monkeypatch.setattr(requests, "post", lambda *a, **k: pytest.fail("reached the network"))
+    c, _ = _admin(app, db_path)
+    rid = _rid(db_path, contract_status="sent", docusign_envelope_id="env_1", module_reviews=1,
+               billing_status="past_due", stripe_customer_id="cus_1", owner_name="Erik Smith")
+    uid = _owner(db_path, rid)
+    r = _post(c, path.format(rid=rid, uid=uid), body)
+    assert r.status_code == 409, (path, r.status_code, r.get_json())
+
+
+def test_side_effect_sends_are_skipped_not_refused_on_a_local_backend(app, db_path, local_backend, monkeypatch):
+    monkeypatch.setattr(emails, "send_password_reset_email", lambda *a, **k: pytest.fail("emailed"))
+    monkeypatch.setattr(emails, "send_reactivation_email", lambda *a, **k: pytest.fail("emailed"))
+    c, _ = _admin(app, db_path)
+    made = _post(c, "/admin/api/support-logins", {"username": "helper2", "email": "helper2@cavnar.test"})
+    assert made.status_code == 200 and made.get_json()["reset_link_sent"] is False
+    assert "does not send" in made.get_json()["note"]
+    rid = _rid(db_path, billing_status="active")
+    uid = _owner(db_path, rid)
+    _post(c, f"/admin/deactivate-client/{uid}")
+    back = _post(c, f"/admin/reactivate-client/{uid}").get_json()
+    assert back["ok"] is True and back["emailed"] is False and "local" in back["email_note"]
+
+
+# ── lockouts name their login (#135, UI-2's request) ────────────────────────
+
+def test_each_lockout_row_names_the_login_it_holds(app, db_path, monkeypatch):
+    import security
+    monkeypatch.setattr(security, "get_conn", lambda *a, **k: models.get_conn(db_path), raising=False)
+    c, _ = _admin(app, db_path)
+    rid = _rid(db_path)
+    uid = _owner(db_path, rid)
+    for i in range(security.ACCOUNT_MAX):
+        security.record_login_failure(f"10.9.0.{i}", "erik")
+        security.record_login_failure(f"10.8.0.{i}", "nobody-here")
+    rows = {r["username"]: r for r in c.get("/admin/api/lockouts").get_json()["lockouts"]}
+    assert rows["erik"]["user_id"] == uid and rows["erik"]["restaurant_id"] == rid
+    assert rows["nobody-here"]["user_id"] is None and rows["nobody-here"]["restaurant_id"] is None

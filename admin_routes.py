@@ -470,9 +470,28 @@ def set_user_role_route(current_user):
     return jsonify(ok=True, role=out["after"], previous_role=out["before"])
 
 
+def _legacy_page_refused(current_user):
+    """The legacy client pages (settings, data) are admin tools that print
+    the owner's contact details, POS labels and staff constraints unmasked.
+    A read-only support login reads the console instead, where
+    admin_routes' support redaction masks them (fix round C #87's request:
+    these pages were the gap). None for an admin."""
+    if current_user.get("is_admin"):
+        return None
+    from markupsafe import escape as _esc_lp
+    import auth_routes as _ar_lp
+    return (_ar_lp._SIMPLE_PAGE % (
+        "<h1>Use the admin console</h1><p>Support logins read client details in the admin console, where "
+        "contact details are masked. This page is for admins.</p>"
+        f"<p><a href='{_esc_lp('/admin')}'>Open the admin console</a></p>")), 403
+
+
 @admin_bp.route("/admin/client-data/<int:restaurant_id>")
 @admin_required
 def client_data_page(restaurant_id, current_user):
+    refused = _legacy_page_refused(current_user)
+    if refused:
+        return refused
     from models import get_client_data, get_staff_notes
     restaurant = get_restaurant(restaurant_id)
     if not restaurant:
@@ -952,7 +971,11 @@ def test_alert_sms_route(restaurant_id, current_user):
         payload, code = blocked
         return jsonify(**payload), code
     from notify import send_test_sms
-    result = send_test_sms(restaurant_id)
+    result = dict(send_test_sms(restaurant_id) or {})
+    # The numbers that failed, as their last four digits only — `errors` was
+    # the contacts' full phone numbers in a console response (docs pass);
+    # `results` already carries to_last4.
+    result["errors"] = ["…" + str(p)[-4:] for p in (result.get("errors") or [])]
     return jsonify(**result)
 
 
@@ -1403,6 +1426,9 @@ def reviews_live_decision(restaurant_id, current, fields, explicit=None):
 @admin_bp.route("/admin/client-settings/<int:restaurant_id>")
 @admin_required
 def client_settings_page(restaurant_id, current_user):
+    refused = _legacy_page_refused(current_user)
+    if refused:
+        return refused
     # The version first, then the row: a write landing between the two reads
     # leaves an older version beside newer values, which a later save checks
     # field by field rather than reverting.
@@ -4601,15 +4627,20 @@ def admin_api_billing_mark_signed(restaurant_id, current_user):
     signed_at = _parse_day(data.get("signed_on")) if data.get("signed_on") else billing_jobs._stamp()
     if not signed_at:
         return jsonify(ok=False, error="signed_on must be a date (M/D/YY or YYYY-MM-DD)."), 400
+    # The production gate BEFORE anything is written: it used to run after
+    # the contract was marked signed, so a refusal answered 409 with the
+    # contract already signed and no audit row (docs pass, integration wave).
+    sends = bool(data.get("send_payment_link") or data.get("send_welcome"))
+    if sends:
+        refused = _live_actions_refused()
+        if refused:
+            return refused
     before = r.contract_status
     with _mdl.billing_context(source="admin", actor=current_user.get("username"),
                               reason=f"marked signed offline: {note}"):
         update_restaurant(restaurant_id, {"contract_status": "signed", "contract_signed_at": signed_at})
     owed = []
-    if data.get("send_payment_link") or data.get("send_welcome"):
-        refused = _live_actions_refused()
-        if refused:
-            return refused
+    if sends:
         if data.get("send_payment_link"):
             oid, _m = billing_jobs.enqueue("payment_link", restaurant_id, f"payment_link:{restaurant_id}:offline",
                                            to_email=r.owner_email, source="admin", actor=current_user.get("username"))
@@ -5239,11 +5270,13 @@ def _submit_admin_job(job_id, fn, *args):
         if _admin_jobs_waiting >= ADMIN_JOB_QUEUE_MAX:
             return "The server is busy with other admin jobs. Try again in a minute."
         _admin_jobs_waiting += 1
+    attribution = _admin_job_attribution(job_id)
 
     def _run():
         global _admin_jobs_waiting
         try:
-            fn(*args)
+            with attribution():
+                fn(*args)
         except Exception as e:
             _ops.capture(e, job="admin_job", context=f"job_id={job_id}")
             _ops.finish_async_job(job_id, "error", {"ok": False, "error": _safe_err(e)})
@@ -5262,6 +5295,39 @@ def _submit_admin_job(job_id, fn, *args):
             _admin_jobs_waiting -= 1
         return "The server is restarting. Try again in a minute."
     return None
+
+
+def _admin_job_attribution(job_id):
+    """A context manager factory: the AI and Places calls an admin job makes
+    are the admin's, not the client's (fix round G #148 — console work does
+    not spend a client's ceiling; B1's request: menu extraction moved onto
+    this pool, off the request whose session said so). The attribution is
+    read here, on the request thread, and re-entered on the pool's —
+    contextvars do not cross threads. The job's log lines carry its id.
+    Never raises; without a request it is a no-op."""
+    from contextlib import contextmanager
+    trigger = actor_id = None
+    try:
+        import ai_utils as _au_job
+        trigger, actor_id, _rid = _au_job._request_attribution()
+    except Exception:
+        _au_job = None
+
+    @contextmanager
+    def _ctx():
+        with contextlib_nullcontext() if _au_job is None else _au_job.ai_context(
+                trigger=trigger or "admin", actor_user_id=actor_id, correlation_id=f"admin_job:{job_id}"):
+            try:
+                import logging_setup
+                log_ctx = logging_setup.context(admin_job=job_id, user_id=actor_id)
+            except Exception:
+                log_ctx = contextlib_nullcontext()
+            with log_ctx:
+                yield
+    return _ctx
+
+
+from contextlib import nullcontext as contextlib_nullcontext  # noqa: E402
 
 
 def _start_menu_extraction(restaurant_id, source, fn, *args):
@@ -5899,14 +5965,40 @@ def admin_api_brief_deliveries(restaurant_id, current_user):
 @admin_bp.route("/admin/api/tasks/<job_id>")
 @admin_required
 def admin_api_task(job_id, current_user):
-    """Poll an admin task started on the bounded admin pool (#153): a manual
-    review fetch or POS sync. {"status": "pending" | "done" | "error",
-    "result": {...}} or 404."""
+    """Poll an admin task started on ops' admin pool (#153): a manual review
+    fetch or POS sync (ops.run_admin_task). {"status": "pending" | "done" |
+    "error", "result": {...}} or 404.
+
+    Admin-only, those task kinds only, and only the keys a poll reads: it
+    served ANY stored async job, unscrubbed, to support logins too — the
+    review account's once-only password among them (docs pass, integration
+    wave). /admin/api/admin-jobs/<id> is the console's poll for its own jobs,
+    and the only place a once-only value is handed over."""
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Support accounts can't read task results."), 403
     import ops
-    job = ops.read_async_job(job_id)
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT kind FROM async_jobs WHERE job_id=?", (str(job_id),)).fetchone()
+    finally:
+        conn.close()
+    job = ops.read_async_job(job_id) if row and row["kind"] in _ADMIN_TASK_KINDS else None
     if not job:
         return jsonify(ok=False, error="Task not found"), 404
-    return jsonify(ok=True, status=job["status"], result=job["result"])
+    def _keep(d):
+        return {k: v for k, v in d.items() if k in _ADMIN_TASK_RESULT_KEYS} if isinstance(d, dict) else None
+    result = _keep(job.get("result"))
+    if result is not None and isinstance(job["result"].get("result"), dict):
+        result["result"] = _keep(job["result"]["result"])     # the job's own counts, under run_admin_task's wrap
+    return jsonify(ok=True, status=job["status"], result=result)
+
+
+# The async-job kinds ops.run_admin_task starts (the admin fetch-now and the
+# manual POS sync), and the result keys a poll of one reads: the run's state,
+# the standard counts, the provider, and what went wrong.
+_ADMIN_TASK_KINDS = ("review_fetch_one", "pos_sync_one")
+_ADMIN_TASK_RESULT_KEYS = ("ok", "state", "attempted", "failed", "skipped", "hit_bound", "provider", "error",
+                           "message")
 
 
 @admin_bp.route("/admin/api/jobs/<job>/runs")

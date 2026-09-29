@@ -439,3 +439,40 @@ def test_provisioning_mints_the_owners_password_as_generated(db_path, monkeypatc
     assert rid and get_restaurant(rid, db_path=db_path).name == "New Place"
     src = open(os.path.join(ROOT, "mobile_api.py"), encoding="utf-8").read()
     assert 'create_user(rid, username, f"{username}@staff.invalid",\n                              _sec.token_urlsafe(32), generated=True)' in src
+
+
+# ── the docs pass's findings on the owner side ──────────────────────────────
+
+def test_the_web_2fa_test_code_says_when_it_did_not_go(db_path, monkeypatch):
+    import permissions
+    monkeypatch.setattr(emails, "send_2fa_code", lambda *a, **k: emails.not_sent("not_configured", "no key"))
+    app = Flask(__name__)
+    app.register_blueprint(auth_routes.auth_bp)
+    rid = _rid(db_path)
+    uid = _owner_login(db_path, rid)
+    c = app.test_client()
+    c.set_cookie("session_token", create_session(uid, db_path=db_path))
+    c.set_cookie("csrf_js", "t")
+    r = c.post("/api/send-2fa-test", json={"method": "email"}, headers={"X-CSRF": "t"})
+    assert r.status_code == 502 and r.get_json()["ok"] is False and "delivery failed" in r.get_json()["error"]
+    left = models.get_conn(db_path).execute("SELECT COUNT(*) FROM two_fa_challenges WHERE user_id=?",
+                                            (uid,)).fetchone()[0]
+    assert left == 0, "an unsent code leaves no challenge to rate-limit the retry"
+    monkeypatch.setattr(emails, "send_2fa_code", lambda *a, **k: emails.SendResult(True, "m1"))
+    ok = c.post("/api/send-2fa-test", json={"method": "email"}, headers={"X-CSRF": "t"})
+    assert ok.status_code == 200 and ok.get_json()["ok"] is True
+
+
+def test_a_deletion_notice_skipped_on_a_local_backend_is_recorded(db_path, monkeypatch):
+    for v in ("ALLOW_LOCAL_SCHEDULER", "RESTORE_FROM", "RAILWAY_PROJECT_ID", "RAILWAY_SERVICE_ID",
+              "RAILWAY_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME"):
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.setattr(emails, "send_account_deletion_request_email", lambda *a, **k: pytest.fail("emailed"))
+    rid = _rid(db_path)
+    client_api._notify_deletion_request(rid, get_restaurant(rid, db_path=db_path), {"username": "owner"},
+                                        "2026-09-29 12:00:00")
+    rows = models.get_conn(db_path).execute("SELECT source, event_type, summary FROM admin_events "
+                                            "WHERE restaurant_id=? ORDER BY id", (rid,)).fetchall()
+    assert [(r["source"], r["event_type"]) for r in rows] == [("account", "deletion.requested"),
+                                                              ("account", "deletion.notice_skipped")]
+    assert "not the production server" in rows[-1]["summary"]

@@ -875,9 +875,13 @@ OWED_KINDS = ("payment_link", "welcome", "receipt", "dunning", "pay_reminder", "
 BACKOFF_MINUTES = (5, 15, 60, 240, 720, 1440)
 MAX_ATTEMPTS = len(BACKOFF_MINUTES)
 SEND_LOCK_MINUTES = 15
-# The post-signing welcome's set-password link lasts
-# models.SET_PASSWORD_LINK_HOURS (72): longer than a reset's hour, because it
-# is how a brand-new owner first gets in, whenever they read it.
+# The set-password link in the post-signing welcome: longer than a reset's
+# hour, because it is how a brand-new owner first gets in, whenever they read
+# it. The link is minted by THE welcome (emails.send_welcome_with_set_password_link,
+# integration wave), which uses models.SET_PASSWORD_LINK_HOURS — this name is
+# kept as that value because docs/ops/SECURITY.md and its control test
+# (tests/test_docs_controls.py) read it here.
+WELCOME_LINK_HOURS = _models.SET_PASSWORD_LINK_HOURS
 
 
 def enqueue(kind, restaurant_id, dedupe_key, to_email=None, payload=None, due_at=None,
