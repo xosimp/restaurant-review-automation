@@ -1199,7 +1199,10 @@ def send_test_sms(restaurant_id: int) -> dict:
     """Send a test SMS to all consented contacts for a restaurant, and say
     what Twilio answered for each — accepted with its message id, or the
     error code and reason (#14). Each attempt is in sms_log; the status
-    callback then records whether the handset got it."""
+    callback then records whether the handset got it. A number is never
+    handed back whole: `errors` holds the failed ones as "…" and their last
+    four digits (the form the admin route masked them to), `results` their
+    to_last4."""
     contacts = get_alert_contacts(restaurant_id, sms_consent_only=True)
     if not contacts:
         return {"ok": False, "error": "No consented alert contact who can be texted (none on file, "
@@ -1216,7 +1219,7 @@ def send_test_sms(restaurant_id: int) -> dict:
         if res.ok:
             sent += 1
         else:
-            errors.append(c["phone"])
+            errors.append("…" + str(c["phone"])[-4:])
     return {"ok": sent > 0, "sent": sent, "errors": errors, "results": results}
 
 

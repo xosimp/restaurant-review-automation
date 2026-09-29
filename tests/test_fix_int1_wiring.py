@@ -331,3 +331,17 @@ def test_an_unreadable_notes_read_marks_the_contexts_last_call(monkeypatch, mark
     # Another call's id is never marked for this one.
     contextvars.copy_context().run(read, "guest_campaign_draft")
     assert len(marks) == 1
+
+
+# ── a test text's failures name a number by its last four digits (INT-2 handoff) ──
+
+def test_a_failed_test_text_hands_back_only_the_last_four_digits(db, monkeypatch):
+    import types
+    import notify
+    rid = models.create_restaurant(models.Restaurant(name="Test Text Co", owner_email="t@x.test"), db_path=db)
+    notify.add_alert_contact(rid, "Ana GM", "(555) 123-4567", sms_consent=True, db_path=db)
+    monkeypatch.setattr(notify, "send_sms_outcome", lambda phone, msg, **k: types.SimpleNamespace(
+        ok=False, status="failed", sid=None, error_code=21211, error="invalid number"))
+    out = notify.send_test_sms(rid)
+    assert out["errors"] == ["…4567"] and out["results"][0]["to_last4"] == "4567"
+    assert "123-4567" not in repr(out)
