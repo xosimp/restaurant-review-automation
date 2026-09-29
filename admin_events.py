@@ -174,6 +174,14 @@ REFUSED_PER_IP = 20              # rows one IP may add per window
 REFUSED_WINDOW_SECONDS = 600
 _refused_window = {}             # ip -> [window_start, rows_written, dropped]; process-local, best effort
 
+# Writes that repeat every few seconds while someone types — the sales-audit
+# autosave — get one successful audit row per actor and object per window,
+# with the body's keys but not its values (the answers blob is the prospect's
+# business, and hundreds of copies of it say nothing more). A refused or
+# failed one is always recorded.
+_COALESCE_SECONDS = {"sales_audit.api_save": 600}
+_coalesce_last = {}              # (actor_id, endpoint, target) -> monotonic time of the last row
+
 # The ALTERs and tables below are applied at boot by init_admin_events(),
 # which models.init_db() calls — never on a request path.
 _AUDIT_COLUMNS = (("actor", "TEXT"), ("actor_id", "INTEGER"), ("target", "TEXT"),
@@ -553,6 +561,19 @@ def _write_request_row(user, response, state):
     if parts:
         target = ",".join(str(p) for p in parts)[:160]
     name = user.get("username") or user.get("email") or f"user:{user.get('id')}"
+    window = _COALESCE_SECONDS.get(request.endpoint or "")
+    if window:
+        if isinstance(body, dict):
+            body = {"_keys": sorted(body)[:60]}
+        if result == "ok":
+            import time as _time
+            key = (user.get("id"), request.endpoint, target)
+            now = _time.monotonic()
+            if len(_coalesce_last) > 5000:
+                _coalesce_last.clear()
+            if now - _coalesce_last.get(key, -1e9) < window:
+                return
+            _coalesce_last[key] = now
     payload = {"status": status, "method": request.method, "path": (request.path or "")[:300],
                "role": user.get("role"), "is_admin": bool(user.get("is_admin")), "body": body}
     text = _json.dumps(payload, default=str)

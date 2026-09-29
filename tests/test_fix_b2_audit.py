@@ -46,6 +46,7 @@ def _redirect_db(db_path, monkeypatch):
     models.init_email_log(db_path=db_path)
     auth_routes._login_attempts.clear()
     admin_events._refused_window.clear()
+    admin_events._coalesce_last.clear()
 
 
 @pytest.fixture
@@ -197,6 +198,20 @@ def test_the_sales_audit_tool_writes_are_audited(app, db_path):
     assert r.status_code == 200
     rows = _rows(db_path, "SELECT event_type, actor FROM admin_events WHERE source='audit'")
     assert {"event_type": "admin_write:sales_audit.api_create", "actor": "will"} in rows
+
+
+def test_the_sales_audit_autosave_is_one_row_per_window_without_the_answers(app, db_path):
+    import sales_audits
+    sales_audits.init_sales_audits(db_path=db_path)
+    _, admin_uid = _admin(db_path)
+    c = _client(app, create_session(admin_uid, db_path=db_path))
+    aid = _post(c, "/admin/api/audits", json={"restaurant_name": "Prospect Grill"}).get_json()["id"]
+    for i in range(4):
+        _post(c, f"/admin/api/audits/{aid}", json={"answers": {"restaurant_name": "Prospect Grill",
+                                                               "fin_annual_revenue": 1000000 + i}})
+    rows = _rows(db_path, "SELECT payload FROM admin_events WHERE event_type='admin_write:sales_audit.api_save'")
+    assert len(rows) == 1, "typing in the audit must not write an audit row per keystroke-save"
+    assert "1000000" not in rows[0]["payload"] and json.loads(rows[0]["payload"])["body"] == {"_keys": ["answers"]}
 
 
 def test_an_admin_import_on_the_client_blueprint_is_audited_but_an_owners_is_not(app, db_path):
