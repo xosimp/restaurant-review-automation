@@ -1,7 +1,7 @@
 import json
 from models import update_analysis, get_pending_analysis
 from ai_utils import (create_with_retry, extract_text, get_client, is_platform_stop,
-                      is_refusal, model_for, parse_json_reply)
+                      is_refusal, mark_outcome, model_for, parse_json_reply)
 from ai_guard import UNTRUSTED_NOTE, wrap_untrusted
 
 
@@ -333,14 +333,20 @@ def analyse_review(review_id: int, rating: int, text: str, restaurant_id: int = 
         # Rests on no data source: classifies one review's own text.
         readiness=data_health.NOT_APPLICABLE,
     )
+    # Truncation and refusal are filed in the ledger by their stop_reason
+    # (create_with_retry, #52); an unusable reply is re-filed below.
     if getattr(message, "stop_reason", None) == "max_tokens":
         raise ValueError("analysis was truncated")
     if is_refusal(message):
         raise ValueError("the model declined to analyse this review")
     # A leading "Here is the JSON:" or a code fence used to fail json.loads
     # and cost the review one of its five attempts (AI-26).
-    result = _validate_analysis(parse_json_reply(extract_text(message), expect=dict),
-                                rating=rating, text=text)
+    try:
+        result = _validate_analysis(parse_json_reply(extract_text(message), expect=dict, message=message),
+                                    rating=rating, text=text)
+    except ValueError:
+        mark_outcome(message, "unparseable", reason="analysis failed its shape check")
+        raise
     update_analysis(
         review_id,
         result["sentiment"],

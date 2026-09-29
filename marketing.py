@@ -986,12 +986,11 @@ def _validated_ideas(restaurant_id, ideas, profile=None, untrusted=()):
         new["validation"]["public"] = rv.PUBLIC_COPY_VERSION
         kept.append(new)
     if dropped and not kept:
-        try:
-            import ops
-            ops.capture(RuntimeError(f"content calendar: all {dropped} ideas refused by response validation"),
-                        job="content_calendar", context=f"restaurant_id={restaurant_id}")
-        except Exception:
-            pass
+        # An AI-quality finding (fix round G #58), not a failing job.
+        import ai_utils as _ai_q
+        _ai_q.record_quality_event("content_calendar", "validation_refused", restaurant_id=restaurant_id,
+                                   action="content_calendar", n=dropped,
+                                   detail=f"content calendar: all {dropped} ideas refused by response validation")
     return kept
 
 

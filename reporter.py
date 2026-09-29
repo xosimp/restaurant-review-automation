@@ -994,8 +994,11 @@ Rules:
             readiness=_ready_dig,
         )
         raw = extract_text(msg).strip()
+        # Output problems raise AIOutputRejected (a ValueError): filed below
+        # as AI-quality findings, not as a failing job (fix round G #58).
+        from ai_utils import AIOutputRejected as _Rejected, mark_outcome as _mark_outcome
         if getattr(msg, "stop_reason", None) == "max_tokens":
-            raise ValueError("weekly digest was truncated")
+            raise _Rejected("weekly digest was truncated")
         import re as _re_rpt
         parsed = {}
         for line in raw.split("\n"):
@@ -1012,7 +1015,8 @@ Rules:
             # whose format drifted put the model's entire output, preamble
             # included, at the top of an email to the client. An unparsed
             # digest is not a digest.
-            raise ValueError("weekly digest did not match the expected LABEL: format")
+            _mark_outcome(msg, "unparseable", reason="no HEADLINE: line")
+            raise _Rejected("weekly digest did not match the expected LABEL: format")
 
         # Every line through the Response Validation Layer (surface
         # "digest", unattended), then the digest's own rules. The engine
@@ -1043,12 +1047,10 @@ Rules:
                                               labor_stale=_labor_state)
             if why:
                 print(f"[digest] dropped {key} line — {why}")
-                try:
-                    import ops
-                    ops.capture(RuntimeError(f"digest {key} line dropped: {why}"),
-                                job="weekly_digest", context=f"restaurant_id={restaurant_id}")
-                except Exception:
-                    pass
+                import ai_utils as _ai_q
+                _ai_q.record_quality_event("weekly_digest", "line_dropped", restaurant_id=restaurant_id,
+                                           action="weekly_digest", detail=f"digest {key} line dropped: {why}",
+                                           codes=getattr(_v, "codes", None))
                 parsed.pop(key)
                 continue
             parsed[key] = text
@@ -1062,16 +1064,14 @@ Rules:
         _allowed = {k.lower() for k in required_lines} | {"headline", "action"}
         for key in [k for k in parsed if k not in _allowed]:
             print(f"[digest] dropped {key} line — that module reported no data this week")
-            try:
-                import ops
-                ops.capture(RuntimeError(f"digest wrote a {key} line for a module with no data"),
-                            job="weekly_digest", context=f"restaurant_id={restaurant_id}")
-            except Exception:
-                pass
+            import ai_utils as _ai_q
+            _ai_q.record_quality_event("weekly_digest", "line_dropped", restaurant_id=restaurant_id,
+                                       action="weekly_digest",
+                                       detail=f"digest wrote a {key} line for a module with no data")
             parsed.pop(key)
 
         if not parsed.get("headline"):
-            raise ValueError("weekly digest headline stated figures that were not in the data")
+            raise _Rejected("weekly digest headline stated figures that were not in the data")
         # Modules the client pays for that reported nothing. Deterministic
         # copy, never generated — see the module_instruction comment.
         if module_gap_lines:
@@ -1088,6 +1088,13 @@ Rules:
             parsed["_caveats"] = _caveats
         return parsed
     except Exception as e:
+        import ai_utils as _ai_q
+        if isinstance(e, _ai_q.AIOutputRejected):
+            _ai_q.record_quality_event(
+                "weekly_digest", "truncated" if "truncated" in str(e) else
+                ("unparseable" if "format" in str(e) else "validation_refused"),
+                restaurant_id=restaurant_id, action="weekly_digest", detail=str(e))
+            return {}
         try:
             import ops
             ops.capture(e, job="weekly_digest", context=f"restaurant_id={restaurant_id}")

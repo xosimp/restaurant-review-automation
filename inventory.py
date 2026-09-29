@@ -1723,13 +1723,15 @@ def finish_food_read(text: str, ctx):
     out = rv.enforce(text, ctx)
     if str(out).strip():
         return out
-    try:
-        import ops
-        codes = out.verdict.codes if out.verdict else []
-        ops.capture(RuntimeError(f"food read refused by validation: {', '.join(codes)}"),
-                    job="inventory_insight", context=f"restaurant_id={ctx.restaurant_id}")
-    except Exception:
-        pass
+    # An AI-quality finding and the fixed copy served in its place (fix
+    # round G #58, #140) — not a failing job.
+    import ai_utils as _ai_q
+    codes = out.verdict.codes if out.verdict else []
+    _ai_q.record_quality_event("inventory_insight", "validation_refused", restaurant_id=ctx.restaurant_id,
+                               action="inventory_insight", codes=codes,
+                               detail=f"food read refused by validation: {', '.join(codes)}")
+    _ai_q.record_quality_event("inventory_insight", "fallback", restaurant_id=ctx.restaurant_id,
+                               action="inventory_insight", detail="served the fixed unchecked-read copy")
     return rv.Validated(FOOD_READ_UNCHECKED, validation=out.validation, verdict=out.verdict)
 
 

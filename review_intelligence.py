@@ -1514,13 +1514,12 @@ def _validate_diagnosis(raw, allowed_ids, prompt, restaurant_id, op_lines=None, 
     op, op_dropped = verify_operational_evidence(raw.get("operational_evidence"), op_lines or {},
                                                  OPERATIONAL_MODULES)
     if op_dropped:
-        try:
-            import ops
-            ops.capture(RuntimeError(f"review_diagnosis operational evidence not in its input: "
-                                     f"{[(d['module'], d['value']) for d in op_dropped][:3]}"),
-                        job="review_diagnosis", context=f"restaurant_id={restaurant_id}")
-        except Exception:
-            pass
+        # An AI-quality finding (fix round G #58), not a failing job.
+        import ai_utils as _ai_q
+        _ai_q.record_quality_event("review_diagnosis", "operational_evidence", restaurant_id=restaurant_id,
+                                   action="review_diagnosis", n=len(op_dropped),
+                                   detail=f"operational evidence not in its input: "
+                                          f"{[(d['module'], d['value']) for d in op_dropped][:3]}")
 
     def _line(key, limit=400):
         return " ".join(str(raw.get(key) or "").split())[:limit] or None
@@ -1651,7 +1650,7 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
                 raise ValueError("diagnosis was truncated")
             # A leading sentence before the JSON failed json.loads (AI-26).
             from ai_utils import parse_json_reply
-            result = _validate_diagnosis(parse_json_reply(extract_text(msg), expect=dict),
+            result = _validate_diagnosis(parse_json_reply(extract_text(msg), expect=dict, message=msg),
                                          allowed, prompt, restaurant_id, op_lines=op_lines,
                                          facts=_cluster_facts(cluster),
                                          # Where the complaints concentrate and what
@@ -1666,14 +1665,27 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False,
                            "window_days": cluster["window_days"], "stale": False})
             produced.append(result)
         except Exception as e:
-            try:
-                import ops
-                ops.capture(e, job="review_diagnosis",
-                            context=f"restaurant_id={restaurant_id} category={cluster['category']}")
-            except Exception:
-                pass
+            import ai_utils as _ai_q
+            if isinstance(e, ValueError):
+                # The model's diagnosis was cut off, did not parse or was
+                # refused by its checks: an AI-quality finding (#58).
+                _ai_q.record_quality_event("review_diagnosis", "output_rejected", restaurant_id=restaurant_id,
+                                           action="review_diagnosis",
+                                           detail=f"{cluster['category']}: {str(e)[:200]}")
+            elif not _ai_q.is_platform_stop(e):
+                # A budget stop or an open breaker is already in the ledger.
+                try:
+                    import ops
+                    ops.capture(e, job="review_diagnosis",
+                                context=f"restaurant_id={restaurant_id} category={cluster['category']}")
+                except Exception:
+                    pass
             if prior:
                 produced.append(prior)
+                # Yesterday's diagnosis stands in for today's (#140).
+                _ai_q.record_quality_event("review_diagnosis", "fallback", restaurant_id=restaurant_id,
+                                           action="review_diagnosis",
+                                           detail=f"{cluster['category']}: the previous diagnosis was kept")
     return produced
 
 

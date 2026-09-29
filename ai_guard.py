@@ -1008,27 +1008,27 @@ def verify_figures(generated: str, context: str, job: str, restaurant_id=None,
       than showing it with a caveat — but the flag means the UI can say the
       numbers weren't verified, instead of presenting them as fact.
 
-    Either way it lands in the failure digest, so a model that starts
-    inventing figures shows up as a rate rather than as one owner's
-    complaint.
+    Either way it is recorded as an AI-quality finding (ai_quality_events,
+    fix round G #58), so a model that starts inventing figures shows up as a
+    rate on the AI page rather than as one owner's complaint — and no longer
+    as a failing job: 243 of these a fortnight read as "Job competitor_insight
+    failed" and buried the real job failures.
     """
     bad = unsupported_figures(generated, context, check_counts=check_counts)
     if bad:
-        try:
-            import ops
-            ops.capture(RuntimeError(f"{job} stated figures not present in its input: {bad[:5]}"),
-                        job=job, context=f"restaurant_id={restaurant_id}")
-        except Exception:
-            pass
+        _capture(f"{job} stated figures not present in its input: {bad[:5]}", job, restaurant_id,
+                 kind="figures", n=len(bad))
     return bad
 
 
-def _capture(message: str, job: str, restaurant_id=None):
-    """A guard's finding into the failure digest, so a model that starts
-    doing it shows up as a rate rather than as one owner's complaint."""
+def _capture(message: str, job: str, restaurant_id=None, kind="guard", n=1):
+    """A guard's finding, recorded as an AI-quality event on surface `job`
+    (ai_utils.record_quality_event), so a model that starts doing it shows up
+    as a rate rather than as one owner's complaint. It used to be an
+    ops.capture — a job_failures row and a Sentry event. Never raises."""
     try:
-        import ops
-        ops.capture(RuntimeError(message), job=job, context=f"restaurant_id={restaurant_id}")
+        import ai_utils
+        ai_utils.record_quality_event(job, kind, restaurant_id=restaurant_id, detail=message, n=n)
     except Exception:
         pass
 
@@ -1155,7 +1155,8 @@ def unsupported_causes(generated: str, anchors, job: str = None, restaurant_id=N
         if any(not carries_anchor(clause, anchors) for _w, clause in clauses):
             out.append(s[:160])
     if out and job:
-        _capture(f"{job} stated a cause no stored diagnosis supports: {out[:2]}", job, restaurant_id)
+        _capture(f"{job} stated a cause no stored diagnosis supports: {out[:2]}", job, restaurant_id,
+                 kind="causes", n=len(out))
     return out
 
 
@@ -1245,7 +1246,8 @@ def unbound_figures(generated: str, entity_facts: dict, global_facts=(), job: st
             if not any(abs(v - abs(k)) <= tol for k in pool):
                 out.append(f"{c['raw']} (about {sorted(here)[0]})")
     if out and job:
-        _capture(f"{job} attached figures to the wrong fact: {out[:4]}", job, restaurant_id)
+        _capture(f"{job} attached figures to the wrong fact: {out[:4]}", job, restaurant_id,
+                 kind="bindings", n=len(out))
     return out
 
 

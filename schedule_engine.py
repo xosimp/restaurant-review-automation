@@ -2874,14 +2874,15 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             if _hours_drift_rows:
                 print(f"[schedule] corrected scheduled_hours on {_hours_drift_rows} row(s), "
                       f"{round(_hours_drift_total, 1)}h total drift")
-                try:
-                    import ops
-                    ops.capture(RuntimeError(
-                        f"{_hours_drift_rows} schedule rows had scheduled_hours that disagreed "
-                        f"with their shift times ({round(_hours_drift_total, 1)}h total)"),
-                        job="labor_schedule", context=f"restaurant_id={restaurant_id}")
-                except Exception:
-                    pass
+                # The model's hours disagreed with its own shift times and
+                # were corrected: an AI-quality finding (fix round G #58),
+                # not a failing job.
+                import ai_utils as _ai_q
+                _ai_q.record_quality_event(
+                    "labor_schedule", "figures", restaurant_id=restaurant_id, action="labor_schedule",
+                    n=_hours_drift_rows,
+                    detail=(f"{_hours_drift_rows} schedule rows had scheduled_hours that disagreed "
+                            f"with their shift times ({round(_hours_drift_total, 1)}h total)"))
             print(f"[schedule] parsed {len(preview_rows)} rows, first={preview_rows[0] if preview_rows else None}")
             if not preview_rows:
                 # Every line was unreadable: saving it would publish an empty
@@ -3499,9 +3500,12 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # Not fatal — the rest of the week is still usable — but the owner
             # must not be handed a short schedule that looks complete.
             print(f"[schedule] dropped {len(_dropped_rows)} malformed row(s): {_dropped_rows[:3]}")
-            _ops.capture(RuntimeError(f"{len(_dropped_rows)} malformed schedule row(s) dropped"),
-                         job="schedule_generate",
-                         context=f"restaurant_id={restaurant_id} · examples={_dropped_rows[:3]}")
+            # Rows the model wrote that could not be read: an AI-quality
+            # finding (fix round G #58), not a failing job.
+            import ai_utils as _ai_q
+            _ai_q.record_quality_event("labor_schedule", "line_dropped", restaurant_id=restaurant_id,
+                                       action="labor_schedule", n=len(_dropped_rows),
+                                       detail=f"{len(_dropped_rows)} malformed schedule row(s) dropped")
 
         _payload = dict(
             ok=True,

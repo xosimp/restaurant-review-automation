@@ -1623,13 +1623,12 @@ def _validate_diagnosis(raw, driver_labels, prompt, restaurant_id, op_lines=None
     op, op_dropped = verify_operational_evidence(raw.get("operational_evidence"), op_lines or {},
                                                  OPERATIONAL_MODULES)
     if op_dropped:
-        try:
-            import ops
-            ops.capture(RuntimeError(f"food_cost_diagnosis operational evidence not in its input: "
-                                     f"{[(d['module'], d['value']) for d in op_dropped][:3]}"),
-                        job="food_cost_diagnosis", context=f"restaurant_id={restaurant_id}")
-        except Exception:
-            pass
+        # An AI-quality finding (fix round G #58), not a failing job.
+        import ai_utils as _ai_q
+        _ai_q.record_quality_event("food_cost_diagnosis", "operational_evidence", restaurant_id=restaurant_id,
+                                   action="food_cost_diagnosis", n=len(op_dropped),
+                                   detail=f"operational evidence not in its input: "
+                                          f"{[(d['module'], d['value']) for d in op_dropped][:3]}")
 
     out = {
         "headline": headline, "cause": cause,
@@ -1759,7 +1758,7 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False) ->
     # A leading sentence before the JSON failed json.loads (AI-26).
     from ai_utils import parse_json_reply
     labels = [d.get("item") or d["label"] for d in drv["drivers"]]
-    result = _validate_diagnosis(parse_json_reply(extract_text(msg), expect=dict),
+    result = _validate_diagnosis(parse_json_reply(extract_text(msg), expect=dict, message=msg),
                                  labels, prompt, restaurant_id,
                                  op_lines=_operational_lines(ev["operational"]),
                                  facts=typed_facts(drv, ev["food_cost"], ev["profitability"]))

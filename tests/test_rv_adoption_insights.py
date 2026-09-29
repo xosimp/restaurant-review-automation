@@ -257,13 +257,20 @@ NOTE_PROMPT = ("CONTEXT:\n- Active staff: Ana (Server), Ben (Cook), Cal (Server)
 
 
 def test_a_note_bullet_that_disciplines_staff_is_dropped_and_captured(monkeypatch):
-    caught = []
+    """Recorded as an AI-quality finding since fix round G (#58) — it used to
+    be an ops.capture, a job_failures row read as a failing job."""
+    caught, captured = [], []
+    import ai_utils
     import ops
-    monkeypatch.setattr(ops, "capture", lambda e, **k: caught.append(str(e)))
+    monkeypatch.setattr(ops, "capture", lambda e, **k: captured.append(str(e)))
+    monkeypatch.setattr(ai_utils, "record_quality_event",
+                        lambda surface, kind, **k: caught.append((surface, kind, k.get("detail"))))
     kept = labor._drop_note_bullets(["Kept Friday dinner at 3 servers.", "Write up Ana for being late."],
                                     NOTE_PROMPT)
     assert kept == ["Kept Friday dinner at 3 servers."]
-    assert caught and "schedule note bullet dropped" in caught[0]
+    assert caught and caught[0][:2] == ("schedule_note", "line_dropped")
+    assert "schedule note bullet dropped" in caught[0][2]
+    assert captured == [], "a quality finding is not a job failure"
 
 
 def test_a_note_bullet_cutting_below_the_owners_floor_or_sending_home_the_keyholder_is_dropped():
