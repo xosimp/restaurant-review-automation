@@ -647,7 +647,25 @@ def prune_login_history(days: int = None, db_path: str = DB_PATH) -> int:
     table outgrows everything else in the file. Runs at boot; returns how many
     rows it removed so a test can assert the window is actually applied.
     """
-    days = LOGIN_HISTORY_RETENTION_DAYS if days is None else days
+    if days is None:
+        # The one registry's window (ops, RETAIN_LOGIN_HISTORY_DAYS) — never
+        # a second number of its own that could disagree with the nightly
+        # prune — and nothing at all when that window is off or refused as
+        # under its floor (memory audit 9/29/26, "retention_registry").
+        # Before rows go at boot, the month's sign-ins are summarised the
+        # same as the nightly pass does (history_rollups.roll_engagement).
+        try:
+            import ops as _ops_lh
+            days = _ops_lh.retention_days("login_history")
+        except Exception:
+            days = LOGIN_HISTORY_RETENTION_DAYS
+        if not days:
+            return 0
+        try:
+            import history_rollups as _hr_lh
+            _hr_lh.roll_engagement(db_path)
+        except Exception:
+            return 0            # no summary, no delete: the nightly pass retries
     try:
         conn = get_conn(db_path)
         try:

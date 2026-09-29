@@ -778,17 +778,33 @@ def ledger(restaurant_id, db_path=None):
             started = (row[0] or "")[:10] if row else None
         except Exception:
             pass
+        # Lifetime figures read what outlives a prune (memory audit 9/29/26,
+        # "rollups"): alert_log is kept 180 days, so "alerts sent since you
+        # started" fell in month 14 and months_active never passed about 7;
+        # the owner's review retention shrank the reply counts. The monthly
+        # summaries (alert_monthly, review_monthly_stats — history_rollups)
+        # carry what the raw rows no longer hold.
+        import history_rollups as _hr
+        try:
+            alerts = _hr.alerts_lifetime(restaurant_id, conn=conn)
+        except Exception:
+            alerts = {"alerts": one("SELECT COUNT(*) FROM alert_log WHERE restaurant_id=?", restaurant_id),
+                      "months": set()}
+        try:
+            purged = _hr.purged_review_totals(restaurant_id, conn=conn)
+        except Exception:
+            purged = {"reviews": 0, "drafted": 0, "posted": 0}
         out = {
             "started": started,
             "replies_drafted": one("SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
-                                   "AND draft_response IS NOT NULL", restaurant_id),
+                                   "AND draft_response IS NOT NULL", restaurant_id) + purged["drafted"],
             "replies_posted": one("SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
-                                  "AND response_status='posted'", restaurant_id),
+                                  "AND response_status='posted'", restaurant_id) + purged["posted"],
             "reviews_watched": one("SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL",
-                                   restaurant_id),
+                                   restaurant_id) + purged["reviews"],
             "schedules_built": one("SELECT COUNT(DISTINCT week_start) FROM schedule_history "
                                    "WHERE restaurant_id=? AND week_start IS NOT NULL", restaurant_id),
-            "alerts_sent": one("SELECT COUNT(*) FROM alert_log WHERE restaurant_id=?", restaurant_id),
+            "alerts_sent": alerts["alerts"],
             "issues_resolved": one("SELECT COUNT(*) FROM ops_issues WHERE restaurant_id=? AND status='resolved'",
                                    restaurant_id),
             "outcomes_measured": one("SELECT COUNT(*) FROM recommendation_outcomes WHERE restaurant_id=? "
@@ -797,8 +813,8 @@ def ledger(restaurant_id, db_path=None):
             # rose is a win even though nothing here can price it (#49).
             "outcomes_improved": _improved_count(restaurant_id, db_path),
             "milestones": one("SELECT COUNT(*) FROM milestones WHERE restaurant_id=?", restaurant_id),
-            "months_active": one("SELECT COUNT(DISTINCT substr(fired_at,1,7)) FROM alert_log "
-                                 "WHERE restaurant_id=?", restaurant_id),
+            "months_active": len(alerts["months"]) if alerts["months"] else one(
+                "SELECT COUNT(DISTINCT substr(fired_at,1,7)) FROM alert_log WHERE restaurant_id=?", restaurant_id),
         }
     finally:
         conn.close()

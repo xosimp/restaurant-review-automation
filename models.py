@@ -864,6 +864,9 @@ def ensure_columns(db_path: str = DB_PATH):
         ("schedule_history", "quality_confidence", "TEXT"),
         ("schedule_history", "what_if_json", "TEXT"),
         ("schedule_history", "republished_at", "TEXT"),
+        # When a superseded draft's detail was thinned to its headline
+        # (ops._thin_drafts; memory audit 9/29/26, "draft_thinning").
+        ("schedule_history", "detail_thinned_at", "TEXT"),
         # email_log.status existed from the start but nothing could write it:
         # log_email() had no status parameter, so a failed send was recorded
         # as 'sent' like every other row.
@@ -3332,6 +3335,11 @@ def init_db(db_path: str = DB_PATH):
     # holds — memory audit 9/29/26. At boot, never on a write path.
     import change_log as _change_log
     _change_log.init_change_log(db_path)
+    # What outlives a prune — the monthly alert, engagement and review
+    # summaries, the weekly inventory summary and the monthly ingredient
+    # costs (history_rollups), kept forever.
+    import history_rollups as _history_rollups
+    _history_rollups.init_history_rollups(db_path)
     # Runs after ensure_columns() so organization_id exists to write into.
     backfill_organizations(db_path=db_path)
     # A target seeded from a figure the registry no longer seeds from goes
@@ -7029,6 +7037,10 @@ def get_approved_examples(restaurant_id: int, limit: int = 5,
                            db_path: str = DB_PATH) -> list:
     """Return recent approved review responses as style examples for the AI.
 
+    Never a review the owner's retention setting removed (deleted_at): a
+    two-year-old guest review reached the model as a style example after
+    the owner chose to keep six months (memory audit 9/29/26).
+
     A reply the auto-approve rule published is the model's own text, not
     the owner's style: learning from it would feed the drafter its own
     output (audit #15), so only replies a person approved are examples. A
@@ -7041,6 +7053,7 @@ def get_approved_examples(restaurant_id: int, limit: int = 5,
     rows = conn.execute("""
         SELECT rating, text, draft_response FROM reviews
         WHERE restaurant_id=?
+          AND deleted_at IS NULL
           AND response_status IN ('approved','posted')
           AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved')
           AND draft_response IS NOT NULL
@@ -7096,7 +7109,8 @@ def get_reply_edit_summaries(restaurant_id: int, limit: int = 12, db_path: str =
     try:
         rows = conn.execute(
             "SELECT edit_distance, edit_category, edit_signals, original_draft, draft_response FROM reviews "
-            "WHERE restaurant_id=? AND edit_category IS NOT NULL AND response_status IN ('approved','posted') "
+            "WHERE restaurant_id=? AND deleted_at IS NULL AND edit_category IS NOT NULL "
+            "AND response_status IN ('approved','posted') "
             "AND COALESCE(response_action, '') NOT IN ('auto_approved', 'bulk_approved') "
             "ORDER BY COALESCE(approved_at, '') DESC, id DESC LIMIT ?", (restaurant_id, int(limit))).fetchall()
     except Exception:
@@ -7242,7 +7256,8 @@ def _ensure_history_columns(conn):
                        ("review_json", "TEXT"), ("generation_seconds", "REAL"),
                        ("weather_json", "TEXT"), ("quality_score", "REAL"), ("quality_band", "TEXT"),
                        ("quality_confidence", "TEXT"), ("what_if_json", "TEXT"), ("superseded_by", "INTEGER"),
-                       ("republished_at", "TEXT"), ("publishing_at", "TEXT"), ("economics_json", "TEXT")):
+                       ("republished_at", "TEXT"), ("publishing_at", "TEXT"), ("economics_json", "TEXT"),
+                       ("detail_thinned_at", "TEXT")):
         if name not in have:
             try:
                 conn.execute(f"ALTER TABLE schedule_history ADD COLUMN {name} {decl}")
@@ -10298,6 +10313,9 @@ def prune_operational_logs(db_path: str = DB_PATH) -> dict:
             if column not in cols:
                 problems.append(f"{table}.{column} missing")
                 continue
+            if int(days) < _ops_retention.retention_floor(table):
+                problems.append(f"{table} window {days} days is under its floor")
+                continue          # the one registry's floor holds here too
             cur = conn.execute(
                 f"DELETE FROM {table} WHERE {column} < datetime('now', ?)",
                 (f"-{int(days)} days",))
@@ -10320,11 +10338,14 @@ def prune_operational_logs(db_path: str = DB_PATH) -> dict:
 def purge_expired_reviews(db_path: str = DB_PATH) -> int:
     """Soft-deletes reviews older than each restaurant's data_retention_months
     (0 = keep everything). Soft, not hard — every reviews query already
-    filters deleted_at IS NULL, and a mistaken retention setting shouldn't
-    be unrecoverable. Returns the number of rows touched.
+    filters deleted_at IS NULL (the reply-style readers too, since 9/29/26),
+    and a mistaken retention setting shouldn't be unrecoverable. Before the
+    rows go, their monthly stats are written (history_rollups.purge_reviews,
+    same transaction). Returns the number of rows touched.
 
     Nightly (scheduler.run_nightly_retention), committing per restaurant:
     it ran hourly as one transaction over every restaurant (#81)."""
+    import history_rollups
     conn = get_conn(db_path)
     total = 0
     try:
@@ -10332,14 +10353,16 @@ def purge_expired_reviews(db_path: str = DB_PATH) -> int:
             "SELECT id, data_retention_months FROM restaurants WHERE COALESCE(data_retention_months, 0) > 0"
         ).fetchall()
         for r in rows:
-            months = int(r["data_retention_months"])
-            cur = conn.execute(f"""
-                UPDATE reviews SET deleted_at = datetime('now')
-                WHERE restaurant_id=? AND deleted_at IS NULL
-                  AND COALESCE(NULLIF(review_date,''), fetched_at) < datetime('now', '-{months * 30} days')
-            """, (r["id"],))
-            total += cur.rowcount or 0
-            conn.commit()
+            # What the reviews were — per month, no guest text — goes into
+            # review_monthly_stats in the same transaction as the
+            # soft-delete (memory audit 9/29/26, "review_retention"): the
+            # owner's choice forgets the words, not the record.
+            try:
+                total += history_rollups.purge_reviews(conn, r["id"], int(r["data_retention_months"]))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
     finally:
         conn.close()
     return total

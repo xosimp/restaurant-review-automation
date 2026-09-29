@@ -142,6 +142,13 @@ def _week_from_row(week_end, waste_json, items_json, inv_value_col=None):
     return week
 
 
+def _iso_key(day):
+    try:
+        return date.fromisoformat(str(day)[:10]).isocalendar()[:2]
+    except Exception:
+        return None
+
+
 def load_waste_history(restaurant_id, limit=None, db_path=None, since=None, until=None):
     """The restaurant's weekly waste series, oldest first, one entry per
     ISO week. When a week holds several snapshots (the insight ran more
@@ -175,6 +182,22 @@ def load_waste_history(restaurant_id, limit=None, db_path=None, since=None, unti
             "WHERE restaurant_id=? AND week_end IS NOT NULL ORDER BY week_end ASC",
             (restaurant_id,),
         ).fetchall()]
+        # The weeks whose snapshots the retention pass has dropped (past 395
+        # days) live on as their weekly summary (history_rollups, kept
+        # forever): read with the raw ones, so the waste trend, food cost %
+        # and the seasonal re-check behind it reach last year and beyond
+        # (memory audit 9/29/26, "seasonal_food"). A week with raw rows
+        # still on file is read from them.
+        import history_rollups as _hr
+        summary = _hr.inventory_summary_weeks(restaurant_id, conn=conn)
+        raw_keys = set()
+        for d in all_days:
+            try:
+                raw_keys.add(date.fromisoformat(str(d)[:10]).isocalendar()[:2])
+            except Exception:
+                continue
+        summary = [w for w in summary if _iso_key(w["week_end"]) not in raw_keys]
+        all_days = sorted(list(all_days) + [w["week_end"] for w in summary if _iso_key(w["week_end"])])
         seen, ordered_keys, first_day_of = set(), [], {}
         for d in all_days:
             try:
@@ -199,16 +222,19 @@ def load_waste_history(restaurant_id, limit=None, db_path=None, since=None, unti
         if until:
             sql += " AND week_end <= ?"
             params.append(str(until)[:10])
-        rows = conn.execute(sql + " ORDER BY week_end ASC", params).fetchall()
+        rows = [dict(r) for r in conn.execute(sql + " ORDER BY week_end ASC", params).fetchall()]
     finally:
         conn.close()
+    hi = str(until)[:10] if until else None
+    rows += [{"week_end": w["week_end"], "waste_json": w["waste_json"], "items_json": None,
+              "inv_value": w["inv_value"]} for w in summary
+             if (not lo or w["week_end"] >= lo) and (not hi or w["week_end"] <= hi)]
+    rows.sort(key=lambda r: str(r["week_end"]))
 
     buckets = {}
     order = []
     for row in rows:
-        week = _week_from_row(row["week_end"], row["waste_json"],
-                              row["items_json"] if "items_json" in row.keys() else None,
-                              row["inv_value"] if "inv_value" in row.keys() else None)
+        week = _week_from_row(row["week_end"], row["waste_json"], row.get("items_json"), row.get("inv_value"))
         if not week:
             continue
         iso = date.fromisoformat(week["week_end"]).isocalendar()
