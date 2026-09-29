@@ -155,3 +155,27 @@ def test_a_restaurant_with_history_before_the_table_is_backfilled_once():
     assert shift_facts.backfill_from_csv() >= 1
     assert len(_facts(rid)) == 6
     assert shift_facts.backfill_from_csv() == 0                   # once
+
+
+def test_the_overtime_metric_reads_the_store_one_person_under_one_name():
+    """metrics' overtime hours read shift_facts over their own window, each
+    person under one name (the POS renamed "Jake S." to "Jacob Smith"
+    mid-week) and each shift once: an export that sent Thursday twice put
+    60 hours in the file — 20 "overtime" hours — for a 48-hour week."""
+    import metrics
+    rid = _rid()
+    monday = date(2026, 9, 7)                              # week_start_day 0: Monday payroll weeks
+
+    def day(i, name):
+        d = monday + timedelta(days=i)
+        return {"date": d.isoformat(), "day": d.strftime("%A"), "employee": name, "role": "Cook",
+                "shift_start": "08:00", "shift_end": "20:00", "scheduled_hours": "12", "actual_hours": "12",
+                "sales": "2000", "employee_ext_id": "E7", "schedule_known": "0"}
+    shift_facts.ingest(rid, [day(0, "Jake S."), day(1, "Jake S.")], "rpower")
+    shift_facts.ingest(rid, [day(2, "Jacob Smith"), day(3, "Jacob Smith"), day(3, "Jacob Smith")], "rpower")
+    stored = models.get_client_data(rid)["shifts_csv"]
+    assert stored.count(",Jacob Smith,") == 5          # the file keeps what was sent, the duplicate too
+    val, detail = metrics._overtime_hours(rid, "2026-09-07", "2026-09-13", None, None)
+    assert val == 8.0 and "8 overtime hours over 1 payroll week" in detail
+    # Outside the window nothing is read: a window with no whole week in it is unknown.
+    assert metrics._overtime_hours(rid, "2026-09-14", "2026-09-20", None, None)[0] is None

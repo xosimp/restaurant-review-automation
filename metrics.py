@@ -251,13 +251,22 @@ def _overtime_hours(rid, start, end, param, db_path):
     week that HAS shifts and nobody past 40 is a measured zero."""
     import labor
     import models
-    cd = models.get_client_data(rid, db_path=db_path)
-    if not cd or not cd.get("shifts_csv"):
-        return None, "no shifts uploaded"
-    try:
-        shifts = labor.load_shifts(csv_string=cd["shifts_csv"])
-    except Exception as e:
-        return None, f"shifts could not be read: {e}"
+    import shift_facts
+    if shift_facts.has_facts(rid, db_path):
+        # The per-shift store (memory audit 9/29/26, shift_facts): every sync
+        # and upload lands in it by the POS rule, three years raw, each person
+        # under one name and each shift once — so one person's week is summed
+        # as one person's, and a shift an export sent twice counts once, over
+        # this window only.
+        shifts = shift_facts.rows(rid, since=_d(start), until=_d(end), db_path=db_path)
+    else:
+        cd = models.get_client_data(rid, db_path=db_path)
+        if not cd or not cd.get("shifts_csv"):
+            return None, "no shifts uploaded"
+        try:
+            shifts = labor.load_shifts(csv_string=cd["shifts_csv"])
+        except Exception as e:
+            return None, f"shifts could not be read: {e}"
     r = models.get_restaurant(rid, db_path)
     wsd = int(getattr(r, "week_start_day", 0) or 0) if r else 0
     s, e = date.fromisoformat(_d(start)), date.fromisoformat(_d(end))
