@@ -383,6 +383,9 @@ def test_analytics_reads_adoption_business_metrics_and_labels_what_is_missing(pa
     assert "/admin/api/adoption" in a and "/admin/api/business-metrics?days=" in a
     assert "m.paying" in a and "m.trial" in a and "tc.available" in a        # paying and trial apart (#71)
     assert "not measured yet" in a and "rec.internal_excluded" in a
+    # Accounts as the slim server-paged rows, not the full records (#79).
+    assert "customerRows()" in a and "loadClients(" not in a
+    assert "/admin/api/clients/list?segment=customer" in _fn(page, "customerRows")
     h = _fn(page, "anaHistory")
     assert "nothing before it is reconstructed" in h and "bm.first_date" in h
     assert "a gap in the lines" in h                                  # a missed night is a gap, not a zero
@@ -648,8 +651,8 @@ READS = [
     ("/admin/api/intelligence", ["savings.periods", "savings.source", "savings.as_of", "savings.restaurants_counted",
                                  "savings.restaurants_active", "savings.note", "learning.weeks", "computed_at", "cached",
                                  "age_seconds", "floor"]),
-    ("/admin/api/clients", ["clients[].segment", "clients[].last_active", "clients[].billing.status",
-                            "clients[].churn_risk", "clients[].modules"]),
+    ("/admin/api/clients/list?segment=customer&sort=name&per_page=200&page=1",
+     ["items[].status", "items[].last_active", "items[].churn", "items[].segment", "pages"]),
 ]
 
 

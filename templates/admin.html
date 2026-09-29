@@ -3083,14 +3083,15 @@ async function analytics(tab){
   if(tab === 'recommendations'){ await recommendations(rid); return; }
   if(tab === 'intelligence'){ await intelligence(); return; }
   const [ad, bm, ai, rec, intel] = await apiAll(['/admin/api/adoption', '/admin/api/business-metrics?days=' + _bmDays, '/admin/api/ai?days=30', '/admin/api/recommendations?days=30', '/admin/api/intelligence'], 3);
-  let recs = null, cErr = null;
-  try{ recs = await loadClients(); }catch(e){ if(e && e.message === STALE) throw e; cErr = String((e && e.message) || e); }
-  const real = recs ? realAccounts(recs) : [], live = real.filter(r => ['churned', 'canceled'].indexOf(r.billing.status) < 0);
+  let real = [], cErr = null;
+  try{ real = await customerRows(); }catch(e){ if(e && e.message === STALE) throw e; cErr = String((e && e.message) || e); }
+  const live = real.filter(r => ['churned', 'canceled'].indexOf(r.status) < 0);
   const within = (r, days) => { const t = parseTs(r.last_active); return t && (Date.now() - t) < days * 864e5; };
   const a7 = live.filter(r => within(r, 7)).length, a1 = live.filter(r => within(r, 1)).length, a28 = live.filter(r => within(r, 28)).length;
   const canceled = real.length - live.length, kept = real.length ? Math.round(live.length / real.length * 100) : null;
   // Churn risk is scored for paying accounts only (#83); the rest are "not scored".
-  const churn = {low:0, medium:0, high:0, unscored:0}; live.forEach(r => { const c = r.churn_risk || {}; if(c.scored === false || !c.level) churn.unscored++; else if(churn[c.level] != null) churn[c.level]++; });
+  // Only a paying account is scored (#83): any other level ("n/a") is not scored.
+  const churn = {low:0, medium:0, high:0, unscored:0}; live.forEach(r => { if(r.churn === 'low' || r.churn === 'medium' || r.churn === 'high') churn[r.churn]++; else churn.unscored++; });
   const aiE = readErr(ai), recE = readErr(rec), adE = readErr(ad), bmE = readErr(bm), inE = readErr(intel);
   const b = aiE ? null : (ai.budget || {}).global_month, t = aiE ? {} : (ai.totals || {});
   const T = recE ? {} : rec.total, top = recE ? 1 : Math.max(1, ...rec.funnel.map(f => f.n)), pct = v => v == null ? '—' : Math.round(v * 100) + '%';
@@ -3102,6 +3103,7 @@ async function analytics(tab){
   const stackBar = parts => `<div style="display:flex;gap:3px;height:10px;border-radius:5px;overflow:hidden">${parts.filter(p => p[0] > 0).map(p => `<i style="flex:${p[0]};background:${p[1]}"></i>`).join('') || '<i style="flex:1;background:var(--hover)"></i>'}</div>`;
   const tc = adE ? null : ad.trial_conversion;
   V().innerHTML = `
+    <div style="display:flex;justify-content:flex-end">${asOf(ad)}</div>
     ${errBanner(ad)}${bmE ? '' : errBanner(bm)}
     <section class="grid g4">
       <div class="card kc"><span class="lbl">Usage</span>${cErr ? unknownV(cErr) : `<span style="display:flex;align-items:baseline;gap:8px"><span class="big" style="font-size:34px">${a7}</span><span class="s">of ${live.length} active this week</span></span>
@@ -3129,6 +3131,18 @@ async function analytics(tab){
           ${L ? `<span class="ink2" style="font-size:13px">Cross-restaurant patterns start once a cohort reaches <span class="n">${intel.floor}</span> restaurants.</span>${Object.entries(L.cohorts).sort((x, y) => y[1] - x[1]).slice(0, 3).map(([cName, n]) => `<div style="display:flex;flex-direction:column;gap:5px"><span style="display:flex;justify-content:space-between;font-size:12.5px"><span class="ink2">${esc(L.cohort_labels[cName] || (cName === 'uncategorised' ? 'Uncategorised' : cName))}</span><span class="n">${Math.min(n, intel.floor)}/${intel.floor}</span></span><span class="bar"><i style="width:${Math.min(100, Math.round(n / intel.floor * 100))}%;background:var(--ember2)"></i></span></div>`).join('')}<a href="#analytics/intelligence" style="font-size:12.5px;font-weight:700">Patterns, cohorts and benchmarks</a>` : `<span class="muted">${unknownV(inE)} — Intelligence couldn't be read.</span>`}</div>
       </div>
     </section>`;
+}
+// The customer accounts as the slim, server-paged rows (#79) — segment,
+// billing status, last active and churn level are all this page reads; the
+// full records are for the client page.
+async function customerRows(){
+  const rows = []; let page = 1, pages = 1;
+  do {
+    const d = await api('/admin/api/clients/list?segment=customer&sort=name&per_page=200&page=' + page);
+    const e = readErr(d); if(e) throw new Error(e);
+    Array.prototype.push.apply(rows, d.items || []); pages = d.pages || 1; page++;
+  } while(page <= pages && page <= 10);
+  return rows;
 }
 // The Recommendation Acceptance Score, or — when nothing taken has been
 // measured yet — the behaviour-only part, labelled, never a score that
