@@ -106,7 +106,11 @@ def test_links_stored_in_plaintext_are_migrated_and_keep_working(db_path):
 def test_linking_an_audit_is_recorded_and_the_client_lists_its_audits(db_path, monkeypatch):
     from flask import Flask
     import admin_routes
+    from csrf import csrf_protect
     from sales_audit_routes import audit_bp
+    if not getattr(audit_bp, "_csrf_wired", False):        # as tests/test_sales_audit.py wires it
+        csrf_protect(audit_bp)
+        audit_bp._csrf_wired = True
     monkeypatch.setattr(admin_routes, "get_conn", lambda *a, **k: models.get_conn(db_path), raising=False)
     monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 9, "username": "will", "is_admin": 1,
                                                            "restaurant_id": 1})

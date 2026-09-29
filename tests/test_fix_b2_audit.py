@@ -52,6 +52,13 @@ def _redirect_db(db_path, monkeypatch):
 def app():
     import toast_routes
     import sales_audit_routes
+    from csrf import csrf_protect
+    # Wire CSRF onto the audit blueprint before any app registers it, as
+    # tests/test_sales_audit.py does: a blueprint can't take a new hook once
+    # registered, and that file wires it if nobody has.
+    if not getattr(sales_audit_routes.audit_bp, "_csrf_wired", False):
+        csrf_protect(sales_audit_routes.audit_bp)
+        sales_audit_routes.audit_bp._csrf_wired = True
     flask_app = Flask(__name__, template_folder="../templates")
     flask_app.secret_key = "fix-b2-audit"
     for bp in (admin_routes.admin_bp, auth_routes.auth_bp, status_routes.status_bp, client_api.client_bp,
