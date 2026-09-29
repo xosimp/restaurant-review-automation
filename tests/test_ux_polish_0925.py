@@ -8,7 +8,14 @@ SRC = open(os.path.join(ROOT, "templates", "dashboard.html"), encoding="utf-8").
 
 
 def test_no_on_screen_not_for_us_label():
-    assert ">Not for us<" not in SRC and 'aria-label="Not for us"' not in SRC
+    """9/25/26 renamed the decline "Pass"; the memory round (M1, 9/29/26)
+    names it "Not for us" again, on web and iOS. UI wave B's surfaces (the
+    schedule review's ✕, the reprice table, the win-back card) carry it;
+    UI wave A renames Home's and the shared recControlsHtml. So the label
+    this test once kept off the page is now the one it must find."""
+    assert 'title="Not for us" aria-label="Not for us" data-rec-action="dismissed"' in SRC
+    assert 'data-rec-kind="not_for_us">Not for us</button>' in SRC
+    assert 'data-winback-dismiss="\' + w.id + \'">Not for us</button>' in SRC
 
 
 def test_focus_card_puts_the_primary_beside_could_also_be_and_answers_after():

@@ -36,6 +36,12 @@
         {% if r.specific_complaint %}<span class="rv2-what">{{ r.specific_complaint|e }}</span>{% endif %}
         {% for k, v in _ents[:2] %}<span class="rv2-ent {{ k }}">{{ v|e }}</span>{% endfor %}
         {% if not r.specific_complaint and not _ents and r.categories %}{% for c in r.categories[:3] %}<span class="cat">{{ c.replace('_',' ') }}</span>{% endfor %}{% endif %}
+        {# Fix tags (memory round 9/29/26, M6 retag): the owner corrects the
+           topics, how it reads, how serious it is and the dishes, in the
+           analyser's own words; Cavnar AI learns its tags from the fixes.
+           The current tags ride on the button (cav-mem-wb rtOpen). #}
+        {% set _rt_dishes = (r.entities.dishes if r.entities and r.entities.dishes else []) %}
+        <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm rv2-fixtags" data-retag="{{ r.id }}" data-rt-cats="{{ (r.categories or [])|join(',') }}" data-rt-sent="{{ r.sentiment or '' }}" data-rt-sev="{{ r.severity or '' }}" data-rt-dishes="{{ _rt_dishes|join(', ') }}">Fix tags</button>
         <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm rv2-ask" data-ask-review="{{ r.id }}">Ask about this →</button>
       </div>
       {% if r.draft_response %}

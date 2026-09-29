@@ -437,7 +437,7 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
             add("staff_note:stale", "staff_note",
                 f"{len(stale)} scheduling note{'' if len(stale) == 1 else 's'} over "
                 f"{STAFF_NOTE_STALE_DAYS} days old — still true?", "watch",
-                {"label": "Review them", "module": "labor"},
+                {"label": "Review them", "module": "labor", "nav": "labor/notes"},
                 detail=", ".join(names[:3]) + (f" and {len(names) - 3} more" if len(names) > 3 else ""),
                 module="labor", count=len(stale))
 
@@ -455,7 +455,7 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
             add("people:identity", "people",
                 (f"Is {first['a']['name']} the same person as {first['b']['name']}?" if len(qs) == 1 else
                  f"{len(qs)} people on your team may be listed twice — same person?"),
-                "watch", {"label": "Answer", "module": "labor"},
+                "watch", {"label": "Answer", "module": "labor", "nav": "labor/people"},
                 detail=first.get("reason"), module="labor", count=len(qs))
 
     hidden = _snoozed(restaurant_id, today, db_path)

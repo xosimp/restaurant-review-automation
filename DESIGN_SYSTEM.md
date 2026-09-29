@@ -1184,6 +1184,34 @@ One order on web (`#panel-dsr`), iPhone (`DailyReportView`) and email (`emails.d
 
 Above the grid, one `.hb-card.dr-wsum`: four tiles from the grid's own totals row — "Week to date · net" (with "N of 7 nights measured"), **vs budget** (owner only; "—" with the grid's reason when a measured night has no budget), **vs last year**, **Labor %** (only when the view reads labor) — then `.dr-wbars`, one bar per night (a period: per week) of net, green when it made its budget, red when under, a dashed ink mark at the budget (owner only; a manager's bars are plain ember and the legend says "Net sales"), a hairline for a night not measured; then `.dr-story`, the one sentence `dsr.rollup.story` writes from the view's redacted grid ("Thursday carried the week ($8,420 net, 48% of it); Friday missed budget by $610." — a view without the budget reads the miss against last year). Nothing on it is summed in the browser. Once any night in the week has a last-year figure, the import card folds to a "Import more last-year nights" text link (`.dr-imp-link`) that opens it.
 
+### What Cavnar AI remembers (memory round, UI wave B, 9/29/26)
+
+The memory round put what Cavnar AI remembers into the payloads; these are the
+shapes that show it on the web. All of it lives in `<script id="cav-mem-wb">`
+(global `mem*` helpers, one per sentence, run under node by
+`tests/test_mem_ui_wb.py`) and `<style id="cav-mem-wb-css">` at the end of
+`dashboard.html`. Every sentence is the payload's own words or figures, every
+date M/D/YY, every number in the number face (`memNum`).
+
+| Need | Use |
+|---|---|
+| Memory line | `.mem-ln` — one 13px `--ink3` line under the thing it dates or sources: "noted 9/2/26 · ends 10/1/26", "Found 3 weeks running, since 9/7/26", "learned 8/3/26 · last kept 9/21/26 · used in 5 drafts", "Matched as you did last time", "Adjusted to how you order (your last 5 orders) · the formula said 12". `.mem-ln.warn` (amber) for a line that argues against the action beside it (the reprice guard, a value complaint). Never a card of its own |
+| Memory pill | `.mem-pill` — a small uppercase pill with a glowing dot for a remembered state that carries a verdict: amber by default ("Recurring", "Needs you"), `.good` green for one that landed ("A rule"), `.neutral` ink with no dot for no verdict ("Standing", "Retired", "Older read"). Never ember |
+| Waiting on you: who is who | Rows in `#lb2-wait-people` (`data-nav="labor/people"`, the identity queue item's landing): "Is Kim T. the same person as Kim Tran?" with the reason and where each record came from, Different people (text) / Same person (secondary) — owner only, else "The account owner answers this"; "A guest praised Ana B. on 9/25/26 — is this them?" with the review's words, Not them / Yes, Ana. The card shows while only these wait (`memWaitCount`) |
+| Scheduling notes | Team & rules → Scheduling notes (`data-nav="labor/notes"`, the stale-notes queue item's landing): one recessed `.mem-note` per person, one `.mem-part` per constraint with its memory line; a part over 90 days old carries an amber inset rail and "Still true?" · Yes, still true / It ended; an ended part is struck through at .55; "Set an end" opens an inline date + Save the end; ✕ removes with Undo (§10 tier 1). The add row is Who (roster picker) · The constraint · Ends (optional date) · Add note |
+| Person sheet memory | Under the sheet's own sections, orange kickers like every kicker: Roles (`.mem-role` pills with "since M/D/YY" and ✕, an inline add row that saves on each add or remove), Covers ("Took 3 covers, turned down 1 in the last 180 days"), Attendance ("Not watched yet" when nobody watched — never a clean record), Guests who named them, and for the owner Rename (`cField`) and "The same person as…" + Merge, which asks once in place (`.mem-confirm`: both names, what moves, Not yet / Merge them) |
+| What the draft keeps | `.mem-lrn` under "What the draft has learned": the editor clashes first ("Ana B. on Tuesday night: taken off in some weeks and put on in others", Needs you, Keep them off / Keep them on — the other side is set aside), then each standing pattern with its pill and memory line and, when it can be one, Make it a rule |
+| What the draft was asked to do | The Studio's Overview section `data-sw="asked"` (`#sw-asked`): each soft requirement as an `.sr-line` with `.cv-ok` (applied) or `.cv-warn` (not) and "Applied · 3 on (usually 2) · from your reviews · until 10/4/26"; pattern clashes left out of the draft; "Details trimmed after 30 days…" on a thinned stored week |
+| What your nights have taught | `.mem-teach` at the top of Events & reservations — the ai surface (`--sf-ai`), an orange kicker, one line per measured label with an ember2 glowing dot, dimmed below its sample floor. A listed event carries its label's record as a memory line in the table |
+| Your rating over time | `.mem-rating` on Intel's What changed: the latest rating in the number face at card size, the change in green or red since the first week on file, a `glowLine` of the weekly readings (hover names each week, M/D/YY), then "Over the months" — the market's arrivals, departures and rating moves as `.in2-comp` rows, six shown and Show all N |
+| Pars to raise | `.mem-pars` inside What to order this week (`data-nav="inventory/pars"`): "Raise the par on Mozzarella to 12", the 86s it rests on as a memory line, Raise par to 12 (secondary) and Not for us |
+| Fix tags | A `cbtn-text` Fix tags in each review card's pill row opens `.rv2-retag` under it: the analyser's topics as toggle buttons (one to three), How it reads, How serious ("—" while unknown), the dishes it names; Save the tags sends only what changed |
+
+Links that land here: `labor/notes`, `labor/people` (a `labor` head handler that
+returns false for every other section) and `inventory/pars` (a plain
+`data-nav`). The decline on this wave's surfaces reads "Not for us": the
+schedule review's ✕, the reprice table, the win-back card.
+
 ## 12c. The admin console (internal, `templates/admin.html`)
 
 Rebuilt 9/28/26 as five places, each answering what needs attention, what

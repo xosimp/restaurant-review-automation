@@ -2364,8 +2364,18 @@ def mobile_food_cost_cfo(current_user):
         # The diagnosis's recommended action is a recommendation like any
         # other (audit #21): keyed, logged as shown, and answerable.
         _dg = _fci.get_diagnosis(rid, include_stale=True)
+        # A diagnosis too old to lean on (rec_trust.diagnosis_anchor_strength
+        # None) keeps its evidence and its "as of" but is not presented or
+        # answerable — the Reviews read's rule (memory audit 9/29/26,
+        # stale_diagnoses), so both clients label it an older read.
+        import rec_trust as _rt_fd
+        _dg_live = bool(_dg) and _rt_fd.diagnosis_anchor_strength(_dg) is not None
         _dg = (_capi.present_diagnoses(rid, [_dg], "diag_food", "food", "food",
-                                       user_id=current_user.get("id")) or [None])[0] if _dg else None
+                                       user_id=current_user.get("id"), shown=1 if _dg_live else 0)
+               or [None])[0] if _dg else None
+        if _dg and not _dg_live:
+            _dg["answerable"] = False
+            _dg["controls_withheld"] = "stale"
         _drivers = _fci.cost_drivers(rid)
         # Each driver names where it is acted on (friction audit U4-9): a
         # price or sourcing driver opens the order, a portion driver its
@@ -3031,6 +3041,8 @@ def mobile_labor_trend(current_user):
                 # A payroll week still in progress (memory audit 9/29/26,
                 # labor_periods): drawn as partial, never read as a trend.
                 "complete": bool(h.get("complete")),
+                "comparable": bool(h.get("comparable")),
+                "basis": h.get("basis"),
             })
         return jsonify(ok=True, weeks=weeks)
     except Exception as e:
