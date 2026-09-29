@@ -2481,7 +2481,8 @@ def _do_recommendation_event(u):
             meta["reason"] = reason
         _rl.record(_rid(u), rkey, "dismissed", surface="schedule_review", user_id=u.get("id"), role=u.get("role"),
                    meta=meta, require_existing=True, authority=_answer_authority(u), via=_rl.request_via(u))
-    out = {"ok": True, "suppressed_kinds": sorted(_si.suppressed_kinds(_rid(u)))}
+    out = {"ok": True, "suppressed_kinds": sorted(_si.suppressed_kinds(_rid(u))),
+           "suppression": _si.suppression_state(_rid(u), write=False)}
     if started:
         out.update({k: started[k] for k in ("tracker", "tracker_refused") if k in started})
     return out, 200
@@ -2684,7 +2685,11 @@ def _do_schedule_intel(u):
             "attendance_by_weekday": _safe(lambda: _sl.attendance_by_weekday(rid), {}),
             "auto_publish_offer": (_safe(lambda: _auto_publish_offer(rid), {"eligible": False}) if _may_publish(u)
                                    else {"eligible": False, "reason": "Only someone who can send the schedule can turn this on."}),
-            "suppressed_recommendation_kinds": sorted(_safe(lambda: _si.suppressed_kinds(rid), set()))}, 200
+            "suppressed_recommendation_kinds": sorted(_safe(lambda: _si.suppressed_kinds(rid), set())),
+            # Why each is off and when it is re-tested (memory audit 9/29/26,
+            # quiet_kinds): {kind: {state suppressed|retest, reason, since,
+            # review_on (M/D/YY), retests}}.
+            "recommendation_suppression": _safe(lambda: _si.suppression_state(rid, write=False), {})}, 200
 
 
 def _do_reservation_sync(u):

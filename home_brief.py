@@ -2334,7 +2334,11 @@ def _build(current_user, present=True):
     for _r in recs:
         _k = _r["key"].split(":", 1)[0]
         if _r.get("quiet") and _k not in [q["kind"] for q in quieter]:
-            quieter.append({"kind": _k, "label": decisions.kind_label(_k)})
+            # When it gets its second chance (memory audit, quiet_kinds).
+            _qs = quiet.get(_k) if isinstance(quiet, dict) else None
+            quieter.append({"kind": _k, "label": decisions.kind_label(_k),
+                            "review_on": (_mdy((_qs or {}).get("review_on")) if (_qs or {}).get("review_on")
+                                          else None)})
 
     # Only what the clients render is logged as shown — and later counted as
     # ignored. Web shows the focus card plus three attention rows ("+N
