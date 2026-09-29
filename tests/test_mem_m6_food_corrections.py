@@ -306,3 +306,68 @@ def test_an_admins_apply_through_view_as_teaches_no_match(db_path):
     invoices.apply(rid, _import(db_path, rid, first), [{"index": 0, "ingredient_id": breast, "unit_cost": 3.5}],
                    user_id=1, authority="admin")
     assert invoices.propose(rid, EXTRACTED)["lines"][0]["ingredient_id"] is None
+
+
+# ── view-as: support at work is never the owner's habit (memory audit M1) ────
+
+VIEW_AS = {"acting_admin_id": 99, "acting_admin": "support", "acting_admin_role": "admin"}
+
+
+def test_an_admins_reprice_through_view_as_is_kept_and_never_the_owners_ratio(db_path):
+    """reprice_decisions carries whose choice it was: a view-as request (g.
+    view_as, permissions.acting_via) is an admin's, kept and left out of the
+    owner's ratio."""
+    import flask
+    rid = _rid(db_path)
+    app = Flask(__name__)
+    with app.test_request_context("/", method="POST"):
+        flask.g.view_as = dict(VIEW_AS)
+        for i in range(3):
+            assert mi.record_price_change(rid, 100 + i, 20.0, 24.0, user_id=5, source="one_tap",
+                                          suggestion={"dish": f"Admin Dish {i}", "suggested_price": 24.0},
+                                          db_path=db_path)
+    c = _conn(db_path)
+    assert [r[0] for r in c.execute("SELECT authority FROM reprice_decisions WHERE restaurant_id=?", (rid,))] \
+        == ["admin"] * 3
+    c.close()
+    assert mi.reprice_acceptance(rid)["ratio"] is None
+    _decisions(db_path, rid, chosen=22.0)
+    acc = mi.reprice_acceptance(rid)
+    assert acc["decisions"] == 3 and acc["ratio"] == 0.75
+
+
+def test_an_admins_supplier_send_through_view_as_is_never_the_owners_order_record(db_path, monkeypatch):
+    """purchase_orders carries whose send it was: an admin's through view-as
+    teaches no order correction and earns the supplier no trust."""
+    import client_api
+    import emails
+    import outcomes
+    rid = _rid(db_path)
+    salmon = _ingredient(db_path, rid, "Salmon")
+    # Nothing is sent: the email is stubbed as delivered (a failed one voids
+    # the PO row), and the audit line and the observed tracker are no-ops.
+    monkeypatch.setattr(emails, "send_supplier_order_email", lambda **kw: types.SimpleNamespace(ok=True))
+    monkeypatch.setattr(client_api, "log_account_event", lambda *a, **k: None)
+    monkeypatch.setattr(outcomes, "observe", lambda *a, **k: None)
+    viewer = {"id": 5, "role": "client", "restaurant_id": rid, "acting_admin_id": 99,
+              "acting_admin_role": "admin", "device_type": "admin-view-as"}
+    group = {"supplier_email": "orders@sysco.test", "supplier_name": "Sysco", "total_cost": 10.0,
+             "items": [{"ingredient_id": salmon, "item": "Salmon", "qty": 7}], "draft_hash": "vh1"}
+    client_api._send_supplier_orders(rid, models.get_restaurant(rid, db_path), [group], viewer)
+    c = _conn(db_path)
+    assert c.execute("SELECT authority FROM purchase_orders WHERE restaurant_id=?", (rid,)).fetchone()[0] == "admin"
+    c.close()
+    c = _conn(db_path)
+    for i in range(4):
+        c.execute("INSERT INTO purchase_orders (restaurant_id, po_number, supplier_name, supplier_email, items_json, "
+                  "total_cost, status, source, draft_items_json, edited, authority) VALUES (?,?,?,?,?,?,?,?,?,1,?)",
+                  (rid, f"PO-adm-{i}", "Sysco", "orders@sysco.test",
+                   json.dumps([{"ingredient_id": salmon, "item": "Salmon", "qty": 7}]), 100.0, "received", "owner",
+                   json.dumps([{"ingredient_id": salmon, "item": "Salmon", "qty": 10}]), "admin"))
+    c.commit()
+    c.close()
+    assert ordering.order_corrections(rid) == {}
+    assert ordering.supplier_trust(rid, "orders@sysco.test")["orders"] == 0
+    _orders(db_path, rid, salmon, drafted=10, sent=7)
+    assert ordering.order_corrections(rid)[salmon]["orders"] == 4
+    assert ordering.supplier_trust(rid, "orders@sysco.test")["orders"] == 4

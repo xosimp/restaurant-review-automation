@@ -9496,11 +9496,19 @@ def _send_supplier_orders(rid, restaurant, groups, actor, resend=False, source="
             _drafted = (drafts or {}).get((group.get("supplier_email") or "").lower(), group["items"])
             _key = lambda it: (it.get("ingredient_id") or it.get("item"), round(float(it.get("qty") or 0), 3))  # noqa: E731
             _edited = sorted(map(_key, _drafted), key=str) != sorted(map(_key, group["items"]), key=str)
+            # Whose send it was (permissions.answer_authority): an admin's
+            # through view-as is support at work — never the owner's record
+            # for supplier trust or order corrections (memory audit 9/29/26,
+            # "view_as"). An automatic send has no person.
+            _po_auth = None
+            if source != "automatic" and actor:
+                from permissions import answer_authority as _aa_po
+                _po_auth = _aa_po(actor)
             _pc = get_conn()
-            _pc.execute("UPDATE purchase_orders SET source=?, draft_items_json=?, edited=? "
+            _pc.execute("UPDATE purchase_orders SET source=?, draft_items_json=?, edited=?, authority=? "
                         "WHERE restaurant_id=? AND po_number=?",
                         (source if source in ("owner", "automatic") else "owner", _json_po.dumps(_drafted),
-                         1 if _edited else 0, rid, po_number))
+                         1 if _edited else 0, _po_auth, rid, po_number))
             _pc.commit()
             _pc.close()
         except Exception as _pe:

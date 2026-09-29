@@ -825,7 +825,10 @@ def mark_calendar_idea_used(restaurant_id: int, content_type: str, topic: str):
 
 def chosen_calendar_angles(restaurant_id: int, limit: int = 5) -> list:
     """The calendar angles the owner chose to write from, newest first (the
-    calendar_* markers mark_calendar_idea_used logs). Never raises."""
+    calendar_* markers mark_calendar_idea_used logs). An angle only an admin
+    took through view-as (its calendar answer on the trail carries
+    authority 'admin' — memory audit 9/29/26, "view_as") is support at work,
+    not the owner's pick. Never raises."""
     if not restaurant_id:
         return []
     try:
@@ -834,10 +837,25 @@ def chosen_calendar_angles(restaurant_id: int, limit: int = 5) -> list:
         try:
             rows = conn.execute("SELECT topic FROM marketing_content_log WHERE restaurant_id=? "
                                 "AND content_type LIKE 'calendar\\_%' ESCAPE '\\' AND TRIM(COALESCE(topic, '')) != '' "
-                                "ORDER BY created_at DESC, id DESC LIMIT ?", (restaurant_id, int(limit))).fetchall()
+                                "ORDER BY created_at DESC, id DESC LIMIT ?", (restaurant_id, int(limit) * 3)).fetchall()
+            try:
+                admin_only = {r["key"] for r in conn.execute(
+                    "SELECT key FROM rec_events WHERE restaurant_id=? AND event='accepted' "
+                    "AND key LIKE 'content_idea:%' GROUP BY key "
+                    "HAVING MIN(CASE WHEN COALESCE(authority, '') = 'admin' THEN 1 ELSE 0 END) = 1",
+                    (restaurant_id,)).fetchall()}
+            except Exception:        # a database from before the ledger's authority column
+                admin_only = set()
         finally:
             conn.close()
-        return [public_topic(r["topic"]) for r in rows if public_topic(r["topic"])]
+        out = []
+        for r in rows:
+            angle = public_topic(r["topic"])
+            if angle and calendar_idea_key(r["topic"]) not in admin_only:
+                out.append(angle)
+            if len(out) >= int(limit):
+                break
+        return out
     except Exception:
         return []
 

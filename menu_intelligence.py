@@ -250,9 +250,12 @@ def reprice_acceptance(restaurant_id, db_path=DB_PATH) -> dict:
             return {"ratio": None, "decisions": 0}
         conn = _conn(db_path)
         try:
+            # An admin's reprice through view-as is support at work, not the
+            # owner's habit (memory audit 9/29/26, "view_as").
             rows = conn.execute("SELECT old_price, suggested_price, chosen_price FROM reprice_decisions "
                                 "WHERE restaurant_id=? AND old_price > 0 AND suggested_price > old_price "
-                                "AND chosen_price IS NOT NULL ORDER BY id DESC LIMIT 20",
+                                "AND chosen_price IS NOT NULL AND COALESCE(authority, '') != 'admin' "
+                                "ORDER BY id DESC LIMIT 20",
                                 (restaurant_id,)).fetchall()
         finally:
             conn.close()
@@ -477,7 +480,8 @@ def init_menu_intelligence(db_path: str = DB_PATH):
             chosen_price     REAL,
             source           TEXT,          -- 'one_tap' | 'manual'
             user_id          INTEGER,
-            created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+            created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+            authority        TEXT           -- permissions.answer_authority; 'admin' = view-as
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_reprice_decisions_rid "
                      "ON reprice_decisions(restaurant_id, created_at)")
@@ -531,12 +535,16 @@ def presented_suggestions(restaurant_id, surface="food", user_id=None, db_path=D
 
 
 def record_price_change(restaurant_id, menu_item_id, old_price, new_price, user_id=None,
-                        source="manual", suggestion=None, db_path=DB_PATH):
+                        source="manual", suggestion=None, db_path=DB_PATH, authority=None):
     """A dish's price changed. When the new price FOLLOWS a live suggestion —
     there is one for this dish, the dish already had a price, and the new
     one is higher — record suggested vs chosen and answer the
     recommendation. Returns the suggestion followed, or None (a first price,
-    a clear-to-nothing, a cut, or no suggestion: nothing is recorded)."""
+    a clear-to-nothing, a cut, or no suggestion: nothing is recorded).
+
+    `authority` is whose choice it was (permissions.answer_authority); with
+    none given, a view-as request is an admin's (permissions.acting_via) —
+    kept, and left out of the owner's reprice ratio."""
     try:
         old = float(old_price) if old_price not in (None, "") else None
         new = float(new_price) if new_price not in (None, "") else None
@@ -547,13 +555,19 @@ def record_price_change(restaurant_id, menu_item_id, old_price, new_price, user_
     s = suggestion or suggestion_for(restaurant_id, menu_item_id=menu_item_id, db_path=db_path)
     if not s:
         return None
+    if authority is None:
+        try:
+            from permissions import acting_via
+            authority = "admin" if acting_via() else None
+        except Exception:
+            authority = None
     try:
         conn = _conn(db_path)
         try:
             conn.execute("INSERT INTO reprice_decisions (restaurant_id, menu_item_id, dish, old_price, "
-                         "suggested_price, chosen_price, source, user_id) VALUES (?,?,?,?,?,?,?,?)",
+                         "suggested_price, chosen_price, source, user_id, authority) VALUES (?,?,?,?,?,?,?,?,?)",
                          (restaurant_id, menu_item_id, s.get("dish"), old, s.get("suggested_price"),
-                          round(new, 2), source, user_id))
+                          round(new, 2), source, user_id, authority))
             conn.commit()
         finally:
             conn.close()

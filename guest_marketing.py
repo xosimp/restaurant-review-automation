@@ -2741,7 +2741,10 @@ def _last_sent_winback(restaurant_id, db_path=DB_PATH, days=180):
     (guest_campaign_drafts.sent_message — written at every send and, until
     the memory audit of 9/29/26, read by nothing), within `days`, or None.
     The fallback for texts sent before marketing_voice kept them; a
-    teammate's send is not the owner's words."""
+    teammate's send is not the owner's words. A send marketing_voice did
+    record is read there, with who sent it — never here: a view-as session
+    answers as the owner's own login, so this table cannot tell an admin's
+    send from the owner's."""
     try:
         conn = get_conn(db_path)
         try:
@@ -2749,7 +2752,10 @@ def _last_sent_winback(restaurant_id, db_path=DB_PATH, days=180):
                 "SELECT d.sent_message, u.role, COALESCE(u.is_admin, 0) AS is_admin FROM guest_campaign_drafts d "
                 "LEFT JOIN users u ON u.id = d.answered_by WHERE d.restaurant_id=? AND d.kind='winback' "
                 "AND d.status='sent' AND TRIM(COALESCE(d.sent_message, '')) != '' "
-                "AND d.answered_at >= datetime('now', ?) ORDER BY d.id DESC LIMIT 5",
+                "AND d.answered_at >= datetime('now', ?) "
+                "AND NOT EXISTS (SELECT 1 FROM marketing_edits e WHERE e.restaurant_id = d.restaurant_id "
+                "                AND e.source = 'winback' AND e.ref_id = d.id) "
+                "ORDER BY d.id DESC LIMIT 5",
                 (restaurant_id, f"-{int(days)} days")).fetchall()
         finally:
             conn.close()

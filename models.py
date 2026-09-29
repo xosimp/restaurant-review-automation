@@ -1134,6 +1134,14 @@ def ensure_columns(db_path: str = DB_PATH):
         # uncaptured): requests were counted and never matched to a review.
         ("review_requests", "review_id", "INTEGER"),
         ("review_requests", "matched_at", "TEXT"),
+        # Whose choice a reprice or a supplier order was (permissions.
+        # answer_authority; memory audit 9/29/26, "view_as"): an admin's work
+        # through view-as is support at work, never the owner's habit, so
+        # the reprice ratio (menu_intelligence.reprice_acceptance) and the
+        # order corrections (ordering.order_corrections) leave it out.
+        # NULL on rows from before = a person at the restaurant.
+        ("reprice_decisions", "authority", "TEXT"),
+        ("purchase_orders", "authority", "TEXT"),
         # Recipe provenance (audit #35): 'owner' (typed or imported by a
         # person), 'draft_accepted' (a Cavnar draft accepted unedited) or
         # 'draft_edited' (a draft line the owner changed before accepting).

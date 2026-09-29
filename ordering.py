@@ -59,7 +59,9 @@ def supplier_trust(restaurant_id, supplier_email, db_path=DB_PATH):
     time. `orders` is every owner-sent order; trusted needs
     ORDER_TRUST_MIN of them unedited and an edit rate at or under
     ORDER_TRUST_EDIT_RATE — the shape auto_approve_trust uses for replies.
-    Rows from before `source` existed count as the owner's. `last_sent_at`
+    Rows from before `source` existed count as the owner's; an admin's send
+    through view-as (authority 'admin') is not (memory audit 9/29/26,
+    "view_as"). `last_sent_at`
     still reads every order — the cadence guard is about what the supplier
     received, whoever sent it."""
     email = (supplier_email or "").strip().lower()
@@ -68,19 +70,27 @@ def supplier_trust(restaurant_id, supplier_email, db_path=DB_PATH):
                 "last_sent_at": None, "trusted": False}
     conn = get_conn(db_path)
     try:
-        try:
-            rows = conn.execute(
-                "SELECT total_cost, sent_at, COALESCE(edited,0) AS edited FROM purchase_orders "
-                "WHERE restaurant_id=? "
-                "AND LOWER(supplier_email)=? AND COALESCE(status,'') NOT IN ('void','voided','cancelled') "
-                "AND COALESCE(source,'owner')='owner' "
-                "ORDER BY id DESC LIMIT 20", (restaurant_id, email)).fetchall()
-        except Exception:
-            # A database from before source/edited existed.
-            rows = conn.execute(
-                "SELECT total_cost, sent_at, 0 AS edited FROM purchase_orders WHERE restaurant_id=? "
-                "AND LOWER(supplier_email)=? AND COALESCE(status,'') NOT IN ('void','voided','cancelled') "
-                "ORDER BY id DESC LIMIT 20", (restaurant_id, email)).fetchall()
+        rows = []
+        # Newest schema first: a database from before `authority`, or from
+        # before source/edited existed, is read with what it has.
+        for sql in ("SELECT total_cost, sent_at, COALESCE(edited,0) AS edited FROM purchase_orders "
+                    "WHERE restaurant_id=? "
+                    "AND LOWER(supplier_email)=? AND COALESCE(status,'') NOT IN ('void','voided','cancelled') "
+                    "AND COALESCE(source,'owner')='owner' AND COALESCE(authority,'') != 'admin' "
+                    "ORDER BY id DESC LIMIT 20",
+                    "SELECT total_cost, sent_at, COALESCE(edited,0) AS edited FROM purchase_orders "
+                    "WHERE restaurant_id=? "
+                    "AND LOWER(supplier_email)=? AND COALESCE(status,'') NOT IN ('void','voided','cancelled') "
+                    "AND COALESCE(source,'owner')='owner' "
+                    "ORDER BY id DESC LIMIT 20",
+                    "SELECT total_cost, sent_at, 0 AS edited FROM purchase_orders WHERE restaurant_id=? "
+                    "AND LOWER(supplier_email)=? AND COALESCE(status,'') NOT IN ('void','voided','cancelled') "
+                    "ORDER BY id DESC LIMIT 20"):
+            try:
+                rows = conn.execute(sql, (restaurant_id, email)).fetchall()
+                break
+            except Exception:
+                continue
         last_row = conn.execute(
             "SELECT sent_at FROM purchase_orders WHERE restaurant_id=? AND LOWER(supplier_email)=? "
             "AND COALESCE(status,'') NOT IN ('void','voided','cancelled') ORDER BY id DESC LIMIT 1",
@@ -349,8 +359,9 @@ def order_corrections(restaurant_id, db_path=DB_PATH) -> dict:
     """{ingredient_id: {"factor", "orders", "median", "basis"}} for the
     ingredients whose draft the owner keeps changing — {} for a restaurant
     that may not teach a learner (models.learning_eligible). Only orders a
-    person sent (source 'owner') with their draft kept; a line the owner took
-    off the order is a 0. Never raises."""
+    person at the restaurant sent (source 'owner', never an admin's through
+    view-as) with their draft kept; a line the owner took off the order is a
+    0. Never raises."""
     try:
         if not _models_mod.learning_eligible(restaurant_id):
             return {}
@@ -358,7 +369,8 @@ def order_corrections(restaurant_id, db_path=DB_PATH) -> dict:
         try:
             rows = conn.execute(
                 "SELECT items_json, draft_items_json FROM purchase_orders WHERE restaurant_id=? "
-                "AND COALESCE(source, 'owner')='owner' AND draft_items_json IS NOT NULL "
+                "AND COALESCE(source, 'owner')='owner' AND COALESCE(authority, '') != 'admin' "
+                "AND draft_items_json IS NOT NULL "
                 "AND COALESCE(status,'') NOT IN ('void','voided','cancelled') ORDER BY id DESC LIMIT 60",
                 (restaurant_id,)).fetchall()
         finally:

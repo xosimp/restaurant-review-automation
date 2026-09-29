@@ -129,10 +129,22 @@ def draft_signals(text, typical_words=None) -> list:
 def record_draft(restaurant_id, channel, body, source, user_id=None, content_log_id=None, db_path=None):
     """One piece of copy a model drafted. Returns its id (the `draft_ref`
     the clients send back with the piece that goes out) or None; never
-    raises into the draft."""
+    raises into the draft.
+
+    A draft made through view-as carries no person (memory audit 9/29/26,
+    "view_as"): the session answers as the owner's own login, and an
+    admin's drafts thrown away for another (regenerated) or matched to a
+    send by person (_match_draft) are support at work, not the owner's
+    "no". It is still kept, and still matched by its draft_ref."""
     body = str(body or "").strip()
     if not restaurant_id or channel not in CHANNELS or not body:
         return None
+    try:
+        from permissions import acting_via
+        if acting_via():
+            user_id = None
+    except Exception:
+        pass
     try:
         conn = get_conn(db_path)
         try:

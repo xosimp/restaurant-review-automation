@@ -269,3 +269,75 @@ def test_a_win_back_sent_before_the_voice_record_is_read_from_sent_message(db_pa
     c.close()
     got = gm.winback_suggestion(rid, restaurant_name="Gia Mia", db_path=db_path)
     assert got["available"] and got["draft"]["message"] == "Owner's own words -Erik"
+
+
+# ── view-as: support at work is never the owner's voice (memory audit M1) ────
+
+VIEW_AS = {"acting_admin_id": 99, "acting_admin": "support", "acting_admin_role": "admin"}
+
+
+def test_a_view_as_sessions_drafts_carry_no_person_and_are_never_the_owners_no(db_path):
+    """A view-as session answers as the owner's own login: its drafts are
+    kept with no person, so an admin regenerating captions is never read as
+    the owner throwing drafts away."""
+    import flask
+    rid = _rid(db_path)
+    _published(db_path, rid, OWNER)
+    app = flask.Flask(__name__)
+    with app.test_request_context("/"):
+        flask.g.view_as = dict(VIEW_AS)
+        for i in range(3):
+            assert mv.record_draft(rid, "social", f"Pasta night! #GiaMia #Pasta {i}", "post", user_id=11)
+        assert mv.record_draft(rid, "social", "The one support kept", "post", user_id=11)
+    c = _conn(db_path)
+    assert c.execute("SELECT COUNT(*) FROM marketing_model_drafts WHERE user_id IS NULL").fetchone()[0] == 4
+    c.close()
+    block = mv.voice_block(rid, "social")
+    assert "— Gia" in block and "regenerated" not in block
+
+
+def test_a_win_back_an_admin_sent_through_view_as_never_starts_the_next_draft(db_path, monkeypatch):
+    """guest_campaign_drafts.answered_by is the owner's login under view-as,
+    so a send marketing_voice recorded (with who sent it) is never read from
+    the legacy fallback: the owner's own last text starts the next draft."""
+    import auth
+    auth.init_auth(db_path=db_path)
+    rid = _rid(db_path)
+    _contacts(db_path, rid)
+    c = _conn(db_path)
+    owner = c.execute("INSERT INTO users (username, email, password_hash, restaurant_id, role) "
+                      "VALUES ('erik','erik@x.test','x',?,'client')", (rid,)).lastrowid
+    c.execute("INSERT INTO guest_campaign_drafts (restaurant_id, kind, segment, segment_size, message, rec_key, status, "
+              "sent_message, answered_at, answered_by) VALUES (?,?,?,?,?,?,'sent',?,datetime('now','-9 days'),?)",
+              (rid, "winback", "lapsed_60", 6, "old", "winback:lapsed_60", "Owner's own words -Erik", owner))
+    c.commit()
+    c.close()
+    monkeypatch.setattr(gm, "start_campaign", lambda *a, **k: {"ok": True, "total": 6, "campaign_id": 1})
+    first = gm.winback_suggestion(rid, restaurant_name="Gia Mia", db_path=db_path)["draft"]
+    assert first["message"] == "Owner's own words -Erik"
+    viewer = {"id": owner, "role": "client", "restaurant_id": rid, "acting_admin_id": 99,
+              "acting_admin_role": "admin", "device_type": "admin-view-as"}
+    out = gm.send_winback(rid, first["id"], message="Support's test text", user_id=owner, user=viewer,
+                          db_path=db_path)
+    assert out["ok"], out
+    c = _conn(db_path)
+    assert c.execute("SELECT authority, via FROM marketing_edits").fetchone()[:] == ("admin", "view_as")
+    c.execute("UPDATE rec_instances SET silenced_until=NULL")
+    c.commit()
+    c.close()
+    nxt = gm.winback_suggestion(rid, restaurant_name="Gia Mia", db_path=db_path)
+    assert nxt["available"] and nxt["draft"]["message"] == "Owner's own words -Erik"
+
+
+def test_a_calendar_angle_only_an_admin_took_is_not_the_owners_pick(db_path):
+    """The calendar reads the angles the owner chose; one an admin wrote
+    from through view-as (its answer on the trail carries authority 'admin')
+    is support at work."""
+    import flask
+    rid = _rid(db_path)
+    marketing.mark_calendar_idea_used(rid, "instagram_post", "Truffle week at the bar")
+    app = flask.Flask(__name__)
+    with app.test_request_context("/"):
+        flask.g.view_as = dict(VIEW_AS)
+        marketing.mark_calendar_idea_used(rid, "instagram_post", "Fall pasta night")
+    assert marketing.chosen_calendar_angles(rid) == ["Truffle week at the bar"]
