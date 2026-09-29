@@ -145,7 +145,9 @@ def _issue_token(issue_id, contact_id, purpose="assignee"):
     import base64
     import hmac as _hmac
     from models import kept_secret
-    key = kept_secret("issue_links") or config.base_url().encode()
+    key = kept_secret("issue_links")
+    if not key:
+        raise RuntimeError("issue link secret unavailable")
     msg = f"issue:{int(issue_id)}:{int(contact_id or 0)}:{purpose}".encode()
     return base64.urlsafe_b64encode(_hmac.new(key, msg, hashlib.sha256).digest()).decode().rstrip("=")[:32]
 
