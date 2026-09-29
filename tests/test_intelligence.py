@@ -333,6 +333,10 @@ def test_trends_need_six_weekly_points_over_a_cohort_at_the_floor(db_path):
     assert cafe["weeks"] == 7 and cafe["slope_per_week"] > 0 and cafe["n_latest"] == 9
     flat = next(t for t in ts if t["cohort"] == "cafe" and t["metric"] == "labor_pct_28d")
     assert flat["slope_per_week"] == 0
+    # "Emerging" is read from the frozen series (memory audit PLATFORM-14):
+    # nothing until the learning pass has persisted the complete weeks.
+    assert trends.emerging(cohorts=cohorts, db_path=db_path) == []
+    assert trends.persist(cohorts=cohorts, db_path=db_path)["written"] > 0
     assert trends.emerging(cohorts=cohorts, db_path=db_path)[0]["metric"] == "avg_rating_30d"
 
 

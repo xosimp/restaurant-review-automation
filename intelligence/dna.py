@@ -259,15 +259,19 @@ def _d(x):
     return str(x or "")[:10]
 
 
-def _sales_days(conn, rid, since):
-    """[(date, sales, hours, labor_pct)] — final days with sales, oldest first."""
+def _sales_days(conn, rid, since, until=None):
+    """[(date, sales, hours, labor_pct)] — final days with sales, oldest
+    first, from `since` through `until` (a past day for the features
+    backfill: nothing after it is read)."""
+    hi = (until.isoformat() if until else "9999-12-31")
     try:
         rows = conn.execute("SELECT date, sales, total_hours, labor_pct FROM labor_daily_history WHERE restaurant_id=? "
-                            "AND date >= ? AND sales > 0 AND COALESCE(final, 1) = 1 ORDER BY date",
-                            (rid, since.isoformat())).fetchall()
+                            "AND date >= ? AND date <= ? AND sales > 0 AND COALESCE(final, 1) = 1 ORDER BY date",
+                            (rid, since.isoformat(), hi)).fetchall()
     except Exception:
         rows = conn.execute("SELECT date, sales, total_hours, labor_pct FROM labor_daily_history WHERE restaurant_id=? "
-                            "AND date >= ? AND sales > 0 ORDER BY date", (rid, since.isoformat())).fetchall()
+                            "AND date >= ? AND date <= ? AND sales > 0 ORDER BY date",
+                            (rid, since.isoformat(), hi)).fetchall()
     out, seen = [], set()
     for r in rows:
         d = _d(r["date"])
@@ -311,7 +315,7 @@ def _weekend_share(days, today):
 DAYPART_SPLIT_HOUR = 16           # "before 4pm"
 
 
-def _dsr_hourly(conn, rid, since):
+def _dsr_hourly(conn, rid, since, until=None):
     """{business_date: (before 4pm, all)} from the nightly Daily Sales
     Report's hourly split (facts_json → blocks.sales.detail.hourly, each
     hour's net from the POS's own ticket times — RPOWER's ticket open time,
@@ -322,8 +326,9 @@ def _dsr_hourly(conn, rid, since):
     from time_utils import BUSINESS_DAY_START_HOUR
     try:
         rows = conn.execute("SELECT business_date, version, facts_json FROM dsr_reports WHERE restaurant_id=? "
-                            "AND business_date >= ? AND status IN ('final','provisional') "
-                            "ORDER BY business_date, version", (rid, since.isoformat())).fetchall()
+                            "AND business_date >= ? AND business_date <= ? AND status IN ('final','provisional') "
+                            "ORDER BY business_date, version",
+                            (rid, since.isoformat(), until.isoformat() if until else "9999-12-31")).fetchall()
     except Exception:
         return {}
     out = {}
@@ -361,8 +366,8 @@ def _daypart_mix(conn, rid, days, today):
     since = today - timedelta(days=56)
     try:
         rows = conn.execute("SELECT business_date, MAX(CASE WHEN captured_hour <= 16 THEN net_sales END) AS early "
-                            "FROM pos_intraday WHERE restaurant_id=? AND business_date >= ? GROUP BY business_date",
-                            (rid, since.isoformat())).fetchall()
+                            "FROM pos_intraday WHERE restaurant_id=? AND business_date >= ? AND business_date <= ? "
+                            "GROUP BY business_date", (rid, since.isoformat(), today.isoformat())).fetchall()
     except Exception:
         rows = []
     final = {d.isoformat(): s for d, s, _h, _p in days}
@@ -382,7 +387,7 @@ def _daypart_mix(conn, rid, days, today):
         seen.add(day)
     n_dsr = 0
     if n < 28:
-        for day, (e, t) in _dsr_hourly(conn, rid, since).items():
+        for day, (e, t) in _dsr_hourly(conn, rid, since, until=today).items():
             if day in seen:
                 continue
             early += e
@@ -930,9 +935,14 @@ def anchor_norms() -> dict:
 def platform_norms(db_path=DB_PATH, weeks=2) -> dict:
     """Per numeric dimension: the robust centre and scale over the latest
     real restaurants' raw values when at least MIN_ROBUST_N measure it,
-    else the stated anchor. Read once per nightly pass."""
+    else the stated anchor. Read once per nightly pass. A pooled figure:
+    a restaurant whose reviews come through the owner's Google connection
+    contributes none of its review dimensions (provenance.REVIEW_DNA_DIMS —
+    Google user data never trains a pooled figure), and a restaurant that
+    may not teach (jobs.excluded_learning_ids) contributes nothing."""
     from .features import iso_week
-    from .jobs import seeded_restaurant_ids
+    from .jobs import seeded_restaurant_ids, excluded_learning_ids
+    from . import provenance
     norms = anchor_norms()
     floor = iso_week(date.today() - timedelta(weeks=weeks))
     conn = get_conn(db_path)
@@ -945,7 +955,8 @@ def platform_norms(db_path=DB_PATH, weeks=2) -> dict:
         rows = []
     finally:
         conn.close()
-    seeded = seeded_restaurant_ids(db_path=db_path)
+    seeded = seeded_restaurant_ids(db_path=db_path) | excluded_learning_ids(db_path=db_path)
+    google = provenance.google_connected_ids(db_path=db_path)
     vals = {}
     for r in rows:
         if r["restaurant_id"] in seeded:
@@ -955,6 +966,8 @@ def platform_norms(db_path=DB_PATH, weeks=2) -> dict:
         except (TypeError, ValueError):
             continue
         for dim, e in dims.items():
+            if r["restaurant_id"] in google and dim in provenance.REVIEW_DNA_DIMS:
+                continue
             if dim in norms:
                 x = _t(dim, (e or {}).get("raw"))
                 if x is not None:

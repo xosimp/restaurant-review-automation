@@ -946,7 +946,8 @@ def _location_context(restaurant_id, db_path, today=None) -> dict:
             ids = [s["id"] for s in sibs]
             q = ",".join("?" * len(ids))
             for r in conn.execute(f"SELECT restaurant_id, week, features_json FROM intel_features WHERE "
-                                  f"restaurant_id IN ({q}) AND week >= ? ORDER BY week DESC", (*ids, floor)).fetchall():
+                                  f"restaurant_id IN ({q}) AND week >= ? AND version = ? ORDER BY week DESC",
+                                  (*ids, floor, _features.FEATURES_VERSION)).fetchall():
                 if r["restaurant_id"] not in rows:
                     import json as _json
                     rows[r["restaurant_id"]] = {"week": r["week"], "features": _json.loads(r["features_json"] or "{}")}

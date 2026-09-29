@@ -573,7 +573,8 @@ def test_b10_a_later_not_today_does_not_erase_an_earlier_hide(db):
     home_brief.dismiss(rid, "cut_waste:Salmon", kind="snooze", user_id=1)
     feedback.sync(db_path=db)
     feedback.sync(db_path=db)
-    acts = {r["action"] for r in _q(db, "SELECT action FROM intel_rec_events WHERE source_key='cut_waste:Salmon'")}
+    # Each answer is its own episode's row (memory audit PLATFORM-4).
+    acts = {r["action"] for r in _q(db, "SELECT action FROM intel_rec_events WHERE source_key LIKE 'cut_waste:Salmon%'")}
     assert {"hidden", "snoozed"} <= acts
     assert scoring.kind_stats("cut_waste", restaurant_id=rid, db_path=db)["hidden"] == 1
 
@@ -762,7 +763,7 @@ def test_b20_an_answer_to_an_episode_nobody_was_shown_is_not_learned(db):
     rl.present(rid, "trim_day:Monday", "labor", "home", db_path=db)
     rl.record(rid, "trim_day:Monday", "dismissed", surface="home", meta={"kind": "hide"}, db_path=db)
     out = feedback.sync(db_path=db)
-    keys = {r["source_key"] for r in _q(db, "SELECT source_key FROM intel_rec_events")}
+    keys = {feedback.base_key(r["source_key"]) for r in _q(db, "SELECT source_key FROM intel_rec_events")}
     assert keys == {"trim_day:Monday"} and out["from_ledger"] == 1
 
 
@@ -823,7 +824,10 @@ def test_b23_scoring_and_confidence_reach_a_patched_models_get_conn(db, monkeypa
     monkeypatch.setattr(models, "get_conn", lambda *a, **k: seen.append(a) or real(db))
     sc.kind_stats("trim_day")
     cf._measurability(1)
-    assert len(seen) == 2
+    # Every connection goes through the patch — the priors now also read the
+    # organisation map and who may teach (memory audit PLATFORM-19,
+    # eligibility), each through models.get_conn.
+    assert len(seen) >= 2
 
 
 # ══ B25 · one `shown` per surface per LOCAL day ══════════════════════════════

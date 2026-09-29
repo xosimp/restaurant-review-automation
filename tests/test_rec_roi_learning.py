@@ -140,9 +140,13 @@ def test_answers_from_every_surface_reach_the_engine_once(db):
     rl.record(rid, "dsr_action:control_hours:labor", "dismissed", surface="dsr", meta={"kind": "hide"}, db_path=db)
     rl.record(rid, "diag_review:service", "implemented", surface="reviews", db_path=db)
     out = feedback.sync(db_path=db, cohorts={rid: "pizza"})
-    got = {(r["source_key"], r["action"]) for r in _q(db, "SELECT source_key, action FROM intel_rec_events")}
+    # One row per EPISODE (memory audit PLATFORM-4): the ledger's answers are
+    # keyed "<key>#e<rec_id>"; the recommendation is the key before it.
+    got = {(feedback.base_key(r["source_key"]), r["action"])
+           for r in _q(db, "SELECT source_key, action FROM intel_rec_events")}
     assert got == {("trim_day:Monday", "not_for_us"), ("insight_food:abcdef1234", "done"),
                    ("dsr_action:control_hours:labor", "hidden"), ("diag_review:service", "implemented")}
+    assert len(_q(db, "SELECT 1 FROM intel_rec_events")) == 4
     assert out["events"] == 4 and out["from_ledger"] == 3
     assert feedback.sync(db_path=db)["events"] == 0             # idempotent, and the cursor moved on
 
@@ -160,7 +164,8 @@ def test_a_snooze_is_learned_as_a_snooze_and_an_old_hidden_one_is_repaired(db):
     rl.present(rid, "trim_day:Friday", "labor", "queue", db_path=db)
     rl.record(rid, "trim_day:Friday", "snoozed", surface="queue", db_path=db)
     feedback.sync(db_path=db)
-    assert _q(db, "SELECT action FROM intel_rec_events WHERE source_key='trim_day:Friday'")[0]["action"] == "snoozed"
+    assert _q(db, "SELECT action FROM intel_rec_events WHERE source_key LIKE 'trim_day:Friday#e%'")[0]["action"] \
+        == "snoozed"
 
 
 def test_ask_answers_are_keyed_by_their_proposal_like_every_other_reader(db):
@@ -248,7 +253,7 @@ def test_the_cohort_prior_is_used_only_over_the_floor_and_only_anonymous(db, mon
     calls = []
 
     def fake(kind, cohort=None, restaurant_id=None, db_path=None, exclude_restaurant_id=None, window_days=None,
-             half_life_days=None):
+             half_life_days=None, **kw):
         calls.append((cohort, exclude_restaurant_id, window_days))
         return {"restaurants": 7, "answered_restaurants": 7, "measured_restaurants": 6, "available": True,
                 "answered": 40, "measured": 20, "improved": 14, "measured_capped": 20.0, "improved_capped": 14.0,
@@ -264,7 +269,9 @@ def test_the_cohort_prior_is_used_only_over_the_floor_and_only_anonymous(db, mon
     base = rec_learning.BASE_RATE_STATED
     acc, suc = m.prior("trim_day")
     assert acc == 0.8 and abs(suc - (14 + base * rec_learning.SHRINK_K) / (20 + rec_learning.SHRINK_K)) < 1e-9
-    # ... and only its recent record (BM3-12, Top-50 #32): the last 365 days.
+    # ... and only its recent record (BM3-12, Top-50 #32): the learning
+    # horizon, decayed (memory audit PLATFORM-11) — one call: the concept
+    # rung cleared both floors, so the ladder stopped there (PLATFORM-1).
     assert calls == [("pizza", rid, rec_learning.PRIOR_WINDOW_DAYS)]
     # below the floor, or carrying an identity: even acceptance, the base rate for success
     monkeypatch.setattr(intelligence, "recommendation_success",

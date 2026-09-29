@@ -86,17 +86,35 @@ def own_record(restaurant_id, db_path=DB_PATH) -> dict:
     Wilson interval — one improvement beside four that got worse used to
     read "measurably improved things here". `worked_detail` carries each
     one's "k of n", and a kind's `success_rate` is None below the floor
-    (its counts stay), so nothing downstream can quote 100% from one."""
+    (its counts stay), so nothing downstream can quote 100% from one.
+
+    One window rule (memory audit 9/29/26, PLATFORM-11): the same horizon
+    the rankers and Historical Accuracy read (rec_learning.
+    DECAY_HORIZON_DAYS — Ask counted all time while they read a year), and
+    "worked" is ranked on the results weighed by their age (rec_learning.
+    decay_weight); the "k of n" quoted stays the plain counts."""
     import rec_learning
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    since = (now - timedelta(days=rec_learning.DECAY_HORIZON_DAYS)).strftime("%Y-%m-%d")
     conn = get_conn(db_path)
     try:
-        kinds = [r["rec_kind"] for r in conn.execute("SELECT DISTINCT rec_kind FROM intel_rec_events WHERE restaurant_id=?",
-                                                       (restaurant_id,)).fetchall()]
+        kinds = [r["rec_kind"] for r in conn.execute("SELECT DISTINCT rec_kind FROM intel_rec_events WHERE restaurant_id=? "
+                                                       "AND event_at >= ?", (restaurant_id, since)).fetchall()]
+        results = conn.execute("SELECT rec_kind, source_key, outcome, event_at FROM intel_rec_events WHERE restaurant_id=? "
+                               "AND action='measured' AND outcome IN ('improved','worsened','no_clear_change') "
+                               "AND event_at >= ?", (restaurant_id, since)).fetchall()
     finally:
         conn.close()
+    weighted = {}
+    for r in results:
+        w = rec_learning.decay_weight(r["rec_kind"], r["event_at"], now, key=r["source_key"])
+        n, k = weighted.get(r["rec_kind"], (0.0, 0.0))
+        weighted[r["rec_kind"]] = (n + w, k + (w if r["outcome"] == "improved" else 0.0))
     out = {}
     for k in kinds:
-        s = dict(scoring.kind_stats(k, restaurant_id=restaurant_id, db_path=db_path))
+        s = dict(scoring.kind_stats(k, restaurant_id=restaurant_id, db_path=db_path,
+                                    window_days=rec_learning.DECAY_HORIZON_DAYS))
         if (s.get("measured") or 0) < rec_learning.MIN_MEASURED_FOR_RATE:
             s["success_rate"] = None
         out[k] = s
@@ -105,7 +123,10 @@ def own_record(restaurant_id, db_path=DB_PATH) -> dict:
         n, imp = int(s.get("measured") or 0), int(s.get("improved") or 0)
         if n < rec_learning.MIN_MEASURED_FOR_RATE or imp / n < 0.5:
             continue
-        lo, _ = rec_learning.wilson(imp, n)
+        nw, kw = weighted.get(k, (float(n), float(imp)))
+        lo, _ = rec_learning.wilson(kw, nw) if nw else (None, None)
+        if lo is None:
+            continue
         ranked.append((lo, n, k, imp))
     ranked.sort(key=lambda x: (-x[0], -x[1], x[2]))
     worked_detail = [{"kind": k, "improved": imp, "measured": n} for _lo, n, k, imp in ranked[:5]]

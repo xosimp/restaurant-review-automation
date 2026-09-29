@@ -1301,6 +1301,46 @@ def _apply_migration(conn, sql, also_tolerate=()):
             return False
         raise
 
+
+# The tracker columns the learning sync reads (intelligence.feedback.sync):
+# a change to any of them re-stamps the row's changed_at, and only stamped
+# rows are re-read (memory audit 9/29/26, PLATFORM-18). A write that touches
+# none of them — the daily value accrual's accrued_through, the dollars —
+# is not a change the learning cares about.
+TRACKER_LEARNING_COLUMNS = ("status", "verdict", "source_key", "metric", "started_on", "evaluate_on",
+                            "after_start", "after_end", "recheck_verdict", "owner_checkin",
+                            "baseline_overlaps_trigger", "concurrent", "delta", "delta_pct", "baseline_value",
+                            "noise_sigma", "baseline_kind")
+
+
+def ensure_tracker_change_stamps(db_path: str = DB_PATH):
+    """recommendation_outcomes.changed_at and the two triggers that keep it:
+    set on insert, and on an update that changes a TRACKER_LEARNING_COLUMNS
+    value. Boot only (models.init_db, after outcomes.init_outcomes has added
+    its columns). The update trigger is re-created each boot from the
+    columns that exist, so a column added later is watched too. Millisecond
+    stamps; the sync's cursor is (changed_at, id)."""
+    conn = sqlite3.connect(db_path)
+    try:
+        have = {r[1] for r in conn.execute("PRAGMA table_info(recommendation_outcomes)").fetchall()}
+        if not have:
+            return
+        if "changed_at" not in have:
+            _apply_migration(conn, "ALTER TABLE recommendation_outcomes ADD COLUMN changed_at TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_outcomes_changed ON recommendation_outcomes(changed_at, id)")
+        stamp = "strftime('%Y-%m-%d %H:%M:%f','now')"
+        conn.execute("DROP TRIGGER IF EXISTS trg_outcomes_changed_ins")
+        conn.execute(f"CREATE TRIGGER trg_outcomes_changed_ins AFTER INSERT ON recommendation_outcomes "
+                     f"BEGIN UPDATE recommendation_outcomes SET changed_at={stamp} WHERE id=NEW.id; END")
+        watched = [c for c in TRACKER_LEARNING_COLUMNS if c in have]
+        when = " OR ".join(f"NEW.{c} IS NOT OLD.{c}" for c in watched)
+        conn.execute("DROP TRIGGER IF EXISTS trg_outcomes_changed_upd")
+        conn.execute(f"CREATE TRIGGER trg_outcomes_changed_upd AFTER UPDATE ON recommendation_outcomes "
+                     f"WHEN {when} BEGIN UPDATE recommendation_outcomes SET changed_at={stamp} WHERE id=NEW.id; END")
+        conn.commit()
+    finally:
+        conn.close()
+
 def _reviews_unique_is_global(conn) -> bool:
     """True while `reviews` still carries the old UNIQUE(platform, external_id)."""
     row = conn.execute(
@@ -2322,6 +2362,19 @@ def init_db(db_path: str = DB_PATH):
             UNIQUE(restaurant_id, week)
         )""",
         "CREATE INDEX IF NOT EXISTS idx_intel_features_week ON intel_features(week, restaurant_id)",
+        # The definition a feature row was computed under (memory audit
+        # 9/29/26, PLATFORM-5): readers take only rows of the current
+        # features.FEATURES_VERSION, so a week measured under an older
+        # definition never mixes into "your normal", a slope, a band or a
+        # prospective pair; the bounded backfill re-derives it. NULL = a row
+        # from before versioning (its definition is not known); a row
+        # written without one is stamped the current version at insert
+        # (features.init_feature_versions). `backfilled` marks a row
+        # computed for a PAST week from the raw tables
+        # (jobs.run_features_backfill), not by that week's nightly pass.
+        "ALTER TABLE intel_features ADD COLUMN version INTEGER",
+        "ALTER TABLE intel_features ADD COLUMN backfilled INTEGER NOT NULL DEFAULT 0",
+        "CREATE INDEX IF NOT EXISTS idx_intel_features_version ON intel_features(restaurant_id, version, week)",
         # Every recommendation's life: presented, answered, measured.
         """CREATE TABLE IF NOT EXISTS intel_rec_events (
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2437,6 +2490,61 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE intel_rec_events ADD COLUMN tags_json TEXT",
         # jobs.log_confidence reads the last 365 days, not the whole table.
         "CREATE INDEX IF NOT EXISTS idx_intel_rec_events_at ON intel_rec_events(event_at)",
+        # Memory audit 9/29/26 (workstream M8). `partition_key`: the
+        # restaurant's confirmed peer partition for the row's metric family,
+        # beside `cohort` (the concept) — the prior ladder's second rung.
+        # `rec_id`: the episode an answer belongs to (rows are per episode,
+        # "<key>#e<rec_id>"). `review_derived`: the row rests on review data
+        # (a review kind, or a result on a review metric). `google_data`: a
+        # review-derived row of a restaurant whose reviews come through the
+        # owner's Google connection — Google user data, never read by a
+        # pooled reader (intelligence.provenance). `trust_version`: the
+        # meaning of the % confidence_at was read from.
+        # provenance.google_connected_ids asks which restaurants hold a
+        # Business Profile review; a partial index keeps that one read small.
+        "CREATE INDEX IF NOT EXISTS idx_reviews_gbp_name ON reviews(restaurant_id) "
+        "WHERE COALESCE(review_name,'') != ''",
+        "ALTER TABLE intel_rec_events ADD COLUMN partition_key TEXT",
+        "ALTER TABLE intel_rec_events ADD COLUMN rec_id TEXT",
+        "ALTER TABLE intel_rec_events ADD COLUMN review_derived INTEGER",
+        "ALTER TABLE intel_rec_events ADD COLUMN google_data INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE intel_rec_events ADD COLUMN trust_version INTEGER",
+        # The bounded confidence fill reads only recently derived rows.
+        "CREATE INDEX IF NOT EXISTS idx_intel_rec_events_created ON intel_rec_events(created_at)",
+        # The confidence log per trust version (only support-score
+        # snapshots are averaged) and the organisations behind each figure.
+        "ALTER TABLE intel_confidence_log ADD COLUMN trust_version INTEGER",
+        "ALTER TABLE intel_confidence_log ADD COLUMN orgs INTEGER",
+        # What the platform believed, week by week (PLATFORM-14): one row
+        # per pattern per ISO week per status it reached — written once,
+        # never re-figured (the trigger refuses an UPDATE), so "this
+        # association has held for 20 weeks at 0.3★" and a retired
+        # pattern's past can be read. Aggregates only, never an id; kept
+        # forever (one row per group × hypothesis × week).
+        """CREATE TABLE IF NOT EXISTS intel_pattern_history (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            week           TEXT    NOT NULL,
+            key            TEXT    NOT NULL,
+            cohort         TEXT    NOT NULL,
+            hypothesis     TEXT    NOT NULL,
+            status         TEXT    NOT NULL,
+            n_with         INTEGER,
+            n_without      INTEGER,
+            effect         REAL,
+            effect_unit    TEXT,
+            cohen_d        REAL,
+            p_value        REAL,
+            q_value        REAL,
+            prospective    INTEGER NOT NULL DEFAULT 0,
+            recorded_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(week, key, status)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_intel_pattern_history_key ON intel_pattern_history(key, week)",
+        """CREATE TRIGGER IF NOT EXISTS intel_pattern_history_append_only
+        BEFORE UPDATE ON intel_pattern_history
+        BEGIN
+            SELECT RAISE(ABORT, 'intel_pattern_history is append-only');
+        END""",
         # Restaurant DNA, level 1 (intelligence/dna.py, BM4 §5): one row per
         # restaurant-week of its operational profile — {dim: {raw, z, n,
         # basis, norm}} over ratios, rates and bands only, never dollars
@@ -3268,6 +3376,14 @@ def init_db(db_path: str = DB_PATH):
     # recommendation's own rec_instances row, so after the ledger exists).
     from outcomes import init_outcomes
     init_outcomes(db_path)
+    # A change stamp on every tracker, so the nightly learning sync re-reads
+    # only the trackers that changed (memory audit PLATFORM-18) — after
+    # init_outcomes, so every column the stamp watches exists.
+    ensure_tracker_change_stamps(db_path)
+    # A feature row written without a definition version is stamped the
+    # current one (memory audit PLATFORM-5).
+    from intelligence.features import init_feature_versions
+    init_feature_versions(db_path)
     # The nightly Daily Sales Report: reports, searchable metrics, budgets,
     # the POS-department → DSR-category map (dsr/).
     from dsr import init_dsr
