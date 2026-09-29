@@ -482,6 +482,15 @@ def _start_timer():
     except Exception:
         rule = "(unknown)"
     logging_setup.bind(request_id=rid, route=rule, method=request.method)
+    # For gunicorn's access log, which reads WSGI environ keys as
+    # %({name}e)s: the route RULE instead of the path, so tokens that ride
+    # in a path (/reset-password/<token>, /i/<token>) never reach a log line.
+    try:
+        request.environ["cavnar.route"] = rule
+        request.environ["cavnar.request_id"] = rid
+        request.environ["cavnar.class"] = klass
+    except Exception:
+        pass
     g._inflight_key = key = object()
     minute = _minute(now)
     with _metrics_lock:

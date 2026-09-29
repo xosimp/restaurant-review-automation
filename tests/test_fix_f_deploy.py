@@ -87,14 +87,43 @@ def test_the_start_command_keeps_one_worker_and_four_threads():
     assert args[args.index("--threads") + 1] == "4"
 
 
-def test_gunicorn_writes_an_access_log_with_the_request_id_and_no_query_string():
+class _SafeAtoms(dict):
+    """gunicorn's access-log atoms: a missing key renders as '-'."""
+    def __getitem__(self, k):
+        return super().__getitem__(k) if k in self else "-"
+
+
+def test_gunicorn_writes_an_access_log_with_the_route_rule_and_request_id_never_the_path():
     args = shlex.split(_start())
     assert args[args.index("--access-logfile") + 1] == "-"
     fmt = args[args.index("--access-logformat") + 1]
-    assert "%({x-request-id}o)s" in fmt, "each access line names the request id the app returned"
-    assert "%(M)s" in fmt, "and how long it took"
-    # A query string can carry a code or token; the path alone is logged.
-    assert "%(U)s" in fmt and "%(r)s" not in fmt and "%(q)s" not in fmt
+    # gunicorn reads WSGI environ keys as %({key}e)s; http_layer puts the
+    # route RULE there. The raw path (%(U)s) and request line (%(r)s) carry
+    # tokens (/reset-password/<token>, /i/<token>), the query string codes.
+    for atom in ("%(U)s", "%(r)s", "%(q)s", "%(f)s"):
+        assert atom not in fmt, atom
+    assert "%({cavnar.route}e)s" in fmt and "%({cavnar.request_id}e)s" in fmt and "%(M)s" in fmt
+    line = fmt % _SafeAtoms({"m": "GET", "{cavnar.route}e": "/reset-password/<token>", "s": "200", "M": 12,
+                             "b": "5120", "{cavnar.class}e": "web", "{cavnar.request_id}e": "0f3a9c"})
+    assert line == "GET /reset-password/<token> 200 12ms bytes=5120 class=web rid=0f3a9c"
+    # A request gunicorn answered itself never reached the app: no route, no id.
+    assert fmt % _SafeAtoms({"m": "GET", "s": "400", "M": 0, "b": "-"}) == "GET - 400 0ms bytes=- class=- rid=-"
+
+
+def test_the_app_puts_the_route_rule_and_request_id_where_gunicorn_reads_them():
+    from flask import Flask, request
+    import http_layer
+    app = Flask(__name__)
+    http_layer.register(app)
+    seen = {}
+
+    @app.route("/reset-password/<token>")
+    def reset(token):
+        seen.update({k: request.environ.get(k) for k in ("cavnar.route", "cavnar.request_id", "cavnar.class")})
+        return "ok"
+    resp = app.test_client().get("/reset-password/secret-token-123")
+    assert seen["cavnar.route"] == "/reset-password/<token>"
+    assert seen["cavnar.request_id"] == resp.headers["X-Request-ID"] and seen["cavnar.class"] == "web"
 
 
 def test_the_deploy_healthcheck_is_health_with_room_for_a_real_boot():
