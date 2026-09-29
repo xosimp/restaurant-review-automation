@@ -157,3 +157,16 @@ def test_the_reliability_dimension_withdraws_when_nobody_was_watched():
                                      rows=[{"employee": "Maria G.", "role": "Bartender", "shift_start": "4:00pm",
                                             "shift_end": "11:00pm", "date": "2026-10-03"}])
     assert shift_quality.dim_reliability(ctx) is None
+
+
+def test_the_nightly_people_job_records_last_weeks_nights_with_the_standard_counts(monkeypatch):
+    import strategy_jobs
+    rid = _rid()
+    d = date(2026, 9, 26)
+    _publish(rid, [d], ["Maria G.", "Ana B."])
+    _pos_day(rid, d, ["Ana B."])
+    out = strategy_jobs.run_people_nightly(today=date(2026, 9, 28))
+    assert {"attempted", "ok", "failed", "skipped", "hit_bound"} <= set(out)
+    assert out["failed"] == 0 and out["attendance"] >= 2
+    assert {e["employee_name"]: e["outcome"] for e in attendance.events(rid)} == {"Maria G.": "no_show",
+                                                                               "Ana B.": "on_time"}
