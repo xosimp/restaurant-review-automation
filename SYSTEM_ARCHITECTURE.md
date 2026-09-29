@@ -8,16 +8,16 @@ review_automation/
 ├── config.py                  # the environment values several modules read (base URL, sender, on-Railway, Places key)
 ├── demo_seed.py               # the Simple EJ's demo account and its boot-time seed, off the request path
 ├── main.py                    # pre-hosted CLI (--demo, --report-only); never a second scheduler (exit 2 without --legacy-scheduler)
-├── models.py                  # (9k lines) schema, migrations, every dataclass, most DB read/write functions
+├── models.py                  # (12k lines) schema, migrations, every dataclass, most DB read/write functions
 ├── auth.py / auth_routes.py   # session/user model, staff portal tables, /auth/* routes (web)
 ├── security.py / security_headers.py / credentials.py / csrf.py / guest_links.py / http_layer.py / net_safety.py
 │                              # durable login throttling + freeze + the admin request ceiling, response headers, Fernet at rest,
 │                              # CSRF, signed links, gzip/metrics/request ids, SSRF-safe outbound fetches
 ├── logging_setup.py           # one log format (JSON on Railway), request/job context on every line
 ├── platform_monitor.py / provider_health.py   # boot records, request telemetry, the supervisor thread, the system card; credential probes
-├── client_api.py              # (8k lines) web dashboard's API — 194 routes; 58 delegate to mobile_api via _m(), the rest own or share a _do_* body
-├── mobile_api.py              # (6k lines) iOS API — 205 routes; the "real" implementation for shared logic
-├── strategy_routes.py         # 68 route bodies registered once each at /api/… and /mobile/api/… (the twin pattern to prefer)
+├── client_api.py              # (11k lines) web dashboard's API — 229 routes; 100 delegate to mobile_api via _m(), the rest own or share a _do_* body
+├── mobile_api.py              # (8k lines) iOS API — 239 routes; the "real" implementation for shared logic
+├── strategy_routes.py         # 126 route bodies registered once each at /api/… and /mobile/api/… (the twin pattern to prefer)
 ├── staff_routes.py / staff_schedule.py / staff_roster.py / time_off.py / labor_replacements.py / preshift.py
 │                              # the staff portal: PIN sign-in, today's schedule, availability, time off, pre-shift read
 ├── admin_routes.py / admin_ops.py / admin_events.py   # /admin console (Will-only)
