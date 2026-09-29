@@ -639,6 +639,39 @@ def measured_effect(restaurant_id, label, db_path=None):
             "owner_median_pct": s["owner_median_pct"], "basis": basis}
 
 
+def summaries(restaurant_id, limit=12, db_path=None) -> list:
+    """What the nights taught here, for the owner: [{"label", "display",
+    "kind", "n", "median_lift_pct", "low_lift_pct", "high_lift_pct",
+    "direction", "last_date", "applies", "owner_median_pct", "text"}] from
+    the per-label summaries (event_effects), the ones past the sample floor
+    first, then the most measured. `text` is the sentence, M/D/YY. Never
+    raises."""
+    from time_utils import mdy
+    try:
+        conn = get_conn(db_path)
+        try:
+            rows = [dict(r) for r in conn.execute(
+                "SELECT label, display, kind, n, median_lift_pct, low_lift_pct, high_lift_pct, direction, last_date, "
+                "owner_median_pct FROM event_effects WHERE restaurant_id=? ORDER BY n DESC, ABS(median_lift_pct) DESC",
+                (restaurant_id,)).fetchall()]
+        finally:
+            conn.close()
+    except Exception:
+        return []
+    out = []
+    for r in rows:
+        n, med = int(r["n"] or 0), float(r["median_lift_pct"] or 0.0)
+        applies = n >= EFFECT_MIN_N or (r["kind"] == "holiday" and (n >= 2 or abs(med) >= HOLIDAY_ONE_NIGHT_PCT))
+        word = "above" if med >= 0 else "below"
+        text = (f"{r['display'] or r['label']}: nights ran a median {abs(med):.0f}% {word} a typical same weekday "
+                f"(measured {n} time{'s' if n != 1 else ''}, last {mdy(r['last_date'])}) — before and after, not proof")
+        if r.get("owner_median_pct") is not None:
+            text += f"; you had listed it at {float(r['owner_median_pct']):+.0f}%"
+        out.append(dict(r, applies=bool(applies), text=text))
+    out.sort(key=lambda x: (not x["applies"], -int(x["n"] or 0)))
+    return out[:limit]
+
+
 def effects_for_day(restaurant_id, day, db_path=None, flags=None) -> dict | None:
     """The measured effects a forecast of `day` may apply: for each kind known
     BEFORE the night (a listed event, the holiday, a campaign, the 1st or

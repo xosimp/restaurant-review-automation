@@ -420,3 +420,25 @@ def test_the_brief_says_a_measured_effect_instead_of_calling_the_day_typical(mon
     assert today["text"].startswith("Today: about $5,000 — a typical Tuesday is $4,000, with Cubs home game +25% "
                                     "(measured 4 times here)")
     assert "looks like a typical" not in today["text"]
+
+
+def test_the_events_screen_carries_what_the_nights_taught():
+    from flask import Flask
+    import demand_signals as ds
+    import strategy_routes
+    rid = _rid()
+    _history(rid, games={3, 6, 9})
+    for k in (3, 6, 9):
+        em.record_night(rid, TUE - timedelta(weeks=k))
+    ds.save(rid, [{"date": "2026-10-06", "kind": "event", "label": "Cubs game"},
+                  {"date": "2026-10-07", "kind": "reservations", "covers": 40}])
+    s = em.summaries(rid)
+    assert s[0]["applies"] is False                               # one wording each: 2 + 1 nights, below the floor
+    assert {x["label"] for x in s} == {"cubs", "cubs cards"} and "measured 2 times" in s[0]["text"]
+    app = Flask(__name__)
+    with app.test_request_context("/labor/demand-signals?start=2026-10-01&end=2026-10-31"):
+        body, status = strategy_routes._do_demand_signals_get({"restaurant_id": rid, "role": "owner", "is_admin": 1})
+    assert status == 200 and body["what_nights_teach"] == s
+    ev = next(x for x in body["signals"] if x["kind"] == "event")
+    assert ev["measured"]["n"] == 3 and ev["measured"]["applies"] is True and "10/" not in ev["measured"]["last"]
+    assert "measured" not in next(x for x in body["signals"] if x["kind"] == "reservations")
