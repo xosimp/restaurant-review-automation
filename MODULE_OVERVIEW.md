@@ -301,9 +301,33 @@ without saying anything it cannot defend line by line.
 
 ## Admin (Will-only)
 
-**Files**: `admin_routes.py`, `admin_ops.py` (data layer), `admin_events.py`.
+**Files**: `admin_routes.py` (routes), `admin_ops.py` (the data layer: the fleet build, issues, billing from the Stripe mirror, jobs, AI, adoption, queues, the timeline, snapshots), `admin_events.py` (the audit trail, support notes, bug reports), `offboarding.py` (closing an account), `platform_monitor.py` (the system card), `templates/admin.html` (the hash-routed single-page console, five areas — Overview, Operations, Customers, Engineering, Analytics — rebuilt 9/28/26; its patterns are `DESIGN_SYSTEM.md` §12c).
 
-Client health rollup (owner → brand → location), job-run history (`job_runs`/`job_failures`), manual contract send (DocuSign), the sales-audit in-person tool (`sales_audit_*.py`), changelog authoring, status-page incident management. Hash-routed single-page app (`admin.html`), CSRF include required on every mutating call same as the client dashboard.
+Client health rollup (owner → brand → location), jobs and the backup, billing and the contract pipeline, AI operations, messaging, the audit trail, support tools (notes, bug reports, per-login security, offboarding), the sales-audit in-person tool (`sales_audit_*.py`), changelog authoring, status-page incident management. CSRF on every mutating call, same as the client dashboard.
+
+**Design stance (fix round, 9/29/26)** — the audits found a console that reported zero when a query failed, resolved issues for good, trusted a stale memo nobody could see, and let an admin action send real mail from a laptop. Now:
+- **Honest reads**: every payload says when it was built, whether it was cached, and which queries failed; a failed read is *unknown*, never 0, and the page shows an amber line. One fleet build is shared (a 45-second memo on request threads, single-flight; a busy console answers 503 with `Retry-After` rather than queueing on four threads).
+- **Issues resolve per occurrence**: a newer occurrence reopens; a few issues cannot be resolved at all (the scheduler, the platform error rate, deletion requests).
+- **Writes say what really happened**: a send answers from its real result (502 on a failure); a sending action is refused on a non-production backend; admin work that calls a provider or a model runs on a bounded pool and is polled.
+- **Who did it**: every write is audited after the response; typed actions carry before/after; sensitive actions need the password again (step-up); a support login reads with personal data masked and writes nothing.
+- Money comes from the Stripe subscription mirror (each subscription once), history from nightly snapshots (`business_metrics_daily`, `value_figures_daily`, `account_risk_state`) that start the night they are first scheduled.
+The full route contract is `API_REFERENCE.md` → *Admin console API*.
+
+---
+
+## Platform, jobs and operations
+
+**Files**: `scheduler.py` (the loop, its gates, the pulse, the lanes, the lease keeper, `backup_db`, the restore drill), `jobs_registry.py` (the one table of jobs), `ops.py` (job ledgers, lease, claims and markers, `capture`, the retention registry, the backup ledger, the platform SLA, operator paging, the digests, the admin task pool), `offsite_backup.py` (the S3/R2 copy and the scrub registry), `status_manager.py` (`/health`, the public status page, the heartbeat reads), `platform_monitor.py` (boot records, request telemetry, the supervisor thread, the system card), `provider_health.py` (hourly credential probes), `logging_setup.py` (one log format with request and job context), `http_layer.py` (request ids, metrics, cache headers), `worker.py` (the optional second process), `main.py` (the pre-hosted CLI, gated), `db_restore.py` (`RESTORE_FROM`).
+
+**Design stance**: a job that fails says so (the standard counts, a partial state, a watchdog on its own bound), a job that stops is noticed from outside the process (the heartbeat, `/health`, the dead-man ping, SMS to the operator), and nothing a laptop runs can reach a real person (`scheduler.scheduling_allowed`). Work over every restaurant is bounded and resumable (`resumable_sweep`, `strategy_jobs._BoundedWalk`). The backup is not done until a copy is off the volume. How it runs: `SYSTEM_ARCHITECTURE.md`; what to do when it breaks: `docs/ops/RECOVERY.md`.
+
+---
+
+## Billing and contracts
+
+**Files**: `pricing.py` (the one price list), `webhook_routes.py` (Stripe and DocuSign webhooks, `/pay/<token>/<period>`), `billing_jobs.py` (the `owed_sends` outbox, `stripe_invoices`, the subscription mirror, dunning, the contract chase, the nightly reconcile), `docusign_helper.py` (envelopes, reminders, resends), `provisioning.py` (an account from a signed contract), `emails.py` (the billing email section), `models.py` (`billing_context`, `pause_lock` / `billing_hold`, `in_service` / `is_paying`, `billing_status_history`).
+
+**Design stance**: every billing email is a durable row before it is sent and is marked from the real delivery result; every billing-state change is recorded with who or what made it; a failed write makes Stripe redeliver instead of being answered 200; one subscription per location group (covered locations say who pays); a dispute or refund hold is lifted only by an admin; the local mirror is reconciled with Stripe nightly and disagreements are raised, never auto-corrected. Details: `SYSTEM_ARCHITECTURE.md` → *Billing lifecycle*.
 
 ---
 
@@ -317,7 +341,7 @@ Profile, Security (2FA + backup codes + trusted devices + sign-in history), Team
 
 ## Auth / Security
 
-See `SYSTEM_ARCHITECTURE.md`'s Auth section for the model. Module-specific note: `_billing_blocked()` and `_module_blocked()` in `auth.py` gate access at the decorator level (a lapsed account or a module the tier doesn't include gets a clear message, not a 500 or a silently empty page).
+See `SYSTEM_ARCHITECTURE.md`'s Auth section for the model and `docs/ops/SECURITY.md` for every control. Module-specific note: `_billing_blocked()` and `_module_blocked()` in `auth.py` gate access at the decorator level (a lapsed account or a module the tier doesn't include gets a clear message, not a 500 or a silently empty page). Since 9/29/26 `auth.py` also holds the internal logins' own second factor (`admin_second_factor_state`, `/admin/two-factor`), step-up (`recent_auth_required`), view-as with the acting admin on the session, the admin role change (`admin_set_role`), the boot seed and the boot two-factor reset; `security.py` the per-address lockouts for internal logins, the boot unlock and the admin request ceiling.
 
 ---
 
@@ -341,7 +365,7 @@ The iOS staff portal (`Features/Staff/`) has the same requests as the web one (F
 
 ## Security infrastructure
 
-**Files**: `security.py` (durable login throttling by account and IP, breached-password check, the freeze), `security_headers.py` (HSTS/CSP/etc. on every response), `credentials.py` (Fernet at rest for POS/OAuth columns), `csrf.py`, `guest_links.py` (signed public tokens), `http_layer.py` (gzip, cache headers, the rolling latency window), `permissions.py` (roles and the per-module view gates), `provisioning.py` (account creation from a signed contract). The controls and the env vars they need: `docs/ops/SECURITY.md`.
+**Files**: `security.py` (durable login throttling by account and IP, per-address locks for internal logins, breached-password check, the freeze, the admin request ceiling), `security_headers.py` (HSTS/CSP/etc. on every response), `credentials.py` (Fernet at rest for every credential column: `FIELDS`, `EXCLUDED`, the re-save at boot), `csrf.py`, `guest_links.py` (signed public tokens, on the kept secret `join_links`), `net_safety.py` (outbound fetches to an address someone else chose: resolve once, refuse private addresses, no redirects), `http_layer.py` (gzip, cache headers, request ids, the rolling latency window), `permissions.py` (roles and the per-module view gates), `provisioning.py` (account creation from a signed contract), `offsite_backup.py` (what may leave the server in a backup). The controls and the env vars they need: `docs/ops/SECURITY.md`.
 
 ## Configuration and the demo accounts
 
