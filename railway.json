@@ -3,9 +3,9 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "gunicorn hosted_dashboard:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120 --keep-alive 5 --log-level info",
+    "startCommand": "gunicorn hosted_dashboard:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120 --keep-alive 5 --log-level info --access-logfile - --access-logformat '%(m)s %(U)s %(s)s %(B)sB %(M)sms rid=%({x-request-id}o)s'",
     "restartPolicyType": "ON_FAILURE",
     "healthcheckPath": "/health",
-    "healthcheckTimeout": 30
+    "healthcheckTimeout": 120
   }
 }

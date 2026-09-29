@@ -1,1 +1,1 @@
-web: python hosted_dashboard.py
+web: gunicorn hosted_dashboard:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120 --keep-alive 5 --log-level info --access-logfile - --access-logformat '%(m)s %(U)s %(s)s %(B)sB %(M)sms rid=%({x-request-id}o)s'
