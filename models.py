@@ -448,6 +448,10 @@ class Restaurant:
     gmb_account_id: Optional[str]        = None
     gmb_location_id: Optional[str]       = None
     gmb_token_expires: Optional[str]     = None
+    # When Google answered invalid_grant and gmb.get_valid_token cleared the
+    # refresh token (UTC). With no token since, the connection was revoked
+    # and the admin console raises it (fix round C, #44).
+    gmb_revoked_at: Optional[str]        = None
     # Toast POS credentials (admin-managed, server-to-server only)
     toast_client_id: Optional[str]       = None
     toast_client_secret: Optional[str]   = None
@@ -1003,6 +1007,8 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "profile_source", "TEXT"),
         ("restaurants", "profile_confirmed_at", "TEXT"),
         ("restaurants", "exclude_from_learning", "INTEGER DEFAULT 0"),
+        # gmb.get_valid_token's invalid_grant stamp (fix round C, #44).
+        ("restaurants", "gmb_revoked_at", "TEXT"),
         ("restaurants", "labor_target_source", "TEXT"),
         ("restaurants", "food_cost_target_source", "TEXT"),
         ("restaurants", "hourly_rate_source", "TEXT"),
@@ -3185,6 +3191,13 @@ def init_db(db_path: str = DB_PATH):
     _admin_events.init_admin_events(db_path)
     import offboarding as _offboarding
     _offboarding.init_offboarding(db_path)
+
+
+    # The admin console's own tables (business_metrics_daily, vendor_costs,
+    # the resolution history, account_risk_state, value_figures_daily) and
+    # admin_issue_resolutions.occurrence_at — at boot, never on a read.
+    import admin_ops as _admin_ops
+    _admin_ops.init_admin_ops(db_path)
     # Runs after ensure_columns() so organization_id exists to write into.
     backfill_organizations(db_path=db_path)
     # A target seeded from a figure the registry no longer seeds from goes
@@ -3501,7 +3514,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
     allowed = {
         "name","owner_email","google_place_id","yelp_business_id","voice_notes",
         "neighborhood","vibe","known_for","sign_off_name","never_say",
-        "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","quality_weights_json","monthly_revenue_target","hours_notes","role_rates_json","salaried_staff_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","waste_target_pct","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","demo_cleared_at","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
+        "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","quality_weights_json","monthly_revenue_target","hours_notes","role_rates_json","salaried_staff_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","waste_target_pct","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","demo_cleared_at","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires","gmb_revoked_at",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","staff_signin_notify","marketing_emails_opt_out","mailing_address","monthly_review_enabled","timezone","onboarding_dismissed",
@@ -4077,6 +4090,7 @@ def _restaurant_from_row(row) -> Restaurant:
         gmb_account_id=row["gmb_account_id"] if "gmb_account_id" in row.keys() else None,
         gmb_location_id=row["gmb_location_id"] if "gmb_location_id" in row.keys() else None,
         gmb_token_expires=row["gmb_token_expires"] if "gmb_token_expires" in row.keys() else None,
+        gmb_revoked_at=row["gmb_revoked_at"] if "gmb_revoked_at" in row.keys() else None,
         toast_client_id=row["toast_client_id"] if "toast_client_id" in row.keys() else None,
         toast_client_secret=row["toast_client_secret"] if "toast_client_secret" in row.keys() else None,
         rpower_token=row["rpower_token"] if "rpower_token" in row.keys() else None,

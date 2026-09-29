@@ -51,7 +51,14 @@ def test_the_score_appears_at_twenty(db):
     for i in range(10):
         rec_ledger.record(rid, f"k:{i}", "accepted")
     d = admin_ops.recommendation_acceptance(days=30, restaurant_id=rid)
-    # 100 × (0.15 × 0.5 + 0.40 × 0.5 + 0 + 0) = 27.5
-    assert d["total"]["ras"] == 27.5
+    # Nothing taken has been measured, so the score is withheld rather than
+    # scoring the outcome fifth as zero (fix round C, #141 — it read 27.5).
+    # The behaviour rates re-weighted to their own sum stand beside it:
+    # 100 × (0.15 × 0.5 + 0.40 × 0.5) ÷ 0.80 = 34.4.
+    assert d["total"]["ras"] is None and d["total"]["outcome_rate"] is None
+    assert d["total"]["ras_partial"] == 34.4 and d["total"]["ras_note"]
     lo, hi = d["total"]["accept_ci90"]
     assert lo < 0.5 < hi
+    rec_ledger.record(rid, "k:0", "outcome", meta={"verdict": "improved"})
+    # 100 × (0.15 × 0.5 + 0.40 × 0.5 + 0.25 × 0 + 0.20 × 1.0) = 47.5
+    assert admin_ops.recommendation_acceptance(days=30, restaurant_id=rid)["total"]["ras"] == 47.5
