@@ -359,6 +359,7 @@ All created at boot (`init_db` and the `init_*` it calls, or the boot block for 
 | `morning_brief_deliveries` | 90 | `created_at` |
 | `alert_storm_caps` | 365 | `started_at` |
 | `login_history` | 90 | `created_at` |
+| `ask_memory_archive` | 400 | `archived_at` |
 
 Also in `prune_ledgers`: `inventory_history` (thinned to one snapshot a week past 56 days, dropped past 395), intermediate `schedule_versions` of weeks older than 180 days (never a published version, never a week's newest) and superseded, never-published, never-shared drafts older than 365 days.
 

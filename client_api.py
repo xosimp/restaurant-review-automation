@@ -8970,11 +8970,21 @@ def _restaurant_profile_payload(rid):
     except Exception:
         review = None
     out = {"ok": True, "profile": _cats.profile_payload(r, review=review)}
+    # The configured targets (the setting's own source and label), and the
+    # owner's goal on each metric when one is what the modules judge against
+    # (memory audit 9/29/26, owner_goals) — {pct, until, label} or None.
+    def _goal(kind):
+        g = _thr.goal_target(r, kind)
+        if not g:
+            return None
+        until = g.get("until")
+        return {"pct": g["value"], "label": g["label"], "goal_id": g.get("goal_id"),
+                "until": until.isoformat() if hasattr(until, "isoformat") else until}
     out["targets"] = {
-        "labor": {"pct": r.labor_target_pct, "source": _thr.target_source(r, "labor"),
-                  "label": _thr.target_label(r, "labor")},
-        "food": {"pct": r.food_cost_target, "source": _thr.target_source(r, "food"),
-                 "label": _thr.target_label(r, "food")},
+        "labor": {"pct": r.labor_target_pct, "source": _thr.target_source(r, "labor", include_goal=False),
+                  "label": _thr.target_label(r, "labor", include_goal=False), "goal": _goal("labor")},
+        "food": {"pct": r.food_cost_target, "source": _thr.target_source(r, "food", include_goal=False),
+                 "label": _thr.target_label(r, "food", include_goal=False), "goal": _goal("food")},
     }
     basis = _thr.labor_cost_basis(r)
     out["labor_cost_basis"] = {"basis": basis, "label": _thr.LABOR_COST_BASIS_LABELS.get(basis)}

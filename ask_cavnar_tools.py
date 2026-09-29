@@ -341,38 +341,49 @@ def _read_alerts(restaurant_id, days=7, _viewer=None):
     return {"alerts": out, "outstanding": sum(1 for a in out if a["needs_action"] and not a["handled"])}
 
 
-def _remember(restaurant_id, fact, kind="context"):
-    """Record something the owner said that should survive this conversation."""
-    from models import remember_ask_fact
+def _viewer_user(viewer):
+    """The login behind a viewer_restaurant (None: an unrestricted caller)."""
+    return getattr(viewer, "_ask_dsr_user", None) if viewer is not None else None
+
+
+def _remember(restaurant_id, fact, kind="context", modules=None, subject=None, valid_until=None, due_on=None,
+              audience=None, _viewer=None):
+    """Record something the owner (or a teammate) said that should survive
+    this conversation — typed (owner_memory.remember: kind, modules,
+    subject, dates, audience) and stamped with who said it, so every
+    generator that reads owner memory reads it, and a manager's remark is
+    never shown as the owner's (memory audit 9/29/26, owner_lanes /
+    owner_reach). A measurable target is refused here and pointed at
+    set_goal, where it is measured and becomes the modules' target."""
+    import owner_memory
     try:
-        saved = remember_ask_fact(restaurant_id, fact, kind=kind, source="Ask Cavnar AI")
-        return {"remembered": saved["fact"]}
+        saved = owner_memory.remember(restaurant_id, fact, kind=kind or "context", modules=modules,
+                                      subject=subject, valid_until=valid_until, due_on=due_on, audience=audience,
+                                      user=_viewer_user(_viewer), source="Ask Cavnar AI", origin="ask")
     except ValueError as e:
         return {"error": str(e)}
+    out = {"remembered": saved["fact"], "kind": saved["kind"], "audience": saved["audience"]}
+    if saved.get("valid_until"):
+        out["until"] = saved["valid_until"]
+    if saved.get("due_on"):
+        out["due_on"] = saved["due_on"]
+    if saved.get("evicted"):
+        out["note"] = ("That lane was full, so the oldest note of this kind moved to the archive the owner "
+                       "can see in Account.")
+    return out
 
 
-def _forget(restaurant_id, fact):
+def _forget(restaurant_id, fact, _viewer=None):
     """Drop one remembered fact.
 
     Memory that can only be written to is memory the owner cannot correct.
     The facts are already in the snapshot, so the model can read them back
-    and match one the owner names; this is the other half.
-    """
-    from models import forget_ask_fact, get_ask_memory
-    text = (fact or "").strip()
-    if not text:
-        return {"error": "name the note to drop"}
-    if forget_ask_fact(restaurant_id, text):
-        return {"forgotten": text}
-    # Matched loosely so "forget the thing about December" lands, rather
-    # than the owner having to quote their own note back word for word.
-    lowered = text.lower()
-    for f in get_ask_memory(restaurant_id):
-        stored = f["fact"]
-        if lowered in stored.lower() or stored.lower() in lowered:
-            forget_ask_fact(restaurant_id, stored)
-            return {"forgotten": stored}
-    return {"error": "no note like that", "remembered": [f["fact"] for f in get_ask_memory(restaurant_id)]}
+    and match one the owner names; this is the other half. Exact text
+    first, then a loose match — but only when exactly one note matches (it
+    used to drop the first of several). A teammate may drop only what they
+    added themselves."""
+    import owner_memory
+    return owner_memory.forget(restaurant_id, fact, user=_viewer_user(_viewer))
 
 
 def _read_staff_availability(restaurant_id):
@@ -1358,13 +1369,29 @@ def _read_outcomes(restaurant_id, _viewer=None):
 
 
 def _set_goal(restaurant_id, metric=None, target=None, deadline=None, note=None, _viewer=None):
+    """Set the goal the owner stated. It carries who set it, and a goal is
+    the target every module judges the metric against (owner_memory.
+    target_for) — so an account holder's is active at once, while a
+    teammate's (or an admin's through view-as) is PROPOSED for an account
+    holder to confirm in Goals (memory audit 9/29/26, owner_goals)."""
     import goals
     if not metric_visible(_viewer, metric):
         return {"error": "Food cost goals are for logins that can see food cost."}
+    user = _viewer_user(_viewer)
     try:
-        g = goals.set_goal(restaurant_id, metric, target, deadline=deadline, note=note)
+        from permissions import answer_authority
+        authority = answer_authority(user) if user is not None else None
+    except Exception:
+        authority = "delegate"
+    try:
+        g = goals.set_goal(restaurant_id, metric, target, deadline=deadline, note=note,
+                           user_id=(user or {}).get("id"), authority=authority, source="ask")
     except ValueError as e:
         return {"error": str(e)}
+    if g.get("proposed"):
+        return {"ok": True, "proposed": True, "goal": g, "summary": g.get("summary"),
+                "note": ("Proposed, not set: a goal becomes the target every module judges against, so the "
+                         "owner confirms it in Goals. Tell them it is waiting for the owner.")}
     return {"ok": True, "goal": g, "summary": goals.summarise(g)}
 
 
@@ -1751,25 +1778,52 @@ TOOLS = [
         # an unattended run.
         "kind": "action",
         "fn": _remember,
+        "wants_viewer": True,
         "module": None,
         "spec": {
             "name": "remember",
-            "description": ("Record one durable fact about this owner or their plans, so it "
-                            "survives into future conversations — they are hiring, they are "
-                            "pushing on food cost, football season starts next month, they want "
-                            "labor under 26%. Call this when the owner tells you something that "
-                            "should change how you answer NEXT week, not something that is "
-                            "already in the data. Keep it to one short sentence in their own "
-                            "terms. Do not record trivia, and do not record the same thing twice."),
+            "description": ("Record one durable fact the person you are talking to told you, so it survives "
+                            "into future conversations AND reaches every other part of Cavnar AI that plans "
+                            "for them — the schedule draft, the labor and food reads, the daily report, "
+                            "marketing and review replies. Call it when they tell you something that should "
+                            "change how Cavnar AI works NEXT week and is not already in the data: 'we're adding "
+                            "two bartenders from 10/12' (context, labor, valid until a month after), "
+                            "'football Sundays start next week' (context, labor + marketing), 'never cut the "
+                            "host — she's our brand' (constraint, labor), 'stop suggesting the salmon "
+                            "special' (preference, food + marketing), 'check Friday's comps with me next "
+                            "week' (followup, due date). One short sentence in their own terms; no trivia; "
+                            "never the same thing twice.\n"
+                            "NOT for: a measurable target ('labor under 26% by December') — call set_goal, "
+                            "which measures it and makes it the target the modules judge against; a date the "
+                            "restaurant is closed — propose add_closed_date; a person who can't work a "
+                            "weekday — propose set_staff_unavailable. Those write the store the schedule "
+                            "actually obeys.\n"
+                            "audience: 'team' when managers should know it too (most operational facts), "
+                            "'principals' for anything private to the owner (personnel changes, pay, money, "
+                            "selling), 'author' for a personal reminder."),
             "input_schema": {"type": "object", "properties": {
-                "fact": {"type": "string", "description": "One short sentence."},
-                "kind": {"type": "string", "enum": ["goal", "context", "preference", "followup"]},
+                "fact": {"type": "string", "description": "One short sentence, in their own terms."},
+                "kind": {"type": "string", "enum": ["constraint", "context", "preference", "goal", "followup"],
+                         "description": ("constraint: a hard rule to respect; context: something true about the "
+                                         "business for a while; preference: how they like things done or said; "
+                                         "goal: an aim no number measures; followup: something to raise again "
+                                         "by a date.")},
+                "modules": {"type": "array", "items": {"type": "string", "enum": [
+                    "reviews", "labor", "schedule", "food", "marketing", "intel", "guests", "ops"]},
+                    "description": "The parts of the business it is about. Omit for the whole business."},
+                "subject": {"type": "string",
+                            "description": "Optional tag: day:<weekday>, dish:<name>, person:<name>, item:<name>."},
+                "valid_until": {"type": "string",
+                                "description": "YYYY-MM-DD for a fact that stops being true (a season, a hire)."},
+                "due_on": {"type": "string", "description": "YYYY-MM-DD, for a followup."},
+                "audience": {"type": "string", "enum": ["team", "principals", "author"]},
             }, "required": ["fact"]},
         },
     },
     {
         "kind": "action",
         "fn": _forget,
+        "wants_viewer": True,
         "module": None,
         "spec": {
             "name": "forget",
@@ -2631,6 +2685,48 @@ TOOLS = [
                 "decision": {"type": "string", "enum": ["approve", "deny"]}}},
         },
     },
+    # A structured constraint the owner states becomes a confirm card that
+    # writes the store the schedule obeys (memory audit 9/29/26,
+    # owner_reach), not a sentence in memory: the closures list and a
+    # person's availability. Both routes exist on web and mobile already.
+    {
+        "kind": "write",
+        "confirm": True,
+        "route": {"web": "/api/account-settings/closures", "mobile": "/mobile/api/account/closures",
+                  "method": "POST"},
+        "summary": "Mark {closed_day} as closed",
+        "module": None,
+        "spec": {
+            "name": "add_closed_date",
+            "description": (
+                "Propose adding a date the restaurant is CLOSED (a holiday, a private buyout, a repair) to the "
+                "closures the schedule and every forecast obey. Use it instead of remember when the owner says "
+                "they are closed on a date. Does NOT change anything — the owner confirms first."),
+            "input_schema": {"type": "object", "required": ["date"], "additionalProperties": False, "properties": {
+                "date": {"type": "string", "description": "YYYY-MM-DD, today or later."}}},
+        },
+    },
+    {
+        "kind": "write",
+        "confirm": True,
+        "route": {"web": "/api/labor/availability", "mobile": "/mobile/api/labor/availability", "method": "POST"},
+        "summary": "Mark {employee_name} as not available on {weekdays}",
+        "module": "module_labor",
+        "spec": {
+            "name": "set_staff_unavailable",
+            "description": (
+                "Propose recording that one person on the team cannot work certain weekdays, in the availability "
+                "the schedule draft treats as a hard rule. Use it instead of remember when the owner says someone "
+                "can't work a day ('Maria can't close Sundays' → Maria, Sunday). The name must be someone on the "
+                "roster; their other blocked days and notes are kept. Does NOT change anything — the owner "
+                "confirms first."),
+            "input_schema": {"type": "object", "required": ["employee_name", "weekdays"],
+                             "additionalProperties": False, "properties": {
+                "employee_name": {"type": "string"},
+                "weekdays": {"type": "array", "items": {"type": "string", "enum": [
+                    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]}}}},
+        },
+    },
     {
         "kind": "read",
         "fn": _read_time_off,
@@ -2700,6 +2796,8 @@ _BY_NAME = {t["spec"]["name"]: t for t in TOOLS}
 
 # Tools with no module flag that still read a module, by permission key.
 _INTEL_TOOLS = {"read_competitors", "read_ai_visibility", "refresh_competitors"}
+# Write tools whose route saves for an account holder only.
+_PRINCIPAL_TOOLS = {"add_closed_date"}
 # Metrics that are the Food Cost module's numbers wherever they appear.
 _FOOD_METRICS = {"food_cost_pct", "weekly_waste"}
 _MODULE_FLAGS = {"reviews": "module_reviews", "labor": "module_labor",
@@ -2762,6 +2860,14 @@ def tool_allowed(name, restaurant):
         return False
     if name in _DSR_TOOLS and not getattr(restaurant, "dsr_enabled", 1):
         return False
+    if name in _PRINCIPAL_TOOLS:
+        # Closures save for the account holder only (F2-3): a card a
+        # manager could never confirm is not offered to them.
+        user = getattr(restaurant, "_ask_dsr_user", None)
+        if user is not None:
+            from permissions import is_principal
+            if not is_principal(user):
+                return False
     return True
 
 
@@ -2896,6 +3002,18 @@ def build_proposal(name, tool_input, restaurant_id=None, owner_words=""):
     args = proposal_args(name, tool_input)
     if proposal_refusal(name, args, restaurant_id, owner_words=owner_words):
         return None
+    if name in _CONSTRAINT_CARDS:
+        # The body is built from the stored list or row, never the model's
+        # words: a closure date, or the person's whole availability with
+        # the new weekdays merged in (their other blocked days and notes
+        # kept — a whole-row save must never drop what the owner set).
+        body, summary_text, _why = _constraint_card(name, args, restaurant_id)
+        if body is None:
+            return None
+        tool_route = dict(tool["route"])
+        out = {"action": name, "summary": summary_text, "route": tool_route, "body": body, "target": {},
+               "fields_shown": fields_shown(body), "requires_confirmation": True}
+        return out
     if name == "send_supplier_order":
         args = {k: v for k, v in args.items() if k not in ("draft_hash", "resend")}
         if restaurant_id is not None:
@@ -3048,7 +3166,97 @@ _FIELD_LABELS = {
     "decision": "Answer",
     "use_checked": "Lines",
     "review_ids": "Replies",
+    "add": "Closed on",
+    "employee_name": "Who",
+    "unavailable_days": "Not available on",
+    "notes": "Their notes (kept)",
 }
+
+
+_CONSTRAINT_CARDS = ("add_closed_date", "set_staff_unavailable")
+_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+def _roster_names(restaurant_id) -> dict:
+    """{lowercased name: name} of the people on this restaurant's roster —
+    the shifts on file and anyone with an availability row."""
+    names = {}
+    try:
+        from models import load_shifts_for_restaurant_roles, get_staff_availability
+        for n in (load_shifts_for_restaurant_roles(restaurant_id) or {}):
+            if str(n).strip():
+                names[str(n).strip().lower()] = str(n).strip()
+        for row in get_staff_availability(restaurant_id) or []:
+            n = str(row.get("employee_name") or "").strip()
+            if n:
+                names[n.lower()] = n
+    except Exception as e:
+        log.warning("ask_cavnar roster names for rid=%s unavailable: %s", restaurant_id, e)
+    return names
+
+
+def _constraint_card(name, args, restaurant_id):
+    """(body, summary, None) for a closure or availability card built from
+    what is stored, or (None, None, why) when it cannot be proposed."""
+    import json as _json
+    from time_utils import mdy
+    if name == "add_closed_date":
+        raw = str(args.get("date") or "").strip()
+        day = None
+        try:
+            import owner_memory
+            day = owner_memory._parse_day(raw)
+        except Exception:
+            day = None
+        if day is None:
+            return None, None, "Give the closed date as YYYY-MM-DD."
+        if restaurant_id is not None:
+            try:
+                import owner_memory
+                today = owner_memory._local_today(restaurant_id)
+            except Exception:
+                from datetime import date as _d
+                today = _d.today()
+            if day < today:
+                return None, None, "That date has passed — a closure is for today or later."
+            try:
+                import schedule_rules
+                from models import get_restaurant
+                if day.isoformat() in schedule_rules.closures(get_restaurant(restaurant_id))["closed_dates"]:
+                    return None, None, f"{mdy(day)} is already on the closures list — nothing to change."
+            except Exception:
+                pass
+        return {"add": day.isoformat()}, f"Mark {day.strftime('%A')} {mdy(day)} as closed", None
+    # set_staff_unavailable
+    who = " ".join(str(args.get("employee_name") or "").split())
+    days = [str(d).strip().capitalize() for d in (args.get("weekdays") or []) if str(d).strip()]
+    days = [d for d in days if d in _WEEKDAYS]
+    if not who or not days:
+        return None, None, "Name the person and the weekdays they can't work."
+    if restaurant_id is None:
+        return ({"employee_name": who, "unavailable_days": sorted(days, key=_WEEKDAYS.index)},
+                f"Mark {who} as not available on {', '.join(days)}", None)
+    roster = _roster_names(restaurant_id)
+    canonical = roster.get(who.lower())
+    if not canonical:
+        return None, None, (f"There is no {who} on the roster here. Check the name with read_shifts, or add them "
+                            "in Labor first.")
+    blocked, notes = set(days), None
+    try:
+        from models import get_staff_availability
+        row = next((r for r in get_staff_availability(restaurant_id) or []
+                    if str(r.get("employee_name") or "").strip().lower() == canonical.lower()), None)
+        if row:
+            blocked |= set(_json.loads(row.get("unavailable_days") or "[]") or [])
+            notes = row.get("notes")
+    except Exception:
+        pass
+    if len(blocked) >= 7:
+        return None, None, f"That would leave {canonical} unable to work any day — say which days they CAN work."
+    body = {"employee_name": canonical, "unavailable_days": sorted(blocked, key=_WEEKDAYS.index)}
+    if notes:
+        body["notes"] = notes
+    return body, f"Mark {canonical} as not available on {', '.join(sorted(set(days), key=_WEEKDAYS.index))}", None
 
 
 def _invoice_or_po(name, args, restaurant_id):
@@ -3142,6 +3350,8 @@ def proposal_refusal(name, tool_input, restaurant_id=None, owner_words=""):
     composed is held to the same guard as every public drafter before the
     owner sees Send — _public_copy_refusal."""
     args = proposal_args(name, tool_input)
+    if name in _CONSTRAINT_CARDS:
+        return _constraint_card(name, args, restaurant_id)[2]
     domains = None
     for k, v in args.items():
         if not isinstance(v, str) or k in ("image_url", "email", "supplier_email"):

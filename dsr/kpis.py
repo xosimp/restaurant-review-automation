@@ -406,8 +406,10 @@ def shift_verdict(m, detail) -> dict | None:
     pct = m.get("pct")
     if not _num(pct):
         return None
-    starting = (detail or {}).get("target_source") != "set"
-    word = "starting target" if starting else "target"
+    # The owner's own target or goal (owner_goals, memory audit 9/29/26) is
+    # never a starting target.
+    starting = (detail or {}).get("target_source") not in ("set", "goal")
+    word = "starting target" if starting else ("goal" if (detail or {}).get("target_source") == "goal" else "target")
     pts = m.get("vs_target_pts")
     text, tone = f"Labor {pct:.1f}%", None
     if _num(pts) and _num(m.get("target_pct")):

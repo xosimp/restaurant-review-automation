@@ -399,7 +399,9 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
         could_hold = {}
     revenue = {"value": None, "source": None}
     try:
-        revenue = _econ.projected_weekly_revenue(restaurant_id)
+        # The week's own DSR budget when the owner set one for most of its
+        # nights (memory audit 9/29/26, owner_goals); the source says which.
+        revenue = _econ.projected_weekly_revenue(restaurant_id, week_dates=next_week_dates)
     except Exception:
         pass
     # Who is experienced, who can run a shift and who usually works when —
@@ -494,6 +496,16 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     result["fairness_ledger"] = ledger
     result["could_hold"] = could_hold
     result["projected_revenue_source"] = revenue.get("source") if revenue.get("value") else ("monthly target ÷ 4.33" if monthly_rev_target else "recent sales scaled to a week")
+    # Which labor target the budget was built against — the owner's goal
+    # ("your goal of 26% by 12/31/26") or the setting (memory audit 9/29/26,
+    # owner_goals): both the revenue and the target name what applied.
+    try:
+        import thresholds as _thr_s
+        _t = _thr_s.target_for(restaurant, "labor")
+        result["labor_target_source"] = _t.get("source")
+        result["labor_target_label"] = _t.get("label")
+    except Exception:
+        pass
     try:
         import reservation_feeds as _rf
         result["reservation_feed"] = _rf.status(restaurant)

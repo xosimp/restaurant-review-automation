@@ -2134,6 +2134,11 @@ _RETENTION_DAYS = {
     "login_history":      int(os.getenv("RETAIN_LOGIN_HISTORY_DAYS", "90")),
     # view_as_sessions is not here: auth.record_view_as_session deletes its
     # rows past two days whenever a view-as opens, and one pruner per table.
+    # What left the owner's memory without the owner asking (a lane's budget,
+    # a date passed, a retraction — models.ask_memory_archive, memory audit
+    # 9/29/26 owner_lanes): shown in Account and restorable for a year and a
+    # month. The live facts themselves are bounded by their lanes, not dates.
+    "ask_memory_archive": int(os.getenv("RETAIN_ASK_MEMORY_ARCHIVE_DAYS", "400")),
 }
 
 # Each table's own timestamp column — they do not agree on a name.
@@ -2153,6 +2158,7 @@ _RETENTION_COLUMN = {
     "value_figures_daily": "date", "admin_issue_resolution_history": "created_at", "sms_log": "created_at",
     "push_outbox": "created_at", "webhook_outbox": "created_at", "morning_brief_deliveries": "created_at",
     "alert_storm_caps": "started_at", "login_history": "created_at",
+    "ask_memory_archive": "archived_at",
 }
 # Every table above has an index on its column, created where the table is
 # or at boot here (_ensure_retention_indexes, DATA-40): these deletes run

@@ -197,10 +197,37 @@ _TARGET_FIELDS = {"labor": ("labor_target_pct", "labor_target_source"),
 STARTING_TARGET_LABEL = "Cavnar AI's starting target"
 
 
-def target_source(restaurant, kind) -> str:
-    """'set' | 'seeded' | 'default' for kind 'labor' or 'food'. A row from
-    before the source was recorded counts as the owner's own when it holds
-    anything but the default."""
+# The goals metric behind each target kind (owner_memory.target_for).
+_GOAL_METRIC = {"labor": "labor_pct", "food": "food_cost_pct"}
+
+
+def goal_target(restaurant, kind):
+    """The owner's ACTIVE goal on this kind's metric — owner_memory.target_for
+    ({"value", "source": "goal", "goal_id", "until", "label"}) — or None.
+    The goal comes first everywhere a target is read (memory audit 9/29/26,
+    owner_goals): the owner set "food cost 28% by 12/1" in Goals while Food
+    Cost, reprice and Home kept judging dishes against 30%. A deliberate
+    function-scope L0 -> L2 read; never raises."""
+    if restaurant is None or kind not in _GOAL_METRIC:
+        return None
+    rid = restaurant.get("id") if isinstance(restaurant, dict) else getattr(restaurant, "id", None)
+    if not rid:
+        return None
+    try:
+        import owner_memory
+        return owner_memory.target_for(rid, _GOAL_METRIC[kind])
+    except Exception:
+        return None
+
+
+def target_source(restaurant, kind, include_goal=True) -> str:
+    """'goal' | 'set' | 'seeded' | 'default' for kind 'labor' or 'food'.
+    'goal' while the owner's active goal on the metric applies (goal_target);
+    `include_goal=False` reads the setting alone (the targets card, the
+    seeding). A row from before the source was recorded counts as the
+    owner's own when it holds anything but the default."""
+    if include_goal and goal_target(restaurant, kind):
+        return "goal"
     field, src_field = _TARGET_FIELDS[kind]
 
     def g(k):
@@ -217,31 +244,45 @@ def target_source(restaurant, kind) -> str:
     return "default" if abs(v - TARGET_DEFAULTS[kind]) < 1e-9 else "set"
 
 
-def target_label(restaurant, kind) -> str:
-    """How a surface names the target: "your target", or "Cavnar's
-    starting target" for a seeded or default one."""
-    return "your target" if target_source(restaurant, kind) == "set" else STARTING_TARGET_LABEL
+def target_label(restaurant, kind, include_goal=True) -> str:
+    """How a surface names the target: "your goal of 28% by 12/1/26" while a
+    goal applies, "your target", or "Cavnar's starting target" for a seeded
+    or default one."""
+    goal = goal_target(restaurant, kind) if include_goal else None
+    if goal:
+        return goal["label"]
+    return "your target" if target_source(restaurant, kind, include_goal=False) == "set" else STARTING_TARGET_LABEL
 
 
-def target_phrase(restaurant, kind, value) -> str:
-    """The target in a sentence: "your 30% target", or "Cavnar's starting
-    target of 30%" when the owner has not set one (#13)."""
+def target_phrase(restaurant, kind, value, include_goal=True) -> str:
+    """The target in a sentence: "your goal of 28% by 12/1/26", "your 30%
+    target", or "Cavnar's starting target of 30%" when the owner has not
+    set one (#13)."""
+    goal = goal_target(restaurant, kind) if include_goal else None
+    if goal:
+        return goal["label"]
     try:
         v = f"{float(value):g}%"
     except (TypeError, ValueError):
         v = "—"
-    return f"your {v} target" if target_source(restaurant, kind) == "set" else f"{STARTING_TARGET_LABEL} of {v}"
+    return (f"your {v} target" if target_source(restaurant, kind, include_goal=False) == "set"
+            else f"{STARTING_TARGET_LABEL} of {v}")
 
 
 def target_alerts_allowed(restaurant, kind) -> bool:
     """No over-target alert on an unconfirmed default (#13): an SMS saying a
-    steakhouse is "over your 30% target" when nobody set 30 is the bug."""
+    steakhouse is "over your 30% target" when nobody set 30 is the bug. The
+    owner's own goal is never a default."""
     return target_source(restaurant, kind) != "default"
 
 
-def target_value(restaurant, kind) -> float:
-    """The target % itself: the stored value when it is a positive number,
-    else Cavnar's default for the kind. notify.labor_target_for reads it."""
+def target_value(restaurant, kind, include_goal=True) -> float:
+    """The target % itself: the owner's active goal on the metric first
+    (goal_target), else the stored value when it is a positive number, else
+    Cavnar's default for the kind. notify.labor_target_for reads it."""
+    goal = goal_target(restaurant, kind) if include_goal else None
+    if goal:
+        return float(goal["value"])
     field = _TARGET_FIELDS[kind][0]
     if restaurant is not None:
         own = restaurant.get(field) if isinstance(restaurant, dict) else getattr(restaurant, field, None)
@@ -257,14 +298,29 @@ def target_value(restaurant, kind) -> float:
 def target_for(restaurant, kind) -> dict:
     """The ONE read of a labor ("labor") or food-cost ("food") target for
     every surface that judges a figure against it (Benchmarking re-audit
-    #10, R2-3/R3-16/R4-26): {pct, source, label, alerts_allowed, phrase}.
-    `label` is "your target" or "Cavnar's starting target"; on a starting
-    target nothing is "over" in red — a tag, a colour or a severity caps at
-    a watch, and no alert fires (`alerts_allowed` False)."""
-    pct = target_value(restaurant, kind)
-    src = target_source(restaurant, kind)
-    return {"pct": pct, "source": src, "label": target_label(restaurant, kind),
-            "alerts_allowed": src != "default", "phrase": target_phrase(restaurant, kind, pct)}
+    #10, R2-3/R3-16/R4-26): {pct, source, label, alerts_allowed, phrase,
+    goal, setting}. The owner's active goal on the metric comes first
+    (source "goal", label "your goal of 28% by 12/1/26" — memory audit
+    9/29/26, owner_goals); `goal` is that goal (None without one) and
+    `setting` the configured target underneath it ({pct, source, label}),
+    so a surface can say which applied. `label` is otherwise "your target"
+    or "Cavnar's starting target"; on a starting target nothing is "over" in
+    red — a tag, a colour or a severity caps at a watch, and no alert fires
+    (`alerts_allowed` False)."""
+    goal = goal_target(restaurant, kind)
+    set_pct = target_value(restaurant, kind, include_goal=False)
+    set_src = target_source(restaurant, kind, include_goal=False)
+    setting = {"pct": set_pct, "source": set_src, "label": target_label(restaurant, kind, include_goal=False)}
+    if goal:
+        until = goal.get("until")
+        return {"pct": float(goal["value"]), "source": "goal", "label": goal["label"], "alerts_allowed": True,
+                "phrase": goal["label"], "setting": setting,
+                "goal": {"id": goal.get("goal_id"), "value": float(goal["value"]),
+                         "until": until.isoformat() if hasattr(until, "isoformat") else until}}
+    return {"pct": set_pct, "source": set_src, "label": setting["label"],
+            "alerts_allowed": set_src != "default", "phrase": target_phrase(restaurant, kind, set_pct,
+                                                                             include_goal=False),
+            "setting": setting, "goal": None}
 
 
 def seeded_targets(restaurant) -> dict:
@@ -291,7 +347,9 @@ def seeded_targets(restaurant) -> dict:
     for kind, metric, engine_metric in (("labor", "labor_pct", "labor_pct_28d"),
                                         ("food", "food_cost_pct", "food_cost_pct_28d")):
         field, src_field = _TARGET_FIELDS[kind]
-        if target_source(restaurant, kind) == "set":
+        # The SETTING's source: a goal on the metric never makes a seed
+        # overwrite a target the owner set.
+        if target_source(restaurant, kind, include_goal=False) == "set":
             continue
         e = _br.lookup(metric, concept, published_only=True, definition=_mr.definition(engine_metric),
                        service_model=prof.get("service_model"))
