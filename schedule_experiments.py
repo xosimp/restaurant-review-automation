@@ -634,6 +634,13 @@ def readout(db_path=DB_PATH) -> dict:
     for e in exps:
         e["promotion"] = promoted.get(e["key"])
         e["promotions"] = [h for h in history if h["experiment"] == e["key"]][:10]
+        # What the readout said, week by week (the stored verdicts).
+        try:
+            e["verdict_history"] = [{k: v.get(k) for k in ("week", "state", "call", "text", "method")}
+                                    for v in verdicts(e["key"], db_path=db_path, limit=12)]
+        except Exception as ex:      # a database from before the verdicts table
+            print(f"[experiments] verdict history unavailable: {ex}")
+            e["verdict_history"] = []
     return {"ok": True, "experiments": exps, "pins": pins, "env_pin": env, "rule": RULE,
             "min_weeks": MIN_WEEKS_PER_ARM, "min_restaurants": MIN_RESTAURANTS_PER_ARM,
             "max_weeks_per_restaurant": MAX_WEEKS_PER_RESTAURANT, "method": VERDICT_METHOD}

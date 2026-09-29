@@ -142,6 +142,8 @@ def test_the_all_types_rung_is_for_behaviour_kinds_only_and_never_an_owner_facin
     # Historical Accuracy never quotes the all-types record
     rec = rec_learning.kind_record(me, "post_this_week", db_path=db)
     assert rec["prior_measured"] == 0 and rec["prior_rung"] is None and rec["prior_unlock"] == "confirm_profile"
+    # ... and says what would unlock a named group, on the K1 object itself
+    assert ce.accuracy(rec)["prior_unlock"] == "confirm_profile"
     # a cold start ranks with help from every type, and says so without a count
     w, why = m.weight("post_this_week:Tuesday")
     assert w > 1.0 and why == ["ranked with help from restaurants of every type on Cavnar AI"]

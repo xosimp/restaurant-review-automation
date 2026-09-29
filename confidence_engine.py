@@ -475,7 +475,12 @@ def accuracy(record) -> dict:
         return {"pct": None, "basis": basis, "n": measured, "improved": improved,
                 "source": "cohort" if c_centre is not None else "none", "low": None, "high": None,
                 "lift": None, "prior": None,
-                "cohort_label": (r.get("prior_label") or None) if c_centre is not None else None}
+                "cohort_label": (r.get("prior_label") or None) if c_centre is not None else None,
+                # The prior ladder (memory audit PLATFORM-1): which named group
+                # the cohort figure came from, and "confirm_profile" when
+                # confirming the restaurant profile would unlock a finer one.
+                "prior_rung": r.get("prior_rung") if c_centre is not None else None,
+                "prior_unlock": r.get("prior_unlock")}
     prior_source = "do_nothing"
     if c_centre is not None and c_centre < centre:
         # Peers saw this kind do WORSE than chance: the prior may sit lower.
@@ -516,8 +521,10 @@ def accuracy(record) -> dict:
                      "untaken_improved": dn["untaken_improved"], "untaken_n": dn["untaken_n"],
                      "do_nothing_rate": round(dn["rate"], 3), "source": dn["source"]},
             "prior": {"source": prior_source, "centre": round(centre, 3), "weight": SHRINK_K,
-                      "cohort_measured": pm or None, "cohort_improved": pi if pm else None},
-            "cohort_label": (r.get("prior_label") or None) if prior_source == "cohort" else None}
+                      "cohort_measured": pm or None, "cohort_improved": pi if pm else None,
+                      "rung": r.get("prior_rung") if pm else None},
+            "cohort_label": (r.get("prior_label") or None) if prior_source == "cohort" else None,
+            "prior_unlock": r.get("prior_unlock")}
 
 
 def recency(lag_days, grace_days, horizon_days):

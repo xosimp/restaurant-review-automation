@@ -1035,12 +1035,14 @@ GOOGLE_PURGE_MARK = "intelligence_google_purge:v1"
 def purge_google_pooled(db_path=DB_PATH) -> dict:
     """Once (GOOGLE_PURGE_MARK): drop the pooled rows a Google-connected
     restaurant's review figures may have entered before the rule — every
-    intel_benchmarks and intel_cohort_series row of a review metric, and
-    every intel_patterns row whose hypothesis reads a review feature —
-    so the night's pass rebuilds them from features.cross_restaurant_view
-    (the bands' weekly freeze starts again with the first rebuilt one).
-    Derived, recomputable aggregates only; nothing a restaurant entered.
-    Returns {"purged": n} (0 once done)."""
+    intel_benchmarks and intel_cohort_series row of a review metric, the
+    materialised comparisons and neighbour predictions built on them
+    (intel_benchmark_facts, intel_effects), and every intel_patterns row
+    whose hypothesis reads a review feature — so the night's pass rebuilds
+    them from features.cross_restaurant_view (the bands' weekly freeze
+    starts again with the first rebuilt one). Derived, recomputable
+    aggregates only; nothing a restaurant entered. Returns {"purged": n}
+    (0 once done)."""
     from . import provenance
     conn = get_conn(db_path)
     try:
@@ -1049,8 +1051,11 @@ def purge_google_pooled(db_path=DB_PATH) -> dict:
         metrics = [m for m in _features.BENCHMARK_KEYS if provenance.review_metric(m)]
         marks = ",".join("?" for _ in metrics)
         n = 0
-        for table in ("intel_benchmarks", "intel_cohort_series"):
+        for table in ("intel_benchmarks", "intel_cohort_series", "intel_benchmark_facts"):
             n += conn.execute(f"DELETE FROM {table} WHERE metric IN ({marks})", metrics).rowcount or 0
+        # predictions keyed by an outcome metric (metrics.py's review metrics)
+        n += conn.execute("DELETE FROM intel_effects WHERE metric IN ('avg_rating','response_hours') "
+                          "OR metric LIKE 'complaints%'").rowcount or 0
         hyps = [h["key"] for h in patterns.HYPOTHESES + patterns.PROSPECTIVE_HYPOTHESES
                 if provenance.review_metric(h["outcome"]) or provenance.review_metric(h["behaviour"][0])]
         if hyps:
