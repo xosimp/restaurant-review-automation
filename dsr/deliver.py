@@ -672,7 +672,8 @@ def release_held(now_utc=None, db_path=None):
     db = _db(db_path)
     now_utc = now_utc or datetime.utcnow()
     if not _allowed():
-        return {"released": 0, "reason": "not the production scheduler host"}
+        return {"released": 0, "reason": "not the production scheduler host",
+                "attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
     conn = store.get_conn(db)
     try:
         rows = [dict(r) for r in conn.execute(
@@ -697,7 +698,12 @@ def release_held(now_utc=None, db_path=None):
                                 f"user_id={row['user_id']}")
             status = FAILED
         counts[status] = counts.get(status, 0) + 1
-    return {"due": len(rows), "released": counts.get(SENT, 0), "counts": counts, "hit_bound": hit_bound}
+    # The standard counts (#39): a push that failed read as a clean run.
+    # Re-held and skipped rows were decided, not attempted.
+    attempted = counts.get(SENT, 0) + counts.get(FAILED, 0)
+    return {"due": len(rows), "released": counts.get(SENT, 0), "counts": counts, "hit_bound": hit_bound,
+            "attempted": attempted, "ok": counts.get(SENT, 0), "failed": counts.get(FAILED, 0),
+            "skipped": sum(v for k, v in counts.items() if k not in (SENT, FAILED))}
 
 
 # ── the closing summary it replaces ─────────────────────────────────────────

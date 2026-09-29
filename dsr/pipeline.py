@@ -980,4 +980,69 @@ def run_sweep(now_utc=None, db_path=None):
     done, hit_bound = _sched.bounded_map(order, _one, 1, SWEEP_MAX_SECONDS)
     if done:
         _write_cursor(db, order[min(done, len(order)) - 1])
-    return {"restaurants": len(order), "done": done, "hit_bound": hit_bound, "actions": actions}
+    # The sweep's own counts (#17): a night that errored or failed lived only
+    # in `actions`, which job_runs never read, so a night that failed read
+    # as a clean run. Nights that did nothing yet (waiting, before close,
+    # another run holds them) are neither attempted nor failed.
+    idle = sum(actions.get(a, 0) for a in _IDLE_ACTIONS)
+    failed = sum(actions.get(a, 0) for a in _FAILED_ACTIONS)
+    attempted = sum(actions.values()) - idle
+    return {"restaurants": len(order), "done": done, "hit_bound": bool(hit_bound), "actions": actions,
+            "attempted": attempted, "ok": attempted - failed, "failed": failed, "skipped": idle}
+
+
+# run_night actions that moved nothing (nothing to judge) and that failed.
+_IDLE_ACTIONS = ("before_close", "closed_day", "none", "waiting", "in_progress")
+_FAILED_ACTIONS = ("error", "error_retry", "failed")
+
+# The missing-night check is read on the request path (ops.check_platform_sla
+# on /health); a night's state changes on the deadline's hour, not the
+# minute, so one read serves ten minutes.
+_MISSING_TTL_SECONDS = 600
+_missing_cache = {}
+# A night is reported missing this long after its provisional deadline.
+MISSING_AFTER_DEADLINE = timedelta(hours=1)
+
+
+def nights_missing(db_path=None, now_utc=None, use_cache=True):
+    """[{restaurant_id, restaurant, business_date, status}] for every live,
+    non-demo restaurant with the DSR on and a POS connected whose last
+    business night has no final or provisional report an hour past its
+    deadline (#17). Nothing watched this: dsr_delivery had no SLA and the
+    console never read dsr_reports, so a night that failed read green."""
+    import time as _t
+    key = (db_path or "", now_utc.isoformat() if now_utc else None)
+    hit = _missing_cache.get(key)
+    if use_cache and now_utc is None and hit and _t.monotonic() - hit[0] < _MISSING_TTL_SECONDS:
+        return list(hit[1])
+    import pos
+    from models import get_all_restaurants
+    db = _db(db_path)
+    now = now_utc or datetime.utcnow()
+    latest = _latest_by_night(db, now.date() - timedelta(days=3))
+    out = []
+    for r in get_all_restaurants(db):
+        if not _live(r) or not getattr(r, "dsr_enabled", 1) or getattr(r, "is_demo", 0):
+            continue
+        local = local_time(r, now)
+        night = None
+        for back in (1, 2):
+            d = local.date() - timedelta(days=back)
+            if close_at(r, d) is not None and local >= deadline_at(r, d) + MISSING_AFTER_DEADLINE:
+                night = d
+                break
+        if night is None:
+            continue
+        row = (latest.get(r.id) or {}).get(night.isoformat())
+        if row and row["status"] in store.FINISHED:
+            continue
+        try:
+            if not pos.connected_provider(r.id)[0]:
+                continue
+        except Exception:
+            continue
+        out.append({"restaurant_id": r.id, "restaurant": r.name, "business_date": night.isoformat(),
+                    "status": row["status"] if row else "missing"})
+    if now_utc is None:
+        _missing_cache[key] = (_t.monotonic(), list(out))
+    return out

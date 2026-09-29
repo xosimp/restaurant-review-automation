@@ -1367,28 +1367,115 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
             "recipients": len(people)}
 
 
-def run_due(db_path=DB_PATH, now_utc=None):
-    """Scheduler entry point: send each restaurant's brief once, at or after
-    its own local brief hour, and never after LATEST_SEND_HOUR local."""
-    from models import get_all_restaurants
-    from time_utils import restaurant_now
+# One tick's brief pass stops taking on restaurants after this long; the
+# ones it did not reach lead the next tick (a cursor), five minutes later,
+# still inside their window (#81).
+BRIEF_MAX_SECONDS = 4 * 60
+BRIEF_CURSOR_KEY = "morning_brief_cursor"
+
+
+def _brief_queue(db_path=DB_PATH):
+    """(due, missed) for this tick, from one light read of the columns that
+    decide it — not every column of every restaurant, and not a claim
+    (a write) per restaurant per tick, which is what walking the fleet did
+    (#81, SCALE-14):
+
+      due     [(id, local_date)]  its window is open and today is unclaimed
+      missed  [(id, local_date)]  its window closed today with nothing claimed
+    """
     import ops
-    sent, skipped = 0, 0
-    for r in get_all_restaurants(db_path):
-        if not getattr(r, "morning_brief_enabled", 1):
+    from time_utils import restaurant_now
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT id, timezone, morning_brief_hour, morning_brief_enabled, billing_status FROM restaurants"
+        ).fetchall()
+    finally:
+        conn.close()
+    due, missed = [], []
+    now_by_tz = {}
+    for row in rows:
+        enabled = row["morning_brief_enabled"]
+        if enabled is not None and not enabled:
             continue
-        if (getattr(r, "billing_status", None) or "trial").lower() not in ("active", "internal", "trial"):
+        if (row["billing_status"] or "trial").lower() not in ("active", "internal", "trial"):
             continue
-        local = restaurant_now(r, naive=True)
-        hour = int(getattr(r, "morning_brief_hour", 7) or 7)
-        if not (hour <= local.hour < LATEST_SEND_HOUR):
+        tz = row["timezone"] or None
+        if tz not in now_by_tz:
+            now_by_tz[tz] = restaurant_now(tz, naive=True)
+        local = now_by_tz[tz]
+        hour = int(row["morning_brief_hour"] or 7)
+        day = local.date().isoformat()
+        if local.hour < hour or hour >= LATEST_SEND_HOUR:
             continue
-        if not ops.claim_period(f"morning_brief:{r.id}", local.date().isoformat()):
+        claimed = ops.period_claimed(f"morning_brief:{row['id']}", day)
+        if claimed:
             continue
+        if local.hour < LATEST_SEND_HOUR:
+            due.append((row["id"], day))
+        else:
+            missed.append((row["id"], day))
+    return due, missed
+
+
+def run_due(db_path=DB_PATH, now_utc=None, max_seconds=BRIEF_MAX_SECONDS):
+    """Scheduler entry point: send each restaurant's brief once, at or after
+    its own local brief hour, and never after LATEST_SEND_HOUR local.
+
+    A due-queue, a time bound and a cursor (#81): the fleet walk claimed per
+    restaurant on every five-minute tick with no bound. A restaurant whose
+    window closed today with no brief claimed is recorded as a missed window
+    (#131) — "no brief today" used to look exactly like a quiet morning.
+    Returns the standard counts."""
+    import ops
+    import time as _time
+    from models import get_restaurant
+    due, missed = _brief_queue(db_path)
+    for rid, day in missed:
+        ops.record_missed_window("morning_brief", rid, day, detail=f"window closed at {LATEST_SEND_HOUR}:00 local")
+    c = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False, "sent": 0,
+         "missed": len(missed)}
+    if not due:
+        return c
+    # Rotated to start after the last restaurant the previous tick reached.
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT value FROM job_cursors WHERE key=?", (BRIEF_CURSOR_KEY,)).fetchone()
+    finally:
+        conn.close()
+    last = int(row["value"]) if row and str(row["value"]).isdigit() else 0
+    due.sort()
+    due = [d for d in due if d[0] > last] + [d for d in due if d[0] <= last]
+    started = _time.monotonic()
+    reached = None
+    for rid, day in due:
+        if reached is not None and _time.monotonic() - started > max_seconds:
+            c["hit_bound"] = True
+            break
+        reached = rid
+        if not ops.claim_period(f"morning_brief:{rid}", day):
+            c["skipped"] += 1
+            continue
+        c["attempted"] += 1
         try:
-            out = deliver(r.id, restaurant=r, today=local.date(), db_path=db_path)
-            sent += 1 if out.get("sent") else 0
-            skipped += 0 if out.get("sent") else 1
+            r = get_restaurant(rid, db_path=db_path)
+            from datetime import date as _date
+            out = deliver(rid, restaurant=r, today=_date.fromisoformat(day), db_path=db_path)
+            c["ok"] += 1
+            c["sent"] += 1 if out.get("sent") else 0
         except Exception as e:
-            ops.capture(e, job="morning_brief", context=f"restaurant_id={r.id}")
-    return {"sent": sent, "skipped": skipped}
+            c["failed"] += 1
+            ops.capture(e, job="morning_brief", context=f"restaurant_id={rid}")
+    if reached is not None:
+        conn = get_conn(db_path)
+        try:
+            conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now')) "
+                         "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                         (BRIEF_CURSOR_KEY, str(reached)))
+            conn.commit()
+        finally:
+            conn.close()
+    if c["hit_bound"]:
+        ops.capture(RuntimeError(f"morning briefs stopped at the {max_seconds}s bound; the rest lead the next tick"),
+                    job="morning_brief", context="time_bound")
+    return c

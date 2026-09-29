@@ -3,7 +3,17 @@ main.py — orchestrator + scheduler
 Run modes:
   python main.py --demo          # full pipeline on sample_reviews.csv, no APIs needed
   python main.py --report-only   # rebuild + print digest from existing DB data
-  python main.py                 # production scheduler (requires .env with API keys)
+  python main.py --legacy-scheduler
+                                 # the original single-restaurant schedule loop
+
+The production scheduler is scheduler.scheduler_loop, run by hosted_dashboard
+(or worker.py) under the database lease. The legacy loop below fetches,
+drafts and emails a Monday digest for restaurant 1 with no lease, so `python
+main.py` with no flags used to start a second, unleased scheduler that sent
+real email (#161). It now refuses unless --legacy-scheduler is passed AND
+scheduler.scheduling_allowed() is true, and each run takes the scheduler
+lease first, so it can never run beside the real one. Removing the legacy
+loop is a candidate for future cleanup after additional verification.
 """
 import os, sys, schedule, time
 from dotenv import load_dotenv
@@ -97,12 +107,34 @@ if __name__ == "__main__":
         report = build_report(rid, RESTAURANT_NAME, days=365)
         print_console_report(report, RESTAURANT_NAME)
 
-    else:
+    elif "--legacy-scheduler" in sys.argv:
+        from scheduler import scheduling_allowed
+        import ops
+        if not scheduling_allowed():
+            print("Refusing: scheduler.scheduling_allowed() is false here (not on Railway, or a restore is "
+                  "in progress). Set ALLOW_LOCAL_SCHEDULER=1 deliberately — this loop sends real email.")
+            sys.exit(2)
         init_db()
         rid = get_or_create_restaurant()
-        schedule.every().day.at("08:00").do(run_daily, restaurant_id=rid)
-        schedule.every().monday.at("09:00").do(run_weekly, restaurant_id=rid)
-        print(f"Scheduler running for {RESTAURANT_NAME}. Ctrl+C to stop.")
+
+        def _leased(fn):
+            def run(**kw):
+                # Never beside the production scheduler: only the lease
+                # holder runs anything (ops.acquire_scheduler_lease).
+                if not ops.acquire_scheduler_lease():
+                    print("Skipped: another process holds the scheduler lease.")
+                    return
+                fn(**kw)
+            return run
+        schedule.every().day.at("08:00").do(_leased(run_daily), restaurant_id=rid)
+        schedule.every().monday.at("09:00").do(_leased(run_weekly), restaurant_id=rid)
+        print(f"Legacy scheduler running for {RESTAURANT_NAME}. Ctrl+C to stop.")
         while True:
             schedule.run_pending()
             time.sleep(60)
+
+    else:
+        print(__doc__)
+        print("No mode given. The production scheduler runs inside hosted_dashboard.py (or worker.py); "
+              "`python main.py` no longer starts a second, unleased one.")
+        sys.exit(2)
