@@ -310,29 +310,85 @@ def seed_review_account_route(current_user):
     local file that Apple will never see. This is the same code path, one
     click, in the process that already has the right database.
 
-    Returns the credentials once. They go in App Store Connect under App
-    Review Information; see docs/app-store-submission.md.
+    The reviewer's EXISTING password is kept by default (--keep-password):
+    Apple signs in with the one already in App Store Connect, and rotating
+    it ended the reviewer's sessions mid-review with nothing asking first
+    (#127). Rotation is explicit: {"rotate_password": true, "confirm":
+    "ROTATE"}. A brand-new account, or a rotation, has a new password —
+    returned ONCE in the job's result (password_once) and scrubbed from the
+    stored result on that first read.
+
+    Runs on the admin job pool (up to 120 s of subprocess), not the request
+    thread (#153): the answer is {job_id}; poll /admin/api/admin-jobs/<id>.
     """
-    import subprocess
-    import sys
     import os as _os
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Support accounts are read-only."), 403
     script = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
                            "scripts", "seed_review_account.py")
     if not _os.path.exists(script):
         return jsonify(ok=False, error="seed_review_account.py is not in this deployment"), 500
+    data = request.get_json(silent=True) or {}
+    rotate = bool(data.get("rotate_password"))
+    if rotate and str(data.get("confirm") or "").strip().upper() != "ROTATE":
+        return jsonify(ok=False, confirm_required=True,
+                       error="Rotating the App Store reviewer's password signs the reviewer out and stops the "
+                             "password in App Store Connect working. Send confirm \"ROTATE\" to do it."), 400
+    actor = dict(current_user)
+    job_id, joined = _start_admin_job("admin_review_account", 0,
+                                      lambda: _seed_review_account_job(script, rotate, actor))
+    if not job_id:
+        return jsonify(ok=False, error="Too many admin jobs are running — try again in a minute."), 429
+    import admin_events
+    admin_events.record_admin_action(current_user, "review_account.seed", target="account:app_review",
+                                     after={"rotate_password": rotate, "job_id": job_id, "joined": joined})
+    return jsonify(ok=True, job_id=job_id, joined=joined, rotate_password=rotate,
+                   message=("Seeding the App Store review account (up to two minutes) — "
+                            + ("the password will be rotated." if rotate else "its password is kept.")))
+
+
+def _seed_review_account_job(script, rotate, actor):
+    """The subprocess half of seed_review_account_route, on the admin pool.
+    The password line is lifted out of the printed output into
+    password_once, which the job-status read scrubs after showing it."""
+    import subprocess
+    import sys
+    import os as _os
+    import admin_events
+    args = [sys.executable, script] + ([] if rotate else ["--keep-password"])
     try:
-        out = subprocess.run(
-            [sys.executable, script],
-            capture_output=True, text=True, timeout=120,
-            # Inherit the environment so the script resolves the same DB_PATH
-            # this process is using, volume mount included.
-            env=dict(_os.environ),
-        )
+        # Inherit the environment so the script resolves the same DB_PATH
+        # this process is using, volume mount included.
+        out = subprocess.run(args, capture_output=True, text=True, timeout=120, env=dict(_os.environ))
     except subprocess.TimeoutExpired:
-        return jsonify(ok=False, error="Seeding timed out"), 504
+        admin_events.record_admin_action(actor, "review_account.seeded", target="account:app_review",
+                                         after={"rotate_password": rotate}, result="error",
+                                         summary="Review account seed timed out")
+        return {"ok": False, "error": "Seeding timed out after two minutes."}
     if out.returncode != 0:
-        return jsonify(ok=False, error=(out.stderr or out.stdout or "")[-1500:]), 500
-    return jsonify(ok=True, output=out.stdout)
+        admin_events.record_admin_action(actor, "review_account.seeded", target="account:app_review",
+                                         after={"rotate_password": rotate}, result="error",
+                                         summary="Review account seed failed")
+        return {"ok": False, "error": (out.stderr or out.stdout or "Seeding failed")[-1500:]}
+    password, lines = None, []
+    for line in (out.stdout or "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Password:"):
+            value = stripped[len("Password:"):].strip()
+            if value and not value.startswith("("):
+                password = value
+                lines.append(line.replace(value, "(shown once, below)"))
+                continue
+        lines.append(line)
+    created = "Created restaurant" in (out.stdout or "")
+    admin_events.record_admin_action(actor, "review_account.seeded", target="account:app_review",
+                                     after={"rotate_password": rotate, "created": created,
+                                            "password_changed": bool(password)})
+    result = {"ok": True, "output": "\n".join(lines), "created": created, "rotated": bool(rotate and password)}
+    if password:
+        result["password_once"] = password
+        result["_scrub"] = ["password_once"]
+    return result
 
 
 @admin_bp.route("/admin/inventory/import-csv/<int:restaurant_id>", methods=["POST"])
@@ -889,76 +945,92 @@ def freeze_account(restaurant_id, current_user):
 @admin_required
 def send_reset_link(user_id, current_user):
     """Preferred over setting a password by hand: the owner chooses it, and
-    nothing about it passes through Will or the database."""
+    nothing about it passes through Will or the database. Answers with what
+    actually happened to the email — a 502 and a sentence when it did not
+    go (#109); it used to say "sent" whatever deliver() returned."""
     if not current_user.get("is_admin"):
         return jsonify(ok=False, error="Support accounts are read-only."), 403
-    from models import create_reset_token
-    conn = get_conn()
-    row = conn.execute("SELECT u.email, r.name, r.owner_name FROM users u LEFT JOIN restaurants r ON r.id=u.restaurant_id "
-                       "WHERE u.id=?", (user_id,)).fetchone()
-    conn.close()
-    if not row or not row["email"]:
-        return jsonify(ok=False, error="No email on that login."), 404
-    token = create_reset_token(row["email"])
-    if not token:
-        return jsonify(ok=False, error="That login is inactive."), 409
-    try:
-        from emails import send_password_reset_email
-        send_password_reset_email(row["email"], f"https://dashboard.cavnar.ai/reset-password/{token}")
-    except Exception as e:
-        return jsonify(ok=False, error=f"Couldn't send: {e}"), 502
-    return jsonify(ok=True)
+    payload, status = _send_reset_link_to(user_id, current_user)
+    return jsonify(**payload), status
 
 
 @admin_bp.route("/admin/reset-password/<int:user_id>", methods=["POST"])
 @admin_required
 def reset_password(user_id, current_user):
-    from models import reset_user_password
-    import secrets, string
-    data = request.get_json()
-    new_pw = data.get("password","").strip()
-    if not new_pw:
-        # Auto-generate if not provided
-        new_pw = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(10))
-    if len(new_pw) < 8:
-        return jsonify(ok=False, error="Password must be at least 8 characters")
-    import security as _sec
-    if _sec.password_pwned(new_pw):
-        return jsonify(ok=False, error=_sec.PWNED_MESSAGE)
+    """An admin reset is a reset LINK now (#86). This route set a password
+    by hand, returned it in the JSON and could email it in plain text; the
+    owner now picks their own password from a one-hour link, and nothing
+    about it passes through the console. A `password` in the body is
+    ignored — the answer says so."""
     if not current_user.get("is_admin"):
         return jsonify(ok=False, error="Support accounts are read-only."), 403
-    reset_user_password(user_id, new_pw)
-    # Optionally email the new password
-    if data.get("send_email"):
-        try:
-            conn = get_conn()
-            row = conn.execute(
-                "SELECT u.email, r.name FROM users u JOIN restaurants r ON u.restaurant_id=r.id WHERE u.id=?",
-                (user_id,)
-            ).fetchone()
-            conn.close()
-            if row:
-                _emails.deliver_or_raise(email_type="admin_password_reset", payload={
-                    "from": _emails.sender("client"),
-                    "to": [row["email"]],
-                    "subject": "Your Cavnar AI password has been reset",
-                    "html": _html_doc(f"""<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
-                    <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:500px;margin:0 auto;background:white;border-radius:12px;padding:28px 24px;box-sizing:border-box">
-                        <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="150" height="26" alt="Cavnar AI" style="display:block;width:150px;height:26px;border:0;outline:none;margin:0 0 20px">
-                        <h3 style="color:#0e0c0a">Password reset</h3>
-                        <p>Hi — your Cavnar AI dashboard password has been reset.</p>
-                        <div style="background:#f7f4ef;padding:14px;border-radius:8px;margin:16px 0">
-                            <p><strong>URL:</strong> <a href="https://dashboard.cavnar.ai">dashboard.cavnar.ai</a></p>
-                            <p><strong>New password:</strong> {_emails.esc(new_pw)}</p>
-                        </div>
-                        <p>Log in and update your password in the Account tab.</p>
-                        <p style="color:#7a736a;font-size:12px">— Will Cavnar · will@cavnar.ai</p>
-                    </div>
-                    </div>"""),
-                })
-        except Exception as e:
-            print(f"Reset email failed: {e}")
-    return jsonify(ok=True, password=new_pw)
+    data = request.get_json(silent=True) or {}
+    payload, status = _send_reset_link_to(user_id, current_user)
+    if payload.get("ok") and (data.get("password") or "").strip():
+        payload["password_ignored"] = True
+        payload["message"] = ("Admins no longer set passwords. " + payload.get("message", "")).strip()
+    return jsonify(**payload), status
+
+
+def _send_failure_reason(result):
+    """A sentence-fragment for why deliver() did not send."""
+    err = str(getattr(result, "error", "") or "")
+    if err.startswith("recipient suppressed"):
+        return "that address is on the suppression list after a bounce or complaint"
+    if err.startswith("RESEND_API_KEY"):
+        return "email isn't configured on this server"
+    if err.startswith("flood guard"):
+        return "too many of these went to that address in the last hour"
+    code = getattr(result, "status_code", None)
+    return f"the email provider refused it{f' ({code})' if code else ''}"
+
+
+def _send_reset_link_to(user_id, current_user):
+    """(payload, status): email one login a one-hour reset link. Shared by
+    send-reset-link and both reset-password routes. Refused on a local
+    backend (#9), for admin logins and for staff PIN identities (no real
+    address), and reported truthfully either way."""
+    blocked = _send_blocked()
+    if blocked:
+        return blocked
+    from models import create_reset_token
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT u.id, u.email, u.username, u.is_admin, u.is_active, u.restaurant_id "
+                           "FROM users u WHERE u.id=?", (user_id,)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return {"ok": False, "error": "No such login."}, 404
+    if row["is_admin"]:
+        return {"ok": False, "error": "Admin logins reset their own password from the sign-in page."}, 403
+    email = (row["email"] or "").strip()
+    if not email or email.lower().endswith("@staff.invalid"):
+        return {"ok": False, "error": "That login has no email address (a staff PIN identity): reset its PIN "
+                                      "from the owner's team screen instead."}, 409
+    if not row["is_active"]:
+        return {"ok": False, "error": "That login is inactive."}, 409
+    token = create_reset_token(email)
+    if not token:
+        return {"ok": False, "error": "That login is inactive."}, 409
+    import admin_events
+    try:
+        from emails import send_password_reset_email
+        result = send_password_reset_email(email, f"{config.base_url()}/reset-password/{token}")
+    except Exception as e:
+        result = _emails.SendResult(False, error=_safe_err(e))
+    ok = bool(getattr(result, "ok", result))
+    admin_events.record_admin_action(current_user, "password.reset_link_sent", restaurant_id=row["restaurant_id"],
+                                     target=f"user:{row['id']}",
+                                     after={"to": email, "delivered": ok,
+                                            "error": None if ok else str(getattr(result, "error", "") or "")[:200]},
+                                     result="ok" if ok else "failed")
+    if not ok:
+        return {"ok": False, "error": f"The reset link didn't go out: {_send_failure_reason(result)}. "
+                                      f"Their password is unchanged."}, 502
+    return {"ok": True, "email": email, "sent_to": email, "username": row["username"],
+            "message": f"Reset link sent to {email}. It works once, for an hour; their password is "
+                       f"unchanged until they use it."}, 200
 
 def _principal_login_id(restaurant_id, fallback_to_any=False):
     """The restaurant's own account-holder login: an active, non-admin
@@ -992,9 +1064,10 @@ def _principal_login_id(restaurant_id, fallback_to_any=False):
 @admin_bp.route("/admin/reset-password-by-restaurant/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def reset_password_by_restaurant(restaurant_id, current_user):
+    """The restaurant's principal login gets a reset link (reset_password)."""
     user_id = _principal_login_id(restaurant_id)
     if not user_id:
-        return jsonify(ok=False, error="This restaurant has no owner login to reset.")
+        return jsonify(ok=False, error="This restaurant has no owner login to reset."), 404
     # reset_password is itself admin_required, which resolves and passes
     # current_user; passing it here as well raised TypeError ("multiple
     # values for 'current_user'") on every call, so this route always 500'd.
@@ -1100,9 +1173,26 @@ def resend_payment(restaurant_id, current_user):
 @admin_bp.route("/admin/seed-reviews/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def seed_reviews(restaurant_id, current_user):
-    """Seed sample reviews for a restaurant so client can see the dashboard working."""
-    from models import save_reviews, get_pending_analysis, update_analysis, get_pending_drafts, Review
+    """Seed 12 invented sample reviews into a DEMO account so the dashboard
+    has something to show.
+
+    Demo accounts only, checked here on the server (#21): it ran on any
+    restaurant, and its invented 1-stars ("Health department should know")
+    then drove real alerts to a real owner and fed their ratings, AI
+    context and the cross-restaurant inputs. The analysis is written for
+    the seeded rows only (it used to label whatever real reviews were
+    pending), and the replies are drafted on the admin job pool rather than
+    by up to twelve model calls on the request thread (#153)."""
+    from models import save_reviews, update_analysis, Review
     from datetime import datetime, timedelta
+    restaurant = get_restaurant(restaurant_id)
+    if not restaurant:
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    if int(getattr(restaurant, "is_demo", 0) or 0) != 1:
+        return jsonify(ok=False, error="Sample reviews go into demo accounts only. This is a real client: "
+                                       "its reviews, ratings and alerts are real. Nothing was added."), 400
+    # Nothing here sends: the alerts seeded reviews can lead to are the
+    # scheduler's, which never runs on a local backend (scheduling_allowed).
 
     # Generate 12 realistic sample reviews
     sample = [
@@ -1143,37 +1233,72 @@ def seed_reviews(restaurant_id, current_user):
             review_date=review_date,
         ))
 
-    new_count, _ = save_reviews(reviews)
+    new_count, new_reviews = save_reviews(reviews)
 
-    # Analyse and draft all of them
-    pending = get_pending_analysis(restaurant_id, limit=50)
-    for i, r in enumerate(pending):
+    # The analysis, for the rows just seeded — by their position in `sample`,
+    # never whatever other reviews happened to be pending.
+    by_ext = {f"{restaurant_id}_{s[2]}": i for i, s in enumerate(sample)}
+    seeded_ids = []
+    for r in new_reviews:
+        i = by_ext.get(r.external_id)
+        if i is None:
+            continue
         sent = sentiments.get(r.rating, "neutral")
-        cats = categories_map[i % len(categories_map)]
-        urg  = urgencies[i % len(urgencies)]
         summary = f"Guest {'praised' if sent=='positive' else 'criticized'} the experience."
-        update_analysis(r.id, sent, cats, summary, urg)
+        update_analysis(r.id, sent, categories_map[i % len(categories_map)], summary, urgencies[i % len(urgencies)])
+        seeded_ids.append(r.id)
 
-    pending_drafts = get_pending_drafts(restaurant_id, limit=50)
+    import admin_events
+    job_id = None
+    if seeded_ids:
+        job_id, _joined = _start_admin_job("admin_seed_drafts", restaurant_id,
+                                           lambda: _draft_reviews_job(restaurant_id, seeded_ids))
+    admin_events.record_admin_action(current_user, "reviews.seeded", restaurant_id=restaurant_id,
+                                     target=f"restaurant:{restaurant_id}",
+                                     after={"seeded": new_count, "review_ids": seeded_ids, "draft_job": job_id})
+    return jsonify(ok=True, seeded=new_count, job_id=job_id,
+                   message=(f"Seeded {new_count} sample review{'s' if new_count != 1 else ''}"
+                            + (" — drafting replies in the background." if job_id else
+                               (" (they were already there)." if not new_count else "."))))
+
+
+def _draft_reviews_job(restaurant_id, review_ids):
+    """Draft replies for these reviews, on the admin pool. Returns counts."""
+    from drafter import draft_response, DraftNotReplaced
+    from models import get_approved_examples
+    from ai_utils import is_platform_stop
     restaurant = get_restaurant(restaurant_id)
-    from drafter import draft_response as _draft_fn
-    from models import get_approved_examples as _get_ex
-    approved_examples = _get_ex(restaurant_id, limit=4)
-    for r in pending_drafts:
+    if not restaurant:
+        return {"ok": False, "error": "Restaurant not found"}
+    conn = get_conn()
+    try:
+        marks = ",".join("?" * len(review_ids))
+        rows = conn.execute(f"SELECT id, rating, text, sentiment, urgency FROM reviews WHERE restaurant_id=? "
+                            f"AND id IN ({marks}) AND deleted_at IS NULL", (restaurant_id, *review_ids)).fetchall()
+    finally:
+        conn.close()
+    examples = get_approved_examples(restaurant_id, limit=4)
+    drafted, failed, stopped = 0, 0, None
+    for r in rows:
         try:
-            _draft_fn(
-                r.id, r.rating, r.text, r.sentiment,
-                restaurant.name,
-                voice_notes=restaurant.voice_notes or "",
-                restaurant_id=restaurant_id,
-                approved_examples=approved_examples,
-                sign_off=restaurant.sign_off_name or restaurant.name,
-                never_say=restaurant.never_say or "",
-            )
-        except Exception as _e:
-            print(f"[seed] draft error [{r.id}]: {_e}")
-
-    return jsonify(ok=True, seeded=new_count)
+            draft_response(r["id"], r["rating"], r["text"], r["sentiment"], restaurant.name,
+                           voice_notes=restaurant.voice_notes or "", restaurant_id=restaurant_id,
+                           approved_examples=examples, sign_off=restaurant.sign_off_name or restaurant.name,
+                           never_say=restaurant.never_say or "", urgency=r["urgency"] or "normal",
+                           language=getattr(restaurant, "response_language", None) or None)
+            drafted += 1
+        except DraftNotReplaced:
+            continue
+        except Exception as e:
+            if is_platform_stop(e):
+                stopped = _safe_err(e)
+                break
+            failed += 1
+            print(f"[seed] draft error [{r['id']}]: {_safe_err(e)}")
+    out = {"ok": not failed and not stopped, "drafted": drafted, "failed": failed}
+    if stopped or failed:
+        out["error"] = (f"Drafting stopped: {stopped}" if stopped else f"{failed} draft(s) failed.")
+    return out
 
 @admin_bp.route("/admin/ai-usage/<int:restaurant_id>")
 @admin_required
@@ -1299,60 +1424,109 @@ def fetch_reviews_now(restaurant_id, current_user):
 
     return jsonify(ok=True, new_reviews=new_count, errors=errors)
 
+# The most replies one "Re-draft every pending reply" writes: one model call
+# each, and the job must finish well inside ops.JOB_MAX_MINUTES. A review
+# past the cap keeps the draft it has — nothing is cleared up front any more.
+REDRAFT_MAX = 150
+
+
 @admin_bp.route("/admin/redraft-all/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def redraft_all(restaurant_id, current_user):
-    """Regenerate AI drafts for all existing reviews — resets non-posted to pending first."""
+    """Write a fresh AI draft over every pending or drafted reply — IN
+    PLACE, on the admin job pool (#78, #153).
+
+    It used to set every drafted/pending review back to pending with its
+    draft NULLed, then redraft 50 on an unbounded thread: an owner's
+    hand-edited replies were wiped, and everything past the 50th was left
+    with no draft at all. Now nothing is cleared: a reply the owner edited
+    (draft_edited=1) is never touched, each draft is replaced only when its
+    new one is written (models.update_draft never overwrites an approved or
+    posted reply), and the job reports what it did."""
     restaurant = get_restaurant(restaurant_id)
     if not restaurant:
-        return jsonify(ok=False, error="Restaurant not found")
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    actor = dict(current_user)
+    job_id, joined = _start_admin_job("admin_redraft", restaurant_id, lambda: _redraft_job(restaurant_id, actor))
+    if not job_id:
+        return jsonify(ok=False, error="Too many admin jobs are running — try again in a minute."), 429
+    import admin_events
+    admin_events.record_admin_action(current_user, "reviews.redraft_started", restaurant_id=restaurant_id,
+                                     target=f"restaurant:{restaurant_id}", after={"job_id": job_id, "joined": joined})
+    return jsonify(ok=True, job_id=job_id, joined=joined,
+                   message=("Already re-drafting this restaurant's replies — following that run."
+                            if joined else "Re-drafting pending replies in the background. Replies the owner "
+                                           "edited are left as they are."))
+
+
+def _redraft_job(restaurant_id, actor=None):
+    """The redraft, on the admin pool. Returns counts: redrafted, skipped
+    (owner-edited, or approved/posted while it ran), failed, and how many
+    are left past REDRAFT_MAX."""
+    from models import get_approved_examples
+    from analyser import analyse_review
+    from drafter import draft_response, DraftNotReplaced
+    from ai_utils import is_platform_stop
+    import admin_events
+    restaurant = get_restaurant(restaurant_id)
+    if not restaurant:
+        return {"ok": False, "error": "Restaurant not found"}
     conn = get_conn()
-    # Reset all drafted/pending reviews so they queue for re-drafting
-    conn.execute(
-        "UPDATE reviews SET response_status='pending', draft_response=NULL WHERE restaurant_id=? AND response_status IN ('drafted','pending')",
-        (restaurant_id,)
-    )
-    conn.commit()
-    conn.close()
-    import threading
-    def _redraft():
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT id, rating, text, sentiment, urgency, processed, COALESCE(draft_edited, 0) AS edited "
+            "FROM reviews WHERE restaurant_id=? AND response_status IN ('drafted', 'pending') "
+            "AND deleted_at IS NULL ORDER BY CASE urgency WHEN 'high' THEN 0 ELSE 1 END, fetched_at DESC",
+            (restaurant_id,)).fetchall()]
+    finally:
+        conn.close()
+    edited = [r for r in rows if r["edited"]]
+    todo = [r for r in rows if not r["edited"]]
+    redrafted, failed, skipped, stopped = 0, 0, 0, None
+    examples = get_approved_examples(restaurant_id, limit=4)
+    for r in todo[:REDRAFT_MAX]:
         try:
-            from models import get_pending_drafts, get_approved_examples, get_conn as _gc
-            from analyser import analyse_review
-            from drafter import draft_response
-            # Re-analyse anything missing sentiment
-            _conn = _gc()
-            unanalysed = _conn.execute(
-                "SELECT id, rating, text FROM reviews WHERE restaurant_id=? AND (sentiment IS NULL OR sentiment='') AND processed=0",
-                (restaurant_id,)
-            ).fetchall()
-            _conn.close()
-            for r in unanalysed:
-                try: analyse_review(r["id"], r["rating"], r["text"], restaurant_id=restaurant_id)
-                except Exception: pass
-            approved_examples = get_approved_examples(restaurant_id, limit=4)
-            for r in get_pending_drafts(restaurant_id, limit=50):
-                try:
-                    draft_response(
-                        r.id, r.rating, r.text, r.sentiment,
-                        restaurant.name,
-                        voice_notes=restaurant.voice_notes or "",
-                        restaurant_id=restaurant_id,
-                        approved_examples=approved_examples,
-                        sign_off=restaurant.sign_off_name or restaurant.name,
-                        never_say=restaurant.never_say or "",
-                        # Both were missing here: urgency meant the serious-issue
-                        # escalation never applied, and language meant a redraft
-                        # silently reverted a non-English restaurant's replies.
-                        urgency=r.urgency or "normal",
-                        language=getattr(restaurant, "response_language", None) or None,
-                    )
-                except Exception as _e:
-                    print(f"[redraft-all] error [{r.id}]: {_e}")
+            sentiment, urgency = r["sentiment"], r["urgency"]
+            if not sentiment and not r["processed"]:
+                analysed = analyse_review(r["id"], r["rating"], r["text"], restaurant_id=restaurant_id) or {}
+                sentiment, urgency = analysed.get("sentiment"), analysed.get("urgency") or urgency
+            if not sentiment:
+                skipped += 1
+                continue
+            draft_response(r["id"], r["rating"], r["text"], sentiment, restaurant.name,
+                           voice_notes=restaurant.voice_notes or "", restaurant_id=restaurant_id,
+                           approved_examples=examples, sign_off=restaurant.sign_off_name or restaurant.name,
+                           never_say=restaurant.never_say or "",
+                           # Both were missing once: urgency is the serious-issue
+                           # escalation, language a non-English restaurant's replies.
+                           urgency=urgency or "normal",
+                           language=getattr(restaurant, "response_language", None) or None)
+            redrafted += 1
+        except DraftNotReplaced:
+            skipped += 1
         except Exception as e:
-            print(f"[redraft-all] background error: {e}")
-    threading.Thread(target=_redraft, daemon=True).start()
-    return jsonify(ok=True)
+            if is_platform_stop(e):
+                stopped = _safe_err(e)
+                break
+            failed += 1
+            print(f"[redraft-all] error [{r['id']}]: {_safe_err(e)}")
+    remaining = max(0, len(todo) - REDRAFT_MAX)
+    out = {"ok": not failed and not stopped, "redrafted": redrafted, "kept_owner_edits": len(edited),
+           "skipped": skipped, "failed": failed, "remaining": remaining,
+           "message": (f"Re-drafted {redrafted} repl{'y' if redrafted == 1 else 'ies'}; "
+                       f"left {len(edited)} the owner edited as they were"
+                       + (f"; {remaining} more past this run's limit keep their current draft" if remaining else "")
+                       + ".")}
+    if stopped or failed:
+        out["error"] = (f"Stopped after {redrafted}: {stopped}" if stopped else
+                        f"{failed} repl{'y' if failed == 1 else 'ies'} could not be re-drafted; they keep "
+                        f"their current draft.")
+    admin_events.record_admin_action(actor or "system", "reviews.redrafted", restaurant_id=restaurant_id,
+                                     target=f"restaurant:{restaurant_id}",
+                                     after={k: out[k] for k in ("redrafted", "kept_owner_edits", "skipped",
+                                                                 "failed", "remaining")},
+                                     result="ok" if out["ok"] else ("partial" if redrafted else "failed"))
+    return out
 
 @admin_bp.route("/admin/view-as/<int:restaurant_id>", methods=["GET", "POST"])
 @admin_required
@@ -1804,156 +1978,296 @@ RESEND_WELCOME_COOLDOWN_MINUTES = 5
 @admin_bp.route("/admin/resend-welcome/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def resend_welcome_email(restaurant_id, current_user):
-    """Reset client password and resend welcome email with new credentials."""
-    import secrets, string
-    from models import get_restaurant, get_conn
-    from auth import update_password
+    """Email the restaurant's owner login a welcome with their username and
+    a link to set their password. Their password is NOT changed (#22).
 
+    It used to pick `... WHERE restaurant_id=? AND is_admin=0 LIMIT 1` — any
+    login, a manager or a staff PIN identity included — reset that login's
+    password (ending every session it had, web and phone), mail the new
+    password to the owner's address, and answer ok whatever the send did,
+    with the double-click cooldown claimed before the send so a retry after
+    a failure was told the email "went out". Now: the principal login
+    (_principal_login_id), no password change, the link goes to that login's
+    own address, the cooldown holds only a send that worked, and the answer
+    is what actually happened — a 502 and a sentence when it didn't."""
+    from models import create_reset_token
     restaurant = get_restaurant(restaurant_id)
     if not restaurant:
-        return jsonify(ok=False, error="Restaurant not found")
-
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    status = (getattr(restaurant, "billing_status", "") or "").lower()
+    if status in ("churned", "canceled"):
+        return jsonify(ok=False, error=f"{restaurant.name} is {status}: a welcome email would invite them back "
+                                       f"into a closed account. Nothing was sent."), 409
+    import models as _models_rw
+    if _models_rw.get_deletion_requested_at(restaurant_id):
+        return jsonify(ok=False, error=f"{restaurant.name} asked to close their account, so no welcome email "
+                                       f"was sent."), 409
+    uid = _principal_login_id(restaurant_id)
+    if not uid:
+        return jsonify(ok=False, error="This restaurant has no owner login to welcome."), 404
+    conn = get_conn()
     try:
-        # Get client user
-        conn = get_conn()
-        user = conn.execute(
-            "SELECT * FROM users WHERE restaurant_id=? AND is_admin=0 LIMIT 1",
-            (restaurant_id,)
-        ).fetchone()
-        if not user:
-            conn.close()
-            return jsonify(ok=False, error="No client user found")
+        user = conn.execute("SELECT id, username, email, last_login FROM users WHERE id=?", (uid,)).fetchone()
+    finally:
         conn.close()
+    email = ((user["email"] if user else "") or "").strip()
+    if not email:
+        return jsonify(ok=False, error="The owner login has no email address."), 409
+    blocked = _send_blocked()
+    if blocked:
+        payload, code = blocked
+        return jsonify(**payload), code
 
-        # A double-click reset the password twice, so the password in the
-        # first email was dead before the client opened it (DATA-38). One
-        # reset per restaurant per few minutes; a second press inside that
-        # changes nothing.
-        import ops as _ops_rw
-        if not _ops_rw.claim_cooldown(f"resend_welcome:{restaurant_id}", RESEND_WELCOME_COOLDOWN_MINUTES):
-            return jsonify(ok=True, email=restaurant.owner_email, already_sent=True,
-                           message="A welcome email with a new password went out a few minutes ago, "
-                                   "so nothing was changed and no second email was sent.")
-
-        # Generate a new temporary password
-        alphabet = string.ascii_letters + string.digits
-        new_password = "".join(secrets.choice(alphabet) for _ in range(12))
-
-        # update_password() (not a raw UPDATE) so this admin-issued reset
-        # also stamps password_changed_at/password_strength, same as a
-        # client's own change-password flow — the Security sheet's
-        # "changed X ago" needs to stay accurate regardless of who reset it.
-        update_password(user["id"], new_password)
-
-        # Send welcome email with new credentials
-        from emails import send_welcome_email
-        send_welcome_email(
-            to_email=restaurant.owner_email,
-            restaurant_name=restaurant.name,
-            username=user["username"],
-            password=new_password,
-            module_reviews=restaurant.module_reviews,
-            module_labor=restaurant.module_labor,
-            module_inventory=restaurant.module_inventory,
-            module_marketing=restaurant.module_marketing,
-            google_place_id=restaurant.google_place_id,
-            owner_name=restaurant.owner_name,
-        )
-
-        return jsonify(ok=True, email=restaurant.owner_email)
-
+    # A double-click must not send two emails whose links cancel each other
+    # (DATA-38). The claim is taken before the send, so a second press while
+    # the first is sending changes nothing — and given back if the send
+    # fails, so the retry the operator makes next actually sends (#22).
+    cooldown_key = f"resend_welcome:{restaurant_id}"
+    if not _ops.claim_cooldown(cooldown_key, RESEND_WELCOME_COOLDOWN_MINUTES):
+        return jsonify(ok=True, email=email, sent_to=email, already_sent=True,
+                       message=f"A welcome email went to {email} in the last few minutes, so nothing was "
+                               f"sent again.")
+    import admin_events
+    token = create_reset_token(email)
+    if not token:
+        _ops.release_period("cooldown", cooldown_key)
+        return jsonify(ok=False, error="The owner login is inactive. Nothing was sent."), 409
+    try:
+        result = _send_welcome_link_email(restaurant, user["username"], email,
+                                          f"{config.base_url()}/reset-password/{token}")
     except Exception as e:
-        print(f"[resend-welcome] error: {e}")
-        return jsonify(ok=False, error=_safe_err(e))
+        result = _emails.SendResult(False, error=_safe_err(e))
+    ok = bool(getattr(result, "ok", False))
+    admin_events.record_admin_action(current_user, "welcome.resent", restaurant_id=restaurant_id,
+                                     target=f"user:{uid}",
+                                     after={"to": email, "delivered": ok, "password_changed": False,
+                                            "error": None if ok else str(getattr(result, "error", "") or "")[:200]},
+                                     result="ok" if ok else "failed")
+    if not ok:
+        _ops.release_period("cooldown", cooldown_key)
+        return jsonify(ok=False, error=f"The welcome email didn't go out: {_send_failure_reason(result)}. "
+                                       f"Nothing about their login changed."), 502
+    return jsonify(ok=True, email=email, sent_to=email, username=user["username"],
+                   signed_in_before=bool(user["last_login"]),
+                   message=f"Welcome email sent to {email} with a link to set their password (it works once, "
+                           f"for an hour). Their current password still works.")
+
+
+def _send_welcome_link_email(restaurant, username, to_email, set_password_url):
+    """The welcome, with a set-password link where the password used to be.
+    Returns the SendResult. BRAND colours only (DESIGN_SYSTEM.md → Email)."""
+    B, esc = _emails.BRAND, _emails.esc
+    first = ((getattr(restaurant, "owner_name", None) or "").strip().split() or [""])[0]
+    greeting = f"Hi {esc(first)} &mdash;" if first else "Hi &mdash;"
+    base = config.base_url()
+    inner = f"""
+      <p style="color:{B['strong']};font-size:18px;font-weight:700;margin:0 0 12px">Your Cavnar AI dashboard is ready</p>
+      <p style="color:{B['body']};font-size:14px;line-height:1.6;margin:0 0 12px">{greeting} the dashboard for <strong>{esc(restaurant.name)}</strong> is live. Your username is <strong>{esc(username)}</strong>.</p>
+      <p style="color:{B['body']};font-size:14px;line-height:1.6;margin:0 0 22px">Choose your password with the button below. The link works once, for an hour.</p>
+      <a href="{esc(set_password_url)}" style="display:inline-block;background:{B['ember']};color:{B['card']};padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600">Set your password &rarr;</a>
+      <p style="color:{B['muted']};font-size:12px;line-height:1.6;margin:22px 0 0">If the link has expired, choose &ldquo;Forgot password?&rdquo; at <a href="{esc(base)}" style="color:{B['ember']}">{esc(base.split('//', 1)[-1])}</a> and enter {esc(to_email)}. Questions? Just reply to this email.</p>
+    """
+    return _emails.deliver(email_type="send_welcome_email", restaurant_id=restaurant.id, payload={
+        "from": _emails.sender("will"),
+        "to": [to_email],
+        "subject": f"Your Cavnar AI dashboard is live — {restaurant.name}",
+        "preheader": "Your username and a link to choose your password are inside.",
+        "html": _emails._branded_email(inner),
+    })
+
+
+def _test_recipient(restaurant, current_user):
+    """(address, 'owner' | 'me') for a test send: the client's owner by
+    default, or the acting admin when the body says {"to": "me"} (#127) —
+    a test the operator only wants to see need not land in the owner's
+    inbox."""
+    data = request.get_json(silent=True) or {}
+    if str(data.get("to") or "").strip().lower() == "me":
+        return ((current_user.get("email") or "").strip(), "me")
+    return ((restaurant.owner_email or "").strip(), "owner")
 
 
 @admin_bp.route("/admin/test-digest/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def test_digest(restaurant_id, current_user):
+    """A [TEST] copy of this week's digest, to the owner or (to: "me") to
+    the admin. The answer names the recipient and says whether it went: it
+    used to answer ok for a send that was suppressed or never attempted
+    (deliver_or_raise raises only on an attempted failure) (#109)."""
     restaurant = get_restaurant(restaurant_id)
     if not restaurant:
-        return jsonify(ok=False, error="Restaurant not found")
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    blocked = _send_blocked()
+    if blocked:
+        payload, code = blocked
+        return jsonify(**payload), code
+    recipient, who = _test_recipient(restaurant, current_user)
+    if not recipient:
+        return jsonify(ok=False, error="There is no email address to send the test to."), 409
     try:
         from reporter import build_report_from_db, render_html
-        owner_email = restaurant.owner_email
         report = build_report_from_db(restaurant_id, restaurant.name, days=7)
         html = render_html(report, restaurant.name, owner_name=restaurant.owner_name, restaurant_id=restaurant_id,
                            owner_view=True)
-        _emails.deliver_or_raise(email_type="digest_preview", restaurant_id=restaurant_id, payload={
-            "from": _emails.sender("client"),
-            "to": [owner_email],
-            "subject": f"[TEST] Your weekly review digest — {restaurant.name}",
-            "html": _html_doc(html),
-        })
-        return jsonify(ok=True, email=owner_email)
     except Exception as e:
-        return jsonify(ok=False, error=_safe_err(e))
+        return jsonify(ok=False, error=f"The digest couldn't be built: {_safe_err(e)}"), 500
+    result = _emails.deliver(email_type="digest_preview", restaurant_id=restaurant_id, payload={
+        "from": _emails.sender("client"),
+        "to": [recipient],
+        "subject": f"[TEST] Your weekly review digest — {restaurant.name}",
+        "html": _html_doc(html),
+    })
+    return _test_send_answer(current_user, restaurant, "digest.test_sent", "test digest", recipient, who, result)
+
 
 @admin_bp.route("/admin/test-urgent/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def test_urgent(restaurant_id, current_user):
+    """A [TEST] urgent-review alert email, to the owner or (to: "me") the
+    admin, built with the same template and sent through the same path
+    (notify._alert_email_html, emails.deliver) as a real alert. It used a
+    bespoke email no real alert uses, swallowed every failure and answered
+    ok (#109, #127)."""
     restaurant = get_restaurant(restaurant_id)
     if not restaurant:
-        return jsonify(ok=False, error="Restaurant not found")
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    blocked = _send_blocked()
+    if blocked:
+        payload, code = blocked
+        return jsonify(**payload), code
+    recipient, who = _test_recipient(restaurant, current_user)
+    if not recipient:
+        return jsonify(ok=False, error="There is no email address to send the test to."), 409
     try:
-        from scheduler import send_urgent_alert
-        owner_email = restaurant.owner_email
-        send_urgent_alert(
-            restaurant.name,
-            owner_email,
-            [{"author": "Test Customer", "platform": "google", "rating": 1,
-              "text": "This is a test urgent review alert from Cavnar AI admin. Your urgent alert email is working correctly."}]
-        )
-        return jsonify(ok=True, email=owner_email)
+        from notify import _alert_email_html
+        html = _alert_email_html(
+            restaurant.name, "Test urgent review alert",
+            ["This is a test of the urgent-review alert, sent by Cavnar AI support. Nothing needs doing.",
+             "<em>&ldquo;Waited an hour and nobody checked on us.&rdquo; &mdash; Test Guest, Google, 1&#9733;</em>",
+             "A real urgent alert looks like this, with a reply already drafted for you to read and post."],
+            restaurant_id=restaurant_id, cta_url=f"{config.base_url()}/?tab=reviews")
     except Exception as e:
-        return jsonify(ok=False, error=_safe_err(e))
+        return jsonify(ok=False, error=f"The alert couldn't be built: {_safe_err(e)}"), 500
+    result = _emails.deliver(email_type="alert_test", restaurant_id=restaurant_id, payload={
+        "from": _emails.sender("client"),
+        "to": [recipient],
+        "subject": f"[TEST] Urgent review alert — {restaurant.name}",
+        "html": _html_doc(html),
+    })
+    return _test_send_answer(current_user, restaurant, "urgent_alert.test_sent", "test urgent alert",
+                             recipient, who, result)
+
+
+def _test_send_answer(current_user, restaurant, action, label, recipient, who, result):
+    """The audit row and the truthful answer for a test send."""
+    import admin_events
+    ok = bool(getattr(result, "ok", False))
+    admin_events.record_admin_action(current_user, action, restaurant_id=restaurant.id,
+                                     target=f"restaurant:{restaurant.id}",
+                                     after={"to": recipient, "to_whom": who, "delivered": ok,
+                                            "error": None if ok else str(getattr(result, "error", "") or "")[:200]},
+                                     result="ok" if ok else "failed")
+    if not ok:
+        return jsonify(ok=False, sent_to=recipient, to=who,
+                       error=f"The {label} to {recipient} didn't go out: {_send_failure_reason(result)}."), 502
+    return jsonify(ok=True, email=recipient, sent_to=recipient, to=who,
+                   message=f"The {label} was sent to {recipient}"
+                           + (" (the client's owner)." if who == "owner" else " (you)."))
 
 @admin_bp.route("/admin/refresh-ig-token/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def refresh_ig_token(restaurant_id, current_user):
-    """Manually refresh Instagram + Facebook tokens for a restaurant."""
+    """Refresh a restaurant's Instagram and Facebook page tokens.
+
+    Two Meta calls of up to 25 s each ran on the request thread; they run on
+    the admin job pool now (#153) — poll /admin/api/admin-jobs/<job_id>.
+    The result says which token refreshed and which didn't: a Facebook
+    refresh that failed used to be ignored and reported "Tokens refreshed"
+    (#109)."""
     restaurant = get_restaurant(restaurant_id)
     if not restaurant or not restaurant.ig_token:
-        return jsonify(ok=False, error="No Instagram token found")
-    try:
-        import requests as _req
-        from datetime import datetime, timedelta
-        from models import update_restaurant
-        from meta_api import graph_url
-        app_secret = os.getenv("META_APP_SECRET","")
+        return jsonify(ok=False, error="No Instagram token found"), 404
+    actor = dict(current_user)
+    job_id, joined = _start_admin_job("admin_ig_refresh", restaurant_id,
+                                      lambda: _refresh_meta_tokens(restaurant_id, actor))
+    if not job_id:
+        return jsonify(ok=False, error="Too many admin jobs are running — try again in a minute."), 429
+    return jsonify(ok=True, job_id=job_id, joined=joined,
+                   message="Refreshing the Instagram and Facebook tokens — this takes a few seconds.")
 
-        # Refresh IG long-lived token
+
+def _meta_exchange(token):
+    """(new_token, expires_date, error) for one long-lived token exchange."""
+    import requests as _req
+    from datetime import datetime, timedelta
+    from meta_api import graph_url
+    from ai_guard import redact_secrets
+    try:
         r = _req.get(graph_url("oauth/access_token"), params={
             "grant_type":        "fb_exchange_token",
-            "client_id":         os.getenv("META_APP_ID",""),
-            "client_secret":     app_secret,
-            "fb_exchange_token": restaurant.ig_token,
+            "client_id":         os.getenv("META_APP_ID", ""),
+            "client_secret":     os.getenv("META_APP_SECRET", ""),
+            "fb_exchange_token": token,
         }, timeout=(5, 20))
-        if r.status_code != 200:
-            return jsonify(ok=False, error=f"IG refresh failed: {r.text[:200]}")
-
-        new_token   = r.json().get("access_token", restaurant.ig_token)
-        new_expires = (datetime.now() + timedelta(days=60)).strftime("%Y-%m-%d")
-
-        update_data = {"ig_token": new_token, "ig_token_expires": new_expires}
-
-        # Refresh FB page token too if we have one
-        if restaurant.fb_page_token:
-            r2 = _req.get(graph_url("oauth/access_token"), params={
-                "grant_type":        "fb_exchange_token",
-                "client_id":         os.getenv("META_APP_ID",""),
-                "client_secret":     app_secret,
-                "fb_exchange_token": restaurant.fb_page_token,
-            }, timeout=(5, 20))
-            if r2.status_code == 200:
-                update_data["fb_page_token"]    = r2.json().get("access_token", restaurant.fb_page_token)
-                update_data["fb_token_expires"] = new_expires
-
-        update_restaurant(restaurant_id, update_data)
-        print(f"IG/FB tokens refreshed for restaurant {restaurant_id}, expires {new_expires}")
-        return jsonify(ok=True, expires=new_expires)
     except Exception as e:
-        return jsonify(ok=False, error=_safe_err(e))
+        return None, None, f"Meta could not be reached ({_safe_err(e)})"
+    if r.status_code != 200:
+        return None, None, f"Meta refused it ({r.status_code}: {redact_secrets((r.text or '')[:200])})"
+    try:
+        body = r.json() or {}
+    except Exception:
+        body = {}
+    new_token = body.get("access_token")
+    if not new_token:
+        return None, None, "Meta answered without a token"
+    try:
+        days = max(1, int(body.get("expires_in") or 0) // 86400) if body.get("expires_in") else 60
+    except (TypeError, ValueError):
+        days = 60
+    return new_token, (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d"), None
+
+
+def _refresh_meta_tokens(restaurant_id, actor):
+    """The refresh, on the admin pool. Saves each token that refreshed,
+    and says plainly which did not."""
+    from models import update_restaurant
+    from time_utils import mdy
+    import admin_events
+    restaurant = get_restaurant(restaurant_id)
+    if not restaurant or not restaurant.ig_token:
+        return {"ok": False, "error": "No Instagram token found"}
+    refreshed, errors, update = {}, {}, {}
+    token, expires, err = _meta_exchange(restaurant.ig_token)
+    if token:
+        update.update(ig_token=token, ig_token_expires=expires)
+        refreshed["instagram"] = expires
+    else:
+        errors["instagram"] = err
+    if restaurant.fb_page_token:
+        token, fb_expires, err = _meta_exchange(restaurant.fb_page_token)
+        if token:
+            update.update(fb_page_token=token, fb_token_expires=fb_expires)
+            refreshed["facebook"] = fb_expires
+        else:
+            errors["facebook"] = err
+    if update:
+        update_restaurant(restaurant_id, update)
+    ok = not errors
+    admin_events.record_admin_action(
+        actor, "meta_tokens.refreshed", restaurant_id=restaurant_id, target="integration:meta",
+        before={"ig_token_expires": restaurant.ig_token_expires, "fb_token_expires": restaurant.fb_token_expires},
+        after={"refreshed": refreshed, "failed": errors},
+        result="ok" if ok else ("partial" if refreshed else "failed"))
+    out = {"ok": ok, "refreshed": {k: True for k in refreshed},
+           "expires": refreshed.get("instagram"), "expires_on": mdy(refreshed.get("instagram") or "")}
+    names = {"instagram": "Instagram", "facebook": "Facebook page"}
+    if refreshed:
+        out["message"] = "; ".join(f"{names[k]} token refreshed, good until {mdy(v)}" for k, v in refreshed.items()) + "."
+    if errors:
+        out["error"] = (" ".join(f"{names[k]} token NOT refreshed: {v}." for k, v in errors.items())
+                        + (" " + out["message"] if refreshed else "")
+                        + " Reconnect Instagram/Facebook from the client's account if it keeps failing.")
+    return out
 
 
 
@@ -2411,14 +2725,47 @@ def admin_api_alert_cap(restaurant_id, current_user):
 @admin_required
 def admin_api_set_demo(restaurant_id, current_user):
     """The is_demo flag decides whether boot-time seeding may wipe this
-    restaurant's reviews and labor history. Nothing else in the console can
-    change it, so a real client stays real."""
+    restaurant's reviews and labor history, and it makes the account
+    deletable by delete-demo. Nothing else in the console can change it.
+
+    Turning it ON is guarded here on the server (#118): refused for an
+    account with a Stripe customer, a signed contract, a paying billing
+    status or an admin login living on it, and it needs the restaurant's
+    exact name typed as confirm_name. One confirm() used to be all that
+    stood between a paying client and the demo reseed. The before-state is
+    recorded with the change."""
     from models import get_restaurant, update_restaurant
+    import offboarding
     data = request.get_json(silent=True) or {}
     on = 1 if data.get("is_demo") else 0
     current = get_restaurant(restaurant_id)
     if not current:
         return jsonify(ok=False, error="Not found"), 404
+    was = int(getattr(current, "is_demo", 0) or 0)
+    before = {"is_demo": was, "billing_status": current.billing_status,
+              "contract_status": getattr(current, "contract_status", None),
+              "stripe_customer": bool((current.stripe_customer_id or "").strip())}
+    if on and not was:
+        reasons = []
+        if (current.stripe_customer_id or "").strip():
+            reasons.append("it has a Stripe customer")
+        if (getattr(current, "contract_status", "") or "") == "signed":
+            reasons.append("its contract is signed")
+        if (current.billing_status or "") in _PAYING_STATUSES:
+            reasons.append(f"its billing status is {current.billing_status}")
+        if offboarding.admin_homes(restaurant_id):
+            reasons.append("an admin login lives on it")
+        import admin_events
+        if reasons:
+            admin_events.record_admin_action(current_user, "demo_flag.set", restaurant_id=restaurant_id,
+                                             target=f"restaurant:{restaurant_id}", before=before,
+                                             after={"is_demo": on, "refused": reasons}, result="refused")
+            return jsonify(ok=False, error=f"{current.name} can't be marked as a demo: " + "; ".join(reasons)
+                                           + ". A demo can be wiped by the boot seed and deleted outright, so "
+                                             "only an account with no billing history can be one."), 409
+        if (data.get("confirm_name") or "").strip() != (current.name or "").strip():
+            return jsonify(ok=False, confirm_required=True,
+                           error="Type the restaurant's exact name to mark it as a demo."), 400
     fields = {"is_demo": on}
     if not on and int(getattr(current, "is_demo", 0) or 0) == 1:
         # Turning demo OFF leaves the seeded rows (rr_% reviews, seeded
@@ -2431,13 +2778,16 @@ def admin_api_set_demo(restaurant_id, current_user):
         from time_utils import utc_stamp
         fields["demo_cleared_at"] = utc_stamp()
     update_restaurant(restaurant_id, fields)
-    try:
-        import admin_events
-        admin_events.record("admin", "demo_flag.set", restaurant_id=restaurant_id, amount=on,
-                            summary=f"Marked as {'demo' if on else 'real client'} by {current_user.get('username')}")
-    except Exception:
-        pass
+    import admin_events
+    admin_events.record_admin_action(current_user, "demo_flag.set", restaurant_id=restaurant_id,
+                                     target=f"restaurant:{restaurant_id}", before=before, after=fields,
+                                     summary=f"Marked as {'demo' if on else 'real client'} by "
+                                             f"{current_user.get('username')}")
     return jsonify(ok=True, restaurant_id=restaurant_id, is_demo=on)
+
+
+# Billing states that mean a client is (or was just) paying: never a demo.
+_PAYING_STATUSES = ("active", "past_due", "paused")
 
 
 @admin_bp.route("/admin/api/client/<int:restaurant_id>/delete-demo", methods=["POST"])
@@ -2449,6 +2799,7 @@ def admin_api_delete_demo(restaurant_id, current_user):
     which is its own confirmed step — and the request must carry the
     restaurant's exact name. Added to retire the Gia Mia demo (9/25/26)."""
     from models import get_restaurant, delete_restaurant
+    import offboarding
     data = request.get_json(silent=True) or {}
     current = get_restaurant(restaurant_id)
     if not current:
@@ -2457,18 +2808,22 @@ def admin_api_delete_demo(restaurant_id, current_user):
         return jsonify(ok=False, error="Only a restaurant flagged as a demo can be deleted here."), 400
     if (data.get("confirm_name") or "").strip() != (current.name or "").strip():
         return jsonify(ok=False, error="The name did not match. Nothing was deleted."), 400
+    if offboarding.admin_homes(restaurant_id):
+        return jsonify(ok=False, error="An admin login lives on this restaurant; deleting it would delete that "
+                                       "login. Nothing was deleted."), 409
     try:
         deleted = delete_restaurant(restaurant_id)
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e)), 500
-    try:
-        import admin_events
-        admin_events.record("admin", "demo.deleted", restaurant_id=restaurant_id,
-                            amount=sum(deleted.values()),
-                            summary=f"Demo account {current.name} (#{restaurant_id}) deleted by "
-                                    f"{current_user.get('username')}")
-    except Exception:
-        pass
+    import admin_events
+    # The row survives the delete (models._KEEP_ON_RESTAURANT_DELETE), so
+    # the record of what happened stays attached to the id (#126).
+    admin_events.record_admin_action(current_user, "demo.deleted", restaurant_id=restaurant_id,
+                                     target=f"restaurant:{restaurant_id}",
+                                     before={"name": current.name, "is_demo": 1},
+                                     after={"rows": sum(deleted.values()), "tables": deleted},
+                                     summary=f"Demo account {current.name} (#{restaurant_id}) deleted by "
+                                             f"{current_user.get('username')}")
     return jsonify(ok=True, restaurant_id=restaurant_id, rows=sum(deleted.values()), tables=deleted)
 
 
@@ -2514,3 +2869,470 @@ def admin_api_activity(current_user):
 def admin_api_search(current_user):
     import admin_ops
     return jsonify(**admin_ops.search(request.args.get("q", "")))
+
+
+# ── Fix round B2 ──────────────────────────────────────────────────────────────
+# The audit trail's views, support notes, bug reports, the deletion request's
+# lifecycle and the offboarding checklist, Add location, sales-audit linking —
+# and the two helpers the B2 routes above share: the local-backend send guard
+# and the bounded admin job pool.
+
+def _send_blocked():
+    """None when this server may email or text real people; otherwise the
+    ({ok: False, local_backend: True, error}, 409) an admin send route
+    returns as-is.
+
+    The same gate the scheduler obeys (scheduler.scheduling_allowed): a
+    local backend has production's Resend and Twilio keys and its own copy
+    of the database, so an admin send from a laptop reached real owners
+    (#9). ALLOW_LOCAL_SCHEDULER=1 opens it deliberately; RESTORE_FROM (a
+    restore waiting to be confirmed) closes it everywhere. Fails closed."""
+    try:
+        import scheduler
+        if scheduler.scheduling_allowed():
+            return None
+    except Exception:
+        pass
+    if (os.getenv("RESTORE_FROM") or "").strip():
+        why = "a database restore is waiting to be confirmed (RESTORE_FROM is set), so this server sends nothing"
+    else:
+        why = ("this is a local backend, and its copy of the database would email real people with "
+               "production's keys")
+    return {"ok": False, "local_backend": True,
+            "error": f"Not sent: {why}. Set ALLOW_LOCAL_SCHEDULER=1 to send from here deliberately."}, 409
+
+
+class _AdminJobs:
+    """A small bounded pool for admin work that must not hold one of the
+    four request threads (#153): AI drafting, Meta token exchanges, the
+    review-account seed. WORKERS threads and a queue of QUEUE jobs; a full
+    queue refuses the job rather than starting another thread (fetch-now
+    and redraft-all used to start one unbounded thread per click).
+
+    Daemon threads on purpose: a deploy kills a job mid-run, and
+    ops.sweep_stale_jobs fails its async_jobs row at the next boot — the
+    contract every async job here already has."""
+    WORKERS = 2
+    QUEUE = 20
+
+    def __init__(self):
+        import queue
+        import threading
+        self._q = queue.Queue(maxsize=self.QUEUE)
+        self._lock = threading.Lock()
+        self._threads = []
+
+    def _ensure_workers(self):
+        import threading
+        with self._lock:
+            self._threads = [t for t in self._threads if t.is_alive()]
+            while len(self._threads) < self.WORKERS:
+                t = threading.Thread(target=self._loop, name=f"admin-job-{len(self._threads)}", daemon=True)
+                t.start()
+                self._threads.append(t)
+
+    def _loop(self):
+        while True:
+            fn = self._q.get()
+            try:
+                fn()
+            except Exception as e:
+                print(f"[admin-job] {e}")
+            finally:
+                self._q.task_done()
+
+    def submit(self, fn):
+        """Queue fn. Raises queue.Full when QUEUE jobs are already waiting."""
+        self._ensure_workers()
+        self._q.put_nowait(fn)
+
+
+_ADMIN_JOBS = _AdminJobs()
+
+
+def _start_admin_job(kind, restaurant_id, fn):
+    """Run fn() on the admin pool, tracked as an ops.async_jobs row.
+    Returns (job_id, joined): a second press while one of the same kind is
+    pending for the same restaurant joins it instead of queueing another.
+    (None, False) when the pool is full. fn returns the job's result dict;
+    ok False marks the job an error. Poll /admin/api/admin-jobs/<job_id>."""
+    import uuid
+    job_id, joined = _ops.claim_async_job(str(uuid.uuid4()), kind, restaurant_id)
+    if joined:
+        return job_id, True
+
+    def _run():
+        try:
+            result = fn() or {}
+            _ops.finish_async_job(job_id, "done" if result.get("ok", True) else "error", result)
+        except Exception as e:
+            _ops.capture(e, job=f"admin_job:{kind}", context=f"restaurant_id={restaurant_id}")
+            _ops.finish_async_job(job_id, "error", {"ok": False, "error": _safe_err(e)})
+    try:
+        _ADMIN_JOBS.submit(_run)
+    except Exception:
+        _ops.finish_async_job(job_id, "error", {"ok": False, "error": "Too many admin jobs are queued."})
+        return None, False
+    return job_id, False
+
+
+@admin_bp.route("/admin/api/admin-jobs/<job_id>")
+@admin_required
+def admin_api_admin_job(job_id, current_user):
+    """One admin job's state: {status: pending} (200), the job's result
+    (200), or a failed job's result (502, with `error`). A value the job
+    marked read-once (the review account's new password) is returned to the
+    first admin who reads it and then removed from the stored result."""
+    job = _ops.read_async_job(job_id)
+    if not job:
+        return jsonify(ok=False, status="missing", error="No such job (results are kept for six hours)."), 404
+    if job["status"] == "pending":
+        return jsonify(ok=True, status="pending", job_id=job_id)
+    result = dict(job.get("result") or {})
+    scrub = [k for k in (result.pop("_scrub", None) or []) if isinstance(k, str)]
+    if scrub:
+        if current_user.get("is_admin"):
+            _ops.finish_async_job(job_id, job["status"], {k: v for k, v in result.items() if k not in scrub})
+        else:
+            for k in scrub:
+                result.pop(k, None)
+    failed = job["status"] != "done" or result.get("ok") is False
+    result.update(ok=not failed, status=job["status"], job_id=job_id)
+    return jsonify(**result), (502 if failed else 200)
+
+
+# ── the audit trail (#53, #72, #126) ─────────────────────────────────────────
+
+def _audit_query_args():
+    a = request.args
+    return {"actor": (a.get("actor") or "").strip() or None, "action": (a.get("action") or "").strip() or None,
+            "result": (a.get("result") or "").strip() or None, "before_id": a.get("before_id"),
+            "limit": a.get("limit", 50), "include_requests": a.get("all") == "1"}
+
+
+@admin_bp.route("/admin/api/audit")
+@admin_required
+def admin_api_audit(current_user):
+    """Admin actions across the fleet, newest first, 50 a page.
+    ?restaurant_id=&actor=&action=<prefix>&result=&before_id=&limit=&all=1"""
+    import admin_events
+    try:
+        rid = int(request.args["restaurant_id"]) if request.args.get("restaurant_id") else None
+    except (TypeError, ValueError):
+        rid = None
+    return jsonify(ok=True, **admin_events.audit_list(restaurant_id=rid, **_audit_query_args()))
+
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/audit")
+@admin_required
+def admin_api_client_audit(restaurant_id, current_user):
+    """One client's admin actions — kept after the client is deleted."""
+    import admin_events
+    return jsonify(ok=True, restaurant_id=restaurant_id,
+                   **admin_events.audit_list(restaurant_id=restaurant_id, **_audit_query_args()))
+
+
+@admin_bp.route("/admin/api/audit/refused")
+@admin_required
+def admin_api_audit_refused(current_user):
+    """Refused and anonymous /admin writes (capped, 30 days)."""
+    import admin_events
+    return jsonify(ok=True, **admin_events.refused_list(before_id=request.args.get("before_id"),
+                                                         limit=request.args.get("limit", 50)))
+
+
+# ── support notes (#55) ──────────────────────────────────────────────────────
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/notes")
+@admin_required
+def admin_api_support_notes(restaurant_id, current_user):
+    """The client's support notes, newest first, with the old one-field
+    internal_notes alongside (read-only)."""
+    import admin_events
+    r = get_restaurant(restaurant_id)
+    if not r:
+        return jsonify(ok=False, error="Not found"), 404
+    out = admin_events.list_support_notes(restaurant_id, before_id=request.args.get("before_id"),
+                                          limit=request.args.get("limit", 50))
+    return jsonify(ok=True, restaurant_id=restaurant_id, legacy_internal_notes=r.internal_notes or "", **out)
+
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/notes", methods=["POST"])
+@admin_required
+def admin_api_add_support_note(restaurant_id, current_user):
+    """Append a note: {body}. Authored and dated; nothing edits or deletes one."""
+    import admin_events
+    if not get_restaurant(restaurant_id):
+        return jsonify(ok=False, error="Not found"), 404
+    data = request.get_json(silent=True) or {}
+    body = sanitize(data.get("body") or "", max_len=admin_events.SUPPORT_NOTE_MAX)
+    note = admin_events.add_support_note(restaurant_id, current_user, body or "")
+    if not note:
+        return jsonify(ok=False, error="Write something first."), 400
+    admin_events.record_admin_action(current_user, "support_note.added", restaurant_id=restaurant_id,
+                                     target=f"note:{note['id']}", after={"length": len(note["body"])})
+    return jsonify(ok=True, note=note)
+
+
+# ── in-app bug reports (#34) ─────────────────────────────────────────────────
+
+@admin_bp.route("/admin/api/bug-reports")
+@admin_required
+def admin_api_bug_reports(current_user):
+    """?status=open|closed&restaurant_id=&before_id=&limit="""
+    import admin_events
+    try:
+        rid = int(request.args["restaurant_id"]) if request.args.get("restaurant_id") else None
+    except (TypeError, ValueError):
+        rid = None
+    return jsonify(ok=True, **admin_events.list_bug_reports(status=request.args.get("status"), restaurant_id=rid,
+                                                             before_id=request.args.get("before_id"),
+                                                             limit=request.args.get("limit", 50)))
+
+
+@admin_bp.route("/admin/api/bug-reports/<int:report_id>/status", methods=["POST"])
+@admin_required
+def admin_api_bug_report_status(report_id, current_user):
+    """{status: closed|open, note?}"""
+    import admin_events
+    data = request.get_json(silent=True) or {}
+    status = str(data.get("status") or "").strip().lower()
+    if status not in ("open", "closed"):
+        return jsonify(ok=False, error="Status must be open or closed."), 400
+    row = admin_events.set_bug_report_status(report_id, status, current_user, note=data.get("note"))
+    if not row:
+        return jsonify(ok=False, error="No such report."), 404
+    admin_events.record_admin_action(current_user, f"bug_report.{status}", restaurant_id=row.get("restaurant_id"),
+                                     target=f"bug_report:{report_id}", after={"status": status,
+                                                                              "note": row.get("close_note")})
+    return jsonify(ok=True, report=row)
+
+
+# ── account deletion and offboarding (#34, #138) ─────────────────────────────
+
+@admin_bp.route("/admin/api/deletion-requests")
+@admin_required
+def admin_api_deletion_requests(current_user):
+    """Every open "Close my account" request, soonest due first."""
+    import offboarding
+    conn = get_conn()
+    try:
+        rows = conn.execute("SELECT id FROM restaurants WHERE deletion_requested_at IS NOT NULL "
+                            "AND deletion_requested_at <> ''").fetchall()
+    finally:
+        conn.close()
+    out = []
+    for row in rows:
+        state = offboarding.checklist(row["id"])
+        if state and state.get("request"):
+            out.append({"restaurant_id": row["id"], "name": state["name"], "billing_status": state["billing_status"],
+                        "outstanding": state["outstanding"], **state["request"]})
+    out.sort(key=lambda x: (x.get("due_at") or ""))
+    return jsonify(ok=True, requests=out)
+
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/offboarding")
+@admin_required
+def admin_api_offboarding(restaurant_id, current_user):
+    """The offboarding checklist: the deletion request (if any) and its
+    30-day due date, each step's state, and whether delete is unlocked."""
+    import offboarding
+    state = offboarding.checklist(restaurant_id)
+    if not state:
+        return jsonify(ok=False, error="Not found"), 404
+    return jsonify(**state)
+
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/offboarding/<step>", methods=["POST"])
+@admin_required
+def admin_api_offboarding_step(restaurant_id, step, current_user):
+    """{status: done|skipped|pending, note?}. 'integrations' done clears
+    every stored credential (offboarding.revoke_integrations); a skip needs
+    a note."""
+    import offboarding
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Support accounts are read-only."), 403
+    data = request.get_json(silent=True) or {}
+    payload, status = offboarding.set_step(restaurant_id, step, str(data.get("status") or "").strip().lower(),
+                                           current_user, note=data.get("note"))
+    return jsonify(**payload), status
+
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/deletion/withdraw", methods=["POST"])
+@admin_required
+def admin_api_withdraw_deletion(restaurant_id, current_user):
+    """The owner changed their mind: clear the request. {note?}"""
+    import offboarding
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Support accounts are read-only."), 403
+    data = request.get_json(silent=True) or {}
+    payload, status = offboarding.withdraw_deletion_request(restaurant_id, current_user, note=data.get("note"))
+    return jsonify(**payload), status
+
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/delete", methods=["POST"])
+@admin_required
+def admin_api_delete_restaurant(restaurant_id, current_user):
+    """Permanently delete a restaurant — a real client included — once its
+    offboarding checklist is finished. {confirm_name}: its exact name.
+    Server-side gates: admin (not support), the name, no admin login on it,
+    the checklist. The step-up (auth.recent_auth_required) is applied to
+    this route in the integration wave. The audit rows and the checklist
+    survive the delete."""
+    import offboarding
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Support accounts are read-only."), 403
+    data = request.get_json(silent=True) or {}
+    try:
+        payload, status = offboarding.delete_restaurant_now(restaurant_id, current_user, data.get("confirm_name"))
+    except Exception as e:
+        _ops.capture(e, job="delete_restaurant", context=f"restaurant_id={restaurant_id}")
+        return jsonify(ok=False, error=f"The delete failed and was rolled back: {_safe_err(e)}"), 500
+    return jsonify(**payload), status
+
+
+# ── Add location to an existing brand (#42) ──────────────────────────────────
+
+def _valid_timezone(name, fallback="America/Chicago"):
+    name = (name or "").strip()
+    if not name:
+        return fallback
+    try:
+        from zoneinfo import ZoneInfo
+        ZoneInfo(name)
+        return name
+    except Exception:
+        return None
+
+
+@admin_bp.route("/admin/api/brand/add-location", methods=["POST"])
+@admin_required
+def admin_api_add_location(current_user):
+    """A new location under an existing brand: same owner, same group, no
+    new login (#42). New client refused both ways in — an existing owner
+    email, and a new email under a group that already belonged to someone.
+
+    Body: {from_restaurant_id (a location of the brand), restaurant_name,
+    location_name?, google_place_id?, yelp_business_id?, owner_phone?,
+    timezone? (defaults to the brand's), module_* ? (default: the brand's),
+    audit_id? (a sales audit to link)}. The brand's owner login becomes an
+    'owner' (the role that may switch locations) at both. Billing follows
+    the brand (decision 1: one subscription per group — the new location is
+    covered by it). No contract is sent."""
+    from models import Restaurant, create_restaurant, update_restaurant
+    import auth
+    import admin_events
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Support accounts are read-only."), 403
+    data = request.get_json(silent=True) or {}
+    try:
+        src_id = int(data.get("from_restaurant_id") or 0)
+    except (TypeError, ValueError):
+        src_id = 0
+    src = get_restaurant(src_id) if src_id else None
+    if not src:
+        return jsonify(ok=False, error="Pick an existing location of the brand."), 400
+    name = sanitize((data.get("restaurant_name") or "").strip(), max_len=120)
+    if not name:
+        return jsonify(ok=False, error="The new location needs a name."), 400
+    owner_email = (src.owner_email or "").strip()
+    if not owner_email:
+        return jsonify(ok=False, error=f"{src.name} has no owner email to share."), 409
+    uid = _principal_login_id(src_id)
+    home_id = src_id
+    if not uid and (src.location_group or "").strip():
+        # The brand's owner may live on another of its locations.
+        from models import get_location_group
+        for sib in get_location_group(src.location_group.strip(), owner_email=owner_email):
+            uid = _principal_login_id(sib["id"])
+            if uid:
+                home_id = sib["id"]
+                break
+    if not uid:
+        return jsonify(ok=False, error=f"{src.name} has no owner login to add the location to."), 409
+    tz = _valid_timezone(data.get("timezone"), fallback=getattr(src, "timezone", None) or "America/Chicago")
+    if not tz:
+        return jsonify(ok=False, error="That timezone isn't a real IANA name (e.g. America/Chicago)."), 400
+    group = (src.location_group or "").strip() or (src.name or "").strip()
+    clash = location_group_conflict(group, owner_email, exclude_id=src_id)
+    if clash:
+        return jsonify(ok=False, error=f"The group name “{group}” already belongs to {clash}. "
+                                       f"Rename this brand's group in its settings first."), 409
+    place = (data.get("google_place_id") or "").strip() or None
+    is_demo = int(getattr(src, "is_demo", 0) or 0)
+    # A demo deliberately mirrors a real listing (place_id_conflict exempts
+    # demos), so only a live location is held to one listing per restaurant.
+    place_clash = place_id_conflict(place) if (place and not is_demo) else None
+    if place_clash:
+        return jsonify(ok=False, error=f"That Google listing is already connected to {place_clash}."), 409
+
+    def _flag(key):
+        if key in data:
+            try:
+                return 1 if int(data.get(key) or 0) else 0
+            except (TypeError, ValueError):
+                return 0
+        return int(getattr(src, key, 0) or 0)
+    modules = {k: _flag(k) for k in ("module_reviews", "module_labor", "module_inventory", "module_marketing")}
+    src_status = (src.billing_status or "trial")
+    billing = src_status if src_status in ("active", "past_due", "paused", "internal") else "trial"
+
+    if not (src.location_group or "").strip():
+        # The first location joins the group it now shares (and its
+        # organization, via update_restaurant) — as provisioning does for a
+        # checkout's second location.
+        update_restaurant(src_id, {"location_group": group})
+    rid = create_restaurant(Restaurant(
+        name=name, owner_email=owner_email, owner_name=src.owner_name,
+        owner_phone=(data.get("owner_phone") or "").strip() or None,
+        google_place_id=place, yelp_business_id=(data.get("yelp_business_id") or "").strip() or None,
+        location_group=group, location_name=sanitize((data.get("location_name") or "").strip(), max_len=120),
+        timezone=tz, is_demo=is_demo, billing_status=billing,
+        # A Place ID IS the reviews connection until Google OAuth is done —
+        # create_client's rule (a new location with no fetch flag was never
+        # fetched).
+        reviews_live=1 if (place and modules["module_reviews"]) else 0, **modules))
+    conn = get_conn()
+    try:
+        login = conn.execute("SELECT id, username, COALESCE(NULLIF(role,''),'client') AS role FROM users WHERE id=?",
+                             (uid,)).fetchone()
+    finally:
+        conn.close()
+    promoted = login["role"] != "owner"
+    if promoted:
+        # 'owner' is the role that may switch between locations; the
+        # membership at the home location carries the role there too.
+        auth.set_user_role(uid, "owner")
+        auth.upsert_membership(uid, home_id, "owner")
+    auth.upsert_membership(uid, rid, "owner")
+    linked_audit = None
+    if data.get("audit_id"):
+        try:
+            import promise
+            import sales_audits
+            aid = int(data["audit_id"])
+            if sales_audits.get_audit(aid):
+                promise.link(aid, rid)
+                linked_audit = aid
+        except (TypeError, ValueError):
+            linked_audit = None
+    admin_events.record_admin_action(
+        current_user, "location.added", restaurant_id=rid, target=f"restaurant:{src_id}",
+        before={"owner_role": login["role"], "brand_group": (src.location_group or None)},
+        after={"name": name, "group": group, "owner_login": uid, "owner_role": "owner", "billing_status": billing,
+               "timezone": tz, "modules": modules, "linked_audit": linked_audit})
+    return jsonify(ok=True, restaurant_id=rid, group=group, owner_username=login["username"],
+                   promoted_to_owner=promoted, billing_status=billing, linked_audit=linked_audit,
+                   message=f"Added {name} to {group}. {login['username']} can switch to it from the location "
+                           f"picker. No contract was sent.")
+
+
+# ── sales audits linked to a client (#66) ────────────────────────────────────
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/audits")
+@admin_required
+def admin_api_client_audits(restaurant_id, current_user):
+    """The sales audits linked to this client (newest first) — what the
+    audit-versus-now comparison (promise.py) reads."""
+    import sales_audits
+    return jsonify(ok=True, restaurant_id=restaurant_id, audits=sales_audits.linked_audits(restaurant_id))

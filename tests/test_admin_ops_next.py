@@ -181,13 +181,15 @@ def test_demo_flag_route_and_console_default(monkeypatch, rid):
     app.register_blueprint(admin_bp); app.register_blueprint(auth_bp)
     cl = app.test_client()
     monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 1, "restaurant_id": None, "is_admin": 1, "username": "will", "email": "x@x.com", "role": "admin"})
-    r = cl.post(f"/admin/api/client/{rid}/demo", json={"is_demo": 1})
+    # Marking a demo needs the restaurant's typed name (fix round B2, #118).
+    assert cl.post(f"/admin/api/client/{rid}/demo", json={"is_demo": 1}).status_code == 400
+    r = cl.post(f"/admin/api/client/{rid}/demo", json={"is_demo": 1, "confirm_name": "Cap Test Grill"})
     assert r.status_code == 200 and r.get_json()["is_demo"] == 1
     assert next(c for c in admin_ops.clients()["clients"] if c["id"] == rid)["is_demo"] is True
     r = cl.post(f"/admin/api/client/{rid}/demo", json={"is_demo": 0})
     assert r.get_json()["is_demo"] == 0
     assert next(c for c in admin_ops.clients()["clients"] if c["id"] == rid)["is_demo"] is False
-    assert cl.post("/admin/api/client/999999/demo", json={"is_demo": 1}).status_code == 404
+    assert cl.post("/admin/api/client/999999/demo", json={"is_demo": 1, "confirm_name": "x"}).status_code == 404
     html = open("templates/admin.html").read()
     assert "_showDemo = true" in html
     for f in ("hosted_dashboard.py", "demo_seed.py"):

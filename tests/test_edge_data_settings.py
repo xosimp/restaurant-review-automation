@@ -524,19 +524,25 @@ def test_resend_payment_reuses_the_open_checkout_session(app, monkeypatch):
     assert created == [], f"{len(created)} checkout sessions were built by resending"
 
 
-def test_a_double_clicked_resend_welcome_leaves_the_first_emailed_password_working(app, monkeypatch):
+def test_a_double_clicked_resend_welcome_leaves_the_first_emailed_link_working(app, monkeypatch):
+    """Resend welcome no longer resets the password (fix round B2, #22): it
+    emails a set-password link. A double-click must still send ONE email, so
+    the link in it is not cancelled by a second one — and the client's
+    current password keeps working throughout."""
+    import re
+    monkeypatch.setenv("ALLOW_LOCAL_SCHEDULER", "1")
     emailed = []
-    monkeypatch.setattr(emails, "send_welcome_email", lambda **k: emailed.append(k["password"]))
+    monkeypatch.setattr(emails, "deliver", lambda **k: emailed.append(k) or emails.SendResult(True))
     rid = _restaurant("Simple EJ's", owner_email="erik@ej.test")
     create_user(rid, "erik", "erik@ej.test", "client-pass-1")
     admin = _admin_client(app)
 
     for _ in range(2):
         assert admin.post(f"/admin/resend-welcome/{rid}").get_json()["ok"] is True
-    assert emailed, "the stub did not see the welcome email"
-
-    assert auth.verify_password("erik", emailed[0]), \
-        "the client opens the first email and its password is already dead"
+    assert len(emailed) == 1, "a double-click sent two welcome emails"
+    token = re.search(r"/reset-password/([A-Za-z0-9_\-]+)", emailed[0]["payload"]["html"]).group(1)
+    assert models.validate_reset_token(token), "the client opens the first email and its link is already dead"
+    assert auth.verify_password("erik", "client-pass-1"), "the current password must keep working"
 
 
 # ── DATA-42 · 2FA send-test ─────────────────────────────────────────────────
