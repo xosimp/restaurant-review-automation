@@ -384,18 +384,51 @@ def person_rows(restaurant_id, since=None, until=None, db_path=None) -> list:
 
 
 def tenure(restaurant_id, db_path=None) -> dict:
-    """{employee_name: {"shifts": n, "first": iso, "last": iso}} from every
-    stored shift — the cumulative count the rolling file could never give
-    (staff_first_seen kept only the most shifts any one upload showed)."""
+    """{employee_name: {"shifts": n, "first": iso, "last": iso}} over a
+    person's whole history — the cumulative count the rolling file could
+    never give (staff_first_seen kept only the most shifts any one upload
+    showed). A lifetime reader: the raw shifts are kept three years
+    (ops._RETENTION_DAYS), so each quarter is counted from its raw rows or
+    from its person_quarters summary, whichever holds more of it — a quarter
+    the prune has started on is read from the summary written while it was
+    whole — and the first day is the earliest either has."""
     conn = get_conn(db_path)
     try:
-        got = conn.execute("SELECT employee_name, COUNT(*) AS n, MIN(business_date) AS first, MAX(business_date) AS last "
-                           "FROM shift_facts WHERE restaurant_id=? GROUP BY employee_key", (restaurant_id,)).fetchall()
+        raw = conn.execute("SELECT employee_key, employee_name, business_date FROM shift_facts WHERE restaurant_id=?",
+                           (restaurant_id,)).fetchall()
+        try:
+            summ = conn.execute("SELECT employee_key, employee_name, quarter, shifts, first_date, last_date FROM "
+                                "person_quarters WHERE restaurant_id=? AND shifts > 0", (restaurant_id,)).fetchall()
+        except Exception:
+            summ = []
     except Exception:
         return {}
     finally:
         conn.close()
-    return {r["employee_name"]: {"shifts": int(r["n"]), "first": r["first"], "last": r["last"]} for r in got}
+    per = {}      # key -> {"name", "q": {quarter: [raw_n, summary_n]}, "first", "last"}
+    for r in raw:
+        try:
+            q = _quarter(date.fromisoformat(r["business_date"]))
+        except ValueError:
+            continue
+        p = per.setdefault(r["employee_key"], {"name": r["employee_name"], "q": {}, "first": None, "last": None})
+        p["q"].setdefault(q, [0, 0])[0] += 1
+        d = r["business_date"]
+        p["first"] = d if p["first"] is None or d < p["first"] else p["first"]
+        p["last"] = d if p["last"] is None or d > p["last"] else p["last"]
+    for r in summ:
+        p = per.setdefault(r["employee_key"], {"name": r["employee_name"], "q": {}, "first": None, "last": None})
+        p["q"].setdefault(r["quarter"], [0, 0])[1] = int(r["shifts"] or 0)
+        for d, pick in ((r["first_date"], min), (r["last_date"], max)):
+            if d:
+                cur = p["first"] if pick is min else p["last"]
+                val = d if cur is None else pick(cur, d)
+                if pick is min:
+                    p["first"] = val
+                else:
+                    p["last"] = val
+    return {p["name"]: {"shifts": sum(max(a, b) for a, b in p["q"].values()), "first": p["first"], "last": p["last"]}
+            for p in per.values() if p["q"]}
 
 
 # ── quarterly summaries, kept forever ───────────────────────────────────────
@@ -437,6 +470,7 @@ def rollup_quarters(restaurant_id, db_path=None, today=None) -> int:
     today = today or date.today()
     shifts_since = _whole_since("shift_facts", RETAIN_DAYS, today).isoformat()
     att_since = _whole_since("attendance_events", 730, today).isoformat()
+    sig_since = _whole_since("person_signals", 730, today).isoformat()
     conn = get_conn(db_path)
     try:
         got = conn.execute("SELECT * FROM shift_facts WHERE restaurant_id=? AND business_date >= ?",
@@ -447,6 +481,12 @@ def rollup_quarters(restaurant_id, db_path=None, today=None) -> int:
                                (restaurant_id, att_since)).fetchall()
         except Exception:
             att = []
+        try:
+            sig = conn.execute("SELECT employee_key, employee_name, person_id, signal_date, kind, polarity "
+                               "FROM person_signals WHERE restaurant_id=? AND signal_date >= ? AND status='confirmed'",
+                               (restaurant_id, sig_since)).fetchall()
+        except Exception:
+            sig = []
     finally:
         conn.close()
     shifts, outcomes = {}, {}
@@ -477,7 +517,24 @@ def rollup_quarters(restaurant_id, db_path=None, today=None) -> int:
             continue
         o = outcomes.setdefault((r["employee_key"], q), {"name": r["employee_name"], "pid": r["person_id"], "n": {}})
         o["n"][r["outcome"]] = o["n"].get(r["outcome"], 0) + 1
-    if not shifts and not outcomes:
+    signals = {}
+    for r in sig:
+        try:
+            q = _quarter(date.fromisoformat(str(r["signal_date"])[:10]))
+        except ValueError:
+            continue
+        g = signals.setdefault((r["employee_key"], q), {"name": r["employee_name"], "pid": r["person_id"],
+                                                        "taken": 0, "declined": 0, "pos": 0, "neg": 0})
+        if r["kind"] == "cover_accepted":
+            g["taken"] += 1
+        elif r["kind"] == "cover_declined":
+            g["declined"] += 1
+        elif r["kind"] == "review_mention":
+            if (r["polarity"] or 0) > 0:
+                g["pos"] += 1
+            elif (r["polarity"] or 0) < 0:
+                g["neg"] += 1
+    if not shifts and not outcomes and not signals:
         return 0
     conn = get_conn(db_path)
     try:
@@ -504,7 +561,40 @@ def rollup_quarters(restaurant_id, db_path=None, today=None) -> int:
                 "updated_at=excluded.updated_at",
                 (restaurant_id, o["pid"], o["name"], key, q, sum(n.values()), n.get("no_show", 0), n.get("called_out", 0),
                  n.get("late", 0), n.get("left_early", 0), n.get("covered", 0)))
+        for (key, q), g in signals.items():
+            conn.execute(
+                "INSERT INTO person_quarters (restaurant_id, person_id, employee_name, employee_key, quarter, "
+                "covers_taken, covers_declined, mentions_positive, mentions_negative, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,datetime('now')) ON CONFLICT(restaurant_id, employee_key, quarter) DO UPDATE "
+                "SET covers_taken=excluded.covers_taken, covers_declined=excluded.covers_declined, "
+                "mentions_positive=excluded.mentions_positive, mentions_negative=excluded.mentions_negative, "
+                "updated_at=excluded.updated_at",
+                (restaurant_id, g["pid"], g["name"], key, q, g["taken"], g["declined"], g["pos"], g["neg"]))
         conn.commit()
     finally:
         conn.close()
-    return len(set(shifts) | set(outcomes))
+    return len(set(shifts) | set(outcomes) | set(signals))
+
+
+def roll_all_quarters(db_path=None, now=None) -> dict:
+    """ops.prune_ledgers' rollup for shift_facts, attendance_events and
+    person_signals (ops._RETENTION_ROLLUP): every restaurant's quarterly
+    summaries brought up to date BEFORE any of their raw rows go, so a
+    quarter is summarised while it is whole. Raises on a failure — the
+    registry then keeps those tables' rows that night."""
+    today = (now.date() if isinstance(now, datetime) else now) or date.today()
+    conn = get_conn(db_path)
+    try:
+        rids = set()
+        for table in ("shift_facts", "attendance_events", "person_signals"):
+            try:
+                rids |= {r[0] for r in conn.execute(f"SELECT DISTINCT restaurant_id FROM {table}").fetchall()}
+            except Exception as e:
+                if "no such table" not in str(e).lower():
+                    raise
+    finally:
+        conn.close()
+    rows = 0
+    for rid in sorted(rids):
+        rows += rollup_quarters(rid, db_path=db_path, today=today)
+    return {"restaurants": len(rids), "rows": rows}

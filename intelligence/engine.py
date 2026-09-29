@@ -76,6 +76,7 @@ from datetime import date, timedelta
 
 import models as _models_mod
 from models import DB_PATH
+from canonical_facts import FINAL_SQL      # final days only (memory audit 9/29/26)
 from . import benchmarks as _bm
 from . import categories
 from . import features as _features
@@ -661,9 +662,10 @@ def _own_progress(restaurant_id, metric, db_path, today=None) -> str:
                 since = (today - timedelta(days=28)).isoformat()
                 if metric in ("labor_pct_28d", "labor_pct_sd_28d"):
                     sql = ("SELECT COUNT(DISTINCT date) FROM labor_daily_history WHERE restaurant_id=? AND date >= ? "
-                           "AND labor_pct IS NOT NULL AND sales > 0")
+                           f"AND labor_pct IS NOT NULL AND sales > 0 AND {FINAL_SQL}")
                 else:
-                    sql = "SELECT COUNT(DISTINCT date) FROM labor_daily_history WHERE restaurant_id=? AND date >= ? AND sales > 0"
+                    sql = ("SELECT COUNT(DISTINCT date) FROM labor_daily_history WHERE restaurant_id=? AND date >= ? "
+                           f"AND sales > 0 AND {FINAL_SQL}")
                 have = int(conn.execute(sql, (restaurant_id, since)).fetchone()[0] or 0)
                 if have < _features.MIN_MEASURED_DAYS or src == "labor":
                     need = max(1, _features.MIN_MEASURED_DAYS - have)
@@ -946,7 +948,8 @@ def _location_context(restaurant_id, db_path, today=None) -> dict:
             ids = [s["id"] for s in sibs]
             q = ",".join("?" * len(ids))
             for r in conn.execute(f"SELECT restaurant_id, week, features_json FROM intel_features WHERE "
-                                  f"restaurant_id IN ({q}) AND week >= ? ORDER BY week DESC", (*ids, floor)).fetchall():
+                                  f"restaurant_id IN ({q}) AND week >= ? AND version = ? ORDER BY week DESC",
+                                  (*ids, floor, _features.FEATURES_VERSION)).fetchall():
                 if r["restaurant_id"] not in rows:
                     import json as _json
                     rows[r["restaurant_id"]] = {"week": r["week"], "features": _json.loads(r["features_json"] or "{}")}

@@ -176,12 +176,16 @@ def latest_version(conn, history_id) -> int:
     return int(row["v"] or 0) if row else 0
 
 
-# The learners' filter over schedule_versions: a save made with an
-# admin's authority (a support login, or anyone acting through view-as)
-# never teaches the draft — it is the admin's hand, stored under the
-# owner's name (SHARED_MEM: an admin's answer never trains the owner's
-# preferences).
-LEARNABLE_SQL = "COALESCE(saved_authority, '') <> 'admin'"
+# saved_by on a version support saved through view-as.
+SUPPORT_PREFIX = "support:"
+# The learners' filter: a week any support save touched teaches nothing —
+# one saved through view-as (saved_by SUPPORT_PREFIX, M1) or with an
+# admin's authority (saved_authority, permissions.answer_authority, M3).
+NOT_SUPPORT_TOUCHED_SQL = ("history_id NOT IN (SELECT sv.history_id FROM schedule_versions sv "
+                           "WHERE sv.saved_by LIKE 'support:%' OR sv.saved_authority = 'admin')")
+# The same rule for one version: an admin's save is never the manager's
+# word (SHARED_MEM: an admin's answer never trains the owner's preferences).
+LEARNABLE_SQL = "COALESCE(saved_authority, '') <> 'admin' AND COALESCE(saved_by, '') NOT LIKE 'support:%'"
 
 
 def authority_of(user) -> str:
@@ -207,6 +211,18 @@ def _insert_version(conn, restaurant_id, history_id, reason, schedule_csv, quali
     # The advice the week carried before this save — read before the new
     # version (whose own quality is judged on the edited rows) lands.
     open_recs = _open_recommendations(conn, history_id) if (last and reason == "edited") else []
+    # Support saving through view-as is not the manager's word (memory audit
+    # 9/29/26, view_as): stamped SUPPORT_PREFIX, and the learners leave the
+    # week out (schedule_learning, learned_patterns).
+    try:
+        from permissions import acting_via
+        _via = acting_via()
+    except Exception:
+        _via = None
+    if _via:
+        saved_by = f"{SUPPORT_PREFIX}{_via.get('admin') or _via.get('admin_id')} (as {saved_by or 'the owner'})"
+        saved_authority = "admin"        # whoever the caller named: the admin's hand
+        open_recs = []                   # nor is it the owner carrying advice out
     cur = conn.execute(
         "INSERT INTO schedule_versions (restaurant_id, history_id, version, reason, schedule_csv, quality_json, "
         "diff_json, saved_by, saved_authority) VALUES (?,?,?,?,?,?,?,?,?)",
@@ -490,7 +506,8 @@ def acceptance(restaurant_id, weeks=8, db_path=DB_PATH) -> dict:
         if picked:
             marks = ",".join("?" for _ in picked)
             for v in conn.execute(f"SELECT history_id, version, reason, schedule_csv FROM schedule_versions WHERE restaurant_id=? "
-                                  f"AND history_id IN ({marks}) ORDER BY version", (restaurant_id, *[h["id"] for h in picked])).fetchall():
+                                  f"AND history_id IN ({marks}) AND {NOT_SUPPORT_TOUCHED_SQL} ORDER BY version",
+                                  (restaurant_id, *[h["id"] for h in picked])).fetchall():
                 versions.setdefault(v["history_id"], []).append(v)
     finally:
         conn.close()
@@ -719,7 +736,7 @@ def refresh_standing_patterns(restaurant_id, db_path=DB_PATH) -> dict:
         vers = {}
         if weeks:
             marks = ",".join("?" for _ in weeks)
-            for v in conn.execute(f"SELECT history_id, version, reason, schedule_csv, saved_authority FROM "
+            for v in conn.execute(f"SELECT history_id, version, reason, schedule_csv, saved_authority, saved_by FROM "
                                   f"schedule_versions WHERE restaurant_id=? AND history_id IN ({marks}) ORDER BY version",
                                   (restaurant_id, *[w["id"] for w in weeks])).fetchall():
                 vers.setdefault(v["history_id"], []).append(v)
@@ -730,7 +747,8 @@ def refresh_standing_patterns(restaurant_id, db_path=DB_PATH) -> dict:
         vs = vers.get(w["id"]) or []
         # A week an admin's hand saved or published (view-as) is not the
         # manager's word: it neither keeps nor reverses a standing pattern.
-        admin_hand = any((v["saved_authority"] or "") == "admin" for v in vs)
+        admin_hand = any((v["saved_authority"] or "") == "admin"
+                         or str(v["saved_by"] or "").startswith(SUPPORT_PREFIX) for v in vs)
         gen = next((v for v in vs if v["reason"] == "generated"), None)
         pub = next((v for v in reversed(vs) if v["reason"] == "published"), None) or (vs[-1] if vs else None)
         if pub is None:
@@ -895,9 +913,12 @@ def make_rule(restaurant_id, pattern_key, user=None, db_path=DB_PATH) -> dict:
         conn.close()
     try:
         import change_log
-        import people
-        change_log.record(restaurant_id, "roster", name, {"pattern": row["text"]}, {"rule": note},
-                          actor_user_id=(user or {}).get("id"), source=people.change_source(user) if user else "owner")
+        if user:
+            change_log.record(restaurant_id, "roster", "availability", {"pattern": row["text"]}, {"rule": note},
+                              subject=name, user=user)
+        else:
+            change_log.record(restaurant_id, "roster", "availability", {"pattern": row["text"]}, {"rule": note},
+                              subject=name, source="owner")
     except Exception as e:
         log.warning("change_log failed for restaurant %s: %s", restaurant_id, e)
     return {"ok": True, "employee": name, "rule": note}

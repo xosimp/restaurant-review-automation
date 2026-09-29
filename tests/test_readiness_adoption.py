@@ -35,6 +35,9 @@ NOT_APPLICABLE_SITES = {
     ("guest_email.py", "draft_newsletter"): "the guest email drafted from the owner's goal",
     ("competitor.py", "fetch_menu_from_pdf_bytes"): "menu extraction from the supplied PDF",
     ("competitor.py", "fetch_menu_from_url"): "menu extraction from the supplied page",
+    # Memory audit 9/29/26 (conversations): the rolling notes of one Ask
+    # chat, written from that chat's own turns and nothing else.
+    ("ask_conversations.py", "_summarize_call"): "notes on one Ask chat, from that chat's own turns",
 }
 
 

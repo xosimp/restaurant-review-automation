@@ -119,6 +119,11 @@ def test_unwatched_attendance_is_said_as_unknown_and_trusted():
     lines = people.memory_lines(_req(rid, "labor_read"))
     unk = [l for l in lines if l["text"].startswith("Attendance is not watched here yet")]
     assert unk and unk[0]["trusted"] is True and "Maria" not in unk[0]["text"]
+    # Said only where a staffing call rests on it — never to Ask, and never
+    # for a restaurant with no staff history at all.
+    assert not [l for l in people.memory_lines(_req(rid, "ask")) if "not watched" in l["text"]]
+    empty = _rid()
+    assert people.memory_lines(_req(empty, "labor_read")) == []
 
 
 def test_an_uploads_own_schedule_is_watched_and_its_no_shows_are_said():

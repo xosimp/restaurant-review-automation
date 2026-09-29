@@ -567,6 +567,30 @@ def budgets_for(restaurant_id, start, end, db_path=DB_PATH):
     return {r["business_date"]: {"gross": r["gross"], "net": r["net"]} for r in rows}
 
 
+def night_budget(restaurant_id, day, db_path=DB_PATH) -> dict:
+    """The night's sales target: {"gross", "net", "source", "label"} — the
+    owner's budget for the night (dsr_budgets, source "budget"), else the
+    owner's GOAL for nightly sales when they set one (owner_memory.target_for
+    "nightly_sales", source "goal" — memory audit 9/29/26: the owner's
+    financial intent sets the report's target, and it is said as their goal,
+    never as a budget they did not enter); {} when neither. Never raises."""
+    iso = day.isoformat() if hasattr(day, "isoformat") else str(day)[:10]
+    b = budgets_for(restaurant_id, iso, iso, db_path=db_path).get(iso) or {}
+    if b and (b.get("gross") is not None or b.get("net") is not None):
+        return {"gross": b.get("gross"), "net": b.get("net"), "source": "budget", "label": "Budget"}
+    try:
+        import owner_memory
+        from time_utils import mdy
+        t = owner_memory.target_for(restaurant_id, "nightly_sales", db_path=db_path)
+        if t and isinstance(t.get("value"), (int, float)) and t["value"] > 0:
+            until = f" by {mdy(t['until'])}" if t.get("until") else ""
+            return {"gross": None, "net": float(t["value"]), "source": "goal", "goal_id": t.get("goal_id"),
+                    "label": f"Your goal of ${float(t['value']):,.0f} a night{until}"}
+    except Exception:
+        pass
+    return {}
+
+
 PREFILL_SOURCES = ("last_week", "last_year", "forecast")
 LAST_YEAR_DAYS = 364     # the same weekday a year back (dsr.block_sales)
 
@@ -723,6 +747,11 @@ def import_history(restaurant_id, rows, source_file=None, imported_by=None, db_p
         conn.commit()
     finally:
         conn.close()
+    if n:
+        # Nights the event memory's history pass has not seen: it reads the
+        # restaurant again on its next pass (memory audit 9/29/26).
+        import event_memory
+        event_memory.reset_backfill(restaurant_id, db_path=db_path)
     return n
 
 
@@ -763,39 +792,27 @@ def baselines_net(restaurant_id, days, db_path=DB_PATH, pos_sync=True) -> dict:
 
       dsr        that night's own report (dsr_metrics sales.net)
       import     the owner's old DSR workbook (dsr_history_import)
-      pos_sync   the nightly POS sync's daily sales, a positive figure only
-                 (0 there means nothing synced), and only when `pos_sync`:
-                 the POS's daily total is the DSR's own basis (D1-13)
+      pos_sync   the nightly POS sync's daily sales, a positive FINAL figure
+                 only (0 there means nothing synced; a night the POS had not
+                 closed is not a night's sales), and only when `pos_sync`
+                 and that night's POS total is the DSR's own basis (D1-13)
 
-    (None, None) for a night none of them has."""
+    The one reader is canonical_facts.net_series (memory audit 9/29/26,
+    net_basis): each POS night's basis comes from the provider that built
+    IT, so a restaurant that moved from Toast to RPOWER never sets last
+    year's Toast total beside tonight's net. (None, None) for a night none
+    of them has."""
+    import canonical_facts as _cf
     isos = sorted({(d.isoformat() if hasattr(d, "isoformat") else str(d)[:10]) for d in days if d})
     out = {d: (None, None) for d in isos}
     if not isos:
         return out
-    marks = ",".join("?" for _ in isos)
-    conn = get_conn(db_path)
-    try:
-        measured = {r["business_date"]: float(r["value"]) for r in conn.execute(
-            f"SELECT business_date, value FROM dsr_metrics WHERE restaurant_id=? AND metric='sales.net' "
-            f"AND value IS NOT NULL AND business_date IN ({marks})", (restaurant_id, *isos)).fetchall()}
-        synced = {}
-        if pos_sync:
-            try:
-                synced = {r["date"]: float(r["sales"]) for r in conn.execute(
-                    f"SELECT date, sales FROM labor_daily_history WHERE restaurant_id=? AND date IN ({marks}) "
-                    "AND sales IS NOT NULL AND sales > 0", (restaurant_id, *isos)).fetchall()}
-            except Exception:
-                synced = {}
-    finally:
-        conn.close()
-    imported = history_for(restaurant_id, isos[0], isos[-1], db_path=db_path)
+    series = _cf.net_series(restaurant_id, db_path=db_path, dates=isos,
+                            pos=_cf.POS_SAME_BASIS if pos_sync else _cf.POS_NONE)
     for d in isos:
-        if d in measured:
-            out[d] = (measured[d], "dsr")
-        elif (imported.get(d) or {}).get("net") is not None:
-            out[d] = (float(imported[d]["net"]), "import")
-        elif d in synced:
-            out[d] = (synced[d], "pos_sync")
+        x = series.get(d)
+        if x:
+            out[d] = (x["net"], x["source"])
     return out
 
 

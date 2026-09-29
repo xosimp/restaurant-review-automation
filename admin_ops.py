@@ -4564,19 +4564,15 @@ def _ras_block(eps):
 
 
 def _internal_restaurants_sql(conn):
-    """Accounts whose owners' behaviour is not a customer's (#141): demo and
-    test accounts (exclude_from_learning), internal billing, the admin's own
-    home — built from the columns this database has."""
-    cols = _columns(conn, "restaurants")
-    parts = ["COALESCE(is_demo,0)=1"] if "is_demo" in cols else []
-    if "exclude_from_learning" in cols:
-        parts.append("COALESCE(exclude_from_learning,0)=1")
-    if "billing_status" in cols:
-        parts.append("LOWER(COALESCE(billing_status,''))='internal'")
-    if _columns(conn, "users") >= {"restaurant_id", "is_admin"}:
-        parts.append("id IN (SELECT restaurant_id FROM users GROUP BY restaurant_id "
-                     "HAVING MIN(COALESCE(is_admin,0))=1)")
-    return "SELECT id FROM restaurants WHERE " + (" OR ".join(parts) if parts else "0")
+    """Accounts whose owners' behaviour is not a customer's (#141) — the one
+    learning predicate, models.learning_exclusion (memory audit 9/29/26,
+    "eligibility"): demo accounts, test accounts (by an admin's flag or,
+    automatically, by name), internal billing, the admin's own home, with
+    the admin's learning_override. As a SELECT over the ids it rules out."""
+    import models as _m
+    ids = sorted(_m.learning_ineligible_ids(conn=conn))
+    return ("SELECT id FROM restaurants WHERE id IN (" + ",".join(str(int(i)) for i in ids) + ")") if ids \
+        else "SELECT id FROM restaurants WHERE 0"
 
 
 def _episodes(conn, since, restaurant_id=None, include_internal=False):
@@ -4589,14 +4585,21 @@ def _episodes(conn, since, restaurant_id=None, include_internal=False):
         where += " AND i.restaurant_id=?"
         args.append(restaurant_id)
     elif not include_internal:
+        import models as _m
         where += f" AND i.restaurant_id NOT IN ({_internal_restaurants_sql(conn)})"
+        # Nor what a converted demo recorded before its learning_since.
+        where += " AND " + _m.learning_rows_sql("i.restaurant_id", "i.created_at")
     inst = _rows_dict(conn, "SELECT i.*, r.name AS restaurant FROM rec_instances i LEFT JOIN restaurants r ON r.id=i.restaurant_id "
                             f"WHERE {where}", tuple(args))
     if not inst:
         return []
     evs = {}
-    for e in _rows_dict(conn, "SELECT e.rec_id, e.event, e.surface, e.meta, e.at, e.role FROM rec_events e JOIN rec_instances i "
-                              f"ON i.rec_id=e.rec_id WHERE {where} ORDER BY e.id", tuple(args)):
+    for e in _rows_dict(conn, "SELECT e.rec_id, e.event, e.surface, e.meta, e.at, e.role, e.authority FROM rec_events e "
+                              f"JOIN rec_instances i ON i.rec_id=e.rec_id WHERE {where} ORDER BY e.id", tuple(args)):
+        # An admin's answer through view-as is support at work, never the
+        # owner's (memory audit 9/29/26, view_as): out of every rate.
+        if e.get("authority") == "admin" and e["event"] != "shown":
+            continue
         evs.setdefault(e["rec_id"], []).append(e)
     import rec_ledger
     trackers = _trackers(conn, sorted({i["tracker_id"] for i in inst if i.get("tracker_id")}))
@@ -4616,6 +4619,13 @@ def _episodes(conn, since, restaurant_id=None, include_internal=False):
         # recommendation twice, and neither was answered nor ignored.
         if i["status"] == "superseded":
             continue
+        # "Bad timing" put it off: neither taken nor declined, in no
+        # denominator (memory audit 9/29/26, "reasons").
+        if i["status"] == "dismissed" and str(_col_or_none(i, "silence_rule") or "") == "bad_timing":
+            continue
+        # "Already doing it" is taken: the owner's answer closed it completed.
+        if i["status"] == "completed" and "completed" not in names and "dismissed" in names:
+            names = (names - {"dismissed"}) | {"completed"}
         # The episode's measured result, read ONLY through
         # rec_learning.learned_verdict (confidence audit E13): the ledger's
         # first outcome event was taken as the verdict, so a result the
@@ -4834,6 +4844,100 @@ def recommendation_acceptance(days=30, restaurant_id=None, include_internal=Fals
             "fatigue": fatigue}
 
 
+# ── what learning did to the rankings (memory audit 9/29/26, rank_log) ──────
+#
+# Every shown card now carries what the effectiveness model did to its rank
+# (rec_events meta "rank": weight, why, prior rung, EFFECTIVENESS_VERSION),
+# and each build logs the candidates it did NOT show (rec_rank_builds). This
+# read answers "did the model raise acceptance or outcomes?" by version and
+# by weight bucket: a weight that lifted a card should go with more taken and
+# more improved than one that sank it, or the model is not helping.
+
+RANK_WEIGHT_BUCKETS = ((0.0, 0.9, "lowered (under 0.9x)"), (0.9, 1.1, "about even (0.9-1.1x)"),
+                       (1.1, 9.9, "raised (over 1.1x)"))
+
+
+def _weight_bucket(w):
+    try:
+        w = float(w)
+    except (TypeError, ValueError):
+        return "no weight logged"
+    for lo, hi, label in RANK_WEIGHT_BUCKETS:
+        if lo <= w < hi:
+            return label
+    return "no weight logged"
+
+
+def rank_learning(days=90, restaurant_id=None, include_internal=False):
+    """Acceptance and measured outcome of shown recommendations, grouped by
+    the effectiveness model's version and by the weight it gave (from each
+    episode's first `shown` carrying a rank), plus how many ranked
+    candidates each surface's builds left unshown. Internal only."""
+    import models
+    days = max(1, min(int(days or 90), 365))
+    since = _stamp(datetime.utcnow() - timedelta(days=days))
+    with heavy_slot("rank learning"):
+        conn = models.get_conn()
+        try:
+            try:
+                eps = _episodes(conn, since, restaurant_id, include_internal=include_internal)
+            except Exception as e:
+                log.warning("rank_learning unavailable: %s", e)
+                eps = []
+            ranks = {}
+            ids = [e["rec_id"] for e in eps]
+            for i in range(0, len(ids), 400):
+                chunk = ids[i:i + 400]
+                for r in _rows_dict(conn, "SELECT rec_id, meta FROM rec_events WHERE event='shown' AND rec_id IN "
+                                          f"({','.join('?' for _ in chunk)}) ORDER BY at, id", tuple(chunk)):
+                    if r["rec_id"] in ranks:
+                        continue
+                    m = _meta_of(r) or {}
+                    if isinstance(m.get("rank"), dict):
+                        ranks[r["rec_id"]] = m["rank"]
+            where, args = "built_at >= ?", [since]
+            if restaurant_id:
+                where += " AND restaurant_id=?"
+                args.append(restaurant_id)
+            builds = _rows_dict(conn, f"SELECT surface, version, shown, not_shown FROM rec_rank_builds WHERE {where}",
+                                tuple(args), optional=True)
+        finally:
+            conn.close()
+    groups = {}
+    for e in eps:
+        rk = ranks.get(e["rec_id"]) or {}
+        g = groups.setdefault((rk.get("version"), _weight_bucket(rk.get("weight")) if rk else "no weight logged"),
+                              {"shown": 0, "taken": 0, "settled": 0, "measured": 0, "improved": 0})
+        g["shown"] += 1
+        took = e["accepted"] or e["completed"] or e.get("implemented")
+        if took or e["dismissed"] or e["ignored"]:
+            g["settled"] += 1
+        if took:
+            g["taken"] += 1
+            if e.get("measured"):
+                g["measured"] += 1
+                g["improved"] += 1 if e.get("improved") else 0
+    rows = []
+    for (version, bucket), g in sorted(groups.items(), key=lambda kv: (str(kv[0][0]), kv[0][1])):
+        rows.append({"version": version, "bucket": bucket, **g,
+                     "accept_rate": round(g["taken"] / g["settled"], 3) if g["settled"] else None,
+                     "accept_ci90": _wilson(g["taken"], g["settled"]) if g["settled"] else None,
+                     "outcome_rate": round(g["improved"] / g["measured"], 3) if g["measured"] else None,
+                     "enough": g["settled"] >= RAS_MIN_N})
+    unshown = {}
+    for b in builds or []:
+        try:
+            n = len(json.loads(b["not_shown"] or "[]") or [])
+        except (TypeError, ValueError):
+            n = 0
+        u = unshown.setdefault(b["surface"], {"builds": 0, "unshown": 0})
+        u["builds"] += 1
+        u["unshown"] += n
+    return {"ok": True, "days": days, "restaurant_id": restaurant_id, "min_n": RAS_MIN_N, "groups": rows,
+            "unshown_by_surface": unshown,
+            "note": "Before and after, not proof: a bucket's rates compare what the model lifted with what it sank."}
+
+
 # ── schedule generation experiments (internal only) ─────────────────────────
 #
 # The live A/B of schedule generation variants (schedule_experiments, audit
@@ -4905,6 +5009,12 @@ def recommendation_calibration(days=365, restaurant_id=None):
         args.append(int(restaurant_id))
     conn = models.get_conn()
     try:
+        if not restaurant_id:
+            # Across the fleet, a demo's, a test account's or Cavnar AI's own
+            # trackers never calibrate the dollars, nor a converted demo's
+            # from before its learning_since (memory audit 9/29/26).
+            where += (f" AND i.restaurant_id NOT IN ({_internal_restaurants_sql(conn)}) AND "
+                      + models.learning_rows_sql("i.restaurant_id", "i.created_at"))
         try:
             rows = None
             # concurrent / baseline_overlaps_trigger: the result rule learning

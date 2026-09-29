@@ -211,9 +211,13 @@ def _build(db_path=DB_PATH, today: date = None) -> dict:
     latest = _features.latest_by_restaurant(db_path=db_path)
     conn = get_conn(db_path)
     try:
-        weeks = conn.execute("SELECT week, COUNT(*) AS n, ROUND(AVG(completeness),3) AS completeness FROM intel_features "
-                             "GROUP BY week ORDER BY week DESC LIMIT 12").fetchall()
-        conf = conn.execute("SELECT week, cohort, rec_kind, n, mean_confidence, acceptance_rate, success_rate FROM intel_confidence_log "
+        weeks = conn.execute("SELECT week, COUNT(*) AS n, ROUND(AVG(completeness),3) AS completeness, "
+                             "SUM(backfilled) AS backfilled FROM intel_features WHERE version = ? "
+                             "GROUP BY week ORDER BY week DESC LIMIT 12", (_features.FEATURES_VERSION,)).fetchall()
+        # trust_version: the meaning of the % averaged (only one version
+        # is averaged per row, jobs.log_confidence); orgs: behind each row.
+        conf = conn.execute("SELECT week, cohort, rec_kind, n, mean_confidence, acceptance_rate, success_rate, "
+                            "trust_version, orgs FROM intel_confidence_log "
                             "WHERE cohort='platform' ORDER BY week DESC, n DESC LIMIT 120").fetchall()
         new_patterns = conn.execute("SELECT COUNT(*) FROM intel_patterns WHERE status='active' AND first_seen >= ?",
                                     ((today - timedelta(days=7)).isoformat(),)).fetchone()[0]

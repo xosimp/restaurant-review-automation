@@ -328,6 +328,31 @@ def answer_authority(user) -> str:
     return "principal" if is_principal(user) else "delegate"
 
 
+def acting_via(user=None):
+    """{"admin_id", "admin", "role"} when a write is an admin (or support
+    login) acting through view-as — read from the login dict
+    (acting_admin_id, set by auth for a view-as session) or, with none
+    given, from the request (flask.g.view_as) — else None. Anything that
+    learns the owner's preferences leaves such a write out (memory audit
+    9/29/26, "view_as"): support triaging a queue is not the owner
+    deciding. Never raises."""
+    ctx = None
+    if isinstance(user, dict) and (user.get("acting_admin_id") or user.get("acting_admin_role")):
+        ctx = {"acting_admin_id": user.get("acting_admin_id"), "acting_admin": user.get("acting_admin"),
+               "acting_admin_role": user.get("acting_admin_role")}
+    if ctx is None:
+        try:
+            from flask import g, has_request_context
+            if has_request_context():
+                ctx = getattr(g, "view_as", None)
+        except Exception:
+            ctx = None
+    if not ctx:
+        return None
+    return {"admin_id": ctx.get("acting_admin_id"), "admin": ctx.get("acting_admin"),
+            "role": ctx.get("acting_admin_role") or "admin"}
+
+
 def principal_only(user, what="this"):
     """None when `user` is an account holder, otherwise the 403 JSON response
     a route returns as-is. For the restaurant-wide switches whose blast radius

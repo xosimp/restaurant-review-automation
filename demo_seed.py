@@ -235,20 +235,27 @@ def _seed_simple_ejs(db_path: str = DB_PATH):
     return rid
 
 
+# Monday quiet through Saturday peak. Sunday is steady all-day trade.
+# Hours are the 55-person roster's (_ejs_history_rows' weekday totals), at
+# its blended rate. Module constants so models.stamp_seed_provenance can tell
+# a seeded day from a real one on a database seeded before rows were stamped.
+SEED_BY_WEEKDAY = {0: (4100, 127), 1: (3900, 116), 2: (5200, 147), 3: (7400, 189),
+                   4: (11800, 228), 5: (13200, 226), 6: (8600, 146)}
+# The first seed's (sales, hours) pairs: a row still holding one is this
+# seed's placeholder, never a POS day, and is brought up to the roster.
+SEED_OLD_PAIRS = {(4100.0, 52.0), (3900.0, 50.0), (5200.0, 61.0), (7400.0, 78.0),
+                  (11800.0, 116.0), (13200.0, 128.0), (8600.0, 90.0)}
+
+
 def _seed_ejs_history(rid: int, db_path: str):
     """Four weeks of daily sales and hours, so demand, year-over-year and the
-    PAR budget all have something real to work from."""
+    PAR budget all have something real to work from. Every row carries
+    source 'seed' (memory audit 9/29/26, "eligibility"): a demo that becomes
+    a real account must be able to tell its synthetic days from real ones."""
     from datetime import date, timedelta
-    # Monday quiet through Saturday peak. Sunday is steady all-day trade.
-    # Hours are the 55-person roster's (_ejs_history_rows' weekday totals),
-    # at its blended rate.
-    BY_WEEKDAY = {0: (4100, 127), 1: (3900, 116), 2: (5200, 147), 3: (7400, 189),
-                  4: (11800, 228), 5: (13200, 226), 6: (8600, 146)}
+    BY_WEEKDAY = SEED_BY_WEEKDAY
     RATE = 13.96
-    # The first seed's (sales, hours) pairs: a row still holding one is this
-    # seed's placeholder, never a POS day, and is brought up to the roster.
-    OLD = {(4100.0, 52.0), (3900.0, 50.0), (5200.0, 61.0), (7400.0, 78.0),
-           (11800.0, 116.0), (13200.0, 128.0), (8600.0, 90.0)}
+    OLD = SEED_OLD_PAIRS
     conn = get_conn(db_path)
     try:
         days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -264,8 +271,8 @@ def _seed_ejs_history(rid: int, db_path: str):
                     return   # a real day (a POS sync) is never overwritten by a placeholder
             conn.execute("""INSERT OR REPLACE INTO labor_daily_history
                 (restaurant_id, date, day_of_week, labor_pct, labor_cost, sales,
-                 total_hours, saved_at)
-                VALUES (?,?,?,?,?,?,?,datetime('now'))""",
+                 total_hours, saved_at, source)
+                VALUES (?,?,?,?,?,?,?,datetime('now'),'seed')""",
                 (rid, ds, days[d.weekday()], round(cost / sales * 100, 2), cost, float(sales), float(hours)))
 
         d = date(2025, 6, 2)

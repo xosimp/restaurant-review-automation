@@ -119,8 +119,57 @@ def known_surface(surface, default="unknown") -> str:
     s = SURFACE_ALIASES.get(surface, surface)
     return s if s in SURFACES else default
 
-# How long each answer silences the same key everywhere.
-SILENCE_DAYS = {"hide": 14, "not_for_us": 3650, "done": 3650}
+# ── what an answer holds (memory audit 9/29/26: silences, critical_low, reasons)
+#
+# Every answer is kept in rec_events for good; what is decided here is only
+# how long it SILENCES the key everywhere. One Done or one "Pass" used to
+# hold 3,650 days on every key, so "Trim Saturday staffing" answered in March
+# could not be said again until 2036 however far Saturday labor drifted, and
+# "Done" on the critically-low card silenced the running-out alert for ten
+# years. The rules now, by kind and by the owner's reason (answer_silence):
+#
+#   safety     stock_low / critical_low: never past the current stock-out
+#              cycle — SAFETY_CYCLE_DAYS at most, and lifted the moment a new
+#              count or delivery of the item arrives (silenced_keys).
+#   situational  advice about a situation that recurs (a weekday's staffing,
+#              an item's waste, a review theme, a diagnosis, the schedule):
+#              Done holds until the trigger has cleared and fires again
+#              (reconsider), and SITUATIONAL_DONE_DAYS at most.
+#   recurring  the four kinds with a known next occurrence (re-audit OPP-9):
+#              Done until the next occurrence, "not for us" a season.
+#   decline    "not for us" with no timing reason: DECLINE_DAYS, then
+#              re-offered with "you passed on this on 3/12/26".
+#   done       Done on a one-off subject: DONE_DAYS, then re-offered.
+#   timing     "bad timing" (or a free reason that names a time): a snooze
+#              of BAD_TIMING_DAYS, in no acceptance denominator.
+#   distrust   "don't trust the data": the key holds until the data it rests
+#              on is re-verified (verify_source), DISTRUST_HOLD_DAYS at most.
+#
+# An answered key also reopens on a material change — the figure at least
+# REOPEN_FACTOR times what it was answered at (the rule an open episode
+# already follows, at a higher bar) — as a new episode that names the
+# answer it follows (previous_answers).
+SILENCE_DAYS = {"hide": 14, "not_for_us": 365, "done": 365}
+DECLINE_DAYS = 365
+DONE_DAYS = 365
+SITUATIONAL_DONE_DAYS = 60
+SAFETY_CYCLE_DAYS = 7
+BAD_TIMING_DAYS = 28
+DISTRUST_HOLD_DAYS = 90
+# A situational Done is held at least this long before it can re-arm, so a
+# trigger flickering on new data the day after the answer cannot bring it
+# straight back.
+REARM_MIN_DAYS = 14
+REOPEN_FACTOR = 2.0
+SAFETY_KINDS = ("stock_low", "critical_low")
+SITUATIONAL_KINDS = frozenset((
+    "trim_day", "cut_waste", "top_issue", "labor_over", "labor", "overtime", "overtime_move", "coverage",
+    "food_cost_driver", "food_waste", "food_diagnosis", "price_spike", "neg_spike", "negative_trend",
+    "negative_share", "rating_drop", "rating_threshold", "intraday_pulse", "pulse_cut", "dsr_action",
+    "digest_move", "monthly_move", "ask_tip"))
+# Model-read lines, stored diagnoses and the schedule's own advice are about
+# the situation they were written from.
+SITUATIONAL_PREFIXES = ("diag_", "schedule_", "insight_")
 # Advice about a situation that comes round again (re-audit OPP-9): a slow
 # Tuesday every week, a list going quiet again, a category dipping again,
 # another fortnight without a post. "Done" on "Fill Tuesday, 10/6/26" was an
@@ -128,10 +177,85 @@ SILENCE_DAYS = {"hide": 14, "not_for_us": 3650, "done": 3650}
 # morning brief's slow-day line with it. Done here holds until the next
 # occurrence (RECURRING_DONE_DAYS); "not for us" holds a season
 # (RECURRING_DECLINE_DAYS) — long enough to be a decline on every surface
-# (insight_store.declined_signatures), never years. A caller's explicit
-# `silence_until` and a Track's measuring window are left as they are.
+# (insight_store.declined_signatures), never years.
 RECURRING_DONE_DAYS = {"slow_day": 6, "list_idle": 30, "category_dip": 28, "post_this_week": 7}
 RECURRING_DECLINE_DAYS = 90
+# What each reason code DOES (the "reasons" item): the answer is kept as the
+# owner gave it; its effect is read from here, the one table every reader
+# (the silence, rec_learning, admin_ops, intelligence.feedback) follows.
+REASON_EFFECT = {"already_doing": "taken", "bad_timing": "defer", "too_costly": "decline",
+                 "doesnt_fit": "decline", "dont_trust_data": "distrust", "other": "decline"}
+# A free "why not" that names a time is a timing answer even without the
+# code: "not now", "after the holidays", "next month" is not a no.
+_TIMING_RE = None
+
+
+def timing_reason(text) -> bool:
+    """Whether an owner's free reason says WHEN rather than no ("not right
+    now", "after football season", "next month"). Conservative: a reason
+    that also says it will never fit is not a timing answer."""
+    global _TIMING_RE
+    import re
+    t = " ".join(str(text or "").lower().split())
+    if not t:
+        return False
+    if _TIMING_RE is None:
+        _TIMING_RE = re.compile(
+            r"\b(?:not (?:right )?now|not yet|later|maybe later|next (?:week|month|season|year|quarter)|"
+            r"after (?:the )?(?:holidays?|season|summer|winter|spring|fall|renovation|remodel|game|rush|busy)|"
+            r"(?:busy|slow|holiday|football) season|this (?:week|month)|right now|for now|until (?:after|next))\b")
+    if re.search(r"\b(?:never|not for us|doesn'?t fit|won'?t work)\b", t):
+        return False
+    return bool(_TIMING_RE.search(t))
+
+
+def reason_effect(reason_code=None, reason=None):
+    """The effect of an owner's why (REASON_EFFECT), or None: a free reason
+    that names a time defers like "bad timing"."""
+    if reason_code in REASON_EFFECT:
+        return REASON_EFFECT[reason_code]
+    if timing_reason(reason):
+        return "defer"
+    return None
+
+
+def is_situational(kind) -> bool:
+    kind = str(kind or "")
+    return kind in SITUATIONAL_KINDS or kind.startswith(SITUATIONAL_PREFIXES)
+
+
+def answer_silence(key, event, kind=None, reason_code=None, reason=None):
+    """(days, rule): how long an answer holds the key silent everywhere and
+    the rule that decides it — (None, None) for an event that sets no
+    silence. `kind` is a dismissal's hide / not_for_us. A caller's own
+    silence (a Track's measuring window) is honoured only up to this."""
+    k = kind_of(key)
+    effect = reason_effect(reason_code, reason)
+    days, rule = None, None
+    if event == "dismissed" and effect == "defer":
+        days, rule = BAD_TIMING_DAYS, "bad_timing"
+    elif event == "dismissed" and effect == "distrust":
+        days, rule = DISTRUST_HOLD_DAYS, "distrust"
+    elif event == "completed" or (event == "dismissed" and effect == "taken"):
+        if k in RECURRING_DONE_DAYS:
+            days, rule = RECURRING_DONE_DAYS[k], "recurring_done"
+        elif is_situational(k):
+            days, rule = SITUATIONAL_DONE_DAYS, "situational_done"
+        else:
+            days, rule = DONE_DAYS, "done"
+    elif event == "dismissed":
+        if (kind or "hide") == "not_for_us":
+            if k in RECURRING_DONE_DAYS:
+                days, rule = RECURRING_DECLINE_DAYS, "recurring_decline"
+            else:
+                days, rule = DECLINE_DAYS, "decline"
+        else:
+            days, rule = SILENCE_DAYS["hide"], "hide"
+    elif event in ("accepted", "implemented"):
+        days, rule = ACCEPTED_QUIET_DAYS, "measuring"
+    if days is not None and k in SAFETY_KINDS:
+        days, rule = min(days, SAFETY_CYCLE_DAYS), "safety_cycle"
+    return days, rule
 
 
 def recurring_silence(key, event, kind=None):
@@ -146,9 +270,38 @@ def recurring_silence(key, event, kind=None):
     if event == "dismissed" and (kind or "hide") == "not_for_us":
         return RECURRING_DECLINE_DAYS
     return None
+
+
+def silence_message(key, event, kind=None, reason_code=None, reason=None):
+    """The sentence an answer's client shows for what it will do — "Pass"
+    and "won't come back" used to promise ten years whatever was said."""
+    days, rule = answer_silence(key, event, kind=kind, reason_code=reason_code, reason=reason)
+    if not days:
+        return None
+    if rule == "safety_cycle":
+        return "Noted — hidden until the next count or delivery"
+    if rule == "bad_timing":
+        return f"Noted — Cavnar AI will bring it back in {days // 7} weeks"
+    if rule == "distrust":
+        return "Noted — held until the data behind it is re-verified in Data Health"
+    if rule == "situational_done":
+        return f"Done — hidden unless it comes back (at most {days} days)"
+    if rule in ("recurring_done", "recurring_decline", "hide"):
+        return f"{'Done' if event == 'completed' else 'Noted'} — hidden for {days} days"
+    if rule in ("decline", "done"):
+        return (f"{'Done' if event == 'completed' else 'Noted'} — Cavnar AI won’t suggest it again "
+                f"for a year")
+    return None
+
+
 # An accepted or completed recommendation is not re-asked while its outcome
 # is being measured.
 ACCEPTED_QUIET_DAYS = 14
+# A manager's or employee's decline (permissions.answer_authority "delegate")
+# silences the recommendation for that login only (rec_silences), at most
+# this long; an admin's through view-as silences it for the admin alone and
+# never trains the owner's preferences.
+DELEGATE_SILENCE_MAX_DAYS = 90
 # An open episode nobody has answered in this long is ignored, not pending:
 # it closes as `expired`, and the next showing starts a new episode.
 EXPIRE_AFTER_DAYS = 14
@@ -166,7 +319,7 @@ NON_OPENING = ("outcome", "opened", "evidence_viewed", "implemented", "supersede
 # restore_kind's stamp is what decisions.quiet_kinds counts from — and stay
 # out of every acceptance figure (admin_ops), so none is read as a
 # recommendation that was taken.
-BOOKKEEPING_PREFIXES = ("restore_kind:", "calibration:", "standby:")
+BOOKKEEPING_PREFIXES = ("restore_kind:", "calibration:", "standby:", "conflict:")
 # How close (seconds) an answer the ledger already holds must be to an older
 # ledger's row for sync_existing to treat the row as that same answer.
 SAME_ANSWER_SECONDS = 300
@@ -257,10 +410,144 @@ def init_rec_ledger(db_path: str = DB_PATH):
             UNIQUE(restaurant_id, source, subject_key, day)
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_rec_missed_at ON rec_missed_detections(detected_at)")
+        # Who gave each answer (memory audit 9/29/26, "who_answered"):
+        # permissions.answer_authority — principal | delegate | admin. NULL
+        # on answers from before it, which every reader treats as the
+        # principal's (production: every answer so far was a co-owner's).
+        ev_have = {r[1] for r in conn.execute("PRAGMA table_info(rec_events)").fetchall()}
+        for col, decl in _EVENT_ADDED_COLUMNS:
+            if col not in ev_have:
+                conn.execute(f"ALTER TABLE rec_events ADD COLUMN {col} {decl}")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_rec_inst_sig ON rec_instances(restaurant_id, signature)")
+        # A delegate's (or an admin's view-as) answer silences for that
+        # login only: `subject_id` is the login it holds for — the acting
+        # admin's own id for a view-as answer, never the owner's.
+        conn.execute("""CREATE TABLE IF NOT EXISTS rec_silences (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id  INTEGER NOT NULL,
+            subject_id     INTEGER NOT NULL,
+            key            TEXT NOT NULL,
+            rec_id         TEXT,
+            event          TEXT NOT NULL,
+            authority      TEXT NOT NULL,
+            reason_code    TEXT,
+            until          TEXT NOT NULL,
+            created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(restaurant_id, subject_id, key)
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_rec_silences_until ON rec_silences(restaurant_id, until)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_rec_silences_prune ON rec_silences(until)")   # ops retention
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_rec_silences_created ON rec_silences(created_at)")
+        # "Don't trust the data" held per DATA SOURCE until it is
+        # re-verified ("reasons"): every card resting on the source is capped
+        # (rec_trust), Data Health shows it open, and the answered key holds
+        # until verify_source. One open row per (restaurant, source).
+        conn.execute("""CREATE TABLE IF NOT EXISTS rec_distrust (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id      INTEGER NOT NULL,
+            source             TEXT NOT NULL,
+            kinds              TEXT,
+            first_reported_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            last_reported_at   TEXT NOT NULL DEFAULT (datetime('now')),
+            reports            INTEGER NOT NULL DEFAULT 1,
+            rec_key            TEXT,
+            reported_by        INTEGER,
+            verified_at        TEXT,
+            verified_by        INTEGER
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_rec_distrust_open ON rec_distrust(restaurant_id, source, verified_at)")
+        # A kind the owner went quiet on (decisions.quiet_kinds) or declined
+        # on the schedule (schedule_intel.suppressed_kinds), held as durable
+        # state with a review date ("quiet_kinds"): it was recounted from a
+        # 2,000-row window and a log pruned at 365 days, so it lifted by
+        # accident and never got a second chance on purpose.
+        conn.execute("""CREATE TABLE IF NOT EXISTS rec_kind_states (
+            restaurant_id  INTEGER NOT NULL,
+            family         TEXT NOT NULL,
+            kind           TEXT NOT NULL,
+            state          TEXT NOT NULL,
+            reason         TEXT,
+            since          TEXT NOT NULL DEFAULT (datetime('now')),
+            review_on      TEXT,
+            retests        INTEGER NOT NULL DEFAULT 0,
+            last_dollars   REAL,
+            restored_at    TEXT,
+            updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (restaurant_id, family, kind)
+        )""")
+        # What learning did to each ranking ("rank_log"): one compact row per
+        # restaurant, surface and local day — the candidates a build ranked,
+        # shown or not, with the rank score, the learned weight, its rung and
+        # the model version.
+        conn.execute("""CREATE TABLE IF NOT EXISTS rec_rank_builds (
+            restaurant_id  INTEGER NOT NULL,
+            surface        TEXT NOT NULL,
+            day            TEXT NOT NULL,
+            version        INTEGER,
+            shown          TEXT,
+            not_shown      TEXT,
+            built_at       TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (restaurant_id, surface, day)
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_rec_rank_builds_at ON rec_rank_builds(built_at)")
         cap_recurring_silences(conn)
+        cap_answer_silences(conn)
         conn.commit()
     finally:
         conn.close()
+
+
+def cap_answer_silences(conn) -> int:
+    """Answers given before the 9/29/26 rules kept a ten-year silence: each
+    is brought back to what that answer holds now (answer_silence), counted
+    from the answer — on the ledger (rec_instances.silenced_until) and on
+    Home's own rows (home_dismissals.expires_at, which silenced_keys also
+    reads). Idempotent: a silence inside its cap is untouched. At boot, on
+    the caller's connection, uncommitted. Returns rows changed."""
+    n = 0
+    try:
+        rows = conn.execute(
+            "SELECT i.rec_id, i.key, i.status, COALESCE(i.closed_at, i.last_event_at) AS at, i.silenced_until, "
+            "(SELECT e.meta FROM rec_events e WHERE e.rec_id=i.rec_id AND e.event IN ('completed','dismissed') "
+            " ORDER BY e.at DESC, e.id DESC LIMIT 1) AS meta "
+            "FROM rec_instances i WHERE i.silenced_until IS NOT NULL AND i.status IN ('completed','dismissed') "
+            # Only what no rule holds today (past the longest, a year): the
+            # boot pass touches the old ten-year answers once, then nothing.
+            "AND i.silenced_until > datetime(COALESCE(i.closed_at, i.last_event_at), ?)",
+            (f"+{max(DECLINE_DAYS, DONE_DAYS) + 1} days",)).fetchall()
+    except Exception as e:
+        print(f"[rec_ledger] silence cap skipped: {e}")
+        rows = []
+    for r in rows:
+        try:
+            meta = json.loads(r["meta"] or "{}") or {}
+        except (TypeError, ValueError):
+            meta = {}
+        event = "completed" if r["status"] == "completed" else "dismissed"
+        days, rule = answer_silence(r["key"], event, kind=meta.get("kind"), reason_code=meta.get("reason_code"),
+                                    reason=meta.get("reason"))
+        if not days:
+            continue
+        n += conn.execute(
+            "UPDATE rec_instances SET silenced_until=datetime(?, ?), silence_rule=COALESCE(silence_rule, ?), "
+            "silenced_at=COALESCE(silenced_at, ?) WHERE rec_id=? AND silenced_until > datetime(?, ?)",
+            (r["at"], f"+{int(days)} days", rule, r["at"], r["rec_id"], r["at"], f"+{int(days)} days")).rowcount or 0
+    # Home's own rows: Done and "not for us" were written 3,650 days out.
+    try:
+        for hr in conn.execute("SELECT restaurant_id, key, kind, dismissed_at, expires_at FROM home_dismissals "
+                               "WHERE kind IN ('done','not_for_us') "
+                               "AND expires_at > datetime(dismissed_at, ?)",
+                               (f"+{max(DECLINE_DAYS, DONE_DAYS) + 1} days",)).fetchall():
+            event = "completed" if hr["kind"] == "done" else "dismissed"
+            days, _rule = answer_silence(hr["key"], event, kind="not_for_us" if hr["kind"] == "not_for_us" else None)
+            if not days:
+                continue
+            n += conn.execute("UPDATE home_dismissals SET expires_at=datetime(dismissed_at, ?) WHERE restaurant_id=? "
+                              "AND key=? AND expires_at > datetime(dismissed_at, ?)",
+                              (f"+{int(days)} days", hr["restaurant_id"], hr["key"], f"+{int(days)} days")).rowcount or 0
+    except Exception as e:           # no home_dismissals on this database
+        print(f"[rec_ledger] home silence cap skipped: {e}")
+    return n
 
 
 def cap_recurring_silences(conn) -> int:
@@ -307,6 +594,23 @@ _ADDED_COLUMNS = (
     ("freshness_pct", "INTEGER"),
     ("freshness_as_of", "TEXT"),
     ("trust_version", "INTEGER"),
+    # The memory audit (9/29/26). Which rule set the answer's silence
+    # (answer_silence: situational_done, decline, safety_cycle, bad_timing,
+    # distrust, … and "rearmed" / "reopened:<why>" / "verified" once
+    # lifted) and when it began; when a surface last saw a situational
+    # trigger CLEAR after the answer (reconsider re-arms the key when it
+    # fires again); the advice signature (insight_store.advice_signature)
+    # computed when it was shown ('' = computed, none); and the episode an
+    # answered key reopened from.
+    ("silence_rule", "TEXT"),
+    ("silenced_at", "TEXT"),
+    ("trigger_clear_at", "TEXT"),
+    ("signature", "TEXT"),
+    ("reopened_from", "TEXT"),
+)
+# rec_events columns added after it shipped (boot ALTERs).
+_EVENT_ADDED_COLUMNS = (
+    ("authority", "TEXT"),            # permissions.answer_authority of whoever answered
 )
 
 # rec_instances' snapshot columns, in confidence_engine.snapshot's order.
@@ -392,6 +696,10 @@ KIND_TOPIC = {
     "holiday_promo": "marketing", "category_dip": "sales", "dish_promote": "marketing",
     "dish_praise": "marketing", "list_idle": "guest_outreach",
     "insight_marketing": "marketing", "intel_recs": "competition", "insight_intel": "competition",
+    # The Labor read's lines, its stored diagnosis, and Marketing's content
+    # ideas carried no topic, so subject-level learning never saw them
+    # (memory audit 9/29/26, "signatures").
+    "insight_labor": "staffing", "diag_labor": "staffing", "content_idea": "posting",
     "competitor_move": "competition", "ai_visibility_drop": "visibility", "loss": "loss",
     "dsr_action:adjust_staffing": "staffing", "dsr_action:control_hours": "hours",
     "dsr_action:coach_team": "training", "dsr_action:reorder": "ordering", "dsr_action:reduce_waste": "waste",
@@ -654,9 +962,91 @@ def _food_category(conn, rid, key, kind):
     return row[0] if row else None
 
 
-def _stored_tags(conn, rid, key, module, kind):
+def _stored_tags(conn, rid, key, module, kind, signature=None):
     kind = kind or kind_of(key)
-    return json.dumps(tags_for(key, module, kind, food_category=_food_category(conn, rid, key, kind)))
+    tags = tags_for(key, module, kind, food_category=_food_category(conn, rid, key, kind))
+    if signature:
+        tags = with_signature_tag(tags, signature)
+    return json.dumps(tags)
+
+
+def with_signature_tag(tags, signature) -> list:
+    """`tags` plus the advice signature's "sig:<signature>" tag, sorted and
+    within MAX_TAGS (the topic, focus and signature are never the ones cut)."""
+    out = set(t for t in (tags or []) if not str(t).startswith("sig:"))
+    if signature:
+        out.add(f"sig:{signature}")
+    if len(out) > MAX_TAGS:
+        out = sorted(out, key=lambda t: (not t.startswith(("topic:", "focus:", "daytype:", "sig:")), t))[:MAX_TAGS]
+    return sorted(out)
+
+
+def signature_for(key, title=None, restaurant_id=None, db_path=None):
+    """insight_store.advice_signature(key, title), or None — with the
+    restaurant's own items and dishes as subjects when it is named, so a
+    model line's "cut the salmon order" is cut_waste:Salmon's advice.
+    Never raises."""
+    try:
+        import insight_store
+        subjects = insight_store.known_subjects(restaurant_id, db_path=db_path or DB_PATH) \
+            if restaurant_id else None
+        return insight_store.advice_signature(key, title, subjects=subjects)
+    except Exception as e:
+        print(f"[rec_ledger] signature unavailable for {key}: {e}")
+        return None
+
+
+# Statuses an answer leaves an episode in (a Track, a Done, a decline, the
+# change made).
+ANSWERED_STATUSES = ("accepted", "completed", "dismissed", "implemented")
+# Silences a material change never reopens: an explicit "not today", a
+# timing answer (it ends on its own within weeks) and a safety silence (a
+# count or a delivery lifts it).
+_NO_REOPEN_RULES = ("bad_timing", "safety_cycle", "snooze")
+
+
+def reopen_change(row, attrs):
+    """Why an ANSWERED, still-silenced episode is a different recommendation
+    now (None when it is not): its figure is at least REOPEN_FACTOR times
+    the one it was answered at (and SUPERSEDE_MIN_DOLLARS more), or — for a
+    taken answer (Done, Track, made) — its target moved: a reprice answered
+    at $34.25 that now asks $36.50. A decline reopens on the figure only:
+    "not for us" at $120/month is not undone by a new price, only by the
+    stakes doubling."""
+    attrs = attrs or {}
+    if row is None or row["status"] not in ANSWERED_STATUSES:
+        return None
+    rule = str(_col(row, "silence_rule") or "")
+    if rule in _NO_REOPEN_RULES:
+        return None
+    old, new = _col(row, "dollar_value"), _num(attrs.get("dollar_value"))
+    if old is not None and new is not None and old > 0:
+        if new >= REOPEN_FACTOR * old and (new - old) >= SUPERSEDE_MIN_DOLLARS:
+            return {"why": "figure_changed", "from": old, "to": new}
+    old_t, new_t = _col(row, "target"), attrs.get("target")
+    if row["status"] != "dismissed" and old_t not in (None, "") and new_t not in (None, "") \
+            and str(new_t)[:60] != str(old_t):
+        return {"why": "target_changed", "from": old_t, "to": str(new_t)[:60]}
+    return None
+
+
+def lift_silence(conn, rec_id, rule, now=None) -> bool:
+    """End an answer's silence now (the answer stays in the trail), noting
+    why in silence_rule — and Home's own row for the key, which
+    silenced_keys reads too. On the caller's connection, uncommitted."""
+    now = now or _now()
+    n = conn.execute("UPDATE rec_instances SET silenced_until=?, silence_rule=? WHERE rec_id=? "
+                     "AND silenced_until IS NOT NULL AND silenced_until > ?",
+                     (now, str(rule)[:40], rec_id, now)).rowcount
+    if n:
+        row = conn.execute("SELECT restaurant_id, key FROM rec_instances WHERE rec_id=?", (rec_id,)).fetchone()
+        if row is not None:
+            try:
+                conn.execute("UPDATE home_dismissals SET expires_at=? WHERE restaurant_id=? AND key=? "
+                             "AND expires_at > ?", (now, row["restaurant_id"], row["key"], now))
+            except Exception:
+                pass                     # no home_dismissals on this database
+    return bool(n)
 
 
 def _material_change(row, attrs, now=None):
@@ -748,6 +1138,7 @@ def _open_or_new(conn, rid, key, module, kind, title=None, attrs=None, surface=N
     row = _latest(conn, rid, key)
     now = _now()
     replaced = None
+    reopened = None
     chain = None
     if row is not None:
         if row["status"] == "open":
@@ -763,9 +1154,19 @@ def _open_or_new(conn, rid, key, module, kind, title=None, attrs=None, surface=N
             else:
                 _close(conn, row["rec_id"], rid, key, "expired", meta={"reason": "no answer"})
         elif _silenced_row(row, now):
-            return None
+            # An answered key reopens on a material change at a higher bar
+            # than an open one (the memory audit's "silences"): the answer
+            # stays in the trail; only its silence ends, and the new episode
+            # names the one it follows (reopened_from).
+            change = reopen_change(row, attrs) if created_at is None else None
+            if not change:
+                return None
+            lift_silence(conn, row["rec_id"], f"reopened:{change['why']}", now=now)
+            reopened = row["rec_id"]
     attrs = attrs or {}
     kind = kind or kind_of(key)
+    if reopened is None and row is not None and row["status"] in ANSWERED_STATUSES:
+        reopened = row["rec_id"]          # re-offered once its silence ran out
     others = []
     if kind in REPLACING_KINDS and created_at is None:
         for other in conn.execute("SELECT * FROM rec_instances WHERE restaurant_id=? AND kind=? AND status='open' "
@@ -779,21 +1180,27 @@ def _open_or_new(conn, rid, key, module, kind, title=None, attrs=None, surface=N
                 chain = start
     rec_id = uuid.uuid4().hex
     snap = attrs.get("_snapshot") or {}
+    # What the advice is ABOUT, computed once when it is shown and stored
+    # (the "signatures" item): a model line's hash key names nothing, so a
+    # Labor read's "cut a server Tuesday" taken three times never built a
+    # Tuesday-staffing record. '' = computed, none.
+    sig = signature_for(key, title, restaurant_id=rid)
     conn.execute(
         "INSERT INTO rec_instances (rec_id, restaurant_id, key, module, kind, title, dollar_value, confidence_band, "
         "evidence_sources, cross_module, model_written, cavnar_completes, expected_metric, expected_by, first_surface, "
-        "first_position, created_at, last_event_at, tags, owner_only, target, chain_started_at, "
-        + ", ".join(SNAPSHOT_COLS) + ") "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?," + ",".join("?" for _ in SNAPSHOT_COLS) + ")",
+        "first_position, created_at, last_event_at, tags, owner_only, target, chain_started_at, signature, "
+        "reopened_from, " + ", ".join(SNAPSHOT_COLS) + ") "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?," + ",".join("?" for _ in SNAPSHOT_COLS) + ")",
         (rec_id, rid, key, module, kind, (title or "")[:200] or None,
          _num(attrs.get("dollar_value")), attrs.get("confidence_band"),
          json.dumps(sorted(set(attrs.get("evidence_sources") or []))) if attrs.get("evidence_sources") else None,
          1 if (attrs.get("cross_module") or len(set(attrs.get("evidence_sources") or [])) > 1) else 0,
          1 if attrs.get("model_written") else 0, 1 if attrs.get("cavnar_completes") else 0,
          attrs.get("expected_metric"), attrs.get("expected_by"), surface, position, created_at or now,
-         created_at or now, _stored_tags(conn, rid, key, module, kind), 1 if attrs.get("owner_only") else 0,
+         created_at or now, _stored_tags(conn, rid, key, module, kind, signature=sig),
+         1 if attrs.get("owner_only") else 0,
          str(attrs["target"])[:60] if attrs.get("target") not in (None, "") else None,
-         chain if (chain and chain < (created_at or now)) else None,
+         chain if (chain and chain < (created_at or now)) else None, sig or "", reopened,
          *(snap.get(c) for c in SNAPSHOT_COLS)))
     if replaced:
         _supersede(conn, replaced[0], rid, key, by=rec_id, meta=replaced[1])
@@ -809,13 +1216,14 @@ def _num(v):
         return None
 
 
-def _add_event(conn, rec_id, rid, key, event, surface=None, user_id=None, role=None, dedupe=None, meta=None, at=None):
+def _add_event(conn, rec_id, rid, key, event, surface=None, user_id=None, role=None, dedupe=None, meta=None, at=None,
+               authority=None):
     at = at or _now()
     cur = conn.execute(
-        "INSERT OR IGNORE INTO rec_events (rec_id, restaurant_id, key, event, surface, user_id, role, dedupe, meta, at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        "INSERT OR IGNORE INTO rec_events (rec_id, restaurant_id, key, event, surface, user_id, role, dedupe, meta, at, "
+        "authority) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         (rec_id, rid, key, event, surface, user_id, (role or None), dedupe or f"{event}:{uuid.uuid4().hex}",
-         json.dumps(meta)[:2000] if meta else None, at))
+         json.dumps(meta)[:2000] if meta else None, at, authority))
     if cur.rowcount:
         conn.execute("UPDATE rec_instances SET last_event_at=MAX(last_event_at, ?) WHERE rec_id=?", (at, rec_id))
     return bool(cur.rowcount)
@@ -973,6 +1381,14 @@ def present_many(restaurant_id, items: list, surface: str, user_id=None, db_path
                     before = _last_shown_pct(conn, rec_id)
                     if before is not None and abs(int(snap["confidence_pct"]) - int(before)) >= CONFIDENCE_MOVE_POINTS:
                         meta["confidence_moved"] = {"from": int(before), "to": int(snap["confidence_pct"])}
+                # ...and what learning did to its rank (memory audit 9/29/26,
+                # "rank_log"): {base, score, weight, why, rung, version} —
+                # rec_learning.rank_meta. 288 shown events carried no weight.
+                rank = it.get("rank")
+                if isinstance(rank, dict) and rank:
+                    meta["rank"] = {k: rank.get(k) for k in ("base", "score", "weight", "why", "prior_rung", "rung",
+                                                             "version")
+                                    if rank.get(k) not in (None, [], "", {})}
                 _add_event(conn, rec_id, restaurant_id, key, "shown", surface=surface, user_id=user_id,
                            dedupe=f"shown:{surface}:{day}", meta=meta)
         kinds = [str(k) for k in (replaces or ()) if k]
@@ -997,14 +1413,60 @@ def present_many(restaurant_id, items: list, surface: str, user_id=None, db_path
     return out
 
 
+def log_rank_build(restaurant_id, surface, shown=(), not_shown=(), version=None, db_path=DB_PATH) -> bool:
+    """One compact row per restaurant, surface and local day with what a
+    build ranked (memory audit 9/29/26, "rank_log"): the cards shown and
+    the top candidates NOT shown, each {key, base, score, weight, rung,
+    version}. The latest build of the day wins. Acceptance can only be
+    corrected for exposure when the alternatives are known. Never raises."""
+    if not restaurant_id or not surface:
+        return False
+
+    def compact(items):
+        out = []
+        for it in items or ():
+            if not isinstance(it, dict) or not it.get("key"):
+                continue
+            out.append({k: it.get(k) for k in ("key", "base", "score", "weight", "rung")
+                        if it.get(k) not in (None, "")})
+        return json.dumps(out)[:6000]
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return False
+    try:
+        day = local_day(conn, restaurant_id)
+        conn.execute("INSERT INTO rec_rank_builds (restaurant_id, surface, day, version, shown, not_shown, built_at) "
+                     "VALUES (?,?,?,?,?,?,?) ON CONFLICT(restaurant_id, surface, day) DO UPDATE SET "
+                     "version=excluded.version, shown=excluded.shown, not_shown=excluded.not_shown, "
+                     "built_at=excluded.built_at",
+                     (restaurant_id, str(surface)[:40], day, version, compact(shown), compact(not_shown), _now()))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"[rec_ledger] rank build not logged: {e}")
+        return False
+    finally:
+        conn.close()
+
+
 def record(restaurant_id, key, event, surface=None, user_id=None, role=None, meta=None, source_ref=None,
            silence_days=None, snooze_until=None, at=None, silence_until=None, db_path=DB_PATH,
-           rec_id=None, require_existing=False) -> bool:
+           rec_id=None, require_existing=False, authority=None, via=None) -> bool:
     """The owner (or Cavnar on their behalf) did something with a
     recommendation. Terminal events close the episode; `dismissed` and
-    `completed`/`accepted` silence the key everywhere for SILENCE_DAYS /
-    ACCEPTED_QUIET_DAYS (or `silence_days`, or an absolute `silence_until`).
-    Never raises.
+    `completed`/`accepted` silence the key everywhere for what the answer
+    holds (answer_silence — by kind and by the owner's reason; a caller's
+    `silence_days` / `silence_until` only up to it, except a Track's
+    measuring window). Never raises.
+
+    `authority` is permissions.answer_authority of whoever answered
+    (principal | delegate | admin; None is a system answer, read as the
+    principal's). A delegate's decline, hide or snooze silences the key for
+    that login only (rec_silences), leaving the episode open for the owner;
+    an admin's answer through view-as (derived from the request when not
+    given, `via` naming the admin) is kept in the trail and changes nothing
+    else — it never silences or trains the owner's preferences.
 
     `rec_id` names the episode the answer belongs to (a check-in on the
     result a tracker measured — K1) instead of the key's latest; it must be
@@ -1034,6 +1496,10 @@ def record(restaurant_id, key, event, surface=None, user_id=None, role=None, met
         # The routes refuse an unknown code with a 400; an internal caller's
         # is dropped rather than stored as if it were one of the six.
         meta = {k: v for k, v in meta.items() if k != "reason_code"}
+    if authority is None and via is None and when is None:
+        via = request_via()
+        if via:
+            authority = "admin"
     try:
         conn = get_conn(db_path)
     except Exception as e:
@@ -1042,7 +1508,8 @@ def record(restaurant_id, key, event, surface=None, user_id=None, role=None, met
     try:
         added = _record_on(conn, restaurant_id, key, event, surface=surface, user_id=user_id, role=role, meta=meta,
                            source_ref=source_ref, silence_days=silence_days, snooze_until=snooze_until, when=when,
-                           silence_until=silence_until, rec_id=rec_id, require_existing=require_existing)
+                           silence_until=silence_until, rec_id=rec_id, require_existing=require_existing,
+                           authority=authority, via=via)
         conn.commit()
         return added
     except Exception as e:
@@ -1054,6 +1521,107 @@ def record(restaurant_id, key, event, surface=None, user_id=None, role=None, met
         return False
     finally:
         conn.close()
+
+
+AUTHORITIES = ("principal", "delegate", "admin")
+# Answers that only silence (never take): what a delegate or an admin says
+# with one of these holds for that login alone.
+_DECLINE_EVENTS = ("dismissed", "snoozed")
+_ANSWER_EVENTS = ("accepted", "completed", "dismissed", "snoozed")
+
+
+def request_via(user=None):
+    """{"admin_id", "admin", "role"} when this request (or `user`) is an
+    admin acting through view-as — the admin behind it, never the owner it
+    views as — else None (permissions.acting_via). Never raises."""
+    try:
+        from permissions import acting_via
+        return acting_via(user)
+    except Exception:
+        return None
+
+
+def silence_subject(user):
+    """The login a per-login silence holds for: the acting admin behind a
+    view-as session (never the owner it views as), else the login itself."""
+    if not isinstance(user, dict):
+        return None
+    via = request_via(user)
+    if via and via.get("admin_id") is not None:
+        return int(via["admin_id"])
+    uid = user.get("id")
+    return int(uid) if uid is not None else None
+
+
+def _set_silence(conn, rec_id, base, days, rule, mode="set", until=None):
+    """Hold the episode silent to base + days (or `until`, whichever is
+    sooner), recording the rule and when it began. mode "max" keeps any
+    longer silence already running; "max_measuring" only a Track's
+    measuring window (or a silence from before rules were recorded)."""
+    new = conn.execute("SELECT datetime(?, ?)", (base, f"+{int(days)} days")).fetchone()[0]
+    u = _stamp(until)
+    if u and u < new:
+        new = u
+    row = conn.execute("SELECT silenced_until, silence_rule FROM rec_instances WHERE rec_id=?", (rec_id,)).fetchone()
+    if row is not None and row["silenced_until"] and row["silenced_until"] >= new and (
+            mode == "max" or (mode == "max_measuring" and row["silence_rule"] in ("measuring", None))):
+        return
+    conn.execute("UPDATE rec_instances SET silenced_until=?, silence_rule=?, silenced_at=?, trigger_clear_at=NULL "
+                 "WHERE rec_id=?", (new, str(rule or "")[:40] or None, base, rec_id))
+
+
+def _silence_login(conn, restaurant_id, subject_id, key, rec_id, event, authority, reason_code, base, days):
+    """A per-login silence (a delegate's or an admin's view-as answer)."""
+    if subject_id is None or not days:
+        return
+    until = conn.execute("SELECT datetime(?, ?)", (base, f"+{int(days)} days")).fetchone()[0]
+    conn.execute(
+        "INSERT INTO rec_silences (restaurant_id, subject_id, key, rec_id, event, authority, reason_code, until, "
+        "created_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(restaurant_id, subject_id, key) DO UPDATE SET "
+        "rec_id=excluded.rec_id, event=excluded.event, authority=excluded.authority, "
+        "reason_code=excluded.reason_code, until=excluded.until, created_at=excluded.created_at",
+        (restaurant_id, int(subject_id), key, rec_id, event, authority, reason_code, until, base))
+
+
+def _register_distrust(conn, restaurant_id, rec_id, key, user_id, base):
+    """"Don't trust the data" on this episode: the data sources it rests on
+    (each evidence module's own source — data_freshness.BLOCKING — so a
+    distrusted shift feed does not cap the food cards that also divide by
+    sales) held open until re-verified (verify_source). Returns the sources."""
+    row = conn.execute("SELECT module, kind, evidence_sources FROM rec_instances WHERE rec_id=?",
+                       (rec_id,)).fetchone()
+    if row is None:
+        return []
+    try:
+        mods = list(json.loads(row["evidence_sources"] or "[]") or [])
+    except (TypeError, ValueError):
+        mods = []
+    if row["module"] and row["module"] not in mods:
+        mods.append(row["module"])
+    try:
+        import data_freshness as _df
+        sources = []
+        for m in mods:
+            primary = _df.BLOCKING.get(str(m or "").lower())
+            for s in ((primary,) if primary else _df.sources_for([m])):
+                if s and s not in sources:
+                    sources.append(s)
+    except Exception as e:
+        print(f"[rec_ledger] distrust sources unreadable for {key}: {e}")
+        sources = []
+    kind = row["kind"] or kind_of(key)
+    for src in sources:
+        open_row = conn.execute("SELECT id, kinds FROM rec_distrust WHERE restaurant_id=? AND source=? "
+                                "AND verified_at IS NULL", (restaurant_id, src)).fetchone()
+        if open_row:
+            kinds = set(json.loads(open_row["kinds"] or "[]") or []) | {kind}
+            conn.execute("UPDATE rec_distrust SET reports=reports+1, last_reported_at=?, rec_key=?, reported_by=?, "
+                         "kinds=? WHERE id=?", (base, key, user_id, json.dumps(sorted(kinds)), open_row["id"]))
+        else:
+            conn.execute("INSERT INTO rec_distrust (restaurant_id, source, kinds, first_reported_at, "
+                         "last_reported_at, rec_key, reported_by) VALUES (?,?,?,?,?,?,?)",
+                         (restaurant_id, src, json.dumps([kind]), base, base, key, user_id))
+    return sources
 
 
 def _may_implement(row, when=None) -> bool:
@@ -1080,10 +1648,16 @@ def _may_implement(row, when=None) -> bool:
 
 def _record_on(conn, restaurant_id, key, event, surface=None, user_id=None, role=None, meta=None, source_ref=None,
                silence_days=None, snooze_until=None, when=None, silence_until=None, rec_id=None,
-               require_existing=False) -> bool:
+               require_existing=False, authority=None, via=None) -> bool:
     """record()'s body on the caller's connection, uncommitted — for a
     caller already inside its own write transaction (a schedule save), where
     a second connection would wait on the lock that caller holds."""
+    authority = authority if authority in AUTHORITIES else None
+    if via and authority is None:
+        authority = "admin"
+    meta = dict(meta) if meta else None
+    if via:
+        meta = dict(meta or {}, via={k: v for k, v in via.items() if v is not None})
     dedupe = f"{event}:{source_ref}" if source_ref else None
     if dedupe and conn.execute("SELECT 1 FROM rec_events WHERE restaurant_id=? AND key=? AND dedupe=? LIMIT 1",
                                (restaurant_id, key, dedupe)).fetchone():
@@ -1116,53 +1690,92 @@ def _record_on(conn, restaurant_id, key, event, surface=None, user_id=None, role
     else:
         rec_id = row["rec_id"]
     added = _add_event(conn, rec_id, restaurant_id, key, event, surface=surface, user_id=user_id, role=role,
-                       dedupe=dedupe, meta=meta, at=when)
+                       dedupe=dedupe, meta=meta, at=when, authority=authority)
     base = when or _now()
-    if added:
-        if event in TERMINAL:
-            _close(conn, rec_id, restaurant_id, key, TERMINAL[event], at=when)
-        recurring = recurring_silence(key, event, (meta or {}).get("kind"))
-        if event == "dismissed":
-            days = silence_days or SILENCE_DAYS.get((meta or {}).get("kind") or "hide", SILENCE_DAYS["hide"])
-            if recurring:
-                days = min(int(days), recurring)
-            conn.execute("UPDATE rec_instances SET silenced_until=COALESCE(?, datetime(?, ?)) WHERE rec_id=?",
-                         (_stamp(silence_until), base, f"+{int(days)} days", rec_id))
-        elif event == "completed" and recurring and not silence_until:
-            # Done on a recurring key holds until its next occurrence — set,
-            # not raised to an older (ten-year) silence (re-audit OPP-9).
-            conn.execute("UPDATE rec_instances SET silenced_until=datetime(?, ?) WHERE rec_id=?",
-                         (base, f"+{int(min(int(silence_days or recurring), recurring))} days", rec_id))
-        elif event in ("accepted", "completed"):
-            conn.execute("UPDATE rec_instances SET silenced_until=MAX(COALESCE(silenced_until, ''), "
-                         "COALESCE(?, datetime(?, ?))) WHERE rec_id=?",
-                         (_stamp(silence_until), base, f"+{int(silence_days or ACCEPTED_QUIET_DAYS)} days", rec_id))
-        elif event == "snoozed":
-            until = snooze_until or (datetime.utcnow() + timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
-            # "Not today" on a card the 8am job had just expired (it was
-            # still on the owner's screen) is an answer to that card: it
-            # reopens, snoozed, instead of staying expired and unsilenced so
-            # the next surface showed it again at once (re-audit B17).
-            conn.execute("UPDATE rec_instances SET snoozed_until=?, "
-                         "status=CASE WHEN status='expired' THEN 'open' ELSE status END, "
-                         "closed_at=CASE WHEN status='expired' THEN NULL ELSE closed_at END WHERE rec_id=?",
-                         (str(until), rec_id))
-        elif event == "implemented":
-            # The change was made. Open, expired or accepted become
-            # implemented; Done stays Done and a "not for us" stays
-            # declined — the time is kept on every one of them.
-            conn.execute(
-                "UPDATE rec_instances SET implemented_at=COALESCE(implemented_at, ?), "
-                "status=CASE WHEN status IN ('open','expired','accepted') THEN 'implemented' ELSE status END, "
-                "closed_at=CASE WHEN status IN ('open','expired') THEN ? ELSE closed_at END, "
-                "silenced_until=MAX(COALESCE(silenced_until, ''), COALESCE(?, datetime(?, ?))) WHERE rec_id=?",
-                (base, base, _stamp(silence_until), base, f"+{int(silence_days or ACCEPTED_QUIET_DAYS)} days",
-                 rec_id))
-        tracker = (meta or {}).get("tracker_id") or (meta or {}).get("tracking")
-        if isinstance(tracker, int) and not isinstance(tracker, bool) and tracker > 0:
-            # The tracker measuring this episode, kept for good (#36).
-            conn.execute("UPDATE rec_instances SET tracker_id=? WHERE rec_id=? AND tracker_id IS NULL",
-                         (tracker, rec_id))
+    if not added:
+        return added
+    m = meta or {}
+    code = m.get("reason_code") if m.get("reason_code") in REASON_CODES else None
+    effect = reason_effect(code, m.get("reason")) if event in ("dismissed", "snoozed") else None
+    # An admin's answer through view-as is support triaging a queue, not the
+    # owner deciding ("view_as"): the trail keeps it; nothing else moves.
+    # A delegate's decline holds for that login only ("who_answered"): the
+    # owner is still shown the recommendation, with who passed on it.
+    login_only = authority == "admin" or (authority == "delegate" and event in _DECLINE_EVENTS)
+    if login_only:
+        if event in _ANSWER_EVENTS:
+            subject = (via or {}).get("admin_id") if authority == "admin" else user_id
+            if event == "snoozed":
+                days = SAFETY_CYCLE_DAYS if kind_of(key) in SAFETY_KINDS else 1
+                if snooze_until:
+                    try:
+                        days = max(1, min(days if kind_of(key) in SAFETY_KINDS else DELEGATE_SILENCE_MAX_DAYS,
+                                          (datetime.strptime(_stamp(snooze_until), "%Y-%m-%d %H:%M:%S")
+                                           - datetime.utcnow()).days + 1))
+                    except (TypeError, ValueError):
+                        pass
+            else:
+                days, _rule = answer_silence(key, event, kind=m.get("kind"), reason_code=code, reason=m.get("reason"))
+                days = min(int(days or SILENCE_DAYS["hide"]), DELEGATE_SILENCE_MAX_DAYS)
+            _silence_login(conn, restaurant_id, subject, key, rec_id, event, authority, code, base, days)
+        return added
+    if event in TERMINAL:
+        # "Already doing it" is the owner saying it is done: it closes taken
+        # ("reasons"), the answer kept as given in the trail.
+        _close(conn, rec_id, restaurant_id, key,
+               "completed" if (event == "dismissed" and effect == "taken") else TERMINAL[event], at=when)
+    if event in ("dismissed", "completed"):
+        days, rule = answer_silence(key, event, kind=m.get("kind"), reason_code=code, reason=m.get("reason"))
+        if silence_days:
+            days = min(int(silence_days), int(days))
+        # Done keeps a longer measuring window a Track already set; any
+        # other answer's silence is replaced by this one's.
+        _set_silence(conn, rec_id, base, days, rule, mode="max_measuring" if event == "completed" else "set",
+                     until=silence_until)
+        if effect == "distrust":
+            _register_distrust(conn, restaurant_id, rec_id, key, user_id, base)
+    elif event == "accepted":
+        # A Track holds while its outcome is measured — the caller's window.
+        days = int(silence_days or ACCEPTED_QUIET_DAYS)
+        if kind_of(key) in SAFETY_KINDS:
+            days = min(days, SAFETY_CYCLE_DAYS)
+        _set_silence(conn, rec_id, base, days, "safety_cycle" if kind_of(key) in SAFETY_KINDS else "measuring",
+                     mode="max", until=silence_until)
+    elif event == "snoozed":
+        until = snooze_until or (datetime.utcnow() + timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
+        if kind_of(key) in SAFETY_KINDS:
+            # Never past the current stock-out cycle.
+            cap = conn.execute("SELECT datetime(?, ?)", (base, f"+{SAFETY_CYCLE_DAYS} days")).fetchone()[0]
+            until = min(str(_stamp(until) or until), cap)
+        # "Not today" on a card the 8am job had just expired (it was
+        # still on the owner's screen) is an answer to that card: it
+        # reopens, snoozed, instead of staying expired and unsilenced so
+        # the next surface showed it again at once (re-audit B17).
+        conn.execute("UPDATE rec_instances SET snoozed_until=?, "
+                     "status=CASE WHEN status='expired' THEN 'open' ELSE status END, "
+                     "closed_at=CASE WHEN status='expired' THEN NULL ELSE closed_at END WHERE rec_id=?",
+                     (str(until), rec_id))
+        if effect == "distrust":
+            _register_distrust(conn, restaurant_id, rec_id, key, user_id, base)
+    elif event == "implemented":
+        # The change was made. Open, expired or accepted become
+        # implemented; Done stays Done and a "not for us" stays
+        # declined — the time is kept on every one of them.
+        conn.execute(
+            "UPDATE rec_instances SET implemented_at=COALESCE(implemented_at, ?), "
+            "status=CASE WHEN status IN ('open','expired','accepted') THEN 'implemented' ELSE status END, "
+            "closed_at=CASE WHEN status IN ('open','expired') THEN ? ELSE closed_at END WHERE rec_id=?",
+            (base, base, rec_id))
+        days = int(silence_days or ACCEPTED_QUIET_DAYS)
+        if kind_of(key) in SAFETY_KINDS:
+            days = min(days, SAFETY_CYCLE_DAYS)
+        _set_silence(conn, rec_id, base, days, "safety_cycle" if kind_of(key) in SAFETY_KINDS else "measuring",
+                     mode="max", until=silence_until)
+    tracker = m.get("tracker_id") or m.get("tracking")
+    if isinstance(tracker, int) and not isinstance(tracker, bool) and tracker > 0:
+        # The tracker measuring this episode, kept for good (#36).
+        conn.execute("UPDATE rec_instances SET tracker_id=? WHERE rec_id=? AND tracker_id IS NULL",
+                     (tracker, rec_id))
     return added
 
 
@@ -1484,24 +2097,34 @@ def backfill_tags(db_path=DB_PATH, limit=5000) -> int:
     """Tag episodes written before tags were stored (#17), and re-tag a dish
     or item episode stored with a day, day type or daypart read out of its
     NAME ("reprice:Friday Fish Fry" as a weekend recommendation — re-audit
-    B14). Bounded; the filter is its own cursor (a re-tagged row no longer
-    matches it), so the nightly job finishes the tail on later nights.
-    Never raises."""
+    B14). Also (memory audit 9/29/26, "signatures"): the advice signature
+    of every episode written before it was stored, with its "sig:" tag,
+    and a topic for the kinds that carried none (insight_labor, diag_labor,
+    content_idea). Bounded; the filter is its own cursor (a re-tagged row no
+    longer matches it — a signature that cannot be read is stored as ''),
+    so the nightly job finishes the tail on later nights. Never raises."""
     try:
         conn = get_conn(db_path)
     except Exception:
         return 0
     n = 0
     named = tuple(DISH_KINDS) + tuple(ITEM_KINDS)
+    topicless = ("insight_labor", "diag_labor", "content_idea")
     try:
         rows = conn.execute(
-            "SELECT rec_id, restaurant_id, key, module, kind FROM rec_instances WHERE tags IS NULL "
+            "SELECT rec_id, restaurant_id, key, module, kind, title, signature FROM rec_instances WHERE tags IS NULL "
+            "OR signature IS NULL "
+            f"OR (kind IN ({','.join('?' for _ in topicless)}) AND tags NOT LIKE '%\"topic:%') "
             f"OR ((kind IN ({','.join('?' for _ in named)}) OR (kind='dsr_action' AND key LIKE 'dsr_action:%:food/%')) "
             "    AND (tags LIKE '%\"day:%' OR tags LIKE '%\"daytype:%' OR tags LIKE '%\"daypart:%')) "
-            "LIMIT ?", (*named, int(limit))).fetchall()
+            "LIMIT ?", (*topicless, *named, int(limit))).fetchall()
         for r in rows:
-            conn.execute("UPDATE rec_instances SET tags=? WHERE rec_id=?",
-                         (_stored_tags(conn, r["restaurant_id"], r["key"], r["module"], r["kind"]), r["rec_id"]))
+            sig = r["signature"]
+            if sig is None:
+                sig = signature_for(r["key"], r["title"], restaurant_id=r["restaurant_id"], db_path=db_path) or ""
+            conn.execute("UPDATE rec_instances SET tags=?, signature=? WHERE rec_id=?",
+                         (_stored_tags(conn, r["restaurant_id"], r["key"], r["module"], r["kind"], signature=sig or None),
+                          sig, r["rec_id"]))
             n += 1
         conn.commit()
     except Exception as e:
@@ -1526,29 +2149,65 @@ def episode_tags(row) -> list:
     return tags_for(row["key"], row["module"], row["kind"])
 
 
-def unsilence(restaurant_id, key, db_path=DB_PATH) -> bool:
-    """The owner took an answer back ("Use again"): the key can be shown."""
+def unsilence(restaurant_id, key, db_path=DB_PATH, subject_id=None) -> bool:
+    """The owner took an answer back ("Use again"): the key can be shown.
+    With `subject_id`, that login's own silence on the key goes too."""
     try:
         conn = get_conn(db_path)
     except Exception:
         return False
     try:
+        k = str(key or "")[:160]
         n = conn.execute("UPDATE rec_instances SET silenced_until=NULL, snoozed_until=NULL WHERE restaurant_id=? AND key=?",
-                         (restaurant_id, str(key or "")[:160])).rowcount
+                         (restaurant_id, k)).rowcount
+        if subject_id is not None:
+            try:
+                n += conn.execute("DELETE FROM rec_silences WHERE restaurant_id=? AND subject_id=? AND key=?",
+                                  (restaurant_id, int(subject_id), k)).rowcount
+            except Exception as e:
+                print(f"[rec_ledger] login silence not lifted: {e}")
         conn.commit()
         return bool(n)
     finally:
         conn.close()
 
 
-def silenced(restaurant_id, key, db_path=DB_PATH) -> bool:
-    return str(key or "")[:160] in silenced_keys(restaurant_id, db_path=db_path)
+def unsilence_login(restaurant_id, key, subject_id, db_path=DB_PATH) -> bool:
+    """A delegate (or support, through view-as) took back their own answer:
+    only that login's silence on the key goes."""
+    if subject_id is None:
+        return False
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return False
+    try:
+        n = conn.execute("DELETE FROM rec_silences WHERE restaurant_id=? AND subject_id=? AND key=?",
+                         (restaurant_id, int(subject_id), str(key or "")[:160])).rowcount
+        conn.commit()
+        return bool(n)
+    except Exception as e:
+        print(f"[rec_ledger] unsilence_login failed: {e}")
+        return False
+    finally:
+        conn.close()
 
 
-def silenced_keys(restaurant_id, db_path=DB_PATH) -> set:
+def silenced(restaurant_id, key, db_path=DB_PATH, viewer=None) -> bool:
+    return str(key or "")[:160] in silenced_keys(restaurant_id, db_path=db_path, viewer=viewer)
+
+
+def silenced_keys(restaurant_id, db_path=DB_PATH, viewer=None) -> set:
     """Every key an answer is currently silencing for this restaurant — on
     any surface. Includes Home's own dismissals, so an answer given before
-    the ledger existed still holds."""
+    the ledger existed still holds.
+
+    `viewer` (a login dict, or a login id) adds what that login's own
+    answers silence for it alone (rec_silences: a manager's decline, an
+    admin's view-as answer). A running-out item's silence (stock_low /
+    critical_low) ends the moment a count or a delivery of the item is
+    recorded after the answer: an answer is about THIS stock-out, never the
+    next one ("critical_low")."""
     now = _now()
     out = set()
     try:
@@ -1556,18 +2215,372 @@ def silenced_keys(restaurant_id, db_path=DB_PATH) -> set:
     except Exception:
         return out
     try:
+        when = {}
         for r in conn.execute(
-                "SELECT key FROM rec_instances WHERE restaurant_id=? AND ((silenced_until IS NOT NULL AND silenced_until > ?) "
+                "SELECT key, silenced_at, closed_at, last_event_at FROM rec_instances WHERE restaurant_id=? "
+                "AND ((silenced_until IS NOT NULL AND silenced_until > ?) "
                 "OR (status='open' AND snoozed_until IS NOT NULL AND snoozed_until > ?))", (restaurant_id, now, now)):
             out.add(r["key"])
+            if kind_of(r["key"]) in SAFETY_KINDS:
+                when[r["key"]] = max(when.get(r["key"], ""), r["silenced_at"] or r["closed_at"] or r["last_event_at"] or "")
         try:
-            for r in conn.execute("SELECT key FROM home_dismissals WHERE restaurant_id=? AND expires_at > datetime('now')",
-                                  (restaurant_id,)):
+            for r in conn.execute("SELECT key, dismissed_at FROM home_dismissals WHERE restaurant_id=? "
+                                  "AND expires_at > datetime('now')", (restaurant_id,)):
                 out.add(r["key"])
+                if kind_of(r["key"]) in SAFETY_KINDS:
+                    when[r["key"]] = max(when.get(r["key"], ""), str(r["dismissed_at"] or ""))
         except Exception:
             pass
+        subject = viewer if isinstance(viewer, int) else silence_subject(viewer)
+        if subject is not None:
+            try:
+                for r in conn.execute("SELECT key, created_at FROM rec_silences WHERE restaurant_id=? AND subject_id=? "
+                                      "AND until > ?", (restaurant_id, int(subject), now)):
+                    out.add(r["key"])
+                    if kind_of(r["key"]) in SAFETY_KINDS:
+                        when[r["key"]] = max(when.get(r["key"], ""), str(r["created_at"] or ""))
+            except Exception as e:
+                print(f"[rec_ledger] login silences unreadable: {e}")
+        if when:
+            out -= _restocked_since(conn, restaurant_id, when)
     except Exception as e:
         print(f"[rec_ledger] silenced_keys failed: {e}")
+    finally:
+        conn.close()
+    return out
+
+
+def _restocked_since(conn, restaurant_id, when) -> set:
+    """The stock keys among `when` ({key: answered at}) whose item has had
+    a count or a delivery recorded since the answer — a new stock-out
+    cycle. Matched on the ingredient's name, as the key carries it."""
+    names = {}
+    for key in when:
+        item = key.split(":", 1)[1].strip().lower() if ":" in key else ""
+        if item:
+            names.setdefault(item, []).append(key)
+    if not names:
+        return set()
+    lifted = set()
+    try:
+        marks = ",".join("?" for _ in names)
+        for r in conn.execute(
+                f"SELECT lower(g.name) AS item, MAX(e.created_at) AS last FROM ingredient_stock_events e "
+                f"JOIN ingredients g ON g.id=e.ingredient_id WHERE e.restaurant_id=? "
+                f"AND e.event_type IN ('recount','receiving') AND lower(g.name) IN ({marks}) GROUP BY lower(g.name)",
+                (restaurant_id, *names)).fetchall():
+            for key in names.get(r["item"], ()):
+                answered = _stamp(when.get(key)) or ""
+                if r["last"] and answered and str(r["last"]) > answered:
+                    lifted.add(key)
+    except Exception as e:           # no stock ledger on this database
+        print(f"[rec_ledger] restock check skipped: {e}")
+    return lifted
+
+
+def login_silences(restaurant_id, keys=None, db_path=DB_PATH, now=None) -> dict:
+    """{key: [{subject_id, authority, event, reason_code, until, at}]} — the
+    per-login silences in force (a delegate's decline, an admin's view-as
+    answer), for the owner's "Dana passed on this" (delegate_answers)."""
+    now = now or _now()
+    out = {}
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return out
+    try:
+        args = [restaurant_id, now]
+        where = ""
+        if keys is not None:
+            keys = [str(k)[:160] for k in keys if k]
+            if not keys:
+                return out
+            where = f" AND key IN ({','.join('?' for _ in keys)})"
+            args += keys
+        for r in conn.execute("SELECT subject_id, key, authority, event, reason_code, until, created_at FROM "
+                              f"rec_silences WHERE restaurant_id=? AND until > ?{where}", args).fetchall():
+            out.setdefault(r["key"], []).append({"subject_id": r["subject_id"], "authority": r["authority"],
+                                                 "event": r["event"], "reason_code": r["reason_code"],
+                                                 "until": r["until"], "at": r["created_at"]})
+    except Exception as e:
+        print(f"[rec_ledger] login silences unreadable: {e}")
+    finally:
+        conn.close()
+    return out
+
+
+def reconsider(restaurant_id, candidates, evaluated_kinds=(), db_path=DB_PATH, now=None, write=True) -> set:
+    """The keys among a build's `candidates` whose answer no longer holds
+    (the memory audit's "silences") — for a surface that filters by
+    silenced_keys before it presents. Each candidate is {key, dollar_value?,
+    target?}; `evaluated_kinds` are the situational kinds this build
+    evaluated IN FULL (every key of them that fires is among the candidates).
+
+      * re-armed: a situational Done (silence_rule situational_done) whose
+        trigger was seen CLEAR after the answer (a build that evaluated the
+        kind and did not fire the key) and fires again, once the answer is
+        REARM_MIN_DAYS old. A build that sees it clear stamps
+        trigger_clear_at; one that sees it firing re-arms it.
+      * reopened: an answered key whose figure moved materially
+        (reopen_change: REOPEN_FACTOR × the answered figure, or a taken
+        answer's target).
+    The silence is lifted (the answer stays in the trail); the surface's
+    present() then begins a new episode that names the one before it
+    (previous_answers). `write=False` (a build that records nothing) judges
+    without writing. Never raises."""
+    items = {}
+    for c in candidates or ():
+        k = str((c or {}).get("key") or "").strip()[:160]
+        if k:
+            items[k] = c
+    kinds = tuple(sorted({str(k) for k in (evaluated_kinds or ()) if k}))
+    if not restaurant_id or (not items and not kinds):
+        return set()
+    now_s = (now or datetime.utcnow()).strftime("%Y-%m-%d %H:%M:%S")
+    rearm_before = ((now or datetime.utcnow()) - timedelta(days=REARM_MIN_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    lifted = set()
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return lifted
+    try:
+        clauses, args = [], [restaurant_id, now_s]
+        if items:
+            clauses.append(f"key IN ({','.join('?' for _ in items)})")
+            args += list(items)
+        if kinds:
+            clauses.append(f"(kind IN ({','.join('?' for _ in kinds)}) AND silence_rule='situational_done')")
+            args += list(kinds)
+        rows = conn.execute(
+            "SELECT * FROM rec_instances WHERE restaurant_id=? AND silenced_until IS NOT NULL AND silenced_until > ? "
+            f"AND status IN ('accepted','completed','dismissed','implemented') AND ({' OR '.join(clauses)}) "
+            "ORDER BY created_at DESC", args).fetchall()
+        seen = set()
+        for row in rows:
+            key = row["key"]
+            if key in seen:
+                continue
+            seen.add(key)
+            latest = _latest(conn, restaurant_id, key)
+            if latest is None or latest["rec_id"] != row["rec_id"]:
+                continue
+            firing = key in items
+            if firing:
+                change = reopen_change(row, items[key])
+                if change:
+                    if write:
+                        lift_silence(conn, row["rec_id"], f"reopened:{change['why']}", now=now_s)
+                    lifted.add(key)
+                    continue
+            if row["silence_rule"] != "situational_done" or kind_of(key) not in kinds:
+                continue
+            answered = row["silenced_at"] or row["closed_at"] or ""
+            if not firing:
+                if write and not (row["trigger_clear_at"] and row["trigger_clear_at"] >= answered):
+                    conn.execute("UPDATE rec_instances SET trigger_clear_at=? WHERE rec_id=?", (now_s, row["rec_id"]))
+                continue
+            if row["trigger_clear_at"] and row["trigger_clear_at"] >= answered and answered <= rearm_before:
+                if write:
+                    lift_silence(conn, row["rec_id"], "rearmed", now=now_s)
+                lifted.add(key)
+        if write:
+            conn.commit()
+    except Exception as e:
+        print(f"[rec_ledger] reconsider failed for {restaurant_id}: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+    finally:
+        conn.close()
+    return lifted
+
+
+def _answer_word(status, rule=None, reason_code=None):
+    if status == "dismissed":
+        if rule == "bad_timing" or reason_code == "bad_timing":
+            return "put off"
+        return "passed on" if rule not in ("hide",) else "hid"
+    if status == "completed":
+        return "marked done" if reason_code != "already_doing" else "said you were already doing"
+    if status == "implemented":
+        return "made the change for"
+    return "tracked"
+
+
+def previous_answers(restaurant_id, keys, db_path=DB_PATH) -> dict:
+    """{key: {answer, answered_on (M/D/YY), reason_code, reason_label,
+    dollar_value, reopened (why or None), text}} for each key whose CURRENT
+    episode follows an answered one — reopened on a material change, re-armed
+    when its trigger came back, or re-offered after its silence ran out —
+    so the card can say "You passed on this on 3/12/26 ($120/mo then)"
+    instead of asking as if for the first time. Principal answers only
+    (a delegate's is delegate_answers'). Never raises."""
+    keys = [str(k)[:160] for k in (keys or []) if k]
+    out = {}
+    if not restaurant_id or not keys:
+        return out
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return out
+    try:
+        from time_utils import mdy
+        marks = ",".join("?" for _ in keys)
+        cur = {r["key"]: r for r in conn.execute(
+            f"SELECT i.* FROM rec_instances i WHERE i.restaurant_id=? AND i.key IN ({marks}) AND i.status='open' "
+            "AND i.reopened_from IS NOT NULL", (restaurant_id, *keys)).fetchall()}
+        for key, ep in cur.items():
+            prev = conn.execute("SELECT * FROM rec_instances WHERE rec_id=? AND restaurant_id=?",
+                                (ep["reopened_from"], restaurant_id)).fetchone()
+            if prev is None or prev["status"] not in ANSWERED_STATUSES:
+                continue
+            ev = conn.execute(
+                "SELECT event, meta, at FROM rec_events WHERE rec_id=? AND event IN ('accepted','completed',"
+                "'dismissed','implemented') AND COALESCE(authority,'principal')='principal' "
+                "ORDER BY at DESC, id DESC LIMIT 1", (prev["rec_id"],)).fetchone()
+            if ev is None:
+                continue
+            try:
+                meta = json.loads(ev["meta"] or "{}") or {}
+            except (TypeError, ValueError):
+                meta = {}
+            code = meta.get("reason_code") if meta.get("reason_code") in REASON_CODES else None
+            on = mdy(str(ev["at"])[:10])
+            word = _answer_word(prev["status"], prev["silence_rule"], code)
+            dollars = prev["dollar_value"]
+            text = f"You {word} this on {on}"
+            if word == "said you were already doing":
+                text = f"On {on} you said you were already doing this"
+            if dollars:
+                text += f" (${float(dollars):,.0f}/mo then)"
+            rule = str(prev["silence_rule"] or "")
+            if rule.startswith("reopened:figure"):
+                text += " — the figure has at least doubled since"
+            elif rule.startswith("reopened:target"):
+                text += " — it asks for something different now"
+            elif rule == "rearmed":
+                text += " — it had cleared, and it is back"
+            out[key] = {"answer": prev["status"], "answered_on": on, "reason_code": code,
+                        "reason_label": reason_label(code) if code else None, "dollar_value": dollars,
+                        "reopened": rule if rule.startswith(("reopened:", "rearmed")) else None,
+                        "text": text + "."}
+    except Exception as e:
+        print(f"[rec_ledger] previous answers unavailable: {e}")
+    finally:
+        conn.close()
+    return out
+
+
+def delegate_answers(restaurant_id, keys, db_path=DB_PATH) -> dict:
+    """{key: {by, answer, reason_code, reason_label, answered_on, text}} —
+    a manager's (or employee's) decline still in force on a recommendation
+    the owner is shown: "Dana passed on this: already doing it (9/28/26)"
+    ("who_answered"). The owner decides; the delegate's answer silenced it
+    for Dana only. Admin view-as answers are never named here. Never raises."""
+    sil = login_silences(restaurant_id, keys, db_path=db_path)
+    out = {}
+    if not sil:
+        return out
+    ids = sorted({x["subject_id"] for v in sil.values() for x in v if x["authority"] == "delegate"})
+    names = {}
+    try:
+        conn = get_conn(db_path)
+        try:
+            if ids:
+                cols = {r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
+                name_col = next((c for c in ("display_name", "full_name", "first_name", "name") if c in cols), None)
+                sel = f"COALESCE(NULLIF({name_col}, ''), username)" if name_col else "username"
+                for r in conn.execute(f"SELECT id, {sel} AS n FROM users WHERE id IN ({','.join('?' for _ in ids)})",
+                                      ids).fetchall():
+                    names[r["id"]] = str(r["n"] or "").split("@")[0].split(" ")[0][:40] or "A teammate"
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[rec_ledger] delegate names unreadable: {e}")
+    from time_utils import mdy
+    for key, rows in sil.items():
+        dele = [x for x in rows if x["authority"] == "delegate"]
+        if not dele:
+            continue
+        x = max(dele, key=lambda d: str(d.get("at") or ""))
+        who = names.get(x["subject_id"], "A teammate")
+        label = reason_label(x["reason_code"]) if x["reason_code"] else ""
+        verb = {"snoozed": "put this off"}.get(x["event"], "passed on this")
+        on = mdy(str(x["at"] or "")[:10])
+        out[key] = {"by": who, "answer": x["event"], "reason_code": x["reason_code"],
+                    "reason_label": label or None, "answered_on": on,
+                    "text": f"{who} {verb}" + (f": {label}" if label else "") + (f" ({on})" if on else "")}
+    return out
+
+
+def verify_source(restaurant_id, source, user_id=None, db_path=DB_PATH) -> dict:
+    """The owner re-verified a data source they had said they don't trust
+    ("reasons"): its open distrust closes, every card resting on it is no
+    longer capped, and the answers held until it was verified (silence_rule
+    'distrust' on a card of the kinds reported against it) are released.
+    Returns {"ok", "closed", "released"}. Never raises."""
+    out = {"ok": False, "closed": 0, "released": 0}
+    src = str(source or "").strip().lower()[:40]
+    if not restaurant_id or not src:
+        return out
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return out
+    try:
+        now = _now()
+        rows = conn.execute("SELECT id, kinds FROM rec_distrust WHERE restaurant_id=? AND source=? "
+                            "AND verified_at IS NULL", (restaurant_id, src)).fetchall()
+        kinds = set()
+        for r in rows:
+            try:
+                kinds |= set(json.loads(r["kinds"] or "[]") or [])
+            except (TypeError, ValueError):
+                pass
+        out["closed"] = conn.execute("UPDATE rec_distrust SET verified_at=?, verified_by=? WHERE restaurant_id=? "
+                                     "AND source=? AND verified_at IS NULL", (now, user_id, restaurant_id, src)).rowcount
+        still = set()
+        for r in conn.execute("SELECT kinds FROM rec_distrust WHERE restaurant_id=? AND verified_at IS NULL",
+                              (restaurant_id,)).fetchall():
+            try:
+                still |= set(json.loads(r["kinds"] or "[]") or [])
+            except (TypeError, ValueError):
+                pass
+        free = sorted(kinds - still)
+        if free:
+            out["released"] = conn.execute(
+                f"UPDATE rec_instances SET silenced_until=?, silence_rule='verified' WHERE restaurant_id=? "
+                f"AND silence_rule='distrust' AND silenced_until > ? AND kind IN ({','.join('?' for _ in free)})",
+                (now, restaurant_id, now, *free)).rowcount
+        conn.commit()
+        out["ok"] = True
+    except Exception as e:
+        print(f"[rec_ledger] verify_source failed: {e}")
+    finally:
+        conn.close()
+    return out
+
+
+def distrusted_sources(restaurant_id, db_path=DB_PATH) -> dict:
+    """{source: {since, last, reports, kinds, rec_key}} — the data sources
+    this restaurant said it does not trust and has not re-verified."""
+    out = {}
+    try:
+        conn = get_conn(db_path)
+    except Exception:
+        return out
+    try:
+        for r in conn.execute("SELECT source, kinds, first_reported_at, last_reported_at, reports, rec_key FROM "
+                              "rec_distrust WHERE restaurant_id=? AND verified_at IS NULL", (restaurant_id,)).fetchall():
+            try:
+                kinds = sorted(json.loads(r["kinds"] or "[]") or [])
+            except (TypeError, ValueError):
+                kinds = []
+            out[r["source"]] = {"since": r["first_reported_at"], "last": r["last_reported_at"],
+                                "reports": int(r["reports"] or 1), "kinds": kinds, "rec_key": r["rec_key"]}
+    except Exception as e:
+        print(f"[rec_ledger] distrusted sources unreadable: {e}")
     finally:
         conn.close()
     return out

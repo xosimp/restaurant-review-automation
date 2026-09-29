@@ -468,16 +468,20 @@ def _rec_event(rid, body, monkeypatch):
 
 
 def test_m8_done_silences_for_good_not_fourteen_days(db_path, monkeypatch):
+    # Memory audit 9/29/26 ("silences"): Done on advice about a situation
+    # holds until the situation clears and comes back — at most
+    # SITUATIONAL_DONE_DAYS, never ten years — and never just 14 days (M-8).
     import rec_ledger
     rid = _rid(db_path)
     rec_ledger.present(rid, "insight_food:abc", "food", "food")          # what the owner was shown (K2)
     out, st = _rec_event(rid, {"key": "insight_food:abc", "event": "completed", "surface": "food",
                                "module": "food"}, monkeypatch)
-    assert st == 200 and "won’t suggest it again" in out["message"]
+    assert st == 200 and "unless it comes back" in out["message"]
     c = _conn(db_path)
     until = c.execute("SELECT silenced_until FROM rec_instances WHERE key='insight_food:abc'").fetchone()[0]
     c.close()
-    assert until > (datetime.utcnow() + timedelta(days=3000)).strftime("%Y-%m-%d")
+    assert (datetime.utcnow() + timedelta(days=rec_ledger.SITUATIONAL_DONE_DAYS - 1)).strftime("%Y-%m-%d") \
+        < until < (datetime.utcnow() + timedelta(days=rec_ledger.SITUATIONAL_DONE_DAYS + 1)).strftime("%Y-%m-%d")
     assert rec_ledger.silenced(rid, "insight_food:abc")
 
 

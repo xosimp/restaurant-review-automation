@@ -120,7 +120,12 @@ def edited_weeks(restaurant_id, weeks=EDIT_WEEKS, db_path=DB_PATH) -> list:
         hist = conn.execute(
             "SELECT DISTINCT v.history_id, h.week_start FROM schedule_versions v JOIN schedule_history h ON h.id=v.history_id "
             "WHERE v.restaurant_id=? AND h.restaurant_id=? AND v.reason='edited' AND v.created_at >= datetime('now', ?) "
+            # A week support edited through view-as, or any admin's save in
+            # it, teaches nothing (memory audit 9/29/26, view_as: M1's
+            # SUPPORT_PREFIX, M3's saved_authority).
             "AND COALESCE(v.saved_authority, '') <> 'admin' "
+            "AND v.history_id NOT IN (SELECT sv.history_id FROM schedule_versions sv WHERE sv.saved_by LIKE 'support:%' "
+            "OR sv.saved_authority = 'admin') "
             "ORDER BY v.history_id DESC LIMIT 60",
             (restaurant_id, restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
         newest = {}
@@ -579,6 +584,8 @@ def prediction_weeks(restaurant_id, weeks=PREDICT_WEEKS, db_path=DB_PATH) -> lis
             "SELECT DISTINCT v.history_id, h.week_start FROM schedule_versions v JOIN schedule_history h ON h.id=v.history_id "
             "WHERE v.restaurant_id=? AND h.restaurant_id=? AND v.reason IN ('edited','published') "
             "AND v.created_at >= datetime('now', ?) AND COALESCE(v.saved_authority, '') <> 'admin' "
+            "AND v.history_id NOT IN (SELECT sv.history_id FROM schedule_versions sv WHERE sv.saved_by LIKE 'support:%' "
+            "OR sv.saved_authority = 'admin') "
             "ORDER BY v.history_id DESC LIMIT 80",
             (restaurant_id, restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
         newest = {}

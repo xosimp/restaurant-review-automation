@@ -264,7 +264,43 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
         conn.close()
     if active is not None:
         _sync_portal_access(restaurant_id, name, _flag(active), db_path)
+    _log_roster_changes(restaurant_id, name, current, new, given, db_path=db_path)
     return _row(row)
+
+
+# How each staff_settings field is named in the change history.
+_ROSTER_FIELDS = {"employment_type": "employment type", "min_hours": "minimum hours", "max_hours": "maximum hours",
+                  "daypart_availability": "availability", "is_minor": "minor", "time_windows": "time windows",
+                  "certifications": "certifications", "preferred_dayparts": "preferred dayparts",
+                  "desired_hours": "desired hours", "experienced": "experienced", "minor_age_band": "minor age band"}
+
+
+def _log_roster_changes(restaurant_id, name, current, new, given, db_path=DB_PATH):
+    """Every field this save changed, into the change history with
+    subject= the person (memory audit 9/29/26, change_log — M7's owed
+    roster caller): taking someone off the roster is "left" (roster_leave),
+    putting them back "added" (roster_add), anything else a roster change.
+    Whose change it is comes from the request or an attributed() block
+    (change_log.actor_context). Never raises."""
+    try:
+        import change_log
+        db = None if db_path == DB_PATH else db_path
+        for field, v in given.items():
+            if v is None:
+                continue
+            before, after = current.get(field), new.get(field)
+            if field == "active":
+                was, now = bool(before), bool(after)
+                if was != now:
+                    change_log.record(restaurant_id, "roster", "left" if was else "added", was, now, subject=name,
+                                      db_path=db)
+                continue
+            if field in ("is_minor", "experienced"):
+                before, after = bool(before), bool(after)
+            change_log.record(restaurant_id, "roster", _ROSTER_FIELDS.get(field, field), before, after, subject=name,
+                              db_path=db)
+    except Exception as e:
+        print(f"[staff_settings] change history not recorded rid={restaurant_id}: {e!r}")
 
 
 def _sync_portal_access(restaurant_id, name, active, db_path=DB_PATH):

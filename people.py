@@ -249,7 +249,10 @@ def get_person(restaurant_id, key, db_path=None, include_pay=True):
     except Exception:
         out["covers"] = None
     try:
-        out["guest_mentions"] = [m for m in mentions(restaurant_id, status="confirmed", db_path=db_path)
+        from datetime import date as _d_pm, timedelta as _td_pm
+        _since_pm = (_d_pm.today() - _td_pm(days=PERSON_MENTION_DAYS)).isoformat()
+        out["guest_mentions"] = [m for m in mentions(restaurant_id, status="confirmed", db_path=db_path,
+                                                     since=_since_pm)
                                  if staff_settings.name_key(m["name"]) == k][:5]
     except Exception:
         out["guest_mentions"] = []
@@ -723,10 +726,15 @@ def init_people(db_path=None):
         _init_person_stores(conn)
         # Whose answer each is (permissions.answer_authority) — added to a
         # database an earlier build of these tables made.
-        for table, col in (("person_questions", "answered_authority"), ("person_signals", "authority")):
+        for table, col, typ in (("person_questions", "answered_authority", "TEXT"),
+                                ("person_signals", "authority", "TEXT"),
+                                ("person_quarters", "covers_taken", "INTEGER NOT NULL DEFAULT 0"),
+                                ("person_quarters", "covers_declined", "INTEGER NOT NULL DEFAULT 0"),
+                                ("person_quarters", "mentions_positive", "INTEGER NOT NULL DEFAULT 0"),
+                                ("person_quarters", "mentions_negative", "INTEGER NOT NULL DEFAULT 0")):
             if col not in _cols(conn, table):
                 try:
-                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT")
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
                 except Exception as e:
                     if "duplicate column" not in str(e).lower():
                         raise
@@ -803,6 +811,10 @@ def _init_person_stores(conn):
         late             INTEGER NOT NULL DEFAULT 0,
         left_early       INTEGER NOT NULL DEFAULT 0,
         covered          INTEGER NOT NULL DEFAULT 0,
+        covers_taken     INTEGER NOT NULL DEFAULT 0,
+        covers_declined  INTEGER NOT NULL DEFAULT 0,
+        mentions_positive INTEGER NOT NULL DEFAULT 0,
+        mentions_negative INTEGER NOT NULL DEFAULT 0,
         first_date       TEXT,
         last_date        TEXT,
         updated_at       TEXT    NOT NULL DEFAULT (datetime('now')),
@@ -1349,7 +1361,8 @@ def _rename_in(conn, idx, pid, new_name, source="rename", actor_user_id=None):
     return moved
 
 
-def rename_person(restaurant_id, person_id, new_name, actor_user_id=None, source="owner", db_path=None) -> dict:
+def rename_person(restaurant_id, person_id, new_name, actor_user_id=None, source="owner", db_path=None,
+                  user=None) -> dict:
     """The owner renames a person: every store follows, the old spelling is
     kept as an alias. Refused when the new name is already somebody else's
     (that is a merge — merge_people)."""
@@ -1377,11 +1390,12 @@ def rename_person(restaurant_id, person_id, new_name, actor_user_id=None, source
     finally:
         conn.close()
     _rename_salaried(restaurant_id, {_nk(before)}, new, db_path)
-    _after_change(restaurant_id, "rename", before, new, actor_user_id, source)
+    _after_change(restaurant_id, "rename", before, new, actor_user_id, source, user=user)
     return {"ok": True, "person_id": pid, "from": before, "to": new, "moved": moved}
 
 
-def merge_people(restaurant_id, from_id, into_id, actor_user_id=None, source="owner", db_path=None) -> dict:
+def merge_people(restaurant_id, from_id, into_id, actor_user_id=None, source="owner", db_path=None,
+                 user=None) -> dict:
     """One person, where there were two: every store row of `from_id` —
     ratings, settings, the minor band, notes, availability, time off,
     contacts, tenure, pairings, requests, the staff login, the shift history
@@ -1434,7 +1448,8 @@ def merge_people(restaurant_id, from_id, into_id, actor_user_id=None, source="ow
     finally:
         conn.close()
     _rename_salaried(restaurant_id, from_keys, keep["display_name"], db_path)
-    _after_change(restaurant_id, "merge", gone["display_name"], keep["display_name"], actor_user_id, source)
+    _after_change(restaurant_id, "merge", gone["display_name"], keep["display_name"], actor_user_id, source,
+                  user=user)
     kept = []
     for table, rec in moved.items():
         for f in rec.get("folded") or []:
@@ -1460,13 +1475,18 @@ def _rename_salaried(restaurant_id, keys, into_name, db_path=None):
         _log.warning("[people] salaried rename failed rid=%s: %s", restaurant_id, e)
 
 
-def _after_change(restaurant_id, kind, before, after, actor_user_id, source):
-    """The roster changed under a person: the change log, and every cache
-    built from names."""
+def _after_change(restaurant_id, kind, before, after, actor_user_id, source, user=None):
+    """The roster changed under a person: the change log (subject= the
+    person as they are now; with the login, whose change it is — an admin
+    through view-as is the admin, change_log.actor_context), and every
+    cache built from names."""
     try:
         import change_log
-        change_log.record(restaurant_id, "roster", after, {kind: before}, {kind: after},
-                          actor_user_id=actor_user_id, source=source)
+        if user:
+            change_log.record(restaurant_id, "roster", kind, before, after, subject=after, user=user)
+        else:
+            change_log.record(restaurant_id, "roster", kind, before, after, subject=after,
+                              actor_user_id=actor_user_id, source=source)
     except Exception as e:
         _log.warning("[people] change_log failed rid=%s: %s", restaurant_id, e)
     try:
@@ -1546,7 +1566,8 @@ def answer_question(restaurant_id, question_id, same: bool, user=None, keep=None
     else:
         into = min(a, b)                           # else the older record
     src = change_source(user) if user else "owner"
-    res = merge_people(restaurant_id, b if into == a else a, into, actor_user_id=uid, source=src, db_path=db_path)
+    res = merge_people(restaurant_id, b if into == a else a, into, actor_user_id=uid, source=src, db_path=db_path,
+                       user=user if isinstance(user, dict) else None)
     conn = _conn(db_path)
     try:
         conn.execute("UPDATE person_questions SET answered_authority=? WHERE id=?", (answer_authority(user), q["id"]))
@@ -1735,6 +1756,9 @@ def external_ids(restaurant_id, source, db_path=None) -> dict:
 # — "Maria was amazing" never reached Maria).
 
 SIGNAL_KINDS = ("cover_accepted", "cover_declined", "review_mention")
+# How far back a person's record lists the guests who named them (inside
+# person_signals' retention floor — ops._RETENTION_READERS).
+PERSON_MENTION_DAYS = 365
 
 
 def _person_for(conn, restaurant_id, name):
@@ -1747,7 +1771,7 @@ def _person_for(conn, restaurant_id, name):
 
 
 def add_role(restaurant_id, name, role, since=None, primary=False, created_by=None, source="owner",
-             db_path=None) -> dict:
+             db_path=None, user=None) -> dict:
     """A role this person holds — "trained on bar from 9/1" — that every
     reader of who-can-work-what sees (staff_settings.roles_for, the
     replacement picker, the roster's role when `primary`: a promotion). A
@@ -1784,25 +1808,36 @@ def add_role(restaurant_id, name, role, since=None, primary=False, created_by=No
         conn.close()
     try:
         import change_log
-        change_log.record(restaurant_id, "roster", display, None,
-                          {"role": role, "since": since_iso, "primary": bool(primary)},
-                          actor_user_id=created_by, source=source)
+        after = {"role": role, "since": since_iso, "primary": bool(primary)}
+        if user:
+            change_log.record(restaurant_id, "roster", "role", None, after, subject=display, user=user)
+        else:
+            change_log.record(restaurant_id, "roster", "role", None, after, subject=display,
+                              actor_user_id=created_by, source=source)
     except Exception as e:
         _log.warning("[people] change_log failed rid=%s: %s", restaurant_id, e)
     return {"name": display, "role": role, "since": since_iso, "primary": bool(primary)}
 
 
-def remove_role(restaurant_id, name, role, db_path=None) -> bool:
+def remove_role(restaurant_id, name, role, db_path=None, user=None) -> bool:
+    role = " ".join(str(role or "").split())
     conn = _conn(db_path)
     try:
         cur = conn.execute("UPDATE person_roles SET removed_at=datetime('now'), is_primary=0 WHERE restaurant_id=? "
                            "AND employee_key=? AND lower(role)=lower(?) AND removed_at IS NULL",
-                           (restaurant_id, canonical_key(restaurant_id, name, db_path=db_path),
-                            " ".join(str(role or "").split())))
+                           (restaurant_id, canonical_key(restaurant_id, name, db_path=db_path), role))
         conn.commit()
-        return (cur.rowcount or 0) > 0
+        done = (cur.rowcount or 0) > 0
     finally:
         conn.close()
+    if done:
+        try:
+            import change_log
+            change_log.record(restaurant_id, "roster", "role", {"role": role}, None, subject=_clean(name),
+                              **({"user": user} if user else {}))
+        except Exception as e:
+            _log.warning("[people] change_log failed rid=%s: %s", restaurant_id, e)
+    return done
 
 
 def held_roles(restaurant_id, name=None, db_path=None, today=None) -> list:
@@ -2044,14 +2079,17 @@ def match_review_mentions(restaurant_id, days=30, db_path=None) -> int:
     return n
 
 
-def mentions(restaurant_id, status="proposed", db_path=None, limit=50) -> list:
+def mentions(restaurant_id, status="proposed", db_path=None, limit=50, since=None) -> list:
     """Guest mentions of staff: [{id, name, key, date, polarity, review_id,
-    snippet, status}] — "proposed" ones wait on the owner's confirmation."""
+    snippet, status}] — "proposed" ones wait on the owner's confirmation.
+    `since` (ISO) keeps a reader inside person_signals' retention window
+    (ops._RETENTION_READERS); what is older lives on in person_quarters."""
     from time_utils import mdy
     conn = _conn(db_path)
     try:
         rows = conn.execute("SELECT * FROM person_signals WHERE restaurant_id=? AND kind='review_mention' AND status=? "
-                            "ORDER BY signal_date DESC, id DESC LIMIT ?", (restaurant_id, status, int(limit))).fetchall()
+                            "AND signal_date >= ? ORDER BY signal_date DESC, id DESC LIMIT ?",
+                            (restaurant_id, status, str(since or "0000-00-00")[:10], int(limit))).fetchall()
     except Exception:
         return []
     finally:
@@ -2129,14 +2167,20 @@ def memory_lines(req) -> list:
         today = None
     from datetime import date as _date
     today = today or _date.today()
-    parts = _MEMORY_PARTS.get(getattr(req, "surface", None), _MEMORY_DEFAULT_PARTS)
+    surface = getattr(req, "surface", None)
+    parts = _MEMORY_PARTS.get(surface, _MEMORY_DEFAULT_PARTS)
     out = []
     for part in parts:
         try:
             out += _MEMORY_READERS[part](rid, today, db)
         except Exception as e:             # one part's failure never costs the others
             _log.warning("[people] memory part %s failed rid=%s: %s", part, rid, e)
-    return out
+    # "Nobody's attendance is known" is said only where a staffing call is
+    # being made on it — the labor read — never to Ask or the diagnosis of
+    # a restaurant that simply has nothing to say about its people yet.
+    if surface != "labor_read":
+        out = [l for l in out if not l.get("unwatched")]
+    return [{k: v for k, v in l.items() if k != "unwatched"} for l in out]
 
 
 def _mem_line(text, date_, subject, weight, source="system", module="labor", trusted=False):
@@ -2150,9 +2194,12 @@ def _mem_attendance(rid, today, db):
     if not lines:
         if attendance.watched(rid, days=90, db_path=db):
             return []                      # watched, and nobody missed: nothing to say
-        return [_mem_line("Attendance is not watched here yet: no published week has been checked against the "
-                          "punches, so no one's reliability is known. Say nothing about who shows up.",
-                          None, "labor", 1.0, trusted=True)]
+        import shift_facts
+        if not shift_facts.has_facts(rid, db_path=db):
+            return []                      # no staff history at all: nothing to say
+        return [dict(_mem_line("Attendance is not watched here yet: no published week has been checked against the "
+                               "punches, so no one's reliability is known. Say nothing about who shows up.",
+                               None, "labor", 1.0, trusted=True), unwatched=True)]
     return [_mem_line(l["text"], l["date"],
                       f"labor:day:{l['top_day'].lower()}" if l.get("top_day") else "labor",
                       3.0 + min(int(l.get("misses") or 0), 6) * 0.5) for l in lines]
@@ -2264,8 +2311,8 @@ def _mem_mentions(rid, today, db):
     from time_utils import mdy
     since = (today - _td(days=MEMORY_MENTION_DAYS)).isoformat()
     by = {}
-    for m in mentions(rid, status="confirmed", db_path=db, limit=200):
-        if not m.get("date_iso") or m["date_iso"] < since:
+    for m in mentions(rid, status="confirmed", db_path=db, limit=200, since=since):
+        if not m.get("date_iso"):
             continue
         e = by.setdefault(m["name"], {"pos": 0, "neg": 0, "n": 0, "first": m["date_iso"], "last": m["date_iso"]})
         e["n"] += 1

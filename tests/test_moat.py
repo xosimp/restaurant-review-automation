@@ -84,7 +84,10 @@ def test_the_context_section_is_empty_for_an_empty_restaurant_and_dated_otherwis
     home_brief.dismiss(rid, "add_brunch", kind="not_for_us", reason="no Sunday staff", title="Add brunch")
     text = decisions.context(rid, db_path=db_path)
     assert text.startswith("WHAT THIS RESTAURANT HAS DECIDED BEFORE")
-    assert "Add brunch: not for us" in text and "because: no Sunday staff" in text
+    # The owner's reason is fenced — what they said, never data (memory
+    # audit 9/29/26, "unfenced"); the answer and the date stay plain.
+    from ai_guard import wrap_untrusted
+    assert "Add brunch: not for us" in text and "because: " + wrap_untrusted("no Sunday staff") in text
     # home_dismissals.dismissed_at defaults to datetime('now'), which is UTC;
     # comparing against the local date failed every evening after 7pm Chicago.
     # Dated M/D/YY like every other date an owner (or Ask quoting one) reads.

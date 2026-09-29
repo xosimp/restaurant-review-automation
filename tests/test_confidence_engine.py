@@ -294,7 +294,7 @@ def test_feedback_sync_fills_confidence_at_from_the_snapshot(db):
     rec_ledger.record(rid, "top_issue:service", "accepted", db_path=db)
     feedback.sync(db_path=db)
     c = models.get_conn(db)
-    row = c.execute("SELECT confidence_at FROM intel_rec_events WHERE source_key='top_issue:service' "
+    row = c.execute("SELECT confidence_at FROM intel_rec_events WHERE source_key LIKE 'top_issue:service#e%' "
                     "AND action='accepted'").fetchone()
     c.close()
     assert row and row[0] == 0.7

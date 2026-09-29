@@ -401,7 +401,9 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
         could_hold = {}
     revenue = {"value": None, "source": None}
     try:
-        revenue = _econ.projected_weekly_revenue(restaurant_id)
+        # The week's own DSR budget when the owner set one for most of its
+        # nights (memory audit 9/29/26, owner_goals); the source says which.
+        revenue = _econ.projected_weekly_revenue(restaurant_id, week_dates=next_week_dates)
     except Exception:
         pass
     # Who is experienced, who can run a shift and who usually works when —
@@ -530,6 +532,16 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None):
     result["fairness_ledger"] = ledger
     result["could_hold"] = could_hold
     result["projected_revenue_source"] = revenue.get("source") if revenue.get("value") else ("monthly target ÷ 4.33" if monthly_rev_target else "recent sales scaled to a week")
+    # Which labor target the budget was built against — the owner's goal
+    # ("your goal of 26% by 12/31/26") or the setting (memory audit 9/29/26,
+    # owner_goals): both the revenue and the target name what applied.
+    try:
+        import thresholds as _thr_s
+        _t = _thr_s.target_for(restaurant, "labor")
+        result["labor_target_source"] = _t.get("source")
+        result["labor_target_label"] = _t.get("label")
+    except Exception:
+        pass
     try:
         import reservation_feeds as _rf
         result["reservation_feed"] = _rf.status(restaurant)
@@ -2572,7 +2584,7 @@ def mark_next_week_built(restaurant_id, history_id) -> int:
 SHOWN_RECOMMENDATIONS = 5
 
 
-def present_quality(restaurant_id, quality, user_id=None):
+def present_quality(restaurant_id, quality, user_id=None, authority=None):
     """The quality verdict's recommendations, recorded as shown on
     "schedule_review" by the response that SERVES them to a person — the
     generation's status poll, a rescore, apply-fixes, the optimizer, a
@@ -2599,8 +2611,11 @@ def present_quality(restaurant_id, quality, user_id=None):
             it["answered"] = bool(it["key"] in ids and ids[it["key"]] is None)
             it["answerable"] = rec_delivery.answerable(it["key"]) and not it["answered"]
             try:
+                # Who it was shown to (memory audit 9/29/26, who_answered):
+                # a manager's or support's showings never suppress a kind
+                # for the owner.
                 _si.record_recommendation(restaurant_id, it.get("kind") or "other",
-                                          str(it.get("text") or "")[:200], "shown")
+                                          str(it.get("text") or "")[:200], "shown", authority=authority)
             except Exception as e:
                 print(f"[schedule] showing not counted for {it.get('kind')}: {e}")
     except Exception as e:

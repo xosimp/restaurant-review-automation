@@ -100,19 +100,99 @@ def for_viewer(action, sees_food=True):
     return out
 
 
-def cancel(restaurant_id, action_id, actor=None, db_path=DB_PATH):
+# Why an automation was undone — asked on the undo (memory audit 9/29/26,
+# "undo"): an undo counts against the trust that queued it either way; the
+# answer says what to fix.
+UNDO_REASONS = ("not_ready", "wanted_changes", "wrong_content", "bad_timing", "other")
+UNDO_REASON_LABELS = {"not_ready": "It wasn't ready yet", "wanted_changes": "I wanted to change it first",
+                      "wrong_content": "Something in it was wrong", "bad_timing": "Bad timing",
+                      "other": "Something else"}
+# The automations an owner's undo counts against, and the trust each reads.
+TRUSTED_KINDS = ("schedule_publish", "order_send")
+
+
+def cancel(restaurant_id, action_id, actor=None, db_path=DB_PATH, reason_code=None, reason=None):
     """The undo. True when a pending row was cancelled; False when it had
-    already run, was cancelled, or belongs to another restaurant."""
+    already run, was cancelled, or belongs to another restaurant. An undo
+    of an automatic send counts against the trust that queued it
+    (models.schedule_publish_trust, ordering.supplier_trust): N clean runs
+    are needed after one. `reason_code` (UNDO_REASONS) and a free `reason`
+    ride on the row when given (or later, record_undo_reason)."""
     conn = get_conn(db_path)
     try:
+        result = {"cancelled_by": (actor or {}).get("username")}
+        if reason_code in UNDO_REASONS:
+            result["reason_code"] = reason_code
+        if isinstance(reason, str) and reason.strip():
+            result["reason"] = reason.strip()[:200]
         cur = conn.execute(
             "UPDATE delayed_actions SET status='cancelled', executed_at=?, result_json=? "
             "WHERE id=? AND restaurant_id=? AND status='pending'",
-            (_utc(), json.dumps({"cancelled_by": (actor or {}).get("username")}), action_id, restaurant_id))
+            (_utc(), json.dumps(result), action_id, restaurant_id))
         conn.commit()
         return cur.rowcount == 1
     finally:
         conn.close()
+
+
+def _conn_now(db_path):
+    """models.get_conn resolved at call time (CLAUDE.md, bound imports): the
+    module-level `from models import get_conn` above is kept for the older
+    functions; what follows reads through models itself."""
+    import models as _m
+    return _m.get_conn() if db_path in (None, DB_PATH) else _m.get_conn(db_path)
+
+
+def record_undo_reason(restaurant_id, action_id, reason_code=None, reason=None, db_path=DB_PATH) -> bool:
+    """The owner's answer to "why did you undo it?" on an action already
+    cancelled. False when there is no such cancelled row here."""
+    if reason_code not in UNDO_REASONS and not (isinstance(reason, str) and reason.strip()):
+        return False
+    conn = _conn_now(db_path)
+    try:
+        row = conn.execute("SELECT result_json FROM delayed_actions WHERE id=? AND restaurant_id=? "
+                           "AND status='cancelled'", (action_id, restaurant_id)).fetchone()
+        if row is None:
+            return False
+        try:
+            result = json.loads(row["result_json"] or "{}") or {}
+        except (TypeError, ValueError):
+            result = {}
+        if reason_code in UNDO_REASONS:
+            result["reason_code"] = reason_code
+        if isinstance(reason, str) and reason.strip():
+            result["reason"] = reason.strip()[:200]
+        conn.execute("UPDATE delayed_actions SET result_json=? WHERE id=? AND restaurant_id=?",
+                     (json.dumps(result), action_id, restaurant_id))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def last_undo(restaurant_id, kind, supplier_email=None, db_path=DB_PATH):
+    """When the owner last undid an AUTOMATIC `kind` (for order_send, to
+    this supplier) — the stamp every trust count restarts from — or None."""
+    conn = _conn_now(db_path)
+    try:
+        rows = conn.execute("SELECT payload_json, executed_at FROM delayed_actions WHERE restaurant_id=? AND kind=? "
+                            "AND status='cancelled' ORDER BY id DESC LIMIT 50", (restaurant_id, kind)).fetchall()
+    except Exception:
+        return None
+    finally:
+        conn.close()
+    for r in rows:
+        try:
+            payload = json.loads(r["payload_json"] or "{}") or {}
+        except (TypeError, ValueError):
+            payload = {}
+        if not payload.get("automatic"):
+            continue
+        if supplier_email and (payload.get("supplier_email") or "").strip().lower() != supplier_email.strip().lower():
+            continue
+        stamp = str(r["executed_at"] or "").replace("T", " ").replace("Z", "")[:19]
+        return stamp or None
+    return None
 
 
 # A row still 'running' this long after it was claimed belongs to a process

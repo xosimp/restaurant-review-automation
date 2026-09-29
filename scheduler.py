@@ -4388,6 +4388,14 @@ def scheduler_loop():
             if _due(now, 5) and _ops.claim_period("forecast_scoring", str(today)):
                 _ops.run_job("forecast_scoring", run_forecast_scoring)
 
+            # 5am+ — what the nights just finished taught (event_memory): the
+            # weather each day actually had, and the measured lift of every
+            # listed event, holiday, rain night, payday and campaign, before
+            # the morning briefs. Sends nothing; bounded and resumable.
+            if _due(now, 5) and _ops.claim_period("event_memory", str(today)):
+                import event_memory as _event_memory
+                _ops.run_job("event_memory", _event_memory.run_event_memory)
+
             # 6am+ — one Data Health snapshot per restaurant, after the
             # nightly chain (POS, depletion, snapshots) has landed.
             if _due(now, 6) and _ops.claim_period("data_health_daily", str(today)):
@@ -4423,6 +4431,15 @@ def scheduler_loop():
                 from intelligence.dashboard import snapshot_value_figures
                 if not _ops.run_in_lane("intel", "value_figures", snapshot_value_figures):
                     _ops.release_period("value_figures", str(today))
+
+            # 6am+, after the outcome evaluations — each restaurant's own
+            # value point (value_snapshots, the Home sparkline), dated on its
+            # local day. It was written only when someone opened Home, so the
+            # series had holes on exactly the days nobody looked (memory audit
+            # 9/29/26). Bounded, resumable; sends nothing.
+            if _due(now, 6) and _ops.claim_period("value_snapshots", str(today)):
+                from value_delivered import run_value_snapshots
+                _ops.run_job("value_snapshots", run_value_snapshots)
 
             # Hourly: each restaurant is told about a result or a milestone
             # at ITS OWN 9am (strategy_jobs.WIN_HOUR, local_due inside),
@@ -4636,6 +4653,17 @@ def scheduler_loop():
             if _due(now, 4) and _ops.claim_period("intelligence_learning", str(today)):
                 from intelligence import jobs as _intel_jobs
                 _ops.run_job("intelligence_learning", _intel_jobs.run_learning)
+            # 5am — past feature weeks from the raw tables (bounded,
+            # resumable; memory audit PLATFORM-5), after the night's own
+            # feature and learning passes.
+            if _due(now, 5) and _ops.claim_period("intelligence_features_backfill", str(today)):
+                from intelligence import jobs as _intel_jobs
+                _ops.run_job("intelligence_features_backfill", _intel_jobs.run_features_backfill)
+            # Monday 5am — the schedule A/B's clustered verdict, stored for
+            # the week (memory audit PLATFORM-13).
+            if _due(now, 5) and now.weekday() == 0 and _ops.claim_period("schedule_experiment_verdicts", str(today)):
+                import schedule_experiments as _sx
+                _ops.run_job("schedule_experiment_verdicts", _sx.record_verdicts)
 
             # Noon daily — which campaign recipients Toast saw on a later
             # check (guest_marketing.run_campaign_attribution). Reads each

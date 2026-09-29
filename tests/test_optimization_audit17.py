@@ -169,7 +169,17 @@ def test_year_over_year_context_is_one_query(db_path, monkeypatch):
     out = models.get_yoy_schedule_context(rid, dates, db_path=db_path)
 
     assert len(out) == len(dates)
-    assert counters["queries"] <= 2, f"one query for the whole window (got {counters['queries']})"
+    # One read of each store for the whole window, however many dates: the
+    # synced day, and the one last-year reader's report, import and POS
+    # stores (canonical_facts.net_series — memory audit 9/29/26,
+    # imported_year).
+    assert counters["queries"] <= 4, f"one query per store for the whole window (got {counters['queries']})"
+    counters["queries"] = 0
+    models.get_yoy_schedule_context(rid, dates[:1], db_path=db_path)
+    one = counters["queries"]
+    counters["queries"] = 0
+    models.get_yoy_schedule_context(rid, dates, db_path=db_path)
+    assert counters["queries"] == one, "the count does not grow with the dates asked"
 
 
 def test_year_over_year_still_prefers_the_exact_52_week_match(db_path):

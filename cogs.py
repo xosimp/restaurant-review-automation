@@ -361,6 +361,9 @@ def dish_reference(restaurant) -> dict | None:
     if tgt["alerts_allowed"]:
         return dict(common, pct=tgt["pct"], kind="target",
                     basis=(f"your food-cost target, {tgt['pct']:g}%" if tgt["source"] == "set"
+                           # The owner's goal on food cost % (memory audit
+                           # 9/29/26, owner_goals) is its own label.
+                           else tgt["label"] if tgt["source"] == "goal"
                            else f"{_thr.STARTING_TARGET_LABEL}, {tgt['pct']:g}%"))
     ind = _engine_industry_food_cost(restaurant)
     if ind and ind.get("high") is not None and ind.get("comparable") is True:

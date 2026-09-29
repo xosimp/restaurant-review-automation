@@ -179,3 +179,36 @@ def test_the_overtime_metric_reads_the_store_one_person_under_one_name():
     assert val == 8.0 and "8 overtime hours over 1 payroll week" in detail
     # Outside the window nothing is read: a window with no whole week in it is unknown.
     assert metrics._overtime_hours(rid, "2026-09-14", "2026-09-20", None, None)[0] is None
+
+
+def test_tenure_outlives_the_raw_rows_through_the_quarterly_summary():
+    """shift_facts.tenure is a lifetime reader (ops._RETENTION_READERS): once
+    a quarter's raw rows are pruned it is read from person_quarters, written
+    while the quarter was whole — the first day and the count survive."""
+    rid = _rid()
+    shift_facts.ingest(rid, _rows(date(2026, 4, 1), 20, people=("Ana B.",)), "upload")
+    shift_facts.ingest(rid, _rows(date(2026, 8, 3), 5, people=("Ana B.",)), "upload")
+    assert shift_facts.roll_all_quarters(now=date(2026, 9, 29))["restaurants"] >= 1
+    conn = models.get_conn()
+    conn.execute("DELETE FROM shift_facts WHERE restaurant_id=? AND business_date < '2026-04-11'", (rid,))  # a prune began
+    conn.commit()
+    conn.close()
+    t = shift_facts.tenure(rid)["Ana B."]
+    assert t == {"shifts": 25, "first": "2026-04-01", "last": "2026-08-07"}
+
+
+def test_the_registry_rolls_every_restaurants_quarters_before_a_prune(monkeypatch):
+    import ops
+    assert ops._RETENTION_ROLLUP["shift_facts"] == "shift_facts:roll_all_quarters"
+    assert ops._RETENTION_ROLLUP["attendance_events"] == ops._RETENTION_ROLLUP["person_signals"]
+    rid = _rid()
+    shift_facts.ingest(rid, _rows(date(2026, 7, 1), 3, people=("Ana B.",)), "upload")
+    import people
+    people.record_signal(rid, "Ana B.", "cover_accepted", "2026-07-02", ref="issue:1")
+    people.record_signal(rid, "Ana B.", "review_mention", "2026-07-03", ref="review:1", polarity=1)
+    out = shift_facts.roll_all_quarters(now=date(2026, 9, 29))
+    assert out["rows"] >= 1
+    conn = models.get_conn()
+    q = dict(conn.execute("SELECT * FROM person_quarters WHERE restaurant_id=? AND quarter='2026-Q3'", (rid,)).fetchone())
+    conn.close()
+    assert (q["shifts"], q["covers_taken"], q["mentions_positive"]) == (3, 1, 1)

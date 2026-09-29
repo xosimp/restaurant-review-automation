@@ -120,6 +120,19 @@ JOBS = {
         cadence="4am CT daily", sla_minutes=_D, sends=False, runnable=True,
         label="Intelligence learning", description="Learning over the materialized intelligence tables",
         target=("intelligence.jobs", "run_learning"), max_minutes=60, retry=True),
+    "intelligence_features_backfill": dict(
+        # Memory audit 9/29/26 (PLATFORM-5): past weeks from the raw tables.
+        cadence="5am CT daily", sla_minutes=_D, sends=False, runnable=True,
+        label="Features backfill",
+        description="Compute the past weeks each restaurant has raw history for and no current-version feature "
+                    "row (bounded, resumable)",
+        target=("intelligence.jobs", "run_features_backfill"), max_minutes=10, retry=True),
+    "schedule_experiment_verdicts": dict(
+        # Memory audit 9/29/26 (PLATFORM-13): the A/B verdict, stored weekly.
+        cadence="Mon 5am CT", sla_minutes=_W, sends=False, runnable=True,
+        label="Schedule A/B verdicts",
+        description="Store each schedule experiment's clustered verdict for the week",
+        target=("schedule_experiments", "record_verdicts"), max_minutes=15, retry=True),
     "marketing_metrics_sync": dict(
         cadence="4am CT nightly", sla_minutes=_D, sends=False, runnable=True,
         label="Marketing metrics", description="Refresh Instagram / Facebook post metrics",
@@ -146,6 +159,12 @@ JOBS = {
         cadence="5am CT daily", sla_minutes=_D, sends=False, runnable=True,
         label="Forecast scoring", description="Score every frozen forecast whose period has closed",
         target=("scheduler", "run_forecast_scoring"), max_minutes=60, retry=True),
+    "event_memory": dict(
+        cadence="5am CT daily", sla_minutes=_D, sends=False, runnable=True,
+        label="Event memory",
+        description=("Observed weather, and what each finished night's events, holidays, rain, paydays and "
+                     "campaigns did to sales (bounded, resumable)"),
+        target=("event_memory", "run_event_memory"), max_minutes=30, retry=True),
     "reservation_sync": dict(
         cadence="5am CT daily, the day before each draft", sla_minutes=_D, sends=False, runnable=True,
         label="Reservations", description="Reservation feeds into events & reservations (no provider live yet)",
@@ -180,6 +199,13 @@ JOBS = {
         description="Each restaurant's four value figures into value_figures_daily, which the Intelligence page "
                     "sums (bounded, resumable)",
         target=("intelligence.dashboard", "snapshot_value_figures"), max_minutes=55, lane="intel"),
+    "value_snapshots": dict(
+        cadence="6am CT daily, after outcome evaluations", sla_minutes=_D, sends=False, runnable=True,
+        label="Value history",
+        description="Each restaurant's measured value point for its own day into value_snapshots (the Home "
+                    "sparkline), for every restaurant in service — not only the days someone opened Home "
+                    "(bounded, resumable)",
+        target=("value_delivered", "run_value_snapshots"), max_minutes=25, retry=True),
     "competitor_analysis": dict(
         cadence="Mon 6am CT (catch-up to Wed), then a daily retry", sla_minutes=_W, sends=False, runnable=True,
         label="Competitor analysis", description="Weekly competitor analysis for full-tier clients (Places + Claude), on the Intel lane",

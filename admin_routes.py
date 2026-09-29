@@ -3447,8 +3447,19 @@ def _brand_payload(restaurant_id):
             "brand_name": r.brand_name, "brand_color": r.brand_color, "brand_logo_url": r.brand_logo_url,
             "category": getattr(r, "category", None),
             "exclude_from_learning": int(getattr(r, "exclude_from_learning", 0) or 0),
+            # Whether this account teaches any learner, why not, and the
+            # admin's word over the automatic rule (memory audit 9/29/26).
+            "learning": _models_learning_status(r),
             "profile": {k: getattr(r, k, None) for k in ("service_model", "concept", "bar_led", "ownership",
                                                         "opened_year", "profile_source", "profile_confirmed_at")}}
+
+
+def _models_learning_status(r):
+    import models as _m_ls
+    try:
+        return _m_ls.learning_status(r)
+    except Exception:
+        return None
 
 
 @admin_bp.route("/admin/api/brand/<int:restaurant_id>", methods=["GET"])
@@ -3512,6 +3523,18 @@ def admin_set_brand(restaurant_id, current_user):
         updates.update(prof)
     if "exclude_from_learning" in data and data.get("exclude_from_learning") not in (None, ""):
         updates["exclude_from_learning"] = 1 if data.get("exclude_from_learning") in (1, True, "1", "true", "on") else 0
+    if "learning_override" in data:
+        # The admin's word over the automatic test/internal rule (memory
+        # audit 9/29/26): 'include' (a real restaurant the rule caught),
+        # 'exclude', or '' for automatic. Including an account starts its
+        # teaching now unless `learning_history` says its history counts.
+        ov = str(data.get("learning_override") or "").strip().lower()
+        if ov not in ("", "include", "exclude"):
+            return jsonify(ok=False, error="learning_override is include, exclude or blank"), 400
+        updates["learning_override"] = ov or None
+        if ov == "include" and not data.get("learning_history"):
+            from time_utils import utc_stamp as _us_lo
+            updates["learning_since"] = _us_lo()
     if not updates:
         return jsonify(ok=False, error="Nothing to save: every field was blank, and a blank field leaves "
                                        "what is stored alone."), 400
@@ -3658,6 +3681,18 @@ def admin_api_confidence_calibration(current_user):
     import admin_ops
     days, rid = _admin_days_rid(365)
     return jsonify(**admin_ops.confidence_calibration(days=days, restaurant_id=rid))
+
+
+@admin_bp.route("/admin/api/recommendations/learning")
+@admin_required
+def admin_api_rank_learning(current_user):
+    """What the effectiveness model did to the rankings (memory audit
+    9/29/26, rank_log): acceptance and measured outcome by model version and
+    weight bucket, and the candidates builds left unshown. Internal only.
+    ?days=90&restaurant_id=N."""
+    import admin_ops
+    days, rid = _admin_days_rid(90)
+    return jsonify(**admin_ops.rank_learning(days=days, restaurant_id=rid))
 
 
 @admin_bp.route("/admin/api/recommendations/missed")
@@ -3810,14 +3845,16 @@ def admin_api_set_demo(restaurant_id, current_user):
     fields = {"is_demo": on}
     if not on and int(getattr(current, "is_demo", 0) or 0) == 1:
         # Turning demo OFF leaves the seeded rows (rr_% reviews, seeded
-        # shifts, ingredients, labor history) in place — never hard-deleted
-        # here — and TAGS the restaurant: demo_cleared_at keeps it out of
-        # cross-restaurant learning until every feature window has rolled
-        # past the seeded history (intelligence.jobs.real_restaurant_ids,
-        # CA3 F7). Synthetic history must not become a real baseline for
-        # everyone else.
+        # shifts, ingredients, labor history — stamped source 'seed') in
+        # place — never hard-deleted here — and TAGS the restaurant:
+        # learning_since is the moment it became real. Nothing it recorded
+        # before then teaches any learner, its own or the platform's, and
+        # its own daily-history readers drop the seed's rows
+        # (models.learning_rows_sql / own_history_sql — memory audit 9/29/26,
+        # "eligibility"; it replaced a 90-day quarantine that was shorter
+        # than the readers' windows). demo_cleared_at records the same moment.
         from time_utils import utc_stamp
-        fields["demo_cleared_at"] = utc_stamp()
+        fields["demo_cleared_at"] = fields["learning_since"] = utc_stamp()
     update_restaurant(restaurant_id, fields)
     import admin_events
     admin_events.record_admin_action(current_user, "demo_flag.set", restaurant_id=restaurant_id,
