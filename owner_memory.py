@@ -77,8 +77,10 @@ _METRIC_MODULE = {"labor_pct": "labor", "overtime_hours": "labor", "sales": "lab
 # Words that make a principal's fact private to the account holders by
 # default, whatever audience the model asked for: personnel plans and money
 # ("I'm letting Dana go in October" never reaches a manager's prompt).
+_ROLE_WORDS_RE = r"(gm|general\s+manager|manager|chef|sous\s+chef|cook|line\s+cook|bartender|server|host|dishwasher|staff)"
 _PRIVATE_RE = re.compile(
-    r"\b(fir(e|ed|ing)|let(ting)?\s+\w+\s+go|replac(e|ing)\s+(the\s+)?(gm|manager|chef|\w+)|terminat\w*|"
+    r"\b(let(ting)?\s+\w+\s+go|(fire|fired|firing)\s+(him|her|them|my|our|the)\s+" + _ROLE_WORDS_RE + r"|"
+    r"replac(e|ing)\s+(him|her|them|my|our|the)\s+" + _ROLE_WORDS_RE + r"|terminat\w*|"
     r"lay(ing)?\s*off|laid\s+off|salar(y|ies)|raise\s+for|pay\s+cut|payroll\s+for|sell(ing)?\s+the\s+"
     r"(restaurant|business|place)|lawsuit|lawyer|attorney|divorce|loan|debt|investor|partner(ship)?\s+"
     r"(split|buyout)|buy\s*out)\b", re.I)

@@ -324,3 +324,12 @@ def test_the_activity_feed_shows_only_the_followups_this_login_may_read():
     texts = [m["text"] for m in activity.build(rid, restaurant=view)["memory"]]
     assert "Remembering: Check Friday's comps" in texts
     assert not any("landlord" in t for t in texts)
+
+
+def test_kitchen_talk_is_not_mistaken_for_a_personnel_secret():
+    rid = _rid()
+    for text in ("Fire the grill by 4pm on game days", "Replacing the walk-in door on Monday"):
+        owner_memory.remember(rid, text, kind="context", user=_owner(rid))
+    assert {f["audience"] for f in models.get_ask_memory(rid)} == {"team"}
+    owner_memory.remember(rid, "Thinking of replacing the GM after the holidays", kind="context", user=_owner(rid))
+    assert models.get_ask_memory(rid)[0]["audience"] == "principals"
