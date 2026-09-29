@@ -1182,10 +1182,11 @@ changed, who needs help, what is broken and what is growing. Dense with data,
 never with text: the rebuild cut the visible text across its screens by 69%
 (51% leaving out the three long logs), measured on the same database.
 
-- **The five areas** — Overview, Operations (Jobs, Email, Push & alerts, AI,
-  Integrations), Customers (Restaurants, Billing, Onboarding, Support queue,
-  and the client page), Engineering (Overview, Experiments), Analytics
-  (Overview, Recommendations, Intelligence) — plus Field tools (audits, cheat
+- **The five areas** — Overview, Operations (Jobs, Email & SMS, Push & alerts,
+  AI, Integrations), Customers (Restaurants, Billing, Onboarding, Support
+  queue, and the client page), Engineering (Overview, Status page, Audit
+  trail, Team & access, Experiments), Analytics (Overview, Recommendations,
+  Intelligence) — plus Field tools (audits, cheat
   sheet, status page) at the foot of the rail. Every older hash (`#clients`,
   `#jobs`, `#emails`, `#recommendations/<id>`, …) lands in the area and tab it
   moved to (`ALIAS`); keep that map when a page moves again.
@@ -1236,6 +1237,36 @@ never with text: the rebuild cut the visible text across its screens by 69%
 - **Spend against a ceiling** is a `.meter` tile: spend of budget, a bar
   (green, amber past the warning line, red when stopped) and when it resets
   (M/D/YY).
+- **A system's state is the server's verdict** (Operations, fix round UI-2).
+  Each system takes its tone from what the server already decided — a job's
+  own state, the heartbeat's `stale` / `wedged` / `loop_stalled`, a platform
+  issue's severity, the messaging problems, the AI health status — never a
+  threshold the page makes up (`opsState`). Red where the server pages or
+  raised a critical, amber for its warnings, grey "Unknown" when the read
+  behind it failed. The area's sentence names every system that is failing,
+  degraded or unread, and says "Everything ran" only when all were read
+  (`opsSentence`). The subsystem cards (`subCard`, six to a row) carry the
+  state as the icon's tone, a red border when failing, and the first word of
+  the line under the trend.
+- **A job's runs are squares in their own state** (`.sq`): ok green, partial
+  amber (`.p`), failed red (`.x`), running ember (`.r`), no run yet empty
+  (`.e`), newest on the right. Partial and running are never green; neither
+  is an admin task that failed.
+- **Lines over time** (`lineChart(points, series, opts)`): one axis, each
+  series its own colour (a dashed line for the secondary one), a point with
+  no value is a gap in its line — never a zero — and `mark` puts a red tick
+  on the axis (an hour when every thread was busy). Used for latency, with
+  customer and console traffic as separate lines, and for the business day
+  by day from the snapshots.
+- **Reads go three at a time** (`apiAll(paths, 3)`) — four request threads
+  serve the whole platform — and an area's reads are shared across its tabs
+  for a minute; Refresh reads them again with `?fresh=1`.
+- **A cursor-paged log** (the audit trail, refused attempts) ends in an
+  "Older" row (`.more`) that appends the next page by `before_id`; filters go
+  to the server. A numbered `.pager` is for lists the server pages by number.
+- **Admin-only reads carry `.w` too.** A control that opens a prompt and a
+  model's output (the call trace) is hidden from a support login like a
+  write.
 - **Cmd-K / `/`** opens one palette: every page and action, and the fleet
   search.
 - **A page's reads belong to the visit that asked** (`api()` and `_seq`): a
