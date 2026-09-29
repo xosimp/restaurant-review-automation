@@ -244,3 +244,28 @@ def test_the_text_and_email_prompts_read_their_channels_voice(db_path, monkeypat
 
 def test_model_drafts_are_kept_ninety_days_by_the_one_registry():
     assert ops._RETENTION_DAYS["marketing_model_drafts"] == 90 == mv.DRAFTS_KEEP_DAYS
+
+
+def test_a_win_back_sent_before_the_voice_record_is_read_from_sent_message(db_path):
+    """guest_campaign_drafts.sent_message was written at every send and read
+    by nothing: an owner's text sent before marketing_edits existed still
+    starts the next draft — never a teammate's."""
+    import auth
+    auth.init_auth(db_path=db_path)
+    rid = _rid(db_path)
+    _contacts(db_path, rid)
+    c = _conn(db_path)
+    owner = c.execute("INSERT INTO users (username, email, password_hash, restaurant_id, role) "
+                      "VALUES ('erik','erik@x.test','x',?,'client')", (rid,)).lastrowid
+    gm_ = c.execute("INSERT INTO users (username, email, password_hash, restaurant_id, role) "
+                    "VALUES ('gm','gm@x.test','x',?,'manager')", (rid,)).lastrowid
+    c.execute("INSERT INTO guest_campaign_drafts (restaurant_id, kind, segment, segment_size, message, rec_key, status, "
+              "sent_message, answered_at, answered_by) VALUES (?,?,?,?,?,?,'sent',?,datetime('now','-9 days'),?)",
+              (rid, "winback", "lapsed_60", 6, "old", "winback:lapsed_60", "Owner's own words -Erik", owner))
+    c.execute("INSERT INTO guest_campaign_drafts (restaurant_id, kind, segment, segment_size, message, rec_key, status, "
+              "sent_message, answered_at, answered_by) VALUES (?,?,?,?,?,?,'sent',?,datetime('now','-2 days'),?)",
+              (rid, "winback", "lapsed_60", 6, "old", "winback:lapsed_60", "The manager's version", gm_))
+    c.commit()
+    c.close()
+    got = gm.winback_suggestion(rid, restaurant_name="Gia Mia", db_path=db_path)
+    assert got["available"] and got["draft"]["message"] == "Owner's own words -Erik"

@@ -2729,6 +2729,32 @@ def winback_return(restaurant_id, db_path=DB_PATH) -> dict:
                      f"the last went out {_mdy(last.get('created_at'))}.")}
 
 
+def _last_sent_winback(restaurant_id, db_path=DB_PATH, days=180):
+    """The last win-back text the account holder sent from a draft here
+    (guest_campaign_drafts.sent_message — written at every send and, until
+    the memory audit of 9/29/26, read by nothing), within `days`, or None.
+    The fallback for texts sent before marketing_voice kept them; a
+    teammate's send is not the owner's words."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT d.sent_message, u.role, COALESCE(u.is_admin, 0) AS is_admin FROM guest_campaign_drafts d "
+                "LEFT JOIN users u ON u.id = d.answered_by WHERE d.restaurant_id=? AND d.kind='winback' "
+                "AND d.status='sent' AND TRIM(COALESCE(d.sent_message, '')) != '' "
+                "AND d.answered_at >= datetime('now', ?) ORDER BY d.id DESC LIMIT 5",
+                (restaurant_id, f"-{int(days)} days")).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return None
+    from permissions import is_principal
+    for r in rows:
+        if not r["is_admin"] and r["role"] is not None and is_principal({"role": r["role"]}):
+            return r["sent_message"]
+    return None
+
+
 def winback_suggestion(restaurant_id, restaurant_name=None, surface="marketing", user_id=None,
                        db_path=DB_PATH) -> dict:
     """The pending win-back draft for Marketing, creating one when a lapsed
@@ -2780,7 +2806,8 @@ def winback_suggestion(restaurant_id, restaurant_name=None, surface="marketing",
             own = marketing_voice.last_sent(restaurant_id, "text", "winback", db_path=db_path)
         except Exception:
             own = None
-        message = (own or "").strip()[:CAMPAIGN_MAX_CHARS] or _winback_message(restaurant_name)
+        message = ((own or _last_sent_winback(restaurant_id, db_path) or "").strip()[:CAMPAIGN_MAX_CHARS]
+                   or _winback_message(restaurant_name))
         conn = get_conn(db_path)
         try:
             cur = conn.execute("INSERT INTO guest_campaign_drafts (restaurant_id, kind, segment, segment_size, "
