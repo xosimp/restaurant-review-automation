@@ -448,7 +448,7 @@ A support login's `/admin/api/` JSON reads are masked (emails, phones, IPs, user
 **Messaging** (fix round E)
 - `GET /admin/api/suppressions?q=&restaurant_id=&limit=` → `{ok, suppressions[{email, reason, detail, scope, created_at, operator, roles?}], restaurant_id}`; `POST /admin/api/suppressions/reinstate` `{email, reason?}` → `{ok, email, lifted}`; 400; 404 not suppressed (audited `email.unsuppressed`).
 - `POST /admin/api/client/<rid>/value-recap` → 200 `{ok, message_id}`; 200 `{ok:false, skipped:true, error}`; 409 not the production server, or `{reason:"suppressed"}`; 502 `{reason, error}`; 404.
-- `POST /admin/api/client/<rid>/storm-cap/lift` → `{ok, restaurant_id}`; 404 no cap on.
+- `POST /admin/api/client/<rid>/storm-cap/lift` → `{ok, restaurant_id}`; 404 no cap on. `POST /admin/api/client/<rid>/alert-cap` `{max_per_day}` (0–500; 0 turns the owner's cap off) → `{ok, restaurant_id, max_per_day}`; 400 not a number or out of range; 404 — one typed audit row, `alert_cap.set`, with the cap before and after and the acting admin.
 - `GET /admin/api/sms?restaurant_id=&limit=` → `{ok, rows (last four digits only), stats{hours, by_status, account_errors, attempted}}`; `GET /admin/api/messaging/health` → `{ok, problems, inbound_webhooks, email, sms, push_outbox, webhook_outbox, storm_caps, operator_suppressed}`; `GET /admin/api/client/<rid>/brief-deliveries?date=` → `{ok, deliveries}`.
 - `POST /admin/alert-contacts/test/<rid>` → 200 `{ok, sent, errors, results[{to_last4, ok, status, sid, error_code, error}]}` — `errors` lists the numbers that failed as "…" and their last four digits; 409 on a local backend (the shared sentence).
 
