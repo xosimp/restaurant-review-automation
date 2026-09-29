@@ -5025,16 +5025,45 @@ def init_staff_notes(db_path: str = DB_PATH):
     conn.close()
 
 def save_staff_note(restaurant_id: int, employee_name: str,
-                    notes: str, db_path: str = DB_PATH):
+                    notes: str, db_path: str = DB_PATH, replace: bool = False) -> dict:
+    """Add a scheduling constraint for one person; {"id", "notes", "appended"}.
+
+    One row per person (UNIQUE(restaurant_id, employee_name)), so a second
+    constraint is ADDED to the first — it used to be written over it: adding
+    "no Sundays" for Maria erased "mornings only", the page said Saved, and
+    the schedule generator stopped respecting the first (fix round #142).
+    The person is matched however their name is cased, as every reader
+    matches it; text already there is not added twice. `replace=True` sets
+    the text outright (the undo of a removal puts back exactly what was)."""
+    name = (employee_name or "").strip()
+    text = (notes or "").strip()
     conn = get_conn(db_path)
-    conn.execute("""
-        INSERT INTO staff_notes (restaurant_id, employee_name, notes)
-        VALUES (?,?,?)
-        ON CONFLICT(restaurant_id, employee_name)
-        DO UPDATE SET notes=excluded.notes
-    """, (restaurant_id, employee_name.strip(), notes.strip()))
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT id, notes FROM staff_notes WHERE restaurant_id=? AND lower(employee_name)=lower(?) "
+                           "ORDER BY id LIMIT 1", (restaurant_id, name)).fetchone()
+        appended = False
+        if row is None:
+            cur = conn.execute("INSERT INTO staff_notes (restaurant_id, employee_name, notes) VALUES (?,?,?)",
+                               (restaurant_id, name, text))
+            note_id, combined = cur.lastrowid, text
+        else:
+            existing = (row["notes"] or "").strip()
+            if replace or not existing:
+                combined = text
+            elif text.lower() in existing.lower():
+                combined = existing
+            else:
+                combined, appended = existing.rstrip(" ;.") + "; " + text, True
+            conn.execute("UPDATE staff_notes SET notes=? WHERE id=?", (combined, row["id"]))
+            note_id = row["id"]
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return {"id": note_id, "notes": combined, "appended": appended}
 
 def get_staff_notes(restaurant_id: int,
                     db_path: str = DB_PATH) -> list[dict]:
@@ -5046,11 +5075,23 @@ def get_staff_notes(restaurant_id: int,
     conn.close()
     return [dict(r) for r in rows]
 
-def delete_staff_note(note_id: int, db_path: str = DB_PATH):
+def delete_staff_note(note_id: int, db_path: str = DB_PATH, restaurant_id: int = None):
+    """Remove one person's constraints and return what was removed
+    ({"id", "restaurant_id", "employee_name", "notes"}), or None when there
+    is no such note (or it isn't `restaurant_id`'s). What was removed is
+    handed back so the page can offer an undo and the audit can say what
+    went (fix round #142)."""
     conn = get_conn(db_path)
-    conn.execute("DELETE FROM staff_notes WHERE id=?", (note_id,))
-    conn.commit()
-    conn.close()
+    try:
+        row = conn.execute("SELECT id, restaurant_id, employee_name, notes FROM staff_notes WHERE id=?",
+                           (note_id,)).fetchone()
+        if row is None or (restaurant_id is not None and int(row["restaurant_id"]) != int(restaurant_id)):
+            return None
+        conn.execute("DELETE FROM staff_notes WHERE id=?", (note_id,))
+        conn.commit()
+        return dict(row)
+    finally:
+        conn.close()
 
 # ── Staff availability ────────────────────────────────────────────────────────
 
@@ -6426,10 +6467,19 @@ def delete_staff_availability(restaurant_id: int, employee_name: str, db_path: s
 
 # ── Client data helpers ───────────────────────────────────────────────────────
 
+# The two datasets client_data holds. data_type becomes a COLUMN NAME in the
+# statements below ({data_type}_csv), so it is checked here, at the data
+# layer, whatever the caller validated: /admin/upload-data passed a form field
+# straight through (fix round #130).
+CLIENT_DATA_TYPES = ("shifts", "inventory")
+
+
 def save_client_data(restaurant_id: int, data_type: str,
                      csv_content: str, source: str = "upload",
                      db_path: str = DB_PATH):
     """Save labor (shifts) or inventory CSV for a client."""
+    if data_type not in CLIENT_DATA_TYPES:
+        raise ValueError(f"save_client_data: unknown data type {data_type!r}")
     conn = get_conn(db_path)
     existing = conn.execute(
         "SELECT id FROM client_data WHERE restaurant_id=?",
@@ -7969,6 +8019,40 @@ def place_id_conflict(place_id: str, exclude_id=None, db_path: str = DB_PATH):
     return None
 
 
+# The column that identifies the POS store a restaurant is bound to, per
+# provider. A store bound to two restaurants syncs its sales and labor into
+# both (fix round #143) — the same failure place_id_conflict prevents for a
+# Google listing, with the same exemption for demos.
+POS_BINDING_COLUMNS = {"toast": ("toast_restaurant_guid",), "square": ("square_location_id",),
+                       "clover": ("clover_merchant_id",), "rpower": ("rpower_cg", "rpower_store_mid")}
+
+
+def pos_binding_conflict(provider: str, values, exclude_id=None, db_path: str = DB_PATH):
+    """The name of another LIVE restaurant already bound to this POS store,
+    or None. `values` is the tuple POS_BINDING_COLUMNS[provider] names (a
+    single value for a one-column binding). Compared case-insensitively and
+    trimmed; blank never conflicts. Demo rows are exempt on both sides, as
+    for Place IDs: the caller skips the check for a demo target."""
+    cols = POS_BINDING_COLUMNS[provider]
+    if not isinstance(values, (tuple, list)):
+        values = (values,)
+    vals = [str(v or "").strip().lower() for v in values]
+    if len(vals) != len(cols) or not vals[-1]:
+        return None
+    where = " AND ".join(f"LOWER(TRIM(COALESCE({c},'')))=?" for c in cols)
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(f"SELECT id, name FROM restaurants WHERE {where} AND COALESCE(is_demo,0)=0",
+                            tuple(vals)).fetchall()
+    finally:
+        conn.close()
+    for r in rows:
+        if exclude_id is not None and int(r["id"]) == int(exclude_id):
+            continue
+        return r["name"] or f"restaurant #{r['id']}"
+    return None
+
+
 def location_group_conflict(group_name: str, owner_email: str, exclude_id=None,
                             db_path: str = DB_PATH):
     """The owner email already using `group_name`, if it isn't this one.
@@ -8503,16 +8587,62 @@ def get_reviews_data(restaurant_id, filter_by="all", search="", category=None, p
     return result
 
 
+# ── CSV files a person opens ────────────────────────────────────────────────
+#
+# Every export ends up in a spreadsheet, and a cell that starts with = + - @
+# (or a tab or a carriage return) is run there as a formula. The text in these
+# files is other people's: a public reviewer's words, ingredient names from a
+# POS, names from an uploaded roster. The one writer every export uses puts a
+# ' in front of such a cell so it reads as text (fix round #156). A plain
+# number, negative ones included, is left as it is. The CSVs this codebase
+# stores and parses itself (the shifts datasets, a stored schedule) are not
+# exports and do not go through it.
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def csv_safe_cell(value):
+    """The cell as it should be written to an export."""
+    if value is None:
+        return ""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value
+    text = str(value)
+    if text[:1] in _CSV_FORMULA_PREFIXES:
+        import re as _re_csv
+        if not _re_csv.match(r"^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$", text):
+            return "'" + text
+    return text
+
+
+class SafeCSVWriter:
+    """csv.writer for an export: every cell through csv_safe_cell."""
+
+    def __init__(self, fileobj, **kwargs):
+        import csv as _csv_mod
+        self._writer = _csv_mod.writer(fileobj, **kwargs)
+
+    def writerow(self, row):
+        return self._writer.writerow([csv_safe_cell(v) for v in row])
+
+    def writerows(self, rows):
+        for row in rows:
+            self.writerow(row)
+
+
+def safe_csv_writer(fileobj, **kwargs) -> SafeCSVWriter:
+    return SafeCSVWriter(fileobj, **kwargs)
+
+
 def build_reviews_export_csv(restaurant_id: int) -> str:
     """The self-serve "export my data" setting's payload — deliberately
     narrower than admin's export_reviews() (9 columns, browser download):
     just the 4 fields a restaurant owner would actually recognize as "my
     review data" (date, rating, review text, response status), sized for
     an email attachment rather than a full admin audit export."""
-    import csv, io
+    import io
     rows = get_reviews_data(restaurant_id)
     buf = io.StringIO()
-    writer = csv.writer(buf)
+    writer = safe_csv_writer(buf)
     writer.writerow(["Date", "Rating", "Review", "Response Status"])
     for r in rows:
         writer.writerow([r.get("review_date") or "", r.get("rating"), r.get("text") or "", r.get("response_status") or ""])
@@ -9860,10 +9990,10 @@ def auto_approve_candidates(restaurant_id: int, db_path: str = DB_PATH, ratings=
 
 
 def build_labor_export_csv(restaurant_id: int, db_path: str = DB_PATH) -> str:
-    import csv, io
+    import io
     conn = get_conn(db_path)
     out = io.StringIO()
-    w = csv.writer(out)
+    w = safe_csv_writer(out)
     w.writerow(["week_start", "hours_scheduled", "labor_cost", "labor_pct", "generated_at"])
     try:
         rows = conn.execute("""
@@ -9886,10 +10016,10 @@ def build_labor_export_csv(restaurant_id: int, db_path: str = DB_PATH) -> str:
 
 
 def build_food_cost_export_csv(restaurant_id: int, db_path: str = DB_PATH) -> str:
-    import csv, io
+    import io
     conn = get_conn(db_path)
     out = io.StringIO()
-    w = csv.writer(out)
+    w = safe_csv_writer(out)
     w.writerow(["ingredient", "unit", "on_hand", "par", "unit_cost", "last_order_qty", "waste_last_week", "updated_at"])
     try:
         rows = conn.execute("SELECT * FROM ingredients WHERE restaurant_id=? ORDER BY name", (restaurant_id,)).fetchall()

@@ -79,17 +79,66 @@ def admin_api_system(current_user):
                    tick=int(_os.getenv("SCHEDULER_TICK_SECONDS", "300")), db=_os.path.basename(str(DB_PATH)),
                    build=build)
 
+def _new_client_problem(data):
+    """The first thing wrong with a New client form, as the sentence to
+    show, or None. Missing keys and non-text values used to surface as a
+    raw KeyError or AttributeError in the console."""
+    import re as _re
+    import time_utils
+    for key, label in (("restaurant_name", "Restaurant name"), ("owner_email", "Owner email"),
+                       ("username", "Dashboard username"), ("password", "Temporary password")):
+        if not isinstance(data.get(key), str) or not data[key].strip():
+            return f"{label} is required."
+    for key in ("google_place_id", "yelp_business_id", "voice_notes", "owner_phone", "owner_name",
+                "location_group", "location_name", "timezone"):
+        if data.get(key) is not None and not isinstance(data.get(key), str):
+            return f"{key.replace('_', ' ').capitalize()} must be text."
+    if len(data["restaurant_name"].strip()) > 200:
+        return "Restaurant name is too long."
+    email = data["owner_email"].strip()
+    if len(email) > 254 or not _re.match(r"^[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+$", email):
+        return "Owner email must be one email address."
+    if not _re.match(r"^[A-Za-z0-9._@+-]{3,64}$", data["username"].strip()):
+        return "Dashboard username: 3 to 64 letters, numbers, dots, dashes or underscores, with no spaces."
+    place = (data.get("google_place_id") or "").strip()
+    if place and (len(place) > 300 or any(c.isspace() for c in place)):
+        return "Google Place ID has spaces in it. Paste just the ID (it starts with ChIJ)."
+    # The zones the product offers (time_utils.COMMON_TIMEZONES, the same list
+    # as the settings page and the owner's own profile). Every restaurant
+    # defaulted to Chicago, so a Pacific client got its 9am mail at 7am
+    # (fix round #152).
+    tz = (data.get("timezone") or "").strip()
+    if tz and tz not in time_utils.COMMON_TIMEZONES:
+        return "Pick the restaurant's timezone from the list."
+    return None
+
+
 @admin_bp.route("/admin/create-client", methods=["POST"])
 @admin_required
 def create_client(current_user):
+    """Create the restaurant and its owner's login, then start the provider
+    calls (the Places menu fetch, the DocuSign contract) as a background
+    job: they held a request thread for as long as Google and DocuSign took
+    (fix round #153). The response carries `setup_job_id`; poll
+    /admin/api/create-client/<job_id> for {envelope_id, docusign_skipped,
+    menu_notes_fetched}. Body adds an optional `timezone` (one of
+    time_utils.COMMON_TIMEZONES; Chicago when not given, and the response
+    says so with timezone_defaulted)."""
     from models import create_restaurant, Restaurant
-    data = request.get_json()
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(ok=False, error="Send the new client as a JSON object."), 400
+    problem = _new_client_problem(data)
+    if problem:
+        return jsonify(ok=False, error=problem), 400
+    timezone = (data.get("timezone") or "").strip() or "America/Chicago"
     try:
-        # Check for duplicate email/username BEFORE creating anything
+        # Check for duplicate email/username BEFORE creating anything. Both
+        # are stored lower-cased (auth.create_user), so compared that way.
         conn_check = get_conn()
         existing = conn_check.execute(
-            "SELECT id FROM users WHERE email=? OR username=?",
-            (data["owner_email"], data["username"])
+            "SELECT id FROM users WHERE lower(email)=lower(?) OR lower(username)=lower(?)",
+            (data["owner_email"].strip(), data["username"].strip())
         ).fetchone()
         conn_check.close()
         if existing:
@@ -110,31 +159,32 @@ def create_client(current_user):
             ))
 
         conflict = location_group_conflict(
-            data.get("location_group", "").strip(), data["owner_email"]
+            (data.get("location_group") or "").strip(), data["owner_email"]
         )
         if conflict:
             return jsonify(ok=False, error=(
-                f"Location group \u201c{data.get('location_group','').strip()}\u201d already belongs to "
+                f"Location group “{(data.get('location_group') or '').strip()}” already belongs to "
                 f"{conflict}. Pick a different group name — locations in a group share data and billing."
             ))
 
         # Create restaurant
         rid = create_restaurant(Restaurant(
-            name=data["restaurant_name"],
-            owner_email=data["owner_email"],
-            google_place_id=data.get("google_place_id") or None,
-            yelp_business_id=data.get("yelp_business_id") or None,
+            name=data["restaurant_name"].strip(),
+            owner_email=data["owner_email"].strip(),
+            google_place_id=(data.get("google_place_id") or "").strip() or None,
+            yelp_business_id=(data.get("yelp_business_id") or "").strip() or None,
             voice_notes=data.get("voice_notes") or None,
             owner_phone=data.get("owner_phone") or None,
             owner_name=data.get("owner_name") or None,
-            location_group=data.get("location_group","").strip() or None,
-            location_name=data.get("location_name","").strip() or None,
+            location_group=(data.get("location_group") or "").strip() or None,
+            location_name=(data.get("location_name") or "").strip() or None,
+            timezone=timezone,
         ))
         try:
             create_user(
                 restaurant_id=rid,
-                username=data["username"],
-                email=data["owner_email"],
+                username=data["username"].strip(),
+                email=data["owner_email"].strip(),
                 password=data["password"],
             )
         except Exception:
@@ -168,59 +218,31 @@ def create_client(current_user):
             # with nothing in it, and nothing said why. The Place ID was
             # already validated against place_id_conflict above, so turning
             # this on is exactly as safe as the ID that was just accepted.
+            # The settings save applies the same rule (reviews_live_decision).
             "reviews_live":    1 if ((data.get("google_place_id") or "").strip()
                                      and _flag("module_reviews", 1)) else 0,
         })
 
-        # Auto-fetch menu notes from Google Places if place ID provided
-        google_place_id = data.get("google_place_id") or None
-        if google_place_id and _flag("module_marketing"):
-            try:
-                from competitor import fetch_menu_notes_from_places
-                auto_menu = fetch_menu_notes_from_places(google_place_id, restaurant_id=rid)
-                if auto_menu:
-                    update_restaurant(rid, {"menu_notes": auto_menu})
-                    print(f"[create_client] Auto-fetched menu notes for {data['restaurant_name']}")
-            except Exception as me:
-                print(f"[create_client] Menu auto-fetch failed: {me}")
         module_names = []
         if _flag("module_reviews"): module_names.append("Review Intelligence")
         if _flag("module_labor"):   module_names.append("Labor Optimizer")
         if _flag("module_inventory"): module_names.append("Food Cost Control")
         if _flag("module_marketing"): module_names.append("Marketing Autopilot")
-        mods = len(module_names)
-        modules_list = ", ".join(module_names)
-
-        # Step 1: Send contract via DocuSign
-        envelope_id = None
-        if mods > 0 and data.get("owner_email"):
-            try:
-                from docusign_helper import send_contract
-                result = send_contract(
-                    owner_email=data["owner_email"],
-                    owner_name=data.get("owner_name","") or data["restaurant_name"],
-                    restaurant_name=data["restaurant_name"],
-                    module_count=mods,
-                    modules_list=modules_list,
-                )
-                envelope_id = result.get("envelope_id")
-                update_restaurant(rid, {
-                    "contract_status": "sent",
-                    "docusign_envelope_id": envelope_id,
-                })
-                print(f"Contract sent via DocuSign to {data['owner_email']}, envelope: {envelope_id}")
-                try:
-                    log_email(rid, "contract", data["owner_email"], f"Service Agreement — {data['restaurant_name']}")
-                except Exception: pass
-            except Exception as e:
-                print(f"DocuSign contract failed: {e}")
-                import traceback; traceback.print_exc()
 
         # Steps 2 & 3 (payment + welcome emails) fire automatically
         # when the client signs the contract via the DocuSign webhook
-
-        docusign_skipped = envelope_id is None and mods > 0
-        return jsonify(ok=True, restaurant_id=rid, envelope_id=envelope_id, docusign_skipped=docusign_skipped)
+        setup = {
+            "restaurant_name": data["restaurant_name"].strip(),
+            "owner_email": data["owner_email"].strip(),
+            "owner_name": (data.get("owner_name") or "").strip(),
+            "google_place_id": (data.get("google_place_id") or "").strip() or None,
+            "fetch_menu": bool(_flag("module_marketing")),
+            "module_names": module_names,
+        }
+        job_id, setup_error = _start_client_setup(rid, setup)
+        return jsonify(ok=True, restaurant_id=rid, setup_job_id=job_id, setup_error=setup_error,
+                       envelope_id=None, docusign_skipped=False, timezone=timezone,
+                       timezone_defaulted=not (data.get("timezone") or "").strip())
     except Exception as e:
         import traceback; traceback.print_exc()
         return jsonify(ok=False, error=_safe_err(e))
@@ -250,6 +272,77 @@ def _login_row(user_id):
         return dict(row) if row else None
     finally:
         conn.close()
+
+
+
+def _start_client_setup(restaurant_id, setup):
+    """(job_id, error): the new client's provider calls, on the bounded admin
+    job pool (see _submit_admin_job)."""
+    import uuid
+    job_id = str(uuid.uuid4())
+    _ops.start_async_job(job_id, "client_setup", restaurant_id)
+    err = _submit_admin_job(job_id, _run_client_setup, job_id, restaurant_id, setup)
+    if err:
+        _ops.finish_async_job(job_id, "error", {"ok": False, "error": err})
+        return job_id, err
+    return job_id, None
+
+
+def _run_client_setup(job_id, restaurant_id, setup):
+    """The Places menu fetch and the DocuSign contract for a new client.
+    Result: {ok, restaurant_id, menu_notes_fetched, envelope_id,
+    docusign_skipped, docusign_error}."""
+    from models import update_restaurant, get_restaurant as _gr_setup
+    result = {"ok": True, "restaurant_id": restaurant_id, "menu_notes_fetched": False,
+              "envelope_id": None, "docusign_skipped": False, "docusign_error": None}
+    # Auto-fetch menu notes from Google Places if place ID provided
+    if setup.get("google_place_id") and setup.get("fetch_menu"):
+        try:
+            from competitor import fetch_menu_notes_from_places
+            auto_menu = fetch_menu_notes_from_places(setup["google_place_id"], restaurant_id=restaurant_id)
+            current = _gr_setup(restaurant_id)
+            # Notes somebody typed while this ran are theirs to keep.
+            if auto_menu and current and not (current.menu_notes or "").strip():
+                update_restaurant(restaurant_id, {"menu_notes": auto_menu})
+                result["menu_notes_fetched"] = True
+        except Exception as me:
+            _ops.capture(me, job="create_client_menu_fetch", context=f"restaurant_id={restaurant_id}")
+    # Step 1: Send contract via DocuSign
+    names = setup.get("module_names") or []
+    if names and setup.get("owner_email"):
+        try:
+            import scheduler as _sched_cc
+            local = not _sched_cc.scheduling_allowed()
+        except Exception:
+            local = True
+        if local:
+            # A local backend holds production's DocuSign credentials: a
+            # contract from here reaches the real owner. The scheduler's rule
+            # (scheduling_allowed; ALLOW_LOCAL_SCHEDULER=1 overrides) applies
+            # to every send an admin action makes.
+            result.update(docusign_skipped=True, docusign_error="Not sent from a local backend.")
+        else:
+            try:
+                from docusign_helper import send_contract
+                sent = send_contract(
+                    owner_email=setup["owner_email"],
+                    owner_name=setup.get("owner_name") or setup["restaurant_name"],
+                    restaurant_name=setup["restaurant_name"],
+                    module_count=len(names),
+                    modules_list=", ".join(names),
+                )
+                envelope_id = sent.get("envelope_id")
+                update_restaurant(restaurant_id, {"contract_status": "sent", "docusign_envelope_id": envelope_id})
+                result["envelope_id"] = envelope_id
+                try:
+                    log_email(restaurant_id, "contract", setup["owner_email"],
+                              f"Service Agreement — {setup['restaurant_name']}")
+                except Exception as le:
+                    _ops.capture(le, job="create_client_contract_log", context=f"restaurant_id={restaurant_id}")
+            except Exception as e:
+                result.update(docusign_skipped=True, docusign_error=_safe_err(e))
+                _ops.capture(e, job="create_client_contract", context=f"restaurant_id={restaurant_id}")
+    _ops.finish_async_job(job_id, "done", result)
 
 
 @admin_bp.route("/admin/deactivate-client/<int:user_id>", methods=["POST"])
@@ -375,20 +468,48 @@ def client_data_page(restaurant_id, current_user):
 @admin_bp.route("/admin/staff-notes/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def save_staff_note_route(restaurant_id, current_user):
+    """Add a scheduling constraint. A second one for the same person is
+    added to the first, never written over it (models.save_staff_note,
+    fix round #142). {ok, id, notes (the person's full text), appended}."""
     from models import save_staff_note
-    name  = request.form.get("employee_name","").strip()
-    notes = request.form.get("notes","").strip()
+    name  = " ".join((request.form.get("employee_name") or "").split())[:80]
+    notes = (request.form.get("notes") or "").strip()[:500]
     if not name or not notes:
-        return jsonify(ok=False, error="Name and notes required")
-    save_staff_note(restaurant_id, name, notes)
-    return jsonify(ok=True)
+        return jsonify(ok=False, error="Name and notes required"), 400
+    if not get_restaurant(restaurant_id):
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    result = save_staff_note(restaurant_id, name, notes)
+    _record_staff_note(restaurant_id, current_user, "staff_note.saved", name,
+                       {"added": notes, "now": result["notes"], "appended": result["appended"]})
+    return jsonify(ok=True, **result)
 
 @admin_bp.route("/admin/staff-notes/<int:note_id>/delete", methods=["POST"])
 @admin_required
 def delete_staff_note_route(note_id, current_user):
+    """Remove one person's constraints. Returns what was removed, so the
+    page can offer an undo, and records it with its restaurant and text —
+    the audit row said neither (fix round #142)."""
     from models import delete_staff_note
-    delete_staff_note(note_id)
-    return jsonify(ok=True)
+    deleted = delete_staff_note(note_id)
+    if not deleted:
+        return jsonify(ok=False, error="That constraint was already removed."), 404
+    _record_staff_note(deleted["restaurant_id"], current_user, "staff_note.removed", deleted["employee_name"],
+                       {"removed": deleted["notes"]})
+    return jsonify(ok=True, deleted={"employee_name": deleted["employee_name"], "notes": deleted["notes"],
+                                     "restaurant_id": deleted["restaurant_id"]})
+
+
+def _record_staff_note(restaurant_id, current_user, event, employee_name, detail):
+    actor = current_user.get("username") or current_user.get("email") or "admin"
+    try:
+        from models import log_event
+        log_event(restaurant_id, event.replace(".", "_"), {"by": actor, "employee": employee_name, **detail})
+    except Exception as e:
+        _ops.capture(e, job="staff_note_audit", context=f"restaurant_id={restaurant_id}")
+    import admin_events
+    admin_events.record("admin", event, restaurant_id=restaurant_id,
+                        summary=f"{actor}: {employee_name}"[:300],
+                        payload={"actor": actor, "employee": employee_name, **detail})
 
 @admin_bp.route("/admin/seed-review-account", methods=["POST"])
 @admin_required
@@ -496,19 +617,49 @@ def list_ingredients_route(restaurant_id, current_user):
     return jsonify(ok=True, ingredients=inventory_ledger.list_ingredients(restaurant_id))
 
 
+def _ingredient_label(value, max_len):
+    """An ingredient name, category or unit as stored: whitespace collapsed,
+    angle brackets dropped. The page escapes on output (fix round #10); this
+    is the second line, so markup never reaches the table at all."""
+    return " ".join(str(value or "").replace("<", "").replace(">", "").split())[:max_len]
+
+
+def _ingredient_amount(data, key, default, positive=False, most=1000000.0):
+    """(number, error). Non-numbers used to 500 the request, and NaN,
+    infinity and negatives were stored — the MOD-FC-6 bug the update route
+    had already fixed (fix round #142)."""
+    import math
+    raw = data.get(key)
+    if raw in (None, ""):
+        return default, None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = float("nan")
+    label = key.replace("_", " ")
+    if isinstance(raw, bool) or not math.isfinite(value) or value < 0 or value > most or (positive and value <= 0):
+        return None, (f"{label.capitalize()} must be a number more than 0." if positive
+                      else f"{label.capitalize()} must be a number of 0 or more.")
+    return value, None
+
+
 @admin_bp.route("/admin/inventory/ingredients/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def create_ingredient_route(restaurant_id, current_user):
     import inventory_ledger
-    data = request.get_json() or {}
-    name = (data.get("name") or "").strip()
+    data = request.get_json(silent=True) or {}
+    name = _ingredient_label(data.get("name"), 80)
     if not name:
-        return jsonify(ok=False, error="Ingredient name required")
+        return jsonify(ok=False, error="Ingredient name required"), 400
+    amounts = {}
+    for key, default, positive, most in (("par_level", 0.0, False, 1000000.0), ("unit_cost", 0.0, False, 100000.0),
+                                         ("case_size", 1.0, True, 100000.0), ("current_stock", 0.0, False, 1000000.0)):
+        amounts[key], err = _ingredient_amount(data, key, default, positive=positive, most=most)
+        if err:
+            return jsonify(ok=False, error=err), 400
     ingredient_id = inventory_ledger.create_ingredient(
-        restaurant_id, name=name, category=data.get("category", ""), unit=data.get("unit", ""),
-        par_level=float(data.get("par_level") or 0), unit_cost=float(data.get("unit_cost") or 0),
-        case_size=float(data.get("case_size") or 1.0), current_stock=float(data.get("current_stock") or 0)
-    )
+        restaurant_id, name=name, category=_ingredient_label(data.get("category"), 40),
+        unit=_ingredient_label(data.get("unit"), 20), **amounts)
     return jsonify(ok=True, id=ingredient_id)
 
 
@@ -516,11 +667,13 @@ def create_ingredient_route(restaurant_id, current_user):
 @admin_required
 def update_ingredient_route(restaurant_id, ingredient_id, current_user):
     import inventory_ledger
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     fields = {}
-    for key in ("name", "category", "unit"):
+    for key, most in (("name", 80), ("category", 40), ("unit", 20)):
         if key in data:
-            fields[key] = data[key]
+            fields[key] = _ingredient_label(data[key], most)
+    if "name" in fields and not fields["name"]:
+        return jsonify(ok=False, error="An ingredient needs a name."), 400
     import math
     for key in ("par_level", "unit_cost", "case_size", "avg_daily_usage", "waste_last_week"):
         if key in data and data[key] not in (None, ""):
@@ -561,10 +714,10 @@ def create_menu_item_route(restaurant_id, current_user):
     """Manual add — the only path for a restaurant with no Toast connection,
     or a dish too new to have shown up in discover_menu_items yet."""
     import inventory_ledger
-    data = request.get_json() or {}
-    name = (data.get("name") or "").strip()
+    data = request.get_json(silent=True) or {}
+    name = _ingredient_label(data.get("name"), 120)
     if not name:
-        return jsonify(ok=False, error="Menu item name required")
+        return jsonify(ok=False, error="Menu item name required"), 400
     menu_item_id = inventory_ledger.create_menu_item(restaurant_id, name)
     return jsonify(ok=True, id=menu_item_id)
 
@@ -594,18 +747,23 @@ def _restaurant_of_menu_item(menu_item_id):
 @admin_required
 def add_recipe_ingredient_route(menu_item_id, current_user):
     import inventory_ledger
-    data = request.get_json() or {}
-    ingredient_id = data.get("ingredient_id")
-    qty_per_unit = data.get("qty_per_unit")
-    if not ingredient_id or not qty_per_unit:
-        return jsonify(ok=False, error="ingredient_id and qty_per_unit required")
+    data = request.get_json(silent=True) or {}
+    try:
+        ingredient_id = int(str(data.get("ingredient_id") or "").strip())
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="Pick an ingredient."), 400
+    # A bad quantity used to 500, or be reported as "belongs to a different
+    # restaurant" (fix round #142).
+    qty_per_unit, err = _ingredient_amount(data, "qty_per_unit", None, positive=True, most=10000.0)
+    if err or qty_per_unit is None:
+        return jsonify(ok=False, error="The quantity per sale must be a number more than 0."), 400
     rid = _restaurant_of_menu_item(menu_item_id)
     if rid is None:
         return jsonify(ok=False, error="No such menu item."), 404
     # ingredient_id is caller-supplied and must belong to the same restaurant
     # as the dish — a recipe that reaches across locations silently costs one
     # location's plate from another's prices.
-    row_id = inventory_ledger.add_recipe_ingredient(rid, menu_item_id, int(ingredient_id), float(qty_per_unit))
+    row_id = inventory_ledger.add_recipe_ingredient(rid, menu_item_id, ingredient_id, qty_per_unit)
     if not row_id:
         return jsonify(ok=False, error="That ingredient belongs to a different restaurant."), 400
     return jsonify(ok=True, id=row_id)
@@ -670,9 +828,13 @@ def record_receiving_route(restaurant_id, ingredient_id, current_user):
 def resync_depletion_route(restaurant_id, current_user):
     import inventory_ledger
     from datetime import date as _date, timedelta as _td
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     business_date_str = data.get("business_date")
-    business_date = _date.fromisoformat(business_date_str) if business_date_str else (_date.today() - _td(days=1))
+    try:
+        business_date = _date.fromisoformat(str(business_date_str)) if business_date_str else (_date.today() - _td(days=1))
+    except ValueError:
+        # A bad date used to 500 the request (fix round #142).
+        return jsonify(ok=False, error="Pick a business date."), 400
     try:
         return jsonify(ok=True, **inventory_ledger.compute_daily_depletion(restaurant_id, business_date))
     except Exception as e:
@@ -759,36 +921,426 @@ def test_alert_sms_route(restaurant_id, current_user):
 @admin_bp.route("/admin/upload-data/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def upload_data(restaurant_id, current_user):
-    from models import save_client_data
-    data_type = request.form.get("data_type")  # "shifts" or "inventory"
-    source     = request.form.get("source", "upload")
+    """A client's shifts or inventory CSV, loaded by an admin into THAT
+    client's restaurant — the one the URL names. The console's data page
+    posted to the owner's /client/upload-data instead, which wrote into the
+    admin's own home restaurant; and this route, which nothing called, passed
+    data_type unchecked into the SQL text and skipped every validation the
+    owner route applies (fix round #19, #130). It now runs the owner route's
+    own body (client_api._do_upload_data).
 
-    if source == "upload":
-        f = request.files.get("csv_file")
-        if not f:
-            return jsonify(ok=False, error="No file uploaded")
-        csv_content = f.read().decode("utf-8")
-    else:
-        csv_content = request.form.get("csv_content", "")
+    Form: data_type (shifts | inventory), csv_file, source (upload | manual)."""
+    import client_api
+    if not get_restaurant(restaurant_id):
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    data_type = request.form.get("data_type")
+    if data_type not in ("shifts", "inventory"):
+        return jsonify(ok=False, error="Choose shifts or inventory data."), 400
+    f = request.files.get("csv_file")
+    if f is None and (request.form.get("csv_content") or "").strip():
+        # The pasted-text shape this route used to take.
+        from werkzeug.datastructures import FileStorage
+        f = FileStorage(io.BytesIO(request.form["csv_content"].encode("utf-8")), filename="data.csv")
+    return client_api._do_upload_data(restaurant_id, data_type, f, current_user,
+                                      source=(request.form.get("source") or "upload"), operator=True)
 
-    if not csv_content.strip():
-        return jsonify(ok=False, error="No data provided")
+# ── The legacy client-settings page (templates/client_settings.html) ─────────
+#
+# Every save used to post ~60 fields and write each one, so an admin fixing a
+# typo in the voice notes reverted whatever the owner had changed since the
+# page loaded, reset past_due/internal billing to 'trial' (the select offered
+# four states and the browser submitted the first), and cleared an RPOWER POS
+# label the select didn't list — while week_start_day, which the form did
+# send, was silently dropped because it wasn't in the route's field list
+# (fix round #8, #113). Now the page sends only the fields the admin touched,
+# with the row version and the values it loaded; the server refuses a key it
+# doesn't know, and refuses a touched field somebody else changed in the
+# meantime (409) instead of reverting it.
 
-    # Validate it parses correctly
-    import io, csv as _csv
+# Every billing state the system itself writes: the Stripe webhooks (active,
+# past_due, paused, churned), provisioning (active), the boot seed and the
+# review account (internal), and a new restaurant's default (trial). A stored
+# value outside this list is still rendered as its own option, and a save
+# that doesn't touch the select never sends it.
+SETTINGS_BILLING_STATES = ("trial", "active", "past_due", "paused", "churned", "internal")
+SETTINGS_BILLING_LABELS = {"trial": "Trial", "active": "Active", "past_due": "Past due", "paused": "Paused",
+                           "churned": "Churned", "internal": "Internal (not a client)"}
+# The POS label (restaurants.pos_system). RPOWER is what rpower_routes writes
+# on connect; it was missing here, so saving an RPOWER client blanked it.
+SETTINGS_POS_SYSTEMS = ("Toast", "Square", "RPOWER", "Clover", "Lightspeed", "Aloha / NCR", "Revel",
+                        "TouchBistro", "Other / Manual")
+SETTINGS_INVENTORY_FREQUENCIES = ("weekly", "biweekly", "monthly")
+SETTINGS_DIGEST_DAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+_SETTINGS_WEEKDAYS = ("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
+_TZ_LABELS = {"America/New_York": "Eastern (New York)", "America/Chicago": "Central (Chicago)",
+              "America/Denver": "Mountain (Denver)", "America/Phoenix": "Arizona (Phoenix)",
+              "America/Los_Angeles": "Pacific (Los Angeles)", "America/Anchorage": "Alaska (Anchorage)",
+              "Pacific/Honolulu": "Hawaii (Honolulu)"}
+
+# Keys the save understands besides the fields themselves.
+_SETTINGS_CONTROL_KEYS = frozenset({"touched", "expected_version", "base", "billing_status_reason"})
+
+# The two targets this page sets: label, lowest, highest. The labor target
+# keeps the admin's stricter 5–60 (SCHED-36); food cost takes the owner
+# route's bounds (strategy_routes._TARGET_BOUNDS). Written, never judged here.
+_SETTINGS_TARGETS = {"labor_target_pct": ("Labor target", 5.0, 60.0), "food_cost_target": ("Food cost target", 5.0, 80.0)}
+
+# Every field the page loads and may send back, in the order a conflict
+# message lists them. weekly_revenue_target is not a column: it is stored as
+# the monthly it implies (models.monthly_from_weekly).
+SETTINGS_FIELDS = (
+    "name", "owner_email", "owner_name", "owner_phone", "location_group", "location_name", "sign_off_name",
+    "timezone", "module_reviews", "module_labor", "module_inventory", "module_marketing",
+    "google_place_id", "yelp_business_id", "reviews_live", "digest_day", "digest_enabled",
+    "hourly_rate", *_SETTINGS_TARGETS, "week_start_day", "monthly_revenue_target", "weekly_revenue_target",
+    "hours_notes", "sched_notes", "section_count", "delivery_pct", "daypart_split", "role_minimums_json",
+    "cut_floor_default", "role_rates_json", "close_times_json", "role_close_buffer_json",
+    "neighborhood", "vibe", "known_for", "voice_notes", "never_say", "skip_holidays", "custom_competitors",
+    "menu_notes", "menu_url", "pos_system", "inventory_frequency", "delivery_days", "inventory_notes",
+    "waste_target_pct", "billing_status", "internal_notes",
+    # Not on the page (the owner's Alert Settings own them); still accepted
+    # from a direct call so an older caller isn't refused.
+    "alert_1star", "alert_2star", "alert_health", "alert_neg_spike", "alert_negative_trend",
+    "alert_no_response", "urgent_via_email", "urgent_via_sms", "alert_5star", "alert_rating_threshold",
+    "alert_rating_floor", "alert_labor_over",
+)
+
+_SETTINGS_NAMES = {
+    "name": "Restaurant name", "owner_email": "Owner email", "owner_name": "Owner name",
+    "owner_phone": "Owner phone", "location_group": "Location group", "location_name": "Location name",
+    "sign_off_name": "Sign-off name", "timezone": "Timezone", "google_place_id": "Google Place ID",
+    "yelp_business_id": "Yelp business ID", "reviews_live": "Review fetching", "digest_day": "Digest day",
+    "digest_enabled": "Weekly digest", "hourly_rate": "Blended hourly rate",
+    "week_start_day": "Payroll week start", "monthly_revenue_target": "Monthly revenue target",
+    "weekly_revenue_target": "Weekly revenue target", "hours_notes": "Hours & shift rules",
+    "sched_notes": "Scheduling notes", "section_count": "Dining sections", "delivery_pct": "Delivery %",
+    "daypart_split": "Daypart split", "role_minimums_json": "Role minimums",
+    "cut_floor_default": "Never cut below", "role_rates_json": "Per-role hourly rates",
+    "close_times_json": "Close time per day", "role_close_buffer_json": "Role after-close allowance",
+    "neighborhood": "Neighborhood", "vibe": "Vibe", "known_for": "Known for", "voice_notes": "Brand voice notes",
+    "never_say": "Never say", "skip_holidays": "Skipped holidays", "custom_competitors": "Custom competitors",
+    "menu_notes": "Menu notes", "menu_url": "Menu URL", "pos_system": "POS system",
+    "inventory_frequency": "Inventory frequency", "delivery_days": "Delivery days",
+    "inventory_notes": "Inventory notes",
+    "waste_target_pct": "Waste target", "billing_status": "Billing status", "internal_notes": "Internal notes",
+    "alert_rating_floor": "Rating alert floor", **{k: v[0] for k, v in _SETTINGS_TARGETS.items()},
+    "module_reviews": "Review Intelligence", "module_labor": "Labor Optimizer",
+    "module_inventory": "Food Cost Control", "module_marketing": "Marketing Autopilot",
+}
+
+_REFUSE_BLANK = object()
+
+
+class _SettingsError(ValueError):
+    """A field the save refuses, with a sentence the page shows as-is."""
+
+
+def _label(key):
+    return _SETTINGS_NAMES.get(key, key.replace("_", " "))
+
+
+def _settings_str(data, key):
+    raw = data.get(key)
+    if raw is None:
+        return ""
+    if isinstance(raw, (dict, list)):
+        raise _SettingsError(f"{_label(key)} must be text.")
+    return str(raw).strip()
+
+
+def _settings_required(data, key, max_len):
+    text = _settings_str(data, key)[:max_len]
+    if not text:
+        raise _SettingsError(f"{_label(key)} is required.")
+    return text
+
+
+def _settings_number(data, key, lo, hi, blank=_REFUSE_BLANK, integer=False):
+    """A finite number in [lo, hi] — refused, never clamped, so a typo is
+    seen rather than silently saved. `blank` is what an empty value stores
+    (refused when not given)."""
+    raw = data.get(key)
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        if blank is _REFUSE_BLANK:
+            raise _SettingsError(f"{_label(key)} is required.")
+        return blank
+    if isinstance(raw, (bool, dict, list)):
+        raise _SettingsError(f"{_label(key)} must be a number.")
+    import math
     try:
-        rows = list(_csv.DictReader(io.StringIO(csv_content)))
-        if not rows:
-            return jsonify(ok=False, error="CSV appears empty")
-    except Exception as e:
-        return jsonify(ok=False, error=f"Could not parse CSV: {e}")
+        value = float(str(raw).strip())
+    except (TypeError, ValueError):
+        raise _SettingsError(f"{_label(key)} must be a number.")
+    if not math.isfinite(value) or not lo <= value <= hi:
+        raise _SettingsError(f"{_label(key)} must be between {lo:g} and {hi:g}.")
+    if integer:
+        if value != int(value):
+            raise _SettingsError(f"{_label(key)} must be a whole number.")
+        return int(value)
+    return value
 
-    save_client_data(restaurant_id, data_type, csv_content, source)
-    return jsonify(ok=True, rows=len(rows))
+
+def _settings_flag(data, key):
+    raw = data.get(key)
+    if raw in (True, 1, "1", "true", "on", "yes"):
+        return 1
+    if raw in (False, 0, "0", "false", "off", "no", None, ""):
+        return 0
+    raise _SettingsError(f"{_label(key)} must be on or off.")
+
+
+def _settings_json_object(data, key):
+    """The parsed object, or None for a blank box. The readers
+    (models.get_role_rates, get_close_times, get_role_close_buffers,
+    labor._role_minimums_dict) fall back to defaults on anything they can't
+    read, so a malformed override saved as "Saved" and then did nothing
+    (ROUTES-25)."""
+    import json as _json
+    text = _settings_str(data, key)
+    if not text:
+        return None
+    try:
+        obj = _json.loads(text)
+    except ValueError:
+        raise _SettingsError(f"{_label(key)} isn't valid JSON. Check the quotes and commas, or clear the box.")
+    if not isinstance(obj, dict):
+        raise _SettingsError(f"{_label(key)} must be a JSON object, like the example in the box.")
+    return obj
+
+
+def _settings_role_numbers(data, key, lo, hi, integer):
+    import json as _json
+    import math
+    obj = _settings_json_object(data, key)
+    if obj is None:
+        return None
+    out = {}
+    for role, value in obj.items():
+        role = " ".join(str(role or "").split())[:60]
+        if not role:
+            raise _SettingsError(f"{_label(key)}: every entry needs a role name.")
+        try:
+            num = float(value)
+        except (TypeError, ValueError):
+            raise _SettingsError(f"{_label(key)}: the value for {role} must be a number.")
+        if isinstance(value, bool) or not math.isfinite(num) or not lo <= num <= hi:
+            raise _SettingsError(f"{_label(key)}: the value for {role} must be between {lo:g} and {hi:g}.")
+        if integer and num != int(num):
+            raise _SettingsError(f"{_label(key)}: the value for {role} must be a whole number.")
+        out[role] = int(num) if integer else round(num, 2)
+    return _json.dumps(out) if out else None
+
+
+def _settings_close_times(data, key):
+    import json as _json
+    import re as _re
+    obj = _settings_json_object(data, key)
+    if obj is None:
+        return None
+    canon = {d.lower(): d for d in _SETTINGS_WEEKDAYS}
+    out = {}
+    for day, value in obj.items():
+        name = canon.get(str(day or "").strip().lower())
+        if not name:
+            raise _SettingsError(f"{_label(key)}: “{day}” isn't a day name. Use Sunday to Saturday.")
+        text = str(value or "").strip()
+        if not _re.match(r"^\d{1,2}(:\d{2})?\s*([ap]\.?m\.?)?$", text, _re.I):
+            raise _SettingsError(f"{_label(key)}: “{text}” for {name} isn't a time like 9:00pm or 21:00.")
+        out[name] = text
+    return _json.dumps(out) if out else None
+
+
+def _settings_email(data, key):
+    import re as _re
+    text = _settings_str(data, key)
+    if not text or len(text) > 254 or not _re.match(r"^[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+$", text):
+        raise _SettingsError(f"{_label(key)} must be one email address.")
+    return text
+
+
+def _settings_timezone(data, key):
+    """A real IANA zone name, or refused. A typo used to be stored as
+    Chicago, which silently moved every "today" the restaurant sees."""
+    text = _settings_str(data, key)
+    try:
+        from zoneinfo import ZoneInfo
+        ZoneInfo(text)
+    except Exception:
+        raise _SettingsError("Pick the restaurant's timezone from the list.")
+    return text
+
+
+def _settings_choice(data, key, choices, blank=_REFUSE_BLANK):
+    text = _settings_str(data, key)
+    if not text and blank is not _REFUSE_BLANK:
+        return blank
+    if text not in choices:
+        raise _SettingsError(f"{_label(key)}: pick one of the listed options.")
+    return text
+
+
+def _settings_url(data, key):
+    text = sanitize(_settings_str(data, key))
+    if not text:
+        return None
+    if not text.lower().startswith(("http://", "https://")) or any(c.isspace() for c in text):
+        raise _SettingsError(f"{_label(key)} must be a web address starting with https://.")
+    return text
+
+
+def _settings_place_id(data, key):
+    text = _settings_str(data, key)
+    if not text:
+        return None
+    if len(text) > 300 or any(c.isspace() for c in text):
+        raise _SettingsError("Google Place ID has spaces in it. Paste just the ID (it starts with ChIJ).")
+    return text
+
+
+_SETTINGS_ALERT_FLAGS = ("alert_1star", "alert_2star", "alert_health", "alert_neg_spike", "alert_negative_trend",
+                         "alert_no_response", "urgent_via_email", "urgent_via_sms", "alert_5star",
+                         "alert_rating_threshold", "alert_labor_over")
+
+# field -> parser(data, key). The owner's own targets route
+# (strategy_routes._TARGET_BOUNDS) is the reference for the numeric bounds;
+# the labor target keeps the admin's stricter 5–60 (SCHED-36).
+_SETTINGS_PARSERS = {
+    "name": lambda d, k: _settings_required(d, k, 200),
+    "owner_email": _settings_email,
+    "owner_name": lambda d, k: sanitize(_settings_str(d, k), max_len=120),
+    "owner_phone": lambda d, k: _settings_str(d, k)[:40] or None,
+    "location_group": lambda d, k: _settings_str(d, k)[:120] or None,
+    "location_name": lambda d, k: _settings_str(d, k)[:120] or None,
+    "sign_off_name": lambda d, k: _settings_str(d, k)[:120] or None,
+    "timezone": _settings_timezone,
+    "module_reviews": _settings_flag,
+    "module_labor": _settings_flag,
+    "module_inventory": _settings_flag,
+    "module_marketing": _settings_flag,
+    "google_place_id": _settings_place_id,
+    "yelp_business_id": lambda d, k: _settings_str(d, k)[:200] or None,
+    "reviews_live": _settings_flag,
+    "digest_day": lambda d, k: _settings_choice(d, k, SETTINGS_DIGEST_DAYS),
+    "digest_enabled": _settings_flag,
+    "hourly_rate": lambda d, k: _settings_number(d, k, 2.0, 250.0, blank=26.0),
+    "week_start_day": lambda d, k: _settings_number(d, k, 0, 6, integer=True),
+    "monthly_revenue_target": lambda d, k: _settings_number(d, k, 0.0, 100000000.0, blank=0.0),
+    "weekly_revenue_target": lambda d, k: _settings_number(d, k, 0.0, 20000000.0, blank=0.0),
+    "hours_notes": lambda d, k: sanitize(_settings_str(d, k), max_len=2000),
+    "sched_notes": lambda d, k: sanitize(_settings_str(d, k), max_len=2000),
+    "section_count": lambda d, k: _settings_number(d, k, 1, 30, blank=None, integer=True),
+    # 0% is a real answer ("no delivery"); the page used to send it as null.
+    "delivery_pct": lambda d, k: _settings_number(d, k, 0, 100, blank=None, integer=True),
+    "daypart_split": lambda d, k: _settings_str(d, k)[:200] or None,
+    "role_minimums_json": lambda d, k: _settings_role_numbers(d, k, 0, 50, integer=True),
+    "role_rates_json": lambda d, k: _settings_role_numbers(d, k, 2.0, 250.0, integer=False),
+    "close_times_json": _settings_close_times,
+    "role_close_buffer_json": lambda d, k: _settings_role_numbers(d, k, 0, 240, integer=True),
+    "neighborhood": lambda d, k: _settings_str(d, k)[:200] or None,
+    "vibe": lambda d, k: sanitize(_settings_str(d, k)),
+    "known_for": lambda d, k: sanitize(_settings_str(d, k)),
+    "voice_notes": lambda d, k: sanitize(_settings_str(d, k)),
+    "never_say": lambda d, k: sanitize(_settings_str(d, k)),
+    "skip_holidays": lambda d, k: sanitize(_settings_str(d, k)),
+    "custom_competitors": lambda d, k: sanitize(_settings_str(d, k)),
+    "menu_notes": lambda d, k: sanitize(_settings_str(d, k), max_len=2000),
+    "menu_url": _settings_url,
+    "pos_system": lambda d, k: _settings_choice(d, k, SETTINGS_POS_SYSTEMS, blank=None),
+    "inventory_frequency": lambda d, k: _settings_choice(d, k, SETTINGS_INVENTORY_FREQUENCIES),
+    "delivery_days": lambda d, k: _settings_str(d, k)[:200] or None,
+    "inventory_notes": lambda d, k: sanitize(_settings_str(d, k)),
+    "waste_target_pct": lambda d, k: _settings_number(d, k, 0.0, 50.0, blank=None),
+    "billing_status": lambda d, k: _settings_choice(d, k, SETTINGS_BILLING_STATES),
+    "internal_notes": lambda d, k: sanitize(_settings_str(d, k)),
+    "alert_rating_floor": lambda d, k: _settings_number(d, k, 1.0, 5.0, blank=4.0),
+    **{flag: _settings_flag for flag in _SETTINGS_ALERT_FLAGS},
+    **{key: (lambda lo, hi: lambda d, k: _settings_number(d, k, lo, hi, blank=30.0))(lo, hi)
+       for key, (_name, lo, hi) in _SETTINGS_TARGETS.items()},
+}
+
+
+def _parse_client_settings(data):
+    """{field: value} for every settings field in `data`, validated.
+    Raises _SettingsError with the sentence to show. cut_floor_default is
+    parsed by the route (schedule_rules owns its rule)."""
+    return {key: _SETTINGS_PARSERS[key](data, key) for key in SETTINGS_FIELDS
+            if key in data and key != "cut_floor_default"}
+
+
+def _settings_same(a, b):
+    """Stored and loaded values compared the way a person would: blank and
+    None are one value, "30" and 30.0 are one value."""
+    def norm(v):
+        if v is None:
+            return None
+        if isinstance(v, bool):
+            return float(int(v))
+        if isinstance(v, (int, float)):
+            return round(float(v), 6)
+        s = str(v).strip()
+        if not s:
+            return None
+        try:
+            return round(float(s), 6)
+        except ValueError:
+            return s
+    return norm(a) == norm(b)
+
+
+def settings_loaded_values(restaurant) -> dict:
+    """The stored value of every field the settings page shows, as it was
+    when the page rendered — sent back with a save so the server can tell
+    "the admin changed this" from "somebody changed this since"."""
+    return {k: getattr(restaurant, k, None) for k in SETTINGS_FIELDS if k != "weekly_revenue_target"}
+
+
+def _listing_shared_with_live(restaurant_id, place_id):
+    """The live restaurant that also holds this listing, if any. Only a demo
+    can share one (place_id_conflict refuses it for a live row), and a demo
+    that shares a live client's listing must not fetch it: every review
+    would be stored, drafted and alerted on twice."""
+    return place_id_conflict((place_id or "").strip(), exclude_id=restaurant_id) if place_id else None
+
+
+def reviews_live_decision(restaurant_id, current, fields, explicit=None):
+    """(value or None for "leave it", error or None): the review-fetching
+    flag a save leaves. The admin's explicit switch wins; otherwise
+    create-client's rule runs on every save that sets the Place ID or the
+    Reviews module — a Place ID plus Reviews means fetching — and clearing
+    the Place ID with no Business Profile connected turns it off (there is
+    nothing left to fetch, and every surface reads the flag as "Google
+    reviews connected"). Fix round #110: the flag was only ever set at
+    creation, so a client created before its Place ID was known, or
+    provisioned from a checkout, never fetched and nothing could turn it on."""
+    place = fields["google_place_id"] if "google_place_id" in fields else getattr(current, "google_place_id", None)
+    reviews_on = fields["module_reviews"] if "module_reviews" in fields else getattr(current, "module_reviews", 0)
+    has_gbp = bool(getattr(current, "gmb_refresh_token", None))
+    was_live = int(getattr(current, "reviews_live", 0) or 0)
+    shared = _listing_shared_with_live(restaurant_id, place)
+    if explicit is not None:
+        if explicit and not (place or has_gbp):
+            return None, ("Add the Google Place ID (or connect the owner's Google Business Profile) "
+                          "before turning on review fetching.")
+        if explicit and shared and not has_gbp:
+            return None, (f"That Google listing belongs to {shared}. A demo that shares it doesn't fetch "
+                          f"reviews, or every one would be stored, drafted and alerted on twice.")
+        return int(bool(explicit)), None
+    if "google_place_id" in fields or "module_reviews" in fields:
+        if place and int(reviews_on or 0) and not shared and not was_live:
+            return 1, None
+        if not place and not has_gbp and was_live:
+            return 0, None
+    return None, None
+
 
 @admin_bp.route("/admin/client-settings/<int:restaurant_id>")
 @admin_required
 def client_settings_page(restaurant_id, current_user):
+    # The version first, then the row: a write landing between the two reads
+    # leaves an older version beside newer values, which a later save checks
+    # field by field rather than reverting.
+    from models import restaurant_version
+    row_version = restaurant_version(restaurant_id)
     restaurant = get_restaurant(restaurant_id)
     if not restaurant:
         return "Restaurant not found", 404
@@ -818,6 +1370,27 @@ def client_settings_page(restaurant_id, current_user):
         got = _intel_hints.industry_read(restaurant, metric)
         bench_hints[key] = ((got["comparison"].get("line") or "")
                             + (f" {got['definition_note']}" if got.get("definition_note") else "")) if got else None
+    # Every stored value gets an option, so a select can't submit its first
+    # option over a value it doesn't list (fix round #8).
+    import time_utils
+    tz = restaurant.timezone or "America/Chicago"
+    timezone_choices = [(z, _TZ_LABELS.get(z, z)) for z in time_utils.COMMON_TIMEZONES]
+    if tz not in time_utils.COMMON_TIMEZONES:
+        timezone_choices.append((tz, f"{tz} (as stored)"))
+    stored_billing = restaurant.billing_status or ""
+    billing_choices = [(s, SETTINGS_BILLING_LABELS[s]) for s in SETTINGS_BILLING_STATES]
+    if stored_billing not in SETTINGS_BILLING_STATES:
+        billing_choices.insert(0, (stored_billing, f"{stored_billing} (as stored)" if stored_billing
+                                   else "Not set (as stored)"))
+    pos_choices = list(SETTINGS_POS_SYSTEMS)
+    if restaurant.pos_system and restaurant.pos_system not in pos_choices:
+        pos_choices.append(restaurant.pos_system)
+    # Prices from the one price list (pricing.py), not the launch prices the
+    # page used to print ($500 setup, $300/mo per module) — fix round #73.
+    import pricing
+    price_ladder = [{"modules": n, "setup": pricing.money(pricing.TIERS[n]["setup"]),
+                     "monthly": pricing.money(pricing.TIERS[n]["monthly"])} for n in sorted(pricing.TIERS)]
+    from notify import MAX_ALERT_CONTACTS
     return render_template('client_settings.html',
         current_user=current_user,
         restaurant=restaurant,
@@ -825,15 +1398,49 @@ def client_settings_page(restaurant_id, current_user):
         staff_notes=staff_notes,
         alert_contacts=alert_contacts,
         count_freshness=count_freshness,
-        bench_hints=bench_hints)
+        bench_hints=bench_hints,
+        row_version=row_version,
+        loaded_settings=settings_loaded_values(restaurant),
+        timezone_choices=timezone_choices,
+        billing_choices=billing_choices,
+        pos_choices=pos_choices,
+        price_ladder=price_ladder,
+        settings_fields=list(SETTINGS_FIELDS),
+        max_alert_contacts=MAX_ALERT_CONTACTS,
+        shared_listing=_listing_shared_with_live(restaurant_id, restaurant.google_place_id))
+
 
 @admin_bp.route("/admin/client-settings/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def save_client_settings(restaurant_id, current_user):
-    from models import update_restaurant, get_restaurant as _gr_cs
+    """Write the fields this save names — and only those.
+
+    Body: the touched fields, plus `expected_version` (the row_version the
+    page loaded), `base` ({field: value as loaded} for each field sent),
+    `touched` (the target fields typed in, see TARGET_SOURCE_FIELDS) and,
+    with a billing-status override, `billing_status_reason`.
+
+    400: an unknown key or an invalid value (the sentence says which).
+    409: a field this save changes was changed by somebody else since the
+    page loaded — {conflict: true, fields, labels, current, current_version}.
+    A row that moved on only in fields this save doesn't touch (a POS sync, a
+    token refresh, the owner editing something else) saves normally: only
+    the named fields are written, so nothing of theirs is reverted.
+    200: {ok, version, saved: {field: stored value}, changed: [...]}.
+    """
+    from models import (update_restaurant, get_restaurant as _gr_cs, restaurant_version, StaleWrite,
+                        expected_version_from)
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify(ok=False, error="Send the settings as a JSON object."), 400
+    unknown = sorted(k for k in data if k not in SETTINGS_FIELDS and k not in _SETTINGS_CONTROL_KEYS)
+    if unknown:
+        # A key this route doesn't write used to be dropped while the page
+        # said "Saved" — week_start_day for months (fix round #113).
+        return jsonify(ok=False, unknown_fields=unknown,
+                       error="These settings aren't saved from this page: " + ", ".join(unknown) + "."), 400
+    # Version before row, as in client_settings_page.
+    version_now = restaurant_version(restaurant_id)
     current = _gr_cs(restaurant_id)
     if not current:
         return jsonify(ok=False, error="Restaurant not found"), 404
@@ -842,34 +1449,8 @@ def save_client_settings(restaurant_id, current_user):
         """The value this save will leave in place: the payload's, or the
         stored one when the payload does not mention the field."""
         if key in data:
-            return (data.get(key) or "").strip()
+            return str(data.get(key) or "").strip()
         return (getattr(current, key, "") or "").strip()
-
-    def _valid_tz(name):
-        """Only store real IANA zone names — a typo here would silently skew
-        every date this restaurant sees."""
-        name = (name or "").strip()
-        if not name:
-            return "America/Chicago"
-        try:
-            from zoneinfo import ZoneInfo
-            ZoneInfo(name)
-            return name
-        except Exception:
-            return "America/Chicago"
-
-    # The labor target drives every schedule budget. Any number used to be
-    # stored — negative, 500% — and a 0 silently became 30% (SCHED-36).
-    _lt_raw = data.get("labor_target_pct")
-    if _lt_raw in (None, ""):
-        _labor_target = 30.0
-    else:
-        try:
-            _labor_target = float(_lt_raw)
-        except (TypeError, ValueError):
-            _labor_target = None
-        if _labor_target is None or _labor_target != _labor_target or not 5.0 <= _labor_target <= 60.0:
-            return jsonify(ok=False, error="Labor target must be a percentage between 5 and 60.")
 
     # "Never cut a role below N people" (schedule_rules.cut_floor): the cut
     # floor for a role with no floor of its own, 1..CUT_FLOOR_MAX. Refused,
@@ -885,123 +1466,143 @@ def save_client_settings(restaurant_id, current_user):
             _cf_ok = False
         if not _cf_ok:
             return jsonify(ok=False, error=f"Never cut below must be a whole number of people from 1 to "
-                                           f"{_sr_cut.CUT_FLOOR_MAX}.")
+                                           f"{_sr_cut.CUT_FLOOR_MAX}."), 400
 
     try:
-        tier = data.get("service_tier","trial")
-        # Same tenancy guard as create-client: a group name in use by another
-        # owner would silently merge two clients into one tenant.
-        place_clash = place_id_conflict((data.get("google_place_id") or "").strip(),
-                                        exclude_id=restaurant_id) if "google_place_id" in data else None
-        # A demo row deliberately mirrors a real listing (place_id_conflict
-        # exempts demos): the stored flag counts when the form doesn't send
-        # one - renaming the demo Simple EJ's was refused because Erik's live
-        # account holds the same listing (owner, 9/28/26).
-        _is_demo = data.get("is_demo") if "is_demo" in data else getattr(current, "is_demo", 0)
-        if place_clash and not int(_is_demo or 0):
+        fields = _parse_client_settings(data)
+    except _SettingsError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    if "cut_floor_default" in data:
+        fields["cut_floor_default"] = _cut_floor
+    sent = set(fields)          # what the admin sent, as opposed to what this save derives
+
+    # The Place ID and the location group are tenancy boundaries, checked
+    # whenever this save sets them. Only the STORED demo flag exempts a row:
+    # the payload used to be able to claim is_demo past this check without
+    # the flag ever being written.
+    if "google_place_id" in fields:
+        place_clash = place_id_conflict(fields["google_place_id"] or "", exclude_id=restaurant_id)
+        if place_clash and not int(getattr(current, "is_demo", 0) or 0):
             return jsonify(ok=False, error=(
                 f"That Google listing is already connected to {place_clash}. Two live "
                 f"restaurants on one listing both pull the same reviews and only one of "
                 f"them can own any given review."
-            ))
-
-        conflict = location_group_conflict(
-            _given_or_current("location_group"),
-            _given_or_current("owner_email"),
-            exclude_id=restaurant_id,
-        ) if ("location_group" in data or "owner_email" in data) else None
+            )), 400
+    if "location_group" in fields or "owner_email" in fields:
+        conflict = location_group_conflict(_given_or_current("location_group"), _given_or_current("owner_email"),
+                                           exclude_id=restaurant_id)
         if conflict:
             return jsonify(ok=False, error=(
-                f"Location group \u201c{_given_or_current('location_group')}\u201d already belongs to "
+                f"Location group “{_given_or_current('location_group')}” already belongs to "
                 f"{conflict}. Pick a different group name — locations in a group share data and billing."
-            ))
-        # Every field the form can carry, parsed and validated as before —
-        # then only the ones this payload actually sent are written. This used
-        # to write every key as data.get(key, default), so any save that left
-        # a field out reset it: the settings page never sends the alert_* or
-        # urgent_* switches, so every save silently turned all of a client's
-        # alerts off, and a one-field payload also reset billing_status to
-        # 'trial', the modules and owner_email (SEC-30).
-        fields = {
-            "name":            data.get("name","").strip(),
-            "owner_email":     data.get("owner_email","").strip(),
-            "google_place_id": data.get("google_place_id","").strip() or None,
-            "yelp_business_id":data.get("yelp_business_id","").strip() or None,
-            "voice_notes":     sanitize(data.get("voice_notes","")),
-            "neighborhood":    data.get("neighborhood","").strip() or None,
-            "vibe":            sanitize(data.get("vibe","")),
-            "known_for":       sanitize(data.get("known_for","")),
-            "timezone":        _valid_tz(data.get("timezone","")),
-            "sign_off_name":   data.get("sign_off_name","").strip() or None,
-            "never_say":       sanitize(data.get("never_say","")),
-            "menu_notes":      sanitize(data.get("menu_notes",""), max_len=2000),
-            "menu_url":        sanitize(data.get("menu_url","")),
-            "skip_holidays":   sanitize(data.get("skip_holidays","")),
-            "custom_competitors": sanitize(data.get("custom_competitors","")),
-            "hourly_rate":     float(data.get("hourly_rate") or 26.0),
-            "labor_target_pct": _labor_target,
-            "pos_system":      data.get("pos_system","").strip() or None,
-            "module_reviews":  int(data.get("module_reviews", 1)),
-            "module_labor":    int(data.get("module_labor", 0)),
-            "module_inventory":int(data.get("module_inventory", 0)),
-            "module_marketing":int(data.get("module_marketing", 0)),
-            "owner_name":      sanitize(data.get("owner_name","")),
-            "owner_phone":     data.get("owner_phone","").strip() or None,
-            "location_group":        data.get("location_group","").strip() or None,
-            "location_name":         data.get("location_name","").strip() or None,
-            "inventory_frequency":   data.get("inventory_frequency","weekly"),
-            "delivery_days":         data.get("delivery_days","").strip() or None,
-            "inventory_notes":       sanitize(data.get("inventory_notes","")),
-            "hours_notes":           sanitize(data.get("hours_notes",""), max_len=2000),
-            "role_rates_json":       data.get("role_rates_json","") or None,
-            "close_times_json":      data.get("close_times_json","") or None,
-            "role_close_buffer_json": data.get("role_close_buffer_json","") or None,
-            "section_count":         int(data["section_count"]) if data.get("section_count") else None,
-            "daypart_split":         data.get("daypart_split","").strip() or None,
-            "delivery_pct":          int(data["delivery_pct"]) if data.get("delivery_pct") is not None and str(data.get("delivery_pct","")) != "" else None,
-            "role_minimums_json":    data.get("role_minimums_json","") or None,
-            "cut_floor_default":     _cut_floor,
-            "sched_notes":           sanitize(data.get("sched_notes",""), max_len=2000),
-            "monthly_revenue_target": float(data.get("monthly_revenue_target") or 0),
-            # Sent only when typed by the week: update_restaurant stores the
-            # monthly it implies (models.monthly_from_weekly) over the above.
-            "weekly_revenue_target":  float(data.get("weekly_revenue_target") or 0),
-            "food_cost_target":      float(data.get("food_cost_target", 30) or 30),
-            "waste_target_pct":      float(data["waste_target_pct"]) if data.get("waste_target_pct") not in (None, "") else None,
-            "digest_day":      data.get("digest_day","monday"),
-            "digest_enabled":  int(data.get("digest_enabled",1)),
-            "reviews_live":    int(bool(data.get("reviews_live"))),
-            "billing_status":  data.get("billing_status","trial"),
-            "internal_notes":  sanitize(data.get("internal_notes","")),
-            "alert_1star":        int(bool(data.get("alert_1star"))),
-            "alert_2star":        int(bool(data.get("alert_2star"))),
-            "alert_health":       int(bool(data.get("alert_health"))),
-            "alert_neg_spike":    int(bool(data.get("alert_neg_spike"))),
-            "alert_negative_trend": int(bool(data.get("alert_negative_trend"))),
-            "alert_no_response":  int(bool(data.get("alert_no_response"))),
-            "urgent_via_email":   int(bool(data.get("urgent_via_email"))),
-            "urgent_via_sms":     int(bool(data.get("urgent_via_sms"))),
-            "alert_5star":             int(bool(data.get("alert_5star"))),
-            "alert_rating_threshold":  int(bool(data.get("alert_rating_threshold"))),
-            "alert_rating_floor":      float(data.get("alert_rating_floor") or 4.0),
-            "alert_labor_over":        int(bool(data.get("alert_labor_over"))),
-        }
-        _upd = {k: v for k, v in fields.items() if k in data}
-        # A target or the blended rate the admin actually edited is the
-        # owner's, even when it is typed back as the default 30% or $26 —
-        # the form names the fields it saw touched (re-audit #45, R2-21).
-        # An untouched field re-sent with the rest confirms nothing.
-        from models import TARGET_SOURCE_FIELDS as _TSF
-        _touched = data.get("touched") if isinstance(data.get("touched"), list) else []
-        for _tf in _touched:
-            if _tf in _TSF and _tf in _upd:
-                _upd[_TSF[_tf]] = "set"
-        update_restaurant(restaurant_id, _upd)
+            )), 400
+
+    # Review fetching (fix round #110).
+    explicit_live = fields.pop("reviews_live") if "reviews_live" in fields else None
+    live, live_err = reviews_live_decision(restaurant_id, current, fields, explicit_live)
+    if live_err:
+        return jsonify(ok=False, error=live_err), 400
+    if live is not None:
+        fields["reviews_live"] = live
+
+    # The billing status is Stripe's; changing it here is an explicit,
+    # reasoned override, recorded with the reason (fix round #8). Re-sending
+    # the stored state changes nothing.
+    billing_reason = None
+    if "billing_status" in fields and fields["billing_status"] != (current.billing_status or ""):
+        billing_reason = sanitize(_settings_str(data, "billing_status_reason"), max_len=300)
+        if not billing_reason:
+            return jsonify(ok=False, error=(
+                "Changing the billing status overrides what Stripe set. Give a reason for the "
+                "override — it is kept with the change.")), 400
+        if (current.billing_status or "") == "paused":
+            # The owner's own resume clears it the same way.
+            fields["paused_until"] = None
+
+    # A value equal to what is stored writes nothing: re-sending a value is
+    # not an edit, and must not count as a conflict either.
+    write = {k: v for k, v in fields.items()
+             if k == "weekly_revenue_target" or not _settings_same(getattr(current, k, None), v)}
+
+    expected = expected_version_from(data)
+    if expected is not None and expected != version_now:
+        # The row moved on since the page loaded. Refuse only when a field
+        # this save changes is one that moved: what is stored now against
+        # what the page loaded (`base`). A field sent without its loaded
+        # value can't be checked, so it is refused rather than guessed.
+        base = data.get("base") if isinstance(data.get("base"), dict) else {}
+        conflicts = []
+        for key in write:
+            if key not in sent:
+                continue
+            column = "monthly_revenue_target" if key == "weekly_revenue_target" else key
+            if column not in base or not _settings_same(getattr(current, column, None), base.get(column)):
+                conflicts.append(column)
+        if conflicts:
+            order = {k: i for i, k in enumerate(SETTINGS_FIELDS)}
+            conflicts = sorted(set(conflicts), key=lambda k: order.get(k, len(order)))
+            return jsonify(ok=False, conflict=True, fields=conflicts,
+                           labels={k: _label(k) for k in conflicts},
+                           current={k: getattr(current, k, None) for k in conflicts},
+                           current_version=version_now,
+                           error=("Changed by somebody else since this page loaded: "
+                                  + ", ".join(_label(k) for k in conflicts)
+                                  + ". Reload to see the change, then make yours again.")), 409
+
+    # A target or the blended rate the admin actually edited is the
+    # owner's, even when it is typed back as the default 30% or $26 —
+    # the form names the fields it saw touched (re-audit #45, R2-21).
+    # An untouched field re-sent with the rest confirms nothing.
+    from models import TARGET_SOURCE_FIELDS as _TSF
+    _touched = data.get("touched") if isinstance(data.get("touched"), list) else []
+    for _tf in _touched:
+        if _tf in _TSF and _tf in fields:
+            write[_TSF[_tf]] = "set"
+
+    before = {k: getattr(current, k, None) for k in write}
+    if write:
+        try:
+            # Compare-and-swap on the version checked above, so a write that
+            # lands between that check and this one is refused too.
+            update_restaurant(restaurant_id, write,
+                              expected_version=(version_now if expected is not None else None))
+        except StaleWrite as e:
+            return jsonify(ok=False, conflict=True, fields=[], current_version=e.current_version,
+                           error=e.user_message), 409
+        _record_settings_change(restaurant_id, current_user, before, write, billing_reason)
+    saved_row = _gr_cs(restaurant_id)
+    saved = {k: getattr(saved_row, k, None) for k in fields if k != "weekly_revenue_target"}
+    if "weekly_revenue_target" in fields:
+        saved["monthly_revenue_target"] = getattr(saved_row, "monthly_revenue_target", None)
+    return jsonify(ok=True, version=restaurant_version(restaurant_id), saved=saved, changed=sorted(write))
+
+
+def _record_settings_change(restaurant_id, current_user, before, after, billing_reason=None):
+    """Who changed what, from what: an activity_log row for the client's
+    history and an admin_events row for the operator's audit trail. The old
+    record was {"by": username} with no diff (ROUTES-4)."""
+    actor = current_user.get("username") or current_user.get("email") or "admin"
+
+    def short(v):
+        return (v[:200] + "…") if isinstance(v, str) and len(v) > 200 else v
+    diff = {k: {"from": short(before.get(k)), "to": short(v)} for k, v in after.items()}
+    extra = {"billing_override_reason": billing_reason} if billing_reason else {}
+    try:
         from models import log_event
-        log_event(restaurant_id, "admin_settings_update", {"by": current_user.get("username", "admin")})
-        return jsonify(ok=True)
+        log_event(restaurant_id, "admin_settings_update", {"by": actor, "changed": diff, **extra})
     except Exception as e:
-        return jsonify(ok=False, error=_safe_err(e))
+        _ops.capture(e, job="admin_settings_audit", context=f"restaurant_id={restaurant_id}")
+    import admin_events
+    if "billing_status" in after:
+        admin_events.record("admin", "billing_status.override", restaurant_id=restaurant_id,
+                            summary=(f"{actor}: {before.get('billing_status') or 'unset'} → "
+                                     f"{after['billing_status']} — {billing_reason}")[:300],
+                            payload={"actor": actor, "before": before.get("billing_status"),
+                                     "after": after["billing_status"], "reason": billing_reason})
+    admin_events.record("admin", "client_settings.update", restaurant_id=restaurant_id,
+                        summary=(f"{actor} changed " + ", ".join(sorted(after)))[:300],
+                        payload={"actor": actor, "changed": diff})
+
 
 @admin_bp.before_request
 def _audit_admin_write():
@@ -2131,11 +2732,15 @@ def mark_posted(review_id, current_user):
 @admin_bp.route("/api/export-reviews")
 @login_required
 def export_reviews(current_user):
-    import io, csv as _csv
+    import io
+    from models import safe_csv_writer
     restaurant = get_restaurant(current_user["restaurant_id"])
     reviews = get_reviews_data(current_user["restaurant_id"])
     buf = io.StringIO()
-    w = _csv.writer(buf)
+    # Reviewer names, review text and drafts are other people's words: a
+    # cell starting "=" ran as a formula in the owner's spreadsheet (fix
+    # round #156).
+    w = safe_csv_writer(buf)
     w.writerow(["Date","Author","Platform","Rating","Sentiment","Urgency","Review","Draft Response","Status"])
     for r in reviews:
         w.writerow([
@@ -2178,80 +2783,98 @@ def inv_trend_api(current_user):
 @admin_bp.route("/admin/upload-menu-pdf/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def upload_menu_pdf(restaurant_id, current_user):
-    """Accept a PDF upload and extract menu items using AI."""
+    """Extract the menu from a PDF, as a background job; poll
+    /admin/api/menu-extract/<job_id>. The text comes back to the page to
+    review — nothing is saved until the admin saves the settings. It used to
+    overwrite the saved menu notes the moment the model answered, while the
+    page said "review and save", and to hold a request thread for the whole
+    model call (fix round #142, #153)."""
     restaurant = get_restaurant(restaurant_id)
     if not restaurant:
-        return jsonify(ok=False, error="Restaurant not found")
+        return jsonify(ok=False, error="Restaurant not found"), 404
     pdf_file = request.files.get("pdf")
     if not pdf_file:
-        return jsonify(ok=False, error="No PDF file uploaded")
-    try:
-        pdf_bytes = pdf_file.read()
-        if len(pdf_bytes) > 10 * 1024 * 1024:  # 10MB limit
-            return jsonify(ok=False, error="PDF too large — max 10MB")
-        from competitor import fetch_menu_from_pdf_bytes
-        from models import update_restaurant
-        menu_notes = fetch_menu_from_pdf_bytes(pdf_bytes, restaurant.name, restaurant_id=restaurant_id)
-        if not menu_notes:
-            return jsonify(ok=False, error="Could not extract menu items from this PDF — try a text-based PDF rather than a scanned image")
-        update_restaurant(restaurant_id, {"menu_notes": menu_notes})
-        return jsonify(ok=True, menu_notes=menu_notes)
-    except Exception as e:
-        return jsonify(ok=False, error=_safe_err(e))
+        return jsonify(ok=False, error="No PDF file uploaded"), 400
+    pdf_bytes = pdf_file.read(10 * 1024 * 1024 + 1)
+    if len(pdf_bytes) > 10 * 1024 * 1024:  # 10MB limit
+        return jsonify(ok=False, error="PDF too large — max 10MB"), 400
+    if not pdf_bytes.startswith(b"%PDF"):
+        return jsonify(ok=False, error="That file isn't a PDF."), 400
+    return _start_menu_extraction(restaurant_id, "pdf", _extract_menu_pdf, pdf_bytes, restaurant.name)
+
+
+def _extract_menu_pdf(restaurant_id, pdf_bytes, restaurant_name):
+    from competitor import fetch_menu_from_pdf_bytes
+    notes = fetch_menu_from_pdf_bytes(pdf_bytes, restaurant_name, restaurant_id=restaurant_id)
+    if not notes:
+        return {"ok": False, "error": "Could not extract menu items from this PDF — try a text-based PDF "
+                                      "rather than a scanned image"}
+    return {"ok": True, "menu_notes": notes}
 
 
 @admin_bp.route("/admin/fetch-menu-from-url/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def fetch_menu_from_url_route(restaurant_id, current_user):
-    """Fetch and parse menu items from a given URL using AI."""
-    data = request.get_json()
-    url = data.get("url", "").strip()
+    """Extract the menu from a web page, as a background job; poll
+    /admin/api/menu-extract/<job_id>. Returned to review, never saved here
+    (the URL and the notes are saved with the settings) — fix round #142,
+    #153."""
+    data = request.get_json(silent=True) or {}
+    url = str(data.get("url") or "").strip()
     if not url:
-        return jsonify(ok=False, error="No URL provided")
-    try:
-        from competitor import fetch_menu_from_url
-        from models import update_restaurant
-        menu_items = fetch_menu_from_url(url, restaurant_id=restaurant_id)
-        if not menu_items:
-            return jsonify(ok=False, error="Could not extract menu from this URL. The site may block automated requests or use JavaScript to load content. Try the PDF upload option instead, or enter items manually.")
-        # Save the URL and extracted notes
-        update_restaurant(restaurant_id, {"menu_url": url, "menu_notes": menu_items})
-        return jsonify(ok=True, menu_notes=menu_items)
-    except Exception as e:
-        return jsonify(ok=False, error=_safe_err(e))
+        return jsonify(ok=False, error="No URL provided"), 400
+    if not url.lower().startswith(("http://", "https://")) or any(c.isspace() for c in url):
+        return jsonify(ok=False, error="Enter the menu's web address, starting with https://."), 400
+    if not get_restaurant(restaurant_id):
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    return _start_menu_extraction(restaurant_id, "url", _extract_menu_url, url)
+
+
+def _extract_menu_url(restaurant_id, url):
+    from competitor import fetch_menu_from_url
+    items = fetch_menu_from_url(url, restaurant_id=restaurant_id)
+    if not items:
+        return {"ok": False, "error": "Could not extract menu from this URL. The site may block automated "
+                                      "requests or use JavaScript to load content. Try the PDF upload option "
+                                      "instead, or enter items manually."}
+    return {"ok": True, "menu_notes": items, "menu_url": url}
 
 
 @admin_bp.route("/admin/refresh-menu-notes/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def refresh_menu_notes(restaurant_id, current_user):
-    """Re-fetch menu notes from Google Places API and update the restaurant record."""
+    """Menu notes from Google Places, merged with the saved ones, as a
+    background job; poll /admin/api/menu-extract/<job_id>. Returned to
+    review like the PDF and URL extractions — the settings save writes it
+    (fix round #142, #153)."""
     restaurant = get_restaurant(restaurant_id)
     if not restaurant:
-        return jsonify(ok=False, error="Restaurant not found")
+        return jsonify(ok=False, error="Restaurant not found"), 404
     if not restaurant.google_place_id:
-        return jsonify(ok=False, error="No Google Place ID set for this restaurant")
-    try:
-        from competitor import fetch_menu_notes_from_places
-        from models import update_restaurant
-        menu_notes = fetch_menu_notes_from_places(restaurant.google_place_id,
-                                                  restaurant_id=restaurant_id)
-        if not menu_notes or len(menu_notes) < 30:
-            # Build helpful message with where to find menu data manually
-            yelp_url = f"https://www.yelp.com/biz/{restaurant.yelp_business_id}" if restaurant.yelp_business_id else ""
-            tips = "Google Places has no menu data for this restaurant. "
-            if yelp_url:
-                tips += f"Try: 1) Upload a menu PDF, 2) Paste their menu URL and click Fetch, or 3) Copy dishes from their Yelp page ({yelp_url}) into the notes field manually."
-            else:
-                tips += "Try: 1) Upload a menu PDF, 2) Paste their menu URL and click Fetch, or 3) Enter key dishes manually in the notes field."
-            return jsonify(ok=False, error=tips)
-        existing = restaurant.menu_notes or ""
-        merged = menu_notes if not existing else menu_notes + ("\n\nAdditional notes:\n" + existing if existing not in menu_notes else "")
-        update_restaurant(restaurant_id, {"menu_notes": merged})
-        has_url = "Menu URL:" in merged
-        return jsonify(ok=True, menu_notes=merged,
-                       message="\u2713 Updated from Google Places" + (" — menu URL found, dishes extracted" if has_url else ""))
-    except Exception as e:
-        return jsonify(ok=False, error=_safe_err(e))
+        return jsonify(ok=False, error="No Google Place ID set for this restaurant"), 400
+    return _start_menu_extraction(restaurant_id, "places", _extract_menu_places, restaurant.google_place_id,
+                                  restaurant.yelp_business_id, restaurant.menu_notes or "")
+
+
+def _extract_menu_places(restaurant_id, place_id, yelp_business_id, existing):
+    from competitor import fetch_menu_notes_from_places
+    menu_notes = fetch_menu_notes_from_places(place_id, restaurant_id=restaurant_id)
+    if not menu_notes or len(menu_notes) < 30:
+        # Build helpful message with where to find menu data manually
+        yelp_url = f"https://www.yelp.com/biz/{yelp_business_id}" if yelp_business_id else ""
+        tips = "Google Places has no menu data for this restaurant. "
+        if yelp_url:
+            tips += (f"Try: 1) Upload a menu PDF, 2) Paste their menu URL and click Fetch, or 3) Copy dishes "
+                     f"from their Yelp page ({yelp_url}) into the notes field manually.")
+        else:
+            tips += ("Try: 1) Upload a menu PDF, 2) Paste their menu URL and click Fetch, or 3) Enter key "
+                     "dishes manually in the notes field.")
+        return {"ok": False, "error": tips}
+    merged = menu_notes if not existing else menu_notes + ("\n\nAdditional notes:\n" + existing
+                                                           if existing not in menu_notes else "")
+    has_url = "Menu URL:" in merged
+    return {"ok": True, "menu_notes": merged,
+            "message": "✓ Updated from Google Places" + (" — menu URL found, dishes extracted" if has_url else "")}
 
 
 RESEND_WELCOME_COOLDOWN_MINUTES = 5
@@ -2748,15 +3371,101 @@ def admin_delete_changelog(entry_id, current_user):
 
 # ── White-label branding admin ───────────────────────────────────────────────
 
+_BRAND_FIELDS = ("brand_name", "brand_color", "brand_logo_url")
+
+
+def brand_color_value(raw):
+    """A brand colour as stored: "#rrggbb" in lower case, or None to clear.
+    Raises ValueError for anything else. The colour is written into a
+    <style> block on the owner's dashboard (dashboard.html) and read by the
+    iOS app, and the dashboard appends an alpha ("…cc"), so only a six-digit
+    hex is valid there; a value like "red;}body{…" went into the page as CSS
+    (fix round #142). "#abc" is expanded; a missing "#" is added."""
+    import re as _re
+    text = str(raw or "").strip().lower()
+    if not text:
+        return None
+    if not text.startswith("#"):
+        text = "#" + text
+    if _re.match(r"^#[0-9a-f]{3}$", text):
+        text = "#" + "".join(c * 2 for c in text[1:])
+    if not _re.match(r"^#[0-9a-f]{6}$", text):
+        raise ValueError("The brand color must be a hex color like #c84b2f.")
+    return text
+
+
+def _brand_logo_value(raw):
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    if not text.lower().startswith("https://") or any(c.isspace() or c in "\"'<>" for c in text) or len(text) > 1000:
+        raise ValueError("The logo URL must be an https:// address of an image.")
+    return text
+
+
+def _brand_payload(restaurant_id):
+    """What the Branding & peer-profile form shows for this client — every
+    field it can set, as stored, so the console fills the form on open
+    instead of carrying over the last client's values (fix round #23)."""
+    from models import restaurant_version
+    r = get_restaurant(restaurant_id)
+    if not r:
+        return None
+    return {"restaurant_id": restaurant_id, "version": restaurant_version(restaurant_id),
+            "brand_name": r.brand_name, "brand_color": r.brand_color, "brand_logo_url": r.brand_logo_url,
+            "category": getattr(r, "category", None),
+            "exclude_from_learning": int(getattr(r, "exclude_from_learning", 0) or 0),
+            "profile": {k: getattr(r, k, None) for k in ("service_model", "concept", "bar_led", "ownership",
+                                                        "opened_year", "profile_source", "profile_confirmed_at")}}
+
+
+@admin_bp.route("/admin/api/brand/<int:restaurant_id>", methods=["GET"])
+@admin_required
+def admin_get_brand(restaurant_id, current_user):
+    payload = _brand_payload(restaurant_id)
+    if payload is None:
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    return jsonify(ok=True, **payload)
+
+
 @admin_bp.route("/admin/api/brand/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def admin_set_brand(restaurant_id, current_user):
-    data = request.get_json(force=True) or {}
-    allowed = {"brand_name", "brand_color", "brand_logo_url", "category"}
-    updates = {k: v for k, v in data.items() if k in allowed}
-    if "category" in updates:
+    """Write the branding and peer-profile fields this call sends.
+
+    The console's form was never filled or reset, so a save wrote the
+    previous client's values, or blanks, over this client's name, colour and
+    logo (fix round #23). Now: a blank brand field is left alone unless it is
+    named in `clear` (["brand_logo_url", ...]); the colour and logo are
+    validated; `expected_version` (from the GET) refuses a stale form with a
+    409; and the response carries the stored values."""
+    from models import StaleWrite, expected_version_from
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(ok=False, error="Send the branding as a JSON object."), 400
+    if not get_restaurant(restaurant_id):
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    clear = data.get("clear") if isinstance(data.get("clear"), list) else []
+    updates = {}
+    try:
+        for key in _BRAND_FIELDS:
+            if key in clear:
+                updates[key] = None
+                continue
+            raw = data.get(key)
+            if raw is None or not str(raw).strip():
+                continue
+            if key == "brand_color":
+                updates[key] = brand_color_value(raw)
+            elif key == "brand_logo_url":
+                updates[key] = _brand_logo_value(raw)
+            else:
+                updates[key] = sanitize(str(raw), max_len=80)
+    except ValueError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    if "category" in data:
         from intelligence.categories import valid as _valid_category
-        cat = (updates["category"] or "").strip().lower()
+        cat = (str(data.get("category") or "")).strip().lower()
         if cat and not _valid_category(cat):
             return jsonify(ok=False, error="Unknown category"), 400
         updates["category"] = cat or None
@@ -2768,18 +3477,27 @@ def admin_set_brand(restaurant_id, current_user):
         if err:
             return jsonify(ok=False, error=err), 400
         updates.update(prof)
-    if "exclude_from_learning" in data:
+    if "exclude_from_learning" in data and data.get("exclude_from_learning") not in (None, ""):
         updates["exclude_from_learning"] = 1 if data.get("exclude_from_learning") in (1, True, "1", "true", "on") else 0
     if not updates:
-        return jsonify(ok=False, error="No valid fields"), 400
-    update_restaurant(restaurant_id, updates)
+        return jsonify(ok=False, error="Nothing to save: every field was blank, and a blank field leaves "
+                                       "what is stored alone."), 400
+    try:
+        update_restaurant(restaurant_id, updates, expected_version=expected_version_from(data))
+    except StaleWrite as e:
+        return jsonify(ok=False, conflict=True, error=e.user_message, current_version=e.current_version,
+                       current=_brand_payload(restaurant_id)), 409
     if "profile_source" in updates:
         import thresholds as _thr
         from models import get_restaurant as _gr
         seed = _thr.seeded_targets(_gr(restaurant_id))
         if seed:
             update_restaurant(restaurant_id, seed)
-    return jsonify(ok=True)
+    import admin_events
+    admin_events.record("admin", "brand.update", restaurant_id=restaurant_id,
+                        summary=(f"{current_user.get('username') or 'admin'} set " + ", ".join(sorted(updates)))[:300],
+                        payload={"actor": current_user.get("username"), "fields": sorted(updates)})
+    return jsonify(ok=True, **_brand_payload(restaurant_id))
 
 
 
@@ -4507,3 +5225,265 @@ def admin_api_client_audits(restaurant_id, current_user):
     audit-versus-now comparison (promise.py) reads."""
     import sales_audits
     return jsonify(ok=True, restaurant_id=restaurant_id, audits=sales_audits.linked_audits(restaurant_id))
+
+
+# ── Fix round B1 ─────────────────────────────────────────────────────────────
+# Legacy pages and data integrity: the bounded admin job pool, the admin
+# twins of the owner's session-scoped routes (response templates, review
+# imports) that name the client they act on, alert contacts, review
+# fetching, and the polls for menu extraction and a new client's setup.
+
+import threading as _b1_threading
+
+# Admin actions that wait on a model or a provider run here instead of on a
+# request thread (fix round #153): the platform has four request threads,
+# and a menu extraction or a DocuSign send held one for as long as the
+# provider took. Bounded in workers AND in queue — an unbounded queue is the
+# old thread-per-click problem one step removed.
+ADMIN_JOB_WORKERS = max(1, min(int(os.getenv("ADMIN_JOB_WORKERS", "2") or 2), 4))
+ADMIN_JOB_QUEUE_MAX = 8
+_admin_job_pool = None
+_admin_job_lock = _b1_threading.Lock()
+_admin_jobs_waiting = 0
+
+
+def _admin_job_executor():
+    global _admin_job_pool
+    if _admin_job_pool is None:
+        with _admin_job_lock:
+            if _admin_job_pool is None:
+                from concurrent.futures import ThreadPoolExecutor
+                _admin_job_pool = ThreadPoolExecutor(max_workers=ADMIN_JOB_WORKERS, thread_name_prefix="admin-job")
+    return _admin_job_pool
+
+
+def _submit_admin_job(job_id, fn, *args):
+    """Run fn(*args) on the admin job pool. Returns None, or the sentence
+    saying why it was not started. fn records its own result in
+    ops.async_jobs; an exception it raises is recorded as the job's error."""
+    global _admin_jobs_waiting
+    with _admin_job_lock:
+        if _admin_jobs_waiting >= ADMIN_JOB_QUEUE_MAX:
+            return "The server is busy with other admin jobs. Try again in a minute."
+        _admin_jobs_waiting += 1
+
+    def _run():
+        global _admin_jobs_waiting
+        try:
+            fn(*args)
+        except Exception as e:
+            _ops.capture(e, job="admin_job", context=f"job_id={job_id}")
+            _ops.finish_async_job(job_id, "error", {"ok": False, "error": _safe_err(e)})
+        finally:
+            with _admin_job_lock:
+                _admin_jobs_waiting -= 1
+            try:
+                from models import close_thread_connections
+                close_thread_connections()
+            except Exception:
+                pass
+    try:
+        _admin_job_executor().submit(_run)
+    except RuntimeError:            # the pool is shutting down: a deploy
+        with _admin_job_lock:
+            _admin_jobs_waiting -= 1
+        return "The server is restarting. Try again in a minute."
+    return None
+
+
+def _start_menu_extraction(restaurant_id, source, fn, *args):
+    """Start one menu extraction for this restaurant as a job; a second
+    while one is running is refused rather than joined (its result would
+    be the other source's)."""
+    import uuid
+    job_id, joined = _ops.claim_async_job(str(uuid.uuid4()), "menu_extract", restaurant_id)
+    if joined:
+        return jsonify(ok=False, job_id=job_id, error="A menu extraction is already running for this "
+                                                      "restaurant. Wait for it to finish."), 409
+
+    def _job():
+        result = fn(restaurant_id, *args)
+        result["source"] = source
+        _ops.finish_async_job(job_id, "done" if result.get("ok") else "error", result)
+    err = _submit_admin_job(job_id, _job)
+    if err:
+        _ops.finish_async_job(job_id, "error", {"ok": False, "error": err})
+        return jsonify(ok=False, error=err), 503
+    return jsonify(ok=True, job_id=job_id, status="pending")
+
+
+def _admin_job_status(job_id):
+    job = _ops.read_async_job(job_id)
+    if not job:
+        return jsonify(ok=False, status="error", error="Job not found"), 404
+    if job["status"] == "pending":
+        return jsonify(ok=True, status="pending")
+    result = dict(job["result"] or {})
+    result["status"] = job["status"]
+    return jsonify(result)
+
+
+@admin_bp.route("/admin/api/menu-extract/<job_id>")
+@admin_required
+def admin_menu_extract_status(job_id, current_user):
+    """{status: pending} until done; then {ok, menu_notes, source, ...} or
+    {ok: false, error}. The text is for the admin to review; nothing is
+    saved (fix round #142)."""
+    return _admin_job_status(job_id)
+
+
+@admin_bp.route("/admin/api/create-client/<job_id>")
+@admin_required
+def admin_client_setup_status(job_id, current_user):
+    """A new client's provider calls: {status: pending}, then
+    {ok, restaurant_id, envelope_id, docusign_skipped, docusign_error,
+    menu_notes_fetched} (fix round #153)."""
+    return _admin_job_status(job_id)
+
+
+# Response templates for THE client named in the URL. The settings page
+# called the owner's session-scoped /api/templates, which listed, created and
+# deleted the admin's own home restaurant's templates (fix round #73).
+@admin_bp.route("/admin/api/templates/<int:restaurant_id>", methods=["GET"])
+@admin_required
+def admin_list_templates(restaurant_id, current_user):
+    from models import get_response_templates
+    if not get_restaurant(restaurant_id):
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    return jsonify(ok=True, templates=get_response_templates(restaurant_id))
+
+
+@admin_bp.route("/admin/api/templates/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def admin_create_template(restaurant_id, current_user):
+    """The owner route's rules (mobile_api.mobile_create_template)."""
+    from models import create_response_template
+    if not get_restaurant(restaurant_id):
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    data = request.get_json(silent=True) or {}
+    title = str(data.get("title") or "").strip()
+    body = str(data.get("body") or "").strip()
+    if not title or not body:
+        return jsonify(ok=False, error="Title and body required"), 400
+    if len(title) > 120:
+        return jsonify(ok=False, error="Title too long (120 chars max)"), 400
+    if len(body) > 5000:
+        return jsonify(ok=False, error="Template text too long (5,000 chars max)"), 400
+    category = data.get("category", "general")
+    if category not in ("general", "positive", "negative", "neutral"):
+        category = "general"
+    tid = create_response_template(restaurant_id, title, body, category)
+    return jsonify(ok=True, id=tid)
+
+
+@admin_bp.route("/admin/api/templates/<int:restaurant_id>/<int:template_id>/delete", methods=["POST"])
+@admin_required
+def admin_delete_template(restaurant_id, template_id, current_user):
+    from models import delete_response_template
+    delete_response_template(template_id, restaurant_id)
+    return jsonify(ok=True)
+
+
+@admin_bp.route("/admin/import-reviews/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def admin_import_reviews(restaurant_id, current_user):
+    """A TripAdvisor, DoorDash or Uber Eats review export into THIS client
+    (multipart: file, platform). The console posted to the owner's
+    /api/import-tripadvisor, which filed every platform's rows under
+    TripAdvisor's column names and, with no restaurant id, into the admin's
+    own home restaurant (fix round #149); that route now sends an admin
+    session here. Same body as the owner's (client_api._do_import_reviews)."""
+    import client_api
+    if not get_restaurant(restaurant_id):
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    payload, status = client_api._do_import_reviews(restaurant_id, request.files.get("file"),
+                                                    request.form.get("platform"))
+    if payload.get("ok"):
+        import admin_events
+        actor = current_user.get("username") or "admin"
+        admin_events.record("admin", "reviews.import", restaurant_id=restaurant_id,
+                            summary=(f"{actor} imported {payload.get('imported', 0)} "
+                                     f"{payload.get('platform', '')} reviews ({payload.get('new', 0)} new)")[:300],
+                            payload={"actor": actor, **{k: payload.get(k) for k in
+                                                        ("platform", "imported", "new", "already_had", "skipped")}})
+    return jsonify(**payload), status
+
+
+# Alert contacts, one add or remove at a time (fix round #73: the routes
+# existed with no screen). The older /admin/alert-contacts routes add without
+# the per-location limit and delete by id alone; nothing calls them —
+# candidate for future cleanup after additional verification.
+@admin_bp.route("/admin/api/alert-contacts/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def admin_add_alert_contact(restaurant_id, current_user):
+    """Add one contact. Never with SMS consent: an operator typing someone
+    else's number isn't that person consenting (notify.add_alert_contact)."""
+    from notify import add_alert_contact, get_alert_contacts, MAX_ALERT_CONTACTS
+    from client_api import _normalize_phone_lenient
+    if not get_restaurant(restaurant_id):
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    data = request.get_json(silent=True) or {}
+    name = " ".join(str(data.get("name") or "").split())[:80]
+    phone = _normalize_phone_lenient(str(data.get("phone") or ""))
+    if not phone:
+        return jsonify(ok=False, error="Enter a mobile number, with its area code."), 400
+    existing = get_alert_contacts(restaurant_id)
+    if any(c["phone"] == phone for c in existing):
+        return jsonify(ok=False, error="That number is already an alert contact here."), 400
+    if len(existing) >= MAX_ALERT_CONTACTS:
+        return jsonify(ok=False, error=f"Alert contacts are limited to {MAX_ALERT_CONTACTS} per location. "
+                                       f"Remove one first."), 400
+    contact_id = add_alert_contact(restaurant_id, name, phone, sms_consent=False)
+    import admin_events
+    admin_events.record("admin", "alert_contact.added", restaurant_id=restaurant_id,
+                        summary=f"{current_user.get('username') or 'admin'} added {name or 'a contact'} …{phone[-4:]}",
+                        payload={"actor": current_user.get("username"), "contact_id": contact_id,
+                                 "name": name, "phone_last4": phone[-4:]})
+    return jsonify(ok=True, id=contact_id, name=name, phone=phone)
+
+
+@admin_bp.route("/admin/api/alert-contacts/<int:restaurant_id>/<int:contact_id>/delete", methods=["POST"])
+@admin_required
+def admin_delete_alert_contact(restaurant_id, contact_id, current_user):
+    from notify import get_alert_contacts, delete_alert_contact
+    mine = [c for c in get_alert_contacts(restaurant_id) if int(c["id"]) == int(contact_id)]
+    if not mine:
+        return jsonify(ok=False, error="That contact isn't this restaurant's."), 404
+    delete_alert_contact(contact_id)
+    import admin_events
+    admin_events.record("admin", "alert_contact.removed", restaurant_id=restaurant_id,
+                        summary=f"{current_user.get('username') or 'admin'} removed {mine[0]['name'] or 'a contact'}",
+                        payload={"actor": current_user.get("username"), "contact_id": contact_id,
+                                 "name": mine[0]["name"], "phone_last4": (mine[0]["phone"] or "")[-4:]})
+    return jsonify(ok=True)
+
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/reviews-fetching", methods=["POST"])
+@admin_required
+def admin_set_reviews_fetching(restaurant_id, current_user):
+    """Turn review fetching on or off: {on: true|false}. The switch the
+    console's "Reviews is on but has never received data" issue needs —
+    fetching was settable only at creation (fix round #110). Refused without
+    a Place ID or a Google Business Profile, and for a demo sharing a live
+    client's listing. {ok, reviews_live, via: "google_business_profile" |
+    "places" | null}."""
+    from models import update_restaurant as _upd_rl
+    data = request.get_json(silent=True) or {}
+    if "on" not in data:
+        return jsonify(ok=False, error="Say on or off."), 400
+    try:
+        on = _settings_flag(data, "on")
+    except _SettingsError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    current = get_restaurant(restaurant_id)
+    if not current:
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    value, err = reviews_live_decision(restaurant_id, current, {}, explicit=on)
+    if err:
+        return jsonify(ok=False, error=err), 400
+    if value != int(current.reviews_live or 0):
+        _upd_rl(restaurant_id, {"reviews_live": value})
+        _record_settings_change(restaurant_id, current_user, {"reviews_live": current.reviews_live},
+                                {"reviews_live": value})
+    via = "google_business_profile" if current.gmb_refresh_token else ("places" if value else None)
+    return jsonify(ok=True, reviews_live=value, via=via)

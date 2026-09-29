@@ -250,7 +250,9 @@ def test_the_admin_settings_save_accepts_and_refuses_the_default(db, monkeypatch
         with app.test_request_context(f"/admin/client-settings/{rid}", method="POST",
                                       json={"name": "Admin", "owner_email": "admin@x.com",
                                             "cut_floor_default": value}):
-            return admin_routes.save_client_settings(rid).get_json()
+            resp = admin_routes.save_client_settings(rid)
+            # A refused value is a 400 now (fix round B1), a (response, status) pair.
+            return (resp[0] if isinstance(resp, tuple) else resp).get_json()
 
     assert save("4")["ok"] and get_restaurant(rid, db).cut_floor_default == 4
     for junk in ("", "0", "11", "two", "1.5"):
@@ -258,4 +260,7 @@ def test_the_admin_settings_save_accepts_and_refuses_the_default(db, monkeypatch
         assert not out["ok"] and "1 to 10" in out["error"], junk
     assert get_restaurant(rid, db).cut_floor_default == 4
     html = open("templates/client_settings.html").read()
-    assert 'id="cut_floor_default"' in html and "getElementById('cut_floor_default')" in html
+    # The page sends every field it tracks by the server's own list
+    # (admin_routes.SETTINGS_FIELDS), one reader for all of them.
+    assert 'id="cut_floor_default"' in html and "cut_floor_default" in admin_routes.SETTINGS_FIELDS
+    assert "var CAV_FIELD_KEYS = {{ settings_fields|tojson }};" in html

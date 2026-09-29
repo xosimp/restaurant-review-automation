@@ -319,9 +319,20 @@ def test_refreshing_menu_notes_bills_the_extraction_to_that_restaurant(db_path, 
     _web(monkeypatch, contacted, redirect_to=None, places=places)
     _model(monkeypatch, calls)
 
-    resp = admin_app.test_client().post("/admin/refresh-menu-notes/%d" % rid, json={})
+    client = admin_app.test_client()
+    resp = client.post("/admin/refresh-menu-notes/%d" % rid, json={})
 
     assert resp.get_json()["ok"] is True
+    # The extraction runs as a background job since fix round B1 (#153): the
+    # route answers with a job id at once, and the job is polled.
+    import time
+    job = {"status": "pending"}
+    for _ in range(200):
+        job = client.get("/admin/api/menu-extract/%s" % resp.get_json()["job_id"]).get_json()
+        if job.get("status") != "pending":
+            break
+        time.sleep(0.05)
+    assert job.get("ok") is True, job
     assert calls, "the menu page was never summarised"
     assert calls[0]["restaurant_id"] == rid, \
         "menu extraction billed to %r, not restaurant %d" % (calls[0]["restaurant_id"], rid)

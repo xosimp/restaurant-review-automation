@@ -480,12 +480,25 @@ def test_s15_status_page_counts_locations_never_names(db, monkeypatch):
 
 # ── S16: an admin save keeps Places-only review fetching on ────────────────
 
-def test_s16_admin_settings_post_the_stored_reviews_live():
+def test_s16_admin_settings_post_the_stored_reviews_live(db, monkeypatch):
+    """An admin save must never switch a Places-only restaurant's fetching
+    off. The page used to echo the stored flag back on every save; since fix
+    round B1 it sends only the fields the admin touched, so a save that
+    doesn't touch the Review fetching switch doesn't mention it at all."""
+    from flask import Flask
+    import admin_routes
+    monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 999, "is_admin": 1, "username": "will"})
+    rid = create_restaurant(Restaurant(name="Places Only", owner_email="p@x.test", google_place_id="ChIJplaces",
+                                       reviews_live=1), db_path=db)
+    app = Flask(__name__)
+    app.register_blueprint(admin_routes.admin_bp)
+    with app.test_request_context(f"/admin/client-settings/{rid}", method="POST", json={"voice_notes": "warm"}):
+        resp = admin_routes.save_client_settings(rid)
+    assert (resp[0] if isinstance(resp, tuple) else resp).get_json()["ok"] is True
+    assert models.get_restaurant(rid, db_path=db).reviews_live == 1
     src = _src("templates/client_settings.html")
-    assert "reviews_live:    {{ 1 if (restaurant.gmb_refresh_token or restaurant.reviews_live) else 0 }}" in src
-    from jinja2 import Environment
-    tpl = Environment().from_string("{{ 1 if (restaurant.gmb_refresh_token or restaurant.reviews_live) else 0 }}")
-    assert tpl.render(restaurant={"gmb_refresh_token": None, "reviews_live": 1}) == "1"
+    assert "reviews_live:    {{" not in src, "the page must not re-send the stored flag"
+    assert 'id="reviews_live"' in src
 
 
 # ── S17: small integrity items ─────────────────────────────────────────────

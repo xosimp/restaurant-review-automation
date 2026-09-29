@@ -483,14 +483,16 @@ def test_imported_tripadvisor_reviews_are_stored_with_their_title_and_platform(w
     assert rows[1]["text"] == "Lovely — Great pasta and kind staff"
 
 
-def test_a_review_import_takes_an_allowed_platform_override_and_ignores_others(world):
+def test_a_review_import_takes_an_allowed_platform_override_and_refuses_others(world):
+    """A platform the importer doesn't read used to be filed as TripAdvisor;
+    it is refused since fix round B1 (#149), and nothing is stored."""
     _login(world, world["owner"])
     first = "rating,text,author\n4,Fast delivery,Ann\n"
     assert _import_reviews(world, first.encode(), platform="DoorDash").get_json()["ok"] is True
     second = "rating,text,author\n3,Cold fries,Bob\n"
-    assert _import_reviews(world, second.encode(), platform="google").get_json()["ok"] is True
-    assert sorted((x["author"], x["platform"]) for x in _reviews(world)) == [
-        ("Ann", "doordash"), ("Bob", "tripadvisor")]
+    refused = _import_reviews(world, second.encode(), platform="google")
+    assert refused.status_code == 400 and refused.get_json()["ok"] is False
+    assert sorted((x["author"], x["platform"]) for x in _reviews(world)) == [("Ann", "doordash")]
 
 
 def test_a_review_import_starts_background_analysis_of_the_new_reviews(world, monkeypatch):

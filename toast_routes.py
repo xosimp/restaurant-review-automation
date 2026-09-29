@@ -40,15 +40,30 @@ def save_toast_credentials(restaurant_id, current_user):
     if not client_id or not client_secret or not guid:
         return jsonify(ok=False, error="client_id, client_secret, and restaurant_guid are all required")
 
+    from toast import test_credentials, demo_allowed, _DEMO_ID
+    from models import get_restaurant, pos_binding_conflict
+    if not get_restaurant(restaurant_id):
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    is_demo_row = demo_allowed(restaurant_id)
+    # Synthetic "demo" data only on a restaurant flagged is_demo (CA3 F8) —
+    # whether or not the credential test runs: {"test": false} used to skip
+    # this and save "demo" credentials onto a real restaurant (fix round #143).
+    if _DEMO_ID in (client_id, client_secret, guid) and not is_demo_row:
+        return jsonify(ok=False, error="Demo credentials are only accepted on a restaurant flagged as a demo"), 400
+    # One Toast restaurant, one Cavnar AI restaurant: a GUID bound to two
+    # syncs its sales and labor into both (fix round #143). A demo may
+    # mirror a live one, as it may a Google listing.
+    if not is_demo_row:
+        clash = pos_binding_conflict("toast", guid, exclude_id=restaurant_id)
+        if clash:
+            return jsonify(ok=False, error=f"That Toast restaurant GUID is already connected to {clash}. "
+                                           f"One Toast location can feed only one restaurant."), 400
+
     # Optionally validate credentials against the Toast API before saving
     if run_test:
-        from toast import test_credentials, demo_allowed
         result = test_credentials(client_id, client_secret, guid)
         if not result["ok"]:
             return jsonify(ok=False, error=result["error"])
-        # Synthetic "demo" data only on a restaurant flagged is_demo (CA3 F8).
-        if result.get("demo") and not demo_allowed(restaurant_id):
-            return jsonify(ok=False, error="Demo credentials are only accepted on a restaurant flagged as a demo")
 
     update_restaurant(restaurant_id, {
         "toast_client_id":       client_id,

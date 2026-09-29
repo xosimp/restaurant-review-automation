@@ -25,6 +25,16 @@ def admin_save_clover(restaurant_id, current_user):
     api_token   = (data.get("api_token") or "").strip()
     if not merchant_id or not api_token:
         return jsonify(ok=False, error="Merchant ID and API token are required")
+    # One Clover merchant, one restaurant (fix round #143, as for Toast).
+    from models import get_restaurant, pos_binding_conflict
+    r = get_restaurant(restaurant_id)
+    if not r:
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    if not int(getattr(r, "is_demo", 0) or 0):
+        clash = pos_binding_conflict("clover", merchant_id, exclude_id=restaurant_id)
+        if clash:
+            return jsonify(ok=False, error=f"That Clover merchant is already connected to {clash}. "
+                                           f"One Clover merchant can feed only one restaurant."), 400
     from clover import test_credentials
     result = test_credentials(merchant_id, api_token)
     if not result["ok"]:

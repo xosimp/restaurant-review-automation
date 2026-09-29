@@ -366,6 +366,19 @@ def bootstrap(restaurant_id: int, store_mid: str = None) -> dict:
                 "error": f"This token can see {len(stores)} stores — pick which one "
                          f"this restaurant is."}
 
+    # One store, one restaurant. A store bound to two restaurants syncs its
+    # sales and labor into both, and each looks entirely normal (fix round
+    # #143). A demo may mirror a live store, as it may a live Google listing.
+    r = get_restaurant(restaurant_id)
+    if not (r is not None and int(getattr(r, "is_demo", 0) or 0)):
+        from models import pos_binding_conflict
+        clash = pos_binding_conflict("rpower", (chosen.get("cg"), chosen.get("store_mid")),
+                                     exclude_id=restaurant_id)
+        if clash:
+            return {"ok": False, "stores": stores,
+                    "error": f"That RPOWER store is already connected to {clash}. One store can feed "
+                             f"only one restaurant — disconnect it there first, or pick another store."}
+
     fields = {
         "rpower_cg": chosen["cg"],
         "rpower_store_mid": str(chosen["store_mid"]),
@@ -376,7 +389,6 @@ def bootstrap(restaurant_id: int, store_mid: str = None) -> dict:
     # RPOWER's own timezone and payroll-week anchor, which are the same two
     # settings an admin was being asked to know. Only filled when Cavnar has
     # nothing already — an operator's explicit choice outranks the POS.
-    r = get_restaurant(restaurant_id)
     if chosen.get("timezone") and not (r and r.timezone and r.timezone != "America/Chicago"):
         fields["timezone"] = chosen["timezone"]
     if chosen.get("ot_dow") is not None and r is not None and not getattr(r, "week_start_day", 0):

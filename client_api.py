@@ -1264,6 +1264,14 @@ def save_theme_api(current_user):
 @client_bp.route("/api/templates", methods=["GET"])
 @login_required
 def list_templates(current_user):
+    # The web templates routes act on the session's restaurant. An admin's
+    # session names its own home restaurant, which the settings page's
+    # "Response templates" section read and wrote for every client (fix
+    # round #73) — the admin routes /admin/api/templates/<id> name the
+    # client. The phone twins (/mobile/api/templates) are unchanged: an
+    # admin signed in to the app is looking at their own home restaurant.
+    if _operator_session(current_user):
+        return _operator_needs_target("keep response templates for")
     from models import get_response_templates
     return jsonify(ok=True, templates=get_response_templates(current_user["restaurant_id"]))
 
@@ -1271,11 +1279,15 @@ def list_templates(current_user):
 @login_required
 def create_template(current_user):
     """Web twin — the one body is mobile_api.mobile_create_template."""
+    if _operator_session(current_user):
+        return _operator_needs_target("keep response templates for")
     return _m("mobile_create_template")(current_user)
 
 @client_bp.route("/api/templates/<int:tid>", methods=["DELETE"])
 @login_required
 def delete_template(tid, current_user):
+    if _operator_session(current_user):
+        return _operator_needs_target("keep response templates for")
     from models import delete_response_template
     delete_response_template(tid, current_user["restaurant_id"])
     return jsonify(ok=True)
@@ -1283,92 +1295,170 @@ def delete_template(tid, current_user):
 @client_bp.route("/api/templates/<int:tid>/use", methods=["POST"])
 @login_required
 def use_template(tid, current_user):
+    if _operator_session(current_user):
+        return _operator_needs_target("keep response templates for")
     from models import increment_template_use
     increment_template_use(tid, restaurant_id=current_user["restaurant_id"])
     return jsonify(ok=True)
 
-@client_bp.route("/api/import-tripadvisor", methods=["POST"])
-@login_required
-def import_tripadvisor(current_user):
+
+# ── Third-party review CSV imports ───────────────────────────────────────────
+#
+# One importer, three exports: TripAdvisor, DoorDash and Uber Eats. Every row
+# used to be read through TripAdvisor's column names and filed as
+# 'tripadvisor' (the console's DoorDash and Uber Eats imports post here), and
+# an admin import with no restaurant id landed in the admin's own home
+# restaurant (fix round #149). Each platform now has its own column names —
+# its export's own headers first, then the generic ones every export shares.
+_IMPORT_COMMON = {
+    "text": ("text", "review", "body", "comment", "review text"),
+    "rating": ("rating", "stars", "score"),
+    "author": ("author", "reviewer", "name", "user", "username"),
+    "date": ("date", "review date", "published"),
+    "title": (),
+    "order": (),
+}
+IMPORT_PLATFORMS = {
+    "tripadvisor": {
+        "label": "TripAdvisor", "guest": "TripAdvisor Guest",
+        "text": ("review text", "text", "review", "body", "comment"),
+        "rating": ("rating", "bubble", "bubbles", "stars", "score"),
+        "author": ("reviewer", "author", "name", "user", "username"),
+        "date": ("review date", "date", "published", "visited", "date of visit"),
+        "title": ("title", "review title", "headline"),
+        "order": (),
+    },
+    "doordash": {
+        "label": "DoorDash", "guest": "DoorDash customer",
+        "text": ("customer comment", "comment", "comments", "review", "review text", "feedback"),
+        "rating": ("rating", "star rating", "customer rating", "stars", "overall rating"),
+        "author": ("customer name", "customer", "consumer name", "consumer", "name"),
+        "date": ("order date", "review date", "rating date", "date", "created at"),
+        "title": (),
+        "order": ("order id", "delivery id", "order number"),
+    },
+    "ubereats": {
+        "label": "Uber Eats", "guest": "Uber Eats customer",
+        "text": ("comment", "comments", "eater comment", "review", "review text", "feedback"),
+        "rating": ("rating", "star rating", "stars", "customer rating", "overall rating"),
+        "author": ("eater name", "eater", "customer name", "customer", "name"),
+        "date": ("order date", "date", "review date", "created at"),
+        "title": (),
+        "order": ("order id", "order uuid", "workflow uuid", "order number"),
+    },
+}
+
+
+def normalise_import_platform(raw):
+    """'tripadvisor' | 'doordash' | 'ubereats', or None for anything else.
+    "Uber Eats", "uber_eats" and "DoorDash" all read as the platform."""
+    key = "".join(ch for ch in str(raw or "").lower() if ch.isalnum())
+    return key if key in IMPORT_PLATFORMS else None
+
+
+def _do_import_reviews(rid, f, platform_raw):
+    """({ok, imported, new, ...}, status) for one CSV export into `rid`."""
     import io, csv as _csv
+    import hashlib as _hl
     from models import Review, save_reviews
-    # Admin can pass restaurant_id explicitly; clients always use their own
-    admin_rid = request.form.get("restaurant_id")
-    if admin_rid and current_user.get("is_admin"):
-        rid = int(admin_rid)
-    else:
-        rid = current_user["restaurant_id"]
-    f    = request.files.get("file")
+    platform = normalise_import_platform(platform_raw) if (platform_raw or "").strip() else "tripadvisor"
+    if not platform:
+        # A platform the importer doesn't read was filed as TripAdvisor.
+        return {"ok": False, "error": "Imports read TripAdvisor, DoorDash and Uber Eats exports."}, 400
+    cols = IMPORT_PLATFORMS[platform]
     if not f:
-        return jsonify(ok=False, error="No file uploaded"), 400
+        return {"ok": False, "error": "No file uploaded"}, 400
     try:
         content = f.read().decode("utf-8-sig")  # handle BOM
     except Exception:
-        return jsonify(ok=False, error="Could not read file — make sure it's a UTF-8 CSV"), 400
+        return {"ok": False, "error": "Could not read file — make sure it's a UTF-8 CSV"}, 400
     if not content.strip():
-        return jsonify(ok=False, error="File is empty"), 400
+        return {"ok": False, "error": "File is empty"}, 400
     try:
         rows = list(_csv.DictReader(io.StringIO(content)))
     except Exception as e:
-        return jsonify(ok=False, error=f"Could not parse CSV: {e}"), 400
+        return {"ok": False, "error": f"Could not parse CSV: {e}"}, 400
     if not rows:
-        return jsonify(ok=False, error="No data rows found"), 400
+        return {"ok": False, "error": "No data rows found"}, 400
+    if len(rows) > MAX_CSV_ROWS:
+        return {"ok": False, "error": f"That file has {len(rows):,} rows — this import handles up to "
+                                      f"{MAX_CSV_ROWS:,} at a time. Split it and import the parts."}, 413
 
-    # Normalise column names (lowercase, strip spaces)
-    def _get(row, *keys):
-        for k in keys:
-            for rk in row:
-                if rk.strip().lower() == k:
-                    return (row[rk] or "").strip()
+    def _get(row, field):
+        """The first of the platform's names for `field` this export has,
+        matched however its header is cased or spaced."""
+        norm = {" ".join(str(k or "").strip().lower().replace("_", " ").split()): k for k in row}
+        for name in cols[field] + tuple(n for n in _IMPORT_COMMON[field] if n not in cols[field]):
+            if name in norm:
+                return (row[norm[name]] or "").strip()
         return ""
 
-    reviews = []
-    for i, row in enumerate(rows):
-        text   = _get(row, "text", "review", "body", "comment", "review text")
-        rating_raw = _get(row, "rating", "stars", "score", "bubble")
-        author = _get(row, "author", "reviewer", "name", "user", "username")
-        date   = _get(row, "date", "review date", "published", "visited")
-        title  = _get(row, "title", "review title", "headline")
+    # The same review already stored for this restaurant and platform: its
+    # key can't always be rebuilt (the column mapping above changed, and an
+    # export may re-order or re-title), so rating + text + date is checked too.
+    conn = get_conn()
+    try:
+        have = {(int(r["rating"] or 0), (r["text"] or "").strip(), (r["review_date"] or "")[:10])
+                for r in conn.execute("SELECT rating, text, review_date FROM reviews WHERE restaurant_id=? "
+                                      "AND platform=?", (rid, platform)).fetchall()}
+    finally:
+        conn.close()
+
+    reviews, skipped, already = [], 0, 0
+    for row in rows:
+        text = _get(row, "text")
+        rating_raw = _get(row, "rating")
+        author = _get(row, "author")
+        date = _get(row, "date")
+        title = _get(row, "title")
+        order = _get(row, "order")
         if not text or not rating_raw:
+            skipped += 1
             continue
         try:
             rating = int(float(rating_raw))
         except Exception:
+            skipped += 1
             continue
         if rating < 1 or rating > 5:
+            skipped += 1
             continue
         full_text = (title + " — " + text) if title else text
+        if (rating, full_text.strip(), (date or "")[:10]) in have:
+            already += 1
+            continue
         # A stable key from the review itself. It was hash(text) — salted per
         # process, so a re-upload after any deploy duplicated every review —
-        # plus the row index, which a re-exported file shifts (DATA-21).
-        import hashlib as _hl
-        _key = _hl.sha256("\x1f".join((author, date, str(rating), full_text)).encode("utf-8")).hexdigest()[:24]
+        # plus the row index, which a re-exported file shifts (DATA-21). The
+        # delivery platforms carry an order id, which is the review's own key.
+        if order:
+            ext = f"{platform}_order_{_hl.sha256(order.encode('utf-8')).hexdigest()[:24]}"
+        else:
+            ext = "ta_import_" + _hl.sha256("\x1f".join((author, date, str(rating), full_text))
+                                            .encode("utf-8")).hexdigest()[:24]
         reviews.append(Review(
             restaurant_id=rid,
-            platform="tripadvisor",
-            external_id=f"ta_import_{_key}",
-            author=author or "TripAdvisor Guest",
+            platform=platform,
+            external_id=ext,
+            author=author or cols["guest"],
             rating=rating,
             text=full_text,
             review_date=date or None,
         ))
     if not reviews:
-        return jsonify(ok=False, error="No valid reviews found — check column names (rating, text required)"), 400
-
-    # Correct platform label from form override
-    plat_override = (request.form.get("platform") or "").strip().lower()
-    allowed_platforms = ("tripadvisor", "doordash", "ubereats")
-    if plat_override in allowed_platforms:
-        for rv in reviews:
-            rv.platform = plat_override
+        if already:
+            return {"ok": True, "imported": 0, "new": 0, "already_had": already,
+                    "platform": platform}, 200
+        return {"ok": False, "error": f"No valid reviews found in this {cols['label']} export — it needs a "
+                                      f"rating (1 to 5) and the review text on each row."}, 400
 
     rejected = []
     new_count, new_objs = save_reviews(reviews, rejected=rejected)
     if rejected and not new_count:
         # Nothing stored is not a success, whatever was parsed (DATA-21).
-        return jsonify(ok=False, error="None of these reviews could be saved. Nothing was imported — "
-                                       "contact support if this keeps happening.",
-                       imported=0, new=0, rejected=len(rejected)), 500
+        return {"ok": False, "error": "None of these reviews could be saved. Nothing was imported — "
+                                      "contact support if this keeps happening.",
+                "imported": 0, "new": 0, "rejected": len(rejected)}, 500
     # Trigger AI processing in background. analyser has no
     # process_new_reviews; the ImportError was swallowed, so an import was
     # never analysed until the next fetch cycle's analyse_pending.
@@ -1380,8 +1470,32 @@ def import_tripadvisor(current_user):
         except Exception as e:
             import ops
             ops.capture(e, job="review_import_analysis", context=f"restaurant_id={rid}")
-    return jsonify(ok=True, imported=len(reviews) - len(rejected), new=new_count,
-                   **({"rejected": len(rejected)} if rejected else {}))
+    out = {"ok": True, "imported": len(reviews) - len(rejected), "new": new_count, "platform": platform}
+    if rejected:
+        out["rejected"] = len(rejected)
+    if skipped:
+        out["skipped"] = skipped
+    if already:
+        out["already_had"] = already
+    return out, 200
+
+
+@client_bp.route("/api/import-tripadvisor", methods=["POST"])
+@login_required
+def import_tripadvisor(current_user):
+    """A review export into the signed-in owner's own restaurant. An admin
+    session must name the restaurant (`restaurant_id`) and goes through the
+    admin gate (admin_routes.admin_import_reviews, the console's route);
+    with none, the import used to land in the admin's own home restaurant."""
+    if _operator_session(current_user):
+        raw = (request.form.get("restaurant_id") or "").strip()
+        if not raw.isdigit():
+            return _operator_needs_target("import reviews into")
+        import admin_routes
+        return admin_routes.admin_import_reviews(int(raw))
+    payload, status = _do_import_reviews(current_user["restaurant_id"], request.files.get("file"),
+                                         request.form.get("platform"))
+    return jsonify(**payload), status
 
 @client_bp.route("/api/response-performance")
 @login_required
@@ -4696,6 +4810,14 @@ def download_schedule(current_user):
         csv_clean = (detail.get("schedule_csv") or "").strip()
         if not csv_clean:
             return jsonify(ok=False, error="That schedule has no rows to download."), 400
+        # Rewritten through the export writer: names and notes come from
+        # uploads and the model, and a cell starting "=" would run as a
+        # formula in the owner's spreadsheet (fix round #156).
+        import csv as _csv_dl
+        from models import safe_csv_writer
+        _buf = io.StringIO()
+        safe_csv_writer(_buf).writerows(_csv_dl.reader(io.StringIO(csv_clean)))
+        csv_clean = _buf.getvalue()
         name = (restaurant.name if restaurant else "Restaurant").replace(" ", "_")
         return send_file(
             io.BytesIO(csv_clean.encode()),
@@ -5270,20 +5392,35 @@ def download_sample_template(current_user, template_type):
     return "Template not found", 404
 
 
+def _operator_session(current_user) -> bool:
+    """An admin or support login. Its session carries a home restaurant of
+    its own, so a session-scoped write made from it lands in the operator's
+    home restaurant — never in the client being managed. The console's
+    "Manage data (CSV)", the settings page's review import and its response
+    templates all did exactly that (fix round #19, #149, #73). A view-as
+    session is the owner's login, not an operator's, and is unaffected."""
+    return bool(current_user.get("is_admin")) or (current_user.get("role") or "") == "support"
+
+
+def _operator_needs_target(what):
+    return jsonify(ok=False, operator_session=True, error=(
+        f"This is an admin session, so it has no restaurant of its own to {what}. Use the client's "
+        f"page in the admin console, which names the restaurant.")), 400
+
+
 # ── Client self-serve data upload ────────────────────────────────────────────
 @client_bp.route("/client/upload-data", methods=["POST"])
 @login_required
 def client_upload_data(current_user):
     """
-    Client-facing upload endpoint. Validates CSV, saves it, triggers re-analysis.
+    Client-facing upload endpoint: the signed-in owner's OWN restaurant.
     login_required (not admin_required) so clients can upload their own data.
+    The body is _do_upload_data, shared with /admin/upload-data/<restaurant_id>
+    (admin_routes.upload_data), which the console's data page uses.
     """
-    import io, csv as _csv
-    from models import save_client_data, log_email
-
-    restaurant_id = current_user["restaurant_id"]
-    data_type     = request.form.get("data_type")  # "shifts" or "inventory"
-
+    if _operator_session(current_user):
+        return _operator_needs_target("upload data into")
+    data_type = request.form.get("data_type")  # "shifts" or "inventory"
     if data_type not in ("shifts", "inventory"):
         return jsonify(ok=False, error="Invalid data type")
 
@@ -5294,8 +5431,41 @@ def client_upload_data(current_user):
     from permissions import has_permission, FOOD_COST_VIEW, LABOR_VIEW
     if not has_permission(current_user, FOOD_COST_VIEW if data_type == "inventory" else LABOR_VIEW):
         return jsonify(ok=False, error="Your login doesn't have access to that module's data."), 403
+    return _do_upload_data(current_user["restaurant_id"], data_type, request.files.get("csv_file"), current_user)
 
-    f = request.files.get("csv_file")
+
+def _upload_notifies_outward(operator):
+    """Whether an upload may email the owner or post to their webhook. An
+    operator's upload is an admin action, and a local backend has
+    production's Resend key and the client's real webhook URL, so it
+    follows the scheduler's rule (scheduler.scheduling_allowed)."""
+    if not operator:
+        return True
+    try:
+        import scheduler
+        return bool(scheduler.scheduling_allowed())
+    except Exception:
+        return False
+
+
+def _do_upload_data(restaurant_id, data_type, f, current_user, source="upload", operator=False):
+    """Validate a shifts or inventory CSV, store it for `restaurant_id`, and
+    re-analyse. One body for the owner's /client/upload-data and the admin's
+    /admin/upload-data/<restaurant_id>: the admin twin used to skip every
+    check here (data_type, rows, the formula screen, the row cap, cp1252) and
+    was never called, while the console posted to the owner route instead
+    (fix round #19, #130). `operator` marks an admin upload: it is recorded
+    as the admin's, and it emails or posts outward only where the scheduler
+    may (_upload_notifies_outward)."""
+    import io, csv as _csv
+    from models import save_client_data, log_email
+
+    if data_type not in ("shifts", "inventory"):
+        return jsonify(ok=False, error="Invalid data type")
+    if source not in ("upload", "manual"):
+        source = "upload"
+    outward = _upload_notifies_outward(operator)
+
     if not f:
         return jsonify(ok=False, error="No file uploaded")
 
@@ -5403,7 +5573,7 @@ def client_upload_data(current_user):
         from models import get_client_data as _gcd_prev
         _prev_row = _gcd_prev(restaurant_id) or {}
         _prev_shifts = (_prev_row.get("shifts_csv"), _prev_row.get("shifts_source") or "upload")
-    save_client_data(restaurant_id, data_type, csv_content, source="upload")
+    save_client_data(restaurant_id, data_type, csv_content, source=source)
     # The AI insight is cached for five minutes with no invalidation, so a
     # fresh upload showed the previous data's narrative beside the new
     # data's numbers on the same screen. Drop it on write.
@@ -5457,14 +5627,15 @@ def client_upload_data(current_user):
                 # analyse_shifts returns overall_labor_pct and per-day hours;
                 # the keys read here never existed, so every payload was
                 # nulls (MOD-LAB-19).
-                _fw_labor(restaurant_id, "labor.updated", {
-                    "labor_pct": _shift_analysis.get("overall_labor_pct"),
-                    "total_hours": round(sum(float((d or {}).get("actual") or 0)
-                                             for d in (_shift_analysis.get("by_day") or {}).values()), 1),
-                    "total_labor_cost": _shift_analysis.get("total_labor_cost"),
-                    "costed_labor": _shift_analysis.get("costed_labor"),
-                    "total_sales": _shift_analysis.get("total_sales"),
-                })
+                if outward:
+                    _fw_labor(restaurant_id, "labor.updated", {
+                        "labor_pct": _shift_analysis.get("overall_labor_pct"),
+                        "total_hours": round(sum(float((d or {}).get("actual") or 0)
+                                                 for d in (_shift_analysis.get("by_day") or {}).values()), 1),
+                        "total_labor_cost": _shift_analysis.get("total_labor_cost"),
+                        "costed_labor": _shift_analysis.get("costed_labor"),
+                        "total_sales": _shift_analysis.get("total_sales"),
+                    })
             except Exception:
                 pass
         elif data_type == "inventory":
@@ -5478,6 +5649,8 @@ def client_upload_data(current_user):
                     if not (_items and _live_inv):
                         return  # never fan out sample-pantry figures to a customer's webhook
                     _trends = _cit(_rid_inv, _items)
+                    if not outward:
+                        return  # an operator upload here posts to no webhook
                     _fw_inv(_rid_inv, "inventory.updated", {
                         "waste_rate_pct": _analysis.get("waste_rate_pct"),
                         "benchmark": _analysis.get("benchmark_label"),
@@ -5503,6 +5676,8 @@ def client_upload_data(current_user):
     # employee. Only this week and last (an upload of last year's history is
     # not "in overtime this week"), and each person-week once: re-uploading
     # the same file re-sent the email (MOD-LAB-17).
+    if not outward:
+        _ot_flags = []
     if _ot_flags:
         from datetime import date as _d_ot, timedelta as _td_ot
         _cut_ot = (_d_ot.today() - _td_ot(days=14)).isoformat()
@@ -5557,6 +5732,24 @@ def client_upload_data(current_user):
                 })
         except Exception:
             pass
+
+    if operator:
+        # An admin's upload for a client: recorded as the admin's, and not
+        # the client's "first upload" (that email tells Will the client
+        # engaged, and the email_log row it keys on would be the admin's).
+        try:
+            from models import log_event
+            _actor = current_user.get("username") or current_user.get("email") or "admin"
+            log_event(restaurant_id, "admin_data_upload",
+                      {"by": _actor, "data_type": data_type, "source": source, "rows": len(rows)})
+            import admin_events
+            admin_events.record("admin", "client_data.upload", restaurant_id=restaurant_id,
+                                summary=f"{_actor} loaded {len(rows)} {data_type} rows ({source})",
+                                payload={"actor": _actor, "data_type": data_type, "rows": len(rows),
+                                         "source": source})
+        except Exception as _au_e:
+            _ops.capture(_au_e, job="admin_data_upload_audit", context=f"restaurant_id={restaurant_id}")
+        return jsonify(ok=True, rows=len(rows), message=f"{len(rows)} rows loaded successfully")
 
     # Log it and notify Will on first-ever upload
     try:

@@ -25,6 +25,16 @@ def admin_save_square(restaurant_id, current_user):
     location_id  = (data.get("location_id") or "").strip()
     if not access_token or not location_id:
         return jsonify(ok=False, error="Access token and location ID are required")
+    # One Square location, one restaurant (fix round #143, as for Toast).
+    from models import get_restaurant, pos_binding_conflict
+    r = get_restaurant(restaurant_id)
+    if not r:
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    if not int(getattr(r, "is_demo", 0) or 0):
+        clash = pos_binding_conflict("square", location_id, exclude_id=restaurant_id)
+        if clash:
+            return jsonify(ok=False, error=f"That Square location is already connected to {clash}. "
+                                           f"One Square location can feed only one restaurant."), 400
     from square import test_credentials
     result = test_credentials(access_token, location_id)
     if not result["ok"]:
