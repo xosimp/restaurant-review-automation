@@ -343,8 +343,8 @@ def render(report, user, restaurant=None, versions=None):
     from the one stored snapshot."""
     from time_utils import mdy
     view = view_for(user)
-    stored = _live_target(_live_labor(_live_categories(report.get("facts") or {}, report, restaurant),
-                                      report, restaurant), restaurant)
+    stored = _live_weather(_live_target(_live_labor(_live_categories(report.get("facts") or {}, report, restaurant),
+                                                    report, restaurant), restaurant), report)
     if view == OWNER:
         stored = _live_salaries(_live_budget(stored, report, restaurant), restaurant)
     facts, hidden = redact(stored, user)
@@ -649,6 +649,41 @@ def _live_salaries(facts, restaurant):
     m["salaried_people"] = people
     m["salaried_total_cost"] = round(total, 2)
     m["salaried_total_pct"] = round(total / float(net) * 100.0, 1)
+    return out
+
+
+def _live_weather(facts, report):
+    """The night's OBSERVED weather beside the forecast the Intel block
+    stored (memory audit 9/29/26, event_memory): the report is written at
+    close, and the nightly event_memory job keeps what the nearest National
+    Weather Service station observed that day (weather_daily). Where it is on
+    file, detail.weather.observed carries it — Erik's Weather column is the
+    weather that happened — and the forecast stays labelled a forecast.
+    Nothing else changes; a night with no observation is as stored."""
+    intel = ((facts or {}).get("blocks") or {}).get("intel") or {}
+    if intel.get("status") != dsr.READY:
+        return facts
+    try:
+        import event_memory
+        rid = report.get("restaurant_id")
+        obs = event_memory.observed_weather(rid, str(report.get("business_date"))[:10])
+    except Exception:
+        obs = None
+    if not obs:
+        return facts
+    out = copy.deepcopy(facts)
+    d = out["blocks"]["intel"].setdefault("detail", {})
+    w = d.get("weather") if isinstance(d.get("weather"), dict) else {}
+    bits = [str(obs.get("conditions") or "").strip()]
+    if obs.get("high_f") is not None:
+        bits.append(f"high {int(round(obs['high_f']))}°")
+    if obs.get("rain") == 1:
+        bits.append("rain during service")
+    w = dict(w, observed={"high_f": obs.get("high_f"), "low_f": obs.get("low_f"), "precip_in": obs.get("precip_in"),
+                          "rained_in_service": obs.get("rain"), "conditions": obs.get("conditions"),
+                          "station": obs.get("station"), "summary": " · ".join(b for b in bits if b) or None,
+                          "basis": "observed by the nearest National Weather Service station"})
+    d["weather"] = w
     return out
 
 

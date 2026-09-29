@@ -286,7 +286,10 @@ def test_outcomes_are_recorded_per_published_daypart_and_read_back(db_path, rid)
     rows = {r["daypart"]: dict(r) for r in conn.execute("SELECT * FROM schedule_outcomes WHERE history_id=?", (hid,)).fetchall()}
     conn.close()
     assert rows["night"]["hours"] == 12.0 and rows["night"]["people"] == 2 and rows["night"]["issues"] == 1
-    assert rows["morning"]["sales"] == 4000 and rows["night"]["sales"] == 6000        # the 40/60 default split
+    # No measured morning share: the daypart sales are unmeasured, never the
+    # old stated 40/60 split (memory audit 9/29/26, QUALITY-11).
+    assert rows["morning"]["sales"] is None and rows["night"]["sales"] is None
+    assert rows["morning"]["split_basis"] == rows["night"]["split_basis"] == "unmeasured"
     # a second recorded week makes it readable
     _publish(db_path, rid, "2026-09-07", "2026-09-13", csv_text.replace("2026-09-05", "2026-09-12"))
     intel.record_outcomes(rid, db_path=db_path, today=dt.date(2026, 9, 22))

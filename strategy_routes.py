@@ -1489,7 +1489,18 @@ def _do_demand_signals_get(u):
     from datetime import date, timedelta
     start = (request.args.get("start") or date.today().isoformat())[:10]
     end = (request.args.get("end") or (date.today() + timedelta(days=60)).isoformat())[:10]
-    return {"ok": True, "signals": _ds.upcoming(_rid(u), start, end)}, 200
+    rid = _rid(u)
+    signals = _ds.upcoming(rid, start, end)
+    # What the nights taught here (event_memory, memory audit 9/29/26):
+    # beside each listed event its label's measured record, and the recurring
+    # effects on file — measured, before and after, not proof.
+    import event_memory as _em
+    for sg in signals:
+        if sg.get("kind") == "event":
+            e = _ds._measured(rid, sg.get("label"))
+            sg["measured"] = ({"median_lift_pct": e["median_lift_pct"], "n": e["n"], "applies": e["applies"],
+                               "last": e["last"].isoformat(), "text": e["basis"]} if e else None)
+    return {"ok": True, "signals": signals, "what_nights_teach": _em.summaries(rid)}, 200
 
 
 def _do_demand_signals_save(u):

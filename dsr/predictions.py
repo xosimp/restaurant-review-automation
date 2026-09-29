@@ -10,8 +10,18 @@ number can settle — never a vibe — so the grade is a fact, not an opinion:
                 (demand.forecast_day's 80% range)
   sales_budget  net sales above (or below) the night's budget, when the
                 forecast's typical night says which side
-  rain          rain forecast (≥ RAIN_PCT): net below a usual <weekday>
-  event         an event or reservations listed: net above a usual <weekday>
+  rain          rain forecast (≥ RAIN_PCT): net below — or above — a usual
+                <weekday>, only in the direction THIS restaurant's own rain
+                nights measured (event_memory, past its sample floor)
+  event         a listed event: net above — or below — a usual <weekday>,
+                only in the direction that event's own past nights measured
+
+A direction is never assumed (memory audit 9/29/26, event_memory): "rain
+lowers sales" and "events lift it" were hard-coded, graded against the
+median — about 50% true by construction — and a delivery-heavy restaurant
+was told on every rainy night that rain would lower sales. A kind with no
+measured effect here is not predicted; "a usual <weekday>" is the plain
+weekday median (the forecast before its measured effects).
 
 A prediction is written ONCE, before its night happens (INSERT OR IGNORE on
 (restaurant, for_date, key)); a re-run of the earlier night never rewrites it
@@ -52,16 +62,22 @@ def _money(v):
     return f"${float(v):,.0f}"
 
 
-def build(forecast, budget_net=None, weather=None, events=None, weekday=None) -> list:
+def build(forecast, budget_net=None, weather=None, events=None, weekday=None, effects=None) -> list:
     """The predictions for one coming night from what is known about it.
-    `forecast` is demand.forecast_day's dict; `weather` forecast_for_day's
-    day row; `events` demand_signals rows. Only what can be graded is
-    predicted; [] when there is no forecast."""
+    `forecast` is demand.forecast_net's dict (the report's own basis);
+    `weather` forecast_for_day's day row; `events` demand_signals rows;
+    `effects` {"rain": event_memory.measured_effect(..), "events": {listed
+    label: effect}}. Only what can be graded is predicted; [] when there is
+    no forecast."""
     if not forecast or not forecast.get("available"):
         return []
     wd = weekday or forecast.get("weekday") or "night"
     typical = forecast.get("typical_sales")
+    usual = forecast.get("base_sales") or typical
     basis = f"Cavnar AI's forecast: the median of the last {forecast.get('samples')} {wd}s"
+    if forecast.get("effects"):
+        basis += " with this restaurant's measured effects of " + ", ".join(
+            str(e.get("display") or e.get("label")) for e in forecast["effects"])
     out = []
     low, high = forecast.get("low"), forecast.get("high")
     if low is not None and high is not None:
@@ -74,19 +90,36 @@ def build(forecast, budget_net=None, weather=None, events=None, weekday=None) ->
                     "value": float(budget_net),
                     "text": f"Sales expected {'above' if above else 'below'} budget ({_money(budget_net)})",
                     "basis": f"{basis}: {_money(typical)} against the budget"})
+    effects = effects or {}
     rain = (weather or {}).get("precip_pct")
-    if typical is not None and rain is not None and rain >= RAIN_PCT:
-        out.append({"key": "rain", "metric": "sales.net", "op": "lt", "value": float(typical),
-                    "text": f"Rain ({int(rain)}% chance) expected to pull sales below a usual {wd} "
-                            f"({_money(typical)})",
-                    "basis": "the National Weather Service forecast against Cavnar AI's typical night"})
-    listed = [e for e in (events or []) if e.get("label")]
-    if typical is not None and listed and not any(p["key"] == "rain" for p in out):
-        names = ", ".join(str(e["label"]) for e in listed[:2])
-        out.append({"key": "event", "metric": "sales.net", "op": "gt", "value": float(typical),
-                    "text": f"{names} expected to lift sales above a usual {wd} ({_money(typical)})",
-                    "basis": "what you listed for the date against Cavnar AI's typical night"})
+    reff = effects.get("rain")
+    if usual is not None and rain is not None and rain >= RAIN_PCT and _directed(reff):
+        below = reff["direction"] == "down"
+        out.append({"key": "rain", "metric": "sales.net", "op": "lt" if below else "gt", "value": float(usual),
+                    "text": (f"Rain ({int(rain)}% chance) expected to pull sales {'below' if below else 'above'} a "
+                             f"usual {wd} ({_money(usual)})"),
+                    "basis": (f"the National Weather Service forecast; rainy nights here ran a median "
+                              f"{abs(reff['median_lift_pct']):.0f}% {'below' if below else 'above'} a usual night "
+                              f"(measured {reff['n']} times)")})
+    listed = [e for e in (events or []) if e.get("label") and e.get("kind", "event") == "event"]
+    measured = [(e, (effects.get("events") or {}).get(str(e["label"]))) for e in listed]
+    measured = [(e, m) for e, m in measured if _directed(m)]
+    if usual is not None and measured and not any(p["key"] == "rain" for p in out):
+        e, m = max(measured, key=lambda em: em[1]["n"])
+        up = m["direction"] == "up"
+        out.append({"key": "event", "metric": "sales.net", "op": "gt" if up else "lt", "value": float(usual),
+                    "text": (f"{e['label']} expected to {'lift sales above' if up else 'pull sales below'} a usual "
+                             f"{wd} ({_money(usual)})"),
+                    "basis": (f"what you listed for the date; nights like it here ran a median "
+                              f"{abs(m['median_lift_pct']):.0f}% {'above' if up else 'below'} a usual night "
+                              f"(measured {m['n']} times)")})
     return out
+
+
+def _directed(effect) -> bool:
+    """A measured effect clear enough to predict with: past its sample floor
+    (event_memory `applies`) and a direction (up / down) past its floor."""
+    return bool(effect and effect.get("applies") and effect.get("direction") in ("up", "down"))
 
 
 # The facts a prediction rests on beyond the night's net — what dsr.access

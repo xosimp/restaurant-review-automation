@@ -3135,10 +3135,18 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
             dow_name = row.get("next_week_dow", "")
             nw_date  = row.get("next_week_date", "")
             if row.get("yoy_sales"):
-                line = (f"  {dow_name} {nw_date}: last year same day → "
-                        f"${row['yoy_sales']:,.0f} sales, "
-                        f"{row['yoy_labor_pct']}% labor, "
-                        f"{row['yoy_hours']}h total hours")
+                # Last year's sales may come from an imported DSR workbook,
+                # which carries no labor or hours (models.
+                # get_yoy_schedule_context, memory audit 9/29/26): only what
+                # is on file is said, never "None% labor".
+                bits = [f"${row['yoy_sales']:,.0f} sales"]
+                if row.get("yoy_labor_pct") is not None:
+                    bits.append(f"{row['yoy_labor_pct']}% labor")
+                if row.get("yoy_hours"):
+                    bits.append(f"{row['yoy_hours']}h total hours")
+                src = {"import": " (your imported DSR workbook)", "dsr": " (that night's report)"}.get(
+                    row.get("yoy_source"), "")
+                line = f"  {dow_name} {nw_date}: last year same day → " + ", ".join(bits) + src
                 # Flag if this day is a holiday match
                 if row.get("is_holiday"):
                     line += f" ← USE THIS (matched to {row['holiday_name']} last year)"

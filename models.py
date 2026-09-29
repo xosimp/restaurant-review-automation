@@ -3388,6 +3388,12 @@ def init_db(db_path: str = DB_PATH):
     # the POS-department → DSR-category map (dsr/).
     from dsr import init_dsr
     init_dsr(db_path)
+    # What each night teaches and the restaurant's public history
+    # (event_memory: event_outcomes, event_effects, weather_daily,
+    # own_rating_history, market_events, competitor_rating_monthly) — memory
+    # audit 9/29/26.
+    from event_memory import init_event_memory
+    init_event_memory(db_path)
     # One stored AI read per restaurant and data fingerprint, shared by web
     # and iOS (insight_store), and the reprice decisions record
     # (menu_intelligence) — audit #22 / #26 / #41.
@@ -7716,8 +7722,17 @@ def get_yoy_schedule_context(restaurant_id: int, next_week_dates: list,
     """
     For each date in next_week_dates, find the same calendar day last year
     (52 weeks back = same weekday). Returns a list of dicts with YoY data.
+
+    Last year's SALES come from the one last-year reader
+    (canonical_facts.sales_history — the night's report, then the owner's
+    imported DSR workbook, then the POS sync's final day; memory audit
+    9/29/26, imported_year) and `yoy_source` names which: a client who
+    imported a year of workbooks but has 60 days of POS history had no
+    year-over-year context at all. Labor %, labor cost and hours come only
+    from the synced day (the import carries none) and are None when absent.
     """
     from datetime import datetime as _dt, timedelta as _td
+    import canonical_facts as _cf
     conn = get_conn(db_path)
 
     # Every candidate date across every requested date, fetched once.
@@ -7736,37 +7751,40 @@ def get_yoy_schedule_context(restaurant_id: int, next_week_dates: list,
             wanted.add((yoy_dt + _td(days=offset)).strftime("%Y-%m-%d"))
 
     by_date = {}
+    canon = {}
     if wanted:
         marks = ",".join("?" * len(wanted))
         for row in conn.execute(
-            f"SELECT * FROM labor_daily_history WHERE restaurant_id=? AND date IN ({marks})",
+            f"SELECT * FROM labor_daily_history WHERE restaurant_id=? AND date IN ({marks}) "
+            f"AND {_cf.FINAL_SQL}",
             (restaurant_id, *sorted(wanted))
         ).fetchall():
             by_date[row["date"]] = dict(row)
+        canon = _cf.net_series(restaurant_id, db_path=db_path, dates=sorted(wanted), pos=_cf.POS_ALL)
 
     rows_out = []
     for date_str in next_week_dates:
         try:
             dt = _dt.strptime(date_str, "%Y-%m-%d")
             yoy_dt = dt - _td(weeks=52)
-            # Same ±3 day window, still walked in offset order so the
-            # fallback below keeps picking the earliest date with data.
-            candidates = [
-                by_date[d] for d in
-                ((yoy_dt + _td(days=o)).strftime("%Y-%m-%d") for o in range(-3, 4))
-                if d in by_date
-            ]
-            # Prefer exact 52-week match, fall back to closest with data
-            exact = next((c for c in candidates if c["date"] == yoy_dt.strftime("%Y-%m-%d")), None)
-            best = exact or (candidates[0] if candidates else None)
+            order = [(yoy_dt + _td(days=o)).strftime("%Y-%m-%d") for o in range(-3, 4)]
+            # Prefer exact 52-week match, fall back to closest with data —
+            # walked in offset order, so the earliest date with data wins a
+            # tie, as before.
+            exact = yoy_dt.strftime("%Y-%m-%d")
+            pick = exact if exact in canon else next((d for d in order if d in canon), None)
+            sales = canon.get(pick) if pick else None
+            labor = by_date.get(pick) if pick else None
             rows_out.append({
                 "next_week_date": date_str,
                 "next_week_dow": dt.strftime("%A"),
-                "yoy_date": best["date"] if best else None,
-                "yoy_sales": best["sales"] if best else None,
-                "yoy_labor_pct": best["labor_pct"] if best else None,
-                "yoy_labor_cost": best["labor_cost"] if best else None,
-                "yoy_hours": best["total_hours"] if best else None,
+                "yoy_date": pick,
+                "yoy_sales": sales["net"] if sales else None,
+                "yoy_source": sales["source"] if sales else None,
+                "yoy_basis": sales["basis"] if sales else None,
+                "yoy_labor_pct": labor["labor_pct"] if labor else None,
+                "yoy_labor_cost": labor["labor_cost"] if labor else None,
+                "yoy_hours": labor["total_hours"] if labor else None,
             })
         except Exception:
             rows_out.append({"next_week_date": date_str, "yoy_date": None})

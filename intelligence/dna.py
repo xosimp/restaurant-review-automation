@@ -44,6 +44,7 @@ from datetime import date, timedelta
 
 import models as _models_mod
 from models import DB_PATH
+import canonical_facts as _cf
 from . import privacy
 from .stats import median, percentile
 
@@ -59,7 +60,10 @@ def get_conn(db_path=None):
 # concept is its own S7, the non-sales structural dimensions joined, and
 # labor % is withheld on the assumed wage. Similarity reads version-2 rows
 # only, so a type code from the old mixed vocabulary is never compared.
-DNA_VERSION = 2
+# 3 (memory audit 9/29/26, canonical_facts): staffing issues over WATCHED
+# nights only, reviews Google removed left out of the review mix, and loss
+# rates over final days — a version-2 row measured all three the old way.
+DNA_VERSION = 3
 MIN_ROBUST_N = 30          # restaurants measuring a dimension before the robust z replaces the anchors
 MAD_K = 1.4826
 Z_CLIP = 3.0
@@ -590,18 +594,34 @@ def _publish_rate(conn, rid, today):
     return _m(round(min(1.0, pub / float(window)), 3), window, f"{pub} of the last {window} weeks published")
 
 
-def _staffing_issues(conn, rid, today):
+# Watched nights a staffing-issues rate needs before it is a reading.
+STAFFING_MIN_WATCHED_NIGHTS = 8
+
+
+def _staffing_issues(conn, rid, today, db_path=DB_PATH):
+    """Coverage and no-show issues per 100 people-shifts over the nights
+    someone WATCHED (canonical_facts.watched_nights: the clock-in check ran).
+    schedule_outcomes stores issues=0 whether or not a night was watched, so
+    a restaurant without coverage checks read 0 issues — the best possible
+    value — in similarity and predictions (QUALITY-18). A night with an
+    issue recorded was watched by definition. Withdrawn below
+    STAFFING_MIN_WATCHED_NIGHTS watched nights."""
+    since = today - timedelta(days=56)
     try:
-        r = conn.execute("SELECT COUNT(DISTINCT history_id) AS w, SUM(issues) AS i, SUM(people) AS p "
-                         "FROM schedule_outcomes WHERE restaurant_id=? AND date >= ?",
-                         (rid, (today - timedelta(days=56)).isoformat())).fetchone()
+        rows = conn.execute("SELECT history_id, date, issues, people FROM schedule_outcomes "
+                            "WHERE restaurant_id=? AND date >= ? AND date <= ?",
+                            (rid, since.isoformat(), today.isoformat())).fetchall()
     except Exception:
         return _need(0, "no schedule outcomes")
-    weeks = int(r["w"] or 0) if r else 0
-    if weeks < 4 or not (r["p"] or 0):
-        return _need(weeks, f"{weeks} published weeks with outcomes in the last 8")
-    return _m(round(float(r["i"] or 0) / float(r["p"]) * 100.0, 2), weeks,
-              f"coverage and no-show issues per 100 people-shifts, {weeks} weeks")
+    watched = _cf.watched_nights(rid, since, today, db_path=db_path)
+    seen = [r for r in rows if (r["issues"] or 0) or _d(r["date"]) in watched]
+    nights = len({_d(r["date"]) for r in seen})
+    weeks = len({r["history_id"] for r in seen})
+    people = sum(int(r["people"] or 0) for r in seen)
+    if nights < STAFFING_MIN_WATCHED_NIGHTS or not people:
+        return _need(nights, f"{nights} watched nights in the last 8 weeks (needs {STAFFING_MIN_WATCHED_NIGHTS})")
+    return _m(round(sum(int(r["issues"] or 0) for r in seen) / float(people) * 100.0, 2), nights,
+              f"coverage and no-show issues per 100 people-shifts, {nights} watched nights over {weeks} weeks")
 
 
 def _staff_rows(conn, rid):
@@ -647,13 +667,16 @@ def _tenure(staff, today):
 
 def _review_mix(conn, rid, today):
     try:
-        rows = conn.execute("SELECT review_date, sentiment, categories FROM reviews WHERE restaurant_id=? "
-                            "AND COALESCE(review_date, fetched_at) >= ?",
-                            (rid, (today - timedelta(days=90)).isoformat())).fetchall()
+        # Live reviews on the one time axis (QUALITY-16): removed ones kept
+        # counting here while every Reviews screen left them out.
+        rows = conn.execute(f"SELECT date({_cf.REVIEW_AXIS}) AS at, sentiment, categories FROM reviews "
+                            f"WHERE restaurant_id=? AND {_cf.LIVE_REVIEWS_SQL} AND date({_cf.REVIEW_AXIS}) >= ? "
+                            f"AND date({_cf.REVIEW_AXIS}) <= ?",
+                            (rid, (today - timedelta(days=90)).isoformat(), today.isoformat())).fetchall()
     except Exception:
         rows = []
     d30 = (today - timedelta(days=30)).isoformat()
-    last30 = [r for r in rows if r["sentiment"] and _d(r["review_date"]) >= d30]
+    last30 = [r for r in rows if r["sentiment"] and _d(r["at"]) >= d30]
     if len(last30) >= 5:
         neg = _m(round(sum(1 for r in last30 if r["sentiment"] == "negative") / float(len(last30)), 3),
                  len(last30), f"{len(last30)} analysed reviews, last 30 days")
@@ -722,7 +745,8 @@ def _loss_rate(conn, rid, kind, today):
     try:
         r = conn.execute("SELECT COUNT(*) AS days, COALESCE(SUM(p.amount),0) AS amt, SUM(l.sales) AS s "
                          "FROM pos_loss_daily p JOIN labor_daily_history l ON l.restaurant_id=p.restaurant_id "
-                         "AND l.date=p.business_date AND l.sales > 0 WHERE p.restaurant_id=? AND p.kind=? "
+                         f"AND l.date=p.business_date AND l.sales > 0 AND {_cf.final_sql('l')} "
+                         "WHERE p.restaurant_id=? AND p.kind=? "
                          "AND p.business_date >= ?", (rid, kind, (today - timedelta(days=28)).isoformat())).fetchone()
     except Exception:
         return _need(0, "no loss data from the POS")
@@ -860,7 +884,7 @@ def measure(restaurant_id, today=None, db_path=DB_PATH, features=None, restauran
             "labor_swing": lambda: _labor_cost(f, "labor_pct_sd_28d", "labor_swing", restaurant),
             "overtime_intensity": lambda: _overtime(restaurant_id, days, today, db_path),
             "schedule_publish_rate": lambda: _publish_rate(conn, restaurant_id, today),
-            "staffing_issues": lambda: _staffing_issues(conn, restaurant_id, today),
+            "staffing_issues": lambda: _staffing_issues(conn, restaurant_id, today, db_path),
             "retention": lambda: _retention(staff, today),
             "tenure_depth": lambda: _tenure(staff, today),
             "rating_level": lambda: _from_feature(f, "avg_rating_30d", "rating_level", f.get("reviews_30d")),

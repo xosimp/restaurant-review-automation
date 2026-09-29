@@ -53,6 +53,7 @@ from datetime import date, timedelta
 
 import models as _models_mod
 from models import DB_PATH
+from canonical_facts import FINAL_SQL          # final days only (memory audit 9/29/26)
 
 
 def get_conn(db_path=None):
@@ -312,7 +313,8 @@ def _revenue_actual(restaurant_id, start, end, row, db_path):
     try:
         got = {r["date"]: _f(r["sales"]) for r in conn.execute(
             "SELECT date, sales FROM labor_daily_history WHERE restaurant_id=? AND date BETWEEN ? AND ? "
-            "AND sales IS NOT NULL AND sales > 0", (restaurant_id, start.isoformat(), end.isoformat())).fetchall()}
+            f"AND sales IS NOT NULL AND sales > 0 AND {FINAL_SQL}",
+            (restaurant_id, start.isoformat(), end.isoformat())).fetchall()}
     finally:
         conn.close()
     if any(d not in got for d in days):

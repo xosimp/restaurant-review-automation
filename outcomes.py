@@ -786,19 +786,35 @@ def _apply_shift(metric, raw, base_ly, win_ly):
 def _seasonal_shift(restaurant_id, metric, base_window, win_window, db_path):
     """(last year's reading over the baseline's weeks, last year's reading
     over the comparison's weeks), or None when last year cannot honestly
-    adjust anything (not enough of it measured)."""
+    adjust anything (not enough of it measured).
+
+    Sales last year come from the POS archive when it covers both windows,
+    else from the ONE last-year reader (metrics.history_sales:
+    canonical_facts.sales_history — the night's report, the owner's
+    imported DSR workbook, the POS sync — both windows on one basis; memory
+    audit 9/29/26, imported_year): an owner who imported a year of
+    workbooks got no seasonal adjustment because the POS archive held 60
+    days."""
+    lys = [(_day(s) - timedelta(days=LY_OFFSET_DAYS), _day(e) - timedelta(days=LY_OFFSET_DAYS))
+           for s, e in (base_window, win_window)]
     out = []
-    for s, e in (base_window, win_window):
-        ls, le = _day(s) - timedelta(days=LY_OFFSET_DAYS), _day(e) - timedelta(days=LY_OFFSET_DAYS)
+    for ls, le in lys:
         # Coverage in TRADING days: a restaurant closed two days a week
         # measured 20 of 28 calendar days and was never adjusted at all.
         cov = metrics.coverage(restaurant_id, metric, ls.isoformat(), le.isoformat(), db_path)
         if cov is not None and (not cov["expected"] or cov["share"] < LY_MIN_COVERAGE):
-            return None
+            out = None
+            break
         v, _ = metrics.measure(restaurant_id, metric, ls.isoformat(), le.isoformat(), db_path)
         if v is None:
-            return None
+            out = None
+            break
         out.append(v)
+    if out is None and metrics.parse(metric)[0] == "sales":
+        got = metrics.history_sales(restaurant_id, lys, db_path=db_path, min_share=LY_MIN_COVERAGE)
+        out = got["values"] if got else None
+    if not out:
+        return None
     return out[0], out[1]
 
 
